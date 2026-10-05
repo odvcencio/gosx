@@ -50,6 +50,17 @@ func Page() Node {
 			<span class="inline-code">route.config.json</span>
 			.
 		</p>
+		<p>
+			Pages with a
+			<span class="inline-code">Load</span>
+			hook or
+			<span class="inline-code">Actions</span>
+			stay dynamic by default. To export a public snapshot, set
+			<span class="inline-code">&#123; "prerender": true &#125;</span>
+			in that route's
+			<span class="inline-code">route.config.json</span>
+			. This setting also applies to child routes unless they override it. Private responses and responses that set cookies remain excluded.
+		</p>
 		<CodeBlock lang="bash" source={data.sampleExport} />
 		<p>
 			The exporter rewrites page and asset references for nested static paths and copies only runtime assets referenced by exported documents. Treat
@@ -119,6 +130,13 @@ func Page() Node {
 		<h2 id="isr">Incremental static regeneration</h2>
 		<p>
 			ISR serves pages represented in the production export manifest and refreshes stale entries in the background. Enable it on the server and give an exported route a public cache lifetime. Cache tags travel into the export metadata for explicit invalidation.
+		</p>
+		<p>
+			An exported page with
+			<span class="inline-code">RevalidateSeconds=0</span>
+			keeps its build-time data until a rebuild or explicit invalidation. The build warns when a prerendered page has a
+			<span class="inline-code">Load</span>
+			hook and no revalidation window. For changing public data, opt in to prerendering and set a public cache lifetime. Keep request-specific data dynamic. Requests with cookies or authorization bypass the snapshot and render the origin, including at the exported trailing-slash URL. Dynamic file pages also accept the same trailing-slash URL after they leave the export manifest.
 		</p>
 		<CodeBlock lang="json" source={data.sampleISRConfig} />
 		<CodeBlock lang="go" source={data.sampleISRApp} />

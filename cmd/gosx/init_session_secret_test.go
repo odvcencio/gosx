@@ -117,6 +117,7 @@ func TestRunInitProductionExportUsesDisposableSecret(t *testing.T) {
 				t.Fatal(err)
 			}
 			addLocalGoSXReplace(t, dir)
+			mustWriteFile(t, filepath.Join(dir, "app", "route.config.json"), `{"prerender":true}`)
 			tidyModule(t, dir)
 			if err := RunExport(dir); err != nil {
 				t.Fatal(err)

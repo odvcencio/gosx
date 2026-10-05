@@ -15,6 +15,7 @@ rm -f "$log"
 
 local_secret="$(openssl rand -hex 32)"
 PORT="127.0.0.1:$port" \
+GOSX_LISTEN_ADDR="127.0.0.1:$port" \
 PUBLIC_URL="$base_url" \
 SESSION_SECRET="$local_secret" \
 	"$go_cmd" run ./cmd/gosx dev ./examples/gosx-docs >"$log" 2>&1 &

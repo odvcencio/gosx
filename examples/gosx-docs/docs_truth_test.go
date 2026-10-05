@@ -242,7 +242,7 @@ func TestChangedGuidesShowTheirWorkingExampleAndCurrentContract(t *testing.T) {
 		{page: "components", required: []string{"Working typed component", "/docs/typed-live", "View the example source"}, forbidden: []string{"doc-scene"}},
 		{page: "deployment", required: []string{"data.buildInfo.frameworkVersion", "/api/site", "docs-live-example"}, forbidden: []string{"doc-scene"}},
 		{page: "auth", required: []string{"Live session-backed action", "View the session action source"}, forbidden: []string{"doc-scene"}},
-		{page: "forms", required: []string{`actionPath("subscribe")`, "actions.subscribe.fieldErrors.email", "ctx.ValidationFailure"}, forbidden: []string{"doc-scene"}},
+		{page: "forms", required: []string{"component SubscribeForm(props: SubscribeProps)", "route.FormState", `ctx.FormState("subscribe")`, `props.Form.FieldErrors["email"]`, "ctx.ActionState", "ctx.ValidationFailure"}, forbidden: []string{"doc-scene"}},
 		{page: "hubs", required: []string{"ExampleHub", "docs-guide-presence", "ctx.Hub.Broadcast", "data.openTabs", "data-gosx-region-signal", "$docs.guidePresence"}, forbidden: []string{"doc-scene", "Refresh: true"}},
 		{page: "images", required: []string{"data.liveImage", "server.Image", "View the image helper source"}, forbidden: []string{"doc-scene"}},
 		{page: "islands", required: []string{"LiveCounter", "signal.New(props.Initial)", "data.liveCounterProps"}, forbidden: []string{"doc-scene", "Strict islands are not supported yet"}},

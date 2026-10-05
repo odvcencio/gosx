@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"m31labs.dev/gosx"
 	gosxcss "m31labs.dev/gosx/css"
@@ -38,7 +37,7 @@ type fileProgramRenderer struct {
 	err            error
 }
 
-func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (string, bool, error) {
+func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOptions) (output string, replaced bool, renderErr error) {
 	// gosx#185: a render profile's validation pass runs before anything is
 	// written, over the whole compiled program, not just the component
 	// being rendered. A non-empty diagnostic list aborts the render here —
@@ -62,6 +61,12 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 	if !ok {
 		return "", false, fmt.Errorf("component %q not found", component)
 	}
+	defer func() {
+		renderErr = locateRenderError(renderErr, comp.Span, component)
+		if renderErr != nil && opts.SourceFile != "" {
+			renderErr = renderErrorFile(renderErr, opts.SourceFile)
+		}
+	}()
 	entryEnv := opts.EvalEnv
 	if comp.Syntax == ir.ComponentSyntaxStrict && strings.TrimSpace(comp.PropsType) != "" {
 		// gosx#226: a strict component rendered as the render entry (not as a
@@ -98,7 +103,7 @@ func renderFileProgramHTML(prog *ir.Program, component string, opts fileRenderOp
 		// never around it.
 		props, err := strictSpreadProps(comp, opts.EntryProps)
 		if err != nil {
-			return "", false, fmt.Errorf("render strict entry %s (props %s): %w", comp.Name, comp.PropsType, err)
+			return "", false, locateEntryRenderError(fmt.Errorf("render strict entry %s (props %s): %w", comp.Name, comp.PropsType, err), prog, comp)
 		}
 		entryEnv = entryEnv.withValue("props", props)
 	}
@@ -229,6 +234,24 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 	if node == nil {
 		return
 	}
+	defer func() {
+		expression := node.Text
+		if expression == "" && node.Tag != "" {
+			expression = "<" + node.Tag + ">"
+		}
+		span := node.Span
+		span.File = r.opts.SourceFile
+		r.err = locateRenderError(r.err, span, expression)
+		if r.err != nil && r.opts.SourceFile != "" {
+			r.err = renderErrorFile(r.err, r.opts.SourceFile)
+		}
+		if recovered := recover(); recovered != nil {
+			if err, ok := recovered.(error); ok {
+				panic(locateRenderError(err, span, expression))
+			}
+			panic(locateRenderError(fmt.Errorf("%v", recovered), span, expression))
+		}
+	}()
 	switch node.Kind {
 	case ir.NodeElement:
 		r.writeElement(b, node, env)
@@ -246,6 +269,9 @@ func (r *fileProgramRenderer) writeNode(b *strings.Builder, nodeID ir.NodeID, en
 }
 
 func (r *fileProgramRenderer) writeElement(b *strings.Builder, node *ir.Node, env fileRenderEnv) {
+	if !htmlattr.ValidTag(node.Tag) {
+		return
+	}
 	tag := html.EscapeString(node.Tag)
 	isForm := strings.EqualFold(node.Tag, "form")
 	formContract := fileAutoManagedFormContract(node.Attrs, env, isForm)
@@ -371,7 +397,7 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 		return
 	}
 
-	b.WriteString(defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env)))
+	b.WriteString(defaultRenderedComponent(node.Tag, r.componentHTMLAttrs(node.Attrs, env), r.renderChildren(node.Children, env)))
 }
 
 func (r *fileProgramRenderer) writeBuiltinComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) bool {
@@ -481,12 +507,12 @@ func (r *fileProgramRenderer) writeLink(b *strings.Builder, node *ir.Node, env f
 
 func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
 	for _, attr := range attrs {
-		if linkReservedAttr(attr.Name) {
+		if linkReservedAttr(attr.Name) || (attr.Kind != ir.AttrSpread && !htmlattr.ValidName(normalizeFileAttrName(attr.Name))) {
 			continue
 		}
 		switch attr.Kind {
 		case ir.AttrStatic:
-			writeFileAttrPair(b, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(attr.Value))
+			writeFileAttrPair(b, html.EscapeString(normalizeFileAttrName(attr.Name)), html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 		case ir.AttrExpr:
 			renderFileEvaluatedAttr(b, normalizeFileAttrName(attr.Name), evalFileExpr(attr.Expr, env))
 		case ir.AttrBool:
@@ -498,7 +524,7 @@ func (r *fileProgramRenderer) renderLinkAttrs(b *strings.Builder, attrs []ir.Att
 				normalized := normalizeFileAttrName(key)
 				// gosx#189: drop an invalid spread key inertly, same rule
 				// and same shared helper as renderFileSpreadAttrs.
-				if normalized == "" || linkReservedAttr(normalized) || !validRenderAttrName(normalized) {
+				if normalized == "" || linkReservedAttr(normalized) || !htmlattr.SafeSpreadName(normalized) {
 					continue
 				}
 				renderFileEvaluatedAttr(b, normalized, value)
@@ -1227,7 +1253,7 @@ func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRender
 	if rendered, ok := renderBoundComponentValue(component, candidates); ok {
 		return true, rendered
 	}
-	return true, defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), childrenHTML)
+	return true, defaultRenderedComponent(node.Tag, r.componentHTMLAttrs(node.Attrs, env), childrenHTML)
 }
 
 // writeLocalComponent renders a strict component whose BODY and whose CALL
@@ -1350,7 +1376,7 @@ func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder
 
 func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env fileRenderEnv) string {
 	if env.renderIsland == nil {
-		return defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env))
+		return defaultRenderedComponent(node.Tag, r.componentHTMLAttrs(node.Attrs, env), r.renderChildren(node.Children, env))
 	}
 
 	prog, err := r.islandProgram(name)
@@ -1588,7 +1614,7 @@ func resolveFileAttrs(attrs []ir.Attr, env fileRenderEnv, excludeSpreadKey strin
 				// cannot trigger renderResolvedAttrs's fail-closed
 				// *RenderProfileError — that path is reserved for a name
 				// the profile itself introduces or mangles.
-				if normalized == "" || normalized == excludeSpreadKey || !validRenderAttrName(normalized) {
+				if normalized == "" || normalized == excludeSpreadKey || !htmlattr.SafeSpreadName(normalized) {
 					continue
 				}
 				out = appendResolvedAttr(out, normalized, entry.Value)
@@ -1661,31 +1687,13 @@ func (r *fileProgramRenderer) renderResolvedAttrs(b *strings.Builder, tag string
 			writeFileAttrName(b, name)
 			continue
 		}
-		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
+		writeFileAttrPair(b, name, html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 	}
 }
 
-// validRenderAttrName reports whether name is safe to use as an HTML
-// attribute name on its own: non-empty once whitespace is accounted for,
-// and free of every character that ends an HTML5 attribute-name token
-// early — Unicode whitespace, the control-character range, and the
-// syntax characters `"`, `'`, `>`, `/`, and `=` (gosx#185 M1). An
-// all-whitespace name is caught by the same loop, folding in gosx#185 n4.
+// validRenderAttrName applies the shared HTML name validator to profile output.
 func validRenderAttrName(name string) bool {
-	if name == "" {
-		return false
-	}
-	for _, r := range name {
-		switch {
-		case unicode.IsSpace(r):
-			return false
-		case r < 0x20 || r == 0x7f:
-			return false
-		case r == '"', r == '\'', r == '>', r == '/', r == '=':
-			return false
-		}
-	}
-	return true
+	return htmlattr.ValidName(name)
 }
 
 // profileError records the first error a render profile hook causes,
@@ -1723,6 +1731,31 @@ func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEn
 	return values
 }
 
+// Keep authored style provenance until fallback HTML is emitted. Spread
+// filtering happens before merging, so a spread cannot replace authored CSS.
+func (r *fileProgramRenderer) componentHTMLAttrs(attrs []ir.Attr, env fileRenderEnv) fileComponentHTMLAttrs {
+	out := fileComponentHTMLAttrs{values: make(map[string]any, len(attrs))}
+	for _, attr := range attrs {
+		switch attr.Kind {
+		case ir.AttrSpread:
+			for key, value := range spreadProps(evalFileExpr(attr.Expr, env)) {
+				if htmlattr.SafeSpreadName(key) {
+					setComponentProp(out.values, key, value)
+				}
+			}
+		case ir.AttrStatic, ir.AttrExpr, ir.AttrBool:
+			out.values[attr.Name] = attrValue([]ir.Attr{attr}, env, attr.Name)
+			if strings.EqualFold(attr.Name, "style") {
+				if out.authoredStyles == nil {
+					out.authoredStyles = make(map[string]bool)
+				}
+				out.authoredStyles[attr.Name] = true
+			}
+		}
+	}
+	return out
+}
+
 // writeFileAttrPair appends ` name="value"` without fmt.
 //
 // WHY: fmt.Fprintf boxes both arguments into an []any and runs the printer, so
@@ -1730,6 +1763,9 @@ func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEn
 // change, renderFileAttr held 48.5% of the remaining allocated objects on a
 // depth-100 page. Direct writes cost none.
 func writeFileAttrPair(b *strings.Builder, name, value string) {
+	if !htmlattr.ValidName(name) {
+		return
+	}
 	b.WriteByte(' ')
 	b.WriteString(name)
 	b.WriteString(`="`)
@@ -1738,15 +1774,21 @@ func writeFileAttrPair(b *strings.Builder, name, value string) {
 }
 
 func writeFileAttrName(b *strings.Builder, name string) {
+	if !htmlattr.ValidName(name) {
+		return
+	}
 	b.WriteByte(' ')
 	b.WriteString(name)
 }
 
 func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, excludeSpreadKey string) {
+	if attr.Kind != ir.AttrSpread && !htmlattr.ValidName(attr.Name) {
+		return
+	}
 	name := html.EscapeString(attr.Name)
 	switch attr.Kind {
 	case ir.AttrStatic:
-		writeFileAttrPair(b, name, html.EscapeString(attr.Value))
+		writeFileAttrPair(b, name, html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 	case ir.AttrExpr:
 		renderFileEvaluatedAttr(b, attr.Name, evalFileExpr(attr.Expr, env))
 	case ir.AttrBool:
@@ -1773,7 +1815,7 @@ func renderFileAttr(b *strings.Builder, attr ir.Attr, env fileRenderEnv, exclude
 func renderFileSpreadAttrs(b *strings.Builder, value any, excludeKey string) {
 	for _, entry := range sortedSpreadProps(value) {
 		normalized := normalizeFileAttrName(entry.Key)
-		if normalized == "" || normalized == excludeKey || !validRenderAttrName(normalized) {
+		if normalized == "" || normalized == excludeKey || !htmlattr.SafeSpreadName(normalized) {
 			continue
 		}
 		renderFileEvaluatedAttr(b, normalized, entry.Value)
@@ -1860,6 +1902,9 @@ func plainTextFileEvaluatedExpr(value any) string {
 }
 
 func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
+	if !htmlattr.ValidName(name) {
+		return
+	}
 	safeName := html.EscapeString(name)
 	switch v := value.(type) {
 	case nil:
@@ -1873,13 +1918,13 @@ func renderFileEvaluatedAttr(b *strings.Builder, name string, value any) {
 		}
 		writeFileAttrPair(b, safeName, strconv.FormatBool(v))
 	case fmt.Stringer:
-		writeFileAttrPair(b, safeName, html.EscapeString(v.String()))
+		writeFileAttrPair(b, safeName, html.EscapeString(htmlattr.FilterURL(name, v.String())))
 	default:
 		if text, ok := fileScalarText(value); ok {
-			writeFileAttrPair(b, safeName, html.EscapeString(text))
+			writeFileAttrPair(b, safeName, html.EscapeString(htmlattr.FilterURL(name, text)))
 			return
 		}
-		writeFileAttrPair(b, safeName, html.EscapeString(fmt.Sprint(v)))
+		writeFileAttrPair(b, safeName, html.EscapeString(htmlattr.FilterURL(name, fmt.Sprint(v))))
 	}
 }
 
@@ -2078,7 +2123,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 			frame, _ := evalFileExpr("props", env).(map[string]any)
 			props, err := strictSpreadPropsFromTypedFrame(comp, frame)
 			if err != nil {
-				return nil, nil, err
+				return nil, nil, locateAttrError(err, attrs[0])
 			}
 			setStrictComponentChildren(comp, props, children)
 			return props, nil, nil
@@ -2098,7 +2143,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 		}
 		props, err := strictSpreadProps(comp, source)
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, locateAttrError(err, attrs[0])
 		}
 		setStrictComponentChildren(comp, props, children)
 		return props, source, nil
@@ -2126,7 +2171,7 @@ func localComponentProps(comp *ir.Component, attrs []ir.Attr, env fileRenderEnv,
 			resolved.Name = field
 			converted, err := strictComponentAttrValue(comp, resolved, env, fieldType)
 			if err != nil {
-				return nil, nil, fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err)
+				return nil, nil, locateAttrError(fmt.Errorf("prop %s (%s): %w", attr.Name, fieldType, err), attr)
 			}
 			value = converted
 		} else {
@@ -2179,6 +2224,9 @@ func setStrictComponentChildren(comp *ir.Component, props map[string]any, childr
 }
 
 func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if fieldType == "map[string]string" && attr.Kind == ir.AttrExpr {
+		return requireStrictStringMap(evalFileExpr(attr.Expr, env))
+	}
 	if !strictScalarFieldType(fieldType) {
 		if strings.HasPrefix(strings.TrimSpace(fieldType), "[]") {
 			// A rendered field whose declared type is "[]T" is an <Each of>
@@ -2337,10 +2385,18 @@ func requireStrictStructValue(value any, typeName string, paths map[string]strin
 	}
 	rv := reflect.ValueOf(value)
 	rt := rv.Type()
-	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName {
+	frameworkForm := rt == reflect.TypeFor[FormState]() && (typeName == "FormState" || strings.HasSuffix(typeName, ".FormState"))
+	if rt.Kind() != reflect.Struct || rt.PkgPath() == "" || rt.Name() != typeName && !frameworkForm {
 		return nil, fmt.Errorf("runtime value has type %s, want exact struct %s", rt, typeName)
 	}
 	return proveStrictStructPaths(rv, typeName, paths)
+}
+
+func requireStrictStringMap(value any) (any, error) {
+	if _, ok := value.(map[string]string); !ok {
+		return nil, fmt.Errorf("runtime value has type %T, want exact map[string]string", value)
+	}
+	return value, nil
 }
 
 // requireStrictSpreadStructField is requireStrictStructValue's structural
@@ -2398,6 +2454,16 @@ func proveStrictStructPaths(rv reflect.Value, typeName string, paths map[string]
 	for subPath, leafType := range paths {
 		fv := rv
 		for _, segment := range strings.Split(subPath, ".") {
+			if key, isKey := strictcomponent.MapKey(segment); isKey {
+				if fv.Type() != reflect.TypeFor[map[string]string]() {
+					return nil, fmt.Errorf("path %s.%s: value has type %s, want map[string]string", typeName, subPath, fv.Type())
+				}
+				fv = fv.MapIndex(reflect.ValueOf(key))
+				if !fv.IsValid() {
+					fv = reflect.ValueOf("")
+				}
+				continue
+			}
 			if fv.Kind() != reflect.Struct {
 				return nil, fmt.Errorf("path %s.%s: value has type %s, want struct", typeName, subPath, fv.Type())
 			}
@@ -2457,8 +2523,7 @@ func strictComponentSliceAttrValue(comp *ir.Component, attr ir.Attr, env fileRen
 
 // requireStrictSliceValue is E1's renderer-boundary check (design spec
 // section 2.7): value's runtime type must be a slice whose element type is
-// exactly the same-file struct schema.Elem — a declared struct type from
-// any package, never an anonymous struct and never a map element — and
+// structurally compatible with the same-file struct schema.Elem, and
 // every read path schema.Reads names must resolve, by FieldByName on the
 // element TYPE (not each element's value), to its exact declared leaf
 // type. The check is O(read paths) once per call, not O(elements): a
@@ -2482,7 +2547,7 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 	}
 	rt := reflect.TypeOf(value)
 	if rt.Kind() != reflect.Slice {
-		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs carrying the fields %s declares", rt, schema.Elem)
 	}
 	// This checks Kind(), not Name(): a named slice type (type Rows
 	// []BreakdownRow) passes here exactly as the bare []BreakdownRow the
@@ -2497,8 +2562,8 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 	// widening cannot desync the file renderer from generated Go the way
 	// an unchecked element type would; it is accepted, not tightened.
 	elemType := rt.Elem()
-	if elemType.Kind() != reflect.Struct || elemType.PkgPath() == "" || elemType.Name() != schema.Elem {
-		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+	if elemType.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs carrying the fields %s declares", rt, schema.Elem)
 	}
 	paths := make([]string, 0, len(schema.Reads))
 	for path := range schema.Reads {
@@ -2511,6 +2576,13 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 		var field reflect.StructField
 		found := false
 		for _, segment := range strings.Split(path, ".") {
+			if _, isKey := strictcomponent.MapKey(segment); isKey {
+				if ft != reflect.TypeFor[map[string]string]() {
+					return nil, fmt.Errorf("slice element %s: field %s has type %s, want map[string]string", schema.Elem, path, ft)
+				}
+				ft = reflect.TypeFor[string]()
+				continue
+			}
 			if ft.Kind() != reflect.Struct {
 				return nil, fmt.Errorf("slice element %s: field %s is not a struct", schema.Elem, path)
 			}
@@ -2599,6 +2671,8 @@ func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
 		switch {
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
+		case fieldType == "map[string]string":
+			proved, err = requireStrictStringMap(raw)
 		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
 			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
 				proved, err = requireStrictSliceValue(raw, schema)
@@ -2671,6 +2745,8 @@ func strictSpreadPropsFromTypedFrame(comp *ir.Component, frame map[string]any) (
 		switch {
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
+		case fieldType == "map[string]string":
+			proved, err = requireStrictStringMap(raw)
 		case strings.HasPrefix(strings.TrimSpace(fieldType), "[]"):
 			if schema, hasSchema := comp.PropsSlices[field]; hasSchema {
 				proved, err = requireStrictSliceValue(raw, schema)
@@ -3286,7 +3362,11 @@ func imageExtraAttrs(attrs []ir.Attr, env fileRenderEnv) []any {
 				if _, ok := consumed[entry.Key]; ok {
 					continue
 				}
-				if rendered, ok := fileNodeAttr(normalizeFileAttrName(entry.Key), entry.Value); ok {
+				normalized := normalizeFileAttrName(entry.Key)
+				if !htmlattr.SafeSpreadName(normalized) {
+					continue
+				}
+				if rendered, ok := fileNodeAttr(normalized, entry.Value); ok {
 					out = append(out, rendered)
 				}
 			}
@@ -3382,7 +3462,7 @@ func appendFileExtraNodeAttr(out []any, attr ir.Attr, env fileRenderEnv, consume
 	if attr.Kind == ir.AttrSpread {
 		for _, entry := range sortedSpreadProps(evalFileExpr(attr.Expr, env)) {
 			normalized := normalizeFileAttrName(entry.Key)
-			if normalized == "" || fileAttrConsumed(consumed, normalized) {
+			if normalized == "" || fileAttrConsumed(consumed, normalized) || !htmlattr.SafeSpreadName(normalized) {
 				continue
 			}
 			if rendered, ok := fileNodeAttr(normalized, entry.Value); ok {
@@ -3471,12 +3551,12 @@ func isEngineReservedAttr(name string) bool {
 
 func (r *fileProgramRenderer) renderTextBlockExtraAttrs(b *strings.Builder, attrs []ir.Attr, env fileRenderEnv) {
 	for _, attr := range attrs {
-		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread {
+		if isTextBlockReservedAttr(attr.Name) || attr.Kind == ir.AttrSpread || !htmlattr.ValidName(attr.Name) {
 			continue
 		}
 		switch attr.Kind {
 		case ir.AttrStatic:
-			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(attr.Value))
+			fmt.Fprintf(b, ` %s="%s"`, html.EscapeString(attr.Name), html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 		case ir.AttrExpr:
 			value := evalFileExpr(attr.Expr, env)
 			renderFileEvaluatedAttr(b, attr.Name, value)
@@ -3792,7 +3872,7 @@ func imagePictureAttrsValue(value any) gosx.AttrList {
 	attrs := make([]any, 0, len(values))
 	for _, entry := range sortedStringAnyMap(values) {
 		name := normalizeFileAttrName(entry.Key)
-		if name == "" || !validRenderAttrName(name) {
+		if name == "" || !htmlattr.SafeSpreadName(name) {
 			continue
 		}
 		if attr, ok := fileNodeAttr(name, entry.Value); ok {

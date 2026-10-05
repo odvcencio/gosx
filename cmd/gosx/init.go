@@ -410,6 +410,12 @@ import (
 	"m31labs.dev/gosx/session"
 )
 
+type PageData struct {
+	AppName string
+	Source string
+	Subscribe route.FormState
+}
+
 func init() {
 	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
@@ -417,14 +423,11 @@ func init() {
 			if appName == "" {
 				appName = "My GoSX App"
 			}
-			return map[string]string{
-				"appName": appName,
-				"source":  page.Source,
-			}, nil
+			return PageData{AppName: appName, Source: page.Source, Subscribe: ctx.FormState("subscribe")}, nil
 		},
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-			values, _ := data.(map[string]string)
-			appName := values["appName"]
+			values, _ := data.(PageData)
+			appName := values.AppName
 			if appName == "" {
 				appName = "My GoSX App"
 			}
@@ -454,12 +457,20 @@ func init() {
 func appHomeTemplate() string {
 	return `package app
 
+import "m31labs.dev/gosx/route"
+
+type PageProps struct {
+	AppName string
+	Source string
+	Subscribe route.FormState
+}
+
 // The form's token is empty for anonymous visitors; Protect checks its origin.
 // Existing sessions also submit their token and receive private HTML.
-func Page() Node {
+component Page(props: PageProps) {
 	return <main class="shell">
 		<span class="eyebrow">GoSX</span>
-		<h1>{data.appName}</h1>
+		<h1>{props.AppName}</h1>
 		<p>Server-rendered HTML, file-routed .gsx pages, session-backed form actions, root-level public assets, metadata, env loading, and JSON APIs are ready out of the box.</p>
 
 		<div class="actions">
@@ -473,19 +484,19 @@ func Page() Node {
 			<p>
 				This page posts to a relative action, validates on the server, and restores values after a normal browser redirect.
 			</p>
-			<form class="docs-form" method="post" action={actionPath("subscribe")}>
-				<input type="hidden" name="csrf_token" value={csrf.token}></input>
+			<form class="docs-form" method="post" action={props.Subscribe.ActionURL}>
+				<input type="hidden" name="csrf_token" value={props.Subscribe.CSRFToken}></input>
 				<label class="field">
 					<span>Name</span>
-					<input name="name" value={actions.subscribe.values.name}></input>
+					<input name="name" value={props.Subscribe.Values["name"]}></input>
 				</label>
 				<label class="field">
 					<span>Email</span>
-					<input name="email" value={actions.subscribe.values.email}></input>
+					<input name="email" value={props.Subscribe.Values["email"]}></input>
 				</label>
-				<p class="form-error">{actions.subscribe.fieldErrors.email}</p>
-				<p class="form-status">{action.message}</p>
-				<p class="flash-note">{flash.notice}</p>
+				<p class="form-error">{props.Subscribe.FieldErrors["email"]}</p>
+				<p class="form-status">{props.Subscribe.Message}</p>
+				<p class="flash-note">{props.Subscribe.Flash["notice"]}</p>
 				<div class="actions">
 					<button class="button primary" type="submit">Submit the starter action</button>
 				</div>

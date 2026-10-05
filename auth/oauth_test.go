@@ -28,7 +28,7 @@ func TestOAuthCallbackSignsIn(t *testing.T) {
 				t.Fatalf("unexpected auth header %q", got)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.Write([]byte(`{"sub":"user-123","email":"ada@example.com","name":"Ada"}`))
+			w.Write([]byte(`{"sub":"user-123","email_verified":true,"email":"ada@example.com","name":"Ada"}`))
 		default:
 			http.NotFound(w, r)
 		}

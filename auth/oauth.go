@@ -35,6 +35,8 @@ type OAuthToken struct {
 }
 
 // OAuthUserResolver resolves the signed-in user from a provider token.
+// Set User.EmailVerified only after checking the provider's verification claim.
+// An unverified Email is cleared before the user is stored in the session.
 type OAuthUserResolver interface {
 	ResolveOAuthUser(context.Context, OAuthProvider, *http.Client, OAuthToken) (User, error)
 }
@@ -436,7 +438,9 @@ func resolveOAuthUser(ctx context.Context, client *http.Client, provider OAuthPr
 		return User{}, fmt.Errorf("oauth userinfo failed: %s", strings.TrimSpace(string(body)))
 	}
 	var payload map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	decoder := json.NewDecoder(res.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
 		return User{}, err
 	}
 	return normalizeOAuthUser(provider.Name, userFromOAuthPayload(provider.Name, payload), nil)
@@ -446,8 +450,15 @@ func userFromOAuthPayload(provider string, payload map[string]any) User {
 	id := stringValue(payload["sub"])
 	if id == "" {
 		id = stringValue(payload["id"])
+		if numericID, ok := payload["id"].(json.Number); ok {
+			id = numericID.String()
+		}
 	}
-	email := strings.ToLower(strings.TrimSpace(stringValue(payload["email"])))
+	verified, _ := payload["email_verified"].(bool)
+	email := ""
+	if verified {
+		email = strings.ToLower(strings.TrimSpace(stringValue(payload["email"])))
+	}
 	name := strings.TrimSpace(stringValue(payload["name"]))
 	if name == "" {
 		name = strings.TrimSpace(stringValue(payload["preferred_username"]))
@@ -473,11 +484,15 @@ func userFromOAuthPayload(provider string, payload map[string]any) User {
 	if profile := stringValue(payload["html_url"]); profile != "" {
 		meta["profile"] = profile
 	}
+	if id != "" {
+		id = provider + ":" + id
+	}
 	return User{
-		ID:    provider + ":" + id,
-		Email: email,
-		Name:  name,
-		Meta:  meta,
+		ID:            id,
+		Email:         email,
+		EmailVerified: verified && email != "",
+		Name:          name,
+		Meta:          meta,
 	}
 }
 
@@ -487,6 +502,10 @@ func normalizeOAuthUser(provider string, user User, err error) (User, error) {
 	}
 	user.ID = strings.TrimSpace(user.ID)
 	user.Email = strings.TrimSpace(strings.ToLower(user.Email))
+	if !user.EmailVerified {
+		user.Email = ""
+	}
+	user.EmailVerified = user.EmailVerified && user.Email != ""
 	user.Name = strings.TrimSpace(user.Name)
 	if user.ID == "" {
 		if user.Email != "" {
@@ -522,14 +541,16 @@ func githubOAuthResolver() OAuthUserResolver {
 			return User{}, fmt.Errorf("github userinfo failed: %s", strings.TrimSpace(string(body)))
 		}
 		var payload map[string]any
-		if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+		decoder := json.NewDecoder(res.Body)
+		decoder.UseNumber()
+		if err := decoder.Decode(&payload); err != nil {
 			return User{}, err
 		}
-		email := strings.ToLower(strings.TrimSpace(stringValue(payload["email"])))
-		if email == "" {
-			email = fetchGitHubPrimaryEmail(ctx, client, token.AccessToken)
-		}
+		// The public profile's email carries no verification claim. Resolve
+		// it through the provider's verified email list instead.
+		email := fetchGitHubPrimaryEmail(ctx, client, token.AccessToken)
 		payload["email"] = email
+		payload["email_verified"] = email != ""
 		return userFromOAuthPayload(provider.Name, payload), nil
 	})
 }
@@ -550,16 +571,26 @@ func fetchGitHubPrimaryEmail(ctx context.Context, client *http.Client, accessTok
 		return ""
 	}
 	var payload []map[string]any
-	if err := json.NewDecoder(res.Body).Decode(&payload); err != nil {
+	decoder := json.NewDecoder(res.Body)
+	decoder.UseNumber()
+	if err := decoder.Decode(&payload); err != nil {
 		return ""
 	}
 	for _, item := range payload {
-		if boolValue(item["primary"]) {
-			return strings.ToLower(strings.TrimSpace(stringValue(item["email"])))
+		if verified, _ := item["verified"].(bool); verified && boolValue(item["primary"]) {
+			email := strings.ToLower(strings.TrimSpace(stringValue(item["email"])))
+			if email != "" {
+				return email
+			}
 		}
 	}
-	if len(payload) > 0 {
-		return strings.ToLower(strings.TrimSpace(stringValue(payload[0]["email"])))
+	for _, item := range payload {
+		if verified, _ := item["verified"].(bool); verified {
+			email := strings.ToLower(strings.TrimSpace(stringValue(item["email"])))
+			if email != "" {
+				return email
+			}
+		}
 	}
 	return ""
 }

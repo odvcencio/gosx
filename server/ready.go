@@ -35,8 +35,9 @@ type ReadinessCheckResult struct {
 
 // ReadinessReport is the JSON shape served by `/readyz`.
 type ReadinessReport struct {
-	OK     bool                   `json:"ok"`
-	Checks []ReadinessCheckResult `json:"checks,omitempty"`
+	RequestID string                 `json:"requestID,omitempty"`
+	OK        bool                   `json:"ok"`
+	Checks    []ReadinessCheckResult `json:"checks,omitempty"`
 }
 
 func normalizeReadyCheckName(name string) string {

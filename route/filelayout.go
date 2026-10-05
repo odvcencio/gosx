@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"html"
+	"m31labs.dev/gosx/internal/htmlattr"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -65,7 +66,7 @@ func loadCachedGSXProgram(path string) (*ir.Program, error) {
 		}
 		prog, err := compileCachedGSX(data)
 		if err != nil {
-			return nil, fmt.Errorf("compile %s: %w", path, err)
+			return nil, fmt.Errorf("compile %s:%w", path, err)
 		}
 		return prog, nil
 	}
@@ -86,7 +87,7 @@ func loadCachedGSXProgram(path string) (*ir.Program, error) {
 	}
 	prog, compileErr := compileCachedGSX(data)
 	if compileErr != nil {
-		compileErr = fmt.Errorf("compile %s: %w", path, compileErr)
+		compileErr = fmt.Errorf("compile %s:%w", path, compileErr)
 	}
 
 	gsxCompileCache.mu.Lock()
@@ -313,6 +314,8 @@ type fileRenderOptions struct {
 	// a program fails clearly at render time rather than resolving against
 	// the wrong directory.
 	SourceDir string
+	// SourceFile locates render failures without mutating the shared program.
+	SourceFile string
 	// EntryChildren supplies the children node for a strict component
 	// rendered as the render entry (gosx#226, gosx#246). Only
 	// RenderProgramComponent sets this field, built from its own
@@ -377,6 +380,11 @@ func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
 }
 
 func renderGSXFile(path string, opts fileRenderOptions, scopeID string) (gosx.Node, error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			panic(renderErrorFile(panicError(recovered), path))
+		}
+	}()
 	prog, err := loadCachedGSXProgram(path)
 	if err != nil {
 		return gosx.Node{}, err
@@ -393,10 +401,13 @@ func renderGSXFile(path string, opts fileRenderOptions, scopeID string) (gosx.No
 	// one — FileLayoutWithOptionsAndRegistry, and the file router's own page
 	// resolution), so filepath.Dir needs no further Abs call.
 	opts.SourceDir = filepath.Dir(path)
+	opts.SourceFile = path
 
 	htmlOut, replaced, err := renderFileProgramHTML(prog, component, opts)
 	if err != nil {
-		return gosx.Node{}, fmt.Errorf("render %s: %w", path, err)
+		// Programs are shared by content hash; filenames belong to this
+		// request's error rather than to the cached program.
+		return gosx.Node{}, renderErrorFile(err, path)
 	}
 	if opts.RequireReplacement && !replaced {
 		return gosx.Node{}, fmt.Errorf("layout %s is missing a <Slot /> or <Outlet /> component", path)
@@ -588,6 +599,11 @@ func injectHTMLTagAttr(tag, name, value string) string {
 	return out.String()
 }
 
+type fileComponentHTMLAttrs struct {
+	values         map[string]any
+	authoredStyles map[string]bool
+}
+
 // defaultRenderedComponent emits the fallback markup for an unresolved
 // component reference: a <div data-gosx-component="Tag"> carrying every
 // attribute the reference supplied, so client-side hydration can find and
@@ -598,16 +614,19 @@ func injectHTMLTagAttr(tag, name, value string) string {
 // differed only in attribute order — byte-identity goldens, HTTP ETags, and
 // caches all churn on content that has not actually changed. Sorting names
 // before emission makes the output deterministic across runs and processes.
-func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML string) string {
+func defaultRenderedComponent(tag string, attrs fileComponentHTMLAttrs, childrenHTML string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div data-gosx-component="%s"`, html.EscapeString(tag))
-	names := make([]string, 0, len(attrs))
-	for name := range attrs {
+	names := make([]string, 0, len(attrs.values))
+	for name := range attrs.values {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		value := attrs[name]
+		if !htmlattr.SafeSpreadName(name) && !(attrs.authoredStyles[name] && strings.EqualFold(name, "style") && htmlattr.ValidName(name)) {
+			continue
+		}
+		value := attrs.values[name]
 		safeName := html.EscapeString(name)
 		switch v := value.(type) {
 		case bool:
@@ -615,9 +634,9 @@ func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML str
 				fmt.Fprintf(&b, " %s", safeName)
 			}
 		case string:
-			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(v))
+			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(htmlattr.FilterURL(name, v)))
 		default:
-			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(fmt.Sprint(v)))
+			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(htmlattr.FilterURL(name, fmt.Sprint(v))))
 		}
 	}
 	b.WriteByte('>')

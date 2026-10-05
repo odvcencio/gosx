@@ -639,6 +639,7 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "route.config.json"), `{"prerender":true}`)
 	tidyModule(t, dir)
 
 	if err := RunBuild(dir, false); err != nil {
@@ -984,6 +985,7 @@ func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, projectDir)
+	mustWriteFile(t, filepath.Join(projectDir, "app", "route.config.json"), `{"prerender":true}`)
 	tidyModule(t, projectDir)
 
 	wd, err := os.Getwd()
@@ -1025,6 +1027,7 @@ func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "verify", "route.config.json"), `{"prerender":true}`)
 
 	mustWriteFile(t, filepath.Join(dir, "app", "verify", "page.gsx"), `package app
 

@@ -304,6 +304,17 @@ func (r *Router) AddDir(root string, opts FileRoutesOptions) error {
 	if err != nil {
 		return err
 	}
+	if r.filePageAliases == nil {
+		r.filePageAliases = make(map[string]string)
+	}
+	// BuildChecked matches these only after canonical routing misses, keeping
+	// slash aliases from conflicting with or taking precedence over catch-alls.
+	for _, pageRoute := range routes {
+		pagePath := patternPath(pageRoute.Pattern)
+		if pagePath != "/" && !strings.HasSuffix(pagePath, "...}") {
+			r.filePageAliases[pageRoute.Pattern] = "GET " + pagePath + "/{$}"
+		}
+	}
 	r.Add(routes...)
 	// Remembered for Build/BuildChecked, which re-checks the registry at build
 	// time rather than here: registration in the shared registry usually runs
@@ -477,7 +488,8 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 	if err != nil {
 		return Route{}, err
 	}
-	routeMiddleware := append([]Middleware(nil), r.opts.Middleware...)
+	routeMiddleware := []Middleware{filePrerenderMiddleware(resolved.page, resolved.module)}
+	routeMiddleware = append(routeMiddleware, r.opts.Middleware...)
 	routeMiddleware = append(routeMiddleware, collectDirMiddleware(resolved.dirModules)...)
 	errorHandler := r.opts.ErrorHandler
 	if resolved.page.ErrorPage != nil {
@@ -612,7 +624,7 @@ func hasComponent(prog *ir.Program, name string) bool {
 func defaultFileRouteError(err error) gosx.Node {
 	return gosx.El("main",
 		gosx.El("h1", gosx.Text("Route Error")),
-		gosx.El("p", gosx.Text(err.Error())),
+		gosx.El("p", gosx.Text("The server encountered an unexpected error.")),
 	)
 }
 

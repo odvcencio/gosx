@@ -5,6 +5,11 @@
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
   request-time compression. Static exports include the asset.
+- Keep file pages with `Load` or `Actions` dynamic unless their route config
+  explicitly enables prerendering. Warn when an opted-in loader page has no
+  revalidation window. Cookie and authorization bypasses now render the origin
+  route at exported trailing-slash URLs. Dynamic file pages also accept exact
+  trailing-slash URLs.
 
 ## v0.57.5
 

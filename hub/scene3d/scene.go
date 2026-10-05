@@ -610,6 +610,7 @@ func decodeData(payload string) any {
 // remove. Use Watch for the incremental stream, which does carry removals.
 func (d *Doc) Commands() ([]scene.Command, error) {
 	var commands []scene.Command
+	var create createDecoder
 	for _, entry := range collectionOrder {
 		payload, ok := d.slotValue(entry.slot)
 		if !ok {
@@ -627,6 +628,9 @@ func (d *Doc) Commands() ([]scene.Command, error) {
 		payload, ok := keys.value(id, fieldCreate)
 		if !ok {
 			continue
+		}
+		if err := create.decodeEnvelope(payload); err != nil {
+			return nil, fmt.Errorf("scene3d: decode create payload for %q: %w", id, err)
 		}
 		commands = append(commands, scene.Command{
 			Kind:     scene.CommandCreateObject,
@@ -770,6 +774,7 @@ func (d *Doc) Watch(fn func([]scene.Command)) {
 // crdt.Doc.OnChange hook and do not want a second hook.
 func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 	var commands []scene.Command
+	var create createDecoder
 	keys := keyBuf{d: d}
 	for _, patch := range patches {
 		if patch.Obj != crdt.Root {
@@ -786,14 +791,21 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 			}
 			switch patch.Action {
 			case "put":
-				commands = append(commands, scene.Command{Kind: kind, Data: decodeData(patch.Value.Str)})
+				if patch.Value.Kind == crdt.ValueKindString {
+					commands = append(commands, scene.Command{Kind: kind, Data: decodeData(patch.Value.Str)})
+				}
 			}
 			continue
 		}
 		switch key.field {
 		case fieldCreate:
 			if patch.Action != "put" {
-				commands = append(commands, scene.RemoveObjectCommand(key.objectID))
+				if patch.Action == "del" {
+					commands = append(commands, scene.RemoveObjectCommand(key.objectID))
+				}
+				continue
+			}
+			if patch.Value.Kind != crdt.ValueKindString || create.decodeEnvelope(patch.Value.Str) != nil {
 				continue
 			}
 			if keys.removed(key.objectID) {
@@ -811,10 +823,16 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 					Data:     decodeData(patch.Value.Str),
 				})
 		case fieldGone:
+			if patch.Action == "put" && patch.Value.Kind != crdt.ValueKindBool {
+				continue
+			}
 			if patch.Action == "put" && patch.Value.Kind == crdt.ValueKindBool && !patch.Value.Bool {
 				// The object came back. Replay its stored create payload,
 				// because the create itself is older than this patch.
 				if payload, ok := keys.value(key.objectID, fieldCreate); ok && !keys.removed(key.objectID) {
+					if create.decodeEnvelope(payload) != nil {
+						continue
+					}
 					commands = append(commands,
 						scene.RemoveObjectCommand(key.objectID),
 						scene.Command{
@@ -827,7 +845,7 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 			}
 			commands = append(commands, scene.RemoveObjectCommand(key.objectID))
 		case fieldTransform, fieldMaterial, fieldLight:
-			if patch.Action != "put" {
+			if patch.Action != "put" || patch.Value.Kind != crdt.ValueKindString {
 				continue
 			}
 			commands = append(commands, scene.Command{
@@ -975,10 +993,9 @@ type createEnvelope struct {
 // createDecoder decodes create payloads through reusable parser state.
 //
 // A View of n objects decodes 2n JSON documents: the envelope that names the
-// record kind, and the record itself. json.Unmarshal builds a fresh parser for
-// every call and throws it away, which measured 14 of the 15 allocations one
-// object cost. A json.Decoder keeps its parser between calls, so the same pair
-// of decodes measured 4 allocations, and those four are the record strings.
+// record kind, and the record itself. The envelope reader validates property
+// names and kinds consistently with authorization and command generation.
+// Both readers reuse their parsers and record buffers between objects.
 //
 // Two rules keep the reuse honest:
 //
@@ -986,13 +1003,14 @@ type createEnvelope struct {
 //     struct field untouched when the input omits it, so a payload that carries
 //     no "kind" would inherit the kind of the object decoded before it, and a
 //     mesh would arrive as a light.
-//   - Drop a decoder that did not consume its whole payload. See decodeValue.
+//   - Drop a decoder that did not consume its whole payload.
 //
 // Do not copy a createDecoder after its first use. Each decoder holds a pointer
 // to the reader beside it.
 type createDecoder struct {
 	payload  []byte
 	envelope createEnvelope
+	ignored  json.RawMessage
 
 	envelopeSrc bytes.Reader
 	envelopeDec *json.Decoder
@@ -1001,11 +1019,7 @@ type createDecoder struct {
 }
 
 func (c *createDecoder) addCreate(v *View, objectID, payload string) error {
-	c.payload = append(c.payload[:0], payload...)
-	c.envelope.Kind = ""
-	c.envelope.Geometry = ""
-	c.envelope.Props = c.envelope.Props[:0]
-	if err := c.decodeValue(&c.envelopeSrc, &c.envelopeDec, c.payload, &c.envelope); err != nil {
+	if err := c.decodeEnvelope(payload); err != nil {
 		return fmt.Errorf("scene3d: decode create payload for %q: %w", objectID, err)
 	}
 	// Every record decodes straight into the slice that keeps it. A local

@@ -24,13 +24,13 @@ func TestDefaultRenderedComponentSortsAttrsDeterministically(t *testing.T) {
 	}
 	want := `<div data-gosx-component="CodeBlock" copyable data-slot="primary" lang="go" line="12" source="func main() {}" theme="dark" title="Example"></div>`
 
-	first := defaultRenderedComponent("CodeBlock", attrs, "")
+	first := defaultRenderedComponent("CodeBlock", fileComponentHTMLAttrs{values: attrs}, "")
 	if first != want {
 		t.Fatalf("attribute order not sorted alphabetically:\n got:  %s\n want: %s", first, want)
 	}
 
 	for i := 0; i < 20; i++ {
-		got := defaultRenderedComponent("CodeBlock", attrs, "")
+		got := defaultRenderedComponent("CodeBlock", fileComponentHTMLAttrs{values: attrs}, "")
 		if got != first {
 			t.Fatalf("render %d differs from render 0 (nondeterministic attribute order):\n render 0: %s\n render %d: %s", i, first, i, got)
 		}

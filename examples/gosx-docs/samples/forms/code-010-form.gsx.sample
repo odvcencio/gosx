@@ -1,1 +1,1 @@
-<input type="hidden" name={action.ReturnTargetField} value="/board?tab=all#roster" />
+<input type="hidden" name="__gosx_return_to" value="/board?tab=all#roster" />

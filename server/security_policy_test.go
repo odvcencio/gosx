@@ -1,6 +1,11 @@
 package server
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
 
 func TestRemoveNonceSourcesPreservesDirectiveBoundaries(t *testing.T) {
 	tests := []struct {
@@ -45,5 +50,35 @@ func TestNormalizeSecurityPolicySharedNonceOnlyFailsClosed(t *testing.T) {
 	})
 	if got, want := policy.SharedContentSecurityPolicy, "script-src 'none'"; got != want {
 		t.Fatalf("shared policy = %q, want %q", got, want)
+	}
+}
+
+func TestDefaultCSPPreservesExplicitFrameOptions(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		policy SecurityPolicy
+		want   string
+	}{
+		{"default", SecurityPolicy{}, "frame-ancestors 'self'"},
+		{"same origin", SecurityPolicy{FrameOptions: "SAMEORIGIN"}, "frame-ancestors 'self'"},
+		{"deny", SecurityPolicy{FrameOptions: "DENY"}, "frame-ancestors 'none'"},
+		{"normalized deny", SecurityPolicy{FrameOptions: " deny "}, "frame-ancestors 'none'"},
+		{"custom policy", SecurityPolicy{FrameOptions: "DENY", ContentSecurityPolicy: "frame-ancestors https://frames.example"}, "frame-ancestors https://frames.example"},
+		{"report only deny", SecurityPolicy{FrameOptions: "DENY", ReportOnly: true}, "frame-ancestors 'none'"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			securityHeadersMiddleware(normalizeSecurityPolicy(tc.policy))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(204) })).ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+			header := "Content-Security-Policy"
+			if tc.policy.ReportOnly {
+				header += "-Report-Only"
+			}
+			if got := w.Header().Get(header); got != tc.want {
+				t.Fatalf("CSP = %q, want %q", got, tc.want)
+			}
+			if got := w.Header().Get("X-Frame-Options"); got != strings.TrimSpace(tc.policy.FrameOptions) {
+				t.Fatalf("frame options changed: %q", got)
+			}
+		})
 	}
 }

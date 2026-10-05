@@ -95,6 +95,11 @@ type Component struct {
 	// ComponentSyntax zero-value convention above.
 	PropsPaths map[string]string
 
+	// PropsFormActions maps renderer paths to FormState.ActionURL to the
+	// sibling CSRFToken path. The checker uses this typed contract for strict
+	// form CSRF diagnostics. Nil is compatible with older serialized programs.
+	PropsFormActions map[string]string
+
 	// PropsSlices records loop-source props reads for strict components: a
 	// same-file <Each of={props.Field}> whose element type is a same-file
 	// value struct. Keys are the dot-joined props path the of attribute
@@ -393,6 +398,9 @@ const (
 // Attr represents a single attribute on an element or component.
 type Attr struct {
 	Kind AttrKind
+
+	// Span tracks the authored attribute for render diagnostics.
+	Span Span
 
 	// Name is the attribute name (empty for AttrSpread).
 	Name string

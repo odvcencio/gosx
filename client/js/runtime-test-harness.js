@@ -2305,10 +2305,13 @@ function createContext(options) {
     },
     fetch: async (url, init = {}) => {
       fetchCalls.push({ url, init });
-      if (!routes.has(url)) {
+      // Match same-origin normalized requests to their server route path.
+      const resolved = new URL(url, context.location.href);
+      const routeKey = routes.has(url) ? url : resolved.origin === context.location.origin ? resolved.pathname + resolved.search : url;
+      if (!routes.has(routeKey)) {
         throw new Error("unexpected fetch: " + url);
       }
-      const route = routes.get(url);
+      const route = routes.get(routeKey);
       const response = typeof route === "function" ? await route(url, init, fetchCalls.length) : route;
       return new FakeResponse(Object.assign({ url }, response || {}));
     },
@@ -3606,7 +3609,7 @@ const RAW_TO_GLOW_LADDER = [
 
 function telemetryPostBodies(env) {
   return env.fetchCalls
-    .filter((call) => call.url === "/_gosx/client-events" && call.init && call.init.method === "POST")
+    .filter((call) => (call.url === "/_gosx/client-events" || call.url === env.context.location.origin + "/_gosx/client-events") && call.init && call.init.method === "POST")
     .map((call) => JSON.parse(call.init.body));
 }
 

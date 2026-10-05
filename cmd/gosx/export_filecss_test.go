@@ -18,6 +18,8 @@ func TestExportStagesExternalFileCSS(t *testing.T) {
 				t.Fatal(err)
 			}
 			addLocalGoSXReplace(t, dir)
+			// This fixture tests exported CSS, so opt its loader page into snapshots.
+			mustWriteFile(t, filepath.Join(dir, "app", "route.config.json"), `{"prerender":true}`)
 			mainPath := filepath.Join(dir, "main.go")
 			main := readFile(t, mainPath)
 			main = strings.Replace(main, "route.FileRoutesOptions{}", `route.FileRoutesOptions{ExternalCSS: "/_gosx/docs-css/"}`, 1)

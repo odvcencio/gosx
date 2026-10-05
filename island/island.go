@@ -15,6 +15,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html"
+	"m31labs.dev/gosx/internal/htmlattr"
 	neturl "net/url"
 	"os"
 	"path/filepath"
@@ -1684,6 +1685,9 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 		return
 	}
 
+	if !htmlattr.ValidTag(node.Tag) {
+		return
+	}
 	safeTag := html.EscapeString(node.Tag)
 	b.WriteByte('<')
 	b.WriteString(safeTag)
@@ -1693,6 +1697,9 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 		attrs = expandIslandManagedFormAttrs(attrs)
 	}
 	for _, attr := range attrs {
+		if !htmlattr.ValidName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on") {
+			continue
+		}
 		safeName := html.EscapeString(attr.Name)
 		if attr.Bool {
 			b.WriteByte(' ')
@@ -1702,7 +1709,7 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 		b.WriteByte(' ')
 		b.WriteString(safeName)
 		b.WriteString(`="`)
-		b.WriteString(html.EscapeString(attr.Value))
+		b.WriteString(html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 		b.WriteByte('"')
 	}
 
