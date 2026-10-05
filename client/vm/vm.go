@@ -5,6 +5,7 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
 	"m31labs.dev/gosx/internal/htmlattr"
@@ -1465,6 +1466,9 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 	eventCount := 0
 	clickCount := 0
 	for _, attr := range attrs {
+		if attr.Kind != program.AttrEvent && (!htmlattr.ValidName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on")) {
+			continue
+		}
 		switch attr.Kind {
 		case program.AttrStatic, program.AttrExpr:
 			if attr.Name != "key" {
@@ -1489,6 +1493,9 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 	}
 
 	for _, attr := range attrs {
+		if attr.Kind != program.AttrEvent && (!htmlattr.ValidName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on")) {
+			continue
+		}
 		switch attr.Kind {
 		case program.AttrStatic:
 			if attr.Name == "key" {
@@ -1496,7 +1503,7 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 				explicitKey = true
 				continue
 			}
-			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: attr.Value})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: htmlattr.FilterURL(attr.Name, attr.Value)})
 		case program.AttrExpr:
 			value := vm.Eval(attr.Expr)
 			if attr.Name == "key" {
@@ -1510,7 +1517,7 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 				}
 				continue
 			}
-			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: value.String()})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: htmlattr.FilterURL(attr.Name, value.String())})
 		case program.AttrBool:
 			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Bool: true})
 		case program.AttrEvent:
