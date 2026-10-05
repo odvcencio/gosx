@@ -63,6 +63,7 @@ secret_log="${tmp_dir}/identity-secret.log"
 GOSX_FAKE_IDENTITY_APP_PID_FILE="$pid_file" \
 	GOSX_FAKE_IDENTITY_APP_SECRET_LOG="$secret_log" \
 	SESSION_SECRET="real-deployment-secret-must-not-be-inherited" \
+	GOSX_LISTEN_ADDR="127.0.0.1:invalid" \
 	run_real_identity ok >/dev/null
 identity_pid="$(cat "$pid_file")"
 if kill -0 "$identity_pid" >/dev/null 2>&1; then

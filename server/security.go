@@ -161,6 +161,9 @@ func (a *App) securityHeaders() Middleware {
 func securityHeadersMiddleware(policy SecurityPolicy) Middleware {
 	if policy.ContentSecurityPolicy == "" {
 		policy.ContentSecurityPolicy = "frame-ancestors 'self'"
+		if strings.EqualFold(strings.TrimSpace(policy.FrameOptions), "DENY") {
+			policy.ContentSecurityPolicy = "frame-ancestors 'none'"
+		}
 	}
 	referrer := policy.ReferrerPolicy
 	if referrer == "" {

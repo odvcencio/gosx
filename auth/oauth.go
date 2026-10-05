@@ -35,6 +35,8 @@ type OAuthToken struct {
 }
 
 // OAuthUserResolver resolves the signed-in user from a provider token.
+// Set User.EmailVerified only after checking the provider's verification claim.
+// An unverified Email is cleared before the user is stored in the session.
 type OAuthUserResolver interface {
 	ResolveOAuthUser(context.Context, OAuthProvider, *http.Client, OAuthToken) (User, error)
 }

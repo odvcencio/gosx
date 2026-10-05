@@ -3,9 +3,12 @@ package scene3d
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
+	"strings"
 
 	"m31labs.dev/gosx/crdt"
 	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/scene"
 )
 
 // Target names what one document write touches. A Guard reads it to decide
@@ -90,16 +93,35 @@ func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthor
 					continue
 				}
 				key, ok := d.parseKey(op.Prop)
-				if !ok || key.field != fieldCreate {
+				if !ok {
 					continue
 				}
-				var envelope struct {
-					Kind string `json:"kind"`
+				if schema, ok := clientPatchSchemas[key.field]; ok {
+					if err := validateClientPatch(op.Value.Str, schema); err != nil {
+						return err
+					}
+					continue
 				}
-				if err := json.Unmarshal([]byte(op.Value.Str), &envelope); err != nil {
+				if key.field != fieldCreate {
+					continue
+				}
+				// Match JSON.parse's case-sensitive property lookup in the browser.
+				var envelope map[string]json.RawMessage
+				if err := json.Unmarshal([]byte(op.Value.Str), &envelope); err != nil || envelope == nil {
 					return fmt.Errorf("scene3d: invalid client create payload")
 				}
-				if envelope.Kind == "html" {
+				for name := range envelope {
+					if name != "kind" && strings.EqualFold(name, "kind") {
+						return fmt.Errorf("scene3d: ambiguous client create kind")
+					}
+				}
+				var kind string
+				if raw, exists := envelope["kind"]; exists {
+					if err := json.Unmarshal(raw, &kind); err != nil {
+						return fmt.Errorf("scene3d: invalid client create kind")
+					}
+				}
+				if kind == "html" {
 					target := Target{Namespace: d.ns, ObjectID: key.objectID, Field: key.field}
 					if htmlGuard == nil || !htmlGuard(client, target) {
 						return fmt.Errorf("scene3d: client HTML overlays are not authorized")
@@ -124,6 +146,39 @@ func ChangeGate(docName string, d *Doc, guard Guard, next hub.BinaryChangeAuthor
 		}
 		return next(client, name, foreign)
 	}
+}
+
+// Patches may edit their declared fields only. HTML replacement must use a
+// create payload and pass ClientHTMLGuard, including for server-owned overlays.
+var clientPatchSchemas = map[string]reflect.Type{
+	fieldTransform: reflect.TypeFor[scene.TransformPatch](),
+	fieldMaterial:  reflect.TypeFor[scene.IRMaterial](),
+	fieldLight:     reflect.TypeFor[scene.LightIR](),
+}
+
+func validateClientPatch(payload string, schema reflect.Type) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(payload), &fields); err != nil || fields == nil {
+		return fmt.Errorf("scene3d: invalid client patch")
+	}
+	for name := range fields {
+		found := false
+		for i := 0; i < schema.NumField(); i++ {
+			if name == strings.Split(schema.Field(i).Tag.Get("json"), ",")[0] {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("scene3d: invalid client patch field %q", name)
+		}
+	}
+	decoder := json.NewDecoder(strings.NewReader(payload))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(reflect.New(schema).Interface()); err != nil {
+		return fmt.Errorf("scene3d: invalid client patch values")
+	}
+	return nil
 }
 
 // String renders a Target for an error message and a log line.
