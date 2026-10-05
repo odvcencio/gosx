@@ -1,5 +1,18 @@
-<form method="post" action={actionPath("subscribe")} data-gosx-managed>
-	<input type="hidden" name="csrf_token" value={csrf.token} />
-	<input name="email" type="email" placeholder="you@example.com" />
-	<button type="submit">Subscribe</button>
-</form>
+package app
+
+import "m31labs.dev/gosx/route"
+
+type PageProps struct {
+	Form route.FormState
+}
+
+component Page(props: PageProps) {
+	return <form method="post" action={props.Form.ActionURL} data-gosx-managed>
+		<input type="hidden" name="csrf_token" value={props.Form.CSRFToken} />
+		<input name="email" type="email" value={props.Form.Values["email"]} />
+		<p role="alert">{props.Form.FieldErrors["email"]}</p>
+		<p role="status">{props.Form.Message}</p>
+		<p>{props.Form.Flash["notice"]}</p>
+		<button type="submit">Subscribe</button>
+	</form>
+}

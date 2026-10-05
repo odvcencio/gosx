@@ -1113,6 +1113,12 @@ func isArrayLiteral(expr string) bool {
 
 // lowerSourceFile processes the root source_file node.
 func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
+	for i := 0; i < int(root.NamedChildCount()); i++ {
+		child := root.NamedChild(i)
+		if l.nodeType(child) == "import_declaration" {
+			l.lowerImportDecl(child)
+		}
+	}
 	l.collectStrictSchemas(root)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
@@ -1120,7 +1126,7 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 		case "package_clause":
 			l.lowerPackageClause(child)
 		case "import_declaration":
-			l.lowerImportDecl(child)
+			// Imports were collected before the renderer schemas.
 		case "function_declaration":
 			l.lowerFunctionDecl(child)
 		case "gosx_component_declaration":
@@ -1151,6 +1157,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictReads = make(map[string]map[string]strictReadClass)
 	l.structFields = make(map[string]map[string]string)
 	l.structTypes = make(map[string]map[string]string)
+	l.collectFormStateSchemas()
 	l.legacyProps = make(map[string]string)
 	l.typedLegacyProps = make(map[string]string)
 	l.childrenHoles = make(map[string]bool)
@@ -1399,7 +1406,7 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strict
 			return
 		}
 		switch l.nodeType(node) {
-		case "selector_expression":
+		case "selector_expression", "index_expression":
 			if path, ok := strictcomponent.ServerPropPath(l.text(node)); ok {
 				registerStrictPropRead(reads, path, strictReadScalar)
 				return
@@ -1722,12 +1729,24 @@ type strictHopResult struct {
 // backstop catches it for either root shape past hop 0 (see
 // strictHopUnknownFieldDeep).
 func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) strictHopResult {
-	if len(path) > strictSelectorPathDepthLimit {
+	fieldDepth := len(path)
+	if len(path) > 0 {
+		if _, isKey := strictcomponent.MapKey(path[len(path)-1]); isKey {
+			fieldDepth--
+		}
+	}
+	if fieldDepth > strictSelectorPathDepthLimit {
 		return strictHopResult{pathText: rootLabel + "." + strings.Join(path, "."), failKind: strictHopTooDeep}
 	}
 	currentType := rootType
 	pathText := rootLabel
 	for i, field := range path {
+		if key, isKey := strictcomponent.MapKey(field); isKey {
+			if currentType == "map[string]string" && i == len(path)-1 {
+				return strictHopResult{leafType: "string", pathText: pathText + "[" + strconv.Quote(key) + "]"}
+			}
+			return strictHopResult{pathText: pathText, failKind: strictHopUndeclaredStruct, failType: currentType, failField: "[" + strconv.Quote(key) + "]"}
+		}
 		fieldType, known := l.structTypes[currentType][field]
 		if !known {
 			if i == 0 {
@@ -1753,6 +1772,10 @@ func (l *lowerer) walkStrictHops(rootLabel, rootType string, path []string) stri
 		case strictRendererScalarType(trimmed):
 			return strictHopResult{pathText: pathText, failKind: strictHopThroughScalar, failField: path[i+1], failType: trimmed}
 		default:
+			if trimmed == "map[string]string" {
+				currentType = trimmed
+				continue
+			}
 			if _, isStruct := l.structTypes[trimmed]; isStruct {
 				currentType = trimmed
 				continue
@@ -2738,12 +2761,13 @@ func (l *lowerer) lowerFunctionDecl(n *gotreesitter.Node) {
 	}
 
 	comp := Component{
-		Name:        name,
-		PropsType:   propsType,
-		PropsName:   propsName,
-		PropsFields: propsFields,
-		PropsPaths:  propsPaths,
-		PropsTyped:  propsTyped,
+		Name:             name,
+		PropsType:        propsType,
+		PropsName:        propsName,
+		PropsFields:      propsFields,
+		PropsPaths:       propsPaths,
+		PropsFormActions: l.copyFormActionPaths(propsType, l.strictReads[name]),
+		PropsTyped:       propsTyped,
 		// Read, never recomputed: collectStrictSchemas already decided this
 		// for every component in the file, whatever its category, and every
 		// call-site rule read the same map. One owner.
@@ -2827,11 +2851,12 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 	scope := l.analyzeBody(n, bodyNode)
 	propsFields, propsPaths := l.copyStrictPropTypes(propsType, l.strictReads[componentName])
 	comp := Component{
-		Name:        componentName,
-		PropsType:   propsType,
-		PropsName:   propsName,
-		PropsFields: propsFields,
-		PropsPaths:  propsPaths,
+		Name:             componentName,
+		PropsType:        propsType,
+		PropsName:        propsName,
+		PropsFields:      propsFields,
+		PropsPaths:       propsPaths,
+		PropsFormActions: l.copyFormActionPaths(propsType, l.strictReads[componentName]),
 		// Read, never recomputed: collectStrictSchemas already decided this
 		// for every strict component in the file, and every call-site rule
 		// read the same map. One owner.
@@ -3149,7 +3174,7 @@ func (l *lowerer) reportStrictServerExpression(span Span, source string, err err
 	l.errs = append(l.errs, Diagnostic{
 		Span:    span,
 		Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
-		Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
+		Hint:    "use props fields or literal string-map lookups; compute other values before rendering; for forms, fill route.FormState with ctx.FormState in Load",
 	})
 }
 
@@ -3270,7 +3295,7 @@ func (l *lowerer) validateStrictConditionalExpression(span Span, source, compone
 		l.errs = append(l.errs, Diagnostic{
 			Span:    span,
 			Message: fmt.Sprintf("strict server expression %q is not renderable: %v", strings.TrimSpace(source), err),
-			Hint:    "use literals or props field selection; compute, index, and call methods before rendering",
+			Hint:    "use props fields or literal string-map lookups; compute other values before rendering; for forms, fill route.FormState with ctx.FormState in Load",
 		})
 		return
 	}

@@ -14,8 +14,84 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/internal/localapp"
+	"m31labs.dev/gosx/ir"
 )
+
+func TestRunInitStrictFormsBuildAndServe(t *testing.T) {
+	if raceDetectorEnabled {
+		t.Skip("builds and serves scaffold subprocesses; covered by test-cli")
+	}
+	for _, template := range []string{initTemplateApp, initTemplateDocs} {
+		t.Run(template, func(t *testing.T) {
+			dir := filepath.Join(t.TempDir(), "strict-forms")
+			if err := RunInit(dir, "example.test/strict-forms", template); err != nil {
+				t.Fatal(err)
+			}
+			formSource := filepath.Join(dir, "app", "page.gsx")
+			if template == initTemplateDocs {
+				formSource = filepath.Join(dir, "app", "docs", "forms", "page.gsx")
+			}
+			prog, err := gosx.Compile([]byte(readFile(t, formSource)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(prog.Components) != 1 || prog.Components[0].Syntax != ir.ComponentSyntaxStrict || prog.Components[0].PropsFormActions["Subscribe.ActionURL"] != "Subscribe.CSRFToken" {
+				t.Fatalf("scaffold does not have a strict typed form boundary: %#v", prog.Components)
+			}
+			addLocalGoSXReplace(t, dir)
+			tidyModule(t, dir)
+			if err := RunBuild(dir, true); err != nil {
+				t.Fatal(err)
+			}
+			port, err := pickFreePort()
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := "http://127.0.0.1:" + port
+			cmd := exec.Command(filepath.Join(dir, "dist", "server", "app"+targetExecutableExt()))
+			cmd.Dir = dir
+			localEnv, err := localapp.Environment(os.Environ(), port)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd.Env = append(localEnv, "PUBLIC_URL="+base, "GOSX_APP_ROOT="+dir, "GOWORK=off")
+			logPath := filepath.Join(t.TempDir(), "server.log")
+			log, err := os.Create(logPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer log.Close()
+			cmd.Stderr = log
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = cmd.Process.Kill(); _ = cmd.Wait() })
+			if err := waitForAppReady(base, 20*time.Second); err != nil {
+				t.Fatalf("serve strict scaffold: %v\n%s", err, readFile(t, logPath))
+			}
+			path := "/"
+			if template == initTemplateDocs {
+				path = "/docs/forms"
+			}
+			client := &http.Client{Timeout: 10 * time.Second}
+			res, err := client.Get(base + path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			body, err := io.ReadAll(res.Body)
+			res.Body.Close()
+			if err != nil {
+				t.Fatal(err)
+			}
+			action := strings.TrimSuffix(path, "/") + "/__actions/subscribe"
+			if res.StatusCode != 200 || !strings.Contains(string(body), `action="`+action+`"`) || !strings.Contains(string(body), `name="csrf_token"`) {
+				t.Fatalf("strict scaffold form: %d %s", res.StatusCode, body)
+			}
+		})
+	}
+}
 
 func TestRunInitStarterFormPrerenderAndCSRF(t *testing.T) {
 	if raceDetectorEnabled {
