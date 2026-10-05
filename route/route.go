@@ -197,18 +197,19 @@ func (ctx *RouteContext) Document(defaultTitle string, body gosx.Node) *server.D
 
 // Router builds an http.Handler from a route tree.
 type Router struct {
-	routes         []Route
-	handlers       []handlerRoute
-	defaultLayout  LayoutFunc
-	notFound       PageHandler
-	notFoundLayout LayoutFunc
-	notFoundScopes []scopedNotFound
-	errorHandler   ErrorHandler
-	errorLayout    LayoutFunc
-	revalidator    *server.Revalidator
-	observers      []server.RequestObserver
-	fileRouteDirs  []fileRouteDirSource
-	navigationHead func(nonce string) gosx.Node
+	routes          []Route
+	handlers        []handlerRoute
+	defaultLayout   LayoutFunc
+	notFound        PageHandler
+	notFoundLayout  LayoutFunc
+	notFoundScopes  []scopedNotFound
+	errorHandler    ErrorHandler
+	errorLayout     LayoutFunc
+	revalidator     *server.Revalidator
+	observers       []server.RequestObserver
+	filePageAliases map[string]string
+	fileRouteDirs   []fileRouteDirSource
+	navigationHead  func(nonce string) gosx.Node
 }
 
 type handlerRoute struct {
@@ -323,6 +324,7 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	}
 	r.logUnregisteredFileModuleWarnings()
 	mux := http.NewServeMux()
+	aliasMux := http.NewServeMux()
 	for _, extra := range r.handlers {
 		var h http.Handler = extra.handler
 		for i := len(extra.middleware) - 1; i >= 0; i-- {
@@ -341,25 +343,33 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 		}
 	}
 	for _, route := range r.routes {
-		if err := r.registerRoute(mux, "", route, nil, nil, r.errorHandler, r.errorLayout); err != nil {
+		if err := r.registerRoute(mux, aliasMux, "", route, nil, nil, r.errorHandler, r.errorLayout); err != nil {
 			return nil, err
 		}
 	}
 
+	// Keep aliases in a fallback mux so canonical catch-all routes retain
+	// precedence and their patterns cannot conflict with the aliases.
+	muxes := []*http.ServeMux{mux}
+	if len(r.filePageAliases) > 0 {
+		muxes = append(muxes, aliasMux)
+	}
 	root := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if _, pattern := mux.Handler(req); pattern != "" {
-			mux.ServeHTTP(w, req)
-			return
-		}
+		for _, candidate := range muxes {
+			if _, pattern := candidate.Handler(req); pattern != "" {
+				candidate.ServeHTTP(w, req)
+				return
+			}
 
-		rec := newInterceptResponseWriter(w)
-		mux.ServeHTTP(rec, req)
-		if rec.escaped() {
-			return
-		}
-		if rec.statusCode != 0 && rec.statusCode != http.StatusNotFound {
-			rec.commit()
-			return
+			rec := newInterceptResponseWriter(w)
+			candidate.ServeHTTP(rec, req)
+			if rec.escaped() {
+				return
+			}
+			if rec.statusCode != 0 && rec.statusCode != http.StatusNotFound {
+				rec.commit()
+				return
+			}
 		}
 
 		r.renderNotFound(w, req)
@@ -396,7 +406,7 @@ func buildErrorHandler(err error) http.Handler {
 	})
 }
 
-func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, parentLayouts []LayoutFunc, parentMiddleware []Middleware, parentError ErrorHandler, parentErrorLayout LayoutFunc) error {
+func (r *Router) registerRoute(mux, aliasMux *http.ServeMux, prefix string, route Route, parentLayouts []LayoutFunc, parentMiddleware []Middleware, parentError ErrorHandler, parentErrorLayout LayoutFunc) error {
 	pattern := joinPattern(prefix, route.Pattern)
 	matchPattern := normalizePattern(pattern)
 
@@ -430,10 +440,17 @@ func (r *Router) registerRoute(mux *http.ServeMux, prefix string, route Route, p
 		if err := safeHandle(mux, matchPattern, h); err != nil {
 			return err
 		}
+		if alias := r.filePageAliases[pattern]; alias != "" {
+			// Reuse the canonical handler so route identity, layouts and params
+			// stay the same. The end marker prevents matching extra subpaths.
+			if err := safeHandle(aliasMux, alias, h); err != nil {
+				return err
+			}
+		}
 	}
 
 	for _, child := range route.Children {
-		if err := r.registerRoute(mux, pattern, child, layouts, middleware, errorHandler, errorLayout); err != nil {
+		if err := r.registerRoute(mux, aliasMux, pattern, child, layouts, middleware, errorHandler, errorLayout); err != nil {
 			return err
 		}
 	}

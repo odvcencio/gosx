@@ -99,6 +99,28 @@ func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch fun
 	return true
 }
 
+// isrOriginRequest maps an exported trailing-slash URL back to its origin
+// route when the request bypasses static HTML or an artifact cannot be served.
+func (a *App) isrOriginRequest(r *http.Request) *http.Request {
+	if a == nil || a.isr == nil || r == nil || r.URL == nil ||
+		(r.Method != http.MethodGet && r.Method != http.MethodHead) ||
+		r.URL.Path == "/" || !strings.HasSuffix(r.URL.Path, "/") {
+		return r
+	}
+	if !a.isr.load(a.effectiveRuntimeRoot()) {
+		return r
+	}
+	artifact, ok := a.isr.artifact(r.URL.Path)
+	if !ok || artifact.page.Path == r.URL.Path {
+		return r
+	}
+	destination := artifact.page.Path
+	if r.URL.RawQuery != "" {
+		destination += "?" + r.URL.RawQuery
+	}
+	return rewriteRequest(r, destination)
+}
+
 func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWriter, *http.Request, bool)) bool {
 	if a == nil || a.isr == nil || r == nil || dispatch == nil {
 		return false
