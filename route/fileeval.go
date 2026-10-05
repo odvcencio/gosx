@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"math"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -1023,12 +1024,34 @@ func equalValues(left, right any) bool {
 				return lnegative == rnegative && lmagnitude == rmagnitude
 			}
 		}
+		if equal, handled := equalityFloatString(left, right); handled {
+			return equal
+		}
+		if equal, handled := equalityFloatString(right, left); handled {
+			return equal
+		}
 		// Reject failed string conversions and preserve mixed numeric precision.
 		ln, lok := equalityNumber(left)
 		rn, rok := equalityNumber(right)
 		return lok && rok && ln.Cmp(rn) == 0
 	}
 	return reflect.DeepEqual(left, right)
+}
+
+// Float/string comparisons use the float's precision, so fractional request
+// values compare like a complete conversion to the corresponding Go float.
+// Integer/string comparisons continue through equalityNumber without rounding.
+func equalityFloatString(number, text any) (equal, handled bool) {
+	n, ok := indirectValueOf(number)
+	if !ok || (n.Kind() != reflect.Float32 && n.Kind() != reflect.Float64) {
+		return false, false
+	}
+	s, ok := indirectValueOf(text)
+	if !ok || s.Kind() != reflect.String {
+		return false, false
+	}
+	_, parsed, ok := parseEqualityNumericString(s.String(), n.Type().Bits())
+	return ok && n.Float() == parsed, true
 }
 
 // equalityInteger uses the sign and magnitude so signed and unsigned IDs
@@ -1070,24 +1093,40 @@ func equalityNumber(value any) (*big.Rat, bool) {
 		n = n.SetFloat64(rv.Float())
 		return n, n != nil
 	case reflect.String:
-		text := strings.TrimSpace(rv.String())
-		// Bound parsing work, including exponent expansion, on request data.
-		if len(text) == 0 || len(text) > 128 {
+		text, _, ok := parseEqualityNumericString(rv.String(), 64)
+		if !ok {
 			return nil, false
-		}
-		if _, err := strconv.ParseFloat(text, 64); err != nil {
-			return nil, false
-		}
-		if i := strings.IndexAny(text, "eE"); i >= 0 {
-			exponent, err := strconv.ParseInt(text[i+1:], 10, 32)
-			if err != nil || exponent < -4096 || exponent > 4096 {
-				return nil, false
-			}
 		}
 		return n.SetString(text)
 	default:
 		return nil, false
 	}
+}
+
+// Bound request-data parsing before either floating-point conversion or
+// rational exponent expansion. Hexadecimal mantissas can contain e/E digits;
+// their exponent marker is p/P rather than the decimal e/E marker.
+func parseEqualityNumericString(value string, bitSize int) (text string, number float64, ok bool) {
+	text = strings.TrimSpace(value)
+	if len(text) == 0 || len(text) > 128 {
+		return "", 0, false
+	}
+	markers := "eE"
+	unsigned := strings.TrimLeft(text, "+-")
+	if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0X") {
+		markers = "pP"
+	}
+	if i := strings.IndexAny(text, markers); i >= 0 {
+		exponent, err := strconv.ParseInt(text[i+1:], 10, 32)
+		if err != nil || exponent < -4096 || exponent > 4096 {
+			return "", 0, false
+		}
+	}
+	number, err := strconv.ParseFloat(text, bitSize)
+	if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
+		return "", 0, false
+	}
+	return text, number, true
 }
 
 func compareValues(left, right any) int {

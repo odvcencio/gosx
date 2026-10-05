@@ -186,6 +186,25 @@ var cases = []Case{
 		DivergesReason: map[Backend]string{VM: "the VM does not coerce strings in equality comparisons"},
 	},
 
+	{
+		ID: "equality_fractional_float_string", Category: "numeric",
+		Note: "route converts a complete fractional numeric string at the float's precision",
+		Expr: "props.F == props.S", PropsFields: "F float64\nS string",
+		PropsLiteral: `F: 19.99, S: "19.99"`,
+		PropsValue:   map[string]any{"F": 19.99, "S": "19.99"}, Want: "true",
+		Unsupported:    map[Backend]string{Transpile: "Go rejects equality between float64 and string"},
+		Diverges:       map[Backend]string{VM: "false"},
+		DivergesReason: map[Backend]string{VM: "the VM does not coerce strings in equality comparisons"},
+	},
+	{
+		ID: "equality_bounded_hexadecimal_string", Category: "numeric",
+		Note: "route rejects hexadecimal exponents outside the request-data parsing limit",
+		Expr: "props.A == props.S", PropsFields: "A int\nS string",
+		PropsLiteral: `A: 0, S: "0x1p-10000000"`,
+		PropsValue:   map[string]any{"A": 0, "S": "0x1p-10000000"}, Want: "false",
+		Unsupported: map[Backend]string{Transpile: "Go rejects equality between int and string"},
+	},
+
 	// --- string --------------------------------------------------------
 
 	{

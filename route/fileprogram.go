@@ -373,7 +373,7 @@ func (r *fileProgramRenderer) writeComponent(b *strings.Builder, node *ir.Node, 
 		return
 	}
 
-	b.WriteString(defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env)))
+	b.WriteString(defaultRenderedComponent(node.Tag, r.componentHTMLAttrs(node.Attrs, env), r.renderChildren(node.Children, env)))
 }
 
 func (r *fileProgramRenderer) writeBuiltinComponent(b *strings.Builder, node *ir.Node, env fileRenderEnv) bool {
@@ -1229,7 +1229,7 @@ func (r *fileProgramRenderer) renderBoundComponent(node *ir.Node, env fileRender
 	if rendered, ok := renderBoundComponentValue(component, candidates); ok {
 		return true, rendered
 	}
-	return true, defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), childrenHTML)
+	return true, defaultRenderedComponent(node.Tag, r.componentHTMLAttrs(node.Attrs, env), childrenHTML)
 }
 
 // writeLocalComponent renders a strict component whose BODY and whose CALL
@@ -1352,7 +1352,7 @@ func (r *fileProgramRenderer) writeLocalComponentWithChildren(b *strings.Builder
 
 func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env fileRenderEnv) string {
 	if env.renderIsland == nil {
-		return defaultRenderedComponent(node.Tag, r.componentAttrMap(node.Attrs, env), r.renderChildren(node.Children, env))
+		return defaultRenderedComponent(node.Tag, r.componentHTMLAttrs(node.Attrs, env), r.renderChildren(node.Children, env))
 	}
 
 	prog, err := r.islandProgram(name)
@@ -1705,6 +1705,31 @@ func (r *fileProgramRenderer) componentAttrMap(attrs []ir.Attr, env fileRenderEn
 		}
 	}
 	return values
+}
+
+// Keep authored style provenance until fallback HTML is emitted. Spread
+// filtering happens before merging, so a spread cannot replace authored CSS.
+func (r *fileProgramRenderer) componentHTMLAttrs(attrs []ir.Attr, env fileRenderEnv) fileComponentHTMLAttrs {
+	out := fileComponentHTMLAttrs{values: make(map[string]any, len(attrs))}
+	for _, attr := range attrs {
+		switch attr.Kind {
+		case ir.AttrSpread:
+			for key, value := range spreadProps(evalFileExpr(attr.Expr, env)) {
+				if htmlattr.SafeSpreadName(key) {
+					setComponentProp(out.values, key, value)
+				}
+			}
+		case ir.AttrStatic, ir.AttrExpr, ir.AttrBool:
+			out.values[attr.Name] = attrValue([]ir.Attr{attr}, env, attr.Name)
+			if strings.EqualFold(attr.Name, "style") {
+				if out.authoredStyles == nil {
+					out.authoredStyles = make(map[string]bool)
+				}
+				out.authoredStyles[attr.Name] = true
+			}
+		}
+	}
+	return out
 }
 
 // writeFileAttrPair appends ` name="value"` without fmt.

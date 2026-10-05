@@ -589,6 +589,11 @@ func injectHTMLTagAttr(tag, name, value string) string {
 	return out.String()
 }
 
+type fileComponentHTMLAttrs struct {
+	values         map[string]any
+	authoredStyles map[string]bool
+}
+
 // defaultRenderedComponent emits the fallback markup for an unresolved
 // component reference: a <div data-gosx-component="Tag"> carrying every
 // attribute the reference supplied, so client-side hydration can find and
@@ -599,19 +604,19 @@ func injectHTMLTagAttr(tag, name, value string) string {
 // differed only in attribute order — byte-identity goldens, HTTP ETags, and
 // caches all churn on content that has not actually changed. Sorting names
 // before emission makes the output deterministic across runs and processes.
-func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML string) string {
+func defaultRenderedComponent(tag string, attrs fileComponentHTMLAttrs, childrenHTML string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div data-gosx-component="%s"`, html.EscapeString(tag))
-	names := make([]string, 0, len(attrs))
-	for name := range attrs {
+	names := make([]string, 0, len(attrs.values))
+	for name := range attrs.values {
 		names = append(names, name)
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		if !htmlattr.SafeSpreadName(name) {
+		if !htmlattr.SafeSpreadName(name) && !(attrs.authoredStyles[name] && strings.EqualFold(name, "style") && htmlattr.ValidName(name)) {
 			continue
 		}
-		value := attrs[name]
+		value := attrs.values[name]
 		safeName := html.EscapeString(name)
 		switch v := value.(type) {
 		case bool:
