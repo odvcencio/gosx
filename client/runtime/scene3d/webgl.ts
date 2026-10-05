@@ -1777,6 +1777,7 @@
     "in vec2 v_uv;",
     "uniform sampler2D u_texture;",
     "uniform float u_exposure;",
+    "uniform vec4 u_background;",
     "uniform int u_toneMapMode;",
     "out vec4 fragColor;",
     "",
@@ -1800,6 +1801,7 @@
     "",
     "void main() {",
     "    vec4 texColor = texture(u_texture, v_uv);",
+    "    if (u_background.a >= 0.0 && texColor.a == 0.0) { fragColor = u_background; return; }",
     "    vec3 color = texColor.rgb;",
     "    color *= u_exposure;",
     "    if (u_toneMapMode == 0) {",
@@ -2692,13 +2694,10 @@
     if (typeof value !== "string") return fb.slice();
     var s = value.trim();
     if (s.charAt(0) === "#") s = s.slice(1);
-    if (s.length === 3) s = s.charAt(0) + s.charAt(0) + s.charAt(1) + s.charAt(1) + s.charAt(2) + s.charAt(2);
+    if (s.length === 3) s = s.replace(/./g, "$&$&");
     if (s.length < 6) return fb.slice();
-    var r = parseInt(s.slice(0, 2), 16);
-    var g = parseInt(s.slice(2, 4), 16);
-    var b = parseInt(s.slice(4, 6), 16);
-    if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return fb.slice();
-    return [r / 255, g / 255, b / 255];
+    var rgb = [0, 2, 4].map(function(offset) { return parseInt(s.slice(offset, offset + 2), 16) / 255; });
+    return rgb.every(Number.isFinite) ? rgb : fb.slice();
   }
 
   // A 1x1 RGBA texture (used for the caustic + shadow stubs and as the
@@ -4589,7 +4588,7 @@
         var val = typeof resolveSelenaUniform === "function"
           ? resolveSelenaUniform(material, layout, field, null)
           : selenaPostFallbackUniformValue(material, layout, field);
-        if (val === null || val === undefined) continue;
+        if (val == null) continue;
         sceneSelenaUploadUniform(gl, loc, field.type, val);
       }
 
@@ -4616,6 +4615,7 @@
       beginPostPass(prog, inputTex, targetFBO ? targetFBO.fbo : null, w, h);
       gl.uniform1f(sceneWaterUniformLocation(gl, prog.program, "u_exposure"), sceneNumber(effect.exposure, 1.0));
       gl.uniform1i(sceneWaterUniformLocation(gl, prog.program, "u_toneMapMode"), scenePostToneMapMode(effect.mode));
+      gl.uniform4fv(sceneWaterUniformLocation(gl, prog.program, "u_background"), effect.background || [0, 0, 0, -1]);
       drawSceneFullscreenQuad(gl, quad.vao);
       return targetFBO ? targetFBO.colorTex : null;
     }
@@ -8876,7 +8876,14 @@
       gl.viewport(0, 0, renderW, renderH);
 
       // Clear — "transparent" clears to fully transparent for alpha compositing.
-      var bg = sceneRenderBackground(bundle.background, usePostProcessing && !authoredPostEffects ? postEffects[0] : null);
+      var implicitOutput = usePostProcessing && !authoredPostEffects;
+      var bg = sceneRenderBackground(bundle.background, implicitOutput && renderTarget.hdrSupported ? postEffects[0] : null);
+      // RGBA8 cannot store the inverse HDR clear. Mark untouched pixels with
+      // zero alpha and restore the authored background in the output pass.
+      if (implicitOutput && !renderTarget.hdrSupported) {
+        postEffects[0].background = bg.slice();
+        bg[3] = 0;
+      }
 
       if (!frameMeta || frameMeta.compositeOverWater !== true) {
         gl.clearColor(bg[0], bg[1], bg[2], bg[3]);

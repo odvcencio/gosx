@@ -1204,7 +1204,7 @@
   function sceneRenderBackground(background, effect) {
     var bg = typeof background === "string" && background.trim().toLowerCase() === "transparent" ? [0, 0, 0, 0] : sceneColorRGBA(background, [0.03, 0.08, 0.12, 1]);
     if (!effect) return bg;
-    var mode = effect.mode, filmic = mode === "filmic";
+    var mode = typeof effect.mode === "string" && effect.mode.trim().toLowerCase(), filmic = mode === "filmic";
     var c = filmic ? [6.2, 0.5, 6.2, 1.7, 0.06] : mode === "reinhard" ? [0, 1, 0, 1, 1] : mode === "none" || mode === "linear" ? [0, 1, 0, 0, 1] : [2.51, 0.03, 2.43, 0.59, 0.14];
     return bg.map(function(value, index) {
       if (index === 3) return value;

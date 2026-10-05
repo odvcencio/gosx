@@ -1,6 +1,6 @@
 "use strict";
 const test = require("node:test"), assert = require("node:assert/strict");
-const {FakeWebGLContext,createContext,installManualRAF,runScript,flushAsyncWork,bootstrapRuntimeSource,freshFeatureBundleSource} = require("./runtime-test-harness.js");
+const {FakeWebGLContext,createContext,installManualRAF,runScript,flushAsyncWork,bootstrapRuntimeSource,freshFeatureBundleSource,installManualTimers} = require("./runtime-test-harness.js");
 
 function water(paused=false) {
  const entry = {id:"tide",resolution:16,surfaceResolution:4,seedDrops:0,activeObject:"None",objectKind:"none",renderPool:false,paused};
@@ -15,6 +15,7 @@ function harness(options={}) {
  const contexts=[];
  const env=createContext({disableCanvas2D:true,prefersReducedMotion:options.reduced,createWebGL2Context() {
   const gl=new FakeWebGLContext(); contexts.push(gl);
+  gl.createSampler=()=>({});gl.samplerParameteri=()=>{};gl.bindSampler=()=>{};gl.deleteSampler=()=>{};
   gl.HALF_FLOAT=0x140b; gl.FRAMEBUFFER_COMPLETE=0x8cd5; gl.checkFramebufferStatus=()=>gl.FRAMEBUFFER_COMPLETE;
   const extension=gl.getExtension.bind(gl), parameter=gl.getProgramParameter.bind(gl);
   gl.getExtension=name=>name==="KHR_parallel_shader_compile" && options.parallel ? {COMPLETION_STATUS_KHR:91}
@@ -33,7 +34,7 @@ function harness(options={}) {
   }
   return element;
  };
- const raf=installManualRAF(env.context);
+ const timers=installManualTimers(env.context),raf=installManualRAF(env.context);
  runScript(bootstrapRuntimeSource,env.context,"bootstrap-runtime.js");
  let factory; const register=env.context.__gosx_register_engine_factory;
  env.context.__gosx_register_engine_factory=(name,value)=>{if(name==="GoSXScene3D") factory=value;register(name,value);};
@@ -41,8 +42,8 @@ function harness(options={}) {
  env.context.__gosx_scene3d_webgl_api.prepareScenePBRInitialRenderer=null;
  const mount=env.document.createElement("div"); env.document.body.appendChild(mount);
  let frame=0;
- async function advance(count=8) {for(let i=0;i<count;i++){await flushAsyncWork();raf.flush(++frame*16);}}
- async function start(scene) {const pending=factory({mount,props:{width:320,height:180,forceWebGL:true,scene:{objects:[],...scene}}});await advance();return pending;}
+ async function advance(count=8) {for(let i=0;i<count;i++){timers.runDelay(0);timers.runDelay(16);await flushAsyncWork();raf.flush(++frame*16);}}
+ async function start(scene) {const pending=factory({mount,emit(){},props:{capabilityTier:options.tier,preferWebGL:true,width:320,height:180,forceWebGL:true,scene:{objects:[],...scene}}});await advance();return pending;}
  return {env,contexts,mount,raf,factory,start,advance,setComplete(){complete=true;}};
 }
 
@@ -103,4 +104,14 @@ test("still or invisible clouds leave a scene static", async t => {
   const h=harness(),c=await h.start({environment:{sky:{mode:"physical",clouds}}});t.after(()=>c.dispose());
   assert.equal(h.mount.getAttribute("data-gosx-scene3d-render-loop-wants-animation"),"false");
  }
+});
+
+for (const tier of ["full", "balanced", "constrained"]) test(`cloud-only mount respects ${tier} atmosphere quality`, async t => {
+ const h=harness({tier}),c=await h.start({environment:{sky:{mode:"physical",clouds:{coverage:0.45,speed:8}}}});t.after(()=>c.dispose());
+ await h.advance();
+ const draws=()=>h.contexts.flatMap(gl=>gl.ops).filter(op=>op[0]==="drawArrays").length;
+ const before=draws();await h.advance(20);assert.equal(h.mount.getAttribute("data-gosx-scene3d-ready"),"true");assert.deepEqual(h.env.consoleLogs.error,[]);
+ assert.equal(h.mount.getAttribute("data-gosx-scene3d-render-loop-wants-animation"),String(tier!=="constrained"));
+ if(tier==="constrained") {assert.equal(draws(),before,"disabled clouds must not continuously redraw the sky");assert.equal(h.mount.getAttribute("data-gosx-scene3d-render-loop"),"stopped");}
+ else assert.ok(draws()>before,"enabled clouds continue drawing");
 });

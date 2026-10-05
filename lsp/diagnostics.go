@@ -92,6 +92,10 @@ func diagnosticForError(err error) Diagnostic {
 	if errors.As(err, &parseErr) {
 		line := clampZeroBased(parseErr.Line - 1)
 		col := clampZeroBased(parseErr.Column - 1)
+		message := parseErr.Message
+		if parseErr.Hint != "" {
+			message += " (hint: " + parseErr.Hint + ")"
+		}
 		return Diagnostic{
 			Range: Range{
 				Start: Position{Line: line, Character: col},
@@ -99,7 +103,7 @@ func diagnosticForError(err error) Diagnostic {
 			},
 			Severity: SeverityError,
 			Source:   "gosx",
-			Message:  parseErr.Message,
+			Message:  message,
 		}
 	}
 
