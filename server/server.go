@@ -1106,6 +1106,9 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 	MarkObservedRequest(r, "error", "")
+	if WriteDevelopmentError(w, r, err) {
+		return
+	}
 	if wantsJSON(r) {
 		writeJSONError(w, errorStatus(err, 0, http.StatusInternalServerError), err, nil)
 		return

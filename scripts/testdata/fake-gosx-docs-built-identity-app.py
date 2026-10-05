@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 
 def listen_addr():
-    raw = os.environ.get("PORT", "")
+    raw = os.environ.get("GOSX_LISTEN_ADDR") or os.environ.get("PORT", "")
     if not raw:
         raise SystemExit("PORT is required")
     if ":" in raw:

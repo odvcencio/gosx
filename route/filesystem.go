@@ -622,7 +622,7 @@ func hasComponent(prog *ir.Program, name string) bool {
 func defaultFileRouteError(err error) gosx.Node {
 	return gosx.El("main",
 		gosx.El("h1", gosx.Text("Route Error")),
-		gosx.El("p", gosx.Text(err.Error())),
+		gosx.El("p", gosx.Text("The server encountered an unexpected error.")),
 	)
 }
 

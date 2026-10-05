@@ -1,4 +1,4 @@
-<input type="search" data-gosx-filter="draft-pool-list" placeholder="Search the pool">
+<input type="search" data-gosx-filter="draft-pool-list" placeholder="Search the pool" />
 	<ul id="draft-pool-list">
 	    <li data-gosx-filter-text="patrick mahomes qb kc">Patrick Mahomes</li>
 	    <li data-gosx-filter-text="josh allen qb buf">Josh Allen</li>

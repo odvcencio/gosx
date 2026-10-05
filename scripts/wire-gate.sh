@@ -51,6 +51,9 @@ GOWORK=off "$go_cmd" build -o "$wiregate_bin" ./perf/wire/cmd/wiregate
 "$gosx_bin" init "$scaffold_dir" --module example.com/wiregate >/dev/null
 mkdir -p "$scaffold_dir/app/counter"
 cp perf/wire/testdata/counter/page.gsx perf/wire/testdata/counter/page.server.go "$scaffold_dir/app/counter/"
+# Measure the same static starter/counter snapshots as the wire baseline.
+# The scaffold's public sample loaders otherwise stay dynamic by default.
+printf '%s\n' '{"prerender":true}' >"$scaffold_dir/app/route.config.json"
 (cd "$scaffold_dir" && GOWORK=off nice -n 10 "$gosx_bin" build --prod . >"$out/scaffold-build.log" 2>&1) || {
 	echo "wire-gate: scaffold production build failed" >&2
 	tail -n 50 "$out/scaffold-build.log" >&2
@@ -73,6 +76,7 @@ start() {
 	ready="$4"
 	local_secret="$(openssl rand -hex 32)"
 	PORT="127.0.0.1:$port" \
+	GOSX_LISTEN_ADDR="127.0.0.1:$port" \
 	PUBLIC_URL="http://127.0.0.1:${port}" \
 	SESSION_SECRET="$local_secret" \
 		"$dir/dist/run.sh" >"$out/${name}-server.log" 2>&1 &

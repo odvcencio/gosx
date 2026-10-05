@@ -394,6 +394,9 @@ const (
 type Attr struct {
 	Kind AttrKind
 
+	// Span tracks the authored attribute for render diagnostics.
+	Span Span
+
 	// Name is the attribute name (empty for AttrSpread).
 	Name string
 
