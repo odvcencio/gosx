@@ -7,8 +7,12 @@
 #   docs      examples/gosx-docs
 #
 # The measurement needs no browser: it fetches each page and every resource
-# on its load path with `Accept-Encoding: br, gzip`, so bytes, request counts,
-# compression, cache and cookie headers are deterministic for a given build.
+# on its load path with `Accept-Encoding: br, gzip`. Each app is one cold
+# visit through budgeted routes in sorted order: HTML includes inline scripts,
+# and fresh hashed eager assets count once, on their first downloading page.
+# Redirects and non-cacheable assets still count on every view. Lazy probes
+# do not warm the visit cache. Per-route ceilings include the first page's
+# full cold load; compression, cache and cookie policies remain checked.
 #
 # Environment:
 #   WIRE_GATE_MODE=check|update  update rewrites the budget to the

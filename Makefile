@@ -335,7 +335,9 @@ perf-budget-ci:
 # docs site for production, serves both, and checks every route in
 # perf/budgets/wire.json: bytes on the wire by type, request count, largest
 # inline script, and the compression, cache and cookie policies. No browser is
-# involved, so the numbers are deterministic for a given build.
+# involved. Each app is a cold visit through sorted routes; HTML includes
+# inline scripts, and fresh hashed assets count once per visit. The first
+# page pays their full cost, with every per-route ceiling still enforced.
 wire-gate:
 	$(SHELL) ./scripts/wire-gate.sh
 
