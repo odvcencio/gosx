@@ -2502,8 +2502,7 @@ func strictComponentSliceAttrValue(comp *ir.Component, attr ir.Attr, env fileRen
 
 // requireStrictSliceValue is E1's renderer-boundary check (design spec
 // section 2.7): value's runtime type must be a slice whose element type is
-// exactly the same-file struct schema.Elem — a declared struct type from
-// any package, never an anonymous struct and never a map element — and
+// structurally compatible with the same-file struct schema.Elem, and
 // every read path schema.Reads names must resolve, by FieldByName on the
 // element TYPE (not each element's value), to its exact declared leaf
 // type. The check is O(read paths) once per call, not O(elements): a
@@ -2527,7 +2526,7 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 	}
 	rt := reflect.TypeOf(value)
 	if rt.Kind() != reflect.Slice {
-		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs carrying the fields %s declares", rt, schema.Elem)
 	}
 	// This checks Kind(), not Name(): a named slice type (type Rows
 	// []BreakdownRow) passes here exactly as the bare []BreakdownRow the
@@ -2542,8 +2541,8 @@ func requireStrictSliceValue(value any, schema ir.SlicePropSchema) (any, error) 
 	// widening cannot desync the file renderer from generated Go the way
 	// an unchecked element type would; it is accepted, not tightened.
 	elemType := rt.Elem()
-	if elemType.Kind() != reflect.Struct || elemType.PkgPath() == "" || elemType.Name() != schema.Elem {
-		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs named %s", rt, schema.Elem)
+	if elemType.Kind() != reflect.Struct {
+		return nil, fmt.Errorf("runtime value has type %s, want a slice of structs carrying the fields %s declares", rt, schema.Elem)
 	}
 	paths := make([]string, 0, len(schema.Reads))
 	for path := range schema.Reads {
