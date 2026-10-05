@@ -141,6 +141,9 @@ func Page() Node {
 		</p>
 		<CodeBlock lang="gosx" source={data.eachSample} />
 		<p>
+			Types declared in .gsx are renderer schemas and become Go declarations when you explicitly transpile the file. File-routed builds execute the IR and do not emit those declarations into the Go package. In page.server.go, return a separate Go type from Load, for example PageData for PageProps and NoteItemData for NoteItem. The file renderer checks loader data and legacy spread props structurally, including nested structs and slice elements: every rendered field must exist with its exact builtin type. Extra fields and different struct names are allowed; missing fields, pointer elements, and promoted fields are rejected even in empty slices. Typed calls between components still follow Go assignability, and declaring the same name twice in the checked package remains an error.
+		</p>
+		<p>
 			A strict call site may also spread exactly one value and nothing else:
 			<span class="inline-code">
 				&lt;Callee
