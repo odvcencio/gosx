@@ -81,7 +81,16 @@ func lowerFileExpr(expr ast.Expr) fileExprFunc {
 		target := lowerFileExpr(node.X)
 		index := lowerFileExpr(node.Index)
 		return func(env fileRenderEnv) any {
-			return indexValue(target(env), index(env))
+			value := target(env)
+			key := index(env)
+			if env.propsFrame == propsFrameStrict {
+				if values, ok := value.(map[string]string); ok {
+					if name, ok := key.(string); ok {
+						return values[name]
+					}
+				}
+			}
+			return indexValue(value, key)
 		}
 
 	case *ast.CallExpr:

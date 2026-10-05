@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 
+	"m31labs.dev/gosx/internal/strictcomponent"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/transpile"
 )
@@ -72,18 +73,18 @@ func formCSRFDiagnostics(file transpile.PackageFile) ([]ir.Diagnostic, []ir.Diag
 			if node.Kind != ir.NodeElement || !strings.EqualFold(node.Tag, "form") {
 				continue
 			}
-			actionName, ok := mutatingFileActionName(node)
+			actionExpr, tokenExpr, ok := mutatingFileAction(node, &comp)
 			if !ok {
 				continue
 			}
-			state := formCSRFDescendantState(file.Program, node.Children)
+			state := formCSRFDescendantState(file.Program, node.Children, comp.Syntax == ir.ComponentSyntaxStrict)
 			if state == formCSRFUnknown {
 				span := node.Span
 				span.File = file.Path
 				warnings = append(warnings, ir.Diagnostic{
 					Severity: ir.SeverityWarning,
 					Span:     span,
-					Message:  fmt.Sprintf("gosx: could not prove that mutating file-action form actionPath(%q) includes a descendant control named %q", actionName, defaultCSRFField),
+					Message:  fmt.Sprintf("gosx: could not prove that mutating file-action form %s includes a descendant control named %q", actionExpr, defaultCSRFField),
 					Hint:     "verify the rendered form includes a hidden csrf_token control; dynamic components, expression content, spreads, and raw HTML are outside this static check",
 				})
 				continue
@@ -95,8 +96,8 @@ func formCSRFDiagnostics(file transpile.PackageFile) ([]ir.Diagnostic, []ir.Diag
 			span.File = file.Path
 			diags = append(diags, ir.Diagnostic{
 				Span:    span,
-				Message: fmt.Sprintf("gosx: mutating file-action form actionPath(%q) is missing a descendant control named %q", actionName, defaultCSRFField),
-				Hint:    "add <input type=\"hidden\" name=\"csrf_token\" value={csrf.token}></input> inside the form, or keep the token in a statically visible descendant",
+				Message: fmt.Sprintf("gosx: mutating file-action form %s is missing a descendant control named %q", actionExpr, defaultCSRFField),
+				Hint:    "add <input type=\"hidden\" name=\"csrf_token\" value={" + tokenExpr + "}></input> inside the form, or keep the token in a statically visible descendant",
 			})
 		}
 	}
@@ -113,11 +114,11 @@ const (
 	formCSRFUnknown
 )
 
-// mutatingFileActionName returns the static actionPath name for a form whose
+// mutatingFileAction recognizes actionPath calls and typed FormState URLs whose
 // method is one of the unsafe methods protected by session.Manager.Protect.
 // An absent method is HTML's GET default; an expression or an unfamiliar
 // method is deliberately unknown rather than assumed to mutate.
-func mutatingFileActionName(node *ir.Node) (string, bool) {
+func mutatingFileAction(node *ir.Node, comp *ir.Component) (string, string, bool) {
 	var action ir.Attr
 	var method ir.Attr
 	var hasAction bool
@@ -133,17 +134,26 @@ func mutatingFileActionName(node *ir.Node) (string, bool) {
 		}
 	}
 	if !hasAction || action.Kind != ir.AttrExpr {
-		return "", false
+		return "", "", false
 	}
 	name, ok := actionPathCallArg(action.Expr)
-	if !ok || !hasMethod || method.Kind != ir.AttrStatic {
-		return "", false
+	actionExpr, tokenExpr := "", "csrf.token"
+	if ok {
+		actionExpr = fmt.Sprintf("actionPath(%q)", name)
+	} else if path, isPath := strictcomponent.ServerPropPath(action.Expr); isPath {
+		if tokenPath, isForm := comp.PropsFormActions[strings.Join(path, ".")]; isForm {
+			actionExpr = strings.TrimSpace(action.Expr)
+			tokenExpr = "props." + tokenPath
+		}
+	}
+	if actionExpr == "" || !hasMethod || method.Kind != ir.AttrStatic {
+		return "", "", false
 	}
 	switch strings.ToLower(strings.TrimSpace(method.Value)) {
 	case "post", "put", "patch", "delete":
-		return name, true
+		return actionExpr, tokenExpr, true
 	default:
-		return "", false
+		return "", "", false
 	}
 }
 
@@ -153,7 +163,7 @@ func mutatingFileActionName(node *ir.Node) (string, bool) {
 // the caller emits a warning rather than an error. Plain fragments and
 // ordinary elements remain transparent, which catches the Gridiron shape even
 // when a hidden input is nested under a static wrapper.
-func formCSRFDescendantState(prog *ir.Program, roots []ir.NodeID) formCSRFState {
+func formCSRFDescendantState(prog *ir.Program, roots []ir.NodeID, strict bool) formCSRFState {
 	seen := make(map[ir.NodeID]bool)
 	var walk func(ir.NodeID) formCSRFState
 	walk = func(id ir.NodeID) formCSRFState {
@@ -166,7 +176,15 @@ func formCSRFDescendantState(prog *ir.Program, roots []ir.NodeID) formCSRFState 
 		}
 		node := &prog.Nodes[id]
 		switch node.Kind {
-		case ir.NodeComponent, ir.NodeExpr, ir.NodeRawHTML:
+		case ir.NodeComponent, ir.NodeRawHTML:
+			return formCSRFUnknown
+		case ir.NodeExpr:
+			_, slot := strictcomponent.IsSlotExpression(node.Text)
+			if strict && !slot && !strictcomponent.IsChildrenExpression(node.Text) {
+				// Strict scalar expressions render escaped text, so a field
+				// error or message cannot supply a hidden form control.
+				return formCSRFMissing
+			}
 			return formCSRFUnknown
 		case ir.NodeText:
 			return formCSRFMissing
