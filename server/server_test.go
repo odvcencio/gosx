@@ -659,7 +659,7 @@ func TestAppReadinessChecksCanFail(t *testing.T) {
 	if len(report.Checks) != 1 {
 		t.Fatalf("expected one readiness check, got %+v", report)
 	}
-	if report.Checks[0].Name != "cache" || report.Checks[0].OK || !strings.Contains(report.Checks[0].Error, "redis unavailable") {
+	if report.Checks[0].Name != "cache" || report.Checks[0].OK || report.Checks[0].Error != http.StatusText(http.StatusServiceUnavailable) {
 		t.Fatalf("unexpected readiness check %+v", report.Checks[0])
 	}
 }
