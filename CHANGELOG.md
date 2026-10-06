@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
 - Retain requested Selena target artifacts, including Metal and GLES, through
   canonical IR and native render bundles. Native previews and renderer frame
   stats report custom mesh programs replaced by the standard shader.
