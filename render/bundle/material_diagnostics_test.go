@@ -1,8 +1,9 @@
 package bundle
 
 import (
-	"m31labs.dev/gosx/engine"
 	"testing"
+
+	"m31labs.dev/gosx/engine"
 )
 
 func TestRendererReportsAndResetsCustomMaterialFallback(t *testing.T) {
@@ -14,6 +15,13 @@ func TestRendererReportsAndResetsCustomMaterialFallback(t *testing.T) {
 	b := engine.RenderBundle{Materials: []engine.RenderMaterial{{Kind: "custom", ShaderLayout: map[string]any{
 		"programs": map[string]any{"metal": engine.ShaderProgram{Source: "authored metal"}},
 	}}}}
+	if notes := MaterialDiagnostics(b); len(notes) != 0 {
+		t.Fatal("unused material reported as substituted")
+	}
+	b.InstancedMeshes = []engine.RenderInstancedMesh{{
+		Kind: "box", Width: 1, Height: 1, Depth: 1, InstanceCount: 1,
+		Transforms: []float64{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1},
+	}}
 	if err := r.Frame(b, 32, 32, 0); err != nil {
 		t.Fatal(err)
 	}

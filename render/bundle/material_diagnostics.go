@@ -11,7 +11,7 @@ import (
 func MaterialDiagnostics(b engine.RenderBundle) []engine.RenderDiagnostic {
 	var out []engine.RenderDiagnostic
 	for i, material := range b.Materials {
-		if material.Kind != "custom" && material.ShaderBackend == "" {
+		if (material.Kind != "custom" && material.ShaderBackend == "") || !materialReferenced(b, i) {
 			continue
 		}
 		var targets []string
@@ -26,4 +26,23 @@ func MaterialDiagnostics(b engine.RenderBundle) []engine.RenderDiagnostic {
 		})
 	}
 	return out
+}
+
+func materialReferenced(b engine.RenderBundle, index int) bool {
+	for _, object := range b.MeshObjects {
+		if object.MaterialIndex == index && object.VertexCount > 0 {
+			return true
+		}
+	}
+	for _, mesh := range b.InstancedMeshes {
+		if mesh.MaterialIndex == index && mesh.InstanceCount > 0 && len(mesh.Transforms) > 0 {
+			return true
+		}
+	}
+	for _, surface := range b.Surfaces {
+		if surface.MaterialIndex == index && surface.VertexCount > 0 {
+			return true
+		}
+	}
+	return false
 }

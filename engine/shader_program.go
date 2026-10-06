@@ -1,7 +1,5 @@
 package engine
 
-import "encoding/json"
-
 // ShaderProgram carries a target's emitted source without implying that a host
 // can execute it. WGSL and Metal use Source; GLSL and GLES use Vertex/Fragment.
 // The containing shaderLayout descriptor supplies entry points and bindings.
@@ -18,12 +16,15 @@ func ShaderProgramFromLayout(layout map[string]any, target string) (ShaderProgra
 	if !ok {
 		return ShaderProgram{}, false
 	}
-	data, err := json.Marshal(programs[target])
-	if err != nil {
-		return ShaderProgram{}, false
-	}
 	var program ShaderProgram
-	if json.Unmarshal(data, &program) != nil {
+	switch value := programs[target].(type) {
+	case ShaderProgram:
+		program = value
+	case map[string]any:
+		program.Source, _ = value["source"].(string)
+		program.Vertex, _ = value["vertex"].(string)
+		program.Fragment, _ = value["fragment"].(string)
+	default:
 		return ShaderProgram{}, false
 	}
 	valid := false
