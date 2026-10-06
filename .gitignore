@@ -8,6 +8,7 @@ build/
 !/docs/scene3d-v1-support.md
 !/docs/stripe.md
 !/docs/ui-recipes.md
+!/docs/controllers.md
 !/docs/desktop-code-signing.md
 !/docs/expression-support-matrix.md
 /gosx

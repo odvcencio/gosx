@@ -4,57 +4,46 @@
   // Declarative headless controllers
   // --------------------------------------------------------------------------
 
-  function controllerList(manifest) {
-    return manifest && Array.isArray(manifest.controllers) ? manifest.controllers : [];
+  function controllerList(config, key = "controllers") {
+    return config && Array.isArray(config[key]) ? config[key] : [];
   }
 
   function controllerOutputMap(config) {
     const outputs = Object.create(null);
-    const list = config && Array.isArray(config.outputs) ? config.outputs : [];
+    const list = controllerList(config, "outputs");
     for (const output of list) {
-      if (!output || !output.signal) continue;
-      const name = String(output.name || output.signal || "").trim();
+      if (!output || (!output.signal && !output.event)) continue;
+      const name = String(output.name || output.signal || output.event || "").trim();
       if (!name) continue;
-      outputs[name] = String(output.signal || "").trim();
+      outputs[name] = output;
     }
     return outputs;
   }
 
-  function controllerOutputSignal(record, name) {
-    const outputName = String(name || "").trim();
-    if (!outputName) return "";
-    return record.outputs[outputName] || outputName;
-  }
-
   function controllerPublish(record, output, payload) {
-    const signal = controllerOutputSignal(record, output);
-    if (!signal) return;
-    const body = Object.assign({
-      controllerId: record.id,
-      controller: record.name,
-      at: Date.now(),
-    }, payload || {});
-    try {
-      const result = setSharedSignalValue(signal, body);
-      if (typeof result === "string" && result !== "") {
-        console.error("[gosx] controller signal error (" + record.id + "/" + signal + "):", result);
-      }
-    } catch (error) {
-      console.error("[gosx] controller signal error (" + record.id + "/" + signal + "):", error);
-    }
+    controllerSetValue(record, output, Object.assign({
+      controllerId: record.id, controller: record.name, at: Date.now(),
+    }, payload || {}));
   }
 
   function controllerSetValue(record, output, value) {
-    const signal = controllerOutputSignal(record, output);
+    if (record.disposed) return;
+    const name = String(output || "").trim(), spec = record.outputs[name];
+    const signal = spec ? String(spec.signal || "").trim() : name;
+    if (spec && spec.event) record.root.dispatchEvent(new CustomEvent(spec.event, { detail: value, bubbles: true }));
     if (!signal) return;
     try {
       const result = setSharedSignalValue(signal, value);
-      if (typeof result === "string" && result !== "") {
-        console.error("[gosx] controller signal error (" + record.id + "/" + signal + "):", result);
-      }
+      if (typeof result === "string" && result !== "") throw new Error(result);
     } catch (error) {
       console.error("[gosx] controller signal error (" + record.id + "/" + signal + "):", error);
     }
+  }
+
+  function controllerEmitBinding(record, binding, payload) {
+    if (binding.project) {
+      if (record.project) record.project(binding, payload);
+    } else controllerPublish(record, binding.output, payload);
   }
 
   function controllerRoot(selector) {
@@ -131,9 +120,14 @@
       metaKey: Boolean(event && event.metaKey),
       shiftKey: Boolean(event && event.shiftKey),
       repeat: Boolean(event && event.repeat),
+      detail: event && event.detail,
+      pointerId: event && event.pointerId,
+      clientX: event && event.clientX,
+      clientY: event && event.clientY,
     };
     if (target) {
       payload.target = {
+        dataset: Object.assign({}, target.dataset || {}),
         id: String(target.id || ""),
         name: String(target.name || ""),
         value: target.value !== undefined ? target.value : undefined,
@@ -175,7 +169,7 @@
   }
 
   function controllerInstallOutputs(record) {
-    const outputs = record.config && Array.isArray(record.config.outputs) ? record.config.outputs : [];
+    const outputs = controllerList(record.config, "outputs");
     for (const output of outputs) {
       if (!output || !output.signal || !Object.prototype.hasOwnProperty.call(output, "initial")) continue;
       controllerSetValue(record, output.name || output.signal, output.initial);
@@ -183,7 +177,7 @@
   }
 
   function controllerInstallInputs(record) {
-    const inputs = record.config && Array.isArray(record.config.inputs) ? record.config.inputs : [];
+    const inputs = controllerList(record.config, "inputs");
     for (const input of inputs) {
       if (!input || !input.signal) continue;
       const name = String(input.name || input.signal).trim();
@@ -198,51 +192,37 @@
     }
   }
 
+  function controllerDispatchEvent(record, binding, event, matched, kind, name) {
+    if (!binding.allowEditable && controllerEditableTarget(event && event.target)) return;
+    if (binding.preventDefault && event && typeof event.preventDefault === "function") event.preventDefault();
+    if (kind === "event" && binding.stopPropagation && event && typeof event.stopPropagation === "function") event.stopPropagation();
+    controllerEmitBinding(record, binding, { kind, name: String(name || ""), event: controllerEventPayload(event, matched) });
+  }
+
   function controllerInstallEvents(record) {
-    const events = record.config && Array.isArray(record.config.events) ? record.config.events : [];
     const root = record.root;
-    for (const binding of events) {
+    for (const binding of record.config.events || []) {
       if (!binding || !binding.type || !binding.output) continue;
-      const listener = function(event) {
-        const target = controllerEventTarget(root, event);
-        const matched = controllerMatchesTarget(root, target, binding.target);
-        if (!matched) return;
-        if (!binding.allowEditable && controllerEditableTarget(target)) return;
-        if (binding.preventDefault && event && typeof event.preventDefault === "function") event.preventDefault();
-        if (binding.stopPropagation && event && typeof event.stopPropagation === "function") event.stopPropagation();
-        controllerPublish(record, binding.output, {
-          kind: "event",
-          name: String(binding.type || ""),
-          event: controllerEventPayload(event, matched),
-        });
-      };
-      controllerAddListener(record, root === document ? document : root, String(binding.type), listener, Boolean(binding.capture));
+      controllerAddListener(record, root, String(binding.type), function(event) {
+        const matched = controllerMatchesTarget(root, controllerEventTarget(root, event), binding.target);
+        if (matched) controllerDispatchEvent(record, binding, event, matched, "event", binding.type);
+      }, Boolean(binding.capture));
     }
   }
 
   function controllerInstallKeys(record) {
-    const keys = record.config && Array.isArray(record.config.keys) ? record.config.keys : [];
-    for (const binding of keys) {
+    for (const binding of record.config.keys || []) {
       if (!binding || !binding.output) continue;
       const eventType = String(binding.event || "keydown");
-      const scope = String(binding.scope || "global").toLowerCase();
-      const target = scope === "root" ? record.root : document;
-      const listener = function(event) {
-        if (!binding.allowEditable && controllerEditableTarget(event && event.target)) return;
-        if (!controllerKeyMatches(binding, event)) return;
-        if (binding.preventDefault && event && typeof event.preventDefault === "function") event.preventDefault();
-        controllerPublish(record, binding.output, {
-          kind: "key",
-          name: String(binding.name || binding.code || binding.key || ""),
-          event: controllerEventPayload(event, event && event.target),
-        });
-      };
-      controllerAddListener(record, target, eventType, listener, false);
+      const target = String(binding.scope || "global").toLowerCase() === "root" ? record.root : document;
+      controllerAddListener(record, target, eventType, function(event) {
+        if (controllerKeyMatches(binding, event)) controllerDispatchEvent(record, binding, event, event.target, "key", binding.name || binding.code || binding.key);
+      }, false);
     }
   }
 
   function controllerInstallTimers(record) {
-    const timers = record.config && Array.isArray(record.config.timers) ? record.config.timers : [];
+    const timers = controllerList(record.config, "timers");
     for (const spec of timers) {
       if (!spec || !spec.output) continue;
       const every = Math.max(1, Math.floor(Number(spec.everyMs || 0)));
@@ -347,7 +327,7 @@
   }
 
   function controllerInstallResources(record) {
-    const resources = record.config && Array.isArray(record.config.resources) ? record.config.resources : [];
+    const resources = controllerList(record.config, "resources");
     for (const spec of resources) {
       if (!spec || !spec.url || !spec.output) continue;
       const refresh = function() { controllerFetchResource(record, spec); };
@@ -364,61 +344,6 @@
       if (spec.refreshSignal) {
         record.unsubscribers.push(gosxSubscribeSharedSignal(spec.refreshSignal, refresh, { immediate: false }));
       }
-    }
-  }
-
-  function controllerStorageArea(area) {
-    const name = String(area || "local").toLowerCase();
-    try {
-      if (name === "session") return window.sessionStorage || null;
-      return window.localStorage || null;
-    } catch (_error) {
-      return null;
-    }
-  }
-
-  function controllerStorageKey(config, key) {
-    const ns = String(config.namespace || "gosx:controller").trim();
-    return ns + ":" + String(key || "").trim();
-  }
-
-  function controllerInstallStorage(record) {
-    const storageConfig = record.config && record.config.storage;
-    if (!storageConfig) return;
-    const area = controllerStorageArea(storageConfig.area);
-    if (!area) return;
-    const loads = Array.isArray(storageConfig.load) ? storageConfig.load : [];
-    for (const slot of loads) {
-      if (!slot || !slot.key || (!slot.signal && !slot.output)) continue;
-      let value = null;
-      let decoded = false;
-      try {
-        const raw = area.getItem(controllerStorageKey(storageConfig, slot.key));
-        if (raw != null && raw !== "") {
-          value = JSON.parse(raw);
-          decoded = true;
-        }
-      } catch (_error) {}
-      if (slot.signal && decoded) controllerSetValue(record, slot.signal, value);
-      if (slot.output) {
-        controllerPublish(record, slot.output, { kind: "storage", name: String(slot.key), value: value });
-      }
-    }
-    const saves = Array.isArray(storageConfig.save) ? storageConfig.save : [];
-    for (const slot of saves) {
-      if (!slot || !slot.key || !slot.signal) continue;
-      const unsub = gosxSubscribeSharedSignal(slot.signal, function(value) {
-        try {
-          area.setItem(controllerStorageKey(storageConfig, slot.key), JSON.stringify(value == null ? null : value));
-        } catch (error) {
-          controllerPublish(record, slot.output || slot.signal, {
-            kind: "storage",
-            name: String(slot.key),
-            error: String(error && error.message || error || "storage failed"),
-          });
-        }
-      }, { immediate: false });
-      record.unsubscribers.push(unsub);
     }
   }
 
@@ -446,16 +371,26 @@
     window.__gosx.controllers.set(record.id, record);
     controllerInstallOutputs(record);
     controllerInstallInputs(record);
+    if (gosxHost.controllers.installInput) gosxHost.controllers.installInput(record, {
+      addListener: controllerAddListener, send: controllerSetValue, publish: controllerPublish,
+      emit: controllerEmitBinding, matches: controllerMatchesTarget, editable: controllerEditableTarget,
+      payload: controllerEventPayload, subscribe: gosxSubscribeSharedSignal,
+    });
     controllerInstallEvents(record);
     controllerInstallKeys(record);
     controllerInstallTimers(record);
     controllerInstallResources(record);
-    controllerInstallStorage(record);
+    if (record.installStorage) record.installStorage();
     return record;
   }
 
-  function mountAllControllers(manifest) {
+  async function mountAllControllers(manifest) {
     const controllers = controllerList(manifest);
+    const path = window.__gosx.document?.get()?.assets?.runtime?.bootstrapControllerInputPath;
+    if (path && !gosxHost.controllers.installInput) {
+      await loadScriptTag(path, "controller-input");
+      if (!gosxHost.controllers.installInput) throw new Error("controller input runtime unavailable");
+    }
     const pending = [];
     for (const entry of controllers) {
       const record = mountController(entry);
@@ -463,8 +398,7 @@
         pending.push.apply(pending, record.ready);
       }
     }
-    if (pending.length === 0) return Promise.resolve();
-    return Promise.all(pending).then(function() {});
+    if (pending.length) await Promise.all(pending);
   }
 
   function disposeController(controllerID) {

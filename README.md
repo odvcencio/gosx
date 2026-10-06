@@ -347,6 +347,9 @@ Island expressions are constrained to what the client VM can evaluate: literals,
 
 ## Reactive State
 
+For typed browser intents, gamepad button edges, drag/drop and modal focus
+ownership, see [browser controllers](docs/controllers.md).
+
 Signals provide fine-grained reactivity in islands:
 
 ```go

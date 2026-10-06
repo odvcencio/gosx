@@ -230,6 +230,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/hydrate-input.ts"),
+			sourceFile("../runtime/scene3d/mount-input.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			// 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
 			// engine the video factory (in 30b) uses on the brain-absent path. It
@@ -363,6 +364,11 @@ var outputs = []output{
 		},
 	},
 	{
+		name:    "bootstrap-controller-input.js",
+		sources: []source{sourceFile("../runtime/host/controller-input.ts")},
+	},
+
+	{
 		// Text-layout engine chunk. bootstrap-lite.js and bootstrap-runtime.js
 		// carried this engine on every page, even a page with no text block:
 		// 42_738 of 131_137 minified bytes in lite (32.6%) and 42_751 of
@@ -471,6 +477,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-controls.ts"),
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
+			sourceFile("../runtime/scene3d/mount-input.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.ts"),
 		},

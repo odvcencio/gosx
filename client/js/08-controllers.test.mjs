@@ -17,7 +17,7 @@ async function drainMicrotasks(turns = 8) {
   }
 }
 
-class FakeTarget {
+export class FakeTarget {
   constructor(tagName = "div") {
     this.tagName = tagName.toUpperCase();
     this.id = "";
@@ -54,7 +54,7 @@ class FakeTarget {
   }
 }
 
-function createContext(options = {}) {
+export function createContext(options = {}) {
   const writes = [];
   const sharedValues = new Map([["$theme", "dark"]]);
   const subscribers = new Map();
@@ -74,14 +74,14 @@ function createContext(options = {}) {
       this.signal.aborted = true;
     }
   }
-  const window = {
+  const window = Object.assign(new FakeTarget("window"), {
     __gosx: {},
     location: { href: "https://example.test/app", origin: "https://example.test" },
     localStorage: {
       getItem(key) { return storage.has(key) ? storage.get(key) : null; },
       setItem(key, value) { storage.set(key, value); },
     },
-  };
+  });
   const fetchImpl = options.fetch || (async (url, init) => {
     assert.equal(url, "https://example.test/api/settings");
     assert.equal(init.credentials, "same-origin");
@@ -105,6 +105,12 @@ function createContext(options = {}) {
     }),
     URL,
     Date,
+    queueMicrotask,
+    CustomEvent: class {
+      constructor(type, init = {}) { this.type = type; this.detail = init.detail; this.bubbles = init.bubbles; }
+    },
+    setTimeout,
+
     AbortController,
     console,
     fetch: fetchImpl,
@@ -136,11 +142,14 @@ function createContext(options = {}) {
   };
   vm.createContext(context);
   vm.runInContext(`(function(){${source}\nwindow.__test_mountAllControllers = mountAllControllers;})();`, context);
-  return { context, writes, timers, document, button, storage, aborts };
+  const inputSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "controller-input.ts"), "utf8");
+  context.loadScriptTag = async () => vm.runInContext(inputSource, context);
+  window.__gosx.document = { get: () => ({ assets: { runtime: { bootstrapControllerInputPath: options.inputPath || "" } } }) };
+  return { context, writes, timers, document, button, storage, aborts, sharedValues, subscribers };
 }
 
 test("declarative controller handles signals, keys, timers, fetch, storage, and dispose", async () => {
-  const env = createContext();
+  const env = createContext({ inputPath: "/gosx/bootstrap-controller-input.js" });
   const manifest = {
     controllers: [{
       id: "gosx-controller-0",
