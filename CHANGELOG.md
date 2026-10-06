@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
   revalidation window. Cookie and authorization bypasses now render the origin
