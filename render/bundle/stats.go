@@ -3,6 +3,8 @@ package bundle
 import (
 	"sort"
 	"sync"
+
+	"m31labs.dev/gosx/engine"
 )
 
 // frameSampleCapacity is the size of the rolling frame-time window. 120
@@ -23,6 +25,10 @@ type FrameStats struct {
 	// FrameCount is a monotonic counter of Frame() calls that successfully
 	// recorded at least one pass.
 	FrameCount uint64
+
+	// MaterialFallbacks reports authored custom mesh programs replaced by the
+	// standard shader in the most recent frame.
+	MaterialFallbacks []engine.RenderDiagnostic
 
 	// LastFrameMS is the wall-clock duration of the most recent frame, in
 	// milliseconds. Zero on the first frame.
@@ -64,6 +70,8 @@ type frameStatsRecorder struct {
 	totalFrames  uint64
 	droppedCount uint64
 	lastFrameSec float64
+
+	materialFallbacks []engine.RenderDiagnostic
 
 	deviceLost       bool
 	deviceLostReason string
@@ -109,6 +117,7 @@ func (s *frameStatsRecorder) snapshot() FrameStats {
 	copy(samples, s.samples[:active])
 	out := FrameStats{
 		FrameCount:        s.totalFrames,
+		MaterialFallbacks: append([]engine.RenderDiagnostic(nil), s.materialFallbacks...),
 		LastFrameMS:       s.lastFrameSec * 1000,
 		DroppedCount:      s.droppedCount,
 		DeviceLost:        s.deviceLost,
@@ -148,4 +157,10 @@ func (s *frameStatsRecorder) isLost() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.deviceLost
+}
+
+func (s *frameStatsRecorder) setMaterialFallbacks(diagnostics []engine.RenderDiagnostic) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.materialFallbacks = diagnostics
 }

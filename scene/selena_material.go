@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"strings"
 
+	"m31labs.dev/gosx/engine"
+
 	"m31labs.dev/selena"
 	"m31labs.dev/selena/bindings"
 	"m31labs.dev/selena/parse"
@@ -18,6 +20,9 @@ type SelenaMaterialOptions struct {
 	Material string
 	Standard StandardMaterial
 	Uniforms map[string]any
+	// Targets adds artifacts to transport alongside the browser programs.
+	// Use selena.AllTargets() to retain Metal and GLES for native adapters.
+	Targets []selena.Target
 }
 
 // SelenaCompiledMaterial is one Scene3D material produced from a Selena source
@@ -93,7 +98,7 @@ func SelenaUniforms(values any) (map[string]any, error) {
 func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
-		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+		Targets:  selenaMaterialTargets(opts),
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -124,7 +129,7 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 	for _, opts := range materials {
 		result, err := selena.CompileProgram(program, selena.CompileOptions{
 			Material: opts.Material,
-			Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+			Targets:  selenaMaterialTargets(opts),
 		})
 		if err != nil {
 			label := opts.Material
@@ -155,7 +160,7 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
-		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+		Targets:  selenaMaterialTargets(opts),
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -204,7 +209,7 @@ func CompileSelenaParticleRender(source []byte, opts SelenaMaterialOptions) (Cus
 func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
-		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+		Targets:  selenaMaterialTargets(opts),
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -271,6 +276,15 @@ func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (Cus
 		VertexWGSL:       wgsl.Source,
 		FragmentWGSL:     wgsl.Source,
 		Uniforms:         selenaUniforms(result.Layout, opts.Uniforms),
+	}
+	if len(opts.Targets) > 0 {
+		programs := make(map[string]any, len(result.Artifacts))
+		for _, artifact := range result.Artifacts {
+			programs[string(artifact.Target)] = engine.ShaderProgram{
+				Source: artifact.Source, Vertex: artifact.Vertex, Fragment: artifact.Fragment,
+			}
+		}
+		material.ShaderLayout["programs"] = programs
 	}
 	if material.Wireframe == nil {
 		material.Wireframe = Bool(false)
@@ -463,4 +477,29 @@ func lowerFirstASCII(value string) string {
 		b[0] += 'a' - 'A'
 	}
 	return string(b)
+}
+
+func selenaMaterialTargets(opts SelenaMaterialOptions) []selena.Target {
+	targets := []selena.Target{selena.TargetWGSL, selena.TargetGLSL}
+	for _, target := range opts.Targets {
+		found := false
+		for _, existing := range targets {
+			found = found || existing == target
+		}
+		if !found {
+			targets = append(targets, target)
+		}
+	}
+	return targets
+}
+
+// ShaderProgram returns an authored target artifact retained in the descriptor.
+// Availability describes transport, not execution support on the current host.
+func (m CustomMaterial) ShaderProgram(target string) (engine.ShaderProgram, bool) {
+	return engine.ShaderProgramFromLayout(m.ShaderLayout, target)
+}
+
+// ShaderProgram returns a retained target artifact from canonical material IR.
+func (m IRMaterial) ShaderProgram(target string) (engine.ShaderProgram, bool) {
+	return engine.ShaderProgramFromLayout(m.ShaderLayout, target)
 }

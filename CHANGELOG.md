@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Retain requested Selena target artifacts, including Metal and GLES, through
+  canonical IR and native render bundles. Native previews and renderer frame
+  stats report custom mesh programs replaced by the standard shader.
+
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
   revalidation window. Cookie and authorization bypasses now render the origin

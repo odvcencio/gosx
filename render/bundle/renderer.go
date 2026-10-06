@@ -739,6 +739,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	if width <= 0 || height <= 0 {
 		return nil
 	}
+	r.stats.setMaterialFallbacks(MaterialDiagnostics(b))
 	b = applyNativeAnimations(b, timeSeconds)
 	r.updatePickSpans(b)
 	if err := r.prepareMeshStates(b); err != nil {
