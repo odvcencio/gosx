@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
 - Compile Selena browser programs as GLSL ES 3.00 for WebGL2, including derivative
   shaders. Match post vertices to the WebGL quad and bottom-left texture origin.
   Expose per-target host requirements while keeping WGSL unchanged.
