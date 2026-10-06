@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
 - Add controller payload projections and named intent events, pointer drag/drop
   with correlated Scene3D/native ray hits, and modal
   focus owners with inert backgrounds and return focus. The input runtime loads
