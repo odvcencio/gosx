@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Compile Selena browser programs as GLSL ES 3.00 for WebGL2, including derivative
+  shaders. Expose per-target host requirements while keeping WGSL unchanged.
+
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
   revalidation window. Cookie and authorization bypasses now render the origin

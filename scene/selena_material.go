@@ -88,12 +88,12 @@ func SelenaUniforms(values any) (map[string]any, error) {
 
 // CompileSelenaMaterial compiles Selena .sel source into GoSX's native
 // CustomMaterial transport. Selena is Scene3D's default shader authoring
-// backend: the returned material carries GLSL for WebGL and WGSL for WebGPU,
+// backend: the returned material carries GLSL ES 3.00 for WebGL2 and WGSL for WebGPU,
 // plus the binding layout the runtime uses to wire uniforms and textures.
 func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
-		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLES},
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -104,7 +104,7 @@ func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMat
 	}
 	material.VertexWGSL = selenaPointsWGSLRuntimeFrameLayout(material.VertexWGSL)
 	material.FragmentWGSL = selenaPointsWGSLRuntimeFrameLayout(material.FragmentWGSL)
-	return material, result.Layout, nil
+	return material, selenaWebGL2Layout(result.Layout), nil
 }
 
 // CompileSelenaBundle compiles one .sel source into an ordered set of Scene3D
@@ -124,7 +124,7 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 	for _, opts := range materials {
 		result, err := selena.CompileProgram(program, selena.CompileOptions{
 			Material: opts.Material,
-			Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+			Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLES},
 		})
 		if err != nil {
 			label := opts.Material
@@ -140,7 +140,7 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 		out = append(out, SelenaCompiledMaterial{
 			Name:     result.Material.Name,
 			Material: material,
-			Layout:   result.Layout,
+			Layout:   selenaWebGL2Layout(result.Layout),
 		})
 	}
 	return out, nil
@@ -155,7 +155,7 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
-		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLES},
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -169,7 +169,7 @@ func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMater
 	}
 	material.VertexWGSL = selenaPointsWGSLRuntimeFrameLayout(material.VertexWGSL)
 	material.FragmentWGSL = selenaPointsWGSLRuntimeFrameLayout(material.FragmentWGSL)
-	return material, result.Layout, nil
+	return material, selenaWebGL2Layout(result.Layout), nil
 }
 
 // CompileSelenaParticleRender compiles a Selena .sel source whose target
@@ -204,7 +204,7 @@ func CompileSelenaParticleRender(source []byte, opts SelenaMaterialOptions) (Cus
 func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
 		Material: opts.Material,
-		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLSL},
+		Targets:  []selena.Target{selena.TargetWGSL, selena.TargetGLES},
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -216,7 +216,7 @@ func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMateria
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
 	}
-	return material, result.Layout, nil
+	return material, selenaWebGL2Layout(result.Layout), nil
 }
 
 func validateSelenaSurfaceKind(result selena.Result, want string) error {
@@ -257,7 +257,7 @@ func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (Cus
 	if !ok || strings.TrimSpace(wgsl.Source) == "" {
 		return CustomMaterial{}, fmt.Errorf("selena material %q did not emit WGSL", result.Material.Name)
 	}
-	glsl, ok := result.Artifact(selena.TargetGLSL)
+	glsl, ok := result.Artifact(selena.TargetGLES)
 	if !ok || strings.TrimSpace(glsl.Vertex) == "" || strings.TrimSpace(glsl.Fragment) == "" {
 		return CustomMaterial{}, fmt.Errorf("selena material %q did not emit GLSL vertex/fragment shaders", result.Material.Name)
 	}
@@ -265,7 +265,7 @@ func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (Cus
 	material := CustomMaterial{
 		StandardMaterial: opts.Standard,
 		ShaderBackend:    "selena",
-		ShaderLayout:     selenaLayoutMap(result.Layout),
+		ShaderLayout:     selenaWebGL2LayoutMap(result.Layout),
 		VertexGLSL:       glsl.Vertex,
 		FragmentGLSL:     glsl.Fragment,
 		VertexWGSL:       wgsl.Source,
@@ -463,4 +463,33 @@ func lowerFirstASCII(value string) string {
 		b[0] += 'a' - 'A'
 	}
 	return string(b)
+}
+
+// SelenaTargetRequirements removes contracts provided by the target's core
+// shader language. Scene-color mip requirements apply to every target.
+func SelenaTargetRequirements(layout bindings.Layout, target selena.Target) bindings.Requirements {
+	requires := layout.Requires
+	if target != selena.TargetGLSL {
+		requires.GLExtensions = nil
+		requires.GLSceneSizeUniform = ""
+	} else {
+		requires.GLExtensions = append([]string(nil), requires.GLExtensions...)
+	}
+	return requires
+}
+
+func selenaWebGL2Layout(layout bindings.Layout) bindings.Layout {
+	layout.Requires = SelenaTargetRequirements(layout, selena.TargetGLES)
+	return layout
+}
+
+func selenaWebGL2LayoutMap(layout bindings.Layout) map[string]any {
+	out := selenaLayoutMap(selenaWebGL2Layout(layout))
+	out["webglTarget"] = string(selena.TargetGLES)
+	requires := make(map[string]any)
+	for _, target := range selena.AllTargets() {
+		requires[string(target)] = SelenaTargetRequirements(layout, target)
+	}
+	out["targetRequires"] = requires
+	return out
 }

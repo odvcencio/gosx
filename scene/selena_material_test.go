@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/scene/capability"
+	"m31labs.dev/selena"
+	"m31labs.dev/selena/bindings"
 )
 
 const selenaDefaultsSource = `
@@ -456,5 +458,54 @@ func TestCompileSelenaPostRejectsNonPostKind(t *testing.T) {
 func TestSelenaSurfaceKindReportsMissingMetadata(t *testing.T) {
 	if kind, ok := selenaSurfaceKind(struct{ Material string }{Material: "Legacy"}); ok || kind != "" {
 		t.Fatalf("selenaSurfaceKind legacy layout = %q ok=%v, want missing metadata", kind, ok)
+	}
+}
+
+const selenaDerivativeSource = `material Filtered {
+    surface(geo) -> color {
+        let edge = fwidth(geo.uv.x)
+        return rgb(edge, edge, edge)
+    }
+}`
+
+func TestSelenaWebGL2DialectAndTargetRequirements(t *testing.T) {
+	material, layout, err := CompileSelenaMaterial([]byte(selenaDerivativeSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{material.VertexGLSL, material.FragmentGLSL} {
+		if !strings.HasPrefix(source, "#version 300 es") {
+			t.Fatal("WebGL2 shader must use GLSL ES 3.00")
+		}
+		if strings.Contains(source, "GL_OES_standard_derivatives") {
+			t.Fatal("WebGL2 derivatives are core")
+		}
+	}
+	if !strings.Contains(material.FragmentGLSL, "fwidth") {
+		t.Fatal("derivative was lost")
+	}
+	if len(layout.Requires.GLExtensions) != 0 {
+		t.Fatal("returned WebGL2 layout requests WebGL1 extension")
+	}
+	if material.ShaderLayout["webglTarget"] != "gles" {
+		t.Fatal("missing target identity")
+	}
+	original := bindings.Layout{Requires: bindings.Requirements{
+		GLExtensions: []string{"OES_standard_derivatives"}, GLSceneSizeUniform: "sceneSize", SceneColorMips: true,
+	}}
+	for _, target := range selena.AllTargets() {
+		r := SelenaTargetRequirements(original, target)
+		if !r.SceneColorMips {
+			t.Fatalf("%s lost mip contract", target)
+		}
+		if (len(r.GLExtensions) > 0) != (target == selena.TargetGLSL) {
+			t.Fatalf("%s extension contract: %+v", target, r)
+		}
+		if (r.GLSceneSizeUniform != "") != (target == selena.TargetGLSL) {
+			t.Fatalf("%s size contract: %+v", target, r)
+		}
+	}
+	if len(original.Requires.GLExtensions) != 1 {
+		t.Fatal("mutated original descriptor")
 	}
 }
