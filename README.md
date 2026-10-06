@@ -616,7 +616,7 @@ separate release-pinned hardware certification obligation in that contract.
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
   To retain native programs, set `SelenaMaterialOptions.Targets: selena.AllTargets()`.
   `CustomMaterial.ShaderProgram(target)`, `IRMaterial.ShaderProgram(target)`, and
-  `engine.RenderMaterial.ShaderProgram(target)` read the same target artifact
+  `engine.RenderMaterial.ShaderProgram(target)` let native host adapters read the same artifact
   through JSON and native render bundles. Source and binding descriptors travel
   together in `shaderLayout.programs`. Default browser materials avoid duplicating
   shader sources. Transport does not imply execution: the current native mesh

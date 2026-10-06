@@ -1,7 +1,10 @@
+//go:build !js || !wasm
+
 package bundle
 
 import (
 	"fmt"
+
 	"m31labs.dev/gosx/engine"
 )
 
@@ -16,7 +19,7 @@ func MaterialDiagnostics(b engine.RenderBundle) []engine.RenderDiagnostic {
 		}
 		var targets []string
 		for _, target := range []string{"wgsl", "glsl", "metal", "gles"} {
-			if _, ok := material.ShaderProgram(target); ok {
+			if _, ok := engine.ShaderProgramFromLayout(material.ShaderLayout, target); ok {
 				targets = append(targets, target)
 			}
 		}
