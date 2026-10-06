@@ -39,9 +39,9 @@ func TestRoutingAndRedirects(t *testing.T) {
 }
 
 func TestHTMLKeepsScriptTextAndPrefixesURLAttributes(t *testing.T) {
-	src := `<!doctype html><a href="/next?q=1&amp;x=2#top">/text</a><img srcset="/a.png 1x, /b.png 2x"><form action="/save"><button formaction="/other" data-gosx-action="POST /api">Save</button></form><script nonce="abc">const url="/untouched";</script><script id="json" type="application/json">{"url":"/untouched"}</script><link href="//cdn.example/style.css">`
+	src := `<!doctype html><a href="/next?q=1&amp;x=2#top">/text</a><img srcset="/a.png 1x, /b.png 2x"><div data-gosx-region-url="/fragment?q=1"></div><form action="/save"><button formaction="/other" data-gosx-action="POST /api">Save</button></form><script nonce="abc">const url="/untouched";</script><script id="json" type="application/json">{"url":"/untouched"}</script><link href="//cdn.example/style.css">`
 	got := HTML("/game", src)
-	for _, want := range []string{`href="/game/next?q=1&amp;x=2#top"`, `srcset="/game/a.png 1x, /game/b.png 2x"`, `action="/game/save"`, `formaction="/game/other"`, `data-gosx-action="POST /game/api"`, `const url="/untouched";`, `{"url":"/untouched"}`, `href="//cdn.example/style.css"`} {
+	for _, want := range []string{`href="/game/next?q=1&amp;x=2#top"`, `srcset="/game/a.png 1x, /game/b.png 2x"`, `data-gosx-region-url="/game/fragment?q=1"`, `action="/game/save"`, `formaction="/game/other"`, `data-gosx-action="POST /game/api"`, `const url="/untouched";`, `{"url":"/untouched"}`, `href="//cdn.example/style.css"`} {
 		if !strings.Contains(got, want) {
 			t.Errorf("missing %s in %s", want, got)
 		}
@@ -56,5 +56,21 @@ func TestMountRootRedirectPreservesQuery(t *testing.T) {
 	Handler("/game", false, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("noncanonical mount root dispatched") })).ServeHTTP(w, httptest.NewRequest("GET", "/game?instance=1", nil))
 	if w.Code != http.StatusPermanentRedirect || w.Header().Get("Location") != "/game/?instance=1" {
 		t.Fatal(w.Code, w.Header())
+	}
+}
+
+func TestExportDiscoveryDoesNotExposeUnprefixedPages(t *testing.T) {
+	for _, export := range []string{"", "1"} {
+		t.Setenv("GOSX_STATIC_EXPORT", export)
+		handler := Handler("/.proxy/game", false, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { t.Fatal("outside-prefix request reached page") }))
+		res := httptest.NewRecorder()
+		handler.ServeHTTP(res, httptest.NewRequest("GET", "/readyz", nil))
+		want := ""
+		if export == "1" {
+			want = "/.proxy/game"
+		}
+		if res.Code != 404 || res.Header().Get(ExportPrefixHeader) != want {
+			t.Fatal(res.Code, res.Header())
+		}
 	}
 }

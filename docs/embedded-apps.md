@@ -109,7 +109,11 @@ Keep page routes and local URLs root-relative: `/tables`, `/images/tile.png`,
 links, forms, images, preload hints, scripts, and framework navigation targets.
 It prefixes island programs, compute programs, engine bundles, shared WASM,
 controller resources, texture variants, and hub WebSocket paths in manifests.
-Lazy bootstrap feature loads also use the prefix.
+Lazy bootstrap feature loads, the inline Scene3D WebGPU loader, and client-event
+telemetry also use the prefix. Reactive island patches keep
+that prefix when updating or creating URL attributes, and region refreshes use
+the prefixed `data-gosx-region-url`. Texture manifests retain authored lookup
+keys and add public keys so model-relative glTF images can select variants.
 
 Native HTTP redirects and managed action JSON redirects receive the same prefix.
 Query strings and fragments survive, and an already prefixed URL is not prefixed
@@ -157,6 +161,15 @@ assets, and builds the server and client bundles without starting the server.
 It also clears stale exported HTML from a previous build. Pages explicitly
 selected for prerendering still use the existing startup and readiness checks.
 
+Production builds discover the server's base path in the local export process.
+Both proxy modes produce the same public paths: with `/.proxy/game`, the home
+page is `dist/static/.proxy/game/index.html`, with assets under the same mount.
+Exported links remain relative to each public page directory; base path metadata
+stays absolute for hydration. `export.json` records `basePath`, public page URLs,
+and their output files. ISR maps these URLs to internal routes and preserves the
+prefix when regenerating cold or stale artifacts. Keep `SetBasePath` consistent
+between the build and deployment.
+
 Install the CLI at the same module version as your app, including when you pin a
 pseudo-version. The version guard compares the installed GoSX module version
 from the binary's build information; local development binaries retain the
@@ -177,3 +190,16 @@ GOWORK=off go test -tags e2e ./e2e -run '^TestEmbeddedAppUnderPrefix$' -count=1
 
 Set `GOSX_CHROME_BIN` when Chrome is installed outside the usual executable path.
 The test uses local TLS fixtures and does not require a Discord account.
+
+`TestPrefixedProductionBuild` builds a production app with prerendered pages,
+scoped CSS, a strict island, ISR, and Scene3D textures. It validates emitted URLs
+and asset responses, clicks the hydrated island in an iframe, refreshes a region,
+selects a model-relative texture through the shipped glTF loader, and repeats URL
+validation after cold and stale ISR regeneration:
+
+```sh
+GOWORK=off go test -tags e2e ./e2e -run '^TestPrefixedProductionBuild$' -count=1
+```
+
+This production test requires TinyGo and Chrome. The prerender unit regression
+also exercises both prefix-preserving and prefix-stripping proxies.

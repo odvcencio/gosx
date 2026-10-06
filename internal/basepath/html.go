@@ -30,7 +30,7 @@ func HTML(prefix, markup string) string {
 			a := &token.Attr[i]
 			value := a.Val
 			switch a.Key {
-			case "href", "src", "action", "formaction", "poster", "data-gosx-engine-bytecode", "data-gosx-region-src", "data-gosx-revalidate-src", "data-gosx-live-src":
+			case "href", "src", "action", "formaction", "poster", "data-gosx-engine-bytecode", "data-gosx-region-src", "data-gosx-region-url", "data-gosx-revalidate-src", "data-gosx-live-src":
 				a.Val = URL(prefix, value)
 			case "data-gosx-action", "data-gosx-reorder-action", "data-gosx-transfer-action":
 				method, target, ok := strings.Cut(value, " ")

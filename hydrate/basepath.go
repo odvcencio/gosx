@@ -1,6 +1,8 @@
 package hydrate
 
 import (
+	"strings"
+
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/internal/urlpath"
 )
@@ -61,6 +63,24 @@ func (m *Manifest) WithBasePath(prefix string) *Manifest {
 				copies[i].URI = urlpath.URL(prefix, copies[i].URI)
 			}
 			out.TextureVariants[key] = copies
+		}
+		for key := range m.TextureVariants {
+			copies := out.TextureVariants[key]
+			// glTF resolves relative images against the public model URL. Keep
+			// authored keys and also index their public root-relative spelling.
+			if len(key) > 0 && key[0] != '/' && !strings.Contains(key, ":") && !strings.HasPrefix(key, "../") {
+				alias := urlpath.URL(prefix, "/"+key)
+				if _, exists := m.TextureVariants[alias]; !exists {
+					if _, rootKey := m.TextureVariants["/"+key]; !rootKey {
+						out.TextureVariants[alias] = copies
+					}
+				}
+			} else if strings.HasPrefix(key, "/") && !strings.HasPrefix(key, "//") {
+				alias := urlpath.URL(prefix, key)
+				if _, exists := m.TextureVariants[alias]; !exists {
+					out.TextureVariants[alias] = copies
+				}
+			}
 		}
 	}
 	return &out

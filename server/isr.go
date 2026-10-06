@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/session"
 )
 
@@ -31,8 +32,9 @@ type isrConfig struct {
 }
 
 type isrManifest struct {
-	Pages  []string   `json:"pages"`
-	Routes []isrRoute `json:"routes,omitempty"`
+	BasePath string     `json:"basePath,omitempty"`
+	Pages    []string   `json:"pages"`
+	Routes   []isrRoute `json:"routes,omitempty"`
 }
 
 type isrRoute struct {
@@ -336,15 +338,27 @@ func readISRManifest(manifestPath string) (isrManifest, error) {
 }
 
 func routesForISRManifest(manifest isrManifest) []isrRoute {
+	prefix, _ := basepath.Normalize(manifest.BasePath)
+	internalPath := func(public string) string {
+		if prefix != "" && (public == prefix || strings.HasPrefix(public, prefix+"/")) {
+			public = strings.TrimPrefix(public, prefix)
+			if public == "" {
+				return "/"
+			}
+		}
+		return public
+	}
 	if len(manifest.Routes) > 0 {
-		routes := make([]isrRoute, 0, len(manifest.Routes))
-		routes = append(routes, manifest.Routes...)
+		routes := append([]isrRoute(nil), manifest.Routes...)
+		for i := range routes {
+			routes[i].Path = internalPath(routes[i].Path)
+		}
 		return routes
 	}
 	routes := make([]isrRoute, 0, len(manifest.Pages))
 	for _, pagePath := range manifest.Pages {
 		routes = append(routes, isrRoute{
-			Path: pagePath,
+			Path: internalPath(pagePath),
 			File: buildmanifest.ExportFilePath(pagePath),
 		})
 	}

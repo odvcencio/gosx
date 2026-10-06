@@ -814,3 +814,30 @@ test("patch applier visits far fewer child nodes with the batch cache", () => {
       `${batched.stats.childVisits} vs ${perOp.stats.childVisits}`,
   );
 });
+
+for (const [label, source] of [["authority", patchAuthoritySource], ["bundle", patchSource]]) {
+  test(`prefixed island URL updates and inserted elements (${label})`, () => {
+    const scene = buildScene((root, doc) => root.appendChild(doc.createElement("a")), source);
+    scene.doc.querySelector = () => ({ getAttribute: () => "/.proxy/game" });
+    const attrs = {
+      href: ["/next?q=1#top", "/.proxy/game/next?q=1#top"],
+      src: ["/image.png", "/.proxy/game/image.png"],
+      srcset: ["/a.png 1x, /b.png 2x", "/.proxy/game/a.png 1x, /.proxy/game/b.png 2x"],
+      formaction: ["/save", "/.proxy/game/save"],
+      "data-gosx-action": ["POST /api/save", "POST /.proxy/game/api/save"],
+      "data-gosx-region-url": ["/fragment", "/.proxy/game/fragment"],
+      "data-label": ["/plain", "/plain"],
+    };
+    scene.apply("island", JSON.stringify(Object.entries(attrs).map(([attrName, [text]]) => ({kind: 1, path: "0", attrName, text}))));
+    for (const [name, [, expected]] of Object.entries(attrs)) assert.equal(scene.root.kids[0].getAttribute(name), expected);
+    scene.apply("island", JSON.stringify([
+      {kind: 3, path: "", tag: "a", children: [1]},
+      {kind: 1, path: "1", attrName: "href", text: "/created"},
+    ]));
+    assert.equal(scene.root.kids[1].getAttribute("href"), "/.proxy/game/created");
+    for (const text of ["/.proxy/game/next", "//cdn.example/next", "https://example.test/next", "relative", "#local"]) {
+      scene.apply("island", JSON.stringify([{kind: 1, path: "0", attrName: "href", text}]));
+      assert.equal(scene.root.kids[0].getAttribute("href"), text);
+    }
+  });
+}

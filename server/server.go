@@ -559,9 +559,9 @@ func (a *App) Build() http.Handler {
 	a.registerRewriteRoutes(rewriteMux, dispatch)
 	// Regeneration must observe the same auth/session and cache boundaries as
 	// a normal request. It never calls the ISR lookup recursively.
-	regeneration := a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	regeneration := basepath.Handler(a.basePath, true, a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		dispatch(w, r, true)
-	}))
+	})))
 	regenerate := func(w http.ResponseWriter, r *http.Request, _ bool) {
 		regeneration.ServeHTTP(w, r)
 	}

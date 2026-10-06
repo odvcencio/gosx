@@ -6,12 +6,17 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 
 	"m31labs.dev/gosx/internal/urlpath"
 )
 
 type contextKey struct{}
+
+// Export headers let the local static-export harness discover the public mount.
+const ExportPrefixHeader = "X-GoSX-Export-Base-Path"
+const ExportStripHeader = "X-GoSX-Export-Proxy-Strips-Prefix"
 
 func FromRequest(r *http.Request) string {
 	if r == nil {
@@ -30,7 +35,16 @@ func Handler(prefix string, proxyStripsPrefix bool, next http.Handler) http.Hand
 	if prefix == "" {
 		return next
 	}
+	export := os.Getenv("GOSX_STATIC_EXPORT") == "1"
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The local exporter connects before the deployment proxy exists. Even
+		// an outside-mount 404 supplies discovery metadata in this build mode.
+		if export {
+			w.Header().Set(ExportPrefixHeader, prefix)
+			if proxyStripsPrefix {
+				w.Header().Set(ExportStripHeader, "1")
+			}
+		}
 		if existing := FromRequest(r); existing != "" {
 			if existing != prefix {
 				http.Error(w, "conflicting base paths", http.StatusInternalServerError)

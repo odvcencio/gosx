@@ -18,12 +18,14 @@ import (
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/internal/localapp"
 	"m31labs.dev/gosx/route"
 )
 
 type exportManifest struct {
+	BasePath  string        `json:"basePath,omitempty"`
 	Pages     []string      `json:"pages"`
 	Routes    []exportRoute `json:"routes,omitempty"`
 	AssetRefs []string      `json:"-"`
@@ -61,6 +63,39 @@ type staticExportOptions struct {
 var errPrivateExportPage = errors.New("response is not shared-cacheable")
 var errDynamicExportPage = errors.New("route requires request-time rendering")
 
+type exportMount struct {
+	prefix string
+	strips bool
+}
+
+func (m exportMount) upstreamURL(public string) string {
+	if m.strips && (public == m.prefix || strings.HasPrefix(public, m.prefix+"/")) {
+		public = strings.TrimPrefix(public, m.prefix)
+		if public == "" {
+			return "/"
+		}
+	}
+	return public
+}
+
+func discoverExportMount(client *http.Client, origin string) (exportMount, error) {
+	for _, discoveryPath := range []string{"/readyz", "/"} {
+		res, err := client.Get(origin + discoveryPath)
+		if err != nil {
+			return exportMount{}, fmt.Errorf("discover export base path: %w", err)
+		}
+		prefix, err := basepath.Normalize(res.Header.Get(basepath.ExportPrefixHeader))
+		res.Body.Close()
+		if err != nil {
+			return exportMount{}, err
+		}
+		if prefix != "" {
+			return exportMount{prefix: prefix, strips: res.Header.Get(basepath.ExportStripHeader) == "1"}, nil
+		}
+	}
+	return exportMount{}, nil
+}
+
 func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	appRoot, err := filepath.Abs(opts.AppRoot)
 	if err != nil {
@@ -90,11 +125,10 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	if err := os.MkdirAll(outputDir, 0755); err != nil {
 		return exportManifest{}, fmt.Errorf("create export dir: %w", err)
 	}
-	if err := bundlepolicy.CopyTree(filepath.Join(appRoot, "public"), outputDir, bundlepolicy.RootPublic, opts.BundlePolicy); err != nil {
-		return exportManifest{}, fmt.Errorf("copy public assets: %w", err)
-	}
-
 	if len(routes) == 0 {
+		if err := bundlepolicy.CopyTree(filepath.Join(appRoot, "public"), outputDir, bundlepolicy.RootPublic, opts.BundlePolicy); err != nil {
+			return exportManifest{}, fmt.Errorf("copy public assets: %w", err)
+		}
 		manifest := exportManifest{Pages: pages}
 		if opts.StageAssets != nil {
 			if err := opts.StageAssets(outputDir, manifest); err != nil {
@@ -137,11 +171,26 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
+	mount, err := discoverExportMount(client, baseURL)
+	if err != nil {
+		return exportManifest{}, err
+	}
+	contentDir := filepath.Join(outputDir, filepath.FromSlash(strings.TrimPrefix(mount.prefix, "/")))
+	// Assets and pages share the public mount on a static host.
+	if err := os.MkdirAll(contentDir, 0755); err != nil {
+		return exportManifest{}, err
+	}
+	if err := bundlepolicy.CopyTree(filepath.Join(appRoot, "public"), contentDir, bundlepolicy.RootPublic, opts.BundlePolicy); err != nil {
+		return exportManifest{}, fmt.Errorf("copy public assets: %w", err)
+	}
 	assetRefs := map[string]struct{}{}
 	fileCSSAssets := map[string]bool{}
 	exportedRoutes := make([]exportRoute, 0, len(routes))
 	for _, entry := range routes {
-		pageHTML, status, headers, err := fetchExportPageResponse(client, baseURL+entry.Path)
+		internalPath := entry.Path
+		entry.Path = basepath.URL(mount.prefix, internalPath)
+		entry.File = buildmanifest.ExportFilePath(entry.Path)
+		pageHTML, status, headers, err := fetchExportPageResponse(client, baseURL+mount.upstreamURL(entry.Path))
 		if errors.Is(err, errDynamicExportPage) {
 			continue
 		}
@@ -161,7 +210,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 			fmt.Fprintln(os.Stderr, prerenderLoadWarning(entry.Path))
 		}
 		entry.Capabilities = routeCapabilitiesFromHTML(pageHTML)
-		if err := stageExportFileCSS(client, baseURL, outputDir, pageHTML, fileCSSAssets); err != nil {
+		if err := stageExportFileCSS(client, baseURL, outputDir, pageHTML, fileCSSAssets, mount); err != nil {
 			return exportManifest{}, fmt.Errorf("export %s stylesheets: %w", entry.Path, err)
 		}
 		addExportRuntimeAssetRefs(assetRefs, pageHTML)
@@ -169,30 +218,30 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite %s: %w", entry.Path, err)
 		}
-		if err := writeExportPage(outputDir, entry.Path, pageHTML); err != nil {
+		if err := writeExportPage(contentDir, internalPath, pageHTML); err != nil {
 			return exportManifest{}, err
 		}
 		pages = append(pages, entry.Path)
 		exportedRoutes = append(exportedRoutes, entry)
 	}
 
-	if missingHTML, status, err := fetchExportPageWithStatus(client, baseURL+"/__gosx_export_missing__"); err == nil && status == http.StatusNotFound {
-		if err := stageExportFileCSS(client, baseURL, outputDir, missingHTML, fileCSSAssets); err != nil {
+	if missingHTML, status, err := fetchExportPageWithStatus(client, baseURL+mount.upstreamURL(basepath.URL(mount.prefix, "/__gosx_export_missing__"))); err == nil && status == http.StatusNotFound {
+		if err := stageExportFileCSS(client, baseURL, outputDir, missingHTML, fileCSSAssets, mount); err != nil {
 			return exportManifest{}, fmt.Errorf("export 404 stylesheets: %w", err)
 		}
 		addExportRuntimeAssetRefs(assetRefs, missingHTML)
-		missingHTML, err = rewriteStaticExportHTML("/", missingHTML)
+		missingHTML, err = rewriteStaticExportHTML(basepath.URL(mount.prefix, "/"), missingHTML)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite 404 page: %w", err)
 		}
-		if err := os.WriteFile(filepath.Join(outputDir, "404.html"), []byte(missingHTML), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(contentDir, "404.html"), []byte(missingHTML), 0644); err != nil {
 			return exportManifest{}, fmt.Errorf("write 404.html: %w", err)
 		}
 	}
 
-	manifest := exportManifest{Pages: pages, Routes: exportedRoutes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
+	manifest := exportManifest{BasePath: mount.prefix, Pages: pages, Routes: exportedRoutes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
 	if opts.StageAssets != nil {
-		if err := opts.StageAssets(outputDir, manifest); err != nil {
+		if err := opts.StageAssets(contentDir, manifest); err != nil {
 			return exportManifest{}, err
 		}
 	}
@@ -598,6 +647,9 @@ func looksLikeExportURLValue(attrs []html.Attribute, value string) bool {
 	for _, attr := range attrs {
 		key := strings.ToLower(attr.Key)
 		val := strings.ToLower(strings.TrimSpace(attr.Val))
+		if key == "name" && val == "gosx-base-path" {
+			return false
+		}
 		if key != "name" && key != "property" && key != "itemprop" {
 			continue
 		}

@@ -34,3 +34,31 @@ func TestManifestBasePathCopiesURLsAndKeepsProps(t *testing.T) {
 		t.Fatal("double prefix")
 	}
 }
+
+func TestTextureVariantsMatchPublicModelRelativePaths(t *testing.T) {
+	m := NewManifest()
+	m.TextureVariants = map[string][]ManifestVariantRef{
+		"assets/wood.png":               {{URI: "/assets/wood.ktx2"}},
+		"/assets/stone.png":             {{URI: "/assets/stone.ktx2"}},
+		"https://cdn.example/other.png": {{URI: "https://cdn.example/other.ktx2"}},
+	}
+	out := m.WithBasePath("/.proxy/game")
+	for _, source := range []string{"wood", "stone"} {
+		// ../assets/<source>.png resolved against /.proxy/game/models/city.gltf.
+		key := "/.proxy/game/assets/" + source + ".png"
+		if refs := out.TextureVariants[key]; len(refs) != 1 || refs[0].URI != "/.proxy/game/assets/"+source+".ktx2" {
+			t.Fatalf("public texture lookup %s: %+v", key, refs)
+		}
+	}
+	if len(m.TextureVariants) != 3 || m.TextureVariants["assets/wood.png"][0].URI != "/assets/wood.ktx2" {
+		t.Fatal("authored manifest mutated")
+	}
+	if len(out.TextureVariants) != 5 {
+		t.Fatal("external key rewritten", out.TextureVariants)
+	}
+	once, _ := out.Marshal()
+	twice, _ := out.WithBasePath("/.proxy/game").Marshal()
+	if string(once) != string(twice) {
+		t.Fatal("public aliases are not idempotent")
+	}
+}

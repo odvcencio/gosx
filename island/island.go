@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"html"
 	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/urlpath"
 	neturl "net/url"
 	"os"
 	"path/filepath"
@@ -1261,7 +1262,7 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 				b.WriteString(`);`)
 			}
 			b.WriteString(`s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
-			b.WriteString(htmlJSStringLiteral(webgpuPath))
+			b.WriteString(htmlJSStringLiteral(urlpath.URL(r.basePath, webgpuPath)))
 			b.WriteString(";document.head.appendChild(s);});};")
 			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")
 			b.WriteString("\x3c/script>")

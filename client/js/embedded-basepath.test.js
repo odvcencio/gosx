@@ -22,3 +22,20 @@ test("lazy features use the configured prefix when document assets are absent", 
  assert.ok(env.fetchCalls.some(call => call.url === "/.proxy/game/gosx/bootstrap-feature-controllers.js"));
  assert.ok(!env.fetchCalls.some(call => call.url.startsWith("/gosx/")));
 });
+
+test("client telemetry uses the configured public prefix", async () => {
+ const env = createContext({fetchRoutes: {"/.proxy/game/_gosx/client-events": {status: 204, text: ""}}});
+ const meta = env.document.createElement("meta");
+ meta.setAttribute("name", "gosx-base-path");
+ meta.setAttribute("content", "/.proxy/game");
+ meta.content = "/.proxy/game";
+ env.document.head.appendChild(meta);
+ env.context.__gosx_telemetry_config = {flushInterval: 0};
+ runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+ await flushAsyncWork();
+ env.context.__gosx_emit("info", "test", "prefix");
+ env.context.__gosx_telemetry_flush();
+ await flushAsyncWork();
+ assert.ok(env.fetchCalls.some(call => new URL(call.url, env.context.location.href).pathname === "/.proxy/game/_gosx/client-events"));
+ assert.ok(!env.fetchCalls.some(call => new URL(call.url, env.context.location.href).pathname === "/_gosx/client-events"));
+});
