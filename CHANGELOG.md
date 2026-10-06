@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
 - Export `signal.NewShared[T]` and `signal.Shared[T]` for typed native Go and
   island authoring. Native calls create independent values; browser lowering
   retains the existing shared `$name` contract.
