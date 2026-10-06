@@ -98,8 +98,10 @@ func TestPrefixedProductionBuild(t *testing.T) {
 		}
 		publicURL := origin + strings.TrimRight(entry.Path, "/") + "/"
 		for _, emitted := range prefixedPageURLs(t, string(body)) {
-			resolved := resolvePrefixedURL(t, publicURL, emitted, prefix)
-			get(resolved)
+			resolved := resolvePrefixedURL(t, publicURL, emitted.value, prefix)
+			if !emitted.websocket {
+				get(resolved)
+			}
 		}
 		if !strings.Contains(string(body), `name="gosx-base-path" content="/.proxy/game"`) {
 			t.Fatal("export rewrote base path metadata")
@@ -109,6 +111,13 @@ func TestPrefixedProductionBuild(t *testing.T) {
 	upstream, _ := url.Parse(origin)
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
 	var escaped atomic.Int32
+	var modelRequests, syncRequests atomic.Int32
+	proxy.ModifyResponse = func(res *http.Response) error {
+		if res.StatusCode == http.StatusSwitchingProtocols && res.Request.URL.Path == prefix+"/video-sync" {
+			syncRequests.Add(1)
+		}
+		return nil
+	}
 	parent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			w.Header().Set("Content-Type", "text/html")
@@ -117,6 +126,9 @@ func TestPrefixedProductionBuild(t *testing.T) {
 		}
 		if !strings.HasPrefix(r.URL.Path, prefix+"/") {
 			escaped.Add(1)
+		}
+		if r.URL.Path == prefix+"/models/city.gltf" {
+			modelRequests.Add(1)
 		}
 		proxy.ServeHTTP(w, r)
 	}))
@@ -134,18 +146,30 @@ func TestPrefixedProductionBuild(t *testing.T) {
 	}
 	poll(frame + `.document.querySelector("#reactive-link")?.href.endsWith("/.proxy/game/news")`)
 	poll(frame + `.__gosx?.islands?.size > 0`)
+	poll(frame + `.document.querySelector("#video video[data-gosx-video=true]")?.getAttribute("src") === "/.proxy/game/media/movie.webm"`)
+	poll(frame + `.document.querySelector("#video video")?.readyState >= 1`)
+	poll(frame + `.document.querySelector("#video video")?.getAttribute("poster") === "/.proxy/game/assets/wood.png"`)
+	poll(frame + `.document.querySelector("#scene")?.getAttribute("data-gosx-scene3d-model-hydration-committed") === "true"`)
+	poll(frame + `.document.querySelector("#scene canvas") != null`)
+	syncDeadline := time.Now().Add(5 * time.Second)
+	for syncRequests.Load() == 0 && time.Now().Before(syncDeadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if modelRequests.Load() == 0 || syncRequests.Load() == 0 {
+		t.Fatalf("built-in engine requests missing: models=%d sync=%d", modelRequests.Load(), syncRequests.Load())
+	}
 	page.eval(t, frame+`.document.querySelector("#update-link").click()`, nil)
 	poll(frame + `.document.querySelector("#reactive-link")?.getAttribute("href") === "/.proxy/game/done"`)
 	poll(frame + `.document.querySelector("#region-refreshed")?.textContent === "refreshed"`)
-	// Load the shipped glTF chunk and use its loader with the emitted manifest.
+	// The mounted Scene3D engine loaded the shipped glTF chunk. Use its loader
+	// with the actual engine props to check a compressed texture variant too.
 	// Explicit renderer evidence makes the selection independent of test hardware.
 	var texture string
 	page.eval(t, `(async () => {
   const w = document.querySelector("iframe").contentWindow;
   const d = w.document;
-  const path = new URL("gosx/bootstrap-feature-scene3d-gltf.js",w.location.href).href;
-  await new Promise((resolve,reject) => { const s=d.createElement("script"); s.src=path; s.nonce=d.querySelector("script[nonce]")?.nonce || ""; s.onload=resolve; s.onerror=reject; d.head.appendChild(s); });
-  const loaded = await w.__gosx_scene3d_gltf_api.sceneLoadGLTFModel(d.querySelector("#model-link").href,{backend:"webgl",uploadReady:true,tokens:["device-feature:texture-compression-bc"]});
+  const engine = JSON.parse(d.querySelector("#gosx-manifest").textContent).engines.find(e => e.component === "GoSXScene3D");
+  const loaded = await w.__gosx_scene3d_gltf_api.sceneLoadGLTFModel(engine.props.scene.models[0].src,{backend:"webgl",uploadReady:true,tokens:["device-feature:texture-compression-bc"]});
   const selected = loaded.objects[0].material.texture;
   if (!(await w.fetch(selected)).ok) throw new Error("selected variant is missing");
   return selected;
@@ -170,7 +194,10 @@ func TestPrefixedProductionBuild(t *testing.T) {
 	check := func(body string) {
 		t.Helper()
 		for _, emitted := range prefixedPageURLs(t, body) {
-			get(resolvePrefixedURL(t, origin+prefix+"/", emitted, prefix))
+			resolved := resolvePrefixedURL(t, origin+prefix+"/", emitted.value, prefix)
+			if !emitted.websocket {
+				get(resolved)
+			}
 		}
 		if !strings.Contains(body, `data-gosx-region-url="/.proxy/game/fragment"`) || !strings.Contains(body, `href="/.proxy/game/news"`) {
 			t.Fatal("ISR lost URL prefix", body)
@@ -220,32 +247,47 @@ func resolvePrefixedURL(t *testing.T, base, value, prefix string) string {
 	return resolved.String()
 }
 
-// Collect URL attributes and URL-bearing runtime/document contract fields.
-// Texture source keys and application props are authored identities, not URLs.
-func prefixedPageURLs(t *testing.T, body string) []string {
+type prefixedPageURL struct {
+	value     string
+	websocket bool
+}
+
+// Collect URL attributes and URL-bearing runtime/document contract fields,
+// including built-in engine props. Custom props and texture keys stay opaque.
+func prefixedPageURLs(t *testing.T, body string) []prefixedPageURL {
 	t.Helper()
 	doc, err := html.Parse(strings.NewReader(body))
 	if err != nil {
 		t.Fatal(err)
 	}
-	var urls []string
-	var jsonURLs func(any)
-	jsonURLs = func(value any) {
+	var urls []prefixedPageURL
+	var jsonURLs func(any, bool)
+	jsonURLs = func(value any, engineProps bool) {
 		switch value := value.(type) {
 		case map[string]any:
 			for key, child := range value {
 				if key == "props" {
+					if value["kind"] == "video" || value["component"] == "GoSXScene3D" {
+						jsonURLs(child, true)
+					}
 					continue
 				}
-				if text, ok := child.(string); ok && (key == "path" || key == "programRef" || key == "uri" || key == "url" || strings.HasSuffix(key, "Path") || strings.HasSuffix(key, "URL")) && text != "" {
-					urls = append(urls, text)
+				known := key == "path" || key == "programRef" || key == "uri" || key == "url" || strings.HasSuffix(key, "Path") || strings.HasSuffix(key, "URL")
+				if engineProps {
+					switch key {
+					case "src", "poster", "sync", "previewSrc", "fullSrc", "envMap", "texture", "normalMap", "roughnessMap", "metalnessMap", "occlusionMap", "emissiveMap", "endpoint", "refreshEndpoint":
+						known = true
+					}
+				}
+				if text, ok := child.(string); ok && known && text != "" {
+					urls = append(urls, prefixedPageURL{value: text, websocket: engineProps && key == "sync"})
 				} else {
-					jsonURLs(child)
+					jsonURLs(child, engineProps)
 				}
 			}
 		case []any:
 			for _, child := range value {
-				jsonURLs(child)
+				jsonURLs(child, engineProps)
 			}
 		}
 	}
@@ -254,19 +296,19 @@ func prefixedPageURLs(t *testing.T, body string) []string {
 		id := ""
 		for _, attr := range node.Attr {
 			if strings.HasPrefix(attr.Key, "data-gosx-scene3d-") && strings.HasSuffix(attr.Key, "-url") {
-				urls = append(urls, attr.Val)
+				urls = append(urls, prefixedPageURL{value: attr.Val})
 			}
 			switch attr.Key {
 			case "id":
 				id = attr.Val
 			case "href", "src", "action", "formaction", "poster", "data-gosx-region-url", "data-gosx-engine-bytecode":
 				if attr.Val != "" {
-					urls = append(urls, attr.Val)
+					urls = append(urls, prefixedPageURL{value: attr.Val})
 				}
 			case "srcset":
 				for _, candidate := range strings.Split(attr.Val, ",") {
 					if fields := strings.Fields(candidate); len(fields) > 0 {
-						urls = append(urls, fields[0])
+						urls = append(urls, prefixedPageURL{value: fields[0]})
 					}
 				}
 			}
@@ -277,9 +319,9 @@ func prefixedPageURLs(t *testing.T, body string) []string {
 				t.Fatal(err)
 			}
 			if id == "gosx-document" {
-				jsonURLs(payload["assets"])
+				jsonURLs(payload["assets"], false)
 			} else {
-				jsonURLs(payload)
+				jsonURLs(payload, false)
 			}
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {

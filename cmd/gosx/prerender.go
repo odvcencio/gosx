@@ -68,6 +68,12 @@ type exportMount struct {
 	strips bool
 }
 
+// publicPath converts a known internal route. It must prepend the mount even
+// when that route itself equals or starts with the prefix.
+func (m exportMount) publicPath(internal string) string {
+	return m.prefix + internal
+}
+
 func (m exportMount) upstreamURL(public string) string {
 	if m.strips && (public == m.prefix || strings.HasPrefix(public, m.prefix+"/")) {
 		public = strings.TrimPrefix(public, m.prefix)
@@ -188,7 +194,7 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	exportedRoutes := make([]exportRoute, 0, len(routes))
 	for _, entry := range routes {
 		internalPath := entry.Path
-		entry.Path = basepath.URL(mount.prefix, internalPath)
+		entry.Path = mount.publicPath(internalPath)
 		entry.File = buildmanifest.ExportFilePath(entry.Path)
 		pageHTML, status, headers, err := fetchExportPageResponse(client, baseURL+mount.upstreamURL(entry.Path))
 		if errors.Is(err, errDynamicExportPage) {
@@ -225,12 +231,12 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		exportedRoutes = append(exportedRoutes, entry)
 	}
 
-	if missingHTML, status, err := fetchExportPageWithStatus(client, baseURL+mount.upstreamURL(basepath.URL(mount.prefix, "/__gosx_export_missing__"))); err == nil && status == http.StatusNotFound {
+	if missingHTML, status, err := fetchExportPageWithStatus(client, baseURL+mount.upstreamURL(mount.publicPath("/__gosx_export_missing__"))); err == nil && status == http.StatusNotFound {
 		if err := stageExportFileCSS(client, baseURL, outputDir, missingHTML, fileCSSAssets, mount); err != nil {
 			return exportManifest{}, fmt.Errorf("export 404 stylesheets: %w", err)
 		}
 		addExportRuntimeAssetRefs(assetRefs, missingHTML)
-		missingHTML, err = rewriteStaticExportHTML(basepath.URL(mount.prefix, "/"), missingHTML)
+		missingHTML, err = rewriteStaticExportHTML(mount.publicPath("/"), missingHTML)
 		if err != nil {
 			return exportManifest{}, fmt.Errorf("rewrite 404 page: %w", err)
 		}

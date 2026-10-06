@@ -114,6 +114,10 @@ telemetry also use the prefix. Reactive island patches keep
 that prefix when updating or creating URL attributes, and region refreshes use
 the prefixed `data-gosx-region-url`. Texture manifests retain authored lookup
 keys and add public keys so model-relative glTF images can select variants.
+Built-in Video props carry prefixed media, poster, subtitle, telemetry, and sync
+URLs. Scene3D props carry prefixed model, material texture, sprite, and environment
+URLs, including progressive model sources and typed texture descriptors. Hydration
+uses the same public URLs as server rendering; custom engine props stay opaque.
 
 Native HTTP redirects and managed action JSON redirects receive the same prefix.
 Query strings and fragments survive, and an already prefixed URL is not prefixed
@@ -162,6 +166,8 @@ It also clears stale exported HTML from a previous build. Pages explicitly
 selected for prerendering still use the existing startup and readiness checks.
 
 Production builds discover the server's base path in the local export process.
+An internal route is always appended to the mount: prefix `/news` and route
+`/news` export at `/news/news`, with an artifact at `news/news/index.html`.
 Both proxy modes produce the same public paths: with `/.proxy/game`, the home
 page is `dist/static/.proxy/game/index.html`, with assets under the same mount.
 Exported links remain relative to each public page directory; base path metadata

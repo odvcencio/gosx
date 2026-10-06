@@ -27,6 +27,7 @@ func (m *Manifest) WithBasePath(prefix string) *Manifest {
 	out.Engines = append([]EngineEntry(nil), m.Engines...)
 	for i := range out.Engines {
 		out.Engines[i].ProgramRef = urlpath.URL(prefix, out.Engines[i].ProgramRef)
+		out.Engines[i].Props = enginePropsWithBasePath(prefix, out.Engines[i])
 	}
 	out.Hubs = append([]HubEntry(nil), m.Hubs...)
 	for i := range out.Hubs {
