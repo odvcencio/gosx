@@ -272,6 +272,12 @@ func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (Cus
 		FragmentWGSL:     wgsl.Source,
 		Uniforms:         selenaUniforms(result.Layout, opts.Uniforms),
 	}
+	if kind, ok := selenaSurfaceKind(result.Layout); ok && kind == "post" {
+		// GoSX's WebGL post pass binds a_position and draws a four-vertex quad.
+		// Selena's GLES wrapper uses a three-vertex triangle and top-left UVs.
+		// Keep the GLES fragment, and supply the host's bottom-left quad contract.
+		material.VertexGLSL = selenaPostWebGL2Vertex
+	}
 	if material.Wireframe == nil {
 		material.Wireframe = Bool(false)
 	}
@@ -526,3 +532,13 @@ func selenaWebGL2LayoutMap(layout bindings.Layout) map[string]any {
 	out["targetRequires"] = requires
 	return out
 }
+
+const selenaPostWebGL2Vertex = `#version 300 es
+precision highp float;
+layout(location = 0) in vec2 a_position;
+out vec2 v_uv;
+void main() {
+  v_uv = a_position * 0.5 + 0.5;
+  gl_Position = vec4(a_position, 0.0, 1.0);
+}
+`

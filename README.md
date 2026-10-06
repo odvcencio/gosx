@@ -617,7 +617,9 @@ separate release-pinned hardware certification obligation in that contract.
   Selena browser shaders use GLSL ES 3.00 for GoSX's WebGL2 contexts. The returned
   binding layout contains the WebGL2 host requirements. Materials with extra host
   requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(material.ShaderLayout, target)`
-  also exposes requirements for each compiler target. Derivatives need no extension on WebGL2. Shader substitutions
+  also exposes requirements for each compiler target. Post vertices use the renderer's
+  quad and bottom-left texture origin. Derivatives need no extension on WebGL2.
+  Shader substitutions
   appear in the renderer's `data-gosx-scene3d-render-mesh-material-fallback` count
   and its `-detail` attribute, including cached compile failures.
 

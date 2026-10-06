@@ -562,3 +562,16 @@ func TestSelenaTargetRequirementsSurviveJSON(t *testing.T) {
 		t.Fatal("accepted malformed requirements")
 	}
 }
+
+func TestSelenaPostUsesWebGLQuadAndBottomLeftUV(t *testing.T) {
+	material, _, err := CompileSelenaPost([]byte(minimalPostSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(material.VertexGLSL, "in vec2 a_position;") || !strings.Contains(material.VertexGLSL, "v_uv = a_position * 0.5 + 0.5;") || strings.Contains(material.VertexGLSL, "gl_VertexID") {
+		t.Fatalf("wrong WebGL post contract: %s", material.VertexGLSL)
+	}
+	if !strings.HasPrefix(material.FragmentGLSL, "#version 300 es") {
+		t.Fatal("post fragment must retain GLES3")
+	}
+}
