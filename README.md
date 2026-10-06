@@ -367,6 +367,20 @@ $theme   // shared: all islands react to changes
 count    // local to the declaring island
 ```
 
+Declare shared state in Go with `signal.NewShared("selection", initial)` or its
+alias `signal.Shared`. Both return `*signal.Signal[T]` and support explicit type
+arguments. The compiler lowers `"selection"` and `"$selection"` to the same
+browser signal, `$selection`, without renaming the Go variable:
+
+```go
+selection := signal.NewShared("selection", "")
+selection.Set("tile-1")
+```
+
+Native Go creates a fresh signal on every call, even for the same name. Keep
+these declarations inside the request or component; they do not share server
+state between requests. Browser sharing is scoped to the page runtime.
+
 ## Server Features
 
 **Sessions and Auth** — Cookie-backed sessions with HMAC-SHA256 signing, optional AES-GCM encryption, previous-secret rotation, CSRF protection with constant-time token comparison, and flash values. Auth supports sessions, magic links, OAuth 2.0 (GitHub, Google), and WebAuthn/Passkeys.
