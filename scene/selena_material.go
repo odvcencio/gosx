@@ -465,9 +465,39 @@ func lowerFirstASCII(value string) string {
 	return string(b)
 }
 
-// SelenaTargetRequirements removes contracts provided by the target's core
-// shader language. Scene-color mip requirements apply to every target.
-func SelenaTargetRequirements(layout bindings.Layout, target selena.Target) bindings.Requirements {
+// SelenaTargetRequirements reads a target's host contract from a transported
+// shaderLayout descriptor. A descriptor without targetRequires has no extra
+// host requirements. It accepts both authored Go values and JSON-decoded maps.
+func SelenaTargetRequirements(layout map[string]any, target selena.Target) (bindings.Requirements, error) {
+	switch target {
+	case selena.TargetWGSL, selena.TargetGLSL, selena.TargetMetal, selena.TargetGLES:
+	default:
+		return bindings.Requirements{}, fmt.Errorf("unknown Selena target %q", target)
+	}
+	value, exists := layout["targetRequires"]
+	if !exists {
+		return bindings.Requirements{}, nil
+	}
+	targets, ok := value.(map[string]any)
+	if !ok {
+		return bindings.Requirements{}, fmt.Errorf("invalid Selena target requirements")
+	}
+	requirements, exists := targets[string(target)]
+	if !exists {
+		return bindings.Requirements{}, fmt.Errorf("missing Selena target %q requirements", target)
+	}
+	data, err := json.Marshal(requirements)
+	if err != nil {
+		return bindings.Requirements{}, err
+	}
+	var out bindings.Requirements
+	if err := json.Unmarshal(data, &out); err != nil {
+		return bindings.Requirements{}, err
+	}
+	return out, nil
+}
+
+func selenaTargetRequirements(layout bindings.Layout, target selena.Target) bindings.Requirements {
 	requires := layout.Requires
 	if target != selena.TargetGLSL {
 		requires.GLExtensions = nil
@@ -479,7 +509,7 @@ func SelenaTargetRequirements(layout bindings.Layout, target selena.Target) bind
 }
 
 func selenaWebGL2Layout(layout bindings.Layout) bindings.Layout {
-	layout.Requires = SelenaTargetRequirements(layout, selena.TargetGLES)
+	layout.Requires = selenaTargetRequirements(layout, selena.TargetGLES)
 	return layout
 }
 
@@ -491,7 +521,7 @@ func selenaWebGL2LayoutMap(layout bindings.Layout) map[string]any {
 	out["webglTarget"] = string(selena.TargetGLES)
 	requires := make(map[string]any)
 	for _, target := range selena.AllTargets() {
-		requires[string(target)] = SelenaTargetRequirements(layout, target)
+		requires[string(target)] = selenaTargetRequirements(layout, target)
 	}
 	out["targetRequires"] = requires
 	return out

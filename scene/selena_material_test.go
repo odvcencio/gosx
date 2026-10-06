@@ -1,6 +1,7 @@
 package scene
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
@@ -494,7 +495,10 @@ func TestSelenaWebGL2DialectAndTargetRequirements(t *testing.T) {
 		GLExtensions: []string{"OES_standard_derivatives"}, GLSceneSizeUniform: "sceneSize", SceneColorMips: true,
 	}}
 	for _, target := range selena.AllTargets() {
-		r := SelenaTargetRequirements(original, target)
+		r, err := SelenaTargetRequirements(selenaWebGL2LayoutMap(original), target)
+		if err != nil {
+			t.Fatal(err)
+		}
 		if !r.SceneColorMips {
 			t.Fatalf("%s lost mip contract", target)
 		}
@@ -514,5 +518,47 @@ func TestSelenaWebGL2DialectAndTargetRequirements(t *testing.T) {
 	}
 	if len(original.Requires.GLExtensions) != 1 {
 		t.Fatal("mutated original descriptor")
+	}
+}
+
+func TestSelenaTargetRequirementsSurviveJSON(t *testing.T) {
+	material, _, err := CompileSelenaMaterial([]byte(selenaDerivativeSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(material.ShaderLayout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range []map[string]any{material.ShaderLayout, decoded} {
+		glsl, err := SelenaTargetRequirements(descriptor, selena.TargetGLSL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(glsl.GLExtensions, []string{"OES_standard_derivatives"}) {
+			t.Fatalf("lost WebGL1 requirements: %+v", glsl)
+		}
+		gles, err := SelenaTargetRequirements(descriptor, selena.TargetGLES)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gles.GLExtensions) != 0 {
+			t.Fatal("WebGL2 still requests WebGL1 derivatives")
+		}
+		glsl.GLExtensions[0] = "changed"
+		again, err := SelenaTargetRequirements(descriptor, selena.TargetGLSL)
+		if err != nil || again.GLExtensions[0] == "changed" {
+			t.Fatal("mutated retained requirements")
+		}
+	}
+	if _, err := SelenaTargetRequirements(nil, selena.Target("unknown")); err == nil {
+		t.Fatal("accepted unknown target")
+	}
+	if _, err := SelenaTargetRequirements(map[string]any{"targetRequires": "invalid"}, selena.TargetGLES); err == nil {
+		t.Fatal("accepted malformed requirements")
 	}
 }

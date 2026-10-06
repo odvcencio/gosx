@@ -616,7 +616,7 @@ separate release-pinned hardware certification obligation in that contract.
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
   Selena browser shaders use GLSL ES 3.00 for GoSX's WebGL2 contexts. The returned
   binding layout contains the WebGL2 host requirements. Materials with extra host
-  requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(layout, target)`
+  requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(material.ShaderLayout, target)`
   also exposes requirements for each compiler target. Derivatives need no extension on WebGL2. Shader substitutions
   appear in the renderer's `data-gosx-scene3d-render-mesh-material-fallback` count
   and its `-detail` attribute, including cached compile failures.
