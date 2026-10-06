@@ -88,6 +88,10 @@ type Options struct {
 	// only when you serve plain HTTP on purpose.
 	AllowInsecure bool
 
+	// Partitioned enables CHIPS storage scoped to the top-level site. It requires
+	// SameSite=None and Secure, including when the session is deleted.
+	Partitioned bool
+
 	HTTPOnly        bool
 	SameSite        http.SameSite
 	Encrypt         bool
@@ -198,6 +202,12 @@ func New(secret string, opts Options) (*Manager, error) {
 	}
 	if opts.SameSite == 0 {
 		opts.SameSite = http.SameSiteLaxMode
+	}
+	if opts.SameSite == http.SameSiteNoneMode && !opts.Secure {
+		return nil, fmt.Errorf("session: SameSite=None requires Secure")
+	}
+	if opts.Partitioned && (!opts.Secure || opts.SameSite != http.SameSiteNoneMode) {
+		return nil, fmt.Errorf("session: partitioned cookies require SameSite=None and Secure")
 	}
 	if err := validateHostPrefix(opts); err != nil {
 		return nil, err
@@ -963,15 +973,16 @@ func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) error {
 	}
 	if store.destroyed || sessionEmpty(store) {
 		http.SetCookie(w, &http.Cookie{
-			Name:     m.opts.CookieName,
-			Value:    "",
-			Path:     m.opts.Path,
-			Domain:   m.opts.Domain,
-			MaxAge:   -1,
-			Expires:  time.Unix(0, 0),
-			Secure:   m.opts.Secure,
-			HttpOnly: m.opts.HTTPOnly,
-			SameSite: m.opts.SameSite,
+			Name:        m.opts.CookieName,
+			Value:       "",
+			Path:        m.opts.Path,
+			Domain:      m.opts.Domain,
+			MaxAge:      -1,
+			Expires:     time.Unix(0, 0),
+			Secure:      m.opts.Secure,
+			HttpOnly:    m.opts.HTTPOnly,
+			SameSite:    m.opts.SameSite,
+			Partitioned: m.opts.Partitioned,
 		})
 		return nil
 	}
@@ -983,15 +994,16 @@ func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) error {
 		return err
 	}
 	cookie := &http.Cookie{
-		Name:     m.opts.CookieName,
-		Value:    encoded,
-		Path:     m.opts.Path,
-		Domain:   m.opts.Domain,
-		MaxAge:   int(m.opts.MaxAge / time.Second),
-		Expires:  m.clock().Add(m.opts.MaxAge),
-		Secure:   m.opts.Secure,
-		HttpOnly: m.opts.HTTPOnly,
-		SameSite: m.opts.SameSite,
+		Name:        m.opts.CookieName,
+		Value:       encoded,
+		Path:        m.opts.Path,
+		Domain:      m.opts.Domain,
+		MaxAge:      int(m.opts.MaxAge / time.Second),
+		Expires:     m.clock().Add(m.opts.MaxAge),
+		Secure:      m.opts.Secure,
+		HttpOnly:    m.opts.HTTPOnly,
+		SameSite:    m.opts.SameSite,
+		Partitioned: m.opts.Partitioned,
 	}
 	// Report an oversized cookie. A browser drops a cookie above the RFC 6265
 	// budget without any signal, so the session would vanish at random.

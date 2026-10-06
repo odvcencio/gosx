@@ -36,6 +36,7 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
+	basePath                           string
 	manifest                           *hydrate.Manifest
 	counter                            int
 	bundleID                           string
@@ -1025,8 +1026,11 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 			}
 		}
 	}
-	return &manifest
+	return manifest.WithBasePath(r.basePath)
 }
+
+// SetBasePath selects the public prefix for client manifest URLs.
+func (r *Renderer) SetBasePath(prefix string) { r.basePath = prefix }
 
 // ManifestJSON returns the manifest as a JSON string.
 func (r *Renderer) ManifestJSON() (string, error) {

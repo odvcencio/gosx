@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime/debug"
 
 	"m31labs.dev/gosx"
 )
@@ -33,7 +34,8 @@ func checkVersionSkew(projectDir string) error {
 	if !ok {
 		return nil
 	}
-	return versionSkewError("v"+gosx.Version, projectVersion, hasLocalReplace)
+	info, _ := debug.ReadBuildInfo()
+	return versionSkewError(compiledGoSXVersion(info), projectVersion, hasLocalReplace)
 }
 
 // goListModule mirrors the subset of `go list -m -json` fields this check
@@ -118,4 +120,25 @@ func versionSkewError(cliVersion, projectVersion string, hasLocalReplace bool) e
 		"gosx %s cannot operate on a project pinned to m31labs.dev/gosx %s. Run: go install m31labs.dev/gosx/cmd/gosx@%s, or set %s=1 to override",
 		cliVersion, projectVersion, projectVersion, skipVersionCheckEnv,
 	)
+}
+
+// compiledGoSXVersion compares the actual installed module, including pseudo
+// versions, rather than the last release constant retained in its source.
+func compiledGoSXVersion(info *debug.BuildInfo) string {
+	if info != nil {
+		modules := append([]*debug.Module{&info.Main}, info.Deps...)
+		for _, mod := range modules {
+			if mod == nil || mod.Path != gosxModulePath {
+				continue
+			}
+			if mod.Replace != nil {
+				mod = mod.Replace
+			}
+			if mod.Version != "" && mod.Version != "(devel)" {
+				return mod.Version
+			}
+			break
+		}
+	}
+	return "v" + gosx.Version
 }

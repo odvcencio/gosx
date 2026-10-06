@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/scheduled"
 )
@@ -78,6 +79,8 @@ type statusCoder interface {
 
 // App is the GoSX server application.
 type App struct {
+	basePath           string
+	basePathOptions    BasePathOptions
 	pageRoutes         map[string]registeredPageRoute
 	apiRoutes          map[string]registeredAPIRoute
 	layout             func(title string, body gosx.Node) gosx.Node
@@ -563,12 +566,12 @@ func (a *App) Build() http.Handler {
 		regeneration.ServeHTTP(w, r)
 	}
 
-	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	return basepath.Handler(a.basePath, a.basePathOptions.ProxyStripsPrefix, a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.maybeServeISR(w, r, regenerate) {
 			return
 		}
 		dispatch(w, a.isrOriginRequest(r), true)
-	}))
+	})))
 }
 
 func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {

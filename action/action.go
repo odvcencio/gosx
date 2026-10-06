@@ -30,6 +30,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/session"
 )
 
@@ -800,6 +801,7 @@ func writeResponse(w http.ResponseWriter, req *http.Request, status int, result 
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	result.Redirect = basepath.URL(basepath.FromRequest(req), result.Redirect)
 	_ = json.NewEncoder(w).Encode(result)
 }
 

@@ -78,24 +78,32 @@
     return "";
   }
 
+  // Resolve only GoSX-owned loads. The configured prefix is emitted by the
+  // server, so no proxy headers or parent-frame messages can change it.
+  function gosxBasePathURL(value) {
+    const meta = document.querySelector('meta[name="gosx-base-path"]');
+    const prefix = meta ? String(meta.getAttribute("content") || "") : "";
+    const path = String(value || "");
+    if (!prefix || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")
+        || path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "?") || path.startsWith(prefix + "#")) {
+      return path;
+    }
+    return prefix + path;
+  }
+
   function bootstrapFeatureURL(name) {
     const assets = runtimeFeatureAssets();
-    switch (name) {
-      case "islands":
-        return String(assets.bootstrapFeatureIslandsPath || runtimeFeaturePreloadPath("bootstrap-feature-islands") || "/gosx/bootstrap-feature-islands.js").trim();
-      case "engines":
-        return String(assets.bootstrapFeatureEnginesPath || runtimeFeaturePreloadPath("bootstrap-feature-engines") || "/gosx/bootstrap-feature-engines.js").trim();
-      case "hubs":
-        return String(assets.bootstrapFeatureHubsPath || runtimeFeaturePreloadPath("bootstrap-feature-hubs") || "/gosx/bootstrap-feature-hubs.js").trim();
-      case "controllers":
-        return String(assets.bootstrapFeatureControllersPath || runtimeFeaturePreloadPath("bootstrap-feature-controllers") || "/gosx/bootstrap-feature-controllers.js").trim();
-      case "textlayout":
-        return String(assets.bootstrapFeatureTextLayoutPath || runtimeFeaturePreloadPath("bootstrap-feature-textlayout") || "/gosx/bootstrap-feature-textlayout.js").trim();
-      case "scene3d":
-        return assets && assets.bootstrapFeatureScene3dPath;
-      default:
-        return "";
-    }
+    const key = {
+      islands: "bootstrapFeatureIslandsPath",
+      engines: "bootstrapFeatureEnginesPath",
+      hubs: "bootstrapFeatureHubsPath",
+      controllers: "bootstrapFeatureControllersPath",
+      textlayout: "bootstrapFeatureTextLayoutPath",
+      scene3d: "bootstrapFeatureScene3dPath",
+    }[name];
+    if (!key) return "";
+    return gosxBasePathURL(String(assets[key] || runtimeFeaturePreloadPath("bootstrap-feature-" + name)
+      || "/gosx/bootstrap-feature-" + name + ".js").trim());
   }
 
   function ensureBootstrapFeature(name) {

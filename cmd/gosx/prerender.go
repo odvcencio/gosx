@@ -84,6 +84,26 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 	pages := make([]string, 0, len(routes))
 
+	if err := os.RemoveAll(outputDir); err != nil {
+		return exportManifest{}, fmt.Errorf("clear export dir: %w", err)
+	}
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return exportManifest{}, fmt.Errorf("create export dir: %w", err)
+	}
+	if err := bundlepolicy.CopyTree(filepath.Join(appRoot, "public"), outputDir, bundlepolicy.RootPublic, opts.BundlePolicy); err != nil {
+		return exportManifest{}, fmt.Errorf("copy public assets: %w", err)
+	}
+
+	if len(routes) == 0 {
+		manifest := exportManifest{Pages: pages}
+		if opts.StageAssets != nil {
+			if err := opts.StageAssets(outputDir, manifest); err != nil {
+				return exportManifest{}, err
+			}
+		}
+		return manifest, nil
+	}
+
 	internalPort, err := pickFreePort()
 	if err != nil {
 		return exportManifest{}, fmt.Errorf("pick export port: %w", err)
@@ -116,15 +136,6 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		return exportManifest{}, fmt.Errorf("wait for export app ready: %w", err)
 	}
 
-	if err := os.RemoveAll(outputDir); err != nil {
-		return exportManifest{}, fmt.Errorf("clear export dir: %w", err)
-	}
-	if err := os.MkdirAll(outputDir, 0755); err != nil {
-		return exportManifest{}, fmt.Errorf("create export dir: %w", err)
-	}
-	if err := bundlepolicy.CopyTree(filepath.Join(appRoot, "public"), outputDir, bundlepolicy.RootPublic, opts.BundlePolicy); err != nil {
-		return exportManifest{}, fmt.Errorf("copy public assets: %w", err)
-	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	assetRefs := map[string]struct{}{}
 	fileCSSAssets := map[string]bool{}

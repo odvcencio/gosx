@@ -18,6 +18,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/server"
 )
 
@@ -129,9 +130,9 @@ func (ctx *RouteContext) ActionPath(name string) string {
 		base = ctx.Request.URL.Path
 	}
 	if base == "/" {
-		return "/__actions/" + name
+		return basepath.URL(basepath.FromRequest(ctx.Request), "/__actions/"+name)
 	}
-	return strings.TrimSuffix(base, "/") + "/__actions/" + name
+	return basepath.URL(basepath.FromRequest(ctx.Request), strings.TrimSuffix(base, "/")+"/__actions/"+name)
 }
 
 // ActionState returns the flashed state for a named browser action.
@@ -197,6 +198,8 @@ func (ctx *RouteContext) Document(defaultTitle string, body gosx.Node) *server.D
 
 // Router builds an http.Handler from a route tree.
 type Router struct {
+	basePath        string
+	basePathOptions server.BasePathOptions
 	routes          []Route
 	handlers        []handlerRoute
 	defaultLayout   LayoutFunc
@@ -378,7 +381,7 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	if len(r.observers) > 0 {
 		handler = server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...))
 	}
-	return &builtRouter{router: r, handler: handler}, nil
+	return &builtRouter{router: r, handler: basepath.Handler(r.basePath, r.basePathOptions.ProxyStripsPrefix, handler)}, nil
 }
 
 // builtRouter is what Build/BuildChecked return. It serves exactly like the

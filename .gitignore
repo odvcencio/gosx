@@ -7,6 +7,7 @@ build/
 !/docs/polar.md
 !/docs/scene3d-v1-support.md
 !/docs/stripe.md
+!/docs/embedded-apps.md
 !/docs/ui-recipes.md
 !/docs/desktop-code-signing.md
 !/docs/expression-support-matrix.md

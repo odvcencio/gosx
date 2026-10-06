@@ -183,3 +183,70 @@ window.__gosx_action("counter-1", "increment", "{}");
 		t.Fatal("expected dispatch log entries")
 	}
 }
+
+func TestInjectReadyHandlerChaining(t *testing.T) {
+	d := requireDriver(t, 10*time.Second)
+	if err := InjectDriver(d); err != nil {
+		t.Fatalf("InjectDriver: %v", err)
+	}
+	page := `<!DOCTYPE html><html><body><script>
+window.readyCalls = [];
+window.initialReadyMissing = window.__gosx_runtime_ready === undefined;
+window.__gosx_runtime_ready = function(value) {
+  readyCalls.push(this.label + ":original:" + value);
+};
+var priorReady = window.__gosx_runtime_ready;
+window.__gosx_runtime_ready = function(value) {
+  priorReady.call(this, value);
+  readyCalls.push(this.label + ":bootstrap:" + value);
+  return "complete";
+};
+var ready = window.__gosx_runtime_ready;
+window.stableReadyWrapper = ready === window.__gosx_runtime_ready;
+window.__gosx_runtime_ready = ready;
+window.idempotentReadyWrapper = ready === window.__gosx_runtime_ready;
+try {
+  window.readyResult = window.__gosx_runtime_ready.call({label: "test"}, 7);
+  window.__gosx_runtime_ready.call({label: "again"}, 8);
+} catch (error) {
+  window.readyError = String(error);
+}
+</script></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		fmt.Fprint(w, page)
+	}))
+	defer srv.Close()
+	if err := d.Navigate(srv.URL); err != nil {
+		t.Fatalf("Navigate: %v", err)
+	}
+	var result struct {
+		InitialMissing bool     `json:"initialMissing"`
+		Stable         bool     `json:"stable"`
+		Idempotent     bool     `json:"idempotent"`
+		Ready          bool     `json:"ready"`
+		Marks          int      `json:"marks"`
+		Calls          []string `json:"calls"`
+		Value          string   `json:"value"`
+		Error          string   `json:"error"`
+	}
+	if err := d.Evaluate(`({
+initialMissing: window.initialReadyMissing,
+stable: window.stableReadyWrapper,
+idempotent: window.idempotentReadyWrapper,
+ready: window.__gosx_perf.ready,
+marks: performance.getEntriesByName("gosx:perf:ready").length,
+calls: window.readyCalls,
+value: window.readyResult || "",
+error: window.readyError || ""
+})`, &result); err != nil {
+		t.Fatalf("query ready chain: %v", err)
+	}
+	if !result.InitialMissing || !result.Stable || !result.Idempotent || !result.Ready || result.Marks != 1 || result.Value != "complete" || result.Error != "" {
+		t.Fatalf("ready chain: %+v", result)
+	}
+	want := "[test:original:7 test:bootstrap:7 again:original:8 again:bootstrap:8]"
+	if fmt.Sprint(result.Calls) != want {
+		t.Fatalf("calls = %v, want %s", result.Calls, want)
+	}
+}
