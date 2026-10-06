@@ -40,13 +40,13 @@
   }
 
   host.controllers.pickScene = function(mount, input, canvas, readViewport, readBundle, pickAtEvent, screenToRay) {
-    if (!input || typeof input.requestId !== "string" || !Number.isFinite(input.clientX) || !Number.isFinite(input.clientY)) return;
+    if (typeof input?.requestId !== "string" || !Number.isFinite(input.clientX) || !Number.isFinite(input.clientY)) return;
     const bundle = readBundle();
-    if (!bundle || !bundle.camera) return;
+    if (!bundle?.camera) return;
     const sample = pickAtEvent(input, canvas, readViewport, () => bundle, 720, 420);
     const ray = screenToRay(sample.pointer.x, sample.pointer.y, sample.metrics.width, sample.metrics.height, bundle.camera);
-    const target = sample.target, object = target && target.object;
-    const hit = object && object.id ? {
+    const target = sample.target, object = target?.object;
+    const hit = object?.id ? {
       id: String(object.id), kind: String(target.kind || object.kind || "mesh"),
       distance: Number(target.distance || 0), point: target.point || target.worldPosition || {},
       instanceIndex: target.instanceIndex >= 0 ? target.instanceIndex : undefined,
@@ -60,6 +60,7 @@
     if (!binding.source || !binding.output) return;
     let active = null, pending = null;
     const root = record.root;
+    const threshold = binding.thresholdPx > 0 ? binding.thresholdPx : 4;
     function phase(output, drag) { if (output) api.publish(record, output, { kind: "drag", drag }); }
     function release(gesture) {
       if (gesture && gesture.element.releasePointerCapture) {
@@ -72,19 +73,19 @@
       if (pending) clearTimeout(pending.timer);
       pending = null;
       release(gesture);
-      if (gesture) phase(binding.cancelOutput, Object.assign({}, gesture.drag, { phase: "cancel", reason }));
+      if (gesture) phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason });
     }
     function finish(hit, target, gesture) {
       if (record.disposed) return;
       if (pending) clearTimeout(pending.timer);
       pending = null;
       if (target.scene && (!hit || !hit.id || target.hitIds && target.hitIds.length && !target.hitIds.includes(hit.id))) {
-        phase(binding.cancelOutput, Object.assign({}, gesture.drag, { phase: "cancel", reason: "miss" }));
+        phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason: "miss" });
         return;
       }
-      api.emit(record, binding, { kind: "drag", drag: Object.assign({}, gesture.drag, {
+      api.emit(record, binding, { kind: "drag", drag: { ...gesture.drag,
         phase: "drop", target: target.target, hit: hit || null,
-      }) });
+      } });
     }
     api.addListener(record, root, "pointerdown", function(event) {
       if (event.button != null && event.button !== 0 || event.isPrimary === false) return;
@@ -99,19 +100,17 @@
     }, false);
     api.addListener(record, document, "pointermove", function(event) {
       if (!active || active.pointerId !== event.pointerId) return;
-      const threshold = binding.thresholdPx > 0 ? binding.thresholdPx : 4;
       active.moved = active.moved || Math.hypot(event.clientX - active.x, event.clientY - active.y) >= threshold;
       active.drag.clientX = event.clientX; active.drag.clientY = event.clientY;
-      if (active.moved) phase(binding.moveOutput, Object.assign({}, active.drag, { phase: "move" }));
+      if (active.moved) phase(binding.moveOutput, { ...active.drag, phase: "move" });
       if (binding.preventDefault) event.preventDefault();
     }, false);
     api.addListener(record, document, "pointerup", function(event) {
       if (!active || active.pointerId !== event.pointerId) return;
       const gesture = active;
+      if (!gesture.moved && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < threshold) { cancel("tap"); return; }
       active = null;
       release(gesture);
-      const threshold = binding.thresholdPx > 0 ? binding.thresholdPx : 4;
-      if (!gesture.moved && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < threshold) return;
       gesture.drag.clientX = event.clientX; gesture.drag.clientY = event.clientY;
       const physical = document.elementFromPoint(event.clientX, event.clientY);
       for (const target of binding.targets || []) {
@@ -126,7 +125,7 @@
         }));
         return;
       }
-      phase(binding.cancelOutput, Object.assign({}, gesture.drag, { phase: "cancel", reason: "outside" }));
+      phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason: "outside" });
     }, false);
     for (const type of ["pointercancel", "lostpointercapture"]) api.addListener(record, root === document ? document : root, type, function(event) {
       if (active && active.pointerId === event.pointerId) cancel(type);
@@ -157,8 +156,7 @@
   }
   function focusOwner(owner, last) {
     const items = focusables(owner.element);
-    const target = last ? items[items.length - 1] : query(owner.element, owner.spec.initialFocus) || items[0];
-    (target || owner.element).focus();
+    (last === undefined && query(owner.element, owner.spec.initialFocus) || items[last ? items.length - 1 : 0] || owner.element).focus();
   }
   function refreshInert() {
     for (const [element, inert] of inertBranches) element.inert = inert;
@@ -199,7 +197,7 @@
         if (!element) return;
         owner = { element, spec, previous: document.activeElement, addedTabindex: !element.hasAttribute("tabindex") };
         if (owner.addedTabindex) element.setAttribute("tabindex", "-1");
-        focusStack.push(owner); refreshInert(); focusOwner(owner, false);
+        focusStack.push(owner); refreshInert(); focusOwner(owner);
       });
     }, { immediate: true }));
     api.addListener(record, document, "keydown", function(event) {

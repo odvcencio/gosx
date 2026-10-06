@@ -13,6 +13,11 @@
   engines can consume typed requests with `wasm.SubscribeSignal[T]` and publish
   native hits with `Context.SetSignal`.
 
+- Ship the controller input chunk in dev servers and static exports as well as
+  production builds. Cancel pending controller mounts on page disposal, end
+  tap gestures with a cancellation phase, and wrap modal Tab navigation to
+  the first or last control independently of initial focus.
+
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
   revalidation window. Cookie and authorization bypasses now render the origin

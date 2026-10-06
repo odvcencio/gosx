@@ -385,12 +385,15 @@
   }
 
   async function mountAllControllers(manifest) {
+    // Page disposal replaces this map, invalidating mounts still loading input.
+    const owner = window.__gosx.controllers || (window.__gosx.controllers = new Map());
     const controllers = controllerList(manifest);
     const path = window.__gosx.document?.get()?.assets?.runtime?.bootstrapControllerInputPath;
     if (path && !gosxHost.controllers.installInput) {
       await loadScriptTag(path, "controller-input");
-      if (!gosxHost.controllers.installInput) throw new Error("controller input runtime unavailable");
     }
+    if (window.__gosx.controllers !== owner) return;
+    if (path && !gosxHost.controllers.installInput) throw new Error("controller input runtime unavailable");
     const pending = [];
     for (const entry of controllers) {
       const record = mountController(entry);

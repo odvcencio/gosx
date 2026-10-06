@@ -3,6 +3,7 @@
 Use `server.PageRuntime.Controller(controller.Config{...})` to bind browser input
 to shared signals and app intents without an island or a lifecycle script.
 Controllers are disposed with the page. They do not render UI.
+Navigation also cancels controllers waiting for their input chunk to load.
 
 ## Project events into typed intents
 
@@ -111,8 +112,9 @@ ignores stale and cancelled requests. Native results expire after `TimeoutMS`
 revision checks. Successful drops include `drag.hit` (a scene hit or null),
 `drag.target` (the matched selector), pointer ID and client coordinates.
 `StartOutput`, `MoveOutput`, and `CancelOutput` publish optional phase records.
-Taps below `ThresholdPX` (default 4) produce no drop. Secondary pointers are
-ignored; cancellation, lost capture, blur, remount, and disposal release the
+Taps below `ThresholdPX` (default 4) produce no drop and publish a cancellation
+with `drag.reason == "tap"` when `CancelOutput` is configured. Secondary pointers
+are ignored; cancellation, lost capture, blur, remount, and disposal release the
 gesture. Give draggable sources `touch-action: none` for touch input.
 
 ## Own modal focus
@@ -126,8 +128,10 @@ controller.FocusOwner{
 
 Put owners in `Config.Focus`. A true boolean `OpenSignal` opens the owner. The
 runtime traps Tab in both directions, redirects outside focus, and makes
-background branches inert. Escape sets the signal to false. Closing restores
-`ReturnFocus`, or the element focused before opening, and the original inert and
+background branches inert. `InitialFocus` applies on opening; forward Tab wraps
+to the first focusable control and reverse Tab to the last. Escape sets the
+signal to false. Closing restores `ReturnFocus`, or the element focused before
+opening, and the original inert and
 tabindex state. Nested owners give the latest modal focus and return to the
 previous one. Provide the modal markup and accessible dialog semantics in GoSX;
 the controller owns interaction and disposal.
@@ -137,3 +141,5 @@ contracts or storage is configured. Storage uses the same optional chunk to
 keep the default bundle within its existing size budget. Ordinary event, key,
 timer, and resource controllers retain their existing load path.
 The `controllers` runtime exclusion role excludes both controller chunks.
+Dev servers, static exports, and production builds all ship the input chunk;
+the document contract supplies its URL.

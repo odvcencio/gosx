@@ -115,6 +115,25 @@ test("drag uses the physical target despite pointer capture and snapshots revisi
   h.dispose();
 });
 
+test("a tap ends its published drag phase without dropping", async () => {
+  const h = harness(), tile = h.element(".tile", "button", h.body), drop = h.element(".end", "div", h.body);
+  h.physical(drop);
+  await h.mount({ drags: [{ source: ".tile", output: "$drop", startOutput: "$start", cancelOutput: "$cancel", targets: [{ target: ".end" }] }] });
+  for (const pointerId of [1, 2]) {
+    h.emit(h.document, "pointerdown", { target: tile, pointerId, clientX: 0, clientY: 0 });
+    assert.equal(h.writes.at(-1).value.drag.phase, "start");
+    h.emit(h.document, "pointerup", { target: tile, pointerId, clientX: 2, clientY: 1 });
+    assert.equal(h.writes.at(-1).signal, "$cancel");
+    assert.equal(h.writes.at(-1).value.drag.phase, "cancel");
+    assert.equal(h.writes.at(-1).value.drag.reason, "tap");
+    assert.equal(tile.capture, null);
+  }
+  assert.equal(h.writes.some(write => write.signal === "$drop"), false);
+  const count = h.writes.length;
+  h.dispose();
+  assert.equal(h.writes.length, count);
+});
+
 test("scene drag accepts correlated native hits and ignores stale, cancelled and timed-out results", async () => {
   const h = harness(), tile = h.element(".tile", "button", h.body), scene = h.element("#board", "div", h.body);
   const requests = [];
@@ -157,6 +176,22 @@ test("modal focus traps both Tab directions, restores focus and preserves backgr
   assert.equal(h.document.activeElement, open); assert.equal(background.inert, false); assert.equal(preserved.inert, true); assert.equal(modal.hasAttribute("tabindex"), false);
   h.context.setSharedSignalValue("$open", true); await Promise.resolve(); h.dispose();
   assert.equal(h.document.activeElement, open); assert.equal(background.inert, false);
+});
+
+test("InitialFocus selects the last control only on opening, while Tab wraps across every control", async () => {
+  const h = harness(), modal = h.element("#modal", "div", h.body);
+  const first = h.element("#first", "button", modal), last = h.element("#last", "button", modal);
+  await h.mount({ focus: [{ target: "#modal", openSignal: "$open", initialFocus: "#last" }] });
+  h.context.setSharedSignalValue("$open", true); await Promise.resolve();
+  assert.equal(h.document.activeElement, last);
+  h.emit(h.document, "keydown", { key: "Tab" });
+  assert.equal(h.document.activeElement, first);
+  h.emit(h.document, "keydown", { key: "Tab", shiftKey: true });
+  assert.equal(h.document.activeElement, last);
+  h.context.setSharedSignalValue("$open", false);
+  h.context.setSharedSignalValue("$open", true); await Promise.resolve();
+  assert.equal(h.document.activeElement, last);
+  h.dispose();
 });
 
 test("nested focus owners restore the previous modal and cancelled opens never steal focus", async () => {
