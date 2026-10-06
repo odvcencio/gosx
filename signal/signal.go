@@ -64,6 +64,19 @@ func New[T any](initial T) *Signal[T] {
 	return &Signal[T]{value: initial, equal: defaultEqual[T]()}
 }
 
+// NewShared creates a signal whose name is shared across browser islands and
+// engines on the page. The GoSX compiler normalizes name to a $-prefixed name.
+// In native Go, each call creates an independent signal initialized to initial;
+// names never register process-global state or share values between requests.
+func NewShared[T any](name string, initial T) *Signal[T] {
+	return New(initial)
+}
+
+// Shared is an alias for NewShared.
+func Shared[T any](name string, initial T) *Signal[T] {
+	return NewShared(name, initial)
+}
+
 // NewWithEqual creates a signal with a custom equality function. Pass nil to
 // notify on every Set regardless of the value.
 func NewWithEqual[T any](initial T, eq func(a, b T) bool) *Signal[T] {
