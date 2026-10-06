@@ -115,6 +115,10 @@
     } catch (failure) { guard.fail("frame", String(failure && failure.message || failure)); }
   }
 
+  function wgpuFinishGPUDrivenEncoding(host: any, encoder: any) {
+    if (host) host.finishEncoding(encoder);
+  }
+
   function wgpuTrackFrameEncoder(encoder: any, guard: any): any {
     guard.frameEncoder = encoder;
     return new Proxy(encoder, { get: function(target, key) {
@@ -12409,7 +12413,6 @@
         stats.waterExpensivePassCadence = Math.max(stats.waterExpensivePassCadence, system.expensivePassCadence || 1);
         var waterStateDirty = false;
         if (hasSimulationTick && !system.seeded) {
-          system.seeded = true;
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (Math.max(0, Math.floor(sceneNumber(entry.seedDrops, 7))) > 0) {
             var seedResult = dispatchWaterComputeStage(encoder, system, entry, "seed", seedCompute.pipeline);
             stats.waterComputeDispatches += seedResult.dispatches;
@@ -12418,6 +12421,7 @@
             waterStateDirty = waterStateDirty || seedResult.dispatches > 0;
             if (seedCompute.authored && seedResult.selena === 0) stats.waterAuthoredComputeDispatches += seedResult.dispatches;
           }
+          system.seeded = true;
         }
         // Queued multi-drop trail (see dispatchWaterDropEvents above): drains
         // every drop queued since the last consumed id, one uniform write +
@@ -18547,7 +18551,7 @@
       // Per-pass stamps ride on the render-pass descriptors, so the slot must be
       // chosen before the shadow pass opens.
       pollGPUPassTimingReadback();
-      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); gpuDriven.finishEncoding(encoder); };
+      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
       // Prepare the full detail draw set before retiring resources from earlier frames.

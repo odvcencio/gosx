@@ -4,6 +4,7 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const {
   createBoardWebGPUHarness, flushAsyncWork, createContext, FakeElement, bundleMeshScene,
+  waterPerfShapeEntry, waterSeedSelenaFixture, waterSurfaceSelenaFixture, waterCausticsSelenaFixture,
   installManualRAF, installManualTimers, runScript, bootstrapRuntimeSource,
   bootstrapFeatureScene3DSource, bootstrapFeatureScene3DWebGLSource, bootstrapFeatureEnginesSource,
 } = require("./runtime-test-harness.js");
@@ -239,4 +240,21 @@ test("the capability probe rejects asynchronously invalid canvas configuration",
   const probe = env.context.__gosx_scene3d_webgpu_probe();
   assert.equal(probe.ready, false);
   assert.equal(probe.error, error);
+});
+
+test("lazy authored water pipelines preserve the initial seed across validation waits", async () => {
+  const h = await failureHarness(/does-not-match/);
+  const api = h.env.context.__gosx_scene3d_api;
+  h.scene.waterSystems = api.createSceneState({ scene: { waterSystems: [Object.assign(waterPerfShapeEntry(false), { resolution: 16, surfaceResolution: 3, seedDrops: 1 })] } }).waterSystems;
+  await frames(h, 30);
+  const seeded = h.fake.state.computePasses.flatMap(pass => pass.dispatches).filter(dispatch => dispatch.pipeline.desc.label === "gosx-selena-compute-" + waterSeedSelenaFixture.layout.material);
+  assert.equal(h.renderer.getFailureReason(), "", JSON.stringify(h.renderer.diagnostics().pipelineFailures));
+  assert.equal(seeded.length, 1, "validation must settle before the initial seed is marked consumed");
+  for (const fixture of [waterSurfaceSelenaFixture, waterCausticsSelenaFixture]) {
+    assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.concat(pass.drawIndexeds).some(draw => draw.pipeline && draw.pipeline.desc.fragment?.module?.code?.trim() === fixture.wgsl.trim())),
+      fixture.layout.material + " must draw after validation settles");
+  }
+  assert.equal(h.renderer.getFailureReason(), "");
+  assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
+  h.renderer.dispose();
 });
