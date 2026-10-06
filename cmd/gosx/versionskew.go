@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime/debug"
 
 	"m31labs.dev/gosx"
 )
@@ -33,7 +34,37 @@ func checkVersionSkew(projectDir string) error {
 	if !ok {
 		return nil
 	}
-	return versionSkewError("v"+gosx.Version, projectVersion, hasLocalReplace)
+	return versionSkewError(cliGoSXVersion(), projectVersion, hasLocalReplace)
+}
+
+var readCLIBuildInfo = debug.ReadBuildInfo
+
+// cliGoSXVersion uses the module compiled into the binary, including versions
+// between releases. Source builds without a module version use the release
+// constant so the existing development workflow keeps its diagnostic.
+func cliGoSXVersion() string {
+	info, ok := readCLIBuildInfo()
+	if ok && info != nil {
+		if info.Main.Path == gosxModulePath {
+			return buildModuleVersion(&info.Main)
+		}
+		for _, dep := range info.Deps {
+			if dep != nil && dep.Path == gosxModulePath {
+				return buildModuleVersion(dep)
+			}
+		}
+	}
+	return "v" + gosx.Version
+}
+
+func buildModuleVersion(mod *debug.Module) string {
+	if mod.Replace != nil {
+		mod = mod.Replace
+	}
+	if mod.Version != "" && mod.Version != "(devel)" {
+		return mod.Version
+	}
+	return "v" + gosx.Version
 }
 
 // goListModule mirrors the subset of `go list -m -json` fields this check

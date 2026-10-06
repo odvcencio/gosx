@@ -774,6 +774,12 @@ compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
 
+Install the CLI at the version required by your project's `go.mod`, using
+`go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the
+binary's compiled module version, so matching pseudo-versions work as well as
+releases. Local development binaries without a module version fall back to the
+release constant. A genuine mismatch still reports the matching install command.
+
 ### Prebuilt runtime (no TinyGo required)
 
 A project pinned to a stable released `m31labs.dev/gosx` version (a plain

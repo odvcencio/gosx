@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
 - Keep `gosx perf` runtime-ready wrappers stable across bootstrap chaining and
   reassignment. Saved callbacks retain their original handler, preventing
   recursion and recording readiness once.
