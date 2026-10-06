@@ -4353,7 +4353,7 @@ function makeFakeGPUDevice(options) {
     },
     pushErrorScope() {},
     popErrorScope() {
-      return Promise.resolve(null);
+      return { then(resolve) { return Promise.resolve(resolve(null)); }, catch() { return Promise.resolve(null); } };
     },
   };
   // Render bundles are opt-in. Without createRenderBundleEncoder the renderer
@@ -4540,6 +4540,7 @@ async function createBoardWebGPUHarness(options) {
   assert.ok(env.context.__gosx_scene3d_api, "scene3d chunk must publish __gosx_scene3d_api");
 
   const fake = makeFakeGPUDevice(opts.fakeDeviceOptions);
+  if (opts.configureDevice) opts.configureDevice(fake.device, fake.state, env);
   // The 16a factory consumes the probed adapter+device through the 16z
   // bridge global — point it at the fake before loading the webgpu chunk.
   env.context.__gosx_scene3d_webgpu_probe = function() {

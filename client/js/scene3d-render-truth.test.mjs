@@ -263,7 +263,8 @@ test("render truth: authored Selena shader modules capture browser compilation i
 test("render truth: device loss and uncaptured GPU errors reach the journal", () => {
   assert.match(webgpuSource, /renderTruth\(\)\.record\("device-lost"/);
   assert.match(webgpuSource, /addEventListener\("uncapturederror"/);
-  assert.match(webgpuSource, /renderTruth\(\)\.record\("gpu-uncaptured-error"/);
+  assert.match(webgpuSource, /function uncaptured\(event/);
+  assert.match(webgpuSource, /renderTruth\(\)\.pipelineFailure\(pass \|\| "core", label, message\)/);
 });
 
 test("render truth: the mount publishes ONE machine-readable backend record", () => {
