@@ -135,6 +135,58 @@
     return new Promise(poll);
   }
 
+  const burstLoads = new Map();
+  function readyParticleBurst() {
+    return Promise.resolve().then(function() { return window.__gosx_ensure_scene3d_compute_loaded(); }).then(function() { return window.__gosx_scene3d_particle_burst_api; });
+  }
+  function loadParticleBurst() {
+    if (window.__gosx_scene3d_particle_burst_api) return readyParticleBurst();
+    if (burstLoads.has(1)) return burstLoads.get(1);
+    const promise = new Promise((resolve, reject) => {
+      const tag = Array.from(document.scripts).find(script => script.getAttribute("data-gosx-script") === "feature-scene3d");
+      const url = tag && tag.getAttribute("data-gosx-scene3d-particle-burst-url");
+      if (!url) return reject(new Error("Scene3D burst chunk URL was not advertised"));
+      const script = document.createElement("script");
+      script.src = url; script.async = true; script.type = "text/javascript";
+      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
+      if (tag.nonce) script.nonce = tag.nonce;
+      script.onload = function() {
+        if (window.__gosx_scene3d_particle_burst_api) {
+          readyParticleBurst().then(resolve, reject);
+        }
+        else reject(new Error("Scene3D burst chunk did not publish its API"));
+      };
+      script.onerror = function() { reject(new Error("failed to load Scene3D burst chunk")); };
+      document.head.appendChild(script);
+    }).catch(function(error) { burstLoads.delete(1); throw error; });
+    burstLoads.set(1, promise);
+    return promise;
+  }
+
+  function burstParticles() {
+    const target = arguments[0], burst = arguments[1], opts = arguments[2] || {}, id = key(target, opts);
+    const deadline = Date.now() + Math.max(0, opts.timeoutMS ?? 10000);
+    return new Promise((resolve, reject) => {
+      function poll() {
+        const rec = record(target, opts);
+        if (rec) {
+          // Custom ready handles may provide their own burst implementation.
+          if (!rec.mount && typeof rec.handle.burstParticles === "function") {
+            return Promise.resolve().then(() => rec.handle.burstParticles(burst)).then(resolve, reject);
+          }
+          const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
+          if (!mount) return reject(new Error("Scene3D burst mount is unavailable"));
+          rec.mount = mount;
+          loadParticleBurst().then(function() {
+            return arguments[0].attach(burst, mount, rec.handle, () => rec.mount.__gosxScene3DHandle === rec.handle);
+          }).then(resolve, reject);
+        } else if (!id || Date.now() >= deadline) reject(new Error("Scene3D burst target is not ready"));
+        else setTimeout(poll, 16);
+      }
+      poll();
+    });
+  }
+
   function dispatchPoseFrame(target, frame, options) {
     var opts = options || {};
     var queueKey = key(target, opts) || target;
@@ -571,6 +623,7 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
+    burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,

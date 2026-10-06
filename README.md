@@ -537,6 +537,8 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 ## Scene3D — 3D Engine
 
+[Scene3D particle bursts](docs/scene3d-particle-bursts.md) start finite event effects with typed Go emitters and automatic browser cleanup.
+
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
 
 - **On the web**, two authored TypeScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
