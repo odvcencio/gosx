@@ -485,6 +485,9 @@ func selenaWebGL2Layout(layout bindings.Layout) bindings.Layout {
 
 func selenaWebGL2LayoutMap(layout bindings.Layout) map[string]any {
 	out := selenaLayoutMap(selenaWebGL2Layout(layout))
+	if layout.Requires.IsZero() {
+		return out
+	}
 	out["webglTarget"] = string(selena.TargetGLES)
 	requires := make(map[string]any)
 	for _, target := range selena.AllTargets() {

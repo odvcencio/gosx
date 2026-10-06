@@ -505,6 +505,13 @@ func TestSelenaWebGL2DialectAndTargetRequirements(t *testing.T) {
 			t.Fatalf("%s size contract: %+v", target, r)
 		}
 	}
+	plain, _, err := CompileSelenaMaterial([]byte(selenaDefaultsSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := plain.ShaderLayout["targetRequires"]; exists {
+		t.Fatal("empty target requirements must not change existing descriptors")
+	}
 	if len(original.Requires.GLExtensions) != 1 {
 		t.Fatal("mutated original descriptor")
 	}
