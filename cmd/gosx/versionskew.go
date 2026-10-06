@@ -34,8 +34,20 @@ func checkVersionSkew(projectDir string) error {
 	if !ok {
 		return nil
 	}
-	info, _ := debug.ReadBuildInfo()
-	return versionSkewError(compiledGoSXVersion(info), projectVersion, hasLocalReplace)
+	return versionSkewError(cliGoSXVersion(), projectVersion, hasLocalReplace)
+}
+
+var readCLIBuildInfo = debug.ReadBuildInfo
+
+// cliGoSXVersion uses the module compiled into the binary, including versions
+// between releases. Source builds without a module version use the release
+// constant so the existing development workflow keeps its diagnostic.
+func cliGoSXVersion() string {
+	info, ok := readCLIBuildInfo()
+	if !ok {
+		info = nil
+	}
+	return compiledGoSXVersion(info)
 }
 
 // goListModule mirrors the subset of `go list -m -json` fields this check

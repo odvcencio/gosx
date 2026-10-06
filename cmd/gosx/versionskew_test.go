@@ -1,13 +1,61 @@
 package main
 
 import (
-	"m31labs.dev/gosx"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx"
 )
+
+func TestCLIGoSXVersion(t *testing.T) {
+	const pseudo = "v0.57.6-0.20261005064753-1dcc1a2d26b4"
+	for _, tc := range []struct {
+		name string
+		info *debug.BuildInfo
+		ok   bool
+		want string
+	}{
+		{"installed release", &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath, Version: "v0.57.5"}}, true, "v0.57.5"},
+		{"installed pseudo version", &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath, Version: pseudo}}, true, pseudo},
+		{"dependency", &debug.BuildInfo{Main: debug.Module{Path: "example.com/cli"}, Deps: []*debug.Module{{Path: "example.com/other", Version: "v1.0.0"}, {Path: gosxModulePath, Version: pseudo}}}, true, pseudo},
+		{"version replacement", &debug.BuildInfo{Deps: []*debug.Module{{Path: gosxModulePath, Version: "v0.57.5", Replace: &debug.Module{Path: gosxModulePath, Version: pseudo}}}}, true, pseudo},
+		{"local replacement", &debug.BuildInfo{Deps: []*debug.Module{{Path: gosxModulePath, Version: pseudo, Replace: &debug.Module{Path: "../gosx"}}}}, true, "v" + gosx.Version},
+		{"development main", &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath, Version: "(devel)"}}, true, "v" + gosx.Version},
+		{"unversioned main", &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath}}, true, "v" + gosx.Version},
+		{"missing module", &debug.BuildInfo{}, true, "v" + gosx.Version},
+		{"unavailable info", nil, false, "v" + gosx.Version},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			previous := readCLIBuildInfo
+			readCLIBuildInfo = func() (*debug.BuildInfo, bool) { return tc.info, tc.ok }
+			t.Cleanup(func() { readCLIBuildInfo = previous })
+			if got := cliGoSXVersion(); got != tc.want {
+				t.Fatalf("CLI version = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckVersionSkewInstalledPseudoVersion(t *testing.T) {
+	const pseudo = "v0.57.6-0.20261005064753-1dcc1a2d26b4"
+	t.Setenv(skipVersionCheckEnv, "")
+	previous := readCLIBuildInfo
+	readCLIBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath, Version: pseudo}}, true
+	}
+	t.Cleanup(func() { readCLIBuildInfo = previous })
+	dir := newGoModProject(t, "module example.com/app\n\ngo 1.26\n\nrequire m31labs.dev/gosx "+pseudo+"\n")
+	if err := checkVersionSkew(dir); err != nil {
+		t.Fatalf("matching pseudo version rejected: %v", err)
+	}
+	dir = newGoModProject(t, "module example.com/app\n\ngo 1.26\n\nrequire m31labs.dev/gosx v0.57.5\n")
+	if err := checkVersionSkew(dir); err == nil || !strings.Contains(err.Error(), "gosx "+pseudo+" cannot operate") {
+		t.Fatalf("genuine mismatch diagnostic = %v", err)
+	}
+}
 
 func TestVersionSkewError(t *testing.T) {
 	cases := []struct {
