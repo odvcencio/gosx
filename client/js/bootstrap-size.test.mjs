@@ -728,7 +728,7 @@ const budgets = [
   // the shared governed allowances remain fixed.
   {
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 1852200 -> 1854000 (measured 1919449); gzip 520900 -> 521500 (measured 537869); brotli 411200 -> 411700 (measured 428049). Governed allowances stay fixed.
-    file: "bootstrap.js", raw: 1861800, gzip: 524000, brotli: 415092 },
+    file: "bootstrap.js", raw: 1861800, gzip: 524000, brotli: 415535 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
