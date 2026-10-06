@@ -728,7 +728,7 @@ const budgets = [
   // the shared governed allowances remain fixed.
   {
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 1852200 -> 1854000 (measured 1919449); gzip 520900 -> 521500 (measured 537869); brotli 411200 -> 411700 (measured 428049). Governed allowances stay fixed.
-    file: "bootstrap.js", raw: 1861800, gzip: 524000, brotli: 414902 },
+    file: "bootstrap.js", raw: 1861800, gzip: 524000, brotli: 415092 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1460,7 +1460,7 @@ const budgets = [
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 436000 -> 436600 (measured 458426); gzip 110700 -> 111000 (measured 116451); brotli 91800 -> 92100 (measured 96629). Governed allowances stay fixed.
     // Detail cache lifecycle adds 1,086 raw / 314 gzip / 280 Brotli WebGPU bytes.
     // Raise only breached measured targets; the size policy stays fixed.
-    file: "bootstrap-feature-scene3d-webgpu.js", raw: 440128, gzip: 111000, brotli: 93263 },
+    file: "bootstrap-feature-scene3d-webgpu.js", raw: 440128, gzip: 111000, brotli: 93584 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only

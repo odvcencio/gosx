@@ -1,5 +1,5 @@
   function wgpuCreatePipelineGuard(canvas: any): any {
-    var guard = { pending: 0, disposed: false, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
+    var guard = { pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
     var notificationPending = false;
     function changed() {
       if (guard.disposed || notificationPending) return;
@@ -41,8 +41,9 @@
       return function(bundle: any, viewport: any, frameMeta: any) {
         try { render(bundle, viewport, frameMeta); }
         catch (error) {
+          wgpuSubmitPendingFrame(guard, error);
           if (!error || !error.pipelineValidation) fail("frame", String(error && error.message || error));
-        } finally { endFrame(); }
+        } finally { guard.frameEncoder = guard.framePass = guard.frameCleanup = null; endFrame(); }
       };
     }
     function release(raw: any) {
@@ -102,11 +103,51 @@
     return pipeline;
   }
 
+  // Pipeline validation can pause a frame after compute commands have advanced
+  // CPU-side simulation state. Submit those valid commands before retrying so
+  // seed flags, consumed events and ping-pong indices still describe the GPU.
+  function wgpuSubmitPendingFrame(guard: any, error: any) {
+    if (!error || !error.pipelineValidation || !guard.frameEncoder) return;
+    try {
+      if (guard.framePass) guard.framePass.end();
+      if (guard.frameCleanup) guard.frameCleanup();
+      guard.submit([guard.frameEncoder.finish()]);
+    } catch (failure) { guard.fail("frame", String(failure && failure.message || failure)); }
+  }
+
+  function wgpuTrackFrameEncoder(encoder: any, guard: any): any {
+    guard.frameEncoder = encoder;
+    return new Proxy(encoder, { get: function(target, key) {
+      var value = Reflect.get(target, key, target);
+      if (key !== "beginRenderPass" && key !== "beginComputePass") return typeof value === "function" ? value.bind(target) : value;
+      return function(descriptor) {
+        var pass = value.call(target, descriptor);
+        guard.framePass = pass;
+        var methods = Object.create(null);
+        return new Proxy(pass, { get: function(active, method) {
+          if (method === "end") return function() {
+            active.end();
+            if (guard.framePass === active) guard.framePass = null;
+          };
+          var fn = Reflect.get(active, method, active);
+          if (typeof fn !== "function") return fn;
+          if (!methods[method]) methods[method] = fn.bind(active);
+          return methods[method];
+        } });
+      };
+    } });
+  }
+
   function wgpuGuardDevice(raw: any, guard: any): any {
     var methods = Object.create(null);
+    guard.submit = raw.queue.submit.bind(raw.queue);
     return new Proxy(raw, {
       get: function(target, key) {
         if (key === "__gosxPipelineGuard") return guard;
+        if (key === "createCommandEncoder") return function(descriptor) {
+          var encoder = target.createCommandEncoder(descriptor);
+          return descriptor && descriptor.label === "gosx-frame" ? wgpuTrackFrameEncoder(encoder, guard) : encoder;
+        };
         if (key === "createShaderModule") return function(descriptor) {
           target.pushErrorScope("validation");
           try { return target.createShaderModule(descriptor); }
@@ -18506,7 +18547,7 @@
       // Per-pass stamps ride on the render-pass descriptors, so the slot must be
       // chosen before the shadow pass opens.
       pollGPUPassTimingReadback();
-      beginGPUPassTimingFrame();
+      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); gpuDriven.finishEncoding(encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
       // Prepare the full detail draw set before retiring resources from earlier frames.

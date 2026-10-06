@@ -90,9 +90,36 @@ test("WebGPU never binds pending pipelines and resumes after validation", async 
   const h = await failureHarness(/does-not-match/);
   h.renderer.render(h.scene, { width: 64, height: 64 });
   assert.equal(h.fake.state.renderPasses.some(pass => pass.pipelines.length > 0), false);
+  assert.ok(h.fake.state.submitCount > 0, "valid work encoded before a pending pipeline must reach the GPU");
+  assert.ok(h.fake.state.renderPasses.every(pass => pass.ended), "the suspended render pass must close before submission");
   await flushAsyncWork();
   await frames(h, 4);
   assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.length > 0));
+  assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
+  h.renderer.dispose();
+});
+
+test("a newly enabled post pass preserves water simulation commands while its pipelines validate", async () => {
+  const h = await failureHarness(/does-not-match/);
+  const api = h.env.context.__gosx_scene3d_api;
+  h.scene.waterSystems = api.createSceneState({ scene: { waterSystems: [{ id: "pending-water", grid: 4, seedDrops: 1 }] } }).waterSystems;
+  await frames(h, 8);
+  const dispatches = label => h.fake.state.computePasses.flatMap(pass => pass.dispatches).filter(dispatch => dispatch.pipeline.desc.label === label).length;
+  assert.equal(dispatches("gosx-water-seed-drops"), 1);
+  const beforeSteps = dispatches("gosx-water-step"), beforeSubmits = h.fake.state.submitCount;
+  h.scene.postEffects = [{ kind: "fxaa" }];
+  h.renderer.render(h.scene, { width: 64, height: 64 }, { nowMS: 170, active: true });
+  assert.ok(dispatches("gosx-water-step") > beforeSteps, "the live simulation advances before a newly required pipeline pauses the frame");
+  assert.ok(h.fake.state.submitCount > beforeSubmits, "the advanced simulation must reach the GPU before retrying");
+  assert.ok(h.fake.state.renderPasses.every(pass => pass.ended));
+  await flushAsyncWork();
+  for (let i = 0; i < 8; i++) {
+    h.renderer.render(h.scene, { width: 64, height: 64 }, { nowMS: 187 + i * 17, active: true });
+    await flushAsyncWork();
+  }
+  assert.equal(dispatches("gosx-water-seed-drops"), 1, "retries must preserve the simulation seed state");
+  assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.some(draw => draw.pipeline && draw.pipeline.desc.label === "gosx-post-fxaa")));
+  assert.equal(h.renderer.getFailureReason(), "");
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
   h.renderer.dispose();
 });
