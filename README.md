@@ -785,6 +785,12 @@ explicit export command. Export harnesses supply a numeric `PORT` and a loopback
 `GOSX_LISTEN_ADDR`. Use `server.App.ListenAndServe` to honor both, including when
 your app's default address comes from another environment variable.
 
+Install the CLI at the version required by your project's `go.mod`, using
+`go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the
+binary's compiled module version, so matching pseudo-versions work as well as
+releases. Local development binaries without a module version fall back to the
+release constant. A genuine mismatch still reports the matching install command.
+
 ### Prebuilt runtime (no TinyGo required)
 
 A project pinned to a stable released `m31labs.dev/gosx` version (a plain

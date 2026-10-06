@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
 - Skip the prerender subprocess when there are no static routes. Set
   `build.prerender.enabled` to `false` to build production assets and a server
   without starting an app that requires authentication or database setup.
