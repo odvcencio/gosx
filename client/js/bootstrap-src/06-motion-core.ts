@@ -1514,6 +1514,7 @@
     });
   }
 
+  motion.ease = motionEase;
   motion.scheduler = scheduler;
   motion.signal = function(initial, name) { return createSignal(initial, name ? String(name) : ""); };
   motion.spring = function(initial, options) { return createSpringSignal(initial, options || {}, options && options.name ? String(options.name) : ""); };

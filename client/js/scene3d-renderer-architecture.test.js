@@ -261,8 +261,8 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
       "probe.yml",
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
-    // Each lazy chunk includes its three sidecars; zoom adds four artifacts.
-    assert.equal(generated.length, 88);
+    // Each lazy chunk includes its three sidecars; timelines add four artifacts.
+    assert.equal(generated.length, 92);
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));
