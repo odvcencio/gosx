@@ -17,7 +17,7 @@
     const cfg = (typeof window !== "undefined" && window.__gosx_telemetry_config) || {};
     const rawFlushInterval = Number(cfg.flushInterval);
     return {
-      endpoint: typeof cfg.endpoint === "string" && cfg.endpoint ? cfg.endpoint : ((document.querySelector('meta[name=gosx-base-path]') as HTMLMetaElement)?.content || "") + GOSX_TELEMETRY_ENDPOINT,
+      endpoint: typeof cfg.endpoint === "string" && cfg.endpoint ? cfg.endpoint : ((document.querySelector?.('meta[name=gosx-base-path]') as HTMLMetaElement)?.content || "") + GOSX_TELEMETRY_ENDPOINT,
       flushInterval: Math.max(0, Number.isFinite(rawFlushInterval) ? rawFlushInterval : GOSX_TELEMETRY_FLUSH_MS_DEFAULT),
       maxBatch: gosxTelemetryPositiveInteger(cfg.maxBatch, GOSX_TELEMETRY_BATCH_MAX_DEFAULT),
       maxQueue: gosxTelemetryPositiveInteger(cfg.maxQueue, GOSX_TELEMETRY_QUEUE_MAX_DEFAULT),
