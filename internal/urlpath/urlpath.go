@@ -3,7 +3,6 @@ package urlpath
 
 import (
 	"fmt"
-	"net/url"
 	"path"
 	"strings"
 )
@@ -28,8 +27,11 @@ func URL(prefix, value string) string {
 	if prefix == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.HasPrefix(value, "/\\") {
 		return value
 	}
-	u, err := url.Parse(value)
-	if err != nil || u.Path == prefix || strings.HasPrefix(u.Path, prefix+"/") {
+	localPath := value
+	if end := strings.IndexAny(localPath, "?#"); end >= 0 {
+		localPath = localPath[:end]
+	}
+	if localPath == prefix || strings.HasPrefix(localPath, prefix+"/") {
 		return value
 	}
 	return prefix + value
