@@ -80,6 +80,8 @@ test("GSP3 dispatch calls the retained motion path", async () => {
   const result = await bridge.dispatchMotionFrame(handle, frame());
   assert.equal(result.applied, true);
   assert.equal(received.length, 1);
+  assert.deepEqual(Object.keys(handle.__gosxMotionFrameStats).sort(), ["accepted", "errors", "lastError", "rejected", "superseded"]);
+  assert.equal(Object.getPrototypeOf(handle.__gosxMotionFrameStats.rejected), null);
   assert.equal(received[0][0].instances[0].id, "hero");
 });
 

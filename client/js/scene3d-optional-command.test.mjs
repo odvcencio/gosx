@@ -103,9 +103,9 @@ for (const feature of features) {
   test(feature.method + " polls stable targets and respects a zero readiness timeout", async () => {
     const r = runtime();
     r.setMount(null);
-    await assert.rejects(r.bridge[feature.method]("scene", {}, { timeoutMS: 0 }), /target is not ready/);
+    await assert.rejects(r.bridge[feature.method]("scene", {}, { timeoutMS: 0 }), /target .*ready/);
     assert.equal(r.timers.length, 0);
-    const expired = assert.rejects(r.bridge[feature.method]("scene", {}, { timeoutMS: 16 }), /target is not ready/);
+    const expired = assert.rejects(r.bridge[feature.method]("scene", {}, { timeoutMS: 16 }), /target .*ready/);
     r.advance(16); await expired;
     const pending = r.bridge[feature.method]("scene", { id: "ready" }, { timeoutMS: 16 });
     r.window[feature.api] = { attach: value => value.id };
@@ -149,6 +149,18 @@ for (const feature of features) {
     assert.equal(r.scripts.length, 0);
   });
 }
+
+test("shared readiness retains fractional presentation deadlines and legacy command rounding", async () => {
+  for (const feature of features) {
+    const r = runtime(); r.setMount(null);
+    const pending = assert.rejects(r.bridge[feature.method]("scene", {}, { timeoutMS: 0.5 }), /target .*ready/);
+    r.advance(0.25); assert.equal(r.timers.length, 1);
+    r.advance(0.25); await pending;
+  }
+  const r = runtime(); r.setMount(null);
+  const pending = assert.rejects(r.bridge.dispatchCommands("scene", [], { timeoutMS: 1.5 }), /target did not become ready/);
+  r.advance(1); await pending;
+});
 
 test("shared command readiness preserves the legacy zero timeout and rejects a late application failure", async () => {
   const r = runtime();

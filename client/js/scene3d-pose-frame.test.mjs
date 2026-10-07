@@ -51,6 +51,8 @@ test("GSP2 dispatch calls the retained pose path", async () => {
   const result = await bridge.dispatchPoseFrame(handle, frame());
   assert.equal(result.applied, true);
   assert.equal(received.length, 1);
+  assert.deepEqual(Object.keys(handle.__gosxPoseFrameStats).sort(), ["accepted", "errors", "fallback", "lastError", "plannerCallsSkipped", "rejected", "superseded"]);
+  assert.equal(Object.getPrototypeOf(handle.__gosxPoseFrameStats.rejected), null);
 });
 
 test("pose rejection uses existing JSON command path when supplied", async () => {
