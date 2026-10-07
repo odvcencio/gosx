@@ -5,8 +5,9 @@
 - Add transactional aggregate telemetry setup with one maintenance worker and
   one named application shutdown hook. Disabled handles own no resources;
   failed setup removes its reservation. Shared close deadlines retain unfinished
-  owners, and clock or logger panics expose fixed error classes. Native features
-  remain unavailable on WebAssembly. Listener, subsystem and record adapters
+  owners, and clock or logger panics expose fixed error classes. Late completion
+  preserves owner cancellation and elapsed deadlines when propagation is delayed.
+  Native features remain unavailable on WebAssembly. Listener, subsystem and record adapters
   follow in their own slices; selecting them returns a fixed unsupported class.
 
 - Add pure telemetry defaults and bounded, redacted option validation, plus
