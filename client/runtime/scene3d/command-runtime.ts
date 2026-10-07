@@ -177,27 +177,9 @@
   const sceneAPI = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
   sceneAPI.addCommandHook = addCommandHook;
 
-  const timelineLoads = new Map();
   function loadTimeline() {
     if (sceneAPI.timeline) return Promise.resolve(sceneAPI.timeline);
-    if (timelineLoads.has(1)) return timelineLoads.get(1);
-    const promise = new Promise((resolve, reject) => {
-      const tag = Array.from(document.scripts).find(script => script.getAttribute("data-gosx-script") === "feature-scene3d");
-      const url = tag && tag.getAttribute("data-gosx-scene3d-timeline-url");
-      if (!url) return reject(new Error("Scene3D timeline chunk URL was not advertised"));
-      const script = document.createElement("script");
-      script.src = url; script.async = true; script.type = "text/javascript";
-      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
-      if (tag.nonce) script.nonce = tag.nonce;
-      script.onload = function() {
-        if (sceneAPI.timeline) resolve(sceneAPI.timeline);
-        else reject(new Error("Scene3D timeline chunk did not publish its API"));
-      };
-      script.onerror = function() { reject(new Error("failed to load Scene3D timeline chunk")); };
-      document.head.appendChild(script);
-    }).catch(function(error) { timelineLoads.delete(1); throw error; });
-    timelineLoads.set(1, promise);
-    return promise;
+    return sceneAPI.ensureFeatureLoaded("timeline", "gosxScene3dTimelineUrl", "");
   }
 
   function playTimeline() {
