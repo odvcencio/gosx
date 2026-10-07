@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Add measured WebSocket control-ping RTT with matching sequence payloads and
+  once-only timeouts. Queue sampling reports text and binary depth independently,
+  and all full-buffer drops remain visible. Broadcast samples coalesce by depth
+  and preserve counts outside fanout locks, with no additional recipient scan.
+  One optional telemetry subscriber has its own reservation and sampling policy.
+  Opt-in slow-client eviction uses interval drop deltas and the existing pump
+  timer; it does not increase the 54-second ping frequency or add a scanner.
+
 - Add transactional aggregate telemetry setup with one maintenance worker and
   one named application shutdown hook. Disabled handles own no resources;
   failed setup removes its reservation. Shared close deadlines retain unfinished

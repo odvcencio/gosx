@@ -14,6 +14,9 @@ var ErrAfterServe = errors.New("hub: observer configuration closed")
 // ErrClosed means the hub has stopped accepting connections.
 var ErrClosed = errors.New("hub: closed")
 
+// ErrObserverConflict means a telemetry subscriber already owns this hub slot.
+var ErrObserverConflict = errors.New("hub: telemetry observer already registered")
+
 // Direction identifies logical WebSocket application payload traffic.
 type Direction uint8
 
@@ -24,13 +27,17 @@ const (
 
 // TrafficEvent excludes WebSocket framing, compression and control messages.
 // Written is true only after a successful outbound write. QueueDepth is -1
-// unless a queue sample accompanies an enqueue.
+// unless a queue sample accompanies an enqueue. Count zero means one event.
+// Broadcast queue/drop callbacks coalesce identical samples with Count and a
+// nil Client; this preserves their multiplicity outside the fanout lock.
 type TrafficEvent struct {
 	Direction  Direction
 	Binary     bool
 	Bytes      int
 	QueueDepth int
 	Written    bool
+	Dropped    bool // an outbound enqueue failed because its queue was full
+	Count      uint64
 }
 
 // HandlerEvent describes one complete application handler invocation.
@@ -53,6 +60,7 @@ const (
 	RejectedOrigin   RejectionReason = "rejected_origin"   // The origin check refused the upgrade.
 	RejectedUpgrade  RejectionReason = "rejected_upgrade"  // The WebSocket upgrade failed.
 	RejectedClosed   RejectionReason = "hub_closed"        // Shutdown has stopped admission.
+	RejectedOther    RejectionReason = "other"             // A configured policy refused admission.
 )
 
 // MessageRejectionReason classifies a payload on an accepted connection.
@@ -68,8 +76,8 @@ const (
 // A panicking observer is detached; its panic text is never logged. Embed
 // NoopObserver so future callbacks can be added without changing your type.
 // Connection, rejection, message, broadcast, handler, observer-panic and Closed
-// callbacks fire now. RoundTrip, RoundTripTimeout and ClientAssociated are
-// extension points; their producers are added in later integrations.
+// callbacks, control RoundTrip and RoundTripTimeout fire now. ClientAssociated
+// remains an extension point for the permitted browser association integration.
 // Closed stops new dispatches. A dispatch admitted before closing may overlap
 // Closed, so subscribers must synchronize their state and tolerate that overlap.
 type Observer interface {
@@ -113,6 +121,21 @@ type observerList struct{ slots []*observerSlot }
 // ignored. Detach is idempotent and never closes the hub. A callback already in
 // progress may finish after detach; no later dispatch admits that subscriber.
 func (h *Hub) UseObserver(o Observer) (detach func(), err error) {
+	return h.useObserver(o, false, 0)
+}
+
+// UseTelemetryObserver reserves one telemetry subscriber independently of
+// application observers. It supports the same startup/removal boundary as
+// UseObserver. Queue sampling defaults to every 64 attempts per text/binary
+// queue; 1 explicitly samples every attempt. Drops are always reported.
+func (h *Hub) UseTelemetryObserver(o Observer, queueSampleEvery uint32) (detach func(), err error) {
+	if queueSampleEvery == 0 {
+		queueSampleEvery = 64
+	}
+	return h.useObserver(o, true, queueSampleEvery)
+}
+
+func (h *Hub) useObserver(o Observer, telemetry bool, queueSampleEvery uint32) (detach func(), err error) {
 	if o == nil {
 		return func() {}, nil
 	}
@@ -124,6 +147,9 @@ func (h *Hub) UseObserver(o Observer) (detach func(), err error) {
 	if h.closing {
 		return nil, ErrClosed
 	}
+	if telemetry && h.telemetryObserver != nil {
+		return nil, ErrObserverConflict
+	}
 	if h.served {
 		return nil, ErrAfterServe
 	}
@@ -134,6 +160,10 @@ func (h *Hub) UseObserver(o Observer) (detach func(), err error) {
 		list.slots = append(list.slots, old.slots...)
 	}
 	list.slots = append(list.slots, slot)
+	if telemetry {
+		h.telemetryObserver = slot
+		h.queueSampleEvery.Store(queueSampleEvery)
+	}
 	h.observers.Store(list)
 	return func() { h.detachObserver(slot) }, nil
 }
@@ -144,6 +174,10 @@ func (h *Hub) detachObserver(slot *observerSlot) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.telemetryObserver == slot {
+		h.telemetryObserver = nil
+		h.queueSampleEvery.Store(0)
+	}
 	old := h.observers.Load()
 	if old == nil {
 		return
@@ -195,4 +229,107 @@ func (h *Hub) visitObserver(slot *observerSlot, visit func(Observer)) {
 
 func (h *Hub) observeMessage(c *Client, event TrafficEvent) {
 	h.observe(func(o Observer) { o.Message(h, c, event) })
+}
+
+// queueEventLocked is part of the existing enqueue/channel-close critical
+// section. Dispatch occurs after that lock is released. Sampling each queue
+// has no observer work on the nil path and never rescans broadcast recipients.
+func (c *Client) queueEventLocked(binary bool, bytes int, dropped bool) (TrafficEvent, bool) {
+	if c.Hub == nil || c.Hub.observers.Load() == nil {
+		return TrafficEvent{}, false
+	}
+	event := TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: -1, Dropped: dropped}
+	if c.transport != nil {
+		every := c.Hub.queueSampleEvery.Load()
+		if every == 0 {
+			every = 64
+		}
+		index := 0
+		queue := c.send
+		if binary {
+			index, queue = 1, c.binarySend
+		}
+		c.transport.enqueues[index]++
+		if c.transport.enqueues[index] >= every {
+			c.transport.enqueues[index] = 0
+			event.QueueDepth = len(queue)
+		}
+	}
+	return event, dropped || event.QueueDepth >= 0
+}
+
+// The queues have 256 slots. This fixed stack scratch coalesces samples by
+// depth, rather than retaining recipients or scanning them again after fanout.
+type enqueueBatch struct {
+	depths  [257]uint64
+	drops   uint64
+	sampled bool
+}
+
+func (h *Hub) fanout(payload []byte, binary bool, predicate func(*Client) bool) (sent, dropped int) {
+	h.mu.RLock()
+	if h.observers.Load() != nil {
+		return h.observedFanoutLocked(payload, binary, predicate)
+	}
+	// Keep the ordinary path out of the sampled fanout's scratch frame.
+	for _, c := range h.clients {
+		if predicate != nil && !predicate(c) {
+			continue
+		}
+		accepted, full := c.enqueue(payload, binary, nil)
+		if accepted {
+			sent++
+		}
+		if full {
+			dropped++
+		}
+	}
+	h.mu.RUnlock()
+	return
+}
+
+func (h *Hub) observedFanoutLocked(payload []byte, binary bool, predicate func(*Client) bool) (sent, dropped int) {
+	var batch enqueueBatch
+	for _, c := range h.clients {
+		if predicate != nil && !predicate(c) {
+			continue
+		}
+		accepted, full := c.enqueue(payload, binary, &batch)
+		if accepted {
+			sent++
+		}
+		if full {
+			dropped++
+		}
+	}
+	h.mu.RUnlock()
+	h.publishBatch(&batch, binary, len(payload))
+	return
+}
+
+func (c *Client) publishEnqueue(event TrafficEvent, batch *enqueueBatch) {
+	if batch == nil {
+		c.Hub.observeMessage(c, event)
+		return
+	}
+	if event.Dropped {
+		batch.drops++
+	}
+	if event.QueueDepth >= 0 {
+		batch.depths[event.QueueDepth]++
+		batch.sampled = true
+	}
+}
+
+func (h *Hub) publishBatch(batch *enqueueBatch, binary bool, bytes int) {
+	if batch.drops != 0 {
+		h.observeMessage(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: -1, Dropped: true, Count: batch.drops})
+	}
+	if batch.sampled {
+		for depth, count := range batch.depths {
+			if count != 0 {
+				h.observeMessage(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: depth, Count: count})
+			}
+		}
+	}
 }

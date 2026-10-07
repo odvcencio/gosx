@@ -89,6 +89,8 @@ func (h *Hub) finishCloseLocked() bool {
 func (h *Hub) finishClose() {
 	h.mu.Lock()
 	list := h.observers.Swap(nil)
+	h.telemetryObserver = nil
+	h.queueSampleEvery.Store(0)
 	h.mu.Unlock()
 	// Remove the list before callbacks: even a reentrant Broadcast from a
 	// Closed callback must not admit another dispatch to these subscribers.
