@@ -23,6 +23,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"m31labs.dev/gosx/internal/httpcache"
 )
 
 type contextKey string
@@ -260,11 +262,14 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		store := m.load(r)
 		ctx := context.WithValue(r.Context(), storeContextKey, store)
+		request, cachePolicy := httpcache.WithPolicy(r.WithContext(ctx))
 		writer := &responseWriter{
 			ResponseWriter: w,
 			store:          store,
+			cachePolicy:    cachePolicy,
+			status:         http.StatusOK,
 		}
-		next.ServeHTTP(writer, r.WithContext(ctx))
+		next.ServeHTTP(writer, request)
 		writer.commitCookie()
 	})
 }
@@ -385,7 +390,8 @@ func (m *Manager) Token(r *http.Request) string {
 
 // Current returns the request-scoped session store loaded by Middleware.
 // Calling it marks the response as session-dependent (Vary: Cookie, and
-// private caching when the visitor has a session).
+// private caching when the visitor has a session). Framework handlers serving
+// explicitly classified immutable assets can ignore reads, but never writes.
 func Current(r *http.Request) *Store {
 	store := currentStore(r)
 	if store != nil {
@@ -1031,11 +1037,20 @@ func sessionEmpty(store *Store) bool {
 
 type responseWriter struct {
 	http.ResponseWriter
-	store     *Store
-	committed bool
+	store       *Store
+	cachePolicy *httpcache.Policy
+	status      int
+	committed   bool
 }
 
 func (w *responseWriter) WriteHeader(status int) {
+	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	if !w.committed {
+		w.status = status
+	}
 	w.commitCookie()
 	w.ResponseWriter.WriteHeader(status)
 }
@@ -1081,16 +1096,21 @@ func (w *responseWriter) commitCookie() {
 		return
 	}
 	w.committed = true
-	// A response that read or wrote the session must vary by Cookie in both
-	// its anonymous and personalized variants; otherwise a shared cache could
-	// replay anonymous HTML to a visitor with a session. A response that never
-	// touched the session (for example a hashed runtime asset) is the same for
-	// every visitor, so its cache headers are left alone.
-	if w.store != nil && (w.store.accessed || w.store.dirty) {
+	// Classification comes from the handler that resolved immutable bytes,
+	// never from the URL or a public cache header. Reads in global middleware
+	// do not personalize these bytes; writes and unsafe final headers still do.
+	dirty := w.store != nil && w.store.dirty
+	publicAsset := !dirty && w.cachePolicy.AllowsImmutable(w.Header(), w.status)
+	private := dirty || len(w.Header().Values("Set-Cookie")) > 0 ||
+		(w.cachePolicy.IsImmutableAsset() && !publicAsset)
+	if publicAsset {
+		w.Header().Set("Cache-Control", httpcache.Immutable)
+	} else if w.store != nil && (w.store.accessed || dirty) {
 		addCookieVary(w.Header())
-		if w.store.cookiePresent || w.store.dirty {
-			w.Header().Set("Cache-Control", "private, no-store")
-		}
+		private = private || w.store.cookiePresent
+	}
+	if private {
+		w.Header().Set("Cache-Control", httpcache.Private)
 	}
 	if w.store == nil || !w.store.dirty {
 		return

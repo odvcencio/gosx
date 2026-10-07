@@ -3741,6 +3741,7 @@ function gosxConfigureSceneScript(script, role, src) {
       lights: [],
       modelAnimations: [],
       modelSkins: [],
+      rigidInstanceModel: null,
     };
     const stageState = {
       _modelAnimations: staged.modelAnimations,
@@ -3810,7 +3811,7 @@ function gosxConfigureSceneScript(script, role, src) {
           object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows };
           object.static = false;
           staged.objects.push(object);
-        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }
+        }
         staged.rigidInstanceModel = instanceModel;
         return { ok: true, staged };
       }
@@ -3827,7 +3828,7 @@ function gosxConfigureSceneScript(script, role, src) {
         x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
         scaleX: 1, scaleY: 1, scaleZ: 1, parentMatrix: null,
         _shareRigidGeometry: true,
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ }) : instanceModel;
+      }) : instanceModel;
       if (rigidInstance) staged.rigidInstanceModel = instanceModel;
       stage = "skin-clone";
       const skinInstances = sceneCloneModelSkins(asset.skins);
@@ -3900,6 +3901,12 @@ function gosxConfigureSceneScript(script, role, src) {
         // an additional static/live record under the same model ID would let
         // two records diverge in pose state.
         await scenePrepareModelSkinPlayback(stageState, asset, instanceModel, skinInstances, objectIDs, staged.objects, staged.points);
+        // Explicit instanced playback owns bounded per-instance deformation
+        // streams. Cache that owner by the same template/identity as GPU skins.
+        if (model._instancedGLB === true && sceneRigidInstanceHydrationKey(state, model, null) &&
+            staged.modelSkins.length === 1 && staged.modelSkins[0].explicitClips) {
+          staged.rigidInstanceModel = instanceModel;
+        }
       } else {
         sceneRegisterStaticModelLiveRecord(stageState, instanceModel, objectIDs);
       }
@@ -3952,9 +3959,13 @@ function gosxConfigureSceneScript(script, role, src) {
     if (model._transition && ["in", "out", "update"].some(function(kind) {
       return model._transition[kind] && model._transition[kind].duration > 0;
     })) return false;
-    // A singular or mirrored transform takes the established winding/bake
-    // path. This fast path never silently changes reflection semantics.
-    return sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0) > 0.000001;
+    const determinant = sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0);
+    // Nonnegative instanced scales may collapse during fades without changing
+    // geometry identity. Mirrored declarations retain the winding/bake path.
+    if (model._instancedGLB === true && model.scaleX >= 0 && model.scaleY >= 0 && model.scaleZ >= 0) {
+      return Number.isFinite(determinant) && determinant >= 0;
+    }
+    return determinant > 0.000001;
   }
 
   function sceneRigidInstanceHydrationKey(state, model, matrix) {
@@ -3968,7 +3979,17 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneReusableRigidInstance(staged, state) {
-    return Boolean(staged && staged.rigidInstanceModel && sceneReusableStaticModelHydration(staged, state));
+    if (!staged || !staged.rigidInstanceModel) return false;
+    if (sceneReusableStaticModelHydration(staged, state)) return true;
+    if (state) for (const object of staged.objects) {
+      if (state.objects.get(object.id) !== object) return false;
+    }
+    return Boolean(staged.model && staged.model._instancedGLB === true &&
+      staged.modelSkins.length === 1 && staged.modelSkins[0].explicitClips &&
+      !staged.modelSkins[0].mixer && !staged.modelSkins[0].wasmMixer &&
+      !staged.modelAnimations.length && !staged.points.length && !staged.labels.length &&
+      !staged.sprites.length && !staged.html.length && !staged.lights.length &&
+      staged.objects.length);
   }
 
   function scenePrepareRigidInstancePatch(state, staged, model, matrix) {
@@ -3986,11 +4007,18 @@ function gosxConfigureSceneScript(script, role, src) {
     // persist across commands and reuse their mutable matrix cache; retain the
     // defensive copy for those broader declarations.
     const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
-    return { staged, model, matrix: snapshotMatrix, crowdRows };
+    return { staged, model, matrix: snapshotMatrix, crowdRows, poseRevision: staged._poseRevision || 0 };
   }
 
   function sceneCommitRigidInstancePatch(patch) {
-    for (const object of patch.staged.objects) object.parentMatrix = patch.matrix;
+    if (patch.staged.modelSkins && patch.staged.modelSkins.length) {
+      const record = patch.staged.modelSkins[0];
+      record.model = patch.model;
+      record.rootTransform = patch.matrix;
+      sceneApplyModelSkinPose(record, 0, false);
+    } else {
+      for (const object of patch.staged.objects) object.parentMatrix = patch.matrix;
+    }
     if (patch.crowdRows) {
       for (const update of patch.crowdRows) update.object._crowdSkin.rows.set(update.rows);
     }
@@ -3999,28 +4027,46 @@ function gosxConfigureSceneScript(script, role, src) {
   }
 
   function sceneUpdateRigidInstancePoses(state, hydrationModels) {
+    // The binary bridge supplies an optional third argument with its exact
+    // batches. Ordinary declaration commands omit it and retain atomic staging.
+    const pendingBatches = arguments[2];
     const records = state && state._hydratedModelRecords;
     const cache = records && records.rigidInstances;
-    if (!cache || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    const pending = Boolean(state && (state._modelHydrationPromise || state._modelHydrationUncommitted));
+    if (!cache || pending && (!Array.isArray(pendingBatches) || !pendingBatches.length) || state._modelOwner && !state._modelOwner()) return false;
     const models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
-    if (models.length !== records.modelCount) return false;
+    if (!pending && models.length !== records.modelCount) return false;
+    // Only the explicit binary frame can advance committed poses during a
+    // declaration transaction. JSON membership/material replacement remains
+    // atomic and does not move unrelated actors before its assets are ready.
+    const requested = pending ? new Set() : null;
+    if (requested) {
+      for (const batch of pendingBatches) {
+        for (const instance of batch.instances) requested.add(batch.id + "/" + instance.id);
+      }
+    }
     const memberships = records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
     const scope = sceneRigidMembershipScopeKey(state);
     const patches = [];
     const keys = new Set();
     for (let index = 0; index < models.length; index++) {
       const model = models[index];
-      const matrix = sceneModelTransformMatrix(model);
       const id = sceneRigidMembershipModelID(model);
+      if (requested && !requested.has(id)) continue;
+      const matrix = sceneModelTransformMatrix(model);
       const template = id && sceneInstancedGLBHydrationTemplates.get(model);
       const membership = id && memberships && memberships.get(id);
       let key = "";
       if (membership) {
         if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
             membership.template !== template || membership.scope !== scope ||
-            membership.staged !== cache.get(membership.key)) return false;
+            membership.staged !== cache.get(membership.key)) {
+          if (pending) continue; // A different asset/template has no committed authority yet.
+          return false;
+        }
         key = membership.key;
       } else if (id) {
+        if (pending) continue; // New identities stay staged until commit.
         return false;
       } else {
         key = sceneRigidInstanceHydrationKey(state, model, matrix);
@@ -4035,15 +4081,25 @@ function gosxConfigureSceneScript(script, role, src) {
       keys.add(key);
       patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
     }
-    // Validate the complete collection before changing the committed scene.
+    // No compatible committed identities is a deferred pose, not a failure.
+    // The ordered queue retains the latest frame for replay after hydration.
+    if (pending && !patches.length) return true;
+    // Validate every selected committed wrapper before changing any pose.
     for (const patch of patches) {
+      if (patch.staged.modelSkins && patch.staged.modelSkins.length) {
+        const record = patch.staged.modelSkins[0];
+        record.model = patch.model;
+        record.rootTransform = patch.matrix;
+        sceneApplyModelSkinPose(record, 0, false);
+      }
       for (const object of patch.staged.objects) {
-        object.parentMatrix = patch.matrix;
+        if (!patch.staged.modelSkins || !patch.staged.modelSkins.length) object.parentMatrix = patch.matrix;
         if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
         if (object._crowdMotion) delete object._crowdMotion;
       }
       patch.staged.model = patch.model;
       patch.staged.rigidInstanceModel = patch.model;
+      patch.staged._poseRevision = (patch.staged._poseRevision || 0) + 1;
     }
     return true;
   }
@@ -4233,6 +4289,7 @@ function gosxConfigureSceneScript(script, role, src) {
 
   async function sceneCommitRigidInstanceMembership(plan) {
     const state = plan.state;
+    state._modelHydrationUncommitted = true;
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
     const additions = plan.entries.filter(function(entry) { return entry.kind === "add"; });
     const results = await Promise.all(additions.map(function(entry) {
@@ -4274,8 +4331,17 @@ function gosxConfigureSceneScript(script, role, src) {
         if (!sceneReusableStaticModelHydration(entry.staged, state)) {
           sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
         }
-      } else if (entry.kind === "rigid" && !sceneReusableRigidInstance(entry.staged, state)) {
-        sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+      } else if (entry.kind === "rigid") {
+        if (!sceneReusableRigidInstance(entry.staged, state)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        // Independent binary poses may have advanced this committed identity
+        // while an addition loaded. Keep that newer pose, not the plan snapshot.
+        if (entry.patch.poseRevision !== (entry.staged._poseRevision || 0)) {
+          const model = entry.staged.rigidInstanceModel;
+          entry.patch = scenePrepareRigidInstancePatch(state, entry.staged, model, sceneModelTransformMatrix(model));
+          if (!entry.patch) { sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null); }
+        }
       }
       for (const object of entry.staged.objects) {
         if (nextObjectIDs.has(object.id)) {
@@ -4320,7 +4386,14 @@ function gosxConfigureSceneScript(script, role, src) {
         for (const object of entry.staged.objects) state.objects.set(object.id, object);
       }
     }
+    // Retain the playback owners for surviving identities and drop only
+    // retired owners; CPU deformation storage must not grow across waves.
+    state._modelSkins = [];
+    for (const staged of hydrated.rigidInstances.values()) {
+      Array.prototype.push.apply(state._modelSkins, staged.modelSkins);
+    }
     state._hydratedModelRecords = hydrated;
+    state._modelHydrationUncommitted = false;
     const counts = sceneModelHydrationCounts(plan.entries.length);
     counts.objects = hydrated.objects.length;
     publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
@@ -4344,6 +4417,9 @@ function gosxConfigureSceneScript(script, role, src) {
     }
     const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
     state._modelHydrationGeneration = generation;
+    // A failed replacement leaves these declarations uncommitted. Compatible
+    // binary poses may still advance the last committed generation afterward.
+    state._modelHydrationUncommitted = true;
     let models;
     try {
       // Commands can replace the declaration arrays while their assets are in
@@ -4375,6 +4451,7 @@ function gosxConfigureSceneScript(script, role, src) {
       sceneClearHydratedModelRecords(state);
       state._modelAnimations = [];
       state._modelSkins = [];
+      state._modelHydrationUncommitted = false;
       publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
         generation,
         currentGeneration: generation,
@@ -4411,6 +4488,8 @@ function gosxConfigureSceneScript(script, role, src) {
         return { ok: true, staged: Object.assign({}, rigid, { model, modelIndex,
           rigidInstanceModel: model,
           _pendingRigidMatrix: matrix,
+          _pendingRigidSource: rigid,
+          _pendingRigidPoseRevision: rigid._poseRevision || 0,
         }) };
       }
       return sceneStageModelHydration(state, model, modelIndex, generation);
@@ -4458,6 +4537,22 @@ function gosxConfigureSceneScript(script, role, src) {
       return sceneModelHydrationOutcome(counts, generation, "failed", false, false, failedStage);
     }
 
+    // Reused wrappers may have received independent binary poses while this
+    // generation loaded. Refresh only those exact cached identities; new or
+    // replaced templates retain this generation's transaction snapshot.
+    for (const result of results) {
+      const staged = result.staged;
+      const source = staged._pendingRigidSource;
+      if (source && staged._pendingRigidPoseRevision !== (source._poseRevision || 0)) {
+        staged.model = source.rigidInstanceModel;
+        staged.rigidInstanceModel = source.rigidInstanceModel;
+        staged._pendingRigidMatrix = new Float32Array(sceneModelTransformMatrix(source.rigidInstanceModel));
+        staged._poseRevision = source._poseRevision;
+      }
+      delete staged._pendingRigidSource;
+      delete staged._pendingRigidPoseRevision;
+    }
+
     // The entire generation is ready and still current. Replace the previous
     // model-derived records in one synchronous turn, preserving declaration
     // order regardless of network completion order.
@@ -4471,8 +4566,14 @@ function gosxConfigureSceneScript(script, role, src) {
     for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
       const staged = results[modelIndex].staged;
       if (staged._pendingRigidMatrix) {
+        if (staged.modelSkins.length) {
+          const record = staged.modelSkins[0];
+          record.model = staged.model;
+          record.rootTransform = staged._pendingRigidMatrix;
+          sceneApplyModelSkinPose(record, 0, false);
+        }
         for (const object of staged.objects) {
-          object.parentMatrix = staged._pendingRigidMatrix;
+          if (!staged.modelSkins.length) object.parentMatrix = staged._pendingRigidMatrix;
           if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, staged.model._crowdPose, object._crowdSkin.rows);
         }
         delete staged._pendingRigidMatrix;
@@ -4522,6 +4623,7 @@ function gosxConfigureSceneScript(script, role, src) {
       Array.prototype.push.apply(state._modelSkins, staged.modelSkins);
     }
     state._hydratedModelRecords = hydrated;
+    state._modelHydrationUncommitted = false;
     counts.objects = hydrated.objects.length;
     counts.points = hydrated.points.length;
     counts.labels = hydrated.labels.length;

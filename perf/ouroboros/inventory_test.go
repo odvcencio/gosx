@@ -456,7 +456,9 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	if audit.Anchor.MethodVersion != compatibilityFullMethod || audit.Anchor.ClassifierVersion != compatibilityFullClassifier {
 		t.Fatalf("anchor metadata = %q/%q, want full E metadata", audit.Anchor.MethodVersion, audit.Anchor.ClassifierVersion)
 	}
-	if len(audit.Reconciliation.AddedSinceAnchor) != 0 || len(audit.Reconciliation.RemovedSinceAnchor) != 0 {
+	// The recovery API is published only by the new failure-loaded chunk.
+	wantAdded := []string{"__gosx_scene3d_pipeline_recovery_api"}
+	if !equalStrings(audit.Reconciliation.AddedSinceAnchor, wantAdded) || len(audit.Reconciliation.RemovedSinceAnchor) != 0 {
 		t.Fatalf("anchor/current changed unexpectedly: %+v", audit.Reconciliation)
 	}
 	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}

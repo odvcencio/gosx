@@ -1,10 +1,37 @@
 # Changelog
 
-## Unreleased
+## v0.57.6
+
+- Apply Scene3D `SetTransformCommand` to a `Model` root ID. Retained rigid
+  models update their parent matrices while preserving imported primitive
+  materials, immutable geometry, and GPU residency. Commands during asset
+  loading supersede stale hydration; fitted models retain their fit scale.
+- Keep compatible committed actors moving while newcomers load; failed or
+  superseded hydration cannot restore an older pose or retain retired wrappers.
+  Cache explicit instanced CPU skin/node/morph playback owners across pose and
+  membership updates, retain zero-scale nonnegative instances, defer early
+  binary pose frames until hydration commits, and bound playback ownership to
+  the current scene membership.
+
+- Preserve public immutable caching for framework runtime JS/WASM, emitted
+  assets, hashed images and versioned public assets when global auth middleware
+  reads the session on every request. Classify resolved assets explicitly;
+  cookies, session writes, HTML/data, session variance and private policies
+  still force private caching.
+- Stop exposing `GET /_gosx/scheduled` on the public listener by default.
+  Building an app no longer creates a scheduler. The deprecated
+  `App.EnablePublicScheduledStatus()` opt-in lasts one minor release; protect
+  it with application authentication. Scheduled status handlers now return at
+  most 64 tasks, omit progress/error text, and report the fixed `task_failed`
+  error class. The response header `X-GoSX-Snapshot-Complete` reports truncation.
 
 - Compare projects against the CLI binary's compiled GoSX module version,
   including pseudo-versions. Development builds retain the release fallback;
   mismatched versions still report the matching install command.
+
+- Export `signal.NewShared[T]` and `signal.Shared[T]` for typed native Go and
+  island authoring. Native calls create independent values; browser lowering
+  retains the existing shared `$name` contract.
 
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
