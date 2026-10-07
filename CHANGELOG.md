@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Preserve public immutable caching for framework runtime JS/WASM, emitted
+  assets, hashed images and versioned public assets when global auth middleware
+  reads the session on every request. Classify resolved assets explicitly;
+  cookies, session writes, HTML/data, session variance and private policies
+  still force private caching.
 - Stop exposing `GET /_gosx/scheduled` on the public listener by default.
   Building an app no longer creates a scheduler. The deprecated
   `App.EnablePublicScheduledStatus()` opt-in lasts one minor release; protect
