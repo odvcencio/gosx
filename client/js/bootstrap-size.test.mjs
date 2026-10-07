@@ -1247,7 +1247,11 @@ const budgets = [
   // Portrait reset reads the authored camera: measured 644799 / 184952 / 152586.
   {
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 614100 -> 614200 (measured 644895). Governed allowances stay fixed.
-    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600, brotli: 145861 },
+    // Model-root command routing adds 219 measured Brotli bytes (152729 ->
+    // 152948); this is the smallest 100-byte target step that clears the cap.
+    // Pending-pose and CPU playback retention adds 564 more Brotli bytes
+    // (152948 -> 153512); the smallest clearing target step is 500 bytes.
+    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600, brotli: 146250 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
