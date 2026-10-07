@@ -19,8 +19,9 @@ function runtime(reduce = false) {
     requestAnimationFrame(fn) { frames.set(++frameID, fn); return frameID; }, cancelAnimationFrame(id) { frames.delete(id); } };
   const context = vm.createContext({ window, document, console, performance: { now: () => clock }, Date, setTimeout, clearTimeout });
   vm.runInContext(read('bootstrap-src/06-motion-core.ts'), context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   vm.runInContext(ts.transpileModule(read('../runtime/scene3d/timeline.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
-  const api = window.__gosx_scene3d_timeline_api;
+  const api = window.__gosx_scene3d_api.timeline;
   let current = null;
   return { api, window, context, writes, frames, listeners,
     play(spec = fixture, apply = commands => writes.push(plain(commands))) {
@@ -169,4 +170,51 @@ test('demand-loaded adapters cancel paused playback on disposal and restore host
   assert.equal(handle.applyCommands, apply);
   assert.equal(handle.dispose, dispose);
   assert.equal(disconnected, true);
+});
+
+test('shared hooks run in explicit order and install one adapter and observer', () => {
+  for (const order of [[20, 10], [10, 20]]) {
+    const r = runtime(), calls = [];
+    let observers = 0, disconnected = 0;
+    r.context.MutationObserver = class {
+      constructor() { observers++; }
+      observe() {}
+      disconnect() { disconnected++; }
+    };
+    const mount = { isConnected: true };
+    const apply = function(commands) { assert.equal(this, handle); calls.push('apply'); return commands; };
+    const dispose = function() { assert.equal(this, handle); calls.push('dispose'); };
+    const handle = { applyCommands: apply, dispose };
+    const add = r.window.__gosx_scene3d_api.addCommandHook;
+    let adapter, teardown, presentation;
+    for (const priority of order) {
+      presentation = add(mount, handle, String(priority), priority,
+        () => calls.push(priority), () => calls.push('close' + priority), () => true);
+      adapter ??= handle.applyCommands; teardown ??= handle.dispose;
+      assert.equal(handle.applyCommands, adapter);
+      assert.equal(handle.dispose, teardown);
+    }
+    const commands = [{ kind: 2 }];
+    assert.equal(handle.applyCommands(commands), commands);
+    assert.deepEqual(calls.splice(0), [10, 20, 'apply']);
+    presentation(commands);
+    assert.deepEqual(calls.splice(0), ['apply']);
+    handle.dispose();
+    assert.deepEqual(calls, ['close10', 'close20', 'dispose']);
+    assert.equal(handle.applyCommands, apply);
+    assert.equal(handle.dispose, dispose);
+    assert.equal(observers, 1); assert.equal(disconnected, 1);
+  }
+});
+
+test('one failed cleanup still disposes every shared hook and the host', () => {
+  const r = runtime(), calls = [], mount = { isConnected: true };
+  const apply = () => {}, dispose = () => calls.push('host');
+  const handle = { applyCommands: apply, dispose };
+  const add = r.window.__gosx_scene3d_api.addCommandHook;
+  add(mount, handle, 'first', 10, () => {}, () => { calls.push('first'); throw new Error('cleanup'); }, () => true);
+  add(mount, handle, 'second', 20, () => {}, () => calls.push('second'), () => true);
+  assert.throws(() => handle.dispose(), /cleanup/);
+  assert.deepEqual(calls, ['first', 'second', 'host']);
+  assert.equal(handle.applyCommands, apply); assert.equal(handle.dispose, dispose);
 });

@@ -4,6 +4,10 @@ Author a finite sequence in Go, then play it on a mounted scene without sending
 per-frame updates from your server. A tabletop game can drop a piece, move the
 camera, and settle the piece's scale in one plan.
 
+Set `scene.Props{Timelines: scene.Bool(true)}` or `<Scene3D timelines={true}>`
+on scenes that will receive plans. This advertises the versioned chunk URL;
+the browser fetches it on first playback. Other pages omit the URL.
+
 ```go
 import (
     "encoding/json"
@@ -79,7 +83,7 @@ command supersedes them; the settled camera returns to user control.
 The implementation loads `bootstrap-feature-scene3d-timeline.js` on first play.
 It is included in production manifests and size reports and uses the advertised,
 versioned URL. `Renderer.SetBootstrapFeatureScene3DTimelinePath` accepts an asset
-prefix for embedded deployments. Ordinary scenes advertise the URL without
+prefix for embedded deployments. Scenes that opt in advertise the URL without
 loading or preloading the chunk.
 
 Native hosts can prepare a `scene.NewTimelinePlayer(plan)` once and call

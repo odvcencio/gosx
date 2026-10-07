@@ -21,7 +21,6 @@ interface SceneTimelineContext {
   const cameraProperties = new Set(['x', 'y', 'z', 'rotationX', 'rotationY', 'rotationZ', 'fov']);
   const key = (t: SceneTweenSpec) => JSON.stringify([!!t.camera, t.node || '', t.property]);
   const mounted = new WeakMap<object, any>();
-  const attachments = new WeakMap<object, any>();
 
   function prepare(spec: SceneTimelineSpec): SceneTweenSpec[] {
     if (!spec || spec.version !== 1 || typeof spec.id !== 'string' || !spec.id || !Array.isArray(spec.tweens) || !spec.tweens.length || spec.tweens.length > 1024) throw new TypeError('invalid Scene3D timeline');
@@ -190,38 +189,20 @@ interface SceneTimelineContext {
 
   function dispose(handle: object) {
     mounted.get(handle)?.cancel('disposed'); mounted.delete(handle);
-    const attachment = attachments.get(handle);
-    if (!attachment) return;
-    attachment.observer?.disconnect();
-    if ((handle as any).applyCommands === attachment.apply) (handle as any).applyCommands = attachment.originalApply;
-    if ((handle as any).dispose === attachment.dispose) (handle as any).dispose = attachment.originalDispose;
-    attachments.delete(handle);
   }
 
-  // Install the command and disposal adapters only when choreography is used.
+  // Join the shared command/disposal hook only when choreography is used.
   function attach(spec: SceneTimelineSpec, mount: any, handle: any, alive: () => boolean) {
     prepare(spec);
     if (!alive() || !mount?.__gosxScene3DState) throw new Error('disposed');
     const state = mount.__gosxScene3DState;
-    let attachment = attachments.get(handle);
-    if (!attachment) {
-      const originalApply = handle.applyCommands, originalDispose = handle.dispose;
-      const apply = (commands: { kind: number }[]) => { clear(state, handle, commands); return originalApply.call(handle, commands); };
-      const teardown = () => { dispose(handle); return originalDispose?.call(handle); };
-      attachment = { apply, dispose: teardown, originalApply, originalDispose, observer: null };
-      if (typeof MutationObserver !== 'undefined') {
-        attachment.observer = new MutationObserver(() => { if (!alive() || !mount.isConnected) dispose(handle); });
-        attachment.observer.observe(mount, { attributes: true, attributeFilter: ['data-gosx-scene3d-command-ready'] });
-        if (mount.parentNode) attachment.observer.observe(mount.parentNode, { childList: true });
-      }
-      attachments.set(handle, attachment);
-      handle.applyCommands = apply; handle.dispose = teardown;
-    }
-    return playMounted(spec, state, handle, (_state, commands) => attachment.originalApply.call(handle, commands),
+    const apply = window.__gosx_scene3d_api.addCommandHook(mount, handle, 'timeline', 10,
+      (commands: { kind: number }[]) => clear(state, handle, commands), () => dispose(handle), alive);
+    return playMounted(spec, state, handle, (_state, commands) => apply(commands),
       null, (_controls, camera) => handle.setCamera(camera), () => {}, () => alive() && mount.isConnected);
   }
 
-  window.__gosx_scene3d_timeline_api = { play, playMounted, attach, clear, dispose, sample: (spec: SceneTimelineSpec, seconds: number) => {
+  window.__gosx_scene3d_api.timeline = { play, playMounted, attach, clear, dispose, sample: (spec: SceneTimelineSpec, seconds: number) => {
     if (!Number.isFinite(seconds)) throw new TypeError('timeline sample time must be finite');
     return sample(prepare(spec), seconds);
   } };

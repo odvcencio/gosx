@@ -26,7 +26,7 @@ const sceneTimelineHTML = `<!doctype html><html><body style="margin:0">
 window.ready = (async () => {
  window.handle = await window.__gosx_engine_factories.GoSXScene3D({
   mount: document.getElementById('scene'), emit() {},
-  props: { width:400,height:300,responsive:false,maxDevicePixelRatio:1,
+  props: { width:400,height:300,responsive:false,maxDevicePixelRatio:1,timelines:true,
    requireWebGL:true,forceWebGL:true,controls:'orbit',background:'#08151f',
    scene: {camera:{x:0,y:0,z:6,fov:60},objects:[{
     id:'piece',kind:'box',width:1,height:1,depth:1,x:-1,y:0,z:0,color:'#ffbb33'

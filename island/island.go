@@ -1171,7 +1171,7 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			b.WriteString(html.EscapeString(instanceStreamPath))
 			b.WriteByte('"')
 		}
-		if timelinePath := r.bootstrapFeatureScene3dTimelinePath; timelinePath != "" {
+		if timelinePath := r.bootstrapFeatureScene3dTimelinePath; timelinePath != "" && r.scene3DNeedsTimelineChunk() {
 			b.WriteString(` data-gosx-scene3d-timeline-url="`)
 			b.WriteString(html.EscapeString(timelinePath))
 			b.WriteByte('"')
@@ -2478,6 +2478,22 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		}
 	}
 	return needsCompute, needsDecompress
+}
+
+// Timelines are advertised only for scenes that opt into finite playback.
+func (r *Renderer) scene3DNeedsTimelineChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props struct {
+			Timelines bool `json:"timelines"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.Timelines {
+			return true
+		}
+	}
+	return false
 }
 
 // Zoom is downloaded only for an explicit camera control opt-in.
