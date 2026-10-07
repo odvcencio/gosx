@@ -302,3 +302,7 @@ declare function sceneRenderBackground(background: any, effect: any): number[];
 declare function sceneTransmissionEffects(effects: any[], environment: any): any[];
 declare function sceneTransmissionVolume(material: any): number[];
 declare function sceneTransmissionPublish(mount: any, state: string): void;
+
+declare var scenePickTargetAtEvent: any;
+
+declare var sceneScreenToRay: any;

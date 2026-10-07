@@ -18,3 +18,12 @@ func TestRegisterNativeStub(t *testing.T) {
 		t.Fatalf("expected ErrUnsupported, got %v", err)
 	}
 }
+
+func TestSharedSignalNativeStubs(t *testing.T) {
+	if err := (Context{}).SetSignal("$intent", nil); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("SetSignal error = %v", err)
+	}
+	if _, err := SubscribeSignal[int](Context{}, "$input", func(int) {}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("SubscribeSignal error = %v", err)
+	}
+}

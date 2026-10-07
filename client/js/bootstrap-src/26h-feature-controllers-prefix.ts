@@ -12,6 +12,7 @@
   }
 
   registerFeature("controllers", function(api) {
+    const loadScriptTag = api.loadScriptTag;
     const gosxReadSharedSignal = api.gosxReadSharedSignal;
     const gosxSubscribeSharedSignal = api.gosxSubscribeSharedSignal;
     const setSharedSignalValue = api.setSharedSignalValue;

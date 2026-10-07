@@ -3,6 +3,7 @@
 package wasm
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,10 @@ func (Context) HasCapability(engine.Capability) bool      { return false }
 func (Context) PropsJSON() ([]byte, error)                { return nil, ErrUnsupported }
 func (Context) DecodeProps(any) error                     { return ErrUnsupported }
 func (Context) Emit(string, any) error                    { return ErrUnsupported }
+func (Context) SetSignal(string, any) error               { return ErrUnsupported }
+func (Context) SubscribeSignal(string, func(json.RawMessage)) (HandleFunc, error) {
+	return nil, ErrUnsupported
+}
 
 // Register returns ErrUnsupported on native targets after validating inputs.
 func Register(component string, factory Factory) error {

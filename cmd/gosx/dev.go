@@ -259,6 +259,9 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-controllers.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js")); err != nil {
 		return fmt.Errorf("stage bootstrap-feature-controllers.js: %w", err)
 	}
+	if err := copyFile(filepath.Join(buildDir, "bootstrap-controller-input.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-controller-input.js")); err != nil {
+		return fmt.Errorf("stage bootstrap-controller-input.js: %w", err)
+	}
 	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-textlayout.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js")); err != nil {
 		return fmt.Errorf("stage bootstrap-feature-textlayout.js: %w", err)
 	}

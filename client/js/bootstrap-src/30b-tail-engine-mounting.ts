@@ -4427,22 +4427,18 @@
       mount: mount,
       props: entry.props || {},
       capabilities: entry.capabilities || [],
-      requiredCapabilities: requiredCapabilityList(entry),
-      capabilityStatus: capabilityStatus || engineCapabilityStatus(entry),
+      requiredCapabilities: capabilityStatus.required,
+      capabilityStatus: capabilityStatus,
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
       runtime: runtime,
+      setSignal: setSharedSignalValue,
+      subscribeSignal: gosxSubscribeSharedSignal,
       isCurrent() { return pendingEngineOwned(pending); },
       emit: function(name, detail) {
-        if (typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
-          document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
-            detail: {
-              engineID: entry.id,
-              component: entry.component,
-              detail: detail,
-            },
-          }));
-        }
+        document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
+          detail: { engineID: entry.id, component: entry.component, detail: detail },
+        }));
       },
     };
   }
@@ -4649,8 +4645,8 @@
       component: entry.component,
       kind: entry.kind,
       capabilities: capabilityList(entry),
-      requiredCapabilities: requiredCapabilityList(entry),
-      capabilityStatus: context.capabilityStatus || engineCapabilityStatus(entry),
+      requiredCapabilities: context.requiredCapabilities,
+      capabilityStatus: context.capabilityStatus,
       runtime: context.runtime,
       mount: mount,
       handle: handle,

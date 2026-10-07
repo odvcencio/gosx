@@ -225,7 +225,7 @@ func buildAssetFiles(manifest *buildmanifest.Manifest) []buildAssetRef {
 		runtimeAssets.StandardGoWASMExec, runtimeAssets.Bootstrap, runtimeAssets.BootstrapLite,
 		runtimeAssets.BootstrapRuntime, runtimeAssets.BootstrapFeatureIslands,
 		runtimeAssets.BootstrapFeatureEngines, runtimeAssets.BootstrapFeatureHubs,
-		runtimeAssets.BootstrapFeatureControllers, runtimeAssets.BootstrapFeatureTextlayout,
+		runtimeAssets.BootstrapFeatureControllers, runtimeAssets.BootstrapControllerInput, runtimeAssets.BootstrapFeatureTextlayout,
 		runtimeAssets.BootstrapFeatureScene3D, runtimeAssets.BootstrapFeatureScene3DCommand,
 		runtimeAssets.BootstrapFeatureScene3DHydrate,
 		runtimeAssets.BootstrapFeatureScene3DWebGPU, runtimeAssets.BootstrapFeatureScene3DWebGL,
