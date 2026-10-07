@@ -20,6 +20,8 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // branch allocations; shared allowances are unchanged.
 // Merge retains main's existing asynchronous shader startup allocations.
 const budgets = [
+  // Finite choreography remains demand-loaded; existing route limits are unchanged.
+  { file: "bootstrap-feature-scene3d-timeline.js", raw: 5_400, gzip: 2_400, brotli: 2_200 },
   { file: "bootstrap-feature-scene3d-zoom.js", raw: 3_900, gzip: 1_650, brotli: 1_450 },
   // Ocean-driven heel, cloth normals, rig sway, impact spray and reduced-motion
   // deck bob remain lazy. Dormant-wake guards avoid unnecessary ocean queries.

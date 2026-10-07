@@ -60,6 +60,10 @@
   api.dispatchCommands = function(target, commands, options) {
     return loadCommandBridge().then(function(bridge) { return bridge.dispatchCommands(target, commands, options); });
   };
+  api.playTimeline = function() {
+    var args = arguments;
+    return loadCommandBridge().then(function() { return arguments[0].playTimeline.apply(null, args); });
+  };
   api.dispatchPoseFrame = function(target, frame, options) {
     return loadCommandBridge().then(function(bridge) { return bridge.dispatchPoseFrame(target, frame, options); });
   };
