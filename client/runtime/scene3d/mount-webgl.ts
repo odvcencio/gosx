@@ -14,27 +14,6 @@
  * @property {() => Promise<object|null>} load
  */
 
-// Every runtime chunk is loaded through a real DOM script element. Keep the
-// element's execution and request policy explicit so a strict-CSP page does not
-// depend on browser defaults. The caller still supplies the active document
-// nonce because a fetched page's nonce must never be reused after navigation.
-function gosxConfigureSceneScript(script, role, src) {
-  if (!script) return;
-  script.type = "text/javascript";
-  script.setAttribute("type", "text/javascript");
-  script.setAttribute("crossorigin", "anonymous");
-  script.setAttribute("referrerpolicy", "no-referrer");
-  if (role) {
-    script.setAttribute("data-gosx-script", role);
-  }
-  if (src) {
-    script.src = src;
-    script.setAttribute("src", src);
-  }
-  if (typeof gosxApplyCurrentScriptNonce === "function") {
-    gosxApplyCurrentScriptNonce(script);
-  }
-}
 
   // --------------------------------------------------------------------------
   // WebGL renderer factory resolution
@@ -1683,17 +1662,7 @@ function gosxConfigureSceneScript(script, role, src) {
   // content hash. Falls back to the unhashed URL when the attribute
   // isn't present (dev mode, manual integration without the island
   // renderer, etc.).
-  function resolveSceneSubFeatureURL(datasetKey, fallback) {
-    try {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (tag && tag.dataset && tag.dataset[datasetKey]) {
-        return tag.dataset[datasetKey];
-      }
-    } catch (_e) {}
-    return fallback;
-  }
 
-  var sceneGatedFeaturePromises = Object.create(null);
 
   // Cached promise for the WebGPU sub-feature chunk. Scene3D now treats
   // WebGPU as the default accelerated backend when the browser exposes it,
@@ -2057,34 +2026,6 @@ function gosxConfigureSceneScript(script, role, src) {
   // Share the URL, CSP, caching and retry path for content-gated authorities.
   // No fallback URL: pages that do not advertise a feature cannot fetch it.
 
-  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
-  function sceneGatedFeatureAPI(kind) {
-    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : kind === "zoom" ? window.__gosx_runtime_api.scene3DZoom : window["__gosx_scene3d_" + kind.replace(/-/g, "_") + "_api"];
-  }
-  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
-  function ensureSceneGatedFeatureLoaded(kind, datasetKey, fallback) {
-    const api = sceneGatedFeatureAPI(kind);
-    if (api) return Promise.resolve(api);
-    if (sceneGatedFeaturePromises[kind]) return sceneGatedFeaturePromises[kind];
-    const name = "scene3d-" + kind, url = resolveSceneSubFeatureURL(datasetKey, fallback || "");
-    if (!url) return Promise.reject(new Error(name + " chunk URL was not advertised"));
-    const promise = new Promise(function(resolve, reject) {
-      const script = document.createElement("script"); script.async = false;
-      gosxConfigureSceneScript(script, "feature-" + name, url);
-      script.onload = function() {
-        const loaded = sceneGatedFeatureAPI(kind);
-        if (loaded) resolve(loaded); else reject(new Error(name + " chunk loaded but did not publish API"));
-      };
-      script.onerror = function() { reject(new Error("failed to load " + name + " chunk")); };
-      document.head.appendChild(script);
-    });
-    sceneGatedFeaturePromises[kind] = promise.catch(function(error) {
-      delete sceneGatedFeaturePromises[kind];
-      if (kind === "webgl" || kind === "webgpu") window["__gosx_scene3d_" + kind + "_feature_promise"] = null;
-      throw error;
-    });
-    return sceneGatedFeaturePromises[kind];
-  }
 
   // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
   // animation-channel record carries something only the decompress chunk can
