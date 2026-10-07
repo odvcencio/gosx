@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add transactional aggregate telemetry setup with one maintenance worker and
+  one named application shutdown hook. Disabled handles own no resources;
+  failed setup removes its reservation. Shared close deadlines retain unfinished
+  owners, and clock or logger panics expose fixed error classes. Native features
+  remain unavailable on WebAssembly. Listener, subsystem and record adapters
+  follow in their own slices; selecting unavailable features fails closed.
+
 - Add pure telemetry defaults and bounded, redacted option validation, plus
   portable wall/elapsed clock types and a deterministic fake clock. Wall jumps
   do not advance elapsed deadlines, and tickers need no conversion goroutine.

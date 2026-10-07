@@ -130,7 +130,7 @@ test-race-pr:
 # Native telemetry checks stay non-short so cap and ownership tests execute.
 .PHONY: test-telemetry test-telemetry-metric-race test-telemetry-helpers-race
 test-telemetry:
-	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/...
+	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/... ./server ./route ./scheduled ./hub ./sim
 
 test-telemetry-metric-race:
 	GOWORK=off $(GO) test -race ./telemetry/metric
@@ -140,7 +140,7 @@ test-telemetry-helpers-race:
 
 .PHONY: test-telemetry-wasm bench-telemetry
 test-telemetry-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry/metric ./internal/clock ./telemetry/telemetrytest
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry ./telemetry/metric ./internal/clock ./telemetry/telemetrytest
 
 bench-telemetry:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim
