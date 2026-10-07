@@ -33,8 +33,8 @@ func TestHubCloseWaitsForReservation(t *testing.T) {
 	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/hub", nil))
-	if w.Code != http.StatusServiceUnavailable {
-		t.Fatalf("new upgrade: %d", w.Code)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "hub closing") {
+		t.Fatalf("new upgrade: %d %q", w.Code, w.Body.String())
 	}
 	if got := receiveHubEvent(t, o.rejected); got != "hub_closed" {
 		t.Fatalf("rejected: %q", got)
@@ -250,8 +250,13 @@ func TestHubCloseCallersBoundedDuringBlockedCompletion(t *testing.T) {
 		}
 	}
 	receiveHubEvent(t, o.entered)
-	if o.calls.Load() != 1 || h.observers.Load() == nil {
-		t.Fatal("completion ownership lost or duplicated")
+	if o.calls.Load() != 1 || h.observers.Load() != nil {
+		t.Fatal("completion duplicated or dispatch still open")
+	}
+	select {
+	case <-h.closeDone:
+		t.Fatal("blocked completion falsely reported success")
+	default:
 	}
 	releaseOnce.Do(func() { close(o.release) })
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
@@ -261,5 +266,41 @@ func TestHubCloseCallersBoundedDuringBlockedCompletion(t *testing.T) {
 	}
 	if h.observers.Load() != nil {
 		t.Fatal("completed owner retained subscriber")
+	}
+}
+
+// A later Closed subscriber may call arbitrary hub APIs. It must not reopen
+// dispatch to a subscriber whose Closed callback has already returned.
+type reentrantCloseObserver struct {
+	NoopObserver
+	closed, broadcasts atomic.Int64
+	reenter            bool
+}
+
+func (o *reentrantCloseObserver) Closed(h *Hub) {
+	o.closed.Add(1)
+	if o.reenter {
+		h.Broadcast("state", 1)
+	}
+}
+func (o *reentrantCloseObserver) Broadcast(*Hub, int, int) { o.broadcasts.Add(1) }
+
+func TestHubClosedDetachesBeforeReentrantDispatch(t *testing.T) {
+	h := New("synthetic-room")
+	first := &reentrantCloseObserver{}
+	second := &reentrantCloseObserver{reenter: true}
+	for _, o := range []*reentrantCloseObserver{first, second} {
+		if _, err := h.UseObserver(o); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	h.Broadcast("state", 2)
+	for _, o := range []*reentrantCloseObserver{first, second} {
+		if o.closed.Load() != 1 || o.broadcasts.Load() != 0 {
+			t.Fatal("subscriber received a callback after Closed")
+		}
 	}
 }

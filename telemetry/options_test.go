@@ -63,22 +63,21 @@ func TestOptionsCopiesAndReservations(t *testing.T) {
 	o := Defaults()
 	o.ClientEvents.Categories = []string{"game"}
 	o.Metrics.Operations = []Operation{{"game", "tick"}}
-	o.Vitals.Engines = []EngineKind{{"game", []string{"wasm"}}}
 	n, err := normalize(o)
 	if err != nil {
 		t.Fatal(err)
 	}
 	o.ClientEvents.Categories[0] = "changed"
 	o.Metrics.Operations[0].Name = "changed"
-	o.Vitals.Engines[0].Backends[0] = "changed"
-	if n.ClientEvents.Categories[0] != "game" || n.Metrics.Operations[0].Name != "tick" || n.Vitals.Engines[0].Backends[0] != "wasm" {
+	if n.ClientEvents.Categories[0] != "game" || n.Metrics.Operations[0].Name != "tick" {
 		t.Fatal("option slices alias caller")
 	}
 	o = Defaults()
 	o.Sessions.Enabled = true
 	n, err = normalize(o)
-	if err != nil || !n.Sessions.Visits || !n.Sessions.HubSessions {
-		t.Fatalf("sessions: %#v %v", n.Sessions, err)
+	var unsupported *ConfigError
+	if !errors.As(err, &unsupported) || unsupported.Code != "unsupported" {
+		t.Fatalf("unimplemented sessions accepted: %v", err)
 	}
 	o = Defaults()
 	o.Activities.MaxOpen = 1

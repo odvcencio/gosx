@@ -1,6 +1,7 @@
 package route
 
 import (
+	"fmt"
 	"net/http"
 	"reflect"
 	"testing"
@@ -36,7 +37,7 @@ func TestBuiltRouterObservationPatterns(t *testing.T) {
 		t.Fatal("catalog is not private")
 	}
 	limited, overflow := p.ObservationPatterns(2)
-	if !overflow || !reflect.DeepEqual(limited, want[:2]) {
+	if !overflow || !reflect.DeepEqual(limited, []server.ObservationPattern{want[0], want[1], want[3]}) {
 		t.Fatalf("bounded: %#v overflow=%v", limited, overflow)
 	}
 }
@@ -59,5 +60,21 @@ func Page() Node { return <main>Round</main> }
 	rows, _ := r.Build().(server.ObservationCatalogProvider).ObservationPatterns(0)
 	if len(rows) != 3 || rows[0].Kind != "action" || rows[0].Pattern != "/round/{id}/__actions/{__gosx_action}" || !reflect.DeepEqual(rows[0].Methods, []string{"POST"}) {
 		t.Fatalf("action catalog: %#v", rows)
+	}
+}
+
+func TestBuiltRouterCatalogPageCapacityExcludesErrors(t *testing.T) {
+	r := NewRouter()
+	for i := 399; i >= 0; i-- {
+		r.Add(Route{Pattern: fmt.Sprintf("/p/%03d", i), Handler: func(*RouteContext) gosx.Node { return gosx.Text("page") }})
+	}
+	rows, overflow := r.Build().(server.ObservationCatalogProvider).ObservationPatterns(0)
+	if overflow || len(rows) != 800 {
+		t.Fatalf("rows=%d overflow=%v", len(rows), overflow)
+	}
+	for i := 0; i < 400; i++ {
+		if rows[i].Kind != "error" || rows[i+400].Kind != "page" || rows[i].Pattern != rows[i+400].Pattern {
+			t.Fatal("an error row displaced a registered page")
+		}
 	}
 }

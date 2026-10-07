@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"m31labs.dev/gosx/internal/telemetryerr"
 	"m31labs.dev/gosx/scheduled"
@@ -34,7 +35,7 @@ type ShutdownSource interface {
 // only this structural contract, so ordinary HTTP apps need no socket package.
 func (a *App) UseShutdownSource(name string, source ShutdownSource) (func(), error) {
 	if source == nil {
-		return nil, &telemetryerr.ConfigError{Field: "shutdown_source", Code: "required"}
+		return nil, shutdownConfigError(&telemetryerr.ConfigError{Field: "shutdown_source", Code: "required"})
 	}
 	return a.UseShutdownHook(name, ShutdownHooks{Signal: source.SignalShutdown, Drain: source.Drain})
 }
@@ -65,19 +66,19 @@ func (a *App) ConfigurationOpen() bool {
 // accepted. Removal is idempotent and only takes effect before Build.
 func (a *App) UseShutdownHook(name string, hooks ShutdownHooks) (func(), error) {
 	if a == nil {
-		return nil, &telemetryerr.ConfigError{Field: "app", Code: "required"}
+		return nil, shutdownConfigError(&telemetryerr.ConfigError{Field: "app", Code: "required"})
 	}
 	if strings.TrimSpace(name) == "" {
-		return nil, &telemetryerr.ConfigError{Field: "shutdown_hook", Code: "name_required"}
+		return nil, shutdownConfigError(&telemetryerr.ConfigError{Field: "shutdown_hook", Code: "name_required"})
 	}
 	a.shutdown.mu.Lock()
 	defer a.shutdown.mu.Unlock()
 	if !a.ConfigurationOpen() {
-		return nil, telemetryerr.ErrAfterBuild
+		return nil, shutdownConfigError(telemetryerr.ErrAfterBuild)
 	}
 	for _, hook := range a.shutdown.hooks {
 		if hook.active && hook.name == name {
-			return nil, &telemetryerr.ConfigError{Field: "shutdown_hook", Code: "duplicate_name"}
+			return nil, shutdownConfigError(&telemetryerr.ConfigError{Field: "shutdown_hook", Code: "duplicate_name"})
 		}
 	}
 	hook := &shutdownHook{name: name, hooks: hooks, active: true}
@@ -107,6 +108,12 @@ func (a *App) UseShutdownHook(name string, hooks ShutdownHooks) (func(), error) 
 // pipeline and its resources; an expired caller never reports completion.
 // External HTTP hosts must drain their server before calling this method.
 // Hijacked WebSockets must be closed by an explicit owner Drain hook.
+// Shutdown is terminal: this App cannot subsequently ListenAndServe again.
+// Scheduled work drains for at most 30 seconds (or ShutdownGrace when a
+// deadline is present). A deadline reserves max(5 seconds, 25% of its remaining
+// time) for hooks. The scheduler is cancelled at that boundary, then joined
+// within the shared context. Drain and Flush callbacks are always attempted
+// afterward, even when that context has expired.
 func (a *App) Shutdown(ctx context.Context) error {
 	if a == nil {
 		return nil
@@ -153,26 +160,30 @@ func (a *App) runShutdown(ctx context.Context, srv *http.Server, scheduler *sche
 		a.addShutdownError("http_drain_failed", srv.Shutdown(ctx))
 	}
 	if scheduler != nil {
-		a.addShutdownError("scheduler_stop_failed", scheduler.StopContext(ctx))
+		grace := scheduledDrainWindow(ctx, scheduler.ShutdownGrace())
+		drainCtx, cancel := context.WithTimeout(ctx, grace)
+		err := scheduler.StopContext(drainCtx)
+		cancel()
+		if err != nil && ctx.Err() == nil {
+			// The cooperative window elapsed; runs have been cancelled.
+			// Keep the same owner until they unwind or the shared deadline.
+			err = scheduler.StopContext(ctx)
+		}
+		a.addShutdownError("scheduler_stop_failed", err)
 	}
-	if ctx.Err() == nil {
-		for _, hook := range hooks {
-			if hook.hooks.Drain != nil {
-				a.signalShutdownHook(ctx, hook)
-			}
+	for _, hook := range hooks {
+		if hook.hooks.Drain != nil {
+			a.signalShutdownHook(ctx, hook)
 		}
-		for _, hook := range hooks {
-			if ctx.Err() != nil {
-				break
-			}
-			if hook.hooks.Drain != nil {
-				a.callShutdownHook("hook_drain_failed", ctx, hook.hooks.Drain)
-			}
+	}
+	for _, hook := range hooks {
+		if hook.hooks.Drain != nil {
+			a.callShutdownHook("hook_drain_failed", ctx, hook.hooks.Drain)
 		}
-		for i := len(hooks) - 1; i >= 0 && ctx.Err() == nil; i-- {
-			if hooks[i].hooks.Flush != nil {
-				a.callShutdownHook("hook_flush_failed", ctx, hooks[i].hooks.Flush)
-			}
+	}
+	for i := len(hooks) - 1; i >= 0; i-- {
+		if hooks[i].hooks.Flush != nil {
+			a.callShutdownHook("hook_flush_failed", ctx, hooks[i].hooks.Flush)
 		}
 	}
 	if !stopSignal() || ctx.Err() != nil {
@@ -185,6 +196,31 @@ func (a *App) runShutdown(ctx context.Context, srv *http.Server, scheduler *sche
 	close(a.shutdown.done)
 	a.shutdown.mu.Unlock()
 }
+
+// A context without a deadline preserves the legacy 30-second cancellation
+// boundary. With a deadline, leave a reserve for source drains and final flush.
+func scheduledDrainWindow(ctx context.Context, configured time.Duration) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 30 * time.Second
+	}
+	remaining := time.Until(deadline)
+	reserve := max(5*time.Second, remaining/4)
+	return max(0, min(configured, remaining-reserve))
+}
+
+// Keep lifecycle errors in the server namespace while preserving the shared
+// configuration identities for errors.Is and errors.As.
+type shutdownConfigurationError struct{ cause error }
+
+func shutdownConfigError(cause error) error { return &shutdownConfigurationError{cause} }
+func (e *shutdownConfigurationError) Error() string {
+	if c, ok := e.cause.(*telemetryerr.ConfigError); ok {
+		return "server: invalid " + c.Field + " (" + c.Code + ")"
+	}
+	return "server: configuration closed after build"
+}
+func (e *shutdownConfigurationError) Unwrap() error { return e.cause }
 
 func (a *App) signalShutdownHook(ctx context.Context, hook *shutdownHook) {
 	hook.signal.Do(func() {

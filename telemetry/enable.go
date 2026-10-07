@@ -134,21 +134,21 @@ func Enable(app *server.App, opts Options) (*Telemetry, error) {
 func availableFeatures(o Options) error {
 	switch {
 	case o.Mode == ModeDesktop:
-		return invalid("desktop", "unavailable")
+		return invalid("desktop", "unsupported")
 	case o.Listen.Addr != "off" || o.Listen.Metrics != (Credential{}) || o.Listen.Admin != (Credential{}) || o.Listen.DangerouslyAllowUnauthenticatedMetricsOnNonLoopback:
-		return invalid("listener", "unavailable")
+		return invalid("listener", "unsupported")
 	case !o.Metrics.DisableRequests || !o.Metrics.DisableOperations || !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
-		return invalid("metric_adapters", "unavailable")
+		return invalid("metric_adapters", "unsupported")
 	case !o.Activities.Disabled:
-		return invalid("activities", "unavailable")
+		return invalid("activities", "unsupported")
 	case o.Sessions.Enabled:
-		return invalid("sessions", "unavailable")
+		return invalid("sessions", "unsupported")
 	case o.Persistence.Enabled:
-		return invalid("persistence", "unavailable")
+		return invalid("persistence", "unsupported")
 	case o.Visitor.Enabled:
-		return invalid("visitor", "unavailable")
+		return invalid("visitor", "unsupported")
 	case o.Vitals.SampleRate > 0 || o.Vitals.EngineSampleRate > 0 || o.Vitals.ClientHealthSampleRate > 0:
-		return invalid("browser_sampling", "unavailable")
+		return invalid("browser_sampling", "unsupported")
 	}
 	return nil
 }

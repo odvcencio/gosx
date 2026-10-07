@@ -19,14 +19,16 @@ type observedHub struct {
 	NoopObserver
 	connected, disconnected, closed atomic.Int64
 	messages                        chan TrafficEvent
-	rejected                        chan string
+	rejected                        chan RejectionReason
+	messageRejected                 chan MessageRejectionReason
+	observerPanics                  atomic.Int64
 	handlers                        chan HandlerEvent
 	disconnects                     chan DisconnectEvent
 	broadcasts                      chan [2]int
 }
 
 func newObservedHub() *observedHub {
-	return &observedHub{messages: make(chan TrafficEvent, 32), rejected: make(chan string, 16), handlers: make(chan HandlerEvent, 16), disconnects: make(chan DisconnectEvent, 16), broadcasts: make(chan [2]int, 16)}
+	return &observedHub{messages: make(chan TrafficEvent, 32), rejected: make(chan RejectionReason, 16), messageRejected: make(chan MessageRejectionReason, 16), handlers: make(chan HandlerEvent, 16), disconnects: make(chan DisconnectEvent, 16), broadcasts: make(chan [2]int, 16)}
 }
 func (o *observedHub) ClientConnected(h *Hub, c *Client, _ *http.Request) {
 	// Reenter APIs that acquire h.mu and c.mu: dispatch must hold neither.
@@ -53,8 +55,12 @@ func (o *observedHub) ClientDisconnected(h *Hub, c *Client, e DisconnectEvent) {
 }
 func (o *observedHub) Closed(h *Hub)                             { h.ClientCount(); h.On("closed", nil); o.closed.Add(1) }
 func (o *observedHub) Message(_ *Hub, _ *Client, e TrafficEvent) { o.messages <- e }
-func (o *observedHub) Rejected(h *Hub, r string)                 { h.ClientCount(); o.rejected <- r }
-func (o *observedHub) Handler(h *Hub, e HandlerEvent)            { h.ClientCount(); o.handlers <- e }
+func (o *observedHub) Rejected(h *Hub, r RejectionReason)        { h.ClientCount(); o.rejected <- r }
+func (o *observedHub) MessageRejected(_ *Hub, _ *Client, r MessageRejectionReason) {
+	o.messageRejected <- r
+}
+func (o *observedHub) ObserverPanicked(*Hub)          { o.observerPanics.Add(1) }
+func (o *observedHub) Handler(h *Hub, e HandlerEvent) { h.ClientCount(); o.handlers <- e }
 func (o *observedHub) Broadcast(h *Hub, accepted, dropped int) {
 	h.ClientCount()
 	o.broadcasts <- [2]int{accepted, dropped}
@@ -209,8 +215,11 @@ func TestHubObserverPanicIsolated(t *testing.T) {
 	if bad.calls.Load() != 1 {
 		t.Fatal("panicking subscriber was not disabled")
 	}
-	if got := receiveHubEvent(t, good.rejected); got != "observer_panic" {
-		t.Fatalf("rejection: %q", got)
+	if good.observerPanics.Load() != 1 || len(good.rejected) != 0 {
+		t.Fatal("observer panic must not count as a connection rejection")
+	}
+	if strings.Contains(buf.String(), "observer-panic-secret-canary") {
+		t.Fatal("observer panic text leaked")
 	}
 	if len(good.messages) != 2 {
 		t.Fatal("healthy subscriber lost events")
@@ -219,8 +228,10 @@ func TestHubObserverPanicIsolated(t *testing.T) {
 	if e := receiveHubEvent(t, good.handlers); !e.Panicked || e.Event != "turn" {
 		t.Fatalf("panic event: %+v", e)
 	}
-	if strings.Contains(buf.String(), "secret-canary") {
-		t.Fatal("panic text leaked")
+	for _, detail := range []string{"handler-panic-secret-canary", "synthetic-room", "turn", "goroutine"} {
+		if !strings.Contains(buf.String(), detail) {
+			t.Fatalf("hub diagnostic lost %q", detail)
+		}
 	}
 }
 
@@ -340,12 +351,42 @@ func TestHubObserverLogicalPayloadKinds(t *testing.T) {
 	if e := receiveHubEvent(t, o.messages); e.Direction != Inbound || e.Bytes != 1 {
 		t.Fatalf("malformed payload count: %+v", e)
 	}
-	if reason := receiveHubEvent(t, o.rejected); reason != "malformed" {
+	if reason := receiveHubEvent(t, o.messageRejected); reason != MessageMalformed {
 		t.Fatalf("reason=%q", reason)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	if err := h.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHubRateLimitIsNotConnectionRejection(t *testing.T) {
+	h := New("synthetic-room")
+	h.MaxMessagesPerSecond, h.MaxMessageBurst = 1, 1
+	o := newObservedHub()
+	if _, err := h.UseObserver(o); err != nil {
+		t.Fatal(err)
+	}
+	c := observedConnection(t, h)
+	if _, _, err := c.ReadMessage(); err != nil { // welcome
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if err := c.WriteMessage(websocket.TextMessage, []byte(`{"event":"turn"}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if reason := receiveHubEvent(t, o.messageRejected); reason != MessageRateLimited {
+		t.Fatalf("message rejection: %q", reason)
+	}
+	if e := receiveHubEvent(t, o.disconnects); e.Reason != "rate_limited" {
+		t.Fatalf("disconnect: %+v", e)
+	}
+	if o.connected.Load() != 1 || len(o.rejected) != 0 {
+		t.Fatal("an accepted connection was also reported rejected")
+	}
+	if err := h.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

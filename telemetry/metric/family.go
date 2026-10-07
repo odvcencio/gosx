@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+	"unsafe"
 )
 
 // Label declares a fixed whitelist, or a Declare-only domain when Values is
@@ -114,7 +115,7 @@ func (r *Registry) register(d descriptor) (*family, error) {
 	samples := 0
 	if len(d.labels) == 0 {
 		samples = sampleCost(d.kind, len(d.bounds))
-		bytes += cellBytes(nil, d.bounds)
+		bytes += cellBytes(d.kind, nil, d.bounds) + cellCapacityBytes(cellCapacity(0, 1, s.opts.MaxSeries))
 	}
 	if len(s.families) == maxFamilies || samples > s.opts.MaxSeries-s.samples || bytes > s.opts.MaxBytes-s.bytes {
 		return nil, ErrCapacity
@@ -133,6 +134,7 @@ func (r *Registry) register(d descriptor) (*family, error) {
 	}
 	f.counter.family, f.gauge.family, f.histogram.family = f, f, f
 	if len(d.labels) == 0 {
+		f.growCells(1)
 		f.addCell("", nil)
 	}
 	s.families[f.name] = f
@@ -160,6 +162,9 @@ func validateDescriptor(d descriptor, privileged bool) error {
 	for i, label := range d.labels {
 		if !identifier(label.Name, 64, false) {
 			return invalid("metric.labels", "identifier")
+		}
+		if strings.HasPrefix(label.Name, "__") {
+			return invalid("metric.labels", "reserved")
 		}
 		if d.kind == KindHistogram && label.Name == "le" {
 			return invalid("metric.labels", "reserved_bucket_label")
@@ -222,8 +227,9 @@ func sampleCost(kind InstrumentKind, bounds int) int {
 	return 1
 }
 
-// Conservative retained charges include map/slab growth, immutable strings,
-// preformatted labels, scalar cells, and separately copied snapshot capacity.
+// Charges cover retained Go objects, map growth, slice capacity and allocator
+// rounding. Domain strings are owned once; tuple values reference those copies.
+// The independent retained-heap gate checks these estimates against real data.
 func descriptorBytes(d descriptor) int64 {
 	n := int64(1024 + 2*(len(d.name)+len(d.help)) + 32*len(d.bounds))
 	for _, label := range d.labels {
@@ -236,12 +242,69 @@ func descriptorBytes(d descriptor) int64 {
 }
 
 func domainBytes(value string) int64 { return int64(128 + len(value)) }
-func cellBytes(values []string, bounds []float64) int64 {
-	n := int64(512 + 64*len(values) + 24*(len(bounds)+1))
+func cellBytes(kind InstrumentKind, values []string, bounds []float64) int64 {
+	// Cell and string-header arrays are rounded to allocation sizes. The
+	// map charge covers the retained lookup and bounded index staging;
+	// domains own value strings and staging borrows caller tuples until return.
+	n := allocationBytes(int64(unsafe.Sizeof(cell{}))) + 64 + allocationBytes(int64(16*len(values)))
+	keyBytes := 2 * len(values)
 	for _, value := range values {
-		n += int64(3*len(value) + 128)
+		keyBytes += len(value)
+	}
+	n += allocationBytes(int64(keyBytes))
+	n += allocationBytes(int64(len(values)) * int64(unsafe.Sizeof(LabelValue{})))
+	if kind == KindHistogram {
+		n += allocationBytes(int64(unsafe.Sizeof(Histogram{}))) + allocationBytes(int64(8*(len(bounds)+1)))
+		n += allocationBytes(int64(unsafe.Sizeof(histogramScratch{}))) + allocationBytes(int64(8*len(bounds))) + allocationBytes(int64(8*(len(bounds)+1)))
 	}
 	return n
+}
+
+// Round conservatively across Go's allocation classes and large-object pages.
+// Long tuple keys must not be charged as if every class were 16 bytes wide.
+func allocationBytes(n int64) int64 {
+	switch {
+	case n <= 256:
+		return (n + 15) / 16 * 16
+	case n <= 512:
+		return (n + 31) / 32 * 32
+	case n <= 1024:
+		return (n + 127) / 128 * 128
+	case n <= 32768:
+		size := int64(1024)
+		for size < n {
+			size *= 2
+		}
+		return size
+	default:
+		return (n + 8191) / 8192 * 8192
+	}
+}
+
+// Reserve actual slice capacity once for a whole batch. Counter and gauge
+// cells do not retain unused histogram state.
+func cellCapacity(current, needed, maximum int) int {
+	if needed <= current {
+		return current
+	}
+	return min(maximum, max(needed, current+current/4+8))
+}
+
+func cellCapacityBytes(capacity int) int64 {
+	return allocationBytes(int64(capacity)*int64(unsafe.Sizeof((*cell)(nil)))) + allocationBytes(int64(capacity)*int64(unsafe.Sizeof(SeriesSnapshot{})))
+}
+
+func (f *family) growCells(added int) {
+	capacity := cellCapacity(cap(f.ordered), len(f.ordered)+added, f.registry.opts.MaxSeries)
+	if capacity == cap(f.ordered) {
+		return
+	}
+	ordered := make([]*cell, len(f.ordered), capacity)
+	copy(ordered, f.ordered)
+	f.ordered = ordered
+	series := make([]SeriesSnapshot, len(f.snapshotSeries), capacity)
+	copy(series, f.snapshotSeries)
+	f.snapshotSeries = series
 }
 
 func (f *family) matches(d descriptor) bool {

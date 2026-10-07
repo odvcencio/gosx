@@ -141,7 +141,7 @@ func TestEnableRollbackAndOwnership(t *testing.T) {
 	}
 }
 
-func TestEnableEntropyAndUnavailableFeatures(t *testing.T) {
+func TestEnableEntropyAndUnsupportedFeatures(t *testing.T) {
 	o := aggregateCoreOptions(t)
 	if _, err := Enable(nil, o); !errors.Is(err, ErrInvalidOptions) {
 		t.Fatal(err)
@@ -157,8 +157,10 @@ func TestEnableEntropyAndUnavailableFeatures(t *testing.T) {
 	} {
 		o = aggregateCoreOptions(t)
 		selectFeature(&o)
-		if _, err := Enable(server.New(), o); !errors.Is(err, ErrInvalidOptions) {
-			t.Fatal("unavailable feature silently enabled", err)
+		_, err := Enable(server.New(), o)
+		var config *ConfigError
+		if !errors.Is(err, ErrInvalidOptions) || !errors.As(err, &config) || config.Code != "unsupported" {
+			t.Fatal("unimplemented feature must return the unsupported class", err)
 		}
 	}
 }
