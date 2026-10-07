@@ -136,6 +136,96 @@ test("set-transform changes and resets parent matrices without a stale model cac
   assert.deepEqual(result.resetOrigin, [1, 2, 3]);
 });
 
+test("set-transform moves a hydrated Model root while retaining primitive materials and geometry", async () => {
+  const context = createCoreContext({ mount: true });
+  const result = await vm.runInContext(`(async () => {
+    let loads = 0;
+    gosxSceneEmit = function() {};
+    const vertices = {count:3, immutable:true, revision:0,
+      positions:new Float32Array([0,0,0, 1,0,0, 0,1,0]),
+      normals:new Float32Array([0,0,1, 0,0,1, 0,0,1])};
+    loadSceneModelAsset = async function() {
+      loads++;
+      return {objects:[{id:'metal',kind:'mesh',color:'#123456',vertices},
+        {id:'barrel',kind:'mesh',color:'#abcdef',vertices}],
+        skins:[],nodes:[],animations:[],points:[],labels:[],sprites:[],html:[],lights:[]};
+    };
+    const state = createSceneState({models:[{id:'turret',src:'head.glb',x:12,y:1.16,z:-8}]}, null);
+    const hydrated = await hydrateSceneStateModels(state, null);
+    const before = Array.from(state.objects.values());
+    const geometry = before.map(o => o.vertices);
+    const transforms = [];
+    for (const rotationY of [Math.PI/2, Math.PI, Math.PI/2]) {
+      await applySceneCommands(state, [{kind:SCENE_CMD_SET_TRANSFORM,objectId:'turret',
+        data:{x:12,y:1.16,z:-8,rotationY,scaleX:1,scaleY:1,scaleZ:1}}]);
+      transforms.push(Array.from(sceneObjectModelMatrix(state.objects.get('turret/metal'),0)));
+    }
+    const parent = [1,0,0,0, 0,1,0,0, 0,0,1,0, 2,3,4,1];
+    await applySceneCommands(state,[{kind:SCENE_CMD_SET_TRANSFORM,objectId:'turret',data:{parentMatrix:parent}}]);
+    const parentOrigin = Array.from(sceneObjectModelMatrix(before[0],0).slice(12,15));
+    await applySceneCommands(state,[{kind:SCENE_CMD_SET_TRANSFORM,objectId:'turret',data:{parentMatrix:null}}]);
+    return {committed:hydrated.committed,loads,transforms,parentOrigin,
+      resetOrigin:Array.from(sceneObjectModelMatrix(before[0],0).slice(12,15)),
+      sameObjects:before.every(o => state.objects.get(o.id)===o),
+      sameGeometry:before.every((o,i) => o.vertices===geometry[i]),
+      colors:before.map(o=>o.color),ids:before.map(o=>o.id),
+      animations:state._modelAnimations.length,skins:state._modelSkins.length,
+      generation:state._modelHydrationGeneration};
+  })()`, context);
+  const actual = JSON.parse(JSON.stringify(result));
+  assert.equal(actual.committed, true);
+  assert.equal(actual.loads, 1);
+  assert.equal(actual.generation, 1);
+  assert.equal(actual.sameObjects, true);
+  assert.equal(actual.sameGeometry, true);
+  assert.deepEqual(actual.ids, ["turret/metal", "turret/barrel"]);
+  assert.deepEqual(actual.colors, ["#123456", "#abcdef"]);
+  assert.equal(actual.animations, 0);
+  assert.equal(actual.skins, 0);
+  assert.ok(Math.abs(actual.transforms[0][0]) < 1e-6);
+  assert.ok(Math.abs(actual.transforms[0][2] + 1) < 1e-6);
+  assert.ok(Math.abs(actual.transforms[1][0] + 1) < 1e-6);
+  assert.deepEqual(actual.transforms[0], actual.transforms[2]);
+  assert.deepEqual(actual.parentOrigin.map(Math.round), [14,4,-4]);
+  assert.deepEqual(actual.resetOrigin.map(Math.round), [12,1,-8]);
+});
+
+test("Model root transform commands preserve fit and supersede pending hydration", async () => {
+  const context = createCoreContext({ mount: true });
+  const result = await vm.runInContext(`(async () => {
+    let loads = 0, release;
+    const pending = new Promise(resolve => { release=resolve; });
+    gosxSceneEmit = function() {};
+    loadSceneModelAsset = async function() {
+      if (++loads===1) await pending;
+      return {objects:[{id:'mesh',kind:'mesh',vertices:{count:3,immutable:true,revision:0,
+        positions:new Float32Array([0,0,0, 1,0,0, 0,1,0])}}],
+        bounds:{minX:0,minY:0,minZ:0,maxX:1,maxY:1,maxZ:0},
+        skins:[],nodes:[],animations:[],points:[],labels:[],sprites:[],html:[],lights:[]};
+    };
+    const state=createSceneState({models:[{id:'model',src:'mesh.glb',fit:'contain',fitAlign:'none',bounds:2}]},null);
+    const old=hydrateSceneStateModels(state,null);
+    await applySceneCommands(state,[{kind:SCENE_CMD_SET_TRANSFORM,objectId:'model',data:{x:5,y:1.16,rotationY:Math.PI/2}}]);
+    release();
+    const stale=await old;
+    const geometry=state.objects.get('model/mesh').vertices;
+    const loadedMatrix=Array.from(sceneObjectModelMatrix(state.objects.get('model/mesh'),0));
+    await applySceneCommands(state,[{kind:SCENE_CMD_SET_TRANSFORM,objectId:'model',data:{x:6,rotationY:Math.PI/2}}]);
+    const object=state.objects.get('model/mesh');
+    return {stale:stale.stale,loads,generation:state._modelHydrationGeneration,
+      sameGeometry:geometry===object.vertices,loadedMatrix,matrix:Array.from(sceneObjectModelMatrix(object,0))};
+  })()`, context);
+  assert.equal(result.stale, true);
+  assert.equal(result.loads, 2);
+  assert.equal(result.generation, 2);
+  assert.equal(result.sameGeometry, true);
+  assert.equal(result.loadedMatrix[12], 5);
+  assert.ok(Math.abs(result.loadedMatrix[13] - 1.16) < 1e-6);
+  assert.ok(Math.abs(result.loadedMatrix[2] + 2) < 1e-6);
+  assert.equal(result.matrix[12], 6);
+  assert.ok(Math.abs(result.matrix[2] + 2) < 1e-6);
+});
+
 test("model roots compose the same parent matrix and use inverse-transpose normals", () => {
   const context = createCoreContext({ mount: true });
   const result = runJSON(context, `(() => {

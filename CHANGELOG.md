@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v0.57.6
+
+- Apply Scene3D `SetTransformCommand` to a `Model` root ID. Retained rigid
+  models update their parent matrices while preserving imported primitive
+  materials, immutable geometry, and GPU residency. Commands during asset
+  loading supersede stale hydration; fitted models retain their fit scale.
 
 - Preserve public immutable caching for framework runtime JS/WASM, emitted
   assets, hashed images and versioned public assets when global auth middleware
