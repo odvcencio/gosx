@@ -31,6 +31,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/internal/bundlepolicy"
+	"m31labs.dev/gosx/internal/httpcache"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -1155,15 +1156,15 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 	// that exact URL never changes and a year of immutable caching is safe.
 	// Unversioned URLs keep revalidation: the app may overwrite the file in
 	// place and the next view must see it.
-	if r.URL.Query().Get("v") != "" {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
-	}
 	if strings.EqualFold(filepath.Ext(fsPath), ".webmanifest") {
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
+	}
+	if r.URL.Query().Get("v") != "" {
+		httpcache.MarkImmutableAsset(w, r)
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 	}
 	if !a.compressionOff && serveCompressedFile(w, r, fsPath, func(ext string) (string, bool) {
 		return bundlepolicy.PublicPath(a.publicDir, r.URL.Path+ext, a.publicPolicy.AllowPublic, a.publicPolicy.Exclude)
