@@ -113,22 +113,24 @@ type Props struct {
 	Walk                 *Walk    `json:"walk,omitempty"`
 	Vessel               *Vessel  `json:"vessel,omitempty"`
 	AutoRotate           *bool    `json:"autoRotate,omitempty"`
-	Responsive           *bool    `json:"responsive,omitempty"`
-	FillHeight           *bool    `json:"fillHeight,omitempty"`
-	PreferWebGPU         *bool    `json:"preferWebGPU,omitempty"`
-	PreferWebGL          *bool    `json:"preferWebGL,omitempty"`
-	ForceWebGL           *bool    `json:"forceWebGL,omitempty"`
-	RequireWebGL         *bool    `json:"requireWebGL,omitempty"`
-	PreferCanvas         *bool    `json:"preferCanvas,omitempty"`
-	UnsupportedMessage   string   `json:"unsupportedMessage,omitempty"`
-	CanvasAlpha          *bool    `json:"canvasAlpha,omitempty"`
-	DragToRotate         *bool    `json:"dragToRotate,omitempty"`
-	PointerLock          *bool    `json:"pointerLock,omitempty"`
-	DeferPostFX          *bool    `json:"deferPostFX,omitempty"`
-	DeferPostFXDelayMS   int      `json:"deferPostFXDelayMS,omitempty"`
-	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
-	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
-	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	// ParticleBursts advertises lazy compute support for event effects added after mount.
+	ParticleBursts       *bool  `json:"particleBursts,omitempty"`
+	Responsive           *bool  `json:"responsive,omitempty"`
+	FillHeight           *bool  `json:"fillHeight,omitempty"`
+	PreferWebGPU         *bool  `json:"preferWebGPU,omitempty"`
+	PreferWebGL          *bool  `json:"preferWebGL,omitempty"`
+	ForceWebGL           *bool  `json:"forceWebGL,omitempty"`
+	RequireWebGL         *bool  `json:"requireWebGL,omitempty"`
+	PreferCanvas         *bool  `json:"preferCanvas,omitempty"`
+	UnsupportedMessage   string `json:"unsupportedMessage,omitempty"`
+	CanvasAlpha          *bool  `json:"canvasAlpha,omitempty"`
+	DragToRotate         *bool  `json:"dragToRotate,omitempty"`
+	PointerLock          *bool  `json:"pointerLock,omitempty"`
+	DeferPostFX          *bool  `json:"deferPostFX,omitempty"`
+	DeferPostFXDelayMS   int    `json:"deferPostFXDelayMS,omitempty"`
+	DragSignalNamespace  string `json:"dragSignalNamespace,omitempty"`
+	PickSignalNamespace  string `json:"pickSignalNamespace,omitempty"`
+	EventSignalNamespace string `json:"eventSignalNamespace,omitempty"`
 	// CameraInputSignal: when set, the engine applies the camera from this shared
 	// signal (null/absent = user controls). Drives follow-mode without app JS.
 	CameraInputSignal string `json:"cameraInputSignal,omitempty"`
@@ -1901,6 +1903,7 @@ func (p Props) legacyBaseProps() map[string]any {
 		out["vessel"] = p.Vessel
 	}
 	setBool(out, "autoRotate", p.AutoRotate)
+	setBool(out, "particleBursts", p.ParticleBursts)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)
 	setBool(out, "preferWebGPU", p.PreferWebGPU)

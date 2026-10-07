@@ -600,6 +600,10 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/timeline.ts")},
 	},
 	{
+		name:    "bootstrap-feature-scene3d-particle-burst.js",
+		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-zoom.js",
 		sources: []source{sourceFile("../runtime/scene3d/mount-zoom.ts")},
 	},
