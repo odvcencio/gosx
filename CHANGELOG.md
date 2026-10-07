@@ -19,7 +19,11 @@
 
 - Add additive hub observers configured before the first connection, with
   logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
-  classifications. `Hub.Close(ctx)` rejects upgrades and waits for connection
+  classifications. Connection rejections are separate from malformed and
+  rate-limited messages; observers preserve existing hub panic diagnostics.
+  Embed `NoopObserver` for future callbacks. Closing detaches subscriptions
+  before `Closed`; already admitted callbacks may overlap completion.
+  `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
 
 - Preserve public immutable caching for framework runtime JS/WASM, emitted

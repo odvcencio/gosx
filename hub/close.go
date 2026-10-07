@@ -87,13 +87,18 @@ func (h *Hub) finishCloseLocked() bool {
 }
 
 func (h *Hub) finishClose() {
-	h.observe(func(o Observer) { o.Closed(h) })
 	h.mu.Lock()
-	if list := h.observers.Swap(nil); list != nil {
+	list := h.observers.Swap(nil)
+	h.mu.Unlock()
+	// Remove the list before callbacks: even a reentrant Broadcast from a
+	// Closed callback must not admit another dispatch to these subscribers.
+	if list != nil {
 		for _, slot := range list.slots {
+			h.visitObserver(slot, func(o Observer) { o.Closed(h) })
 			slot.active.Store(false)
 		}
 	}
+	h.mu.Lock()
 	close(h.closeDone)
 	h.mu.Unlock()
 }
