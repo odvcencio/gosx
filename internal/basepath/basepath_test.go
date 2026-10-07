@@ -59,6 +59,19 @@ func TestMountRootRedirectPreservesQuery(t *testing.T) {
 	}
 }
 
+func TestHTMLPrefixCollisionAndRepeatedRewriting(t *testing.T) {
+	src := `<a href="/news">News</a><a href="/news/details?q=1#top">Details</a>`
+	got := HTML("/news", src)
+	for _, want := range []string{`href="/news/news"`, `href="/news/news/details?q=1#top"`} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing %s in %s", want, got)
+		}
+	}
+	if twice := HTML("/news", got); twice != got {
+		t.Errorf("rewritten attributes changed: %s", twice)
+	}
+}
+
 func TestExportDiscoveryDoesNotExposeUnprefixedPages(t *testing.T) {
 	for _, export := range []string{"", "1"} {
 		t.Setenv("GOSX_STATIC_EXPORT", export)

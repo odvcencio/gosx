@@ -39,3 +39,28 @@ test("client telemetry uses the configured public prefix", async () => {
  assert.ok(env.fetchCalls.some(call => new URL(call.url, env.context.location.href).pathname === "/.proxy/game/_gosx/client-events"));
  assert.ok(!env.fetchCalls.some(call => new URL(call.url, env.context.location.href).pathname === "/_gosx/client-events"));
 });
+
+for (const preload of [false, true]) {
+ test(`lazy features preserve colliding mount paths (preload=${preload})`, async () => {
+  const publicPath = "/gosx/gosx/bootstrap-feature-controllers.js";
+  const env = createContext({
+   manifest: {runtime: {}, islands: [], bundles: {}, controllers: [{id: "clock", config: {}}]},
+   fetchRoutes: {[publicPath]: {text: bootstrapFeatureControllersSource}},
+  });
+  const meta = env.document.createElement("meta");
+  meta.setAttribute("name", "gosx-base-path");
+  meta.setAttribute("content", "/gosx");
+  env.document.head.appendChild(meta);
+  if (preload) {
+   const link = env.document.createElement("link");
+   link.setAttribute("rel", "preload");
+   link.setAttribute("as", "script");
+   link.setAttribute("href", publicPath);
+   env.document.head.appendChild(link);
+  }
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  assert.ok(env.fetchCalls.some(call => call.url === publicPath));
+  assert.ok(!env.fetchCalls.some(call => call.url === "/gosx/bootstrap-feature-controllers.js" || call.url.startsWith("/gosx/gosx/gosx/")));
+ });
+}

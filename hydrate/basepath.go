@@ -11,10 +11,15 @@ import (
 // prefix. It copies changed collections so rendering cannot alter shared state
 // or application props. An empty prefix keeps the original manifest.
 func (m *Manifest) WithBasePath(prefix string) *Manifest {
-	if m == nil || prefix == "" {
+	if m == nil || prefix == "" || m.basePath == prefix {
 		return m
 	}
+	if m.basePathSource != nil {
+		m = m.basePathSource
+	}
 	out := *m
+	out.basePath = prefix
+	out.basePathSource = m
 	out.Runtime.Path = urlpath.URL(prefix, out.Runtime.Path)
 	out.Islands = append([]IslandEntry(nil), m.Islands...)
 	for i := range out.Islands {

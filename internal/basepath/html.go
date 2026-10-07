@@ -25,6 +25,19 @@ func HTML(prefix, markup string) string {
 			continue
 		}
 		token := z.Token()
+		// Track rewriting explicitly; a path beginning with the mount may
+		// still be an internal route. Repeated passes keep public URLs intact.
+		prefixed := false
+		for _, attr := range token.Attr {
+			if attr.Key == "data-gosx-url-prefix" && attr.Val == prefix {
+				prefixed = true
+				break
+			}
+		}
+		if prefixed {
+			out.Write(raw)
+			continue
+		}
 		changed := false
 		for i := range token.Attr {
 			a := &token.Attr[i]
@@ -59,6 +72,7 @@ func HTML(prefix, markup string) string {
 			changed = changed || value != a.Val
 		}
 		if changed {
+			token.Attr = append(token.Attr, html.Attribute{Key: "data-gosx-url-prefix", Val: prefix})
 			out.WriteString(token.String())
 		} else {
 			out.Write(raw)

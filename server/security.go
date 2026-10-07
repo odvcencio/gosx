@@ -85,17 +85,20 @@ func withSecurityPolicyState(ctx context.Context, state securityPolicyState) con
 //
 // Call it before Build. Passing a zero SecurityPolicy restores the default framing policy
 // again and restores the default headers alone. Invalid frame ancestors or
-// conflicting X-Frame-Options return an error without applying the policy.
+// conflicting X-Frame-Options return an error, but still apply the other policy
+// settings with framing denied, even when the caller ignores the error.
 func (a *App) EnableSecurityPolicy(policy SecurityPolicy) error {
 	if a == nil {
 		return nil
 	}
-	if err := validateFrameAncestors(policy); err != nil {
-		return err
+	err := validateFrameAncestors(policy)
+	if err != nil {
+		policy.FrameAncestors = []string{"'none'"}
+		policy.FrameOptions = "DENY"
 	}
 	policy.FrameAncestors = append([]string(nil), policy.FrameAncestors...)
 	a.securityPolicy = normalizeSecurityPolicy(policy)
-	return nil
+	return err
 }
 
 func normalizeSecurityPolicy(policy SecurityPolicy) SecurityPolicy {

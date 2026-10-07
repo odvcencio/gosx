@@ -849,8 +849,7 @@
     var meta = document.querySelector && document.querySelector('meta[name="gosx-base-path"]');
     var prefix = meta && meta.getAttribute("content") || "";
     if (!prefix || value.charAt(0) !== "/" || value.charAt(1) === "/" || value.charAt(1) === "\\") return value;
-    var pathname = value.split(/[?#]/, 1)[0];
-    return pathname === prefix || pathname.indexOf(prefix + "/") === 0 ? value : prefix + value;
+    return prefix + value;
   }
 
   function publicAttribute(name, value) {

@@ -91,8 +91,10 @@ continue to work. No app-specific cookie attributes or URL rewriting are needed.
 | `session.Options.TrustedOrigins` | Empty | Permits exact HTTP(S) mutation origins through the existing CSRF origin guard. |
 
 `EnableSecurityPolicy` returns an error for an invalid framing source or a
-conflicting `FrameOptions` setting. It accepts `'self'`, `'none'` alone, and
-HTTP(S) origins with an optional wildcard subdomain. It rejects unrestricted
+conflicting `FrameOptions` setting. On error it still applies the supplied CSP
+and other headers, with `frame-ancestors 'none'` and `X-Frame-Options: DENY` to
+block framing even if the caller ignores the error. It accepts `'self'`,
+`'none'` alone, and HTTP(S) origins with an optional wildcard subdomain. It rejects unrestricted
 `*`, scheme-only sources, paths, and injected directives. Prefer the exact
 Activity domain instead of `https://*.discordsays.com` when the embedding chain
 allows it. A report-only CSP still receives an enforced framing policy.
@@ -120,14 +122,19 @@ URLs, including progressive model sources and typed texture descriptors. Hydrati
 uses the same public URLs as server rendering; custom engine props stay opaque.
 
 Native HTTP redirects and managed action JSON redirects receive the same prefix.
-Query strings and fragments survive, and an already prefixed URL is not prefixed
-again. External URLs, protocol-relative URLs, relative paths, and arbitrary
+Query strings and fragments survive. Root-relative inputs are internal paths:
+with prefix `/news`, a link to `/news` becomes `/news/news`, and `/news/details`
+becomes `/news/news/details`. Supply internal paths to rendered attributes and
+`server.URL`; use the returned public URL directly in API responses or custom
+browser code. External URLs, protocol-relative URLs, relative paths, and arbitrary
 application props or script text retain their values. CSS files should use
 relative asset URLs. For an app-owned API response or custom browser code, use
 `server.URL(request, "/api/state")` to obtain its public URL.
 
 `SetBasePath` rejects noncanonical prefixes, escaped separators, queries, and
 fragments. With the default proxy mode, requests outside the prefix return 404.
+Health and readiness probes must include the prefix, for example
+`/.proxy/game/healthz` and `/.proxy/game/readyz`, rather than the root paths.
 The option never reads a client-supplied forwarded-prefix header. Register it on
 the app before `Build`; standalone routers use the same API. Framework-rendered
 HTML, including deferred fragments, participates in URL rewriting. A mounted

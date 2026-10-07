@@ -119,8 +119,8 @@ func (ctx *RouteContext) Query(name string) string {
 	return ctx.Request.URL.Query().Get(name)
 }
 
-// ActionPath returns the current page-relative action endpoint for the given
-// action name.
+// ActionPath returns the internal page-relative action endpoint for the given
+// action name. GoSX prefixes it when rendering URL attributes.
 func (ctx *RouteContext) ActionPath(name string) string {
 	if ctx == nil || strings.TrimSpace(name) == "" {
 		return ""
@@ -130,9 +130,9 @@ func (ctx *RouteContext) ActionPath(name string) string {
 		base = ctx.Request.URL.Path
 	}
 	if base == "/" {
-		return basepath.URL(basepath.FromRequest(ctx.Request), "/__actions/"+name)
+		return "/__actions/" + name
 	}
-	return basepath.URL(basepath.FromRequest(ctx.Request), strings.TrimSuffix(base, "/")+"/__actions/"+name)
+	return strings.TrimSuffix(base, "/") + "/__actions/" + name
 }
 
 // ActionState returns the flashed state for a named browser action.

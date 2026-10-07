@@ -62,3 +62,21 @@ func TestTextureVariantsMatchPublicModelRelativePaths(t *testing.T) {
 		t.Fatal("public aliases are not idempotent")
 	}
 }
+
+func TestManifestBasePathCollidesWithInternalURLs(t *testing.T) {
+	m := NewManifest()
+	m.Runtime.Path = "/news/runtime.wasm"
+	m.Hubs = []HubEntry{{Path: "/news"}}
+	m.Engines = []EngineEntry{{Kind: "video", Props: json.RawMessage(`{"src":"/news/movie.webm"}`)}}
+	out := m.WithBasePath("/news")
+	if out.Runtime.Path != "/news/news/runtime.wasm" || out.Hubs[0].Path != "/news/news" || string(out.Engines[0].Props) != `{"src":"/news/news/movie.webm"}` {
+		t.Fatalf("colliding URLs: %+v, props=%s", out, out.Engines[0].Props)
+	}
+	if out.WithBasePath("/news") != out {
+		t.Fatal("same mount applied twice")
+	}
+	other := out.WithBasePath("/other")
+	if other.Runtime.Path != "/other/news/runtime.wasm" || other.Hubs[0].Path != "/other/news" || m.Hubs[0].Path != "/news" {
+		t.Fatal("remount did not use original internal URLs", other)
+	}
+}

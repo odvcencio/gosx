@@ -835,9 +835,18 @@ for (const [label, source] of [["authority", patchAuthoritySource], ["bundle", p
       {kind: 1, path: "1", attrName: "href", text: "/created"},
     ]));
     assert.equal(scene.root.kids[1].getAttribute("href"), "/.proxy/game/created");
-    for (const text of ["/.proxy/game/next", "//cdn.example/next", "https://example.test/next", "relative", "#local"]) {
+    for (const text of ["//cdn.example/next", "https://example.test/next", "relative", "#local"]) {
       scene.apply("island", JSON.stringify([{kind: 1, path: "0", attrName: "href", text}]));
       assert.equal(scene.root.kids[0].getAttribute("href"), text);
+    }
+    for (const text of ["/.proxy/game", "/.proxy/game/next?q=1#top"]) {
+      scene.apply("island", JSON.stringify([{kind: 1, path: "0", attrName: "href", text}]));
+      assert.equal(scene.root.kids[0].getAttribute("href"), "/.proxy/game" + text);
+    }
+    scene.doc.querySelector = () => ({ getAttribute: () => "/news" });
+    for (const text of ["/news", "/news/details?q=1#top"]) {
+      scene.apply("island", JSON.stringify([{kind: 1, path: "0", attrName: "href", text}]));
+      assert.equal(scene.root.kids[0].getAttribute("href"), "/news" + text);
     }
   });
 }

@@ -21,17 +21,11 @@ func Normalize(value string) (string, error) {
 	return strings.TrimSuffix(value, "/"), nil
 }
 
-// URL prefixes local root-relative URLs once. External and relative URLs retain
-// their meaning. Query strings and fragments are preserved.
+// URL converts an internal root-relative URL to its public URL. The prefix is
+// always prepended, even when the internal path matches it. External and
+// relative URLs retain their meaning. Query strings and fragments are preserved.
 func URL(prefix, value string) string {
 	if prefix == "" || !strings.HasPrefix(value, "/") || strings.HasPrefix(value, "//") || strings.HasPrefix(value, "/\\") {
-		return value
-	}
-	localPath := value
-	if end := strings.IndexAny(localPath, "?#"); end >= 0 {
-		localPath = localPath[:end]
-	}
-	if localPath == prefix || strings.HasPrefix(localPath, prefix+"/") {
 		return value
 	}
 	return prefix + value

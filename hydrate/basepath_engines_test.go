@@ -47,7 +47,7 @@ func TestBuiltInEngineURLsUseBasePath(t *testing.T) {
 }`},
 		{"scene legacy props", "GoSXScene3D", "surface", `{"models":[{"src":"/models/city.gltf"}],"environment":{"envMap":"/assets/env.hdr"}}`, `{"models":[{"src":"/game/models/city.gltf"}],"environment":{"envMap":"/game/assets/env.hdr"}}`},
 		{"custom engine", "Custom", "surface", `{"src":"/media/movie.webm","scene":{"models":[{"src":"/models/city.gltf"}]}}`, `{"src":"/media/movie.webm","scene":{"models":[{"src":"/models/city.gltf"}]}}`},
-		{"external and relative", "GoSXVideo", "video", `{"src":"https://cdn.example/movie.webm","poster":"//cdn.example/poster.png","sync":"wss://realtime.example/ws","subtitleBase":"relative","sources":[{"src":"/game/media/movie.webm"}]}`, `{"src":"https://cdn.example/movie.webm","poster":"//cdn.example/poster.png","sync":"wss://realtime.example/ws","subtitleBase":"relative","sources":[{"src":"/game/media/movie.webm"}]}`},
+		{"external relative and colliding internal", "GoSXVideo", "video", `{"src":"https://cdn.example/movie.webm","poster":"//cdn.example/poster.png","sync":"wss://realtime.example/ws","subtitleBase":"relative","sources":[{"src":"/game/media/movie.webm"}]}`, `{"src":"https://cdn.example/movie.webm","poster":"//cdn.example/poster.png","sync":"wss://realtime.example/ws","subtitleBase":"relative","sources":[{"src":"/game/game/media/movie.webm"}]}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			m := NewManifest()

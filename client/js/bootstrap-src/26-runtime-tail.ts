@@ -84,8 +84,7 @@
     const meta = document.querySelector('meta[name="gosx-base-path"]');
     const prefix = meta ? String(meta.getAttribute("content") || "") : "";
     const path = String(value || "");
-    if (!prefix || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")
-        || path === prefix || path.startsWith(prefix + "/") || path.startsWith(prefix + "?") || path.startsWith(prefix + "#")) {
+    if (!prefix || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")) {
       return path;
     }
     return prefix + path;
@@ -102,8 +101,8 @@
       scene3d: "bootstrapFeatureScene3dPath",
     }[name];
     if (!key) return "";
-    return gosxBasePathURL(String(assets[key] || runtimeFeaturePreloadPath("bootstrap-feature-" + name)
-      || "/gosx/bootstrap-feature-" + name + ".js").trim());
+    const publicPath = assets[key] || runtimeFeaturePreloadPath("bootstrap-feature-" + name);
+    return publicPath ? String(publicPath).trim() : gosxBasePathURL("/gosx/bootstrap-feature-" + name + ".js");
   }
 
   function ensureBootstrapFeature(name) {

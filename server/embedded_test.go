@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -10,6 +11,58 @@ import (
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
 )
+
+func TestAppBasePathCollidesWithInternalRoutes(t *testing.T) {
+	for _, strips := range []bool{false, true} {
+		t.Run(fmt.Sprintf("strips=%t", strips), func(t *testing.T) {
+			app := New()
+			if err := app.SetBasePath("/news", BasePathOptions{ProxyStripsPrefix: strips}); err != nil {
+				t.Fatal(err)
+			}
+			for _, route := range []string{"/", "/news", "/news/details"} {
+				app.Page(route, func(ctx *Context) gosx.Node {
+					return gosx.Fragment(gosx.Text("route="+ctx.Request.URL.Path), gosx.El("a", gosx.Attrs(gosx.Attr("href", "/news?q=1#top")), gosx.Text("News")))
+				})
+			}
+			handler := app.Build()
+			for _, route := range []string{"/", "/news", "/news/details"} {
+				public := "/news" + route
+				upstream := public
+				if strips {
+					upstream = route
+				}
+				w := httptest.NewRecorder()
+				handler.ServeHTTP(w, httptest.NewRequest("GET", upstream, nil))
+				for _, want := range []string{"route=" + route, `href="/news/news?q=1#top"`, `"path":"` + public + `"`} {
+					if w.Code != 200 || !strings.Contains(w.Body.String(), want) {
+						t.Fatalf("route %s: status=%d, missing %s in %s", route, w.Code, want, w.Body.String())
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDefaultBasePathHealthProbesRequirePrefix(t *testing.T) {
+	app := New()
+	if err := app.SetBasePath("/news"); err != nil {
+		t.Fatal(err)
+	}
+	handler := app.Build()
+	for _, path := range []string{"/healthz", "/readyz"} {
+		for _, prefix := range []string{"", "/news"} {
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, httptest.NewRequest("GET", prefix+path, nil))
+			want := 200
+			if prefix == "" {
+				want = 404
+			}
+			if w.Code != want {
+				t.Errorf("probe %s: status=%d, want %d", prefix+path, w.Code, want)
+			}
+		}
+	}
+}
 
 func TestFrameAncestorAllowlist(t *testing.T) {
 	for _, policy := range []SecurityPolicy{

@@ -2,8 +2,10 @@ package main
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -34,7 +36,7 @@ func main() {
  app.Mount("/_gosx/css/page.css", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Type", "text/css"); w.Write([]byte("p{color:blue}")) }))
  page := func(ctx *server.Context) gosx.Node {
   ctx.AddHead(gosx.El("link", gosx.Attrs(gosx.Attr("rel", "stylesheet"), gosx.Attr("href", "/_gosx/css/page.css"), gosx.Attr("data-gosx-file-css", "page"))))
-  return gosx.Fragment(gosx.El("p", gosx.Attrs(gosx.Attr("data-internal-route", ctx.Request.URL.Path))), gosx.El("a", gosx.Attrs(gosx.Attr("href", "/news")), gosx.Text("News")), gosx.El("div", gosx.Attrs(gosx.Attr("data-gosx-region-url", "/fragment"))))
+  return gosx.Fragment(gosx.El("p", gosx.Attrs(gosx.Attr("data-internal-route", ctx.Request.URL.Path))), gosx.El("a", gosx.Attrs(gosx.Attr("href", "/news?q=1#top")), gosx.Text("News")), gosx.El("a", gosx.Attrs(gosx.Attr("href", "/news/details")), gosx.Text("Details")), gosx.El("div", gosx.Attrs(gosx.Attr("data-gosx-region-url", "/fragment"))))
  }
  app.Page("/", page)
  app.Page("/news", page)
@@ -95,6 +97,28 @@ func main() {
 					for _, want := range []string{`content="` + prefix + `"`, `href="` + css + `"`, `data-gosx-region-url="` + prefix + `/fragment"`, `data-internal-route="` + internal + `"`} {
 						if !strings.Contains(body, want) {
 							t.Fatalf("missing %s in %s", want, body)
+						}
+					}
+					base, err := url.Parse("https://export.example" + strings.TrimRight(public, "/") + "/")
+					if err != nil {
+						t.Fatal(err)
+					}
+					for label, target := range map[string]string{"News": "/news?q=1#top", "Details": "/news/details"} {
+						match := regexp.MustCompile(`<a[^>]*href="([^"]*)"[^>]*>` + label + `</a>`).FindStringSubmatch(body)
+						if len(match) != 2 {
+							t.Fatalf("missing %s link in %s", label, body)
+						}
+						ref, err := url.Parse(match[1])
+						if err != nil {
+							t.Fatal(err)
+						}
+						got := base.ResolveReference(ref)
+						want, err := url.Parse("https://export.example" + prefix + target)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if strings.TrimSuffix(got.Path, "/") != want.Path || got.Host != want.Host || got.Scheme != want.Scheme || got.RawQuery != want.RawQuery || got.Fragment != want.Fragment {
+							t.Fatalf("%s link from %s resolves to %s, want %s", label, public, got, want)
 						}
 					}
 				}

@@ -68,3 +68,40 @@ func TestBasePathManagedAndNativeActionRedirects(t *testing.T) {
 		}
 	}
 }
+
+func TestBasePathActionRoutesAndRedirectsCollideWithPrefix(t *testing.T) {
+	router := NewRouter()
+	router.SetBasePath("/news")
+	router.Add(Route{Pattern: "/news", Handler: func(ctx *RouteContext) gosx.Node {
+		if got := ctx.ActionPath("save"); got != "/news/__actions/save" {
+			t.Fatalf("internal action path = %q", got)
+		}
+		return gosx.El("form", gosx.Attrs(gosx.Attr("action", ctx.ActionPath("save"))))
+	}})
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, httptest.NewRequest("GET", "/news/news", nil))
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `action="/news/news/__actions/save"`) {
+		t.Fatal(w.Code, w.Body.String())
+	}
+	app := server.New()
+	app.SetBasePath("/news")
+	registry := action.NewRegistry()
+	registry.Register("save", func(ctx *action.Context) error { ctx.Redirect("/news/details?q=1#top"); return nil })
+	app.Mount("/save", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { r.SetPathValue("name", "save"); registry.ServeHTTP(w, r) }))
+	for _, managed := range []bool{false, true} {
+		req := httptest.NewRequest("POST", "/news/save", strings.NewReader(""))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		if managed {
+			req.Header.Set("Accept", "application/json")
+		}
+		w := httptest.NewRecorder()
+		app.Build().ServeHTTP(w, req)
+		if managed {
+			if !strings.Contains(w.Body.String(), `"redirect":"/news/news/details?q=1#top"`) {
+				t.Fatal(w.Body.String())
+			}
+		} else if w.Header().Get("Location") != "/news/news/details?q=1#top" {
+			t.Fatal(w.Header())
+		}
+	}
+}
