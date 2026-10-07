@@ -85,10 +85,11 @@ type Renderer struct {
 	bootstrapFeatureScene3dDecompressPath string
 	// Walk is advertised only when a Scene3D engine carries walk props.
 	bootstrapFeatureScene3dWalkPath          string
+	bootstrapFeatureScene3dTimelinePath      string
 	bootstrapFeatureScene3dZoomPath          string
-	bootstrapFeatureScene3dParticleBurstPath string
 	bootstrapFeatureScene3dVesselPath        string
 	bootstrapFeatureScene3dOceanQueryPath    string
+	bootstrapFeatureScene3dParticleBurstPath string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -235,6 +236,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
 	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
+	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
 	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
@@ -651,6 +653,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
 	r.bootstrapFeatureScene3dParticleBurstPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DTimelinePath overrides the demand-loaded timeline chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DTimelinePath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dTimelinePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DVesselPath overrides the optional sailing chunk URL.
 func (r *Renderer) SetBootstrapFeatureScene3DVesselPath(path string) {
 	if r == nil {
@@ -762,6 +772,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
 		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
+		return r.runtimeAssets.BootstrapFeatureScene3DTimeline, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-vessel.js", r.bootstrapFeatureScene3dVesselPath, r.runtimeAssets.BootstrapFeatureScene3DVessel):
 		return r.runtimeAssets.BootstrapFeatureScene3DVessel, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-ocean-query.js", r.bootstrapFeatureScene3dOceanQueryPath, r.runtimeAssets.BootstrapFeatureScene3DOceanQuery):
@@ -920,6 +932,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
 	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
+	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
 	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
 	r.SetVideoHLSPath(runtime.VideoHLS)
@@ -1171,9 +1184,14 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			b.WriteString(html.EscapeString(instanceStreamPath))
 			b.WriteByte('"')
 		}
-		if burstPath := r.bootstrapFeatureScene3dParticleBurstPath; burstPath != "" {
+		if burstPath := r.bootstrapFeatureScene3dParticleBurstPath; burstPath != "" && r.scene3DNeedsParticleBurstChunk() {
 			b.WriteString(` data-gosx-scene3d-particle-burst-url="`)
 			b.WriteString(html.EscapeString(burstPath))
+			b.WriteByte('"')
+		}
+		if timelinePath := r.bootstrapFeatureScene3dTimelinePath; timelinePath != "" && r.scene3DNeedsTimelineChunk() {
+			b.WriteString(` data-gosx-scene3d-timeline-url="`)
+			b.WriteString(html.EscapeString(timelinePath))
 			b.WriteByte('"')
 		}
 		if animPath := r.bootstrapFeatureScene3dAnimationPath; animPath != "" {
@@ -2479,6 +2497,38 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		}
 	}
 	return needsCompute, needsDecompress
+}
+
+// Timelines are advertised only for scenes that opt into finite playback.
+func (r *Renderer) scene3DNeedsTimelineChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props struct {
+			Timelines bool `json:"timelines"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.Timelines {
+			return true
+		}
+	}
+	return false
+}
+
+// Particle bursts are advertised only for scenes that opt into event effects.
+func (r *Renderer) scene3DNeedsParticleBurstChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props struct {
+			ParticleBursts bool `json:"particleBursts"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.ParticleBursts {
+			return true
+		}
+	}
+	return false
 }
 
 // Zoom is downloaded only for an explicit camera control opt-in.

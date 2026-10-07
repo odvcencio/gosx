@@ -132,10 +132,8 @@ test('portrait framing provides the default FOV and preserves optical zoom throu
 });
 
 test('the lazy zoom loader finds the controller in the runtime API', () => {
- const source = require('./runtime-test-harness.js').readSceneMountSrc();
- const start = source.indexOf('  function sceneGatedFeatureAPI(kind)');
- const end = source.indexOf('  // @ts-ignore', start);
+ const source = ts.transpileModule(fs.readFileSync(require.resolve('../runtime/scene3d/script-loader.ts'), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
  const api = { setup() {} }, env = { window: { __gosx_runtime_api: { scene3DZoom: api } } };
- vm.runInNewContext(source.slice(start, end), env);
+ vm.runInNewContext(source, env);
  assert.equal(env.sceneGatedFeatureAPI('zoom'), api);
 });

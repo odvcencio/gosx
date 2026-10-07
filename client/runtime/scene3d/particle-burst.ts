@@ -40,23 +40,16 @@ interface SceneParticleBurstSpec {
     if (backend && !['webgl', 'webgpu'].includes(backend)) throw new Error('Scene3D particle bursts require WebGL or WebGPU');
     let rec = mounts.get(handle);
     if (!rec) {
-      const state = mount.__gosxScene3DState, originalApply = handle.applyCommands, originalDispose = handle.dispose;
-      rec = { state, originalApply, originalDispose, bursts: new Map(), owned: new Set(), generation: 0, sequence: 0, closed: false, observer: null, waiters: [] };
-      rec.apply = (commands: { kind: number }[]) => {
+      const state = mount.__gosxScene3DState;
+      rec = { state, bursts: new Map(), owned: new Set(), generation: 0, sequence: 0, closed: false, waiters: [] };
+      rec.originalApply = window.__gosx_scene3d_api.addCommandHook(mount, handle, 'particle-burst', 20, (commands: { kind: number }[]) => {
         if (Array.isArray(commands) && commands.some(command => command.kind === 6)) {
           rec.generation++;
           for (const burst of Array.from(rec.bursts.values()) as any[]) burst.stop('commands', false);
           rec.owned.clear();
         }
-        return originalApply.call(handle, commands);
-      };
-      rec.dispose = () => { dispose(handle); return originalDispose?.call(handle); };
-      if (typeof MutationObserver !== 'undefined') {
-        rec.observer = new MutationObserver(() => { if (!alive() || !mount.isConnected) dispose(handle); });
-        rec.observer.observe(mount, { attributes: true, attributeFilter: ['data-gosx-scene3d-command-ready'] });
-        if (mount.parentNode) rec.observer.observe(mount.parentNode, { childList: true });
-      }
-      mounts.set(handle, rec); handle.applyCommands = rec.apply; handle.dispose = rec.dispose;
+      }, () => dispose(handle), alive);
+      mounts.set(handle, rec);
     }
     const previous = rec.bursts.get(plan.id);
     const total = (Array.from(rec.bursts.values()) as any[]).reduce((sum: number, burst: any) => sum + burst.plan.particles.count, 0) - (previous?.plan.particles.count || 0) + plan.particles.count;
@@ -88,7 +81,7 @@ interface SceneParticleBurstSpec {
         }
         const commands = [{ kind: 6, data: { points: rec.state.points || [], computeParticles: compute, waterSystems: rec.state.waterSystems || [] } }];
         try {
-          const applied = rec.originalApply.call(handle, commands);
+          const applied = rec.originalApply(commands);
           rec.owned = owned;
           Promise.resolve(applied).then(() => { for (const waiter of waiters) waiter.resolve(); }, error => failure(error, waiters));
         } catch (error) { failure(error, waiters); }
@@ -133,10 +126,8 @@ interface SceneParticleBurstSpec {
     if (!rec) return;
     rec.closed = true;
     for (const burst of Array.from(rec.bursts.values()) as any[]) burst.stop('disposed', false);
-    rec.observer?.disconnect();
-    if (handle.applyCommands === rec.apply) handle.applyCommands = rec.originalApply;
-    if (handle.dispose === rec.dispose) handle.dispose = rec.originalDispose;
     mounts.delete(handle);
   }
-  window.__gosx_scene3d_particle_burst_api = { attach, dispose, prepare };
+  window.__gosx_scene3d_api['particle-burst'] = { attach, dispose, prepare,
+    load: () => window.__gosx_ensure_scene3d_compute_loaded() };
 })();

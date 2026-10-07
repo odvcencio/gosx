@@ -136,6 +136,7 @@ var outputs = []output{
 			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/request.ts"),
 			sourceFile("../runtime/host/actions.ts"),
+			sourceFile("../runtime/scene3d/script-loader.ts"),
 			sourceFile(scene3DCommandBridgeFile),
 			sourceFile(scene3DInstanceStreamBridgeFile),
 			sourceFile("../runtime/host/regions.ts"),
@@ -380,6 +381,7 @@ var outputs = []output{
 		name: "bootstrap-feature-scene3d.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.ts"),
+			sourceFile("../runtime/scene3d/script-loader.ts"),
 			sourceFile(scene3DCommandBridgeFile),
 			sourceFile(scene3DInstanceStreamBridgeFile),
 			sourceFile(runtimePrimitivesFile),
@@ -590,7 +592,11 @@ var outputs = []output{
 	},
 	{
 		name:    "bootstrap-feature-scene3d-particle-burst.js",
-		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
+		sources: []source{sourceFile("../runtime/scene3d/command-hooks.ts"), sourceFile("../runtime/scene3d/particle-burst.ts")},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-timeline.js",
+		sources: []source{sourceFile("../runtime/scene3d/command-hooks.ts"), sourceFile("../runtime/scene3d/timeline.ts")},
 	},
 	{
 		name:    "bootstrap-feature-scene3d-zoom.js",

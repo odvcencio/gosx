@@ -113,24 +113,26 @@ type Props struct {
 	Walk                 *Walk    `json:"walk,omitempty"`
 	Vessel               *Vessel  `json:"vessel,omitempty"`
 	AutoRotate           *bool    `json:"autoRotate,omitempty"`
-	// ParticleBursts advertises lazy compute support for event effects added after mount.
-	ParticleBursts       *bool  `json:"particleBursts,omitempty"`
-	Responsive           *bool  `json:"responsive,omitempty"`
-	FillHeight           *bool  `json:"fillHeight,omitempty"`
-	PreferWebGPU         *bool  `json:"preferWebGPU,omitempty"`
-	PreferWebGL          *bool  `json:"preferWebGL,omitempty"`
-	ForceWebGL           *bool  `json:"forceWebGL,omitempty"`
-	RequireWebGL         *bool  `json:"requireWebGL,omitempty"`
-	PreferCanvas         *bool  `json:"preferCanvas,omitempty"`
-	UnsupportedMessage   string `json:"unsupportedMessage,omitempty"`
-	CanvasAlpha          *bool  `json:"canvasAlpha,omitempty"`
-	DragToRotate         *bool  `json:"dragToRotate,omitempty"`
-	PointerLock          *bool  `json:"pointerLock,omitempty"`
-	DeferPostFX          *bool  `json:"deferPostFX,omitempty"`
-	DeferPostFXDelayMS   int    `json:"deferPostFXDelayMS,omitempty"`
-	DragSignalNamespace  string `json:"dragSignalNamespace,omitempty"`
-	PickSignalNamespace  string `json:"pickSignalNamespace,omitempty"`
-	EventSignalNamespace string `json:"eventSignalNamespace,omitempty"`
+	Responsive           *bool    `json:"responsive,omitempty"`
+	FillHeight           *bool    `json:"fillHeight,omitempty"`
+	PreferWebGPU         *bool    `json:"preferWebGPU,omitempty"`
+	PreferWebGL          *bool    `json:"preferWebGL,omitempty"`
+	ForceWebGL           *bool    `json:"forceWebGL,omitempty"`
+	RequireWebGL         *bool    `json:"requireWebGL,omitempty"`
+	PreferCanvas         *bool    `json:"preferCanvas,omitempty"`
+	UnsupportedMessage   string   `json:"unsupportedMessage,omitempty"`
+	CanvasAlpha          *bool    `json:"canvasAlpha,omitempty"`
+	DragToRotate         *bool    `json:"dragToRotate,omitempty"`
+	PointerLock          *bool    `json:"pointerLock,omitempty"`
+	DeferPostFX          *bool    `json:"deferPostFX,omitempty"`
+	DeferPostFXDelayMS   int      `json:"deferPostFXDelayMS,omitempty"`
+	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
+	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
+	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	// Timelines advertises the optional runtime for finite object and camera playback.
+	Timelines *bool `json:"timelines,omitempty"`
+	// ParticleBursts advertises the optional runtime and compute support for event effects.
+	ParticleBursts *bool `json:"particleBursts,omitempty"`
 	// CameraInputSignal: when set, the engine applies the camera from this shared
 	// signal (null/absent = user controls). Drives follow-mode without app JS.
 	CameraInputSignal string `json:"cameraInputSignal,omitempty"`
@@ -1896,6 +1898,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "ariaLabel", p.AriaLabel)
 	setString(out, "background", p.Background)
 	setString(out, "controls", p.Controls)
+	setBool(out, "timelines", p.Timelines)
 	if p.Walk != nil {
 		out["walk"] = p.Walk
 	}
@@ -2343,6 +2346,17 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		}
 	case HTML:
 		l.pendingHTML = append(l.pendingHTML, pendingHTML{html: current, parent: parent})
+	case Text3D:
+		if surface, err := current.Surface(); err == nil {
+			if parent.Rotation != (quaternion{W: 1}) {
+				surface.Rotation = eulerFromQuaternion(parent.Rotation.mul(quaternionFromEuler(surface.Rotation)).normalized())
+			}
+			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: surface, parent: parent})
+		}
+	case *Text3D:
+		if current != nil {
+			l.lowerNode(*current, parent)
+		}
 	case *HTML:
 		if current != nil {
 			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: *current, parent: parent})

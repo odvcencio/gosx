@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -25,7 +26,7 @@ const sceneParticleBurstHTML = `<!doctype html><html><body style="margin:0">
 window.ready = (async () => {
  window.handle = await window.__gosx_engine_factories.GoSXScene3D({
   mount: document.getElementById('scene'), emit() {},
-  props: {width:400,height:300,responsive:false,maxDevicePixelRatio:1,
+  props: {width:400,height:300,responsive:false,maxDevicePixelRatio:1,particleBursts:true,
    requireWebGL:true,forceWebGL:true,shaded:true,controls:'none',background:'#08151f',
    scene:{camera:{x:0,y:0,z:6,fov:60},objects:[{
     id:'piece',kind:'box',width:1,height:1,depth:1,x:-1,y:0,z:0,color:'#ffbb33'
@@ -74,6 +75,14 @@ func TestScene3DParticleBurstLazyRenderingAndCleanup(t *testing.T) {
 	after := page.screenshotElement(t, "#scene canvas")
 	if bytes.Equal(before, after) {
 		t.Fatal("burst did not change rendered pixels")
+	}
+	if dir := os.Getenv("GOSX_PARTICLE_BURST_EVIDENCE_DIR"); dir != "" {
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "particle-burst.png"), after, 0644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var finished bool
 	page.eval(t, `effect.finished.then(result => result.finished && !result.suppressed)`, &finished)
