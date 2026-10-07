@@ -4,8 +4,6 @@
 // DOM island or app-specific JavaScript.
 package controller
 
-import "m31labs.dev/gosx/scene"
-
 // Config declares a page-scoped headless controller.
 type Config struct {
 	Name       string          `json:"name,omitempty"`
@@ -129,18 +127,46 @@ type DropTarget struct {
 	TimeoutMS     int      `json:"timeoutMs,omitempty"`
 }
 
+// Vector3 is a world-space point or direction in a controller pick message.
+// Its JSON representation matches scene.Vector3.
+type Vector3 struct {
+	X float64 `json:"x,omitempty"`
+	Y float64 `json:"y,omitempty"`
+	Z float64 `json:"z,omitempty"`
+}
+
+// Ray is a world-space ray in a controller pick request.
+// Its JSON representation matches scene.Ray.
+type Ray struct {
+	Origin    Vector3 `json:"origin"`
+	Direction Vector3 `json:"direction"`
+}
+
+// RayHit describes a scene intersection in a controller pick result.
+// Its JSON representation matches scene.RayHit.
+type RayHit struct {
+	ID            string  `json:"id,omitempty"`
+	Kind          string  `json:"kind,omitempty"`
+	Distance      float64 `json:"distance"`
+	Point         Vector3 `json:"point"`
+	Normal        Vector3 `json:"normal,omitzero"`
+	Pickable      bool    `json:"pickable,omitempty"`
+	InstanceIndex *int    `json:"instanceIndex,omitempty"`
+	Method        string  `json:"method,omitempty"`
+}
+
 // PickRequest is emitted on a scene target's RequestOutput after pointer release.
 // RequestID correlates the result with the live drag, including across remounts.
 type PickRequest struct {
-	RequestID string    `json:"requestId"`
-	Ray       scene.Ray `json:"ray"`
+	RequestID string `json:"requestId"`
+	Ray       Ray    `json:"ray"`
 }
 
-// PickResult accepts output from scene.RaycastGraph or SceneAccelerator.Raycast.
+// PickResult carries a converted scene.RaycastGraph or SceneAccelerator.Raycast hit.
 // A nil Hit is a miss. Results for expired, cancelled, or older drags are ignored.
 type PickResult struct {
-	RequestID string        `json:"requestId"`
-	Hit       *scene.RayHit `json:"hit"`
+	RequestID string  `json:"requestId"`
+	Hit       *RayHit `json:"hit"`
 }
 
 // FocusOwner owns a modal while OpenSignal is true. Target and optional focus

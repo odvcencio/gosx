@@ -84,20 +84,31 @@ browser pick. Set both to use the existing native scene query APIs:
 // Inside an engine/wasm factory, return the subscription as its Handle.
 subscription, err := wasm.SubscribeSignal[controller.PickRequest](ctx, "$dropRay",
     func(request controller.PickRequest) {
-        hit, ok := scene.RaycastGraph(graph, request.Ray, scene.PickableOnly())
+        ray := scene.Ray{
+            Origin: scene.Vector3(request.Ray.Origin),
+            Direction: scene.Vector3(request.Ray.Direction),
+        }
+        hit, ok := scene.RaycastGraph(graph, ray, scene.PickableOnly())
         result := controller.PickResult{RequestID: request.RequestID}
         if ok {
-            result.Hit = &hit
+            result.Hit = &controller.RayHit{
+                ID: hit.ID, Kind: hit.Kind, Distance: hit.Distance,
+                Point: controller.Vector3(hit.Point), Normal: controller.Vector3(hit.Normal),
+                Pickable: hit.Pickable, InstanceIndex: hit.InstanceIndex, Method: hit.Method,
+            }
         }
         _ = ctx.SetSignal("$dropHit", result)
     })
 return subscription, err
-// scene.NewSceneAccelerator(graph).Raycast(request.Ray) uses the same result type.
+// scene.NewSceneAccelerator(graph).Raycast(ray) uses the same result type.
 ```
 
 The Scene3D mount receives `gosx:scene3d:pick-request` and emits
 `gosx:scene3d:input` with `detail.kind == "ray"` and a correlated ray/pick in
 `detail.input`. `PickRequest.Ray` has the same JSON representation as `scene.Ray`.
+The controller defines its own `Vector3`, `Ray`, and `RayHit` types so ordinary
+servers do not link scene rendering dependencies. Convert the vectors when
+calling native scene queries, then copy the hit fields into `controller.RayHit`.
 `wasm.SubscribeSignal[T]` decodes subsequent browser writes into a Go value;
 `ctx.SetSignal` writes JSON back into the browser signal runtime. Dispose the
 subscription with the engine handle. Native signal constructors remain

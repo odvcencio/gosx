@@ -1,7 +1,9 @@
 package controller_test
 
 import (
+	"bytes"
 	"encoding/json"
+	"reflect"
 	"testing"
 
 	"m31labs.dev/gosx/controller"
@@ -40,7 +42,7 @@ func TestControllerInputManifest(t *testing.T) {
 
 func TestPickResultAcceptsNativeRaycasts(t *testing.T) {
 	graph := scene.NewGraph(scene.Mesh{ID: "end", Geometry: scene.BoxGeometry{Width: 2, Height: 2, Depth: 2}})
-	request := controller.PickRequest{RequestID: "drag:1", Ray: scene.Ray{Origin: scene.Vec3(0, 0, 4), Direction: scene.Vec3(0, 0, -1)}}
+	request := controller.PickRequest{RequestID: "drag:1", Ray: controller.Ray{Origin: controller.Vector3{Z: 4}, Direction: controller.Vector3{Z: -1}}}
 	data, err := json.Marshal(request)
 	if err != nil {
 		t.Fatal(err)
@@ -53,11 +55,17 @@ func TestPickResultAcceptsNativeRaycasts(t *testing.T) {
 		func(ray scene.Ray) (scene.RayHit, bool) { return scene.RaycastGraph(graph, ray) },
 		func(ray scene.Ray) (scene.RayHit, bool) { return scene.NewSceneAccelerator(graph).Raycast(ray) },
 	} {
-		hit, ok := raycast(decoded.Ray)
+		ray := scene.Ray{Origin: scene.Vector3(decoded.Ray.Origin), Direction: scene.Vector3(decoded.Ray.Direction)}
+		hit, ok := raycast(ray)
 		if !ok {
 			t.Fatal("expected native ray hit")
 		}
-		data, err := json.Marshal(controller.PickResult{RequestID: decoded.RequestID, Hit: &hit})
+		pickHit := controller.RayHit{
+			ID: hit.ID, Kind: hit.Kind, Distance: hit.Distance,
+			Point: controller.Vector3(hit.Point), Normal: controller.Vector3(hit.Normal),
+			Pickable: hit.Pickable, InstanceIndex: hit.InstanceIndex, Method: hit.Method,
+		}
+		data, err := json.Marshal(controller.PickResult{RequestID: decoded.RequestID, Hit: &pickHit})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -68,6 +76,59 @@ func TestPickResultAcceptsNativeRaycasts(t *testing.T) {
 		if result.RequestID != request.RequestID || result.Hit == nil || result.Hit.ID != "end" || result.Hit.Distance != 3 {
 			t.Fatalf("native result = %+v", result)
 		}
+	}
+}
+
+func TestPickMessagesMatchSceneJSON(t *testing.T) {
+	instance := 0
+	for _, hit := range []scene.RayHit{
+		{},
+		{ID: "end", Kind: "mesh", Distance: 3, Point: scene.Vec3(1, 2, 3),
+			Normal: scene.Vec3(0, 0, 1), Pickable: true, InstanceIndex: &instance, Method: "native"},
+	} {
+		data, err := json.Marshal(hit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var local controller.RayHit
+		if err := json.Unmarshal(data, &local); err != nil {
+			t.Fatal(err)
+		}
+		got, err := json.Marshal(local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatalf("hit JSON changed: got %s, want %s", got, data)
+		}
+	}
+	for _, ray := range []scene.Ray{{}, {Origin: scene.Vec3(1, 2, 3), Direction: scene.Vec3(0, 0, -1)}} {
+		data, err := json.Marshal(ray)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var local controller.Ray
+		if err := json.Unmarshal(data, &local); err != nil {
+			t.Fatal(err)
+		}
+		got, err := json.Marshal(local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, data) {
+			t.Fatalf("ray JSON changed: got %s, want %s", got, data)
+		}
+	}
+	data, err := json.Marshal(controller.PickResult{RequestID: "miss"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var miss controller.PickResult
+	if err := json.Unmarshal(data, &miss); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(miss, controller.PickResult{RequestID: "miss"}) {
+		t.Fatalf("miss changed: %+v", miss)
 	}
 }
 
