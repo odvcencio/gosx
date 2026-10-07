@@ -887,7 +887,7 @@ func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
 	cmd.Stderr = launchLog
 	// Deliberately omit the source/build environment and toolchain PATH. run.sh
 	// must establish GOSX_APP_ROOT itself, including paths containing spaces.
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + t.TempDir(), "GOSX_ENV=production", "PORT=127.0.0.1:0"}
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "GOSX_ENV=production", "PORT=127.0.0.1:0"}
 	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
