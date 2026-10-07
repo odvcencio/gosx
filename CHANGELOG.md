@@ -24,6 +24,9 @@
 - Skip the prerender subprocess when there are no static routes. Set
   `build.prerender.enabled` to `false` to build production assets and a server
   without starting an app that requires authentication or database setup.
+- Keep `gosx perf` runtime-ready wrappers stable across bootstrap chaining and
+  reassignment. Saved callbacks retain their original handler, preventing
+  recursion and recording readiness once.
 
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
