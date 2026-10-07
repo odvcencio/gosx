@@ -645,6 +645,10 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if report, err := checkDeploymentBundle(filepath.Join(dir, "dist")); err != nil || !report.OK || report.StaticRoutes != 2 {
+		t.Fatalf("prerendered production bundle failed deployment checks: %+v, %v", report, err)
+	}
+
 	for _, rel := range []string{
 		"dist/build.json",
 		"dist/export.json",
