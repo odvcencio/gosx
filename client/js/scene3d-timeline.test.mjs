@@ -20,6 +20,7 @@ function runtime(reduce = false) {
   const context = vm.createContext({ window, document, console, performance: { now: () => clock }, Date, setTimeout, clearTimeout });
   vm.runInContext(read('bootstrap-src/06-motion-core.ts'), context);
   vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-hooks.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   vm.runInContext(ts.transpileModule(read('../runtime/scene3d/timeline.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   const api = window.__gosx_scene3d_api.timeline;
   let current = null;
@@ -188,6 +189,8 @@ test('shared hooks run in explicit order and install one adapter and observer', 
     const add = r.window.__gosx_scene3d_api.addCommandHook;
     let adapter, teardown, presentation;
     for (const priority of order) {
+      vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-hooks.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+      assert.equal(r.window.__gosx_scene3d_api.addCommandHook, add, 'another chunk must reuse the hook registry');
       presentation = add(mount, handle, String(priority), priority,
         () => calls.push(priority), () => calls.push('close' + priority), () => true);
       adapter ??= handle.applyCommands; teardown ??= handle.dispose;
