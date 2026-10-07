@@ -146,40 +146,19 @@
   type PresentationName = "timeline" | "burst";
   type PresentationOptions = { engineID?: string; timeoutMS?: number };
   type PresentationAPI = { attach(value: unknown, mount: any, handle: any, ownsMount: () => boolean): unknown };
-  type PresentationFeature = { method: string; chunk: string; api: string; prepare?: () => unknown };
-  const presentationLoads = new Map<PresentationName, Promise<PresentationAPI>>();
+  type PresentationFeature = { method: string; chunk: string; datasetKey: string; prepare?: () => unknown };
   const presentations: Record<PresentationName, PresentationFeature> = {
-    timeline: { method: "playTimeline", chunk: "timeline", api: "__gosx_scene3d_timeline_api" },
+    timeline: { method: "playTimeline", chunk: "timeline", datasetKey: "gosxScene3dTimelineUrl" },
     burst: {
-      method: "burstParticles", chunk: "particle-burst", api: "__gosx_scene3d_particle_burst_api",
+      method: "burstParticles", chunk: "particle-burst", datasetKey: "gosxScene3dParticleBurstUrl",
       prepare: () => window.__gosx_ensure_scene3d_compute_loaded(),
     },
   };
 
   function loadPresentation(name: PresentationName): Promise<PresentationAPI> {
     const feature = presentations[name];
-    function prepared() {
-      return Promise.resolve().then(() => feature.prepare && feature.prepare()).then(() => Reflect.get(window, feature.api));
-    }
-    if (Reflect.get(window, feature.api)) return prepared();
-    if (presentationLoads.has(name)) return presentationLoads.get(name);
-    const promise = new Promise<PresentationAPI>((resolve, reject) => {
-      const tag = Array.from(document.scripts).find(script => script.getAttribute("data-gosx-script") === "feature-scene3d");
-      const url = tag && tag.getAttribute("data-gosx-scene3d-" + feature.chunk + "-url");
-      if (!url) return reject(new Error("Scene3D " + name + " chunk URL was not advertised"));
-      const script = document.createElement("script");
-      script.src = url; script.async = true; script.type = "text/javascript";
-      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
-      if (tag.nonce) script.nonce = tag.nonce;
-      script.onload = function() {
-        if (Reflect.get(window, feature.api)) prepared().then(resolve, reject);
-        else reject(new Error("Scene3D " + name + " chunk did not publish its API"));
-      };
-      script.onerror = function() { reject(new Error("failed to load Scene3D " + name + " chunk")); };
-      document.head.appendChild(script);
-    }).catch(function(error) { presentationLoads.delete(name); throw error; });
-    presentationLoads.set(name, promise);
-    return promise;
+    return window.__gosx_scene3d_api.ensureFeatureLoaded(feature.chunk, feature.datasetKey, "")
+      .then((api: PresentationAPI) => Promise.resolve(feature.prepare && feature.prepare()).then(() => api));
   }
 
   // Optional presentations share readiness and ownership. Their chunks retain
