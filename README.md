@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.57.5**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.6**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -367,6 +367,20 @@ $theme   // shared: all islands react to changes
 count    // local to the declaring island
 ```
 
+Declare shared state in Go with `signal.NewShared("selection", initial)` or its
+alias `signal.Shared`. Both return `*signal.Signal[T]` and support explicit type
+arguments. The compiler lowers `"selection"` and `"$selection"` to the same
+browser signal, `$selection`, without renaming the Go variable:
+
+```go
+selection := signal.NewShared("selection", "")
+selection.Set("tile-1")
+```
+
+Native Go creates a fresh signal on every call, even for the same name. Keep
+these declarations inside the request or component; they do not share server
+state between requests. Browser sharing is scoped to the page runtime.
+
 ## Server Features
 
 **Sessions and Auth** — Cookie-backed sessions with HMAC-SHA256 signing, optional AES-GCM encryption, previous-secret rotation, CSRF protection with constant-time token comparison, and flash values. Auth supports sessions, magic links, OAuth 2.0 (GitHub, Google), and WebAuthn/Passkeys.
@@ -393,6 +407,12 @@ chooses a different destination; explicit non-empty redirects are sanitized to
 a same-origin root-relative path, with unsafe values resolving to `/`.
 
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
+
+Content-addressed framework assets retain public immutable caching when global
+auth middleware reads the session. Session writes, cookies, HTML/data and
+private response policies keep their cache boundaries. See
+[immutable asset caching with sessions](./docs/immutable-asset-caching.md) for
+the classified routes and response checks.
 
 **Navigation** — `app.EnableNavigation()` adds server-driven soft transitions with managed head swaps, conservative keyed body reconciliation, and intent-prefetching. Same-origin anchors, GET forms, and GoSX `/__actions/` forms are managed automatically; `data-gosx-native` is the explicit native-browser opt-out. Stable `id`/`data-gosx-key` elements keep DOM identity and dirty focused form state while incoming attributes and content update. Pages remain server-first and progressively enhanced.
 
@@ -1218,7 +1238,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.57.5**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.6**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 
