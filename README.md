@@ -408,6 +408,12 @@ a same-origin root-relative path, with unsafe values resolving to `/`.
 
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 
+Content-addressed framework assets retain public immutable caching when global
+auth middleware reads the session. Session writes, cookies, HTML/data and
+private response policies keep their cache boundaries. See
+[immutable asset caching with sessions](./docs/immutable-asset-caching.md) for
+the classified routes and response checks.
+
 **Navigation** — `app.EnableNavigation()` adds server-driven soft transitions with managed head swaps, conservative keyed body reconciliation, and intent-prefetching. Same-origin anchors, GET forms, and GoSX `/__actions/` forms are managed automatically; `data-gosx-native` is the explicit native-browser opt-out. Stable `id`/`data-gosx-key` elements keep DOM identity and dirty focused form state while incoming attributes and content update. Pages remain server-first and progressively enhanced.
 
 **Declarative Transfer** — `data-gosx-transfer` describes a stable source and fixed target for pointer/touch or keyboard assignment. Pointer/touch drags never relocate nodes optimistically; while a pointer is held near an edge, GoSX scrolls the nearest scrollable ancestor (or the viewport) and re-tests the held coordinates against live targets. The managed action response remains authoritative.

@@ -16,17 +16,59 @@ type scheduledStatusItem struct {
 	LastSuccessAt        *string `json:"last_success_at,omitempty"`
 	NextDueAt            *string `json:"next_due_at,omitempty"`
 	CurrentAttempt       int     `json:"current_attempt,omitempty"`
-	CurrentProgress      *string `json:"current_progress"`
 	CurrentProgressAgeMs *int64  `json:"current_progress_age_ms,omitempty"`
 	ProgressTimeoutMs    *int64  `json:"progress_timeout_ms,omitempty"`
-	RecentError          *string `json:"recent_error,omitempty"`
+	ErrorClass           string  `json:"error_class,omitempty"`
 }
 
-// ScheduledStatusHandler returns an http.Handler that serves the current
-// status of all registered tasks as a JSON array at /_gosx/scheduled.
+const scheduledStatusLimit = 64
+
+// ScheduledStatus returns at most 64 task statuses and whether the snapshot is
+// complete. It removes progress and error text and never creates a scheduler.
+func (a *App) ScheduledStatus(limit int) ([]scheduled.TaskStatus, bool) {
+	if a == nil || a.scheduler == nil {
+		return nil, true
+	}
+	if limit <= 0 || limit > scheduledStatusLimit {
+		limit = scheduledStatusLimit
+	}
+	return sanitizedScheduledStatus(a.scheduler, limit)
+}
+
+func sanitizedScheduledStatus(s *scheduled.Scheduler, limit int) ([]scheduled.TaskStatus, bool) {
+	if s == nil {
+		return nil, true
+	}
+	statuses, complete := s.StatusLimit(limit)
+	for i := range statuses {
+		statuses[i].CurrentProgress = ""
+		if statuses[i].RecentError != "" {
+			statuses[i].RecentError = "task_failed"
+		}
+	}
+	return statuses, complete
+}
+
+// ScheduledStatusHandler returns bounded, redacted task status as a JSON array.
+// Mount this handler behind authentication; it does not authorize requests.
 func ScheduledStatusHandler(s *scheduled.Scheduler) http.Handler {
+	return scheduledStatusHandler(func() ([]scheduled.TaskStatus, bool) {
+		return sanitizedScheduledStatus(s, scheduledStatusLimit)
+	})
+}
+
+// ScheduledStatusHandler returns the App's bounded, redacted task status without
+// creating a scheduler. Internal aliases can mount the same handler behind
+// their admin authentication.
+func (a *App) ScheduledStatusHandler() http.Handler {
+	return scheduledStatusHandler(func() ([]scheduled.TaskStatus, bool) {
+		return a.ScheduledStatus(scheduledStatusLimit)
+	})
+}
+
+func scheduledStatusHandler(snapshot func() ([]scheduled.TaskStatus, bool)) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		statuses := s.Status()
+		statuses, complete := snapshot()
 		items := make([]scheduledStatusItem, 0, len(statuses))
 		for _, st := range statuses {
 			item := scheduledStatusItem{
@@ -48,17 +90,18 @@ func ScheduledStatusHandler(s *scheduled.Scheduler) http.Handler {
 				s := st.NextDueAt.UTC().Format("2006-01-02T15:04:05.999999999Z07:00")
 				item.NextDueAt = &s
 			}
-			if st.CurrentProgress != "" {
-				cp := st.CurrentProgress
-				item.CurrentProgress = &cp
-			}
 			if st.RecentError != "" {
-				re := st.RecentError
-				item.RecentError = &re
+				item.ErrorClass = "task_failed"
 			}
 			items = append(items, item)
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		if complete {
+			w.Header().Set("X-GoSX-Snapshot-Complete", "true")
+		} else {
+			w.Header().Set("X-GoSX-Snapshot-Complete", "false")
+		}
 		_ = json.NewEncoder(w).Encode(items)
 	})
 }
