@@ -137,33 +137,41 @@
 
   const sceneAPI = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
 
-  function loadTimeline() {
-    if (sceneAPI.timeline) return Promise.resolve(sceneAPI.timeline);
-    return sceneAPI.ensureFeatureLoaded("timeline", "gosxScene3dTimelineUrl", "");
+  const presentationLoads: Record<string, Promise<any>> = {};
+  function loadPresentation(kind: string, datasetKey: string) {
+    if (sceneAPI[kind]) return Promise.resolve(sceneAPI[kind]);
+    return presentationLoads[kind] || (presentationLoads[kind] = new Promise((resolve, reject) => {
+      const tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      const url = tag && (tag as HTMLScriptElement).dataset[datasetKey];
+      if (!url) return reject(new Error("Scene3D " + kind + " chunk URL was not advertised"));
+      const script = document.createElement("script");
+      script.src = url; script.async = true; script.type = "text/javascript";
+      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
+      script.nonce = (tag as HTMLScriptElement).nonce;
+      script.onload = () => sceneAPI[kind] ? resolve(sceneAPI[kind]) : reject(new Error("Scene3D " + kind + " chunk did not publish its API"));
+      script.onerror = () => reject(new Error("failed to load Scene3D " + kind + " chunk"));
+      document.head.appendChild(script);
+    }).catch(error => { delete presentationLoads[kind]; throw error; }));
+  }
+
+  async function playPresentation(target: any, plan: any, opts: any, kind: string, method: string, datasetKey: string) {
+    opts ||= {};
+    const id = key(target, opts), deadline = Date.now() + Math.max(0, opts.timeoutMS ?? 10000);
+    let rec = record(target, opts);
+    while (!rec) {
+      if (!id || Date.now() >= deadline) throw new Error("Scene3D " + kind + " target is not ready");
+      await new Promise(resolve => setTimeout(resolve, 16));
+      rec = record(target, opts);
+    }
+    if (!rec.mount && typeof rec.handle[method] === "function") return Promise.resolve().then(() => rec.handle[method](plan));
+    const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find((element: any) => element.__gosxScene3DHandle === rec.handle);
+    if (!mount) throw new Error("Scene3D " + kind + " mount is unavailable");
+    const api = await loadPresentation(kind, datasetKey);
+    return api.attach(plan, mount, rec.handle, () => mount.__gosxScene3DHandle === rec.handle);
   }
 
   function playTimeline() {
-    const target = arguments[0], timeline = arguments[1], opts = arguments[2] || {}, id = key(target, opts);
-    const deadline = Date.now() + Math.max(0, opts.timeoutMS ?? 10000);
-    return new Promise((resolve, reject) => {
-      function poll() {
-        const rec = record(target, opts);
-        if (rec) {
-          // Custom ready handles may provide their own timeline implementation.
-          if (!rec.mount && typeof rec.handle.playTimeline === "function") {
-            return Promise.resolve().then(() => rec.handle.playTimeline(timeline)).then(resolve, reject);
-          }
-          const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
-          if (!mount) return reject(new Error("Scene3D timeline mount is unavailable"));
-          rec.mount = mount;
-          loadTimeline().then(function() {
-            return arguments[0].attach(timeline, mount, rec.handle, () => rec.mount.__gosxScene3DHandle === rec.handle);
-          }).then(resolve, reject);
-        } else if (!id || Date.now() >= deadline) reject(new Error("Scene3D timeline target is not ready"));
-        else setTimeout(poll, 16);
-      }
-      poll();
-    });
+    return playPresentation(arguments[0], arguments[1], arguments[2], "timeline", "playTimeline", "gosxScene3dTimelineUrl");
   }
 
   function dispatchPoseFrame(target, frame, options) {

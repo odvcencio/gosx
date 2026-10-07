@@ -128,6 +128,41 @@ test('public bridge resolves a mounted timeline without applying command payload
   assert.equal(await r.window.__gosx_scene3d_command_bridge.playTimeline(handle, fixture), result);
 });
 
+test('public playback shares a versioned request, preserves CSP policy and retries failed loads', async () => {
+  const r = runtime(), scripts = [], api = r.window.__gosx_scene3d_api;
+  delete api.timeline;
+  const handle = { __gosxScene3DCommandReady: true, applyCommands() {}, setCamera() {}, dispose() {} };
+  const mount = { __gosxScene3DHandle: handle, __gosxScene3DState: { camera: {} }, isConnected: true };
+  Object.assign(r.context.document, {
+    querySelector: () => ({ dataset: { gosxScene3dTimelineUrl: '/runtime/timeline.hash.js?v=1' }, nonce: 'current-page' }),
+    createElement: () => ({}), head: { appendChild: script => scripts.push(script) },
+  });
+  const play = () => r.window.__gosx_scene3d_command_bridge.playTimeline(mount, fixture);
+  const first = assert.rejects(play(), /failed to load/), second = assert.rejects(play(), /failed to load/);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].src, '/runtime/timeline.hash.js?v=1');
+  assert.equal(scripts[0].nonce, 'current-page');
+  assert.equal(scripts[0].crossOrigin, 'anonymous');
+  assert.equal(scripts[0].referrerPolicy, 'no-referrer');
+  scripts[0].onerror(); await Promise.all([first, second]);
+  const retry = play();
+  assert.equal(scripts.length, 2);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/timeline.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+  scripts[1].onload();
+  const player = await retry;
+  handle.applyCommands([{ kind: 2 }]);
+  assert.deepEqual(plain(await player.finished), { finished: false, reason: 'commands' });
+  handle.dispose();
+});
+
+test('public playback cannot fetch an unadvertised timeline', async () => {
+  const r = runtime(); delete r.window.__gosx_scene3d_api.timeline;
+  const handle = { __gosxScene3DCommandReady: true, applyCommands() {} };
+  const mount = { __gosxScene3DHandle: handle };
+  r.context.document.head = { appendChild() { assert.fail('no fallback request'); } };
+  await assert.rejects(r.window.__gosx_scene3d_command_bridge.playTimeline(mount, fixture), /URL was not advertised/);
+});
+
 test('shared render bundles receive node bindings and release the camera after settling', async () => {
   const r = runtime(), state = {}, poses = [], handle = {};
   vm.runInContext(ts.transpileModule(read('../runtime/scene3d/mount-controls.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
