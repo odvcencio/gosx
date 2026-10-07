@@ -105,3 +105,38 @@ func TestBasePathActionRoutesAndRedirectsCollideWithPrefix(t *testing.T) {
 		}
 	}
 }
+
+func TestBasePathNativeActionReturnsToPublicReferer(t *testing.T) {
+	for _, strips := range []bool{false, true} {
+		app := server.New()
+		app.SetBasePath("/news", server.BasePathOptions{ProxyStripsPrefix: strips})
+		registry := action.NewRegistry()
+		registry.Register("save", func(ctx *action.Context) error { return nil })
+		app.Mount("/news/__actions/save", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.SetPathValue("name", "save")
+			registry.ServeHTTP(w, r)
+		}))
+		handler := app.Build()
+		for _, target := range []struct{ referer, want string }{
+			{"/news/?tab=all", "/news/?tab=all"},
+			{"/news/news?tab=all", "/news/news?tab=all"},
+			{"/news/news/details?tab=all", "/news/news/details?tab=all"},
+			{"/news?tab=all", "/news/?tab=all"},
+			{"/newspaper?tab=all", "/news/news"},
+			{"/n%65ws/news?tab=all", "/news/news"},
+		} {
+			upstream := "/news/news/__actions/save"
+			if strips {
+				upstream = "/news/__actions/save"
+			}
+			req := httptest.NewRequest("POST", "https://example.test"+upstream, strings.NewReader(""))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req.Header.Set("Referer", "https://example.test"+target.referer)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, req)
+			if got, want := w.Header().Get("Location"), target.want; w.Code != http.StatusSeeOther || got != want {
+				t.Errorf("strips=%t referer=%s: status=%d, redirect=%q, want %q", strips, target.referer, w.Code, got, want)
+			}
+		}
+	}
+}
