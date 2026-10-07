@@ -2212,6 +2212,9 @@ function createContext(options) {
   // does a WebGPU page whose device is lost. A test can still override the
   // route through options.fetchRoutes, or drop it to prove the chunk is absent.
   routes.set("/gosx/bootstrap-feature-scene3d-webgl.js", { text: bootstrapFeatureScene3DWebGLSource });
+  routes.set("/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", {
+    text: fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-pipeline-recovery.js"), "utf8"),
+  });
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
     routes.set(url, response);
   }
@@ -4497,7 +4500,7 @@ function freshFeatureBundleSource(name, options) {
 // options.fakeDeviceOptions is forwarded to makeFakeGPUDevice().
 async function createBoardWebGPUHarness(options) {
   const opts = options || {};
-  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow });
+  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow, fetchRoutes: opts.fetchRoutes });
   // Most renderer harnesses assert the complete diagnostic attribute surface.
   // Production defaults to throttled telemetry; tests opt out only when they
   // are specifically verifying that production behavior.

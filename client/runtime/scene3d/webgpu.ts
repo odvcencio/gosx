@@ -13,29 +13,17 @@
     }
     function fail(label: string, message: string) {
       if (guard.disposed || guard.coreError) return;
-      var pass = wgpuOptionalPipelinePass(label);
-      if (pass && guard.disabled.has(pass)) return;
-      if (pass) guard.disabled.add(pass);
-      else guard.coreError = message;
-      guard.failures.push({ label: label, pass: pass || "core", message: message });
-      changed();
-      renderTruth().pipelineFailure(pass || "core", label, message);
-      var detail = { pipeline: label, pass: pass || "core", error: message, action: pass ? "disabled" : "webgl2-fallback" };
-      try { if (typeof window.__gosx_emit === "function") window.__gosx_emit("warn", "scene3d-webgpu", "pipeline-failed", detail); } catch (_err) {}
-      console.warn("[gosx] WebGPU " + (pass ? pass + " disabled" : "core pipeline failed; falling back to WebGL2") + ": " + message);
-      if (canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
-        canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-pipeline-failed", JSON.stringify(guard.failures));
-      }
+      guard.pending++;
+      window.__gosx_scene3d_api.ensurePipelineRecovery().then(function(api) {
+        api.recover(guard, canvas, renderTruth(), label, message);
+      }, function(error) {
+        if (!guard.disposed) guard.coreError = message + "\nPipeline recovery unavailable: " + String(error);
+      }).finally(function() { guard.pending--; changed(); });
     }
-
     function uncaptured(event: any) {
-      if (guard.disposed) return;
       if (event && typeof event.preventDefault === "function") event.preventDefault();
       var error = event && event.error;
-      var message = String(error && error.message || error || "unknown WebGPU error");
-      // Validation messages name the rejected pipeline on browser backends.
-      var match = message.match(/(?:RenderPipeline|ComputePipeline|ShaderModule) with ['"]([^'"]+)['"] label|['"](gosx-(?:post|reflection|transmission)[^'"]*)['"]/);
-      fail(match && (match[1] || match[2]) || "uncaptured", message);
+      fail("", String(error && error.message || error || "unknown WebGPU error"));
     }
     function wrapFrame(render: any, endFrame: any) {
       return function(bundle: any, viewport: any, frameMeta: any) {
@@ -163,21 +151,6 @@
         return methods[key].bound;
       },
     });
-  }
-
-  function wgpuOptionalPipelinePass(label: string): string {
-    if (/^gosx-post-/.test(label)) {
-      var name = label.slice("gosx-post-".length);
-      if (/^bloom|^blur$/.test(name)) return SCENE_POST_BLOOM;
-      if (name === "toneMapping") return SCENE_POST_TONE_MAPPING;
-      if (name === "colorGrade") return SCENE_POST_COLOR_GRADE;
-      if (/^atmosphere:/.test(name)) return "atmosphere";
-      if (["contactShadows", "ssao", "dof", "fxaa", "vignette"].includes(name)) return name;
-    }
-    if (/^(gosx-post|post-)/.test(label)) return "post";
-    if (/^(gosx-reflection|gosx-planar-reflection)/.test(label)) return "reflections";
-    if (/^(gosx-transmission|post-depth-resolve)/.test(label)) return "post";
-    return "";
   }
 
   // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
@@ -19384,7 +19357,7 @@
     // The probe in 16z is what prevents us from ever reaching this
     // state on broken backends — it verifies device creation works
     // before we're allowed to construct a renderer at all.
-    if (initFailed && !pipelineGuard.coreError) return sceneWebGPUFactoryFailure("init-failed: " + initError);
+    if (initFailed && !pipelineGuard.coreError && !pipelineGuard.pending) return sceneWebGPUFactoryFailure("init-failed: " + initError);
 
     function supportsBundle(bundle) {
       if (webGPUUnsupportedLineStyles(bundle)) {

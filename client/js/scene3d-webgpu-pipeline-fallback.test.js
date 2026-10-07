@@ -6,14 +6,16 @@ const {
   createBoardWebGPUHarness, flushAsyncWork, createContext, FakeElement, bundleMeshScene,
   waterPerfShapeEntry, waterSeedSelenaFixture, waterSurfaceSelenaFixture, waterCausticsSelenaFixture,
   installManualRAF, installManualTimers, runScript, bootstrapRuntimeSource,
-  bootstrapFeatureScene3DSource, bootstrapFeatureScene3DWebGLSource, bootstrapFeatureEnginesSource,
+  bootstrapFeatureScene3DSource, bootstrapFeatureScene3DWebGLSource, bootstrapFeatureScene3DWebGPUSource, bootstrapFeatureEnginesSource,
 } = require("./runtime-test-harness.js");
 
 const validationMessage = "RenderPipeline with 'gosx-post' label is invalid\nValidation Error in CommandEncoder::finish, label 'gosx-frame'\n" + "validation detail ".repeat(30);
 
-async function failureHarness(pattern, mode = "scope") {
+async function failureHarness(pattern, mode = "scope", options = {}) {
   const events = [], warnings = [], stack = [], listeners = new Set();
   const harness = await createBoardWebGPUHarness({
+    fresh: true,
+    ...options,
     configureDevice(device, state, env) {
       env.context.__gosx_emit = (level, category, message, detail) => events.push({ message, detail });
       env.context.console = { warn: message => warnings.push(message), error() {}, log() {} };
@@ -97,6 +99,7 @@ test("WebGPU never binds pending pipelines and resumes after validation", async 
   await frames(h, 4);
   assert.ok(h.fake.state.renderPasses.some(pass => pass.draws.length > 0));
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
+  assert.equal(h.env.fetchCalls.filter(call => call.url.includes("pipeline-recovery")).length, 0);
   h.renderer.dispose();
 });
 
@@ -130,12 +133,14 @@ test("uncaptured optional and unexpected core errors degrade once and detach on 
   const listener = Array.from(h.listeners)[0];
   let prevented = 0;
   for (let i = 0; i < 5; i++) listener({ error: { message: validationMessage }, preventDefault() { prevented++; } });
+  await flushAsyncWork();
   assert.deepEqual(Array.from(h.renderer.diagnostics().disabledPipelinePasses), ["post"]);
   await frames(h);
   assert.equal(h.renderer.getFailureReason(), "");
   assert.ok(h.fake.state.submitCount > 10);
   const unexpected = "Validation Error: unexpected attachment mismatch";
   for (let i = 0; i < 5; i++) listener({ error: { message: unexpected }, preventDefault() { prevented++; } });
+  await flushAsyncWork();
   assert.equal(h.renderer.getFailureReason(), "webgpu-pipeline-failed");
   assert.equal(h.renderer.diagnostics().pipelineCoreError, unexpected);
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 2);
@@ -239,7 +244,8 @@ test("the capability probe rejects asynchronously invalid canvas configuration",
   await flushAsyncWork();
   const probe = env.context.__gosx_scene3d_webgpu_probe();
   assert.equal(probe.ready, false);
-  assert.equal(probe.error, error);
+  assert.match(probe.error, /canvas configure failed/);
+  assert.ok(probe.error.includes(error));
 });
 
 test("lazy authored water pipelines preserve the initial seed across validation waits", async () => {
@@ -257,4 +263,76 @@ test("lazy authored water pipelines preserve the initial seed across validation 
   assert.equal(h.renderer.getFailureReason(), "");
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
   h.renderer.dispose();
+});
+
+for (const mode of ["scope", "throw"]) {
+  test(`lazy ${mode} pipeline rejection reaches the mount's real WebGL2 fallback`, async () => {
+    const h = await failureHarness(/^gosx-pbr-opaque$/, mode);
+    h.renderer.dispose();
+    const mount = new FakeElement("div", null);
+    mount.id = "real-pipeline-fallback";
+    const env = createContext({
+      elements: [mount], enableWebGPU: true, enableWebGL2: true,
+      navigatorGPU: {
+        requestAdapter: async () => ({ requestDevice: async () => h.fake.device }),
+        getPreferredCanvasFormat: () => "rgba8unorm",
+      },
+      fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource } },
+      manifest: { runtime: { path: "/gosx/runtime.wasm" }, engines: [{
+        id: "real-pipeline-fallback", component: "GoSXScene3D", kind: "surface", mountId: mount.id, jsExport: "GoSXScene3D",
+        props: { width: 320, height: 180, preferWebGPU: true, autoRotate: true,
+          scene: { objects: [{ kind: "box", width: 1, height: 1, depth: 1, color: "#8de1ff" }] } },
+      }] },
+    });
+    for (const key of ["GPUBufferUsage", "GPUTextureUsage", "GPUShaderStage"]) env.context[key] = h.env.context[key];
+    const timers = installManualTimers(env.context), raf = installManualRAF(env.context);
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    env.context.__gosx_emit = (level, category, message, detail) => h.events.push({ message, detail });
+    runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+    runScript(bootstrapFeatureScene3DWebGPUSource, env.context, "bootstrap-feature-scene3d-webgpu.js");
+    const factory = env.context.__gosx_scene3d_webgpu_api.createRenderer;
+    let firstCanvas, activeRenderer;
+    env.context.__gosx_scene3d_webgpu_api.createRenderer = (canvas, options) => { firstCanvas = canvas; activeRenderer = factory(canvas, options); return activeRenderer; };
+    timers.runDelay(0);
+    for (let frame = 0; frame < 20; frame++) {
+      if (activeRenderer) activeRenderer.render(h.scene, { width: 320, height: 180 });
+      raf.flush(frame * 17); await flushAsyncWork(); timers.runInterval(2000);
+    }
+    const handle = mount.__gosxScene3DHandle;
+    try {
+      assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+      assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-pipeline-failed");
+      assert.notEqual(mount.children[0], firstCanvas);
+      assert.ok(mount.children[0].contextCalls.some(call => call.kind === "webgl2"));
+      assert.equal(env.fetchCalls.filter(call => call.url.includes("pipeline-recovery")).length, 1);
+      assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 1);
+      assert.equal(h.fake.state.renderPasses.some(pass => pass.pipelines.some(pipeline => pipeline.desc.label === "gosx-pbr-opaque")), false);
+    } finally { if (handle) handle.dispose(); }
+  });
+}
+
+test("a missing lazy recovery chunk stops the failed renderer and requests fallback", async () => {
+  const h = await failureHarness(/^gosx-pbr-opaque$/, "scope", {
+    fetchRoutes: { "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js": { text: "" } },
+  });
+  await frames(h);
+  assert.equal(h.renderer.getFailureReason(), "webgpu-pipeline-failed");
+  assert.match(h.renderer.diagnostics().pipelineCoreError, /Pipeline recovery unavailable/);
+  assert.ok(h.renderer.diagnostics().pipelineCoreError.includes(validationMessage));
+  assert.equal(h.env.fetchCalls.filter(call => call.url.includes("pipeline-recovery")).length, 1);
+  h.renderer.dispose();
+});
+
+test("disposing during the lazy fetch leaves the retired renderer silent", async () => {
+  const h = await failureHarness(/does-not-match/);
+  const load = h.env.document.scriptLoader;
+  let finish;
+  h.env.document.scriptLoader = (url, script) => { finish = () => load(url, script); };
+  Array.from(h.listeners)[0]({ error: { message: validationMessage } });
+  assert.equal(h.renderer.diagnostics().pipelinePending, 1);
+  h.renderer.dispose();
+  finish();
+  await flushAsyncWork();
+  assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
+  assert.equal(h.warnings.length, 0);
 });

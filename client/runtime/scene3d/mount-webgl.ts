@@ -2086,6 +2086,10 @@ function gosxConfigureSceneScript(script, role, src) {
     return sceneGatedFeaturePromises[kind];
   }
 
+  window.__gosx_scene3d_api.ensurePipelineRecovery = function() {
+    return ensureSceneGatedFeatureLoaded("pipeline-recovery", "gosxScene3dPipelineRecoveryUrl", "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js");
+  };
+
   // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
   // animation-channel record carries something only the decompress chunk can
   // read. The field names match the writers in 11a-scene-decompress.ts.
