@@ -215,6 +215,21 @@
     return playPresentation("burst", target, burst, options);
   }
 
+  // Both binary queues preserve a pending membership declaration when a newer
+  // frame supersedes its pose or motion data without replacing that declaration.
+  function inheritPendingMembership(options: any, pendingOptions: any) {
+    const older = pendingOptions.beforeCommands;
+    const newer = options.beforeCommands;
+    let membership = null;
+    if (Array.isArray(older)) for (let index = older.length - 1; index >= 0; index--) {
+      if (older[index] && older[index].kind === 11) { membership = older[index]; break; }
+    }
+    const replaced = Array.isArray(newer) && newer.some(command => command && command.kind === 11);
+    return membership && !replaced
+      ? Object.assign({}, options, { beforeCommands: [membership].concat(Array.isArray(newer) ? newer : []) })
+      : options;
+  }
+
   function dispatchPoseFrame(target, frame, options) {
     var opts = options || {};
     var queueKey = key(target, opts) || target;
@@ -226,16 +241,7 @@
         poseQueues.set(queueKey, queue);
       }
       if (queue.pending) {
-        var older = queue.pending.opts.beforeCommands;
-        var newer = opts.beforeCommands;
-        var oldMembership = null;
-        if (Array.isArray(older)) for (var i = older.length - 1; i >= 0; i--) {
-          if (older[i] && older[i].kind === 11) { oldMembership = older[i]; break; }
-        }
-        var hasNewMembership = Array.isArray(newer) && newer.some(function(command) { return command && command.kind === 11; });
-        if (oldMembership && !hasNewMembership) {
-          opts = Object.assign({}, opts, { beforeCommands: [oldMembership].concat(Array.isArray(newer) ? newer : []) });
-        }
+        opts = inheritPendingMembership(opts, queue.pending.opts);
         poseStats(queue.pending.target, queue.pending.opts).superseded++;
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
@@ -518,16 +524,7 @@
         motionQueues.set(queueKey, queue);
       }
       if (queue.pending) {
-        var older = queue.pending.opts.beforeCommands;
-        var newer = opts.beforeCommands;
-        var oldMembership = null;
-        if (Array.isArray(older)) for (var i = older.length - 1; i >= 0; i--) {
-          if (older[i] && older[i].kind === 11) { oldMembership = older[i]; break; }
-        }
-        var hasNewMembership = Array.isArray(newer) && newer.some(function(command) { return command && command.kind === 11; });
-        if (oldMembership && !hasNewMembership) {
-          opts = Object.assign({}, opts, { beforeCommands: [oldMembership].concat(Array.isArray(newer) ? newer : []) });
-        }
+        opts = inheritPendingMembership(opts, queue.pending.opts);
         motionStats(queue.pending.target, queue.pending.opts).superseded++;
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
