@@ -647,7 +647,8 @@
     "../runtime/scene3d/webgl-contact-shadows.ts": 63,
     "../runtime/scene3d/webgpu-contact-shadows.ts": 75,
     "../runtime/scene3d/webgl-taa.ts": 143,
-    "../runtime/scene3d/mount-zoom.ts": 123
+    "../runtime/scene3d/mount-zoom.ts": 123,
+    "../runtime/scene3d/pipeline-recovery.ts": 42
   },
   "functionDefaults": {
     "lines": 200,
@@ -1499,6 +1500,12 @@
       "chunk": "bootstrap-feature-scene3d-zoom.js",
       "sources": [
         "../runtime/scene3d/mount-zoom.ts"
+      ]
+    },
+    "pipeline-recovery": {
+      "chunk": "bootstrap-feature-scene3d-pipeline-recovery.js",
+      "sources": [
+        "../runtime/scene3d/pipeline-recovery.ts"
       ]
     }
   }
