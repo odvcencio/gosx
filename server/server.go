@@ -108,9 +108,10 @@ type App struct {
 	compressionOff     bool
 	legacyGzip         bool
 
-	schedulerOnce sync.Once
-	scheduler     *scheduled.Scheduler
-	srv           *http.Server
+	schedulerOnce         sync.Once
+	scheduler             *scheduled.Scheduler
+	publicScheduledStatus bool
+	srv                   *http.Server
 
 	// staleIslandsOnce guards warnStaleIslands, so hashing every island's
 	// source runs at most once per App even if Build() runs more than once
@@ -594,8 +595,20 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 			Logger: a.clientEventsLogger,
 		}))
 	}
-	if !a.hasRoute("GET /_gosx/scheduled") {
-		mux.Handle("GET /_gosx/scheduled", ScheduledStatusHandler(a.Scheduler()))
+	if a.publicScheduledStatus && !a.hasRoute("GET /_gosx/scheduled") {
+		mux.Handle("GET /_gosx/scheduled", a.ScheduledStatusHandler())
+	}
+}
+
+// EnablePublicScheduledStatus exposes bounded, redacted task status on the
+// public listener. Call it before Build and protect the route with application
+// authentication.
+//
+// Deprecated: this compatibility opt-in lasts one minor release. Use the
+// authenticated internal telemetry listener when available instead.
+func (a *App) EnablePublicScheduledStatus() {
+	if a != nil {
+		a.publicScheduledStatus = true
 	}
 }
 

@@ -15,6 +15,7 @@ import (
 // a 2-element JSON array with expected fields for two registered tasks.
 func TestScheduledStatusEndpoint(t *testing.T) {
 	app := New()
+	app.EnablePublicScheduledStatus()
 
 	// Register two tasks before building: one interval, one with ProgressTimeout.
 	if err := app.Scheduler().Register(scheduled.Task{
