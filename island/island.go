@@ -1172,6 +1172,7 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	bootstrapPath := r.selectedBootstrapPath()
 	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+		chunkNeeds := r.scene3DChunkNeeds()
 		// The strict hydrate decoder is not part of the initial Scene3D route.
 		// Emit it only for a shared-runtime Scene3D program, ordered before the
 		// main deferred scene bundle so the factory observes its published API.
@@ -1205,12 +1206,12 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			b.WriteString(html.EscapeString(instanceStreamPath))
 			b.WriteByte('"')
 		}
-		if timelinePath := r.bootstrapFeatureScene3dTimelinePath; timelinePath != "" {
+		if timelinePath := r.bootstrapFeatureScene3dTimelinePath; chunkNeeds.timelines && timelinePath != "" {
 			b.WriteString(` data-gosx-scene3d-timeline-url="`)
 			b.WriteString(html.EscapeString(timelinePath))
 			b.WriteByte('"')
 		}
-		if burstPath := r.bootstrapFeatureScene3dParticleBurstPath; burstPath != "" {
+		if burstPath := r.bootstrapFeatureScene3dParticleBurstPath; chunkNeeds.particleBursts && burstPath != "" {
 			b.WriteString(` data-gosx-scene3d-particle-burst-url="`)
 			b.WriteString(html.EscapeString(burstPath))
 			b.WriteByte('"')
@@ -1235,7 +1236,6 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		// the chunk. The runtime refuses to guess a path, so a scene with one
 		// cube and one directional light cannot fetch either chunk, and the
 		// bytes stay on the server.
-		needsCompute, needsDecompress := r.scene3DChunkNeeds()
 		if walkPath := r.bootstrapFeatureScene3dWalkPath; r.scene3DNeedsWalkChunk() && walkPath != "" {
 			b.WriteString(` data-gosx-scene3d-walk-url="`)
 			b.WriteString(html.EscapeString(walkPath))
@@ -1258,12 +1258,12 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 				}
 			}
 		}
-		if computePath := r.bootstrapFeatureScene3dComputePath; needsCompute && computePath != "" {
+		if computePath := r.bootstrapFeatureScene3dComputePath; chunkNeeds.compute && computePath != "" {
 			b.WriteString(` data-gosx-scene3d-compute-url="`)
 			b.WriteString(html.EscapeString(computePath))
 			b.WriteByte('"')
 		}
-		if decompressPath := r.bootstrapFeatureScene3dDecompressPath; needsDecompress && decompressPath != "" {
+		if decompressPath := r.bootstrapFeatureScene3dDecompressPath; chunkNeeds.decompress && decompressPath != "" {
 			b.WriteString(` data-gosx-scene3d-decompress-url="`)
 			b.WriteString(html.EscapeString(decompressPath))
 			b.WriteByte('"')
@@ -2435,6 +2435,7 @@ type scene3DChunkClip struct {
 // scene3DChunkProbe reads the two shapes a Scene3D engine can carry: the wire
 // IR under props.scene, and the flat props form the runtime also accepts.
 type scene3DChunkProbe struct {
+	Timelines        bool                 `json:"timelines"`
 	ParticleBursts   bool                 `json:"particleBursts"`
 	Scene            *scene3DChunkProbe   `json:"scene"`
 	Compression      json.RawMessage      `json:"compression"`
@@ -2446,9 +2447,9 @@ type scene3DChunkProbe struct {
 
 // needsComputeChunk reports whether the scene reaches
 // bootstrap-feature-scene3d-compute.js. Two paths do: a compute particle
-// system, which both renderers build through createSceneParticleSystem, and an
-// instanced mesh, which the WebGPU renderer culls on the GPU with a kernel from
-// the same file.
+// system (including an opted-in event burst), which both renderers build through
+// createSceneParticleSystem, and an instanced mesh, which the WebGPU renderer
+// culls on the GPU with a kernel from the same file.
 //
 // Be permissive on purpose. A URL the runtime never uses costs about sixty
 // bytes of HTML; a missing URL drops a particle system the author asked for.
@@ -2496,7 +2497,8 @@ func (p *scene3DChunkProbe) needsDecompressChunk() bool {
 // scene3DChunkNeeds decodes every Scene3D engine on the page once and reports
 // which gated sub-feature chunks the page must advertise. A page with several
 // scenes advertises a chunk when any one scene needs it.
-func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool) {
+func (r *Renderer) scene3DChunkNeeds() scene3DChunkRequirements {
+	var needs scene3DChunkRequirements
 	for i := range r.manifest.Engines {
 		entry := &r.manifest.Engines[i]
 		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
@@ -2508,22 +2510,30 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		var probe scene3DChunkProbe
 		if err := json.Unmarshal(entry.Props, &probe); err != nil {
 			// A scene whose props do not decode is a scene this renderer cannot
-			// reason about. Advertise both chunks rather than drop a feature the
+			// reason about. Advertise all gated chunks rather than drop a feature the
 			// author declared: a wrong URL costs bytes, a missing one costs the
 			// feature.
-			return true, true
+			return scene3DChunkRequirements{compute: true, decompress: true, timelines: true, particleBursts: true}
 		}
 		if probe.needsComputeChunk() {
-			needsCompute = true
+			needs.compute = true
 		}
 		if probe.needsDecompressChunk() {
-			needsDecompress = true
+			needs.decompress = true
 		}
-		if needsCompute && needsDecompress {
-			return true, true
+		for p := &probe; p != nil; p = p.Scene {
+			needs.timelines = needs.timelines || p.Timelines
+			needs.particleBursts = needs.particleBursts || p.ParticleBursts
+		}
+		if needs.compute && needs.decompress && needs.timelines && needs.particleBursts {
+			return needs
 		}
 	}
-	return needsCompute, needsDecompress
+	return needs
+}
+
+type scene3DChunkRequirements struct {
+	compute, decompress, timelines, particleBursts bool
 }
 
 // Zoom is downloaded only for an explicit camera control opt-in.

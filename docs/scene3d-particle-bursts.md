@@ -5,8 +5,10 @@ event-owned system to the mounted scene, then removes it after its longest
 particle lifetime. It reuses GoSX's existing GPU particles and CPU/WebGL fallback.
 
 Set `scene.Props{ParticleBursts: scene.Bool(true)}` on a scene that will receive
-event effects. This advertises its versioned compute URL without loading it.
-Scenes with existing compute particles already advertise that prerequisite.
+event effects. This explicitly advertises the versioned burst and compute URLs
+without loading them. Existing compute particles enable the compute prerequisite;
+burst playback still requires the `ParticleBursts` flag. Omitting the flag or
+setting it to false leaves the burst URL out of ordinary pages.
 Burst playback requires a WebGL or WebGPU mount; other backends reject the request.
 
 ```go
@@ -62,7 +64,8 @@ Playback loads `bootstrap-feature-scene3d-particle-burst.js` and the existing
 particle compute chunk only on first use, waiting for both before starting.
 Its advertised versioned URL supports production manifests and embedded asset
 prefixes. `Renderer.SetBootstrapFeatureScene3DParticleBurstPath` overrides the
-URL. Ordinary scenes advertise the chunk without fetching or preloading it.
+URL while preserving the explicit opt-in. Opted-in scenes advertise the chunk
+without fetching or preloading it.
 
 Native hosts can call `burst.Sample(currentSceneIR, elapsedSeconds)` to obtain
 a `SetParticlesCommand` preserving their other particle layers. Apply it when

@@ -13,7 +13,7 @@ import (
 func TestScene3DTimelineURLIsAdvertisedWithoutLoading(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetBootstrapFeatureScene3DTimelinePath("/activity/runtime/timeline.js?v=abc")
-	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{}`)}, gosx.Text(""))
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"timelines":true}`)}, gosx.Text(""))
 	markup := gosx.RenderHTML(r.BootstrapScript())
 	if !strings.Contains(markup, `data-gosx-scene3d-timeline-url="/activity/runtime/timeline.js?v=abc"`) {
 		t.Fatal("timeline must preserve an Activity-safe override URL")
@@ -31,5 +31,9 @@ func TestScene3DTimelineManifestURL(t *testing.T) {
 	}
 	if r.bootstrapFeatureScene3dTimelinePath != "/activity/runtime/bootstrap-feature-scene3d-timeline.abc.js" {
 		t.Fatalf("timeline URL must use the production chunk version: %s", r.bootstrapFeatureScene3dTimelinePath)
+	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"timelines":true}`)}, gosx.Text(""))
+	if markup := gosx.RenderHTML(r.BootstrapScript()); !strings.Contains(markup, `data-gosx-scene3d-timeline-url="/activity/runtime/bootstrap-feature-scene3d-timeline.abc.js"`) {
+		t.Fatal("opted-in timeline must advertise its hashed manifest URL")
 	}
 }

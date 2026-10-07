@@ -35,4 +35,8 @@ func TestScene3DParticleBurstManifestURL(t *testing.T) {
 	if r.bootstrapFeatureScene3dParticleBurstPath != "/activity/runtime/bootstrap-feature-scene3d-particle-burst.abc.js" {
 		t.Fatalf("burst URL must use the production chunk version: %s", r.bootstrapFeatureScene3dParticleBurstPath)
 	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"particleBursts":true}`)}, gosx.Text(""))
+	if markup := gosx.RenderHTML(r.BootstrapScript()); !strings.Contains(markup, `data-gosx-scene3d-particle-burst-url="/activity/runtime/bootstrap-feature-scene3d-particle-burst.abc.js"`) {
+		t.Fatal("opted-in burst must advertise its hashed manifest URL")
+	}
 }

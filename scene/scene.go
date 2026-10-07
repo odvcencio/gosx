@@ -113,7 +113,9 @@ type Props struct {
 	Walk                 *Walk    `json:"walk,omitempty"`
 	Vessel               *Vessel  `json:"vessel,omitempty"`
 	AutoRotate           *bool    `json:"autoRotate,omitempty"`
-	// ParticleBursts advertises lazy compute support for event effects added after mount.
+	// Timelines advertises lazy timeline playback for plans received after mount.
+	Timelines *bool `json:"timelines,omitempty"`
+	// ParticleBursts advertises lazy burst playback and its compute prerequisite.
 	ParticleBursts       *bool  `json:"particleBursts,omitempty"`
 	Responsive           *bool  `json:"responsive,omitempty"`
 	FillHeight           *bool  `json:"fillHeight,omitempty"`
@@ -1903,6 +1905,7 @@ func (p Props) legacyBaseProps() map[string]any {
 		out["vessel"] = p.Vessel
 	}
 	setBool(out, "autoRotate", p.AutoRotate)
+	setBool(out, "timelines", p.Timelines)
 	setBool(out, "particleBursts", p.ParticleBursts)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)
