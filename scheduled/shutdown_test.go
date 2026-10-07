@@ -183,3 +183,28 @@ func TestStopCompatibilityWrapperIsBounded(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestStopPreservesLegacyCancellationCause(t *testing.T) {
+	s := New(Options{Logger: discardLogger(), ShutdownGrace: 10 * time.Millisecond})
+	if s.ShutdownGrace() != 10*time.Millisecond || New(Options{}).ShutdownGrace() != 30*time.Second {
+		t.Fatal("configured shutdown grace was not preserved")
+	}
+	entered := make(chan struct{})
+	cause := make(chan error, 1)
+	if err := s.Register(Task{Name: "wait", Fn: func(ctx context.Context, _ TickHandle) error {
+		close(entered)
+		<-ctx.Done()
+		cause <- context.Cause(ctx)
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enqueue("wait", nil); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	s.Stop(0)
+	if got := <-cause; !errors.Is(got, context.Canceled) || errors.Is(got, context.DeadlineExceeded) {
+		t.Fatalf("legacy cancellation cause: %v", got)
+	}
+}
