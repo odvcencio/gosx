@@ -32,6 +32,9 @@
 - Export `signal.NewShared[T]` and `signal.Shared[T]` for typed native Go and
   island authoring. Native calls create independent values; browser lowering
   retains the existing shared `$name` contract.
+- Keep `gosx perf` runtime-ready wrappers stable across bootstrap chaining and
+  reassignment. Saved callbacks retain their original handler, preventing
+  recursion and recording readiness once.
 
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
