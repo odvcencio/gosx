@@ -226,10 +226,11 @@ func (t *Telemetry) Metrics() *metric.Registry {
 func (t *Telemetry) MetricsHandler() http.Handler { return http.NotFoundHandler() }
 func (t *Telemetry) AdminHandler() http.Handler   { return http.NotFoundHandler() }
 
-// ObserveCatalog seals registration before public serving. Later adapters use
-// this callback to admit bounded route tuples from the trusted owner catalog.
+// ObserveCatalog seals registration before public serving, including registries
+// retained after Close or a worker failure. Later adapters use this callback to
+// admit bounded route tuples from the trusted owner catalog.
 func (t *Telemetry) ObserveCatalog([]server.ObservationPattern) {
-	if t.Enabled() {
+	if t != nil && t.registry != nil {
 		t.registry.Seal()
 	}
 }
