@@ -17,6 +17,9 @@ var ErrStallTimeout = errors.New("scheduled: progress stall timeout")
 // ErrTimeout is the cancellation cause when a run exceeds its hard Timeout.
 var ErrTimeout = errors.New("scheduled: task timeout")
 
+// ErrStopped reports that the scheduler no longer admits work.
+var ErrStopped = errors.New("scheduled: stopped")
+
 const defaultShutdownGrace = 30 * time.Second
 
 // minWatchdogCadence floors the watchdog ticker so very small timeouts do not
@@ -96,8 +99,12 @@ type Scheduler struct {
 	runs    map[RunID]*activeRun
 	started bool
 
-	wg     sync.WaitGroup // schedule loops + enqueued runs
-	stopCh chan struct{}  // closed by Stop to unwind loops
+	stopped    bool
+	pending    int           // schedule loops + accepted enqueues, guarded by mu
+	stopCause  error         // also cancels accepted work that has not started yet
+	stopCh     chan struct{} // closed to unwind loops and retry waits
+	stopDone   chan struct{} // one completion channel; no waiter goroutines
+	stopClosed bool
 }
 
 // New constructs a Scheduler, applying defaults for any unset Options field.
@@ -115,10 +122,11 @@ func New(opts Options) *Scheduler {
 		opts.ShutdownGrace = defaultShutdownGrace
 	}
 	return &Scheduler{
-		opts:   opts,
-		tasks:  make(map[string]*registered),
-		runs:   make(map[RunID]*activeRun),
-		stopCh: make(chan struct{}),
+		opts:     opts,
+		tasks:    make(map[string]*registered),
+		runs:     make(map[RunID]*activeRun),
+		stopCh:   make(chan struct{}),
+		stopDone: make(chan struct{}),
 	}
 }
 
@@ -132,6 +140,9 @@ func (s *Scheduler) Register(t Task) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.stopped {
+		return ErrStopped
+	}
 	if _, exists := s.tasks[t.Name]; exists {
 		return fmt.Errorf("scheduled: task %q already registered", t.Name)
 	}
@@ -150,7 +161,7 @@ func (s *Scheduler) Register(t Task) error {
 // repeated calls are no-ops. Loops unwind when ctx is cancelled or Stop is called.
 func (s *Scheduler) Start(ctx context.Context) {
 	s.mu.Lock()
-	if s.started {
+	if s.started || s.stopped {
 		s.mu.Unlock()
 		return
 	}
@@ -159,13 +170,13 @@ func (s *Scheduler) Start(ctx context.Context) {
 	for _, r := range s.tasks {
 		tasks = append(tasks, r.task)
 	}
+	s.pending += len(tasks)
 	s.mu.Unlock()
 
 	for _, t := range tasks {
 		t := t
-		s.wg.Add(1)
 		go func() {
-			defer s.wg.Done()
+			defer s.workFinished()
 			s.scheduleLoop(ctx, t)
 		}()
 	}
@@ -202,6 +213,14 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, t Task) {
 			return
 		case <-timer.C:
 		}
+		// A due timer and shutdown can become ready together. Admission is
+		// checked again before invoking another scheduled attempt.
+		s.mu.Lock()
+		stopped := s.stopped
+		s.mu.Unlock()
+		if stopped {
+			return
+		}
 		s.runOnce(ctx, t)
 		last = s.opts.Now()
 	}
@@ -211,7 +230,14 @@ func (s *Scheduler) scheduleLoop(ctx context.Context, t Task) {
 // the RunID of the first attempt and errors if the task is unknown.
 func (s *Scheduler) Enqueue(name string, payload []byte) (RunID, error) {
 	s.mu.Lock()
+	if s.stopped {
+		s.mu.Unlock()
+		return "", ErrStopped
+	}
 	r, ok := s.tasks[name]
+	if ok {
+		s.pending++
+	}
 	s.mu.Unlock()
 	if !ok {
 		return "", fmt.Errorf("scheduled: task %q not registered", name)
@@ -228,9 +254,8 @@ func (s *Scheduler) Enqueue(name string, payload []byte) (RunID, error) {
 	}
 
 	id := newRunID(name, s.opts.Now)
-	s.wg.Add(1)
 	go func() {
-		defer s.wg.Done()
+		defer s.workFinished()
 		s.runOnceWithID(context.Background(), task, id)
 	}()
 	return id, nil
@@ -321,6 +346,9 @@ func (s *Scheduler) runAttempt(parent context.Context, task Task, id RunID, atte
 
 	s.mu.Lock()
 	s.runs[id] = run
+	if s.stopCause != nil {
+		run.cancel(s.stopCause)
+	}
 	s.mu.Unlock()
 
 	// Record run start in status.
@@ -553,56 +581,78 @@ func (s *Scheduler) status(limit int) ([]TaskStatus, bool) {
 	return out, complete
 }
 
-// Stop signals every schedule loop to exit, drains in-flight runs up to grace,
-// then force-cancels any stragglers and waits for them to unwind.
+// Stop drains for grace, then cancels stragglers. The compatibility wrapper
+// allows at most one further grace window for cancellation to unwind.
+// Use StopContext when the caller owns the full shutdown deadline.
 func (s *Scheduler) Stop(grace time.Duration) {
 	if grace <= 0 {
 		grace = s.opts.ShutdownGrace
 	}
 
-	// Signal loops to stop (idempotent close).
-	s.mu.Lock()
-	select {
-	case <-s.stopCh:
-		// already closed
-	default:
-		close(s.stopCh)
+	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	err := s.StopContext(ctx)
+	cancel()
+	if err != nil {
+		ctx, cancel = context.WithTimeout(context.Background(), grace)
+		_ = s.StopContext(ctx)
+		cancel()
 	}
-	s.started = false
-	s.mu.Unlock()
-
-	// Drain: wait for all tracked goroutines, bounded by grace.
-	if s.waitGrace(grace) {
-		return
-	}
-
-	// Grace elapsed with runs still in flight: cancel them.
-	s.mu.Lock()
-	for _, run := range s.runs {
-		run.cancel(context.Canceled)
-	}
-	s.mu.Unlock()
-
-	// Wait for the cancelled runs to finish unwinding. wg.Wait is unbounded
-	// here, but cancellation guarantees the run goroutines return promptly.
-	s.wg.Wait()
 }
 
-// waitGrace blocks until all tracked goroutines finish or d elapses. It reports
-// whether they finished within the window.
-func (s *Scheduler) waitGrace(d time.Duration) bool {
-	done := make(chan struct{})
-	go func() {
-		s.wg.Wait()
-		close(done)
-	}()
-	timer := time.NewTimer(d)
-	defer timer.Stop()
+// StopContext permanently stops admission and waits for accepted work. On
+// cancellation it cancels current and not-yet-started runs and returns the
+// caller's context error. Ignoring tasks retain ownership until they return;
+// repeated callers wait on the same channel without creating goroutines.
+func (s *Scheduler) StopContext(ctx context.Context) error {
+	if s == nil {
+		return nil
+	}
+	s.mu.Lock()
+	if !s.stopped {
+		s.stopped = true
+		close(s.stopCh)
+	}
+	s.finishStopLocked()
+	done := s.stopDone
+	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		s.cancelRuns(err)
+		return err
+	}
 	select {
 	case <-done:
-		return true
-	case <-timer.C:
-		return false
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return nil
+	case <-ctx.Done():
+		s.cancelRuns(ctx.Err())
+		return ctx.Err()
+	}
+}
+
+func (s *Scheduler) cancelRuns(cause error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stopCause == nil {
+		s.stopCause = cause
+	}
+	for _, run := range s.runs {
+		run.cancel(s.stopCause)
+	}
+}
+
+func (s *Scheduler) workFinished() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pending--
+	s.finishStopLocked()
+}
+
+func (s *Scheduler) finishStopLocked() {
+	if s.stopped && s.pending == 0 && !s.stopClosed {
+		s.stopClosed = true
+		close(s.stopDone)
 	}
 }
 

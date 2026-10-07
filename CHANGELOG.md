@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add named App shutdown hooks: drain HTTP and scheduled work before source
+  drains, then flush in reverse registration order. Concurrent shutdown callers
+  share one pipeline and respect their own deadlines; `/readyz` reports draining.
+  `Scheduler.StopContext` stops admission and cancels on its context deadline
+  without allocating waiter goroutines. The legacy `Stop(grace)` also bounds
+  its cancellation wait to one additional grace window.
+
 - Add additive hub observers configured before the first connection, with
   logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
   classifications. `Hub.Close(ctx)` rejects upgrades and waits for connection

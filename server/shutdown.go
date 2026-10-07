@@ -1,0 +1,204 @@
+package server
+
+import (
+	"context"
+	"errors"
+	"log"
+	"net/http"
+	"strings"
+	"sync"
+
+	"m31labs.dev/gosx/internal/telemetryerr"
+	"m31labs.dev/gosx/scheduled"
+)
+
+// ShutdownHooks belongs to an application's existing resource owner. Signal
+// must only stop admission or cancel work: it must not wait or perform I/O.
+// Drain and Flush must cooperate with their context. HTTP and the scheduler
+// drain first, then source Drains run in order and Flushes in reverse order.
+type ShutdownHooks struct {
+	Signal func(context.Context)
+	Drain  func(context.Context) error
+	Flush  func(context.Context) error
+}
+
+type shutdownHook struct {
+	name   string
+	hooks  ShutdownHooks
+	active bool
+	signal sync.Once
+}
+
+type appShutdown struct {
+	mu        sync.Mutex // registration, resource publication, and completion
+	hooks     []*shutdownHook
+	done      chan struct{}
+	errors    []error
+	result    error
+	panicOnce sync.Once
+}
+
+// ConfigurationOpen reports whether lifecycle extensions can be attached.
+// Configure the App on one goroutine before its first Build.
+func (a *App) ConfigurationOpen() bool {
+	return a != nil && !a.configurationClosed.Load() && !a.draining.Load()
+}
+
+// UseShutdownHook reserves a unique name before Build. Nil callbacks are
+// accepted. Removal is idempotent and only takes effect before Build.
+func (a *App) UseShutdownHook(name string, hooks ShutdownHooks) (func(), error) {
+	if a == nil {
+		return nil, &telemetryerr.ConfigError{Field: "app", Code: "required"}
+	}
+	if strings.TrimSpace(name) == "" {
+		return nil, &telemetryerr.ConfigError{Field: "shutdown_hook", Code: "name_required"}
+	}
+	a.shutdown.mu.Lock()
+	defer a.shutdown.mu.Unlock()
+	if !a.ConfigurationOpen() {
+		return nil, telemetryerr.ErrAfterBuild
+	}
+	for _, hook := range a.shutdown.hooks {
+		if hook.active && hook.name == name {
+			return nil, &telemetryerr.ConfigError{Field: "shutdown_hook", Code: "duplicate_name"}
+		}
+	}
+	hook := &shutdownHook{name: name, hooks: hooks, active: true}
+	a.shutdown.hooks = append(a.shutdown.hooks, hook)
+	return func() {
+		a.shutdown.mu.Lock()
+		defer a.shutdown.mu.Unlock()
+		if a.ConfigurationOpen() {
+			hook.active = false
+			hook.hooks = ShutdownHooks{}
+		}
+	}, nil
+}
+
+// Shutdown starts one pipeline with the first caller's context. Each caller
+// waits subject to its own deadline. An unfinished callback retains the
+// pipeline and its resources; an expired caller never reports completion.
+// External HTTP hosts must drain their server before calling this method.
+// Hijacked WebSockets must be closed by an explicit owner Drain hook.
+func (a *App) Shutdown(ctx context.Context) error {
+	if a == nil {
+		return nil
+	}
+	a.shutdown.mu.Lock()
+	if a.shutdown.done == nil {
+		a.draining.Store(true)
+		a.configurationClosed.Store(true)
+		a.shutdown.done = make(chan struct{})
+		hooks := make([]*shutdownHook, 0, len(a.shutdown.hooks))
+		for _, hook := range a.shutdown.hooks {
+			if hook.active {
+				hooks = append(hooks, hook)
+			}
+		}
+		go a.runShutdown(ctx, a.srv, a.scheduler, hooks)
+	}
+	done := a.shutdown.done
+	a.shutdown.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-done:
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		return a.shutdown.result // published by closing done
+	}
+}
+
+func (a *App) runShutdown(ctx context.Context, srv *http.Server, scheduler *scheduled.Scheduler, hooks []*shutdownHook) {
+	// One cancellation callback covers this pipeline, even while a Drain is
+	// blocked. There is no waiter goroutine per hook or Shutdown caller.
+	signalAll := func() {
+		for _, hook := range hooks {
+			a.signalShutdownHook(ctx, hook)
+		}
+	}
+	stopSignal := context.AfterFunc(ctx, signalAll)
+	if srv != nil {
+		a.addShutdownError("http_drain_failed", srv.Shutdown(ctx))
+	}
+	if scheduler != nil {
+		a.addShutdownError("scheduler_stop_failed", scheduler.StopContext(ctx))
+	}
+	if ctx.Err() == nil {
+		for _, hook := range hooks {
+			if hook.hooks.Drain != nil {
+				a.signalShutdownHook(ctx, hook)
+			}
+		}
+		for _, hook := range hooks {
+			if ctx.Err() != nil {
+				break
+			}
+			if hook.hooks.Drain != nil {
+				a.callShutdownHook("hook_drain_failed", ctx, hook.hooks.Drain)
+			}
+		}
+		for i := len(hooks) - 1; i >= 0 && ctx.Err() == nil; i-- {
+			if hooks[i].hooks.Flush != nil {
+				a.callShutdownHook("hook_flush_failed", ctx, hooks[i].hooks.Flush)
+			}
+		}
+	}
+	if !stopSignal() || ctx.Err() != nil {
+		signalAll() // joins any already admitted, non-blocking Signals
+	}
+	a.addShutdownError("deadline", ctx.Err())
+	a.shutdown.mu.Lock()
+	a.shutdown.result = errors.Join(a.shutdown.errors...)
+	a.shutdown.hooks = nil
+	close(a.shutdown.done)
+	a.shutdown.mu.Unlock()
+}
+
+func (a *App) signalShutdownHook(ctx context.Context, hook *shutdownHook) {
+	hook.signal.Do(func() {
+		if hook.hooks.Signal != nil {
+			a.callShutdownHook("hook_signal_failed", ctx, func(ctx context.Context) error {
+				hook.hooks.Signal(ctx)
+				return nil
+			})
+		}
+	})
+}
+
+func (a *App) callShutdownHook(code string, ctx context.Context, fn func(context.Context) error) {
+	defer func() {
+		if recover() != nil {
+			a.addShutdownError(code+"_panic", shutdownPanic{})
+			a.shutdown.panicOnce.Do(func() { log.Print("[gosx] shutdown callback panic") })
+		}
+	}()
+	a.addShutdownError(code, fn(ctx))
+}
+
+type shutdownPanic struct{}
+
+func (shutdownPanic) Error() string { return "server: shutdown callback panic" }
+
+// The original error remains inspectable in process; Error exports only a
+// fixed phase class and never application names or arbitrary callback text.
+type shutdownError struct {
+	code  string
+	cause error
+}
+
+func (e *shutdownError) Error() string { return "server: shutdown " + e.code }
+func (e *shutdownError) Unwrap() error { return e.cause }
+
+func (a *App) addShutdownError(code string, err error) {
+	if err == nil {
+		return
+	}
+	a.shutdown.mu.Lock()
+	a.shutdown.errors = append(a.shutdown.errors, &shutdownError{code: code, cause: err})
+	a.shutdown.mu.Unlock()
+}
