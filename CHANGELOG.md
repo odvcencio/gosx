@@ -16,30 +16,49 @@
   method sets across mounts without expanding router-relative paths. App head
   decorators now reach mounted router pages and errors through their existing
   page state and document render; `Context.Pattern` identifies the registered
-  owner pattern before decoration.
+  owner pattern before decoration. Catalog limits count registered routes;
+  page error rows are derived without displacing pages. Selection orders paths
+  before kind priority and retains at most twice the route limit. Page-panic
+  errors retain the registered page pattern in request and document metadata.
 
 - Export bounded, copied metric snapshots and deterministic Prometheus text
   with shared admission, consistent histogram buckets, and a 2 MiB output cap.
   Snapshot adapters can retain an explicit clone within their own capacity.
+  Snapshot labels, histogram scratch and series slices reserve their actual
+  bounded capacity; the default request inventory fits the unchanged budget.
+  Network adapters must render into their own buffer and release the snapshot
+  lease before writing a response.
 
 - Add a bounded metric registry with finite label domains, atomic tuple batches,
   scalar sample and byte reservations, sealed registration, and consistent
   counter, gauge, and histogram instruments. Application families cannot use
-  the framework's reserved `gosx_` prefix.
+  the framework's reserved `gosx_` prefix, or labels starting with `__`.
+  Batch admission sorts once and reserves measured object and slice capacity;
+  counters and gauges retain no unused histogram state. The default request
+  metric inventory fits the unchanged sample and byte budgets.
 
 - Add named App shutdown hooks: drain HTTP and scheduled work before source
   drains, then flush in reverse registration order. Concurrent shutdown callers
-  share one pipeline and respect their own deadlines; `/readyz` reports draining.
+  share one terminal pipeline and respect their own deadlines; `/readyz` reports
+  draining. Scheduled runs cancel after 30 seconds without a deadline. With a
+  deadline, their cooperative window leaves at least five seconds or a quarter
+  of the remaining time for hooks. Every Drain and Flush is then attempted with
+  the shared context. Lifecycle configuration errors use the server namespace.
   `Scheduler.StopContext` stops admission and cancels on its context deadline
   without allocating waiter goroutines. The legacy `Stop(grace)` also bounds
-  its cancellation wait to one additional grace window.
+  its cancellation wait to one additional grace window and preserves Canceled
+  as the task cancellation cause.
   `UseShutdownSource` registers an existing resource owner through a structural
   signal/drain contract. Hub shutdown integration stays in the hub package, so
   ordinary server imports do not acquire a WebSocket dependency.
 
 - Add additive hub observers configured before the first connection, with
   logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
-  classifications. `Hub.Close(ctx)` rejects upgrades and waits for connection
+  classifications. Connection rejections are separate from malformed and
+  rate-limited messages; observers preserve existing hub panic diagnostics.
+  Embed `NoopObserver` for future callbacks. Closing detaches subscriptions
+  before `Closed`; already admitted callbacks may overlap completion.
+  `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
 
 - Preserve public immutable caching for framework runtime JS/WASM, emitted

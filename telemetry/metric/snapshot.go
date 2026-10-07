@@ -125,7 +125,7 @@ func (s *registryState) copySnapshot() Snapshot {
 			case KindGauge:
 				series.Gauge = math.Float64frombits(c.value.Load())
 			case KindHistogram:
-				h, buf := &c.histogram, c.snapshotHistogram
+				h, buf := c.histogram, c.snapshotHistogram
 				copy(buf.bounds, f.bounds)
 				h.mu.Lock()
 				copy(buf.counts, h.counts)

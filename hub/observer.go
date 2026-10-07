@@ -44,13 +44,40 @@ type HandlerEvent struct {
 // Consumers must classify AppReason against their declared values before export.
 type DisconnectEvent struct{ Reason, AppReason string }
 
+// RejectionReason classifies an unsuccessful connection admission. These
+// values never describe traffic on an already accepted connection.
+type RejectionReason string
+
+const (
+	RejectedCapacity RejectionReason = "rejected_capacity" // No connection slot is available.
+	RejectedOrigin   RejectionReason = "rejected_origin"   // The origin check refused the upgrade.
+	RejectedUpgrade  RejectionReason = "rejected_upgrade"  // The WebSocket upgrade failed.
+	RejectedClosed   RejectionReason = "hub_closed"        // Shutdown has stopped admission.
+)
+
+// MessageRejectionReason classifies a payload on an accepted connection.
+type MessageRejectionReason string
+
+const (
+	MessageRateLimited MessageRejectionReason = "rate_limited" // Inbound message allowance was exhausted.
+	MessageMalformed   MessageRejectionReason = "malformed"    // A text payload was not a valid Message.
+)
+
 // Observer receives synchronous, concurrent callbacks outside hub/client locks.
 // Callbacks must be bounded and must not perform I/O or wait for pump shutdown.
-// A panicking observer is detached; its panic text is never logged.
+// A panicking observer is detached; its panic text is never logged. Embed
+// NoopObserver so future callbacks can be added without changing your type.
+// Connection, rejection, message, broadcast, handler, observer-panic and Closed
+// callbacks fire now. RoundTrip, RoundTripTimeout and ClientAssociated are
+// extension points; their producers are added in later integrations.
+// Closed stops new dispatches. A dispatch admitted before closing may overlap
+// Closed, so subscribers must synchronize their state and tolerate that overlap.
 type Observer interface {
 	ClientConnected(*Hub, *Client, *http.Request)
 	ClientDisconnected(*Hub, *Client, DisconnectEvent)
-	Rejected(*Hub, string)
+	Rejected(*Hub, RejectionReason)
+	MessageRejected(*Hub, *Client, MessageRejectionReason)
+	ObserverPanicked(*Hub)
 	Message(*Hub, *Client, TrafficEvent)
 	Broadcast(*Hub, int, int)
 	Handler(*Hub, HandlerEvent)
@@ -63,16 +90,18 @@ type Observer interface {
 // NoopObserver lets subscribers implement only the callbacks they need.
 type NoopObserver struct{}
 
-func (NoopObserver) ClientConnected(*Hub, *Client, *http.Request)      {}
-func (NoopObserver) ClientDisconnected(*Hub, *Client, DisconnectEvent) {}
-func (NoopObserver) Rejected(*Hub, string)                             {}
-func (NoopObserver) Message(*Hub, *Client, TrafficEvent)               {}
-func (NoopObserver) Broadcast(*Hub, int, int)                          {}
-func (NoopObserver) Handler(*Hub, HandlerEvent)                        {}
-func (NoopObserver) RoundTrip(*Hub, *Client, time.Duration)            {}
-func (NoopObserver) RoundTripTimeout(*Hub, *Client)                    {}
-func (NoopObserver) ClientAssociated(*Hub, *Client, string)            {}
-func (NoopObserver) Closed(*Hub)                                       {}
+func (NoopObserver) ClientConnected(*Hub, *Client, *http.Request)          {}
+func (NoopObserver) ClientDisconnected(*Hub, *Client, DisconnectEvent)     {}
+func (NoopObserver) Rejected(*Hub, RejectionReason)                        {}
+func (NoopObserver) MessageRejected(*Hub, *Client, MessageRejectionReason) {}
+func (NoopObserver) ObserverPanicked(*Hub)                                 {}
+func (NoopObserver) Message(*Hub, *Client, TrafficEvent)                   {}
+func (NoopObserver) Broadcast(*Hub, int, int)                              {}
+func (NoopObserver) Handler(*Hub, HandlerEvent)                            {}
+func (NoopObserver) RoundTrip(*Hub, *Client, time.Duration)                {}
+func (NoopObserver) RoundTripTimeout(*Hub, *Client)                        {}
+func (NoopObserver) ClientAssociated(*Hub, *Client, string)                {}
+func (NoopObserver) Closed(*Hub)                                           {}
 
 type observerSlot struct {
 	observer Observer
@@ -149,7 +178,7 @@ func (h *Hub) visitObserver(slot *observerSlot, visit func(Observer)) {
 	defer func() {
 		if recover() != nil {
 			h.detachObserver(slot)
-			h.observe(func(o Observer) { o.Rejected(h, "observer_panic") })
+			h.observe(func(o Observer) { o.ObserverPanicked(h) })
 			h.observerWarningMu.Lock()
 			warn := h.observerWarningAt.IsZero() || time.Since(h.observerWarningAt) >= time.Minute
 			if warn {
