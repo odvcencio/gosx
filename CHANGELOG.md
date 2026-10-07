@@ -13,12 +13,20 @@
   `Scheduler.StopContext` stops admission and cancels on its context deadline
   without allocating waiter goroutines. The legacy `Stop(grace)` also bounds
   its cancellation wait to one additional grace window.
+  `UseShutdownSource` registers an existing resource owner through a structural
+  signal/drain contract. Hub shutdown integration stays in the hub package, so
+  ordinary server imports do not acquire a WebSocket dependency.
 
 - Add additive hub observers configured before the first connection, with
   logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
   classifications. `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
 
+- Preserve public immutable caching for framework runtime JS/WASM, emitted
+  assets, hashed images and versioned public assets when global auth middleware
+  reads the session on every request. Classify resolved assets explicitly;
+  cookies, session writes, HTML/data, session variance and private policies
+  still force private caching.
 - Stop exposing `GET /_gosx/scheduled` on the public listener by default.
   Building an app no longer creates a scheduler. The deprecated
   `App.EnablePublicScheduledStatus()` opt-in lasts one minor release; protect

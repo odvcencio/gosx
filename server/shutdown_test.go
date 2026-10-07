@@ -16,8 +16,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/gorilla/websocket"
-	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/internal/telemetryerr"
 	"m31labs.dev/gosx/scheduled"
 )
@@ -67,6 +65,38 @@ func TestShutdownHookConfiguration(t *testing.T) {
 	}
 	if err := nilApp.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type testShutdownSource struct{ calls []string }
+
+func (s *testShutdownSource) SignalShutdown(context.Context) { s.calls = append(s.calls, "signal") }
+func (s *testShutdownSource) Drain(context.Context) error {
+	s.calls = append(s.calls, "drain")
+	return nil
+}
+
+func TestShutdownSourceUsesExistingPipeline(t *testing.T) {
+	a := New()
+	if _, err := a.UseShutdownSource("missing", nil); !errors.Is(err, telemetryerr.ErrInvalidOptions) {
+		t.Fatal(err)
+	}
+	source := &testShutdownSource{}
+	if _, err := a.UseShutdownSource("resource", source); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.UseShutdownSource("resource", source); !errors.Is(err, telemetryerr.ErrInvalidOptions) {
+		t.Fatal(err)
+	}
+	a.Build()
+	if _, err := a.UseShutdownSource("late", source); !errors.Is(err, telemetryerr.ErrAfterBuild) {
+		t.Fatal(err)
+	}
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(source.calls, []string{"signal", "drain"}) {
+		t.Fatal(source.calls)
 	}
 }
 
@@ -328,43 +358,5 @@ func TestShutdownDrainsOwnedHTTPThenScheduler(t *testing.T) {
 	schedulerOnce.Do(func() { close(schedulerRelease) })
 	if err := <-shutdownDone; err != nil {
 		t.Fatal(err)
-	}
-}
-
-func TestShutdownExternalHostAndHijackedHub(t *testing.T) {
-	a := New()
-	h := hub.New("game")
-	defer h.Close(context.Background())
-	a.Mount("/ws", h)
-	if _, err := a.UseShutdownHook("room", ShutdownHooks{Drain: h.Close}); err != nil {
-		t.Fatal(err)
-	}
-	external := httptest.NewServer(a.Build())
-	defer external.Close()
-	conn, _, err := websocket.DefaultDialer.Dial("ws"+strings.TrimPrefix(external.URL, "http")+"/ws", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-	if _, _, err := conn.ReadMessage(); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-	if err := external.Config.Shutdown(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if h.ClientCount() != 1 {
-		t.Fatal("HTTP shutdown unexpectedly closed hijacked socket")
-	}
-	if err := a.Shutdown(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if h.ClientCount() != 0 {
-		t.Fatal("explicit hub Drain did not finish")
-	}
-	conn.SetReadDeadline(time.Now().Add(time.Second))
-	if _, _, err := conn.ReadMessage(); err == nil {
-		t.Fatal("hub socket remained open")
 	}
 }

@@ -10,6 +10,32 @@ func (h *Hub) Close(ctx context.Context) error {
 	if h == nil {
 		return nil
 	}
+	done := h.beginClose()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+// SignalShutdown stops upgrades and starts the existing single socket-close
+// owner without waiting for network I/O or pump completion. Applications may
+// register the Hub through server.App.UseShutdownSource before Build.
+func (h *Hub) SignalShutdown(context.Context) {
+	if h != nil {
+		h.beginClose()
+	}
+}
+
+// Drain waits for the same owner started by SignalShutdown or Close. Together
+// these methods satisfy a structural shutdown contract without a server import.
+func (h *Hub) Drain(ctx context.Context) error { return h.Close(ctx) }
+
+func (h *Hub) beginClose() <-chan struct{} {
 	h.mu.Lock()
 	if h.closeDone == nil {
 		h.closeDone = make(chan struct{})
@@ -26,15 +52,7 @@ func (h *Hub) Close(ctx context.Context) error {
 		// arbitrary network Close can block; it must not block every caller.
 		go h.closeConnections()
 	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	select {
-	case <-done:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return done
 }
 
 func (h *Hub) closeConnections() {
