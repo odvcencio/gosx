@@ -51,3 +51,45 @@ test("Scene3D pick bridge follows current camera and reports misses after scene 
   request(); assert.equal(events.length, 0);
   bundle = { camera: { z: 8 } }; request(); assert.equal(events[0].detail.input.ray.origin.z, 8); assert.equal(events[0].detail.input.hit, null);
 });
+
+test("canvas picking owns controller bridge disposal across canvas rebinding", () => {
+  const listeners = new Set(), picks = [], requests = [];
+  const mount = {
+    addEventListener: (_name, listener) => listeners.add(listener),
+    removeEventListener: (_name, listener) => listeners.delete(listener),
+  };
+  const context = {
+    window: { __gosx: { host: { controllers: { pickScene: (...args) => requests.push(args) } } } },
+    scenePickTargetAtEvent() {},
+    sceneScreenToRay() {},
+    setupScenePickInteractions(canvas, props, readViewport, readBundle, emit, interactive, pointer) {
+      assert.equal(listeners.size, 1, "controller listener is installed with canvas picking");
+      const pick = {
+        getSnapshot: () => ({ canvas }),
+        dispose() {
+          assert.equal(this, pick, "preserve the pick handle receiver");
+          assert.equal(listeners.size, 0, "release the controller listener before canvas picking");
+          picks.push(canvas);
+        },
+      };
+      return pick;
+    },
+  };
+  vm.createContext(context);
+  vm.runInContext(bridge, context);
+  let bundle = { camera: { z: 4 } };
+  const install = canvas => context.setupSceneMountPickInteractions(mount, canvas, {}, () => ({}), () => bundle, () => {}, true, null);
+  const firstCanvas = { id: "first" }, secondCanvas = { id: "second" };
+  const first = install(firstCanvas);
+  assert.equal(first.getSnapshot().canvas, firstCanvas);
+  first.dispose();
+  const second = install(secondCanvas);
+  bundle = { camera: { z: 8 } };
+  for (const listener of listeners) listener({ detail: { requestId: "rebound" } });
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0][2], secondCanvas);
+  assert.equal(requests[0][4](), bundle, "rebound requests read current scene state");
+  second.dispose();
+  assert.equal(listeners.size, 0);
+  assert.deepEqual(picks, [firstCanvas, secondCanvas]);
+});

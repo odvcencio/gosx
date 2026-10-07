@@ -1407,7 +1407,7 @@ test("committed actor poses advance through held, rejected and superseded asset 
       "/slow.glb": outcome === "failed" ? { status: 500, body: "unavailable" } : { bytes: buildMinimalGLBBytes() },
     } });
     runScript(freshFeatureBundleSource("scene3d-gltf"), env.context, "bootstrap-feature-scene3d-gltf.js");
-    const bridgeSource = require("node:fs").readFileSync(require("node:path").join(__dirname, "../runtime/scene3d/command-runtime.ts"), "utf8");
+    const bridgeSource = freshFeatureBundleSource("scene3d-command");
     runScript(bridgeSource, env.context, "command-runtime.ts");
     const api = env.context.__gosx_scene3d_api;
     const bridge = env.context.__gosx_scene3d_command_bridge;

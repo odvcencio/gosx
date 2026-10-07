@@ -119,123 +119,100 @@
     });
   }
 
+  // Legacy command and binary-frame calls use the same readiness contract.
+  function withReadyRecord<T>(target: unknown, opts: any, kind: string, applyReady: (rec: any) => T | PromiseLike<T>): Promise<T> {
+    const id = key(target, opts);
+    const deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
+    return new Promise((resolve, reject) => {
+      function poll() {
+        try {
+          const rec = record(target, opts);
+          if (rec) { resolve(applyReady(rec)); return; }
+        } catch (error) { reject(error); return; }
+        if (!id) return reject(new Error("Scene3D " + kind + " target is not ready and has no stable id"));
+        if (Date.now() >= deadline) return reject(new Error("Scene3D " + kind + " target did not become ready: " + id));
+        setTimeout(poll, 16);
+      }
+      poll();
+    });
+  }
+
   function dispatchCommands(target, commands, options) {
     if (!Array.isArray(commands)) return Promise.reject(new TypeError("Scene3D commands must be an array"));
-    var opts = options || {};
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    var rev = ++revision;
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) return apply(rec, commands, rev).then(resolve, reject);
-      if (!id) return reject(new Error("Scene3D command target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D command target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
+    const rev = ++revision;
+    return withReadyRecord(target, options || {}, "command", rec => apply(rec, commands, rev));
+  }
+
+  type PresentationName = "timeline" | "burst";
+  type PresentationOptions = { engineID?: string; timeoutMS?: number };
+  type PresentationAPI = { attach(value: unknown, mount: any, handle: any, ownsMount: () => boolean): unknown };
+  type PresentationFeature = { method: string; chunk: string; api: string; prepare?: () => unknown };
+  const presentationLoads = new Map<PresentationName, Promise<PresentationAPI>>();
+  const presentations: Record<PresentationName, PresentationFeature> = {
+    timeline: { method: "playTimeline", chunk: "timeline", api: "__gosx_scene3d_timeline_api" },
+    burst: {
+      method: "burstParticles", chunk: "particle-burst", api: "__gosx_scene3d_particle_burst_api",
+      prepare: () => window.__gosx_ensure_scene3d_compute_loaded(),
+    },
+  };
+
+  function loadPresentation(name: PresentationName): Promise<PresentationAPI> {
+    const feature = presentations[name];
+    function prepared() {
+      return Promise.resolve().then(() => feature.prepare && feature.prepare()).then(() => Reflect.get(window, feature.api));
     }
-    return new Promise(poll);
-  }
-
-  const timelineLoads = new Map();
-  function loadTimeline() {
-    if (window.__gosx_scene3d_timeline_api) return Promise.resolve(window.__gosx_scene3d_timeline_api);
-    if (timelineLoads.has(1)) return timelineLoads.get(1);
-    const promise = new Promise((resolve, reject) => {
+    if (Reflect.get(window, feature.api)) return prepared();
+    if (presentationLoads.has(name)) return presentationLoads.get(name);
+    const promise = new Promise<PresentationAPI>((resolve, reject) => {
       const tag = Array.from(document.scripts).find(script => script.getAttribute("data-gosx-script") === "feature-scene3d");
-      const url = tag && tag.getAttribute("data-gosx-scene3d-timeline-url");
-      if (!url) return reject(new Error("Scene3D timeline chunk URL was not advertised"));
+      const url = tag && tag.getAttribute("data-gosx-scene3d-" + feature.chunk + "-url");
+      if (!url) return reject(new Error("Scene3D " + name + " chunk URL was not advertised"));
       const script = document.createElement("script");
       script.src = url; script.async = true; script.type = "text/javascript";
       script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
       if (tag.nonce) script.nonce = tag.nonce;
       script.onload = function() {
-        if (window.__gosx_scene3d_timeline_api) resolve(window.__gosx_scene3d_timeline_api);
-        else reject(new Error("Scene3D timeline chunk did not publish its API"));
+        if (Reflect.get(window, feature.api)) prepared().then(resolve, reject);
+        else reject(new Error("Scene3D " + name + " chunk did not publish its API"));
       };
-      script.onerror = function() { reject(new Error("failed to load Scene3D timeline chunk")); };
+      script.onerror = function() { reject(new Error("failed to load Scene3D " + name + " chunk")); };
       document.head.appendChild(script);
-    }).catch(function(error) { timelineLoads.delete(1); throw error; });
-    timelineLoads.set(1, promise);
+    }).catch(function(error) { presentationLoads.delete(name); throw error; });
+    presentationLoads.set(name, promise);
     return promise;
   }
 
-  function playTimeline() {
-    const target = arguments[0], timeline = arguments[1], opts = arguments[2] || {}, id = key(target, opts);
+  // Optional presentations share readiness and ownership. Their chunks retain
+  // their own playback, cancellation and scheduler lifecycle implementations.
+  function playPresentation(name: PresentationName, target: unknown, value: unknown, options?: PresentationOptions) {
+    const opts = options || {}, id = key(target, opts), method = presentations[name].method;
     return new Promise((resolve, reject) => {
       const timeout = opts.timeoutMS ?? 10000;
-      if (!Number.isFinite(timeout)) return reject(new TypeError("Scene3D timeline timeout must be finite"));
+      if (!Number.isFinite(timeout)) return reject(new TypeError("Scene3D " + name + " timeout must be finite"));
       const deadline = Date.now() + Math.max(0, timeout);
       function poll() {
         const rec = record(target, opts);
         if (rec) {
-          // Custom ready handles may provide their own timeline implementation.
-          if (!rec.mount && typeof rec.handle.playTimeline === "function") {
-            return Promise.resolve().then(() => rec.handle.playTimeline(timeline)).then(resolve, reject);
+          // Custom ready handles may implement presentations without a mount.
+          if (!rec.mount && typeof rec.handle[method] === "function") {
+            return Promise.resolve().then(() => rec.handle[method](value)).then(resolve, reject);
           }
-          const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
-          if (!mount) return reject(new Error("Scene3D timeline mount is unavailable"));
-          rec.mount = mount;
-          loadTimeline().then(function() {
-            return arguments[0].attach(timeline, mount, rec.handle, () => rec.mount.__gosxScene3DHandle === rec.handle);
-          }).then(resolve, reject);
-        } else if (!id || Date.now() >= deadline) reject(new Error("Scene3D timeline target is not ready"));
+          const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(candidate => Reflect.get(candidate, "__gosxScene3DHandle") === rec.handle);
+          if (!mount) return reject(new Error("Scene3D " + name + " mount is unavailable"));
+          loadPresentation(name).then(api => api.attach(value, mount, rec.handle, () => mount.__gosxScene3DHandle === rec.handle)).then(resolve, reject);
+        } else if (!id || Date.now() >= deadline) reject(new Error("Scene3D " + name + " target is not ready"));
         else setTimeout(poll, 16);
       }
       poll();
     });
   }
 
-  const burstLoads = new Map();
-  function readyParticleBurst() {
-    return Promise.resolve().then(function() { return window.__gosx_ensure_scene3d_compute_loaded(); }).then(function() { return window.__gosx_scene3d_particle_burst_api; });
-  }
-  function loadParticleBurst() {
-    if (window.__gosx_scene3d_particle_burst_api) return readyParticleBurst();
-    if (burstLoads.has(1)) return burstLoads.get(1);
-    const promise = new Promise((resolve, reject) => {
-      const tag = Array.from(document.scripts).find(script => script.getAttribute("data-gosx-script") === "feature-scene3d");
-      const url = tag && tag.getAttribute("data-gosx-scene3d-particle-burst-url");
-      if (!url) return reject(new Error("Scene3D burst chunk URL was not advertised"));
-      const script = document.createElement("script");
-      script.src = url; script.async = true; script.type = "text/javascript";
-      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
-      if (tag.nonce) script.nonce = tag.nonce;
-      script.onload = function() {
-        if (window.__gosx_scene3d_particle_burst_api) {
-          readyParticleBurst().then(resolve, reject);
-        }
-        else reject(new Error("Scene3D burst chunk did not publish its API"));
-      };
-      script.onerror = function() { reject(new Error("failed to load Scene3D burst chunk")); };
-      document.head.appendChild(script);
-    }).catch(function(error) { burstLoads.delete(1); throw error; });
-    burstLoads.set(1, promise);
-    return promise;
+  function playTimeline(target: unknown, timeline: unknown, options?: PresentationOptions) {
+    return playPresentation("timeline", target, timeline, options);
   }
 
-  function burstParticles() {
-    const target = arguments[0], burst = arguments[1], opts = arguments[2] || {}, id = key(target, opts);
-    return new Promise((resolve, reject) => {
-      const timeout = opts.timeoutMS ?? 10000;
-      if (!Number.isFinite(timeout)) return reject(new TypeError("Scene3D burst timeout must be finite"));
-      const deadline = Date.now() + Math.max(0, timeout);
-      function poll() {
-        const rec = record(target, opts);
-        if (rec) {
-          // Custom ready handles may provide their own burst implementation.
-          if (!rec.mount && typeof rec.handle.burstParticles === "function") {
-            return Promise.resolve().then(() => rec.handle.burstParticles(burst)).then(resolve, reject);
-          }
-          const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
-          if (!mount) return reject(new Error("Scene3D burst mount is unavailable"));
-          rec.mount = mount;
-          loadParticleBurst().then(function() {
-            return arguments[0].attach(burst, mount, rec.handle, () => rec.mount.__gosxScene3DHandle === rec.handle);
-          }).then(resolve, reject);
-        } else if (!id || Date.now() >= deadline) reject(new Error("Scene3D burst target is not ready"));
-        else setTimeout(poll, 16);
-      }
-      poll();
-    });
+  function burstParticles(target: unknown, burst: unknown, options?: PresentationOptions) {
+    return playPresentation("burst", target, burst, options);
   }
 
   function dispatchPoseFrame(target, frame, options) {
@@ -340,20 +317,11 @@
     }
     var batches;
     try { batches = decodePoseFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) {
-        poseStats(target, opts);
-        if (typeof rec.handle.applyPoseFrame !== "function") return reject(new Error("Scene3D pose frames are unsupported by this mount"));
-        return Promise.resolve().then(function() { return rec.handle.applyPoseFrame(batches); }).then(resolve, reject);
-      }
-      if (!id) return reject(new Error("Scene3D pose frame target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D pose frame target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
-    }
-    return new Promise(poll).catch(fallback);
+    return withReadyRecord(target, opts, "pose frame", rec => {
+      poseStats(target, opts);
+      if (typeof rec.handle.applyPoseFrame !== "function") throw new Error("Scene3D pose frames are unsupported by this mount");
+      return Promise.resolve().then(() => rec.handle.applyPoseFrame(batches));
+    }).catch(fallback);
   }
 
   function applyMountedPoseFrame(state, batches, updateRigidPoses, scheduleRender, handle) {
@@ -638,25 +606,13 @@
       if (opts.fallbackPoseFrame) return dispatchPoseFrameNow(target, opts.fallbackPoseFrame, opts);
       return fallbackToCommands(error);
     }
-    // @ts-ignore TS7034 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-    var batches;
+    let batches: ReturnType<typeof decodeMotionFrame>;
     try { batches = decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) {
-        motionStats(target, opts);
-        if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
-        // @ts-ignore TS7005 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-        return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); }).then(resolve, reject);
-      }
-      if (!id) return reject(new Error("Scene3D motion frame target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D motion frame target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
-    }
-    return new Promise(poll).catch(fallback);
+    return withReadyRecord(target, opts, "motion frame", rec => {
+      motionStats(target, opts);
+      if (typeof rec.handle.applyMotionFrame !== "function") throw new Error("Scene3D motion frames are unsupported by this mount");
+      return Promise.resolve().then(() => rec.handle.applyMotionFrame(batches));
+    }).catch(fallback);
   }
 
   // applyMountedMotionFrame validates EVERY batch/instance ID and order

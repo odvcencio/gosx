@@ -57,20 +57,10 @@
     return loadCommandBridge().then(function(bridge) { return bridge && bridge.applyCommandScripts(root); });
   };
 
-  ["dispatchCommands", "dispatchPoseFrame", "playTimeline", "burstParticles"].forEach(function(method) {
+  // Command, pose and GSP3 motion frames share the same demand-loaded host.
+  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline", "burstParticles"].forEach(function(method) {
     api[method] = async function() { return (await loadCommandBridge())[method].apply(null, arguments); };
   });
-  // GSP3 motion frame (see command-runtime.ts's "GPU-driven crowd motion"
-  // section). Same lazy-load contract as dispatchPoseFrame above: the first
-  // call to either fetches the one shared command-runtime chunk.
-  // @ts-ignore TS7006 -- untyped, matching this file's convention.
-  // the expect-error form would report this directive unused under
-  // tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent
-  // either way.
-  api.dispatchMotionFrame = function(target, frame, options) {
-    // @ts-ignore TS7006 -- untyped, matching this file's convention.
-    return loadCommandBridge().then(function(bridge) { return bridge.dispatchMotionFrame(target, frame, options); });
-  };
   function forceWebGLRequested() {
     if (window.__gosx_scene3d_force_webgl === true) return true;
     try {

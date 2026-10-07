@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { freshFeatureBundleSource } from "./runtime-test-harness.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = [
@@ -17,10 +18,7 @@ const scene3dBridgeSrc = fs.readFileSync(
   path.join(__dirname, "..", "runtime", "scene3d", "command-bridge.ts"),
   "utf8"
 );
-const scene3dCommandRuntimeSrc = fs.readFileSync(
-  path.join(__dirname, "..", "runtime", "scene3d", "command-runtime.ts"),
-  "utf8"
-);
+const scene3dCommandRuntimeSrc = freshFeatureBundleSource("scene3d-command");
 
 const tick = () => new Promise((r) => setTimeout(r, 0));
 

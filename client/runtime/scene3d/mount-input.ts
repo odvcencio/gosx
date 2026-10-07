@@ -7,3 +7,24 @@ function setupSceneControllerPickBridge(mount: HTMLElement, canvas: HTMLCanvasEl
   mount.addEventListener("gosx:scene3d:pick-request", request);
   return () => mount.removeEventListener("gosx:scene3d:pick-request", request);
 }
+
+// Controller requests and canvas picking share the same rebind/dispose lifetime.
+function setupSceneMountPickInteractions(
+  mount: HTMLElement,
+  canvas: HTMLCanvasElement,
+  props: any,
+  readViewport: () => any,
+  readBundle: () => any,
+  emitInteraction: (detail: any) => void,
+  interactiveEnabled: boolean,
+  emitPointerPhase: any,
+) {
+  const release = setupSceneControllerPickBridge(mount, canvas, readViewport, readBundle);
+  const pick = setupScenePickInteractions(canvas, props, readViewport, readBundle, emitInteraction, interactiveEnabled, emitPointerPhase);
+  const dispose = pick.dispose;
+  pick.dispose = () => {
+    release();
+    dispose.call(pick);
+  };
+  return pick;
+}

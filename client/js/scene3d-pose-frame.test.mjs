@@ -4,9 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { freshFeatureBundleSource } from "./runtime-test-harness.js";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
-const source = fs.readFileSync(path.join(directory, "..", "runtime", "scene3d", "command-runtime.ts"), "utf8");
+const source = freshFeatureBundleSource("scene3d-command");
 
 function runtime(handle, extra = {}) {
   const context = { window: {}, document: {}, TextDecoder, Uint8Array, ArrayBuffer, DataView, Set, Map, Date, Promise, setTimeout, ...extra };

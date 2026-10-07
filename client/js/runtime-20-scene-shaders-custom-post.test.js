@@ -935,7 +935,7 @@ test("Scene3D raycast returns the exact nearest non-uniformly scaled instance", 
 });
 
 test("Scene3D authored picks reserve pointer gestures before orbit controls", () => {
-  const pickInstall = bootstrapScene3DMountSourceFile.indexOf("pickHandle = setupScenePickInteractions");
+  const pickInstall = bootstrapScene3DMountSourceFile.indexOf("pickHandle = setupSceneMountPickInteractions");
   const controlsInstall = bootstrapScene3DMountSourceFile.indexOf("sceneControlHandle = setupSceneBuiltInControls", pickInstall);
   assert.ok(pickInstall >= 0 && controlsInstall > pickInstall, "pick listener must be registered before controls");
   assert.match(bootstrapScene3DMountSourceFile, /function onPointerDown\(event\) \{\s+if \(event && event\.defaultPrevented\)/);
