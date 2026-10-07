@@ -180,7 +180,7 @@ test("one decoder serves a dense frame and reordered membership falls back witho
 test("retained pose application reaches the existing crowd animation rows", () => {
   const { context, bridge } = runtime();
   const rendererSource = fs.readFileSync(path.join(directory, "..", "runtime", "scene3d", "mount-webgl.ts"), "utf8");
-  const start = rendererSource.indexOf("function sceneUpdateRigidInstancePoses(");
+  const start = rendererSource.indexOf("function sceneCommitRigidInstancePatch(");
   const end = rendererSource.indexOf("function sceneRigidMembershipModelID(", start);
   assert.ok(start > 0 && end > start);
   context.sceneHydrationModels = state => state.instancedGLBMeshes[0].instances.map(instance => ({ id: instance.id, x: instance.x, _crowdPose: { animation: instance.animation, animationTime: instance.animationTime, animationLoop: instance.animationLoop } }));
@@ -200,4 +200,74 @@ test("retained pose application reaches the existing crowd animation rows", () =
   assert.equal(object.parentMatrix[12], 1.5);
   assert.equal(object._crowdMotion, undefined, 'pose fallback returns the object to the legacy crowd shader');
   assert.deepEqual(Array.from(rows.slice(0, 2)), [2, 1]);
+});
+
+
+test("pending hydration advances compatible poses without replaying an older queued frame", async () => {
+  let release;
+  const seen = [];
+  const handle = {
+    __gosxScene3DCommandReady: true,
+    applyCommands() { return new Promise(resolve => { release = resolve; }); },
+    applyPoseFrame(batches) { seen.push(batches[0].instances[0].x); return { applied: true, binary: true }; },
+    applyPendingPoseFrame(batches) { seen.push(batches[0].instances[0].x); return { applied: true, binary: true }; },
+  };
+  const { bridge } = runtime(handle);
+  // Find the first transform after the fixed dictionary, batch and instance IDs.
+  const firstFrame = frame();
+  const offset = 4 + 2 + 2 + 3 + 2 + 2 + 6 + 2 + 2 + 4;
+  const moved = x => { const value = firstFrame.slice(); new DataView(value.buffer).setFloat32(offset, x, true); return value; };
+  const first = bridge.dispatchPoseFrame(handle, moved(1), { beforeCommands: [{ kind: 11 }] });
+  for (let i = 0; i < 4; i++) await Promise.resolve();
+  const middle = bridge.dispatchPoseFrame(handle, moved(2));
+  const latest = bridge.dispatchPoseFrame(handle, moved(3));
+  assert.deepEqual(seen, [2, 3], "pose progress must not wait for the cold asset");
+  assert.equal((await middle).superseded, true);
+  release();
+  await Promise.all([first, latest]);
+  assert.deepEqual(seen, [2, 3, 3], "the captured first pose must never roll back the actor");
+});
+
+
+test("a pending membership change advances matching committed identities only", () => {
+  const { bridge } = runtime();
+  const current = { id: "hero", x: 0 };
+  const state = { _modelHydrationPromise: Promise.resolve(), _hydratedModelRecords: {},
+    instancedGLBMeshes: [{ id: "heroes", instances: [current] }],
+  };
+  const batches = bridge.decodePoseFrame(frame(2));
+  batches.push({ id: "future-batch", instances: [{ id: "future", x: 9 }] });
+  const retained = [];
+  const result = bridge.applyMountedPoseFrame(state, batches, (_state, _models, selected) => {
+    retained.push(...selected);
+    return true;
+  }, () => {}, {});
+  assert.equal(result.binary, true);
+  assert.equal(current.x, 1.5);
+  assert.deepEqual(retained, ["heroes/hero"]);
+  assert.equal(state.instancedGLBMeshes[0].instances.length, 1, "future instances must remain staged");
+  state._modelHydrationPromise = null;
+  assert.throws(() => bridge.applyMountedPoseFrame(state, batches, () => true, () => {}, {}), /membership-changed/);
+});
+
+test("a rejected prerequisite releases the pose queue for the latest valid frame", async () => {
+  let rejectLoad;
+  let pendingCalls = 0;
+  const applied = [];
+  const handle = {
+    __gosxScene3DCommandReady: true,
+    applyCommands() { return new Promise((_resolve, reject) => { rejectLoad = reject; }); },
+    applyPendingPoseFrame() { pendingCalls++; throw new Error("retained pose unavailable"); },
+    applyPoseFrame(batches) { applied.push(batches); return { applied: true, binary: true }; },
+  };
+  const { bridge } = runtime(handle);
+  const first = bridge.dispatchPoseFrame(handle, frame(), { beforeCommands: [{ kind: 11 }] });
+  const failed = assert.rejects(first, /asset load failed/);
+  const latest = bridge.dispatchPoseFrame(handle, frame());
+  assert.equal(pendingCalls, 1);
+  rejectLoad(new Error("asset load failed"));
+  await failed;
+  assert.equal((await latest).applied, true);
+  assert.equal(applied.length, 1);
+  assert.equal(handle.__gosxPoseFrameStats.errors, 1);
 });
