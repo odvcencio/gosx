@@ -5,7 +5,10 @@
 - Add a bounded metric registry with finite label domains, atomic tuple batches,
   scalar sample and byte reservations, sealed registration, and consistent
   counter, gauge, and histogram instruments. Application families cannot use
-  the framework's reserved `gosx_` prefix.
+  the framework's reserved `gosx_` prefix, or labels starting with `__`.
+  Batch admission sorts once and reserves measured object and slice capacity;
+  counters and gauges retain no unused histogram state. The default request
+  metric inventory fits the unchanged sample and byte budgets.
 
 - Add named App shutdown hooks: drain HTTP and scheduled work before source
   drains, then flush in reverse registration order. Concurrent shutdown callers

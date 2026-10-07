@@ -7,7 +7,7 @@ type cell struct {
 	value     atomic.Uint64
 	counter   Counter
 	gauge     Gauge
-	histogram Histogram
+	histogram *Histogram
 }
 
 type CounterVec struct{ family *family }
