@@ -2832,63 +2832,6 @@ function gosxConfigureSceneScript(script, role, src) {
     return Boolean(source && Object.prototype.hasOwnProperty.call(source, key));
   }
 
-  function sceneAnimationNumber(source, key, fallback, min) {
-    if (!sceneOwns(source, key)) {
-      return fallback;
-    }
-    const value = sceneNumber(source[key], fallback);
-    return Number.isFinite(value) ? Math.max(min, value) : fallback;
-  }
-
-  function sceneAnimationMilliseconds(source, key, fallbackSeconds) {
-    if (!sceneOwns(source, key)) {
-      return fallbackSeconds;
-    }
-    const value = Number(source[key]);
-    return Number.isFinite(value) ? Math.max(0, value) / 1000 : fallbackSeconds;
-  }
-
-  function sceneModelAnimationPlayOptions(model, patch, defaults) {
-    const fallbackLoop = defaults && typeof defaults.loop === "boolean" ? defaults.loop : true;
-    const modelLoop = sceneOwns(model, "loop") ? model.loop !== false : fallbackLoop;
-    const loop = sceneOwns(patch, "loop") ? patch.loop !== false : modelLoop;
-    const modelSpeed = sceneAnimationNumber(model, "animationSpeed", defaults && defaults.speed !== undefined ? defaults.speed : 1, 0);
-    const modelWeight = sceneAnimationNumber(model, "animationWeight", defaults && defaults.weight !== undefined ? defaults.weight : 1, 0);
-    return {
-      loop,
-      speed: sceneAnimationNumber(patch, "animationSpeed", modelSpeed, 0),
-      weight: sceneAnimationNumber(patch, "animationWeight", modelWeight, 0),
-      fadeIn: sceneAnimationMilliseconds(
-        patch,
-        "animationFadeInMS",
-        sceneAnimationMilliseconds(model, "animationFadeInMS", defaults && defaults.fadeIn !== undefined ? defaults.fadeIn : 0),
-      ),
-    };
-  }
-
-  function sceneModelAnimationStopOptions(model, patch, defaults) {
-    return {
-      fadeOut: sceneAnimationMilliseconds(
-        patch,
-        "animationFadeOutMS",
-        sceneAnimationMilliseconds(model, "animationFadeOutMS", defaults && defaults.fadeOut !== undefined ? defaults.fadeOut : 0),
-      ),
-    };
-  }
-
-  function sceneApplyModelAnimationControls(record, patch) {
-    if (!record || !record.model || !sceneIsPlainObject(patch)) {
-      return;
-    }
-    const keys = ["loop", "animationSpeed", "animationWeight", "animationFadeInMS", "animationFadeOutMS"];
-    for (let index = 0; index < keys.length; index += 1) {
-      const key = keys[index];
-      if (sceneOwns(patch, key)) {
-        record.model[key] = patch[key];
-      }
-    }
-  }
-
   function sceneRegisterModelAnimationRecord(state, record) {
     if (!state || !record || (!record.mixer && !record.wasmMixerActive)) {
       return;
@@ -3028,14 +2971,6 @@ function gosxConfigureSceneScript(script, role, src) {
           window.__gosx_motion_mixer_add_clip(handle, clip.name, animationApi.wasmClipJSON(clip));
         }
         sceneRegisterModelAnimationRecord(state, record);
-        const requestedAnimation = typeof instanceModel.animation === "string" ? instanceModel.animation.trim() : "";
-        if (requestedAnimation) {
-          sceneModelRecordPlay(record, requestedAnimation, sceneModelAnimationPlayOptions(instanceModel, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
-          if (sceneModelRecordIsPlaying({ animation: requestedAnimation, wasmMixerActive: true, wasmMixer: handle })) {
-            record.animation = requestedAnimation;
-            record.animationSeq = typeof instanceModel.animationSeq === "string" ? instanceModel.animationSeq : "";
-          }
-        }
       }
     } else if (typeof animationApi.createMixer === "function") {
       if (clips.length) {
@@ -3049,94 +2984,17 @@ function gosxConfigureSceneScript(script, role, src) {
           mixer.addClip(clip.name, clip);
         }
         sceneRegisterModelAnimationRecord(state, record);
-        const requestedAnimation = typeof instanceModel.animation === "string" ? instanceModel.animation.trim() : "";
-        if (requestedAnimation) {
-          mixer.play(requestedAnimation, sceneModelAnimationPlayOptions(instanceModel, null, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
-          if (mixer.isPlaying(requestedAnimation)) {
-            record.animation = requestedAnimation;
-            record.animationSeq = typeof instanceModel.animationSeq === "string" ? instanceModel.animationSeq : "";
-          }
-        }
       }
     }
 
+    animationApi.initializeModelPlayback(record, instanceModel);
     sceneApplyModelSkinPose(record, 0, false);
-  }
-
-  // Route a clip play through the active mixer. opts is the JS-mixer options
-  // shape ({loop, speed, weight, fadeIn}); the WASM mixer takes the same values
-  // as positional arguments.
-  function sceneModelRecordPlay(record, name, opts) {
-    const options = opts || {};
-    if (record && record.wasmMixerActive) {
-      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_play === "function") {
-        window.__gosx_motion_mixer_play(
-          record.wasmMixer,
-          name,
-          options.fadeIn !== undefined ? options.fadeIn : 0,
-          options.loop !== undefined ? options.loop !== false : true,
-          options.speed !== undefined ? options.speed : 1,
-          options.weight !== undefined ? options.weight : 1
-        );
-      }
-      return;
-    }
-    if (record && record.mixer) {
-      record.mixer.play(name, options);
-    }
-  }
-
-  // Route a clip stop through the active mixer. opts is the JS-mixer options
-  // shape ({fadeOut}); the WASM mixer takes fadeOut positionally.
-  function sceneModelRecordStop(record, name, opts) {
-    const options = opts || {};
-    if (record && record.wasmMixerActive) {
-      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_stop === "function") {
-        window.__gosx_motion_mixer_stop(record.wasmMixer, name, options.fadeOut !== undefined ? options.fadeOut : 0);
-      }
-      if ((record.morphTargets && record.morphTargets.length > 0)
-        || (record.nodeAnimTargets && record.nodeAnimTargets.length > 0)) {
-        // One final pose tick after the stop/fade so the fold and the rigid
-        // node playback restore the authored defaults. Skinned stop/hold
-        // unchanged.
-        record.poseDirty = true;
-      }
-      return;
-    }
-    if (record && record.mixer) {
-      record.mixer.stop(name, options);
-      if ((record.morphTargets && record.morphTargets.length > 0)
-        || (record.nodeAnimTargets && record.nodeAnimTargets.length > 0)) {
-        record.poseDirty = true;
-      }
-    }
-  }
-
-  // Whether a named clip is playing on the record's active mixer, routed to the
-  // WASM mixer when active (P4-M3) and the JS mixer otherwise.
-  function sceneModelRecordWasPlaying(record, name) {
-    if (!record || !name) {
-      return false;
-    }
-    if (record.wasmMixerActive) {
-      return Boolean(
-        typeof window !== "undefined" &&
-        typeof window.__gosx_motion_mixer_is_playing === "function" &&
-        window.__gosx_motion_mixer_is_playing(record.wasmMixer, name)
-      );
-    }
-    return Boolean(record.mixer && record.mixer.isPlaying(name));
-  }
-
-  // Whether a record's currently-selected animation is playing.
-  function sceneModelRecordIsPlaying(record) {
-    return record ? sceneModelRecordWasPlaying(record, record.animation) : false;
   }
 
   function sceneHasActiveModelAnimations(state) {
     const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
     return records.some(function(record) {
-      return sceneModelRecordIsPlaying(record);
+      return record.animationApi.isModelPlaying(record);
     });
   }
 
@@ -3147,7 +3005,7 @@ function gosxConfigureSceneScript(script, role, src) {
       if (!record) {
         continue;
       }
-      const playing = sceneModelRecordIsPlaying(record);
+      const playing = record.animationApi.isModelPlaying(record);
       if (!playing && !record.poseDirty) {
         continue;
       }
@@ -3532,59 +3390,6 @@ function gosxConfigureSceneScript(script, role, src) {
     return true;
   }
 
-  function sceneApplyModelLiveAnimation(record, patch) {
-    if (!record || (!record.mixer && !record.wasmMixerActive) || !sceneIsPlainObject(patch)) {
-      return false;
-    }
-    const hasAnimation = sceneOwns(patch, "animation");
-    const hasControls = sceneOwns(patch, "loop")
-      || sceneOwns(patch, "animationSpeed")
-      || sceneOwns(patch, "animationWeight")
-      || sceneOwns(patch, "animationFadeInMS")
-      || sceneOwns(patch, "animationFadeOutMS");
-    if (!hasAnimation && !hasControls) {
-      return false;
-    }
-    const animation = hasAnimation
-      ? (typeof patch.animation === "string" ? patch.animation.trim() : "")
-      : record.animation;
-    const hasSeq = sceneOwns(patch, "animationSeq");
-    const animationSeq = hasSeq ? String(patch.animationSeq == null ? "" : patch.animationSeq) : "";
-    const replay = Boolean(hasSeq && animationSeq && record.animation === animation && record.animationSeq !== animationSeq);
-    sceneApplyModelAnimationControls(record, patch);
-    if (!animation) {
-      if (record.animation && sceneModelRecordIsPlaying(record)) {
-        const stopOptions = sceneModelAnimationStopOptions(record.model, patch, { fadeOut: 0.05 });
-        sceneModelRecordStop(record, record.animation, stopOptions);
-        if (stopOptions.fadeOut <= 0) {
-          record.animation = "";
-        }
-      }
-      record.animationSeq = animationSeq;
-      record.poseDirty = true;
-      return true;
-    }
-    if (record.animation === animation && sceneModelRecordIsPlaying(record) && !replay) {
-      if (hasControls) {
-        sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: 0 }));
-        record.poseDirty = true;
-        return true;
-      }
-      return false;
-    }
-    if (record.animation && sceneModelRecordIsPlaying(record)) {
-      sceneModelRecordStop(record, record.animation, sceneModelAnimationStopOptions(record.model, patch, { fadeOut: replay ? 0 : 0.05 }));
-    }
-    sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(record.model, patch, { loop: true, speed: 1, weight: 1, fadeIn: replay ? 0 : 0.04 }));
-    if (!sceneModelRecordWasPlaying(record, animation)) {
-      return false;
-    }
-    record.animation = animation;
-    record.animationSeq = animationSeq;
-    record.poseDirty = true;
-    return true;
-  }
-
   function sceneApplyModelLiveEvent(state, eventName, payload) {
     const event = typeof eventName === "string" ? eventName.trim() : "";
     if (!event) {
@@ -3599,7 +3404,7 @@ function gosxConfigureSceneScript(script, role, src) {
       }
       const patch = sceneModelLivePatchForRecord(record, payload);
       changed = sceneApplyModelLivePatch(state, record, patch) || changed;
-      changed = sceneApplyModelLiveAnimation(record, patch) || changed;
+      changed = Boolean(record.animationApi && record.animationApi.applyModelAnimation(record, patch)) || changed;
     }
     return changed;
   }
