@@ -6,6 +6,7 @@ build/
 !/docs/docs-site-spec.md
 !/docs/polar.md
 !/docs/scene3d-v1-support.md
+!/docs/scene3d-text.md
 !/docs/stripe.md
 !/docs/ui-recipes.md
 !/docs/controllers.md
