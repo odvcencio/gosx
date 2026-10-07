@@ -19,6 +19,7 @@
         "../runtime/host/disclosure.ts",
         "../runtime/host/request.ts",
         "../runtime/host/actions.ts",
+        "../runtime/scene3d/script-loader.ts",
         "../runtime/scene3d/command-bridge.ts",
         "../runtime/scene3d/instance-stream-bridge.ts",
         "../runtime/host/regions.ts",
@@ -209,6 +210,7 @@
       "name": "bootstrap-feature-scene3d.js",
       "sources": [
         "bootstrap-src/26d-feature-scene3d-prefix.ts",
+        "../runtime/scene3d/script-loader.ts",
         "../runtime/scene3d/command-bridge.ts",
         "../runtime/scene3d/instance-stream-bridge.ts",
         "bootstrap-src/10-runtime-primitives.ts",
@@ -329,6 +331,7 @@
     {
       "name": "bootstrap-feature-scene3d-timeline.js",
       "sources": [
+        "../runtime/scene3d/command-hooks.ts",
         "../runtime/scene3d/timeline.ts"
       ]
     },
