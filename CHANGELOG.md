@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add additive hub observers configured before the first connection, with
+  logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
+  classifications. `Hub.Close(ctx)` rejects upgrades and waits for connection
+  pumps within each caller's deadline; unfinished owners retain subscriptions.
+
 - Stop exposing `GET /_gosx/scheduled` on the public listener by default.
   Building an app no longer creates a scheduler. The deprecated
   `App.EnablePublicScheduledStatus()` opt-in lasts one minor release; protect
