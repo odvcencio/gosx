@@ -61,10 +61,6 @@ func RunInit(dir string, module string, template string) error {
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
-	if err := os.MkdirAll(absDir, 0755); err != nil {
-		return fmt.Errorf("create %s: %w", absDir, err)
-	}
-
 	if module == "" {
 		module = defaultModuleName(absDir)
 	}
@@ -79,19 +75,15 @@ func RunInit(dir string, module string, template string) error {
 		return err
 	}
 
-	for _, file := range files {
-		if err := writeScaffoldFile(absDir, file.Path, file.Contents); err != nil {
-			return err
-		}
-	}
-	if err := syncModulesPackage(absDir); err != nil {
+	tidyErr, err := createScaffold(absDir, module, files, tidyScaffold)
+	if err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "gosx init: created %s template in %s\n", template, absDir)
 
-	if err := tidyScaffold(absDir); err != nil {
-		fmt.Fprintf(os.Stderr, "gosx init: %v\n", err)
+	if tidyErr != nil {
+		fmt.Fprintf(os.Stderr, "gosx init: %v\n", tidyErr)
 		fmt.Fprintf(os.Stderr, "gosx init: run `go mod tidy` in %s before `go run .`\n", absDir)
 		return nil
 	}
@@ -100,7 +92,9 @@ func RunInit(dir string, module string, template string) error {
 	return nil
 }
 
-// tidyScaffold resolves the new module's dependencies.
+// tidyScaffold resolves dependencies in a private staging tree before publication.
+// The Go command may still populate its shared module/build caches; those external
+// effects are not part of the scaffold file transaction.
 //
 // The template writes go.mod and no go.sum, and a module with neither will not
 // build — `go run .` stops on the first missing sum entry and names a package
@@ -137,22 +131,6 @@ func defaultModuleName(dir string) string {
 		return "gosx-app"
 	}
 	return base
-}
-
-func writeScaffoldFile(root string, rel string, contents string) error {
-	path := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
-	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s already exists", path)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat %s: %w", path, err)
-	}
-	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }
 
 func goModTemplate(module string) string {
@@ -584,7 +562,7 @@ func init() {
 func appStackTemplate() string {
 	return `package app
 
-func Page() Node {
+component Page() {
 	return <main class="shell">
 		<span class="eyebrow">Client Navigation</span>
 		<h1>Page transitions without a full reload</h1>
@@ -601,7 +579,7 @@ func Page() Node {
 func appNotFoundTemplate() string {
 	return `package app
 
-func Page() Node {
+component NotFoundPage() {
 	return <main class="shell">
 		<span class="eyebrow">404</span>
 		<h1>Page not found</h1>
@@ -620,7 +598,7 @@ func Page() Node {
 func appErrorTemplate() string {
 	return `package app
 
-func Page() Node {
+component ErrorPage() {
 	return <main class="shell">
 		<span class="eyebrow">500</span>
 		<h1>Something broke</h1>

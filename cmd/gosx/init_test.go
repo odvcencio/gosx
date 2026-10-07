@@ -267,6 +267,9 @@ func TestRunInitRejectsUnknownTemplate(t *testing.T) {
 	if err := RunInit(dir, "example.com/unknown", "wat"); err == nil {
 		t.Fatal("expected unknown template error")
 	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("invalid template created a destination: %v", err)
+	}
 }
 
 func TestSyncModulesPackageGeneratesImportsFromServerFiles(t *testing.T) {
