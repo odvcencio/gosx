@@ -290,24 +290,29 @@
   // The bootstrap JS assigns this as a function. The WASM bridge later
   // calls it. We intercept via a property trap so we can wrap it at
   // assignment time, before it's invoked.
-  var _capturedReadyHandler = null;
-  Object.defineProperty(window, "__gosx_runtime_ready", {
-    set: function(fn) {
-      _capturedReadyHandler = fn;
-    },
-    get: function() {
-      // Return a wrapper that calls the original + patches WASM exports.
-      return function() {
-        if (typeof _capturedReadyHandler === "function") {
-          _capturedReadyHandler.apply(this, arguments);
-        }
-        // At this point WASM exports (__gosx_hydrate, __gosx_action, etc.)
-        // have been registered via js.Global().Set(). Wrap them now.
-        _wrapWasmExports();
+  var _readyWrappers = new WeakMap();
+  function _wrapReadyHandler(handler) {
+    if (typeof handler !== "function") return handler;
+    if (_readyWrappers.has(handler)) return _readyWrappers.get(handler);
+    // A bootstrap may capture this wrapper as its prior handler. Keep that
+    // handler fixed when a later bootstrap installs its own chained callback.
+    var wrapped = function() {
+      var result = handler.apply(this, arguments);
+      _wrapWasmExports();
+      if (!perf.ready) {
         perf.ready = true;
         performance.mark("gosx:perf:ready");
-      };
-    },
+      }
+      return result;
+    };
+    _readyWrappers.set(handler, wrapped);
+    _readyWrappers.set(wrapped, wrapped);
+    return wrapped;
+  }
+  var _capturedReadyHandler = _wrapReadyHandler(window.__gosx_runtime_ready);
+  Object.defineProperty(window, "__gosx_runtime_ready", {
+    set: function(fn) { _capturedReadyHandler = _wrapReadyHandler(fn); },
+    get: function() { return _capturedReadyHandler; },
     configurable: true
   });
 
