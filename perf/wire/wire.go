@@ -2,6 +2,16 @@
 // runs: the document, every resource the HTML asks the browser to load, and
 // every runtime asset the GoSX manifest tells the bootstrap to fetch.
 //
+// A visit starts with an empty asset cache and crawls pages in order. Each
+// page pays its document (including inline scripts), redirect bodies and
+// downloaded eager resources. Fresh, content-hashed assets are downloaded
+// once per visit for matching request variants; later references retain
+// their policy metadata but add no bytes or requests. Changed Vary headers
+// require another download. The first page pays the full cold download.
+// On-demand probes do not warm this cache, since they are not page downloads.
+// Inline scripts are never estimated from an HTML compression ratio: their
+// transferred bytes are already included in the compressed document total.
+//
 // The measurement is deterministic. It needs no browser, so CI can gate bytes,
 // request counts, compression and cache headers on every pull request, and a
 // regression is a real regression rather than scheduler noise.
@@ -19,7 +29,9 @@ import (
 	"path"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"golang.org/x/net/html"
@@ -53,7 +65,7 @@ const (
 	KindOther    = "other"
 )
 
-// Resource is one network response.
+// Resource describes a downloaded response or a reused asset.
 type Resource struct {
 	URL             string `json:"url"`
 	Kind            string `json:"kind"`
@@ -63,12 +75,17 @@ type Resource struct {
 	DecodedBytes    int64  `json:"decodedBytes"`
 	ContentEncoding string `json:"contentEncoding,omitempty"`
 	CacheControl    string `json:"cacheControl,omitempty"`
+	Vary            string `json:"vary,omitempty"`
 	Immutable       bool   `json:"immutable"`
 	Hashed          bool   `json:"hashed"`
 	SetCookie       bool   `json:"setCookie,omitempty"`
+	// CacheHit means the visit reused this asset without a request. WireBytes
+	// is zero; decoded size and headers remain available for policy checks.
+	CacheHit bool `json:"cacheHit,omitempty"`
 	// Framework marks a response the page requested under the framework's
 	// /gosx/ prefix, even when a redirect served it from another path.
-	Framework bool `json:"framework,omitempty"`
+	Framework  bool `json:"framework,omitempty"`
+	cacheUntil time.Time
 }
 
 // Route is the measurement of one page.
@@ -80,16 +97,16 @@ type Route struct {
 	Document  Resource   `json:"document"`
 	Resources []Resource `json:"resources"`
 
-	// Requests counts the document and every distinct subresource.
+	// Requests counts the document, redirect hops and downloaded eager assets.
+	// Fresh hashed assets reused from the visit cache add no request.
 	Requests int `json:"requests"`
 	// WireBytes sums bytes on the wire by resource kind.
 	WireBytes map[string]int64 `json:"wireBytes"`
 	// TotalWireBytes sums every response body as transferred.
 	TotalWireBytes int64 `json:"totalWireBytes"`
-	// FrameworkJSWireBytes counts wire bytes of JavaScript and WASM served
-	// from the framework's /gosx/ prefix plus inline executable script
-	// (inline bytes travel inside the document, so they are counted at their
-	// share of the document's compression ratio).
+	// FrameworkJSWireBytes counts downloaded JavaScript, WASM and programs
+	// under the framework's /gosx/ prefix. Inline scripts travel in HTML and
+	// are counted there, without an estimated compression allocation.
 	FrameworkJSWireBytes int64 `json:"frameworkJsWireBytes"`
 
 	// LazyWireBytes sums the on-demand runtime chunks the page advertises
@@ -107,6 +124,51 @@ type Options struct {
 	Client *http.Client
 	// UserAgent overrides MobileUserAgent.
 	UserAgent string
+	// Visit shares a cache across sequential page views. Nil measures a cold
+	// page. Use a separate Visit for each app/site visit.
+	Visit *Visit
+}
+
+// Visit holds fresh hashed assets between sequential page views. Its zero
+// value is an empty cache. Documents and diagnostic on-demand probes are
+// always fetched, and non-cacheable assets are downloaded on every page.
+type Visit struct {
+	assets map[string]cachedAsset
+}
+
+type cachedAsset struct {
+	resource       Resource
+	body           []byte
+	url            *url.URL
+	requestHeaders http.Header
+}
+
+func (a cachedAsset) matches(headers http.Header) bool {
+	for _, name := range strings.Split(a.resource.Vary, ",") {
+		name = strings.TrimSpace(name)
+		if name != "" && strings.Join(a.requestHeaders.Values(name), "\x00") != strings.Join(headers.Values(name), "\x00") {
+			return false
+		}
+	}
+	return true
+}
+
+// resourceRequestHeaders mirrors the headers on an eager request, including
+// cookies the HTTP client will attach. Capture them before sending, since the
+// response can change the jar. Absent headers also match a Vary field.
+func resourceRequestHeaders(client *http.Client, ua, raw string) http.Header {
+	header := make(http.Header)
+	header.Set("User-Agent", ua)
+	header.Set("Accept-Encoding", AcceptEncoding)
+	if client.Jar != nil {
+		if u, err := url.Parse(raw); err == nil {
+			req := &http.Request{Header: header}
+			for _, cookie := range client.Jar.Cookies(u) {
+				req.AddCookie(cookie)
+			}
+		}
+	}
+	return header
 }
 
 var hashedSegment = regexp.MustCompile(`[.-][0-9a-fA-F]{8,}[.-]|[.-][0-9a-fA-F]{8,}$|/[0-9a-fA-F]{16,}/`)
@@ -162,7 +224,7 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 	}
 	out := Route{App: app, Route: route, URL: pageURL.String(), WireBytes: map[string]int64{}}
 
-	doc, docHops, body, finalURL, err := fetch(ctx, client, ua, pageURL.String(), "navigation")
+	doc, docHops, body, finalURL, err := fetch(ctx, client, ua, pageURL.String(), "navigation", nil)
 	if err != nil {
 		return Route{}, err
 	}
@@ -217,7 +279,11 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 	}
 	for _, t := range targets {
 		r, abs, key := t.ref, t.abs, t.key
-		res, hops, _, _, err := fetch(ctx, client, ua, key, r.initiator)
+		visit := opts.Visit
+		if r.kind == KindLazyScript {
+			visit = nil
+		}
+		res, hops, _, _, err := fetch(ctx, client, ua, key, r.initiator, visit)
 		if r.kind == KindLazyScript {
 			// Redirects in front of an on-demand chunk are on-demand too:
 			// list them for the cookie and cache policies, but count their
@@ -241,15 +307,14 @@ func Crawl(ctx context.Context, opts Options, app, base, route string) (Route, e
 			continue
 		}
 		out.Resources = append(out.Resources, res)
-		out.Requests++
+		if !res.CacheHit {
+			out.Requests++
+		}
 		out.WireBytes[res.Kind] += res.WireBytes
 		out.TotalWireBytes += res.WireBytes
 		if res.Framework && (res.Kind == KindScript || res.Kind == KindWASM || res.Kind == KindProgram) {
 			out.FrameworkJSWireBytes += res.WireBytes
 		}
-	}
-	if out.InlineScriptBytes > 0 && doc.DecodedBytes > 0 {
-		out.FrameworkJSWireBytes += out.InlineScriptBytes * doc.WireBytes / doc.DecodedBytes
 	}
 	sort.SliceStable(out.Resources, func(i, j int) bool { return out.Resources[i].URL < out.Resources[j].URL })
 	return out, nil
@@ -438,10 +503,22 @@ func textOf(n *html.Node) string {
 // fetch follows up to 10 redirects by hand, so every hop is measured: each
 // redirect response is returned in hops with its bytes, cookies and cache
 // headers, and counts as a request.
-func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string) (Resource, []Resource, []byte, *url.URL, error) {
+func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string, visit *Visit) (Resource, []Resource, []byte, *url.URL, error) {
 	var hops []Resource
 	current := raw
 	for hop := 0; ; hop++ {
+		key := current
+		var requestHeaders http.Header
+		if visit != nil {
+			requestHeaders = resourceRequestHeaders(client, ua, current)
+			if cached, ok := visit.assets[key]; ok && time.Now().Before(cached.resource.cacheUntil) && cached.matches(requestHeaders) {
+				res := cached.resource
+				res.Initiator = initiator
+				res.CacheHit = true
+				res.WireBytes = 0
+				return res, hops, cached.body, cached.url, nil
+			}
+		}
 		res, body, reqURL, location, err := fetchOnce(ctx, client, ua, current, initiator)
 		if err != nil {
 			return Resource{}, hops, nil, nil, err
@@ -450,6 +527,12 @@ func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string) 
 			if res.Status != http.StatusOK {
 				return res, hops, body, reqURL, fmt.Errorf("GET %s: status %d", current, res.Status)
 			}
+			if visit != nil && res.Hashed && !res.cacheUntil.IsZero() {
+				if visit.assets == nil {
+					visit.assets = make(map[string]cachedAsset)
+				}
+				visit.assets[key] = cachedAsset{resource: res, body: body, url: reqURL, requestHeaders: requestHeaders}
+			}
 			return res, hops, body, reqURL, nil
 		}
 		if hop >= 10 {
@@ -457,7 +540,9 @@ func fetch(ctx context.Context, client *http.Client, ua, raw, initiator string) 
 		}
 		res.Kind = KindRedirect
 		hops = append(hops, res)
-		current = reqURL.ResolveReference(location).String()
+		next := reqURL.ResolveReference(location)
+		next.Fragment = ""
+		current = next.String()
 	}
 }
 
@@ -474,6 +559,7 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 		req.Header.Set("Sec-Fetch-Dest", "document")
 		req.Header.Set("Sec-Fetch-Site", "none")
 	}
+	requestTime := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
 		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: %w", raw, err)
@@ -489,6 +575,7 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: decode %s: %w", raw, enc, err)
 	}
 	cc := resp.Header.Get("Cache-Control")
+	responseTime := time.Now()
 	res := Resource{
 		URL:             req.URL.RequestURI(),
 		Initiator:       initiator,
@@ -497,9 +584,11 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 		DecodedBytes:    int64(len(decoded)),
 		ContentEncoding: enc,
 		CacheControl:    cc,
+		Vary:            strings.Join(resp.Header.Values("Vary"), ", "),
 		Immutable:       strings.Contains(strings.ToLower(cc), "immutable"),
 		Hashed:          IsHashedURL(req.URL.String()),
 		SetCookie:       len(resp.Header.Values("Set-Cookie")) > 0,
+		cacheUntil:      cacheUntil(resp.Header, responseTime, responseTime.Sub(requestTime)),
 	}
 	var location *url.URL
 	switch resp.StatusCode {
@@ -514,6 +603,68 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 		}
 	}
 	return res, decoded, req.URL, location, nil
+}
+
+// cacheUntil accepts explicit browser freshness, not immutable alone. Cache
+// entries that need validation (no-cache), forbid storage (no-store), are
+// already stale, or have Vary: * are never reused. Other Vary fields are
+// matched against the request headers, including cookies, on each reuse.
+// Date, Age and response delay follow RFC 9111 sections 4.2.1 and 4.2.3.
+func cacheUntil(header http.Header, now time.Time, responseDelay time.Duration) time.Time {
+	for _, vary := range header.Values("Vary") {
+		for _, name := range strings.Split(vary, ",") {
+			if strings.TrimSpace(name) == "*" {
+				return time.Time{}
+			}
+		}
+	}
+	var lifetime time.Duration
+	hasMaxAge := false
+	for _, directive := range strings.Split(strings.Join(header.Values("Cache-Control"), ","), ",") {
+		name, value, _ := strings.Cut(strings.TrimSpace(directive), "=")
+		switch strings.ToLower(strings.TrimSpace(name)) {
+		case "no-store", "no-cache":
+			return time.Time{}
+		case "max-age":
+			seconds, err := strconv.ParseInt(strings.Trim(strings.TrimSpace(value), `"`), 10, 32)
+			if err != nil || seconds <= 0 || hasMaxAge {
+				return time.Time{}
+			}
+			lifetime = time.Duration(seconds) * time.Second
+			hasMaxAge = true
+		}
+	}
+	date, err := http.ParseTime(header.Get("Date"))
+	if err != nil {
+		date = now
+	}
+	if !hasMaxAge {
+		expires, err := http.ParseTime(header.Get("Expires"))
+		if err != nil {
+			return time.Time{}
+		}
+		lifetime = expires.Sub(date)
+	}
+	age := now.Sub(date)
+	if age < 0 {
+		age = 0
+	}
+	suppliedAge := responseDelay
+	if value := header.Get("Age"); value != "" {
+		seconds, err := strconv.ParseInt(value, 10, 32)
+		if err != nil || seconds < 0 {
+			return time.Time{}
+		}
+		suppliedAge += time.Duration(seconds) * time.Second
+	}
+	if suppliedAge > age {
+		age = suppliedAge
+	}
+	lifetime -= age
+	if lifetime <= 0 {
+		return time.Time{}
+	}
+	return now.Add(lifetime)
 }
 
 func decode(enc string, body []byte) ([]byte, error) {
