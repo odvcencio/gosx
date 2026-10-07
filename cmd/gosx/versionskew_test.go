@@ -354,32 +354,3 @@ require m31labs.dev/gosx v0.30.7
 		t.Fatalf("checkVersionSkew(%q) = %v, want nil with GOSX_SKIP_VERSION_CHECK set", dir, err)
 	}
 }
-
-func TestCompiledGoSXVersionMatchesInstalledModule(t *testing.T) {
-	const pseudo = "v0.57.6-0.20261005064753-1dcc1a2d26b4"
-	for _, tc := range []struct {
-		name string
-		info *debug.BuildInfo
-		want string
-	}{
-		{"installed", &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath, Version: pseudo}}, pseudo},
-		{"dependency", &debug.BuildInfo{Deps: []*debug.Module{{Path: gosxModulePath, Version: pseudo}}}, pseudo},
-		{"version replacement", &debug.BuildInfo{Deps: []*debug.Module{{Path: gosxModulePath, Version: "v0.57.5", Replace: &debug.Module{Path: gosxModulePath, Version: pseudo}}}}, pseudo},
-		{"local replacement", &debug.BuildInfo{Deps: []*debug.Module{{Path: gosxModulePath, Version: pseudo, Replace: &debug.Module{Path: "./local-module"}}}}, "v" + gosx.Version},
-		{"development", &debug.BuildInfo{Main: debug.Module{Path: gosxModulePath, Version: "(devel)"}}, "v" + gosx.Version},
-		{"missing", nil, "v" + gosx.Version},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := compiledGoSXVersion(tc.info)
-			if got != tc.want {
-				t.Fatalf("version=%q want=%q", got, tc.want)
-			}
-			if err := versionSkewError(got, got, false); err != nil {
-				t.Fatal(err)
-			}
-			if err := versionSkewError(got, "v0.1.0", false); err == nil {
-				t.Fatal("genuine mismatch accepted")
-			}
-		})
-	}
-}

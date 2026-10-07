@@ -44,10 +44,27 @@ var readCLIBuildInfo = debug.ReadBuildInfo
 // constant so the existing development workflow keeps its diagnostic.
 func cliGoSXVersion() string {
 	info, ok := readCLIBuildInfo()
-	if !ok {
-		info = nil
+	if ok && info != nil {
+		if info.Main.Path == gosxModulePath {
+			return buildModuleVersion(&info.Main)
+		}
+		for _, dep := range info.Deps {
+			if dep != nil && dep.Path == gosxModulePath {
+				return buildModuleVersion(dep)
+			}
+		}
 	}
-	return compiledGoSXVersion(info)
+	return "v" + gosx.Version
+}
+
+func buildModuleVersion(mod *debug.Module) string {
+	if mod.Replace != nil {
+		mod = mod.Replace
+	}
+	if mod.Version != "" && mod.Version != "(devel)" {
+		return mod.Version
+	}
+	return "v" + gosx.Version
 }
 
 // goListModule mirrors the subset of `go list -m -json` fields this check
@@ -132,25 +149,4 @@ func versionSkewError(cliVersion, projectVersion string, hasLocalReplace bool) e
 		"gosx %s cannot operate on a project pinned to m31labs.dev/gosx %s. Run: go install m31labs.dev/gosx/cmd/gosx@%s, or set %s=1 to override",
 		cliVersion, projectVersion, projectVersion, skipVersionCheckEnv,
 	)
-}
-
-// compiledGoSXVersion compares the actual installed module, including pseudo
-// versions, rather than the last release constant retained in its source.
-func compiledGoSXVersion(info *debug.BuildInfo) string {
-	if info != nil {
-		modules := append([]*debug.Module{&info.Main}, info.Deps...)
-		for _, mod := range modules {
-			if mod == nil || mod.Path != gosxModulePath {
-				continue
-			}
-			if mod.Replace != nil {
-				mod = mod.Replace
-			}
-			if mod.Version != "" && mod.Version != "(devel)" {
-				return mod.Version
-			}
-			break
-		}
-	}
-	return "v" + gosx.Version
 }
