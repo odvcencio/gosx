@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Preserve public immutable caching for framework runtime JS/WASM, emitted
+  assets, hashed images and versioned public assets when global auth middleware
+  reads the session on every request. Classify resolved assets explicitly;
+  cookies, session writes, HTML/data, session variance and private policies
+  still force private caching.
+
 - Compare projects against the CLI binary's compiled GoSX module version,
   including pseudo-versions. Development builds retain the release fallback;
   mismatched versions still report the matching install command.
