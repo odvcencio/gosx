@@ -210,16 +210,19 @@ func tupleKey(values []string) string {
 
 func (f *family) addCell(key string, values []string) {
 	c := &cell{values: make([]string, len(values))}
+	c.snapshotLabels = make([]LabelValue, len(values))
 	for i, value := range values {
 		c.values[i] = f.labels[i].values[value]
 	}
 	if f.kind == KindHistogram {
 		c.histogram.bounds = f.bounds
 		c.histogram.counts = make([]uint64, len(f.bounds)+1)
+		c.snapshotHistogram = &histogramScratch{bounds: make([]float64, len(f.bounds)), counts: make([]uint64, len(f.bounds)+1)}
 	}
 	c.counter.cell, c.gauge.cell, c.histogram.cell = c, c, c
 	f.cells[strings.Clone(key)] = c
 	f.ordered = append(f.ordered, c)
+	f.snapshotSeries = append(f.snapshotSeries, SeriesSnapshot{})
 	slices.SortFunc(f.ordered, func(a, b *cell) int {
 		for i, value := range a.values {
 			if n := strings.Compare(value, b.values[i]); n != 0 {

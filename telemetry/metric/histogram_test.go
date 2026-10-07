@@ -3,6 +3,7 @@ package metric
 import (
 	"errors"
 	"math"
+	"runtime"
 	"slices"
 	"sync"
 	"testing"
@@ -79,6 +80,7 @@ func TestHistogramConcurrentConsistency(t *testing.T) {
 			}
 			return
 		default:
+			runtime.Gosched() // wasm cooperatively schedules its single OS thread
 		}
 	}
 }

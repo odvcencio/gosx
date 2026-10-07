@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Export bounded, copied metric snapshots and deterministic Prometheus text
+  with shared admission, consistent histogram buckets, and a 2 MiB output cap.
+  Snapshot adapters can retain an explicit clone within their own capacity.
+
 - Add a bounded metric registry with finite label domains, atomic tuple batches,
   scalar sample and byte reservations, sealed registration, and consistent
   counter, gauge, and histogram instruments. Application families cannot use

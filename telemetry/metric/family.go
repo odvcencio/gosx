@@ -34,16 +34,17 @@ const (
 )
 
 type family struct {
-	registry   *registryState
-	name, help string
-	kind       InstrumentKind
-	labels     []labelDomain
-	bounds     []float64
-	cells      map[string]*cell
-	ordered    []*cell
-	counter    CounterVec
-	gauge      GaugeVec
-	histogram  HistogramVec
+	registry       *registryState
+	name, help     string
+	kind           InstrumentKind
+	labels         []labelDomain
+	bounds         []float64
+	cells          map[string]*cell
+	ordered        []*cell
+	snapshotSeries []SeriesSnapshot
+	counter        CounterVec
+	gauge          GaugeVec
+	histogram      HistogramVec
 }
 
 type labelDomain struct {
@@ -135,6 +136,7 @@ func (r *Registry) register(d descriptor) (*family, error) {
 		f.addCell("", nil)
 	}
 	s.families[f.name] = f
+	s.snapshotFamilies = append(s.snapshotFamilies, FamilySnapshot{})
 	s.ordered = append(s.ordered, f)
 	slices.SortFunc(s.ordered, func(a, b *family) int { return strings.Compare(a.name, b.name) })
 	s.samples += samples
@@ -235,7 +237,7 @@ func descriptorBytes(d descriptor) int64 {
 
 func domainBytes(value string) int64 { return int64(128 + len(value)) }
 func cellBytes(values []string, bounds []float64) int64 {
-	n := int64(384 + 64*len(values) + 24*(len(bounds)+1))
+	n := int64(512 + 64*len(values) + 24*(len(bounds)+1))
 	for _, value := range values {
 		n += int64(3*len(value) + 128)
 	}
