@@ -135,6 +135,55 @@
     return new Promise(poll);
   }
 
+  const timelineLoads = new Map();
+  function loadTimeline() {
+    if (window.__gosx_scene3d_timeline_api) return Promise.resolve(window.__gosx_scene3d_timeline_api);
+    if (timelineLoads.has(1)) return timelineLoads.get(1);
+    const promise = new Promise((resolve, reject) => {
+      const tag = Array.from(document.scripts).find(script => script.getAttribute("data-gosx-script") === "feature-scene3d");
+      const url = tag && tag.getAttribute("data-gosx-scene3d-timeline-url");
+      if (!url) return reject(new Error("Scene3D timeline chunk URL was not advertised"));
+      const script = document.createElement("script");
+      script.src = url; script.async = true; script.type = "text/javascript";
+      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
+      if (tag.nonce) script.nonce = tag.nonce;
+      script.onload = function() {
+        if (window.__gosx_scene3d_timeline_api) resolve(window.__gosx_scene3d_timeline_api);
+        else reject(new Error("Scene3D timeline chunk did not publish its API"));
+      };
+      script.onerror = function() { reject(new Error("failed to load Scene3D timeline chunk")); };
+      document.head.appendChild(script);
+    }).catch(function(error) { timelineLoads.delete(1); throw error; });
+    timelineLoads.set(1, promise);
+    return promise;
+  }
+
+  function playTimeline() {
+    const target = arguments[0], timeline = arguments[1], opts = arguments[2] || {}, id = key(target, opts);
+    return new Promise((resolve, reject) => {
+      const timeout = opts.timeoutMS ?? 10000;
+      if (!Number.isFinite(timeout)) return reject(new TypeError("Scene3D timeline timeout must be finite"));
+      const deadline = Date.now() + Math.max(0, timeout);
+      function poll() {
+        const rec = record(target, opts);
+        if (rec) {
+          // Custom ready handles may provide their own timeline implementation.
+          if (!rec.mount && typeof rec.handle.playTimeline === "function") {
+            return Promise.resolve().then(() => rec.handle.playTimeline(timeline)).then(resolve, reject);
+          }
+          const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
+          if (!mount) return reject(new Error("Scene3D timeline mount is unavailable"));
+          rec.mount = mount;
+          loadTimeline().then(function() {
+            return arguments[0].attach(timeline, mount, rec.handle, () => rec.mount.__gosxScene3DHandle === rec.handle);
+          }).then(resolve, reject);
+        } else if (!id || Date.now() >= deadline) reject(new Error("Scene3D timeline target is not ready"));
+        else setTimeout(poll, 16);
+      }
+      poll();
+    });
+  }
+
   function dispatchPoseFrame(target, frame, options) {
     var opts = options || {};
     var queueKey = key(target, opts) || target;
@@ -616,6 +665,7 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
+    playTimeline: playTimeline,
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,
