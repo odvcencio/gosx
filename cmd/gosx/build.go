@@ -737,7 +737,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	staticPages := 0
-	if !opts.Dev && builtServer {
+	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
 			AppRoot:      distDir,
 			OutputDir:    filepath.Join(distDir, "static"),
@@ -822,7 +822,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
 	fmt.Println("  • dist/ includes app/, content/, and public/ for file-routed runtime deployment")
-	if !opts.Dev && builtServer {
+	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
 		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
 		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
 	}
