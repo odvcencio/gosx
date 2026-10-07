@@ -8,6 +8,7 @@ build/
 !/docs/scene3d-v1-support.md
 !/docs/scene3d-text.md
 !/docs/scene3d-timeline.md
+!/docs/scene3d-particle-bursts.md
 !/docs/stripe.md
 !/docs/ui-recipes.md
 !/docs/controllers.md

@@ -38,6 +38,7 @@
     "scene3d/mount-telemetry.ts",
     "scene3d/hydrate-input.ts",
     "scene3d/command-runtime.ts",
+    "scene3d/particle-burst.ts",
     "scene3d/walk-surfaces.ts",
     "scene3d/vessel-physics.ts",
     "scene3d/vessel-input.ts",

@@ -57,16 +57,9 @@
     return loadCommandBridge().then(function(bridge) { return bridge && bridge.applyCommandScripts(root); });
   };
 
-  api.dispatchCommands = function(target, commands, options) {
-    return loadCommandBridge().then(function(bridge) { return bridge.dispatchCommands(target, commands, options); });
-  };
-  api.playTimeline = function() {
-    var args = arguments;
-    return loadCommandBridge().then(function() { return arguments[0].playTimeline.apply(null, args); });
-  };
-  api.dispatchPoseFrame = function(target, frame, options) {
-    return loadCommandBridge().then(function(bridge) { return bridge.dispatchPoseFrame(target, frame, options); });
-  };
+  ["dispatchCommands", "dispatchPoseFrame", "playTimeline", "burstParticles"].forEach(function(method) {
+    api[method] = async function() { return (await loadCommandBridge())[method].apply(null, arguments); };
+  });
   // GSP3 motion frame (see command-runtime.ts's "GPU-driven crowd motion"
   // section). Same lazy-load contract as dispatchPoseFrame above: the first
   // call to either fetches the one shared command-runtime chunk.
