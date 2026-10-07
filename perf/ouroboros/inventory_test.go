@@ -483,8 +483,8 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 		"__gosx_scene3d_ocean_query", "__gosx_scene3d_ocean_query_api", "__gosx_scene3d_ocean_waves",
 		"__gosx_scene3d_vessel_api", "__gosx_scene3d_vessel_input", "__gosx_scene3d_vessel_model",
 		"__gosx_scene3d_vessel_physics", "__gosx_scene3d_vessel_wake", "__gosx_scene3d_walk_surfaces",
-		// Finite choreography publishes this optional authority from its lazy chunk.
-		"__gosx_scene3d_timeline_api", "__gosx_scene3d_particle_burst_api"))
+		// Finite choreography and its demand-loaded coordinator publish optional authorities.
+		"__gosx_scene3d_timeline_api", "__gosx_scene3d_particle_burst_api", "__gosx_scene3d_presentation_api"))
 	if !equalStrings(audit.Reconciliation.MissingFromAnchor, wantReceiptOnly) {
 		t.Fatalf("receipt-only names = %+v, want %+v", audit.Reconciliation.MissingFromAnchor, wantReceiptOnly)
 	}
