@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
 	"sync"
 	"time"
 )
@@ -455,23 +456,66 @@ type liveRunSummary struct {
 // Status returns a snapshot of every registered task's status, overlaying live
 // run state (current attempt / progress) for tasks that are mid-run.
 func (s *Scheduler) Status() []TaskStatus {
+	statuses, _ := s.status(-1)
+	return statuses
+}
+
+// StatusLimit returns at most limit statuses in name order and reports whether
+// all registered tasks are included. A nonpositive limit returns no statuses.
+// Selection and temporary storage are bounded by limit, not the task count.
+func (s *Scheduler) StatusLimit(limit int) ([]TaskStatus, bool) {
+	if limit < 0 {
+		limit = 0
+	}
+	return s.status(limit)
+}
+
+func (s *Scheduler) status(limit int) ([]TaskStatus, bool) {
 	now := s.opts.Now()
 
 	s.mu.Lock()
 	// Collect a stable view of tasks and the newest live run per task.
-	names := make([]string, 0, len(s.tasks))
-	scheduleStrings := make(map[string]string, len(s.tasks))
-	progressTimeouts := make(map[string]*int64, len(s.tasks))
-	for name, r := range s.tasks {
-		names = append(names, name)
+	complete := limit < 0 || len(s.tasks) <= limit
+	if limit < 0 || limit > len(s.tasks) {
+		limit = len(s.tasks)
+	}
+	names := make([]string, 0, limit)
+	for name := range s.tasks {
+		if complete {
+			names = append(names, name)
+			continue
+		}
+		if limit == 0 {
+			break
+		}
+		pos := sort.SearchStrings(names, name)
+		if pos == limit {
+			continue
+		}
+		if len(names) < limit {
+			names = append(names, "")
+		}
+		copy(names[pos+1:], names[pos:])
+		names[pos] = name
+	}
+	if complete {
+		sort.Strings(names)
+	}
+	scheduleStrings := make(map[string]string, len(names))
+	progressTimeouts := make(map[string]*int64, len(names))
+	for _, name := range names {
+		r := s.tasks[name]
 		scheduleStrings[name] = scheduleString(r.task.Schedule)
 		if r.task.ProgressTimeout > 0 {
 			ms := r.task.ProgressTimeout.Milliseconds()
 			progressTimeouts[name] = &ms
 		}
 	}
-	live := make(map[string]liveRunSummary)
+	live := make(map[string]liveRunSummary, len(names))
 	for _, run := range s.runs {
+		if _, included := scheduleStrings[run.taskName]; !included {
+			continue
+		}
 		progressAt, progress := run.snapshot()
 		// Prefer the highest-attempt live run per task.
 		if existing, ok := live[run.taskName]; !ok || run.attempt >= existing.attempt {
@@ -488,6 +532,10 @@ func (s *Scheduler) Status() []TaskStatus {
 	out := make([]TaskStatus, 0, len(names))
 	for _, name := range names {
 		st, _ := s.opts.Store.Load(name)
+		if st.CurrentProgressAgeMs != nil {
+			age := *st.CurrentProgressAgeMs
+			st.CurrentProgressAgeMs = &age
+		}
 		st.Name = name
 		st.Schedule = scheduleStrings[name]
 		// Always reflect the task's ProgressTimeout configuration.
@@ -502,7 +550,7 @@ func (s *Scheduler) Status() []TaskStatus {
 		}
 		out = append(out, st)
 	}
-	return out
+	return out, complete
 }
 
 // Stop signals every schedule loop to exit, drains in-flight runs up to grace,

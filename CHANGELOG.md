@@ -7,6 +7,12 @@
   reads the session on every request. Classify resolved assets explicitly;
   cookies, session writes, HTML/data, session variance and private policies
   still force private caching.
+- Stop exposing `GET /_gosx/scheduled` on the public listener by default.
+  Building an app no longer creates a scheduler. The deprecated
+  `App.EnablePublicScheduledStatus()` opt-in lasts one minor release; protect
+  it with application authentication. Scheduled status handlers now return at
+  most 64 tasks, omit progress/error text, and report the fixed `task_failed`
+  error class. The response header `X-GoSX-Snapshot-Complete` reports truncation.
 
 - Compare projects against the CLI binary's compiled GoSX module version,
   including pseudo-versions. Development builds retain the release fallback;
