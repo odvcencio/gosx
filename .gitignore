@@ -6,10 +6,12 @@ build/
 !/docs/docs-site-spec.md
 !/docs/polar.md
 !/docs/scene3d-v1-support.md
+!/docs/scene3d-text.md
 !/docs/stripe.md
 !/docs/ui-recipes.md
 !/docs/desktop-code-signing.md
 !/docs/expression-support-matrix.md
+!/docs/immutable-asset-caching.md
 /gosx
 node_modules/
 
