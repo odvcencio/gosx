@@ -1486,6 +1486,7 @@
 	    let dragHandle = null;
 	    let gizmoDragHandle = null;
 	    let pickHandle = null;
+        let releaseControllerPickBridge = null;
 	    let latestScenePickDetail = null;
 
 	    function swapRenderer(nextRenderer, fallbackReason) {
@@ -2213,6 +2214,8 @@
     }
 
 	    function disposeSceneCanvasInteractionHandles() {
+          if (releaseControllerPickBridge) releaseControllerPickBridge();
+          releaseControllerPickBridge = null;
 	      if (dragHandle && typeof dragHandle.dispose === "function") {
 	        dragHandle.dispose();
 	      }
@@ -2232,6 +2235,7 @@
 	    }
 
 	    function installSceneCanvasInteractionHandles() {
+          releaseControllerPickBridge = setupSceneControllerPickBridge(mount, canvas, () => viewport, () => latestBundle);
 	      pickHandle = setupScenePickInteractions(canvas, props, function() {
 	        return viewport;
 	      }, function() {
@@ -3656,6 +3660,7 @@
       releaseSceneDebugSurface();
       dragHandle.dispose();
       pickHandle.dispose();
+      if (releaseControllerPickBridge) releaseControllerPickBridge();
       sceneControlHandle.dispose();
       if (typeof mount.removeEventListener === "function") mount.removeEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
       renderer.dispose();

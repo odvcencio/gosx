@@ -1212,6 +1212,7 @@ func addManifestRuntimeRefs(refs map[string]string, manifest *buildmanifest.Mani
 		{"/gosx/bootstrap-feature-engines.js", manifest.Runtime.BootstrapFeatureEngines.File},
 		{"/gosx/bootstrap-feature-hubs.js", manifest.Runtime.BootstrapFeatureHubs.File},
 		{"/gosx/bootstrap-feature-controllers.js", manifest.Runtime.BootstrapFeatureControllers.File},
+		{"/gosx/bootstrap-controller-input.js", manifest.Runtime.BootstrapControllerInput.File},
 		{"/gosx/bootstrap-feature-textlayout.js", manifest.Runtime.BootstrapFeatureTextlayout.File},
 		{"/gosx/bootstrap-feature-scene3d.js", manifest.Runtime.BootstrapFeatureScene3D.File},
 		{"/gosx/bootstrap-feature-scene3d-command.js", manifest.Runtime.BootstrapFeatureScene3DCommand.File},
@@ -1381,6 +1382,8 @@ func manifestRefSource(distDir string, manifest *buildmanifest.Manifest, ref str
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureHubs)
 	case "/gosx/bootstrap-feature-controllers.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureControllers)
+	case "/gosx/bootstrap-controller-input.js":
+		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapControllerInput)
 	case "/gosx/bootstrap-feature-textlayout.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureTextlayout)
 	case "/gosx/bootstrap-feature-scene3d.js":
@@ -1728,7 +1731,7 @@ func allManifestAssets(manifest *buildmanifest.Manifest) []buildmanifest.HashedA
 		rt.WASM, rt.WASMIslands, rt.WASMExec, rt.StandardGoWASMExec,
 		rt.Bootstrap, rt.BootstrapLite, rt.BootstrapRuntime,
 		rt.BootstrapFeatureIslands, rt.BootstrapFeatureEngines, rt.BootstrapFeatureHubs,
-		rt.BootstrapFeatureControllers, rt.BootstrapFeatureTextlayout,
+		rt.BootstrapFeatureControllers, rt.BootstrapControllerInput, rt.BootstrapFeatureTextlayout,
 		rt.BootstrapFeatureScene3D, rt.BootstrapFeatureScene3DCommand,
 		rt.BootstrapFeatureScene3DHydrate,
 		rt.BootstrapFeatureScene3DWebGPU, rt.BootstrapFeatureScene3DWebGL,

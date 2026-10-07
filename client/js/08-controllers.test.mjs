@@ -9,6 +9,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const source = [
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "controllers.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "page-disposal.ts"), "utf8"),
 ].join("\n");
 
 async function drainMicrotasks(turns = 8) {
@@ -17,7 +18,7 @@ async function drainMicrotasks(turns = 8) {
   }
 }
 
-class FakeTarget {
+export class FakeTarget {
   constructor(tagName = "div") {
     this.tagName = tagName.toUpperCase();
     this.id = "";
@@ -54,7 +55,7 @@ class FakeTarget {
   }
 }
 
-function createContext(options = {}) {
+export function createContext(options = {}) {
   const writes = [];
   const sharedValues = new Map([["$theme", "dark"]]);
   const subscribers = new Map();
@@ -74,14 +75,14 @@ function createContext(options = {}) {
       this.signal.aborted = true;
     }
   }
-  const window = {
+  const window = Object.assign(new FakeTarget("window"), {
     __gosx: {},
     location: { href: "https://example.test/app", origin: "https://example.test" },
     localStorage: {
       getItem(key) { return storage.has(key) ? storage.get(key) : null; },
       setItem(key, value) { storage.set(key, value); },
     },
-  };
+  });
   const fetchImpl = options.fetch || (async (url, init) => {
     assert.equal(url, "https://example.test/api/settings");
     assert.equal(init.credentials, "same-origin");
@@ -105,6 +106,12 @@ function createContext(options = {}) {
     }),
     URL,
     Date,
+    queueMicrotask,
+    CustomEvent: class {
+      constructor(type, init = {}) { this.type = type; this.detail = init.detail; this.bubbles = init.bubbles; }
+    },
+    setTimeout,
+
     AbortController,
     console,
     fetch: fetchImpl,
@@ -114,6 +121,11 @@ function createContext(options = {}) {
     },
     clearInterval() {},
     clearTimeout() {},
+    goWASMEnginePageGeneration: 0,
+    pendingEngineRuntimes: new Map(),
+    disposeManagedMotion() {},
+    disposeManagedTextLayouts() {},
+    pendingManifest: null,
     setSharedSignalValue(signal, value) {
       writes.push({ signal, value });
       sharedValues.set(signal, value);
@@ -136,11 +148,38 @@ function createContext(options = {}) {
   };
   vm.createContext(context);
   vm.runInContext(`(function(){${source}\nwindow.__test_mountAllControllers = mountAllControllers;})();`, context);
-  return { context, writes, timers, document, button, storage, aborts };
+  window.__gosx.islands = new Map();
+  window.__gosx.engines = new Map();
+  window.__gosx.host.hubs = { preparePage() {} };
+  const inputSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "controller-input.ts"), "utf8");
+  context.loadScriptTag = async () => vm.runInContext(inputSource, context);
+  window.__gosx.document = { get: () => ({ assets: { runtime: { bootstrapControllerInputPath: options.inputPath || "" } } }) };
+  return { context, writes, timers, document, button, storage, aborts, sharedValues, subscribers };
+}
+
+for (const nextPage of [false, true]) {
+  test(`page disposal cancels a delayed controller mount (next page: ${nextPage})`, async () => {
+    const env = createContext({ inputPath: "/gosx/bootstrap-controller-input.js" });
+    let loaded;
+    env.context.loadScriptTag = () => new Promise(resolve => { loaded = resolve; });
+    const manifest = value => ({ controllers: [{ id: "page-controller", config: {
+      outputs: [{ name: "view", signal: "$view", initial: value }],
+      storage: { namespace: "prefs" },
+    } }] });
+    const oldMount = env.context.window.__test_mountAllControllers(manifest("old"));
+    await env.context.window.__gosx_dispose_page();
+    const inputSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "controller-input.ts"), "utf8");
+    vm.runInContext(inputSource, env.context);
+    if (nextPage) await env.context.window.__test_mountAllControllers(manifest("new"));
+    loaded();
+    await oldMount;
+    assert.deepEqual(env.writes.map(write => write.value), nextPage ? ["new"] : []);
+    assert.equal(env.context.window.__gosx.controllers?.size || 0, nextPage ? 1 : 0);
+  });
 }
 
 test("declarative controller handles signals, keys, timers, fetch, storage, and dispose", async () => {
-  const env = createContext();
+  const env = createContext({ inputPath: "/gosx/bootstrap-controller-input.js" });
   const manifest = {
     controllers: [{
       id: "gosx-controller-0",

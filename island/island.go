@@ -53,6 +53,7 @@ type Renderer struct {
 	bootstrapFeatureEnginesPath        string
 	bootstrapFeatureHubsPath           string
 	bootstrapFeatureControllersPath    string
+	bootstrapControllerInputPath       string
 	bootstrapFeatureScene3dPath        string
 	bootstrapFeatureScene3dCommandPath string
 	// bootstrapFeatureScene3dInstanceStreamPath serves the opt-in binary
@@ -121,6 +122,7 @@ type Summary struct {
 	BootstrapFeatureEnginesPath     string
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
+	BootstrapControllerInputPath    string
 	BootstrapFeatureScene3DPath     string
 	// BootstrapFeatureTextLayoutPath is the content-hashed text-layout chunk
 	// URL, set on Scene3D pages. The client fetches that chunk on demand for
@@ -221,6 +223,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
 	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
 	renderer.bootstrapFeatureControllersPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-controllers.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureControllers.Hash))
+	renderer.bootstrapControllerInputPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-controller-input.js", strings.TrimSpace(runtimeAssets.BootstrapControllerInput.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
 	renderer.bootstrapFeatureScene3dCommandPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-command.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCommand.Hash))
 	renderer.bootstrapFeatureScene3dInstanceStreamPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-instance-stream.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DInstanceStream.Hash))
@@ -515,6 +518,14 @@ func (r *Renderer) SetBootstrapFeatureControllersPath(path string) {
 	r.bootstrapFeatureControllersPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapControllerInputPath overrides the demand-loaded input chunk URL.
+func (r *Renderer) SetBootstrapControllerInputPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapControllerInputPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureTextlayoutPath overrides the demand-loaded text-layout
 // engine chunk URL.
 func (r *Renderer) SetBootstrapFeatureTextlayoutPath(path string) {
@@ -726,6 +737,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureHubs, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-controllers.js", r.bootstrapFeatureControllersPath, r.runtimeAssets.BootstrapFeatureControllers):
 		return r.runtimeAssets.BootstrapFeatureControllers, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-controller-input.js", r.bootstrapControllerInputPath, r.runtimeAssets.BootstrapControllerInput):
+		return r.runtimeAssets.BootstrapControllerInput, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d.js", r.bootstrapFeatureScene3dPath, r.runtimeAssets.BootstrapFeatureScene3D):
 		return r.runtimeAssets.BootstrapFeatureScene3D, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-command.js", r.bootstrapFeatureScene3dCommandPath, r.runtimeAssets.BootstrapFeatureScene3DCommand):
@@ -901,6 +914,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
 	r.SetBootstrapFeatureControllersPath(runtime.BootstrapFeatureControllers)
+	r.SetBootstrapControllerInputPath(runtime.BootstrapControllerInput)
 	r.SetBootstrapFeatureTextlayoutPath(runtime.BootstrapFeatureTextlayout)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
 	r.SetBootstrapFeatureScene3DCommandPath(runtime.BootstrapFeatureScene3DCommand)
@@ -2149,6 +2163,12 @@ func (r *Renderer) Summary() Summary {
 		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
 		summary.BootstrapFeatureControllersPath = r.selectedBootstrapFeaturePath("controllers")
 		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
+	}
+	for _, entry := range r.manifest.Controllers {
+		if entry.Config.NeedsInputRuntime() {
+			summary.BootstrapControllerInputPath = r.bootstrapControllerInputPath
+			break
+		}
 	}
 	if plan.Mode == "lite" {
 		summary.PatchPath = ""
