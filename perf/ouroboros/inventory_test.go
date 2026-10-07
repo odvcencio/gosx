@@ -456,9 +456,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	if audit.Anchor.MethodVersion != compatibilityFullMethod || audit.Anchor.ClassifierVersion != compatibilityFullClassifier {
 		t.Fatalf("anchor metadata = %q/%q, want full E metadata", audit.Anchor.MethodVersion, audit.Anchor.ClassifierVersion)
 	}
-	// The recovery API is published only by the new failure-loaded chunk.
-	wantAdded := []string{"__gosx_scene3d_pipeline_recovery_api"}
-	if !equalStrings(audit.Reconciliation.AddedSinceAnchor, wantAdded) || len(audit.Reconciliation.RemovedSinceAnchor) != 0 {
+	if len(audit.Reconciliation.AddedSinceAnchor) != 0 || len(audit.Reconciliation.RemovedSinceAnchor) != 0 {
 		t.Fatalf("anchor/current changed unexpectedly: %+v", audit.Reconciliation)
 	}
 	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}
@@ -482,6 +480,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	// authorities extend the full source inventory. Keep the pinned historical
 	// receipt unchanged and explicitly reconcile every added authority name.
 	wantFullOnly = uniqueStrings(append(wantFullOnly,
+		"__gosx_scene3d_pipeline_recovery_api",
 		"__gosx_scene3d_ocean_query", "__gosx_scene3d_ocean_query_api", "__gosx_scene3d_ocean_waves",
 		"__gosx_scene3d_vessel_api", "__gosx_scene3d_vessel_input", "__gosx_scene3d_vessel_model",
 		"__gosx_scene3d_vessel_physics", "__gosx_scene3d_vessel_wake", "__gosx_scene3d_walk_surfaces"))

@@ -2086,7 +2086,7 @@ function gosxConfigureSceneScript(script, role, src) {
     return sceneGatedFeaturePromises[kind];
   }
 
-  window.__gosx_scene3d_api.ensurePipelineRecovery = function() {
+  (window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {})).ensurePipelineRecovery = function() {
     return ensureSceneGatedFeatureLoaded("pipeline-recovery", "gosxScene3dPipelineRecoveryUrl", "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js");
   };
 

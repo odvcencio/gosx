@@ -35,6 +35,7 @@ const webgpuSource = readSceneRendererBackendSrc("webgpu");
 // (its only caller) moved there when the former single 20-scene-mount.js split
 // into the 20a..20h file set.
 const backendMountSource = readSrc("../runtime/scene3d/mount-webgl.ts");
+const pipelineRecoverySource = readSrc("../runtime/scene3d/pipeline-recovery.ts");
 
 // loadRenderTruth evaluates 15a in a throwaway VM with a minimal window and
 // returns the published API. No DOM library needed: the only DOM surface the
@@ -264,7 +265,7 @@ test("render truth: device loss and uncaptured GPU errors reach the journal", ()
   assert.match(webgpuSource, /renderTruth\(\)\.record\("device-lost"/);
   assert.match(webgpuSource, /addEventListener\("uncapturederror"/);
   assert.match(webgpuSource, /function uncaptured\(event/);
-  assert.match(webgpuSource, /renderTruth\(\)\.pipelineFailure\(pass \|\| "core", label, message\)/);
+  assert.match(pipelineRecoverySource, /truth\.pipelineFailure\(pass \|\| "core", label, message\)/);
 });
 
 test("render truth: the mount publishes ONE machine-readable backend record", () => {

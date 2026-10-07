@@ -759,11 +759,8 @@
       setAttrValue(mount, sceneAttr("webgpu-device-lost-reason"),
         reason && renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason || "" : "");
     }
-
     function rendererReportsWebGPUFailure(diagnostics) {
-      if (!diagnostics) {
-        return "";
-      }
+      if (!diagnostics) return "";
       if (diagnostics.pipelineCoreError) return "webgpu-pipeline-failed";
       if (diagnostics.deviceLost) {
         return "webgpu-device-lost";
