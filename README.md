@@ -785,6 +785,9 @@ gosx perf budget perf.json budget.json # Check a saved report
 gosx size [--json] dist               # Report exact gzip sizes and feature chunks
 ```
 
+Performance instrumentation preserves chained runtime-ready callbacks, including
+soft navigation, and records readiness once per page.
+
 Production builds require TinyGo on `PATH`, emit capability-linked `core`,
 `engine`, `collab`, and `full` runtime profiles (plus the legacy `islands`
 compatibility artifact), and write `.gz` sidecars for immutable runtime assets
