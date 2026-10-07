@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Compile Selena browser programs as GLSL ES 3.00 for WebGL2, including derivative
+  shaders. Match post vertices to the WebGL quad and bottom-left texture origin.
+  Expose per-target host requirements while keeping WGSL unchanged.
+- Retain requested Selena target artifacts, including Metal and GLSL,
+  through canonical IR and native render bundles. Native previews and renderer
+  frame stats report custom mesh programs replaced by the standard shader.
+
 - Preserve public immutable caching for framework runtime JS/WASM, emitted
   assets, hashed images and versioned public assets when global auth middleware
   reads the session on every request. Classify resolved assets explicitly;
