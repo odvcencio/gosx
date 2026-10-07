@@ -2343,6 +2343,17 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		}
 	case HTML:
 		l.pendingHTML = append(l.pendingHTML, pendingHTML{html: current, parent: parent})
+	case Text3D:
+		if surface, err := current.Surface(); err == nil {
+			if parent.Rotation != (quaternion{W: 1}) {
+				surface.Rotation = eulerFromQuaternion(parent.Rotation.mul(quaternionFromEuler(surface.Rotation)).normalized())
+			}
+			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: surface, parent: parent})
+		}
+	case *Text3D:
+		if current != nil {
+			l.lowerNode(*current, parent)
+		}
 	case *HTML:
 		if current != nil {
 			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: *current, parent: parent})
