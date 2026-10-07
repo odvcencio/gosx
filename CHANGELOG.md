@@ -6,6 +6,12 @@
   models update their parent matrices while preserving imported primitive
   materials, immutable geometry, and GPU residency. Commands during asset
   loading supersede stale hydration; fitted models retain their fit scale.
+- Keep compatible committed actors moving while newcomers load; failed or
+  superseded hydration cannot restore an older pose or retain retired wrappers.
+  Cache explicit instanced CPU skin/node/morph playback owners across pose and
+  membership updates, retain zero-scale nonnegative instances, defer early
+  binary pose frames until hydration commits, and bound playback ownership to
+  the current scene membership.
 
 - Preserve public immutable caching for framework runtime JS/WASM, emitted
   assets, hashed images and versioned public assets when global auth middleware
