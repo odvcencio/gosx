@@ -15,10 +15,11 @@ func (t *Telemetry) run() {
 		var cancel context.CancelFunc
 		if t.closeContext != nil {
 			if t.closeResult == nil {
-				t.closeResult = t.closeContext.Err()
+				t.closeResult = t.closeContextError()
 			}
 			cancel = t.closeCancel
 		}
+		t.closeSource = nil
 		t.active.Store(false)
 		close(t.done)
 		t.mu.Unlock()
@@ -55,13 +56,31 @@ func (t *Telemetry) run() {
 			if ctx != nil {
 				t.mu.Lock()
 				if t.closeResult == nil {
-					t.closeResult = ctx.Err()
+					t.closeResult = t.closeContextError()
 				}
 				t.mu.Unlock()
 				return
 			}
 		}
 	}
+}
+
+// A parent's Done can close before cancellation reaches this child. Capture
+// the source error and an elapsed deadline while holding the owner lock.
+func (t *Telemetry) closeContextError() error {
+	ctx := t.closeContext
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if t.closeSource != nil {
+		if err := t.closeSource.Err(); err != nil {
+			return err
+		}
+	}
+	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
+		return context.DeadlineExceeded
+	}
+	return nil
 }
 
 func (t *Telemetry) clockFailed(err error) {
@@ -137,6 +156,7 @@ func (t *Telemetry) signal(ctx context.Context) {
 		if ctx == nil {
 			ctx = context.Background()
 		}
+		t.closeSource = ctx
 		t.closeContext, t.closeCancel = context.WithTimeout(ctx, 20*time.Second)
 		t.active.Store(false)
 		select {
