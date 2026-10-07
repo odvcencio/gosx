@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add `gosx deploy check [--json] dist` to validate server launch files, bundle
+  policy, asset checksums and compressed sidecars, and exported pages before
+  uploading a production bundle. The check never starts the application.
+
 - Compile Selena browser programs as GLSL ES 3.00 for WebGL2, including derivative
   shaders. Match post vertices to the WebGL quad and bottom-left texture origin.
   Expose per-target host requirements while keeping WGSL unchanged.
