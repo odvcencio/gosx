@@ -1926,7 +1926,8 @@ const routeBudgets = [
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     raw: 1384500,
     gzip: 383800,
-    brotli: 321374,
+    // Preserve pipeline recovery's +1,374 target delta over main's 320,500.
+    brotli: 321874,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2491,7 +2492,8 @@ const routeBudgets = [
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1235900,
     gzip: 340400,
-    brotli: 284679,
+    // Preserve pipeline recovery's +1,374 target delta over main's 283,705.
+    brotli: 285079,
   },
 
 ];
