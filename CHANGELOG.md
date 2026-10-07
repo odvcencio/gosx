@@ -6,6 +6,11 @@
   portable wall/elapsed clock types and a deterministic fake clock. Wall jumps
   do not advance elapsed deadlines, and tickers need no conversion goroutine.
   Native attachment and feature implementations follow in separate slices.
+  Unimplemented opt-in features return a fixed unsupported configuration error.
+  Listener validation rejects short, malformed and shared credentials, requires
+  authentication for non-loopback IPs, and rejects DNS listener names. Empty
+  environment variables preserve code settings; environment enables cannot
+  override an explicit Disabled flag. Credential files are read at startup.
 
 - Expose bounded, copied catalogs of registered observation patterns, merging
   method sets across mounts without expanding router-relative paths. App head

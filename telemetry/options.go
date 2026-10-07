@@ -152,12 +152,16 @@ func telemetrySwitch(value string) (bool, error) {
 	}
 }
 
-// FromEnv overlays only present telemetry variables and validates the result.
+// FromEnv overlays nonempty telemetry variables and validates the result.
+// The environment can disable telemetry, but cannot reenable Disabled in code.
 // An environment secret never enables visitor identity. Values stay out of errors.
+// Credential files are read only at startup, not during this pure validation.
 func FromEnv(base Options) (Options, error) {
 	var err error
 	if value, ok := os.LookupEnv("GOSX_TELEMETRY"); ok {
-		base.Disabled, err = telemetrySwitch(value)
+		disabled, switchErr := telemetrySwitch(value)
+		err = switchErr
+		base.Disabled = base.Disabled || disabled
 		if err != nil {
 			return Options{}, err
 		}
@@ -172,15 +176,15 @@ func FromEnv(base Options) (Options, error) {
 		{"GOSX_TELEMETRY_ADMIN_TOKEN", &base.Listen.Admin.Token},
 		{"GOSX_TELEMETRY_ADMIN_TOKEN_FILE", &base.Listen.Admin.TokenFile},
 	} {
-		if value, ok := os.LookupEnv(item.name); ok {
+		if value, ok := os.LookupEnv(item.name); ok && value != "" {
 			*item.dst = value
 		}
 	}
-	if value, ok := os.LookupEnv("GOSX_TELEMETRY_SECRET"); ok && base.Visitor.Enabled && base.Visitor.Key != nil {
+	if value, ok := os.LookupEnv("GOSX_TELEMETRY_SECRET"); ok && value != "" && base.Visitor.Enabled && base.Visitor.Key != nil {
 		base.Visitor.Secret = []byte(value)
 	}
 	if value, ok := os.LookupEnv("GOSX_TELEMETRY_SPOOL_DIR"); ok && value != "" {
-		return Options{}, invalid("spool", "unavailable")
+		return Options{}, invalid("spool", "unsupported")
 	}
 	return normalize(base)
 }
@@ -279,10 +283,8 @@ func normalize(o Options) (Options, error) {
 		o.Sessions.Visits = true
 		o.Sessions.HubSessions = true
 	}
-	for _, cred := range []Credential{o.Listen.Metrics, o.Listen.Admin} {
-		if cred.Token != "" && cred.TokenFile != "" {
-			return Options{}, invalid("credential", "duplicate_source")
-		}
+	if err := validateListenerOptions(o.Listen); err != nil {
+		return Options{}, err
 	}
 	for _, values := range []*[]string{&o.ClientEvents.Categories, &o.ClientEvents.Codes, &o.Metrics.AuthTypes, &o.Metrics.AuthProviders, &o.Metrics.DegradedComponents, &o.Metrics.ScheduledTasks, &o.Metrics.ReadinessChecks} {
 		if len(*values) > 64 {
@@ -349,6 +351,20 @@ func normalize(o Options) (Options, error) {
 	}
 	if o.Limits.MaxQueuedBytes > math.MaxInt64-reserved || reserved+o.Limits.MaxQueuedBytes > o.Limits.MemoryBudgetBytes || o.Limits.MaxQueuedBytes < int64(o.Activities.MaxRecordBytes)+256 {
 		return Options{}, invalid("memory_bytes", "incompatible_reservations")
+	}
+	for _, feature := range []struct {
+		field    string
+		selected bool
+	}{
+		{"persistence", o.Persistence.Enabled || o.Persistence.ContinueOnUnavailable},
+		{"sessions", o.Sessions.Enabled},
+		{"vitals", o.Vitals.SampleRate > 0 || o.Vitals.EngineSampleRate > 0 || o.Vitals.ClientHealthSampleRate > 0 || len(o.Vitals.Engines) > 0},
+		{"visitor", o.Visitor.Enabled},
+		{"desktop", o.Desktop != nil || o.Mode == ModeDesktop},
+	} {
+		if feature.selected {
+			return Options{}, invalid(feature.field, "unsupported")
+		}
 	}
 	return o, nil
 }
