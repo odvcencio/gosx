@@ -89,7 +89,6 @@ func (t *Telemetry) updateCore(now Instant) {
 	if elapsed < 0 {
 		elapsed = 0
 	}
-	t.core.uptime.Set(elapsed.Seconds())
 	usage := t.registry.Usage()
 	t.core.series.Set(float64(usage.Samples))
 	// Fixed owner/channel/clock state is reserved independently of the registry.
@@ -98,4 +97,6 @@ func (t *Telemetry) updateCore(now Instant) {
 		bytes += t.hubs.bytes.Load()
 	}
 	t.core.memory.Set(float64(usage.Bytes + bytes))
+	// Publish the collection time after refreshing its usage gauges.
+	t.core.uptime.Set(elapsed.Seconds())
 }
