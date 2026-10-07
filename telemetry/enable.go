@@ -33,6 +33,7 @@ type Telemetry struct {
 	start               Instant
 	boot, limiterSalt   [16]byte
 	core                coreMetrics
+	hubs                *hubState
 	ownerBytes          int64
 	faultOnce           sync.Once
 }
@@ -82,7 +83,7 @@ func Enable(app *server.App, opts Options) (*Telemetry, error) {
 		return nil, err
 	}
 	t := &Telemetry{opts: o, wake: make(chan struct{}, 1), done: make(chan struct{})}
-	remove, err := app.UseShutdownHook("telemetry", server.ShutdownHooks{Signal: t.signal, Flush: t.Close})
+	remove, err := app.UseShutdownHook("telemetry", server.ShutdownHooks{Signal: t.prepareShutdown, Flush: t.Close})
 	if err != nil {
 		var config *ConfigError
 		if errors.As(err, &config) && config.Code == "duplicate_name" {

@@ -8,6 +8,7 @@ import (
 
 func (t *Telemetry) run() {
 	defer func() {
+		t.releaseHubs()
 		if err := stopTicker(t.ticker); err != nil {
 			t.clockFailed(err)
 		}
@@ -122,7 +123,9 @@ func stampTicker(t Ticker, stamp time.Time) (now Instant, err error) {
 	return now, nil
 }
 
-func (t *Telemetry) signal(ctx context.Context) {
+// Signal closes admission. Existing hub callbacks stay subscribed through
+// source drain; only the later Flush/Close wakes the worker to detach them.
+func (t *Telemetry) prepareShutdown(ctx context.Context) {
 	if t == nil || t.done == nil {
 		return
 	}
@@ -139,12 +142,19 @@ func (t *Telemetry) signal(ctx context.Context) {
 		}
 		t.closeContext, t.closeCancel = context.WithTimeout(ctx, 20*time.Second)
 		t.active.Store(false)
-		select {
-		case t.wake <- struct{}{}:
-		default:
-		}
 	}
 	t.mu.Unlock()
+}
+
+func (t *Telemetry) signal(ctx context.Context) {
+	t.prepareShutdown(ctx)
+	if t == nil || t.done == nil {
+		return
+	}
+	select {
+	case t.wake <- struct{}{}:
+	default:
+	}
 }
 
 // Close shares the one worker completion. Every caller keeps its own deadline;

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Register bounded hub telemetry groups with finite event and disconnect labels,
+  exact logical payload counts, sampled queue depths, control RTT, and slow-client
+  counters. Attachments release automatically when pumps finish, and telemetry
+  shutdown preserves source-drain callbacks before removing its subscriptions.
+  Counted histogram observations preserve coalesced broadcast samples atomically.
+
 - Add measured WebSocket control-ping RTT with matching sequence payloads and
   once-only timeouts. Queue sampling reports text and binary depth independently,
   and all full-buffer drops remain visible. Broadcast samples coalesce by depth

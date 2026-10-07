@@ -77,6 +77,9 @@ func (t *Telemetry) initializeRegistry() (err error) {
 		}
 		t.core.dropped[reason] = c
 	}
+	if err := t.initializeHubs(); err != nil {
+		return err
+	}
 	t.updateCore(t.start)
 	return nil
 }
@@ -90,5 +93,9 @@ func (t *Telemetry) updateCore(now Instant) {
 	usage := t.registry.Usage()
 	t.core.series.Set(float64(usage.Samples))
 	// Fixed owner/channel/clock state is reserved independently of the registry.
-	t.core.memory.Set(float64(usage.Bytes + t.ownerBytes))
+	bytes := t.ownerBytes
+	if t.hubs != nil {
+		bytes += t.hubs.bytes.Load()
+	}
+	t.core.memory.Set(float64(usage.Bytes + bytes))
 }
