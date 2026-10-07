@@ -285,6 +285,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-pipeline-recovery.js",
+      "sources": [
+        "../runtime/scene3d/pipeline-recovery.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-webgpu.js",
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
