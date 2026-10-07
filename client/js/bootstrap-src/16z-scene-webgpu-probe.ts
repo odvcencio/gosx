@@ -888,6 +888,9 @@
       console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
       return false;
     }
+    var scoped = typeof device.pushErrorScope === "function" && typeof device.popErrorScope === "function";
+    if (scoped) device.pushErrorScope("validation");
+    var validation;
     try {
       ctx.configure({
         device: device,
@@ -899,9 +902,20 @@
       console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
       try { if (typeof ctx.unconfigure === "function") ctx.unconfigure(); } catch (_e) {}
       return false;
+    } finally {
+      if (scoped) validation = device.popErrorScope().catch(function(error) { return error; });
     }
     try { if (typeof ctx.unconfigure === "function") ctx.unconfigure(); } catch (_e) {}
-    return true;
+    if (!validation) return true;
+    return validation.then(function(error) {
+      if (!error) return true;
+      _webgpuProbeError = String(error.message || error);
+      console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+      return false;
+    }).catch(function(error) {
+      _webgpuProbeError = String(error && error.message || error);
+      return false;
+    });
   }
 
   function sceneWebGPUStartProbe() {
@@ -968,7 +982,8 @@
       // adapter+device; catching it here keeps the mount canvas clean so the
       // WebGL2 fallback can acquire a context instead of dying with
       // "could not acquire a renderer".
-      if (!sceneWebGPUProbeCanvasContext(device)) {
+      return Promise.resolve(sceneWebGPUProbeCanvasContext(device)).then(function(contextReady) {
+      if (!contextReady) {
         if (!_webgpuProbeError) { _webgpuProbeError = "canvas webgpu context unavailable"; }
         _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;
@@ -989,6 +1004,7 @@
       sceneWebGPUWatchDeviceLoss(device);
       sceneWebGPUDispatchProbeReady(recoveredFromLoss);
       return true;
+      });
     }).catch(function(err) {
       _webgpuProbeError = String(err && (err.message || err) || "unknown error");
       console.warn("[gosx] WebGPU probe failed:", _webgpuProbeError);

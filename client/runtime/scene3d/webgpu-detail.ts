@@ -41,7 +41,7 @@ function sceneWebGPUDetailBakeResources(device: any, resources: any, placeholder
       return vec4f(select(vec3f(0.5), color.rgb, flags.x > 0.5), select(0.5, r, flags.z > 0.5));
     }`;
   const module = device.createShaderModule({ label: "detail-atlas-bake", code: code });
-  const pipeline = device.createRenderPipeline({ label: "detail-atlas-bake", layout: "auto",
+  const pipeline = wgpuCreateValidatedPipeline(device, "render", { label: "detail-atlas-bake", layout: "auto",
     vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: "rgba8unorm" }] },
     primitive: { topology: "triangle-list" },
   });
@@ -56,7 +56,7 @@ function sceneWebGPUBakeDetailAtlas(device: any, resources: any, atlas: any, inp
     const offset = Math.floor(layer / 2) * 3, normalPass = layer % 2 === 1;
     const src = inputs.records[offset + (normalPass ? 1 : 0)], rough = inputs.records[offset + 2];
     device.queue.writeBuffer(atlas.flags[layer], 0, new Float32Array(inputs.masks.slice(offset, offset + 3).concat(normalPass ? 1 : 0)));
-    const group = device.createBindGroup({ layout: bake.pipeline.getBindGroupLayout(0), entries: [
+    const group = device.createBindGroup({ layout: wgpuRequirePipeline(bake.pipeline).getBindGroupLayout(0), entries: [
       { binding: 0, resource: src && src.loaded ? src.view : bake.placeholder },
       { binding: 1, resource: rough && rough.loaded ? rough.view : bake.placeholder },
       { binding: 2, resource: resources.sampler }, { binding: 3, resource: { buffer: atlas.flags[layer] } },
@@ -66,7 +66,7 @@ function sceneWebGPUBakeDetailAtlas(device: any, resources: any, atlas: any, inp
         view: atlas.texture.createView({ dimension: "2d", baseArrayLayer: layer, arrayLayerCount: 1, baseMipLevel: mip, mipLevelCount: 1 }),
         loadOp: "clear", storeOp: "store", clearValue: { r: 0.5, g: 0.5, b: 0.5, a: 0.5 },
       }] });
-      pass.setPipeline(bake.pipeline); pass.setBindGroup(0, group); pass.draw(3); pass.end();
+      pass.setPipeline(wgpuRequirePipeline(bake.pipeline)); pass.setBindGroup(0, group); pass.draw(3); pass.end();
     }
   }
   device.queue.submit([encoder.finish()]);

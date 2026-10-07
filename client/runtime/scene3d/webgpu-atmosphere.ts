@@ -53,10 +53,10 @@ function createSceneCloudWebGPU(device) {
    sceneCloudUniformData(opts,data);device.queue.writeBuffer(buffer,0,data);
    const key=opts.format+":"+opts.samples;let pipeline=pipelines.get(key);
    if(!pipeline){const blend={srcFactor:"one",dstFactor:"one-minus-src-alpha",operation:"add"};
-     pipeline=device.createRenderPipeline({label:"gosx-clouds",layout:pipelineLayout,vertex:{module,entryPoint:"vertexMain"},
+     pipeline=wgpuCreateValidatedPipeline(device, "render", {label:"gosx-clouds",layout:pipelineLayout,vertex:{module,entryPoint:"vertexMain"},
        fragment:{module,entryPoint:"fragmentMain",targets:[{format:opts.format,blend:{color:blend,alpha:blend}}]},
        multisample:{count:opts.samples},depthStencil:{format:"depth24plus",depthWriteEnabled:false,depthCompare:"always"}});pipelines.set(key,pipeline);}
-   pass.setPipeline(pipeline);pass.setBindGroup(0,group);pass.draw(3);
+   pass.setPipeline(wgpuRequirePipeline(pipeline));pass.setBindGroup(0,group);pass.draw(3);
  },dispose:function(){buffer.destroy();pipelines.clear();}};
 }
 function sceneCloudWebGPUDraw(resources,device,pass,opts) {

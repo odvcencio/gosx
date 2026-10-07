@@ -187,7 +187,7 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
       const key = opts.format + ":" + opts.samples;
       let pipeline = pipelines.get(key);
       if (!pipeline) {
-        pipeline = device.createRenderPipeline({ label: "gosx-ocean", layout: pipelineLayout,
+        pipeline = wgpuCreateValidatedPipeline(device, "render", { label: "gosx-ocean", layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain" },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: opts.format, blend: { color: blend, alpha: blend } }] },
           primitive: { topology: "triangle-list", cullMode: "none" }, multisample: { count: opts.samples },
@@ -202,7 +202,7 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
         group = device.createBindGroup({layout,entries: bindings});
         groupView = view;
       }
-      pass.setPipeline(pipeline);
+      pass.setPipeline(wgpuRequirePipeline(pipeline));
       pass.setBindGroup(0, group);
       if (reflections) pass.setBindGroup(1, sceneReflectWebGPUGroup(device, reflectLayout, opts.reflection || dummyReflection));
       pass.draw(data[16 + 32] * data[16 + 33] * 6);

@@ -110,7 +110,7 @@ async function renderFrames(harness, api, state, frames) {
 
 async function gpuDrivenHarness(options) {
   const opts = options || {};
-  const harness = await createBoardWebGPUHarness({ fresh: true, fakeDeviceOptions: Object.assign({ timestampQuery: true }, opts.device || {}) });
+  const harness = await createBoardWebGPUHarness({ fresh: true, configureDevice: opts.configureDevice, fakeDeviceOptions: Object.assign({ timestampQuery: true }, opts.device || {}) });
   harness.canvas.width = 64;
   harness.canvas.height = 64;
   // The fake device drops buffer labels; keep them so tests can find buffers.
@@ -226,3 +226,37 @@ test("gpu-driven: two-phase occlusion splits the main pass around a Hi-Z build",
   assert.equal(cullPasses(fake).length, 2, "early + late camera culls");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-reason"), "gpu-driven-occlusion");
 });
+
+for (const rejected of ["gosx-gpu-driven-cull", "gosx-gpu-driven-pbr"]) {
+  test(`gpu-driven: scoped synchronous ${rejected} rejection keeps the classic renderer safe`, async () => {
+    const warnings = [], stack = [], message = "Validation Error: rejected " + rejected;
+    let attempts = 0;
+    const { harness, api } = await gpuDrivenHarness({ configureDevice(device, state, env) {
+      env.context.console = { warn: (...args) => warnings.push(args.join(" ")), error() {}, log() {} };
+      device.createRenderPipelineAsync = device.createComputePipelineAsync = undefined;
+      device.pushErrorScope = filter => stack.push({ filter, error: null });
+      device.popErrorScope = () => Promise.resolve(stack.pop().error);
+      for (const method of ["createRenderPipeline", "createComputePipeline"]) {
+        const create = device[method];
+        device[method] = descriptor => {
+          assert.equal(stack.at(-1).filter, "validation");
+          if (descriptor.label === rejected) {
+            attempts++;
+            stack.at(-1).error = { message };
+          }
+          return create(descriptor);
+        };
+      }
+    } });
+    await renderFrames(harness, api, sceneState(api, {}), 20);
+    assert.equal(attempts, 1);
+    assert.equal(warnings.length, 1);
+    assert.ok(warnings[0].includes(message));
+    assert.equal(stack.length, 0);
+    assert.equal(harness.fake.state.renderPasses.some(pass => pass.pipelines.some(pipeline => pipeline.desc.label === rejected)), false);
+    assert.equal(harness.fake.state.computePasses.some(pass => pass.pipelines.some(pipeline => pipeline.desc.label === rejected)), false);
+    assert.ok(harness.fake.state.renderPasses.some(pass => pass.draws.length > 0 || pass.drawIndexeds.length > 0));
+    assert.equal(harness.renderer.getFailureReason(), "");
+    harness.renderer.dispose();
+  });
+}

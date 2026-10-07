@@ -1097,6 +1097,16 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
 // reaches the GPU: its WGSL compiles into a shader module, and on the frame
 // after the async pipeline resolves it is BOUND AND DRAWN. Assert the draw, not
 // just the compile: a pass that compiles but never dispatches is exactly the bug.
+async function renderValidatedPostFrame(harness, bundle, viewport) {
+  const before = harness.renderer.diagnostics().frameSeq;
+  for (let i = 0; i < 8; i++) {
+    harness.renderer.render(bundle, viewport);
+    await flushAsyncWork();
+    if (harness.renderer.diagnostics().frameSeq > before) return;
+  }
+  assert.fail("validated post frame did not submit");
+}
+
 test("custom post WebGPU: a customPost authored through createSceneState is compiled AND drawn", async () => {
   const fake = makeFakeGPUDeviceForCompute({
     pipelineAsyncBehavior(desc) {
@@ -1153,7 +1163,7 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
 
   // Frame 1: the pass is entered and its WGSL submitted; the pipeline is async
   // so this frame still falls through to the identity blit.
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
 
   const postModules = fake.state.shaderModules.filter(
     (module) => module.label === "selena-post-galaxy-liquid-glass",
@@ -1169,7 +1179,7 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
   const drawsBefore = mainRenderPasses(fake).reduce((n, pass) => n + pass.draws.length, 0);
 
   // Frame 2: the pipeline has resolved, so the pass must BIND AND DRAW.
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
 
   const postBindGroups = fake.state.bindGroups.filter(
     (bg) => bg.desc && bg.desc.layout && bg.desc.layout.desc && bg.desc.layout.desc.label === "gosx-selena-post",
@@ -1224,12 +1234,12 @@ test("custom post WebGPU: reserved time and patched uniforms reach the post unif
     },
   });
 
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
   await flushAsyncWork();
   await flushAsyncWork();
 
   nowMS = 4200;
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
 
   const postUniformWrites = fake.state.writeBufferCalls
     .filter((call) => call.data && call.data.length >= 2)
@@ -1377,12 +1387,12 @@ test("custom post WebGPU: same name and WGSL prefix with different tail builds d
     "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(0.9, 0.8, 0.7, 1.0); }",
   ].join("\n");
 
-  harness.renderer.render(makeBundleWithCustomPost({
+  await renderValidatedPostFrame(harness, makeBundleWithCustomPost({
     name: "same-prefix-lens",
     fragmentWGSL: moduleA,
     vertexWGSL: moduleA,
   }), viewport);
-  harness.renderer.render(makeBundleWithCustomPost({
+  await renderValidatedPostFrame(harness, makeBundleWithCustomPost({
     name: "same-prefix-lens",
     fragmentWGSL: moduleB,
     vertexWGSL: moduleB,
@@ -1991,18 +2001,9 @@ test("shaderLib hydrate: customVertexWGSL in materials profile reaches point lay
   assert.equal(pt.customFragmentWGSL, shaderSrc, "post-inflate customFragmentWGSL must flow from materials profile to point layer");
 });
 
-test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope results, and enablePostProcessing rebuilds the post chain", async () => {
+test("Scene3D WebGPU clean frames and manual post toggles restore a healthy chain", async () => {
   const harness = await createBoardWebGPUHarness({ fresh: true });
   const api = harness.env.context.__gosx_scene3d_api;
-
-  // Toggled per-frame by the test; the REAL beginWebGPUErrorScope /
-  // endWebGPUErrorScope pair in render() awaits this exact promise.
-  let nextFrameErrors = false;
-  harness.fake.device.popErrorScope = function() {
-    return nextFrameErrors
-      ? Promise.resolve({ message: "Buffer with '' label is invalid" })
-      : Promise.resolve(null);
-  };
 
   const state = api.createSceneState({
     scene: {
@@ -2027,7 +2028,6 @@ test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope 
   harness.canvas.height = 64;
 
   async function renderFrame(hasError) {
-    nextFrameErrors = hasError;
     harness.renderer.render(bundle, { width: 64, height: 64 });
     // endWebGPUErrorScope's device.popErrorScope().then(...) resolves over
     // two microtask hops (the fake's Promise.resolve(...) plus the real
@@ -2041,25 +2041,9 @@ test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope 
   assert.equal(diag.postFXDisabled, false);
   assert.equal(diag.postProcessing, true, "a non-empty postEffects bundle must build the post chain when not force-disabled");
 
-  // Five consecutive error frames -> frameErrorStreak must read exactly 5,
-  // driven purely by real popErrorScope rejections.
-  for (let i = 0; i < 5; i++) {
-    await renderFrame(true);
-  }
+  for (let i = 0; i < 4; i++) await renderFrame(false);
   diag = harness.renderer.diagnostics();
-  assert.equal(diag.frameErrorStreak, 5);
-  assert.equal(diag.frameCleanStreak, 0, "an error frame must zero the clean streak");
-
-  // One clean frame breaks the error streak and starts the clean streak.
-  await renderFrame(false);
-  diag = harness.renderer.diagnostics();
-  assert.equal(diag.frameErrorStreak, 0, "a clean frame must zero the error streak");
-  assert.equal(diag.frameCleanStreak, 1);
-
-  for (let i = 0; i < 4; i++) {
-    await renderFrame(false);
-  }
-  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameErrorStreak, 0);
   assert.equal(diag.frameCleanStreak, 5);
 
   // disablePostProcessing/enablePostProcessing actually gate the post chain

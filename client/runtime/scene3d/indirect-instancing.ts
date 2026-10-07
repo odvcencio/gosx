@@ -627,6 +627,17 @@
       });
     }
 
+    function scopedSyncPipeline(method, descriptor) {
+      device.pushErrorScope("validation");
+      var pipeline, failure = null;
+      try { pipeline = device[method](descriptor); }
+      catch (error) { failure = error; }
+      return device.popErrorScope().then(function(error) {
+        if (failure || error) throw failure || error;
+        return pipeline;
+      });
+    }
+
     function startCompute(name, label, code, entryPoint, layout) {
       if (computeStarted[name]) return;
       computeStarted[name] = true;
@@ -638,7 +649,7 @@
       };
       var promise = typeof device.createComputePipelineAsync === "function"
         ? device.createComputePipelineAsync(descriptor)
-        : Promise.resolve().then(function() { return device.createComputePipeline(descriptor); });
+        : Promise.resolve().then(function() { return scopedSyncPipeline("createComputePipeline", descriptor); });
       settle(name, promise, [module], function(pipeline) { compute[name] = pipeline; });
     }
 
@@ -646,7 +657,7 @@
       renderPipelines.set(key, null);
       var promise = typeof device.createRenderPipelineAsync === "function"
         ? device.createRenderPipelineAsync(descriptor)
-        : Promise.resolve().then(function() { return device.createRenderPipeline(descriptor); });
+        : Promise.resolve().then(function() { return scopedSyncPipeline("createRenderPipeline", descriptor); });
       settle(key, promise, modules, function(pipeline) { renderPipelines.set(key, pipeline); });
     }
 

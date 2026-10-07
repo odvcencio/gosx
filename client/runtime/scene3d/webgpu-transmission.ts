@@ -67,7 +67,7 @@ function wgpuCreateTransmissionResources(device) {
             if (!texture || w !== width || h !== height || fmt !== format || count !== levels) {
                 release(); width = w; height = h; levels = count;
                 if (!pipeline || fmt !== format) {
-                    pipeline = device.createRenderPipeline({ label: "gosx-transmission-mips", layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
+                    pipeline = wgpuCreateValidatedPipeline(device, "render", { label: "gosx-transmission-mips", layout: device.createPipelineLayout({ bindGroupLayouts: [layout] }),
                         vertex: { module: module, entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: fmt }] }, primitive: { topology: "triangle-strip" } });
                 }
                 format = fmt;
@@ -89,7 +89,7 @@ function wgpuCreateTransmissionResources(device) {
             for (var i = 0; i < levels; i++) {
                 var pass = encoder.beginRenderPass({ label: "gosx-transmission-mip-" + i,
                     colorAttachments: [{ view: views[i], loadOp: "clear", storeOp: "store" }] });
-                pass.setPipeline(pipeline); pass.setBindGroup(0, i === 0 ? copyBinding : bindings[i - 1]); pass.draw(4); pass.end();
+                pass.setPipeline(wgpuRequirePipeline(pipeline)); pass.setBindGroup(0, i === 0 ? copyBinding : bindings[i - 1]); pass.draw(4); pass.end();
             }
         },
         fallback: function() { device.queue.writeBuffer(uniform, 0, new Float32Array(4)); },
