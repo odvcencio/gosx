@@ -16,7 +16,6 @@
   var recoveryKey = "gosx:scene3d:force-webgl-next";
 
   function loadCommandBridge() {
-    if (window.__gosx_scene3d_command_bridge) return Promise.resolve(window.__gosx_scene3d_command_bridge);
     return ensureSceneGatedFeatureLoaded("command", "gosxScene3dCommandUrl", "/gosx/bootstrap-feature-scene3d-command.js");
   }
 

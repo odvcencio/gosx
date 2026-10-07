@@ -47,7 +47,7 @@ function ensureSceneGatedFeatureLoaded(kind: string, datasetKey: string, fallbac
       const loaded = sceneGatedFeatureAPI(kind);
       if (loaded) resolve(loaded); else reject(new Error(name + " chunk loaded but did not publish API"));
     };
-    script.onerror = function(error) { reject(typeof (error as any)?.message === "string" ? error : new Error("failed to load " + name + " chunk")); };
+    script.onerror = function(error) { reject((error as any)?.message ? error : new Error("failed to load " + name + " chunk")); };
     document.head.appendChild(script);
   });
   sceneGatedFeaturePromises[kind] = promise.catch(function(error) {
