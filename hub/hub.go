@@ -361,11 +361,7 @@ func (h *Hub) invokeHandler(handler HandlerFunc, ctx *Context) {
 			if ctx != nil {
 				event = ctx.Event
 			}
-			if observed {
-				log.Print("[gosx hub] recovered panic in handler")
-			} else {
-				log.Printf("[hub/%s] recovered panic in handler (client=%q event=%q): %v\n%s", h.name, clientID, event, r, debug.Stack())
-			}
+			log.Printf("[hub/%s] recovered panic in handler (client=%q event=%q): %v\n%s", h.name, clientID, event, r, debug.Stack())
 		}
 		if observed {
 			event := HandlerEvent{Duration: time.Since(start), Panicked: r != nil}
@@ -760,13 +756,15 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, metadata ConnectionMetadata) {
 	if !h.reserveClientSlot() {
 		h.mu.RLock()
-		reason := "rejected_capacity"
+		reason := RejectedCapacity
+		body := "hub full"
 		if h.closing {
-			reason = "hub_closed"
+			reason = RejectedClosed
+			body = "hub closing"
 		}
 		h.mu.RUnlock()
 		h.observe(func(o Observer) { o.Rejected(h, reason) })
-		http.Error(w, "hub full", http.StatusServiceUnavailable)
+		http.Error(w, body, http.StatusServiceUnavailable)
 		return
 	}
 	reserved := true
@@ -792,9 +790,9 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	}
 	conn, err := connectionUpgrader.Upgrade(w, r, nil)
 	if err != nil {
-		reason := "rejected_upgrade"
+		reason := RejectedUpgrade
 		if originRejected {
-			reason = "rejected_origin"
+			reason = RejectedOrigin
 		}
 		h.observe(func(o Observer) { o.Rejected(h, reason) })
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
@@ -810,7 +808,7 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		}
 	}
 	if err := conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
-		h.observe(func(o Observer) { o.Rejected(h, "rejected_upgrade") })
+		h.observe(func(o Observer) { o.Rejected(h, RejectedUpgrade) })
 		log.Printf("[hub/%s] set read deadline error: %v", h.name, err)
 		conn.Close()
 		return
@@ -843,7 +841,7 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		h.mu.Unlock()
 		reserved = false
 		_ = conn.Close()
-		h.observe(func(o Observer) { o.Rejected(h, "hub_closed") })
+		h.observe(func(o Observer) { o.Rejected(h, RejectedClosed) })
 		if finish {
 			h.finishClose()
 		}
@@ -976,11 +974,7 @@ func (c *Client) readPump() {
 	defer func() {
 		if r := recover(); r != nil {
 			c.setDisconnectReason("panic", "")
-			if c.Hub.observers.Load() != nil {
-				log.Print("[gosx hub] recovered panic in readPump")
-			} else {
-				log.Printf("[hub/%s] recovered panic in readPump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
-			}
+			log.Printf("[hub/%s] recovered panic in readPump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
 		}
 	}()
 
@@ -1000,7 +994,7 @@ func (c *Client) readPump() {
 		c.Hub.observeMessage(c, TrafficEvent{Direction: Inbound, Binary: msgType == websocket.BinaryMessage, Bytes: len(data), QueueDepth: -1})
 		if !c.allowInboundMessage(time.Now()) {
 			c.setDisconnectReason("rate_limited", "")
-			c.Hub.observe(func(o Observer) { o.Rejected(c.Hub, "rejected_rate") })
+			c.Hub.observe(func(o Observer) { o.MessageRejected(c.Hub, c, MessageRateLimited) })
 			log.Printf("[hub/%s] client %s exceeded inbound message rate", c.Hub.name, c.ID)
 			break
 		}
@@ -1012,7 +1006,7 @@ func (c *Client) readPump() {
 
 		var msg Message
 		if err := json.Unmarshal(data, &msg); err != nil {
-			c.Hub.observe(func(o Observer) { o.Rejected(c.Hub, "malformed") })
+			c.Hub.observe(func(o Observer) { o.MessageRejected(c.Hub, c, MessageMalformed) })
 			continue
 		}
 
@@ -1039,11 +1033,7 @@ func (c *Client) writePump() {
 	defer func() {
 		if r := recover(); r != nil {
 			c.setDisconnectReason("panic", "")
-			if c.Hub.observers.Load() != nil {
-				log.Print("[gosx hub] recovered panic in writePump")
-			} else {
-				log.Printf("[hub/%s] recovered panic in writePump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
-			}
+			log.Printf("[hub/%s] recovered panic in writePump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
 		}
 	}()
 	ticker := time.NewTicker(pingPeriod)
@@ -1098,6 +1088,7 @@ func (h *Hub) removeClient(c *Client) {
 		c.mu.Unlock()
 		return
 	}
+	// Senders use c.mu too, so no send can race these channel closes.
 	c.closed = true
 	disconnect := c.disconnect
 	if disconnect.Reason == "" {
@@ -1112,13 +1103,6 @@ func (h *Hub) removeClient(c *Client) {
 	h.mu.Unlock()
 
 	h.presence.remove(c.ID)
-
-	// Mark closed under c.mu before closing the channels: trySend/
-	// tryBinarySend check c.closed under the same mutex before writing, so
-	// this ordering guarantees any send that observes closed=false completes
-	// its channel write strictly before the close below runs (mutually
-	// exclusive via c.mu), and any send that loses the race simply observes
-	// closed=true and skips the write instead of racing the close.
 
 	// Fire leave handler
 	if ok {

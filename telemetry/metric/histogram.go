@@ -28,7 +28,7 @@ func (v *HistogramVec) Bind(values ...string) (*Histogram, error) {
 	if c == nil || err != nil {
 		return nil, err
 	}
-	return &c.histogram, nil
+	return c.histogram, nil
 }
 
 func (v *HistogramVec) Declare(values ...string) error {

@@ -34,8 +34,8 @@ type Options struct {
 	Logger *slog.Logger
 	// Store persists task status; defaults to an in-memory store.
 	Store Store
-	// ShutdownGrace is the default drain window for Stop when grace<=0;
-	// defaults to 30s.
+	// ShutdownGrace is the default drain window for Stop when grace<=0 and
+	// for an App shutdown with a deadline; defaults to 30s.
 	ShutdownGrace time.Duration
 }
 
@@ -585,18 +585,33 @@ func (s *Scheduler) status(limit int) ([]TaskStatus, bool) {
 // allows at most one further grace window for cancellation to unwind.
 // Use StopContext when the caller owns the full shutdown deadline.
 func (s *Scheduler) Stop(grace time.Duration) {
-	if grace <= 0 {
-		grace = s.opts.ShutdownGrace
+	if s == nil {
+		return
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), grace)
+	if grace <= 0 {
+		grace = s.ShutdownGrace()
+	}
+	// Preserve the legacy task cancellation cause. A grace timer cancels
+	// this context rather than expiring a deadline owned by the caller.
+	ctx, cancel := context.WithCancel(context.Background())
+	timer := time.AfterFunc(grace, cancel)
 	err := s.StopContext(ctx)
+	timer.Stop()
 	cancel()
 	if err != nil {
 		ctx, cancel = context.WithTimeout(context.Background(), grace)
 		_ = s.StopContext(ctx)
 		cancel()
 	}
+}
+
+// ShutdownGrace returns the configured cooperative drain window, defaulting
+// to 30 seconds. It does not stop or otherwise change the scheduler.
+func (s *Scheduler) ShutdownGrace() time.Duration {
+	if s == nil {
+		return defaultShutdownGrace
+	}
+	return s.opts.ShutdownGrace
 }
 
 // StopContext permanently stops admission and waits for accepted work. On

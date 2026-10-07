@@ -96,7 +96,7 @@ func (r *Registry) DeclareBatch(declarations []TupleDeclaration) error {
 
 type pendingFamily struct {
 	family  *family
-	cells   map[string][]string
+	cells   map[string]int
 	domains []map[string]struct{}
 }
 
@@ -106,7 +106,7 @@ func declareLocked(s *registryState, declarations []TupleDeclaration) error {
 	}
 	pending := make(map[*family]*pendingFamily)
 	samples, bytes := 0, int64(0)
-	for _, declaration := range declarations {
+	for index, declaration := range declarations {
 		f := familyOf(declaration.Instrument)
 		if f == nil || f.registry != s {
 			return invalid("metric.declarations", "foreign_instrument")
@@ -120,7 +120,7 @@ func declareLocked(s *registryState, declarations []TupleDeclaration) error {
 		}
 		p := pending[f]
 		if p == nil {
-			p = &pendingFamily{family: f, cells: make(map[string][]string), domains: make([]map[string]struct{}, len(f.labels))}
+			p = &pendingFamily{family: f, cells: make(map[string]int), domains: make([]map[string]struct{}, len(f.labels))}
 			pending[f] = p
 		}
 		if _, exists := p.cells[key]; exists {
@@ -147,25 +147,35 @@ func declareLocked(s *registryState, declarations []TupleDeclaration) error {
 			bytes += domainBytes(value)
 		}
 		samples += sampleCost(f.kind, len(f.bounds))
-		bytes += cellBytes(declaration.Values, f.bounds)
+		bytes += cellBytes(f.kind, declaration.Values, f.bounds)
 		if samples > s.opts.MaxSeries-s.samples || bytes > s.opts.MaxBytes-s.bytes {
 			return ErrCapacity
 		}
 		// Staging is finite and discarded before return. Retained copies are
 		// made only after the whole batch's reservation has succeeded.
-		p.cells[key] = slices.Clone(declaration.Values)
+		p.cells[key] = index
 	}
 	for _, p := range pending {
 		f := p.family
+		capacity := cellCapacity(cap(f.ordered), len(f.ordered)+len(p.cells), s.opts.MaxSeries)
+		bytes += cellCapacityBytes(capacity) - cellCapacityBytes(cap(f.ordered))
+	}
+	if bytes > s.opts.MaxBytes-s.bytes {
+		return ErrCapacity
+	}
+	for _, p := range pending {
+		f := p.family
+		f.growCells(len(p.cells))
 		for i, added := range p.domains {
 			for value := range added {
 				value = strings.Clone(value)
 				f.labels[i].values[value] = value
 			}
 		}
-		for key, values := range p.cells {
-			f.addCell(key, values)
+		for key, index := range p.cells {
+			f.addCell(key, declarations[index].Values)
 		}
+		f.sortCells()
 	}
 	s.samples += samples
 	s.bytes += bytes
@@ -215,14 +225,21 @@ func (f *family) addCell(key string, values []string) {
 		c.values[i] = f.labels[i].values[value]
 	}
 	if f.kind == KindHistogram {
-		c.histogram.bounds = f.bounds
-		c.histogram.counts = make([]uint64, len(f.bounds)+1)
+		c.histogram = &Histogram{cell: c, bounds: f.bounds, counts: make([]uint64, len(f.bounds)+1)}
 		c.snapshotHistogram = &histogramScratch{bounds: make([]float64, len(f.bounds)), counts: make([]uint64, len(f.bounds)+1)}
 	}
-	c.counter.cell, c.gauge.cell, c.histogram.cell = c, c, c
-	f.cells[strings.Clone(key)] = c
+	c.counter.cell, c.gauge.cell = c, c
+	// Multi-label keys come from the private length-framed builder. Reuse
+	// that owned key; single-label keys use the domain's copied string.
+	if len(values) == 1 {
+		key = c.values[0]
+	}
+	f.cells[key] = c
 	f.ordered = append(f.ordered, c)
 	f.snapshotSeries = append(f.snapshotSeries, SeriesSnapshot{})
+}
+
+func (f *family) sortCells() {
 	slices.SortFunc(f.ordered, func(a, b *cell) int {
 		for i, value := range a.values {
 			if n := strings.Compare(value, b.values[i]); n != 0 {
