@@ -1,11 +1,14 @@
 package scene
 
 import (
+	"encoding/json"
 	"reflect"
 	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/scene/capability"
+	"m31labs.dev/selena"
+	"m31labs.dev/selena/bindings"
 )
 
 const selenaDefaultsSource = `
@@ -456,5 +459,148 @@ func TestCompileSelenaPostRejectsNonPostKind(t *testing.T) {
 func TestSelenaSurfaceKindReportsMissingMetadata(t *testing.T) {
 	if kind, ok := selenaSurfaceKind(struct{ Material string }{Material: "Legacy"}); ok || kind != "" {
 		t.Fatalf("selenaSurfaceKind legacy layout = %q ok=%v, want missing metadata", kind, ok)
+	}
+}
+
+const selenaDerivativeSource = `material Filtered {
+    surface(geo) -> color {
+        let edge = fwidth(geo.uv.x)
+        return rgb(edge, edge, edge)
+    }
+}`
+
+func TestSelenaWebGL2DialectAndTargetRequirements(t *testing.T) {
+	material, layout, err := CompileSelenaMaterial([]byte(selenaDerivativeSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, source := range []string{material.VertexGLSL, material.FragmentGLSL} {
+		if !strings.HasPrefix(source, "#version 300 es") {
+			t.Fatal("WebGL2 shader must use GLSL ES 3.00")
+		}
+		if strings.Contains(source, "GL_OES_standard_derivatives") {
+			t.Fatal("WebGL2 derivatives are core")
+		}
+	}
+	if !strings.Contains(material.FragmentGLSL, "fwidth") {
+		t.Fatal("derivative was lost")
+	}
+	if len(layout.Requires.GLExtensions) != 0 {
+		t.Fatal("returned WebGL2 layout requests WebGL1 extension")
+	}
+	if material.ShaderLayout["webglTarget"] != "gles" {
+		t.Fatal("missing target identity")
+	}
+	original := bindings.Layout{Requires: bindings.Requirements{
+		GLExtensions: []string{"OES_standard_derivatives"}, GLSceneSizeUniform: "sceneSize", SceneColorMips: true,
+	}}
+	for _, target := range selena.AllTargets() {
+		r, err := SelenaTargetRequirements(selenaWebGL2LayoutMap(original), target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !r.SceneColorMips {
+			t.Fatalf("%s lost mip contract", target)
+		}
+		if (len(r.GLExtensions) > 0) != (target == selena.TargetGLSL) {
+			t.Fatalf("%s extension contract: %+v", target, r)
+		}
+		if (r.GLSceneSizeUniform != "") != (target == selena.TargetGLSL) {
+			t.Fatalf("%s size contract: %+v", target, r)
+		}
+	}
+	plain, _, err := CompileSelenaMaterial([]byte(selenaDefaultsSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := plain.ShaderLayout["targetRequires"]; exists {
+		t.Fatal("empty target requirements must not change existing descriptors")
+	}
+	if len(original.Requires.GLExtensions) != 1 {
+		t.Fatal("mutated original descriptor")
+	}
+}
+
+func TestSelenaTargetRequirementsSurviveJSON(t *testing.T) {
+	material, _, err := CompileSelenaMaterial([]byte(selenaDerivativeSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(material.ShaderLayout)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, descriptor := range []map[string]any{material.ShaderLayout, decoded} {
+		glsl, err := SelenaTargetRequirements(descriptor, selena.TargetGLSL)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !reflect.DeepEqual(glsl.GLExtensions, []string{"OES_standard_derivatives"}) {
+			t.Fatalf("lost WebGL1 requirements: %+v", glsl)
+		}
+		gles, err := SelenaTargetRequirements(descriptor, selena.TargetGLES)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(gles.GLExtensions) != 0 {
+			t.Fatal("WebGL2 still requests WebGL1 derivatives")
+		}
+		glsl.GLExtensions[0] = "changed"
+		again, err := SelenaTargetRequirements(descriptor, selena.TargetGLSL)
+		if err != nil || again.GLExtensions[0] == "changed" {
+			t.Fatal("mutated retained requirements")
+		}
+	}
+	if _, err := SelenaTargetRequirements(nil, selena.Target("unknown")); err == nil {
+		t.Fatal("accepted unknown target")
+	}
+	if _, err := SelenaTargetRequirements(map[string]any{"targetRequires": "invalid"}, selena.TargetGLES); err == nil {
+		t.Fatal("accepted malformed requirements")
+	}
+}
+
+func TestSelenaPostUsesWebGLQuadAndBottomLeftUV(t *testing.T) {
+	material, _, err := CompileSelenaPost([]byte(minimalPostSource), SelenaMaterialOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(material.VertexGLSL, "in vec2 a_position;") || !strings.Contains(material.VertexGLSL, "v_uv = a_position * 0.5 + 0.5;") || strings.Contains(material.VertexGLSL, "gl_VertexID") {
+		t.Fatalf("wrong WebGL post contract: %s", material.VertexGLSL)
+	}
+	if !strings.HasPrefix(material.FragmentGLSL, "#version 300 es") {
+		t.Fatal("post fragment must retain GLES3")
+	}
+}
+
+func TestSelenaNativeTargetsPreserveBrowserPrograms(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		source  string
+		compile func([]byte, SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error)
+	}{
+		{"mesh", selenaDerivativeSource, CompileSelenaMaterial},
+		{"points", selenaPointsSource, CompileSelenaPoints},
+		{"post", minimalPostSource, CompileSelenaPost},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			browser, _, err := tc.compile([]byte(tc.source), SelenaMaterialOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			portable, _, err := tc.compile([]byte(tc.source), SelenaMaterialOptions{Targets: selena.AllTargets()})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if portable.VertexGLSL != browser.VertexGLSL || portable.FragmentGLSL != browser.FragmentGLSL || portable.VertexWGSL != browser.VertexWGSL || portable.FragmentWGSL != browser.FragmentWGSL {
+				t.Fatal("retaining native targets changed the adapted browser program")
+			}
+			if !strings.HasPrefix(portable.VertexGLSL, "#version 300 es") || !strings.HasPrefix(portable.FragmentGLSL, "#version 300 es") {
+				t.Fatal("native targets replaced the WebGL2 dialect")
+			}
+		})
 	}
 }
