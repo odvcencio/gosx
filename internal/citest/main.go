@@ -64,6 +64,7 @@ var prRaceTargets = []raceTarget{
 	{"signal", "concurrent subscriptions, tracking, and batching"},
 	{"sim", "server-authoritative simulation loop"},
 	{"telemetry/metric", "bounded registry admission and consistent histogram snapshots"},
+	{"telemetry/telemetrytest", "concurrent deterministic clock and timer ownership"},
 	{"scene", "parallel scene geometry work"},
 }
 

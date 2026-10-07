@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add pure telemetry defaults and bounded, redacted option validation, plus
+  portable wall/elapsed clock types and a deterministic fake clock. Wall jumps
+  do not advance elapsed deadlines, and tickers need no conversion goroutine.
+  Native attachment and feature implementations follow in separate slices.
+
 - Expose bounded, copied catalogs of registered observation patterns, merging
   method sets across mounts without expanding router-relative paths. App head
   decorators now reach mounted router pages and errors through their existing
