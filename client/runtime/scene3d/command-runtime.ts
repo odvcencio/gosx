@@ -222,7 +222,7 @@
     return new Promise(function(resolve, reject) {
       var queue = poseQueues.get(queueKey);
       if (!queue) {
-        queue = { running: false, pending: null, stats: null };
+        queue = { running: false, pending: null, stats: null, sequence: 0, progressed: 0, waitingForCommands: false };
         poseQueues.set(queueKey, queue);
       }
       if (queue.pending) {
@@ -239,15 +239,16 @@
         poseStats(queue.pending.target, queue.pending.opts).superseded++;
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
-      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject };
-      // Advance compatible committed actors while assets load; keep the latest
-      // frame queued behind its membership command for final replay.
-      if (queue.waiting) {
+      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject, sequence: ++queue.sequence };
+      // Membership commands retain their transaction ordering. While their
+      // assets are pending, a mounted renderer may synchronously advance only
+      // compatible committed identities; keep the latest job for final replay.
+      if (queue.waitingForCommands) {
         var rec = record(target, opts);
         if (rec && typeof rec.handle.applyPendingPoseFrame === "function") {
           try {
             var progress = rec.handle.applyPendingPoseFrame(decodePoseFrame(frame));
-            if (progress && progress.applied === true && progress.binary === true) queue.advanced = true;
+            if (progress && progress.applied === true && progress.binary === true) queue.progressed = queue.pending.sequence;
           } catch (_error) { /* The queued transaction remains authoritative. */ }
         }
       }
@@ -273,15 +274,15 @@
     if (!job) { queue.running = false; poseQueues.delete(queueKey); return; }
     queue.pending = null;
     queue.running = true;
-    queue.advanced = false;
     var operation;
     try {
-      queue.waiting = Array.isArray(job.opts.beforeCommands);
-      operation = queue.waiting
+      queue.waitingForCommands = Array.isArray(job.opts.beforeCommands);
+      operation = queue.waitingForCommands
         ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() {
-          queue.waiting = false;
-          // Do not replay an older frame over poses advanced during loading.
-          return queue.advanced
+          queue.waitingForCommands = false;
+          // A newer compatible pose already reached the committed wrappers.
+          // Replaying this captured frame would roll them back after loading.
+          return queue.progressed > job.sequence
             ? { applied: false, binary: true, superseded: true }
             : dispatchPoseFrameNow(job.target, job.frame, job.opts);
         })
@@ -302,7 +303,7 @@
       if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
         try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:pose-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
       }
-      queue.waiting = false;
+      queue.waitingForCommands = false;
       job.reject(error);
       runPoseQueue(queueKey, queue);
     });
@@ -331,17 +332,21 @@
       throw new Error("Scene3D pose frame rejected: " + reason);
     }
     if (!Array.isArray(batches)) reject("invalid-frame");
-    if (!state._hydratedModelRecords) reject("renderer-not-ready");
+    var pending = Boolean(state._modelHydrationPromise || state._modelHydrationUncommitted);
+    if (!state._hydratedModelRecords) {
+      if (pending) return { applied: false, binary: true, pending: true };
+      reject("renderer-not-ready");
+    }
     var mounted = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
     var targets = [];
-    var pending = Boolean(state._modelHydrationPromise || state._modelsPending);
     var selected = pending ? [] : batches;
-    var requested = pending ? new Set() : null;
     for (var batch of batches) {
       var current = mounted.find(function(candidate) { return candidate.id === batch.id; });
       if (!Array.isArray(batch.instances)) reject("membership-changed");
       if (pending) {
-        // Filter future membership; the renderer checks committed ownership.
+        // The next queued declaration can add or reorder members while this
+        // transaction loads. Advance only identities in its current snapshot;
+        // their committed template, scope and wrapper are checked by the renderer.
         if (!current) continue;
         var instances = [];
         var poses = [];
@@ -352,9 +357,8 @@
           if (!instance) continue;
           instances.push(instance);
           poses.push(pose);
-          requested.add(batch.id + "/" + pose.id);
         }
-        if (instances.length) {
+        if (poses.length) {
           targets.push({ instances: instances });
           selected.push({ id: batch.id, instances: poses });
         }
@@ -383,7 +387,7 @@
     }
     previous.length = offset;
     var retained = false;
-    try { retained = updateRigidPoses(state, null, requested); } catch (_error) { retained = false; }
+    try { retained = updateRigidPoses(state, null, batches); } catch (_error) { retained = false; }
     if (!retained) {
       offset = 0;
       for (var batchIndex = 0; batchIndex < batches.length; batchIndex++) {

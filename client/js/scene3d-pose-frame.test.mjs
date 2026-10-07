@@ -240,12 +240,12 @@ test("a pending membership change advances matching committed identities only", 
   batches.push({ id: "future-batch", instances: [{ id: "future", x: 9 }] });
   const retained = [];
   const result = bridge.applyMountedPoseFrame(state, batches, (_state, _models, selected) => {
-    retained.push(...selected);
+    for (const batch of selected) retained.push(...batch.instances.map(instance => instance.id));
     return true;
   }, () => {}, {});
   assert.equal(result.binary, true);
   assert.equal(current.x, 1.5);
-  assert.deepEqual(retained, ["heroes/hero"]);
+  assert.deepEqual(retained, ["hero"]);
   assert.equal(state.instancedGLBMeshes[0].instances.length, 1, "future instances must remain staged");
   state._modelHydrationPromise = null;
   assert.throws(() => bridge.applyMountedPoseFrame(state, batches, () => true, () => {}, {}), /membership-changed/);

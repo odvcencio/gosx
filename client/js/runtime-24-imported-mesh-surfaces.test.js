@@ -1447,6 +1447,13 @@ test("committed actor poses advance through held, rejected and superseded asset 
     assert.equal(state.objects.get(hero.id), hero, "late completion must retain the current wrapper");
     assert.equal(hero.parentMatrix[12], outcome === "stale" ? 5 : 3, "late completion must not restore the captured pose");
     assert.equal(state.objects.size, outcome === "committed" ? 2 : 1);
+    const caches = state._hydratedModelRecords;
+    const owners = [...caches.rigidInstances.values(), ...caches.staticModels.values()];
+    const cachedObjects = new Set(owners.flatMap(owner => owner.objects));
+    assert.equal(cachedObjects.size, state.objects.size, "only committed geometry owners may remain cached");
+    for (const object of cachedObjects) {
+      assert.equal(state.objects.get(object.id), object, "stale stages must not retain retired wrappers");
+    }
     if (outcome === "failed") {
       assert.equal(pose(4).binary, true, "a rejected asset must not permanently block surviving actors");
       assert.equal(hero.parentMatrix[12], 4);
@@ -1472,7 +1479,7 @@ test("reset during hydration clears retained actors and rejects late ownership",
     { id: "newcomers", src: "/slow.glb", instances: [{ id: "new", x: 9 }] },
   ] } }]);
   assert.ok(state._modelHydrationPromise);
-  const selected = require("node:vm").runInContext('new Set(["heroes/hero"])', env.context);
+  const selected = [{ id: "heroes", instances: [{ id: "hero" }] }];
   state.instancedGLBMeshes[0].instances[0].x = 2;
   assert.equal(env.context.__meshTest.updatePoses(state, null, selected), true);
   assert.equal(hero.parentMatrix[12], 2);
@@ -1483,10 +1490,10 @@ test("reset during hydration clears retained actors and rejects late ownership",
   state._modelOwner = () => true;
   await api.applySceneCommands(state, [{ kind: 11, data: { instancedGLBMeshes: [] } }]);
   assert.equal(state.objects.size, 0);
-  assert.equal(state._modelsPending, false);
+  assert.equal(state._modelHydrationUncommitted, false);
   assert.equal(env.context.__meshTest.updatePoses(state, null, selected), false);
   release();
   assert.equal((await loading)[0].stale, true);
   assert.equal(state.objects.size, 0, "late loading must not resurrect a reset actor");
-  assert.equal(state._modelsPending, false, "stale completion cannot undo the reset state");
+  assert.equal(state._modelHydrationUncommitted, false, "stale completion cannot undo the reset state");
 });

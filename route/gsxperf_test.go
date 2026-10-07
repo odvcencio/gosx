@@ -12,6 +12,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/server"
 )
 
 func gsxCompileCacheCounts() (progs, files int) {
@@ -243,6 +244,34 @@ func Page() Node {
 	if strings.Contains(got, "<span>1-1-") {
 		t.Fatalf("inner loop leaked a binding: %q", got)
 	}
+}
+
+func TestPageRuntimeConstructionAllocations(t *testing.T) {
+	// This fixture and the benchmark share the production manifest path. Keep
+	// this test sequential: manifest roots are process-wide, and AllocsPerRun
+	// measures process allocations with GOMAXPROCS temporarily set to one.
+	setupRuntimeConstructionManifest(t)
+	runtime := server.NewPageRuntime()
+	runtime.EnableBootstrap()
+	if got := runtime.Summary().BootstrapPath; got != "/gosx/assets/runtime/bootstrap-lite.555.js" {
+		t.Fatalf("fixture did not load its hashed bootstrap: %q", got)
+	}
+
+	// Manifest decoding is startup work; the cache above is warm. This fixed
+	// fixture fell from 600 to 143 allocations after removing repeated URL
+	// parsing. Leave a little compiler headroom without admitting that cost
+	// again. Timing and allocated bytes remain benchmark diagnostics, not gates.
+	const maxAllocs = 150
+	allocs := testing.AllocsPerRun(100, func() {
+		runtime = server.NewPageRuntime()
+	})
+	if runtime == nil {
+		t.Fatal("nil page runtime")
+	}
+	if allocs > maxAllocs {
+		t.Fatalf("warm page runtime construction = %.0f allocations, want <= %d; profile BenchmarkPageRuntimeConstruction", allocs, maxAllocs)
+	}
+	t.Logf("warm page runtime construction: %.0f allocations (limit %d)", allocs, maxAllocs)
 }
 
 // TestIslandManifestCacheReloadsAndStaysRaceFree builds renderers from many

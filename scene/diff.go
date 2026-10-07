@@ -668,6 +668,8 @@ type TransformPatch struct {
 //
 // DiffScene emits it when DiffOptions.PatchTransforms is on. Any caller may
 // build it by hand for an object the runtime already holds.
+// A Model root ID transforms all imported primitives; retained rigid models
+// update their parent matrices without replacing geometry or materials.
 func SetTransformCommand(id string, patch TransformPatch) Command {
 	return Command{Kind: CommandSetTransform, ObjectID: id, Data: patch}
 }

@@ -2,14 +2,18 @@ package main
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -645,6 +649,10 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	if report, err := checkDeploymentBundle(filepath.Join(dir, "dist")); err != nil || !report.OK || report.StaticRoutes != 2 {
+		t.Fatalf("prerendered production bundle failed deployment checks: %+v, %v", report, err)
+	}
+
 	for _, rel := range []string{
 		"dist/build.json",
 		"dist/export.json",
@@ -687,11 +695,15 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 
 // TestRunBuildRelocatedBundleRendersSiblingFragment proves the production
 // deployment shape end to end. The server binary is built with -trimpath,
-// the finished dist/ tree is moved to a fresh path, and the original source
+// the finished dist/ tree is copied to a fresh path, and the original source
 // tree is removed before run.sh starts it from outside the bundle. run.sh's
 // GOSX_APP_ROOT export must therefore point the trimpath-safe caller resolver
-// at the staged app/ tree for LoadFileProgramHere to find page.gsx.
+// at the staged app/ tree for LoadFileProgramHere to find page.gsx. The same
+// build also proves framework health and signal-driven draining through run.sh.
 func TestRunBuildRelocatedBundleRendersSiblingFragment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("run.sh and Unix signal forwarding require a POSIX host")
+	}
 	if raceDetectorEnabled {
 		t.Skip("shells out to the production build and server; race instrumentation adds no value and blows the timeout")
 	}
@@ -713,14 +725,19 @@ require m31labs.dev/gosx v0.53.10
 	mustWriteFile(t, filepath.Join(sourceDir, "main.go"), `package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
+	"time"
 
 	"example.com/fragment-relocation/app/wire"
 	"m31labs.dev/gosx/route"
@@ -728,10 +745,20 @@ import (
 )
 
 func main() {
+	shutdown, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
 	_, thisFile, _, _ := runtime.Caller(0)
 	root := server.ResolveAppRoot(thisFile)
 	router := route.NewRouter()
 	router.Handle("/wire/signal", http.HandlerFunc(wire.ServeSignalFragment))
+	router.Handle("/wire/drain", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("DRAINING")
+		select {
+		case <-shutdown.Done():
+			_, _ = fmt.Fprint(w, "request drained")
+		case <-r.Context().Done():
+		}
+	}))
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
 		log.Fatal(err)
 	}
@@ -750,8 +777,24 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	app := server.New()
+	app.Mount("/", handler)
+	srv := &http.Server{Handler: app.Build(), ReadHeaderTimeout: 5 * time.Second}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		<-shutdown.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Fatal(err)
+		}
+	}()
 	fmt.Printf("LISTENING %s\n", ln.Addr())
-	log.Fatal(http.Serve(ln, handler))
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+	<-drained
 }
 `)
 	mustWriteFile(t, filepath.Join(sourceDir, "app", "wire", "page.gsx"), `package wire
@@ -817,9 +860,9 @@ func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
 		t.Fatalf("RunBuild: %v", err)
 	}
 
-	relocated := filepath.Join(t.TempDir(), "staged-dist")
-	if err := os.Rename(filepath.Join(sourceDir, "dist"), relocated); err != nil {
-		t.Fatalf("move dist to staged path: %v", err)
+	relocated := filepath.Join(t.TempDir(), "staged bundle")
+	if err := os.CopyFS(relocated, os.DirFS(filepath.Join(sourceDir, "dist"))); err != nil {
+		t.Fatalf("copy dist to isolated path: %v", err)
 	}
 	if err := os.RemoveAll(sourceDir); err != nil {
 		t.Fatalf("remove original source tree: %v", err)
@@ -828,10 +871,24 @@ func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
 		t.Fatalf("original page.gsx is still available after relocation: %v", err)
 	}
 
-	cmd := exec.Command(filepath.Join(relocated, "run.sh"))
+	if report, err := checkDeploymentBundle(relocated); err != nil || !report.OK {
+		t.Fatalf("relocated bundle failed deployment checks: %+v, %v", report, err)
+	}
+
+	launchLog, err := os.Create(filepath.Join(t.TempDir(), "bundle.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = launchLog.Close() })
+	runContext, cancelRun := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancelRun)
+	cmd := exec.CommandContext(runContext, filepath.Join(relocated, "run.sh"))
 	cmd.Dir = filepath.Dir(relocated)
-	cmd.Stderr = os.Stderr
-	cmd.Env = withoutEnv(os.Environ(), "GOSX_APP_ROOT")
+	cmd.Stderr = launchLog
+	// Deliberately omit the source/build environment and toolchain PATH. run.sh
+	// must establish GOSX_APP_ROOT itself, including paths containing spaces.
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "GOSX_ENV=production", "PORT=127.0.0.1:0"}
+	cmd.WaitDelay = 5 * time.Second
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
@@ -839,21 +896,52 @@ func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start relocated bundle: %v", err)
 	}
-	defer func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
+	processDone := make(chan struct{})
+	var processErr error
+	go func() {
+		processErr = cmd.Wait()
+		close(processDone)
 	}()
+	t.Cleanup(func() {
+		select {
+		case <-processDone:
+		default:
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			select {
+			case <-processDone:
+			case <-time.After(5 * time.Second):
+				_ = cmd.Process.Kill()
+				select {
+				case <-processDone:
+				case <-time.After(5 * time.Second):
+					t.Error("relocated bundle did not exit after cleanup kill")
+				}
+			}
+		}
+		if t.Failed() {
+			data, _ := os.ReadFile(launchLog.Name())
+			t.Logf("bundle process output:\n%s", data)
+		}
+	})
 
 	addrCh := make(chan string, 1)
+	drainStarted := make(chan struct{}, 1)
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		for scanner.Scan() {
-			if addr, ok := strings.CutPrefix(scanner.Text(), "LISTENING "); ok {
+			line := scanner.Text()
+			_, _ = fmt.Fprintln(launchLog, line)
+			if addr, ok := strings.CutPrefix(line, "LISTENING "); ok {
 				select {
 				case addrCh <- addr:
 				default:
 				}
-				return
+			}
+			if line == "DRAINING" {
+				select {
+				case drainStarted <- struct{}{}:
+				default:
+				}
 			}
 		}
 	}()
@@ -861,12 +949,27 @@ func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
 	var addr string
 	select {
 	case addr = <-addrCh:
+	case <-processDone:
+		t.Fatalf("relocated bundle exited before readiness: %v", processErr)
 	case <-time.After(20 * time.Second):
 		t.Fatal("relocated bundle never printed its listening address")
 	}
 
 	client := &http.Client{Timeout: 10 * time.Second}
+	t.Cleanup(client.CloseIdleConnections)
 	baseURL := "http://" + addr
+	healthResp, err := client.Get(baseURL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET relocated health: %v", err)
+	}
+	var health struct {
+		OK bool `json:"ok"`
+	}
+	healthErr := json.NewDecoder(healthResp.Body).Decode(&health)
+	_ = healthResp.Body.Close()
+	if healthResp.StatusCode != http.StatusOK || healthErr != nil || !health.OK {
+		t.Fatalf("GET /healthz = %d, health %+v, error %v", healthResp.StatusCode, health, healthErr)
+	}
 	pageResp, err := client.Get(baseURL + "/wire")
 	if err != nil {
 		t.Fatalf("GET relocated page: %v", err)
@@ -896,17 +999,50 @@ func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
 	if fragmentResp.StatusCode != http.StatusOK || string(fragmentBody) != wantFragment {
 		t.Fatalf("GET /wire/signal = %d body %q, want 200 and %q", fragmentResp.StatusCode, fragmentBody, wantFragment)
 	}
-}
 
-func withoutEnv(env []string, name string) []string {
-	prefix := name + "="
-	out := make([]string, 0, len(env))
-	for _, entry := range env {
-		if !strings.HasPrefix(entry, prefix) {
-			out = append(out, entry)
+	// Hold a real request until SIGTERM arrives. An abrupt shell/server exit
+	// would lose the response, so this proves both forwarding and draining.
+	drainResult := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(baseURL + "/wire/drain")
+		if err != nil {
+			drainResult <- err
+			return
 		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err == nil && (resp.StatusCode != http.StatusOK || string(body) != "request drained") {
+			err = fmt.Errorf("drain response = %d %q", resp.StatusCode, body)
+		}
+		drainResult <- err
+	}()
+	select {
+	case <-drainStarted:
+	case err := <-drainResult:
+		t.Fatalf("drain request ended before shutdown: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("drain request never reached the bundle")
 	}
-	return out
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal relocated bundle: %v", err)
+	}
+	select {
+	case err := <-drainResult:
+		if err != nil {
+			t.Fatalf("in-flight request did not drain: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight request did not finish during graceful shutdown")
+	}
+	select {
+	case <-processDone:
+		if processErr != nil {
+			t.Fatalf("relocated bundle did not exit cleanly: %v", processErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("relocated bundle did not shut down gracefully")
+	}
+
 }
 
 func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {
