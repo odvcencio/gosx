@@ -22,6 +22,23 @@ type ShutdownHooks struct {
 	Flush  func(context.Context) error
 }
 
+// ShutdownSource keeps resource ownership with its implementation. SignalShutdown
+// stops admission without waiting or performing I/O; Drain waits cooperatively
+// for that same owner. Mounting a handler does not register a shutdown source.
+type ShutdownSource interface {
+	SignalShutdown(context.Context)
+	Drain(context.Context) error
+}
+
+// UseShutdownSource registers an existing owner before Build. The server needs
+// only this structural contract, so ordinary HTTP apps need no socket package.
+func (a *App) UseShutdownSource(name string, source ShutdownSource) (func(), error) {
+	if source == nil {
+		return nil, &telemetryerr.ConfigError{Field: "shutdown_source", Code: "required"}
+	}
+	return a.UseShutdownHook(name, ShutdownHooks{Signal: source.SignalShutdown, Drain: source.Drain})
+}
+
 type shutdownHook struct {
 	name   string
 	hooks  ShutdownHooks
