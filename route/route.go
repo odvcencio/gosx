@@ -210,9 +210,11 @@ type Router struct {
 	filePageAliases map[string]string
 	fileRouteDirs   []fileRouteDirSource
 	navigationHead  func(nonce string) gosx.Node
+	headDecorators  []server.HeadDecorator
 }
 
 type handlerRoute struct {
+	kind       string
 	pattern    string
 	handler    http.Handler
 	middleware []Middleware
@@ -295,10 +297,15 @@ func (r *Router) Add(routes ...Route) {
 
 // Handle registers a raw HTTP handler alongside page routes.
 func (r *Router) Handle(pattern string, handler http.Handler, middleware ...Middleware) {
+	r.handleKind("mount", pattern, handler, middleware...)
+}
+
+func (r *Router) handleKind(kind, pattern string, handler http.Handler, middleware ...Middleware) {
 	if strings.TrimSpace(pattern) == "" || handler == nil {
 		return
 	}
 	r.handlers = append(r.handlers, handlerRoute{
+		kind:       kind,
 		pattern:    pattern,
 		handler:    handler,
 		middleware: append([]Middleware(nil), middleware...),
@@ -504,6 +511,7 @@ func (r *Router) renderPage(w http.ResponseWriter, ctx *RouteContext, layouts []
 	if ctx.StatusCode() == 0 {
 		ctx.SetStatus(defaultStatus)
 	}
+	r.decoratePageContext(ctx)
 	ctx.PrepareCache(ctx.Request)
 
 	requestNonce := ctx.Nonce()

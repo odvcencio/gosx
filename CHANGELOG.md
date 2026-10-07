@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Expose bounded, copied catalogs of registered observation patterns, merging
+  method sets across mounts without expanding router-relative paths. App head
+  decorators now reach mounted router pages and errors through their existing
+  page state and document render; `Context.Pattern` identifies the registered
+  owner pattern before decoration.
+
 - Export bounded, copied metric snapshots and deterministic Prometheus text
   with shared admission, consistent histogram buckets, and a 2 MiB output cap.
   Snapshot adapters can retain an explicit clone within their own capacity.

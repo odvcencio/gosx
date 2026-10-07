@@ -114,6 +114,8 @@ type DeferredRegistry struct {
 // Context carries request-scoped page metadata, headers, and status.
 type Context struct {
 	Request *http.Request
+	// Pattern is the registered page/error pattern, never a client path.
+	Pattern string
 	PageState
 }
 
