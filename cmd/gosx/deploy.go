@@ -78,7 +78,7 @@ func runDeploy(args []string, out io.Writer) error {
 			return encodeErr
 		}
 	} else if err == nil {
-		fmt.Fprintf(out, "Bundle checks passed: %d assets (%d bytes), %d static routes.\nLaunch: GOSX_APP_ROOT=%s %s\nConfigure runtime secrets and verify destination health before routing traffic.\n", report.Assets, report.AssetBytes, report.StaticRoutes, report.Directory, filepath.Join(report.Directory, "server", "app"))
+		fmt.Fprintf(out, "Bundle checks passed: %d assets (%d bytes), %d static routes.\nRun ./run.sh from the bundle directory after configuring runtime secrets.\nVerify destination health before routing traffic.\n", report.Assets, report.AssetBytes, report.StaticRoutes)
 	}
 	return err
 }
