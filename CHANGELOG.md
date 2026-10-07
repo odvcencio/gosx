@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a bounded metric registry with finite label domains, atomic tuple batches,
+  scalar sample and byte reservations, sealed registration, and consistent
+  counter, gauge, and histogram instruments. Application families cannot use
+  the framework's reserved `gosx_` prefix.
+
 - Add named App shutdown hooks: drain HTTP and scheduled work before source
   drains, then flush in reverse registration order. Concurrent shutdown callers
   share one pipeline and respect their own deadlines; `/readyz` reports draining.
