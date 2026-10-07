@@ -8,17 +8,8 @@ import (
 	"testing"
 )
 
-// inline_assets_test.go covers inlineAssets: the build-artifact class this
-// tool prepares for a Go source to go:embed directly, rather than for a
-// fetched <script src> bundle. gosx#221 added it so
-// client/runtime/host/navigation.ts (app.EnableNavigation's inline
-// per-page navigation runtime) ships minified instead of raw, without
-// joining the fetched bundle graph in outputs (see the inlineAssets doc
-// comment in main.go for why navigation.ts stays out of that graph).
-//
-// These tests build synthetic inline assets, the same way build_test.go and
-// closure_test.go build synthetic outputs chunks. Separate tests below cover
-// the real, committed client/runtime/host/navigation-runtime.min.js.
+// These tests cover generated standalone runtimes embedded in Go, including
+// navigation's precompressed sidecars and its exclusion from chunks.json.
 
 // writeHostSource writes one source file below host-src/ inside the fixture
 // directory and returns the relative path an inline asset entry uses. It is
@@ -51,11 +42,7 @@ func inlineAssetFixture(t *testing.T) (*fixture, output) {
 	return f, entry
 }
 
-// TestInlineAssetBuildWritesOnlyTheMinifiedFile proves the build produces the
-// minified artifact and nothing else: no .map, no .gz, no .br, and it does
-// not touch chunks.json. An inline asset is never fetched over the network,
-// so none of the fetched-bundle sidecars apply.
-func TestInlineAssetBuildWritesOnlyTheMinifiedFile(t *testing.T) {
+func TestInlineAssetBuildWritesCompressedSidecars(t *testing.T) {
 	f, entry := inlineAssetFixture(t)
 	useInlineAssets(t, entry)
 
@@ -74,16 +61,15 @@ func TestInlineAssetBuildWritesOnlyTheMinifiedFile(t *testing.T) {
 		t.Error("inline asset does not end with a newline")
 	}
 
-	for _, suffix := range []string{".map", ".gz", ".br"} {
+	for _, suffix := range []string{".map"} {
 		if _, err := os.Stat(f.path(entry.name + suffix)); err == nil {
 			t.Errorf("build wrote %s%s; an inline asset must ship no fetched-bundle sidecar", entry.name, suffix)
 		}
 	}
-	// run() always writes chunks.json, even for an outputs-empty run (an
-	// empty chunk list is still a valid, honest manifest of the fetched
-	// bundle graph). What an inline asset must never do is appear inside
-	// it: chunks.json is the fetched-bundle-to-symbol map JS tests read,
-	// and an inline asset is never fetched.
+	if match, err := sidecarsMatch(f.path(entry.name), string(code)); err != nil || !match {
+		t.Fatalf("compressed sidecars do not match the runtime: match=%v err=%v", match, err)
+	}
+	// Embedded standalone assets have server-owned URLs, outside chunks.json.
 	if manifest, err := os.ReadFile(f.path(chunksManifestRel)); err == nil {
 		if strings.Contains(string(manifest), entry.name) {
 			t.Errorf("chunks.json names the inline asset %s; an inline asset must not join the fetched chunk manifest", entry.name)
