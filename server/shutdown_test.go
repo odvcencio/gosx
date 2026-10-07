@@ -360,3 +360,142 @@ func TestShutdownDrainsOwnedHTTPThenScheduler(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestShutdownCancelsScheduledRunWithoutDeadline(t *testing.T) {
+	testShutdownCancelsScheduledRun(t, context.Background(), 35*time.Second)
+}
+
+func TestShutdownReservesHooksWithOneSecondDeadline(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	testShutdownCancelsScheduledRun(t, ctx, 2*time.Second)
+}
+
+func testShutdownCancelsScheduledRun(t *testing.T, ctx context.Context, timeout time.Duration) {
+	t.Helper()
+	a := New()
+	s := a.Scheduler()
+	entered, cancelled := make(chan struct{}), make(chan struct{})
+	if err := s.Register(scheduled.Task{Name: "waiting", Fn: func(ctx context.Context, _ scheduled.TickHandle) error {
+		close(entered)
+		<-ctx.Done()
+		close(cancelled)
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		stop, cancel := context.WithCancel(context.Background())
+		cancel()
+		_ = s.StopContext(stop)
+	})
+	if _, err := s.Enqueue("waiting", nil); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	var drained, flushed atomic.Bool
+	check := func(ctx context.Context) error {
+		select {
+		case <-cancelled:
+		default:
+			t.Error("hook ran before the scheduled run cancelled")
+		}
+		return ctx.Err()
+	}
+	if _, err := a.UseShutdownHook("source", ShutdownHooks{Drain: func(ctx context.Context) error {
+		drained.Store(true)
+		return check(ctx)
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.UseShutdownHook("telemetry", ShutdownHooks{Flush: func(ctx context.Context) error {
+		flushed.Store(true)
+		if !drained.Load() {
+			t.Error("flush preceded drain")
+		}
+		return check(ctx)
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	start := time.Now()
+	go func() { result <- a.Shutdown(ctx) }()
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(timeout):
+		t.Fatal("Shutdown failed to cancel the waiting task")
+	}
+	if !drained.Load() || !flushed.Load() {
+		t.Fatal("scheduler consumed the hook window")
+	}
+	if _, deadline := ctx.Deadline(); !deadline && time.Since(start) < 30*time.Second {
+		t.Fatal("background shutdown cancelled before its 30-second window")
+	}
+}
+
+func TestScheduledDrainWindow(t *testing.T) {
+	if got := scheduledDrainWindow(context.Background(), time.Millisecond); got != 30*time.Second {
+		t.Fatalf("no deadline: %s", got)
+	}
+	for _, tc := range []struct{ deadline, configured, min, max time.Duration }{
+		{time.Second, 30 * time.Second, 0, 0},
+		{12 * time.Second, 30 * time.Second, 6 * time.Second, 7 * time.Second},
+		{100 * time.Second, 30 * time.Second, 30 * time.Second, 30 * time.Second},
+		{100 * time.Second, 90 * time.Second, 74 * time.Second, 75 * time.Second},
+		{100 * time.Second, time.Second, time.Second, time.Second},
+	} {
+		ctx, cancel := context.WithTimeout(context.Background(), tc.deadline)
+		got := scheduledDrainWindow(ctx, tc.configured)
+		cancel()
+		if got < tc.min || got > tc.max {
+			t.Fatalf("remaining=%s configured=%s: %s", tc.deadline, tc.configured, got)
+		}
+	}
+}
+
+func TestShutdownAttemptsHooksWithCancelledContext(t *testing.T) {
+	a := New()
+	var drained, flushed atomic.Bool
+	if _, err := a.UseShutdownHook("source", ShutdownHooks{
+		Drain: func(ctx context.Context) error { drained.Store(true); return ctx.Err() },
+		Flush: func(ctx context.Context) error { flushed.Store(true); return ctx.Err() },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := a.Shutdown(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	join, joinCancel := context.WithTimeout(context.Background(), time.Second)
+	defer joinCancel()
+	if err := a.Shutdown(join); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if !drained.Load() || !flushed.Load() {
+		t.Fatal("cancelled context skipped drain or flush")
+	}
+}
+
+func TestShutdownConfigurationErrorsKeepServerNamespace(t *testing.T) {
+	a := New()
+	_, err := a.UseShutdownHook("", ShutdownHooks{})
+	var config *telemetryerr.ConfigError
+	if !strings.HasPrefix(err.Error(), "server:") || !errors.Is(err, telemetryerr.ErrInvalidOptions) || !errors.As(err, &config) {
+		t.Fatalf("configuration error: %v", err)
+	}
+	a.Build()
+	_, err = a.UseShutdownHook("late", ShutdownHooks{})
+	if !strings.HasPrefix(err.Error(), "server:") || !errors.Is(err, telemetryerr.ErrAfterBuild) {
+		t.Fatalf("closed configuration: %v", err)
+	}
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.ListenAndServe("127.0.0.1:0"); !errors.Is(err, http.ErrServerClosed) {
+		t.Fatalf("shutdown must be terminal: %v", err)
+	}
+}

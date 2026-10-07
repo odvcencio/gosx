@@ -4,10 +4,15 @@
 
 - Add named App shutdown hooks: drain HTTP and scheduled work before source
   drains, then flush in reverse registration order. Concurrent shutdown callers
-  share one pipeline and respect their own deadlines; `/readyz` reports draining.
+  share one terminal pipeline and respect their own deadlines; `/readyz` reports
+  draining. Scheduled runs cancel after 30 seconds without a deadline. With a
+  deadline, their cooperative window leaves at least five seconds or a quarter
+  of the remaining time for hooks. Every Drain and Flush is then attempted with
+  the shared context. Lifecycle configuration errors use the server namespace.
   `Scheduler.StopContext` stops admission and cancels on its context deadline
   without allocating waiter goroutines. The legacy `Stop(grace)` also bounds
-  its cancellation wait to one additional grace window.
+  its cancellation wait to one additional grace window and preserves Canceled
+  as the task cancellation cause.
   `UseShutdownSource` registers an existing resource owner through a structural
   signal/drain contract. Hub shutdown integration stays in the hub package, so
   ordinary server imports do not acquire a WebSocket dependency.

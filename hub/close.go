@@ -31,8 +31,9 @@ func (h *Hub) SignalShutdown(context.Context) {
 	}
 }
 
-// Drain waits for the same owner started by SignalShutdown or Close. Together
-// these methods satisfy a structural shutdown contract without a server import.
+// Drain starts closing if necessary, then waits for the same owner used by
+// SignalShutdown and Close. It also satisfies the server's structural shutdown
+// contract, without importing server or transferring socket ownership.
 func (h *Hub) Drain(ctx context.Context) error { return h.Close(ctx) }
 
 func (h *Hub) beginClose() <-chan struct{} {
