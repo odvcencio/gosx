@@ -25,6 +25,7 @@ type Telemetry struct {
 	active              atomic.Bool
 	mu                  sync.Mutex
 	closeContext        context.Context
+	closeSource         context.Context
 	closeCancel         context.CancelFunc
 	closeResult         error
 	wake, done          chan struct{}

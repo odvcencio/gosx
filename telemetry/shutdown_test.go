@@ -139,6 +139,73 @@ func TestCloseBackgroundCallerKeepsSharedDeadline(t *testing.T) {
 	}
 }
 
+// A context may publish its own cancellation before propagating it to children.
+// Hold its AfterFunc callback to make that interval deterministic.
+type delayedClosePropagation struct {
+	context.Context
+	release <-chan struct{}
+}
+
+func (c delayedClosePropagation) Value(any) any { return nil }
+func (c delayedClosePropagation) AfterFunc(f func()) func() bool {
+	return context.AfterFunc(c.Context, func() { <-c.release; f() })
+}
+
+func TestCloseRecordsElapsedDeadlineBeforeCancellationPropagates(t *testing.T) {
+	o := aggregateCoreOptions(t)
+	tick := &controlledTicker{ch: make(chan time.Time), entered: make(chan struct{}), release: make(chan struct{})}
+	o.Clock = controlledClock{tick}
+	tel, err := Enable(server.New(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	propagate := make(chan struct{})
+	defer close(propagate)
+	parent, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
+	defer cancel()
+	ctx := delayedClosePropagation{parent, propagate}
+	if err := tel.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal(err)
+	}
+	<-tick.entered
+	if err := tel.closeContext.Err(); err != nil {
+		t.Fatal("fixture propagated cancellation early", err)
+	}
+	close(tick.release)
+	if err := tel.Close(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatal("elapsed owner deadline was lost", err)
+	}
+}
+
+func TestCloseRecordsParentCancellationBeforeItPropagates(t *testing.T) {
+	o := aggregateCoreOptions(t)
+	tick := &controlledTicker{ch: make(chan time.Time), entered: make(chan struct{}), release: make(chan struct{})}
+	o.Clock = controlledClock{tick}
+	tel, err := Enable(server.New(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	propagate := make(chan struct{})
+	defer close(propagate)
+	parent, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	ctx := delayedClosePropagation{parent, propagate}
+	result := make(chan error, 1)
+	go func() { result <- tel.Close(ctx) }()
+	<-tick.entered
+	cancel()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	if err := tel.closeContext.Err(); err != nil {
+		t.Fatal("fixture propagated cancellation early", err)
+	}
+	close(tick.release)
+	if err := tel.Close(context.Background()); !errors.Is(err, context.Canceled) {
+		t.Fatal("owner cancellation was lost", err)
+	}
+}
+
 type panickingLogHandler struct{}
 
 func (panickingLogHandler) Enabled(context.Context, slog.Level) bool  { return true }
