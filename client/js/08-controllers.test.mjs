@@ -235,6 +235,31 @@ test("declarative controller handles signals, keys, timers, fetch, storage, and 
   assert.equal(env.aborts.every((controller) => controller.signal.aborted), false);
 });
 
+test("controller event payloads preserve raw values and Boolean flags", async () => {
+  const env = createContext();
+  env.button.dataset = { tile: "end" };
+  await env.context.window.__test_mountAllControllers({ controllers: [{ id: "events", config: {
+    events: [{ type: "pick", target: "button", output: "$intent" }],
+  } }] });
+  env.document.dispatchEvent({
+    type: "pick", target: env.button, key: "Enter", code: "Enter",
+    altKey: 0, ctrlKey: 1, metaKey: false, shiftKey: true, repeat: "",
+    detail: { tile: "end" }, pointerId: 0, clientX: 0, clientY: 12,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(env.writes.at(-1).value.event)), {
+    type: "pick", key: "Enter", code: "Enter",
+    altKey: false, ctrlKey: true, metaKey: false, shiftKey: true, repeat: false,
+    detail: { tile: "end" }, pointerId: 0, clientX: 0, clientY: 12,
+    target: { dataset: { tile: "end" }, id: "save", name: "", value: "clicked", checked: false, text: "" },
+  });
+  env.document.dispatchEvent({ type: "pick", target: env.button });
+  const sparse = JSON.parse(JSON.stringify(env.writes.at(-1).value.event));
+  assert.deepEqual(sparse, {
+    type: "pick", altKey: false, ctrlKey: false, metaKey: false, shiftKey: false, repeat: false,
+    target: { dataset: { tile: "end" }, id: "save", name: "", value: "clicked", checked: false, text: "" },
+  });
+});
+
 test("controller resource refresh and polling release completed AbortControllers", async () => {
   const pendingFetches = [];
   const env = createContext({

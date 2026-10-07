@@ -111,26 +111,17 @@
 
   function controllerEventPayload(event, matched) {
     const target = matched || (event && event.target) || null;
-    const payload = {
-      type: String(event && event.type || ""),
-      key: event && event.key,
-      code: event && event.code,
-      altKey: Boolean(event && event.altKey),
-      ctrlKey: Boolean(event && event.ctrlKey),
-      metaKey: Boolean(event && event.metaKey),
-      shiftKey: Boolean(event && event.shiftKey),
-      repeat: Boolean(event && event.repeat),
-      detail: event && event.detail,
-      pointerId: event && event.pointerId,
-      clientX: event && event.clientX,
-      clientY: event && event.clientY,
-    };
+    const payload = { type: String(event && event.type || "") };
+    for (const key of ["key", "code", "altKey", "ctrlKey", "metaKey", "shiftKey", "repeat", "detail", "pointerId", "clientX", "clientY"]) {
+      const value = event && event[key];
+      payload[key] = key.endsWith("Key") || key === "repeat" ? Boolean(value) : value;
+    }
     if (target) {
       payload.target = {
         dataset: Object.assign({}, target.dataset || {}),
         id: String(target.id || ""),
         name: String(target.name || ""),
-        value: target.value !== undefined ? target.value : undefined,
+        value: target.value,
         checked: target.checked !== undefined ? Boolean(target.checked) : undefined,
         text: target.textContent !== undefined ? String(target.textContent || "") : undefined,
       };
