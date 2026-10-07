@@ -7,10 +7,6 @@
 //
 // check exits 1 when a limit is exceeded or stale, a required policy fails, a
 // passing policy is not yet required, or a route is missing on either side.
-// Each app is one initially cold visit in sorted route order. HTML includes
-// inline scripts; eager hashed assets with fresh cache headers count once per
-// matching request variant, on the first page that downloads them. All route ceilings stay in
-// force, including that first page's cold bytes and requests.
 // -write rewrites the budget to the measurements instead of failing (limits
 // only move down unless -allow-raise is set).
 package main
@@ -22,8 +18,6 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"net/http"
-	"net/http/cookiejar"
 	"os"
 	"sort"
 	"strings"
@@ -46,14 +40,12 @@ func (m *multi) Set(v string) error { *m = append(*m, v); return nil }
 
 // Report is the JSON measurement file.
 type Report struct {
-	Schema      string       `json:"schema"`
-	Methodology string       `json:"methodology,omitempty"`
-	MeasuredAt  time.Time    `json:"measuredAt"`
-	Routes      []wire.Route `json:"routes"`
+	Schema     string       `json:"schema"`
+	MeasuredAt time.Time    `json:"measuredAt"`
+	Routes     []wire.Route `json:"routes"`
 }
 
 const reportSchema = "gosx.wire-report/v1"
-const visitMethodology = "gosx.wire-visit/v1"
 
 var errGate = errors.New("gate failed")
 
@@ -128,13 +120,10 @@ func runCheck(args []string, stdout, stderr io.Writer) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	report := Report{Schema: reportSchema, Methodology: visitMethodology, MeasuredAt: time.Now().UTC()}
+	report := Report{Schema: reportSchema, MeasuredAt: time.Now().UTC()}
 	for _, app := range sortedKeys(want) {
-		var visit wire.Visit
-		jar, _ := cookiejar.New(nil)
-		client := &http.Client{Jar: jar}
 		for _, route := range sortedKeys(want[app]) {
-			m, err := wire.Crawl(ctx, wire.Options{Visit: &visit, Client: client}, app, bases[app], route)
+			m, err := wire.Crawl(ctx, wire.Options{}, app, bases[app], route)
 			if err != nil {
 				return fmt.Errorf("%s %s: %w", app, route, err)
 			}
@@ -314,13 +303,7 @@ func Table(after Report, before *Report) string {
 			cell(wire.MetricInlineScriptBytes, true),
 			failing)
 	}
-	b.WriteString("\nBytes are response bodies as sent on the wire (after br or gzip), fetched with `Accept-Encoding: br, gzip` and a mobile user agent. HTML includes inline scripts; Total includes HTML and all eager resource and redirect bodies. ")
-	if after.Methodology == visitMethodology {
-		b.WriteString("Each app is one initially cold visit in listed route order, with a cookie jar shared within that app. Fresh hashed assets count once per matching request variant, on the first page that downloads them; cache hits add no bytes or requests. Vary and freshness determine reuse. ")
-	} else {
-		b.WriteString("This earlier report measures each page as a separate cold load. ")
-	}
-	b.WriteString("Inline JS is the decoded source size for the inline policy, not extra wire bytes. On-demand JS is measured separately, excluded from Total and Requests, and never warms the visit cache. All per-route ceilings apply, including the first page's full cold cost.\n")
+	b.WriteString("\nBytes are as sent on the wire (after br or gzip), fetched with `Accept-Encoding: br, gzip` and a mobile user agent. Inline JS is uncompressed. On-demand JS is every runtime chunk the page advertises for loading on demand; it is not in Total or Requests.\n")
 	return b.String()
 }
 

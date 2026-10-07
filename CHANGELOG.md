@@ -5,6 +5,26 @@
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
   request-time compression. Static exports include the asset.
+- Preserve public immutable caching for framework runtime JS/WASM, emitted
+  assets, hashed images and versioned public assets when global auth middleware
+  reads the session on every request. Classify resolved assets explicitly;
+  cookies, session writes, HTML/data, session variance and private policies
+  still force private caching.
+- Stop exposing `GET /_gosx/scheduled` on the public listener by default.
+  Building an app no longer creates a scheduler. The deprecated
+  `App.EnablePublicScheduledStatus()` opt-in lasts one minor release; protect
+  it with application authentication. Scheduled status handlers now return at
+  most 64 tasks, omit progress/error text, and report the fixed `task_failed`
+  error class. The response header `X-GoSX-Snapshot-Complete` reports truncation.
+
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
+- Export `signal.NewShared[T]` and `signal.Shared[T]` for typed native Go and
+  island authoring. Native calls create independent values; browser lowering
+  retains the existing shared `$name` contract.
+
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
   revalidation window. Cookie and authorization bypasses now render the origin

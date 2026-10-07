@@ -155,9 +155,9 @@ func TestCrawlCountsTheLoadPath(t *testing.T) {
 	if sum != r.TotalWireBytes {
 		t.Fatalf("kinds sum to %d, total %d", sum, r.TotalWireBytes)
 	}
-	// Inline scripts are already counted in the document, without an
-	// estimated compression allocation to the external framework metric.
-	want := boot.WireBytes + 2000 + 4
+	// Framework bytes: boot.js + wasm + gxi + all inline script (HTML is
+	// uncompressed, so inline bytes count in full).
+	want := boot.WireBytes + 2000 + 4 + r.InlineScriptBytes
 	if r.FrameworkJSWireBytes != want {
 		t.Fatalf("framework bytes = %d, want %d", r.FrameworkJSWireBytes, want)
 	}

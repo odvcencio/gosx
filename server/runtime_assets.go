@@ -1,6 +1,7 @@
 package server
 
 import (
+	"mime"
 	"net/http"
 	"os"
 	"path"
@@ -11,6 +12,7 @@ import (
 
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	"m31labs.dev/gosx/internal/httpcache"
 	"m31labs.dev/gosx/internal/httpcompress"
 	"m31labs.dev/gosx/island"
 )
@@ -138,17 +140,15 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fsPath, ok := runtimeManifestDirectAssetPath(root, name); ok {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
+		serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
 	if version := strings.TrimSpace(r.URL.Query().Get("v")); version != "" {
 		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			MarkObservedRequest(r, "runtime", "/gosx/"+name)
-			serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
+			serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
 			return
 		}
 	}
@@ -161,9 +161,8 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
+		serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
@@ -176,6 +175,15 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.NotFound(w, r)
+}
+
+func serveImmutableRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
+	setRuntimeContentType(w.Header(), fsPath)
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(fsPath)))
+	}
+	httpcache.MarkImmutableAsset(w, r)
+	serveRuntimeFileWithCompression(w, r, fsPath, compression)
 }
 
 func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {

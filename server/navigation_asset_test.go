@@ -11,6 +11,7 @@ import (
 
 	"m31labs.dev/gosx"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	"m31labs.dev/gosx/session"
 )
 
 func TestNavigationAssetHashAndRepresentations(t *testing.T) {
@@ -71,6 +72,55 @@ func TestNavigationAssetHashAndRepresentations(t *testing.T) {
 	app.ServeHTTP(w, httptest.NewRequest("GET", strings.Replace(wantPath, "navigation.", "navigation.wrong", 1), nil))
 	if w.Code != 404 {
 		t.Fatalf("unknown hash status=%d", w.Code)
+	}
+}
+
+func TestNavigationAssetRemainsImmutableAfterSessionRead(t *testing.T) {
+	m := session.MustNew("navigation-asset-test-secret", session.Options{})
+	w := httptest.NewRecorder()
+	m.Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		session.Current(r).Set("viewer", "signed-in")
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/session", nil))
+	if len(w.Result().Cookies()) != 1 {
+		t.Fatal("expected session cookie")
+	}
+	cookie := w.Result().Cookies()[0]
+	app := New()
+	app.Use(m.Middleware)
+	app.Use(func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if session.Current(r).String("viewer") != "signed-in" {
+				t.Fatal("middleware did not read the signed-in session")
+			}
+			next.ServeHTTP(w, r)
+		})
+	})
+	handler := app.Build()
+	for _, tc := range []struct {
+		name, method, conditional, byteRange string
+		status                               int
+	}{
+		{name: "get", method: http.MethodGet, status: http.StatusOK},
+		{name: "head", method: http.MethodHead, status: http.StatusOK},
+		{name: "conditional", method: http.MethodGet, conditional: `W/"` + strings.TrimSuffix(strings.TrimPrefix(runtimehost.NavigationRuntimePath, "/gosx/assets/runtime/"), ".js") + `"`, status: http.StatusNotModified},
+		{name: "range", method: http.MethodGet, byteRange: "bytes=0-15", status: http.StatusPartialContent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := httptest.NewRequest(tc.method, runtimehost.NavigationRuntimePath, nil)
+			r.AddCookie(cookie)
+			r.Header.Set("Accept-Encoding", "br, gzip")
+			r.Header.Set("If-None-Match", tc.conditional)
+			r.Header.Set("Range", tc.byteRange)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != tc.status || w.Header().Get("Cache-Control") != immutableAssetCacheControl {
+				t.Fatalf("status=%d headers=%v", w.Code, w.Header())
+			}
+			if headerHasToken(w.Header(), "Vary", "Cookie") || len(w.Result().Cookies()) != 0 {
+				t.Fatalf("session-independent asset headers=%v", w.Header())
+			}
+		})
 	}
 }
 
