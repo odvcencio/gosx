@@ -24,10 +24,15 @@ func TestTypedSharedSignalNativePicking(t *testing.T) {
 	calls := 0
 	dispose, err := SubscribeSignal[controller.PickRequest](ctx, "$dropRay", func(request controller.PickRequest) {
 		calls++
-		hit, ok := scene.RaycastGraph(graph, request.Ray)
+		ray := scene.Ray{Origin: scene.Vector3(request.Ray.Origin), Direction: scene.Vector3(request.Ray.Direction)}
+		hit, ok := scene.RaycastGraph(graph, ray)
 		result := controller.PickResult{RequestID: request.RequestID}
 		if ok {
-			result.Hit = &hit
+			result.Hit = &controller.RayHit{
+				ID: hit.ID, Kind: hit.Kind, Distance: hit.Distance,
+				Point: controller.Vector3(hit.Point), Normal: controller.Vector3(hit.Normal),
+				Pickable: hit.Pickable, InstanceIndex: hit.InstanceIndex, Method: hit.Method,
+			}
 		}
 		if err := ctx.SetSignal("$dropHit", result); err != nil {
 			t.Error(err)
