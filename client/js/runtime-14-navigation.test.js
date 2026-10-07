@@ -2576,7 +2576,7 @@ test("Scene3D public command API loads through the authored compat URL and rejec
   runScript(bootstrapFeatureScene3DSource, missing.context, "bootstrap-feature-scene3d.js");
   await assert.rejects(
     missing.context.__gosx.scene3d.dispatchCommands({ id: "ready-scene", __gosxScene3DCommandReady: true, applyCommands() {} }, commands),
-    /script not found: \/gosx\/bootstrap-feature-scene3d-command\.js/,
+    /failed to load scene3d-command chunk/,
   );
 });
 
@@ -2618,7 +2618,7 @@ test("Scene3D public command API retries lazy command chunk load after failure",
   };
   await assert.rejects(
     env.context.__gosx.scene3d.dispatchCommands(target, commands),
-    /script not found: \/gosx\/bootstrap-feature-scene3d-command\.js/,
+    /failed to load scene3d-command chunk/,
   );
   const ack = await env.context.__gosx.scene3d.dispatchCommands(target, commands);
 

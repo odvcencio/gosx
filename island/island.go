@@ -86,6 +86,7 @@ type Renderer struct {
 	bootstrapFeatureScene3dDecompressPath string
 	// Walk is advertised only when a Scene3D engine carries walk props.
 	bootstrapFeatureScene3dWalkPath          string
+	bootstrapFeatureScene3dPresentationPath  string
 	bootstrapFeatureScene3dTimelinePath      string
 	bootstrapFeatureScene3dParticleBurstPath string
 	bootstrapFeatureScene3dZoomPath          string
@@ -238,6 +239,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
 	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
 	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
+	renderer.bootstrapFeatureScene3dPresentationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-presentation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DPresentation.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
 	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
@@ -656,6 +658,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DZoomPath(path string) {
 	r.bootstrapFeatureScene3dZoomPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DPresentationPath overrides the optional playback coordinator URL.
+func (r *Renderer) SetBootstrapFeatureScene3DPresentationPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dPresentationPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DTimelinePath overrides the demand-loaded timeline chunk URL.
 func (r *Renderer) SetBootstrapFeatureScene3DTimelinePath(path string) {
 	if r == nil {
@@ -783,6 +793,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DWalk, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-zoom.js", r.bootstrapFeatureScene3dZoomPath, r.runtimeAssets.BootstrapFeatureScene3DZoom):
 		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-presentation.js", r.bootstrapFeatureScene3dPresentationPath, r.runtimeAssets.BootstrapFeatureScene3DPresentation):
+		return r.runtimeAssets.BootstrapFeatureScene3DPresentation, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
 		return r.runtimeAssets.BootstrapFeatureScene3DTimeline, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
@@ -822,7 +834,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 	}
 	target := compatRuntimePath(path)
 	switch target {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-presentation.js", "/gosx/bootstrap-feature-scene3d-timeline.js", "/gosx/bootstrap-feature-scene3d-particle-burst.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
 		if path == target {
 			return path + "?v=" + neturl.QueryEscape(hash)
 		}
@@ -952,6 +964,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
 	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
 	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
+	r.SetBootstrapFeatureScene3DPresentationPath(runtime.BootstrapFeatureScene3DPresentation)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
 	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
@@ -1204,6 +1217,11 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		if instanceStreamPath := r.bootstrapFeatureScene3dInstanceStreamPath; instanceStreamPath != "" {
 			b.WriteString(` data-gosx-scene3d-instance-stream-url="`)
 			b.WriteString(html.EscapeString(instanceStreamPath))
+			b.WriteByte('"')
+		}
+		if presentationPath := r.bootstrapFeatureScene3dPresentationPath; (chunkNeeds.timelines || chunkNeeds.particleBursts) && presentationPath != "" {
+			b.WriteString(` data-gosx-scene3d-presentation-url="`)
+			b.WriteString(html.EscapeString(presentationPath))
 			b.WriteByte('"')
 		}
 		if timelinePath := r.bootstrapFeatureScene3dTimelinePath; chunkNeeds.timelines && timelinePath != "" {

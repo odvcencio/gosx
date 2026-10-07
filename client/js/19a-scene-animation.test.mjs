@@ -58,6 +58,7 @@ function run(context, expression) {
 
 test("cloned five-weight channel preserves componentCount and owns buffer copies", () => {
   const { context } = createMixerContext();
+  context.__gosx_scene3d_api = {};
   vm.runInContext(readSource("10-runtime-scene-utils.ts"), context);
   vm.runInContext(ts.transpileModule(readSource("../runtime/scene3d/mount-webgl.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   const out = run(context, `(() => {

@@ -93,11 +93,10 @@
             nextRotationX: number(), nextRotationY: number(), nextRotationZ: number(),
             nextScaleX: number(), nextScaleY: number(), nextScaleZ: number(),
             tNext: number(),
-            animation: "", clipStartTime: 0, animationLoop: false, playbackRate: 1,
           };
           if (!(instance.tNext > instance.tPrev)) throw new RangeError("Scene3D motion frame requires tNext after tPrev");
         } else {
-          instance = { id: instanceID, x: number(), y: number(), z: number(), rotationX: number(), rotationY: number(), rotationZ: number(), scaleX: number(), scaleY: number(), scaleZ: number(), animationTime: number(), animation: "", animationLoop: false };
+          instance = { id: instanceID, x: number(), y: number(), z: number(), rotationX: number(), rotationY: number(), rotationZ: number(), scaleX: number(), scaleY: number(), scaleZ: number(), animationTime: number() };
           if (instance.animationTime < 0) throw new TypeError("negative Scene3D animation time");
         }
         var clipIndex = u16();
@@ -143,11 +142,10 @@
     });
   }
 
-  // Commands and presentations share polling; explicit presentation timeouts
-  // preserve zero while legacy commands retain their default and rounding.
-  function withReadyRecord<T>(target: unknown, opts: any, kind: string, applyReady: (rec: any) => T | PromiseLike<T>, timeoutMS?: number): Promise<T> {
+  // Commands and binary frames share the legacy readiness deadline.
+  function withReadyRecord<T>(target: unknown, opts: any, kind: string, applyReady: (rec: any) => T | PromiseLike<T>): Promise<T> {
     const id = key(target, opts);
-    const deadline = Date.now() + (timeoutMS ?? Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000)));
+    const deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
     return new Promise((resolve, reject) => {
       function poll() {
         try {
@@ -166,49 +164,6 @@
     if (!Array.isArray(commands)) return Promise.reject(new TypeError("Scene3D commands must be an array"));
     const rev = ++revision;
     return withReadyRecord(target, options || {}, "command", rec => apply(rec, commands, rev));
-  }
-
-  type PresentationName = "timeline" | "burst";
-  type PresentationOptions = { engineID?: string; timeoutMS?: number };
-  type PresentationAPI = { attach(value: unknown, mount: any, handle: any, ownsMount: () => boolean): unknown };
-  type PresentationFeature = { method: string; chunk: string; datasetKey: string; prepare?: () => unknown };
-  const presentations: Record<PresentationName, PresentationFeature> = {
-    timeline: { method: "playTimeline", chunk: "timeline", datasetKey: "gosxScene3dTimelineUrl" },
-    burst: {
-      method: "burstParticles", chunk: "particle-burst", datasetKey: "gosxScene3dParticleBurstUrl",
-      prepare: () => window.__gosx_ensure_scene3d_compute_loaded(),
-    },
-  };
-
-  function loadPresentation(name: PresentationName): Promise<PresentationAPI> {
-    const feature = presentations[name];
-    return window.__gosx_scene3d_api.ensureFeatureLoaded(feature.chunk, feature.datasetKey, "")
-      .then((api: PresentationAPI) => Promise.resolve(feature.prepare && feature.prepare()).then(() => api));
-  }
-
-  // Optional presentations share readiness and ownership. Their chunks retain
-  // their own playback, cancellation and scheduler lifecycle implementations.
-  function playPresentation(name: PresentationName, target: unknown, value: unknown, options?: PresentationOptions) {
-    const opts = options || {}, method = presentations[name].method;
-    const timeout = opts.timeoutMS ?? 10000;
-    if (!Number.isFinite(timeout)) return Promise.reject(new TypeError("Scene3D " + name + " timeout must be finite"));
-    return withReadyRecord(target, opts, name, rec => {
-      // Custom ready handles may implement presentations without a mount.
-      if (!rec.mount && typeof rec.handle[method] === "function") {
-        return Promise.resolve().then(() => rec.handle[method](value));
-      }
-      const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(candidate => Reflect.get(candidate, "__gosxScene3DHandle") === rec.handle);
-      if (!mount) throw new Error("Scene3D " + name + " mount is unavailable");
-      return loadPresentation(name).then(api => api.attach(value, mount, rec.handle, () => mount.__gosxScene3DHandle === rec.handle));
-    }, Math.max(0, timeout));
-  }
-
-  function playTimeline(target: unknown, timeline: unknown, options?: PresentationOptions) {
-    return playPresentation("timeline", target, timeline, options);
-  }
-
-  function burstParticles(target: unknown, burst: unknown, options?: PresentationOptions) {
-    return playPresentation("burst", target, burst, options);
   }
 
   // Both binary queues preserve a pending membership declaration when a newer
@@ -588,8 +543,6 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
-    playTimeline: playTimeline,
-    burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,

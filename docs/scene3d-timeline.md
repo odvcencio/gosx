@@ -80,11 +80,24 @@ Both JavaScript scenes and shared Go/WASM render bundles receive the same
 presentation bindings. Settled object values hold until an authoritative scene
 command supersedes them; the settled camera returns to user control.
 
-The implementation loads `bootstrap-feature-scene3d-timeline.js` on first play.
-It is included in production manifests and size reports and uses the advertised,
-versioned URL. `Renderer.SetBootstrapFeatureScene3DTimelinePath` accepts an asset
-prefix for embedded deployments. Opted-in scenes advertise the URL without
-loading or preloading the chunk. URL overrides preserve the explicit opt-in.
+First play loads `bootstrap-feature-scene3d-presentation.js`, which coordinates
+scene readiness and loads `bootstrap-feature-scene3d-timeline.js`. Both use
+advertised, versioned URLs and appear in production manifests and size reports.
+`Renderer.SetBootstrapFeatureScene3DPresentationPath` and
+`Renderer.SetBootstrapFeatureScene3DTimelinePath` accept asset URL overrides for
+embedded deployments. Opted-in scenes advertise both URLs without loading or
+preloading the chunks. URL overrides preserve the explicit opt-in.
+
+For an already mounted scene, the generated JavaScript dependencies add these
+bytes on first play (HTTP headers excluded; compression columns are alternatives):
+
+| Dependencies | Raw | Gzip | Brotli |
+| --- | ---: | ---: | ---: |
+| Presentation coordinator + timeline | 7,662 | 3,309 | 3,013 |
+
+Cached dependencies are reused. The coordinator replaces the generic command
+chunk in the playback load chain; it does not add another sequential hop. Scenes
+without timeline or burst opt-ins advertise none of these playback URLs.
 
 Native hosts can prepare a `scene.NewTimelinePlayer(plan)` once and call
 `player.Sample(elapsedSeconds)` for compact scene commands. `plan.Sample` is the

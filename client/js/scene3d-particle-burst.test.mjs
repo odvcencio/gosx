@@ -150,9 +150,9 @@ test('timeline and burst adapters compose in either order and restore the origin
 
 test('burst bridge rejects non-finite readiness timeouts before scheduling', async () => {
   const r = runtime();
-  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-bridge.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
   r.context.setTimeout = () => assert.fail('invalid timeouts must not schedule work');
   for (const timeoutMS of [NaN, Infinity, -Infinity, 'later']) {
-    await assert.rejects(r.window.__gosx_scene3d_command_bridge.burstParticles('missing', fixture, { timeoutMS }), /timeout must be finite/);
+    await assert.rejects(r.window.__gosx.scene3d.burstParticles('missing', fixture, { timeoutMS }), /timeout must be finite/);
   }
 });

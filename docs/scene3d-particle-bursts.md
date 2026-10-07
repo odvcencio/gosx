@@ -60,12 +60,27 @@ emission jitter and randomized lifetime. Background gaps advance at most
 100 milliseconds per scheduler frame. Bursts use receipt time independently of
 the scene's authored animation clock.
 
-Playback loads `bootstrap-feature-scene3d-particle-burst.js` and the existing
-particle compute chunk only on first use, waiting for both before starting.
-Its advertised versioned URL supports production manifests and embedded asset
-prefixes. `Renderer.SetBootstrapFeatureScene3DParticleBurstPath` overrides the
-URL while preserving the explicit opt-in. Opted-in scenes advertise the chunk
-without fetching or preloading it.
+First use loads `bootstrap-feature-scene3d-presentation.js`, which coordinates
+scene readiness and loads `bootstrap-feature-scene3d-particle-burst.js`. Playback
+also waits for the existing particle compute chunk. Advertised, versioned URLs
+support production manifests and embedded asset prefixes.
+`Renderer.SetBootstrapFeatureScene3DPresentationPath` and
+`Renderer.SetBootstrapFeatureScene3DParticleBurstPath` override the URLs while
+preserving the explicit opt-in. Opted-in scenes advertise the chunks without
+fetching or preloading them.
+
+For an already mounted scene, the generated JavaScript dependencies add these
+bytes on first burst (HTTP headers excluded; compression columns are alternatives):
+
+| Dependencies | Raw | Gzip | Brotli |
+| --- | ---: | ---: | ---: |
+| Presentation coordinator + burst, compute cached | 7,381 | 3,126 | 2,832 |
+| Presentation coordinator + burst + cold compute | 68,722 | 20,556 | 18,943 |
+
+Cached dependencies are reused. The coordinator replaces the generic command
+chunk in the playback load chain; it does not add another sequential hop. Scenes
+without timeline or burst opt-ins advertise none of these playback URLs. Compute
+keeps its independent scene-content loading policy.
 
 Native hosts can call `burst.Sample(currentSceneIR, elapsedSeconds)` to obtain
 a `SetParticlesCommand` preserving their other particle layers. Apply it when

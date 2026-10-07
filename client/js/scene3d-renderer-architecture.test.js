@@ -261,8 +261,8 @@ test("repo-wide renderer references scan Git-tracked text without suffix escape 
       "probe.yml",
     ]);
     const generated = [...generatedBootstrapArtifactPaths()];
-    assert.equal(generated.length, 100);
-    assert.ok(["", ".map", ".gz", ".br"].every((suffix) => ["bootstrap-controller-input.js", "bootstrap-feature-scene3d-timeline.js", "bootstrap-feature-scene3d-particle-burst.js"].every((chunk) => generated.includes("client/js/" + chunk + suffix))));
+    assert.equal(generated.length, 104);
+    assert.ok(["", ".map", ".gz", ".br"].every((suffix) => ["bootstrap-controller-input.js", "bootstrap-feature-scene3d-presentation.js", "bootstrap-feature-scene3d-timeline.js", "bootstrap-feature-scene3d-particle-burst.js"].every((chunk) => generated.includes("client/js/" + chunk + suffix))));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.map"));
     assert.ok(generated.includes("client/js/bootstrap-feature-scene3d-hydrate.js.gz"));

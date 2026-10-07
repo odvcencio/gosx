@@ -8,6 +8,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 import { freshFeatureBundleSource } from "./runtime-test-harness.js";
+import { sceneGatedLoaders } from "./scene3d-gated-loader-fixture.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = [
@@ -144,6 +145,7 @@ function runModule(regions, payload, opts) {
         dispatchedEvents.push(event);
         return true;
       },
+      querySelector: () => null,
       createElement: (tagName) => {
         const tag = String(tagName || "").toLowerCase();
         if (tag !== "script") return {};
@@ -152,6 +154,7 @@ function runModule(regions, payload, opts) {
           onload: null,
           onerror: null,
           src: "",
+          setAttribute(name, value) { this[name] = value; },
         };
       },
       head: {
@@ -170,6 +173,7 @@ function runModule(regions, payload, opts) {
       },
     },
     window: {
+      __gosx_scene3d_api: {},
       __gosx_subscribe_shared_signal: (name, fn, opts) => { subs.push({ name, fn, opts }); return () => {}; },
       __gosx_emit: (level, category, message, fields) => telemetry.push({ level, category, message, fields }),
       __gosx: {
@@ -185,6 +189,7 @@ function runModule(regions, payload, opts) {
   ctx.window.document = ctx.document;
   const timers = installManualTimers(ctx);
   vm.createContext(ctx);
+  vm.runInContext(sceneGatedLoaders, ctx);
   vm.runInContext(scene3dBridgeSrc, ctx);
   vm.runInContext(moduleSrc, ctx);
   const firePointer = (type, target) => {
@@ -475,7 +480,8 @@ test("declarative scene command broadcasts keep legacy mounted handles separate 
   const { context } = runModule([], {}, { engines });
   assert.equal(engine.record.handle.__gosxScene3DCommandReady, undefined);
 
-  await context.window.__gosx_apply_scene_command_scripts(root);
+  context.window.__gosx_apply_scene_command_scripts(root);
+  await tick(); // The region wrapper schedules command loading without returning its promise.
   assert.deepEqual(asJSON(engine.calls), [commands]);
 
   await assert.rejects(

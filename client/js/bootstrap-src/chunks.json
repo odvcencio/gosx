@@ -335,6 +335,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-presentation.js",
+      "sources": [
+        "../runtime/scene3d/presentation.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-timeline.js",
       "sources": [
         "../runtime/scene3d/timeline.ts"

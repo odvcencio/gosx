@@ -652,6 +652,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d-walk", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-walk.js"), &manifest.Runtime.BootstrapFeatureScene3DWalk, "scene3d"},
 		{"bootstrap-feature-scene3d-particle-burst", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-particle-burst.js"), &manifest.Runtime.BootstrapFeatureScene3DParticleBurst, "scene3d"},
 		{"bootstrap-feature-scene3d-zoom", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-zoom.js"), &manifest.Runtime.BootstrapFeatureScene3DZoom, "scene3d"},
+		{"bootstrap-feature-scene3d-presentation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-presentation.js"), &manifest.Runtime.BootstrapFeatureScene3DPresentation, "scene3d"},
 		{"bootstrap-feature-scene3d-timeline", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-timeline.js"), &manifest.Runtime.BootstrapFeatureScene3DTimeline, "scene3d"},
 		{"bootstrap-feature-scene3d-vessel", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-vessel.js"), &manifest.Runtime.BootstrapFeatureScene3DVessel, "scene3d"},
 		{"bootstrap-feature-scene3d-ocean-query", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-ocean-query.js"), &manifest.Runtime.BootstrapFeatureScene3DOceanQuery, "scene3d"},
@@ -1351,6 +1352,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "/gosx/bootstrap-feature-scene3d-zoom.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DZoom.File)
+	case "/gosx/bootstrap-feature-scene3d-presentation.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DPresentation.File)
 	case "/gosx/bootstrap-feature-scene3d-timeline.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DTimeline.File)
 	case "/gosx/bootstrap-feature-scene3d-vessel.js":

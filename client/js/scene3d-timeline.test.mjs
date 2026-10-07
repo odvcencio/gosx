@@ -120,18 +120,18 @@ test('application failures reject finished and release scheduler work', async ()
 
 test('public bridge resolves a mounted timeline without applying command payloads', async () => {
   const r = runtime();
-  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-bridge.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
   const result = { finished: Promise.resolve() };
   const handle = { __gosxScene3DCommandReady: true, applyCommands() { assert.fail('timeline dispatch is separate'); }, playTimeline(spec) { assert.equal(spec, fixture); return result; } };
-  assert.equal(await r.window.__gosx_scene3d_command_bridge.playTimeline(handle, fixture), result);
+  assert.equal(await r.window.__gosx.scene3d.playTimeline(handle, fixture), result);
 });
 
 test('public bridge rejects non-finite timeouts instead of polling forever', async () => {
   const r = runtime();
-  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-bridge.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
   r.context.setTimeout = () => assert.fail('invalid timeouts must not schedule work');
   for (const timeoutMS of [NaN, Infinity, -Infinity, 'later']) {
-    await assert.rejects(r.window.__gosx_scene3d_command_bridge.playTimeline('missing', fixture, { timeoutMS }), /timeout must be finite/);
+    await assert.rejects(r.window.__gosx.scene3d.playTimeline('missing', fixture, { timeoutMS }), /timeout must be finite/);
   }
 });
 

@@ -19,6 +19,7 @@ test("WebGL water blends over the depth-tested world in one context", () => {
     sceneNumber: (value, fallback) => Number(value) || fallback,
     sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
     window: {
+      __gosx_scene3d_api: {},
       __gosx_scene3d_webgl_api: {
         createSceneWaterRendererWebGL(receivedGL) {
           assert.equal(receivedGL, gl);
@@ -76,7 +77,7 @@ test("water wrapper follows live world state and timing methods", () => {
   const context = {
     sceneNumber: (value, fallback) => Number(value) || fallback,
     sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
-    window: { __gosx_scene3d_webgl_api: {
+    window: { __gosx_scene3d_api: {}, __gosx_scene3d_webgl_api: {
       createSceneWaterRendererWebGL: () => ({kind:"webgl", isWaterForced:true, pollPerformanceSample:waterSample, render() {}, dispose() {}}),
       createScenePBRRendererOrFallback: () => ({pollPerformanceSample:worldSample, render() {}, renderSurfaces() {}, dispose() {}}),
     } },

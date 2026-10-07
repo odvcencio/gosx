@@ -596,6 +596,10 @@ var outputs = []output{
 		},
 	},
 	{
+		name:    "bootstrap-feature-scene3d-presentation.js",
+		sources: []source{sourceFile("../runtime/scene3d/presentation.ts")},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-timeline.js",
 		sources: []source{sourceFile("../runtime/scene3d/timeline.ts")},
 	},

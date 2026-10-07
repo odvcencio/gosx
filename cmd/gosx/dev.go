@@ -276,6 +276,9 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 		"bootstrap-feature-scene3d-compute.js",
 		"bootstrap-feature-scene3d-decompress.js",
 		"bootstrap-feature-scene3d-instance-stream.js",
+		"bootstrap-feature-scene3d-presentation.js",
+		"bootstrap-feature-scene3d-timeline.js",
+		"bootstrap-feature-scene3d-particle-burst.js",
 	} {
 		if err := copyFile(filepath.Join(buildDir, chunk), filepath.Join(gosxRoot, "client", "js", chunk)); err != nil {
 			return fmt.Errorf("stage %s: %w", chunk, err)

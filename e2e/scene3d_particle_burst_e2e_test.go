@@ -18,6 +18,7 @@ const sceneParticleBurstHTML = `<!doctype html><html><body style="margin:0">
 <script data-gosx-script="feature-scene3d"
  data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js"
  data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js"
+ data-gosx-scene3d-presentation-url="/activity/runtime/presentation.js?v=coord1"
  data-gosx-scene3d-compute-url="/gosx/bootstrap-feature-scene3d-compute.js?v=particles1"
  data-gosx-scene3d-particle-burst-url="/activity/runtime/burst.js?v=event1"
  src="/gosx/bootstrap-feature-scene3d.js"></script>
@@ -41,9 +42,20 @@ window.burst = {version:1,id:'impact',delay:0.05,duration:1.73,particles:{
 
 func TestScene3DParticleBurstLazyRenderingAndCleanup(t *testing.T) {
 	root, chrome := e2eRepoRoot(t), e2eChromePath(t)
-	var requests atomic.Int32
+	var requests, presentationRequests, commandRequests atomic.Int32
 	mux := http.NewServeMux()
 	mux.Handle("/gosx/", http.StripPrefix("/gosx/", http.FileServer(http.Dir(filepath.Join(root, "client", "js")))))
+	mux.HandleFunc("/gosx/bootstrap-feature-scene3d-command.js", func(w http.ResponseWriter, r *http.Request) {
+		commandRequests.Add(1)
+		http.ServeFile(w, r, filepath.Join(root, "client", "js", "bootstrap-feature-scene3d-command.js"))
+	})
+	mux.HandleFunc("/activity/runtime/presentation.js", func(w http.ResponseWriter, r *http.Request) {
+		presentationRequests.Add(1)
+		if r.URL.Query().Get("v") != "coord1" {
+			t.Error("presentation coordinator lost its advertised version")
+		}
+		http.ServeFile(w, r, filepath.Join(root, "client", "js", "bootstrap-feature-scene3d-presentation.js"))
+	})
 	mux.HandleFunc("/activity/runtime/burst.js", func(w http.ResponseWriter, r *http.Request) {
 		requests.Add(1)
 		if r.URL.Query().Get("v") != "event1" {
@@ -65,11 +77,14 @@ func TestScene3DParticleBurstLazyRenderingAndCleanup(t *testing.T) {
 	if mountError != "" {
 		t.Fatalf("mount: %s\n%s", mountError, page.Console())
 	}
-	if requests.Load() != 0 {
-		t.Fatal("ordinary startup fetched the burst chunk")
+	if requests.Load() != 0 || presentationRequests.Load() != 0 || commandRequests.Load() != 0 {
+		t.Fatalf("startup fetched optional chunks: burst=%d presentation=%d command=%d", requests.Load(), presentationRequests.Load(), commandRequests.Load())
 	}
 	before := page.screenshotElement(t, "#scene canvas")
 	page.eval(t, `(async () => { window.effect = await window.__gosx.scene3d.burstParticles(handle, burst); return true; })()`, nil)
+	if requests.Load() != 1 || presentationRequests.Load() != 1 || commandRequests.Load() != 0 {
+		t.Fatalf("first burst must fetch one coordinator and burst, without generic commands: burst=%d presentation=%d command=%d", requests.Load(), presentationRequests.Load(), commandRequests.Load())
+	}
 	page.waitFor(t, `Number(document.getElementById('scene').getAttribute('data-gosx-scene3d-webgl-compute-particle-draw-instances')) > 0`, 5*time.Second, "rendered particles")
 	after := page.screenshotElement(t, "#scene canvas")
 	if bytes.Equal(before, after) {
@@ -77,8 +92,8 @@ func TestScene3DParticleBurstLazyRenderingAndCleanup(t *testing.T) {
 	}
 	var finished bool
 	page.eval(t, `effect.finished.then(result => result.finished && !result.suppressed)`, &finished)
-	if !finished || requests.Load() != 1 {
-		t.Fatal("burst did not finish after one lazy request")
+	if !finished || requests.Load() != 1 || presentationRequests.Load() != 1 || commandRequests.Load() != 0 {
+		t.Fatalf("burst completion changed lazy chunk contract: finished=%t burst=%d presentation=%d command=%d", finished, requests.Load(), presentationRequests.Load(), commandRequests.Load())
 	}
 	page.waitFor(t, `document.getElementById('scene').__gosxScene3DState.computeParticles.length === 0 && document.getElementById('scene').getAttribute('data-gosx-scene3d-render-loop') === 'stopped'`, 5*time.Second, "burst cleanup and idle render loop")
 }

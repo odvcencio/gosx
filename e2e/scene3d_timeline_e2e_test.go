@@ -20,6 +20,7 @@ const sceneTimelineHTML = `<!doctype html><html><body style="margin:0">
 <script data-gosx-script="feature-scene3d"
  data-gosx-scene3d-webgl-url="/gosx/bootstrap-feature-scene3d-webgl.js"
  data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js"
+ data-gosx-scene3d-presentation-url="/activity/runtime/presentation.js?v=coord1"
  data-gosx-scene3d-timeline-url="/activity/runtime/timeline.js?v=plan1"
  src="/gosx/bootstrap-feature-scene3d.js"></script>
 <script>
@@ -42,9 +43,20 @@ window.plan = {version:1,id:'place',tweens:[
 
 func TestScene3DTimelineLazyPlaybackInBrowser(t *testing.T) {
 	root, chrome := e2eRepoRoot(t), e2eChromePath(t)
-	var timelineRequests atomic.Int32
+	var timelineRequests, presentationRequests, commandRequests atomic.Int32
 	mux := http.NewServeMux()
 	mux.Handle("/gosx/", http.StripPrefix("/gosx/", http.FileServer(http.Dir(filepath.Join(root, "client", "js")))))
+	mux.HandleFunc("/gosx/bootstrap-feature-scene3d-command.js", func(w http.ResponseWriter, r *http.Request) {
+		commandRequests.Add(1)
+		http.ServeFile(w, r, filepath.Join(root, "client", "js", "bootstrap-feature-scene3d-command.js"))
+	})
+	mux.HandleFunc("/activity/runtime/presentation.js", func(w http.ResponseWriter, r *http.Request) {
+		presentationRequests.Add(1)
+		if r.URL.Query().Get("v") != "coord1" {
+			t.Error("presentation coordinator lost its advertised version")
+		}
+		http.ServeFile(w, r, filepath.Join(root, "client", "js", "bootstrap-feature-scene3d-presentation.js"))
+	})
 	mux.HandleFunc("/activity/runtime/timeline.js", func(w http.ResponseWriter, r *http.Request) {
 		timelineRequests.Add(1)
 		if r.URL.Query().Get("v") != "plan1" {
@@ -68,8 +80,8 @@ func TestScene3DTimelineLazyPlaybackInBrowser(t *testing.T) {
 	if mountError != "" {
 		t.Fatalf("mount: %s\n%s", mountError, page.Console())
 	}
-	if timelineRequests.Load() != 0 {
-		t.Fatal("ordinary scene startup fetched the timeline")
+	if timelineRequests.Load() != 0 || presentationRequests.Load() != 0 || commandRequests.Load() != 0 {
+		t.Fatalf("startup fetched optional chunks: timeline=%d presentation=%d command=%d", timelineRequests.Load(), presentationRequests.Load(), commandRequests.Load())
 	}
 	var backend string
 	page.eval(t, `document.getElementById("scene").getAttribute("data-gosx-scene3d-backend")`, &backend)
@@ -78,12 +90,15 @@ func TestScene3DTimelineLazyPlaybackInBrowser(t *testing.T) {
 	}
 	before := page.screenshotElement(t, "#scene canvas")
 	page.eval(t, `(async () => { window.playback = await window.__gosx.scene3d.playTimeline(handle, window.plan); playback.pause(); playback.seek(0.1); return true; })()`, nil)
+	if timelineRequests.Load() != 1 || presentationRequests.Load() != 1 || commandRequests.Load() != 0 {
+		t.Fatalf("first timeline play must fetch one coordinator and timeline, without generic commands: timeline=%d presentation=%d command=%d", timelineRequests.Load(), presentationRequests.Load(), commandRequests.Load())
+	}
 	page.waitFor(t, `document.getElementById('scene').__gosxScene3DState.objects.get('piece').x > -1`, 5*time.Second, "tween sample")
 	page.eval(t, `playback.finish(); true`, nil)
 	var finished bool
 	page.eval(t, `playback.finished.then(result => result.finished)`, &finished)
-	if !finished || timelineRequests.Load() != 1 {
-		t.Fatal("timeline did not finish after exactly one lazy fetch")
+	if !finished || timelineRequests.Load() != 1 || presentationRequests.Load() != 1 || commandRequests.Load() != 0 {
+		t.Fatalf("timeline completion changed lazy chunk contract: finished=%t timeline=%d presentation=%d command=%d", finished, timelineRequests.Load(), presentationRequests.Load(), commandRequests.Load())
 	}
 	page.waitFor(t, `Math.abs(handle.getCamera().y - 0.5) < 1e-6`, 5*time.Second, "settled camera controls")
 	page.waitFor(t, `document.getElementById('scene').__gosxScene3DState.objects.get('piece').x === 1`, 5*time.Second, "settled piece")

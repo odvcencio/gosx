@@ -51,6 +51,7 @@ function createCoreContext({ mount = false } = {}) {
   }
   vm.runInContext(trimBeforeSharedAPI(readSource("10-runtime-scene-core.ts")), context, { filename: "10-runtime-scene-core.ts" });
   if (mount) {
+    context.__gosx_scene3d_api = {};
     vm.runInContext(ts.transpileModule(readRuntime("mount-webgl.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "mount-webgl.ts" });
   }
   return context;

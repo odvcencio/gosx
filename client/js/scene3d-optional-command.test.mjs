@@ -2,27 +2,13 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import vm from "node:vm";
 import fs from "node:fs";
-import { createRequire } from "node:module";
-import { freshFeatureBundleSource, readSceneMountSrc } from "./runtime-test-harness.js";
+import { freshFeatureBundleSource } from "./runtime-test-harness.js";
 
-const source = freshFeatureBundleSource("scene3d-command");
-const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
-function loaderSource(text, names, statements = []) {
-  const parsed = ts.createSourceFile("scene-loader.ts", text, ts.ScriptTarget.ES2022, true);
-  const selected = parsed.statements.filter(node =>
-    (ts.isFunctionDeclaration(node) && names.includes(node.name.text)) || statements.includes(node.getText(parsed)));
-  assert.equal(selected.length, names.length + statements.length, "all real loader authorities must be exercised");
-  return selected.map(node => node.getText(parsed)).join("\n");
-}
-const loaders = loaderSource(readSceneMountSrc(), [
-  "gosxConfigureSceneScript", "resolveSceneSubFeatureURL", "sceneGatedFeatureAPI",
-  "ensureSceneGatedFeatureLoaded", "ensureComputeFeatureLoaded",
-], ["var sceneGatedFeaturePromises = Object.create(null);",
-  "window.__gosx_scene3d_api.ensureFeatureLoaded = ensureSceneGatedFeatureLoaded;",
-  "window.__gosx_ensure_scene3d_compute_loaded = ensureComputeFeatureLoaded;"])
-  + "\n" + loaderSource(fs.readFileSync(new URL("bootstrap-src/10-runtime-scene-utils.ts", import.meta.url), "utf8"), [
-    "gosxScriptNonceValue", "gosxCurrentScriptNonce", "gosxApplyCurrentScriptNonce",
-  ]);
+import { sceneGatedLoaders } from "./scene3d-gated-loader-fixture.mjs";
+
+const source = freshFeatureBundleSource("scene3d-presentation");
+const commands = freshFeatureBundleSource("scene3d-command");
+const facade = fs.readFileSync(new URL("../runtime/scene3d/command-bridge.ts", import.meta.url), "utf8");
 const features = [
   { method: "playTimeline", chunk: "timeline", api: "__gosx_scene3d_timeline_api" },
   { method: "burstParticles", chunk: "particle-burst", api: "__gosx_scene3d_particle_burst_api" },
@@ -42,15 +28,87 @@ function runtime() {
   };
   const window = { __gosx_scene3d_api: {}, __gosx_scene3d_compute_api: {} };
   const context = vm.createContext({ window, document, Date: { now: () => now }, setTimeout: callback => timers.push(callback) });
-  vm.runInContext(loaders, context);
+  vm.runInContext(sceneGatedLoaders, context);
   vm.runInContext(source, context);
-  for (const feature of [...features, { chunk: "compute" }]) {
+  vm.runInContext(commands, context);
+  vm.runInContext(facade, context);
+  for (const feature of [...features, { chunk: "compute" }, { chunk: "presentation" }]) {
     const key = "gosxScene3d" + feature.chunk.split("-").map(part => part[0].toUpperCase() + part.slice(1)).join("") + "Url";
     tag.dataset[key] = "/assets/" + feature.chunk + ".js";
   }
-  return { window, mount, handle, scripts, timers, document, dataset: tag.dataset, bridge: window.__gosx_scene3d_command_bridge,
+  return { window, mount, handle, scripts, timers, document, dataset: tag.dataset, bridge: window.__gosx_scene3d_presentation_api, commands: window.__gosx_scene3d_command_bridge, context, facade: window.__gosx.scene3d,
     setMount(value) { currentMount = value; }, advance(ms) { now += ms; timers.shift()(); } };
 }
+
+for (const feature of features) {
+  test(feature.method + " first play loads presentation then playback without the command chunk", async () => {
+    const r = runtime();
+    delete r.window.__gosx_scene3d_presentation_api;
+    delete r.window.__gosx_scene3d_command_bridge;
+    const first = r.facade[feature.method](r.mount, { id: "first" });
+    const second = r.facade[feature.method](r.mount, { id: "second" });
+    assert.equal(r.scripts.length, 1, "coordinator loading is shared");
+    assert.equal(r.scripts[0].src, "/assets/presentation.js");
+    assert.equal(r.scripts[0].nonce, "active-document-nonce");
+    vm.runInContext(source, r.context);
+    r.scripts[0].onload();
+    await Promise.resolve(); await Promise.resolve();
+    assert.equal(r.scripts.length, 2);
+    assert.equal(r.scripts[1].src, "/assets/" + feature.chunk + ".js");
+    r.window[feature.api] = { attach: value => value.id };
+    r.scripts[1].onload();
+    assert.deepEqual(await Promise.all([first, second]), ["first", "second"]);
+    assert.equal(r.window.__gosx_scene3d_command_bridge, undefined);
+    assert.deepEqual(r.scripts.map(script => script.src), ["/assets/presentation.js", "/assets/" + feature.chunk + ".js"]);
+  });
+
+  test(feature.method + " facade preserves custom handles and rejects unadvertised coordination", async () => {
+    const r = runtime();
+    delete r.window.__gosx_scene3d_presentation_api;
+    for (const key of Object.keys(r.dataset)) delete r.dataset[key];
+    const value = { id: "custom" };
+    const custom = { __gosxScene3DCommandReady: true, applyCommands() {}, [feature.method]: spec => spec };
+    assert.equal(await r.facade[feature.method](custom, value), value);
+    for (const timeoutMS of [NaN, Infinity, -Infinity, "later"]) {
+      await assert.rejects(r.facade[feature.method](custom, value, { timeoutMS }), /timeout must be finite/);
+    }
+    custom[feature.method] = () => { throw new Error("custom failure"); };
+    await assert.rejects(r.facade[feature.method](custom, value), /custom failure/);
+    await assert.rejects(r.facade[feature.method](r.mount, value), /presentation chunk URL was not advertised/);
+    assert.equal(r.scripts.length, 0);
+  });
+}
+
+test("presentation coordination retries failure and missing publication through the canonical loader", async () => {
+  const r = runtime();
+  delete r.window.__gosx_scene3d_presentation_api;
+  const failed = assert.rejects(r.facade.playTimeline(r.mount, {}), /failed to load scene3d-presentation/);
+  r.scripts[0].onerror(); await failed;
+  const unpublished = assert.rejects(r.facade.playTimeline(r.mount, {}), /did not publish API/);
+  r.scripts[1].onload(); await unpublished;
+  r.window.__gosx_scene3d_timeline_api = { attach: () => "attached" };
+  const retry = r.facade.playTimeline(r.mount, {});
+  vm.runInContext(source, r.context);
+  r.scripts[2].onload();
+  assert.equal(await retry, "attached");
+  assert.equal(r.scripts.length, 3);
+});
+
+test("command coordination retains its legacy fallback URL and publication contract", async () => {
+  const r = runtime();
+  delete r.window.__gosx_scene3d_command_bridge;
+  const received = [];
+  r.handle.applyCommands = value => received.push(value);
+  const pending = r.facade.dispatchCommands(r.handle, [{ kind: 5 }]);
+  assert.equal(r.scripts[0].src, "/gosx/bootstrap-feature-scene3d-command.js");
+  vm.runInContext(commands, r.context);
+  r.scripts[0].onload();
+  assert.equal((await pending).applied, true);
+  assert.equal(received.length, 1);
+  assert.equal(typeof r.window.__gosx_scene3d_command_bridge.dispatchCommands, "function");
+  await r.facade.dispatchCommands(r.handle, []);
+  assert.equal(r.scripts.length, 1, "the canonical loader reuses the legacy bridge publication");
+});
 
 for (const feature of features) {
   test(feature.method + " coalesces script loading and fences attachment to its original owner", async () => {
@@ -158,14 +216,14 @@ test("shared readiness retains fractional presentation deadlines and legacy comm
     r.advance(0.25); await pending;
   }
   const r = runtime(); r.setMount(null);
-  const pending = assert.rejects(r.bridge.dispatchCommands("scene", [], { timeoutMS: 1.5 }), /target did not become ready/);
+  const pending = assert.rejects(r.commands.dispatchCommands("scene", [], { timeoutMS: 1.5 }), /target did not become ready/);
   r.advance(1); await pending;
 });
 
 test("shared command readiness preserves the legacy zero timeout and rejects a late application failure", async () => {
   const r = runtime();
   r.setMount(null);
-  const pending = r.bridge.dispatchCommands("scene", [], { timeoutMS: 0 });
+  const pending = r.commands.dispatchCommands("scene", [], { timeoutMS: 0 });
   const rejected = assert.rejects(pending, /renderer disposed/);
   assert.equal(r.timers.length, 1, "legacy command zero uses its default readiness window");
   r.handle.applyCommands = () => { throw new Error("renderer disposed"); };

@@ -2059,7 +2059,7 @@ function gosxConfigureSceneScript(script, role, src) {
 
   // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
   function sceneGatedFeatureAPI(kind) {
-    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : kind === "zoom" ? window.__gosx_runtime_api.scene3DZoom : window["__gosx_scene3d_" + kind.replace(/-/g, "_") + "_api"];
+    return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : kind === "zoom" ? window.__gosx_runtime_api.scene3DZoom : window["__gosx_scene3d_" + kind.replace(/-/g, "_") + (kind === "command" ? "_bridge" : "_api")];
   }
   // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
   function ensureSceneGatedFeatureLoaded(kind, datasetKey, fallback) {

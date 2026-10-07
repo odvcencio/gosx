@@ -44,6 +44,7 @@ func TestScene3DPlaybackChunksRequireOptIn(t *testing.T) {
 				name string
 				want bool
 			}{
+				{"presentation", tc.timelines || tc.bursts},
 				{"timeline", tc.timelines}, {"particle-burst", tc.bursts},
 				{"compute", tc.compute}, {"decompress", tc.decompress},
 			} {

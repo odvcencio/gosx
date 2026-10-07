@@ -179,6 +179,12 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-decompress.js"), true
 	case "/gosx/bootstrap-feature-scene3d-instance-stream.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-instance-stream.js"), true
+	case "/gosx/bootstrap-feature-scene3d-presentation.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-presentation.js"), true
+	case "/gosx/bootstrap-feature-scene3d-timeline.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-timeline.js"), true
+	case "/gosx/bootstrap-feature-scene3d-particle-burst.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-particle-burst.js"), true
 	case "/gosx/patch.js":
 		return filepath.Join(buildDir, "patch.js"), true
 	case "/gosx/hls.min.js":
