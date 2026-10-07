@@ -4,8 +4,8 @@
 // Run:  go run ./examples/scheduled-work
 // Visit http://localhost:8080
 //
-// GET /_gosx/scheduled shows live task status for every registered task,
-// including the last progress message and next-due time.
+// Task status is private by default. App.ScheduledStatusHandler can be mounted
+// behind application authentication; it omits progress and error text.
 package main
 
 import (
@@ -75,6 +75,5 @@ func main() {
 	}
 
 	fmt.Println("GoSX scheduled-work example running at http://localhost:8080")
-	fmt.Println("Task status: GET http://localhost:8080/_gosx/scheduled")
 	log.Fatal(app.ListenAndServe(":8080"))
 }

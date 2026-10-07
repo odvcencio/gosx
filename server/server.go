@@ -31,6 +31,8 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/internal/bundlepolicy"
+	"m31labs.dev/gosx/internal/httpcache"
+	"m31labs.dev/gosx/internal/telemetryerr"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -78,39 +80,41 @@ type statusCoder interface {
 
 // App is the GoSX server application.
 type App struct {
-	pageRoutes         map[string]registeredPageRoute
-	apiRoutes          map[string]registeredAPIRoute
-	layout             func(title string, body gosx.Node) gosx.Node
-	document           DocumentFunc
-	mux                *http.ServeMux
-	middleware         []Middleware
-	edgeMiddleware     []EdgeMiddleware
-	notFound           PageHandler
-	errorPage          ErrorHandler
-	publicDir          string
-	publicPolicy       bundlepolicy.PolicyFile
-	imageDir           string
-	runtimeRoot        string
-	runtimeMeta        *runtimeManifestCache
-	isr                *isrConfig
-	isrStore           ISRStore
-	navigation         bool
-	observers          []RequestObserver
-	readyChecks        []namedReadyCheck
-	redirects          map[string]registeredRedirectRoute
-	rewrites           map[string]registeredRewriteRoute
-	mounts             map[string]registeredMountedRoute
-	revalidator        *Revalidator
-	operations         []OperationObserver
-	clientEventsLogger *slog.Logger
-	headDecorators     []HeadDecorator
-	securityPolicy     SecurityPolicy
-	compressionOff     bool
-	legacyGzip         bool
+	pageRoutes          map[string]registeredPageRoute
+	apiRoutes           map[string]registeredAPIRoute
+	layout              func(title string, body gosx.Node) gosx.Node
+	document            DocumentFunc
+	mux                 *http.ServeMux
+	middleware          []Middleware
+	edgeMiddleware      []EdgeMiddleware
+	notFound            PageHandler
+	errorPage           ErrorHandler
+	publicDir           string
+	publicPolicy        bundlepolicy.PolicyFile
+	imageDir            string
+	runtimeRoot         string
+	runtimeMeta         *runtimeManifestCache
+	isr                 *isrConfig
+	isrStore            ISRStore
+	navigation          bool
+	observers           []RequestObserver
+	readyChecks         []namedReadyCheck
+	redirects           map[string]registeredRedirectRoute
+	rewrites            map[string]registeredRewriteRoute
+	mounts              map[string]registeredMountedRoute
+	revalidator         *Revalidator
+	operations          []OperationObserver
+	clientEventsLogger  *slog.Logger
+	headDecorators      []HeadDecorator
+	securityPolicy      SecurityPolicy
+	compressionOff      bool
+	legacyGzip          bool
+	configurationClosed atomic.Bool
 
-	schedulerOnce sync.Once
-	scheduler     *scheduled.Scheduler
-	srv           *http.Server
+	schedulerOnce         sync.Once
+	scheduler             *scheduled.Scheduler
+	publicScheduledStatus bool
+	srv                   *http.Server
 
 	// staleIslandsOnce guards warnStaleIslands, so hashing every island's
 	// source runs at most once per App even if Build() runs more than once
@@ -537,6 +541,7 @@ func (a *App) preloadGrammarBlob() {
 }
 
 func (a *App) Build() http.Handler {
+	a.configurationClosed.Store(true)
 	a.preloadGrammarBlob()
 	a.warnStaleIslands()
 	mux := http.NewServeMux()
@@ -594,9 +599,26 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 			Logger: a.clientEventsLogger,
 		}))
 	}
-	if !a.hasRoute("GET /_gosx/scheduled") {
-		mux.Handle("GET /_gosx/scheduled", ScheduledStatusHandler(a.Scheduler()))
+	if a.publicScheduledStatus && !a.hasRoute("GET /_gosx/scheduled") {
+		mux.Handle("GET /_gosx/scheduled", a.ScheduledStatusHandler())
 	}
+}
+
+// EnablePublicScheduledStatus exposes bounded, redacted task status on the
+// public listener. Call it before Build and protect the route with application
+// authentication.
+//
+// Deprecated: this compatibility opt-in lasts one minor release. Use the
+// authenticated internal telemetry listener when available instead.
+func (a *App) EnablePublicScheduledStatus() error {
+	if a == nil {
+		return &telemetryerr.ConfigError{Field: "app", Code: "required"}
+	}
+	if a.configurationClosed.Load() {
+		return telemetryerr.ErrAfterBuild
+	}
+	a.publicScheduledStatus = true
+	return nil
 }
 
 // SetClientEventsLogger overrides the slog.Logger used by the
@@ -1155,15 +1177,15 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 	// that exact URL never changes and a year of immutable caching is safe.
 	// Unversioned URLs keep revalidation: the app may overwrite the file in
 	// place and the next view must see it.
-	if r.URL.Query().Get("v") != "" {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-	} else {
-		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
-	}
 	if strings.EqualFold(filepath.Ext(fsPath), ".webmanifest") {
 		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
 	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
+	}
+	if r.URL.Query().Get("v") != "" {
+		httpcache.MarkImmutableAsset(w, r)
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
 	}
 	if !a.compressionOff && serveCompressedFile(w, r, fsPath, func(ext string) (string, bool) {
 		return bundlepolicy.PublicPath(a.publicDir, r.URL.Path+ext, a.publicPolicy.AllowPublic, a.publicPolicy.Exclude)
