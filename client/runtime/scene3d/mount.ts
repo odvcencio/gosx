@@ -764,6 +764,7 @@
       if (!diagnostics) {
         return "";
       }
+      if (diagnostics.pipelineCoreError) return "webgpu-pipeline-failed";
       if (diagnostics.deviceLost) {
         return "webgpu-device-lost";
       }
@@ -1610,7 +1611,7 @@
 	      // renderer exactly like webgpu-device-lost's was, so it needs the
 	      // same fresh-canvas treatment. Failed PBR shaders also need a fresh
 	      // context so their teardown cannot cancel the legacy shader queue.
-	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
+	      return reason === "webgpu-pipeline-failed" || reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
 	    }
 
     // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the

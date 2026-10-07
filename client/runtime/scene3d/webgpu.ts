@@ -1,3 +1,185 @@
+  function wgpuCreatePipelineGuard(canvas: any): any {
+    var guard = { pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
+    var notificationPending = false;
+    function changed() {
+      if (guard.disposed || notificationPending) return;
+      notificationPending = true;
+      Promise.resolve().then(function() {
+        notificationPending = false;
+        if (!guard.disposed && !guard.pending && typeof canvas.dispatchEvent === "function") {
+          canvas.dispatchEvent(new CustomEvent("gosx:scene3d:resource-ready"));
+        }
+      });
+    }
+    function fail(label: string, message: string) {
+      if (guard.disposed || guard.coreError) return;
+      var pass = wgpuOptionalPipelinePass(label);
+      if (pass && guard.disabled.has(pass)) return;
+      if (pass) guard.disabled.add(pass);
+      else guard.coreError = message;
+      guard.failures.push({ label: label, pass: pass || "core", message: message });
+      changed();
+      renderTruth().pipelineFailure(pass || "core", label, message);
+      var detail = { pipeline: label, pass: pass || "core", error: message, action: pass ? "disabled" : "webgl2-fallback" };
+      try { if (typeof window.__gosx_emit === "function") window.__gosx_emit("warn", "scene3d-webgpu", "pipeline-failed", detail); } catch (_err) {}
+      console.warn("[gosx] WebGPU " + (pass ? pass + " disabled" : "core pipeline failed; falling back to WebGL2") + ": " + message);
+      if (canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
+        canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-pipeline-failed", JSON.stringify(guard.failures));
+      }
+    }
+
+    function uncaptured(event: any) {
+      if (guard.disposed) return;
+      if (event && typeof event.preventDefault === "function") event.preventDefault();
+      var error = event && event.error;
+      var message = String(error && error.message || error || "unknown WebGPU error");
+      // Validation messages name the rejected pipeline on browser backends.
+      var match = message.match(/(?:RenderPipeline|ComputePipeline|ShaderModule) with ['"]([^'"]+)['"] label|['"](gosx-(?:post|reflection|transmission)[^'"]*)['"]/);
+      fail(match && (match[1] || match[2]) || "uncaptured", message);
+    }
+    function wrapFrame(render: any, endFrame: any) {
+      return function(bundle: any, viewport: any, frameMeta: any) {
+        try { render(bundle, viewport, frameMeta); }
+        catch (error) {
+          wgpuSubmitPendingFrame(guard, error);
+          if (!error || !error.pipelineValidation) fail("frame", String(error && error.message || error));
+        } finally { guard.frameEncoder = guard.framePass = guard.frameCleanup = null; endFrame(); }
+      };
+    }
+    function release(raw: any) {
+      guard.disposed = true;
+      if (typeof raw.removeEventListener === "function") raw.removeEventListener("uncapturederror", uncaptured);
+      else if (raw.onuncapturederror === uncaptured) raw.onuncapturederror = null;
+    }
+    function snapshot(out: any) {
+      Object.assign(out, { pipelineCoreError: guard.coreError, pipelineFailures: guard.failures.slice(), disabledPipelinePasses: Array.from(guard.disabled), pipelinePending: guard.pending });
+      out.postProcessing = out.postProcessing && !guard.disabled.has("post");
+    }
+    return guard;
+  }
+
+  // A pipeline object can exist even when validation rejected it. Pop each
+  // scope before returning, while the device stack still belongs to this call.
+  // Only the result promise is asynchronous; scopes never settle out of order.
+  var wgpuPipelineValidation = new WeakMap();
+
+  function wgpuRequirePipeline(pipeline: any): any {
+    var state = pipeline && wgpuPipelineValidation.get(pipeline);
+    if (state && state.status !== "ready") throw state;
+    return pipeline;
+  }
+
+  function wgpuCreateValidatedPipeline(device: any, kind: string, descriptor: any): any {
+    var guard = device.__gosxPipelineGuard;
+    var state = { status: "pending", pipelineValidation: true };
+    var pipeline: any;
+    var scoped = false;
+    var error: any = null;
+    if (guard) guard.pending++;
+    function finish(failure: any) {
+      state.status = failure ? "failed" : "ready";
+      if (guard) {
+        guard.pending--;
+        if (failure && !guard.disposed) guard.fail(descriptor.label || kind, failure.message || String(failure));
+        if (!guard.pending) guard.changed();
+      }
+    }
+    try {
+      device.pushErrorScope("validation");
+      scoped = true;
+      pipeline = kind === "render" ? device.createRenderPipeline(descriptor) : device.createComputePipeline(descriptor);
+    } catch (failure) {
+      error = failure;
+      pipeline = {};
+    }
+    wgpuPipelineValidation.set(pipeline, state);
+    // popErrorScope removes the scope synchronously, even though its result
+    // arrives later. Nested frame scopes therefore keep their own errors.
+    if (scoped) {
+      try {
+        device.popErrorScope().then(function(failure) { finish(error || failure); }, finish);
+      } catch (failure) { finish(error || failure); }
+    } else finish(error);
+    return pipeline;
+  }
+
+  // Pipeline validation can pause a frame after compute commands have advanced
+  // CPU-side simulation state. Submit those valid commands before retrying so
+  // seed flags, consumed events and ping-pong indices still describe the GPU.
+  function wgpuSubmitPendingFrame(guard: any, error: any) {
+    if (!error || !error.pipelineValidation || !guard.frameEncoder) return;
+    try {
+      if (guard.framePass) guard.framePass.end();
+      if (guard.frameCleanup) guard.frameCleanup();
+      guard.submit([guard.frameEncoder.finish()]);
+    } catch (failure) { guard.fail("frame", String(failure && failure.message || failure)); }
+  }
+
+  function wgpuFinishGPUDrivenEncoding(host: any, encoder: any) {
+    if (host) host.finishEncoding(encoder);
+  }
+
+  function wgpuTrackFrameEncoder(encoder: any, guard: any): any {
+    guard.frameEncoder = encoder;
+    return new Proxy(encoder, { get: function(target, key) {
+      var value = Reflect.get(target, key, target);
+      if (key !== "beginRenderPass" && key !== "beginComputePass") return typeof value === "function" ? value.bind(target) : value;
+      return function(descriptor) {
+        var pass = value.call(target, descriptor);
+        guard.framePass = pass;
+        var methods = Object.create(null);
+        return new Proxy(pass, { get: function(active, method) {
+          if (method === "end") return function() {
+            active.end();
+            if (guard.framePass === active) guard.framePass = null;
+          };
+          var fn = Reflect.get(active, method, active);
+          if (typeof fn !== "function") return fn;
+          if (!methods[method]) methods[method] = fn.bind(active);
+          return methods[method];
+        } });
+      };
+    } });
+  }
+
+  function wgpuGuardDevice(raw: any, guard: any): any {
+    var methods = Object.create(null);
+    guard.submit = raw.queue.submit.bind(raw.queue);
+    return new Proxy(raw, {
+      get: function(target, key) {
+        if (key === "__gosxPipelineGuard") return guard;
+        if (key === "createCommandEncoder") return function(descriptor) {
+          var encoder = target.createCommandEncoder(descriptor);
+          return descriptor && descriptor.label === "gosx-frame" ? wgpuTrackFrameEncoder(encoder, guard) : encoder;
+        };
+        if (key === "createShaderModule") return function(descriptor) {
+          target.pushErrorScope("validation");
+          try { return target.createShaderModule(descriptor); }
+          finally { target.popErrorScope().catch(function() {}); }
+        };
+        var value = Reflect.get(target, key, target);
+        if (typeof value !== "function") return value;
+        if (!methods[key] || methods[key].source !== value) methods[key] = { source: value, bound: value.bind(target) };
+        return methods[key].bound;
+      },
+    });
+  }
+
+  function wgpuOptionalPipelinePass(label: string): string {
+    if (/^gosx-post-/.test(label)) {
+      var name = label.slice("gosx-post-".length);
+      if (/^bloom|^blur$/.test(name)) return SCENE_POST_BLOOM;
+      if (name === "toneMapping") return SCENE_POST_TONE_MAPPING;
+      if (name === "colorGrade") return SCENE_POST_COLOR_GRADE;
+      if (/^atmosphere:/.test(name)) return "atmosphere";
+      if (["contactShadows", "ssao", "dof", "fxaa", "vignette"].includes(name)) return name;
+    }
+    if (/^(gosx-post|post-)/.test(label)) return "post";
+    if (/^(gosx-reflection|gosx-planar-reflection)/.test(label)) return "reflections";
+    if (/^(gosx-transmission|post-depth-resolve)/.test(label)) return "post";
+    return "";
+  }
+
   // @ts-ignore TS7006 -- raw-source renderer tests use JavaScript signatures.
   function sceneLatestGPUCompletion(previous, next) {
     return previous && previous.frameSeq > next.frameSeq ? previous : next;
@@ -3832,7 +4014,7 @@
   // its magnitude remains the actual MSAA count. This keeps the governed
   // factory signature at eight parameters without an allocation per variant.
   function wgpuCreatePBRPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, signedSampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-pbr-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -3859,7 +4041,7 @@
   }
 
   function wgpuCreatePBRInstancedPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-pbr-instanced-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -3890,7 +4072,7 @@
   // module is used — no per-instance color from vertex; fragment reads the
   // per-material uniform. Shadow pipeline is NOT added (shadows stay draw-all).
   function wgpuCreatePBRInstancedCullPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-pbr-instanced-cull-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -3927,7 +4109,7 @@
   // render/bundle/shadow_drift_test.go pins both settings and states why they
   // differ. Change either side there, not here alone.
   function wgpuCreateShadowPipeline(device, shadowLayout, vertexModule, frontFace) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-shadow",
       layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),
       vertex: {
@@ -3945,7 +4127,7 @@
   }
 
   function wgpuCreateShadowInstancedPipeline(device, shadowLayout, vertexModule, fragmentModule) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-shadow-instanced",
       layout: device.createPipelineLayout({ bindGroupLayouts: [shadowLayout] }),
       vertex: {
@@ -3964,7 +4146,7 @@
   }
 
   function wgpuCreateSceneColorPipeline(device, pipelineLayout, vertexModule, fragmentModule, topology, blendMode, depthWrite, targetFormat, sampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-scene-color-" + topology + "-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -3991,7 +4173,7 @@
   }
 
   function wgpuCreateSurfacePipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-surface-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -4018,7 +4200,7 @@
   }
 
   function wgpuCreateThickLinePipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-thick-line-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -4045,7 +4227,7 @@
   }
 
   function wgpuCreatePointsPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-points-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -4072,7 +4254,7 @@
   }
 
   function wgpuCreatePointsVertexPipeline(device, pipelineLayout, vertexModule, fragmentModule, blendMode, depthWrite, targetFormat, sampleCount) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: "gosx-points-vertex-" + blendMode,
       layout: pipelineLayout,
       vertex: {
@@ -4098,10 +4280,10 @@
     });
   }
 
-  function wgpuCreatePostPipeline(device, layout, fragmentModule, targetFormat) {
+  function wgpuCreatePostPipeline(device, layout, fragmentModule, targetFormat, name) {
     var vertModule = device.createShaderModule({ label: "post-vert", code: WGSL_POST_VERTEX });
-    return device.createRenderPipeline({
-      label: "gosx-post",
+    return wgpuCreateValidatedPipeline(device, "render", {
+      label: "gosx-post" + (name ? "-" + name : ""),
       layout: layout,
       vertex: {
         module: vertModule,
@@ -4126,21 +4308,9 @@
   //
   // ONLY TWO CALLERS MAY EXIST, and both already do: ensureFBOs' allocation
   // guard below, and the per-frame validation scope
-  // (beginWebGPUErrorScope / endWebGPUErrorScope). Do not add a third.
-  //
-  // The stack this pops is owned by the DEVICE, not by the operation. Six
-  // asynchronous pipeline-build sites used to push and pop it from their own
-  // .then / .catch — that is, in SETTLE order against a LIFO stack — so two
-  // overlapping builds swapped results and one build's error was reported
-  // against the other. Measured in Firefox on m31labs.dev: four clean authored
-  // points modules with a RESOLVED createRenderPipelineAsync were all marked
-  // failed by an error belonging to a compute kernel. Those sites now validate
-  // per object (create*PipelineAsync + getCompilationInfo); see the block
-  // comment on sceneShaderModuleError in 16b-scene-compute.js.
-  //
-  // The two remaining callers are safe because neither can interleave with
-  // anything: ensureFBOs pushes and pops inside one synchronous block, and the
-  // frame scope is guarded against re-entry by pendingWebGPUErrorScope.
+  // (beginWebGPUErrorScope / endWebGPUErrorScope), plus pipeline/module
+  // creation scopes. Every resource scope is popped in the same synchronous
+  // block that pushes it; no asynchronous build pops another build's scope.
   function wgpuPopScopedErrorScope(scopedDevice) {
     if (!scopedDevice || typeof scopedDevice.popErrorScope !== "function") {
       return Promise.resolve(null);
@@ -4437,7 +4607,7 @@
       if (pipelines[name]) return pipelines[name];
       var fragModule = device.createShaderModule({ label: "post-" + name, code: fragmentSource });
       var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout] });
-      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, name === "present" ? presentationFormat : targetFormat);
+      var pipeline = wgpuCreatePostPipeline(device, pipelineLayout, fragModule, name === "present" ? presentationFormat : targetFormat, name);
       pipelines[name] = pipeline;
       return pipeline;
     }
@@ -4545,7 +4715,7 @@
       if (opts.scissor && opts.scissor.width > 0 && opts.scissor.height > 0 && typeof pass.setScissorRect === "function") {
         pass.setScissorRect(opts.scissor.x, opts.scissor.y, opts.scissor.width, opts.scissor.height);
       }
-      pass.setPipeline(pipeline);
+      pass.setPipeline(wgpuRequirePipeline(pipeline));
       pass.setBindGroup(0, bindGroup);
       pass.draw(4);
       pass.end();
@@ -4587,13 +4757,13 @@
 @fragment fn fragmentMain(@builtin(position) pos: vec4f) -> @builtin(frag_depth) f32 {
   var depth = 1.0; for (var sample = 0; sample < 4; sample++) { depth = min(depth, textureLoad(source, vec2i(pos.xy), sample)); } return depth;
 }` });
-        depthResolvePipeline = device.createRenderPipeline({ label: "gosx-post-depth-resolve", layout: device.createPipelineLayout({ bindGroupLayouts: [depthResolveLayout] }),
+        depthResolvePipeline = wgpuCreateValidatedPipeline(device, "render", { label: "gosx-post-depth-resolve", layout: device.createPipelineLayout({ bindGroupLayouts: [depthResolveLayout] }),
           vertex: { module: device.createShaderModule({ code: WGSL_POST_VERTEX }), entryPoint: "vertexMain" }, fragment: { module: module, entryPoint: "fragmentMain", targets: [] },
           primitive: { topology: "triangle-strip" }, depthStencil: { format: "depth24plus", depthWriteEnabled: true, depthCompare: "always" } });
       }
       var group = device.createBindGroup({ layout: depthResolveLayout, entries: [{ binding: 0, resource: sourceView }] });
       var pass = encoder.beginRenderPass({ label: "gosx-post-depth-resolve", colorAttachments: [], depthStencilAttachment: { view: depthTexView, depthLoadOp: "clear", depthClearValue: 1, depthStoreOp: "store" } });
-      pass.setPipeline(depthResolvePipeline); pass.setBindGroup(0, group); pass.draw(4); pass.end();
+      pass.setPipeline(wgpuRequirePipeline(depthResolvePipeline)); pass.setBindGroup(0, group); pass.draw(4); pass.end();
     }
     return {
       getSceneTarget: function(width, height) {
@@ -5055,7 +5225,7 @@
   // Double-sided rasterization also matches the CPU raycast, which accepts both
   // triangle windings.
   function wgpuCreatePickPipeline(device, pipelineLayout, vertexModule, fragmentModule, vertexLayout, label) {
-    return device.createRenderPipeline({
+    return wgpuCreateValidatedPipeline(device, "render", {
       label: label,
       layout: pipelineLayout,
       vertex: { module: vertexModule, entryPoint: "vertexMain", buffers: vertexLayout },
@@ -5588,7 +5758,7 @@
           var count = Math.floor(sceneNumber(obj.vertexCount, 0));
           if (count <= 0) continue;
           if (boundPipeline !== "mesh") {
-            pass.setPipeline(pipeline);
+            pass.setPipeline(wgpuRequirePipeline(pipeline));
             boundPipeline = "mesh";
           }
           pass.setBindGroup(0, bindGroup, offset);
@@ -5606,7 +5776,7 @@
         var geom = adapter.instancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
         if (boundPipeline !== "instanced") {
-          pass.setPipeline(instancedPipeline);
+          pass.setPipeline(wgpuRequirePipeline(instancedPipeline));
           boundPipeline = "instanced";
         }
         pass.setBindGroup(0, bindGroup, offset);
@@ -6486,7 +6656,7 @@
         var key = opts.format + ":" + opts.samples;
         var pipeline = pipelines.get(key);
         if (!pipeline) {
-          pipeline = device.createRenderPipeline({ label: "gosx-sky", layout: pipelineLayout,
+          pipeline = wgpuCreateValidatedPipeline(device, "render", { label: "gosx-sky", layout: pipelineLayout,
             vertex: { module: module, entryPoint: "vertexMain" },
             fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: opts.format }] },
             primitive: { topology: "triangle-list" }, multisample: { count: opts.samples },
@@ -6500,7 +6670,7 @@
           ] });
           cached.image = image; cached.cube = cube;
         }
-        pass.setPipeline(pipeline); pass.setBindGroup(0, cached.group); pass.draw(3);
+        pass.setPipeline(wgpuRequirePipeline(pipeline)); pass.setBindGroup(0, cached.group); pass.draw(3);
         return state;
       },
       dispose: function() { uniform.destroy(); pipelines.clear(); cached.group = null; },
@@ -6546,7 +6716,9 @@
       return sceneWebGPUFactoryFailure("probe-not-ready" + probeError);
     }
     var adapter = probe.adapter;
-    var device = probe.device;
+    var rawDevice = probe.device;
+    var pipelineGuard = wgpuCreatePipelineGuard(canvas);
+    var device = wgpuGuardDevice(rawDevice, pipelineGuard);
     var rendererOptions = options && typeof options === "object" ? options : {};
     // lastDeviceLostInfo: { reason, message } captured by the device.lost
     // handler below (see initGPUResources), read back by diagnostics().
@@ -6637,7 +6809,7 @@
 
     function sceneWebGPUCanvasConfiguration() {
       var config = {
-        device: device,
+        device: rawDevice,
         format: presentationFormat,
         usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
         alphaMode: activePresentation.alphaMode,
@@ -7760,20 +7932,10 @@
           dispose();
         }).catch(function() {});
 
-        // uncapturederror carries validation and out-of-memory failures the
-        // per-frame error scopes never see (resource creation outside a scope,
-        // async pipeline work, driver-level complaints). On a Tint/naga
-        // divergence this is frequently the ONLY textual evidence, so it goes
-        // in the journal even though the frame keeps running.
-        if (typeof device.addEventListener === "function") {
-          try {
-            device.addEventListener("uncapturederror", function(event) {
-              var err = event && event.error;
-              renderTruth().record("gpu-uncaptured-error", String((err && err.message) || err || "unknown"));
-            });
-          } catch (_uncapturedErr) {
-            // Older implementations expose device.onuncapturederror only.
-          }
+        if (typeof rawDevice.addEventListener === "function") {
+          rawDevice.addEventListener("uncapturederror", pipelineGuard.uncaptured);
+        } else {
+          rawDevice.onuncapturederror = pipelineGuard.uncaptured;
         }
         renderTruth().record("webgpu-device-ready", renderTruth().implementation(webGPUAdapterInfoSnapshot()));
 /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */
@@ -7916,39 +8078,39 @@
         pbrInstancedCullVertexModule = device.createShaderModule({ label: "pbr-instanced-cull-vert", code: WGSL_PBR_INSTANCED_CULL_VERTEX });
         pbrFragmentModule = device.createShaderModule({ label: "pbr-frag", code: WGSL_PBR_FRAGMENT });
         elioSkinShaderModule = device.createShaderModule({ label: "elio-skin-lbs", code: SCENE_ELIO_SKIN_LBS_SOURCE });
-        elioSkinPipeline = device.createComputePipeline({
+        elioSkinPipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-elio-skin-lbs",
           layout: elioSkinPipelineLayout,
           compute: { module: elioSkinShaderModule, entryPoint: "skin" },
         });
         computedMorphShaderModule = device.createShaderModule({ label: "computed-morph", code: SCENE_COMPUTED_MORPH_SOURCE });
-        computedMorphPipeline = device.createComputePipeline({
+        computedMorphPipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-computed-morph",
           layout: computedMorphPipelineLayout,
           compute: { module: computedMorphShaderModule, entryPoint: "morphPose" },
         });
         waterComputeShaderModule = device.createShaderModule({ label: "gosx-water-compute", code: SCENE_WATER_COMPUTE_SOURCE });
-        waterSeedPipeline = device.createComputePipeline({
+        waterSeedPipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-water-seed-drops",
           layout: waterComputePipelineLayout,
           compute: { module: waterComputeShaderModule, entryPoint: "seedDrops" },
         });
-        waterDropPipeline = device.createComputePipeline({
+        waterDropPipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-water-add-drop",
           layout: waterComputePipelineLayout,
           compute: { module: waterComputeShaderModule, entryPoint: "addDrop" },
         });
-        waterDisplacementPipeline = device.createComputePipeline({
+        waterDisplacementPipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-water-displace-object",
           layout: waterComputePipelineLayout,
           compute: { module: waterComputeShaderModule, entryPoint: "displaceObject" },
         });
-        waterStepPipeline = device.createComputePipeline({
+        waterStepPipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-water-step",
           layout: waterComputePipelineLayout,
           compute: { module: waterComputeShaderModule, entryPoint: "stepSimulation" },
         });
-        waterNormalPipeline = device.createComputePipeline({
+        waterNormalPipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-water-normals",
           layout: waterComputePipelineLayout,
           compute: { module: waterComputeShaderModule, entryPoint: "updateNormals" },
@@ -7960,7 +8122,7 @@
         waterPoolFragmentModule = device.createShaderModule({ label: "gosx-water-pool-frag", code: SCENE_WATER_POOL_FRAGMENT_SOURCE });
         waterCausticsVertexModule = device.createShaderModule({ label: "gosx-water-caustics-vert", code: SCENE_WATER_CAUSTICS_VERTEX_SOURCE });
         waterCausticsFragmentModule = device.createShaderModule({ label: "gosx-water-caustics-frag", code: SCENE_WATER_CAUSTICS_FRAGMENT_SOURCE });
-        waterCausticsPipeline = device.createRenderPipeline({
+        waterCausticsPipeline = wgpuCreateValidatedPipeline(device, "render", {
           label: "gosx-water-caustics-pass",
           layout: waterCausticsPipelineLayout,
           vertex: { module: waterCausticsVertexModule, entryPoint: "vertexMain", buffers: [] },
@@ -7978,7 +8140,7 @@
         waterObjectMeshShadowFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-shadow-frag", code: SCENE_WATER_OBJECT_MESH_SHADOW_FRAGMENT_SOURCE });
         waterObjectMeshRefractionFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-texture-frag", code: sceneWaterObjectMeshFragmentSource(1) });
         waterObjectMeshClippedFragmentModule = device.createShaderModule({ label: "gosx-water-object-mesh-clipped-frag", code: sceneWaterObjectMeshFragmentSource(2) });
-        waterObjectTexturePipeline = device.createRenderPipeline({
+        waterObjectTexturePipeline = wgpuCreateValidatedPipeline(device, "render", {
           label: "gosx-water-object-texture-pass",
           layout: waterObjectTexturePipelineLayout,
           vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
@@ -7993,7 +8155,7 @@
           },
           primitive: { topology: "triangle-list" },
         });
-        waterObjectShadowPipeline = device.createRenderPipeline({
+        waterObjectShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
           label: "gosx-water-object-shadow-pass",
           layout: waterObjectTexturePipelineLayout,
           vertex: { module: waterObjectTextureVertexModule, entryPoint: "vertexMain", buffers: [] },
@@ -8004,7 +8166,7 @@
           },
           primitive: { topology: "triangle-list" },
         });
-        waterObjectMeshShadowPipeline = device.createRenderPipeline({
+        waterObjectMeshShadowPipeline = wgpuCreateValidatedPipeline(device, "render", {
           label: "gosx-water-object-mesh-shadow-pass",
           layout: waterObjectMeshShadowPipelineLayout,
           vertex: { module: waterObjectMeshShadowVertexModule, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
@@ -8650,7 +8812,7 @@
         /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (pipelineDepthStencil) {
           pipelineDescriptor.depthStencil = { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" };
         }
-        var pipeline = device.createRenderPipeline(pipelineDescriptor);
+        var pipeline = wgpuCreateValidatedPipeline(device, "render", pipelineDescriptor);
         cached = { pipeline: pipeline, bindGroupLayout: bindGroupLayout, layout: layout, attrs: attrs };
         selenaPipelineCache.set(key, cached);
         stamp(cached, false);
@@ -8727,7 +8889,7 @@
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bindGroupLayout] });
         var module = device.createShaderModule({ label: "selena-material-skinned", code: shader });
         renderTruth().captureShaderInfo(module, "selena-material-skinned");
-        var pipeline = device.createRenderPipeline({
+        var pipeline = wgpuCreateValidatedPipeline(device, "render", {
           label: "gosx-selena-skinned-" + (layout.material || "material") + "-" + blendMode,
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
@@ -9016,7 +9178,7 @@
         var module = device.createShaderModule({ label: "selena-compute-material", code: shader });
         renderTruth().captureShaderInfo(module, "selena-compute-material");
         var entryPoint = (layout.entryPoints && layout.entryPoints.compute) || "computeMain";
-        var pipeline = device.createComputePipeline({
+        var pipeline = wgpuCreateValidatedPipeline(device, "compute", {
           label: "gosx-selena-compute-" + (layout.material || "material"),
           layout: pipelineLayout,
           compute: { module: module, entryPoint: entryPoint },
@@ -9197,7 +9359,7 @@
         var pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [bgl] });
         var module = device.createShaderModule({ label: "selena-post-material", code: shader });
         renderTruth().captureShaderInfo(module, "selena-post-material");
-        var pipeline = device.createRenderPipeline({
+        var pipeline = wgpuCreateValidatedPipeline(device, "render", {
           label: "gosx-selena-post-" + pipelineLabelSuffix + (layout.material || "material"),
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: [] },
@@ -11093,7 +11255,7 @@
       if (!system || !pipeline) return 0;
       var pass = sharedPass || (encoder && encoder.beginComputePass({ label: "gosx-water-pass" }));
       if (!pass) return 0;
-      pass.setPipeline(pipeline);
+      pass.setPipeline(wgpuRequirePipeline(pipeline));
       pass.setBindGroup(0, system.computeBindGroups[system.activeIndex]);
       pass.dispatchWorkgroups(Math.ceil(system.cellCount / 64));
       if (!sharedPass) pass.end();
@@ -11124,7 +11286,7 @@
               clearValue: { r: 0, g: 0, b: 0, a: 1 },
             }],
           });
-          selenaPass.setPipeline(selenaDraw.pipeline);
+          selenaPass.setPipeline(wgpuRequirePipeline(selenaDraw.pipeline));
           selenaPass.setBindGroup(0, selenaDraw.bindGroup);
           // Selena caustics projects the same authored water topology as the
           // visible surface, matching the reference's tessellated light grid.
@@ -11151,7 +11313,7 @@
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
         }],
       });
-      pass.setPipeline(pipeline);
+      pass.setPipeline(wgpuRequirePipeline(pipeline));
       pass.setBindGroup(0, system.causticsBindGroups[system.activeIndex]);
       pass.draw(3);
       pass.end();
@@ -11409,7 +11571,7 @@
         if (selenaResource) {
           var selenaKey = "selena:" + texturePassMode + ":" + (mat && mat.key || matIndex) + ":" + blendMode + ":" + (depthWrite ? "1" : "0");
           if (currentPipelineKey !== selenaKey) {
-            pass.setPipeline(selenaResource.pipeline);
+            pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
             currentPipelineKey = selenaKey;
             lastMaterialIndex = -1;
             lastReceiveShadow = null;
@@ -11427,7 +11589,7 @@
         if (currentPipelineKey !== pipelineKey) {
           var pipeline = getWaterObjectMeshPipeline(texturePassMode, blendMode, depthWrite);
           if (!pipeline) continue;
-          pass.setPipeline(pipeline);
+          pass.setPipeline(wgpuRequirePipeline(pipeline));
           pass.setBindGroup(0, frameBindGroup);
           currentPipelineKey = pipelineKey;
           lastMaterialIndex = -1;
@@ -11569,7 +11731,7 @@
         ],
       });
       if (hasSubject) {
-        pass.setPipeline(waterObjectTexturePipeline);
+        pass.setPipeline(wgpuRequirePipeline(waterObjectTexturePipeline));
         pass.setBindGroup(0, system.objectTextureBindGroup);
         pass.draw(3);
       }
@@ -11606,7 +11768,7 @@
       if (hasSubject) {
         var selenaDraw = getWaterObjectShadowSelenaDraw(system, entry);
         if (selenaDraw) {
-          pass.setPipeline(selenaDraw.pipeline);
+          pass.setPipeline(wgpuRequirePipeline(selenaDraw.pipeline));
           pass.setBindGroup(0, selenaDraw.bindGroup);
           pass.draw(3);
           selena = 1;
@@ -11619,7 +11781,7 @@
         // Builtin waterObjectShadowPipeline (SCENE_WATER_OBJECT_SHADOW_FRAGMENT_SOURCE)
         // is the last-resort safety-net fallback now that the hand-written
         // data-prop-authored object-shadow pipeline tier has been retired.
-        pass.setPipeline(waterObjectShadowPipeline);
+        pass.setPipeline(wgpuRequirePipeline(waterObjectShadowPipeline));
         pass.setBindGroup(0, system.objectTextureBindGroup);
         pass.draw(3);
       }
@@ -11662,7 +11824,7 @@
       if (sceneWaterObjectMeshShadowUsesSelena(entry)) {
         var selenaDraw = getWaterObjectMeshShadowSelenaDraw(system, entry);
         if (selenaDraw) {
-          pass.setPipeline(selenaDraw.pipeline);
+          pass.setPipeline(wgpuRequirePipeline(selenaDraw.pipeline));
           pass.setBindGroup(0, selenaDraw.bindGroup);
           drawCalls = drawWaterObjectProjectedShadowObjectsSelena(pass, objectList, pbrBuffers, selenaDraw);
           selena = 1;
@@ -11675,7 +11837,7 @@
         // is the last-resort safety-net fallback now that the hand-written
         // data-prop-authored object-mesh-shadow pipeline tier has been retired.
         device.queue.writeBuffer(system.objectMeshShadowUniformBuffer, 0, sceneWaterObjectMeshShadowUniformData(system));
-        pass.setPipeline(waterObjectMeshShadowPipeline);
+        pass.setPipeline(wgpuRequirePipeline(waterObjectMeshShadowPipeline));
         pass.setBindGroup(0, system.objectMeshShadowBindGroup);
         drawCalls = drawWaterObjectProjectedShadowObjects(pass, objectList, pbrBuffers);
       }
@@ -12251,7 +12413,6 @@
         stats.waterExpensivePassCadence = Math.max(stats.waterExpensivePassCadence, system.expensivePassCadence || 1);
         var waterStateDirty = false;
         if (hasSimulationTick && !system.seeded) {
-          system.seeded = true;
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (Math.max(0, Math.floor(sceneNumber(entry.seedDrops, 7))) > 0) {
             var seedResult = dispatchWaterComputeStage(encoder, system, entry, "seed", seedCompute.pipeline);
             stats.waterComputeDispatches += seedResult.dispatches;
@@ -12260,6 +12421,7 @@
             waterStateDirty = waterStateDirty || seedResult.dispatches > 0;
             if (seedCompute.authored && seedResult.selena === 0) stats.waterAuthoredComputeDispatches += seedResult.dispatches;
           }
+          system.seeded = true;
         }
         // Queued multi-drop trail (see dispatchWaterDropEvents above): drains
         // every drop queued since the last consumed id, one uniform write +
@@ -13406,7 +13568,7 @@
       if (!system || !draw || !draw.pipeline || !draw.bindGroup) return 0;
       var pass = sharedPass || (encoder && encoder.beginComputePass({ label: "gosx-water-selena-compute-pass" }));
       if (!pass) return 0;
-      pass.setPipeline(draw.pipeline);
+      pass.setPipeline(wgpuRequirePipeline(draw.pipeline));
       pass.setBindGroup(0, draw.bindGroup);
       pass.dispatchWorkgroups(Math.ceil(system.cellCount / 64));
       if (!sharedPass) pass.end();
@@ -13482,7 +13644,7 @@
       var cached = waterPoolPipelineCache[cacheKey];
       if (cached) return cached;
       var record = {
-        pipeline: device.createRenderPipeline({
+        pipeline: wgpuCreateValidatedPipeline(device, "render", {
           label: "gosx-water-pool-pass",
           layout: waterPoolPipelineLayout,
           vertex: { module: waterPoolVertexModule, entryPoint: "vertexMain", buffers: [] },
@@ -13544,7 +13706,7 @@
           var selenaDraw = getWaterPoolSelenaDraw(system, entry);
           if (selenaDraw) {
             if (selenaDraw.pipeline !== activePipeline) {
-              renderPass.setPipeline(selenaDraw.pipeline);
+              renderPass.setPipeline(wgpuRequirePipeline(selenaDraw.pipeline));
               activePipeline = selenaDraw.pipeline;
             }
             // The generic Selena pipeline layout has exactly ONE bind group
@@ -13589,7 +13751,7 @@
         var pipelineRecord = getWaterPoolPipeline(system);
         if (!pipelineRecord || !pipelineRecord.pipeline) continue;
         if (pipelineRecord.pipeline !== activePipeline) {
-          renderPass.setPipeline(pipelineRecord.pipeline);
+          renderPass.setPipeline(wgpuRequirePipeline(pipelineRecord.pipeline));
           activePipeline = pipelineRecord.pipeline;
         }
         var vertexCount = rounded ? roundedPoolVertexCount : 30;
@@ -13650,7 +13812,7 @@
           depthCompare: "less-equal",
         },
       };
-      var pipeline = device.createRenderPipeline(descriptor);
+      var pipeline = wgpuCreateValidatedPipeline(device, "render", descriptor);
       var record = { pipeline: pipeline, authored: false, authoredVertex: false, failed: false, pending: false };
       waterRenderPipelineCache.set(cacheKey, record);
       return record;
@@ -13678,7 +13840,7 @@
           if (selenaDraw) {
             writeWaterObjectTextureMatrices(system);
             if (selenaDraw.pipeline !== activePipeline) {
-              renderPass.setPipeline(selenaDraw.pipeline);
+              renderPass.setPipeline(wgpuRequirePipeline(selenaDraw.pipeline));
               activePipeline = selenaDraw.pipeline;
             }
             renderPass.setBindGroup(0, selenaDraw.bindGroup);
@@ -13727,7 +13889,7 @@
         if (!pipelineRecord || !pipelineRecord.pipeline) continue;
         writeWaterObjectTextureMatrices(system);
         if (pipelineRecord.pipeline !== activePipeline) {
-          renderPass.setPipeline(pipelineRecord.pipeline);
+          renderPass.setPipeline(wgpuRequirePipeline(pipelineRecord.pipeline));
           activePipeline = pipelineRecord.pipeline;
         }
         if (pipelineRecord.authored) {
@@ -15397,7 +15559,7 @@
         if (!record) continue;
         if (!pass) {
           pass = encoder.beginComputePass({ label: "gosx-elio-skin-lbs" });
-          pass.setPipeline(elioSkinPipeline);
+          pass.setPipeline(wgpuRequirePipeline(elioSkinPipeline));
         }
         pass.setBindGroup(0, record.bindGroup);
         pass.dispatchWorkgroups(record.workgroups);
@@ -15624,7 +15786,7 @@
         if (!record) continue;
         if (!pass) {
           pass = encoder.beginComputePass({ label: "gosx-computed-morph" });
-          pass.setPipeline(computedMorphPipeline);
+          pass.setPipeline(wgpuRequirePipeline(computedMorphPipeline));
         }
         pass.setBindGroup(0, record.bindGroup);
         pass.dispatchWorkgroups(record.workgroups);
@@ -15889,7 +16051,7 @@
           var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
           if (!skinnedPositionBuffer) continue;
           if (currentShadowPipeline !== "static") {
-            pass.setPipeline(sp);
+            pass.setPipeline(wgpuRequirePipeline(sp));
             currentShadowPipeline = "static";
           }
           pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
@@ -15903,7 +16065,7 @@
         var computedMorphRecord = webGPUObjectComputedMorphDrawRecord(obj);
         if (computedMorphRecord) {
           if (currentShadowPipeline !== "static") {
-            pass.setPipeline(sp);
+            pass.setPipeline(wgpuRequirePipeline(sp));
             currentShadowPipeline = "static";
           }
           pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
@@ -15921,7 +16083,7 @@
           // so every model-space caster folds in its own transform per draw.
           var reflectedCaster = sceneAffineDeterminant(obj.modelMatrix, 0) < 0, retainedPipelineKind = sceneWebGPUPipelineKind(reflectedCaster, "static");
           if (currentShadowPipeline !== retainedPipelineKind) {
-            pass.setPipeline(getShadowPipeline(reflectedCaster));
+            pass.setPipeline(wgpuRequirePipeline(getShadowPipeline(reflectedCaster)));
             currentShadowPipeline = retainedPipelineKind;
           }
           if (!webGPUBindRetainedMeshAttribute(pass, 0, obj, "positions", 3)) continue;
@@ -15942,7 +16104,7 @@
         }
 
         if (currentShadowPipeline !== "static") {
-          pass.setPipeline(sp);
+          pass.setPipeline(wgpuRequirePipeline(sp));
           currentShadowPipeline = "static";
         }
 
@@ -15998,7 +16160,7 @@
         var kind = hasDetail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr");
         kind += ":" + objectDepthWrite;
         if (currentPipelineKind === kind) return;
-        pass.setPipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail));
+        pass.setPipeline(wgpuRequirePipeline(getPBRPipeline(blendMode, objectDepthWrite, reflected ? "cw" : "ccw", hasDetail)));
         pass.setBindGroup(0, frameBindGroup);
         currentPipelineKind = kind;
         lastMaterialIndex = -1;
@@ -16061,7 +16223,7 @@
         if (selenaResource) {
           var selenaKey = "selena:" + (isSkinned ? "skin:" : "") + (mat && mat.key || matIndex) + sceneWebGPUSelenaPipelineSuffix(obj, reflectedDirect);
           if (currentPipelineKind !== selenaKey) {
-            pass.setPipeline(selenaResource.pipeline);
+            pass.setPipeline(wgpuRequirePipeline(selenaResource.pipeline));
             currentPipelineKind = selenaKey;
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
           var selenaBG = createSelenaBindGroup(mat, selenaResource, obj);
@@ -16411,7 +16573,7 @@
           // GPU-culled path: slot 4 = outputBuf (80B InstanceRecord, cull layout).
           // Use the cull pipeline (loc 8 = pickData vec4u) instead of the
           // standard pipeline (loc 8 = instanceColor vec4f).
-          pass.setPipeline(getPBRInstancedCullPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail)));
+          pass.setPipeline(wgpuRequirePipeline(getPBRInstancedCullPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail))));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -16420,7 +16582,7 @@
           pass.drawIndirect(cullSys.drawArgsBuf, 0);
         } else {
           // Draw-all path (not-ready, no kernel, or capability absent).
-          pass.setPipeline(getPBRInstancedPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail)));
+          pass.setPipeline(wgpuRequirePipeline(getPBRInstancedPipeline(blendMode, meshDepthWrite, Boolean(mat && mat.detail))));
           pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedPositionBuffer", geom.positions));
           pass.setVertexBuffer(1, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedNormalBuffer", geom.normals));
           pass.setVertexBuffer(2, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedUVBuffer", geom.uvs));
@@ -16561,7 +16723,7 @@
         var geom = getInstancedGeometry(mesh);
         if (!geom || geom.vertexCount <= 0) continue;
         if (!drew) {
-          pass.setPipeline(getShadowInstancedPipeline());
+          pass.setPipeline(wgpuRequirePipeline(getShadowInstancedPipeline()));
           drew = true;
         }
         pass.setVertexBuffer(0, ensureInstancedGeometryGPUBuffer(geom, "_gosxWGPUInstancedShadowPositionBuffer", geom.positions));
@@ -16730,7 +16892,7 @@
       var blend = entry.blend === "alpha" || entry.blend === "additive" ? entry.blend : "opaque";
       var topology = entry.topology === "triangle-list" ? "triangle-list" : "line-list";
       var depthWrite = typeof entry.depthWrite === "boolean" ? entry.depthWrite : linePassDepthWrite(blend);
-      renderPass.setPipeline(getSceneColorPipeline(entry.space === "clip" ? "clip" : "world", topology, blend, depthWrite));
+      renderPass.setPipeline(wgpuRequirePipeline(getSceneColorPipeline(entry.space === "clip" ? "clip" : "world", topology, blend, depthWrite)));
       renderPass.setBindGroup(0, frameBindGroup);
       renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitivePositions", positions, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
       renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(owner, "_gosxWGPUPrimitiveColors", colors, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
@@ -16825,7 +16987,7 @@
       if (!indexData || indexData.count <= 0) return false;
       var owner = record.owner || thickLineOwner;
       var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
-      renderPass.setPipeline(getThickLinePipeline(blend, linePassDepthWrite(blend)));
+      renderPass.setPipeline(wgpuRequirePipeline(getThickLinePipeline(blend, linePassDepthWrite(blend))));
       renderPass.setBindGroup(0, frameBindGroup);
       renderPass.setVertexBuffer(0, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLinePositionA", scratch.positionsA.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
       renderPass.setVertexBuffer(1, wgpuCachedTrackedBuffer(owner, "_gosxWGPUThickLinePositionB", scratch.positionsB.subarray(0, usedVerts * 3), GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, true));
@@ -16882,7 +17044,7 @@
       var entries = surfaceEntries(bundle, passName);
       if (!entries.length) return false;
       var blend = passName === "alpha" || passName === "additive" ? passName : "opaque";
-      renderPass.setPipeline(getSurfacePipeline(blend, blend === "opaque"));
+      renderPass.setPipeline(wgpuRequirePipeline(getSurfacePipeline(blend, blend === "opaque")));
       renderPass.setBindGroup(0, frameBindGroup);
       var drew = false;
       for (var i = 0; i < entries.length; i++) {
@@ -17074,7 +17236,7 @@
             { binding: 0, resource: { buffer: pointsUniformBuffer } },
           ]);
           pipeline = authoredResource.pipeline;
-          pass.setPipeline(pipeline);
+          pass.setPipeline(wgpuRequirePipeline(pipeline));
           pass.setVertexBuffer(0, pointsParticleBuffer);
           pass.setBindGroup(1, userUnifBG);
           pass.setBindGroup(2, pointsBG);
@@ -17084,7 +17246,7 @@
             { binding: 0, resource: { buffer: pointsUniformBuffer } },
           ]);
           pipeline = getPointsVertexPipeline(validBlend, depthWrite);
-          pass.setPipeline(pipeline);
+          pass.setPipeline(wgpuRequirePipeline(pipeline));
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ pass.setVertexBuffer(0, pointsParticleBuffer);
           pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
           pass.setBindGroup(2, pointsBG);
@@ -17244,7 +17406,7 @@
             { binding: 1, resource: { buffer: system.renderBuffer } },
           ]);
           pipeline = cpAuthoredResource.pipeline;
-          pass.setPipeline(pipeline);
+          pass.setPipeline(wgpuRequirePipeline(pipeline));
           pass.setBindGroup(1, cpUserUnifBG);
           pass.setBindGroup(2, pointsBG);
         } else {
@@ -17254,7 +17416,7 @@
             { binding: 1, resource: { buffer: system.renderBuffer } },
           ]);
           pipeline = getPointsPipeline(validBlend, depthWrite);
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ pass.setPipeline(pipeline);
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ pass.setPipeline(wgpuRequirePipeline(pipeline));
           pass.setBindGroup(1, createMaterialBindGroup(null, false, defaultMaterialOwner));
           pass.setBindGroup(2, pointsBG);
         }
@@ -17694,7 +17856,7 @@
       try {
         device.popErrorScope().then(function(error) {
           if (error) {
-            reportWebGPUFrameError(error.message || String(error));
+            pipelineGuard.uncaptured({ error: error });
           } else {
             webGPUConsecutiveFrameErrors = 0;
             webGPUConsecutiveCleanFrames += 1;
@@ -18115,7 +18277,7 @@
           });
 
           if (!pipelineSet) {
-            pass.setPipeline(resource.pipeline);
+            pass.setPipeline(wgpuRequirePipeline(resource.pipeline));
             pipelineSet = true;
           }
           pass.setBindGroup(0, bindGroup);
@@ -18213,7 +18375,7 @@
         var spec = passes[p];
         var meshList = ctx.drawList[spec.name];
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (meshList && meshList.length > 0) {
-          target.setPipeline(getPBRPipeline(spec.blend, spec.depthWrite));
+          target.setPipeline(wgpuRequirePipeline(getPBRPipeline(spec.blend, spec.depthWrite)));
           /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ target.setBindGroup(0, ctx.frameBindGroup);
           drawPBRObjects(target, meshList, ctx.bundle, ctx.materials, ctx.frameBindGroup, spec.blend, spec.depthWrite, ctx.pbrBuffers);
         }
@@ -18242,7 +18404,7 @@
         startInit();
         return;
       }
-      if (initFailed || !bundle) return;
+      if (initFailed || pipelineGuard.coreError || pipelineGuard.pending || !bundle) return;
 
       var hasPBRData = Boolean(
         bundle.worldMeshPositions &&
@@ -18346,13 +18508,13 @@
       // validation retries RAW rendering instead of drawing dead frames
       // forever with a poisoned post-FX target.
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
-      var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      var postEffects = (Array.isArray(bundle.postEffects) ? bundle.postEffects : []).filter(function(effect) { return !pipelineGuard.disabled.has(effect.kind); });
       var authoredPostEffects = postEffects.length > 0;
       var hasTransmission = sceneTransmissionPresent(bundle);
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
-      transmissionSettings.screen = transmissionSettings.screen && hasTransmission && !postFXForceDisabled;
+      transmissionSettings.screen = transmissionSettings.screen && hasTransmission && !postFXForceDisabled && !pipelineGuard.disabled.has("post");
       if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
-      var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled;
+      var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled && !pipelineGuard.disabled.has("post");
       targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
 
       // Compute scaled render-target dimensions (PostFX memory cap).
@@ -18389,7 +18551,7 @@
       // Per-pass stamps ride on the render-pass descriptors, so the slot must be
       // chosen before the shadow pass opens.
       pollGPUPassTimingReadback();
-      beginGPUPassTimingFrame();
+      beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
       // Prepare the full detail draw set before retiring resources from earlier frames.
@@ -18853,13 +19015,13 @@
       // Draw PBR meshes, WebGPU-native instanced meshes, world lines, and textured surfaces.
       var waterDrawnBeforeAlpha = false, oceanOpts = { device: device, environment: bundle.environment, camera: cam, meta: frameMeta, view: scratchViewMatrix, aspect: scaledW/scaledH, viewProj: scratchSelenaViewProjection, timeSeconds: frameTimeSeconds, linear: usePostProcessing, format: targetFormat, samples: sampleCount, textureCache: textureCache, frameBindGroup: frameBindGroup, mount: canvas.parentNode, drawn: false, reflection: {} };
       // @ts-ignore TS7005 -- plain-JS reflection callback captures optional GPU target handles; bridge types govern its interface.
-      const prepareOceanReflection = () => { const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(getPBRPipeline("opaque", true, "cw")); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
+      const prepareOceanReflection = () => { if (pipelineGuard.disabled.has("reflections")) return; const r = sceneReflectWebGPU(oceanResources, device, { environment: bundle.environment, meta: frameMeta, pass: mainPass, encoder, descriptor: mainPassDescriptor, width: scaledW, height: scaledH, view: scratchViewMatrix, proj: scratchProjMatrix, camera: cam, linear: usePostProcessing, format: targetFormat, samples: sampleCount, colorView: mainResolveView || mainColorView, depthView: mainDepthTargetView, frameData: _frameUniformF, frameGroup: (buffer = false) => _createFrameBindGroupUncached(shadowView0, shadowView1, iblResources.active && iblResources.irradiance && iblResources.irradiance.view, iblResources.active && iblResources.radiance && iblResources.radiance.view, iblResources.active && iblResources.brdfLUT && iblResources.brdfLUT.view, envMapResources.active && envMapResources.record && envMapResources.record.view, buffer), draw: (pass = mainPass,group = frameBindGroup) => { pass.setPipeline(wgpuRequirePipeline(getPBRPipeline("opaque", true, "cw"))); pass.setBindGroup(0,group); drawPBRObjects(pass, sceneReflectOpaqueList(drawList.opaque, materials), bundle, materials, group, "opaque", true, pbrSceneBuffers, null); } }); mainPass = r.pass; oceanOpts.reflection = r.record; };
       // @ts-expect-error TS2339 -- bundleState is added to the frame record during render.
       if (frameStats.bundleState === "direct" && (hasPBRData || hasInstancedData || hasWorldLines || hasSurfaces)) {
         // Opaque pass.
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.opaque.length > 0) {
           var opaquePipeline = getPBRPipeline("opaque", true);
-          mainPass.setPipeline(opaquePipeline);
+          mainPass.setPipeline(wgpuRequirePipeline(opaquePipeline));
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats);
         }
@@ -18902,7 +19064,7 @@
         // Alpha pass.
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.alpha.length > 0) {
           var alphaPipeline = getPBRPipeline("alpha", false);
-          mainPass.setPipeline(alphaPipeline);
+          mainPass.setPipeline(wgpuRequirePipeline(alphaPipeline));
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.alpha, bundle, materials, frameBindGroup, "alpha", false, pbrSceneBuffers, frameStats);
         }
@@ -18922,7 +19084,7 @@
         // Additive pass.
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (drawList.additive.length > 0) {
           var additivePipeline = getPBRPipeline("additive", false);
-          mainPass.setPipeline(additivePipeline);
+          mainPass.setPipeline(wgpuRequirePipeline(additivePipeline));
           mainPass.setBindGroup(0, frameBindGroup);
           drawPBRObjects(mainPass, drawList.additive, bundle, materials, frameBindGroup, "additive", false, pbrSceneBuffers, frameStats);
         }
@@ -19020,7 +19182,7 @@
       try { resource.destroy(); } catch (_err) {}
     }
 
-    function dispose() {
+    function dispose() { pipelineGuard.release(rawDevice);
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true;
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
@@ -19208,7 +19370,7 @@
     // function only flips the gate. Idempotent — returns false if post-FX
     // is not currently force-disabled (nothing to do).
     function enablePostProcessing() {
-      if (!postFXForceDisabled) return false;
+      if (!postFXForceDisabled || pipelineGuard.disabled.has("post")) return false;
       postFXForceDisabled = false;
       return true;
     }
@@ -19222,7 +19384,7 @@
     // The probe in 16z is what prevents us from ever reaching this
     // state on broken backends — it verifies device creation works
     // before we're allowed to construct a renderer at all.
-    if (initFailed) return sceneWebGPUFactoryFailure("init-failed: " + initError);
+    if (initFailed && !pipelineGuard.coreError) return sceneWebGPUFactoryFailure("init-failed: " + initError);
 
     function supportsBundle(bundle) {
       if (webGPUUnsupportedLineStyles(bundle)) {
@@ -19327,7 +19489,7 @@
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterDroppedTicks = lastWebGPUFrameStats && lastWebGPUFrameStats.waterDroppedTicks || 0;
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterNormalDispatchSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterNormalDispatchSeq || 0;
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.waterSampledStateSyncSeq = lastWebGPUFrameStats && lastWebGPUFrameStats.waterSampledStateSyncSeq || 0;
-      out.postProcessing = !!postProcessor;
+      out.postProcessing = !!postProcessor; pipelineGuard.snapshot(out);
       // Frame-error resilience state (see reportWebGPUFrameError /
       // disablePostProcessing / enablePostProcessing above and
       // 20-scene-mount.js's checkSceneWebGPUFrameErrorWatchdog, the poller
@@ -19380,7 +19542,8 @@
       getPerformanceTimingStatus: getPerformanceTimingStatus,
       getFrameTiming: getFrameTiming,
       diagnostics: diagnostics,
-      render: render,
+      render: pipelineGuard.wrapFrame(render, endWebGPUErrorScope),
+      getFailureReason: function() { return pipelineGuard.coreError ? "webgpu-pipeline-failed" : ""; },
       dispose: dispose,
       disablePostProcessing: disablePostProcessing,
       enablePostProcessing: enablePostProcessing,
