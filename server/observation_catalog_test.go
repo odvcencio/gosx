@@ -2,6 +2,7 @@ package server
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -60,6 +61,7 @@ func TestObservationCatalogCopiesMergesAndNotifiesOnce(t *testing.T) {
 	want := []ObservationPattern{
 		{Kind: "api", Pattern: "/api", Methods: []string{"POST"}},
 		{Kind: "error", Pattern: "/local/{id}", Methods: []string{"GET", "HEAD"}},
+		{Kind: "error", Pattern: "/relative/{id}", Methods: []string{"GET", "HEAD", "POST"}},
 		{Kind: "mount", Pattern: "/one/", Methods: []string{"*"}},
 		{Kind: "mount", Pattern: "/plain/", Methods: []string{"*"}},
 		{Kind: "mount", Pattern: "/two/", Methods: []string{"*"}},
@@ -84,7 +86,7 @@ func TestObservationCatalogBoundsAndIsolation(t *testing.T) {
 	h := &catalogHandler{rows: []ObservationPattern{{Kind: "page", Pattern: "/declared", Methods: []string{"GET"}}}, overflow: true}
 	a.Mount("/plain/", h)
 	rows, overflow := a.ObservationPatterns(1)
-	if len(rows) != 1 || !overflow || rows[0].Kind != "mount" {
+	if len(rows) != 2 || !overflow || rows[0].Kind != "error" || rows[1].Kind != "page" {
 		t.Fatalf("selection: %#v overflow=%v", rows, overflow)
 	}
 	rows, _ = a.ObservationPatterns(0)
@@ -104,5 +106,25 @@ func TestObservationCatalogBoundsAndIsolation(t *testing.T) {
 	}
 	if err := New().UseObservationCatalogObserver(nil); err == nil {
 		t.Fatal("nil observer accepted")
+	}
+}
+
+func TestObservationCatalogPageCapacityExcludesErrors(t *testing.T) {
+	for _, count := range []int{400, 512, 600} {
+		a := New()
+		for i := count - 1; i >= 0; i-- {
+			a.Page(fmt.Sprintf("GET /p/%03d", i), func(*Context) gosx.Node { return gosx.Text("page") })
+		}
+		rows, overflow := a.ObservationPatterns(0)
+		admitted := min(count, 512)
+		if len(rows) != 2*admitted || overflow != (count > 512) {
+			t.Fatalf("pages=%d rows=%d overflow=%v", count, len(rows), overflow)
+		}
+		for i := 0; i < admitted; i++ {
+			errorRow, page := rows[i], rows[i+admitted]
+			if errorRow.Kind != "error" || page.Kind != "page" || errorRow.Pattern != page.Pattern || !reflect.DeepEqual(errorRow.Methods, []string{"GET", "HEAD"}) || !reflect.DeepEqual(page.Methods, errorRow.Methods) {
+				t.Fatalf("page/error pair: %#v %#v", errorRow, page)
+			}
+		}
 	}
 }

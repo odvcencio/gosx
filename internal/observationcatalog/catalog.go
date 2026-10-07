@@ -15,8 +15,10 @@ type Pattern struct {
 const DefaultLimit = 512
 const MaxMethods = 64
 
-// Collector retains the lexically first limit rows, independent of traversal
-// order. Method sets are also bounded; either truncation reports overflow.
+// Collector retains at most limit registered routes, ordered by pattern then
+// kind priority, independent of traversal order. Derived page-error rows do
+// not consume route capacity. Method sets are bounded too; either truncation
+// reports overflow. Result contains at most twice the route limit.
 type Collector struct {
 	limit    int
 	rows     []Pattern
@@ -45,8 +47,13 @@ func (c *Collector) Register(kind, pattern string) {
 }
 
 func (c *Collector) Add(row Pattern) {
+	// Error rows inherit admitted pages and methods at Result time. Provider
+	// error rows cannot displace the pages that generate the actual traffic.
+	if row.Kind == "error" {
+		return
+	}
 	i := sort.Search(len(c.rows), func(i int) bool {
-		return c.rows[i].Kind > row.Kind || c.rows[i].Kind == row.Kind && c.rows[i].Pattern >= row.Pattern
+		return compareRoute(c.rows[i], row) >= 0
 	})
 	if i == len(c.rows) || c.rows[i].Kind != row.Kind || c.rows[i].Pattern != row.Pattern {
 		if len(c.rows) == c.limit {
@@ -82,8 +89,50 @@ func (c *Collector) Add(row Pattern) {
 
 func (c *Collector) Overflow() { c.overflow = true }
 
-// Result transfers the collector's private slices to the caller.
-func (c *Collector) Result() ([]Pattern, bool) { return c.rows, c.overflow }
+// Result returns a private catalog, sorted by kind and pattern. Each admitted
+// page contributes an error row with the same methods without another slot.
+func (c *Collector) Result() ([]Pattern, bool) {
+	rows := make([]Pattern, 0, 2*len(c.rows))
+	for _, row := range c.rows {
+		rows = append(rows, row)
+		if row.Kind == "page" {
+			rows = append(rows, Pattern{Kind: "error", Pattern: row.Pattern, Methods: append([]string(nil), row.Methods...)})
+		}
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		return rows[i].Kind < rows[j].Kind || rows[i].Kind == rows[j].Kind && rows[i].Pattern < rows[j].Pattern
+	})
+	return rows, c.overflow
+}
+
+func compareRoute(a, b Pattern) int {
+	if n := strings.Compare(a.Pattern, b.Pattern); n != 0 {
+		return n
+	}
+	if n := kindPriority(a.Kind) - kindPriority(b.Kind); n != 0 {
+		return n
+	}
+	return strings.Compare(a.Kind, b.Kind)
+}
+
+func kindPriority(kind string) int {
+	switch kind {
+	case "page":
+		return 0
+	case "api":
+		return 1
+	case "action":
+		return 2
+	case "redirect":
+		return 3
+	case "rewrite":
+		return 4
+	case "mount":
+		return 5
+	default:
+		return 6
+	}
+}
 
 func Clone(rows []Pattern) []Pattern {
 	result := append([]Pattern(nil), rows...)

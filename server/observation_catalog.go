@@ -19,7 +19,9 @@ type ObservationCatalogObserver interface {
 }
 
 // ObservationCatalogProvider exposes registered patterns without matching or
-// executing requests. Zero limit defaults to 512. Truncation reports overflow.
+// executing requests. Zero limit defaults to 512 registered routes. Derived
+// page-error rows add no route slots; output contains at most twice the limit.
+// Truncation of routes or method sets reports overflow.
 type ObservationCatalogProvider interface {
 	ObservationPatterns(limit int) ([]ObservationPattern, bool)
 }
@@ -56,7 +58,6 @@ func (a *App) ObservationPatterns(limit int) ([]ObservationPattern, bool) {
 	}
 	for _, route := range a.pageRoutes {
 		c.Register("page", route.pattern)
-		c.Register("error", route.pattern)
 	}
 	for _, route := range a.apiRoutes {
 		c.Register("api", route.pattern)

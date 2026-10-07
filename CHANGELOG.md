@@ -6,7 +6,10 @@
   method sets across mounts without expanding router-relative paths. App head
   decorators now reach mounted router pages and errors through their existing
   page state and document render; `Context.Pattern` identifies the registered
-  owner pattern before decoration.
+  owner pattern before decoration. Catalog limits count registered routes;
+  page error rows are derived without displacing pages. Selection orders paths
+  before kind priority and retains at most twice the route limit. Page-panic
+  errors retain the registered page pattern in request and document metadata.
 
 - Export bounded, copied metric snapshots and deterministic Prometheus text
   with shared admission, consistent histogram buckets, and a 2 MiB output cap.

@@ -16,7 +16,6 @@ func (b *builtRouter) ObservationPatterns(limit int) ([]server.ObservationPatter
 			pattern := joinPattern(prefix, route.Pattern)
 			if route.Handler != nil {
 				c.Register("page", pattern)
-				c.Register("error", pattern)
 			}
 			visit(pattern, route.Children)
 		}
