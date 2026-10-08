@@ -338,6 +338,41 @@ func (e *expressionEmitter) inputExpression(id program.ExprID) (wasmgen.Function
 		b.copyRecord(id, 2)
 		return wasmgen.Function{I32Locals: 3, Body: b}, nil
 	}
+	if e.state.linked != nil {
+		b.i32(linkedEventActive)
+		b.memory(0x28, 2, 0)
+		b.i32(1)
+		b.op(0x47)
+		b.i32(linkedEventInstance)
+		b.memory(0x28, 2, 0)
+		b.get(0)
+		b.op(0x47)
+		b.op(0x72)
+		b.guard(statusBadInput)
+		b.i32(linkedEventInputs + int32(input.ID)*4)
+		b.memory(0x28, 2, 0)
+		b.set(2)
+		b.get(2)
+		b.index(0x23, arenaBaseGlobal)
+		b.i32(int32(e.reserved))
+		b.op(0x6a)
+		b.op(0x49)
+		b.guard(statusBadInput)
+		b.get(2)
+		b.op(0xad)
+		b.i64(valueBytes)
+		b.op(0x7c)
+		b.index(0x23, arenaBaseGlobal)
+		b.op(0xad)
+		b.index(0x23, allocationGlobal)
+		b.op(0xad)
+		b.op(0x7c)
+		b.op(0x56)
+		b.guard(statusBadInput)
+		e.inputKindGuard(&b, input, 2)
+		b.copyRecord(id, 2)
+		return wasmgen.Function{I32Locals: 3, Body: b}, nil
+	}
 	// Imports may overwrite IO, so a successful read owns its bytes before
 	// returning to any expression that could perform a second input call.
 	b.i32(32768)
@@ -565,9 +600,15 @@ type linkedCode struct {
 	wireScalar, checkpointValidate     uint32
 	wireStore, abortPage, initPage     uint32
 	envelopeValidate                   uint32
+	freezeEnvelope                     uint32
 }
 
-const linkedRenderMaskGlobal = 25
+const (
+	linkedRenderMaskGlobal = 25
+	linkedEventInstance    = 128
+	linkedEventActive      = 132
+	linkedEventInputs      = 144
+)
 
 func commonFunctions(e *expressionEmitter) []uint32 {
 	indices := append([]uint32{}, e.helpers[:]...)
@@ -614,7 +655,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.abortPage = c.notify + 13
 	c.initPage = c.notify + 14
 	c.envelopeValidate = c.notify + 15
-	c.module.Functions = make([]wasmgen.Function, len(common)+16)
+	c.freezeEnvelope = c.notify + 16
+	c.module.Functions = make([]wasmgen.Function, len(common)+17)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -639,7 +681,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 16 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 17 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -697,6 +739,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+13] = l.abortPageFunction(c)
 	c.module.Functions[len(common)+14] = l.initPageFunction(c)
 	c.module.Functions[len(common)+15] = l.envelopeValidationFunction(c)
+	c.module.Functions[len(common)+16] = l.freezeEnvelopeFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -1008,6 +1051,16 @@ func (l *linkedLayout) snapshotFunction(e *expressionEmitter) wasmgen.Function {
 func (l *linkedLayout) sharedBoundaryFunction(e *expressionEmitter, index uint32) wasmgen.Function {
 	fn := e.module.Functions[index-uint32(len(e.module.Imports))]
 	var b instructions
+	for _, pointer := range []int32{linkedEventInstance, linkedEventActive} {
+		b.i32(pointer)
+		b.i32(0)
+		b.memory(0x36, 2, 0)
+	}
+	for id := uint32(0); id < ProfileLimits().Inputs; id++ {
+		b.i32(linkedEventInputs + int32(id)*4)
+		b.i32(0)
+		b.memory(0x36, 2, 0)
+	}
 	if index == e.computed.begin || index == e.computed.commit {
 		from, to := uint32(0), uint32(8)
 		if index == e.computed.commit {
@@ -3154,4 +3207,127 @@ func (l *linkedLayout) envelopeValidationFunction(c *linkedCode) wasmgen.Functio
 	b.i32(0)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(5), I32Locals: 16, Body: b}
+}
+
+// Freeze the complete validated transport before any expression or host
+// import runs. The returned document and its absolute scalar pointers belong
+// to the working arena; transport bytes do not count as live state roots.
+func (l *linkedLayout) freezeEnvelopeFunction(c *linkedCode) wasmgen.Function {
+	const (
+		owned = 5 + iota
+		header
+		count
+		cursor
+		index
+		record
+		id
+		result
+	)
+	var b instructions
+	b.errorGuard()
+	b.index(0x23, pendingGlobal)
+	b.op(0x45)
+	b.guard(statusBusy)
+	for param := uint32(0); param < 5; param++ {
+		b.get(param)
+	}
+	b.index(0x10, c.envelopeValidate)
+	b.index(0x22, result)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(result)
+	b.index(0x24, errorGlobal)
+	b.i32(0)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.get(4)
+	b.index(0x10, c.indices[0][c.programs[0].helpers[helperAllocate]])
+	b.set(owned)
+	b.errorGuard()
+	b.get(owned)
+	b.get(3)
+	b.get(4)
+	b.index(0x10, c.indices[0][c.programs[0].helpers[helperCopy]])
+	b.op(0x1a)
+	b.errorGuard()
+	b.get(0)
+	b.op(0x04)
+	b.op(0x7f)
+	b.i32(12)
+	b.op(0x05)
+	b.i32(16)
+	b.op(0x0b)
+	b.set(header)
+	b.get(owned)
+	b.get(header)
+	b.op(0x6a)
+	b.set(cursor)
+	b.get(cursor)
+	b.i32(4)
+	b.op(0x6b)
+	b.memory(0x28, 2, 0)
+	b.set(count)
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.get(index)
+	b.get(count)
+	b.op(0x4f)
+	b.index(0x0d, 1)
+	b.get(cursor)
+	b.memory(0x28, 2, 0)
+	b.set(id)
+	b.get(cursor)
+	b.i32(4)
+	b.op(0x6a)
+	b.set(record)
+	b.get(record)
+	b.memory(0x28, 2, 20)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(record)
+	b.get(owned)
+	b.get(record)
+	b.memory(0x28, 2, 16)
+	b.op(0x6a)
+	b.memory(0x36, 2, 16)
+	b.op(0x0b)
+	b.get(0)
+	b.op(0x45)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(linkedEventInputs)
+	b.get(id)
+	b.i32(4)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.get(record)
+	b.memory(0x36, 2, 0)
+	b.op(0x0b)
+	b.get(cursor)
+	b.i32(28)
+	b.op(0x6a)
+	b.set(cursor)
+	b.get(index)
+	b.i32(1)
+	b.op(0x6a)
+	b.set(index)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.get(0)
+	b.op(0x45)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(linkedEventInstance)
+	b.get(1)
+	b.memory(0x36, 2, 0)
+	b.i32(linkedEventActive)
+	b.i32(1)
+	b.memory(0x36, 2, 0)
+	b.op(0x0b)
+	b.get(owned)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(5), I32Locals: 8, Body: b}
 }

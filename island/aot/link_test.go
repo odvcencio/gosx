@@ -2944,3 +2944,236 @@ func TestLinkedEnvelopeValidationRejectsInvalidOwnersHandlersAndIOBounds(t *test
 		}
 	}
 }
+
+func frozenEnvelopeTestModule(t *testing.T, l *linkedLayout, c *linkedCode) wasmgen.Module {
+	t.Helper()
+	m := checkpointImportTestModule(c)
+	p := linkedProgramByName(t, l, "InputHandlers").state.programID
+	for _, item := range []struct {
+		name  string
+		index uint32
+	}{{"freeze", c.freezeEnvelope}, {"bindFrame", c.indices[p][c.programs[p].dom.bind]},
+		{"allocate", c.indices[p][c.programs[p].helpers[helperAllocate]]}} {
+		m.Exports = append(m.Exports, wasmgen.Export{Name: item.name, Function: item.index})
+	}
+	for _, input := range l.programs[p].unit.Contract.Inputs {
+		if input.Source == "event" {
+			m.Exports = append(m.Exports, wasmgen.Export{Name: "read" + strconv.Itoa(int(input.ID)),
+				Function: c.indices[p][c.programs[p].functions[input.Exprs[0]]]})
+		}
+	}
+	return m
+}
+
+func TestLinkedFrozenEventsPreserveNativeValuesAfterHostOverwritesIO(t *testing.T) {
+	l, c := envelopeValidationFixture(t)
+	p := linkedProgramByName(t, l, "InputHandlers")
+	type testCase struct {
+		Document string
+	}
+	var cases []testCase
+	var expected [][]vm.Value
+	var flags [][]uint32
+	for _, item := range []struct {
+		boolean, integer vm.Value
+		text             vm.Value
+		present          bool
+	}{{vm.BoolVal(true), vm.IntVal(-2147483648), vm.StringVal("héllo\x00🌴e\u0301"), true},
+		{vm.BoolVal(false), vm.IntVal(2147483647), vm.StringVal(""), true},
+		{vm.ZeroValue(program.TypeBool), vm.ZeroValue(program.TypeInt), vm.ZeroValue(program.TypeString), false},
+		{vm.BoolVal(true), vm.IntVal(0), vm.StringVal(strings.Repeat("x", 4096)), true}} {
+		fields := map[string]vm.Value{"checked": item.boolean, "selectedIndex": item.integer, "value": item.text}
+		model := vm.NewVM(p.unit.Program, nil)
+		model.SetEventData(fields)
+		var values []vm.Value
+		var bits []uint32
+		var entries []checkpointTestValue
+		for _, input := range p.unit.Contract.Inputs {
+			if input.Source != "event" {
+				continue
+			}
+			value := model.Eval(input.Exprs[0])
+			flag := uint32(0)
+			if value.Type == program.TypeString && item.present {
+				flag = 1
+			} else if value.Type == program.TypeBool && value.Truth() {
+				flag = 2
+			}
+			values, bits = append(values, value), append(bits, flag)
+			entries = append(entries, checkpointTestValue{input.ID, scalarTransport(value.Type, flag, int64(value.Number()), value.Text())})
+		}
+		cases = append(cases, testCase{base64.StdEncoding.EncodeToString(envelopeTestBytes(t, false, 15, entries))})
+		expected, flags = append(expected, values), append(flags, bits)
+	}
+	data := struct {
+		FrameTable, Program uint32
+		Cases               []testCase
+	}{l.frameTable, p.state.programID, cases}
+	var got struct {
+		Values     [][]scalarResult
+		Statuses   []int32
+		Bindings   int
+		Owned      bool
+		HighWater  []uint32
+		AfterAbort []uint32
+	}
+	runExpressionModule(t, frozenEnvelopeTestModule(t, l, c), `
+  const api = instance.exports, statuses = [], values = [], highWater = [], afterAbort = [];
+  let bindings = 0, owned = true;
+  statuses.push(api.begin(0,0,1));
+  view.setUint32(data.FrameTable+15*16,data.Program,true); view.setUint32(data.FrameTable+15*16+4,1,true);
+  statuses.push(api.commit(0,0));
+  for (let i=0;i<data.Cases.length;i++) {
+    statuses.push(api.begin(i+1,0,0));
+    const document = Buffer.from(data.Cases[i].Document,'base64'), base = 65536-document.length;
+    memory.set(document,base);
+    const copy = api.freeze(0,15,2,base,document.length);
+    owned = owned&&copy>=api.working()&&copy+document.length<=api.working()+api.cursor();
+    statuses.push(api.status(),api.bindFrame(15));
+    const records = [];
+    for (let field=0;field<3;field++) {
+      const record = api['read'+field](15), pointer = view.getUint32(record+16,true), length = view.getUint32(record+20,true);
+      records.push({Pointer:record,Status:api.status(),Type:view.getUint32(record,true),Flags:view.getUint32(record+4,true),
+        Low:view.getInt32(record+8,true),High:view.getInt32(record+12,true),StringPointer:pointer,Length:length,
+        Text:Buffer.from(memory.slice(pointer,pointer+length)).toString('base64')});
+      owned = owned&&record!==0&&(!length||(pointer>=copy&&pointer+length<=copy+document.length));
+    }
+    values.push(records); highWater.push(api.cursor()); statuses.push(api.abortPage()); afterAbort.push(api.cursor());
+  }
+  const document = Buffer.from(data.Cases[3].Document,'base64');
+  for (let i=0;i<100;i++) {
+    statuses.push(api.begin(100+i,0,0)); memory.set(document,32768);
+    api.freeze(0,15,2,32768,document.length); statuses.push(api.status());
+    owned = owned&&api.cursor()===highWater[3]; statuses.push(api.abortPage());
+  }
+  process.stdout.write(JSON.stringify({Values:values,Statuses:statuses,Bindings:bindings,Owned:owned,
+    HighWater:highWater,AfterAbort:afterAbort}));`, data, &got,
+		`{input:unexpected,bind:()=>{bindings++;memory.fill(0xff,32768,65536);return 0;},patch:unexpected}`)
+	if !got.Owned || len(got.Values) != len(cases) || got.Bindings != len(cases) {
+		t.Fatalf("event data was imported, retained in IO, or lost during binding: %+v", got)
+	}
+	for i, values := range got.Values {
+		if len(values) != len(expected[i]) {
+			t.Fatal("missing frozen scalar")
+		}
+		for j, value := range values {
+			text, err := base64.StdEncoding.DecodeString(value.Text)
+			number := int64(value.High)<<32 | int64(uint32(value.Low))
+			want := expected[i][j]
+			if err != nil || value.Status != 0 || value.Type != uint32(want.Type) || value.Flags != flags[i][j] ||
+				number != int64(want.Number()) || string(text) != want.Text() {
+				t.Fatalf("frozen event %d/%d: %+v want %+v", i, j, value, want)
+			}
+		}
+		if got.AfterAbort[i] != c.programs[0].reserved {
+			t.Fatal("transport allocation survived abort")
+		}
+	}
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("frozen event status: %v", got.Statuses)
+		}
+	}
+}
+
+func TestLinkedFrozenSharedEnvelopeRebasesEveryStringWithoutEventOwnership(t *testing.T) {
+	l, c := envelopeValidationFixture(t)
+	entries := []checkpointTestValue{{0, scalarTransport(program.TypeBool, 2, 0, "")},
+		{1, scalarTransport(program.TypeInt, 0, -2147483648, "")}, {2, scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴")}}
+	document := envelopeTestBytes(t, true, 0, entries)
+	var got struct {
+		Statuses []int32
+		Copied   bool
+		Event    uint32
+	}
+	runExpressionModule(t, frozenEnvelopeTestModule(t, l, c), `
+  const api = instance.exports, document = Buffer.from(data,'base64'), statuses = [api.begin(0,0,1)];
+  memory.set(document,32769);
+  const copy = api.freeze(1,0xffffffff,0xffffffff,32769,document.length);
+  memory.fill(0xff,32768,65536);
+  let copied = copy>=api.working()&&api.status()===0;
+  for (let field=0;field<3;field++) {
+    const record = copy+16+field*28, source = 16+field*28;
+    copied = copied&&Buffer.from(memory.slice(record,record+16)).equals(document.subarray(source,source+16));
+    const length = view.getUint32(record+20,true), pointer = view.getUint32(record+16,true);
+    copied = copied&&(!length?pointer===0:pointer===copy+document.readUInt32LE(source+16));
+    if (length) copied = copied&&Buffer.from(memory.slice(pointer,pointer+length)).equals(document.subarray(document.readUInt32LE(source+16)));
+  }
+  const event = view.getUint32(132,true); statuses.push(api.status(),api.abortPage());
+  process.stdout.write(JSON.stringify({Statuses:statuses,Copied:copied,Event:event}));`, base64.StdEncoding.EncodeToString(document), &got)
+	if !got.Copied || got.Event != 0 || !reflect.DeepEqual(got.Statuses, []int32{0, 0, 0}) {
+		t.Fatalf("shared envelope was not owned and rebased independently: %+v", got)
+	}
+}
+
+func TestLinkedFrozenEventsRejectStaleMissingAndForeignReads(t *testing.T) {
+	l, c := envelopeValidationFixture(t)
+	boolean := scalarTransport(program.TypeBool, 2, 0, "")
+	document := envelopeTestBytes(t, false, 15, []checkpointTestValue{{0, boolean}, {2, scalarTransport(program.TypeString, 1, 0, "text")}})
+	data := struct {
+		FrameTable, Program uint32
+		Document            string
+	}{l.frameTable, linkedProgramByName(t, l, "InputHandlers").state.programID, base64.StdEncoding.EncodeToString(document)}
+	var got struct {
+		Statuses []int32
+		Cleared  bool
+	}
+	runExpressionModule(t, frozenEnvelopeTestModule(t, l, c), `
+  const api = instance.exports, statuses = [api.begin(0,0,1)], document = Buffer.from(data.Document,'base64');
+  for (const id of [0,15]) {view.setUint32(data.FrameTable+id*16,data.Program,true);view.setUint32(data.FrameTable+id*16+4,1,true);}
+  statuses.push(api.commit(0,0)); let cleared = true;
+  const empty = () => memory.slice(128,136).every(b=>b===0)&&memory.slice(144,208).every(b=>b===0);
+  for (let i=0;i<4;i++) {
+    statuses.push(api.begin(i+1,0,0));
+    if (i!==0) {memory.set(document,32768);api.freeze(0,15,0,32768,document.length);statuses.push(api.status());}
+    if (i===3) {
+      statuses.push(api.commit(i+1,0)); cleared = cleared&&empty();
+    } else {
+      const pointer = i===0?api.read0(15):i===1?api.read1(15):api.read0(0);
+      if (pointer!==0) throw new Error('stale or foreign scalar was returned');
+      statuses.push(api.status(),api.commit(i+1,0),api.abortPage()); cleared = cleared&&empty();
+    }
+  }
+  statuses.push(api.begin(5,0,0));
+  if (api.read0(15)!==0) throw new Error('committed event pointer was reused');
+  statuses.push(api.status(),api.abortPage()); cleared = cleared&&empty();
+  process.stdout.write(JSON.stringify({Statuses:statuses,Cleared:cleared}));`, data, &got)
+	want := []int32{0, 0, 0, 2, 2, 0, 0, 0, 2, 2, 0, 0, 0, 2, 2, 0, 0, 0, 0, 0, 2, 0}
+	if !got.Cleared || !reflect.DeepEqual(got.Statuses, want) {
+		t.Fatalf("event lifetime or ownership differs: %+v", got)
+	}
+}
+
+func TestLinkedEnvelopeFreezeRejectsBeforeCopyAndGuardsArenaCapacity(t *testing.T) {
+	l, c := envelopeValidationFixture(t)
+	valid := envelopeTestBytes(t, false, 15, []checkpointTestValue{{0, scalarTransport(program.TypeBool, 2, 0, "")},
+		{2, scalarTransport(program.TypeString, 1, 0, "value")}})
+	invalid := append([]byte{}, valid...)
+	invalid[0] = 0
+	data := struct {
+		FrameTable, Program uint32
+		Valid, Invalid      string
+	}{l.frameTable, linkedProgramByName(t, l, "InputHandlers").state.programID,
+		base64.StdEncoding.EncodeToString(valid), base64.StdEncoding.EncodeToString(invalid)}
+	var got struct {
+		Statuses []int32
+		Atomic   bool
+	}
+	runExpressionModule(t, frozenEnvelopeTestModule(t, l, c), `
+  const api = instance.exports, statuses = [api.begin(0,0,1)];
+  view.setUint32(data.FrameTable+15*16,data.Program,true);view.setUint32(data.FrameTable+15*16+4,1,true);
+  statuses.push(api.commit(0,0)); let atomic = true;
+  for (let i=0;i<2;i++) {
+    statuses.push(api.begin(i+1,0,0));
+    const document = Buffer.from(i?data.Valid:data.Invalid,'base64');memory.set(document,32768);
+    if (i) api.allocate(65536-api.cursor()-8);
+    const before = Buffer.from(memory), allocation = api.cursor();
+    const pointer = api.freeze(0,15,0,32768,document.length);
+    atomic = atomic&&pointer===0&&before.equals(Buffer.from(memory))&&api.cursor()===allocation;
+    statuses.push(api.status(),api.commit(i+1,0),api.abortPage());
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Atomic:atomic}));`, data, &got)
+	if !got.Atomic || !reflect.DeepEqual(got.Statuses, []int32{0, 0, 0, 2, 2, 0, 0, 5, 5, 0}) {
+		t.Fatalf("invalid or oversized transport changed state before failure: %+v", got)
+	}
+}
