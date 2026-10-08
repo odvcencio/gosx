@@ -125,14 +125,6 @@
   // Scalar math helpers
   // ---------------------------------------------------------------------------
 
-  function sceneAnimLerpVec(a, b, t) {
-    var result = new Array(a.length);
-    for (var i = 0; i < a.length; i++) {
-      result[i] = a[i] + (b[i] - a[i]) * t;
-    }
-    return result;
-  }
-
   // Non-allocating lerp: writes into pre-allocated `out`.
   function sceneAnimLerpVecInto(out, a, b, t) {
     for (var i = 0; i < a.length; i++) {
@@ -141,68 +133,10 @@
     return out;
   }
 
-  function sceneAnimNormalizeQuat(q) {
-    var len = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-    if (len < 1e-10) return [0, 0, 0, 1];
-    return [q[0] / len, q[1] / len, q[2] / len, q[3] / len];
-  }
-
-  function sceneAnimSlerpQuat(a, b, t) {
-    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-
-    // Ensure shortest path.
-    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
-    if (dot < 0) {
-      dot = -dot;
-      bx = -bx; by = -by; bz = -bz; bw = -bw;
-    }
-
-    // When quaternions are very close, fall back to normalized lerp.
-    if (dot > 0.9995) {
-      return sceneAnimNormalizeQuat(sceneAnimLerpVec(a, [bx, by, bz, bw], t));
-    }
-
-    var theta = Math.acos(dot);
-    var sinTheta = Math.sin(theta);
-    var w0 = Math.sin((1 - t) * theta) / sinTheta;
-    var w1 = Math.sin(t * theta) / sinTheta;
-
-    return [
-      a[0] * w0 + bx * w1,
-      a[1] * w0 + by * w1,
-      a[2] * w0 + bz * w1,
-      a[3] * w0 + bw * w1,
-    ];
-  }
-
-  // Non-allocating slerp: writes into pre-allocated `out`.
+  // Share the offset implementation so both channel interpolation and clip
+  // blending use the same shortest-path math without temporary arrays.
   function sceneAnimSlerpQuatInto(out, a, b, t) {
-    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-
-    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
-    if (dot < 0) {
-      dot = -dot;
-      bx = -bx; by = -by; bz = -bz; bw = -bw;
-    }
-
-    if (dot > 0.9995) {
-      sceneAnimLerpVecInto(out, a, [bx, by, bz, bw], t);
-      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
-      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
-      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
-      return out;
-    }
-
-    var theta = Math.acos(dot);
-    var sinTheta = Math.sin(theta);
-    var w0 = Math.sin((1 - t) * theta) / sinTheta;
-    var w1 = Math.sin(t * theta) / sinTheta;
-
-    out[0] = a[0] * w0 + bx * w1;
-    out[1] = a[1] * w0 + by * w1;
-    out[2] = a[2] * w0 + bz * w1;
-    out[3] = a[3] * w0 + bw * w1;
-    return out;
+    return _sceneAnimSlerpQuatOffset(out, a, 0, b, 0, t);
   }
 
   // Non-allocating slerp from offset into flat value arrays.
@@ -378,9 +312,9 @@
     existing.totalWeight += weight;
 
     if (property === "rotation") {
-      existing.value = sceneAnimSlerpQuat(existing.value, newValue, t);
+      sceneAnimSlerpQuatInto(existing.value, existing.value, newValue, t);
     } else {
-      existing.value = sceneAnimLerpVec(existing.value, newValue, t);
+      sceneAnimLerpVecInto(existing.value, existing.value, newValue, t);
     }
   }
 
@@ -779,14 +713,163 @@
     };
   }
 
+  // Model playback control belongs to the animation authority. Core hydration
+  // owns records and geometry; these adapters only drive their existing mixers.
+  const sceneModelAnimationControlFields = ["loop", "animationSpeed", "animationWeight", "animationFadeInMS", "animationFadeOutMS"];
+
+  function sceneAnimationOwns(source: any, key: string): boolean {
+    return Boolean(source && Object.prototype.hasOwnProperty.call(source, key));
+  }
+
+  function sceneModelAnimationValue(model: any, key: string, fallback: number, divisor = 1) {
+    if (!sceneAnimationOwns(model, key)) return fallback;
+    const value = Number(model[key]);
+    return Number.isFinite(value) ? Math.max(0, value) / divisor : fallback;
+  }
+
+  // Live control patches are copied into record.model before playback. Resolve
+  // that one current model instead of layering the identical patch twice.
+  function sceneModelAnimationPlayOptions(model: any, fadeIn = 0) {
+    return {
+      loop: !sceneAnimationOwns(model, "loop") || model.loop !== false,
+      speed: sceneModelAnimationValue(model, "animationSpeed", 1),
+      weight: sceneModelAnimationValue(model, "animationWeight", 1),
+      fadeIn: sceneModelAnimationValue(model, "animationFadeInMS", fadeIn, 1000),
+    };
+  }
+
+  // Route a clip play through the active mixer. opts is the JS-mixer options
+  // shape ({loop, speed, weight, fadeIn}); the WASM mixer takes the same values
+  // as positional arguments.
+  function sceneModelRecordPlay(record: any, name: string, options: ReturnType<typeof sceneModelAnimationPlayOptions>) {
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_play === "function") {
+        window.__gosx_motion_mixer_play(
+          record.wasmMixer,
+          name,
+          options.fadeIn, options.loop, options.speed, options.weight
+        );
+      }
+      return;
+    }
+    if (record && record.mixer) {
+      record.mixer.play(name, options);
+    }
+  }
+
+  // Route a clip stop through the active mixer. opts is the JS-mixer options
+  // shape ({fadeOut}); the WASM mixer takes fadeOut positionally.
+  function sceneModelRecordStop(record: any, name: string, fadeOut: number) {
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_stop === "function") {
+        window.__gosx_motion_mixer_stop(record.wasmMixer, name, fadeOut);
+      }
+    } else if (record && record.mixer) {
+      record.mixer.stop(name, { fadeOut });
+    } else {
+      return;
+    }
+    // One final pose tick restores morph and node defaults after stopping.
+    if ((record.morphTargets && record.morphTargets.length > 0)
+      || (record.nodeAnimTargets && record.nodeAnimTargets.length > 0)) {
+      record.poseDirty = true;
+    }
+  }
+
+  // Whether a named clip is playing on the record's active mixer, routed to the
+  // WASM mixer when active (P4-M3) and the JS mixer otherwise.
+  function sceneModelRecordWasPlaying(record: any, name: string) {
+    if (!record || !name) {
+      return false;
+    }
+    if (record.wasmMixerActive) {
+      return Boolean(
+        typeof window !== "undefined" &&
+        typeof window.__gosx_motion_mixer_is_playing === "function" &&
+        window.__gosx_motion_mixer_is_playing(record.wasmMixer, name)
+      );
+    }
+    return Boolean(record.mixer && record.mixer.isPlaying(name));
+  }
+
+  // Whether a record's currently-selected animation is playing.
+  function sceneModelRecordIsPlaying(record: any) {
+    return record ? sceneModelRecordWasPlaying(record, record.animation) : false;
+  }
+
+  function sceneInitializeModelPlayback(record: any, model: any) {
+    const animation = typeof model.animation === "string" ? model.animation.trim() : "";
+    if (!animation) return;
+    sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(model));
+    if (sceneModelRecordWasPlaying(record, animation)) {
+      record.animation = animation;
+      record.animationSeq = typeof model.animationSeq === "string" ? model.animationSeq : "";
+    }
+  }
+
+  function sceneApplyModelLiveAnimation(record: any, patch: any) {
+    if (!record || (!record.mixer && !record.wasmMixerActive) || (!patch || typeof patch !== "object" || Array.isArray(patch) || ArrayBuffer.isView(patch))) {
+      return false;
+    }
+    const hasAnimation = sceneAnimationOwns(patch, "animation");
+    const hasControls = sceneModelAnimationControlFields.some(key => sceneAnimationOwns(patch, key));
+    if (!hasAnimation && !hasControls) {
+      return false;
+    }
+    const animation = hasAnimation
+      ? (typeof patch.animation === "string" ? patch.animation.trim() : "")
+      : record.animation;
+    const hasSeq = sceneAnimationOwns(patch, "animationSeq");
+    const animationSeq = hasSeq ? String(patch.animationSeq == null ? "" : patch.animationSeq) : "";
+    const replay = Boolean(hasSeq && animationSeq && record.animation === animation && record.animationSeq !== animationSeq);
+    if (record.model) {
+      for (const key of sceneModelAnimationControlFields) {
+        if (sceneAnimationOwns(patch, key)) record.model[key] = patch[key];
+      }
+    }
+    const model = record.model || patch;
+    if (!animation) {
+      if (record.animation && sceneModelRecordIsPlaying(record)) {
+        const fadeOut = sceneModelAnimationValue(model, "animationFadeOutMS", 0.05, 1000);
+        sceneModelRecordStop(record, record.animation, fadeOut);
+        if (fadeOut <= 0) {
+          record.animation = "";
+        }
+      }
+      record.animationSeq = animationSeq;
+      record.poseDirty = true;
+      return true;
+    }
+    if (record.animation === animation && sceneModelRecordIsPlaying(record) && !replay) {
+      if (hasControls) {
+        sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(model));
+        record.poseDirty = true;
+        return true;
+      }
+      return false;
+    }
+    if (record.animation && sceneModelRecordIsPlaying(record)) {
+      sceneModelRecordStop(record, record.animation, sceneModelAnimationValue(model, "animationFadeOutMS", replay ? 0 : 0.05, 1000));
+    }
+    sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(model, replay ? 0 : 0.04));
+    if (!sceneModelRecordWasPlaying(record, animation)) {
+      return false;
+    }
+    record.animation = animation;
+    record.animationSeq = animationSeq;
+    record.poseDirty = true;
+    return true;
+  }
+
   // Publish the animation API onto window for the legacy monolithic
-  // bootstrap.js bundle that inlines 19a-scene-animation.js. The split
-  // bootstrap-feature-scene3d-animation.js bundle also publishes in
-  // 26g-feature-scene3d-animation-suffix.js; both writing the same
-  // value is a harmless double-set.
+  // bootstrap.js bundle that inlines this source. The lazy chunk suffix
+  // extends this same API with crowd helpers after their constants initialize.
   if (typeof window !== "undefined") {
     window.__gosx_scene3d_animation_api = {
       createMixer: createSceneAnimationMixer,
+      initializeModelPlayback: sceneInitializeModelPlayback,
+      isModelPlaying: sceneModelRecordIsPlaying,
+      applyModelAnimation: sceneApplyModelLiveAnimation,
       buildNodeTransforms: sceneAnimBuildNodeTransforms,
       computeJointMatrices: sceneAnimComputeJointMatrices,
       wasmClipJSON: sceneAnimWasmClipJSON,
