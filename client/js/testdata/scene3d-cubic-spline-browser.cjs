@@ -1,6 +1,6 @@
 'use strict';
-/* Native browser regression probe for imported glTF CUBICSPLINE animation
- * and exact affine Group.Scale rendering/picking.
+/* Native browser regression probe for imported glTF CUBICSPLINE animation,
+ * exact affine Group.Scale rendering/picking, and single-BIN textured GLB.
  *
  * Boots real Chrome over CDP (Node builtins only), serves the built
  * bootstrap.js plus a strict method-and-path allowlist of feature assets on
@@ -37,6 +37,11 @@
  *     Changed geometry pixels are compared as RGBA bytes, not by file size or
  *     hash. Actual WebGPU canvas presentation is outside this hosted proof and
  *     remains a release-pinned hardware certification obligation.
+ *   - Separate textured pages render a white-factor standard PBR quad with
+ *     an embedded four-quadrant PNG. Both real pixel paths must contain all
+ *     four colors. A white-PNG mutation leaves drawing/ownership intact but
+ *     must fail those color oracles on both backends. Object URLs are scoped
+ *     to their page and their real Blob bytes are SHA-256 checked.
  *
  * Any page console error or warning fails the probe. Usage:
  *
@@ -69,9 +74,10 @@ try {
 }
 
 const fixture = require(path.join(__dirname, 'cubic-spline-fixture.cjs'));
+const texturedFixture = require('./textured-glb-fixture.cjs');
 const GLB = fixture.buildCubicSplineGLB();
 const MUTATION = String(process.env.GOSX_SCENE3D_CUBIC_MUTATION || '').trim();
-if (MUTATION && MUTATION !== 'webgpu-no-draw' && MUTATION !== 'webgpu-no-submit') {
+if (MUTATION && !['webgpu-no-draw', 'webgpu-no-submit', 'texture-white'].includes(MUTATION)) {
   console.error('unsupported GOSX_SCENE3D_CUBIC_MUTATION: ' + MUTATION);
   process.exit(2);
 }
@@ -166,6 +172,15 @@ const AFFINE_CASES = [
   { name: 'affine-wg', webgpu: true, mount: 'scene-affine-wg', engine: 'gosx-engine-affine-wg' },
 ];
 
+const TEXTURED_CASES = [
+  { name: 'textured-gl', webgpu: false, mount: 'scene-textured-gl', engine: 'gosx-engine-textured-gl' },
+  { name: 'textured-wg', webgpu: true, mount: 'scene-textured-wg', engine: 'gosx-engine-textured-wg' },
+];
+const TEXTURED_GLB = texturedFixture.buildTexturedGLB({ white: MUTATION === 'texture-white' });
+const TEXTURED_PNG = texturedFixture.quadrantPNG(MUTATION === 'texture-white');
+const TEXTURED_PNG_SHA256 = require('crypto').createHash('sha256').update(TEXTURED_PNG).digest('hex');
+const textureBlobSessions = new Map();
+
 const AFFINE_PARENT = [
   -2, 0, 0, 0,
   0, 1, 0, 0,
@@ -238,12 +253,21 @@ function affineManifestFor(mount, engine, webgpu) {
   }] });
 }
 
-function htmlFor(mount, engine, webgpu, affine) {
+function texturedManifestFor(mount, engine, webgpu) {
+  const manifest = JSON.parse(manifestFor(mount, engine, webgpu));
+  const props = manifest.engines[0].props;
+  props.camera = { x: 0, y: 0, z: 3, fov: 50 };
+  props.models = [{ id: 'textured', src: '/models/textured.glb' }];
+  return JSON.stringify(manifest);
+}
+
+function htmlFor(mount, engine, webgpu, affine, textured) {
   return '<!doctype html><html><head><meta charset="utf-8">' +
     '<link rel="icon" href="data:,"></head><body>' +
     '<div id="' + mount + '" width="' + W + '" height="' + H + '"></div>' +
     '<script type="application/json" id="gosx-manifest">' +
-    (affine ? affineManifestFor(mount, engine, webgpu) : manifestFor(mount, engine, webgpu)) + '</script>' +
+    (textured ? texturedManifestFor(mount, engine, webgpu) :
+      affine ? affineManifestFor(mount, engine, webgpu) : manifestFor(mount, engine, webgpu)) + '</script>' +
     '<script src="/bootstrap.js"></script></body></html>';
 }
 
@@ -265,6 +289,8 @@ function requestAllowed(method, pathname, search) {
   return method === 'GET' && (pathname === '/' || pathname === '/case/gl' ||
     pathname === '/case/wg' || pathname === '/case/affine-gl' ||
     pathname === '/case/affine-wg' || pathname === '/models/cubic-spline.glb' ||
+    pathname === '/case/textured-gl' || pathname === '/case/textured-wg' ||
+    pathname === '/models/textured.glb' ||
     STATIC_ROUTES.has(pathname));
 }
 
@@ -332,6 +358,15 @@ const server = http.createServer((req, res) => {
     send(200, GLB, 'model/gltf-binary');
     return;
   }
+  const textured = TEXTURED_CASES.find((c) => parsed.pathname === '/case/' + c.name);
+  if (textured) {
+    send(200, Buffer.from(htmlFor(textured.mount, textured.engine, textured.webgpu, false, true)), 'text/html');
+    return;
+  }
+  if (parsed.pathname === '/models/textured.glb') {
+    send(200, TEXTURED_GLB, 'model/gltf-binary');
+    return;
+  }
   const assetPath = STATIC_ROUTES.get(parsed.pathname);
   try {
     send(200, fs.readFileSync(assetPath), 'text/javascript');
@@ -395,6 +430,8 @@ function inspectNetworkRequest(rawURL, method) {
     return;
   }
   if (parsed.protocol === 'about:' || parsed.protocol === 'data:') return;
+  if (parsed.protocol === 'blob:' && method === 'GET' && parsed.origin === BASE &&
+      textureBlobSessions.get(rawURL) === activeSessionId) return;
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     networkFail(String(method || 'GET') + ' unsupported URL ' + rawURL);
     return;
@@ -436,6 +473,14 @@ function dispatch(raw) {
     // while those throwaway targets are closing; only the live proof target's
     // events are evidence about the case under test.
     if (!activeSessionId || m.sessionId !== activeSessionId) return;
+    if (m.method === 'Runtime.bindingCalled' && m.params && m.params.name === '__textureBlobRegistered') {
+      let receipt;
+      try { receipt = JSON.parse(m.params.payload); } catch (_err) {}
+      if (receipt && receipt.type === 'image/png' && receipt.size === TEXTURED_PNG.length &&
+          typeof receipt.url === 'string' && receipt.url.startsWith('blob:' + BASE + '/')) {
+        textureBlobSessions.set(receipt.url, m.sessionId);
+      } else networkFail('invalid embedded-texture blob registration');
+    }
     if (m.method === 'Runtime.consoleAPICalled' && m.params && m.params.args) {
       const text = m.params.args.map((x) => x.value !== undefined ? String(x.value) : (x.description || '')).join(' ');
       if (m.params.type === 'error') errors.push('console.error: ' + text);
@@ -510,10 +555,11 @@ const sleep = (ms) => new Promise((res) => setTimeout(res, ms));
 // mutation modes are local negative controls: they suppress WebGPU draw or
 // submit while leaving the old pass/submission counters green, so acceptance
 // must come from the mapped renderer-target pixels rather than those counters.
-const PRELOAD = `
+const PRELOAD = (mutation = MUTATION) => `
 window.__cubicGLDraws = 0; window.__cubicGLContext = '';
 window.__cubicWGPasses = 0; window.__cubicWGSubmits = 0;
-window.__cubicProofMutation = ${JSON.stringify(MUTATION)};
+window.__cubicProofMutation = ${JSON.stringify(mutation)};
+window.__textureColorCounts = ${texturedFixture.textureColorCounts.toString()};
 window.__cubicProofTarget = ${JSON.stringify(PROOF_TARGET)};
 window.__affineGLUploads = []; window.__affineGLDrawRecords = [];
 window.__affineWGUploads = []; window.__affineWGDrawRecords = [];
@@ -726,6 +772,7 @@ window.__affineInputEvents = [];
       byteLength: pixels.length, pixelSHA256: snapshot.pixelSHA256,
       cornerRGBA: [r, g, b, a],
       foregroundPixels: foregroundPixels,
+      textureColors: window.__textureColorCounts(pixels),
       renderTargetKind: snapshot.renderTargetKind,
       canvasPresented: snapshot.canvasPresented,
       contextID: snapshot.contextID,
@@ -1284,6 +1331,26 @@ window.__affineInputEvents = [];
 })();
 `;
 
+// Only texture pages may register object URLs. The production loader creates
+// them from its embedded PNG. Record and later hash the real Blob; never replace
+// its image data or permit unrelated blob/network requests.
+const TEXTURE_PRELOAD = `
+window.__textureBlobReceipts = [];
+(function(){
+  var create = URL.createObjectURL;
+  URL.createObjectURL = function(blob) {
+    var url = create.apply(this, arguments);
+    var receipt = {url:url,type:blob.type,size:blob.size};
+    window.__textureBlobReceipts.push(receipt);
+    window.__textureBlobRegistered(JSON.stringify(receipt));
+    blob.arrayBuffer().then(function(bytes){return crypto.subtle.digest('SHA-256',bytes);})
+      .then(function(hash){receipt.sha256=Array.from(new Uint8Array(hash),function(b){return b.toString(16).padStart(2,'0');}).join('');})
+      .catch(function(){receipt.error='embedded PNG digest failed';});
+    return url;
+  };
+})();
+`;
+
 const CAPS_START_EXPR = '(function(){' +
   'var c=document.createElement("canvas");var gl2=false,gl=null,released=false;' +
   'try{gl=c.getContext("webgl2");gl2=!!gl;' +
@@ -1544,7 +1611,8 @@ function imageStatsExpr(base64) {
     'for(var i=0;i<data.length;i+=4){var d=Math.max(Math.abs(data[i]-16),' +
       'Math.abs(data[i+1]-20),Math.abs(data[i+2]-24),Math.abs(data[i+3]-255));' +
       'if(d>3)changed++;if(d>maxDelta)maxDelta=d;}' +
-    'res({width:c.width,height:c.height,nonBackgroundPixels:changed,maxDelta:maxDelta});' +
+    'res({width:c.width,height:c.height,nonBackgroundPixels:changed,maxDelta:maxDelta,' +
+      'textureColors:window.__textureColorCounts(data)});' +
     '}catch(e){res(null);}};image.onerror=function(){res(null);};' +
     'image.src="data:image/png;base64,' + base64 + '";})';
 }
@@ -1742,6 +1810,81 @@ function compareSampledPose(pose, t, label) {
   assertClose(pose.t0.rotation, fixture.evalRotation(t), label + ' sampled rotation', 2e-3);
   assertClose(pose.t0.scale, fixture.evalScale(t), label + ' sampled scale', 2e-3);
   assertClose(pose.t0.weights, fixture.evalWeights(t), label + ' sampled weights', 2e-3);
+}
+
+async function runTexturedCase(send, c, sessionId) {
+  const ev = { name: c.name, kind: 'gltf-single-buffer-textured', webgpu: c.webgpu,
+    mount: c.mount, engine: c.engine };
+  const load = waitForEvent('Page.loadEventFired', MOUNT_WAIT_MS, sessionId);
+  await send('Page.navigate', { url: BASE + '/case/' + c.name });
+  await load;
+  const modelExpr = '(function(){var m=document.getElementById(' + JSON.stringify(c.mount) + ');' +
+    'var s=m&&m.__gosxScene3DState,o=s&&s.objects&&s.objects.get("textured/quad-prim-0");' +
+    'return !!(m&&m.getAttribute("data-gosx-scene3d-mounted")==="true"&&o);})()';
+  const deadline = Date.now() + MOUNT_WAIT_MS;
+  while (Date.now() < deadline && !(await evalSend(send, modelExpr))) await sleep(50);
+  ev.modelLoaded = await evalSend(send, modelExpr);
+  if (!ev.modelLoaded) throw new Error('[' + c.name + '] textured GLB did not mount its quad');
+  ev.attrs = await evalSend(send, attrsExpr(c.mount));
+  if (!ev.attrs || ev.attrs.renderer !== (c.webgpu ? 'webgpu' : 'webgl') || ev.attrs.fallback) {
+    fail('[' + c.name + '] wrong backend attributes: ' + JSON.stringify(ev.attrs));
+  }
+  await settleFrames(send, 10);
+  if (c.webgpu) await waitForWebGPUFrame(send, c.mount);
+  // GPU image upload is asynchronous. Wait for real colored pixels; the white
+  // texture mutation deliberately exhausts this bounded window with zero counts.
+  const pixelsDeadline = Date.now() + 5000;
+  do {
+    if (c.webgpu) {
+      // A static scene has no continuous animation submissions. Arm first,
+      // then request a frame through the public handle's props refresh.
+      ev.readback = await evalSend(send, '(function(){var m=document.getElementById(' + JSON.stringify(c.mount) + ');' +
+        'var r=window.__cubicWGReadback,h=m&&m.__gosxScene3DHandle;' +
+        'if(!h||typeof h.updateSceneProps!=="function"||!r.arm(m.querySelector("canvas"),' + JSON.stringify(c.name + '-texture') + '))' +
+        'return {error:"static texture capture could not be armed"};' +
+        'h.updateSceneProps({});return r.result(' + JSON.stringify(c.name + '-texture') + ');})()', { awaitPromise: true });
+      ev.textureColors = ev.readback && ev.readback.textureColors;
+    } else {
+      const shot = await capture(send, c.mount);
+      writeArtifact(c.name + '-visible.png', shot);
+      ev.pixelStats = await evalSend(send, imageStatsExpr(shot), { awaitPromise: true });
+      ev.textureColors = ev.pixelStats && ev.pixelStats.textureColors;
+    }
+    if (ev.textureColors && Object.values(ev.textureColors).every((count) => count >= 100)) break;
+    await settleFrames(send, 2);
+  } while (Date.now() < pixelsDeadline);
+  if (c.webgpu) {
+    assertWebGPUReadback(ev.readback, '[' + c.name + '] texture');
+    ev.webgpuProof = await evalSend(send, webGPUProofExpr());
+    ev.webgpuDiagnostics = await evalSend(send, webGPUDiagnosticsExpr());
+  } else if (!ev.pixelStats || ev.pixelStats.nonBackgroundPixels <= 20) {
+    fail('[' + c.name + '] textured quad was not visibly rasterized');
+  }
+  ev.draw = await evalSend(send, '({gl:window.__cubicGLContext,draws:window.__cubicGLDraws,' +
+    'wgPasses:window.__cubicWGPasses,wgSubmits:window.__cubicWGSubmits})');
+  if (!ev.draw || (c.webgpu ? !(ev.draw.wgPasses > 0 && ev.draw.wgSubmits > 0) :
+    !(ev.draw.gl === 'webgl2' && ev.draw.draws > 0))) {
+    fail('[' + c.name + '] native draw/submission evidence missing');
+  }
+  ev.embeddedImages = await evalSend(send, 'window.__textureBlobReceipts');
+  if (!Array.isArray(ev.embeddedImages) || ev.embeddedImages.length !== 1 ||
+      ev.embeddedImages[0].sha256 !== TEXTURED_PNG_SHA256 ||
+      textureBlobSessions.get(ev.embeddedImages[0].url) !== sessionId) {
+    fail('[' + c.name + '] embedded PNG did not match the allowlisted fixture bytes');
+  }
+  for (const color of ['red', 'green', 'blue', 'yellow']) {
+    if (!ev.textureColors || !(ev.textureColors[color] >= 100)) {
+      fail('[' + c.name + '] texture lacks ' + color + ' pixels (expected >= 100)');
+    }
+  }
+  ev.disposed = await evalSend(send, disposeExpr(c.engine, c.mount));
+  if (ev.disposed !== true) fail('[' + c.name + '] disposal did not clear engine state');
+  ev.telemetry = await evalSend(send, telemetryQuiesceExpr(), { awaitPromise: true });
+  if (!ev.telemetry || ev.telemetry.queueDepth !== 0 || ev.telemetry.pendingRequests !== 0) {
+    fail('[' + c.name + '] telemetry did not quiesce before navigation');
+  }
+  await waitForNetworkIdle(c.name);
+  return ev;
 }
 
 async function runAffineCase(send, c, sessionId) {
@@ -2478,7 +2621,7 @@ const watchdog = setTimeout(() => {
       await send('Runtime.enable');
       await send('Network.enable');
       await send('Log.enable');
-      await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD });
+      await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD() });
       activeSessionId = sessionId;
       CASE_EVIDENCE.push(await runAffineCase(send, c, sessionId));
     } finally {
@@ -2504,7 +2647,7 @@ const watchdog = setTimeout(() => {
       await send('Runtime.enable');
       await send('Network.enable');
       await send('Log.enable');
-      await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD });
+      await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD() });
       activeSessionId = sessionId;
       CASE_EVIDENCE.push(await runCase(send, c, sessionId));
     } finally {
@@ -2522,7 +2665,32 @@ const watchdog = setTimeout(() => {
       try { await cdpSend('Target.closeTarget', { targetId }, null, STEP_MS); } catch (_err) {}
     }
   }
-  if (clientEventResponses.length !== CASES.length + AFFINE_CASES.length) {
+  for (const c of TEXTURED_CASES) {
+    const caseStderrStart = chromeStderrBytes;
+    const { targetId } = await cdpSend('Target.createTarget', { url: 'about:blank' });
+    const { sessionId } = await cdpSend('Target.attachToTarget', { targetId, flatten: true });
+    const send = (method, params, to) => cdpSend(method, params, sessionId, to || STEP_MS);
+    try {
+      await send('Page.enable');
+      await send('Runtime.enable');
+      await send('Network.enable');
+      await send('Log.enable');
+      // Existing no-draw/no-submit controls retain their exact cubic failures.
+      // Texture causality has its own white-image control at the GLB source.
+      await send('Runtime.addBinding', { name: '__textureBlobRegistered' });
+      await send('Page.addScriptToEvaluateOnNewDocument', { source: PRELOAD('') + TEXTURE_PRELOAD });
+      activeSessionId = sessionId;
+      CASE_EVIDENCE.push(await runTexturedCase(send, c, sessionId));
+    } finally {
+      await sleep(100);
+      CASE_STDERR_RANGES.push({ name: c.name, startByte: caseStderrStart,
+        beforeTargetCloseByte: chromeStderrBytes });
+      activeSessionId = null;
+      networkRequests.clear();
+      try { await cdpSend('Target.closeTarget', { targetId }, null, STEP_MS); } catch (_err) {}
+    }
+  }
+  if (clientEventResponses.length !== CASES.length + AFFINE_CASES.length + TEXTURED_CASES.length) {
     fail('expected one intentional client-events 204 per renderer case, got ' +
       clientEventResponses.length);
   }
