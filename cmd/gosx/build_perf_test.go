@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -93,6 +94,12 @@ func TestPerfGraphBuildInventory(t *testing.T) {
 	nav := seen["framework/runtime/navigation.js"]
 	if nav.URL != runtimehost.NavigationRuntimePath || nav.SHA256 != perfBuildDigest([]byte(runtimehost.NavigationRuntime)) {
 		t.Fatal("external navigation identity is not bound to the served body")
+	}
+	for suffix, want := range map[string][]byte{"": []byte(runtimehost.NavigationRuntime), ".gz": runtimehost.NavigationRuntimeGzip, ".br": runtimehost.NavigationRuntimeBrotli} {
+		got, err := os.ReadFile(filepath.Join(dist, "assets/runtime", filepath.Base(nav.URL)+suffix))
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatal("revision-specific navigation representation missing", err)
+		}
 	}
 	for id, kind := range map[string]string{"app/fixture/islands/counter": "program", "app/fixture/css/app/counter.css": "css"} {
 		if a := seen[id]; a.Owner != "app" || a.Kind != kind {
