@@ -113,6 +113,8 @@ type App struct {
 	compressionOff      bool
 	legacyGzip          bool
 	configurationClosed atomic.Bool
+	draining            atomic.Bool
+	shutdown            appShutdown
 
 	schedulerOnce         sync.Once
 	scheduler             *scheduled.Scheduler
@@ -546,7 +548,9 @@ func (a *App) preloadGrammarBlob() {
 }
 
 func (a *App) Build() http.Handler {
+	a.shutdown.mu.Lock()
 	a.configurationClosed.Store(true)
+	a.shutdown.mu.Unlock()
 	a.preloadGrammarBlob()
 	a.warnStaleIslands()
 	mux := http.NewServeMux()
@@ -639,21 +643,14 @@ func (a *App) SetClientEventsLogger(logger *slog.Logger) {
 // default options. Callers that never invoke Scheduler pay no overhead.
 func (a *App) Scheduler() *scheduled.Scheduler {
 	a.schedulerOnce.Do(func() {
+		a.shutdown.mu.Lock()
+		defer a.shutdown.mu.Unlock()
 		a.scheduler = scheduled.New(scheduled.Options{})
+		if a.draining.Load() {
+			_ = a.scheduler.StopContext(context.Background())
+		}
 	})
 	return a.scheduler
-}
-
-// Shutdown stops the scheduler (if one was created) and then gracefully shuts
-// down the HTTP server using the provided context.
-func (a *App) Shutdown(ctx context.Context) error {
-	if a.scheduler != nil {
-		a.scheduler.Stop(30 * time.Second)
-	}
-	if a.srv != nil {
-		return a.srv.Shutdown(ctx)
-	}
-	return nil
 }
 
 func (a *App) registerPageRoutes(mux *http.ServeMux) {
@@ -801,7 +798,13 @@ func (a *App) ListenAndServe(addr string) error {
 		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	a.shutdown.mu.Lock()
+	if a.draining.Load() {
+		a.shutdown.mu.Unlock()
+		return http.ErrServerClosed
+	}
 	a.srv = srv
+	a.shutdown.mu.Unlock()
 	a.Scheduler().Start(context.Background())
 	return srv.ListenAndServe()
 }
@@ -1225,6 +1228,12 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	report := ReadinessReport{OK: true}
+	if a.draining.Load() {
+		report.OK = false
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(report)
+		return
+	}
 	for _, entry := range a.readyChecks {
 		if entry.check == nil {
 			continue
