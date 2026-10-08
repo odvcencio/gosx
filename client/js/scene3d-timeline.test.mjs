@@ -20,7 +20,9 @@ function runtime(reduce = false) {
   const context = vm.createContext({ window, document, console, performance: { now: () => clock }, Date, setTimeout, clearTimeout });
   vm.runInContext(read('bootstrap-src/06-motion-core.ts'), context);
   vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
-  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-hooks.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/script-loader.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  vm.runInContext('window.__gosx_scene3d_api.loadPresentation = ensureSceneGatedFeatureLoaded', context);
+  context.gosxApplyCurrentScriptNonce = script => { script.nonce = document.querySelector()?.nonce; };
   vm.runInContext(ts.transpileModule(read('../runtime/scene3d/timeline.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   const api = window.__gosx_scene3d_api.timeline;
   let current = null;
@@ -135,7 +137,9 @@ test('public playback shares a versioned request, preserves CSP policy and retri
   const mount = { __gosxScene3DHandle: handle, __gosxScene3DState: { camera: {} }, isConnected: true };
   Object.assign(r.context.document, {
     querySelector: () => ({ dataset: { gosxScene3dTimelineUrl: '/runtime/timeline.hash.js?v=1' }, nonce: 'current-page' }),
-    createElement: () => ({}), head: { appendChild: script => scripts.push(script) },
+    createElement: () => ({ setAttribute(name, value) {
+      this[({ crossorigin: 'crossOrigin', referrerpolicy: 'referrerPolicy' })[name] || name] = value;
+    } }), head: { appendChild: script => scripts.push(script) },
   });
   const play = () => r.window.__gosx_scene3d_command_bridge.playTimeline(mount, fixture);
   const first = assert.rejects(play(), /failed to load/), second = assert.rejects(play(), /failed to load/);
@@ -224,7 +228,7 @@ test('shared hooks run in explicit order and install one adapter and observer', 
     const add = r.window.__gosx_scene3d_api.addCommandHook;
     let adapter, teardown, presentation;
     for (const priority of order) {
-      vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-hooks.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+      vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
       assert.equal(r.window.__gosx_scene3d_api.addCommandHook, add, 'another chunk must reuse the hook registry');
       presentation = add(mount, handle, String(priority), priority,
         () => calls.push(priority), () => calls.push('close' + priority), () => true);

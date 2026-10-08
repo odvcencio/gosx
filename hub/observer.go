@@ -216,6 +216,23 @@ func (h *Hub) detachObserver(slot *observerSlot) {
 }
 
 func (h *Hub) observe(visit func(Observer)) {
+	// Pumps and reserved registrations keep finishClose from starting until
+	// their callbacks return. These dispatches only need the detach check;
+	// writing a shared admission counter would contend on every message.
+	list := h.observers.Load()
+	if list == nil {
+		return
+	}
+	for _, slot := range list.slots {
+		if slot.state.Load()&observerRetired == 0 {
+			h.invokeObserver(slot, visit)
+		}
+	}
+}
+
+// observeConcurrent protects dispatches whose owner can race finishClose:
+// broadcasts, unreserved/released rejections, and nested panic notifications.
+func (h *Hub) observeConcurrent(visit func(Observer)) {
 	list := h.observers.Load()
 	if list == nil {
 		return
@@ -251,7 +268,7 @@ func (h *Hub) invokeObserver(slot *observerSlot, visit func(Observer)) {
 	defer func() {
 		if recover() != nil {
 			h.detachObserver(slot)
-			h.observe(func(o Observer) { o.ObserverPanicked(h) })
+			h.observeConcurrent(func(o Observer) { o.ObserverPanicked(h) })
 			h.observerWarningMu.Lock()
 			warn := h.observerWarningAt.IsZero() || time.Since(h.observerWarningAt) >= time.Minute
 			if warn {
@@ -268,6 +285,12 @@ func (h *Hub) invokeObserver(slot *observerSlot, visit func(Observer)) {
 
 func (h *Hub) observeMessage(c *Client, event TrafficEvent) {
 	h.observe(func(o Observer) { o.Message(h, c, event) })
+}
+
+// Enqueue notifications can come from broadcasts or application Send calls
+// after their queue locks are released, without a pump retaining the owner.
+func (h *Hub) observeEnqueue(c *Client, event TrafficEvent) {
+	h.observeConcurrent(func(o Observer) { o.Message(h, c, event) })
 }
 
 // queueEventLocked is part of the existing enqueue/channel-close critical
@@ -348,7 +371,7 @@ func (h *Hub) observedFanoutLocked(payload []byte, binary bool, predicate func(*
 
 func (c *Client) publishEnqueue(event TrafficEvent, batch *enqueueBatch) {
 	if batch == nil {
-		c.Hub.observeMessage(c, event)
+		c.Hub.observeEnqueue(c, event)
 		return
 	}
 	if event.Dropped {
@@ -362,12 +385,12 @@ func (c *Client) publishEnqueue(event TrafficEvent, batch *enqueueBatch) {
 
 func (h *Hub) publishBatch(batch *enqueueBatch, binary bool, bytes int) {
 	if batch.drops != 0 {
-		h.observeMessage(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: -1, Dropped: true, Count: batch.drops})
+		h.observeEnqueue(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: -1, Dropped: true, Count: batch.drops})
 	}
 	if batch.sampled {
 		for depth, count := range batch.depths {
 			if count != 0 {
-				h.observeMessage(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: depth, Count: count})
+				h.observeEnqueue(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: depth, Count: count})
 			}
 		}
 	}

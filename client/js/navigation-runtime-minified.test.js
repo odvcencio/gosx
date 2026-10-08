@@ -19,9 +19,34 @@ const assert = require("node:assert/strict");
 const {
   navigationSource,
   navigationRuntimeMinifiedSource,
+  bootstrapSource,
+  FakeElement,
   createContext,
   runScript,
+  flushAsyncWork,
 } = require("./runtime-test-harness.js");
+
+test("deferred navigation marks parser-built links before bootstrap starts", async () => {
+  const env = createContext({ elements: [] });
+  env.document.readyState = "interactive";
+  env.context.location.href = "http://localhost:3000/current";
+  const link = new FakeElement("a", env.document);
+  link.setAttribute("href", "/current");
+  link.setAttribute("data-gosx-link", "true");
+  env.document.body.appendChild(link);
+
+  runScript(navigationRuntimeMinifiedSource, env.context, "navigation-runtime.min.js");
+  const navigation = env.context.__gosx.navigation;
+  assert.equal(link.getAttribute("aria-current"), "page");
+  assert.equal(link.getAttribute("data-gosx-link-current"), "page");
+  assert.equal(link.getAttribute("data-gosx-link-state"), "idle");
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.equal(env.context.__gosx.navigation, navigation);
+  assert.equal(env.context.__gosx.host.navigation, navigation);
+  assert.equal(env.context.__gosx_page_nav, navigation);
+});
 
 test("the minified navigation runtime artifact parses and boots", () => {
   const env = createContext({ elements: [] });

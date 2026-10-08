@@ -759,11 +759,9 @@
       setAttrValue(mount, sceneAttr("webgpu-device-lost-reason"),
         reason && renderWatchdogDeviceLostInfo ? renderWatchdogDeviceLostInfo.reason || "" : "");
     }
-
     function rendererReportsWebGPUFailure(diagnostics) {
-      if (!diagnostics) {
-        return "";
-      }
+      if (!diagnostics) return "";
+      if (diagnostics.pipelineCoreError) return "webgpu-pipeline-failed";
       if (diagnostics.deviceLost) {
         return "webgpu-device-lost";
       }
@@ -1478,7 +1476,6 @@
         }
         renderFrame(now, lastRenderReason || "refresh");
     }
-
 	    let sceneRendererRecentlySwapped = false;
 	    let sceneRendererLastSwapReason = "";
 	    let sceneControlHandle = null;
@@ -1487,7 +1484,6 @@
 	    let pickHandle = null;
         let releaseControllerPickBridge = null;
 	    let latestScenePickDetail = null;
-
 	    function swapRenderer(nextRenderer, fallbackReason) {
 	      if (!nextRenderer) {
 	        return false;
@@ -1611,7 +1607,7 @@
 	      // renderer exactly like webgpu-device-lost's was, so it needs the
 	      // same fresh-canvas treatment. Failed PBR shaders also need a fresh
 	      // context so their teardown cannot cancel the legacy shader queue.
-	      return reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
+	      return reason === "webgpu-pipeline-failed" || reason === "webgpu-device-lost" || reason === "webgpu-persistent-frame-error" || reason === "webgl-shader-failed";
 	    }
 
     // WebGL fallback owner: null = idle, 0 = settled, false = terminal, or the
@@ -2201,7 +2197,6 @@
         }
       };
     }
-
     function readSceneSourceCamera() {
       if (latestBundle && latestBundle.sourceCamera) {
         return latestBundle.sourceCamera;
@@ -2211,7 +2206,6 @@
       }
       return sceneState.camera;
     }
-
 	    function disposeSceneCanvasInteractionHandles() {
           if (releaseControllerPickBridge) releaseControllerPickBridge();
           releaseControllerPickBridge = null;
@@ -2232,7 +2226,6 @@
 	      gizmoDragHandle = null;
 	      pickHandle = null;
 	    }
-
 	    function installSceneCanvasInteractionHandles() {
           releaseControllerPickBridge = setupSceneControllerPickBridge(mount, canvas, () => viewport, () => latestBundle);
 	      pickHandle = setupScenePickInteractions(canvas, props, function() {

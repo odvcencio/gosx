@@ -480,6 +480,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	// authorities extend the full source inventory. Keep the pinned historical
 	// receipt unchanged and explicitly reconcile every added authority name.
 	wantFullOnly = uniqueStrings(append(wantFullOnly,
+		"__gosx_scene3d_pipeline_recovery_api",
 		"__gosx_scene3d_ocean_query", "__gosx_scene3d_ocean_query_api", "__gosx_scene3d_ocean_waves",
 		"__gosx_scene3d_vessel_api", "__gosx_scene3d_vessel_input", "__gosx_scene3d_vessel_model",
 		"__gosx_scene3d_vessel_physics", "__gosx_scene3d_vessel_wake", "__gosx_scene3d_walk_surfaces"))
