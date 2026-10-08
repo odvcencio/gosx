@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Islands: `onWheel` (non-passive), `onDblClick`, `onContextMenu` and
+  `onLostPointerCapture`; event fields `offsetX`, `offsetY` (relative to the
+  handler element), `deltaX`, `deltaY` and `deltaMode`; and
+  `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. An unknown
+  `onX` island attribute is now a compile error. Pre-selective manifests attach
+  the four new listeners on every island root. See `docs/island-events.md`.
+
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
   to replace its code-configured token or file source. Two environment sources
