@@ -113,7 +113,7 @@ func readWithin(root, path string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("input escapes project root")
 	}
-	f, err := r.Open(rel)
+	f, err := openInput(r, rel)
 	if err != nil {
 		return nil, errors.New("cannot open confined input")
 	}
