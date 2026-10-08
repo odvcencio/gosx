@@ -756,6 +756,364 @@ func checkpointValueTestModule(c *linkedCode) wasmgen.Module {
 	return m
 }
 
+type checkpointTestValue struct {
+	ID     uint32
+	Packet string
+}
+
+type checkpointTestFrame struct {
+	Instance, Program uint32
+	Last              uint64
+	Locals, Inputs    []checkpointTestValue
+}
+
+type checkpointTestShared struct {
+	ID      uint32
+	Version uint64
+	Packet  string
+}
+
+// The wire oracle writes the specified fields directly, independently of the
+// emitted address tables and WASM serialization helpers.
+func checkpointTestBytes(t *testing.T, digest [32]byte, sequence uint64, frames []checkpointTestFrame, shared []checkpointTestShared) []byte {
+	t.Helper()
+	body := make([]byte, 64)
+	var tail []byte
+	var fixups []int
+	appendValue := func(packet string) {
+		raw, err := base64.StdEncoding.DecodeString(packet)
+		if err != nil || len(raw) < 24 {
+			t.Fatalf("invalid test scalar: %v", err)
+		}
+		start := len(body)
+		body = append(body, raw[:24]...)
+		if len(raw) > 24 {
+			fixups = append(fixups, start+16)
+			binary.LittleEndian.PutUint32(body[start+16:], uint32(len(tail)))
+			tail = append(tail, raw[24:]...)
+		}
+	}
+	for _, frame := range frames {
+		for _, field := range []uint32{frame.Instance, frame.Program, uint32(len(frame.Locals)), uint32(len(frame.Inputs)), uint32(frame.Last), uint32(frame.Last >> 32)} {
+			body = binary.LittleEndian.AppendUint32(body, field)
+		}
+		for _, entries := range [][]checkpointTestValue{frame.Locals, frame.Inputs} {
+			for _, entry := range entries {
+				body = binary.LittleEndian.AppendUint32(body, entry.ID)
+				appendValue(entry.Packet)
+			}
+		}
+	}
+	for _, entry := range shared {
+		body = binary.LittleEndian.AppendUint32(body, entry.ID)
+		body = binary.LittleEndian.AppendUint64(body, entry.Version)
+		appendValue(entry.Packet)
+	}
+	for _, offset := range fixups {
+		binary.LittleEndian.PutUint32(body[offset:], uint32(len(body))+binary.LittleEndian.Uint32(body[offset:]))
+	}
+	copy(body, "GXAC")
+	binary.LittleEndian.PutUint16(body[4:], 1)
+	for i, field := range []uint32{uint32(len(body) + len(tail)), uint32(len(frames)), uint32(len(shared)), uint32(sequence), uint32(sequence >> 32), uint32(len(tail))} {
+		binary.LittleEndian.PutUint32(body[8+i*4:], field)
+	}
+	copy(body[32:], digest[:])
+	return append(body, tail...)
+}
+
+func checkpointRecordUnit(t *testing.T) Unit {
+	t.Helper()
+	u, _ := scalarInputUnit(t, "prop", String, false)
+	u.Component, u.Contract.Component, u.Program.Name = "example/components.CheckpointRecords", "example/components.CheckpointRecords", "CheckpointRecords"
+	for i, def := range []struct {
+		name, value string
+		kind        ScalarKind
+		op          program.OpCode
+		typ         program.ExprType
+	}{{"number", "0", Int, program.OpLitInt, program.TypeInt}, {"enabled", "false", Bool, program.OpLitBool, program.TypeBool},
+		{"text", "", String, program.OpLitString, program.TypeString}, {"$shared", "", String, program.OpLitString, program.TypeString}} {
+		init := addExpression(&u, def.op, def.typ, def.kind, def.value)
+		u.Program.Signals = append(u.Program.Signals, program.SignalDef{Name: def.name, Type: def.typ, Init: init})
+		u.Contract.Signals = append(u.Contract.Signals, StateContract{Slot: uint32(i), Name: def.name, Kind: def.kind})
+	}
+	return refreshUnit(t, u)
+}
+
+func TestLinkedCheckpointPageBytesTrackPreparedCommittedAndDisposedState(t *testing.T) {
+	u := checkpointRecordUnit(t)
+	other, _ := scalarInputUnit(t, "prop", Int32, true)
+	other.Component, other.Contract.Component, other.Program.Name = "example/components.NestedCheckpoint", "example/components.NestedCheckpoint", "NestedCheckpoint"
+	other = refreshUnit(t, other)
+	l, err := buildLinkedLayout([]Unit{other, u}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "checkpoint", Function: c.checkpoint}, wasmgen.Export{Name: "dispose", Function: c.dispose})
+	integer := func(n int64) string { return scalarTransport(program.TypeInt, 0, n, "") }
+	text := scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴e\u0301")
+	frames := []checkpointTestFrame{
+		{Instance: 0, Last: 3, Locals: []checkpointTestValue{{0, integer(-2147483648)}, {1, scalarTransport(program.TypeBool, 0, 0, "")}, {2, scalarTransport(program.TypeString, 0, 0, "")}}, Inputs: []checkpointTestValue{{0, scalarTransport(program.TypeString, 1, 0, "")}}},
+		{Instance: 7, Last: 6, Inputs: []checkpointTestValue{{0, scalarTransport(program.TypeAny, 0, 0, "")}}},
+		{Instance: 15, Last: 1, Locals: []checkpointTestValue{{0, integer(2147483647)}, {1, scalarTransport(program.TypeBool, 2, 0, "")}, {2, text}}, Inputs: []checkpointTestValue{{0, text}}},
+	}
+	type root struct {
+		ID     uint32
+		Packet string
+	}
+	data := struct {
+		Frames                                     []checkpointTestFrame
+		Roots                                      []root
+		FrameTable, FrameSequences, SharedVersions uint32
+		Sequence                                   [2]uint32
+		Changes                                    []root
+	}{Frames: frames, FrameTable: l.frameTable, FrameSequences: l.frameSequences, SharedVersions: l.sharedVersions, Sequence: [2]uint32{0xfffffff0, 0x80000001}}
+	for i := range data.Frames {
+		name := u.Program.Name
+		if data.Frames[i].Instance == 7 {
+			name = other.Program.Name
+		}
+		p := linkedProgramByName(t, l, name)
+		data.Frames[i].Program = p.state.programID
+		for _, value := range data.Frames[i].Locals {
+			data.Roots = append(data.Roots, root{p.state.rows[data.Frames[i].Instance*uint32(len(p.unit.Program.Signals))+value.ID], value.Packet})
+		}
+		for _, value := range data.Frames[i].Inputs {
+			id := p.inputs[data.Frames[i].Instance*uint32(len(p.unit.Contract.Inputs))+value.ID]
+			data.Roots = append(data.Roots, root{id, value.Packet})
+			if data.Frames[i].Instance == 7 {
+				data.Changes = append(data.Changes, root{id, integer(42)})
+			}
+		}
+	}
+	data.Roots = append(data.Roots, root{l.shared[0].root, text})
+	data.Changes = append(data.Changes, root{15*l.localStride + 2, text}, root{l.shared[0].root, text})
+	sequence := uint64(data.Sequence[1])<<32 | uint64(data.Sequence[0])
+	shared := []checkpointTestShared{{0, 7, text}}
+	initial := checkpointTestBytes(t, l.inputSetSHA, sequence, data.Frames, shared)
+	changed := append([]checkpointTestFrame{}, data.Frames...)
+	changed[1].Inputs = []checkpointTestValue{{0, integer(42)}}
+	changed[1].Last, changed[2].Last = sequence+1, sequence+1
+	prepared := checkpointTestBytes(t, l.inputSetSHA, sequence+1, changed, []checkpointTestShared{{0, sequence + 1, text}})
+	var got struct {
+		Documents []string
+		Statuses  []int32
+		Pure      bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], documents = [];
+  for (const f of data.Frames) {
+    view.setUint32(data.FrameTable+f.Instance*16,f.Program,true);
+    view.setUint32(data.FrameTable+f.Instance*16+4,1,true);
+    view.setUint32(data.FrameTable+f.Instance*16+8,f.Last,true);
+  }
+  view.setUint32(data.SharedVersions,7,true);
+  const store = values => { for (const value of values) {
+    memory.set(Buffer.from(value.Packet,'base64'),32768);
+    statuses.push(api.store(value.ID,32768));
+  }};
+  let pure = true;
+  const read = which => {
+    const before = Buffer.concat([Buffer.from(memory.slice(0,32768)),Buffer.from(memory.slice(65536))]);
+    const allocation = api.cursor(), status = api.status(), pending = api.pending();
+    const length = api.checkpoint(which,32769,32767);
+    pure = pure&&before.equals(Buffer.concat([Buffer.from(memory.slice(0,32768)),Buffer.from(memory.slice(65536))]))
+      &&allocation===api.cursor()&&status===api.status()&&pending===api.pending();
+    if (length>0) documents.push(Buffer.from(memory.slice(32769,32769+length)).toString('base64'));
+    else statuses.push(length);
+  };
+  statuses.push(api.begin(data.Sequence[0],data.Sequence[1],1));
+  store(data.Roots); read(1); read(0);
+  statuses.push(api.commit(data.Sequence[0],data.Sequence[1])); read(0);
+  const change = () => {
+    statuses.push(api.begin(data.Sequence[0]+1,data.Sequence[1],0)); store(data.Changes);
+    for (const frame of [7,15]) {
+      view.setUint32(data.FrameSequences+frame*8,data.Sequence[0]+1,true);
+      view.setUint32(data.FrameSequences+frame*8+4,data.Sequence[1],true);
+    }
+    view.setUint32(data.SharedVersions+8,data.Sequence[0]+1,true);
+    view.setUint32(data.SharedVersions+12,data.Sequence[1],true);
+  };
+  change(); read(1); read(0); statuses.push(api.abort()); read(0); read(1);
+  change(); statuses.push(api.commit(data.Sequence[0]+1,data.Sequence[1])); read(0);
+  statuses.push(api.dispose(0)); read(0);
+  process.stdout.write(JSON.stringify({Documents:documents,Statuses:statuses,Pure:pure}));`, data, &got)
+	want := [][]byte{initial, initial, prepared, initial, initial, prepared,
+		checkpointTestBytes(t, l.inputSetSHA, sequence+1, changed[1:], []checkpointTestShared{{0, sequence + 1, text}})}
+	if len(got.Documents) != len(want) || !got.Pure {
+		t.Fatalf("checkpoint generations or purity: %+v", got)
+	}
+	for i, document := range want {
+		if got.Documents[i] != base64.StdEncoding.EncodeToString(document) {
+			t.Fatalf("checkpoint generation %d differs from the exact GXAC wire contract", i)
+		}
+	}
+	var errors []int32
+	for _, status := range got.Statuses {
+		if status != 0 {
+			errors = append(errors, status)
+		}
+	}
+	if !reflect.DeepEqual(errors, []int32{-statusBadSequence, -statusBusy}) {
+		t.Fatalf("checkpoint transaction statuses: %v", got.Statuses)
+	}
+}
+
+func TestLinkedCheckpointPageRejectsInvalidStateWithoutWriting(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{layoutUnit(t, "RejectedCheckpoint", 2, 0, 0)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "checkpoint", Function: c.checkpoint})
+	type testCase struct {
+		Which, Destination, Capacity uint32
+		Offset, Value                uint32
+		Mutate, ArenaRelative        bool
+		Want                         int32
+	}
+	cases := []testCase{
+		{Which: 2, Destination: 32768, Capacity: 32768, Want: -2},
+		{Which: 4294967295, Destination: 32768, Capacity: 32768, Want: -2},
+		{Destination: 32767, Capacity: 32768, Want: -2},
+		{Destination: 65536, Capacity: 1, Want: -2},
+		{Destination: 65536, Capacity: 0, Want: -10},
+		{Destination: 32768, Capacity: 0, Want: -10},
+		{Destination: 32768, Capacity: 143, Want: -10},
+		{Destination: 32768, Capacity: 4294967295, Want: -2},
+	}
+	for _, mutation := range [][3]uint32{{l.frameTable + 4, 2, 10}, {l.frameTable, 1, 10}, {l.frameTable + 8, 6, 10},
+		{65536, uint32(program.TypeString), 10}, {65536 + 4, 1, 2}, {65536 + 8, 2147483648, 3},
+		{65536 + 16, 4294967295, 2}, {65536 + 24 + 4, 4, 2}} {
+		item := testCase{Destination: 32768, Capacity: 32768, Offset: mutation[0], Value: mutation[1], Mutate: true, Want: -int32(mutation[2])}
+		if item.Offset >= 65536 {
+			item.Offset -= 65536
+			item.ArenaRelative = true
+		}
+		cases = append(cases, item)
+	}
+	data := struct {
+		FrameTable uint32
+		Cases      []testCase
+		Integer    string
+		Invalid    string
+	}{l.frameTable, cases, scalarTransport(program.TypeInt, 0, 0, ""), scalarTransport(program.TypeFloat, 0, 0, "")}
+	var got struct {
+		Statuses  []int32
+		Unchanged []bool
+		Poisoned  []int32
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], unchanged = [];
+  view.setUint32(data.FrameTable+4,1,true);
+  if (api.begin(5,0,1)!==0) throw new Error('initialization failed');
+  memory.set(Buffer.from(data.Integer,'base64'),32768);
+  if (api.store(0,32768)!==0||api.store(1,32768)!==0||api.commit(5,0)!==0) throw new Error('initial roots failed');
+  const clean = Buffer.from(memory);
+  for (const item of data.Cases) {
+    memory.set(clean);
+    if (item.Mutate) view.setUint32(item.Offset+(item.ArenaRelative?api.committed():0),item.Value,true);
+    memory.fill(0xa5,32768,65536);
+    const before = Buffer.from(memory), allocation = api.cursor();
+    statuses.push(api.checkpoint(item.Which,item.Destination,item.Capacity));
+    unchanged.push(before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation);
+  }
+  memory.set(clean);
+  const poisoned = [api.begin(6,0,0)];
+  memory.set(Buffer.from(data.Invalid,'base64'),32768);
+  poisoned.push(api.store(0,32768));
+  memory.fill(0xa5,32768,65536);
+  const before = Buffer.from(memory);
+  poisoned.push(api.checkpoint(1,32768,32768));
+  unchanged.push(before.equals(Buffer.from(memory))&&api.status()===2);
+  poisoned.push(api.checkpoint(0,65392,144));
+  poisoned.push(view.getUint32(65392+20,true),api.status());
+  process.stdout.write(JSON.stringify({Statuses:statuses,Unchanged:unchanged,Poisoned:poisoned}));`, data, &got)
+	if len(got.Statuses) != len(cases) {
+		t.Fatal("checkpoint rejection cases were skipped")
+	}
+	for i, item := range cases {
+		if got.Statuses[i] != item.Want || !got.Unchanged[i] {
+			t.Fatalf("checkpoint case %d: status %d want %d, unchanged %v", i, got.Statuses[i], item.Want, got.Unchanged[i])
+		}
+	}
+	if !got.Unchanged[len(cases)] || !reflect.DeepEqual(got.Poisoned, []int32{0, 2, -2, 144, 5, 2}) {
+		t.Fatalf("poisoned prepared generation changed committed export: %+v", got)
+	}
+}
+
+func TestLinkedCheckpointPageEnforcesDenseStringBudgetAndExactIOEnd(t *testing.T) {
+	u := staticUnit(t)
+	init := addExpression(&u, program.OpLitString, program.TypeString, String, "")
+	for i := range 5 {
+		name := "text" + strconv.Itoa(i)
+		u.Program.Signals = append(u.Program.Signals, program.SignalDef{Name: name, Type: program.TypeString, Init: init})
+		u.Contract.Signals = append(u.Contract.Signals, StateContract{Slot: uint32(i), Name: name, Kind: String})
+	}
+	u = refreshUnit(t, u)
+	l, err := buildLinkedLayout([]Unit{u}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "checkpoint", Function: c.checkpoint})
+	text := strings.Repeat("x", 4096)
+	frame := checkpointTestFrame{Instance: 0, Program: 0}
+	for i := range 5 {
+		value := text
+		if i == 4 {
+			value = ""
+		}
+		frame.Locals = append(frame.Locals, checkpointTestValue{uint32(i), scalarTransport(program.TypeString, 1, 0, value)})
+	}
+	want := checkpointTestBytes(t, l.inputSetSHA, 5, []checkpointTestFrame{frame}, nil)
+	data := struct {
+		FrameTable uint32
+		Text       string
+		Length     uint32
+	}{l.frameTable, base64.StdEncoding.EncodeToString([]byte(text)), uint32(len(want))}
+	var got struct {
+		Status    int32
+		Document  string
+		Unchanged bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports;
+  view.setUint32(data.FrameTable+4,1,true);
+  if (api.begin(5,0,1)!==0||api.commit(5,0)!==0) throw new Error('initialization failed');
+  const base = api.committed();
+  const text = base+8192;
+  memory.set(Buffer.from(data.Text,'base64'),text);
+  for (let i=0;i<5;i++) {
+    view.setUint32(base+i*24+4,1,true);
+    view.setUint32(base+i*24+16,i===4?0:text,true);
+    view.setUint32(base+i*24+20,i===4?0:4096,true);
+  }
+  const length = api.checkpoint(0,65536-data.Length,data.Length);
+  const document = length>0?Buffer.from(memory.slice(65536-data.Length,65536)).toString('base64'):'';
+  view.setUint32(base+4*24+16,text,true);
+  view.setUint32(base+4*24+20,4096,true);
+  const before = Buffer.from(memory), allocation = api.cursor();
+  const status = api.checkpoint(0,32768,32768);
+  process.stdout.write(JSON.stringify({Status:status,Document:document,
+    Unchanged:before.equals(Buffer.from(memory))&&api.cursor()===allocation&&api.status()===0}));`, data, &got)
+	if got.Document != base64.StdEncoding.EncodeToString(want) || got.Status != -statusStringLimit || !got.Unchanged {
+		t.Fatal("checkpoint deduplicated transport strings, exceeded the string budget or changed memory on rejection")
+	}
+}
+
 func TestLinkedCheckpointValuesPreserveScalarBytesAndDenseStringOrder(t *testing.T) {
 	l, err := buildLinkedLayout([]Unit{layoutUnit(t, "CheckpointValues", 1, 0, 0)}, DefaultOptions())
 	if err != nil {

@@ -32,7 +32,7 @@ type linkedLayout struct {
 	strings                                                  map[string]stringConstant
 	instancesBase                                            int32
 	sharedMasksBase                                          int32
-	checkpointPlanBase, digestBase                           int32
+	checkpointPlanBase, checkpointSharedBase, digestBase     int32
 	inputSetSHA                                              [32]byte
 	programs                                                 []linkedProgram
 	shared                                                   []linkedShared
@@ -257,6 +257,15 @@ func (l *linkedLayout) encodeData() error {
 		plans = append(plans, local, input, uint32(table(entries)))
 	}
 	l.checkpointPlanBase = table(plans)
+	var sharedTypes []uint32
+	for _, shared := range l.shared {
+		tag, err := checkpointWireType(shared.kind)
+		if err != nil {
+			return err
+		}
+		sharedTypes = append(sharedTypes, uint32(tag))
+	}
+	l.checkpointSharedBase = table(sharedTypes)
 	l.digestBase = int32(wasmgen.ConstantOffset + len(l.data))
 	l.data = append(l.data, l.inputSetSHA[:]...)
 	if len(l.data) > wasmgen.MaxDataBytes {
@@ -538,7 +547,7 @@ type linkedCode struct {
 	indices                            [][]uint32
 	notify, publish, scalar, dispose   uint32
 	dispatch, initialize, bind, render uint32
-	checkpointValue                    uint32
+	checkpointValue, checkpoint        uint32
 }
 
 const linkedRenderMaskGlobal = 25
@@ -581,7 +590,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.bind = c.notify + 6
 	c.render = c.notify + 7
 	c.checkpointValue = c.notify + 8
-	c.module.Functions = make([]wasmgen.Function, len(common)+9)
+	c.checkpoint = c.notify + 9
+	c.module.Functions = make([]wasmgen.Function, len(common)+10)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -606,7 +616,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 9 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 10 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -657,6 +667,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+6] = l.frameOperationFunction(c, "bind")
 	c.module.Functions[len(common)+7] = l.frameOperationFunction(c, "render")
 	c.module.Functions[len(common)+8] = checkpointValueFunction(c)
+	c.module.Functions[len(common)+9] = l.checkpointFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -1761,4 +1772,373 @@ func checkpointValueFunction(c *linkedCode) wasmgen.Function {
 	b.op(0x6a)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(5), I32Locals: 3, Body: b}
+}
+
+// checkpoint takes generation (committed/prepared), IO destination and capacity.
+// Preflight every owned scalar and sequence before writing any transport bytes.
+func (l *linkedLayout) checkpointFunction(c *linkedCode) wasmgen.Function {
+	const (
+		arena = 3 + iota
+		instances
+		body
+		strings
+		frame
+		row
+		owner
+		plan
+		count
+		entries
+		index
+		entry
+		source
+		result
+		cursor
+		tail
+		total
+		sequence
+		page // i64; all preceding locals are i32.
+	)
+	var b instructions
+	b.get(0)
+	b.i32(1)
+	b.op(0x4b)
+	b.statusFailure(-statusBadInput)
+	b.get(1)
+	b.i32(32768)
+	b.op(0x49)
+	b.statusFailure(-statusBadInput)
+	b.get(1)
+	b.op(0xad)
+	b.get(2)
+	b.op(0xad)
+	b.op(0x7c)
+	b.i64(65536)
+	b.op(0x56)
+	b.statusFailure(-statusBadInput)
+	b.get(0)
+	b.op(0x04)
+	b.op(0x40)
+	b.index(0x23, pendingGlobal)
+	b.op(0x45)
+	b.statusFailure(-statusBusy)
+	b.index(0x23, errorGlobal)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(0)
+	b.index(0x23, errorGlobal)
+	b.op(0x6b)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.index(0x23, arenaBaseGlobal)
+	b.set(arena)
+	setPage := func(lo, hi uint32) {
+		b.index(0x23, lo)
+		b.op(0xad)
+		b.index(0x23, hi)
+		b.op(0xad)
+		b.i64(32)
+		b.op(0x86)
+		b.op(0x84)
+		b.set(page)
+	}
+	setPage(pendingLoGlobal, pendingHiGlobal)
+	b.op(0x05)
+	b.index(0x23, initializedGlobal)
+	b.op(0x45)
+	b.statusFailure(-statusBadSequence)
+	b.index(0x23, committedBaseGlobal)
+	b.set(arena)
+	setPage(committedLoGlobal, committedHiGlobal)
+	b.op(0x0b)
+	b.get(arena)
+	b.i32(65536)
+	b.op(0x47)
+	b.get(arena)
+	b.i32(131072)
+	b.op(0x47)
+	b.op(0x71)
+	b.statusFailure(-10)
+	b.i32(64 + int32(len(l.shared))*36)
+	b.set(body)
+	loop := func(local uint32, limit func(), visit func()) {
+		b.i32(0)
+		b.set(local)
+		b.op(0x02)
+		b.op(0x40)
+		b.op(0x03)
+		b.op(0x40)
+		b.get(local)
+		limit()
+		b.op(0x4f)
+		b.index(0x0d, 1)
+		visit()
+		b.get(local)
+		b.i32(1)
+		b.op(0x6a)
+		b.set(local)
+		b.index(0x0c, 0)
+		b.op(0x0b)
+		b.op(0x0b)
+	}
+	validate := func(expected, allowAny func()) {
+		b.get(source)
+		b.get(arena)
+		b.get(arena)
+		b.i32(65536)
+		b.op(0x6a)
+		b.index(0x10, c.scalar)
+		b.index(0x22, result)
+		b.op(0x04)
+		b.op(0x40)
+		b.i32(0)
+		b.get(result)
+		b.op(0x6b)
+		b.op(0x0f)
+		b.op(0x0b)
+		b.get(source)
+		b.memory(0x28, 2, 0)
+		expected()
+		b.op(0x47)
+		if allowAny != nil {
+			allowAny()
+			b.get(source)
+			b.memory(0x28, 2, 0)
+			b.i32(int32(program.TypeAny))
+			b.op(0x46)
+			b.op(0x71)
+			b.op(0x45)
+			b.op(0x71)
+		}
+		b.statusFailure(-10)
+		b.get(strings)
+		b.get(source)
+		b.memory(0x28, 2, 20)
+		b.op(0x6a)
+		b.index(0x22, strings)
+		b.i32(int32(ProfileLimits().CommittedStringBytes))
+		b.op(0x4b)
+		b.statusFailure(-statusStringLimit)
+	}
+	copyValue := func(offset int32) {
+		b.get(source)
+		b.get(cursor)
+		b.i32(offset)
+		b.op(0x6a)
+		b.get(tail)
+		b.get(1)
+		b.get(arena)
+		b.index(0x10, c.checkpointValue)
+		b.index(0x22, tail)
+		b.op(0x45)
+		b.statusFailure(-10)
+	}
+	store := func(offset uint32, value func()) {
+		b.get(cursor)
+		value()
+		b.memory(0x36, 2, offset)
+	}
+	advance := func(bytes int32) {
+		b.get(cursor)
+		b.i32(bytes)
+		b.op(0x6a)
+		b.set(cursor)
+	}
+	frames := func(copy bool) {
+		loop(frame, func() { b.i32(int32(ProfileLimits().Instances)) }, func() {
+			b.i32(int32(l.frameTable))
+			b.get(frame)
+			b.i32(16)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.set(row)
+			b.get(row)
+			b.memory(0x28, 2, 4)
+			if !copy {
+				b.i32(1)
+				b.op(0x4b)
+				b.statusFailure(-10)
+				b.get(row)
+				b.memory(0x28, 2, 4)
+			}
+			b.op(0x04)
+			b.op(0x40)
+			b.get(row)
+			b.memory(0x28, 2, 0)
+			b.set(owner)
+			if !copy {
+				b.get(owner)
+				b.i32(int32(len(l.programs)))
+				b.op(0x4f)
+				b.statusFailure(-10)
+				b.get(instances)
+				b.i32(1)
+				b.op(0x6a)
+				b.set(instances)
+			}
+			b.i32(l.checkpointPlanBase)
+			b.get(owner)
+			b.i32(12)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.set(plan)
+			b.get(plan)
+			b.memory(0x28, 2, 0)
+			b.get(plan)
+			b.memory(0x28, 2, 4)
+			b.op(0x6a)
+			b.set(count)
+			b.get(plan)
+			b.memory(0x28, 2, 8)
+			b.set(entries)
+			b.get(0)
+			b.op(0x04)
+			b.op(0x7f)
+			b.i32(int32(l.frameSequences))
+			b.get(frame)
+			b.i32(8)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.op(0x05)
+			b.get(row)
+			b.i32(8)
+			b.op(0x6a)
+			b.op(0x0b)
+			b.set(sequence)
+			if !copy {
+				b.get(sequence)
+				b.memory(0x29, 3, 0)
+				b.get(page)
+				b.op(0x56)
+				b.statusFailure(-10)
+				b.get(body)
+				b.i32(24)
+				b.op(0x6a)
+				b.get(count)
+				b.i32(28)
+				b.op(0x6c)
+				b.op(0x6a)
+				b.set(body)
+			} else {
+				store(0, func() { b.get(frame) })
+				store(4, func() { b.get(owner) })
+				for i := uint32(0); i < 2; i++ {
+					store(8+i*4, func() { b.get(plan); b.memory(0x28, 2, i*4) })
+				}
+				b.get(cursor)
+				b.get(sequence)
+				b.memory(0x29, 3, 0)
+				b.memory(0x37, 3, 16)
+				advance(24)
+			}
+			loop(index, func() { b.get(count) }, func() {
+				b.get(entries)
+				b.get(index)
+				b.i32(20)
+				b.op(0x6c)
+				b.op(0x6a)
+				b.set(entry)
+				b.get(arena)
+				b.get(entry)
+				b.memory(0x28, 2, 4)
+				b.get(frame)
+				b.get(entry)
+				b.memory(0x28, 2, 8)
+				b.op(0x6c)
+				b.op(0x6a)
+				b.i32(valueBytes)
+				b.op(0x6c)
+				b.op(0x6a)
+				b.set(source)
+				if !copy {
+					validate(func() { b.get(entry); b.memory(0x28, 2, 12) }, func() { b.get(entry); b.memory(0x28, 2, 16) })
+				} else {
+					store(0, func() { b.get(entry); b.memory(0x28, 2, 0) })
+					copyValue(4)
+					advance(28)
+				}
+			})
+			b.op(0x0b)
+		})
+	}
+	shared := func(copy bool) {
+		loop(index, func() { b.i32(int32(len(l.shared))) }, func() {
+			b.get(arena)
+			b.i32(int32(l.sharedBase))
+			b.get(index)
+			b.op(0x6a)
+			b.i32(valueBytes)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.set(source)
+			b.i32(int32(l.sharedVersions))
+			b.get(index)
+			b.i32(16)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.get(0)
+			b.i32(8)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.set(sequence)
+			if !copy {
+				b.get(sequence)
+				b.memory(0x29, 3, 0)
+				b.get(page)
+				b.op(0x56)
+				b.statusFailure(-10)
+				validate(func() {
+					b.i32(l.checkpointSharedBase)
+					b.get(index)
+					b.i32(4)
+					b.op(0x6c)
+					b.op(0x6a)
+					b.memory(0x28, 2, 0)
+				}, nil)
+			} else {
+				store(0, func() { b.get(index) })
+				b.get(cursor)
+				b.get(sequence)
+				b.memory(0x29, 3, 0)
+				b.memory(0x37, 3, 4)
+				copyValue(12)
+				advance(36)
+			}
+		})
+	}
+	frames(false)
+	shared(false)
+	b.get(body)
+	b.get(strings)
+	b.op(0x6a)
+	b.index(0x22, total)
+	b.get(2)
+	b.op(0x4b)
+	b.statusFailure(-10)
+	b.get(1)
+	b.set(cursor)
+	store(0, func() { b.i32(0x43415847) })
+	store(4, func() { b.i32(1) })
+	store(8, func() { b.get(total) })
+	store(12, func() { b.get(instances) })
+	store(16, func() { b.i32(int32(len(l.shared))) })
+	b.get(cursor)
+	b.get(page)
+	b.memory(0x37, 3, 20)
+	store(28, func() { b.get(strings) })
+	for offset := uint32(0); offset < 32; offset += 8 {
+		b.get(cursor)
+		b.i32(l.digestBase)
+		b.memory(0x29, 3, offset)
+		b.memory(0x37, 3, 32+offset)
+	}
+	advance(64)
+	b.get(1)
+	b.get(body)
+	b.op(0x6a)
+	b.set(tail)
+	frames(true)
+	shared(true)
+	b.get(total)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 18, I64Locals: 1, Body: b}
 }
