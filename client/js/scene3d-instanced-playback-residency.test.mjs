@@ -158,3 +158,41 @@ test('CPU stages enter the identity cache and membership retires only removed pl
     assert.equal(run('state._modelSkins[0]'),survivor);
   }
 });
+
+
+test('incompatible lazy animation APIs leave skin playback disabled', async () => {
+  const begin = source.indexOf('  async function scenePrepareModelSkinPlayback(');
+  const end = source.indexOf('  function sceneHasActiveModelAnimations(', begin);
+  assert.ok(begin >= 0 && end > begin);
+  const prepare = ts.transpileModule(source.slice(begin, end), {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
+  const compatible = {
+    buildNodeTransforms() {}, computeJointMatrices() {},
+    initializeModelPlayback(record) { record.initialized = true; },
+    isModelPlaying() { return false; }, applyModelAnimation() { return false; },
+  };
+  async function stage(api) {
+    const state = {};
+    const c = vm.createContext({console, Map,
+      ensureAnimationFeatureLoaded: async () => api,
+      sceneModelHasSkins: () => true,
+      sceneModelRootNodes: () => [0],
+      sceneModelTransformMatrix: () => new Float32Array(16),
+      sceneCloneModelAnimations: () => [],
+      sceneApplyModelSkinPose: record => { record.sampled = true; },
+    });
+    vm.runInContext(prepare, c);
+    await c.scenePrepareModelSkinPlayback(state, {nodes:[{}]}, {}, [], [], [], []);
+    return state;
+  }
+  for (const method of ['initializeModelPlayback', 'isModelPlaying', 'applyModelAnimation']) {
+    for (const value of [undefined, true]) {
+      const state = await stage({...compatible, [method]:value});
+      assert.equal(state._modelSkins, undefined, method + ' must prevent registration');
+      assert.equal(state._modelAnimations, undefined);
+    }
+  }
+  const state = await stage(compatible);
+  assert.equal(state._modelSkins.length, 1);
+  assert.equal(state._modelSkins[0].initialized, true);
+  assert.equal(state._modelSkins[0].sampled, true);
+});
