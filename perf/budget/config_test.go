@@ -426,3 +426,32 @@ func TestConfigErrorOrderAndIntegralLimits(t *testing.T) {
 		}
 	}
 }
+
+func TestConfigNativeInputsReuseVerifiedSnapshots(t *testing.T) {
+	path := configFixture(t, nil)
+	inputs, err := LoadInputs(path, LoadOptions{RootDir: filepath.Dir(path)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.BudgetSHA256 != inputDigest(original) {
+		t.Fatal("budget snapshot hash is not its exact bytes")
+	}
+	data, err := json.Marshal(inputs)
+	if err != nil || string(data) != "{}" {
+		t.Fatal("native input snapshot gained a JSON surface", err)
+	}
+	coefficientPath := filepath.Join(inputs.RootDir(), inputs.File.Coefficients.File)
+	if err := os.WriteFile(coefficientPath, []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Derive(inputs.File, inputs.Profile, inputs.Coefficients); err != nil {
+		t.Fatal("derivation reread snapshot sources", err)
+	}
+	if _, err := LoadInputs(path, LoadOptions{RootDir: inputs.RootDir()}); err == nil {
+		t.Fatal("fresh loader accepted changed referenced bytes")
+	}
+}

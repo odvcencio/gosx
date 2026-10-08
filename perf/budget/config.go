@@ -1,8 +1,11 @@
 package budget
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -143,19 +146,52 @@ func Load(path string, opts LoadOptions) (*File, error) {
 }
 
 type loadedInputs struct {
-	file         File
-	profile      Profile
-	coefficients Coefficients
-	toolchain    Toolchain
+	file                  File
+	profile               Profile
+	coefficients          Coefficients
+	toolchain             Toolchain
+	rootDir, budgetSHA256 string
+}
+
+// Inputs is a native snapshot of hash-verified files. It has no JSON surface;
+// commands serialize only the selected versioned configuration or report.
+type Inputs struct {
+	File         File         `json:"-"`
+	Profile      Profile      `json:"-"`
+	Coefficients Coefficients `json:"-"`
+	Toolchain    Toolchain    `json:"-"`
+	BudgetSHA256 string       `json:"-"`
+	rootDir      string
+}
+
+func LoadInputs(path string, opts LoadOptions) (*Inputs, error) {
+	loaded, err := loadInputs(path, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &Inputs{File: loaded.file, Profile: loaded.profile, Coefficients: loaded.coefficients, Toolchain: loaded.toolchain, BudgetSHA256: loaded.budgetSHA256, rootDir: loaded.rootDir}, nil
+}
+
+func (inputs *Inputs) RootDir() string { return inputs.rootDir }
+func (inputs *Inputs) PublicValidator() (*PublicValidator, error) {
+	return NewPublicValidator(filepath.Join(inputs.rootDir, inputs.File.Fixtures.File), LoadOptions{RootDir: inputs.rootDir}, inputs.File.HubBudgets)
 }
 
 func loadInputs(path string, opts LoadOptions) (result *loadedInputs, resultErr error) {
 	defer func() { resultErr = inputReference(resultErr, "budget", "") }()
 	var f File
-	root, err := loadInput(path, opts, "Budget", &f)
+	root, err := inputRoot(path, opts)
 	if err != nil {
 		return nil, err
 	}
+	data, err := readWithin(root, path, maxInputBytes)
+	if err != nil {
+		return nil, err
+	}
+	if err := decodeInput(data, "Budget", &f); err != nil {
+		return nil, err
+	}
+	digest := sha256.Sum256(data)
 	var p Profile
 	var c Coefficients
 	var tc Toolchain
@@ -232,7 +268,7 @@ func loadInputs(path string, opts LoadOptions) (result *loadedInputs, resultErr 
 	if err := f.validate(p, c); err != nil {
 		return nil, err
 	}
-	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc}, nil
+	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:])}, nil
 }
 
 func (f File) validate(p Profile, c Coefficients) error {

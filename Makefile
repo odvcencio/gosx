@@ -124,6 +124,10 @@ test-budget-trailers:
 test-budget-gate:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Check|Policy|Exception|Approval)'
 
+.PHONY: test-budget-cli
+test-budget-cli:
+	GOWORK=off $(GO) test ./cmd/gosx -run TestBudget
+
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 
