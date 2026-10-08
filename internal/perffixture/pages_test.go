@@ -168,6 +168,9 @@ func TestPerfFixturePagesKeepRealProgramsScenesAndMutedMedia(t *testing.T) {
 				if entry.ProgramRef != want {
 					t.Fatal("app-owned program reference missing")
 				}
+				if shape == "engine-shared" && !strings.Contains(string(html), `src="/assets/engine.js"`) {
+					t.Fatal("shared engine app factory missing")
+				}
 			case "scene-js":
 				if entry.Component != "GoSXScene3D" || len(entry.Props) == 0 || !strings.Contains(string(entry.Props), "box") {
 					t.Fatal("real scene graph missing")
@@ -193,6 +196,11 @@ func TestPerfFixturePagesKeepRealProgramsScenesAndMutedMedia(t *testing.T) {
 
 func TestPerfFixturePagesRejectMissingAndUnsafeInputs(t *testing.T) {
 	manifest := pageManifest(t)
+	assets := pageAssets()
+	assets.EngineJSURL = ""
+	if _, err := Page(pageRenderer(t, manifest, "configured"), "engine-shared", assets); err == nil {
+		t.Fatal("shared engine accepted without its app factory")
+	}
 	for _, shape := range []string{"engine-js", "engine-shared", "go-wasm", "scene-shared", "video"} {
 		if _, err := Page(pageRenderer(t, manifest, "configured"), shape, Assets{}); err == nil {
 			t.Fatalf("missing program/media accepted for %s", shape)

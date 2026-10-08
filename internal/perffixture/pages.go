@@ -76,6 +76,9 @@ func Page(r *island.Renderer, shape string, assets Assets) ([]byte, error) {
 				return nil, fixtureError("/assets/engineJS")
 			}
 		case "engine-shared":
+			if !assetURL(assets.EngineJSURL) {
+				return nil, fixtureError("/assets/engineJS")
+			}
 			config.Runtime, config.WASMPath = engine.RuntimeShared, assets.EngineSharedURL
 		case "go-wasm":
 			config.Runtime, config.WASMPath = engine.RuntimeGoWASM, assets.GoWASMURL
@@ -117,7 +120,7 @@ func Page(r *island.Renderer, shape string, assets Assets) ([]byte, error) {
 	if navigation {
 		head = append(head, gosx.El("script", gosx.Attrs(gosx.Attr("src", runtimehost.NavigationRuntimePath), gosx.BoolAttr("defer"))))
 	}
-	if shape == "engine-js" {
+	if shape == "engine-js" || shape == "engine-shared" {
 		head = append(head, gosx.El("script", gosx.Attrs(gosx.Attr("src", assets.EngineJSURL), gosx.BoolAttr("defer"))))
 	}
 	document := gosx.El("html", gosx.Attrs(gosx.Attr("lang", "en")), gosx.El("head", gosx.Fragment(head...)), gosx.El("body", gosx.El("main", body)))
