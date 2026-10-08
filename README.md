@@ -805,6 +805,12 @@ compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
 
+When Binaryen's `wasm-opt` is on `PATH`, the builder applies an optional `-Oz`
+pass before hashing and compressing WASM. A missing or failing optimizer emits
+a warning and keeps the compiled output. For comparable production sizes, use
+the same Go, TinyGo, and Binaryen versions as CI; the wire gate's optimizer is
+pinned in [`scripts/install-ci-binaryen.sh`](scripts/install-ci-binaryen.sh).
+
 Production builds start the server for prerendering only when static routes
 exist. Apps that need request-time authentication or a database can also disable
 build-time prerendering in `gosx.config.json`:

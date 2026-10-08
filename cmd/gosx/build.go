@@ -981,13 +981,22 @@ func standardGoWASMOptEnabled() bool {
 }
 
 func optimizeWASMWithWasmOpt(path string) (bool, error) {
+	return optimizeWASMWithWasmOptDiagnostics(path, os.Stderr)
+}
+
+func optimizeWASMWithWasmOptDiagnostics(path string, diagnostics io.Writer) (bool, error) {
 	woptPath, woptErr := exec.LookPath("wasm-opt")
 	if woptErr != nil {
+		fmt.Fprintf(diagnostics, "warning: optional wasm-opt optimization skipped for %s: wasm-opt is not available on PATH; keeping compiled WASM. Install Binaryen matching your CI toolchain for comparable production sizes.\n", filepath.Base(path))
 		return false, nil
 	}
 	optTmp := path + ".opt"
 	optCmd := exec.Command(woptPath, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
-	if optCmd.Run() != nil {
+	if output, err := optCmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(diagnostics, "warning: optional wasm-opt optimization skipped for %s: %s failed: %v; keeping compiled WASM. Check this optimizer's version against your CI toolchain.\n", filepath.Base(path), woptPath, err)
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			fmt.Fprintln(diagnostics, detail)
+		}
 		return false, nil
 	}
 	if err := os.Rename(optTmp, path); err != nil {
