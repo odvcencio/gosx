@@ -34,16 +34,22 @@ func RunBudget(args []string, stdout, stderr io.Writer) int {
 		return runBudgetDerive(args[1:], stdout, stderr)
 	case "explain":
 		return runBudgetExplain(args[1:], stdout, stderr)
+	case "report":
+		return runBudgetReport(args[1:], stdout, stderr)
+	case "public-check":
+		return runBudgetPublicCheck(args[1:], stdout, stderr)
 	default:
 		return budgetDiagnostic(stderr, nil, 2, "invalid-input", "cli", "/command")
 	}
 }
 func budgetUsage(w io.Writer) {
-	fmt.Fprint(w, `gosx budget - Derive and inspect performance allocations
+	fmt.Fprint(w, `gosx budget - Derive, inspect and validate performance budgets
 
 Usage:
   gosx budget derive --budget FILE [--root DIR] [--check | --write | --out FILE]
   gosx budget explain --budget FILE --page-type TYPE [--root DIR] [--json]
+  gosx budget report --report FILE --out FILE [--root DIR]
+  gosx budget public-check [--format auto|json|jsonl|markdown] [--root DIR] FILE...
 
 Derive prints proposed JSON unless --check, --write or --out is supplied.
 Explain --json encodes the complete explanation text as a JSON string.
