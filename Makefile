@@ -116,6 +116,10 @@ test-budget-public:
 test-budget-measure:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Measure|HTTPMeasure|Inline)'
 
+.PHONY: test-budget-trailers
+test-budget-trailers:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Trailer|Acknowledge)'
+
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 
