@@ -63,7 +63,7 @@ func Page() Node {
 				</span>
 				.
 			</p>
-			<p>
+			<p id="navigation-migration">
 				Code that runs while HTML is parsed, including inline body scripts and
 				<span class="inline-code">ctx.ManagedScript</span>
 				or

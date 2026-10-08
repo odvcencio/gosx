@@ -431,6 +431,7 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 			},
 			forbidden: []string{
 				"window.__gosx_page_nav",
+				"window.__gosx_submit_action",
 				"window.__gosx_dispose_page",
 				"window.__gosx_bootstrap_page",
 				"data-gosx-lifecycle-script",
@@ -484,6 +485,27 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.page, func(t *testing.T) {
 			body := readDocsPagePair(t, docsRoot, test.page)
+			if test.page == "runtime" {
+				// Legacy aliases belong only in the migration warning, never
+				// in current API guidance or executable samples.
+				migration := regexp.MustCompile(`(?s)<p id="navigation-migration">.*?</p>`)
+				paragraphs := migration.FindAllString(body, -1)
+				if len(paragraphs) != 1 {
+					t.Fatalf("runtime docs need one explicit navigation migration paragraph, got %d", len(paragraphs))
+				}
+				assertDocsContract(t, paragraphs[0], []string{
+					"Code that runs while HTML is parsed",
+					"ctx.ManagedScript", "ctx.LifecycleScript",
+					"without defer, must wait for", "DOMContentLoaded",
+					"window.__gosx.navigation", "window.__gosx_page_nav",
+					"window.__gosx_submit_action", "window.__gosx.cues",
+				}, nil)
+				body = migration.ReplaceAllString(body, "")
+				assertDocsContract(t, body, []string{
+					`document.addEventListener("DOMContentLoaded"`,
+					`document.readyState === "loading"`, "await new Promise",
+				}, nil)
+			}
 			assertDocsContract(t, body, test.required, test.forbidden)
 		})
 	}
