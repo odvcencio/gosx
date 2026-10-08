@@ -81,23 +81,18 @@
         var instanceID = id();
         if (instanceIDs.has(instanceID)) throw new TypeError("duplicate " + kind + " instance ID");
         instanceIDs.add(instanceID);
-        var instance: any;
+        var instance: any = { id: instanceID };
         if (motion) {
-          instance = {
-            id: instanceID,
-            prevX: number(), prevY: number(), prevZ: number(),
-            prevRotationX: number(), prevRotationY: number(), prevRotationZ: number(),
-            prevScaleX: number(), prevScaleY: number(), prevScaleZ: number(),
-            tPrev: number(),
-            nextX: number(), nextY: number(), nextZ: number(),
-            nextRotationX: number(), nextRotationY: number(), nextRotationZ: number(),
-            nextScaleX: number(), nextScaleY: number(), nextScaleZ: number(),
-            tNext: number(),
-            animation: "", clipStartTime: 0, animationLoop: false, playbackRate: 1,
-          };
+          for (const side of ["prev", "next"]) {
+            for (const field of poseFields.slice(0, 9)) {
+              instance[side + field[0].toUpperCase() + field.slice(1)] = number();
+            }
+            instance[side === "prev" ? "tPrev" : "tNext"] = number();
+          }
           if (!(instance.tNext > instance.tPrev)) throw new RangeError("Scene3D motion frame requires tNext after tPrev");
         } else {
-          instance = { id: instanceID, x: number(), y: number(), z: number(), rotationX: number(), rotationY: number(), rotationZ: number(), scaleX: number(), scaleY: number(), scaleZ: number(), animationTime: number(), animation: "", animationLoop: false };
+          for (const field of poseFields.slice(0, 9)) instance[field] = number();
+          instance.animationTime = number();
           if (instance.animationTime < 0) throw new TypeError("negative Scene3D animation time");
         }
         var clipIndex = u16();
@@ -141,8 +136,8 @@
     });
   }
 
-  // Binary frame paths share readiness and timeout handling. Validation and
-  // fallback remain in their format-specific callers.
+  // Commands, binary frames and presentation share readiness and timeout handling.
+  // Validation and fallback remain in their format-specific callers.
   function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void) => unknown) {
     var id = key(target, opts);
     var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
@@ -158,17 +153,10 @@
   function dispatchCommands(target, commands, options) {
     if (!Array.isArray(commands)) return Promise.reject(new TypeError("Scene3D commands must be an array"));
     var opts = options || {};
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
     var rev = ++revision;
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) return apply(rec, commands, rev).then(resolve, reject);
-      if (!id) return reject(new Error("Scene3D command target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D command target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
-    }
-    return new Promise(poll);
+    return waitForCommandMount(target, opts, "command", function(rec, resolve, reject) {
+      return apply(rec, commands, rev).then(resolve, reject);
+    });
   }
 
   const sceneAPI = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
@@ -194,13 +182,7 @@
 
   async function playPresentation(target: any, plan: any, opts: any, kind: string, method: string, datasetKey: string) {
     opts ||= {};
-    const id = key(target, opts), deadline = Date.now() + Math.max(0, opts.timeoutMS ?? 10000);
-    let rec = record(target, opts);
-    while (!rec) {
-      if (!id || Date.now() >= deadline) throw new Error("Scene3D " + kind + " target is not ready");
-      await new Promise(resolve => setTimeout(resolve, 16));
-      rec = record(target, opts);
-    }
+    const rec = record(target, opts) || await waitForCommandMount(target, opts, kind, (rec, resolve) => resolve(rec));
     if (!rec.mount && typeof rec.handle[method] === "function") return Promise.resolve().then(() => rec.handle[method](plan));
     const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
     if (!mount) throw new Error("Scene3D " + kind + " mount is unavailable");
