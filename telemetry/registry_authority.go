@@ -83,6 +83,9 @@ func (t *Telemetry) initializeRegistry() (err error) {
 	if err := t.initializeLoops(); err != nil {
 		return err
 	}
+	if err := t.initializeDefaultAdapters(); err != nil {
+		return err
+	}
 	t.updateCore(t.start)
 	return nil
 }
@@ -96,6 +99,7 @@ func (t *Telemetry) updateCore(now Instant) {
 	t.core.series.Set(float64(usage.Samples))
 	// Fixed owner/channel/clock state is reserved independently of the registry.
 	bytes := t.ownerBytes
+	bytes += t.adapterBytes.Load()
 	if t.hubs != nil {
 		bytes += t.hubs.bytes.Load()
 	}

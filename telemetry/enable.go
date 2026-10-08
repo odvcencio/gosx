@@ -34,6 +34,12 @@ type Telemetry struct {
 	start               Instant
 	boot, limiterSalt   [16]byte
 	core                coreMetrics
+	adapters            adapterVectors
+	operations          map[Operation]operationMeters
+	auth                map[authLabels]*metric.Counter
+	degraded            map[string]*metric.Gauge
+	requests            *requestState
+	adapterBytes        atomic.Int64
 	hubs                *hubState
 	loops               *loopState
 	ownerBytes          int64
@@ -126,6 +132,9 @@ func Enable(app *server.App, opts Options) (*Telemetry, error) {
 	if err = app.UseObservationCatalogObserver(t); err != nil {
 		return nil, err
 	}
+	if !o.Metrics.DisableOperations {
+		app.UseOperationObserver(t)
+	}
 	t.active.Store(true)
 	attached = true
 	go t.run()
@@ -140,7 +149,7 @@ func availableFeatures(o Options) error {
 		return invalid("desktop", "unsupported")
 	case o.Listen.Addr != "off" || o.Listen.Metrics != (Credential{}) || o.Listen.Admin != (Credential{}) || o.Listen.DangerouslyAllowUnauthenticatedMetricsOnNonLoopback:
 		return invalid("listener", "unsupported")
-	case !o.Metrics.DisableRequests || !o.Metrics.DisableOperations || !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
+	case !o.Metrics.DisableRequests || !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
 		return invalid("metric_adapters", "unsupported")
 	case !o.Activities.Disabled:
 		return invalid("activities", "unsupported")
@@ -231,8 +240,9 @@ func (t *Telemetry) AdminHandler() http.Handler   { return http.NotFoundHandler(
 
 // ObserveCatalog seals registration before public serving. Later adapters use
 // this callback to admit bounded route tuples from the trusted owner catalog.
-func (t *Telemetry) ObserveCatalog([]server.ObservationPattern) {
+func (t *Telemetry) ObserveCatalog(rows []server.ObservationPattern) {
 	if t.Enabled() {
+		t.admitRequestCatalog(rows)
 		t.registry.Seal()
 	}
 }
