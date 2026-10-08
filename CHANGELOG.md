@@ -83,6 +83,18 @@
   Opt-in slow-client eviction uses interval drop deltas and the existing pump
   timer; it does not increase the 54-second ping frequency or add a scanner.
 
+- Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
+  for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
+  extensions or `GLSceneSizeUniform`; post shaders use the quad and bottom-left
+  texture origin. Hosts supplying these fields to WebGL1 must switch to WebGL2
+  or supply separately compiled ES 1.00 shaders and their own binding layout.
+- Add `SelenaMaterialOptions.Targets`, `SelenaTargetRequirements` and the
+  `ShaderProgram(target)` accessors on `CustomMaterial`, `IRMaterial` and
+  `engine.RenderMaterial`. Requested artifacts travel through both browser scene
+  payloads and native bundles. `FrameStats.MaterialFallbacks` and native preview
+  diagnostics report custom mesh programs replaced by the standard shader.
+
+
 - Add transactional aggregate telemetry setup with one maintenance worker and
   one named application shutdown hook. Disabled handles own no resources;
   failed setup removes its reservation. Shared close deadlines retain unfinished
@@ -94,6 +106,7 @@
   clock failures have their own fixed drop reason.
   Native features remain unavailable on WebAssembly. Listener, subsystem and record adapters
   follow in their own slices; selecting them returns a fixed unsupported class.
+
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
   to replace its code-configured token or file source. Two environment sources
