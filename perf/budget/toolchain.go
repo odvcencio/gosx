@@ -41,22 +41,29 @@ func LoadToolchain(path string, opts LoadOptions) (*Toolchain, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := t.validate(root); err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+func (t Toolchain) validate(root string) error {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if err := t.validateModules(info.Deps); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	seen := make(map[string]bool)
 	for _, font := range t.Fonts {
 		if seen[font.File] {
-			return nil, errors.New("duplicate font reference")
+			return errors.New("duplicate font reference")
 		}
 		seen[font.File] = true
 		if _, err := readReference(root, font, 16<<20); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	return &t, nil
+	return nil
 }
 
 func (t Toolchain) validateModules(modules []*debug.Module) error {

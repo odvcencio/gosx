@@ -36,8 +36,15 @@ func LoadProfile(path string, opts LoadOptions) (*Profile, error) {
 	if _, err := loadInput(path, opts, "Profile", &p); err != nil {
 		return nil, err
 	}
-	if p.Reference == "phone-4gb" && p.BenchmarkIndexTarget == nil {
-		return nil, errors.New("phone profile requires a benchmark target")
+	if err := p.validate(); err != nil {
+		return nil, err
 	}
 	return &p, nil
+}
+
+func (p Profile) validate() error {
+	if p.Reference == "phone-4gb" && p.BenchmarkIndexTarget == nil {
+		return errors.New("phone profile requires a benchmark target")
+	}
+	return nil
 }

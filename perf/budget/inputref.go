@@ -2,7 +2,6 @@
 package budget
 
 import (
-	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -14,6 +13,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const maxInputBytes = 2 << 20
@@ -145,22 +145,8 @@ func loadInput(path string, opts LoadOptions, definition string, out any) (strin
 	if err != nil {
 		return "", err
 	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.UseNumber()
-	var value any
-	if err := d.Decode(&value); err != nil {
-		return "", errors.New("invalid input JSON")
-	}
-	if err := d.Decode(new(any)); err != io.EOF {
-		return "", errors.New("input must contain one JSON value")
-	}
-	if err := validateInput(value, inputDefinitions[definition]); err != nil {
+	if err := decodeInput(data, definition, out); err != nil {
 		return "", err
-	}
-	d = json.NewDecoder(bytes.NewReader(data))
-	d.DisallowUnknownFields()
-	if err := d.Decode(out); err != nil {
-		return "", errors.New("input does not match typed contract")
 	}
 	return root, nil
 }
@@ -172,6 +158,18 @@ func validateInput(value, raw any) error {
 	fail := func() error { return errors.New("input does not match schema") }
 	if ref, ok := s["$ref"].(string); ok {
 		return validateInput(value, inputDefinitions[strings.TrimPrefix(ref, "#/$defs/")])
+	}
+	if choices, ok := s["oneOf"].([]any); ok {
+		matches := 0
+		for _, choice := range choices {
+			if validateInput(value, choice) == nil {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return fail()
+		}
+		return nil
 	}
 	if c, ok := s["const"]; ok && !equalJSON(value, c) {
 		return fail()
@@ -193,13 +191,16 @@ func validateInput(value, raw any) error {
 		kind = "boolean"
 	case json.Number:
 		kind = "integer"
+		if _, err := value.(json.Number).Int64(); err != nil {
+			kind = "number"
+		}
 	case []any:
 		kind = "array"
 	case map[string]any:
 		kind = "object"
 	}
 	if t, ok := s["type"]; ok {
-		match := t == kind
+		match := t == kind || t == "number" && kind == "integer"
 		if ts, ok := t.([]any); ok {
 			for _, k := range ts {
 				match = match || k == kind
@@ -211,15 +212,8 @@ func validateInput(value, raw any) error {
 	}
 	switch v := value.(type) {
 	case json.Number:
-		n, err := v.Int64()
-		if err != nil {
-			return fail()
-		}
-		if low, ok := s["minimum"].(float64); ok && n < int64(low) {
-			return fail()
-		}
-		if high, ok := s["maximum"].(float64); ok && n > int64(high) {
-			return fail()
+		if err := validateNumber(v, s); err != nil {
+			return err
 		}
 	case string:
 		if max, ok := s["maxLength"].(float64); ok && len(v) > int(max) {
@@ -228,6 +222,15 @@ func validateInput(value, raw any) error {
 		if pattern, ok := s["pattern"].(string); ok && !regexp.MustCompile(pattern).MatchString(v) {
 			return fail()
 		}
+		if format, ok := s["format"].(string); ok {
+			layout := time.RFC3339
+			if format == "date" {
+				layout = time.DateOnly
+			}
+			if _, err := time.Parse(layout, v); err != nil {
+				return fail()
+			}
+		}
 	case []any:
 		if min, ok := s["minItems"].(float64); ok && len(v) < int(min) {
 			return fail()
@@ -235,13 +238,23 @@ func validateInput(value, raw any) error {
 		if max, ok := s["maxItems"].(float64); ok && len(v) > int(max) {
 			return fail()
 		}
-		for _, item := range v {
+		for i, item := range v {
+			if s["uniqueItems"] == true {
+				for _, prior := range v[:i] {
+					if equalJSON(prior, item) {
+						return fail()
+					}
+				}
+			}
 			if err := validateInput(item, s["items"]); err != nil {
 				return err
 			}
 		}
 	case map[string]any:
 		if min, ok := s["minProperties"].(float64); ok && len(v) < int(min) {
+			return fail()
+		}
+		if max, ok := s["maxProperties"].(float64); ok && len(v) > int(max) {
 			return fail()
 		}
 		props, _ := s["properties"].(map[string]any)
@@ -253,9 +266,18 @@ func validateInput(value, raw any) error {
 			}
 		}
 		for k, child := range v {
+			if names, ok := s["propertyNames"]; ok {
+				if err := validateInput(k, names); err != nil {
+					return err
+				}
+			}
 			p, ok := props[k]
 			if !ok {
-				return fail()
+				if extra, ok := s["additionalProperties"].(map[string]any); ok {
+					p = extra
+				} else {
+					return fail()
+				}
 			}
 			if err := validateInput(child, p); err != nil {
 				return err
@@ -266,6 +288,13 @@ func validateInput(value, raw any) error {
 }
 
 func equalJSON(a, b any) bool {
+	if n, ok := b.(json.Number); ok {
+		f, err := n.Float64()
+		if err != nil {
+			return false
+		}
+		b = f
+	}
 	if n, ok := a.(json.Number); ok {
 		f, err := n.Float64()
 		return err == nil && reflect.DeepEqual(f, b)
