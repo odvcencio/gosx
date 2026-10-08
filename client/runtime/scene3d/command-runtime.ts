@@ -119,6 +119,20 @@
     });
   }
 
+  // Binary frame paths share readiness and timeout handling. Validation and
+  // fallback remain in their format-specific callers.
+  function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void) => unknown) {
+    var id = key(target, opts);
+    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
+    return new Promise(function poll(resolve, reject) {
+      var rec = record(target, opts);
+      if (rec) return apply(rec, resolve, reject);
+      if (!id) return reject(new Error("Scene3D " + format + " target is not ready and has no stable id"));
+      if (Date.now() >= deadline) return reject(new Error("Scene3D " + format + " target did not become ready: " + id));
+      setTimeout(function() { poll(resolve, reject); }, 16);
+    });
+  }
+
   function dispatchCommands(target, commands, options) {
     if (!Array.isArray(commands)) return Promise.reject(new TypeError("Scene3D commands must be an array"));
     var opts = options || {};
@@ -133,6 +147,47 @@
       setTimeout(function() { poll(resolve, reject); }, 16);
     }
     return new Promise(poll);
+  }
+
+  const sceneAPI = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
+
+  const presentationLoads: Record<string, Promise<any>> = {};
+  function loadPresentation(kind: string, datasetKey: string) {
+    if (sceneAPI[kind]) return Promise.resolve(sceneAPI[kind]);
+    return presentationLoads[kind] || (presentationLoads[kind] = new Promise((resolve, reject) => {
+      const tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      // @ts-expect-error TS2339 -- the selector matches a script element.
+      const url = tag && tag.dataset[datasetKey];
+      if (!url) return reject(new Error("Scene3D " + kind + " chunk URL was not advertised"));
+      const script = document.createElement("script");
+      script.src = url; script.async = true; script.type = "text/javascript";
+      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
+      // @ts-expect-error TS2339 -- the selector matches a script element.
+      script.nonce = tag.nonce;
+      script.onload = () => sceneAPI[kind] ? resolve(sceneAPI[kind]) : reject(new Error("Scene3D " + kind + " chunk did not publish its API"));
+      script.onerror = () => reject(new Error("failed to load Scene3D " + kind + " chunk"));
+      document.head.appendChild(script);
+    }).catch(error => { delete presentationLoads[kind]; throw error; }));
+  }
+
+  async function playPresentation(target: any, plan: any, opts: any, kind: string, method: string, datasetKey: string) {
+    opts ||= {};
+    const id = key(target, opts), deadline = Date.now() + Math.max(0, opts.timeoutMS ?? 10000);
+    let rec = record(target, opts);
+    while (!rec) {
+      if (!id || Date.now() >= deadline) throw new Error("Scene3D " + kind + " target is not ready");
+      await new Promise(resolve => setTimeout(resolve, 16));
+      rec = record(target, opts);
+    }
+    if (!rec.mount && typeof rec.handle[method] === "function") return Promise.resolve().then(() => rec.handle[method](plan));
+    const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
+    if (!mount) throw new Error("Scene3D " + kind + " mount is unavailable");
+    const api = await loadPresentation(kind, datasetKey);
+    return api.attach(plan, mount, rec.handle, () => mount.__gosxScene3DHandle === rec.handle);
+  }
+
+  function playTimeline() {
+    return playPresentation(arguments[0], arguments[1], arguments[2], "timeline", "playTimeline", "gosxScene3dTimelineUrl");
   }
 
   function dispatchPoseFrame(target, frame, options) {
@@ -238,20 +293,11 @@
     }
     var batches;
     try { batches = decodePoseFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) {
-        poseStats(target, opts);
-        if (typeof rec.handle.applyPoseFrame !== "function") return reject(new Error("Scene3D pose frames are unsupported by this mount"));
-        return Promise.resolve().then(function() { return rec.handle.applyPoseFrame(batches); }).then(resolve, reject);
-      }
-      if (!id) return reject(new Error("Scene3D pose frame target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D pose frame target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
-    }
-    return new Promise(poll).catch(fallback);
+    return waitForCommandMount(target, opts, "pose frame", function(rec, resolve, reject) {
+      poseStats(target, opts);
+      if (typeof rec.handle.applyPoseFrame !== "function") return reject(new Error("Scene3D pose frames are unsupported by this mount"));
+      return Promise.resolve().then(function() { return rec.handle.applyPoseFrame(batches); }).then(resolve, reject);
+    }).catch(fallback);
   }
 
   function applyMountedPoseFrame(state, batches, updateRigidPoses, scheduleRender, handle) {
@@ -542,22 +588,11 @@
     // @ts-ignore TS7034 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
     var batches;
     try { batches = decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) {
-        motionStats(target, opts);
-        if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
-        // @ts-ignore TS7005 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-        return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); }).then(resolve, reject);
-      }
-      if (!id) return reject(new Error("Scene3D motion frame target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D motion frame target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
-    }
-    return new Promise(poll).catch(fallback);
+    return waitForCommandMount(target, opts, "motion frame", function(rec, resolve, reject) {
+      motionStats(target, opts);
+      if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
+      return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); }).then(resolve, reject);
+    }).catch(fallback);
   }
 
   // applyMountedMotionFrame validates EVERY batch/instance ID and order
@@ -620,6 +655,7 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
+    playTimeline: playTimeline,
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,

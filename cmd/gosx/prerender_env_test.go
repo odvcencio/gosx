@@ -34,6 +34,7 @@ func main() {
     port := os.Getenv("PORT")
     addr := net.JoinHostPort("127.0.0.1", port)
     if os.Getenv("TEST_EXPORT_LISTENER") == "colon" { addr = ":" + port }
+    if os.Getenv("TEST_EXPORT_LISTENER") == "override" { addr = os.Getenv("GOSX_LISTEN_ADDR") }
     log.Fatal(http.ListenAndServe(addr, nil))
 }
 `)
@@ -44,8 +45,9 @@ func main() {
 	}
 	t.Setenv("SESSION_SECRET", "change-me-in-production")
 	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("GOSX_LISTEN_ADDR", "192.0.2.1:8080")
 	for _, inheritedPort := range []string{"", "8080", "0.0.0.0:8080"} {
-		for _, listener := range []string{"join", "colon"} {
+		for _, listener := range []string{"join", "colon", "override"} {
 			for _, publicURL := range []string{"", "https://explicit.example.test"} {
 				t.Run(inheritedPort+"/"+listener+"/"+publicURL, func(t *testing.T) {
 					if inheritedPort == "" {

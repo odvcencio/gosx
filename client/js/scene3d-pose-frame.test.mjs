@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
@@ -5,13 +6,16 @@ import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
+const ts = createRequire(new URL('../runtime/package.json', import.meta.url))('typescript');
+const transpile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
+
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const source = fs.readFileSync(path.join(directory, "..", "runtime", "scene3d", "command-runtime.ts"), "utf8");
 
 function runtime(handle, extra = {}) {
   const context = { window: {}, document: {}, TextDecoder, Uint8Array, ArrayBuffer, DataView, Set, Map, Date, Promise, setTimeout, ...extra };
   vm.createContext(context);
-  vm.runInContext(source, context);
+  vm.runInContext(transpile(source), context);
   return { context, bridge: context.window.__gosx_scene3d_command_bridge, handle };
 }
 
