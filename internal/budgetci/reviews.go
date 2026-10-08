@@ -206,10 +206,14 @@ func validFile(file string) bool {
 	return true
 }
 
-type boundedOutput struct{ bytes.Buffer }
+type boundedOutput struct {
+	bytes.Buffer
+	overflow bool
+}
 
 func (b *boundedOutput) Write(data []byte) (int, error) {
 	if b.Len()+len(data) > nativeLimit {
+		b.overflow = true
 		return 0, failure("invalid-input", "/response")
 	}
 	return b.Buffer.Write(data)
@@ -220,6 +224,9 @@ func commandOutput(ctx context.Context, name string, args ...string) ([]byte, er
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Stdout, cmd.Stderr = &out, io.Discard
 	if err := cmd.Run(); err != nil {
+		if out.overflow {
+			return nil, failure("invalid-input", "/response")
+		}
 		return nil, failure("environment", "/command")
 	}
 	return out.Bytes(), nil

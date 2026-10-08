@@ -230,7 +230,7 @@ func TestReviewsNoExceptionsAvoidNetworkAndBoundNativeOutput(t *testing.T) {
 		t.Fatal("empty exception set queried review metadata", err)
 	}
 	var output boundedOutput
-	if _, err := output.Write(make([]byte, nativeLimit+1)); err == nil || output.Len() != 0 {
+	if _, err := output.Write(make([]byte, nativeLimit+1)); err == nil || output.Len() != 0 || !output.overflow {
 		t.Fatal("native response limit was bypassed")
 	}
 	if _, err := (GitHubReviews{}).Reviews(context.Background(), "bad?repository", 1); err == nil {
