@@ -247,6 +247,9 @@ func Page() Node {
 }
 
 func TestPageRuntimeConstructionAllocations(t *testing.T) {
+	if raceEnabled {
+		t.Skip("allocation budget is measured without race instrumentation")
+	}
 	// This fixture and the benchmark share the production manifest path. Keep
 	// this test sequential: manifest roots are process-wide, and AllocsPerRun
 	// measures process allocations with GOMAXPROCS temporarily set to one.
@@ -258,7 +261,7 @@ func TestPageRuntimeConstructionAllocations(t *testing.T) {
 	}
 
 	// Manifest decoding is startup work; the cache above is warm. This fixed
-	// fixture fell from 600 to 143 allocations after removing repeated URL
+	// fixture fell from 730 to 143 allocations after removing repeated URL
 	// parsing. Leave a little compiler headroom without admitting that cost
 	// again. Timing and allocated bytes remain benchmark diagnostics, not gates.
 	const maxAllocs = 150
