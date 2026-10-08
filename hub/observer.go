@@ -4,6 +4,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -70,8 +71,8 @@ const (
 // Connection, rejection, message, broadcast, handler, observer-panic and Closed
 // callbacks fire now. RoundTrip, RoundTripTimeout and ClientAssociated are
 // extension points; their producers are added in later integrations.
-// Closed stops new dispatches. A dispatch admitted before closing may overlap
-// Closed, so subscribers must synchronize their state and tolerate that overlap.
+// Closed is last: closing stops admission for every subscriber and drains all
+// admitted callbacks before invoking it. Callbacks must not wait for Hub.Close.
 type Observer interface {
 	ClientConnected(*Hub, *Client, *http.Request)
 	ClientDisconnected(*Hub, *Client, DisconnectEvent)
@@ -104,9 +105,29 @@ func (NoopObserver) ClientAssociated(*Hub, *Client, string)                {}
 func (NoopObserver) Closed(*Hub)                                           {}
 
 type observerSlot struct {
-	observer Observer
-	active   atomic.Bool
+	observer  Observer
+	state     atomic.Uint64
+	drained   chan struct{}
+	drainOnce sync.Once
 }
+
+const observerRetired = uint64(1) << 63
+
+func (slot *observerSlot) retire() bool {
+	for {
+		state := slot.state.Load()
+		if state&observerRetired != 0 {
+			return false
+		}
+		if slot.state.CompareAndSwap(state, state|observerRetired) {
+			if state == 0 {
+				slot.drainOnce.Do(func() { close(slot.drained) })
+			}
+			return true
+		}
+	}
+}
+
 type observerList struct{ slots []*observerSlot }
 
 // UseObserver adds a subscriber before the first upgrade reservation. Nil is
@@ -127,8 +148,7 @@ func (h *Hub) UseObserver(o Observer) (detach func(), err error) {
 	if h.served {
 		return nil, ErrAfterServe
 	}
-	slot := &observerSlot{observer: o}
-	slot.active.Store(true)
+	slot := &observerSlot{observer: o, drained: make(chan struct{})}
 	list := &observerList{}
 	if old := h.observers.Load(); old != nil {
 		list.slots = append(list.slots, old.slots...)
@@ -139,7 +159,7 @@ func (h *Hub) UseObserver(o Observer) (detach func(), err error) {
 }
 
 func (h *Hub) detachObserver(slot *observerSlot) {
-	if !slot.active.Swap(false) {
+	if !slot.retire() {
 		return
 	}
 	h.mu.Lock()
@@ -172,9 +192,28 @@ func (h *Hub) observe(visit func(Observer)) {
 }
 
 func (h *Hub) visitObserver(slot *observerSlot, visit func(Observer)) {
-	if !slot.active.Load() {
-		return
+	for {
+		state := slot.state.Load()
+		if state&observerRetired != 0 {
+			return
+		}
+		// Admission and retirement share one atomic state. Retirement cannot
+		// observe a drained subscriber while a new callback is admitted.
+		if slot.state.CompareAndSwap(state, state+1) {
+			break
+		}
 	}
+	defer slot.leave()
+	h.invokeObserver(slot, visit)
+}
+
+func (slot *observerSlot) leave() {
+	if slot.state.Add(^uint64(0)) == observerRetired {
+		slot.drainOnce.Do(func() { close(slot.drained) })
+	}
+}
+
+func (h *Hub) invokeObserver(slot *observerSlot, visit func(Observer)) {
 	defer func() {
 		if recover() != nil {
 			h.detachObserver(slot)

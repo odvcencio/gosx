@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -13,6 +14,91 @@ import (
 
 	"github.com/gorilla/websocket"
 )
+
+type closingObserver struct {
+	NoopObserver
+	closed           atomic.Bool
+	late             atomic.Int64
+	entered, release chan struct{}
+}
+
+func (o *closingObserver) Broadcast(*Hub, int, int) {
+	if o.closed.Load() {
+		o.late.Add(1)
+	}
+	if o.entered != nil {
+		close(o.entered)
+		<-o.release
+	}
+}
+func (o *closingObserver) Rejected(*Hub, RejectionReason) {
+	if o.closed.Load() {
+		o.late.Add(1)
+	}
+}
+func (o *closingObserver) Closed(*Hub) { o.closed.Store(true) }
+
+func TestHubClosedWaitsForEveryAdmittedCallback(t *testing.T) {
+	h := New("test")
+	a := &closingObserver{entered: make(chan struct{}), release: make(chan struct{})}
+	b := &closingObserver{}
+	_, _ = h.UseObserver(a)
+	_, _ = h.UseObserver(b)
+	callbackDone := make(chan struct{})
+	go func() { h.BroadcastBinary([]byte{1}); close(callbackDone) }()
+	receiveHubEvent(t, a.entered)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	err := h.Close(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) || a.closed.Load() || b.closed.Load() {
+		t.Fatal(err, "premature Closed")
+	}
+	if h.observers.Load() != nil {
+		t.Fatal("close did not retire all subscribers")
+	}
+	close(a.release)
+	receiveHubEvent(t, callbackDone)
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !a.closed.Load() || !b.closed.Load() {
+		t.Fatal("missing Closed")
+	}
+	h.BroadcastBinary([]byte{1})
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/hub", nil))
+	if a.late.Load() != 0 || b.late.Load() != 0 {
+		t.Fatal("callback after Closed")
+	}
+}
+
+func TestHubClosedLastUnderConcurrentDispatch(t *testing.T) {
+	for range 5000 {
+		h := New("test")
+		o := &closingObserver{}
+		_, _ = h.UseObserver(o)
+		var stop atomic.Bool
+		var wg sync.WaitGroup
+		for range 4 {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				for !stop.Load() {
+					h.BroadcastBinary([]byte{1})
+					h.observe(func(obs Observer) { obs.Rejected(h, RejectedClosed) })
+				}
+			}()
+		}
+		runtime.Gosched()
+		if err := h.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
+		stop.Store(true)
+		wg.Wait()
+		if o.late.Load() != 0 {
+			t.Fatal("callback after Closed or Close return", o.late.Load())
+		}
+	}
+}
 
 func TestHubCloseWaitsForReservation(t *testing.T) {
 	h := New("synthetic-room")
