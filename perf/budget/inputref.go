@@ -315,7 +315,10 @@ func validateInputAt(value, raw any, pointer string) error {
 			p, ok := props[k]
 			childPointer := pointerChild(pointer, k)
 			if !ok {
-				childPointer = pointer
+				// Include only keys accepted by the schema name domain.
+				if s["propertyNames"] == nil {
+					childPointer = pointer
+				}
 				if extra, ok := s["additionalProperties"].(map[string]any); ok {
 					p = extra
 				} else {
