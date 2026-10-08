@@ -104,7 +104,9 @@ func Page() Node {
 				<div class="scene-fallback">Preparing the scene runtime...</div>
 			</Scene3D>
 		</section>
-		<p>Inline scripts must wait for DOMContentLoaded before calling the deferred navigation runtime.</p>
+		<p>
+			Inline scripts must wait for DOMContentLoaded before calling the deferred navigation runtime.
+		</p>
 		<pre class="code-block">
 			{`window.__gosx_dispose_page()
 		window.__gosx_bootstrap_page()
