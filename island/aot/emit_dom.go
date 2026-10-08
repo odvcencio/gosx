@@ -25,6 +25,7 @@ type domField struct {
 }
 
 type domLayout struct {
+	frameStride                     uint32
 	bindings                        BindingSet
 	fields                          []domField
 	rootBase                        uint32
@@ -82,6 +83,7 @@ func buildDOMLayout(u Unit, instances []uint32) (*stateLayout, *domLayout, error
 		return nil, nil, err
 	}
 	state.roots += uint32(len(state.instances) * len(d.fields))
+	d.frameStride = uint32(len(d.fields))
 	return state, d, nil
 }
 
@@ -236,7 +238,7 @@ func (e *expressionEmitter) domValueFunction(field domField) wasmgen.Function {
 
 func (e *expressionEmitter) domRoot(b *instructions, field int) {
 	b.get(2)
-	b.i32(int32(len(e.dom.fields)))
+	b.i32(int32(e.dom.frameStride))
 	b.op(0x6c)
 	b.i32(int32(e.dom.rootBase) + int32(field))
 	b.op(0x6a)

@@ -28,7 +28,7 @@ type computedLayout struct {
 }
 
 func (e *expressionEmitter) setupComputed() error {
-	if computedMetaBase+len(e.state.instances)*int(e.state.computedCount)*computedMetaBytes > 32768 {
+	if computedMetaBase+len(e.state.instances)*int(e.state.computedStride)*computedMetaBytes > 32768 {
 		return fmt.Errorf("computed tables exceed the fixed interval")
 	}
 	c := &computedLayout{getters: make([]uint32, e.state.computedCount)}
@@ -37,9 +37,13 @@ func (e *expressionEmitter) setupComputed() error {
 		*global = uint32(len(e.module.Globals))
 		e.module.Globals = append(e.module.Globals, wasmgen.Global{Mutable: true})
 	}
-	c.instancesBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
-	for _, id := range e.state.instances {
-		e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, id)
+	if e.state.linked != nil {
+		c.instancesBase = e.state.linked.instancesBase
+	} else {
+		c.instancesBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
+		for _, id := range e.state.instances {
+			e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, id)
+		}
 	}
 	if len(e.module.Data) > wasmgen.MaxDataBytes {
 		return fmt.Errorf("computed instance table exceeds constants")
@@ -74,7 +78,7 @@ func (e *expressionEmitter) setupComputed() error {
 func (e *expressionEmitter) computedMeta(b *instructions, frame uint32, index, offset uint32) {
 	b.i32(computedMetaBase + int32(index)*computedMetaBytes + int32(offset))
 	b.get(frame)
-	b.i32(int32(e.state.computedCount) * computedMetaBytes)
+	b.i32(int32(e.state.computedStride) * computedMetaBytes)
 	b.op(0x6c)
 	b.op(0x6a)
 }
@@ -101,7 +105,7 @@ func (e *expressionEmitter) computedGetFunction(index uint32, body program.ExprI
 	b.set(2)
 	b.index(0x23, arenaBaseGlobal)
 	b.get(1)
-	b.i32(int32(e.state.computedCount))
+	b.i32(int32(e.state.computedStride))
 	b.op(0x6c)
 	b.i32(int32(e.state.mutableRoots + index))
 	b.op(0x6a)
@@ -163,7 +167,7 @@ func (e *expressionEmitter) computedGetFunction(index uint32, body program.ExprI
 	}
 	b.errorGuard()
 	b.get(1)
-	b.i32(int32(e.state.computedCount))
+	b.i32(int32(e.state.computedStride))
 	b.op(0x6c)
 	b.i32(int32(e.state.mutableRoots + index))
 	b.op(0x6a)
@@ -283,6 +287,27 @@ func (e *expressionEmitter) computedInitializeFunction() wasmgen.Function {
 	b.statusFailure(statusBusy)
 	b.index(0x23, initializedGlobal)
 	b.statusFailure(statusBadSequence)
+	if e.state.linked != nil {
+		b.get(0)
+		b.index(0x10, e.state.lookup)
+		b.set(0)
+		b.statusGuard()
+		for index := range e.unit.Program.Computeds {
+			e.computedMeta(&b, 0, uint32(index), computedWorking)
+			b.memory(0x28, 2, 0)
+			b.statusFailure(statusBadSequence)
+			e.computedMeta(&b, 0, uint32(index), computedWorking)
+			b.i32(computedDirty)
+			b.memory(0x36, 2, 0)
+			b.get(0)
+			b.index(0x10, e.computed.getters[index])
+			b.op(0x1a)
+			b.statusGuard()
+		}
+		b.i32(0)
+		b.op(0x0b)
+		return wasmgen.Function{Signature: i32Signature(1), Body: b}
+	}
 	for frame, instance := range e.state.instances {
 		for index := range e.unit.Program.Computeds {
 			base := computedMetaBase + int32(frame*int(e.state.computedCount)+index)*computedMetaBytes + computedWorking
@@ -305,7 +330,7 @@ func (e *expressionEmitter) computedInitializeFunction() wasmgen.Function {
 
 func (e *expressionEmitter) computedBeginFunction() wasmgen.Function {
 	var b instructions
-	for row := 0; row < len(e.state.instances)*int(e.state.computedCount); row++ {
+	for row := 0; row < len(e.state.instances)*int(e.state.computedStride); row++ {
 		base := computedMetaBase + int32(row)*computedMetaBytes
 		for offset := uint32(0); offset < computedWorking; offset += 8 {
 			b.i32(base + computedWorking)
@@ -333,7 +358,7 @@ func (e *expressionEmitter) computedBeginFunction() wasmgen.Function {
 
 func (e *expressionEmitter) computedCommitFunction() wasmgen.Function {
 	var b instructions
-	for row := 0; row < len(e.state.instances)*int(e.state.computedCount); row++ {
+	for row := 0; row < len(e.state.instances)*int(e.state.computedStride); row++ {
 		base := computedMetaBase + int32(row)*computedMetaBytes
 		for offset := uint32(0); offset < computedWorking; offset += 8 {
 			b.i32(base)
@@ -383,7 +408,7 @@ func (e *expressionEmitter) computedSnapshotFunction() wasmgen.Function {
 	b.op(0x03)
 	b.op(0x40)
 	b.get(3)
-	b.i32(int32(len(e.state.instances)) * int32(e.state.computedCount))
+	b.i32(int32(len(e.state.instances)) * int32(e.state.computedStride))
 	b.op(0x4f)
 	b.index(0x0d, 1)
 	b.i32(computedMetaBase + computedWorking)
@@ -394,11 +419,29 @@ func (e *expressionEmitter) computedSnapshotFunction() wasmgen.Function {
 	b.set(8)
 	b.get(2)
 	b.get(3)
-	b.i32(int32(e.state.computedCount))
+	b.i32(int32(e.state.computedStride))
 	b.op(0x6e)
 	b.get(0)
 	b.op(0x46)
 	b.op(0x72)
+	if e.state.linked != nil {
+		for _, field := range []struct {
+			offset uint32
+			value  int32
+		}{{0, int32(e.state.programID)}, {4, 1}} {
+			b.i32(int32(e.state.linked.frameTable))
+			b.get(3)
+			b.i32(int32(e.state.computedStride))
+			b.op(0x6e)
+			b.i32(16)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.memory(0x28, 2, field.offset)
+			b.i32(field.value)
+			b.op(0x46)
+			b.op(0x71)
+		}
+	}
 	b.get(8)
 	b.memory(0x28, 2, 0)
 	b.i32(computedCreated)
@@ -570,11 +613,11 @@ func (e *expressionEmitter) computedNotifyFunction() wasmgen.Function {
 	b.op(0x72)
 	b.memory(0x36, 2, 0)
 	b.get(0)
-	b.i32(int32(e.state.computedCount))
+	b.i32(int32(e.state.computedStride))
 	b.op(0x6e)
 	b.set(2)
 	b.get(0)
-	b.i32(int32(e.state.computedCount))
+	b.i32(int32(e.state.computedStride))
 	b.op(0x70)
 	b.set(3)
 	// Only another computed is an internal subscriber. A cache with no
@@ -589,7 +632,7 @@ func (e *expressionEmitter) computedNotifyFunction() wasmgen.Function {
 	b.index(0x0d, 1)
 	b.i32(computedMetaBase + computedWorking)
 	b.get(2)
-	b.i32(int32(e.state.computedCount))
+	b.i32(int32(e.state.computedStride))
 	b.op(0x6c)
 	b.get(4)
 	b.op(0x6a)

@@ -76,6 +76,10 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 			{Mutable: true, Initial: int32(roots+uint32(len(u.Program.Exprs))) * valueBytes}, {Mutable: true, Initial: 131072}},
 	}}
 	e.reserved = (roots + uint32(len(u.Program.Exprs))) * valueBytes
+	if state != nil && state.linked != nil {
+		e.reserved = (roots + state.linked.expressions) * valueBytes
+		e.module.Globals[allocationGlobal].Initial = int32(e.reserved)
+	}
 	if transactions {
 		e.memoryGlobals()
 	}
@@ -98,11 +102,11 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 	if transactions {
 		e.setupTransactions()
 	}
-	if len(u.Contract.Inputs) != 0 {
+	if len(u.Contract.Inputs) != 0 || state != nil && state.linked != nil {
 		e.inputUTF8 = uint32(len(e.module.Imports) + len(e.module.Functions))
 		e.module.Functions = append(e.module.Functions, inputUTF8Function())
 	}
-	if state != nil && state.computedCount != 0 {
+	if state != nil && (state.computedCount != 0 || state.linked != nil) {
 		if err := e.setupComputed(); err != nil {
 			return nil, err
 		}

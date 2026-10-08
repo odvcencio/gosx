@@ -1,6 +1,7 @@
 package aot
 
 import (
+	"encoding/binary"
 	"fmt"
 	"strings"
 
@@ -25,6 +26,9 @@ type linkedProgram struct {
 // active manifest instance owns that frame; catalog programs need no instances.
 // Capacity is fixed at the profile maximum, independently of SSR route guards.
 type linkedLayout struct {
+	data                                                     []byte
+	strings                                                  map[string]stringConstant
+	instancesBase                                            int32
 	programs                                                 []linkedProgram
 	shared                                                   []linkedShared
 	tags                                                     []string
@@ -111,6 +115,9 @@ func buildLinkedLayout(units []Unit, options Options) (*linkedLayout, error) {
 	tagIDs := bindingNameIDs(l.tags)
 	for index := range l.programs {
 		p := &l.programs[index]
+		p.state.linked, p.state.programID = l, uint32(index)
+		p.state.computedStride = l.computedStride
+		p.dom.frameStride = l.baselineStride
 		p.state.rows = nil
 		p.state.mutableRoots = l.computedBase
 		p.state.roots = l.roots
@@ -144,7 +151,72 @@ func buildLinkedLayout(units []Unit, options Options) (*linkedLayout, error) {
 		}
 		p.state.inputRows = append([]uint32{}, p.inputs...)
 	}
+	if err := l.encodeData(); err != nil {
+		return nil, err
+	}
 	return l, nil
+}
+
+func (l *linkedLayout) encodeData() error {
+	values := map[string]bool{}
+	for _, p := range l.programs {
+		e := &expressionEmitter{unit: p.unit, dom: p.dom, transactional: true}
+		strings, _, _ := e.stringValues()
+		for value := range strings {
+			values[value] = true
+		}
+	}
+	l.strings = map[string]stringConstant{}
+	for _, value := range sortedBindingNames(values) {
+		constant := stringConstant{length: int32(len(value))}
+		if value != "" {
+			if len(l.data)+len(value) > wasmgen.MaxDataBytes {
+				return fmt.Errorf("linked constants exceed the fixed interval")
+			}
+			constant.pointer = int32(wasmgen.ConstantOffset + len(l.data))
+			l.data = append(l.data, value...)
+		}
+		l.strings[value] = constant
+	}
+	for len(l.data)%4 != 0 {
+		l.data = append(l.data, 0)
+	}
+	tables := map[string]int32{}
+	table := func(rows []uint32) int32 {
+		var data []byte
+		for _, row := range rows {
+			data = binary.LittleEndian.AppendUint32(data, row)
+		}
+		if pointer, exists := tables[string(data)]; exists {
+			return pointer
+		}
+		pointer := int32(wasmgen.ConstantOffset + len(l.data))
+		tables[string(data)] = pointer
+		l.data = append(l.data, data...)
+		return pointer
+	}
+	for i := range l.programs {
+		p := &l.programs[i]
+		p.state.dataBase = table(p.state.rows)
+		p.state.inputDataBase = table(p.inputs)
+	}
+	var instances []uint32
+	for i := uint32(0); i < ProfileLimits().Instances; i++ {
+		instances = append(instances, i)
+	}
+	l.instancesBase = table(instances)
+	if len(l.data) > wasmgen.MaxDataBytes {
+		return fmt.Errorf("linked constants exceed the fixed interval")
+	}
+	return nil
+}
+
+func (l *linkedLayout) emitProgram(index uint32) (*expressionEmitter, error) {
+	if uint64(index) >= uint64(len(l.programs)) {
+		return nil, fmt.Errorf("linked program ID out of range")
+	}
+	p := &l.programs[index]
+	return emitConfiguredModule(p.unit, l.roots, true, p.state, p.dom)
 }
 
 // Selector leaves load the normalized input directly. Compiler-only aggregate

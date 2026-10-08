@@ -1,10 +1,12 @@
 package aot
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/binary"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -454,5 +456,180 @@ func TestEmitEventInputFramingUTF8AndScalarGuards(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("%s event statuses: %v want %v", kind, got, want)
 		}
+	}
+}
+
+func linkedComputedUnit(t *testing.T, name string, count, fields, start int) Unit {
+	t.Helper()
+	u := layoutUnit(t, name, 1, count, fields)
+	u.Program.Exprs[0].Value = strconv.Itoa(start)
+	one := addExpression(&u, program.OpLitInt, program.TypeInt, Int, "1")
+	local := addExpression(&u, program.OpSignalGet, program.TypeInt, Int, "local0")
+	increment := addExpression(&u, program.OpAdd, program.TypeInt, Int, "", local, one)
+	write := addExpression(&u, program.OpSignalSet, program.TypeAny, AnyZero, "local0", increment)
+	u.Contract.Expressions[write].Pure = false
+	u.Program.Handlers = []program.Handler{{Name: "increment", Body: []program.ExprID{write}}}
+	previous := local
+	for i := range count {
+		u.Program.Computeds[i].Expr = addExpression(&u, program.OpAdd, program.TypeInt, Int, "", previous, one)
+		previous = addExpression(&u, program.OpSignalGet, program.TypeInt, Int, u.Program.Computeds[i].Name)
+	}
+	for i := range u.Program.Nodes {
+		if u.Program.Nodes[i].Kind == program.NodeExpr {
+			u.Program.Nodes[i].Expr = previous
+		}
+	}
+	return refreshBindingUnit(t, u)
+}
+
+func TestLinkedProgramUsesPageStridesAndOwnedManifestFrames(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{linkedComputedUnit(t, "Small", 1, 1, 4), linkedComputedUnit(t, "Larger", 2, 2, 9)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for programID, p := range l.programs {
+		e, err := l.emitProgram(uint32(programID))
+		if err != nil {
+			t.Fatal(err)
+		}
+		exportDOMModule(e)
+		var got struct {
+			Patches   [][]vm.PatchOp
+			Statuses  []uint32
+			Cache     []int32
+			Rejected  []uint32
+			Unchanged bool
+		}
+		data := struct {
+			domTestData
+			ProgramID, OtherID, FrameTable, ComputedBase, BaselineBase uint32
+			ComputedCount, ComputedStride, BaselineStride              uint32
+			Initial                                                    string
+		}{domTestData: domData(e), ProgramID: uint32(programID), OtherID: uint32(1 - programID), FrameTable: l.frameTable,
+			ComputedBase: l.computedBase, BaselineBase: l.baselineBase, ComputedCount: p.state.computedCount,
+			ComputedStride: l.computedStride, BaselineStride: l.baselineStride}
+		initial, _ := strconv.ParseInt(p.unit.Program.Exprs[0].Value, 10, 32)
+		data.Initial = scalarTransport(program.TypeInt, 0, initial, "")
+		runExpressionModule(t, e.module, `
+  const api = instance.exports, bound = [], patches = [], batches = [], statuses = [];
+  for (const frame of [0,15]) {
+    view.setUint32(data.FrameTable+frame*16,data.ProgramID,true);
+    view.setUint32(data.FrameTable+frame*16+4,1,true);
+  }
+  view.setUint32(data.FrameTable+7*16,data.OtherID,true); view.setUint32(data.FrameTable+7*16+4,1,true);
+  statuses.push(api.begin(0,0,1));
+  for (const frame of [0,15]) {
+    memory.set(Buffer.from(data.Initial,'base64'),32768);
+    statuses.push(api.store(frame,32768),api.initialize(frame),api.bind(frame),api.render(frame,1));
+  }
+  if (patches.length) throw new Error('initial patches');
+  statuses.push(api.commit(0,0));
+  const cache = [];
+  for (const frame of [0,15]) cache.push(view.getInt32(api.committed()+(data.ComputedBase+frame*data.ComputedStride+data.ComputedCount-1)*24+8,true));
+  for (const [index,frame] of [0,15,0].entries()) {
+    statuses.push(api.begin(index+1,0,0),api.handler(frame),api.render(frame,0),api.commit(index+1,0));
+    batches.push(patches.splice(0));
+  }
+  const before = Buffer.from(memory.slice(api.committed(),api.committed()+data.ComputedBase*24));
+  const rejected = [];
+  for (const frame of [7,1,16,-1]) {
+    statuses.push(api.begin(4,0,0)); rejected.push(api.handler(frame));
+    rejected.push(api.commit(4,0)); api.abort();
+  }
+  const unchanged = before.equals(Buffer.from(memory.slice(api.committed(),api.committed()+data.ComputedBase*24)));
+  process.stdout.write(JSON.stringify({Patches:batches,Statuses:statuses,Cache:cache,Rejected:rejected,Unchanged:unchanged}));`, data, &got, domTestImports)
+		for _, status := range got.Statuses {
+			if status != 0 {
+				t.Fatalf("linked program status: %+v", got)
+			}
+		}
+		if !got.Unchanged || !reflect.DeepEqual(got.Cache, []int32{int32(initial) + int32(p.state.computedCount), int32(initial) + int32(p.state.computedCount)}) {
+			t.Fatalf("cache stride or committed ownership: %+v", got)
+		}
+		for _, status := range got.Rejected {
+			if status != statusBadInput {
+				t.Fatalf("foreign/inactive frame was admitted: %+v", got)
+			}
+		}
+		models := []*vm.Island{vm.NewIsland(p.unit.Program, ""), vm.NewIsland(p.unit.Program, "")}
+		for step, model := range []int{0, 1, 0} {
+			if want := models[model].Dispatch("increment", ""); !reflect.DeepEqual(got.Patches[step], want) {
+				t.Fatalf("linked frame patches: %+v want %+v", got.Patches[step], want)
+			}
+		}
+		if e.reserved != (l.roots+l.expressions)*valueBytes || !bytes.Equal(e.module.Data, l.data) {
+			t.Fatal("program used private scratch or constants")
+		}
+	}
+}
+
+func TestLinkedConstantsAreSortedDeduplicatedAlignedAndBounded(t *testing.T) {
+	a, b := layoutUnit(t, "First", 1, 0, 0), layoutUnit(t, "Second", 1, 0, 0)
+	for _, u := range []*Unit{&a, &b} {
+		addExpression(u, program.OpLitString, program.TypeString, String, "héllo\x00🌴")
+		addExpression(u, program.OpLitString, program.TypeString, String, "")
+	}
+	a, b = refreshUnit(t, a), refreshUnit(t, b)
+	l, err := buildLinkedLayout([]Unit{b, a}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := l.strings[""]; c.pointer != 0 || c.length != 0 {
+		t.Fatal("empty constant has storage")
+	}
+	if bytes.Count(l.data, []byte("héllo\x00🌴")) != 1 {
+		t.Fatal("linked literals were not deduplicated")
+	}
+	var previous int32
+	values := map[string]bool{}
+	for value := range l.strings {
+		values[value] = true
+	}
+	for _, value := range sortedBindingNames(values) {
+		if value == "" {
+			continue
+		}
+		c := l.strings[value]
+		if c.pointer < previous || !bytes.Equal(l.data[c.pointer-1024:c.pointer-1024+c.length], []byte(value)) {
+			t.Fatal("constant byte order or pointer changed")
+		}
+		previous = c.pointer + c.length
+	}
+	for _, p := range l.programs {
+		if p.state.dataBase%4 != 0 || p.state.inputDataBase%4 != 0 {
+			t.Fatal("descriptor tables are unaligned")
+		}
+		for i, root := range p.state.rows {
+			offset := int(p.state.dataBase) - 1024 + i*4
+			if binary.LittleEndian.Uint32(l.data[offset:]) != root {
+				t.Fatal("root table does not address the page frame bank")
+			}
+		}
+	}
+	for i := 0; i < 5; i++ {
+		addExpression(&a, program.OpLitString, program.TypeString, String, strings.Repeat(string(rune('a'+i)), 4096))
+	}
+	a = refreshUnit(t, a)
+	if _, err := buildLinkedLayout([]Unit{a}, DefaultOptions()); err == nil {
+		t.Fatal("admitted constants above the 16 KiB segment")
+	}
+}
+
+func TestLinkedIdenticalRootTablesShareConstantStorage(t *testing.T) {
+	var units []Unit
+	for i := range 16 {
+		units = append(units, layoutUnit(t, "Bank"+strconv.Itoa(i), 16, 0, 0))
+	}
+	l, err := buildLinkedLayout(units, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range l.programs {
+		if p.state.dataBase != l.programs[0].state.dataBase {
+			t.Fatal("identical frame tables have separate constant allocations")
+		}
+	}
+	if len(l.data) > 1200 || l.roots != 256 {
+		t.Fatalf("deduplicated catalog layout: %d bytes, %d roots", len(l.data), l.roots)
 	}
 }

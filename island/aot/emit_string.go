@@ -25,7 +25,7 @@ func i32Signature(count int) wasmgen.Signature {
 	return wasmgen.Signature{Params: params, Result: wasmgen.I32}
 }
 
-func (e *expressionEmitter) setupStrings() error {
+func (e *expressionEmitter) stringValues() (map[string]bool, bool, bool) {
 	needed := e.transactional
 	formatNeeded := e.dom != nil
 	values := map[string]bool{}
@@ -51,30 +51,40 @@ func (e *expressionEmitter) setupStrings() error {
 			}
 		}
 	}
-	if !needed {
-		return nil
-	}
 	if formatNeeded {
 		for _, value := range []string{"true", "false", "0"} {
 			values[value] = true
 		}
 	}
-	keys := make([]string, 0, len(values))
-	for value := range values {
-		keys = append(keys, value)
+	return values, needed, formatNeeded
+}
+
+func (e *expressionEmitter) setupStrings() error {
+	values, needed, formatNeeded := e.stringValues()
+	if !needed {
+		return nil
 	}
-	sort.Strings(keys)
-	e.strings = make(map[string]stringConstant, len(keys))
-	for _, value := range keys {
-		c := stringConstant{length: int32(len(value))}
-		if value != "" {
-			c.pointer = int32(wasmgen.ConstantOffset + len(e.module.Data))
-			e.module.Data = append(e.module.Data, value...)
+	if e.state != nil && e.state.linked != nil {
+		e.strings = e.state.linked.strings
+		e.module.Data = append([]byte{}, e.state.linked.data...)
+	} else {
+		keys := make([]string, 0, len(values))
+		for value := range values {
+			keys = append(keys, value)
 		}
-		e.strings[value] = c
-	}
-	if len(e.module.Data) > wasmgen.MaxDataBytes {
-		return fmt.Errorf("string constants exceed the constant segment")
+		sort.Strings(keys)
+		e.strings = make(map[string]stringConstant, len(keys))
+		for _, value := range keys {
+			c := stringConstant{length: int32(len(value))}
+			if value != "" {
+				c.pointer = int32(wasmgen.ConstantOffset + len(e.module.Data))
+				e.module.Data = append(e.module.Data, value...)
+			}
+			e.strings[value] = c
+		}
+		if len(e.module.Data) > wasmgen.MaxDataBytes {
+			return fmt.Errorf("string constants exceed the constant segment")
+		}
 	}
 	for i := range e.helpers {
 		e.helpers[i] = uint32(len(e.module.Imports) + len(e.module.Functions) + i)

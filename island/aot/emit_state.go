@@ -11,16 +11,19 @@ import (
 )
 
 type stateLayout struct {
-	instances     []uint32
-	signals       map[string]uint32
-	rows          []uint32
-	roots         uint32
-	dataBase      int32
-	lookup        uint32
-	mutableRoots  uint32
-	computedCount uint32
-	inputRows     []uint32
-	inputDataBase int32
+	linked         *linkedLayout
+	programID      uint32
+	computedStride uint32
+	instances      []uint32
+	signals        map[string]uint32
+	rows           []uint32
+	roots          uint32
+	dataBase       int32
+	lookup         uint32
+	mutableRoots   uint32
+	computedCount  uint32
+	inputRows      []uint32
+	inputDataBase  int32
 }
 
 func emitStateExpressions(u Unit, instances []uint32) (*expressionEmitter, error) {
@@ -72,6 +75,7 @@ func buildStateLayout(u Unit, instances []uint32) (*stateLayout, error) {
 	}
 	s.mutableRoots = s.roots
 	s.computedCount = uint32(len(u.Program.Computeds))
+	s.computedStride = s.computedCount
 	s.roots += uint32(len(s.instances)) * s.computedCount
 	if s.roots > ProfileLimits().Values || len(shared) > int(ProfileLimits().SharedNames) {
 		return nil, fmt.Errorf("state roots exceed the profile")
@@ -89,23 +93,51 @@ func buildStateLayout(u Unit, instances []uint32) (*stateLayout, error) {
 }
 
 func (e *expressionEmitter) setupState() error {
-	for len(e.module.Data)%4 != 0 {
-		e.module.Data = append(e.module.Data, 0)
-	}
-	e.state.dataBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
-	for _, root := range e.state.rows {
-		e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, root)
-	}
-	e.state.inputDataBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
-	for _, root := range e.state.inputRows {
-		e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, root)
-	}
-	if len(e.module.Data) > wasmgen.MaxDataBytes {
-		return fmt.Errorf("state tables exceed the constant segment")
+	if e.state.linked == nil {
+		for len(e.module.Data)%4 != 0 {
+			e.module.Data = append(e.module.Data, 0)
+		}
+		e.state.dataBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
+		for _, root := range e.state.rows {
+			e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, root)
+		}
+		e.state.inputDataBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
+		for _, root := range e.state.inputRows {
+			e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, root)
+		}
+		if len(e.module.Data) > wasmgen.MaxDataBytes {
+			return fmt.Errorf("state tables exceed the constant segment")
+		}
 	}
 	e.state.lookup = uint32(len(e.module.Imports) + len(e.module.Functions))
 	var b instructions
 	b.errorGuard()
+	if e.state.linked != nil {
+		b.get(0)
+		b.i32(int32(ProfileLimits().Instances))
+		b.op(0x4f)
+		b.guard(statusBadInput)
+		b.i32(int32(e.state.linked.frameTable))
+		b.get(0)
+		b.i32(16)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.set(1)
+		b.get(1)
+		b.memory(0x28, 2, 0)
+		b.i32(int32(e.state.programID))
+		b.op(0x47)
+		b.get(1)
+		b.memory(0x28, 2, 4)
+		b.i32(1)
+		b.op(0x47)
+		b.op(0x72)
+		b.guard(statusBadInput)
+		b.get(0)
+		b.op(0x0b)
+		e.module.Functions = append(e.module.Functions, wasmgen.Function{Signature: i32Signature(1), I32Locals: 1, Body: b})
+		return nil
+	}
 	for i, id := range e.state.instances {
 		b.get(0)
 		b.i32(int32(id))
