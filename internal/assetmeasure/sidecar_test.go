@@ -3,6 +3,7 @@ package assetmeasure
 import (
 	"bytes"
 	"compress/gzip"
+	"encoding/hex"
 	"testing"
 )
 
@@ -51,5 +52,25 @@ func TestSidecarNoncanonicalGzipRemainsSeparate(t *testing.T) {
 	w.Close()
 	if VerifySidecar(raw, out.Bytes(), "gzip") != nil || bytes.Equal(out.Bytes(), canonical) {
 		t.Fatal("release representation was treated as canonical")
+	}
+}
+
+func TestSidecarZopfliDoesNotDefineCanonicalSize(t *testing.T) {
+	withBuildIdentity(t, "v1.2.1", false)
+	raw := bytes.Repeat([]byte("function counter(){return 123456789;}\n"), 40)
+	// Release producer canary using five Zopfli iterations.
+	encoded, err := hex.DecodeString("1f8b08000000000002034b2bcd4b2ec9cccf5348ce2fcd2b492dd2d0ac2e4a2d292dca5330343236313533b7b0b4aee51aeaaa46558daa1a5535aa6a541500e656f91bf0050000")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifySidecar(raw, encoded, "gzip"); err != nil {
+		t.Fatal(err)
+	}
+	sizes, err := Measure(raw, canonicalTestPin())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizes.Gzip != 75 || len(encoded) != 71 {
+		t.Fatal("canonical and release producers were conflated", sizes.Gzip, len(encoded))
 	}
 }
