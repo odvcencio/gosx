@@ -639,6 +639,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines, "engines"},
 		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs, "hubs"},
 		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers, "controllers"},
+		{"bootstrap-controller-input", filepath.Join(gosxRoot, "client", "js", "bootstrap-controller-input.js"), &manifest.Runtime.BootstrapControllerInput, "controllers"},
 		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout, "textlayout"},
 		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D, "scene3d"},
 		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand, "scene3d"},
@@ -737,7 +738,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	staticPages := 0
-	if !opts.Dev && builtServer {
+	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
 			AppRoot:      distDir,
 			OutputDir:    filepath.Join(distDir, "static"),
@@ -798,6 +799,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		manifest.Runtime.BootstrapFeatureEngines.File,
 		manifest.Runtime.BootstrapFeatureHubs.File,
 		manifest.Runtime.BootstrapFeatureControllers.File,
+		manifest.Runtime.BootstrapControllerInput.File,
 		manifest.Runtime.BootstrapFeatureTextlayout.File,
 		manifest.Runtime.Patch.File,
 		manifest.Runtime.VideoHLS.File,
@@ -821,7 +823,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
 	fmt.Println("  • dist/ includes app/, content/, and public/ for file-routed runtime deployment")
-	if !opts.Dev && builtServer {
+	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
 		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
 		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
 	}
@@ -1318,6 +1320,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureHubs.File)
 	case "/gosx/bootstrap-feature-controllers.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureControllers.File)
+	case "/gosx/bootstrap-controller-input.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapControllerInput.File)
 	case "/gosx/bootstrap-feature-textlayout.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureTextlayout.File)
 	case "/gosx/bootstrap-feature-scene3d.js":
