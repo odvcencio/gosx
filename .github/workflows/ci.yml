@@ -568,6 +568,13 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v1
 
+      - name: WebAssembly encoder browser validation
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          test -x "$GOSX_CHROME_BIN"
+          make test-wasmgen
+
       # TinyGo is required: TestProductionBuildRunsMixedTinyGoAndStandardGoWASM
       # (e2e/go_wasm_mixed_prod_e2e_test.go) runs a real production GoSX build
       # (`go run ./cmd/gosx build --prod`), which requires TinyGo on PATH.
