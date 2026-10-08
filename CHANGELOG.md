@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Independently check retained gauge and histogram heap, including their
+  leased snapshot storage, against the existing byte reservations.
+
 - Export bounded, copied metric snapshots and deterministic Prometheus text
   with shared admission, consistent histogram buckets, and a 2 MiB output cap.
   Snapshot adapters can retain an explicit clone within their own capacity.
