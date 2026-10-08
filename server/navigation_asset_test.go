@@ -135,10 +135,51 @@ func TestNavigationScriptDefersExternalRuntimeBeforeBootstrap(t *testing.T) {
 	w := httptest.NewRecorder()
 	app.Build().ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
-	tag := `<script data-gosx-navigation="true" nonce="page-nonce" defer src="` + runtimehost.NavigationRuntimePath + `"></script>`
+	tag := `<script data-gosx-navigation="true" nonce="page-nonce" defer crossorigin="anonymous" referrerpolicy="no-referrer" src="` + runtimehost.NavigationRuntimePath + `"></script>`
 	nav := strings.Index(body, tag)
 	boot := strings.Index(body, `data-gosx-script="bootstrap"`)
 	if nav < 0 || boot <= nav || !strings.Contains(body, `<script defer data-gosx-script="bootstrap"`) || strings.Contains(body, runtimehost.NavigationRuntime) {
 		t.Fatal("navigation and bootstrap must defer in document order with the request nonce")
+	}
+}
+
+func TestNavigationAssetStaleHashRevalidatesCurrentBytes(t *testing.T) {
+	stalePath := "/gosx/assets/runtime/navigation." + strings.Repeat("0", 64) + ".js"
+	handler := New().Build()
+	currentETag := `W/"` + strings.TrimSuffix(strings.TrimPrefix(runtimehost.NavigationRuntimePath, "/gosx/assets/runtime/"), ".js") + `"`
+	for _, tc := range []struct {
+		name, method, accept, encoding, conditional, byteRange string
+		status                                                 int
+		want                                                   []byte
+	}{
+		{name: "identity", status: http.StatusOK, want: []byte(runtimehost.NavigationRuntime)},
+		{name: "gzip", accept: "gzip", encoding: "gzip", status: http.StatusOK, want: runtimehost.NavigationRuntimeGzip},
+		{name: "brotli", accept: "br, gzip", encoding: "br", status: http.StatusOK, want: runtimehost.NavigationRuntimeBrotli},
+		{name: "head", method: http.MethodHead, status: http.StatusOK},
+		{name: "conditional", conditional: currentETag, status: http.StatusNotModified},
+		{name: "range", byteRange: "bytes=0-15", status: http.StatusPartialContent, want: []byte(runtimehost.NavigationRuntime[:16])},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			method := tc.method
+			if method == "" {
+				method = http.MethodGet
+			}
+			r := httptest.NewRequest(method, stalePath, nil)
+			r.Header.Set("Accept-Encoding", tc.accept)
+			r.Header.Set("If-None-Match", tc.conditional)
+			r.Header.Set("Range", tc.byteRange)
+			w := httptest.NewRecorder()
+			handler.ServeHTTP(w, r)
+			if w.Code != tc.status || w.Header().Get("Cache-Control") != "no-cache" || w.Header().Get("ETag") != currentETag || w.Header().Get("Content-Encoding") != tc.encoding || !bytes.Equal(w.Body.Bytes(), tc.want) {
+				t.Fatalf("stale asset: status=%d headers=%v bytes=%d", w.Code, w.Header(), w.Body.Len())
+			}
+		})
+	}
+	for _, hash := range []string{"", strings.Repeat("0", 63), strings.Repeat("g", 64), strings.Repeat("0", 65)} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/gosx/assets/runtime/navigation."+hash+".js", nil))
+		if w.Code != http.StatusNotFound {
+			t.Fatalf("malformed hash %q: status=%d", hash, w.Code)
+		}
 	}
 }

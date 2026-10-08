@@ -54,6 +54,26 @@ func Page() Node {
 				<span class="inline-code">--check</span>
 				mode fails the build when the committed file drifts from that source.
 			</p>
+			<p>
+				Navigation loads as a deferred external script before bootstrap. Each page makes
+				one more request. Proxies, CDNs and auth middleware must allow
+				<span class="inline-code">/gosx/assets/runtime/navigation.*.js</span>.
+			</p>
+			<p>
+				Code that runs while HTML is parsed, including inline body scripts and
+				<span class="inline-code">ctx.ManagedScript</span> or
+				<span class="inline-code">ctx.LifecycleScript</span> without defer, must wait for
+				<span class="inline-code">DOMContentLoaded</span> before calling
+				<span class="inline-code">window.__gosx.navigation</span>,
+				<span class="inline-code">window.__gosx_page_nav</span>,
+				<span class="inline-code">window.__gosx_submit_action</span> or
+				<span class="inline-code">window.__gosx.cues</span>.
+			</p>
+			{CodeBlock("javascript", `document.addEventListener("DOMContentLoaded", () => window.__gosx.navigation.revalidate(), { once: true });`)}
+			<p>
+				On streamed pages, navigation waits for the last fragment and parsing to finish.
+				Links and managed forms use native behavior until the deferred runtime runs.
+			</p>
 		</section>
 		<section id="page-transitions">
 			<h2>What a managed transition owns</h2>

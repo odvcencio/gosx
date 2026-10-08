@@ -113,7 +113,7 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 
 	// Embedded runtime assets resolve before (and independently of) the
 	// runtime asset root.
-	if "/gosx/"+name == runtimehost.NavigationRuntimePath {
+	if _, ok := runtimehost.NavigationRuntimeAssetHash("/gosx/" + name); ok {
 		a.serveNavigationRuntime(w, r)
 		return
 	}
