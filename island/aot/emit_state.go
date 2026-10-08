@@ -167,6 +167,18 @@ func (e *expressionEmitter) stateExpression(id program.ExprID, expr program.Expr
 		b.index(0x10, e.transactions[transactionStore])
 		b.op(0x1a)
 		b.errorGuard()
+		if e.computed != nil {
+			b.get(0)
+			b.i32(int32(slot))
+			shared := int32(0)
+			if strings.HasPrefix(expr.Value, "$") {
+				shared = 1
+			}
+			b.i32(shared)
+			b.index(0x10, e.computed.publish)
+			b.op(0x1a)
+			b.errorGuard()
+		}
 		b.record(id, program.TypeAny, i64Instructions(0), i32Instructions(0))
 	}
 	return wasmgen.Function{I32Locals: 3, Body: b}, nil

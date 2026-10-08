@@ -18,9 +18,20 @@ func (e *expressionEmitter) setupHandlers() {
 		b.index(0x10, e.state.lookup)
 		b.op(0x1a)
 		b.statusGuard()
+		if e.computed != nil {
+			b.index(0x23, e.computed.batch)
+			b.statusFailure(statusBusy)
+			b.i32(1)
+			b.index(0x24, e.computed.batch)
+		}
 		for _, expr := range handler.Body {
 			b.get(0)
 			b.index(0x10, e.functions[expr])
+			b.op(0x1a)
+			b.statusGuard()
+		}
+		if e.computed != nil {
+			b.index(0x10, e.computed.flush)
 			b.op(0x1a)
 			b.statusGuard()
 		}
