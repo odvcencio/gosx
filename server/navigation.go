@@ -19,7 +19,9 @@ import (
 // owner of this script, which prevents applications from accidentally
 // creating a second runtime with a stale or missing request nonce.
 func navigationScriptWithNonce(nonce string) gosx.Node {
-	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + ` src="` + runtimehost.NavigationRuntimePath + `"></script>`)
+	// Bootstrap scripts are also deferred. Document order keeps navigation
+	// available before bootstrap without making first paint wait for this asset.
+	return gosx.RawHTML(`<script data-gosx-navigation="true"` + nonceAttr(nonce) + ` defer src="` + runtimehost.NavigationRuntimePath + `"></script>`)
 }
 
 func nonceAttr(nonce string) string {

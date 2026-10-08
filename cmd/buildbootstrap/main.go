@@ -666,7 +666,7 @@ var outputs = []output{
 
 // inlineAssets lists standalone artifacts embedded in the Go binary rather
 // than staged through the bootstrap chunk graph. The navigation head loads
-// its embedded asset by content hash before other scripts run. Generate
+// its embedded asset by content hash as a deferred script before bootstrap. Generate
 // compressed sidecars for serving and exporting, without a source map or a
 // chunks.json entry (the server owns the URL).
 var inlineAssets = []output{

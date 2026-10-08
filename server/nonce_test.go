@@ -105,7 +105,7 @@ func TestAppThreadsPerRequestNonceToOwnedInlineAndRuntimeScripts(t *testing.T) {
 
 	body := w.Body.String()
 	for _, snippet := range []string{
-		`<script data-gosx-navigation="true" nonce="req-nonce-1" src="` + runtimehost.NavigationRuntimePath + `"></script>`,
+		`<script data-gosx-navigation="true" nonce="req-nonce-1" defer src="` + runtimehost.NavigationRuntimePath + `"></script>`,
 		`data-gosx-document-contract nonce="req-nonce-1">`,
 		`data-gosx-script="bootstrap" data-gosx-bootstrap-mode="lite" src="/gosx/bootstrap-lite.js"`,
 		`type="text/javascript" crossorigin="anonymous" referrerpolicy="no-referrer" nonce="req-nonce-1"`,

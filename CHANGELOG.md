@@ -32,7 +32,8 @@
 
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
-  request-time compression. Static exports include the asset.
+  request-time compression. Static exports include the asset. Defer execution
+  until parsing finishes, before bootstrap, so it does not delay first paint.
 - Preserve public immutable caching for framework runtime JS/WASM, emitted
   assets, hashed images and versioned public assets when global auth middleware
   reads the session on every request. Classify resolved assets explicitly;

@@ -124,7 +124,7 @@ func TestNavigationAssetRemainsImmutableAfterSessionRead(t *testing.T) {
 	}
 }
 
-func TestNavigationScriptLoadsExternalRuntimeBeforeBootstrap(t *testing.T) {
+func TestNavigationScriptDefersExternalRuntimeBeforeBootstrap(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
 	app.Page("GET /", func(ctx *Context) gosx.Node {
@@ -135,10 +135,10 @@ func TestNavigationScriptLoadsExternalRuntimeBeforeBootstrap(t *testing.T) {
 	w := httptest.NewRecorder()
 	app.Build().ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
 	body := w.Body.String()
-	tag := `<script data-gosx-navigation="true" nonce="page-nonce" src="` + runtimehost.NavigationRuntimePath + `"></script>`
+	tag := `<script data-gosx-navigation="true" nonce="page-nonce" defer src="` + runtimehost.NavigationRuntimePath + `"></script>`
 	nav := strings.Index(body, tag)
 	boot := strings.Index(body, `data-gosx-script="bootstrap"`)
-	if nav < 0 || boot <= nav || strings.Contains(body, runtimehost.NavigationRuntime) {
-		t.Fatal("navigation must load externally before bootstrap with the request nonce")
+	if nav < 0 || boot <= nav || !strings.Contains(body, `<script defer data-gosx-script="bootstrap"`) || strings.Contains(body, runtimehost.NavigationRuntime) {
+		t.Fatal("navigation and bootstrap must defer in document order with the request nonce")
 	}
 }
