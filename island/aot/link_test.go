@@ -173,8 +173,11 @@ func TestLinkedLayoutKeepsEventInputsOutOfCommittedRoots(t *testing.T) {
 func TestLinkedLayoutCombinedRootBoundary(t *testing.T) {
 	u := layoutUnit(t, "AtLimit", 16, 15, 1)
 	l, err := buildLinkedLayout([]Unit{u}, DefaultOptions())
-	if err != nil || l.roots != 512 || l.frameTable != 25088 || l.tablesEnd != 25344 {
-		t.Fatalf("exact root/table boundary: %+v %v", l, err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if l.roots != 512 || l.frameTable != 25088 || l.frameSequences != 25344 || l.tablesEnd != 25472 {
+		t.Fatalf("root/table boundary: %d roots, %d/%d/%d table offsets", l.roots, l.frameTable, l.frameSequences, l.tablesEnd)
 	}
 	// Separate valid programs can exceed the combined fixed-bank allowance.
 	a, b := layoutUnit(t, "Locals", 16, 0, 0), layoutUnit(t, "Caches", 0, 16, 1)
@@ -203,8 +206,8 @@ func TestLinkedLayoutSharedIdentityCompatibilityAndMaximum(t *testing.T) {
 		units = append(units, layoutUnit(t, "Group"+strconv.Itoa(group), 0, 0, 0, names...))
 	}
 	l, err := buildLinkedLayout(units[:4], DefaultOptions())
-	if err != nil || len(l.shared) != 64 || l.roots != 64 || l.tablesEnd != 18688 {
-		t.Fatalf("shared maximum: %+v %v", l, err)
+	if err != nil || len(l.shared) != 64 || l.roots != 64 || l.tablesEnd != 18816 {
+		t.Fatalf("shared maximum: %v", err)
 	}
 	if _, err := buildLinkedLayout(units, DefaultOptions()); err == nil {
 		t.Fatal("admitted more than 64 exact shared names")
@@ -254,8 +257,8 @@ func TestLinkedLayoutAllowsFullCatalogWithoutActiveInstances(t *testing.T) {
 		units = append(units, namedUnit(t, i))
 	}
 	l, err := buildLinkedLayout(units, DefaultOptions())
-	if err != nil || len(l.programs) != 16 || l.roots != 0 || l.tablesEnd != 17664 {
-		t.Fatalf("static catalog maximum: %+v %v", l, err)
+	if err != nil || len(l.programs) != 16 || l.roots != 0 || l.tablesEnd != 17792 {
+		t.Fatalf("static catalog maximum: %v", err)
 	}
 	for _, p := range l.programs {
 		if len(p.state.rows) != 0 || len(p.inputs) != 0 || len(p.state.instances) != 16 {
@@ -1260,5 +1263,204 @@ func TestLinkedDisposeClearsOwnedBanksAndKeepsPeersAndSharedValues(t *testing.T)
 	}
 	if !reflect.DeepEqual(got.Busy, []uint32{7, 7}) || !reflect.DeepEqual(got.Invalid, []uint32{2, 2}) || !reflect.DeepEqual(got.Corrupt, []uint32{2}) || !got.Cleared || !got.Preserved || !got.Atomic || !got.Live || !got.Metadata || !got.Prop || !got.Shared {
 		t.Fatalf("dispose isolation: %+v", got)
+	}
+}
+
+func TestLinkedPageOperationsMatchNativePatchOrderAndSequenceGenerations(t *testing.T) {
+	for _, shared := range []bool{false, true} {
+		t.Run(strconv.FormatBool(shared), func(t *testing.T) {
+			units := []Unit{linkedComputedUnit(t, "Small", 1, 1, 4), linkedComputedUnit(t, "Larger", 2, 2, 9)}
+			if shared {
+				for i := range units {
+					u := &units[i]
+					u.Program.Exprs[0].Value = "10"
+					u.Program.Signals[0].Name, u.Contract.Signals[0].Name = "$count", "$count"
+					for j := range u.Program.Exprs {
+						expr := &u.Program.Exprs[j]
+						if (expr.Op == program.OpSignalGet || expr.Op == program.OpSignalSet) && expr.Value == "local0" {
+							expr.Value = "$count"
+						}
+					}
+					*u = refreshBindingUnit(t, *u)
+				}
+			}
+			l, err := buildLinkedLayout(units, DefaultOptions())
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := linkProgramCode(l)
+			if err != nil {
+				t.Fatal(err)
+			}
+			m := exportLinkedTestModule(c)
+			for _, item := range []struct {
+				name string
+				fn   uint32
+			}{{"initializeAll", c.initialize}, {"bindAll", c.bind}, {"renderAll", c.render}, {"dispatch", c.dispatch}} {
+				m.Exports = append(m.Exports, wasmgen.Export{Name: item.name, Function: item.fn})
+			}
+			data := struct {
+				Bindings              []BindingSet
+				Owners, LocalRoots    []uint32
+				Roots                 []string
+				FrameTable, Sequences uint32
+			}{Owners: make([]uint32, 16), FrameTable: l.frameTable, Sequences: l.frameSequences}
+			for i := range data.Owners {
+				data.Owners[i] = NoBindingName
+			}
+			data.Owners[0], data.Owners[7], data.Owners[15] = 0, 1, 0
+			for _, p := range l.programs {
+				data.Bindings = append(data.Bindings, p.dom.bindings)
+			}
+			for _, frame := range []uint32{0, 7, 15} {
+				p := &l.programs[data.Owners[frame]]
+				initial, _ := strconv.ParseInt(p.unit.Program.Exprs[0].Value, 10, 32)
+				data.LocalRoots = append(data.LocalRoots, p.state.rows[frame])
+				data.Roots = append(data.Roots, scalarTransport(program.TypeInt, 0, initial, ""))
+			}
+			type observedPatch struct {
+				Frame uint32
+				Op    vm.PatchOp
+			}
+			var got struct {
+				Statuses, InitialSequences []uint32
+				Patches                    [][]observedPatch
+				Sequences                  [][]uint32
+				Bound                      [][]uint32
+			}
+			runExpressionModule(t, m, `
+  const api = instance.exports, bound = [], patches = [], statuses = [], batches = [], sequences = [];
+  const frames = [0,7,15];
+  for (const frame of frames) {
+    view.setUint32(data.FrameTable+frame*16,data.Owners[frame],true); view.setUint32(data.FrameTable+frame*16+4,1,true);
+  }
+  statuses.push(api.begin(100,0,1));
+  for (const [i,frame] of frames.entries()) {
+    memory.set(Buffer.from(data.Roots[i],'base64'),32768); statuses.push(api.store(data.LocalRoots[i],32768));
+    view.setUint32(data.Sequences+frame*8,i+1,true);
+  }
+  statuses.push(api.initializeAll(),api.bindAll(),api.renderAll(1),api.commit(100,0));
+  if (patches.length) throw new Error('initial patches');
+  const initialSequences = frames.map(frame=>view.getUint32(data.FrameTable+frame*16+8,true));
+  for (const [i,frame] of [0,7,15,7,0].entries()) {
+    statuses.push(api.begin(101+i,0,0),api.dispatch(frame,0),api.renderAll(0),api.commit(101+i,0));
+    batches.push(patches.splice(0)); sequences.push(frames.map(frame=>view.getUint32(data.FrameTable+frame*16+8,true)));
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,InitialSequences:initialSequences,Patches:batches,Sequences:sequences,Bound:bound}));`, data, &got, `{input: unexpected,
+  bind: (id,binding,kind,tag) => { bound.push([id,binding,kind,tag>>>0]); return 0; },
+  patch: (id,kind,binding,attribute,pointer) => {
+    const descriptor = data.Bindings[data.Owners[id]].bindings[binding];
+    if (kind!==0 || attribute!==-1 || view.getUint32(pointer,true)!==0 || view.getUint32(pointer+4,true)!==1) throw new Error('patch shape');
+    const start = view.getUint32(pointer+16,true), length = view.getUint32(pointer+20,true);
+    patches.push({frame:id,op:{kind,path:descriptor.path,text:Buffer.from(memory.subarray(start,start+length)).toString('utf8')}});
+    return 0;
+  }}`)
+			for _, status := range got.Statuses {
+				if status != 0 {
+					t.Fatalf("page operation: %+v", got)
+				}
+			}
+			if !reflect.DeepEqual(got.InitialSequences, []uint32{1, 2, 3}) {
+				t.Fatalf("initial renderer replaced checkpoint sequences: %v", got.InitialSequences)
+			}
+			var bindings [][]uint32
+			models, previous := map[uint32]*vm.VM{}, map[uint32]*vm.ResolvedTree{}
+			sharedSignal := signal.New(vm.IntVal(10))
+			for _, frame := range []uint32{0, 7, 15} {
+				p := &l.programs[data.Owners[frame]]
+				model := vm.NewVM(p.unit.Program, nil)
+				vm.InitSignals(model, p.unit.Program)
+				if shared {
+					model.SetSignal("$count", sharedSignal)
+				}
+				models[frame], previous[frame] = model, model.EvalTree()
+				for _, binding := range p.dom.bindings.Bindings {
+					bindings = append(bindings, []uint32{frame, binding.ID, uint32(binding.Kind), binding.TagID})
+				}
+			}
+			if !reflect.DeepEqual(got.Bound, bindings) {
+				t.Fatal("binding calls did not follow manifest and physical preorder")
+			}
+			last := []uint32{1, 2, 3}
+			for step, frame := range []uint32{0, 7, 15, 7, 0} {
+				p := &l.programs[data.Owners[frame]]
+				signal.Batch(func() {
+					for _, expr := range p.unit.Program.Handlers[0].Body {
+						models[frame].Eval(expr)
+					}
+				})
+				var want []observedPatch
+				for i, peer := range []uint32{0, 7, 15} {
+					if !shared && peer != frame {
+						continue
+					}
+					next := models[peer].EvalTree()
+					for _, op := range vm.ReconcileTrees(previous[peer], next, l.programs[data.Owners[peer]].unit.Program.StaticMask) {
+						want = append(want, observedPatch{peer, op})
+					}
+					previous[peer], last[i] = next, uint32(101+step)
+				}
+				if !reflect.DeepEqual(got.Patches[step], want) || !reflect.DeepEqual(got.Sequences[step], last) {
+					t.Fatalf("patch/sequence step %d: %+v %v want %+v %v", step, got.Patches[step], got.Sequences[step], want, last)
+				}
+			}
+		})
+	}
+}
+
+func TestLinkedPageOperationFailuresPreserveRootsAndInstanceSequences(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{linkedComputedUnit(t, "Failure", 1, 1, 4)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := exportLinkedTestModule(c)
+	for _, item := range []struct {
+		name string
+		fn   uint32
+	}{{"dispatch", c.dispatch}, {"initializeAll", c.initialize}, {"bindAll", c.bind}, {"renderAll", c.render}} {
+		m.Exports = append(m.Exports, wasmgen.Export{Name: item.name, Function: item.fn})
+	}
+	data := struct {
+		domTestData
+		FrameTable, Sequences, Rows uint32
+		Initial                     string
+	}{domData(c.programs[0]), l.frameTable, l.frameSequences, l.roots, scalarTransport(program.TypeInt, 0, 4, "")}
+	var got struct {
+		Statuses, Idle, Failures, Commits []uint32
+		Preserved, Aborted                bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, bound = [], patches = [], statuses = [], failures = [], commits = [];
+  const idle = [api.dispatch(0,0),api.initializeAll(),api.bindAll(),api.renderAll(0)];
+  view.setUint32(data.FrameTable+4,1,true);
+  statuses.push(api.begin(0,0,1)); memory.set(Buffer.from(data.Initial,'base64'),32768);
+  statuses.push(api.store(0,32768),api.initializeAll(),api.bindAll(),api.renderAll(1),api.commit(0,0));
+  const before = Buffer.from(memory.slice(api.committed(),api.committed()+data.Rows*24));
+  const metadata = Buffer.from(memory.slice(data.FrameTable,data.FrameTable+256));
+  const operations = [()=>api.dispatch(1,0),()=>api.dispatch(16,0),()=>api.dispatch(-1,0),()=>api.dispatch(0,1),()=>api.dispatch(0,-1),()=>api.renderAll(2),()=>api.initializeAll(),()=>api.bindAll(),
+    ()=>{view.setUint32(data.FrameTable,1,true);const result=api.dispatch(0,0);view.setUint32(data.FrameTable,0,true);return result;},
+    ()=>{view.setUint32(data.FrameTable+4,2,true);const result=api.renderAll(1);view.setUint32(data.FrameTable+4,1,true);return result;}];
+  for (const [i,operation] of operations.entries()) {
+    statuses.push(api.begin(i+1,0,0)); failures.push(operation()); commits.push(api.commit(i+1,0)); statuses.push(api.abort());
+  }
+  data.PatchStatus = 6;
+  statuses.push(api.begin(20,0,0),api.dispatch(0,0)); failures.push(api.renderAll(0)); commits.push(api.commit(20,0)); statuses.push(api.abort());
+  const preserved = before.equals(Buffer.from(memory.slice(api.committed(),api.committed()+data.Rows*24))) && metadata.equals(Buffer.from(memory.slice(data.FrameTable,data.FrameTable+256)));
+  statuses.push(api.begin(21,0,0));
+  const aborted = view.getUint32(data.Sequences,true)===0 && view.getUint32(data.FrameTable+8,true)===0;
+  statuses.push(api.abort());
+  process.stdout.write(JSON.stringify({Statuses:statuses,Idle:idle,Failures:failures,Commits:commits,Preserved:preserved,Aborted:aborted}));`, data, &got, domTestImports)
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("page operation setup: %+v", got)
+		}
+	}
+	want := []uint32{2, 2, 2, 2, 2, 2, 8, 8, 2, 2, 6}
+	if !reflect.DeepEqual(got.Idle, []uint32{7, 7, 7, 7}) || !reflect.DeepEqual(got.Failures, want) || !reflect.DeepEqual(got.Commits, want) || !got.Preserved || !got.Aborted {
+		t.Fatalf("failed operation published roots or sequences: %+v", got)
 	}
 }

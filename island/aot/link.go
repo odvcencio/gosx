@@ -37,7 +37,7 @@ type linkedLayout struct {
 	tags                                                     []string
 	localStride, inputStride, computedStride, baselineStride uint32
 	inputBase, sharedBase, computedBase, baselineBase, roots uint32
-	frameTable, sharedVersions, tablesEnd                    uint32
+	frameTable, frameSequences, sharedVersions, tablesEnd    uint32
 	expressions                                              uint32
 }
 
@@ -105,7 +105,8 @@ func buildLinkedLayout(units []Unit, options Options) (*linkedLayout, error) {
 		return nil, fmt.Errorf("linked scalar roots exceed the profile")
 	}
 	l.frameTable = computedMetaBase + capacity*l.computedStride*computedMetaBytes
-	l.sharedVersions = l.frameTable + capacity*16
+	l.frameSequences = l.frameTable + capacity*16
+	l.sharedVersions = l.frameSequences + capacity*8
 	l.tablesEnd = l.sharedVersions + uint32(len(l.shared))*16
 	if l.tablesEnd > 32768 {
 		return nil, fmt.Errorf("linked tables exceed the fixed interval")
@@ -495,10 +496,11 @@ func inputUTF8Function() wasmgen.Function {
 }
 
 type linkedCode struct {
-	module                           wasmgen.Module
-	programs                         []*expressionEmitter
-	indices                          [][]uint32
-	notify, publish, scalar, dispose uint32
+	module                             wasmgen.Module
+	programs                           []*expressionEmitter
+	indices                            [][]uint32
+	notify, publish, scalar, dispose   uint32
+	dispatch, initialize, bind, render uint32
 }
 
 const linkedRenderMaskGlobal = 25
@@ -536,7 +538,11 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.publish = c.notify + 1
 	c.scalar = c.notify + 2
 	c.dispose = c.notify + 3
-	c.module.Functions = make([]wasmgen.Function, len(common)+4)
+	c.dispatch = c.notify + 4
+	c.initialize = c.notify + 5
+	c.bind = c.notify + 6
+	c.render = c.notify + 7
+	c.module.Functions = make([]wasmgen.Function, len(common)+8)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -561,7 +567,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 4 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 8 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -607,6 +613,10 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+1] = l.publishFunction(c)
 	c.module.Functions[len(common)+2] = scalarValidationFunction(c.indices[0][c.programs[0].inputUTF8])
 	c.module.Functions[len(common)+3] = l.disposeFunction(c)
+	c.module.Functions[len(common)+4] = l.dispatchFunction(c)
+	c.module.Functions[len(common)+5] = l.frameOperationFunction(c, "initialize")
+	c.module.Functions[len(common)+6] = l.frameOperationFunction(c, "bind")
+	c.module.Functions[len(common)+7] = l.frameOperationFunction(c, "render")
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -929,6 +939,19 @@ func (l *linkedLayout) sharedBoundaryFunction(e *expressionEmitter, index uint32
 			b.i32(base)
 			b.memory(0x29, 3, from)
 			b.memory(0x37, 3, to)
+		}
+		for frame := uint32(0); frame < ProfileLimits().Instances; frame++ {
+			committed := int32(l.frameTable + frame*16 + 8)
+			working := int32(l.frameSequences + frame*8)
+			if index == e.computed.commit {
+				b.i32(committed)
+				b.i32(working)
+			} else {
+				b.i32(working)
+				b.i32(committed)
+			}
+			b.memory(0x29, 3, 0)
+			b.memory(0x37, 3, 0)
 		}
 	}
 	if index != e.computed.commit {
@@ -1381,6 +1404,13 @@ func (l *linkedLayout) disposeFunction(c *linkedCode) wasmgen.Function {
 	b.get(1)
 	b.i64(0)
 	b.memory(0x37, 3, 8)
+	b.i32(int32(l.frameSequences))
+	b.get(0)
+	b.i32(8)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.i64(0)
+	b.memory(0x37, 3, 0)
 	b.get(1)
 	b.i32(0)
 	b.memory(0x36, 2, 4)
@@ -1395,4 +1425,182 @@ func (l *linkedLayout) disposeFunction(c *linkedCode) wasmgen.Function {
 	b.i32(0)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(1), I32Locals: 4, I64Locals: 1, Body: b}
+}
+
+func (b *instructions) checkedStatusCall(function, result uint32) {
+	b.index(0x10, function)
+	b.index(0x22, result)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(result)
+	b.index(0x24, errorGlobal)
+	b.get(result)
+	b.op(0x0f)
+	b.op(0x0b)
+}
+
+func (l *linkedLayout) stampFrame(b *instructions, frame uint32) {
+	for i, global := range []uint32{pendingLoGlobal, pendingHiGlobal} {
+		b.i32(int32(l.frameSequences))
+		b.get(frame)
+		b.i32(8)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.index(0x23, global)
+		b.memory(0x36, 2, uint32(i*4))
+	}
+}
+
+func (l *linkedLayout) dispatchFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.statusGuard()
+	b.index(0x23, pendingGlobal)
+	b.op(0x45)
+	b.statusFailure(statusBusy)
+	b.get(0)
+	b.i32(int32(ProfileLimits().Instances))
+	b.op(0x4f)
+	b.poisonStatus(statusBadInput)
+	b.i32(int32(l.frameTable))
+	b.get(0)
+	b.i32(16)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.index(0x22, 2)
+	b.memory(0x28, 2, 4)
+	b.i32(1)
+	b.op(0x47)
+	b.poisonStatus(statusBadInput)
+	b.get(2)
+	b.memory(0x28, 2, 0)
+	b.set(3)
+	for id, e := range c.programs {
+		b.get(3)
+		b.i32(int32(id))
+		b.op(0x46)
+		b.op(0x04)
+		b.op(0x40)
+		for handler, fn := range e.handlers {
+			b.get(1)
+			b.i32(int32(handler))
+			b.op(0x46)
+			b.op(0x04)
+			b.op(0x40)
+			b.get(0)
+			b.checkedStatusCall(c.indices[id][fn], 4)
+			l.stampFrame(&b, 0)
+			b.i32(0)
+			b.op(0x0f)
+			b.op(0x0b)
+		}
+		b.op(0x0b)
+	}
+	b.i32(statusBadInput)
+	b.index(0x24, errorGlobal)
+	b.i32(statusBadInput)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(2), I32Locals: 3, Body: b}
+}
+
+// Page operations walk manifest frame order. Calls target compiled functions;
+// no Program or expression opcode is decoded by the shipped module.
+func (l *linkedLayout) frameOperationFunction(c *linkedCode, operation string) wasmgen.Function {
+	params := uint32(0)
+	if operation == "render" {
+		params = 1
+	}
+	frame, address, owner, result := params, params+1, params+2, params+3
+	var b instructions
+	b.statusGuard()
+	b.index(0x23, pendingGlobal)
+	b.op(0x45)
+	b.statusFailure(statusBusy)
+	if operation == "render" {
+		b.get(0)
+		b.i32(1)
+		b.op(0x4b)
+		b.poisonStatus(statusBadInput)
+	} else {
+		b.index(0x23, initializedGlobal)
+		b.poisonStatus(statusBadSequence)
+	}
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.get(frame)
+	b.i32(int32(ProfileLimits().Instances))
+	b.op(0x4f)
+	b.index(0x0d, 1)
+	b.i32(int32(l.frameTable))
+	b.get(frame)
+	b.i32(16)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.index(0x22, address)
+	b.memory(0x28, 2, 4)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(address)
+	b.memory(0x28, 2, 0)
+	b.set(owner)
+	b.get(address)
+	b.memory(0x28, 2, 4)
+	b.i32(1)
+	b.op(0x47)
+	b.get(owner)
+	b.i32(int32(len(c.programs)))
+	b.op(0x4f)
+	b.op(0x72)
+	b.poisonStatus(statusBadInput)
+	if operation == "render" {
+		b.get(0)
+		b.index(0x23, linkedRenderMaskGlobal)
+		b.i32(1)
+		b.get(frame)
+		b.op(0x74)
+		b.op(0x71)
+		b.op(0x72)
+		b.op(0x04)
+		b.op(0x40)
+	}
+	for id, e := range c.programs {
+		fn := e.computed.initialize
+		if operation == "bind" {
+			fn = e.dom.bind
+		} else if operation == "render" {
+			fn = e.dom.render
+		}
+		b.get(owner)
+		b.i32(int32(id))
+		b.op(0x46)
+		b.op(0x04)
+		b.op(0x40)
+		b.get(frame)
+		if operation == "render" {
+			b.get(0)
+		}
+		b.checkedStatusCall(c.indices[id][fn], result)
+		b.op(0x0b)
+	}
+	if operation == "render" {
+		b.get(0)
+		b.op(0x45)
+		b.op(0x04)
+		b.op(0x40)
+		l.stampFrame(&b, frame)
+		b.op(0x0b)
+		b.op(0x0b)
+	}
+	b.op(0x0b)
+	b.get(frame)
+	b.i32(1)
+	b.op(0x6a)
+	b.set(frame)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.i32(0)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(int(params)), I32Locals: 4, Body: b}
 }
