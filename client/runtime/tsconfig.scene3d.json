@@ -24,6 +24,8 @@
     "scene3d/overlay-dom.ts",
     "scene3d/mount-controls.ts",
     "scene3d/mount-zoom.ts",
+    "scene3d/command-hooks.ts",
+    "scene3d/timeline.ts",
     "scene3d/mount-walk.ts",
     "scene3d/ocean-waves.ts",
     "scene3d/ocean-query.ts",
@@ -33,6 +35,7 @@
     "scene3d/mount-quality.ts",
     "scene3d/overlays.ts",
     "scene3d/mount-viewport.ts",
+    "scene3d/script-loader.ts",
     "scene3d/command-bridge.ts",
     "scene3d/mount-telemetry.ts",
     "scene3d/hydrate-input.ts",
@@ -46,6 +49,7 @@
     "scene3d/webgl-depth-post.ts",
     "scene3d/webgl-contact-shadows.ts",
     "scene3d/webgl-taa.ts",
-    "scene3d/webgpu-contact-shadows.ts"
+    "scene3d/webgpu-contact-shadows.ts",
+    "scene3d/mount-input.ts"
   ]
 }

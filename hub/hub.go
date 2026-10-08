@@ -970,9 +970,12 @@ func (c *Client) readPump() {
 		}
 		msgType, data, err := c.conn.ReadMessage()
 		if err != nil {
-			c.setDisconnectReason(readDisconnectReason(err), "")
-			if !websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
-				log.Printf("[hub/%s] read error: %v", c.Hub.name, err)
+			reason := readDisconnectReason(err)
+			c.setDisconnectReason(reason, "")
+			if reason != "peer_closed" {
+				// A CloseError includes peer-controlled close text. Diagnostics
+				// keep only the fixed transport class, never the raw error.
+				log.Printf("[gosx hub] read failed (%s)", reason)
 			}
 			break
 		}

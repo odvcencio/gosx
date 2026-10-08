@@ -1,11 +1,70 @@
 package metric
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"strings"
 	"testing"
 )
+
+// Include the leased snapshot arenas in an independent retained-heap check.
+// Histogram tuples occupy the full unchanged scalar budget.
+func TestSnapshotGaugeAndHistogramHeapAccounting(t *testing.T) {
+	for _, kind := range []InstrumentKind{KindGauge, KindHistogram} {
+		name, count := "gauge", 7168
+		if kind == KindHistogram {
+			name, count = "histogram", 2048
+		}
+		t.Run(name, func(t *testing.T) {
+			tuples := make([][]string, count)
+			for i := range tuples {
+				tuples[i] = []string{fmt.Sprintf("/route/%03d", i/8), fmt.Sprintf("class_%d", i%8)}
+			}
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			r := &Registry{}
+			labels := []Label{{Name: "route", MaxValues: 1024}, {Name: "class", MaxValues: 8}}
+			var instrument InstrumentVec
+			var err error
+			if kind == KindGauge {
+				instrument, err = r.NewGauge(GaugeOptions{Name: "snapshot_gauge", Labels: labels})
+			} else {
+				instrument, err = r.NewHistogram(HistogramOptions{Name: "snapshot_histogram", Labels: labels,
+					Bounds: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			batch := make([]TupleDeclaration, count)
+			for i := range batch {
+				batch[i] = TupleDeclaration{instrument, tuples[i]}
+			}
+			if err := r.DeclareBatch(batch); err != nil {
+				t.Fatal(err)
+			}
+			if err := r.WithSnapshot(context.Background(), func(s Snapshot) error {
+				if len(s.Families) != 1 || len(s.Families[0].Series) != count {
+					t.Fatal("incomplete snapshot")
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+			runtime.GC()
+			runtime.ReadMemStats(&after)
+			retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+			t.Logf("snapshot kind=%s samples=%d accounted=%d retained=%d headroom=%d", name,
+				r.Usage().Samples, r.Usage().Bytes, retained, r.Usage().Bytes-retained)
+			if retained > r.Usage().Bytes {
+				t.Fatalf("snapshot retained heap %d exceeds reservation %d", retained, r.Usage().Bytes)
+			}
+			runtime.KeepAlive(r)
+			runtime.KeepAlive(tuples)
+		})
+	}
+}
 
 // A retained-heap measurement independent of the registry's admission formula.
 func TestRegistryRetainedHeapAccounting(t *testing.T) {
@@ -43,6 +102,55 @@ func TestRegistryRetainedHeapAccounting(t *testing.T) {
 	}
 	runtime.KeepAlive(r)
 	runtime.KeepAlive(tuples)
+}
+
+func TestRegistryGaugeAndHistogramHeapAccounting(t *testing.T) {
+	for _, kind := range []InstrumentKind{KindGauge, KindHistogram} {
+		name := "gauge"
+		count := 7168
+		if kind == KindHistogram {
+			name, count = "histogram", 2048
+		}
+		t.Run(name, func(t *testing.T) {
+			tuples := make([][]string, count)
+			for i := range tuples {
+				tuples[i] = []string{fmt.Sprintf("/route/%03d", i/8), fmt.Sprintf("class_%d", i%8)}
+			}
+			runtime.GC()
+			var before, after runtime.MemStats
+			runtime.ReadMemStats(&before)
+			r := &Registry{}
+			labels := []Label{{Name: "route", MaxValues: 1024}, {Name: "class", MaxValues: 8}}
+			var instrument InstrumentVec
+			var err error
+			if kind == KindGauge {
+				instrument, err = r.NewGauge(GaugeOptions{Name: "heap_gauge", Labels: labels})
+			} else {
+				instrument, err = r.NewHistogram(HistogramOptions{Name: "heap_histogram", Labels: labels,
+					Bounds: []float64{.001, .0025, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			batch := make([]TupleDeclaration, count)
+			for i := range batch {
+				batch[i] = TupleDeclaration{instrument, tuples[i]}
+			}
+			if err := r.DeclareBatch(batch); err != nil {
+				t.Fatal(err)
+			}
+			runtime.GC()
+			runtime.ReadMemStats(&after)
+			retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
+			t.Logf("kind=%s samples=%d accounted=%d retained=%d headroom=%d", name, r.Usage().Samples,
+				r.Usage().Bytes, retained, r.Usage().Bytes-retained)
+			if retained > r.Usage().Bytes {
+				t.Fatalf("retained heap %d exceeds reservation %d", retained, r.Usage().Bytes)
+			}
+			runtime.KeepAlive(r)
+			runtime.KeepAlive(tuples)
+		})
+	}
 }
 
 // S7b must be able to reserve its request counters, duration histograms and
