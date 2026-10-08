@@ -21,7 +21,7 @@ import (
 	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/internal/localapp"
- "m31labs.dev/gosx/internal/pagecaps"
+	"m31labs.dev/gosx/internal/pagecaps"
 	"m31labs.dev/gosx/route"
 )
 
@@ -41,19 +41,19 @@ type exportRoute struct {
 }
 
 type routeCapabilities struct {
- ComputeIslands int `json:"computeIslands,omitempty"`
- Controllers int `json:"controllers,omitempty"`
- Runtime string `json:"runtime,omitempty"`
-	Navigation    bool   `json:"navigation"`
-	Bootstrap     bool   `json:"bootstrap"`
-	BootstrapMode string `json:"bootstrapMode,omitempty"`
-	WASM          bool   `json:"wasm"`
-	Islands       int    `json:"islands,omitempty"`
-	Engines       int    `json:"engines,omitempty"`
-	Hubs          int    `json:"hubs,omitempty"`
-	Scene3D       bool   `json:"scene3d,omitempty"`
-	Video         bool   `json:"video,omitempty"`
-	Motion        bool   `json:"motion,omitempty"`
+	ComputeIslands int    `json:"computeIslands,omitempty"`
+	Controllers    int    `json:"controllers,omitempty"`
+	Runtime        string `json:"runtime,omitempty"`
+	Navigation     bool   `json:"navigation"`
+	Bootstrap      bool   `json:"bootstrap"`
+	BootstrapMode  string `json:"bootstrapMode,omitempty"`
+	WASM           bool   `json:"wasm"`
+	Islands        int    `json:"islands,omitempty"`
+	Engines        int    `json:"engines,omitempty"`
+	Hubs           int    `json:"hubs,omitempty"`
+	Scene3D        bool   `json:"scene3d,omitempty"`
+	Video          bool   `json:"video,omitempty"`
+	Motion         bool   `json:"motion,omitempty"`
 }
 
 type staticExportOptions struct {
@@ -202,7 +202,9 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 			fmt.Fprintln(os.Stderr, prerenderLoadWarning(entry.Path))
 		}
 		entry.Capabilities, err = routeCapabilitiesFromHTML(pageHTML)
- if err != nil {return exportManifest{}, fmt.Errorf("export capabilities: %w",err)}
+		if err != nil {
+			return exportManifest{}, fmt.Errorf("export capabilities: %w", err)
+		}
 		if err := stageExportFileCSS(client, baseURL, outputDir, pageHTML, fileCSSAssets, mount); err != nil {
 			return exportManifest{}, fmt.Errorf("export %s stylesheets: %w", entry.Path, err)
 		}
@@ -348,16 +350,24 @@ func sortedExportRuntimeAssetRefs(refs map[string]struct{}) []string {
 	return out
 }
 
-func routeCapabilitiesFromHTML(input string) (routeCapabilities,error) {
- c,err:=pagecaps.FromHTML([]byte(input))
- if err!=nil {return routeCapabilities{},err}
- mode:=c.BootstrapMode;if mode=="none" {mode=""}
- runtime:=c.Runtime;if runtime=="none" {runtime=""}
- return routeCapabilities{
-  Navigation:c.Navigation,Bootstrap:c.Bootstrap,BootstrapMode:mode,WASM:c.WASM,
-  Islands:c.Islands,ComputeIslands:c.ComputeIslands,Engines:c.Engines,Hubs:c.Hubs,
-  Controllers:c.Controllers,Scene3D:c.Scene3D,Video:c.Video,Motion:c.Motion,Runtime:runtime,
- },nil
+func routeCapabilitiesFromHTML(input string) (routeCapabilities, error) {
+	c, err := pagecaps.FromHTML([]byte(input))
+	if err != nil {
+		return routeCapabilities{}, err
+	}
+	mode := c.BootstrapMode
+	if mode == "none" {
+		mode = ""
+	}
+	runtime := c.Runtime
+	if runtime == "none" {
+		runtime = ""
+	}
+	return routeCapabilities{
+		Navigation: c.Navigation, Bootstrap: c.Bootstrap, BootstrapMode: mode, WASM: c.WASM,
+		Islands: c.Islands, ComputeIslands: c.ComputeIslands, Engines: c.Engines, Hubs: c.Hubs,
+		Controllers: c.Controllers, Scene3D: c.Scene3D, Video: c.Video, Motion: c.Motion, Runtime: runtime,
+	}, nil
 }
 
 func writeExportManifest(path string, manifest exportManifest) error {
