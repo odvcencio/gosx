@@ -189,6 +189,11 @@ func TestCanonicalPublicCatalogBindsTrackedIdentifiers(t *testing.T) {
 	if validator.assets["framework/runtime/navigation.js"] != "framework" || validator.assets["framework/runtime/core.wasm"] != "framework" || validator.assets["app/scaffold/islands/Counter"] != "app" || validator.assets["app/docs/islands/LiveCounter"] != "app" {
 		t.Fatal("public asset ownership missing")
 	}
+	for source := range validator.sources {
+		if strings.HasPrefix(source, "examples/gosx-docs/public/") && strings.HasSuffix(source, ".js") && validator.assets["app/docs/"+strings.TrimPrefix(source, "examples/gosx-docs/")] != "app" {
+			t.Fatal("tracked public script ownership missing")
+		}
+	}
 	if len(validator.routes) != 11 {
 		t.Fatal("public route registration changed")
 	}
