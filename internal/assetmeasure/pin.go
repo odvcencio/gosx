@@ -3,7 +3,6 @@ package assetmeasure
 
 import (
 	"errors"
-	"runtime"
 	"runtime/debug"
 )
 
@@ -18,11 +17,8 @@ func validatePin(pin CompressorPin) error {
 	if pin != (CompressorPin{GoVersion: "1.26.0", BrotliVersion: "v1.2.1", GzipLevel: 9, BrotliQuality: 11, BrotliWindow: 0}) {
 		return errors.New("unsupported canonical compressor pin")
 	}
-	if runtime.Version() != "go"+pin.GoVersion {
-		return errors.New("canonical Go version does not match pin")
-	}
 	info, ok := readBuildInfo()
-	if !ok || info.GoVersion != runtime.Version() {
+	if !ok || info.GoVersion != "go"+pin.GoVersion {
 		return errors.New("canonical build identity is unavailable")
 	}
 	for _, dep := range info.Deps {

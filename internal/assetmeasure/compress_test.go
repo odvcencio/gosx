@@ -3,7 +3,6 @@ package assetmeasure
 import (
 	"bytes"
 	"compress/gzip"
-	"runtime"
 	"runtime/debug"
 	"testing"
 )
@@ -12,6 +11,7 @@ func canonicalTestPin() CompressorPin {
 	return CompressorPin{GoVersion: "1.26.0", BrotliVersion: "v1.2.1", GzipLevel: 9, BrotliQuality: 11}
 }
 
+// Test binaries omit module metadata; each case supplies its build identity.
 func withBuildIdentity(t *testing.T, version string, replaced bool) {
 	t.Helper()
 	previous := readBuildInfo
@@ -21,7 +21,7 @@ func withBuildIdentity(t *testing.T, version string, replaced bool) {
 		if replaced {
 			dep.Replace = &debug.Module{Path: "example.invalid/compressor", Version: version}
 		}
-		return &debug.BuildInfo{GoVersion: runtime.Version(), Deps: []*debug.Module{dep}}, true
+		return &debug.BuildInfo{GoVersion: "go1.26.0", Deps: []*debug.Module{dep}}, true
 	}
 }
 
@@ -95,8 +95,24 @@ func TestAssetMeasureRejectPinAndMVS(t *testing.T) {
 			t.Fatal("changed pin accepted")
 		}
 	}
-	readBuildInfo = func() (*debug.BuildInfo, bool) { return &debug.BuildInfo{GoVersion: runtime.Version()}, true }
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return &debug.BuildInfo{GoVersion: "go1.26.0"}, true }
 	if _, err := Measure(nil, canonicalTestPin()); err == nil {
 		t.Fatal("missing selected module accepted")
+	}
+}
+
+func TestAssetMeasureRejectCompilerIdentity(t *testing.T) {
+	withBuildIdentity(t, "v1.2.1", false)
+	for _, version := range []string{"", "go1.26.8"} {
+		readBuildInfo = func() (*debug.BuildInfo, bool) {
+			return &debug.BuildInfo{GoVersion: version, Deps: []*debug.Module{{Path: "github.com/andybalholm/brotli", Version: "v1.2.1"}}}, true
+		}
+		if _, err := Measure([]byte("body"), canonicalTestPin()); err == nil {
+			t.Fatal("compiler mismatch accepted")
+		}
+	}
+	readBuildInfo = func() (*debug.BuildInfo, bool) { return nil, false }
+	if _, err := Measure([]byte("body"), canonicalTestPin()); err == nil {
+		t.Fatal("missing build identity accepted")
 	}
 }
