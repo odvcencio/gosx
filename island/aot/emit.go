@@ -23,14 +23,30 @@ const (
 // pointer or zero on failure. Records occupy bounded working-arena slots;
 // committed roots and host effects are outside this expression library.
 type expressionEmitter struct {
-	unit      Unit
-	module    wasmgen.Module
-	functions []uint32
-	strings   map[string]stringConstant
-	helpers   [5]uint32
+	unit          Unit
+	module        wasmgen.Module
+	functions     []uint32
+	strings       map[string]stringConstant
+	helpers       [5]uint32
+	rootSlots     uint32
+	reserved      uint32
+	transactional bool
+	rootCopy      uint32
+	transactions  [4]uint32
 }
 
 func emitExpressions(u Unit) (*expressionEmitter, error) {
+	return emitScalarModule(u, 0, false)
+}
+
+func emitArenaExpressions(u Unit, roots uint32) (*expressionEmitter, error) {
+	return emitScalarModule(u, roots, true)
+}
+
+func emitScalarModule(u Unit, roots uint32, transactions bool) (*expressionEmitter, error) {
+	if roots > ProfileLimits().Values {
+		return nil, fmt.Errorf("scalar root layout exceeds the profile")
+	}
 	if r := Classify(u, ScalarDOMV1); !r.Eligible {
 		return nil, fmt.Errorf("scalar profile: %s[%d]: %s", r.Table, r.Index, r.Reason)
 	}
@@ -41,14 +57,19 @@ func emitExpressions(u Unit) (*expressionEmitter, error) {
 		}
 		return wasmgen.Signature{Params: params, Result: wasmgen.I32}
 	}
-	e := &expressionEmitter{unit: u, module: wasmgen.Module{
+	e := &expressionEmitter{unit: u, rootSlots: roots, transactional: transactions, module: wasmgen.Module{
 		Imports: []wasmgen.Import{
 			{Module: "gosx_aot_v1", Name: "input", Signature: sig(4)},
 			{Module: "gosx_aot_v1", Name: "bind", Signature: sig(4)},
 			{Module: "gosx_aot_v1", Name: "patch", Signature: sig(5)},
 		},
-		Globals: []wasmgen.Global{{Mutable: true}, {Mutable: true, Initial: 131072}},
+		Globals: []wasmgen.Global{{Mutable: true}, {Mutable: true, Initial: 131072 + int32(roots)*valueBytes},
+			{Mutable: true, Initial: int32(roots+uint32(len(u.Program.Exprs))) * valueBytes}, {Mutable: true, Initial: 131072}},
 	}}
+	e.reserved = (roots + uint32(len(u.Program.Exprs))) * valueBytes
+	if transactions {
+		e.memoryGlobals()
+	}
 	e.functions = make([]uint32, len(u.Program.Exprs))
 	e.module.Functions = make([]wasmgen.Function, len(u.Program.Exprs))
 	for i := range e.functions {
@@ -64,6 +85,9 @@ func emitExpressions(u Unit) (*expressionEmitter, error) {
 		}
 		fn.Signature = sig(1)
 		e.module.Functions[i] = fn
+	}
+	if transactions {
+		e.setupTransactions()
 	}
 	binary, err := wasmgen.Encode(e.module)
 	if err == nil {

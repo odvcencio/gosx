@@ -26,7 +26,7 @@ func i32Signature(count int) wasmgen.Signature {
 }
 
 func (e *expressionEmitter) setupStrings() error {
-	needed := false
+	needed := e.transactional
 	formatNeeded := false
 	values := map[string]bool{}
 	for i, expr := range e.unit.Program.Exprs {
@@ -61,7 +61,6 @@ func (e *expressionEmitter) setupStrings() error {
 	if len(e.module.Data) > wasmgen.MaxDataBytes {
 		return fmt.Errorf("string constants exceed the constant segment")
 	}
-	e.module.Globals = append(e.module.Globals, wasmgen.Global{Mutable: true, Initial: int32(len(e.functions) * valueBytes)})
 	for i := range e.helpers {
 		e.helpers[i] = uint32(len(e.module.Imports) + len(e.module.Functions) + i)
 	}
@@ -107,7 +106,7 @@ func (e *expressionEmitter) allocateFunction() wasmgen.Function {
 	b.get(2)
 	b.op(0xa7)
 	b.index(0x24, allocationGlobal)
-	b.index(0x23, workingBaseGlobal)
+	b.index(0x23, arenaBaseGlobal)
 	b.get(1)
 	b.op(0x6a)
 	b.op(0x0b)

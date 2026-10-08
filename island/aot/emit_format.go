@@ -29,8 +29,8 @@ func (b *instructions) numericShape(record uint32, flags int32, zeroNumber bool)
 	}
 }
 
-func (b *instructions) typeBranch(typ program.ExprType) {
-	b.get(1)
+func (b *instructions) typeBranch(local uint32, typ program.ExprType) {
+	b.get(local)
 	b.i32(int32(typ))
 	b.op(0x46)
 	b.op(0x04)
@@ -58,10 +58,10 @@ func (e *expressionEmitter) formatFunction() wasmgen.Function {
 	b.get(0)
 	b.memory(0x28, 2, 0)
 	b.set(1)
-	b.typeBranch(program.TypeString)
+	b.typeBranch(1, program.TypeString)
 	b.textFields(0, 3, 4)
 	b.op(0x05)
-	b.typeBranch(program.TypeInt)
+	b.typeBranch(1, program.TypeInt)
 	b.numericShape(0, 0, false)
 	b.get(0)
 	b.memory(0x29, 3, 8)
@@ -137,7 +137,7 @@ func (e *expressionEmitter) formatFunction() wasmgen.Function {
 	b.op(0x6b)
 	b.set(3)
 	b.op(0x05)
-	b.typeBranch(program.TypeBool)
+	b.typeBranch(1, program.TypeBool)
 	b.numericShape(0, 2, true)
 	b.get(0)
 	b.memory(0x28, 2, 4)
@@ -148,7 +148,7 @@ func (e *expressionEmitter) formatFunction() wasmgen.Function {
 	e.constantText(&b, "false")
 	b.op(0x0b)
 	b.op(0x05)
-	b.typeBranch(program.TypeAny)
+	b.typeBranch(1, program.TypeAny)
 	b.numericShape(0, 0, true)
 	e.constantText(&b, "0")
 	b.op(0x05)
