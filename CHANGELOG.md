@@ -10,6 +10,8 @@
   page error rows are derived without displacing pages. Selection orders paths
   before kind priority and retains at most twice the route limit. Page-panic
   errors retain the registered page pattern in request and document metadata.
+- Independently check retained gauge and histogram heap, including their
+  leased snapshot storage, against the existing byte reservations.
 
 - Export bounded, copied metric snapshots and deterministic Prometheus text
   with shared admission, consistent histogram buckets, and a 2 MiB output cap.
@@ -18,6 +20,9 @@
   bounded capacity; the default request inventory fits the unchanged budget.
   Network adapters must render into their own buffer and release the snapshot
   lease before writing a response.
+- Insert single metric tuple admissions into their sorted position instead of
+  sorting the whole family. Retained-heap checks cover counters, gauges and
+  histograms under the existing memory reservations.
 
 - Add a bounded metric registry with finite label domains, atomic tuple batches,
   scalar sample and byte reservations, sealed registration, and consistent
@@ -26,6 +31,12 @@
   Batch admission sorts once and reserves measured object and slice capacity;
   counters and gauges retain no unused histogram state. The default request
   metric inventory fits the unchanged sample and byte budgets.
+- App shutdown is terminal. The HTTP server drains before scheduled work,
+  followed by resource Drain and Flush hooks. Scheduled cancellation preserves
+  `context.Canceled`; deadline shutdowns reserve time for hooks even when a
+  cancelled task is still stopping.
+- `scheduled.Scheduler.ShutdownGrace` exposes the configured cooperative window
+  so the server can honor it when coordinating a deadline shutdown.
 
 - Add named App shutdown hooks: drain HTTP and scheduled work before source
   drains, then flush in reverse registration order. Concurrent shutdown callers
@@ -41,15 +52,45 @@
   `UseShutdownSource` registers an existing resource owner through a structural
   signal/drain contract. Hub shutdown integration stays in the hub package, so
   ordinary server imports do not acquire a WebSocket dependency.
+- Hub closing retires every observer and drains admitted callbacks before
+  delivering Closed. Closed is the final callback, including after Close returns;
+  callbacks must remain bounded and cannot wait for that same hub to close.
 
 - Add additive hub observers configured before the first connection, with
   logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
   classifications. Connection rejections are separate from malformed and
   rate-limited messages; observers preserve existing hub panic diagnostics.
   Embed `NoopObserver` for future callbacks. Closing detaches subscriptions
-  before `Closed`; already admitted callbacks may overlap completion.
+  before `Closed` and drains admitted callbacks before completion.
   `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
+- Add controller payload projections and named intent events, pointer drag/drop
+  with correlated Scene3D/native ray hits, and modal
+  focus owners with inert backgrounds and return focus. The input runtime loads
+  only for configured input or storage contracts and releases its state on page disposal. Go-WASM
+  engines can consume typed requests with `wasm.SubscribeSignal[T]` and publish
+  native hits with `Context.SetSignal`.
+
+- Ship the controller input chunk in dev servers and static exports as well as
+  production builds. Cancel pending controller mounts on page disposal, end
+  tap gestures with a cancellation phase, and wrap modal Tab navigation to
+  the first or last control independently of initial focus.
+
+- Define controller-local pick ray and hit types, preserving the scene JSON
+  shape without linking scene rendering dependencies into ordinary servers.
+
+## v0.57.6
+
+- Apply Scene3D `SetTransformCommand` to a `Model` root ID. Retained rigid
+  models update their parent matrices while preserving imported primitive
+  materials, immutable geometry, and GPU residency. Commands during asset
+  loading supersede stale hydration; fitted models retain their fit scale.
+- Keep compatible committed actors moving while newcomers load; failed or
+  superseded hydration cannot restore an older pose or retain retired wrappers.
+  Cache explicit instanced CPU skin/node/morph playback owners across pose and
+  membership updates, retain zero-scale nonnegative instances, defer early
+  binary pose frames until hydration commits, and bound playback ownership to
+  the current scene membership.
 
 - Preserve public immutable caching for framework runtime JS/WASM, emitted
   assets, hashed images and versioned public assets when global auth middleware
@@ -70,6 +111,12 @@
 - Export `signal.NewShared[T]` and `signal.Shared[T]` for typed native Go and
   island authoring. Native calls create independent values; browser lowering
   retains the existing shared `$name` contract.
+- Keep `gosx perf` runtime-ready wrappers stable across bootstrap chaining and
+  reassignment. Saved callbacks retain their original handler, preventing
+  recursion and recording readiness once.
+- Skip the prerender subprocess when there are no static routes. Set
+  `build.prerender.enabled` to `false` to build production assets and a server
+  without starting an app that requires authentication or database setup.
 
 - Keep file pages with `Load` or `Actions` dynamic unless their route config
   explicitly enables prerendering. Warn when an opted-in loader page has no
