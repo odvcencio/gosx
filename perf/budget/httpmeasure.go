@@ -198,7 +198,9 @@ func measureMIME(kind, mediaType string) bool {
 		return mediaType == "application/wasm"
 	case "css":
 		return mediaType == "text/css"
-	case "program", "model", "other":
+	case "model":
+		return mediaType == "model/gltf-binary" || mediaType == "model/gltf+json" || mediaType == "application/octet-stream" || mediaType == "application/json"
+	case "program", "other":
 		return mediaType == "application/octet-stream" || mediaType == "application/json"
 	case "font":
 		return mediaType == "font/woff2" || mediaType == "font/woff" || mediaType == "application/font-woff"
