@@ -190,6 +190,63 @@ func TestAppShutdownClosesTelemetryWorker(t *testing.T) {
 	}
 }
 
+func TestBuildSealsInactiveTelemetryRegistry(t *testing.T) {
+	for _, state := range []string{"closed", "worker_failed"} {
+		t.Run(state, func(t *testing.T) {
+			o := aggregateCoreOptions(t)
+			tick := &controlledTicker{ch: make(chan time.Time)}
+			o.Clock = controlledClock{tick}
+			a := server.New()
+			tel, err := Enable(a, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = tel.Close(context.Background()) })
+			registry := tel.Metrics()
+			counter, err := registry.NewCounter(metric.CounterOptions{
+				Name: "turns_total", Labels: []metric.Label{{Name: "phase", Values: []string{"before", "after"}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := counter.Bind("before"); err != nil {
+				t.Fatal(err)
+			}
+			if state == "closed" {
+				if err := tel.Close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				close(tick.ch)
+				select {
+				case <-tel.done:
+				case <-time.After(time.Second):
+					t.Fatal("failed clock worker did not stop")
+				}
+				if err := tel.Close(context.Background()); !errors.Is(err, ErrInvalidOptions) {
+					t.Fatal("worker failure was not reported", err)
+				}
+			}
+			if tel.Enabled() || registry.Usage().Sealed {
+				t.Fatal("expected inactive telemetry with registration still open before Build")
+			}
+			a.Build()
+			if !registry.Usage().Sealed {
+				t.Fatal("Build did not seal the inactive telemetry registry")
+			}
+			if _, err := registry.NewCounter(metric.CounterOptions{Name: "late_total"}); !errors.Is(err, ErrAfterBuild) {
+				t.Fatal("Build allowed a new metric", err)
+			}
+			if _, err := counter.Bind("after"); !errors.Is(err, ErrAfterBuild) {
+				t.Fatal("Build allowed a new tuple", err)
+			}
+			if _, err := counter.Bind("before"); err != nil {
+				t.Fatal("Build rejected an existing tuple", err)
+			}
+		})
+	}
+}
+
 func TestCoreMetricsUseElapsedTimeAndPublicRegistry(t *testing.T) {
 	o := aggregateCoreOptions(t)
 	c := telemetrytest.NewClock(time.Unix(1234, 500000000))
