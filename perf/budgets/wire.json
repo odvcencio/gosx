@@ -15,7 +15,7 @@
           "imageWireBytes": 256,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 248404,
-          "lazyJsWireBytes": 196635,
+          "lazyJsWireBytes": 198737,
           "requests": 9,
           "totalWireBytes": 991968,
           "wasmWireBytes": 650787
@@ -33,7 +33,7 @@
           "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014).",
-          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 210845 bytes against the previous 209925-byte limit; the new 212953-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them.",
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 210845 bytes against the previous 209925-byte limit; the new 212953-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them. Particle bursts and demand-loaded timeline playback measured 196770 bytes against the previous 196635-byte limit; the new 198737-byte limit uses the existing wire tolerance (decision 0014).",
           "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 11 against the previous 8 limit. The new 11 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
           "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3416 bytes measured."
         }
@@ -100,7 +100,7 @@
           "imageWireBytes": 8404,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 230415,
-          "lazyJsWireBytes": 196635,
+          "lazyJsWireBytes": 198737,
           "requests": 7,
           "totalWireBytes": 959647,
           "wasmWireBytes": 650787
@@ -119,7 +119,7 @@
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
           "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014).",
-          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 194773 bytes against the previous 193692-byte limit; the new 196720-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them.",
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 194773 bytes against the previous 193692-byte limit; the new 196720-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them. Particle bursts and demand-loaded timeline playback measured 196770 bytes against the previous 196635-byte limit; the new 198737-byte limit uses the existing wire tolerance (decision 0014).",
           "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 10 against the previous 6 limit. The new 10 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load. The accessible Scene3D poster adds one image request to the initial page load (6 to 7).",
           "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3416 bytes measured."
         }
@@ -132,7 +132,7 @@
           "imageWireBytes": 191105,
           "inlineScriptBytes": 111586,
           "jsWireBytes": 236944,
-          "lazyJsWireBytes": 196635,
+          "lazyJsWireBytes": 198737,
           "requests": 14,
           "totalWireBytes": 1180112,
           "wasmWireBytes": 650787
@@ -150,7 +150,7 @@
           "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +105 bytes measured.",
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 242836 bytes against the previous 236674-byte limit; the new 245264-byte limit uses the existing wire tolerance (decision 0014).",
-          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 194773 bytes against the previous 193692-byte limit; the new 196720-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them.",
+          "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 194773 bytes against the previous 193692-byte limit; the new 196720-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them. Particle bursts and demand-loaded timeline playback measured 196770 bytes against the previous 196635-byte limit; the new 198737-byte limit uses the existing wire tolerance (decision 0014).",
           "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 17 against the previous 13 limit. The new 17 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
           "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3415 bytes measured.",
           "imageWireBytes": "Scene-aware startup hints preload the first water tile and five cube-map faces alongside the accessible poster. Lossless progressive JPEG encoding preserves every decoded pixel while reducing the required image bytes."

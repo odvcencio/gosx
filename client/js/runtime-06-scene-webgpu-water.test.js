@@ -260,7 +260,7 @@ test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
   assert.match(source, /SCENE_ELIO_SKIN_LBS_SOURCE/);
   assert.match(source, /Emitted by m31labs\.dev\/elio\/emit\/wgsl from stdlib\.Skin\(\)/);
   assert.match(source, /@compute @workgroup_size\(64\)/);
-  assert.match(source, /device\.createComputePipeline\(\{[\s\S]*label: "gosx-elio-skin-lbs"/);
+  assert.match(source, /wgpuCreateValidatedPipeline\(device, "compute", \{[\s\S]*label: "gosx-elio-skin-lbs"/);
   assert.match(source, /updateElioSkinnedMeshes\(bundle, encoder\)/);
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
@@ -482,7 +482,7 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.match(webgpu, /waterAuthoredSurfacePipelineLastError = ""/);
   assert.doesNotMatch(webgpu, /var validationDevice = authored \? device : null/);
   assert.doesNotMatch(webgpu, /validationDevice\.pushErrorScope\("validation"\)/);
-  assert.match(webgpu, /var pipeline = device\.createRenderPipeline\(descriptor\)/);
+  assert.match(webgpu, /var pipeline = wgpuCreateValidatedPipeline\(device, "render", descriptor\)/);
   assert.match(webgpu, /pending: false/);
   assert.doesNotMatch(webgpu, /wgpuPopScopedErrorScope\(validationDevice\)\.then/);
   assert.doesNotMatch(webgpu, /waterAuthoredSurfacePipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
@@ -982,7 +982,7 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
   assert.match(webgpu, /WATER_CAUSTICS_TEXTURE_SIZE = 1024/);
   assert.match(webgpu, /waterCausticsBindGroupLayout = device\.createBindGroupLayout/);
   assert.match(webgpu, /waterCausticsPipelineLayout = device\.createPipelineLayout/);
-  assert.match(webgpu, /waterCausticsPipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /waterCausticsPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
   assert.match(webgpu, /label: "gosx-water-caustics-pass"/);
   assert.match(webgpu, /format: WATER_CAUSTICS_TEXTURE_FORMAT/);
   assert.match(webgpu, /function sceneWaterCausticsResolution/);
@@ -1090,9 +1090,9 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /waterObjectMeshShadowBindGroupLayout = device\.createBindGroupLayout/);
   assert.match(webgpu, /waterObjectTexturePipelineLayout = device\.createPipelineLayout/);
   assert.match(webgpu, /waterObjectMeshShadowPipelineLayout = device\.createPipelineLayout/);
-  assert.match(webgpu, /waterObjectTexturePipeline = device\.createRenderPipeline/);
-  assert.match(webgpu, /waterObjectShadowPipeline = device\.createRenderPipeline/);
-  assert.match(webgpu, /waterObjectMeshShadowPipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /waterObjectTexturePipeline = wgpuCreateValidatedPipeline\(device, "render",/);
+  assert.match(webgpu, /waterObjectShadowPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
+  assert.match(webgpu, /waterObjectMeshShadowPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
   // The hand-written data-prop-authored object-shadow/object-mesh-shadow
   // pipeline tier has been retired: both passes resolve Selena-primary
   // falling through directly to the builtin waterObjectShadowPipeline/
@@ -1105,8 +1105,8 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectShadowWGSL"\)/);
   assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowVertexWGSL"\)/);
   assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowFragmentWGSL"\)/);
-  assert.match(webgpu, /pass\.setPipeline\(waterObjectShadowPipeline\)/);
-  assert.match(webgpu, /pass\.setPipeline\(waterObjectMeshShadowPipeline\)/);
+  assert.match(webgpu, /pass\.setPipeline\(wgpuRequirePipeline\(waterObjectShadowPipeline\)\)/);
+  assert.match(webgpu, /pass\.setPipeline\(wgpuRequirePipeline\(waterObjectMeshShadowPipeline\)\)/);
   assert.match(webgpu, /waterObjectMeshRefractionFragmentModule = device\.createShaderModule/);
   assert.match(webgpu, /waterObjectMeshClippedFragmentModule = device\.createShaderModule/);
   assert.match(webgpu, /waterObjectMeshShadowVertexModule = device\.createShaderModule/);

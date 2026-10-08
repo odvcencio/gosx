@@ -19,6 +19,7 @@
         "../runtime/host/disclosure.ts",
         "../runtime/host/request.ts",
         "../runtime/host/actions.ts",
+        "../runtime/scene3d/script-loader.ts",
         "../runtime/scene3d/command-bridge.ts",
         "../runtime/scene3d/instance-stream-bridge.ts",
         "../runtime/host/regions.ts",
@@ -89,6 +90,7 @@
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
+        "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
@@ -198,6 +200,12 @@
       ]
     },
     {
+      "name": "bootstrap-controller-input.js",
+      "sources": [
+        "../runtime/host/controller-input.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
         "bootstrap-src/26i-feature-textlayout-prefix.ts",
@@ -209,6 +217,7 @@
       "name": "bootstrap-feature-scene3d.js",
       "sources": [
         "bootstrap-src/26d-feature-scene3d-prefix.ts",
+        "../runtime/scene3d/script-loader.ts",
         "../runtime/scene3d/command-bridge.ts",
         "../runtime/scene3d/instance-stream-bridge.ts",
         "bootstrap-src/10-runtime-primitives.ts",
@@ -242,6 +251,7 @@
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
+        "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"
       ]
@@ -285,6 +295,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-pipeline-recovery.js",
+      "sources": [
+        "../runtime/scene3d/pipeline-recovery.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-webgpu.js",
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
@@ -324,6 +340,18 @@
         "../runtime/scene3d/vessel-model.ts",
         "../runtime/scene3d/vessel-wake.ts",
         "../runtime/scene3d/mount-vessel.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-particle-burst.js",
+      "sources": [
+        "../runtime/scene3d/particle-burst.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-timeline.js",
+      "sources": [
+        "../runtime/scene3d/timeline.ts"
       ]
     },
     {

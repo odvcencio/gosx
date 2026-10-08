@@ -13,67 +13,23 @@
   if (typeof window === "undefined" || window.__gosxScene3DBridge) return;
   window.__gosxScene3DBridge = true;
   var api = (window.__gosx = window.__gosx || {}).scene3d = window.__gosx.scene3d || {};
-  var commandPromise = null;
   var recoveryKey = "gosx:scene3d:force-webgl-next";
 
-  function commandURL() {
-    try {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
-      if (tag && tag.dataset && tag.dataset.gosxScene3dCommandUrl) return tag.dataset.gosxScene3dCommandUrl;
-    } catch (_e) {}
-    return "/gosx/bootstrap-feature-scene3d-command.js";
-  }
-
   function loadCommandBridge() {
-    if (window.__gosx_scene3d_command_bridge) return Promise.resolve(window.__gosx_scene3d_command_bridge);
-    if (commandPromise) return commandPromise;
-    commandPromise = new Promise(function(resolve, reject) {
-      var script = document.createElement("script");
-      script.src = commandURL();
-      script.async = true;
-      script.type = "text/javascript";
-      script.crossOrigin = "anonymous";
-      script.referrerPolicy = "no-referrer";
-      if (typeof script.setAttribute === "function") {
-        script.setAttribute("src", script.src);
-        script.setAttribute("type", "text/javascript");
-        script.setAttribute("crossorigin", "anonymous");
-        script.setAttribute("referrerpolicy", "no-referrer");
-      }
-      if (typeof gosxApplyCurrentScriptNonce === "function") {
-        gosxApplyCurrentScriptNonce(script);
-      }
-      script.onload = function() { resolve(window.__gosx_scene3d_command_bridge); };
-      script.onerror = function(err) {
-        commandPromise = null;
-        reject(err);
-      };
-      (document.head || document.documentElement || document.body).appendChild(script);
-    });
-    return commandPromise;
+    return ensureSceneGatedFeatureLoaded("command", "gosxScene3dCommandUrl", "/gosx/bootstrap-feature-scene3d-command.js");
   }
 
   window.__gosx_scene3d_apply_command_scripts = function(root) {
     return loadCommandBridge().then(function(bridge) { return bridge && bridge.applyCommandScripts(root); });
   };
 
-  api.dispatchCommands = function(target, commands, options) {
-    return loadCommandBridge().then(function(bridge) { return bridge.dispatchCommands(target, commands, options); });
-  };
-  api.dispatchPoseFrame = function(target, frame, options) {
-    return loadCommandBridge().then(function(bridge) { return bridge.dispatchPoseFrame(target, frame, options); });
-  };
-  // GSP3 motion frame (see command-runtime.ts's "GPU-driven crowd motion"
-  // section). Same lazy-load contract as dispatchPoseFrame above: the first
-  // call to either fetches the one shared command-runtime chunk.
-  // @ts-ignore TS7006 -- untyped, matching this file's convention.
-  // the expect-error form would report this directive unused under
-  // tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent
-  // either way.
-  api.dispatchMotionFrame = function(target, frame, options) {
-    // @ts-ignore TS7006 -- untyped, matching this file's convention.
-    return loadCommandBridge().then(function(bridge) { return bridge.dispatchMotionFrame(target, frame, options); });
-  };
+  // All public command and presentation calls share one demand-loaded bridge.
+  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline", "burstParticles"].forEach(function(method) {
+    api[method] = function() {
+      const args = arguments;
+      return loadCommandBridge().then(function(bridge) { return bridge[method](...args); });
+    };
+  });
   function forceWebGLRequested() {
     if (window.__gosx_scene3d_force_webgl === true) return true;
     try {

@@ -25,21 +25,22 @@
     return Boolean(handle && handle.__gosxScene3DCommandReady === true && typeof handle.applyCommands === "function");
   }
 
-  // GSP2 is a pose frame. Validate the entire buffer before the
-  // mounted renderer sees it, so malformed or truncated frames change nothing.
-  function decodePoseFrame(input) {
+  // GSP2 and GSP3 share strict framing, IDs and scalar validation. Format
+  // fields remain separate, and nothing reaches the renderer until decoding ends.
+  function decodeInstanceFrame(input: any, motion: boolean) {
+    var kind = "Scene3D " + (motion ? "motion" : "pose");
     var bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
-    if (!(bytes instanceof Uint8Array)) throw new TypeError("Scene3D pose frame must be an ArrayBuffer or Uint8Array");
+    if (!(bytes instanceof Uint8Array)) throw new TypeError(kind + " frame must be an ArrayBuffer or Uint8Array");
     var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
     var decoder = new TextDecoder("utf-8", { fatal: true });
     var offset = 0;
-    function need(size) {
-      if (size > view.byteLength - offset) throw new RangeError("truncated Scene3D pose frame");
+    function need(size: number) {
+      if (size > view.byteLength - offset) throw new RangeError("truncated " + kind + " frame");
     }
     function u16() { need(2); var value = view.getUint16(offset, true); offset += 2; return value; }
     function id() {
       var length = u16();
-      if (!length) throw new TypeError("empty Scene3D pose ID");
+      if (!length) throw new TypeError("empty " + kind + " ID");
       need(length);
       var value = decoder.decode(bytes.subarray(offset, offset + length));
       offset += length;
@@ -49,12 +50,12 @@
       need(4);
       var value = view.getFloat32(offset, true);
       offset += 4;
-      if (!Number.isFinite(value)) throw new TypeError("non-finite Scene3D pose value");
+      if (!Number.isFinite(value)) throw new TypeError("non-finite " + kind + " value");
       return value;
     }
     need(6);
-    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || view.getUint8(3) !== 50) {
-      throw new TypeError("unsupported Scene3D pose frame version");
+    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || view.getUint8(3) !== (motion ? 51 : 50)) {
+      throw new TypeError("unsupported " + kind + " frame version");
     }
     offset = 4;
     var clipCount = u16();
@@ -71,31 +72,47 @@
     var batchIDs = new Set();
     for (var i = 0; i < count; i++) {
       var batchID = id();
-      if (batchIDs.has(batchID)) throw new TypeError("duplicate Scene3D pose batch ID");
+      if (batchIDs.has(batchID)) throw new TypeError("duplicate " + kind + " batch ID");
       batchIDs.add(batchID);
       var instanceCount = u16();
       var instances = [];
       var instanceIDs = new Set();
       for (var j = 0; j < instanceCount; j++) {
         var instanceID = id();
-        if (instanceIDs.has(instanceID)) throw new TypeError("duplicate Scene3D pose instance ID");
+        if (instanceIDs.has(instanceID)) throw new TypeError("duplicate " + kind + " instance ID");
         instanceIDs.add(instanceID);
-        var instance = { id: instanceID, x: number(), y: number(), z: number(), rotationX: number(), rotationY: number(), rotationZ: number(), scaleX: number(), scaleY: number(), scaleZ: number(), animationTime: number(), animation: "", animationLoop: false };
-        if (instance.animationTime < 0) throw new TypeError("negative Scene3D animation time");
+        var instance: any = { id: instanceID };
+        if (motion) {
+          for (const side of ["prev", "next"]) {
+            for (const field of poseFields.slice(0, 9)) {
+              instance[side + field[0].toUpperCase() + field.slice(1)] = number();
+            }
+            instance[side === "prev" ? "tPrev" : "tNext"] = number();
+          }
+          if (!(instance.tNext > instance.tPrev)) throw new RangeError("Scene3D motion frame requires tNext after tPrev");
+        } else {
+          for (const field of poseFields.slice(0, 9)) instance[field] = number();
+          instance.animationTime = number();
+          if (instance.animationTime < 0) throw new TypeError("negative Scene3D animation time");
+        }
         var clipIndex = u16();
         if (clipIndex >= clips.length) throw new RangeError("unknown Scene3D animation clip index");
         instance.animation = clips[clipIndex];
+        if (motion) instance.clipStartTime = number();
         need(1);
         var loop = view.getUint8(offset++);
         if (loop > 1) throw new TypeError("invalid Scene3D animation loop flag");
         instance.animationLoop = loop === 1;
+        if (motion) instance.playbackRate = number();
         instances.push(instance);
       }
       batches.push({ id: batchID, instances: instances });
     }
-    if (offset !== view.byteLength) throw new RangeError("trailing Scene3D pose frame data");
+    if (offset !== view.byteLength) throw new RangeError("trailing " + kind + " frame data");
     return batches;
   }
+
+  function decodePoseFrame(input) { return decodeInstanceFrame(input, false); }
 
   function record(target, options) {
     if (ready(target)) return { handle: target, mount: null };
@@ -119,20 +136,89 @@
     });
   }
 
+  // Commands, binary frames and presentation share readiness and timeout handling.
+  // Validation and fallback remain in their format-specific callers.
+  function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void) => unknown) {
+    var id = key(target, opts);
+    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
+    return new Promise<any>(function poll(resolve, reject) {
+      var rec = record(target, opts);
+      if (rec) return apply(rec, resolve, reject);
+      if (!id) return reject(new Error("Scene3D " + format + " target is not ready and has no stable id"));
+      if (Date.now() >= deadline) return reject(new Error("Scene3D " + format + " target did not become ready: " + id));
+      setTimeout(function() { poll(resolve, reject); }, 16);
+    });
+  }
+
   function dispatchCommands(target, commands, options) {
     if (!Array.isArray(commands)) return Promise.reject(new TypeError("Scene3D commands must be an array"));
     var opts = options || {};
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
     var rev = ++revision;
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) return apply(rec, commands, rev).then(resolve, reject);
-      if (!id) return reject(new Error("Scene3D command target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D command target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
+    return waitForCommandMount(target, opts, "command", function(rec, resolve, reject) {
+      return apply(rec, commands, rev).then(resolve, reject);
+    });
+  }
+
+  const sceneAPI = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
+
+  // One adapter per handle, shared by optional presentation features. Lower
+  // orders run first, regardless of the order in which chunks were loaded.
+  const commandHooks = new WeakMap<object, any>();
+  function addCommandHook(mount: any, handle: any, name: string, order: number,
+    beforeCommands: (commands: any[]) => void, dispose: () => void, alive: () => boolean) {
+    let rec = commandHooks.get(handle);
+    if (!rec) {
+      const apply = handle.applyCommands, teardown = handle.dispose;
+      rec = { hooks: new Map(), ordered: [], observer: null };
+      const close = () => {
+        if (!commandHooks.delete(handle)) return;
+        rec.observer?.disconnect();
+        if (handle.applyCommands === rec.commands) handle.applyCommands = apply;
+        if (handle.dispose === rec.dispose) handle.dispose = teardown;
+        const hooks = rec.ordered;
+        rec.hooks.clear(); rec.ordered = [];
+        let failure;
+        for (const hook of hooks) {
+          try { hook.dispose(); } catch (error) { failure ??= error; }
+        }
+        if (failure) throw failure;
+      };
+      rec.commands = handle.applyCommands = function(commands: any[]) {
+        for (const hook of rec.ordered) hook.beforeCommands(commands);
+        return apply.call(handle, commands);
+      };
+      rec.dispose = handle.dispose = function() { try { close(); } finally { teardown?.apply(handle, arguments); } };
+      rec.apply = (commands: any[]) => apply.call(handle, commands);
+      if (typeof MutationObserver !== 'undefined') {
+        rec.observer = new MutationObserver(() => { if (!alive() || !mount.isConnected) close(); });
+        rec.observer.observe(mount, { attributes: true, attributeFilter: ['data-gosx-scene3d-command-ready'] });
+        if (mount.parentNode) rec.observer.observe(mount.parentNode, { childList: true });
+      }
+      commandHooks.set(handle, rec);
     }
-    return new Promise(poll);
+    rec.hooks.set(name, { order, beforeCommands, dispose });
+    rec.ordered = Array.from(rec.hooks.values()).sort((a: any, b: any) => a.order - b.order);
+    return rec.apply;
+  }
+  sceneAPI.addCommandHook = addCommandHook;
+
+  async function playPresentation(target: any, plan: any, opts: any, kind: string, method: string, datasetKey: string) {
+    opts ||= {};
+    const rec = record(target, opts) || await waitForCommandMount(target, opts, kind, (rec, resolve) => resolve(rec));
+    if (!rec.mount && typeof rec.handle[method] === "function") return Promise.resolve().then(() => rec.handle[method](plan));
+    const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
+    if (!mount) throw new Error("Scene3D " + kind + " mount is unavailable");
+    const api = await sceneAPI.loadPresentation(kind, datasetKey);
+    if (api.load) await api.load();
+    return api.attach(plan, mount, rec.handle, () => mount.__gosxScene3DHandle === rec.handle);
+  }
+
+  function playTimeline(...args: any[]) {
+    return playPresentation(args[0], args[1], args[2], "timeline", "playTimeline", "gosxScene3dTimelineUrl");
+  }
+
+  function burstParticles(...args: any[]) {
+    return playPresentation(args[0], args[1], args[2], "particle-burst", "burstParticles", "gosxScene3dParticleBurstUrl");
   }
 
   function dispatchPoseFrame(target, frame, options) {
@@ -176,18 +262,18 @@
     });
   }
 
-  function poseStats(target, opts) {
-    var queue = poseQueues.get(key(target, opts) || target);
-    var rec = record(target, opts);
-    if (rec && rec.handle.__gosxPoseFrameStats) return rec.handle.__gosxPoseFrameStats;
-    var stats = queue && queue.stats || {
-      accepted: 0, plannerCallsSkipped: 0, fallback: 0, superseded: 0,
-      errors: 0, lastError: "", rejected: Object.create(null),
-    };
+  function frameStats(target: any, opts: any, motion: boolean) {
+    const queue = (motion ? motionQueues : poseQueues).get(key(target, opts) || target);
+    const rec = record(target, opts), property = "__gosx" + (motion ? "Motion" : "Pose") + "FrameStats";
+    if (rec && rec.handle[property]) return rec.handle[property];
+    const stats = queue && queue.stats || { accepted: 0, superseded: 0, errors: 0, lastError: "", rejected: Object.create(null) };
+    if (!motion && !queue?.stats) Object.assign(stats, { plannerCallsSkipped: 0, fallback: 0 });
     if (queue) queue.stats = stats;
-    if (rec) rec.handle.__gosxPoseFrameStats = stats;
+    if (rec) rec.handle[property] = stats;
     return stats;
   }
+
+  function poseStats(target, opts) { return frameStats(target, opts, false); }
 
   function runPoseQueue(queueKey, queue) {
     var job = queue.pending;
@@ -238,20 +324,11 @@
     }
     var batches;
     try { batches = decodePoseFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) {
-        poseStats(target, opts);
-        if (typeof rec.handle.applyPoseFrame !== "function") return reject(new Error("Scene3D pose frames are unsupported by this mount"));
-        return Promise.resolve().then(function() { return rec.handle.applyPoseFrame(batches); }).then(resolve, reject);
-      }
-      if (!id) return reject(new Error("Scene3D pose frame target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D pose frame target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
-    }
-    return new Promise(poll).catch(fallback);
+    return waitForCommandMount(target, opts, "pose frame", function(rec, resolve, reject) {
+      poseStats(target, opts);
+      if (typeof rec.handle.applyPoseFrame !== "function") return reject(new Error("Scene3D pose frames are unsupported by this mount"));
+      return Promise.resolve().then(function() { return rec.handle.applyPoseFrame(batches); }).then(resolve, reject);
+    }).catch(fallback);
   }
 
   function applyMountedPoseFrame(state, batches, updateRigidPoses, scheduleRender, handle) {
@@ -333,107 +410,10 @@
     return { applied: true, binary: true };
   }
 
-  // ---------------------------------------------------------------------------
-  // GPU-driven crowd motion (GSP3) -- the parallel, backward-compatible
-  // sibling of the GSP2 pose-frame channel above. A MotionFrame carries a
-  // previous and a next transform (with scene-clock timestamps) and
-  // GPU-evaluated animation state per instance, instead of a single
-  // continuously-updated pose; see scene/motion_frame.go's MotionFrame doc
-  // comment and animation.ts's "GPU-driven crowd motion" section for the
-  // full design. Existing PoseFrame callers are unaffected: nothing above
-  // this comment changes.
-  // ---------------------------------------------------------------------------
+  // GPU-driven crowd motion retains its own queues and mount validation.
   var motionQueues = new Map();
 
-  // decodeMotionFrame validates the entire GSP3 buffer before the mounted
-  // renderer sees it, mirroring decodePoseFrame's fail-closed contract
-  // exactly (magic, version, lengths, duplicate IDs, finite values) plus one
-  // check GSP2 has no equivalent for: TNext must be strictly after TPrev
-  // (see scene/motion_frame.go's EncodeMotionFrame, which rejects the same
-  // condition at the source) -- otherwise the shader's per-instance
-  // interpolation factor could divide by a near-zero or negative span.
-  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-  function decodeMotionFrame(input) {
-    var bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
-    if (!(bytes instanceof Uint8Array)) throw new TypeError("Scene3D motion frame must be an ArrayBuffer or Uint8Array");
-    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    var decoder = new TextDecoder("utf-8", { fatal: true });
-    var offset = 0;
-    // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-    function need(size) { if (size > view.byteLength - offset) throw new RangeError("truncated Scene3D motion frame"); }
-    function u16() { need(2); var value = view.getUint16(offset, true); offset += 2; return value; }
-    function id() {
-      var length = u16();
-      if (!length) throw new TypeError("empty Scene3D motion ID");
-      need(length);
-      var value = decoder.decode(bytes.subarray(offset, offset + length));
-      offset += length;
-      return value;
-    }
-    function number() {
-      need(4);
-      var value = view.getFloat32(offset, true);
-      offset += 4;
-      if (!Number.isFinite(value)) throw new TypeError("non-finite Scene3D motion value");
-      return value;
-    }
-    need(6);
-    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || view.getUint8(3) !== 51) {
-      throw new TypeError("unsupported Scene3D motion frame version");
-    }
-    offset = 4;
-    var clipCount = u16();
-    var clips = [""];
-    var clipIDs = new Set();
-    for (var c = 0; c < clipCount; c++) {
-      var clip = id();
-      if (clipIDs.has(clip)) throw new TypeError("duplicate Scene3D animation clip");
-      clipIDs.add(clip);
-      clips.push(clip);
-    }
-    var count = u16();
-    var batches = [];
-    var batchIDs = new Set();
-    for (var i = 0; i < count; i++) {
-      var batchID = id();
-      if (batchIDs.has(batchID)) throw new TypeError("duplicate Scene3D motion batch ID");
-      batchIDs.add(batchID);
-      var instanceCount = u16();
-      var instances = [];
-      var instanceIDs = new Set();
-      for (var j = 0; j < instanceCount; j++) {
-        var instanceID = id();
-        if (instanceIDs.has(instanceID)) throw new TypeError("duplicate Scene3D motion instance ID");
-        instanceIDs.add(instanceID);
-        var instance = {
-          id: instanceID,
-          prevX: number(), prevY: number(), prevZ: number(),
-          prevRotationX: number(), prevRotationY: number(), prevRotationZ: number(),
-          prevScaleX: number(), prevScaleY: number(), prevScaleZ: number(),
-          tPrev: number(),
-          nextX: number(), nextY: number(), nextZ: number(),
-          nextRotationX: number(), nextRotationY: number(), nextRotationZ: number(),
-          nextScaleX: number(), nextScaleY: number(), nextScaleZ: number(),
-          tNext: number(),
-          animation: "", clipStartTime: 0, animationLoop: false, playbackRate: 1,
-        };
-        if (!(instance.tNext > instance.tPrev)) throw new RangeError("Scene3D motion frame requires tNext after tPrev");
-        var clipIndex = u16();
-        if (clipIndex >= clips.length) throw new RangeError("unknown Scene3D animation clip index");
-        instance.animation = clips[clipIndex];
-        instance.clipStartTime = number();
-        need(1);
-        var loop = view.getUint8(offset++);
-        if (loop > 1) throw new TypeError("invalid Scene3D animation loop flag");
-        instance.animationLoop = loop === 1;
-        instance.playbackRate = number();
-        instances.push(instance);
-      }
-      batches.push({ id: batchID, instances: instances });
-    }
-    if (offset !== view.byteLength) throw new RangeError("trailing Scene3D motion frame data");
-    return batches;
-  }
+  function decodeMotionFrame(input) { return decodeInstanceFrame(input, true); }
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
   function dispatchMotionFrame(target, frame, options) {
@@ -466,17 +446,7 @@
   }
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-  function motionStats(target, opts) {
-    var queue = motionQueues.get(key(target, opts) || target);
-    var rec = record(target, opts);
-    if (rec && rec.handle.__gosxMotionFrameStats) return rec.handle.__gosxMotionFrameStats;
-    var stats = queue && queue.stats || {
-      accepted: 0, superseded: 0, errors: 0, lastError: "", rejected: Object.create(null),
-    };
-    if (queue) queue.stats = stats;
-    if (rec) rec.handle.__gosxMotionFrameStats = stats;
-    return stats;
-  }
+  function motionStats(target, opts) { return frameStats(target, opts, true); }
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
   function runMotionQueue(queueKey, queue) {
@@ -542,22 +512,11 @@
     // @ts-ignore TS7034 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
     var batches;
     try { batches = decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-    function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) {
-        motionStats(target, opts);
-        if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
-        // @ts-ignore TS7005 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-        return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); }).then(resolve, reject);
-      }
-      if (!id) return reject(new Error("Scene3D motion frame target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D motion frame target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
-    }
-    return new Promise(poll).catch(fallback);
+    return waitForCommandMount(target, opts, "motion frame", function(rec, resolve, reject) {
+      motionStats(target, opts);
+      if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
+      return Promise.resolve().then(function() { return rec.handle.applyMotionFrame(batches); }).then(resolve, reject);
+    }).catch(fallback);
   }
 
   // applyMountedMotionFrame validates EVERY batch/instance ID and order
@@ -620,6 +579,8 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
+    playTimeline: playTimeline,
+    burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,

@@ -3,9 +3,11 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import vm from 'node:vm';
+import {createRequire} from 'node:module';
 import {fileURLToPath} from 'node:url';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+const ts = createRequire(import.meta.url)('../runtime/node_modules/typescript');
 const source = fs.readFileSync(path.join(root, 'client/runtime/scene3d/mount-webgl.ts'), 'utf8');
 function functions(first, next) {
   return source.slice(source.indexOf('  function '+first+'('), source.indexOf('  function '+next+'('));
@@ -104,7 +106,7 @@ test('CPU playback replacement remains atomic when a later identity is invalid',
 
 test('a pose arriving before first hydration stays deferred without a rejection', () => {
   const c=vm.createContext({window:{},document:{},TextDecoder,Uint8Array,ArrayBuffer,DataView,Set,Map,Date,Promise,setTimeout});
-  vm.runInContext(fs.readFileSync(path.join(root,'client/runtime/scene3d/command-runtime.ts'),'utf8'),c);
+  vm.runInContext(ts.transpileModule(fs.readFileSync(path.join(root,'client/runtime/scene3d/command-runtime.ts'),'utf8'), {compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText,c);
   const handle={};
   const result=c.window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(
     {_modelHydrationPromise:Promise.resolve()},[],()=>{throw Error('updater called')},()=>{},handle);

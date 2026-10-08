@@ -129,6 +129,10 @@ type Props struct {
 	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
 	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
 	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	// Timelines advertises the optional runtime for finite object and camera playback.
+	Timelines *bool `json:"timelines,omitempty"`
+	// ParticleBursts advertises the optional runtime and compute support for event effects.
+	ParticleBursts *bool `json:"particleBursts,omitempty"`
 	// CameraInputSignal: when set, the engine applies the camera from this shared
 	// signal (null/absent = user controls). Drives follow-mode without app JS.
 	CameraInputSignal string `json:"cameraInputSignal,omitempty"`
@@ -1894,6 +1898,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "ariaLabel", p.AriaLabel)
 	setString(out, "background", p.Background)
 	setString(out, "controls", p.Controls)
+	setBool(out, "timelines", p.Timelines)
 	if p.Walk != nil {
 		out["walk"] = p.Walk
 	}
@@ -1901,6 +1906,7 @@ func (p Props) legacyBaseProps() map[string]any {
 		out["vessel"] = p.Vessel
 	}
 	setBool(out, "autoRotate", p.AutoRotate)
+	setBool(out, "particleBursts", p.ParticleBursts)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)
 	setBool(out, "preferWebGPU", p.PreferWebGPU)
