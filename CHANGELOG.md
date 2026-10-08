@@ -12,8 +12,10 @@
   chunk once, and hands it the feature API, which now includes
   `ensureBootstrapFeature`. `gosx build`, `gosx export`, `gosx dev` and the
   runtime asset server serve any `bootstrap-feature-<name>.js` listed in
-  `runtime.features`. `island.Summary` and `server.PageRuntimeSummary` gain a
-  `FeaturePaths` map, so they are no longer comparable with `==`.
+  `runtime.features`. `island.Renderer.FeaturePaths()`,
+  `server.PageRuntime.FeaturePaths()` and `server.DocumentContext.FeaturePaths`
+  expose the chunk URLs; `island.Summary` and `server.PageRuntimeSummary` are
+  unchanged and stay comparable with `==`.
 - Add `api.registerCapabilityProbe(name, fn)` to the feature API. A feature chunk
   can answer a `requiredCapabilities` name the runtime does not know. An unknown
   name with no probe stays unsupported and is not cached, so a probe that

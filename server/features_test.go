@@ -71,3 +71,10 @@ func TestDocumentContractLegacyFeatureKeysAreNotDuplicated(t *testing.T) {
 		t.Fatalf("bootstrapFeatureEnginesPath appears %d times: %s", n, contract)
 	}
 }
+
+func TestPageRuntimeSummaryStaysComparable(t *testing.T) {
+	a, b := NewPageRuntime().Summary(), NewPageRuntime().Summary()
+	if a != b {
+		t.Fatal("PageRuntimeSummary must stay comparable with ==")
+	}
+}

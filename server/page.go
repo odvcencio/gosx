@@ -68,9 +68,12 @@ type DocumentContext struct {
 	Bootstrap     bool
 	RuntimeActive bool
 	Runtime       PageRuntimeSummary
-	Navigation    bool
-	Head          gosx.Node
-	Body          gosx.Node
+	// FeaturePaths maps opt-in runtime chunk names to public URLs. The document
+	// contract writes one bootstrapFeature<Name>Path key per non-legacy entry.
+	FeaturePaths map[string]string
+	Navigation   bool
+	Head         gosx.Node
+	Body         gosx.Node
 	// BodyAttrs carries attributes contributed through Context.BodyAttrs /
 	// PageState.BodyAttrs onto the rendered <body> element, in addition to
 	// the framework's own body attributes (see document_attrs.go). See
@@ -166,6 +169,7 @@ func (s *PageState) DocumentContext(request *http.Request, pattern, defaultTitle
 	}
 	if runtime := s.RuntimeState(); runtime != nil {
 		doc.Runtime = runtime.Summary()
+		doc.FeaturePaths = runtime.FeaturePaths()
 		doc.Bootstrap = doc.Runtime.Bootstrap
 		doc.RuntimeActive = doc.Runtime.Runtime
 	}
@@ -346,7 +350,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			Engines:                         doc.Runtime.Engines,
 			Hubs:                            doc.Runtime.Hubs,
 			Controllers:                     doc.Runtime.Controllers,
-			FeaturePaths:                    documentFeaturePaths(basepath.FromRequest(doc.Request), doc.Runtime.FeaturePaths),
+			FeaturePaths:                    documentFeaturePaths(basepath.FromRequest(doc.Request), doc.FeaturePaths),
 		},
 	})
 	if err != nil {

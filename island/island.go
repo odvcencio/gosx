@@ -118,12 +118,6 @@ type programAsset struct {
 
 // Summary describes the client bootstrap/runtime surface required by a page.
 type Summary struct {
-	// FeaturePaths maps each runtime feature chunk the page can load to its
-	// public URL: the six legacy chunks the page uses (islands, engines, hubs,
-	// controllers, scene3d, textlayout) plus every feature the page requires
-	// through RequireFeature. The document contract publishes a flat
-	// bootstrapFeature<Name>Path key for each non-legacy entry.
-	FeaturePaths                    map[string]string
 	Bootstrap                       bool
 	BootstrapMode                   string
 	Manifest                        bool
@@ -1114,6 +1108,40 @@ func (r *Renderer) RequireFeature(name string) error {
 		return fmt.Errorf("island renderer is nil")
 	}
 	return r.manifest.RequireFeature(name)
+}
+
+// FeaturePaths maps each runtime feature chunk the page can load to its public
+// URL: the six legacy chunks the page uses (islands, engines, hubs,
+// controllers, scene3d, textlayout) plus every feature the page requires
+// through RequireFeature. The document contract publishes a flat
+// bootstrapFeature<Name>Path key for each non-legacy entry. It returns nil
+// when the page loads no chunk. It lives beside Summary, not in it, so Summary
+// stays comparable with ==.
+func (r *Renderer) FeaturePaths() map[string]string {
+	if r == nil || !r.clientRuntimePlan().Selective {
+		return nil
+	}
+	summary := r.Summary()
+	paths := map[string]string{}
+	for name, path := range map[string]string{
+		"islands":     summary.BootstrapFeatureIslandsPath,
+		"engines":     summary.BootstrapFeatureEnginesPath,
+		"hubs":        summary.BootstrapFeatureHubsPath,
+		"controllers": summary.BootstrapFeatureControllersPath,
+		"scene3d":     summary.BootstrapFeatureScene3DPath,
+		"textlayout":  summary.BootstrapFeatureTextLayoutPath,
+	} {
+		if strings.TrimSpace(path) != "" {
+			paths[name] = path
+		}
+	}
+	for _, name := range r.requiredFeatureNames() {
+		paths[name] = r.requiredFeaturePath(name)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	return paths
 }
 
 // legacyFeatureNames are the chunks that predate manifest.features. Their
@@ -2283,25 +2311,6 @@ func (r *Renderer) Summary() Summary {
 		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
 		summary.BootstrapFeatureControllersPath = r.selectedBootstrapFeaturePath("controllers")
 		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
-		summary.FeaturePaths = map[string]string{}
-		for name, path := range map[string]string{
-			"islands":     summary.BootstrapFeatureIslandsPath,
-			"engines":     summary.BootstrapFeatureEnginesPath,
-			"hubs":        summary.BootstrapFeatureHubsPath,
-			"controllers": summary.BootstrapFeatureControllersPath,
-			"scene3d":     summary.BootstrapFeatureScene3DPath,
-			"textlayout":  summary.BootstrapFeatureTextLayoutPath,
-		} {
-			if strings.TrimSpace(path) != "" {
-				summary.FeaturePaths[name] = path
-			}
-		}
-		for _, name := range r.requiredFeatureNames() {
-			summary.FeaturePaths[name] = r.requiredFeaturePath(name)
-		}
-		if len(summary.FeaturePaths) == 0 {
-			summary.FeaturePaths = nil
-		}
 	}
 	for _, entry := range r.manifest.Controllers {
 		if entry.Config.NeedsInputRuntime() {

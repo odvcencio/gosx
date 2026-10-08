@@ -35,9 +35,6 @@ type pageRuntimeManagedScript struct {
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
 type PageRuntimeSummary struct {
-	// FeaturePaths maps runtime feature chunk names to public URLs; see
-	// island.Summary.FeaturePaths.
-	FeaturePaths                    map[string]string
 	Bootstrap                       bool
 	Runtime                         bool
 	BootstrapMode                   string
@@ -95,6 +92,15 @@ func (r *PageRuntime) RequireFeature(name string) error {
 	}
 	r.active = true
 	return nil
+}
+
+// FeaturePaths maps the runtime feature chunks the page loads to their public
+// URLs; see island.Renderer.FeaturePaths. It returns nil for an inactive page.
+func (r *PageRuntime) FeaturePaths() map[string]string {
+	if r == nil || r.renderer == nil || !r.active {
+		return nil
+	}
+	return r.renderer.FeaturePaths()
 }
 
 // Engine registers a client engine and returns its server-rendered mount shell.
@@ -387,7 +393,6 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 	}
 	summary := r.renderer.Summary()
 	return PageRuntimeSummary{
-		FeaturePaths:                    copyFeaturePaths(summary.FeaturePaths),
 		Bootstrap:                       summary.Bootstrap,
 		Runtime:                         strings.TrimSpace(summary.RuntimePath) != "",
 		BootstrapMode:                   summary.BootstrapMode,
@@ -419,15 +424,4 @@ func (r *PageRuntime) usesCompatRuntimeAssets() bool {
 	}
 	head := gosx.RenderHTML(r.renderer.PageHead())
 	return strings.Contains(head, "/gosx/")
-}
-
-func copyFeaturePaths(in map[string]string) map[string]string {
-	if len(in) == 0 {
-		return nil
-	}
-	out := make(map[string]string, len(in))
-	for name, path := range in {
-		out[name] = path
-	}
-	return out
 }
