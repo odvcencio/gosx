@@ -250,7 +250,7 @@ func TestCanonicalRuntimeBuildWritesPortableMeasuredEvidence(t *testing.T) {
 
 type runtimeBuildHookSnapshot struct {
 	build        func(string, string, string, string, ...string) error
-	optimize     func(string) (bool, error)
+	optimize     func() func(string) (bool, error)
 	metrics      func(string) (ouroboros.AssetMetrics, error)
 	stage        func(string, string) (runtimeShimPublication, error)
 	resolveRoot  func(string) (string, error)
@@ -264,7 +264,7 @@ type runtimeBuildHookSnapshot struct {
 func saveRuntimeBuildHooks() func() {
 	snapshot := runtimeBuildHookSnapshot{
 		build:        runtimeBuildTinyGoWASM,
-		optimize:     runtimeOptimizeWASMWithWasmOpt,
+		optimize:     runtimeNewWASMOptimizer,
 		metrics:      runtimeMetricsForFile,
 		stage:        runtimeStageTinyGoWASMExec,
 		resolveRoot:  runtimeResolveGoSXModuleRoot,
@@ -276,7 +276,7 @@ func saveRuntimeBuildHooks() func() {
 	}
 	return func() {
 		runtimeBuildTinyGoWASM = snapshot.build
-		runtimeOptimizeWASMWithWasmOpt = snapshot.optimize
+		runtimeNewWASMOptimizer = snapshot.optimize
 		runtimeMetricsForFile = snapshot.metrics
 		runtimeStageTinyGoWASMExec = snapshot.stage
 		runtimeResolveGoSXModuleRoot = snapshot.resolveRoot
@@ -316,6 +316,6 @@ func stubSuccessfulRuntimeBuild(t *testing.T, repoRoot string) {
 	runtimeBuildTinyGoWASM = func(_, _, outputPath, _ string, _ ...string) error {
 		return os.WriteFile(outputPath, []byte("wasm:"+filepath.Base(outputPath)), 0o644)
 	}
-	runtimeOptimizeWASMWithWasmOpt = func(string) (bool, error) { return false, nil }
+	runtimeNewWASMOptimizer = func() func(string) (bool, error) { return func(string) (bool, error) { return false, nil } }
 	runtimeMetricsForFile = ouroboros.MetricsForFile
 }
