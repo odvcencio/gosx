@@ -28,7 +28,7 @@ func TestDocumentContractNamesEveryFeatureTheLoaderReads(t *testing.T) {
 		declared[name] = true
 	}
 
-	keyPattern := regexp.MustCompile(`assets\.(bootstrapFeature[A-Za-z0-9]+Path)`)
+	keyPattern := regexp.MustCompile(`(?:assets\.|["'])(bootstrapFeature[A-Za-z0-9]+Path)`)
 	read := map[string][]string{}
 	for _, file := range []string{
 		"../client/js/bootstrap-src/00-textlayout.ts",
