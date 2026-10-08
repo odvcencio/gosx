@@ -9,16 +9,16 @@ import (
 )
 
 // NoBindingName identifies text bindings, which have neither a tag nor an
-// attribute. All other name IDs index the corresponding byte-sorted table.
+// attribute. Other tag IDs index the byte-sorted HTML tag table.
 const NoBindingName = ^uint32(0)
 
 // BindingSet describes fixed physical DOM nodes. SourceNodes preserve the
 // source text group; Path addresses the one browser node that group resolves.
-// Attributes retain declaration order. Events refer to program-local handlers.
+// Attribute IDs are indices within each binding, in declaration order.
+// Events refer to program-local handlers.
 type BindingSet struct {
-	Tags       []string  `json:"tags"`
-	Attributes []string  `json:"attributes"`
-	Bindings   []Binding `json:"bindings"`
+	Tags     []string  `json:"tags"`
+	Bindings []Binding `json:"bindings"`
 }
 
 type Binding struct {
@@ -27,7 +27,7 @@ type Binding struct {
 	Kind        program.NodeKind `json:"kind"`
 	TagID       uint32           `json:"tagId"`
 	SourceNodes []program.NodeID `json:"sourceNodes"`
-	Attributes  []uint32         `json:"attributes"`
+	Attributes  []string         `json:"attributes"`
 	Events      []BindingEvent   `json:"events"`
 }
 
@@ -43,17 +43,14 @@ func BuildBindings(u Unit) (BindingSet, error) {
 		return BindingSet{}, fmt.Errorf("binding profile: %s[%d]: %s", r.Table, r.Index, r.Reason)
 	}
 	out := BindingSet{Bindings: []Binding{}}
-	tags, attrs := map[string]bool{}, map[string]bool{}
+	tags := map[string]bool{}
 	for _, binding := range u.Contract.Bindings {
 		if binding.Kind == program.NodeElement {
 			tags[binding.Tag] = true
 		}
-		for _, name := range binding.Attributes {
-			attrs[name] = true
-		}
 	}
-	out.Tags, out.Attributes = sortedBindingNames(tags), sortedBindingNames(attrs)
-	tagIDs, attrIDs := bindingNameIDs(out.Tags), bindingNameIDs(out.Attributes)
+	out.Tags = sortedBindingNames(tags)
+	tagIDs := bindingNameIDs(out.Tags)
 	handlerIDs := map[string]uint32{}
 	for i, handler := range u.Program.Handlers {
 		handlerIDs[handler.Name] = uint32(i)
@@ -61,14 +58,14 @@ func BuildBindings(u Unit) (BindingSet, error) {
 	owners := make([]uint32, len(u.Program.Nodes))
 	for _, source := range u.Contract.Bindings {
 		binding := Binding{ID: source.ID, Kind: source.Kind, TagID: NoBindingName,
-			SourceNodes: append([]program.NodeID(nil), source.Nodes...), Attributes: []uint32{}, Events: []BindingEvent{}}
+			SourceNodes: append([]program.NodeID(nil), source.Nodes...), Attributes: []string{}, Events: []BindingEvent{}}
 		for _, id := range source.Nodes {
 			owners[id] = source.ID
 		}
 		if source.Kind == program.NodeElement {
 			binding.TagID = tagIDs[source.Tag]
 			for _, name := range source.Attributes {
-				binding.Attributes = append(binding.Attributes, attrIDs[name])
+				binding.Attributes = append(binding.Attributes, name)
 			}
 			for _, attr := range u.Program.Nodes[source.Nodes[0]].Attrs {
 				if attr.Kind == program.AttrEvent {

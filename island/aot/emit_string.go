@@ -42,8 +42,13 @@ func (e *expressionEmitter) setupStrings() error {
 				values[node.Text] = true
 			}
 		}
-		for _, name := range append(append([]string{}, e.dom.bindings.Tags...), e.dom.bindings.Attributes...) {
+		for _, name := range e.dom.bindings.Tags {
 			values[name] = true
+		}
+		for _, binding := range e.dom.bindings.Bindings {
+			for _, name := range binding.Attributes {
+				values[name] = true
+			}
 		}
 	}
 	if !needed {

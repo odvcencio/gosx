@@ -31,7 +31,7 @@ const domTestImports = `{input: unexpected,
       const text = Buffer.from(memory.subarray(start, start + length)).toString('utf8');
       if (text) patch.text = text;
     }
-    if (attribute !== -1) patch.attrName = data.Bindings.attributes[attribute];
+    if (attribute !== -1) patch.attrName = descriptor.attributes[attribute];
     patches.push(patch);
     return data.PatchStatus || 0;
   }} `

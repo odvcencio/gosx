@@ -61,16 +61,16 @@ func TestBindingsPhysicalPathsMatchNativeVM(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(set.Tags, []string{"button", "div", "input"}) || !reflect.DeepEqual(set.Attributes, []string{"data-count", "disabled", "title", "type", "value"}) {
+	if !reflect.DeepEqual(set.Tags, []string{"button", "div", "input"}) {
 		t.Fatalf("name tables: %+v", set)
 	}
 	want := []Binding{
-		{ID: 0, Path: "", Kind: program.NodeElement, TagID: 1, SourceNodes: []program.NodeID{0}, Attributes: []uint32{2}, Events: []BindingEvent{}},
-		{ID: 1, Path: "0", Kind: program.NodeText, TagID: NoBindingName, SourceNodes: []program.NodeID{1, 2, 3}, Attributes: []uint32{}, Events: []BindingEvent{}},
-		{ID: 2, Path: "1", Kind: program.NodeElement, TagID: 0, SourceNodes: []program.NodeID{4}, Attributes: []uint32{3}, Events: []BindingEvent{{Type: "click", Handler: 0}}},
-		{ID: 3, Path: "1/0", Kind: program.NodeText, TagID: NoBindingName, SourceNodes: []program.NodeID{5}, Attributes: []uint32{}, Events: []BindingEvent{}},
-		{ID: 4, Path: "2", Kind: program.NodeElement, TagID: 2, SourceNodes: []program.NodeID{6}, Attributes: []uint32{4, 1, 0}, Events: []BindingEvent{}},
-		{ID: 5, Path: "3", Kind: program.NodeText, TagID: NoBindingName, SourceNodes: []program.NodeID{7}, Attributes: []uint32{}, Events: []BindingEvent{}},
+		{ID: 0, Path: "", Kind: program.NodeElement, TagID: 1, SourceNodes: []program.NodeID{0}, Attributes: []string{"title"}, Events: []BindingEvent{}},
+		{ID: 1, Path: "0", Kind: program.NodeText, TagID: NoBindingName, SourceNodes: []program.NodeID{1, 2, 3}, Attributes: []string{}, Events: []BindingEvent{}},
+		{ID: 2, Path: "1", Kind: program.NodeElement, TagID: 0, SourceNodes: []program.NodeID{4}, Attributes: []string{"type"}, Events: []BindingEvent{{Type: "click", Handler: 0}}},
+		{ID: 3, Path: "1/0", Kind: program.NodeText, TagID: NoBindingName, SourceNodes: []program.NodeID{5}, Attributes: []string{}, Events: []BindingEvent{}},
+		{ID: 4, Path: "2", Kind: program.NodeElement, TagID: 2, SourceNodes: []program.NodeID{6}, Attributes: []string{"value", "disabled", "data-count"}, Events: []BindingEvent{}},
+		{ID: 5, Path: "3", Kind: program.NodeText, TagID: NoBindingName, SourceNodes: []program.NodeID{7}, Attributes: []string{}, Events: []BindingEvent{}},
 	}
 	if !reflect.DeepEqual(set.Bindings, want) {
 		t.Fatalf("bindings: %+v", set.Bindings)
@@ -217,7 +217,7 @@ func TestBindingsTablesAndJSONAreDeterministic(t *testing.T) {
 		t.Fatalf("descriptor arrays are absent: %s", before)
 	}
 	first.Bindings[1].SourceNodes[0] = 255
-	first.Attributes[0] = "changed"
+	first.Bindings[4].Attributes[0] = "changed"
 	first.Bindings[2].Events[0].Type = "changed"
 	second, err := BuildBindings(u)
 	if err != nil {
@@ -232,7 +232,7 @@ func TestBindingsTablesAndJSONAreDeterministic(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw, _ := json.Marshal(static)
-	if string(raw) != `{"tags":["div"],"attributes":[],"bindings":[{"id":0,"path":"","kind":0,"tagId":0,"sourceNodes":[0],"attributes":[],"events":[]}]}` {
+	if string(raw) != `{"tags":["div"],"bindings":[{"id":0,"path":"","kind":0,"tagId":0,"sourceNodes":[0],"attributes":[],"events":[]}]}` {
 		t.Fatalf("static descriptor: %s", raw)
 	}
 }
@@ -263,6 +263,27 @@ func TestBindingsAcceptProfileNodeLimitAndDeepPaths(t *testing.T) {
 		last := set.Bindings[count-1].Path
 		if count == 64 && last != strings.TrimSuffix(strings.Repeat("0/", 63), "/") || count == 256 && last != "254" {
 			t.Fatalf("last physical path: %q", last)
+		}
+	}
+}
+
+func TestBindingsAttributeIDsAreLocalDeclarationIndices(t *testing.T) {
+	u := fixedBindingUnit(t)
+	u.Program.Nodes[4].Attrs = append(u.Program.Nodes[4].Attrs,
+		program.Attr{Kind: program.AttrStatic, Name: "title", Value: "button title"})
+	u = refreshBindingUnit(t, u)
+	set, err := BuildBindings(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, item := range []struct {
+		binding int
+		names   []string
+	}{
+		{0, []string{"title"}}, {2, []string{"type", "title"}}, {4, []string{"value", "disabled", "data-count"}},
+	} {
+		if !reflect.DeepEqual(set.Bindings[item.binding].Attributes, item.names) {
+			t.Fatalf("binding-local attribute IDs: %+v", set.Bindings[item.binding])
 		}
 	}
 }

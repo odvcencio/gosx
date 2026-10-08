@@ -64,7 +64,7 @@ func emitDOMExpressions(u Unit, instances []uint32) (*expressionEmitter, error) 
 				if attr.Name == "value" && (n.Tag == "input" || n.Tag == "textarea" || n.Tag == "select") {
 					kind = patchSetValue
 				}
-				d.fields = append(d.fields, domField{binding: binding.ID, attribute: binding.Attributes[attribute], kind: kind, expr: attr.Expr,
+				d.fields = append(d.fields, domField{binding: binding.ID, attribute: uint32(attribute), kind: kind, expr: attr.Expr,
 					presence: attr.Name == "checked" || attr.Name == "disabled" || attr.Name == "hidden" || attr.Name == "selected" || attr.Name == "required" || attr.Name == "readonly" || attr.Name == "multiple"})
 			}
 			attribute++
