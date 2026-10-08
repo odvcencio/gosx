@@ -7,7 +7,10 @@
 // during synchronous startup and keep main alive while its instances are in use.
 package wasm
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+)
 
 var (
 	// ErrUnsupported reports use outside a js/wasm build.
@@ -35,3 +38,19 @@ func (f HandleFunc) Dispose() {
 
 // Factory creates one independent engine instance for a browser context.
 type Factory func(Context) (Handle, error)
+
+// SubscribeSignal decodes a browser shared signal into T before calling handler.
+// Malformed values are ignored. Return the subscription as the engine handle,
+// or dispose it from your Handle, to release the browser and Go callbacks.
+// The current value is not replayed; subscriptions receive subsequent writes.
+func SubscribeSignal[T any](ctx Context, name string, handler func(T)) (HandleFunc, error) {
+	if handler == nil {
+		return nil, errors.New("shared signal handler is required")
+	}
+	return ctx.SubscribeSignal(name, func(data json.RawMessage) {
+		var value T
+		if json.Unmarshal(data, &value) == nil {
+			handler(value)
+		}
+	})
+}
