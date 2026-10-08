@@ -96,6 +96,9 @@ func TestRealDefaultMetricInventoryFits(t *testing.T) {
 			retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
 			charged := usage.Bytes + tel.ownerBytes + tel.adapterBytes.Load() + tel.hubs.bytes.Load() + tel.loops.bytes.Load()
 			charged += tel.activities.bytes.Load()
+			if tel.activities.events != nil {
+				charged += tel.activities.events.used.Load()
+			}
 			if charged > opts.Limits.MemoryBudgetBytes {
 				t.Fatalf("default reservations %d exceed total memory budget %d", charged, opts.Limits.MemoryBudgetBytes)
 			}

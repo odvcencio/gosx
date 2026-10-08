@@ -31,16 +31,17 @@ type Activity[A, P, E any] struct {
 	entity *activityEntity
 }
 type activityEntity struct {
-	mu               sync.Mutex
-	kind             *activityKindCore
-	record           schema.Record
-	recordID         string
-	tuple            [2]string
-	start, lastTouch time.Duration
-	loop             *Loop
-	dirty, final     bool
-	receipt          Receipt
-	presence         map[string]participantPresence
+	mu                                          sync.Mutex
+	kind                                        *activityKindCore
+	record                                      schema.Record
+	recordID                                    string
+	tuple                                       [2]string
+	start, lastTouch                            time.Duration
+	loop                                        *Loop
+	dirty, final                                bool
+	receipt                                     Receipt
+	presence                                    map[string]participantPresence
+	eventsAccepted, eventsDropped, eventVersion uint64
 }
 
 const activitySlotBytes = int64(32 << 10)
@@ -100,6 +101,7 @@ func (t *Telemetry) activityNow() (Instant, error) {
 }
 func activityElapsed(v *schema.Activity, e *activityEntity, now Instant, final bool) {
 	e.mu.Lock()
+	v.EventsAccepted, v.EventsDropped = e.eventsAccepted, e.eventsDropped
 	for i := range v.Participants {
 		sessionPresence(&v.Participants[i], e.presence[v.Participants[i].ID], now.Monotonic)
 	}
@@ -263,6 +265,7 @@ func (a *Activity[A, P, E]) Snapshot() (schema.Activity, error) {
 	e := a.entity
 	e.mu.Lock()
 	v, _ := e.record.Activity()
+	v.EventsAccepted, v.EventsDropped = e.eventsAccepted, e.eventsDropped
 	final := e.final
 	var presence [33]participantPresence
 	for i := range v.Participants {
@@ -392,6 +395,7 @@ func (a *Activity[A, P, E]) End(end ActivityEnd[A]) (Receipt, error) {
 	reason := activityValue(end.Reason, e.kind.reasons)
 	e.mu.Lock()
 	original := e.record
+	version := e.eventVersion
 	terminal := e.final
 	e.mu.Unlock()
 	v, _ := original.Activity()
@@ -433,7 +437,7 @@ func (a *Activity[A, P, E]) End(end ActivityEnd[A]) (Receipt, error) {
 		}
 		return Receipt{}, ErrConflict
 	}
-	if e.record.Envelope().Revision != original.Envelope().Revision {
+	if e.record.Envelope().Revision != original.Envelope().Revision || e.eventVersion != version {
 		e.mu.Unlock()
 		return Receipt{}, ErrConflict
 	}
@@ -478,6 +482,7 @@ func checkpointActivity(e *activityEntity, now Instant) (Receipt, error) {
 		return Receipt{}, ErrClosed
 	}
 	original := e.record
+	version := e.eventVersion
 	e.mu.Unlock()
 	v, _ := original.Activity()
 	activityElapsed(&v, e, now, false)
@@ -496,7 +501,7 @@ func checkpointActivity(e *activityEntity, now Instant) (Receipt, error) {
 	if s.stopping.Load() {
 		return Receipt{}, ErrClosed
 	}
-	if e.record.Envelope().Revision != original.Envelope().Revision {
+	if e.record.Envelope().Revision != original.Envelope().Revision || e.eventVersion != version {
 		return Receipt{}, ErrConflict
 	}
 	receipt := newMemoryReceipt()

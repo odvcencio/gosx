@@ -148,6 +148,7 @@ bench-telemetry:
 .PHONY: test-telemetry-fuzz
 test-telemetry-fuzz:
 	GOWORK=off GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./telemetry -run '^$$' -fuzz FuzzDomainFields -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOWORK=off GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./telemetry -run '^$$' -fuzz FuzzActivityTransitions -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 
 test-fuzz-smoke: test-telemetry-fuzz
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./session -run '^$$' -fuzz FuzzDanmujiDecodeSessionCookieNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)

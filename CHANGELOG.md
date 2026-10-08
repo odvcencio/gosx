@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Queue copied activity events through one fixed count and byte budget on the
+  existing telemetry worker. In-flight records keep their reservations, event
+  caps and rejected writes preserve truthful terminal totals, and accepted
+  sequence order follows queue admission. No event history or sink is implicit.
+
 - Add bounded activity seats with revision-checked field replacement, one
   active connection reference, idempotent joins and leaves, monotonic presence
   time and frozen final totals. Consented human links are copied and trimmed

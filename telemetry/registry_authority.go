@@ -120,6 +120,9 @@ func (t *Telemetry) updateCore(now Instant) {
 	}
 	if t.activities != nil {
 		bytes += t.activities.bytes.Load()
+		if t.activities.events != nil {
+			bytes += t.activities.events.used.Load()
+		}
 	}
 	t.core.memory.Set(float64(usage.Bytes + bytes))
 	// Publish the collection time after refreshing its usage gauges.

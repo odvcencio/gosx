@@ -12,6 +12,7 @@ func freezeActivity(e *activityEntity, now Instant, reason string) error {
 	// no application codec is invoked while closing an abandoned activity.
 	e.mu.Lock()
 	original := e.record
+	version := e.eventVersion
 	final := e.final
 	e.mu.Unlock()
 	if final {
@@ -31,7 +32,7 @@ func freezeActivity(e *activityEntity, now Instant, reason string) error {
 		e.mu.Unlock()
 		return nil
 	}
-	if e.record.Envelope().Revision != original.Envelope().Revision {
+	if e.record.Envelope().Revision != original.Envelope().Revision || e.eventVersion != version {
 		e.mu.Unlock()
 		return ErrConflict
 	}
@@ -106,6 +107,7 @@ func (t *Telemetry) stopActivities(ctx context.Context) error {
 			result = errors.Join(result, err)
 		}
 	}
+	t.drainActivityEvents()
 	t.collectActivityReceipts()
 	return result
 }

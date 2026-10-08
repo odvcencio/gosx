@@ -34,6 +34,8 @@ type activityState struct {
 	sequence        uint64
 	stream, boot    string
 	lastMaintenance time.Duration
+	events          *recordQueue
+	eventPublish    sync.Mutex
 }
 
 type activityKindCore struct {
@@ -63,6 +65,9 @@ func (t *Telemetry) initializeActivities() error {
 	}
 	s := &activityState{kinds: make(map[string]*activityKindCore, 32), pool: new(fieldPool),
 		live: make(map[string]*activityEntity, t.opts.Activities.MaxOpen), attached: make(map[*Loop]*activityEntity, t.opts.Activities.MaxOpen)}
+	if !t.opts.Activities.Disabled {
+		s.events = newRecordQueue(t.opts.Limits.MaxQueuedRecords, t.opts.Limits.MaxQueuedBytes)
+	}
 	s.boot = hex.EncodeToString(t.boot[:])
 	s.stream = s.boot
 	s.bytes.Store(bytes)
