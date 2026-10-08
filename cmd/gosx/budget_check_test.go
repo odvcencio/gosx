@@ -94,7 +94,7 @@ func TestBudgetCheckAtomicArtifactsAndProvenanceMismatch(t *testing.T) {
 	}
 	jsonBefore, _ := os.ReadFile(report)
 	mdBefore, _ := os.ReadFile(markdown)
-	if code := RunBudget([]string{"public-check", report, markdown}, &stdout, &stderr); code != 0 {
+	if code := RunBudget([]string{"public-check", "--root", args[3], report, markdown}, &stdout, &stderr); code != 0 {
 		t.Fatalf("published artifact invalid: %s", stderr.String())
 	}
 	bad := func(ctx context.Context, o budget.CollectOptions) (*budget.Report, error) {
@@ -125,7 +125,7 @@ func TestBudgetCheckFlagsCIClockAndTrustedEvent(t *testing.T) {
 	if code := runBudgetCheckWith(append(args, "--now", "2026-01-01"), &stdout, &stderr, budgetCheckFakeCollector(base)); code != 2 || stdout.Len() != 0 {
 		t.Fatal("CI clock override accepted")
 	}
-	root, _ := filepath.Abs("../..")
+	root := args[3]
 	path := filepath.Join(t.TempDir(), "event.json")
 	t.Setenv("GITHUB_EVENT_PATH", path)
 	data, _ := json.Marshal(map[string]any{"pull_request": map[string]any{"head": map[string]string{"sha": base.Info.SHA}, "base": map[string]string{"sha": strings.Repeat("b", 40)}}})
