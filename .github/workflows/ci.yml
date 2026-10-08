@@ -179,12 +179,9 @@ jobs:
         if: github.event_name == 'push'
         run: make test-race
 
-  # cmd/gosx/build_test.go runs real production builds and therefore requires
-  # TinyGo. Isolating it gives PRs a ~6 minute Go critical path while preserving
-  # every production-build assertion and the standalone CLI build gate. A cold
-  # merged-main run reached Go's default 10-minute package timeout in the final
-  # generated-docs fixture, so the suite has a 15-minute Go timeout inside this
-  # 50-minute job ceiling.
+  # The full CLI package approaches its unchanged 25-minute test timeout.
+  # Two exhaustive partitions assign tests by name, including examples and
+  # fuzz seeds. Both jobs are required; documentation gates run once in job 0.
   go-cli-tests:
     runs-on: ubuntu-latest
     timeout-minutes: 50
@@ -210,7 +207,7 @@ jobs:
         run: scripts/install-ci-tinygo.sh
 
       - name: CLI production-build integration tests
-        run: make test-cli
+        run: make test-cli CLI_SHARD=0
 
       - name: Documentation example tests
         run: GOWORK=off nice -n 10 go test ./examples/gosx-docs/...
@@ -223,6 +220,28 @@ jobs:
 
       - name: Compile documentation site pages and server
         run: GOWORK=off nice -n 10 ./gosx build --dev ./examples/gosx-docs
+
+  go-cli-tests-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: CLI production-build integration tests
+        run: make test-cli CLI_SHARD=1
 
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
@@ -655,6 +674,7 @@ jobs:
       - go-tests
       - go-race-tests
       - go-cli-tests
+      - go-cli-tests-b
       - js-tests
       - wire-gates
       - wasm-tests
@@ -670,6 +690,7 @@ jobs:
           GO_TESTS_RESULT: ${{ needs.go-tests.result }}
           GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
           GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
+          GO_CLI_TESTS_B_RESULT: ${{ needs.go-cli-tests-b.result }}
           JS_TESTS_RESULT: ${{ needs.js-tests.result }}
           WIRE_GATES_RESULT: ${{ needs.wire-gates.result }}
           WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
@@ -683,6 +704,7 @@ jobs:
             "go-tests=$GO_TESTS_RESULT" \
             "go-race-tests=$GO_RACE_TESTS_RESULT" \
             "go-cli-tests=$GO_CLI_TESTS_RESULT" \
+            "go-cli-tests-b=$GO_CLI_TESTS_B_RESULT" \
             "js-tests=$JS_TESTS_RESULT" \
             "wire-gates=$WIRE_GATES_RESULT" \
             "wasm-tests=$WASM_TESTS_RESULT" \
@@ -698,7 +720,7 @@ jobs:
                 ;;
             esac
           done
-          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
+          echo "release-gate, go-tests, go-race-tests, go-cli-tests, go-cli-tests-b, js-tests, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame
