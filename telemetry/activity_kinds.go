@@ -1,9 +1,11 @@
 package telemetry
 
 import (
+	"encoding/hex"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"m31labs.dev/gosx/telemetry/schema"
 )
@@ -20,10 +22,18 @@ type ActivityKindOptions struct {
 }
 
 type activityState struct {
-	mu    sync.Mutex
-	kinds map[string]*activityKindCore
-	pool  *fieldPool
-	bytes atomic.Int64
+	mu              sync.Mutex
+	kinds           map[string]*activityKindCore
+	pool            *fieldPool
+	bytes           atomic.Int64
+	live            map[string]*activityEntity
+	attached        map[*Loop]*activityEntity
+	entropy         sync.Mutex
+	transactions    atomic.Int32
+	stopping        atomic.Bool
+	sequence        uint64
+	stream, boot    string
+	lastMaintenance time.Duration
 }
 
 type activityKindCore struct {
@@ -32,6 +42,8 @@ type activityKindCore struct {
 	dimensions                       []Dimension
 	combinations                     [][2]string
 	outcomes, reasons, events, roles []string
+	meters                           activityMeters
+	open                             int64 // activityState.mu
 }
 
 // ActivityKind owns a startup declaration of one finite activity shape. Its
@@ -49,7 +61,10 @@ func (t *Telemetry) initializeActivities() error {
 	if !t.reserveMisc(bytes) {
 		return ErrCapacity
 	}
-	s := &activityState{kinds: make(map[string]*activityKindCore, 32), pool: new(fieldPool)}
+	s := &activityState{kinds: make(map[string]*activityKindCore, 32), pool: new(fieldPool),
+		live: make(map[string]*activityEntity, t.opts.Activities.MaxOpen), attached: make(map[*Loop]*activityEntity, t.opts.Activities.MaxOpen)}
+	s.boot = hex.EncodeToString(t.boot[:])
+	s.stream = s.boot
 	s.bytes.Store(bytes)
 	t.activities = s
 	return nil
@@ -229,6 +244,7 @@ func newActivityKind[A, P, E any](t *Telemetry, name string, opts ActivityKindOp
 		return nil, err
 	}
 	k := &ActivityKind[A, P, E]{core: freezeActivityKind(t, name, opts), activity: freezeDomainCodec(a, ab, ac, ae), participant: freezeDomainCodec(p, pb, pc, pe), event: freezeDomainCodec(e, eb, ec, ee)}
+	k.core.bindActivityMeters()
 	s.kinds[k.core.name] = k.core
 	s.bytes.Add(charge)
 	return k, nil

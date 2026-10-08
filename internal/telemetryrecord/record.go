@@ -80,6 +80,7 @@ func (r Record) ClientHealthSummary() (ClientHealthSummary, bool) {
 // It is internal accounting, not an additional public schema API.
 func RetainedBytes(r Record) int64 { return r.charge }
 func Valid(r Record) bool          { return r.line != "" }
+func EncodedLen(r Record) int      { return len(r.line) }
 
 func NewVisit(e Envelope, v Visit) (Record, error) {
 	if !entityState(e.State, v.EndedAt) {
