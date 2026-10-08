@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add immutable typed telemetry records with a schema-1 JSONL envelope,
+  deterministic field order, UTC observations, CRC-32C and copied payload
+  views. Framework-only constructors reject invalid identities and finite
+  field, record and retained-memory cap violations. Unknown optional tick
+  health is omitted. Record writers preserve wrapped error identities while
+  exposing fixed error text.
+
 - Reserve default telemetry aggregate families before route admission, with
   whole page/error reservations and shared page duration histograms. Operation
   and explicitly attached auth observers use finite startup labels; degradation
