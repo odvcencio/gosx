@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"m31labs.dev/gosx/buildmanifest"
@@ -68,7 +69,7 @@ func writeTestFixtureManifest(t *testing.T, dir string, manifest *FixtureManifes
 	}
 }
 
-func TestMeasureAppReturnsConservativeReconciledReport(t *testing.T) {
+func TestMeasureAppReturnsReconciledDeclaredClosure(t *testing.T) {
 	opts, _, document, program := testRouteMeasurement(t)
 	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
 	if err != nil {
@@ -76,15 +77,15 @@ func TestMeasureAppReturnsConservativeReconciledReport(t *testing.T) {
 	}
 	docSizes, _ := testBodyNormalizer(document)
 	programSizes, _ := testBodyNormalizer(program)
-	if len(report.Rows) != 1 || len(report.Assets) != 2 || report.Coverage.RoutesMeasured != 1 || report.Coverage.AssetsMeasured != 2 || report.Coverage.Reachability != "unknown" {
-		t.Fatal("coverage was certified without reachability proof")
+	if len(report.Rows) != 1 || len(report.Assets) != 2 || report.Coverage.RoutesMeasured != 1 || report.Coverage.AssetsMeasured != 2 || report.Coverage.Reachability != "known" {
+		t.Fatal("coverage did not reflect declared closure")
 	}
 	row := report.Rows[0]
-	if row.Status != "unavailable" || row.ModelStatus != "unknown" || row.NormalizedBytes != docSizes.Brotli+programSizes.Brotli || row.FrameworkBytes != programSizes.Brotli || row.AppBytes != docSizes.Brotli || row.AppBytes+row.FrameworkBytes != row.NormalizedBytes || row.PhaseBytes.Critical+row.PhaseBytes.Startup != row.NormalizedBytes || row.WireBytes != int64(len(document)+len(program)) || row.Requests != 2 {
+	if row.Status != "unavailable" || row.ModelStatus != "unknown" || row.NormalizedBytes != docSizes.Brotli || row.FrameworkBytes != 0 || row.AppBytes != docSizes.Brotli || row.AppBytes+row.FrameworkBytes != row.NormalizedBytes || row.PhaseBytes.Critical+row.PhaseBytes.Startup != row.NormalizedBytes || row.WireBytes != int64(len(document)) || row.Requests != 1 || row.PhaseBytes.Dormant != programSizes.Brotli {
 		t.Fatal("inventory, phase, ownership or first-render wire sums differ")
 	}
-	if report.Assets[1].Phase != "startup" {
-		t.Fatal("unproved dormant declaration excluded potential cost")
+	if report.Assets[1].Phase != "dormant" {
+		t.Fatal("proved dormant inventory was charged at startup")
 	}
 	data, err := json.Marshal(Report{Schema: "gosx.budget-report/v1", Info: opts.Public, Mode: "report-only", Rows: report.Rows, Assets: report.Assets, ExceptionIDs: []string{}, Acknowledgments: []Ack{}, Violations: []CountReason{}, Coverage: report.Coverage})
 	if err != nil {
@@ -99,7 +100,7 @@ func TestMeasureAppReturnsConservativeReconciledReport(t *testing.T) {
 }
 
 func TestMeasureFixtureContractsAndProvenance(t *testing.T) {
-	for _, name := range []string{"source", "fixtures", "unknown-field", "route-duplicate", "missing-critical", "type", "asset-hash", "sidecar", "route-not-registered", "route-duplicate-input", "app", "capability"} {
+	for _, name := range []string{"source", "fixtures", "unknown-field", "route-duplicate", "missing-critical", "type", "asset-hash", "sidecar", "route-not-registered", "route-duplicate-input", "app", "capability", "capability-fields"} {
 		t.Run(name, func(t *testing.T) {
 			opts, manifest, _, _ := testRouteMeasurement(t)
 			switch name {
@@ -127,6 +128,8 @@ func TestMeasureFixtureContractsAndProvenance(t *testing.T) {
 				opts.App = "private-app"
 			case "capability":
 				manifest.Routes[0].PageTypes = []string{"island"}
+			case "capability-fields":
+				manifest.Routes[0].Capabilities.Scene3D = true
 			}
 			writeTestFixtureManifest(t, opts.DistDir, manifest)
 			if name == "unknown-field" {
@@ -151,6 +154,7 @@ func TestMeasureFreshLiveHTMLNormalizesDeclaredNonces(t *testing.T) {
 	manifest.Assets = manifest.Assets[:1]
 	manifest.Assets[0].SHA256 = testMeasureHash(build)
 	manifest.Routes[0].PageTypes = []string{"enhanced"}
+	manifest.Routes[0].Capabilities, _ = pagecaps.FromHTML(build)
 	if err := os.WriteFile(filepath.Join(opts.DistDir, "counter/index.html"), build, 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -219,6 +223,7 @@ func TestMeasureServingProfileAndPinAdmission(t *testing.T) {
 
 func TestMeasurePhysicalAliasesAndRedirects(t *testing.T) {
 	opts, manifest, document, program := testRouteMeasurement(t)
+	manifest.Assets[1].Phase = "startup"
 	// Two logical roles at one request identity consume one physical body.
 	alias := manifest.Assets[1]
 	alias.ID = "app/fixture/program"
@@ -267,5 +272,166 @@ func TestMeasurePhysicalAliasesAndRedirects(t *testing.T) {
 	row := result.Rows[0]
 	if row.NormalizedBytes != docSizes.Brotli+programSizes.Brotli+redirectSizes.Brotli || row.FrameworkBytes != programSizes.Brotli+redirectSizes.Brotli {
 		t.Fatal("redirect ownership or canonical sums differ")
+	}
+}
+
+func TestMeasureDeclaredPhasesKeepAfterReadyAndDormantOutOfCold(t *testing.T) {
+	for _, phase := range []string{"startup", "after-ready", "dormant"} {
+		t.Run(phase, func(t *testing.T) {
+			opts, manifest, document, program := testRouteMeasurement(t)
+			manifest.Assets[1].Phase = phase
+			writeTestFixtureManifest(t, opts.DistDir, manifest)
+			var docRequests, assetRequests atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/counter/" {
+					docRequests.Add(1)
+					w.Header().Set("Content-Type", "text/html")
+					w.Write(document)
+					return
+				}
+				assetRequests.Add(1)
+				w.Header().Set("Content-Type", "text/javascript")
+				w.Write(program)
+			}))
+			t.Cleanup(server.Close)
+			opts.BaseURL, opts.Client = server.URL, server.Client()
+			report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			row := report.Rows[0]
+			docSizes, _ := testBodyNormalizer(document)
+			programSizes, _ := testBodyNormalizer(program)
+			if report.Coverage.Reachability != "known" || docRequests.Load() != 2 || row.PhaseBytes.Critical != docSizes.Brotli || row.FrameworkBytes+row.AppBytes != row.NormalizedBytes {
+				t.Fatal("provenance or document/owner totals differ", row)
+			}
+			if phase == "startup" {
+				if row.NormalizedBytes != docSizes.Brotli+programSizes.Brotli || row.Requests != 2 || row.WireBytes != int64(len(document)+len(program)) || row.PhaseBytes.Startup != programSizes.Brotli || row.FrameworkBytes != programSizes.Brotli {
+					t.Fatal("startup body discounted", row)
+				}
+			} else if row.NormalizedBytes != docSizes.Brotli || row.Requests != 1 || row.FrameworkBytes != 0 || row.WireBytes != int64(len(document)) {
+				t.Fatal("session inventory entered cold totals", row)
+			}
+			if phase == "after-ready" && (assetRequests.Load() != 1 || row.PhaseBytes.AfterReady != programSizes.Brotli) {
+				t.Fatal("advertised later cost lost", row)
+			}
+			if phase == "dormant" && (assetRequests.Load() != 0 || row.PhaseBytes.Dormant != programSizes.Brotli) {
+				t.Fatal("unused inventory fetched or lost", row)
+			}
+		})
+	}
+}
+
+func TestMeasureServedCSSFontModuleClosureAndCriticalContent(t *testing.T) {
+	graph := testResourceGraph()
+	opts, _, _, _ := testRouteMeasurement(t)
+	document := graph.Bodies["app/fixture/html"]
+	caps, err := pagecaps.FromHTML(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph.Route.App = "fixture"
+	graph.Route.SourcePath = "fixture/page.gsx"
+	graph.Route.PageTypes = []string{"island"}
+	graph.Route.Capabilities = caps
+	graph.Route.InputSequenceID = "counter-input"
+	manifest := &FixtureManifest{Schema: "gosx.perf-fixtures/v1", Version: 1, SourceSHA: opts.Public.SHA, FixturesSHA256: opts.Public.FixtureSHA256, CatalogSHA256: strings.Repeat("2", 64), Routes: []FixtureRoute{graph.Route}, Assets: graph.Graph.Assets}
+	byURL := map[string]buildmanifest.PerfAssetUse{}
+	for _, asset := range manifest.Assets {
+		file := strings.TrimPrefix(asset.URL, "/")
+		if asset.Kind == "html" {
+			file = "counter/index.html"
+		}
+		file = filepath.Join(opts.DistDir, file)
+		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, graph.Bodies[asset.ID], 0600); err != nil {
+			t.Fatal(err)
+		}
+		byURL[asset.URL] = asset
+	}
+	writeTestFixtureManifest(t, opts.DistDir, manifest)
+	var fetchedFull atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asset, ok := byURL[r.URL.Path]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		if asset.ID == "framework/runtime/full" {
+			fetchedFull.Store(true)
+		}
+		switch asset.Kind {
+		case "html":
+			w.Header().Set("Content-Type", "text/html")
+		case "css":
+			w.Header().Set("Content-Type", "text/css")
+		case "js":
+			w.Header().Set("Content-Type", "text/javascript")
+		case "wasm":
+			w.Header().Set("Content-Type", "application/wasm")
+		case "font":
+			w.Header().Set("Content-Type", "font/woff2")
+		case "image":
+			w.Header().Set("Content-Type", "image/png")
+		default:
+			w.Header().Set("Content-Type", "application/octet-stream")
+		}
+		w.Write(graph.Bodies[asset.ID])
+	}))
+	t.Cleanup(server.Close)
+	opts.BaseURL, opts.Client = server.URL, server.Client()
+	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	row := report.Rows[0]
+	var total, framework, critical, dormant, wireBytes int64
+	for _, asset := range manifest.Assets {
+		sizes, _ := testBodyNormalizer(graph.Bodies[asset.ID])
+		if asset.ID == "framework/runtime/full" {
+			dormant += sizes.Brotli
+			continue
+		}
+		total += sizes.Brotli
+		wireBytes += int64(len(graph.Bodies[asset.ID]))
+		if asset.Owner == "framework" {
+			framework += sizes.Brotli
+		}
+		if asset.ID == "app/fixture/html" || asset.ID == "app/fixture/font" || asset.ID == "app/fixture/hero" {
+			critical += sizes.Brotli
+		}
+	}
+	if report.Coverage.Reachability != "known" || fetchedFull.Load() || row.NormalizedBytes != total || row.FrameworkBytes != framework || row.WireBytes != wireBytes || row.Requests != 9 || row.PhaseBytes.Critical != critical || row.PhaseBytes.Startup != total-critical || row.PhaseBytes.Dormant != dormant {
+		t.Fatal("served dependency closure, critical content or owner/phase sums differ", row)
+	}
+}
+
+func TestMeasureUnknownCriticalityRetainsPotentialBodies(t *testing.T) {
+	opts, manifest, document, _ := testRouteMeasurement(t)
+	document = bytes.Replace(document, []byte("</body>"), []byte(`<img srcset="/a.png 1x,/b.png 2x"></body>`), 1)
+	manifest.Assets[0].SHA256 = testMeasureHash(document)
+	if err := os.WriteFile(filepath.Join(opts.DistDir, "counter/index.html"), document, 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFixtureManifest(t, opts.DistDir, manifest)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/counter/" {
+			w.Header().Set("Content-Type", "text/html")
+			w.Write(document)
+			return
+		}
+		w.Header().Set("Content-Type", "text/javascript")
+		w.Write([]byte("fixtureRuntime()"))
+	}))
+	t.Cleanup(server.Close)
+	opts.BaseURL, opts.Client = server.URL, server.Client()
+	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Coverage.Reachability != "unknown" || report.Rows[0].ReasonCode != "unknown-reachability" || report.Rows[0].FrameworkBytes == 0 || report.Rows[0].PhaseBytes.Dormant != 0 {
+		t.Fatal("unresolved criticality excluded potential framework cost", report)
 	}
 }

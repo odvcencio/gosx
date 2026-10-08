@@ -3,9 +3,13 @@ package budget
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
+
+	"m31labs.dev/gosx/buildmanifest"
 	"strings"
 
 	"m31labs.dev/gosx/client/runtime/host"
@@ -28,9 +32,9 @@ type MeasureOptions struct {
 	Public                PublicInfo
 }
 
-// Measure verifies production fixture bodies and fresh documents. Until resource
-// reachability is proved, the inventory cost is conservative and explicitly
-// unknown; dormant declarations alone never exclude a potential body.
+// Measure verifies production fixture bodies, fresh documents and declared
+// resource closure. Unresolved reachability retains potential startup bytes;
+// browser reconciliation and model checks remain separate.
 func Measure(ctx context.Context, opts MeasureOptions) (AppReport, error) {
 	if _, err := assetmeasure.Measure(nil, opts.Pin); err != nil {
 		return AppReport{}, measureFailure("noncanonical", "/pin")
@@ -39,7 +43,7 @@ func Measure(ctx context.Context, opts MeasureOptions) (AppReport, error) {
 }
 
 func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormalizer) (AppReport, error) {
-	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "unknown"}}
+	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "known"}}
 	if validateInput(opts.App, inputDefinitions["ID"]) != nil {
 		return result, measureFailure("invalid-input", "/app")
 	}
@@ -87,6 +91,8 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	result.Coverage.RoutesExpected = int64(len(routes))
 	var fixtures []fixtureBody
 	byURL := map[string]int{}
+	uses := []buildmanifest.PerfAssetUse{}
+	bodies := map[string][]byte{}
 	for _, use := range manifest.Assets {
 		if use.Owner == "app" && !strings.HasPrefix(use.ID, "app/"+opts.App+"/") {
 			continue
@@ -95,6 +101,8 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if err != nil {
 			return result, err
 		}
+		uses = append(uses, use)
+		bodies[use.ID] = body
 		if previous, ok := byURL[use.URL]; ok {
 			if fixtures[previous].sha != use.SHA256 || fixtures[previous].kind != use.Kind {
 				return result, measureFailure("wrong-fixture", "/manifest/assets")
@@ -126,10 +134,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	sort.Strings(inlineFramework)
 	result.Coverage.AssetsExpected = int64(len(fixtures))
 	for _, fixture := range fixtures {
-		phase := "startup"
-		if fixture.kind == "html" {
-			phase = "critical"
-		}
+		phase := "dormant"
 		result.Assets = append(result.Assets, AssetReport{ID: fixture.id, SHA256: fixture.sha, Owner: fixture.owner, Phase: phase, Raw: fixture.sizes.Raw, Gzip: fixture.sizes.Gzip, Brotli: fixture.sizes.Brotli,
 			ChangedSources: []string{}, App: opts.App, Kind: fixture.kind, Condition: fixture.condition, Dependencies: fixture.dependencies})
 	}
@@ -165,6 +170,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if err != nil {
 			return result, measureFailure("capability", "/routes/capabilities")
 		}
+		observedCaps, _ := json.Marshal(caps)
+		declaredCaps, _ := json.Marshal(route.Capabilities)
+		if !bytes.Equal(observedCaps, declaredCaps) {
+			return result, measureFailure("capability", "/routes/capabilities")
+		}
 		detected, err := pagecaps.Classify(caps, false)
 		if err != nil || !fixtureCoversTypes(route.PageTypes, detected) {
 			return result, measureFailure("capability", "/routes/pageTypes")
@@ -173,63 +183,96 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if row.Backend == "" {
 			row.Backend = "none"
 		}
-		row.NormalizedBytes = measuredHTML.Sizes.Brotli
-		row.FrameworkBytes = measuredHTML.Framework.Brotli
-		row.AppBytes = measuredHTML.App.Brotli
-		row.WireBytes = first.WireBytes
-		row.Requests = first.Requests
-		row.PhaseBytes.Critical = measuredHTML.Sizes.Brotli
-		for _, redirect := range first.RedirectSizes {
-			row.NormalizedBytes += redirect.Brotli
-			row.AppBytes += redirect.Brotli
-			row.PhaseBytes.Critical += redirect.Brotli
+		plan, err := ResolveReachability(ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: uses}, Bodies: bodies, Route: route, Backend: row.Backend})
+		if err != nil {
+			return result, err
 		}
-		physical := map[string]bool{first.finalURL + "|" + document.sha: true}
+		if plan.Reachability == "unknown" {
+			result.Coverage.Reachability = "unknown"
+		} else {
+			row.ReasonCode = "insufficient-data"
+		}
+		phases := map[string]string{}
+		for _, asset := range plan.Assets {
+			phases[asset.ID] = asset.Phase
+		}
+		for i := range result.Assets {
+			result.Assets[i].Phase = earlierPhase(result.Assets[i].Phase, phases[result.Assets[i].ID])
+		}
+		costs := []PhaseCost{{RequestIdentity: first.finalURL, Phase: "critical", Owner: "app", Sizes: measuredHTML.Sizes, WireBytes: first.finalWireBytes, Requests: 1}}
+		for i, redirect := range first.RedirectSizes {
+			costs = append(costs, PhaseCost{RequestIdentity: "document-redirect:" + strconv.Itoa(i), Phase: "critical", Owner: "app", Sizes: redirect, WireBytes: first.redirectWireBytes[i], Requests: 1})
+		}
+		inline := map[string]int64{first.finalURL: measuredHTML.Framework.Brotli}
+		coldInline := map[string]bool{first.finalURL: true}
+		noExecutableAssets := true
 		for _, fixture := range fixtures {
-			if fixture.kind == "html" {
+			phase := phases[fixture.id]
+			if phase != "dormant" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
+				noExecutableAssets = false
+			}
+			if fixture.url == document.url {
 				continue
 			}
-			observed, err := measureHTTP(ctx, HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}, normalize)
+			if phase == "dormant" {
+				costs = append(costs, PhaseCost{RequestIdentity: fixture.url, Phase: phase, Owner: fixture.owner, Sizes: fixture.sizes})
+				continue
+			}
+			options := HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}
+			if fixture.kind == "html" {
+				options.HTMLFields = fields
+				options.ServingCompressor = "go-brotli-4"
+			}
+			observed, err := measureHTTP(ctx, options, normalize)
 			if err != nil {
 				return result, err
 			}
-			key := observed.finalURL + "|" + fixture.sha
-			if physical[key] {
-				row.WireBytes += observed.WireBytes - observed.finalWireBytes
-				row.Requests += observed.Requests - 1
-				for _, redirect := range observed.RedirectSizes {
-					row.NormalizedBytes += redirect.Brotli
-					row.PhaseBytes.Startup += redirect.Brotli
-					if fixture.owner == "framework" {
-						row.FrameworkBytes += redirect.Brotli
-					} else {
-						row.AppBytes += redirect.Brotli
-					}
+			if fixture.kind == "html" {
+				repeat, err := measureHTTP(ctx, options, normalize)
+				if err != nil {
+					return result, err
 				}
-				row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
-				continue
+				html, err := measureHTML(observed.body, htmlOpts, normalize)
+				if err != nil {
+					return result, err
+				}
+				again, err := measureHTML(repeat.body, htmlOpts, normalize)
+				if err != nil {
+					return result, err
+				}
+				if err := VerifyHTMLRenders(html, again); err != nil {
+					return result, err
+				}
+				if fixture.owner == "app" {
+					inline[observed.finalURL] = html.Framework.Brotli
+					coldInline[observed.finalURL] = coldInline[observed.finalURL] || phaseRank(phase) <= 1
+				}
 			}
-			physical[key] = true
-			row.NormalizedBytes += observed.Sizes.Brotli
-			row.WireBytes += observed.WireBytes
-			row.Requests += observed.Requests
-			row.PhaseBytes.Startup += observed.Sizes.Brotli
-			for _, redirect := range observed.RedirectSizes {
-				row.NormalizedBytes += redirect.Brotli
-				row.PhaseBytes.Startup += redirect.Brotli
-			}
-			cost := observed.Sizes.Brotli
-			for _, redirect := range observed.RedirectSizes {
-				cost += redirect.Brotli
-			}
-			if fixture.owner == "framework" {
-				row.FrameworkBytes += cost
-			} else {
-				row.AppBytes += cost
+			costs = append(costs, PhaseCost{RequestIdentity: observed.finalURL, Phase: phase, Owner: fixture.owner, Sizes: observed.Sizes, WireBytes: observed.finalWireBytes, Requests: 1})
+			for i, redirect := range observed.RedirectSizes {
+				costs = append(costs, PhaseCost{RequestIdentity: "asset-redirect:" + fixture.id + ":" + strconv.Itoa(i), Phase: phase, Owner: fixture.owner, Sizes: redirect, WireBytes: observed.redirectWireBytes[i], Requests: 1})
 			}
 			row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
 		}
-		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: measuredHTML.ExecutableScripts == 0 && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
+		totals, err := SumPhases(costs)
+		if err != nil {
+			return result, err
+		}
+		row.NormalizedBytes, row.FrameworkBytes, row.AppBytes = totals.NormalizedBytes, totals.FrameworkBytes, totals.AppBytes
+		row.WireBytes, row.Requests, row.PhaseBytes = totals.WireBytes, totals.Requests, totals.Phases
+		frameworkBodies := map[string]bool{}
+		for _, cost := range costs {
+			if cost.Owner == "framework" {
+				frameworkBodies[cost.RequestIdentity] = true
+			}
+		}
+		for identity, n := range inline {
+			if coldInline[identity] && !frameworkBodies[identity] {
+				row.FrameworkBytes += n
+				row.AppBytes -= n
+			}
+		}
+		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && measuredHTML.ExecutableScripts == 0 && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
 		row.HeadroomBytes = -row.NormalizedBytes
 		for _, name := range route.PageTypes {
 			copy := row

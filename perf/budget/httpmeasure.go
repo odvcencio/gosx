@@ -35,15 +35,16 @@ type HTTPMeasureOptions struct {
 // HTTPMeasurement keeps served bytes separate from canonical normalization.
 // Body, response headers and resolved URLs remain private intermediate data.
 type HTTPMeasurement struct {
-	Sizes          assetmeasure.Sizes
-	RedirectSizes  []assetmeasure.Sizes
-	WireBytes      int64
-	Requests       int64
-	Policies       []PolicyResult
-	body           []byte
-	header         http.Header
-	finalURL       string
-	finalWireBytes int64
+	Sizes             assetmeasure.Sizes
+	RedirectSizes     []assetmeasure.Sizes
+	WireBytes         int64
+	Requests          int64
+	Policies          []PolicyResult
+	body              []byte
+	header            http.Header
+	finalURL          string
+	finalWireBytes    int64
+	redirectWireBytes []int64
 }
 
 type bodyNormalizer func([]byte) (assetmeasure.Sizes, error)
@@ -116,6 +117,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		out.Requests++
 		if response.StatusCode >= 300 && response.StatusCode <= 399 && response.StatusCode != http.StatusNotModified {
 			out.RedirectSizes = append(out.RedirectSizes, sizes)
+			out.redirectWireBytes = append(out.redirectWireBytes, int64(len(wire)))
 			location, err := response.Location()
 			if err != nil || hop == 10 || location.Scheme != base.Scheme || location.Host != base.Host || location.User != nil || location.RawQuery != "" || location.Fragment != "" {
 				return out, measureFailure("wrong-fixture", "/redirect")
