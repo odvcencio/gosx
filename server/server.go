@@ -334,7 +334,9 @@ func (a *App) HandleAPI(route APIRoute) {
 }
 
 // EnableNavigation injects the built-in client-side page navigation runtime
-// into document/head-aware responses.
+// into document/head-aware responses. Its external script is deferred and runs
+// before the framework bootstrap. Inline scripts that call the navigation API
+// should wait for DOMContentLoaded.
 //
 // Call it any time before Build(): Build() is what wires the navigation-runtime
 // head builder into every mounted NavigationConfigurable handler (see Mount and

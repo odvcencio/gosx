@@ -64,7 +64,7 @@ const navigationSource = [
 ].join("\n");
 // navigationRuntimeMinifiedSource is the generated, committed artifact
 // client/runtime/host/navigation_asset.go go:embeds for app.EnableNavigation
-// writes inline into every page (gosx#221). Every behavioral test in this
+// serves as a standalone asset. Every behavioral test in this
 // suite exercises navigationSource above (the readable .ts source) — this
 // minified copy exists only so navigation-runtime-minified.test.js can prove
 // it parses and boots (its IIFE installs its globals) the same way
@@ -2212,6 +2212,9 @@ function createContext(options) {
   // does a WebGPU page whose device is lost. A test can still override the
   // route through options.fetchRoutes, or drop it to prove the chunk is absent.
   routes.set("/gosx/bootstrap-feature-scene3d-webgl.js", { text: bootstrapFeatureScene3DWebGLSource });
+  routes.set("/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", {
+    text: fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-pipeline-recovery.js"), "utf8"),
+  });
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
     routes.set(url, response);
   }
@@ -4353,7 +4356,7 @@ function makeFakeGPUDevice(options) {
     },
     pushErrorScope() {},
     popErrorScope() {
-      return Promise.resolve(null);
+      return { then(resolve) { return Promise.resolve(resolve(null)); }, catch() { return Promise.resolve(null); } };
     },
   };
   // Render bundles are opt-in. Without createRenderBundleEncoder the renderer
@@ -4497,7 +4500,7 @@ function freshFeatureBundleSource(name, options) {
 // options.fakeDeviceOptions is forwarded to makeFakeGPUDevice().
 async function createBoardWebGPUHarness(options) {
   const opts = options || {};
-  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow });
+  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow, fetchRoutes: opts.fetchRoutes });
   // Most renderer harnesses assert the complete diagnostic attribute surface.
   // Production defaults to throttled telemetry; tests opt out only when they
   // are specifically verifying that production behavior.
@@ -4540,6 +4543,7 @@ async function createBoardWebGPUHarness(options) {
   assert.ok(env.context.__gosx_scene3d_api, "scene3d chunk must publish __gosx_scene3d_api");
 
   const fake = makeFakeGPUDevice(opts.fakeDeviceOptions);
+  if (opts.configureDevice) opts.configureDevice(fake.device, fake.state, env);
   // The 16a factory consumes the probed adapter+device through the 16z
   // bridge global — point it at the fake before loading the webgpu chunk.
   env.context.__gosx_scene3d_webgpu_probe = function() {

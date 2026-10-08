@@ -105,7 +105,8 @@ func (a *App) UseShutdownHook(name string, hooks ShutdownHooks) (func(), error) 
 // Scheduled work drains for at most 30 seconds (or ShutdownGrace when a
 // deadline is present). A deadline reserves max(5 seconds, 25% of its remaining
 // time) for hooks. After cancellation, deadline shutdowns wait only until the
-// deadline minus half that reserve; hooks can therefore overlap a cancelled
+// deadline minus half the smaller of that reserve and the remaining time;
+// hooks can therefore overlap a cancelled
 // run still unwinding. Without a deadline, cancelled runs are joined without
 // limit. Drain and Flush callbacks are always attempted afterward.
 func (a *App) Shutdown(ctx context.Context) error {
@@ -223,13 +224,9 @@ func scheduledDrainWindow(ctx context.Context, configured time.Duration) time.Du
 func scheduledJoinDeadline(deadline, now time.Time) time.Time {
 	remaining := max(0, deadline.Sub(now))
 	reserve := max(5*time.Second, remaining/4)
-	cutoff := deadline.Add(-reserve / 2)
-	if remaining > 0 && cutoff.Before(now) {
-		// A cutoff already in the past cannot join even a promptly cancelled
-		// run. Only this case splits the remaining time between join and hooks.
-		return now.Add(remaining / 2)
-	}
-	return cutoff
+	// Cap the reserve before halving it so the join budget grows continuously
+	// with the owner's deadline, including deadlines shorter than five seconds.
+	return deadline.Add(-min(reserve, remaining) / 2)
 }
 
 // Keep lifecycle errors in the server namespace while preserving the shared

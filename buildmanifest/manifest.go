@@ -53,26 +53,28 @@ type RuntimeAssets struct {
 	// encoding/json only treats false/0/nil/empty-collection values as empty
 	// — so these use "omitzero" (Go 1.24+) instead: a role a project excludes
 	// never appears in build.json, matching GC-3's framework-lane contract.
-	BootstrapFeatureIslands           HashedAsset `json:"bootstrapFeatureIslands,omitzero"`
-	BootstrapFeatureEngines           HashedAsset `json:"bootstrapFeatureEngines,omitzero"`
-	BootstrapFeatureHubs              HashedAsset `json:"bootstrapFeatureHubs,omitzero"`
-	BootstrapFeatureControllers       HashedAsset `json:"bootstrapFeatureControllers,omitzero"`
-	BootstrapControllerInput          HashedAsset `json:"bootstrapControllerInput,omitzero"`
-	BootstrapFeatureTextlayout        HashedAsset `json:"bootstrapFeatureTextlayout,omitzero"`
-	BootstrapFeatureScene3D           HashedAsset `json:"bootstrapFeatureScene3d,omitzero"`
-	BootstrapFeatureScene3DCommand    HashedAsset `json:"bootstrapFeatureScene3dCommand,omitzero"`
-	BootstrapFeatureScene3DHydrate    HashedAsset `json:"bootstrapFeatureScene3dHydrate,omitzero"`
-	BootstrapFeatureScene3DWebGPU     HashedAsset `json:"bootstrapFeatureScene3dWebgpu,omitzero"`
-	BootstrapFeatureScene3DWebGL      HashedAsset `json:"bootstrapFeatureScene3dWebgl,omitzero"`
-	BootstrapFeatureScene3DGLTF       HashedAsset `json:"bootstrapFeatureScene3dGltf,omitzero"`
-	BootstrapFeatureScene3DAnimation  HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitzero"`
-	BootstrapFeatureScene3DCompute    HashedAsset `json:"bootstrapFeatureScene3dCompute,omitzero"`
-	BootstrapFeatureScene3DDecompress HashedAsset `json:"bootstrapFeatureScene3dDecompress,omitzero"`
-	BootstrapFeatureScene3DWalk       HashedAsset `json:"bootstrapFeatureScene3dWalk,omitzero"`
-	BootstrapFeatureScene3DZoom       HashedAsset `json:"bootstrapFeatureScene3dZoom,omitzero"`
-	BootstrapFeatureScene3DTimeline   HashedAsset `json:"bootstrapFeatureScene3dTimeline,omitzero"`
-	BootstrapFeatureScene3DVessel     HashedAsset `json:"bootstrapFeatureScene3dVessel,omitzero"`
-	BootstrapFeatureScene3DOceanQuery HashedAsset `json:"bootstrapFeatureScene3dOceanQuery,omitzero"`
+	BootstrapFeatureIslands                 HashedAsset `json:"bootstrapFeatureIslands,omitzero"`
+	BootstrapFeatureEngines                 HashedAsset `json:"bootstrapFeatureEngines,omitzero"`
+	BootstrapFeatureHubs                    HashedAsset `json:"bootstrapFeatureHubs,omitzero"`
+	BootstrapFeatureControllers             HashedAsset `json:"bootstrapFeatureControllers,omitzero"`
+	BootstrapControllerInput                HashedAsset `json:"bootstrapControllerInput,omitzero"`
+	BootstrapFeatureTextlayout              HashedAsset `json:"bootstrapFeatureTextlayout,omitzero"`
+	BootstrapFeatureScene3D                 HashedAsset `json:"bootstrapFeatureScene3d,omitzero"`
+	BootstrapFeatureScene3DCommand          HashedAsset `json:"bootstrapFeatureScene3dCommand,omitzero"`
+	BootstrapFeatureScene3DHydrate          HashedAsset `json:"bootstrapFeatureScene3dHydrate,omitzero"`
+	BootstrapFeatureScene3DPipelineRecovery HashedAsset `json:"bootstrapFeatureScene3dPipelineRecovery,omitzero"`
+	BootstrapFeatureScene3DWebGPU           HashedAsset `json:"bootstrapFeatureScene3dWebgpu,omitzero"`
+	BootstrapFeatureScene3DWebGL            HashedAsset `json:"bootstrapFeatureScene3dWebgl,omitzero"`
+	BootstrapFeatureScene3DGLTF             HashedAsset `json:"bootstrapFeatureScene3dGltf,omitzero"`
+	BootstrapFeatureScene3DAnimation        HashedAsset `json:"bootstrapFeatureScene3dAnimation,omitzero"`
+	BootstrapFeatureScene3DCompute          HashedAsset `json:"bootstrapFeatureScene3dCompute,omitzero"`
+	BootstrapFeatureScene3DDecompress       HashedAsset `json:"bootstrapFeatureScene3dDecompress,omitzero"`
+	BootstrapFeatureScene3DWalk             HashedAsset `json:"bootstrapFeatureScene3dWalk,omitzero"`
+	BootstrapFeatureScene3DZoom             HashedAsset `json:"bootstrapFeatureScene3dZoom,omitzero"`
+	BootstrapFeatureScene3DTimeline         HashedAsset `json:"bootstrapFeatureScene3dTimeline,omitzero"`
+	BootstrapFeatureScene3DVessel           HashedAsset `json:"bootstrapFeatureScene3dVessel,omitzero"`
+	BootstrapFeatureScene3DOceanQuery       HashedAsset `json:"bootstrapFeatureScene3dOceanQuery,omitzero"`
+	BootstrapFeatureScene3DParticleBurst    HashedAsset `json:"bootstrapFeatureScene3dParticleBurst,omitzero"`
 	// BootstrapFeatureScene3DInstanceStream is the opt-in binary
 	// instance-transform fast path (see client/runtime/scene3d/
 	// instance-stream.ts and scene/instance_stream.go). It is opt-in in the
@@ -184,39 +186,41 @@ type SceneAssetManifest struct {
 }
 
 type RuntimePaths struct {
-	WASM                                  string
-	WASMIslands                           string
-	WASMVariants                          map[string]string
-	WASMExec                              string
-	StandardGoWASMExec                    string
-	Bootstrap                             string
-	BootstrapLite                         string
-	BootstrapRuntime                      string
-	BootstrapFeatureIslands               string
-	BootstrapFeatureEngines               string
-	BootstrapFeatureHubs                  string
-	BootstrapFeatureControllers           string
-	BootstrapControllerInput              string
-	BootstrapFeatureTextlayout            string
-	BootstrapFeatureScene3D               string
-	BootstrapFeatureScene3DCommand        string
-	BootstrapFeatureScene3DHydrate        string
-	BootstrapFeatureScene3DWebGPU         string
-	BootstrapFeatureScene3DWebGL          string
-	BootstrapFeatureScene3DGLTF           string
-	BootstrapFeatureScene3DAnimation      string
-	BootstrapFeatureScene3DCompute        string
-	BootstrapFeatureScene3DDecompress     string
-	BootstrapFeatureScene3DWalk           string
-	BootstrapFeatureScene3DZoom           string
-	BootstrapFeatureScene3DTimeline       string
-	BootstrapFeatureScene3DVessel         string
-	BootstrapFeatureScene3DOceanQuery     string
-	BootstrapFeatureScene3DInstanceStream string
-	Patch                                 string
-	VideoHLS                              string
-	StripeBridge                          string
-	Relay                                 string
+	WASM                                    string
+	WASMIslands                             string
+	WASMVariants                            map[string]string
+	WASMExec                                string
+	StandardGoWASMExec                      string
+	Bootstrap                               string
+	BootstrapLite                           string
+	BootstrapRuntime                        string
+	BootstrapFeatureIslands                 string
+	BootstrapFeatureEngines                 string
+	BootstrapFeatureHubs                    string
+	BootstrapFeatureControllers             string
+	BootstrapControllerInput                string
+	BootstrapFeatureTextlayout              string
+	BootstrapFeatureScene3D                 string
+	BootstrapFeatureScene3DCommand          string
+	BootstrapFeatureScene3DHydrate          string
+	BootstrapFeatureScene3DPipelineRecovery string
+	BootstrapFeatureScene3DWebGPU           string
+	BootstrapFeatureScene3DWebGL            string
+	BootstrapFeatureScene3DGLTF             string
+	BootstrapFeatureScene3DAnimation        string
+	BootstrapFeatureScene3DCompute          string
+	BootstrapFeatureScene3DDecompress       string
+	BootstrapFeatureScene3DWalk             string
+	BootstrapFeatureScene3DZoom             string
+	BootstrapFeatureScene3DParticleBurst    string
+	BootstrapFeatureScene3DTimeline         string
+	BootstrapFeatureScene3DVessel           string
+	BootstrapFeatureScene3DOceanQuery       string
+	BootstrapFeatureScene3DInstanceStream   string
+	Patch                                   string
+	VideoHLS                                string
+	StripeBridge                            string
+	Relay                                   string
 }
 
 // Load reads a build manifest from disk.
@@ -243,39 +247,41 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		variants[id] = AssetURL(assetBaseURL, "runtime", asset.File)
 	}
 	return RuntimePaths{
-		WASM:                                  AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
-		WASMIslands:                           AssetURL(assetBaseURL, "runtime", m.Runtime.WASMIslands.File),
-		WASMVariants:                          variants,
-		WASMExec:                              AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
-		StandardGoWASMExec:                    AssetURL(assetBaseURL, "runtime", m.Runtime.StandardGoWASMExec.File),
-		Bootstrap:                             AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
-		BootstrapLite:                         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
-		BootstrapRuntime:                      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapRuntime.File),
-		BootstrapFeatureIslands:               AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureIslands.File),
-		BootstrapFeatureEngines:               AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureEngines.File),
-		BootstrapFeatureHubs:                  AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureHubs.File),
-		BootstrapFeatureControllers:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureControllers.File),
-		BootstrapControllerInput:              AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapControllerInput.File),
-		BootstrapFeatureTextlayout:            AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureTextlayout.File),
-		BootstrapFeatureScene3D:               AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3D.File),
-		BootstrapFeatureScene3DCommand:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCommand.File),
-		BootstrapFeatureScene3DHydrate:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DHydrate.File),
-		BootstrapFeatureScene3DWebGPU:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGPU.File),
-		BootstrapFeatureScene3DWebGL:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGL.File),
-		BootstrapFeatureScene3DGLTF:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DGLTF.File),
-		BootstrapFeatureScene3DAnimation:      AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DAnimation.File),
-		BootstrapFeatureScene3DCompute:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCompute.File),
-		BootstrapFeatureScene3DDecompress:     AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DDecompress.File),
-		BootstrapFeatureScene3DWalk:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWalk.File),
-		BootstrapFeatureScene3DZoom:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DZoom.File),
-		BootstrapFeatureScene3DTimeline:       AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DTimeline.File),
-		BootstrapFeatureScene3DVessel:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DVessel.File),
-		BootstrapFeatureScene3DOceanQuery:     AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DOceanQuery.File),
-		BootstrapFeatureScene3DInstanceStream: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DInstanceStream.File),
-		Patch:                                 AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
-		VideoHLS:                              AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
-		StripeBridge:                          AssetURL(assetBaseURL, "runtime", m.Runtime.StripeBridge.File),
-		Relay:                                 AssetURL(assetBaseURL, "runtime", m.Runtime.Relay.File),
+		WASM:                                    AssetURL(assetBaseURL, "runtime", m.Runtime.WASM.File),
+		WASMIslands:                             AssetURL(assetBaseURL, "runtime", m.Runtime.WASMIslands.File),
+		WASMVariants:                            variants,
+		WASMExec:                                AssetURL(assetBaseURL, "runtime", m.Runtime.WASMExec.File),
+		StandardGoWASMExec:                      AssetURL(assetBaseURL, "runtime", m.Runtime.StandardGoWASMExec.File),
+		Bootstrap:                               AssetURL(assetBaseURL, "runtime", m.Runtime.Bootstrap.File),
+		BootstrapLite:                           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapLite.File),
+		BootstrapRuntime:                        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapRuntime.File),
+		BootstrapFeatureIslands:                 AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureIslands.File),
+		BootstrapFeatureEngines:                 AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureEngines.File),
+		BootstrapFeatureHubs:                    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureHubs.File),
+		BootstrapFeatureControllers:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureControllers.File),
+		BootstrapControllerInput:                AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapControllerInput.File),
+		BootstrapFeatureTextlayout:              AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureTextlayout.File),
+		BootstrapFeatureScene3D:                 AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3D.File),
+		BootstrapFeatureScene3DCommand:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCommand.File),
+		BootstrapFeatureScene3DHydrate:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DHydrate.File),
+		BootstrapFeatureScene3DPipelineRecovery: AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DPipelineRecovery.File),
+		BootstrapFeatureScene3DWebGPU:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGPU.File),
+		BootstrapFeatureScene3DWebGL:            AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWebGL.File),
+		BootstrapFeatureScene3DGLTF:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DGLTF.File),
+		BootstrapFeatureScene3DAnimation:        AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DAnimation.File),
+		BootstrapFeatureScene3DCompute:          AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DCompute.File),
+		BootstrapFeatureScene3DDecompress:       AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DDecompress.File),
+		BootstrapFeatureScene3DWalk:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DWalk.File),
+		BootstrapFeatureScene3DZoom:             AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DZoom.File),
+		BootstrapFeatureScene3DParticleBurst:    AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DParticleBurst.File),
+		BootstrapFeatureScene3DTimeline:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DTimeline.File),
+		BootstrapFeatureScene3DVessel:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DVessel.File),
+		BootstrapFeatureScene3DOceanQuery:       AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DOceanQuery.File),
+		BootstrapFeatureScene3DInstanceStream:   AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DInstanceStream.File),
+		Patch:                                   AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
+		VideoHLS:                                AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
+		StripeBridge:                            AssetURL(assetBaseURL, "runtime", m.Runtime.StripeBridge.File),
+		Relay:                                   AssetURL(assetBaseURL, "runtime", m.Runtime.Relay.File),
 	}
 }
 

@@ -7172,6 +7172,7 @@
   // loaded as a separate feature chunk, they destructure from this
   // namespace instead.
   window.__gosx_scene3d_api = {
+    loadPresentation: ensureSceneGatedFeatureLoaded,
     appendSceneObjectToBundle,
     appendSceneSurfaceToBundle,
     applySceneCommands,

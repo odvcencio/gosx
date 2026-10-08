@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	"m31labs.dev/gosx/server"
 )
 
 func TestServerProxyInjectsReloadScriptIntoHTML(t *testing.T) {
@@ -164,6 +166,18 @@ func TestServerServesBuiltRuntimeAssetFromDistAssets(t *testing.T) {
 	}
 	if cache := rec.Header().Get("Cache-Control"); !strings.Contains(cache, "no-cache") {
 		t.Fatalf("expected no-cache headers, got %q", cache)
+	}
+}
+
+func TestServerProxiesEmbeddedNavigationAsset(t *testing.T) {
+	upstream := httptest.NewServer(server.New().Build())
+	defer upstream.Close()
+	srv := &Server{Dir: t.TempDir(), BuildDir: t.TempDir()}
+	srv.SetProxyTarget(upstream.URL)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, runtimehost.NavigationRuntimePath, nil))
+	if w.Code != http.StatusOK || w.Body.String() != runtimehost.NavigationRuntime {
+		t.Fatalf("navigation asset: status=%d bytes=%d", w.Code, w.Body.Len())
 	}
 }
 
