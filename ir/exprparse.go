@@ -642,6 +642,8 @@ var browserMethodSpecs = map[string]browserMethodSpec{
 	"preventdefault":  {name: "PreventDefault", minArgs: 0, maxArgs: 0, returnType: program.TypeBool},
 	"stoppropagation": {name: "StopPropagation", minArgs: 0, maxArgs: 0, returnType: program.TypeBool},
 	"scrollintoview":  {name: "ScrollIntoView", minArgs: 1, maxArgs: 2, returnType: program.TypeBool},
+	"capturepointer":  {name: "CapturePointer", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"releasepointer":  {name: "ReleasePointer", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
 }
 
 func (p *exprParser) browserReceiver(id program.ExprID) bool {

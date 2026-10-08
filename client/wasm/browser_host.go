@@ -192,6 +192,18 @@ func (r *browserHostReceiver) Call(method string, args []vm.Value) (result vm.Va
 		// Resolve after reconciliation so a signal may reveal, create, or move
 		// the target before the browser computes its scroll position.
 		return vm.BoolVal(browserDefer(func() { r.scrollIntoView(selector, behavior) })), nil
+	case "CapturePointer", "ReleasePointer":
+		if err := requireBrowserArity(method, callArgs, 1, 1); err != nil {
+			return vm.BoolVal(false), err
+		}
+		if !enabled {
+			return vm.BoolVal(false), nil
+		}
+		pointerID, err := browserIntArg(method, callArgs, 0)
+		if err != nil {
+			return vm.BoolVal(false), err
+		}
+		return vm.BoolVal(browserCurrentHandlerPointerCapture(method == "CapturePointer", pointerID)), nil
 	default:
 		return vm.ZeroValue(program.TypeAny), fmt.Errorf("unknown browser method %q", method)
 	}
@@ -485,6 +497,30 @@ func browserCurrentEventCall(method string) bool {
 	if method == "stopPropagation" {
 		event.Set("__gosx_stop_island_fanout", true)
 	}
+	return true
+}
+
+// browserCurrentHandlerPointerCapture is synchronous on purpose: browsers honour
+// setPointerCapture only while the pointerdown event dispatches. A DOMException
+// (for example an inactive pointer) becomes false, not a VM diagnostic.
+func browserCurrentHandlerPointerCapture(capture bool, pointerID int) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	handler := js.Global().Get("__gosx_current_handler")
+	if handler.IsUndefined() || handler.IsNull() {
+		return false
+	}
+	method := "releasePointerCapture"
+	if capture {
+		method = "setPointerCapture"
+	}
+	if handler.Get(method).Type() != js.TypeFunction {
+		return false
+	}
+	handler.Call(method, pointerID)
 	return true
 }
 
