@@ -734,8 +734,8 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 551 more Brotli bytes
     // (430293 -> 430844); only the exceeded target moves, by 500 bytes.
     file: "bootstrap.js", raw: 1861800, gzip: 524000,
-    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432078.
-    brotli: 432100 },
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432323.
+    brotli: 432400 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1259,7 +1259,7 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
     file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600,
-    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 153692.
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 153648.
     brotli: 153700 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
@@ -1941,8 +1941,8 @@ const routeBudgets = [
     gzip: 383800,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
-    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337813.
-    brotli: 337900,
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337766.
+    brotli: 337800,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2508,7 +2508,7 @@ const routeBudgets = [
     raw: 1235900,
     gzip: 340400,
     // The same 564-byte shared runtime addition exceeds this route's cap.
-    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299186.
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299139.
     brotli: 299200,
   },
 
