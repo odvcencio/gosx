@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Remove the unused standalone Scene3D pipeline recovery asset and its
+  unreleased renderer setter. Pipeline recovery remains inside the WebGPU
+  renderer bundle.
+
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
   request-time compression. Static exports include the asset. Defer execution

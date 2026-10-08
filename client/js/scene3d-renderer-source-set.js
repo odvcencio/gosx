@@ -27,6 +27,7 @@ function sameList(actual, expected) {
 function isRendererSource(backend, source) {
   const runtime = new RegExp(`^\\.\\./runtime/scene3d/${backend}(?:-[a-z0-9-]+)?\\.ts$`);
   if (runtime.test(source)) return true;
+  if (backend === "webgpu" && source === "../runtime/scene3d/pipeline-recovery.ts") return true;
   return backend === "webgpu" && /^bootstrap-src\/16a\d+-scene-webgpu-[a-z0-9-]+\.ts$/.test(source);
 }
 

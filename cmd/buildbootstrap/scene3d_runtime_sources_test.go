@@ -103,3 +103,20 @@ func TestWebGPUPointSpritePerPointVaryingsStayFlat(t *testing.T) {
 		})
 	}
 }
+
+func TestPipelineRecoveryShipsOnlyInsideWebGPURenderers(t *testing.T) {
+	var owners []string
+	for _, out := range outputs {
+		if out.name == "bootstrap-feature-scene3d-pipeline-recovery.js" {
+			t.Fatal("pipeline recovery must not ship as a standalone chunk")
+		}
+		for _, source := range out.sources {
+			if source.rel == "../runtime/scene3d/pipeline-recovery.ts" {
+				owners = append(owners, out.name)
+			}
+		}
+	}
+	if got, want := strings.Join(owners, ","), "bootstrap.js,bootstrap-feature-scene3d-webgpu.js"; got != want {
+		t.Fatalf("pipeline recovery owners = %q, want %q", got, want)
+	}
+}
