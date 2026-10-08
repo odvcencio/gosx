@@ -90,11 +90,21 @@ func writeHashedWithOptions(dir, name, ext string, data []byte, opts hashedWrite
 			return HashedAsset{}, err
 		}
 	}
-	return HashedAsset{
-		File: filename,
-		Hash: hash,
-		Size: int64(len(data)),
-	}, nil
+	asset := HashedAsset{File: filename, Hash: hash, Size: int64(len(data))}
+	if opts.CompressedSidecars {
+		for _, sidecar := range []struct {
+			ext  string
+			size *int64
+		}{{".gz", &asset.GzipSize}, {".br", &asset.BrotliSize}} {
+			info, err := os.Stat(path + sidecar.ext)
+			if err == nil {
+				*sidecar.size = info.Size()
+			} else if !os.IsNotExist(err) {
+				return HashedAsset{}, err
+			}
+		}
+	}
+	return asset, nil
 }
 
 func writeHashedWithoutCompressedSidecars(dir, name, ext string, data []byte) (HashedAsset, error) {

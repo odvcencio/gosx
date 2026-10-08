@@ -267,8 +267,12 @@ type RuntimeRef struct {
 	// ManifestHash identifies the exact browser/WASM ABI contract.
 	ManifestHash string `json:"manifestHash,omitempty"`
 
-	// Size in bytes (compressed).
+	// Size in bytes before compression.
 	Size int64 `json:"size,omitempty"`
+
+	// Transfer sizes guide server-side selection and stay out of page JSON.
+	GzipSize   int64 `json:"-"`
+	BrotliSize int64 `json:"-"`
 
 	// Variant is the capability-linked runtime selected for this page.
 	Variant string `json:"variant,omitempty"`

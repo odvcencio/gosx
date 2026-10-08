@@ -907,10 +907,16 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.runtimeAssets = manifest.Runtime
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
+		r.manifest.Runtime.GzipSize = manifest.Runtime.WASM.GzipSize
+		r.manifest.Runtime.BrotliSize = manifest.Runtime.WASM.BrotliSize
+		r.setRuntimeVariant(r.manifest.Runtime)
 		r.SetBundle(r.bundleID, runtime.WASM)
 	}
 	if runtime.WASMIslands != "" {
 		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
+		r.islandRuntime.GzipSize = manifest.Runtime.WASMIslands.GzipSize
+		r.islandRuntime.BrotliSize = manifest.Runtime.WASMIslands.BrotliSize
+		r.setRuntimeVariant(r.islandRuntime)
 	}
 	for id, asset := range manifest.Runtime.WASMVariants {
 		path := runtime.WASMVariants[id]
@@ -930,6 +936,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 			Hash:         asset.Hash,
 			ManifestHash: firstNonEmptyRuntimeManifestHash(asset.ManifestHash),
 			Size:         asset.Size,
+			GzipSize:     asset.GzipSize,
+			BrotliSize:   asset.BrotliSize,
 			Variant:      variant,
 			FeatureMask:  mask,
 		})
@@ -2327,16 +2335,37 @@ func (r *Renderer) smallestCompatibleRuntimeRef(required runtimewasm.FeatureMask
 }
 
 func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
+	candidateCost, currentCost := runtimeRefTransferCost(candidate), runtimeRefTransferCost(current)
+	if candidateCost > 0 && currentCost <= 0 {
+		return true
+	}
+	if candidateCost <= 0 {
+		return currentCost <= 0 && candidate.Path < current.Path
+	}
+	if candidateCost != currentCost {
+		return candidateCost < currentCost
+	}
 	if candidate.Size > 0 && current.Size <= 0 {
 		return true
 	}
 	if candidate.Size <= 0 {
-		return false
+		return current.Size <= 0 && candidate.Path < current.Path
 	}
 	if candidate.Size != current.Size {
 		return candidate.Size < current.Size
 	}
 	return candidate.Path < current.Path
+}
+
+// runtimeRefTransferCost uses the best recorded representation for each asset.
+func runtimeRefTransferCost(ref hydrate.RuntimeRef) int64 {
+	if ref.BrotliSize > 0 {
+		return ref.BrotliSize
+	}
+	if ref.GzipSize > 0 {
+		return ref.GzipSize
+	}
+	return ref.Size
 }
 
 func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {
