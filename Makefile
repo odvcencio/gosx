@@ -131,8 +131,14 @@ test-budget-cli:
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 
+# CI runs the two exhaustive name partitions separately. An ordinary test-cli
+# invocation still runs the full package with the same 25-minute timeout.
 test-cli:
+ifdef CLI_SHARD
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest cli $(CLI_SHARD)
+else
 	$(GO) test -timeout 25m ./cmd/gosx
+endif
 
 test-ci-partitions:
 	$(GO) test ./internal/citest
