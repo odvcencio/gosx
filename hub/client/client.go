@@ -1,11 +1,13 @@
 package hubclient
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"runtime"
 	"sync"
 	"time"
 )
@@ -45,8 +47,9 @@ type Options struct {
 	// StoreKey is the key used with Store. Empty selects "hubclient.resume".
 	StoreKey string
 	// OnStateChange, if set, is called on every Client.State transition. It
-	// is called from the client's internal goroutine — treat it like an
-	// event handler, not call back into blocking work.
+	// is called from the client's internal goroutine. It may call Close;
+	// Close then requests shutdown without waiting for this callback to return.
+	// Other blocking work delays the reconnect loop.
 	OnStateChange func(State)
 	// EnableCompression offers permessage-deflate at handshake on the native
 	// (gorilla) transport, matching a hub's own EnableCompression opt-in.
@@ -71,7 +74,10 @@ type Client struct {
 	started     bool
 	closed      bool
 	closeCh     chan struct{}
-	wg          sync.WaitGroup
+	done        chan struct{}
+	loopID      uint64
+	dialCtx     context.Context
+	cancelDial  context.CancelFunc
 }
 
 // New creates a Client for opts. It does not dial — call Connect to start
@@ -83,12 +89,16 @@ func New(opts Options) *Client {
 	if opts.StoreKey == "" {
 		opts.StoreKey = defaultStoreKey
 	}
+	dialCtx, cancelDial := context.WithCancel(context.Background())
 	c := &Client{
-		opts:     opts,
-		dial:     newDefaultDialer(opts.EnableCompression),
-		backoff:  opts.Backoff,
-		handlers: make(map[string]func(json.RawMessage)),
-		closeCh:  make(chan struct{}),
+		opts:       opts,
+		dial:       newDefaultDialer(opts.EnableCompression),
+		backoff:    opts.Backoff,
+		handlers:   make(map[string]func(json.RawMessage)),
+		closeCh:    make(chan struct{}),
+		done:       make(chan struct{}),
+		dialCtx:    dialCtx,
+		cancelDial: cancelDial,
 	}
 	c.resumeToken = opts.ResumeToken
 	if opts.Store != nil {
@@ -102,7 +112,8 @@ func New(opts Options) *Client {
 // On registers handler for event, replacing any previously registered
 // handler for the same event name. Event names mirror what the server
 // registers with hub.On — for example "sim:tick" or a game-specific event
-// like "session".
+// like "session". Handlers run on the reconnect loop's goroutine and may call
+// Close, which requests shutdown without waiting for the handler to return.
 func (c *Client) On(event string, handler func(data json.RawMessage)) {
 	if c == nil || event == "" || handler == nil {
 		return
@@ -115,6 +126,7 @@ func (c *Client) On(event string, handler func(data json.RawMessage)) {
 // On registers a typed handler for event: data is JSON-decoded into T before
 // handler runs. A decode failure is silently dropped, matching hub's own
 // handler dispatch, which never surfaces a decode error to the caller.
+// Like Client.On handlers, handler may call Close without waiting for shutdown.
 func On[T any](c *Client, event string, handler func(value T)) {
 	if c == nil || handler == nil {
 		return
@@ -211,44 +223,54 @@ func (c *Client) Connect() {
 		return
 	}
 	c.started = true
-	c.wg.Add(1)
 	c.mu.Unlock()
 	go c.run()
 }
 
-// Close stops the reconnect loop and closes any pending or open connection. It blocks
-// until the background goroutine has exited. A closed Client cannot be
-// reused; construct a new one with New.
+// Close stops the reconnect loop and closes any pending or open connection.
+// Calls from On handlers or Options.OnStateChange request shutdown without
+// waiting for the callback's own goroutine. All other calls, including concurrent
+// calls, wait until the loop finishes and StateClosed callbacks return.
+// A closed Client cannot be reused; construct a new one with New.
 func (c *Client) Close() error {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return nil
+	if !c.closed {
+		c.closed = true
+		close(c.closeCh)
+		c.cancelDial()
+		if !c.started {
+			// Use the same finalizer even when Connect was never called, so a
+			// StateClosed callback can itself call Close safely.
+			c.started = true
+			go c.run()
+		}
 	}
-	c.closed = true
-	cn := c.current
-	close(c.closeCh)
+	loopID := c.loopID
 	c.mu.Unlock()
-	if cn != nil {
-		_ = cn.Close()
+	if loopID == 0 || currentGoroutineID() != loopID {
+		<-c.done
 	}
-	c.wg.Wait()
-	c.setState(StateClosed)
 	return nil
 }
 
 func (c *Client) run() {
-	defer c.wg.Done()
+	c.mu.Lock()
+	c.loopID = currentGoroutineID()
+	c.mu.Unlock()
+	defer func() {
+		c.setState(StateClosed)
+		close(c.done)
+	}()
 	attempt := 0
 	for {
 		if c.isClosed() {
 			return
 		}
 		c.setState(StateConnecting)
-		cn, err := c.dial.Dial(c.dialURL(), c.opts.Header)
+		cn, err := c.dial.Dial(c.dialCtx, c.dialURL(), c.opts.Header)
 		if err != nil {
 			attempt++
 			if !c.waitRetry(attempt) {
@@ -268,6 +290,7 @@ func (c *Client) run() {
 		c.current = cn
 		c.mu.Unlock()
 		opened := c.pump(cn)
+		_ = cn.Close()
 		c.mu.Lock()
 		c.current = nil
 		c.mu.Unlock()
@@ -283,6 +306,27 @@ func (c *Client) run() {
 			return
 		}
 	}
+}
+
+// currentGoroutineID identifies reentrant Close calls without changing callback
+// ordering or making an unrelated caller skip its shutdown wait. Go exposes no
+// goroutine ID API; runtime.Stack's first line supplies it on native and wasm.
+// Keep this dependency here, outside message dispatch's hot path.
+func currentGoroutineID() uint64 {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	const prefix = "goroutine "
+	var id uint64
+	for _, b := range buf[len(prefix):n] {
+		if b < '0' || b > '9' {
+			break
+		}
+		id = id*10 + uint64(b-'0')
+	}
+	if id == 0 {
+		panic("hubclient: cannot identify callback goroutine")
+	}
+	return id
 }
 
 // pump consumes cn's event channel until it or the client closes, dispatching

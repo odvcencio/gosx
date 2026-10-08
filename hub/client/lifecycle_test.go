@@ -1,6 +1,7 @@
 package hubclient
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -109,6 +110,131 @@ func TestTransportStopUnblocksFullEventQueue(t *testing.T) {
 	awaitLifecycle(t, finished, "event producer cancellation")
 }
 
+func TestCloseFromMessageHandler(t *testing.T) {
+	for _, typed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "raw", true: "typed"}[typed], func(t *testing.T) {
+			cn := newPendingConn()
+			cn.events <- frameEvent{Kind: frameOpen}
+			cn.events <- frameEvent{Kind: frameMessage, Data: []byte(`{"event":"stop","data":{}}`)}
+			c := New(Options{})
+			c.dial = lifecycleDialer(func() (conn, error) { return cn, nil })
+			returned := make(chan struct{})
+			stop := func() {
+				_ = c.Close()
+				_ = c.Close() // Reentrant callers must also skip their own wait.
+				close(returned)
+			}
+			if typed {
+				On(c, "stop", func(struct{}) { stop() })
+			} else {
+				c.On("stop", func(json.RawMessage) { stop() })
+			}
+			c.Connect()
+			awaitLifecycle(t, returned, "Close from a message handler")
+			closeClient(t, c)
+			awaitLifecycle(t, cn.closed, "handler's socket closure")
+			if c.State() != StateClosed {
+				t.Fatal("handler's client did not reach StateClosed")
+			}
+		})
+	}
+}
+
+func TestCloseFromStateChangeCallback(t *testing.T) {
+	for _, state := range []State{StateConnecting, StateConnected, StateReconnecting, StateClosed} {
+		t.Run(state.String(), func(t *testing.T) {
+			cn := newPendingConn()
+			cn.events <- frameEvent{Kind: frameOpen}
+			if state == StateReconnecting {
+				close(cn.events)
+			}
+			returned := make(chan struct{})
+			var calls atomic.Int32
+			var c *Client
+			c = New(Options{OnStateChange: func(s State) {
+				if s == state {
+					_ = c.Close()
+					_ = c.Close()
+					calls.Add(1)
+					close(returned)
+				}
+			}})
+			c.dial = lifecycleDialer(func() (conn, error) { return cn, nil })
+			if state == StateClosed {
+				// Exercise the final callback even without a preceding Connect.
+				go c.Close()
+			} else {
+				c.Connect()
+			}
+			awaitLifecycle(t, returned, "Close from a state callback")
+			closeClient(t, c)
+			if c.State() != StateClosed || calls.Load() != 1 {
+				t.Fatalf("state=%v callback calls=%d, want closed/1", c.State(), calls.Load())
+			}
+		})
+	}
+}
+
+func TestCloseConcurrentCallersWaitForLoop(t *testing.T) {
+	dialing, finishDial := make(chan struct{}), make(chan struct{})
+	closedCallback, finishCallback := make(chan struct{}), make(chan struct{})
+	var dialOnce, callbackOnce sync.Once
+	defer dialOnce.Do(func() { close(finishDial) })
+	defer callbackOnce.Do(func() { close(finishCallback) })
+	var closedStates atomic.Int32
+	c := New(Options{OnStateChange: func(s State) {
+		if s == StateClosed {
+			closedStates.Add(1)
+			close(closedCallback)
+			<-finishCallback
+		}
+	}})
+	c.dial = lifecycleDialer(func() (conn, error) {
+		close(dialing)
+		<-finishDial
+		return nil, errors.New("dial stopped")
+	})
+	c.Connect()
+	awaitLifecycle(t, dialing, "pending dial")
+	first, second := make(chan struct{}), make(chan struct{})
+	go func() { _ = c.Close(); close(first) }()
+	awaitLifecycle(t, c.closeCh, "first close request")
+	go func() { _ = c.Close(); close(second) }()
+	select {
+	case <-second:
+		t.Fatal("concurrent Close returned while the loop was dialing")
+	case <-time.After(30 * time.Millisecond):
+	}
+	dialOnce.Do(func() { close(finishDial) })
+	awaitLifecycle(t, closedCallback, "final StateClosed callback")
+	for _, done := range []<-chan struct{}{first, second} {
+		select {
+		case <-done:
+			t.Fatal("Close returned before the final state callback finished")
+		default:
+		}
+	}
+	callbackOnce.Do(func() { close(finishCallback) })
+	awaitLifecycle(t, first, "first Close completion")
+	awaitLifecycle(t, second, "concurrent Close completion")
+	if c.State() != StateClosed || closedStates.Load() != 1 {
+		t.Fatalf("state=%v closed transitions=%d, want closed/1", c.State(), closedStates.Load())
+	}
+}
+
+// Run Close off the test goroutine so a shutdown regression fails at this
+// assertion instead of hanging in a deferred Close until the package timeout.
+func closeClient(t *testing.T, c *Client) {
+	t.Helper()
+	done := make(chan struct{})
+	var err error
+	go func() { err = c.Close(); close(done) }()
+	awaitLifecycle(t, done, "client shutdown")
+	if err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+}
+
 func awaitLifecycle(t *testing.T, done <-chan struct{}, what string) {
 	t.Helper()
 	select {
@@ -120,7 +246,7 @@ func awaitLifecycle(t *testing.T, done <-chan struct{}, what string) {
 
 type lifecycleDialer func() (conn, error)
 
-func (d lifecycleDialer) Dial(string, http.Header) (conn, error) { return d() }
+func (d lifecycleDialer) Dial(context.Context, string, http.Header) (conn, error) { return d() }
 
 type pendingConn struct {
 	events  chan frameEvent

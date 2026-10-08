@@ -3,7 +3,11 @@
 package hubclient
 
 import (
+	"context"
 	"net/http"
+	"net/http/httptrace"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -28,10 +32,23 @@ type nativeDialer struct {
 	enableCompression bool
 }
 
-func (d nativeDialer) Dial(rawURL string, header http.Header) (conn, error) {
+func (d nativeDialer) Dial(ctx context.Context, rawURL string, header http.Header) (conn, error) {
 	dialer := *websocket.DefaultDialer
 	dialer.EnableCompression = d.enableCompression
-	ws, _, err := dialer.Dial(rawURL, header)
+	// Gorilla observes cancellation while dialing TCP/TLS, but its HTTP upgrade
+	// read only observes a deadline. Close that socket on cancellation as well.
+	var stopCancel func() bool
+	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) {
+			stopCancel = context.AfterFunc(ctx, func() { _ = info.Conn.Close() })
+		},
+	})
+	defer func() {
+		if stopCancel != nil {
+			stopCancel()
+		}
+	}()
+	ws, _, err := dialer.DialContext(ctx, rawURL, header)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +63,9 @@ func (d nativeDialer) Dial(rawURL string, header http.Header) (conn, error) {
 
 type nativeConn struct {
 	*eventStream
-	ws *websocket.Conn
+	ws        *websocket.Conn
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (c *nativeConn) Send(data []byte, binary bool) error {
@@ -58,8 +77,16 @@ func (c *nativeConn) Send(data []byte, binary bool) error {
 }
 
 func (c *nativeConn) Close() error {
-	c.stop()
-	return c.ws.Close()
+	c.closeOnce.Do(func() {
+		c.stop()
+		// WriteControl may run concurrently with Send and the read loop. Keep
+		// shutdown bounded even if a peer stops reading or Send holds the writer.
+		_ = c.ws.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(100*time.Millisecond))
+		c.closeErr = c.ws.Close()
+	})
+	return c.closeErr
 }
 
 func (c *nativeConn) readLoop() {
