@@ -62,33 +62,87 @@ func TestProductionBuildHydratesStrictIsland(t *testing.T) {
 		t.Fatalf("root status = %d\n%s", resp.StatusCode, logs.String())
 	}
 
-	page := newBrowserPage(t, chrome, nil, 1024, 768, "", 60*time.Second)
-	if status := page.navigate(t, baseURL+"/"); status != http.StatusOK {
-		t.Fatalf("fixture status %d\n%s", status, logs.String())
-	}
-	if err := chromedp.Run(page.ctx,
-		chromedp.WaitVisible(`#strict-counter`, chromedp.ByQuery),
-	); err != nil {
-		t.Fatalf("wait for strict island: %v\nconsole:\n%s\npage errors: %v", err, page.Console(), page.PageErrors())
-	}
+	for _, delayed := range []bool{false, true} {
+		name, initScript := "normal", ""
+		if delayed {
+			name, initScript = "delayed-program", strictIslandDelayedProgram
+		}
+		t.Run(name, func(t *testing.T) {
+			page := newBrowserPage(t, chrome, nil, 1024, 768, initScript, 60*time.Second)
+			if status := page.navigate(t, baseURL+"/"); status != http.StatusOK {
+				t.Fatalf("fixture status %d\n%s", status, logs.String())
+			}
+			if err := chromedp.Run(page.ctx,
+				chromedp.WaitVisible(`#strict-counter`, chromedp.ByQuery),
+			); err != nil {
+				t.Fatalf("wait for strict island: %v\nconsole:\n%s\npage errors: %v", err, page.Console(), page.PageErrors())
+			}
 
-	var before string
-	page.eval(t, `document.querySelector("#strict-counter").textContent`, &before)
-	if !strings.Contains(before, "Draft Pick") || !strings.Contains(strings.TrimSpace(before), "7") {
-		t.Fatalf("initial hydrated island text = %q, want it to contain the proven props \"Draft Pick\" and \"7\"", before)
-	}
+			var before string
+			page.eval(t, `document.querySelector("#strict-counter").textContent`, &before)
+			if !strings.Contains(before, "Draft Pick") || !strings.Contains(strings.TrimSpace(before), "7") {
+				t.Fatalf("initial server-rendered island text = %q, want it to contain the proven props \"Draft Pick\" and \"7\"", before)
+			}
 
-	page.eval(t, `document.querySelector("#strict-counter-button").click()`, nil)
-	if err := chromedp.Run(page.ctx, chromedp.Poll(
-		`document.querySelector("#strict-counter-button").textContent === "8"`,
-		nil,
-		chromedp.WithPollingTimeout(10*time.Second),
-	)); err != nil {
-		t.Fatalf("wait for strict island increment: %v\nconsole:\n%s\npage errors: %v", err, page.Console(), page.PageErrors())
-	}
-	var after string
-	page.eval(t, `document.querySelector("#strict-counter-button").textContent`, &after)
-	if strings.TrimSpace(after) != "8" {
-		t.Fatalf("strict island did not hydrate: button text=%q", after)
+			if delayed {
+				page.waitFor(t, `window.__strictIslandProgramRequested === true`, 10*time.Second, "held strict island program fetch")
+				var ready bool
+				page.eval(t, strictIslandClickReady, &ready)
+				if ready {
+					t.Fatal("server-rendered island must not have a click listener while its program fetch is held")
+				}
+
+				// A click on visible SSR before handler registration must leave
+				// its rendered value intact. This proves the held fetch controls
+				// readiness independently of visibility and early user input.
+				page.eval(t, `document.querySelector("#strict-counter-button").click()`, nil)
+				var heldText string
+				page.eval(t, `document.querySelector("#strict-counter-button").textContent`, &heldText)
+				if strings.TrimSpace(heldText) != "7" {
+					t.Fatalf("held program allowed an unhydrated click to change SSR: %q", heldText)
+				}
+				page.eval(t, `window.__releaseStrictIslandProgram()`, nil)
+			}
+
+			// Visible SSR markup precedes asynchronous program loading. Hydration
+			// publishes the registry entry only after attaching delegated listeners.
+			page.waitFor(t, strictIslandClickReady, 10*time.Second, "strict island click listener")
+			page.eval(t, `document.querySelector("#strict-counter-button").click()`, nil)
+			if err := chromedp.Run(page.ctx, chromedp.Poll(
+				`document.querySelector("#strict-counter-button").textContent === "8"`,
+				nil,
+				chromedp.WithPollingTimeout(10*time.Second),
+			)); err != nil {
+				t.Fatalf("wait for strict island increment: %v\nconsole:\n%s\npage errors: %v", err, page.Console(), page.PageErrors())
+			}
+			var after string
+			page.eval(t, `document.querySelector("#strict-counter-button").textContent`, &after)
+			if strings.TrimSpace(after) != "8" {
+				t.Fatalf("strict island did not hydrate: button text=%q", after)
+			}
+		})
 	}
 }
+
+const strictIslandClickReady = `(() => {
+const root = document.querySelector("#strict-counter-button")?.closest("[data-gosx-island]");
+const island = window.__gosx?.islands?.get(root?.id);
+return !!island && island.root === root && island.listeners.some(entry => entry.type === "click" && entry.target === root);
+})()`
+
+// Hold the actual compiled island program until the test releases it. Runtime
+// and markup loading proceed normally, so SSR visibility cannot stand in for
+// hydration readiness. No timer or machine-dependent sleep controls this race.
+const strictIslandDelayedProgram = `(() => {
+const originalFetch = window.fetch;
+const released = new Promise(resolve => { window.__releaseStrictIslandProgram = resolve; });
+window.__strictIslandProgramRequested = false;
+window.fetch = function(input, options) {
+  const url = new URL(input instanceof Request ? input.url : input, document.baseURI);
+  if (url.pathname.includes("/islands/")) {
+    window.__strictIslandProgramRequested = true;
+    return released.then(() => originalFetch.call(this, input, options));
+  }
+  return originalFetch.call(this, input, options);
+};
+})()`
