@@ -108,7 +108,7 @@ func readWithin(root, path string, limit int64) ([]byte, error) {
 	if err != nil {
 		return nil, errors.New("input escapes project root")
 	}
-	f, err := r.Open(rel)
+	f, err := openInput(r, rel)
 	if err != nil {
 		return nil, errors.New("cannot open confined input")
 	}
@@ -160,7 +160,13 @@ func loadInput(path string, opts LoadOptions, definition string, out any) (strin
 	if err := validateInput(value, inputDefinitions[definition]); err != nil {
 		return "", err
 	}
-	d = json.NewDecoder(bytes.NewReader(data))
+	// Decode the exact value checked above. Replaying duplicate object keys into
+	// a struct can merge fields that the map decoder already discarded.
+	validated, err := json.Marshal(value)
+	if err != nil {
+		return "", errors.New("input does not match typed contract")
+	}
+	d = json.NewDecoder(bytes.NewReader(validated))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return "", errors.New("input does not match typed contract")
