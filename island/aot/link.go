@@ -32,6 +32,7 @@ type linkedLayout struct {
 	strings                                                  map[string]stringConstant
 	instancesBase                                            int32
 	sharedMasksBase                                          int32
+	eventPlanBase                                            int32
 	checkpointPlanBase, checkpointSharedBase, digestBase     int32
 	inputSetSHA                                              [32]byte
 	programs                                                 []linkedProgram
@@ -266,6 +267,19 @@ func (l *linkedLayout) encodeData() error {
 		sharedTypes = append(sharedTypes, uint32(tag))
 	}
 	l.checkpointSharedBase = table(sharedTypes)
+	var eventPlans []uint32
+	for _, p := range l.programs {
+		var types []uint32
+		for _, input := range p.unit.Contract.Inputs {
+			tag, err := checkpointWireType(input.Kind)
+			if err != nil {
+				return err
+			}
+			types = append(types, uint32(tag))
+		}
+		eventPlans = append(eventPlans, uint32(len(p.unit.Program.Handlers)), uint32(table(handlerInputMasks(p.unit))), uint32(table(types)))
+	}
+	l.eventPlanBase = table(eventPlans)
 	l.digestBase = int32(wasmgen.ConstantOffset + len(l.data))
 	l.data = append(l.data, l.inputSetSHA[:]...)
 	if len(l.data) > wasmgen.MaxDataBytes {
@@ -550,6 +564,7 @@ type linkedCode struct {
 	checkpointValue, checkpoint        uint32
 	wireScalar, checkpointValidate     uint32
 	wireStore, abortPage, initPage     uint32
+	envelopeValidate                   uint32
 }
 
 const linkedRenderMaskGlobal = 25
@@ -598,7 +613,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.wireStore = c.notify + 12
 	c.abortPage = c.notify + 13
 	c.initPage = c.notify + 14
-	c.module.Functions = make([]wasmgen.Function, len(common)+15)
+	c.envelopeValidate = c.notify + 15
+	c.module.Functions = make([]wasmgen.Function, len(common)+16)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -623,7 +639,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 15 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 16 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -680,6 +696,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+12] = l.wireStoreFunction(c)
 	c.module.Functions[len(common)+13] = l.abortPageFunction(c)
 	c.module.Functions[len(common)+14] = l.initPageFunction(c)
+	c.module.Functions[len(common)+15] = l.envelopeValidationFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -2825,4 +2842,316 @@ func (l *linkedLayout) initPageFunction(c *linkedCode) wasmgen.Function {
 	b.i32(0)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(2), I32Locals: 16, Body: b}
+}
+
+// Input membership is compiled from each handler's complete expression graph.
+// The module receives bit masks, not source expressions or handler bytecode.
+func handlerInputMasks(unit Unit) []uint32 {
+	leaves := map[program.ExprID]uint32{}
+	for _, input := range unit.Contract.Inputs {
+		if input.Source == "event" {
+			for _, expr := range input.Exprs {
+				leaves[expr] = input.ID
+			}
+		}
+	}
+	computed := map[string]program.ExprID{}
+	for _, def := range unit.Program.Computeds {
+		computed[def.Name] = def.Expr
+	}
+	masks := make([]uint32, len(unit.Program.Handlers))
+	for index, handler := range unit.Program.Handlers {
+		seen := make([]bool, len(unit.Program.Exprs))
+		var visit func(program.ExprID)
+		visit = func(id program.ExprID) {
+			if seen[id] {
+				return
+			}
+			seen[id] = true
+			if input, exists := leaves[id]; exists {
+				masks[index] |= 1 << input
+			}
+			expr := unit.Program.Exprs[id]
+			for _, arg := range expr.Operands {
+				visit(arg)
+			}
+			if expr.Op == program.OpSignalGet {
+				if dependency, exists := computed[expr.Value]; exists {
+					visit(dependency)
+				}
+			}
+		}
+		for _, expr := range handler.Body {
+			visit(expr)
+		}
+	}
+	return masks
+}
+
+// Validate normalized GXAE events or GXAS shared batches without effects.
+// Event fields match the handler's complete input mask; shared batches may
+// contain a sorted subset of declared names. All trailing bytes are consumed.
+func (l *linkedLayout) envelopeValidationFunction(c *linkedCode) wasmgen.Function {
+	const (
+		end = 5 + iota
+		header
+		count
+		mask
+		types
+		owner
+		table
+		cursor
+		dense
+		index
+		id
+		previous
+		seen
+		record
+		result
+		expected
+	)
+	var b instructions
+	b.get(0)
+	b.i32(1)
+	b.op(0x4b)
+	b.statusFailure(statusBadInput)
+	b.get(0)
+	b.op(0x04)
+	b.op(0x7f)
+	b.i32(12)
+	b.op(0x05)
+	b.i32(16)
+	b.op(0x0b)
+	b.set(header)
+	b.get(3)
+	b.i32(32768)
+	b.op(0x49)
+	b.get(4)
+	b.get(header)
+	b.op(0x49)
+	b.op(0x72)
+	b.get(4)
+	b.i32(int32(ProfileLimits().InputBytes))
+	b.op(0x4b)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	b.get(3)
+	b.op(0xad)
+	b.get(4)
+	b.op(0xad)
+	b.op(0x7c)
+	b.i64(65536)
+	b.op(0x56)
+	b.statusFailure(statusBadInput)
+	b.get(3)
+	b.get(4)
+	b.op(0x6a)
+	b.set(end)
+	b.get(3)
+	b.memory(0x28, 2, 4)
+	b.i32(1)
+	b.op(0x47)
+	b.statusFailure(1)
+	b.get(0)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(3)
+	b.memory(0x28, 2, 0)
+	b.i32(0x53415847)
+	b.op(0x47)
+	b.statusFailure(statusBadInput)
+	b.get(3)
+	b.memory(0x28, 2, 8)
+	b.index(0x22, count)
+	b.i32(int32(len(l.shared)))
+	b.op(0x4b)
+	b.statusFailure(statusBadInput)
+	b.i32(l.checkpointSharedBase)
+	b.set(types)
+	b.op(0x05)
+	b.get(3)
+	b.memory(0x28, 2, 0)
+	b.i32(0x45415847)
+	b.op(0x47)
+	b.statusFailure(statusBadInput)
+	b.get(3)
+	b.memory(0x28, 2, 8)
+	b.get(1)
+	b.op(0x47)
+	b.get(1)
+	b.i32(int32(ProfileLimits().Instances))
+	b.op(0x4f)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	b.i32(int32(l.frameTable))
+	b.get(1)
+	b.i32(16)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.set(table)
+	b.get(table)
+	b.memory(0x28, 2, 4)
+	b.i32(1)
+	b.op(0x47)
+	b.statusFailure(statusBadInput)
+	b.get(table)
+	b.memory(0x28, 2, 0)
+	b.index(0x22, owner)
+	b.i32(int32(len(l.programs)))
+	b.op(0x4f)
+	b.statusFailure(statusBadInput)
+	b.i32(l.eventPlanBase)
+	b.get(owner)
+	b.i32(12)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.set(table)
+	b.get(2)
+	b.get(table)
+	b.memory(0x28, 2, 0)
+	b.op(0x4f)
+	b.statusFailure(statusBadInput)
+	b.get(table)
+	b.memory(0x28, 2, 4)
+	b.get(2)
+	b.i32(4)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.memory(0x28, 2, 0)
+	b.set(mask)
+	b.get(table)
+	b.memory(0x28, 2, 8)
+	b.set(types)
+	b.get(3)
+	b.memory(0x28, 2, 12)
+	b.index(0x22, count)
+	b.i32(int32(ProfileLimits().Inputs))
+	b.op(0x4b)
+	b.statusFailure(statusBadInput)
+	b.op(0x0b)
+	b.get(3)
+	b.get(header)
+	b.op(0x6a)
+	b.set(cursor)
+	b.get(cursor)
+	b.op(0xad)
+	b.get(count)
+	b.op(0xad)
+	b.i64(28)
+	b.op(0x7e)
+	b.op(0x7c)
+	b.get(end)
+	b.op(0xad)
+	b.op(0x56)
+	b.statusFailure(statusBadInput)
+	b.get(cursor)
+	b.get(count)
+	b.i32(28)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.set(dense)
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.get(index)
+	b.get(count)
+	b.op(0x4f)
+	b.index(0x0d, 1)
+	b.get(cursor)
+	b.memory(0x28, 2, 0)
+	b.set(id)
+	b.get(index)
+	b.op(0x45)
+	b.op(0x45)
+	b.get(id)
+	b.get(previous)
+	b.op(0x4d)
+	b.op(0x71)
+	b.statusFailure(statusBadInput)
+	b.get(id)
+	b.set(previous)
+	b.get(0)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(id)
+	b.i32(int32(len(l.shared)))
+	b.op(0x4f)
+	b.statusFailure(statusBadInput)
+	b.op(0x05)
+	b.get(id)
+	b.i32(int32(ProfileLimits().Inputs))
+	b.op(0x4f)
+	b.statusFailure(statusBadInput)
+	b.i32(1)
+	b.get(id)
+	b.op(0x74)
+	b.index(0x22, expected)
+	b.get(mask)
+	b.op(0x71)
+	b.op(0x45)
+	b.statusFailure(statusBadInput)
+	b.get(seen)
+	b.get(expected)
+	b.op(0x72)
+	b.set(seen)
+	b.op(0x0b)
+	b.get(types)
+	b.get(id)
+	b.i32(4)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.memory(0x28, 2, 0)
+	b.set(expected)
+	b.get(cursor)
+	b.i32(4)
+	b.op(0x6a)
+	b.set(record)
+	b.get(record)
+	b.get(3)
+	b.get(end)
+	b.get(dense)
+	b.index(0x10, c.wireScalar)
+	b.index(0x22, result)
+	b.i32(0)
+	b.op(0x48)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(0)
+	b.get(result)
+	b.op(0x6b)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.get(record)
+	b.memory(0x28, 2, 0)
+	b.get(expected)
+	b.op(0x47)
+	b.statusFailure(statusBadInput)
+	b.get(result)
+	b.set(dense)
+	b.get(cursor)
+	b.i32(28)
+	b.op(0x6a)
+	b.set(cursor)
+	b.get(index)
+	b.i32(1)
+	b.op(0x6a)
+	b.set(index)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.get(dense)
+	b.get(end)
+	b.op(0x47)
+	b.get(0)
+	b.op(0x45)
+	b.get(seen)
+	b.get(mask)
+	b.op(0x47)
+	b.op(0x71)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	b.i32(0)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(5), I32Locals: 16, Body: b}
 }

@@ -1486,6 +1486,9 @@ func exportLinkedTestModule(c *linkedCode) wasmgen.Module {
 			name := "handler" + strconv.Itoa(p)
 			if handler != 0 {
 				name = "other" + strconv.Itoa(p)
+				if handler > 1 {
+					name += "_" + strconv.Itoa(handler)
+				}
 			}
 			e.module.Exports = append(e.module.Exports, wasmgen.Export{Name: name, Function: c.indices[p][index]})
 		}
@@ -2659,5 +2662,285 @@ func TestLinkedCheckpointImportFailuresAndAbortPreserveCommittedState(t *testing
 				t.Fatalf("failed initialization published state or allowed a retry: %+v", got)
 			}
 		})
+	}
+}
+
+func envelopeTestBytes(t *testing.T, shared bool, instance uint32, entries []checkpointTestValue) []byte {
+	t.Helper()
+	header := 16
+	if shared {
+		header = 12
+	}
+	body := make([]byte, header)
+	copy(body, "GXAE")
+	if shared {
+		copy(body, "GXAS")
+		binary.LittleEndian.PutUint32(body[8:], uint32(len(entries)))
+	} else {
+		binary.LittleEndian.PutUint32(body[8:], instance)
+		binary.LittleEndian.PutUint32(body[12:], uint32(len(entries)))
+	}
+	binary.LittleEndian.PutUint16(body[4:], 1)
+	var tail []byte
+	var pointers []int
+	for _, entry := range entries {
+		body = binary.LittleEndian.AppendUint32(body, entry.ID)
+		raw, err := base64.StdEncoding.DecodeString(entry.Packet)
+		if err != nil || len(raw) < 24 {
+			t.Fatalf("invalid envelope test value: %v", err)
+		}
+		start := len(body)
+		body = append(body, raw[:24]...)
+		if len(raw) > 24 {
+			pointers = append(pointers, start+16)
+			binary.LittleEndian.PutUint32(body[start+16:], uint32(len(tail)))
+			tail = append(tail, raw[24:]...)
+		}
+	}
+	for _, pointer := range pointers {
+		binary.LittleEndian.PutUint32(body[pointer:], uint32(len(body))+binary.LittleEndian.Uint32(body[pointer:]))
+	}
+	return append(body, tail...)
+}
+
+func envelopeValidationFixture(t *testing.T) (*linkedLayout, *linkedCode) {
+	t.Helper()
+	u := staticUnit(t)
+	u.Component, u.Contract.Component, u.Program.Name = "example/components.InputHandlers", "example/components.InputHandlers", "InputHandlers"
+	var leaves []program.ExprID
+	for _, def := range []struct {
+		name string
+		kind ScalarKind
+		typ  program.ExprType
+	}{{"checked", Bool, program.TypeBool}, {"selectedIndex", Int32, program.TypeInt}, {"value", String, program.TypeString}} {
+		leaf := addExpression(&u, program.OpEventGet, def.typ, def.kind, def.name)
+		leaves = append(leaves, leaf)
+		u.Contract.Inputs = append(u.Contract.Inputs, InputContract{ID: uint32(len(u.Contract.Inputs)), Source: "event", Root: def.name, Path: []string{}, Kind: def.kind, Exprs: []program.ExprID{leaf}})
+	}
+	prop := addExpression(&u, program.OpPropGet, program.TypeString, String, "Title")
+	u.Program.Props = []program.PropDef{{Name: "Title", Type: program.TypeString}}
+	u.Contract.Inputs = append(u.Contract.Inputs, InputContract{ID: 3, Source: "prop", Root: "Title", Path: []string{}, Kind: String, Exprs: []program.ExprID{prop}})
+	pair := addExpression(&u, program.OpSeq, program.TypeString, String, "", leaves[0], leaves[2], leaves[2])
+	all := addExpression(&u, program.OpSeq, program.TypeInt, Int32, "", pair, leaves[1])
+	idle := addExpression(&u, program.OpLitInt, program.TypeInt, Int, "0")
+	u.Program.Handlers = []program.Handler{{Name: "pair", Body: []program.ExprID{pair}}, {Name: "index", Body: []program.ExprID{leaves[1]}},
+		{Name: "all", Body: []program.ExprID{all}}, {Name: "idle", Body: []program.ExprID{idle}}}
+	for i, def := range []struct {
+		name, literal string
+		kind          ScalarKind
+		typ           program.ExprType
+		op            program.OpCode
+	}{{"$B", "false", Bool, program.TypeBool, program.OpLitBool}, {"$Case", "0", Int32, program.TypeInt, program.OpLitInt},
+		{"$case", "", String, program.TypeString, program.OpLitString}} {
+		init := addExpression(&u, def.op, def.typ, def.kind, def.literal)
+		u.Program.Signals = append(u.Program.Signals, program.SignalDef{Name: def.name, Type: def.typ, Init: init})
+		u.Contract.Signals = append(u.Contract.Signals, StateContract{Slot: uint32(i), Name: def.name, Kind: def.kind})
+	}
+	u = refreshUnit(t, u)
+	l, err := buildLinkedLayout([]Unit{u, staticUnit(t)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(handlerInputMasks(u), []uint32{5, 2, 7, 0}) {
+		t.Fatal("handler masks include immutable props or omit nested/repeated operands")
+	}
+	return l, c
+}
+
+func TestLinkedEnvelopeValidationMatchesHandlerMembershipAndSharedSubsets(t *testing.T) {
+	l, c := envelopeValidationFixture(t)
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "validateEnvelope", Function: c.envelopeValidate})
+	type testCase struct {
+		Shared, Handler uint32
+		Document        string
+	}
+	text := scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴e\u0301")
+	boolean := scalarTransport(program.TypeBool, 2, 0, "")
+	integer := scalarTransport(program.TypeInt, 0, -2147483648, "")
+	var cases []testCase
+	add := func(shared bool, handler uint32, values []checkpointTestValue) {
+		mode := uint32(0)
+		if shared {
+			mode = 1
+		}
+		cases = append(cases, testCase{mode, handler, base64.StdEncoding.EncodeToString(envelopeTestBytes(t, shared, 15, values))})
+	}
+	add(false, 0, []checkpointTestValue{{0, boolean}, {2, text}})
+	add(false, 1, []checkpointTestValue{{1, integer}})
+	add(false, 2, []checkpointTestValue{{0, boolean}, {1, integer}, {2, text}})
+	add(false, 3, nil)
+	add(false, 0, []checkpointTestValue{{0, scalarTransport(program.TypeBool, 0, 0, "")}, {2, scalarTransport(program.TypeString, 0, 0, "")}})
+	add(false, 0, []checkpointTestValue{{0, boolean}, {2, scalarTransport(program.TypeString, 1, 0, "")}})
+	add(true, 0, nil)
+	add(true, 0, []checkpointTestValue{{2, text}})
+	add(true, 0, []checkpointTestValue{{0, boolean}, {1, integer}, {2, text}})
+	data := struct {
+		FrameTable, Program uint32
+		Cases               []testCase
+	}{l.frameTable, linkedProgramByName(t, l, "InputHandlers").state.programID, cases}
+	var got struct {
+		Statuses []int32
+		Pure     bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], allocation = api.cursor();
+  view.setUint32(data.FrameTable+15*16,data.Program,true); view.setUint32(data.FrameTable+15*16+4,1,true);
+  let pure = true;
+  for (const item of data.Cases) {
+    const document = Buffer.from(item.Document,'base64');
+    for (const base of [32769,65536-document.length]) {
+      memory.set(document,base);
+      const before = Buffer.from(memory);
+      statuses.push(api.validateEnvelope(item.Shared,15,item.Handler,base,document.length));
+      pure = pure&&before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation;
+    }
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Pure:pure}));`, data, &got)
+	if len(got.Statuses) != len(cases)*2 || !got.Pure {
+		t.Fatal("envelope validation skipped records or changed memory or transaction state")
+	}
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("valid envelope status: %v", got.Statuses)
+		}
+	}
+}
+
+func TestLinkedEnvelopeValidationRejectsForeignFieldsMalformedValuesAndTrailers(t *testing.T) {
+	l, c := envelopeValidationFixture(t)
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "validateEnvelope", Function: c.envelopeValidate})
+	type testCase struct {
+		Shared, Handler uint32
+		Document        string
+		Want            int32
+	}
+	boolean := scalarTransport(program.TypeBool, 2, 0, "")
+	text := scalarTransport(program.TypeString, 1, 0, "same")
+	var cases []testCase
+	add := func(shared bool, handler uint32, entries []checkpointTestValue, want int32) {
+		mode := uint32(0)
+		if shared {
+			mode = 1
+		}
+		cases = append(cases, testCase{mode, handler, base64.StdEncoding.EncodeToString(envelopeTestBytes(t, shared, 15, entries)), want})
+	}
+	for _, ids := range [][]uint32{{0}, {2}, {0, 1, 2}, {0, 3}, {0, 2, 2}, {2, 0}, {0, 32}} {
+		var entries []checkpointTestValue
+		for _, id := range ids {
+			packet := text
+			if id == 0 {
+				packet = boolean
+			}
+			entries = append(entries, checkpointTestValue{id, packet})
+		}
+		add(false, 0, entries, 2)
+	}
+	add(false, 1, []checkpointTestValue{{1, scalarTransport(program.TypeInt, 0, 2147483648, "")}}, 3)
+	add(false, 0, []checkpointTestValue{{0, boolean}, {2, scalarTransport(program.TypeString, 1, 0, strings.Repeat("x", 4097))}}, 4)
+	add(false, 0, []checkpointTestValue{{0, boolean}, {2, scalarTransport(program.TypeString, 1, 0, "\xff")}}, 2)
+	add(false, 0, []checkpointTestValue{{0, scalarTransport(program.TypeAny, 0, 0, "")}, {2, text}}, 2)
+	add(true, 0, []checkpointTestValue{{3, text}}, 2)
+	add(true, 0, []checkpointTestValue{{2, text}, {2, text}}, 2)
+	add(true, 0, []checkpointTestValue{{2, text}, {0, boolean}}, 2)
+	add(true, 0, []checkpointTestValue{{0, scalarTransport(program.TypeInt, 0, 0, "")}}, 2)
+	valid := envelopeTestBytes(t, false, 15, []checkpointTestValue{{0, boolean}, {2, text}})
+	for _, change := range [][3]uint32{{0, 0, 2}, {4, 2, 1}, {4, 65537, 1}, {8, 0, 2}, {12, 17, 2}, {64, 71, 2}, {64, 73, 2}, {64, 32840, 2}} {
+		modified := append([]byte{}, valid...)
+		binary.LittleEndian.PutUint32(modified[change[0]:], change[1])
+		cases = append(cases, testCase{0, 0, base64.StdEncoding.EncodeToString(modified), int32(change[2])})
+	}
+	for length := 0; length < len(valid); length++ {
+		cases = append(cases, testCase{0, 0, base64.StdEncoding.EncodeToString(valid[:length]), 2})
+	}
+	cases = append(cases, testCase{0, 0, base64.StdEncoding.EncodeToString(append(append([]byte{}, valid...), 0)), 2})
+	data := struct {
+		FrameTable, Program uint32
+		Cases               []testCase
+	}{l.frameTable, linkedProgramByName(t, l, "InputHandlers").state.programID, cases}
+	var got struct {
+		Statuses []int32
+		Pure     bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], allocation = api.cursor();
+  view.setUint32(data.FrameTable+15*16,data.Program,true); view.setUint32(data.FrameTable+15*16+4,1,true);
+  let pure = true;
+  for (const item of data.Cases) {
+    memory.fill(0,32768,65536);
+    const document = Buffer.from(item.Document,'base64');
+    memory.set(document,32768);
+    const before = Buffer.from(memory);
+    statuses.push(api.validateEnvelope(item.Shared,15,item.Handler,32768,document.length));
+    pure = pure&&before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation;
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Pure:pure}));`, data, &got)
+	if len(got.Statuses) != len(cases) || !got.Pure {
+		t.Fatal("rejected envelopes wrote memory or transaction state")
+	}
+	for i, item := range cases {
+		if got.Statuses[i] != item.Want {
+			t.Fatalf("envelope case %d: %d want %d", i, got.Statuses[i], item.Want)
+		}
+	}
+}
+
+func TestLinkedEnvelopeValidationRejectsInvalidOwnersHandlersAndIOBounds(t *testing.T) {
+	l, c := envelopeValidationFixture(t)
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "validateEnvelope", Function: c.envelopeValidate})
+	event := envelopeTestBytes(t, false, 15, nil)
+	shared := envelopeTestBytes(t, true, 0, nil)
+	data := struct {
+		FrameTable, Program, Other uint32
+		Event, Shared              string
+	}{l.frameTable, linkedProgramByName(t, l, "InputHandlers").state.programID,
+		linkedProgramByName(t, l, "Example").state.programID, base64.StdEncoding.EncodeToString(event), base64.StdEncoding.EncodeToString(shared)}
+	var got struct {
+		Statuses []int32
+		Pure     bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], allocation = api.cursor();
+  const event = Buffer.from(data.Event,'base64'), shared = Buffer.from(data.Shared,'base64');
+  memory.set(event,32768); memory.set(shared,32800);
+  let pure = true;
+  function check(mode,id,handler,ptr,length) {
+    const before = Buffer.from(memory);
+    statuses.push(api.validateEnvelope(mode,id,handler,ptr,length));
+    pure = pure&&before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation;
+  }
+  check(0,15,3,32768,16);
+  view.setUint32(data.FrameTable+15*16+4,2,true);
+  check(0,15,3,32768,16);
+  view.setUint32(data.FrameTable+15*16+4,1,true);
+  for (const owner of [2,0xffffffff,data.Other]) {
+    view.setUint32(data.FrameTable+15*16,owner,true);
+    check(0,15,3,32768,16);
+  }
+  view.setUint32(data.FrameTable+15*16,data.Program,true);
+  for (const id of [0,16,0xffffffff]) check(0,id,3,32768,16);
+  for (const handler of [4,32,0xffffffff]) check(0,15,handler,32768,16);
+  for (const [ptr,length] of [[0,16],[32767,16],[65521,16],[65536,16],[0xffffffff,16],
+      [32768,0],[32768,15],[32768,32769],[32768,0xffffffff]]) check(0,15,3,ptr,length);
+  check(2,15,3,32768,16); check(0xffffffff,15,3,32768,16);
+  check(0,15,3,32768,16); check(1,0xffffffff,0xffffffff,32800,12);
+  process.stdout.write(JSON.stringify({Statuses:statuses,Pure:pure}));`, data, &got)
+	if !got.Pure || len(got.Statuses) != 24 {
+		t.Fatalf("invalid envelope bounds caused an effect or skipped validation: %+v", got)
+	}
+	for i, status := range got.Statuses {
+		want := int32(2)
+		if i >= len(got.Statuses)-2 {
+			want = 0
+		}
+		if status != want {
+			t.Fatalf("owner/handler/bounds case %d: %d want %d", i, status, want)
+		}
 	}
 }
