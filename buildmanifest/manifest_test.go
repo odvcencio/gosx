@@ -31,6 +31,7 @@ func TestLoadAndURLs(t *testing.T) {
     "bootstrap": {"file": "bootstrap.33333333.js", "hash": "33333333", "size": 30},
     "bootstrapFeatureScene3dCommand": {"file": "bootstrap-feature-scene3d-command.3d3d3d3d.js", "hash": "3d3d3d3d", "size": 33},
     "bootstrapFeatureScene3dHydrate": {"file": "bootstrap-feature-scene3d-hydrate.3e3e3e3e.js", "hash": "3e3e3e3e", "size": 34},
+    "bootstrapFeatureScene3dPipelineRecovery": {"file": "bootstrap-feature-scene3d-pipeline-recovery.3f3f3f3f.js", "hash": "3f3f3f3f", "size": 34},
     "patch": {"file": "patch.44444444.js", "hash": "44444444", "size": 40},
     "videoHLS": {"file": "hls.min.77777777.js", "hash": "77777777", "size": 70}
   },
@@ -71,6 +72,9 @@ func TestLoadAndURLs(t *testing.T) {
 	}
 	if runtime.BootstrapFeatureScene3DHydrate != "/gosx/assets/runtime/bootstrap-feature-scene3d-hydrate.3e3e3e3e.js" {
 		t.Fatalf("unexpected scene3d hydrate url: %s", runtime.BootstrapFeatureScene3DHydrate)
+	}
+	if runtime.BootstrapFeatureScene3DPipelineRecovery != "/gosx/assets/runtime/bootstrap-feature-scene3d-pipeline-recovery.3f3f3f3f.js" {
+		t.Fatalf("unexpected scene3d pipeline recovery url: %s", runtime.BootstrapFeatureScene3DPipelineRecovery)
 	}
 	if runtime.VideoHLS != "/gosx/assets/runtime/hls.min.77777777.js" {
 		t.Fatalf("unexpected video hls url: %s", runtime.VideoHLS)

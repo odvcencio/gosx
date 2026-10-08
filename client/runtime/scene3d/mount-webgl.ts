@@ -2027,6 +2027,7 @@
   // No fallback URL: pages that do not advertise a feature cannot fetch it.
 
 
+
   // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
   // animation-channel record carries something only the decompress chunk can
   // read. The field names match the writers in 11a-scene-decompress.ts.
