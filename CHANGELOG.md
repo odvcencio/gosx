@@ -61,6 +61,8 @@
   existing writer timer with a cadence that divides the ping period. Ping
   sequences start from cryptographic per-connection randomness. Invalid
   slow-client policy logs a fixed class at most once per minute.
+- Slow-client checks follow the shared hub tick and scale the drop threshold to
+  the elapsed window.
 - Hub Close waits for application enqueue callbacks as well as pumps. Release
   locks that callbacks may acquire before Close. The framework-only telemetry
   observer slot requires an internal authority key; observer conflicts match
