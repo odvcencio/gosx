@@ -92,6 +92,11 @@ func VerifyDerivation(file File, profile Profile, coefficients Coefficients) err
 }
 
 func newModel(file File, profile Profile, coefficients Coefficients, name string, after bool) (planningModel, error) {
+	return modelWithCosts(file, profile, coefficients, name, after, nil)
+}
+
+// Overrides are private diagnostic assumptions, never a stored calibration.
+func modelWithCosts(file File, profile Profile, coefficients Coefficients, name string, after bool, overrides map[string]*big.Rat) (planningModel, error) {
 	page, ok := file.PageTypes[name]
 	if !ok || !knownPageType(name) {
 		return planningModel{}, errors.New("unregistered page type")
@@ -158,6 +163,12 @@ func newModel(file File, profile Profile, coefficients Coefficients, name string
 			status = "illustrative"
 		}
 		costs[e.Name] = ratio(value, 1)
+		if override, ok := overrides[e.Name]; ok {
+			if override == nil || override.Sign() < 0 || e.Name == "wasmOverlapPPM" && override.Cmp(ratio(1000000, 1)) > 0 {
+				return planningModel{}, errors.New("invalid sensitivity cost")
+			}
+			costs[e.Name] = new(big.Rat).Set(override)
+		}
 	}
 	if status != "illustrative" && profile.Reference != "desktop-cpu-proxy" {
 		return planningModel{}, errors.New("phone certification is unavailable")
@@ -196,8 +207,9 @@ func newModel(file File, profile Profile, coefficients Coefficients, name string
 		Reserve, Share  int64
 		Set, Backend    string
 		Metric          string
+		Overrides       map[string]*big.Rat `json:"Overrides,omitempty"`
 	}{"transfer-cpu/v1", name, after, []Ref{file.Profile, file.Coefficients, file.Toolchain, file.Fixtures}, profile, coefficients,
-		page.Network, goal, page.Mix, work, reserve, page.MinAppPPM, page.CoefficientSet, page.Backend, page.PrimaryMetric})
+		page.Network, goal, page.Mix, work, reserve, page.MinAppPPM, page.CoefficientSet, page.Backend, page.PrimaryMetric, overrides})
 	return planningModel{network: network, initial: profile.InitCwndBytes, quantum: profile.QuantumBytes, reserve: reserve,
 		share: page.MinAppPPM, static: name == "static", window: window, slope: slope, fixed: fixed, status: status, fingerprint: inputDigest(fingerprint)}, nil
 }

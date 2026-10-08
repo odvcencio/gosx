@@ -12,18 +12,24 @@ func ratio(n, d int64) *big.Rat { return new(big.Rat).SetFrac(big.NewInt(n), big
 // transferMicros charges ACK-limited flights and serializes the final flight.
 // The planning connection excludes setup and first-byte delays, charged by caller.
 func transferMicros(bytes int64, network Network, initial int64) (elapsed, slowStart *big.Rat, err error) {
-	if bytes < 0 || bytes > maxSearchBytes || network.DownBytesPerSec <= 0 || network.RTTMicros < 0 || initial <= 0 || initial > maxSearchBytes {
+	return transferAt(bytes, ratio(network.DownBytesPerSec, 1), ratio(network.RTTMicros, 1), initial)
+}
+
+func transferAt(bytes int64, down, rtt *big.Rat, initial int64) (elapsed, slowStart *big.Rat, err error) {
+	if bytes < 0 || bytes > maxSearchBytes || down.Sign() <= 0 || rtt.Sign() < 0 || initial <= 0 || initial > maxSearchBytes {
 		return nil, nil, errors.New("invalid transfer input")
 	}
 	slowStart = new(big.Rat)
-	bdp := new(big.Rat).Mul(ratio(network.DownBytesPerSec, 1000000), ratio(network.RTTMicros, 1))
+	bdp := new(big.Rat).Mul(down, rtt)
+	bdp.Quo(bdp, ratio(1000000, 1))
 	delivered, cwnd := int64(0), initial
 	for delivered < bytes {
 		remaining := bytes - delivered
 		if ratio(cwnd, 1).Cmp(bdp) >= 0 || remaining <= cwnd {
-			return new(big.Rat).Add(slowStart, new(big.Rat).Mul(ratio(remaining, network.DownBytesPerSec), ratio(1000000, 1))), slowStart, nil
+			serial := new(big.Rat).Quo(ratio(remaining, 1), down)
+			return new(big.Rat).Add(slowStart, serial.Mul(serial, ratio(1000000, 1))), slowStart, nil
 		}
-		slowStart.Add(slowStart, ratio(network.RTTMicros, 1))
+		slowStart.Add(slowStart, rtt)
 		delivered += cwnd
 		cwnd *= 2 // Bounded search stops before this can approach int64 overflow.
 	}
@@ -36,10 +42,27 @@ type planningModel struct {
 	static                           bool
 	window, slope, fixed             *big.Rat
 	status, fingerprint              string
+	downOverride, rttOverride        *big.Rat
+}
+
+func (m planningModel) down() *big.Rat {
+	if m.downOverride != nil {
+		return m.downOverride
+	}
+	return ratio(m.network.DownBytesPerSec, 1)
+}
+func (m planningModel) rtt() *big.Rat {
+	if m.rttOverride != nil {
+		return m.rttOverride
+	}
+	return ratio(m.network.RTTMicros, 1)
+}
+func (m planningModel) transfer(n int64) (*big.Rat, *big.Rat, error) {
+	return transferAt(n, m.down(), m.rtt(), m.initial)
 }
 
 func (m planningModel) cost(n int64) (*big.Rat, error) {
-	transfer, _, err := transferMicros(n, m.network, m.initial)
+	transfer, _, err := m.transfer(n)
 	if err != nil {
 		return nil, err
 	}
@@ -73,13 +96,13 @@ func (m planningModel) solve() (int64, *big.Rat, error) {
 	}
 	// Recover the exact solution inside the selected linear segment. At an ACK
 	// discontinuity, the preceding flight boundary is the largest feasible value.
-	_, phase, _ := transferMicros(lo, m.network, m.initial)
-	_, nextPhase, _ := transferMicros(lo+1, m.network, m.initial)
+	_, phase, _ := m.transfer(lo)
+	_, nextPhase, _ := m.transfer(lo + 1)
 	unrounded := ratio(lo, 1)
 	if phase.Cmp(nextPhase) == 0 {
 		cost, _ := m.cost(lo)
 		gap := new(big.Rat).Sub(m.window, cost)
-		slope := new(big.Rat).Add(ratio(1000000, m.network.DownBytesPerSec), m.slope)
+		slope := new(big.Rat).Add(new(big.Rat).Quo(ratio(1000000, 1), m.down()), m.slope)
 		unrounded.Add(unrounded, gap.Quo(gap, slope))
 	}
 	return lo / m.quantum * m.quantum, unrounded, nil
@@ -107,7 +130,7 @@ func (m planningModel) allocation() (Derivation, error) {
 	if framework < 0 {
 		return Derivation{}, errors.New("app minimum exceeds allocation")
 	}
-	transfer, slow, _ := transferMicros(n, m.network, m.initial)
+	transfer, slow, _ := m.transfer(n)
 	cpu := new(big.Rat).Add(new(big.Rat).Mul(ratio(n, 1), m.slope), m.fixed)
 	return Derivation{Kind: "transfer-cpu", Status: m.status, InputSHA256: m.fingerprint,
 		TotalBytes: n, AppCriticalReserveBytes: m.reserve, MinAppBytes: minimum, FrameworkBytes: framework,
