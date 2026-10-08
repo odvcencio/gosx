@@ -347,6 +347,9 @@ Island expressions are constrained to what the client VM can evaluate: literals,
 
 ## Reactive State
 
+For typed browser intents, drag/drop and modal focus
+ownership, see [browser controllers](docs/controllers.md).
+
 Signals provide fine-grained reactivity in islands:
 
 ```go
@@ -795,6 +798,20 @@ Production builds require TinyGo on `PATH`, emit capability-linked `core`,
 compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
+
+Production builds start the server for prerendering only when static routes
+exist. Apps that need request-time authentication or a database can also disable
+build-time prerendering in `gosx.config.json`:
+
+```json
+{"build":{"prerender":{"enabled":false}}}
+```
+
+This keeps the server binary and normal production assets, and omits static
+snapshots and the edge export. The default is `true`; `gosx export` remains an
+explicit export command. Export harnesses supply a numeric `PORT` and a loopback
+`GOSX_LISTEN_ADDR`. Use `server.App.ListenAndServe` to honor both, including when
+your app's default address comes from another environment variable.
 
 Install the CLI at the version required by your project's `go.mod`, using
 `go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the

@@ -9,6 +9,7 @@ build/
 !/docs/scene3d-text.md
 !/docs/stripe.md
 !/docs/ui-recipes.md
+!/docs/controllers.md
 !/docs/desktop-code-signing.md
 !/docs/expression-support-matrix.md
 !/docs/immutable-asset-caching.md
