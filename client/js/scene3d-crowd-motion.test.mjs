@@ -2,11 +2,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
+import { createRequire } from "node:module";
+
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 function context() {
   const c = vm.createContext({ console, Float32Array, Map, WeakMap, Set, Math });
   for (const p of ['bootstrap-src/11-scene-math.ts', '../runtime/scene3d/animation.ts']) {
-    vm.runInContext(fs.readFileSync(new URL(p, import.meta.url), 'utf8'), c);
+    vm.runInContext(ts.transpileModule(fs.readFileSync(new URL(p, import.meta.url), 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, c);
   }
   return c;
 }
