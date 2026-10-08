@@ -1,8 +1,10 @@
 package aot
 
 import (
+	"bytes"
 	"encoding/binary"
 	"fmt"
+	"reflect"
 	"strings"
 
 	"m31labs.dev/gosx/internal/wasmgen"
@@ -476,4 +478,236 @@ func inputUTF8Function() wasmgen.Function {
 	b.i32(1)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(2), I32Locals: 3, Body: b}
+}
+
+type linkedCode struct {
+	module   wasmgen.Module
+	programs []*expressionEmitter
+	indices  [][]uint32
+}
+
+func commonFunctions(e *expressionEmitter) []uint32 {
+	indices := append([]uint32{}, e.helpers[:]...)
+	indices = append(indices, e.inputUTF8, e.rootCopy)
+	indices = append(indices, e.transactions[:]...)
+	return append(indices, e.computed.begin, e.computed.commit, e.computed.abort, e.dom.patch)
+}
+
+// linkProgramCode combines already proved programs without decoding source at
+// runtime. Helpers have stable IDs; each program retains ExprID/handler order.
+func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
+	if l == nil || len(l.programs) == 0 {
+		return nil, fmt.Errorf("empty linked layout")
+	}
+	shared := map[string]bool{}
+	for _, p := range l.programs {
+		for _, signal := range p.unit.Program.Signals {
+			if strings.HasPrefix(signal.Name, "$") {
+				if shared[signal.Name] {
+					return nil, fmt.Errorf("cross-program shared subscriptions are unsupported")
+				}
+				shared[signal.Name] = true
+			}
+		}
+	}
+	c := &linkedCode{}
+	for i := range l.programs {
+		e, err := l.emitProgram(uint32(i))
+		if err != nil {
+			return nil, err
+		}
+		c.programs = append(c.programs, e)
+	}
+	first := c.programs[0].module
+	c.module = wasmgen.Module{Imports: append([]wasmgen.Import{}, first.Imports...), Globals: append([]wasmgen.Global{}, first.Globals...), Data: append([]byte{}, l.data...)}
+	for i := range c.module.Imports {
+		c.module.Imports[i].Signature.Params = append([]wasmgen.ValueType{}, first.Imports[i].Signature.Params...)
+	}
+	common := commonFunctions(c.programs[0])
+	c.module.Functions = make([]wasmgen.Function, len(common))
+	for _, e := range c.programs {
+		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
+			return nil, fmt.Errorf("incompatible linked module storage or imports")
+		}
+		indices := make([]uint32, len(e.module.Imports)+len(e.module.Functions))
+		for i := range indices {
+			indices[i] = NoBindingName
+		}
+		for i := range e.module.Imports {
+			indices[i] = uint32(i)
+		}
+		for id, index := range commonFunctions(e) {
+			indices[index] = uint32(len(first.Imports) + id)
+		}
+		c.indices = append(c.indices, indices)
+	}
+	type functionSource struct{ program, index uint32 }
+	var sources []functionSource
+	for p, e := range c.programs {
+		indices := c.indices[p]
+		add := func(index uint32) {
+			if index == NoBindingName || indices[index] != NoBindingName {
+				return
+			}
+			indices[index] = uint32(len(first.Imports) + len(common) + len(sources))
+			sources = append(sources, functionSource{uint32(p), index})
+		}
+		for _, index := range e.functions {
+			add(index)
+		}
+		for _, index := range e.handlers {
+			add(index)
+		}
+		for i := range e.module.Functions {
+			add(uint32(len(first.Imports) + i))
+		}
+	}
+	globals := make([]uint32, len(first.Globals))
+	for i := range globals {
+		globals[i] = uint32(i)
+	}
+	for helper := range common {
+		for p, e := range c.programs {
+			index := commonFunctions(e)[helper]
+			fn, err := relocateFunction(e.module.Functions[index-uint32(len(first.Imports))], c.indices[p], globals)
+			if err != nil {
+				return nil, err
+			}
+			if p == 0 {
+				c.module.Functions[helper] = fn
+			} else if !reflect.DeepEqual(c.module.Functions[helper], fn) {
+				return nil, fmt.Errorf("incompatible linked helper %d", helper)
+			}
+		}
+	}
+	for _, source := range sources {
+		e := c.programs[source.program]
+		fn, err := relocateFunction(e.module.Functions[source.index-uint32(len(first.Imports))], c.indices[source.program], globals)
+		if err != nil {
+			return nil, err
+		}
+		c.module.Functions = append(c.module.Functions, fn)
+	}
+	raw, err := wasmgen.Encode(c.module)
+	if err == nil {
+		err = wasmgen.Validate(raw)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("linked code: %w", err)
+	}
+	return c, nil
+}
+
+type relocationReader struct {
+	data []byte
+	pos  int
+}
+
+func (r *relocationReader) leb(bits int) (uint64, error) {
+	start, value := r.pos, uint64(0)
+	limit := 5
+	if bits == 64 {
+		limit = 10
+	}
+	for i := range limit {
+		if r.pos == len(r.data) {
+			return 0, fmt.Errorf("truncated instruction immediate")
+		}
+		b := r.data[r.pos]
+		r.pos++
+		value |= uint64(b&127) << (i * 7)
+		if b&128 != 0 {
+			continue
+		}
+		var canonical []byte
+		if bits == 0 {
+			if value > uint64(^uint32(0)) {
+				return 0, fmt.Errorf("instruction index overflow")
+			}
+			canonical = wasmgen.AppendU32(nil, uint32(value))
+		} else {
+			if b&64 != 0 && (i+1)*7 < 64 {
+				value |= ^uint64(0) << ((i + 1) * 7)
+			}
+			if bits == 32 {
+				value = uint64(int64(int32(value)))
+			}
+			canonical = wasmgen.AppendI64(nil, int64(value))
+		}
+		if !bytes.Equal(canonical, r.data[start:r.pos]) {
+			return 0, fmt.Errorf("noncanonical instruction immediate")
+		}
+		return value, nil
+	}
+	return 0, fmt.Errorf("instruction immediate overflow")
+}
+
+// Relocation walks instruction framing, never matching arbitrary byte values.
+// Constants, branch/local indices and memory offsets retain their exact bytes.
+func relocateFunction(fn wasmgen.Function, functions, globals []uint32) (wasmgen.Function, error) {
+	r := relocationReader{data: fn.Body}
+	var body []byte
+	var lastOp byte
+	for r.pos < len(r.data) {
+		start := r.pos
+		op := r.data[r.pos]
+		lastOp = op
+		r.pos++
+		unsigned := func() (uint64, error) { return r.leb(0) }
+		var err error
+		switch {
+		case op == 0x10 || op == 0x23 || op == 0x24:
+			index, readErr := unsigned()
+			if readErr != nil {
+				return wasmgen.Function{}, readErr
+			}
+			mapping := functions
+			if op != 0x10 {
+				mapping = globals
+			}
+			if index >= uint64(len(mapping)) || mapping[index] == NoBindingName {
+				return wasmgen.Function{}, fmt.Errorf("unresolved instruction index")
+			}
+			body = wasmgen.AppendU32(append(body, op), mapping[index])
+			continue
+		case op >= 0x02 && op <= 0x04:
+			if r.pos == len(r.data) || r.data[r.pos] != 0x40 && r.data[r.pos] != byte(wasmgen.I32) && r.data[r.pos] != byte(wasmgen.I64) {
+				return wasmgen.Function{}, fmt.Errorf("unsupported block type")
+			}
+			r.pos++
+		case op == 0x0c || op == 0x0d || op >= 0x20 && op <= 0x22 || op == 0x3f:
+			_, err = unsigned()
+		case op == 0x0e:
+			var count uint64
+			count, err = unsigned()
+			if count > uint64(len(r.data)-r.pos) {
+				return wasmgen.Function{}, fmt.Errorf("branch table limit")
+			}
+			for i := uint64(0); i <= count && err == nil; i++ {
+				_, err = unsigned()
+			}
+		case op == 0x28 || op == 0x29 || op >= 0x2c && op <= 0x37 || op >= 0x3a && op <= 0x3e:
+			_, err = unsigned()
+			if err == nil {
+				_, err = unsigned()
+			}
+		case op == 0x41:
+			_, err = r.leb(32)
+		case op == 0x42:
+			_, err = r.leb(64)
+		case op == 0x00 || op == 0x01 || op == 0x05 || op == 0x0b || op == 0x0f || op == 0x1a || op == 0x1b || op >= 0x45 && op <= 0x5a || op >= 0x67 && op <= 0x8a || op == 0xa7 || op == 0xac || op == 0xad:
+		default:
+			return wasmgen.Function{}, fmt.Errorf("unsupported relocation instruction")
+		}
+		if err != nil {
+			return wasmgen.Function{}, err
+		}
+		body = append(body, r.data[start:r.pos]...)
+	}
+	if len(body) == 0 || lastOp != 0x0b {
+		return wasmgen.Function{}, fmt.Errorf("unterminated relocated function")
+	}
+	fn.Body = body
+	fn.Signature.Params = append([]wasmgen.ValueType{}, fn.Signature.Params...)
+	return fn, nil
 }

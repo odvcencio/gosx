@@ -633,3 +633,196 @@ func TestLinkedIdenticalRootTablesShareConstantStorage(t *testing.T) {
 		t.Fatalf("deduplicated catalog layout: %d bytes, %d roots", len(l.data), l.roots)
 	}
 }
+
+func exportLinkedTestModule(c *linkedCode) wasmgen.Module {
+	e := &expressionEmitter{module: c.module}
+	for i, index := range c.programs[0].transactions {
+		e.transactions[i] = c.indices[0][index]
+	}
+	exportStateModule(e)
+	for p, source := range c.programs {
+		for name, index := range map[string]uint32{
+			"initialize": source.computed.initialize, "bind": source.dom.bind,
+			"render": source.dom.render, "handler": source.handlers[0],
+		} {
+			e.module.Exports = append(e.module.Exports, wasmgen.Export{Name: name + strconv.Itoa(p), Function: c.indices[p][index]})
+		}
+	}
+	return e.module
+}
+
+func TestLinkedCodeRunsProgramsAndRepeatedInstancesInOneModule(t *testing.T) {
+	units := []Unit{linkedComputedUnit(t, "Small", 1, 1, 4), linkedComputedUnit(t, "Larger", 2, 2, 9)}
+	l, err := buildLinkedLayout(units, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.module.Imports) != 3 || len(c.module.Exports) != 0 || len(c.module.Globals) != 25 || !bytes.Equal(c.module.Data, l.data) {
+		t.Fatal("linked library changed storage or exposed a private function")
+	}
+	for helper, index := range commonFunctions(c.programs[0]) {
+		if c.indices[0][index] != c.indices[1][commonFunctions(c.programs[1])[helper]] {
+			t.Fatal("programs retained duplicate helpers")
+		}
+	}
+	otherLayout, err := buildLinkedLayout([]Unit{units[1], units[0], units[1]}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := linkProgramCode(otherLayout)
+	if err != nil || !reflect.DeepEqual(c.module, other.module) {
+		t.Fatalf("input order changed linked code: %v", err)
+	}
+	type testProgram struct {
+		Bindings BindingSet
+		Initial  string
+	}
+	data := struct {
+		Programs                []testProgram
+		FramePrograms           []int
+		FrameTable, LocalStride uint32
+	}{FramePrograms: make([]int, 16), FrameTable: l.frameTable, LocalStride: l.localStride}
+	for i := range data.FramePrograms {
+		data.FramePrograms[i] = -1
+	}
+	data.FramePrograms[0], data.FramePrograms[15], data.FramePrograms[7] = 0, 0, 1
+	for _, p := range l.programs {
+		initial, _ := strconv.ParseInt(p.unit.Program.Exprs[0].Value, 10, 32)
+		data.Programs = append(data.Programs, testProgram{p.dom.bindings, scalarTransport(program.TypeInt, 0, initial, "")})
+	}
+	var got struct {
+		Statuses []uint32
+		Patches  [][]vm.PatchOp
+		Memory   uint32
+	}
+	runExpressionModule(t, exportLinkedTestModule(c), `
+  const api = instance.exports, patches = [], batches = [], statuses = [];
+  for (const [frame,owner] of data.FramePrograms.entries()) {
+    if (owner < 0) continue;
+    view.setUint32(data.FrameTable+frame*16,owner,true);
+    view.setUint32(data.FrameTable+frame*16+4,1,true);
+  }
+  statuses.push(api.begin(0,0,1));
+  for (const [frame,owner] of data.FramePrograms.entries()) {
+    if (owner < 0) continue;
+    memory.set(Buffer.from(data.Programs[owner].Initial,'base64'),32768);
+    statuses.push(api.store(frame*data.LocalStride,32768),api['initialize'+owner](frame),api['bind'+owner](frame),api['render'+owner](frame,1));
+  }
+  if (patches.length) throw new Error('initial patches');
+  statuses.push(api.commit(0,0));
+  for (const [index,frame] of [0,7,15,7,0].entries()) {
+    const owner = data.FramePrograms[frame];
+    statuses.push(api.begin(index+1,0,0),api['handler'+owner](frame),api['render'+owner](frame,0),api.commit(index+1,0));
+    batches.push(patches.splice(0));
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Patches:batches,Memory:memory.length}));`, data, &got, `{input: unexpected,
+  bind: (id,binding,kind,tag) => {
+    const descriptor = data.Programs[data.FramePrograms[id]].Bindings.bindings[binding];
+    if (descriptor.kind !== kind || (descriptor.tagId >>> 0) !== (tag >>> 0)) throw new Error('foreign binding');
+    return 0;
+  },
+  patch: (id,kind,binding,attribute,pointer) => {
+    const descriptor = data.Programs[data.FramePrograms[id]].Bindings.bindings[binding];
+    if (kind !== 0 || attribute !== -1 || view.getUint32(pointer,true) !== 0 || view.getUint32(pointer+4,true) !== 1) throw new Error('patch shape');
+    const start = view.getUint32(pointer+16,true), length = view.getUint32(pointer+20,true);
+    patches.push({kind,path:descriptor.path,text:Buffer.from(memory.subarray(start,start+length)).toString('utf8')});
+    return 0;
+  }}`)
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("linked transaction failed: %+v", got)
+		}
+	}
+	if got.Memory != 196608 || len(got.Patches) != 5 {
+		t.Fatalf("memory or event count: %+v", got)
+	}
+	models := map[int]*vm.Island{}
+	for frame, owner := range data.FramePrograms {
+		if owner >= 0 {
+			models[frame] = vm.NewIsland(l.programs[owner].unit.Program, "")
+		}
+	}
+	for step, frame := range []int{0, 7, 15, 7, 0} {
+		if want := models[frame].Dispatch("increment", ""); !reflect.DeepEqual(got.Patches[step], want) {
+			t.Fatalf("frame %d patches: %+v want %+v", frame, got.Patches[step], want)
+		}
+	}
+	before := append([]byte{}, c.module.Functions[0].Body...)
+	source := &c.programs[0].module.Functions[commonFunctions(c.programs[0])[0]-3]
+	source.Body[0] ^= 1
+	source.Signature.Params[0] = wasmgen.Void
+	if !bytes.Equal(c.module.Functions[0].Body, before) || c.module.Functions[0].Signature.Params[0] != wasmgen.I32 {
+		t.Fatal("linked helper aliases a private emitter")
+	}
+}
+
+func TestFunctionRelocationPreservesConstantsAndExpandsIndices(t *testing.T) {
+	var body instructions
+	body.index(0x10, 3)
+	body.op(0x1a)
+	body.index(0x23, 1)
+	body.i32(16)
+	body.op(0x6a)
+	body.i64(2048)
+	body.op(0x1a)
+	body.op(0x0b)
+	source := wasmgen.Function{Signature: i32Signature(1), Body: body}
+	fn, err := relocateFunction(source, []uint32{0, 1, 2, 131}, []uint32{0, 129})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]byte{0x10, 0x83, 0x01, 0x1a, 0x23, 0x81, 0x01}, body[5:]...)
+	if !bytes.Equal(fn.Body, want) {
+		t.Fatalf("relocated framing: %x want %x", fn.Body, want)
+	}
+	m := wasmgen.Module{Functions: make([]wasmgen.Function, 132), Globals: make([]wasmgen.Global, 130), Exports: []wasmgen.Export{{Name: "run", Function: 0}}}
+	for i := range m.Functions {
+		m.Functions[i] = wasmgen.Function{Signature: i32Signature(0), Body: []byte{0x41, 0, 0x0b}}
+	}
+	m.Functions[0], m.Functions[131] = fn, wasmgen.Function{Signature: i32Signature(0), Body: []byte{0x41, 7, 0x0b}}
+	m.Globals[129].Initial = 10
+	var got int
+	runExpressionModule(t, m, `process.stdout.write(JSON.stringify(instance.exports.run(0)));`, nil, &got)
+	if got != 26 {
+		t.Fatalf("relocated call/global result: %d", got)
+	}
+	fn.Body[0], fn.Signature.Params[0] = 0, wasmgen.Void
+	if source.Body[0] != 0x10 || source.Signature.Params[0] != wasmgen.I32 {
+		t.Fatal("relocation changed source storage")
+	}
+	for _, value := range []int64{-1 << 63, -1 << 31, -65, 0, 63, 64, 1<<31 - 1, 1<<63 - 1} {
+		var b instructions
+		b.i64(value)
+		b.op(0x0b)
+		fn, err := relocateFunction(wasmgen.Function{Body: b}, nil, nil)
+		if err != nil || !bytes.Equal(fn.Body, b) {
+			t.Fatalf("signed constant %d changed: %v", value, err)
+		}
+	}
+}
+
+func TestFunctionRelocationRejectsMalformedFramingAndUnresolvedIndices(t *testing.T) {
+	for _, body := range [][]byte{
+		{}, {0x10}, {0x10, 0x80}, {0x10, 0x80, 0, 0x0b}, {0x10, 1, 0x0b}, {0x23, 1, 0x0b},
+		{0x24, 0, 0x0b}, {0x41, 0x80, 0x80, 0x80, 0x80, 8, 0x0b}, {0x41, 0x0b},
+		{0x02}, {0x02, 0x7d, 0x0b}, {0x0e, 127, 0x0b}, {0x28, 0, 0x80}, {0xfc, 0, 0x0b}, {0x40, 0, 0x0b},
+	} {
+		if _, err := relocateFunction(wasmgen.Function{Body: body}, []uint32{0}, []uint32{NoBindingName}); err == nil {
+			t.Fatalf("accepted malformed relocation: %x", body)
+		}
+	}
+	if _, err := linkProgramCode(nil); err == nil {
+		t.Fatal("admitted an empty code set")
+	}
+	l, err := buildLinkedLayout([]Unit{layoutUnit(t, "First", 0, 0, 0, "$same"), layoutUnit(t, "Second", 0, 0, 0, "$same")}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := linkProgramCode(l); err == nil {
+		t.Fatal("admitted cross-program subscriptions before their dispatcher")
+	}
+}
