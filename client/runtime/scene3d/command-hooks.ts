@@ -1,4 +1,4 @@
-// Shared lifecycle adapters, evaluated only with an optional presentation chunk.
+// Shared lifecycle adapters, installed by the demand-loaded command chunk.
 (() => {
   const sceneAPI = window.__gosx_scene3d_api;
   if (sceneAPI.addCommandHook) return;

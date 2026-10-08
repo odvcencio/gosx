@@ -20,10 +20,9 @@ function runtime(reduce = false, features = ['particle-burst']) {
     requestAnimationFrame(fn) { frames.set(++frameID, fn); return frameID; }, cancelAnimationFrame(id) { frames.delete(id); } };
   const context = vm.createContext({ window, document, console, performance: { now: () => clock }, Date, setTimeout, clearTimeout });
   vm.runInContext(read('bootstrap-src/06-motion-core.ts'), context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-hooks.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   function load(name) {
-    for (const file of ['command-hooks', name]) {
-      vm.runInContext(ts.transpileModule(read('../runtime/scene3d/' + file + '.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
-    }
+    vm.runInContext(ts.transpileModule(read('../runtime/scene3d/' + name + '.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   }
   for (const name of features) load(name);
   const baselineListeners = listeners.size;
