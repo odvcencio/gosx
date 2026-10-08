@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/internal/httpcache"
 	"m31labs.dev/gosx/internal/httpcompress"
 	"m31labs.dev/gosx/island"
@@ -112,6 +113,10 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 
 	// Embedded runtime assets resolve before (and independently of) the
 	// runtime asset root.
+	if _, ok := runtimehost.NavigationRuntimeAssetHash("/gosx/" + name); ok {
+		a.serveNavigationRuntime(w, r)
+		return
+	}
 	if name == "devtools-lantern.js" {
 		serveDevtoolsLantern(w, r)
 		return
@@ -267,26 +272,27 @@ func runtimeManifestDirectAssetPath(root, name string) (string, bool) {
 func runtimeCompatSourcePath(root, name string) (string, bool) {
 	buildDir := filepath.Join(root, "build")
 	candidates := map[string]string{
-		"runtime.wasm":                                 filepath.Join(buildDir, "gosx-runtime.wasm"),
-		"runtime-islands.wasm":                         filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
-		"runtime-core.wasm":                            filepath.Join(buildDir, "gosx-runtime-core.wasm"),
-		"runtime-engine.wasm":                          filepath.Join(buildDir, "gosx-runtime-engine.wasm"),
-		"runtime-collab.wasm":                          filepath.Join(buildDir, "gosx-runtime-collab.wasm"),
-		"wasm_exec.js":                                 filepath.Join(buildDir, "wasm_exec.js"),
-		"standard-go-wasm_exec.js":                     filepath.Join(buildDir, "standard-go-wasm_exec.js"),
-		"bootstrap.js":                                 filepath.Join(buildDir, "bootstrap.js"),
-		"bootstrap-lite.js":                            filepath.Join(buildDir, "bootstrap-lite.js"),
-		"bootstrap-runtime.js":                         filepath.Join(buildDir, "bootstrap-runtime.js"),
-		"bootstrap-feature-islands.js":                 filepath.Join(buildDir, "bootstrap-feature-islands.js"),
-		"bootstrap-feature-engines.js":                 filepath.Join(buildDir, "bootstrap-feature-engines.js"),
-		"bootstrap-feature-hubs.js":                    filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
-		"bootstrap-feature-controllers.js":             filepath.Join(buildDir, "bootstrap-feature-controllers.js"),
-		"bootstrap-controller-input.js":                filepath.Join(buildDir, "bootstrap-controller-input.js"),
-		"bootstrap-feature-textlayout.js":              filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
-		"bootstrap-feature-scene3d.js":                 filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
-		"bootstrap-feature-scene3d-command.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
-		"bootstrap-feature-scene3d-hydrate.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-hydrate.js"),
-		"bootstrap-feature-scene3d-instance-stream.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-instance-stream.js"),
+		"runtime.wasm":                                   filepath.Join(buildDir, "gosx-runtime.wasm"),
+		"runtime-islands.wasm":                           filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
+		"runtime-core.wasm":                              filepath.Join(buildDir, "gosx-runtime-core.wasm"),
+		"runtime-engine.wasm":                            filepath.Join(buildDir, "gosx-runtime-engine.wasm"),
+		"runtime-collab.wasm":                            filepath.Join(buildDir, "gosx-runtime-collab.wasm"),
+		"wasm_exec.js":                                   filepath.Join(buildDir, "wasm_exec.js"),
+		"standard-go-wasm_exec.js":                       filepath.Join(buildDir, "standard-go-wasm_exec.js"),
+		"bootstrap.js":                                   filepath.Join(buildDir, "bootstrap.js"),
+		"bootstrap-lite.js":                              filepath.Join(buildDir, "bootstrap-lite.js"),
+		"bootstrap-runtime.js":                           filepath.Join(buildDir, "bootstrap-runtime.js"),
+		"bootstrap-feature-islands.js":                   filepath.Join(buildDir, "bootstrap-feature-islands.js"),
+		"bootstrap-feature-engines.js":                   filepath.Join(buildDir, "bootstrap-feature-engines.js"),
+		"bootstrap-feature-hubs.js":                      filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
+		"bootstrap-feature-controllers.js":               filepath.Join(buildDir, "bootstrap-feature-controllers.js"),
+		"bootstrap-controller-input.js":                  filepath.Join(buildDir, "bootstrap-controller-input.js"),
+		"bootstrap-feature-textlayout.js":                filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
+		"bootstrap-feature-scene3d.js":                   filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
+		"bootstrap-feature-scene3d-command.js":           filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
+		"bootstrap-feature-scene3d-hydrate.js":           filepath.Join(buildDir, "bootstrap-feature-scene3d-hydrate.js"),
+		"bootstrap-feature-scene3d-pipeline-recovery.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-pipeline-recovery.js"),
+		"bootstrap-feature-scene3d-instance-stream.js":   filepath.Join(buildDir, "bootstrap-feature-scene3d-instance-stream.js"),
 		"patch.js":         filepath.Join(buildDir, "patch.js"),
 		"hls.min.js":       filepath.Join(buildDir, "hls.min.js"),
 		"stripe-bridge.js": filepath.Join(buildDir, "stripe-bridge.js"),
@@ -399,6 +405,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCommand.File)
 	case "bootstrap-feature-scene3d-hydrate.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
+	case "bootstrap-feature-scene3d-pipeline-recovery.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery.File)
 	case "bootstrap-feature-scene3d-webgpu.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
 	case "bootstrap-feature-scene3d-webgl.js":
@@ -411,6 +419,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCompute.File)
 	case "bootstrap-feature-scene3d-walk.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWalk.File)
+	case "bootstrap-feature-scene3d-particle-burst.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "bootstrap-feature-scene3d-zoom.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DZoom.File)
 	case "bootstrap-feature-scene3d-timeline.js":

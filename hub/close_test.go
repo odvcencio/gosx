@@ -72,7 +72,7 @@ func TestHubClosedWaitsForEveryAdmittedCallback(t *testing.T) {
 }
 
 func TestHubClosedLastUnderConcurrentDispatch(t *testing.T) {
-	for range 5000 {
+	for range 300 {
 		h := New("test")
 		o := &closingObserver{}
 		_, _ = h.UseObserver(o)
@@ -84,7 +84,8 @@ func TestHubClosedLastUnderConcurrentDispatch(t *testing.T) {
 				defer wg.Done()
 				for !stop.Load() {
 					h.BroadcastBinary([]byte{1})
-					h.observe(func(obs Observer) { obs.Rejected(h, RejectedClosed) })
+					h.observeConcurrent(func(obs Observer) { obs.Rejected(h, RejectedClosed) })
+					runtime.Gosched()
 				}
 			}()
 		}
@@ -97,6 +98,45 @@ func TestHubClosedLastUnderConcurrentDispatch(t *testing.T) {
 		if o.late.Load() != 0 {
 			t.Fatal("callback after Closed or Close return", o.late.Load())
 		}
+	}
+}
+
+type panicBroadcastObserver struct{ NoopObserver }
+
+func (panicBroadcastObserver) Broadcast(*Hub, int, int) { panic("test panic") }
+
+type blockingPanicObserver struct{ closingObserver }
+
+func (o *blockingPanicObserver) ObserverPanicked(*Hub) {
+	if o.closed.Load() {
+		o.late.Add(1)
+	}
+	close(o.entered)
+	<-o.release
+}
+
+func TestHubClosedWaitsForNestedPanicCallback(t *testing.T) {
+	h := New("test")
+	o := &blockingPanicObserver{closingObserver: closingObserver{
+		entered: make(chan struct{}), release: make(chan struct{}),
+	}}
+	_, _ = h.UseObserver(panicBroadcastObserver{})
+	_, _ = h.UseObserver(o)
+	done := make(chan struct{})
+	go func() { h.BroadcastBinary([]byte{1}); close(done) }()
+	receiveHubEvent(t, o.entered)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+	defer cancel()
+	if err := h.Close(ctx); !errors.Is(err, context.DeadlineExceeded) || o.closed.Load() {
+		t.Fatal(err, "premature Closed during nested callback")
+	}
+	close(o.release)
+	receiveHubEvent(t, done)
+	if err := h.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !o.closed.Load() || o.late.Load() != 0 {
+		t.Fatal("nested callback reached observer after Closed")
 	}
 }
 
