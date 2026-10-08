@@ -35,6 +35,7 @@ type expressionEmitter struct {
 	transactions  [4]uint32
 	state         *stateLayout
 	handlers      []uint32
+	computed      *computedLayout
 }
 
 func emitExpressions(u Unit) (*expressionEmitter, error) {
@@ -91,6 +92,11 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 	}
 	if transactions {
 		e.setupTransactions()
+	}
+	if state != nil && state.computedCount != 0 {
+		if err := e.setupComputed(); err != nil {
+			return nil, err
+		}
 	}
 	for i, expr := range u.Program.Exprs {
 		fn, err := e.expression(program.ExprID(i), expr)

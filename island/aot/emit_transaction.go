@@ -131,6 +131,12 @@ func (e *expressionEmitter) beginFunction() wasmgen.Function {
 	b.index(0x0c, 0)
 	b.op(0x0b)
 	b.op(0x0b)
+	if e.computed != nil {
+		b.get(2)
+		b.index(0x10, e.computed.begin)
+		b.op(0x1a)
+		b.statusGuard()
+	}
 	b.i32(0)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 2, Body: b}
@@ -153,6 +159,11 @@ func (e *expressionEmitter) commitFunction() wasmgen.Function {
 	b.op(0x45)
 	b.statusFailure(statusBadSequence)
 	b.statusGuard()
+	if e.computed != nil {
+		b.index(0x10, e.computed.commit)
+		b.op(0x1a)
+		b.statusGuard()
+	}
 	for _, pair := range [][2]uint32{{arenaBaseGlobal, committedBaseGlobal},
 		{allocationGlobal, committedCursorGlobal}, {workingStringsGlobal, committedStringsGlobal},
 		{pendingLoGlobal, committedLoGlobal}, {pendingHiGlobal, committedHiGlobal}} {
@@ -176,6 +187,10 @@ func (e *expressionEmitter) abortFunction() wasmgen.Function {
 	}
 	b.i32(int32(e.reserved))
 	b.index(0x24, allocationGlobal)
+	if e.computed != nil {
+		b.index(0x10, e.computed.abort)
+		b.op(0x1a)
+	}
 	b.i32(0)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(0), Body: b}

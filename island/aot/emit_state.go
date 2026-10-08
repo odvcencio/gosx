@@ -11,18 +11,17 @@ import (
 )
 
 type stateLayout struct {
-	instances []uint32
-	signals   map[string]uint32
-	rows      []uint32
-	roots     uint32
-	dataBase  int32
-	lookup    uint32
+	instances     []uint32
+	signals       map[string]uint32
+	rows          []uint32
+	roots         uint32
+	dataBase      int32
+	lookup        uint32
+	mutableRoots  uint32
+	computedCount uint32
 }
 
 func emitStateExpressions(u Unit, instances []uint32) (*expressionEmitter, error) {
-	if len(u.Program.Computeds) != 0 {
-		return nil, fmt.Errorf("computed state requires a computed layout")
-	}
 	state, err := buildStateLayout(u, instances)
 	if err != nil {
 		return nil, err
@@ -59,6 +58,9 @@ func buildStateLayout(u Unit, instances []uint32) (*stateLayout, error) {
 		sharedSlots[name] = uint32(len(s.instances)*len(locals) + i)
 	}
 	s.roots = uint32(len(s.instances)*len(locals) + len(shared))
+	s.mutableRoots = s.roots
+	s.computedCount = uint32(len(u.Program.Computeds))
+	s.roots += uint32(len(s.instances)) * s.computedCount
 	if s.roots > ProfileLimits().Values || len(shared) > int(ProfileLimits().SharedNames) {
 		return nil, fmt.Errorf("state roots exceed the profile")
 	}
@@ -124,6 +126,9 @@ func (e *expressionEmitter) stateExpression(id program.ExprID, expr program.Expr
 	}
 	slot, ok := e.state.signals[expr.Value]
 	if !ok {
+		if expr.Op == program.OpSignalGet && e.computed != nil {
+			return e.computedExpression(id, expr)
+		}
 		return wasmgen.Function{}, fmt.Errorf("signal name has no mutable root")
 	}
 	var b instructions
@@ -133,6 +138,9 @@ func (e *expressionEmitter) stateExpression(id program.ExprID, expr program.Expr
 	b.guard(statusBusy)
 	e.signalRoot(&b, slot, 3)
 	if expr.Op == program.OpSignalGet {
+		if e.computed != nil {
+			e.trackDependency(&b, slot)
+		}
 		b.index(0x23, arenaBaseGlobal)
 		b.get(3)
 		b.i32(valueBytes)

@@ -3,6 +3,7 @@ package aot
 import (
 	"encoding/base64"
 	"reflect"
+	"strconv"
 	"testing"
 
 	"m31labs.dev/gosx/client/vm"
@@ -276,5 +277,211 @@ func TestEmitHandlerFaultStopsWritesBeforeCommit(t *testing.T) {
 		scalarTransport(program.TypeInt, 0, 0, ""), e.rootSlots}, &got)
 	if !reflect.DeepEqual(got, []uint32{3, 3, 1, 1, 0, 0, 0, 0}) {
 		t.Fatalf("handler failure published or continued writes: %v", got)
+	}
+}
+
+func addComputed(u *Unit, name string, kind ScalarKind, body program.ExprID) {
+	slot := uint32(len(u.Program.Computeds))
+	u.Program.Computeds = append(u.Program.Computeds, program.ComputedDef{Name: name, Type: u.Program.Exprs[body].Type, Expr: body})
+	u.Contract.Computeds = append(u.Contract.Computeds, StateContract{Slot: slot, Name: name, Kind: kind})
+}
+
+func computedReadUnit(t *testing.T) (Unit, []program.ExprID) {
+	u := staticUnit(t)
+	zero := addExpression(&u, program.OpLitInt, program.TypeInt, Int, "0")
+	one := addExpression(&u, program.OpLitInt, program.TypeInt, Int, "1")
+	two := addExpression(&u, program.OpLitInt, program.TypeInt, Int, "2")
+	yes := addExpression(&u, program.OpLitBool, program.TypeBool, Bool, "true")
+	no := addExpression(&u, program.OpLitBool, program.TypeBool, Bool, "false")
+	for i, def := range []struct {
+		name string
+		kind ScalarKind
+		init program.ExprID
+	}{
+		{"count", Int, zero}, {"enabled", Bool, yes},
+	} {
+		u.Program.Signals = append(u.Program.Signals, program.SignalDef{Name: def.name, Type: u.Program.Exprs[def.init].Type, Init: def.init})
+		u.Contract.Signals = append(u.Contract.Signals, StateContract{Slot: uint32(i), Name: def.name, Kind: def.kind})
+	}
+	count := addExpression(&u, program.OpSignalGet, program.TypeInt, Int, "count")
+	enabled := addExpression(&u, program.OpSignalGet, program.TypeBool, Bool, "enabled")
+	later := addExpression(&u, program.OpSignalGet, program.TypeInt, Int, "later")
+	addComputed(&u, "forward", Int, later)
+	product := addExpression(&u, program.OpMul, program.TypeInt, Int, "", count, two)
+	addComputed(&u, "later", Int, product)
+	sum := addExpression(&u, program.OpAdd, program.TypeInt, Int, "", later, one)
+	addComputed(&u, "tally", Int, sum)
+	tally := addExpression(&u, program.OpSignalGet, program.TypeInt, Int, "tally")
+	maximum := addExpression(&u, program.OpLitInt, program.TypeInt, Int, "2147483647")
+	overflow := addExpression(&u, program.OpAdd, program.TypeInt, Int, "", maximum, one)
+	choice := addExpression(&u, program.OpCond, program.TypeInt, Int, "", enabled, tally, overflow)
+	addComputed(&u, "choice", Int, choice)
+	positive := addExpression(&u, program.OpGt, program.TypeBool, Bool, "", count, zero)
+	both := addExpression(&u, program.OpAnd, program.TypeBool, Bool, "", no, positive)
+	addComputed(&u, "both", Bool, both)
+	reads := []program.ExprID{}
+	for _, def := range u.Program.Computeds {
+		kind := u.Contract.Computeds[len(reads)].Kind
+		reads = append(reads, addExpression(&u, program.OpSignalGet, def.Type, kind, def.Name))
+	}
+	return refreshUnit(t, u), reads
+}
+
+func exportComputedReads(e *expressionEmitter, reads []program.ExprID) {
+	exportStateModule(e)
+	e.module.Exports = append(e.module.Exports, wasmgen.Export{Name: "initialize", Function: e.computed.initialize})
+	for i, expr := range reads {
+		e.module.Exports = append(e.module.Exports, wasmgen.Export{Name: "read" + strconv.Itoa(i), Function: e.functions[expr]})
+	}
+}
+
+func TestEmitComputedSourceOrderNestedTrackingAndLazyBranches(t *testing.T) {
+	u, reads := computedReadUnit(t)
+	e, err := emitStateExpressions(u, []uint32{42, 7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportComputedReads(e, reads)
+	var got struct {
+		Statuses     []uint32
+		Values       [][]int64
+		Dependencies [][]uint32
+	}
+	runExpressionModule(t, e.module, `
+  const api = instance.exports, statuses = [], values = [], dependencies = [];
+  statuses.push(api.begin(0, 0, 1));
+  for (let slot = 0; slot < data.Roots.length; slot++) {
+    memory.set(Buffer.from(data.Roots[slot], 'base64'), 32768);
+    statuses.push(api.store(slot, 32768));
+  }
+  statuses.push(api.initialize());
+  for (const id of [7, 42]) {
+    const row = [];
+    for (let item = 0; item < data.Count; item++) {
+      const pointer = api['read' + item](id);
+      row.push(view.getUint32(pointer + 4, true), view.getInt32(pointer + 8, true));
+    }
+    values.push(row);
+  }
+  for (let frame = 0; frame < 2; frame++) {
+    dependencies.push(Array.from({length: data.Count}, (_, index) =>
+      view.getUint32(17408 + (frame * data.Count + index) * 32 + 20, true)));
+  }
+  statuses.push(api.commit(0, 0), api.begin(1, 0, 0));
+  const pointer = api.read2(7);
+  statuses.push(api.status(), api.abort());
+  process.stdout.write(JSON.stringify({Statuses: statuses, Values: values, Dependencies: dependencies}));`, struct {
+		Roots []string
+		Count uint32
+	}{[]string{
+		scalarTransport(program.TypeInt, 0, 3, ""), scalarTransport(program.TypeBool, 2, 0, ""),
+		scalarTransport(program.TypeInt, 0, 8, ""), scalarTransport(program.TypeBool, 2, 0, ""),
+	}, e.state.computedCount}, &got)
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("computed status: %+v", got)
+		}
+	}
+	if !reflect.DeepEqual(got.Dependencies, [][]uint32{{0, 1, 1 << 17, 2 | 1<<18, 1}, {0, 1, 1 << 17, 2 | 1<<18, 1}}) {
+		t.Fatalf("dynamic dependencies: %v", got.Dependencies)
+	}
+	var want [][]int64
+	for _, initial := range []int{3, 8} {
+		model := vm.NewVM(u.Program, nil)
+		vm.InitSignals(model, u.Program)
+		model.SetSignal("count", signal.New(vm.IntVal(initial)))
+		row := []int64{}
+		for _, read := range reads {
+			value := model.Eval(read)
+			flags := int64(0)
+			if value.Type == program.TypeBool && value.Truth() {
+				flags = 2
+			}
+			row = append(row, flags, int64(value.Number()))
+		}
+		want = append(want, row)
+	}
+	if !reflect.DeepEqual(got.Values, want) || got.Values[0][1] != 0 {
+		t.Fatalf("computed values: %v want %v", got.Values, want)
+	}
+}
+
+func TestEmitComputedStringsPreserveDefaultAndPayloadIdentity(t *testing.T) {
+	u := staticUnit(t)
+	later := addExpression(&u, program.OpSignalGet, program.TypeString, String, "later")
+	addComputed(&u, "forward", String, later)
+	empty := addExpression(&u, program.OpLitString, program.TypeString, String, "")
+	addComputed(&u, "later", String, empty)
+	text := addExpression(&u, program.OpLitString, program.TypeString, String, "héllo\x00🌴")
+	addComputed(&u, "text", String, text)
+	reads := []program.ExprID{addExpression(&u, program.OpSignalGet, program.TypeString, String, "forward"), later,
+		addExpression(&u, program.OpSignalGet, program.TypeString, String, "text")}
+	u = refreshUnit(t, u)
+	e, err := emitStateExpressions(u, []uint32{7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportComputedReads(e, reads)
+	var got []struct {
+		Type, Flags uint32
+		Text        string
+	}
+	runExpressionModule(t, e.module, `
+  const api = instance.exports;
+  if (api.begin(0, 0, 1) || api.initialize()) throw new Error('initialization');
+  const result = [];
+  for (let item = 0; item < 3; item++) {
+    const pointer = api['read' + item](7);
+    result.push({Type: view.getUint32(pointer, true), Flags: view.getUint32(pointer + 4, true),
+      Text: Buffer.from(memory.subarray(view.getUint32(pointer + 16, true),
+        view.getUint32(pointer + 16, true) + view.getUint32(pointer + 20, true))).toString('base64')});
+  }
+  if (api.commit(0, 0)) throw new Error('commit');
+  process.stdout.write(JSON.stringify(result));`, nil, &got)
+	model := vm.NewVM(u.Program, nil)
+	vm.InitSignals(model, u.Program)
+	for i, result := range got {
+		want := model.Eval(reads[i])
+		text, _ := base64.StdEncoding.DecodeString(result.Text)
+		flags := uint32(1)
+		if i == 0 {
+			flags = 0
+		}
+		if result.Type != uint32(want.Type) || result.Flags != flags || string(text) != want.Text() {
+			t.Fatalf("computed string %d: %+v want %q", i, result, want.Text())
+		}
+	}
+}
+
+func TestEmitComputedAbortPreservesCommittedMetadata(t *testing.T) {
+	u, reads := computedReadUnit(t)
+	e, err := emitStateExpressions(u, []uint32{7})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportComputedReads(e, reads)
+	var got []uint32
+	runExpressionModule(t, e.module, `
+  const api = instance.exports, result = [];
+  api.begin(0, 0, 1);
+  memory.set(Buffer.from(data[0], 'base64'), 32768); api.store(0, 32768);
+  memory.set(Buffer.from(data[1], 'base64'), 32768); api.store(1, 32768);
+  result.push(api.initialize(), api.initialize(), api.commit(0, 0));
+  api.begin(1, 0, 0);
+  const meta = 17408 + 32 + 16;
+  view.setUint32(meta, 3, true);
+  const pointer = api.read1(7);
+  result.push(view.getInt32(pointer + 8, true), api.abort(), api.begin(2, 0, 0));
+  result.push(view.getUint32(meta, true), view.getUint32(meta + 4, true), api.abort());
+  process.stdout.write(JSON.stringify(result));`, []string{scalarTransport(program.TypeInt, 0, 6, ""),
+		scalarTransport(program.TypeBool, 2, 0, "")}, &got)
+	if !reflect.DeepEqual(got, []uint32{0, statusBadSequence, 0, 12, 0, 0, 1, 1, 0}) {
+		t.Fatalf("computed metadata transaction: %v", got)
+	}
+	write := addExpression(&u, program.OpSignalSet, program.TypeAny, AnyZero, "count", 0)
+	u.Contract.Expressions[write].Pure = false
+	u.Program.Handlers = []program.Handler{{Name: "write", Body: []program.ExprID{write}}}
+	if e, err := emitStateExpressions(refreshUnit(t, u), []uint32{7}); err == nil || e != nil {
+		t.Fatal("accepted mutable writes without invalidation")
 	}
 }
