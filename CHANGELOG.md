@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a portable, bounded MemorySink test helper with synchronized record and
+  byte admission, copied readers and one injected failure per operation.
+  Its zero value uses 128 records and 1 MiB. Memory acceptance makes no local
+  durability promise. The sink contract precedes the bounded worker slice.
+
 - Add immutable typed telemetry records with a schema-1 JSONL envelope,
   deterministic field order, UTC observations, CRC-32C and copied payload
   views. Framework-only constructors reject invalid identities and finite
