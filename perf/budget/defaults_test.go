@@ -129,6 +129,12 @@ func TestCanonicalCatalogRetainsLegacyRoutesAndCapabilities(t *testing.T) {
 			t.Fatal("duplicate registered route")
 		}
 		seen[key] = true
+		if route.Capabilities.Navigation && route.Capabilities.Runtime == "none" {
+			t.Fatal("navigation script runtime missing")
+		}
+		if key == "docs|/" && !route.Capabilities.Motion {
+			t.Fatal("document motion capability missing")
+		}
 		families, err := pagecaps.Classify(route.Capabilities, false)
 		if err != nil {
 			t.Fatal(err)
@@ -180,7 +186,7 @@ func TestCanonicalPublicCatalogBindsTrackedIdentifiers(t *testing.T) {
 	if !validator.sources["perf/fixtures/catalog.v1.json"] || !validator.routes["scaffold|/counter/"]["island"] {
 		t.Fatal("catalog or route is untracked")
 	}
-	if validator.assets["framework/runtime/navigation.js"] != "framework" || validator.assets["framework/runtime/core.wasm"] != "framework" || validator.assets["app/scaffold/islands/Counter"] != "app" {
+	if validator.assets["framework/runtime/navigation.js"] != "framework" || validator.assets["framework/runtime/core.wasm"] != "framework" || validator.assets["app/scaffold/islands/Counter"] != "app" || validator.assets["app/docs/islands/LiveCounter"] != "app" {
 		t.Fatal("public asset ownership missing")
 	}
 	if len(validator.routes) != 11 {
