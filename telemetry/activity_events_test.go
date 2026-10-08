@@ -15,6 +15,36 @@ import (
 	"m31labs.dev/gosx/telemetry/schema"
 )
 
+func TestRecordQueueKeepsConfiguredEntryCapacity(t *testing.T) {
+	const entries = 4096
+	metadata := recordQueueMetadataBytes(entries)
+	q := newRecordQueue(entries, metadata+1)
+	if q == nil || len(q.slots) != entries || q.used.Load() != metadata {
+		t.Fatal("queue silently scaled its entry capacity")
+	}
+	if q := newRecordQueue(entries, metadata-1); q != nil {
+		t.Fatal("queue allocated incompatible metadata")
+	}
+	tel := &Telemetry{opts: Defaults()}
+	tel.opts.Limits.MaxQueuedBytes = int64(tel.opts.Activities.MaxRecordBytes) + 256
+	err := tel.initializeActivities()
+	var config *ConfigError
+	if !errors.As(err, &config) || config.Field != "queue_bytes" || config.Code != "incompatible_reservations" {
+		t.Fatalf("incompatible caps were accepted: %v", err)
+	}
+	if tel.activities != nil || tel.miscBytes.Load() != 0 {
+		t.Fatal("incompatible caps allocated or published state")
+	}
+	tel.opts.Limits.MaxQueuedRecords = 1
+	tel.opts.Limits.MaxQueuedBytes += recordQueueMetadataBytes(1)
+	if err := tel.initializeActivities(); err != nil {
+		t.Fatal("compatible lowered caps rejected", err)
+	}
+	if len(tel.activities.events.slots) != 1 {
+		t.Fatal("lowered entry capacity changed")
+	}
+}
+
 func eventFixture(t testing.TB) (*Activity[NoFields, NoFields, int], *Telemetry) {
 	t.Helper()
 	tel, _ := lifecycleOwner(t)
