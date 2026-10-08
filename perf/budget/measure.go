@@ -3,15 +3,17 @@ package budget
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"os"
+	"path"
 	"sort"
 	"strconv"
-
-	"m31labs.dev/gosx/buildmanifest"
 	"strings"
 
+	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/internal/assetmeasure"
 	"m31labs.dev/gosx/internal/pagecaps"
@@ -321,8 +323,12 @@ type fixtureBody struct {
 
 func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][]byte, error) {
 	if assetURL == host.NavigationRuntimePath {
-		body := []byte(host.NavigationRuntime)
-		return body, map[string][]byte{"gzip": host.NavigationRuntimeGzip, "br": host.NavigationRuntimeBrotli}, nil
+		file := "assets/runtime/" + path.Base(assetURL)
+		if _, err := root.Stat(file); os.IsNotExist(err) {
+			// Older builds did not stage the embedded navigation asset.
+			body := []byte(host.NavigationRuntime)
+			return body, map[string][]byte{"gzip": host.NavigationRuntimeGzip, "br": host.NavigationRuntimeBrotli}, nil
+		}
 	}
 	file := strings.TrimPrefix(assetURL, "/")
 	if kind == "html" {
@@ -337,6 +343,12 @@ func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][
 	body, err := readMeasureFile(root, file, maxMeasureBody)
 	if err != nil {
 		return nil, nil, err
+	}
+	if hash, navigation := host.NavigationRuntimeAssetHash(assetURL); navigation {
+		digest := sha256.Sum256(body)
+		if hash != hex.EncodeToString(digest[:]) {
+			return nil, nil, measureFailure("wrong-fixture", "/file")
+		}
 	}
 	representations := map[string][]byte{}
 	for _, sidecar := range []struct{ suffix, encoding string }{{".gz", "gzip"}, {".br", "br"}} {
