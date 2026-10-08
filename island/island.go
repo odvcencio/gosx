@@ -104,6 +104,8 @@ type Renderer struct {
 	islandRuntime                  hydrate.RuntimeRef
 	runtimeVariants                map[string]hydrate.RuntimeRef
 	runtimeAssets                  buildmanifest.RuntimeAssets
+	perfAssets                     *buildmanifest.PerfAssetUses
+	perfAssetBaseURL               string
 	bootstrapOnly                  bool
 }
 
@@ -902,6 +904,11 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	if err := manifest.ValidateIslandAssets(); err != nil {
 		return fmt.Errorf("apply build manifest: %w", err)
 	}
+	if err := manifest.ValidatePerfAssetUses(); err != nil {
+		return err
+	}
+	r.perfAssets = clonePerfAssetUses(manifest.PerfAssetUses)
+	r.perfAssetBaseURL = assetBaseURL
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
 	r.runtimeAssets = manifest.Runtime

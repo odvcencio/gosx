@@ -488,4 +488,5 @@ test-perf-manifest:
 
 .PHONY: test-perf-graph
 test-perf-graph:
-	GOWORK=off go test ./cmd/gosx ./buildmanifest -run 'TestPerf(Graph|Asset)'
+	GOWORK=off go test ./cmd/gosx ./buildmanifest ./island -run 'TestPerf(Graph|Asset)'
+	cd cmd/buildbootstrap && GOWORK=off go test -run TestPerfGraph
