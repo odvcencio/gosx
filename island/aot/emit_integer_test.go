@@ -276,9 +276,12 @@ func TestEmitRejectsWidthCasesAndUnimplementedKinds(t *testing.T) {
 		}
 	}
 	u := staticUnit(t)
-	addExpression(&u, program.OpSeq, program.TypeAny, AnyZero, "")
+	id := addExpression(&u, program.OpLitInt, program.TypeInt, Int, "0")
+	addExpression(&u, program.OpSignalGet, program.TypeInt, Int, "count")
+	u.Program.Signals = []program.SignalDef{{Name: "count", Type: program.TypeInt, Init: id}}
+	u.Contract.Signals = []StateContract{{Slot: 0, Name: "count", Kind: Int}}
 	if e, err := emitExpressions(refreshUnit(t, u)); err == nil || e != nil {
-		t.Fatal("returned partial statement emitter")
+		t.Fatal("returned state emitter without a bound state layout")
 	}
 }
 

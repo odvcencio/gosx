@@ -33,6 +33,8 @@ type expressionEmitter struct {
 	transactional bool
 	rootCopy      uint32
 	transactions  [4]uint32
+	state         *stateLayout
+	handlers      []uint32
 }
 
 func emitExpressions(u Unit) (*expressionEmitter, error) {
@@ -44,6 +46,10 @@ func emitArenaExpressions(u Unit, roots uint32) (*expressionEmitter, error) {
 }
 
 func emitScalarModule(u Unit, roots uint32, transactions bool) (*expressionEmitter, error) {
+	return emitConfiguredModule(u, roots, transactions, nil)
+}
+
+func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateLayout) (*expressionEmitter, error) {
 	if roots > ProfileLimits().Values {
 		return nil, fmt.Errorf("scalar root layout exceeds the profile")
 	}
@@ -57,7 +63,7 @@ func emitScalarModule(u Unit, roots uint32, transactions bool) (*expressionEmitt
 		}
 		return wasmgen.Signature{Params: params, Result: wasmgen.I32}
 	}
-	e := &expressionEmitter{unit: u, rootSlots: roots, transactional: transactions, module: wasmgen.Module{
+	e := &expressionEmitter{unit: u, rootSlots: roots, transactional: transactions, state: state, module: wasmgen.Module{
 		Imports: []wasmgen.Import{
 			{Module: "gosx_aot_v1", Name: "input", Signature: sig(4)},
 			{Module: "gosx_aot_v1", Name: "bind", Signature: sig(4)},
@@ -78,6 +84,14 @@ func emitScalarModule(u Unit, roots uint32, transactions bool) (*expressionEmitt
 	if err := e.setupStrings(); err != nil {
 		return nil, err
 	}
+	if state != nil {
+		if err := e.setupState(); err != nil {
+			return nil, err
+		}
+	}
+	if transactions {
+		e.setupTransactions()
+	}
 	for i, expr := range u.Program.Exprs {
 		fn, err := e.expression(program.ExprID(i), expr)
 		if err != nil {
@@ -86,8 +100,8 @@ func emitScalarModule(u Unit, roots uint32, transactions bool) (*expressionEmitt
 		fn.Signature = sig(1)
 		e.module.Functions[i] = fn
 	}
-	if transactions {
-		e.setupTransactions()
+	if state != nil {
+		e.setupHandlers()
 	}
 	binary, err := wasmgen.Encode(e.module)
 	if err == nil {
@@ -112,6 +126,10 @@ func (e *expressionEmitter) expression(id program.ExprID, expr program.Expr) (wa
 		return e.stringExpression(id, expr)
 	case program.OpFormat, program.OpToString:
 		return e.formatExpression(id, expr)
+	case program.OpSignalGet, program.OpSignalSet:
+		return e.stateExpression(id, expr)
+	case program.OpSeq:
+		return e.sequenceExpression(id, expr), nil
 	case program.OpLitBool, program.OpEq, program.OpNeq, program.OpLt, program.OpGt,
 		program.OpLte, program.OpGte, program.OpAnd, program.OpOr, program.OpNot:
 		return e.comparison(id, expr)
