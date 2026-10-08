@@ -34,8 +34,7 @@ func selenaWebGLLinkScript(t *testing.T) string {
 			if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(shader));
 			gl.attachShader(program, shader);
 		}
-		gl.linkProgram(program);
-		if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
+		gl.linkProgram(program); if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(program));
 		return program;
 	}`
 }
@@ -47,12 +46,10 @@ func TestSelenaProgramsLinkOnWebGL2(t *testing.T) {
 		name, source string
 		compile      func([]byte, scene.SelenaMaterialOptions) (scene.CustomMaterial, bindings.Layout, error)
 	}{
-		{"derivative", `material Filtered {
-			surface(geo) -> color {
+		{"derivative", `material Filtered { surface(geo) -> color {
                 let edge = fwidth(geo.uv.x)
                 return rgb(edge, edge, edge)
-            }
-		}`, scene.CompileSelenaMaterial},
+        }}`, scene.CompileSelenaMaterial},
 		{"glow-points", `material GlowPoints kind points {
     param fogColor : vec3 = rgb(0, 0, 0)
     surface(pt) -> color {
@@ -65,8 +62,7 @@ func TestSelenaProgramsLinkOnWebGL2(t *testing.T) {
         let a         = core * edge * pt.alpha
         let foggedRGB = mix(fogColor, pt.color, pt.fogFactor)
         return rgb(foggedRGB.r, foggedRGB.g, foggedRGB.b, a)
-    }
-}`, scene.CompileSelenaPoints},
+}}`, scene.CompileSelenaPoints},
 		{"post-frost", `material PostFrost kind post {
     param rects     : array<vec4, 4>
     param blurLevel : float = 3.0
@@ -81,9 +77,7 @@ func TestSelenaProgramsLinkOnWebGL2(t *testing.T) {
             let dy = abs(post.uv.y - r.y) - r.w
             let d = length(vec2f(max(dx, 0.0), max(dy, 0.0))) + min(max(dx, dy), 0.0)
             best = min(best, d)
-            if (d < 0.0) {
-                break
-            }
+            if (d < 0.0) { break }
         }
         let aa = max(fwidth(best), px)
         let inside = 1.0 - smoothstep(0.0 - aa, 0.0 + aa, best)
@@ -91,8 +85,7 @@ func TestSelenaProgramsLinkOnWebGL2(t *testing.T) {
         let plain = sceneColor(post.uv)
         let k = inside * mixAmount
         return rgb(mix(plain.r, blurred.r, k), mix(plain.g, blurred.g, k), mix(plain.b, blurred.b, k), plain.a)
-    }
-}`, scene.CompileSelenaPost},
+}}`, scene.CompileSelenaPost},
 		{"texture-origin", `material Passthrough kind post {
             surface(post) -> color { return sceneColor(post.uv) }
         }`, scene.CompileSelenaPost},
