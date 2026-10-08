@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add typed telemetry domain codecs and copied field views with finite enum,
+  array, nesting and byte limits. Eight staging leases isolate synchronous
+  encoders; invalid fields and encoder failures discard the whole projection.
+  Domain JSON sorts keys, preserves finite numbers and uses milliseconds for
+  duration values. Activity registration and records follow separately.
+
 - Add optional whole-tick simulation and visible-frame observers at the existing
   ticker and animation owners. Simulation lag uses elapsed scheduled deadlines;
   timing includes the existing single snapshot and state broadcast. Nil observers
