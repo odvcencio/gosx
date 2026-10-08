@@ -118,7 +118,7 @@ func TestClassifyLiteralDomainAndUnknownOperations(t *testing.T) {
 			t.Fatalf("literal %s: %+v", value, r)
 		}
 	}
-	for _, op := range []program.OpCode{program.OpDiv, program.OpMod, program.OpCall, program.OpToRunes, program.OpHostCall, program.OpClosure, program.OpAdd} {
+	for _, op := range []program.OpCode{program.OpDiv, program.OpMod, program.OpCall, program.OpToRunes, program.OpHostCall, program.OpClosure} {
 		u := literalUnit(t)
 		u.Program.Exprs[0].Op = op
 		u = refreshUnit(t, u)
@@ -190,13 +190,14 @@ func TestClassifyDependencyDepthAndComputedCycle(t *testing.T) {
 			u.Program.Exprs = append(u.Program.Exprs, program.Expr{Op: program.OpSeq, Type: program.TypeInt, Operands: []program.ExprID{program.ExprID(i - 1)}})
 			u.Contract.Expressions = append(u.Contract.Expressions, ExpressionContract{Expr: program.ExprID(i), Kind: Int, Pure: true})
 		}
+		u.Program.Handlers = []program.Handler{{Name: "read", Body: []program.ExprID{program.ExprID(count - 1)}}}
 		u = refreshUnit(t, u)
 		r := Classify(u, ScalarDOMV1)
-		want := "opcode_unsupported"
+		want := ""
 		if count == 65 {
 			want = "expression_depth"
 		}
-		if r.Reason != want {
+		if r.Reason != want || r.Eligible != (count == 64) {
 			t.Fatalf("depth %d: %+v", count, r)
 		}
 	}

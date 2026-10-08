@@ -268,7 +268,16 @@ func classify(u Unit) *rejection {
 			inputRefs[id] = true
 		}
 	}
-	if failure := literalSubset(u); failure != nil {
+	if failure := opcodeRules(p); failure != nil {
+		return failure
+	}
+	if failure := inputRules(u); failure != nil {
+		return failure
+	}
+	if failure := expressionTypes(u); failure != nil {
+		return failure
+	}
+	if failure := effectRules(u); failure != nil {
 		return failure
 	}
 	canonical, err := NewUnit(u.Component, p, c)
@@ -513,47 +522,4 @@ func parserTopology(p *program.Program) bool {
 		inspect(node)
 	}
 	return slices.Equal(expected, actual)
-}
-
-func literalSubset(u Unit) *rejection {
-	for i, e := range u.Program.Exprs {
-		proof := u.Contract.Expressions[i]
-		if e.Op != program.OpLitString && e.Op != program.OpLitInt && e.Op != program.OpLitBool {
-			return reject("opcode_unsupported", "expressions", i)
-		}
-		if len(e.Operands) != 0 {
-			return reject("arity", "expressions", i)
-		}
-		if !proof.Pure {
-			return reject("purity", "expressions", i)
-		}
-		switch e.Op {
-		case program.OpLitString:
-			if e.Type != program.TypeString || proof.Kind != String {
-				return reject("type_mismatch", "expressions", i)
-			}
-			if len(e.Value) > 4096 {
-				return reject("string_limit", "expressions", i)
-			}
-		case program.OpLitInt:
-			if e.Type != program.TypeInt || proof.Kind != Int && proof.Kind != Int32 {
-				return reject("type_mismatch", "expressions", i)
-			}
-			value, err := strconv.ParseInt(e.Value, 10, 32)
-			if err != nil || strconv.FormatInt(value, 10) != e.Value {
-				return reject("integer_literal", "expressions", i)
-			}
-		case program.OpLitBool:
-			if e.Type != program.TypeBool || proof.Kind != Bool {
-				return reject("type_mismatch", "expressions", i)
-			}
-			if e.Value != "true" && e.Value != "false" {
-				return reject("boolean_literal", "expressions", i)
-			}
-		}
-	}
-	if len(u.Contract.Inputs) != 0 {
-		return reject("input_unsupported", "inputs", -1)
-	}
-	return nil
 }

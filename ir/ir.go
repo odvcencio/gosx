@@ -24,6 +24,8 @@ type ComponentID uint32
 
 // Program is the top-level IR container for a GoSX compilation unit.
 type Program struct {
+	// aotScalarShadows is source-only evidence; it is never serialized.
+	aotScalarShadows map[string]bool
 	// Package is the Go package name.
 	Package string
 
@@ -291,6 +293,9 @@ type ComponentScope struct {
 	Computeds []ComputedInfo
 	Handlers  []HandlerInfo
 	Locals    map[string]string // variable name → kind ("signal", "computed", "handler")
+	// SourcePropsPaths retains declared leaf types used by state and handlers.
+	// It does not change the renderer's prop schema.
+	SourcePropsPaths map[string]string
 }
 
 // SignalInfo describes a signal declaration found in the component body.

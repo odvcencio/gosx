@@ -46,7 +46,7 @@ func Counter(props CounterProps) Node {
 	if u.Component != "example/components.Counter" || len(u.Contract.Expressions) != len(vmProgram.Exprs) {
 		t.Fatalf("incomplete contract: %+v", u.Contract)
 	}
-	if len(u.Contract.Inputs) != 2 || u.Contract.Inputs[0].Root != "Initial" || u.Contract.Inputs[0].Kind != aot.Int32 || u.Contract.Inputs[1].Root != "Label" {
+	if len(u.Contract.Inputs) != 2 || u.Contract.Inputs[0].Root != "props" || u.Contract.Inputs[0].Path[0] != "Initial" || u.Contract.Inputs[0].Kind != aot.Int32 || u.Contract.Inputs[1].Path[0] != "Label" {
 		t.Fatalf("inputs: %+v", u.Contract.Inputs)
 	}
 	if len(u.Contract.Signals) != 1 || u.Contract.Signals[0].Kind != aot.Int || len(u.Contract.Computeds) != 1 || u.Contract.Computeds[0].Kind != aot.Int {
@@ -54,6 +54,9 @@ func Counter(props CounterProps) Node {
 	}
 	if len(u.Contract.Bindings) != 5 || len(u.Contract.Bindings[2].Nodes) != 2 || u.Contract.Bindings[2].Kind != program.NodeText {
 		t.Fatalf("physical text groups: %+v", u.Contract.Bindings)
+	}
+	if receipt := aot.Classify(u, aot.ScalarDOMV1); !receipt.Eligible {
+		t.Fatalf("counter: %+v", receipt)
 	}
 	u2, err := ir.LowerIslandAOT(p, 0)
 	if err != nil || u.Digest != u2.Digest {
@@ -142,7 +145,59 @@ func Editor(props EditorProps) Node {
 		t.Fatalf("event: %+v", u.Contract.Inputs)
 	}
 	input := u.Contract.Inputs[1]
-	if input.Root != "Detail" || len(input.Path) != 1 || input.Path[0] != "Label" || len(input.Exprs) != 2 {
+	if input.Root != "props" || len(input.Path) != 2 || input.Path[0] != "Detail" || input.Path[1] != "Label" || len(input.Exprs) != 2 {
 		t.Fatalf("selector interning: %+v", input)
+	}
+	if receipt := aot.Classify(u, aot.ScalarDOMV1); !receipt.Eligible {
+		t.Fatalf("editor: %+v", receipt)
+	}
+}
+
+func TestIslandAOTInitializerOnlyInput(t *testing.T) {
+	src := []byte(`package example
+type CounterProps struct { Initial int32 }
+//gosx:island
+func Counter(props CounterProps) Node {
+ count := signal.New(props.Initial)
+ increment := func() { count.Set(count.Get() + 1) }
+ return <button type="button" onClick={increment}>{count}</button>
+}`)
+	p, err := parse(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.PackagePath = "example/components"
+	u, err := ir.LowerIslandAOT(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.Contract.Inputs) != 1 || u.Contract.Signals[0].Kind != aot.Int32 {
+		t.Fatalf("contract: %+v", u.Contract)
+	}
+	if typ, err := aot.InputDefaultType(u.Program, u.Contract.Inputs[0]); err != nil || typ != program.TypeAny {
+		t.Fatalf("selector default: %v %v", typ, err)
+	}
+	if receipt := aot.Classify(u, aot.ScalarDOMV1); !receipt.Eligible {
+		t.Fatalf("counter: %+v", receipt)
+	}
+}
+
+func TestIslandAOTRejectsShadowedScalarTypes(t *testing.T) {
+	for _, declaration := range []string{"type int int64", "type int = int64", "type string []byte"} {
+		t.Run(declaration, func(t *testing.T) {
+			typ := "int"
+			if declaration == "type string []byte" {
+				typ = "string"
+			}
+			src := []byte(fmt.Sprintf("package example\n%s\ntype Props struct { Value %s }\n//gosx:island\nfunc Counter(props Props) Node { return <div>{props.Value}</div> }", declaration, typ))
+			p, err := parse(t, src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.PackagePath = "example/components"
+			if _, err := ir.LowerIslandAOT(p, 0); err == nil {
+				t.Fatal("accepted a shadowed scalar type")
+			}
+		})
 	}
 }

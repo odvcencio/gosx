@@ -18,6 +18,13 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		return aot.Unit{}, fmt.Errorf("invalid island component index")
 	}
 	comp := src.Components[index]
+	for _, declarations := range []map[string]string{comp.PropsFields, comp.PropsPaths} {
+		for _, typ := range declarations {
+			if src.aotScalarShadows[typ] {
+				return aot.Unit{}, aotSourceError(comp, "source_type", "a scalar type name is shadowed")
+			}
+		}
+	}
 	identity := src.PackagePath + "." + comp.Name
 	if src.PackagePath == "" {
 		return aot.Unit{}, aotSourceError(comp, "component_identity", "an import path is required")
@@ -245,6 +252,7 @@ func aotSourceInput(p *program.Program, id program.ExprID, comp Component) (aot.
 		return aot.InputContract{}, true
 	}
 	root := e.Value
+	inputRoot, inputPath := root, keys
 	if root == "props" {
 		root, keys = keys[0], keys[1:]
 	}
@@ -253,12 +261,22 @@ func aotSourceInput(p *program.Program, id program.ExprID, comp Component) (aot.
 	if len(keys) > 0 {
 		typ = comp.PropsPaths[path]
 	}
+	if comp.Scope != nil && typ == "" {
+		typ = comp.Scope.SourcePropsPaths[path]
+	}
 	if kind := aotSourceKind(typ); kind != "" {
-		return aot.InputContract{Source: "prop", Root: root, Path: keys, Kind: kind}, false
+		return aot.InputContract{Source: "prop", Root: inputRoot, Path: inputPath, Kind: kind}, false
 	}
 	for leaf := range comp.PropsPaths {
 		if strings.HasPrefix(leaf, path+".") {
 			return aot.InputContract{}, true
+		}
+	}
+	if comp.Scope != nil {
+		for leaf := range comp.Scope.SourcePropsPaths {
+			if strings.HasPrefix(leaf, path+".") {
+				return aot.InputContract{}, true
+			}
 		}
 	}
 	return aot.InputContract{}, false

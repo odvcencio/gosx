@@ -73,6 +73,8 @@ type lowerer struct {
 	structTypes  map[string]map[string]string
 	strictServer bool
 
+	scalarTypeShadows map[string]bool
+
 	// legacyProps records every legacy (func-spelled) renderer's declared
 	// props type text, and typedLegacyProps the subset whose base type is a
 	// struct declared in this same .gsx file (gosx#240). A name in
@@ -513,7 +515,37 @@ func (l *lowerer) analyzeBody(funcDecl, bodyNode *gotreesitter.Node) *ComponentS
 		}
 	}
 
-	// Only return scope if we found anything
+	propsName, propsType := l.extractProps(funcDecl)
+	if propsName == "props" {
+		scope.SourcePropsPaths = make(map[string]string)
+		sources := []string{}
+		for _, s := range scope.Signals {
+			sources = append(sources, s.InitExpr)
+		}
+		for _, c := range scope.Computeds {
+			sources = append(sources, c.BodyExpr)
+		}
+		for _, h := range scope.Handlers {
+			sources = append(sources, h.Statements...)
+		}
+		for _, source := range sources {
+			for _, path := range strictcomponent.ServerExpressionPropPaths(source) {
+				result := l.walkStrictHops("props", propsBaseType(propsType), path)
+				if result.failKind == strictHopOK && !l.scalarTypeShadows[result.leafType] {
+					scope.SourcePropsPaths[strings.Join(path, ".")] = result.leafType
+				}
+			}
+		}
+		for i := range scope.Signals {
+			if scope.Signals[i].SourceType != "" {
+				continue
+			}
+			if path, ok := strictcomponent.ServerPropPath(scope.Signals[i].InitExpr); ok {
+				scope.Signals[i].SourceType = scope.SourcePropsPaths[strings.Join(path, ".")]
+			}
+		}
+	}
+	// Only return scope if we found anything.
 	if len(scope.Signals) == 0 && len(scope.Computeds) == 0 && len(scope.Handlers) == 0 {
 		return nil
 	}
@@ -728,7 +760,11 @@ func (l *lowerer) computedSourceType(args *gotreesitter.Node) string {
 		fn := args.NamedChild(i)
 		if l.nodeType(fn) == "func_literal" {
 			if result := l.childByField(fn, "result"); result != nil {
-				return l.text(result)
+				name := l.text(result)
+				if l.scalarTypeShadows[name] {
+					return ""
+				}
+				return name
 			}
 		}
 	}
@@ -1556,6 +1592,13 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 		if l.nodeType(node) == "type_spec" {
 			nameNode := l.childByField(node, "name")
 			typeNode := l.childByField(node, "type")
+			if nameNode != nil && strictRendererScalarType(l.text(nameNode)) {
+				if l.scalarTypeShadows == nil {
+					l.scalarTypeShadows = make(map[string]bool)
+				}
+				l.scalarTypeShadows[l.text(nameNode)] = true
+				l.prog.aotScalarShadows = l.scalarTypeShadows
+			}
 			if nameNode == nil || typeNode == nil || l.nodeType(typeNode) != "struct_type" {
 				return
 			}
