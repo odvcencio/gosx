@@ -602,6 +602,7 @@ type linkedCode struct {
 	envelopeValidate                   uint32
 	freezeEnvelope                     uint32
 	prepareEvent                       uint32
+	prepareShared                      uint32
 }
 
 const (
@@ -658,7 +659,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.envelopeValidate = c.notify + 15
 	c.freezeEnvelope = c.notify + 16
 	c.prepareEvent = c.notify + 17
-	c.module.Functions = make([]wasmgen.Function, len(common)+18)
+	c.prepareShared = c.notify + 18
+	c.module.Functions = make([]wasmgen.Function, len(common)+19)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -683,7 +685,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 18 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 19 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -743,6 +745,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+15] = l.envelopeValidationFunction(c)
 	c.module.Functions[len(common)+16] = l.freezeEnvelopeFunction(c)
 	c.module.Functions[len(common)+17] = l.prepareEventFunction(c)
+	c.module.Functions[len(common)+18] = l.prepareSharedFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -1208,18 +1211,34 @@ func (l *linkedLayout) publishFunction(c *linkedCode) wasmgen.Function {
 	b.statusFailure(statusBusy)
 	b.get(0)
 	b.i32(int32(ProfileLimits().Instances))
-	b.op(0x4f)
+	b.op(0x4b)
+	b.poisonStatus(statusBadInput)
+	// The document batch uses the one-past-last frame as its origin. It has
+	// no local dependency bit and marks only peers declaring the shared name.
+	b.get(0)
+	b.i32(int32(ProfileLimits().Instances))
+	b.op(0x46)
+	b.get(2)
+	b.i32(-1)
+	b.op(0x46)
+	b.op(0x71)
 	b.poisonStatus(statusBadInput)
 	b.get(1)
 	b.i32(32)
 	b.op(0x4f)
 	b.poisonStatus(statusBadInput)
+	b.get(0)
+	b.i32(int32(ProfileLimits().Instances))
+	b.op(0x49)
+	b.op(0x04)
+	b.op(0x40)
 	b.index(0x23, linkedRenderMaskGlobal)
 	b.i32(1)
 	b.get(0)
 	b.op(0x74)
 	b.op(0x72)
 	b.index(0x24, linkedRenderMaskGlobal)
+	b.op(0x0b)
 	b.get(2)
 	b.i32(-1)
 	b.op(0x47)
@@ -3367,4 +3386,86 @@ func (l *linkedLayout) prepareEventFunction(c *linkedCode) wasmgen.Function {
 	b.index(0x10, c.render)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(6), I32Locals: 1, Body: b}
+}
+
+// Apply a document-owned shared batch without executing an island handler.
+// Values and notifications retain descriptor order, then affected frames
+// render in numeric instance order. Equal writes receive the new sequence.
+func (l *linkedLayout) prepareSharedFunction(c *linkedCode) wasmgen.Function {
+	const (
+		result = 4 + iota
+		document
+		count
+		cursor
+		index
+		id
+	)
+	var b instructions
+	b.index(0x23, pendingGlobal)
+	b.statusFailure(statusBusy)
+	b.get(0)
+	b.get(1)
+	b.i32(0)
+	b.index(0x10, c.indices[0][c.programs[0].transactions[transactionBegin]])
+	b.index(0x22, result)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(result)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.i32(1)
+	b.i32(0)
+	b.i32(0)
+	b.get(2)
+	b.get(3)
+	b.index(0x10, c.freezeEnvelope)
+	b.set(document)
+	b.statusGuard()
+	b.get(document)
+	b.memory(0x28, 2, 8)
+	b.set(count)
+	b.get(document)
+	b.i32(12)
+	b.op(0x6a)
+	b.set(cursor)
+	b.i32(1)
+	b.index(0x24, c.programs[0].computed.batch)
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.get(index)
+	b.get(count)
+	b.op(0x4f)
+	b.index(0x0d, 1)
+	b.get(cursor)
+	b.memory(0x28, 2, 0)
+	b.set(id)
+	b.i32(int32(l.sharedBase))
+	b.get(id)
+	b.op(0x6a)
+	b.get(cursor)
+	b.i32(4)
+	b.op(0x6a)
+	b.checkedStatusCall(c.indices[0][c.programs[0].transactions[transactionStore]], result)
+	b.i32(int32(ProfileLimits().Instances))
+	b.i32(0)
+	b.get(id)
+	b.checkedStatusCall(c.publish, result)
+	b.get(cursor)
+	b.i32(28)
+	b.op(0x6a)
+	b.set(cursor)
+	b.get(index)
+	b.i32(1)
+	b.op(0x6a)
+	b.set(index)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.checkedStatusCall(c.indices[0][c.programs[0].computed.flush], result)
+	b.i32(0)
+	b.index(0x10, c.render)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(4), I32Locals: 6, Body: b}
 }

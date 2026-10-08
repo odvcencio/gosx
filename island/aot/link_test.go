@@ -3539,3 +3539,317 @@ func TestLinkedEventTransactionRejectsForeignHandlersAndUnboundedTransport(t *te
 		t.Fatalf("foreign or unbounded transport reached handler effects: %+v", got)
 	}
 }
+
+type sharedTransactionPatch struct {
+	Instance uint32
+	Patch    vm.PatchOp
+}
+
+func sharedTransactionFixture(t *testing.T) (*linkedLayout, *linkedCode, wasmgen.Module, []checkpointTestFrame, []checkpointTestShared) {
+	t.Helper()
+	a, ar := linkedSharedUnit(t, "SharedFirst", false, false)
+	b, br := linkedSharedUnit(t, "SharedSecond", true, true)
+	for _, item := range []struct {
+		unit *Unit
+		read program.ExprID
+	}{{&a, ar[2]}, {&b, br[2]}} {
+		item.unit.Program.Nodes = []program.Node{{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}},
+			{Kind: program.NodeElement, Tag: "span", Children: []program.NodeID{2}}, {Kind: program.NodeExpr, Expr: item.read}}
+		item.unit.Program.StaticMask = []bool{false, false, false}
+		*item.unit = refreshBindingUnit(t, *item.unit)
+	}
+	l, err := buildLinkedLayout([]Unit{b, layoutUnit(t, "Unrelated", 0, 0, 0, "$Count", "$$count"), a}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointImportTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "prepareShared", Function: c.prepareShared})
+	var frames []checkpointTestFrame
+	for i, name := range []string{"Unrelated", "SharedFirst", "SharedSecond", "SharedFirst"} {
+		id := []uint32{0, 1, 7, 15}[i]
+		p := linkedProgramByName(t, l, name)
+		frame := checkpointTestFrame{Instance: id, Program: p.state.programID}
+		for _, local := range p.unit.Contract.Signals {
+			if !strings.HasPrefix(local.Name, "$") {
+				frame.Locals = append(frame.Locals, checkpointTestValue{local.Slot, scalarTransport(program.TypeInt, 0, 0, "")})
+			}
+		}
+		frames = append(frames, frame)
+	}
+	var shared []checkpointTestShared
+	for _, descriptor := range l.shared {
+		value := int64(0)
+		if descriptor.name == "$count" {
+			value = 10
+		}
+		shared = append(shared, checkpointTestShared{descriptor.id, 0, scalarTransport(program.TypeInt, 0, value, "")})
+	}
+	return l, c, m, frames, shared
+}
+
+func TestLinkedSharedTransactionsMatchNativePeersAndExactNameVersions(t *testing.T) {
+	l, c, m, frames, shared := sharedTransactionFixture(t)
+	document := checkpointTestBytes(t, l.inputSetSHA, 0, frames, shared)
+	type step struct {
+		Low, High uint32
+		Envelope  string
+	}
+	var steps []step
+	var expectedPatches [][]sharedTransactionPatch
+	var expectedCheckpoints []string
+	store := map[string]*signal.Signal[vm.Value]{}
+	for _, item := range l.shared {
+		value := 0
+		if item.name == "$count" {
+			value = 10
+		}
+		store[item.name] = signal.New(vm.IntVal(value))
+	}
+	models := map[uint32]*vm.Island{}
+	descriptors := make([]BindingSet, 16)
+	for _, frame := range frames {
+		p := l.programs[frame.Program]
+		model := vm.NewIsland(p.unit.Program, "")
+		for _, def := range p.unit.Program.Signals {
+			if strings.HasPrefix(def.Name, "$") {
+				model.SetSharedSignal(def.Name, store[def.Name])
+			}
+		}
+		models[frame.Instance], descriptors[frame.Instance] = model, c.programs[frame.Program].dom.bindings
+		defer model.Dispose()
+	}
+	for _, item := range []struct {
+		seq    uint64
+		writes map[string]int
+	}{{1, map[string]int{"$count": 11}}, {2, map[string]int{"$count": 11}}, {4, nil},
+		{1<<32 + 1, map[string]int{"$Count": 5, "$count": 12}}, {1<<32 + 2, map[string]int{"$Count": 8}}} {
+		var entries []checkpointTestValue
+		for _, descriptor := range l.shared {
+			if value, written := item.writes[descriptor.name]; written {
+				packet := scalarTransport(program.TypeInt, 0, int64(value), "")
+				entries = append(entries, checkpointTestValue{descriptor.id, packet})
+				shared[descriptor.id].Packet, shared[descriptor.id].Version = packet, item.seq
+			}
+		}
+		signal.Batch(func() {
+			for _, descriptor := range l.shared {
+				if value, written := item.writes[descriptor.name]; written {
+					store[descriptor.name].Set(vm.IntVal(value))
+				}
+			}
+		})
+		patches := []sharedTransactionPatch{}
+		for i := range frames {
+			frame := &frames[i]
+			affected := false
+			for _, def := range l.programs[frame.Program].unit.Program.Signals {
+				if _, written := item.writes[def.Name]; written {
+					affected = true
+				}
+			}
+			if affected {
+				frame.Last = item.seq
+				for _, patch := range models[frame.Instance].Reconcile() {
+					patches = append(patches, sharedTransactionPatch{frame.Instance, patch})
+				}
+			}
+		}
+		expectedPatches = append(expectedPatches, patches)
+		expectedCheckpoints = append(expectedCheckpoints, base64.StdEncoding.EncodeToString(checkpointTestBytes(t, l.inputSetSHA, item.seq, frames, shared)))
+		steps = append(steps, step{uint32(item.seq), uint32(item.seq >> 32), base64.StdEncoding.EncodeToString(envelopeTestBytes(t, true, 0, entries))})
+	}
+	data := struct {
+		domTestData
+		Document string
+		Frames   []BindingSet
+		Steps    []step
+	}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), descriptors, steps}
+	var got struct {
+		Statuses    []int32
+		Patches     [][]sharedTransactionPatch
+		Checkpoints []string
+		Preserved   bool
+	}
+	host := strings.Replace(domTestImports, "data.Bindings.bindings[binding]", "data.Frames[id].bindings[binding]", 1)
+	host = strings.Replace(host, "patches.push(patch);", "patches.push({Instance:id,Patch:patch}); memory.fill(0xff,32768,65536);", 1)
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], bound = [], patches = [], batches = [], checkpoints = [];
+  const document = Buffer.from(data.Document,'base64');memory.set(document,32768);
+  statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  const checkpoint = which => {
+    const length = api.checkpoint(which,32768,32768);
+    if (length<=0) throw new Error('checkpoint status '+length);
+    return Buffer.from(memory.slice(32768,32768+length)).toString('base64');
+  };
+  let previous = checkpoint(0), preserved = previous===data.Document;
+  for (const step of data.Steps) {
+    const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+    const envelope = Buffer.from(step.Envelope,'base64');memory.set(envelope,32768);
+    statuses.push(api.prepareShared(step.Low,step.High,32768,envelope.length));
+    preserved = preserved&&committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)))&&checkpoint(0)===previous;
+    const candidate = checkpoint(1);checkpoints.push(candidate);batches.push(patches.splice(0));
+    statuses.push(api.prepareShared(0,0,0xffffffff,0xffffffff));
+    preserved = preserved&&api.status()===0&&checkpoint(1)===candidate;
+    statuses.push(api.commit(step.Low,step.High),api.commit(step.Low,step.High));
+    previous = checkpoint(0);preserved = preserved&&previous===candidate;
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Patches:batches,Checkpoints:checkpoints,Preserved:preserved}));`, data, &got, host)
+	if !got.Preserved || !reflect.DeepEqual(got.Patches, expectedPatches) || !reflect.DeepEqual(got.Checkpoints, expectedCheckpoints) {
+		t.Fatalf("document shared batch changed unrelated peers or differs from native state: %+v want patches %+v", got, expectedPatches)
+	}
+	for i, status := range got.Statuses {
+		want := int32(0)
+		if i >= 2 && (i-2)%4 == 1 {
+			want = 7
+		}
+		if status != want {
+			t.Fatalf("shared batch status %d: %d want %d", i, status, want)
+		}
+	}
+}
+
+func TestLinkedSharedTransactionsRejectMalformedAndPartialComputedFailures(t *testing.T) {
+	l, c, m, frames, shared := sharedTransactionFixture(t)
+	document := checkpointTestBytes(t, l.inputSetSHA, 0, frames, shared)
+	var count uint32
+	for _, descriptor := range l.shared {
+		if descriptor.name == "$count" {
+			count = descriptor.id
+		}
+	}
+	integer := scalarTransport(program.TypeInt, 0, 11, "")
+	for _, tc := range []struct {
+		name    string
+		entries []checkpointTestValue
+		want    int32
+	}{{"unknown shared ID", []checkpointTestValue{{uint32(len(l.shared)), integer}}, 2},
+		{"duplicate shared ID", []checkpointTestValue{{count, integer}, {count, integer}}, 2},
+		{"wrong shared kind", []checkpointTestValue{{count, scalarTransport(program.TypeBool, 2, 0, "")}}, 2},
+		{"invalid shared integer", []checkpointTestValue{{count, scalarTransport(program.TypeInt, 0, 2147483648, "")}}, 3},
+		{"computed overflow after shared write", []checkpointTestValue{{count, scalarTransport(program.TypeInt, 0, 2147483647, "")}}, 3}} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := struct {
+				domTestData
+				Document, Envelope string
+			}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document),
+				base64.StdEncoding.EncodeToString(envelopeTestBytes(t, true, 0, tc.entries))}
+			var got struct {
+				Statuses  []int32
+				Preserved bool
+			}
+			runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], bound = [], patches = [];
+  const document = Buffer.from(data.Document,'base64'), envelope = Buffer.from(data.Envelope,'base64');
+  statuses.push(api.prepareShared(1,0,32768,envelope.length));
+  memory.set(document,32768);statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));memory.set(envelope,32768);
+  statuses.push(api.prepareShared(1,0,32768,envelope.length),api.checkpoint(1,32768,32768),api.commit(1,0));
+  let preserved = committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)));
+  statuses.push(api.abortPage(),api.abortPage());
+  const length = api.checkpoint(0,32768,32768);
+  preserved = preserved&&Buffer.from(memory.slice(32768,32768+length)).equals(document)&&api.status()===0&&api.pending()===0;
+  process.stdout.write(JSON.stringify({Statuses:statuses,Preserved:preserved}));`, data, &got,
+				`{input:unexpected,bind:()=>0,patch:unexpected}`)
+			if !got.Preserved || !reflect.DeepEqual(got.Statuses, []int32{8, 0, 0, tc.want, -tc.want, tc.want, 0, 0}) {
+				t.Fatalf("invalid shared batch or computed failure committed state: %+v", got)
+			}
+		})
+	}
+}
+
+func TestLinkedSharedTransactionsOwnStringDefaultsAndGuardLiveBytes(t *testing.T) {
+	u := staticUnit(t)
+	init := addExpression(&u, program.OpLitString, program.TypeString, String, "seed")
+	read := addExpression(&u, program.OpSignalGet, program.TypeString, String, "$text")
+	u.Program.Signals = []program.SignalDef{{Name: "$text", Type: program.TypeString, Init: init}}
+	u.Contract.Signals = []StateContract{{Name: "$text", Kind: String}}
+	u.Program.Nodes = []program.Node{{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}}, {Kind: program.NodeExpr, Expr: read}}
+	u.Program.StaticMask = []bool{false, false}
+	u = refreshBindingUnit(t, u)
+	l, err := buildLinkedLayout([]Unit{u}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointImportTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "prepareShared", Function: c.prepareShared})
+	frames := make([]checkpointTestFrame, 16)
+	shared := []checkpointTestShared{{0, 0, scalarTransport(program.TypeString, 1, 0, "seed")}}
+	root := signal.New(vm.StringVal("seed"))
+	models := make([]*vm.Island, 16)
+	for i := range frames {
+		frames[i].Instance = uint32(i)
+		models[i] = vm.NewIsland(u.Program, "")
+		models[i].SetSharedSignal("$text", root)
+		defer models[i].Dispose()
+	}
+	document := checkpointTestBytes(t, l.inputSetSHA, 0, frames, shared)
+	var envelopes, checkpoints []string
+	var expected [][]sharedTransactionPatch
+	for i, item := range []struct {
+		value vm.Value
+		flags uint32
+	}{{vm.StringVal("héllo\x00🌴e\u0301"), 1}, {vm.ZeroValue(program.TypeString), 0}, {vm.StringVal(""), 1}, {vm.StringVal(""), 1}} {
+		packet := scalarTransport(item.value.Type, item.flags, 0, item.value.Text())
+		envelopes = append(envelopes, base64.StdEncoding.EncodeToString(envelopeTestBytes(t, true, 0, []checkpointTestValue{{0, packet}})))
+		root.Set(item.value)
+		patches := []sharedTransactionPatch{}
+		for frame, model := range models {
+			frames[frame].Last = uint64(i + 1)
+			for _, patch := range model.Reconcile() {
+				patches = append(patches, sharedTransactionPatch{uint32(frame), patch})
+			}
+		}
+		expected = append(expected, patches)
+		shared[0].Packet, shared[0].Version = packet, uint64(i+1)
+		checkpoints = append(checkpoints, base64.StdEncoding.EncodeToString(checkpointTestBytes(t, l.inputSetSHA, uint64(i+1), frames, shared)))
+	}
+	large := envelopeTestBytes(t, true, 0, []checkpointTestValue{{0, scalarTransport(program.TypeString, 1, 0, strings.Repeat("x", 4096))}})
+	data := struct {
+		domTestData
+		Document, Large string
+		Envelopes       []string
+	}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(large), envelopes}
+	var got struct {
+		Statuses    []int32
+		Patches     [][]sharedTransactionPatch
+		Checkpoints []string
+		Preserved   bool
+	}
+	host := strings.Replace(domTestImports, "patches.push(patch);", "patches.push({Instance:id,Patch:patch}); memory.fill(0xff,32768,65536);", 1)
+	runExpressionModule(t, m, `
+  const api = instance.exports, bound = [], patches = [], batches = [], checkpoints = [], statuses = [];
+  const document = Buffer.from(data.Document,'base64');memory.set(document,32768);
+  statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  const checkpoint = which => {
+    const length = api.checkpoint(which,32768,32768);
+    if (length<=0) throw new Error('checkpoint status '+length);
+    return Buffer.from(memory.slice(32768,32768+length)).toString('base64');
+  };
+  let previous = checkpoint(0), preserved = previous===data.Document;
+  for (let i=0;i<data.Envelopes.length;i++) {
+    const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+    const envelope = Buffer.from(data.Envelopes[i],'base64');memory.set(envelope,32768);
+    statuses.push(api.prepareShared(i+1,0,32768,envelope.length));
+    preserved = preserved&&committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)))&&checkpoint(0)===previous;
+    const candidate = checkpoint(1);checkpoints.push(candidate);batches.push(patches.splice(0));
+    statuses.push(api.commit(i+1,0));previous = checkpoint(0);preserved = preserved&&previous===candidate;
+  }
+  const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+  const large = Buffer.from(data.Large,'base64');memory.set(large,32768);
+  statuses.push(api.prepareShared(5,0,32768,large.length),api.checkpoint(1,32768,32768),api.commit(5,0));
+  preserved = preserved&&committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)));
+  statuses.push(api.abortPage());preserved = preserved&&checkpoint(0)===previous;
+  process.stdout.write(JSON.stringify({Statuses:statuses,Patches:batches,Checkpoints:checkpoints,Preserved:preserved}));`, data, &got, host)
+	want := []int32{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, -4, 4, 0}
+	if !got.Preserved || !reflect.DeepEqual(got.Statuses, want) || !reflect.DeepEqual(got.Patches, expected) || !reflect.DeepEqual(got.Checkpoints, checkpoints) {
+		t.Fatalf("shared strings lost presence, ownership, or live-byte bounds: %+v want patches %+v", got, expected)
+	}
+}
