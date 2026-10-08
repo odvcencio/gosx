@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"html"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -566,4 +569,23 @@ func readDocsPagePair(t *testing.T, root, page string) string {
 		}
 	}
 	return joined.String()
+}
+
+func TestRuntimeNavigationMigrationRendersAllowlist(t *testing.T) {
+	configureDocsTestSecret(t)
+	_, thisFile, _, _ := runtime.Caller(0)
+	app, err := buildDocsApp(filepath.Dir(thisFile), "8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/docs/runtime/", nil))
+	pattern := "/gosx/assets/runtime/navigation.*.js"
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(html.UnescapeString(body), pattern) {
+		t.Fatalf("runtime migration must display the navigation asset allowlist: status=%d", w.Code)
+	}
+	if strings.Contains(body, pattern) {
+		t.Fatal("the display-only wildcard must not become a literal export asset reference")
+	}
 }
