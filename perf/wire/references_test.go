@@ -4,11 +4,32 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
 	"testing"
 )
+
+func TestReferencesProductionEngineChunk(t *testing.T) {
+	body, err := os.ReadFile("../../client/js/bootstrap-feature-engines.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := append([]byte{}, body...)
+	set, err := ScanReferences(body, KindScript)
+	if err != nil || set.Complete || !bytes.Equal(body, before) {
+		t.Fatal("production code must retain computed-fetch uncertainty", err)
+	}
+}
+
+func TestReferencesFormattedMinifiedStatementBoundaries(t *testing.T) {
+	body := []byte(`(function(){if(ready)try{mount()}catch{ready=false}if(ready){let a=true;a&&(ready=false)}import("./ready.js")})();`)
+	set, err := ScanReferences(body, KindScript)
+	if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, []Reference{{"./ready.js", KindScript, false}}) {
+		t.Fatal("minified statements changed module extraction", set, err)
+	}
+}
 
 func TestReferencesHTMLActiveRootsAndPotentialChunks(t *testing.T) {
 	body := []byte(`<!doctype html><head>
