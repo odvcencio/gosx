@@ -8,6 +8,7 @@ import (
 	"io"
 	"reflect"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/andybalholm/brotli"
@@ -115,19 +116,11 @@ func TestArtifactCanonicalJSONAndBinaryInputs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var decoded program.Program
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	jsonUnit, err := NewUnit(u.Component, &decoded, u.Contract)
+	jsonUnit, err := NewJSONUnit(u.Component, raw, u.Contract)
 	if err != nil {
 		t.Fatal(err)
 	}
-	fromBinary, err := program.DecodeBinary(u.ProgramBytes)
-	if err != nil {
-		t.Fatal(err)
-	}
-	binaryUnit, err := NewUnit(u.Component, fromBinary, u.Contract)
+	binaryUnit, err := NewBinaryUnit(u.Component, u.ProgramBytes, u.Contract)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,6 +138,252 @@ func TestArtifactCanonicalJSONAndBinaryInputs(t *testing.T) {
 	}
 	if !reflect.DeepEqual(artifacts[0], artifacts[1]) || !reflect.DeepEqual(artifacts[0], artifacts[2]) {
 		t.Fatal("source encoding changed the canonical module")
+	}
+}
+
+func TestArtifactJSONAdmissionRejectsDiscardedFields(t *testing.T) {
+	u := fixedBindingUnit(t)
+	raw, err := json.Marshal(u.Program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prefix := func(field string) []byte { return append([]byte("{"+field+","), raw[1:]...) }
+	cases := []struct {
+		name string
+		data []byte
+	}{
+		{"empty", nil},
+		{"null", []byte("null")},
+		{"array", []byte("[]")},
+		{"malformed", raw[:len(raw)-1]},
+		{"second object", append(append([]byte{}, raw...), []byte(" {}")...)},
+		{"trailing scalar", append(append([]byte{}, raw...), []byte(" true")...)},
+		{"unknown root", prefix(`"extension":0`)},
+		{"surface", prefix(`"Surface":0`)},
+		{"case alias", prefix(`"NAME":"ignored"`)},
+		{"duplicate", prefix(`"name":"ignored"`)},
+		{"escaped duplicate", prefix(`"\u006eame":"ignored"`)},
+		{"null duplicate", prefix(`"name":null`)},
+		{"unknown node", bytes.Replace(raw, []byte(`"nodes":[{`), []byte(`"nodes":[{"extension":0,`), 1)},
+		{"duplicate node", bytes.Replace(raw, []byte(`"nodes":[{`), []byte(`"nodes":[{"kind":0,`), 1)},
+		{"unknown expression", bytes.Replace(raw, []byte(`"exprs":[{`), []byte(`"exprs":[{"extension":0,`), 1)},
+		{"duplicate expression", bytes.Replace(raw, []byte(`"exprs":[{`), []byte(`"exprs":[{"op":0,`), 1)},
+		{"unknown attribute", bytes.Replace(raw, []byte(`"attrs":[{`), []byte(`"attrs":[{"extension":0,`), 1)},
+		{"unknown signal", bytes.Replace(raw, []byte(`"signals":[{`), []byte(`"signals":[{"extension":0,`), 1)},
+		{"unknown handler", bytes.Replace(raw, []byte(`"handlers":[{`), []byte(`"handlers":[{"extension":0,`), 1)},
+		{"fractional ID", bytes.Replace(raw, []byte(`"root":0`), []byte(`"root":0.5`), 1)},
+		{"negative ID", bytes.Replace(raw, []byte(`"root":0`), []byte(`"root":-1`), 1)},
+		{"ID overflow", bytes.Replace(raw, []byte(`"root":0`), []byte(`"root":65536`), 1)},
+		{"wrong table shape", bytes.Replace(raw, []byte(`"nodes":[`), []byte(`"nodes":{`), 1)},
+		{"invalid UTF-8", bytes.Replace(raw, []byte(`"name":"`), []byte{'"', 'n', 'a', 'm', 'e', '"', ':', '"', 255}, 1)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if bytes.Equal(tc.data, raw) {
+				t.Fatal("mutation did not alter the fixture")
+			}
+			if _, err := NewJSONUnit(u.Component, tc.data, u.Contract); err == nil {
+				t.Fatal("admitted a malformed or lossy JSON envelope")
+			}
+		})
+	}
+	// The compatible VM decoder still accepts its existing extension behavior.
+	var legacy program.Program
+	if err := json.Unmarshal(prefix(`"extension":0`), &legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy.Name != u.Program.Name {
+		t.Fatal("VM JSON semantics changed")
+	}
+}
+
+func TestArtifactJSONAdmissionChecksEveryTableAndSourceProof(t *testing.T) {
+	u := literalUnit(t)
+	for _, tc := range []struct {
+		name   string
+		mutate func(*program.Program)
+	}{
+		{"version", func(p *program.Program) { p.Version = "future" }},
+		{"functions", func(p *program.Program) { p.Funcs = []program.FuncDef{{Name: "f"}} }},
+		{"engine", func(p *program.Program) { p.EngineNodes = []program.EngineNode{{Kind: "scene"}} }},
+		{"call depth", func(p *program.Program) { p.MaxCallDepth = 1 }},
+		{"unused opcode", func(p *program.Program) { p.Exprs[0].Op = 255 }},
+		{"unused type", func(p *program.Program) { p.Exprs[0].Type = program.TypeFloat }},
+		{"unused operand", func(p *program.Program) { p.Exprs[0].Operands = []program.ExprID{1} }},
+		{"unused node", func(p *program.Program) { p.Nodes = append(p.Nodes, program.Node{Kind: 255}) }},
+		{"overlong wire string", func(p *program.Program) { p.Name = strings.Repeat("x", 65536) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			copy := refreshUnit(t, u)
+			tc.mutate(copy.Program)
+			data, err := json.Marshal(copy.Program)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewJSONUnit(u.Component, data, u.Contract); err == nil {
+				t.Fatal("admitted unsupported data before profile validation")
+			}
+		})
+	}
+	raw, err := json.Marshal(u.Program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	contract := u.Contract
+	contract.Expressions = append([]ExpressionContract{}, contract.Expressions...)
+	contract.Expressions[0].Kind = Bool
+	if _, err := NewJSONUnit(u.Component, raw, contract); err == nil {
+		t.Fatal("admitted incompatible source evidence")
+	}
+}
+
+type programWireSection struct {
+	tag     byte
+	payload []byte
+}
+
+func programSections(t *testing.T, data []byte) []programWireSection {
+	t.Helper()
+	sections := make([]programWireSection, 11)
+	cursor := 8
+	for i := range sections {
+		length := int(binary.LittleEndian.Uint32(data[cursor+1 : cursor+5]))
+		sections[i] = programWireSection{data[cursor], append([]byte{}, data[cursor+5:cursor+5+length]...)}
+		cursor += 5 + length
+	}
+	if cursor != len(data) {
+		t.Fatal("fixture framing is not canonical")
+	}
+	return sections
+}
+
+func encodeProgramSections(sections []programWireSection) []byte {
+	raw := []byte{'G', 'S', 'X', 0, 1, 0, byte(len(sections)), byte(len(sections) >> 8)}
+	for _, section := range sections {
+		raw = append(raw, section.tag)
+		raw = binary.LittleEndian.AppendUint32(raw, uint32(len(section.payload)))
+		raw = append(raw, section.payload...)
+	}
+	return raw
+}
+
+func TestArtifactBinaryAdmissionRejectsLostFraming(t *testing.T) {
+	u := staticUnit(t)
+	for _, tc := range []struct {
+		name   string
+		mutate func([]programWireSection) []programWireSection
+	}{
+		{"unknown tag", func(s []programWireSection) []programWireSection { s[10].tag = 11; return s }},
+		{"duplicate tag", func(s []programWireSection) []programWireSection { s[10].tag = 8; return s }},
+		{"missing section", func(s []programWireSection) []programWireSection { return s[:10] }},
+		{"extra section", func(s []programWireSection) []programWireSection { return append(s, programWireSection{11, nil}) }},
+		{"reordered sections", func(s []programWireSection) []programWireSection { s[8], s[9] = s[9], s[8]; return s }},
+		{"noncanonical boolean", func(s []programWireSection) []programWireSection { s[7].payload[2] = 2; return s }},
+		{"invalid name reference", func(s []programWireSection) []programWireSection {
+			binary.LittleEndian.PutUint16(s[2].payload[4:6], 65535)
+			return s
+		}},
+		{"invalid empty text reference", func(s []programWireSection) []programWireSection {
+			binary.LittleEndian.PutUint16(s[2].payload[9:11], 65535)
+			return s
+		}},
+		{"unused string", func(s []programWireSection) []programWireSection {
+			count := binary.LittleEndian.Uint16(s[0].payload[:2])
+			binary.LittleEndian.PutUint16(s[0].payload[:2], count+1)
+			s[0].payload = append(s[0].payload, 1, 0, 'x')
+			return s
+		}},
+		{"invalid string bytes", func(s []programWireSection) []programWireSection { s[0].payload[4] = 255; return s }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw := encodeProgramSections(tc.mutate(programSections(t, u.ProgramBytes)))
+			if _, err := NewBinaryUnit(u.Component, raw, u.Contract); err == nil {
+				t.Fatal("admitted a lossy binary envelope")
+			}
+		})
+	}
+	for tag := range 11 {
+		t.Run("section tail "+strconv.Itoa(tag), func(t *testing.T) {
+			sections := programSections(t, u.ProgramBytes)
+			sections[tag].payload = append(sections[tag].payload, 0)
+			raw := encodeProgramSections(sections)
+			if _, err := program.DecodeBinary(raw); err != nil {
+				t.Fatal("VM decoder no longer tolerates its existing section tails")
+			}
+			if _, err := NewBinaryUnit(u.Component, raw, u.Contract); err == nil {
+				t.Fatal("admitted ignored section bytes")
+			}
+		})
+	}
+	for length := range len(u.ProgramBytes) {
+		if _, err := NewBinaryUnit(u.Component, u.ProgramBytes[:length], u.Contract); err == nil {
+			t.Fatalf("admitted prefix of length %d", length)
+		}
+	}
+	for _, offset := range []int{0, 4, 6} {
+		raw := append([]byte{}, u.ProgramBytes...)
+		raw[offset]++
+		if _, err := NewBinaryUnit(u.Component, raw, u.Contract); err == nil {
+			t.Fatalf("admitted invalid header at %d", offset)
+		}
+	}
+	raw := append(append([]byte{}, u.ProgramBytes...), 0)
+	if _, err := NewBinaryUnit(u.Component, raw, u.Contract); err == nil {
+		t.Fatal("admitted global trailing bytes")
+	}
+	binary.LittleEndian.PutUint32(raw[9:13], ^uint32(0))
+	if _, err := NewBinaryUnit(u.Component, raw, u.Contract); err == nil {
+		t.Fatal("admitted a wrapping section length")
+	}
+}
+
+func TestArtifactInputReadersOwnUnicodeAndZeroIDs(t *testing.T) {
+	u := literalUnit(t)
+	u.Program.Name = "e\u0301\x00🌴"
+	u.Program.Exprs[0] = program.Expr{Op: program.OpLitString, Type: program.TypeString, Value: "héllo\x00🌴"}
+	u.Contract.Expressions[0].Kind = String
+	u = refreshUnit(t, u)
+	raw, err := json.Marshal(u.Program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Whitespace and equivalent JSON escapes do not change canonical identity.
+	escaped := bytes.ReplaceAll(raw, []byte("🌴"), []byte(`\ud83c\udf34`))
+	escaped = append(append([]byte(" \n"), escaped...), '\n', '\t')
+	fromJSON, err := NewJSONUnit(u.Component, escaped, u.Contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire := append([]byte{}, u.ProgramBytes...)
+	fromBinary, err := NewBinaryUnit(u.Component, wire, u.Contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromJSON.Digest != u.Digest || fromBinary.Digest != u.Digest || fromJSON.Program.Root != 0 || fromJSON.Program.Exprs[0].Value != u.Program.Exprs[0].Value {
+		t.Fatal("Unicode bytes or valid ID zero changed during admission")
+	}
+	for i := range wire {
+		wire[i] = 255
+	}
+	u.Contract.Expressions[0].Kind = Bool
+	u.Program.Exprs[0].Value = "changed"
+	if fromBinary.Contract.Expressions[0].Kind != String || fromJSON.Contract.Expressions[0].Kind != String || fromBinary.Program.Exprs[0].Value != "héllo\x00🌴" || fromJSON.Program.Exprs[0].Value != "héllo\x00🌴" {
+		t.Fatal("input readers borrowed caller storage")
+	}
+}
+
+func TestArtifactBinaryAdmissionChecksUnusedExpressions(t *testing.T) {
+	u := literalUnit(t)
+	sections := programSections(t, u.ProgramBytes)
+	sections[3].payload[2] = 255
+	if _, err := NewBinaryUnit(u.Component, encodeProgramSections(sections), u.Contract); err == nil {
+		t.Fatal("admitted an unsupported opcode in an unused expression")
+	}
+	contract := u.Contract
+	contract.Expressions = append([]ExpressionContract{}, contract.Expressions...)
+	contract.Expressions[0].Kind = Bool
+	if _, err := NewBinaryUnit(u.Component, u.ProgramBytes, contract); err == nil {
+		t.Fatal("admitted a binary program with incompatible source evidence")
 	}
 }
 

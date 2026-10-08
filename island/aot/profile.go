@@ -2,10 +2,14 @@
 package aot
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"io"
+	"reflect"
+	"strings"
 	"unicode/utf8"
 
 	"m31labs.dev/gosx/island/program"
@@ -278,4 +282,159 @@ func ContractBindings(p *program.Program) ([]BindingContract, error) {
 		}
 	}
 	return bindings, nil
+}
+
+// NewJSONUnit reads the closed program wire shape before canonicalization.
+// Duplicate or unknown fields cannot be erased into a supported program.
+func NewJSONUnit(component string, data []byte, contract ScalarContract) (Unit, error) {
+	trimmed := bytes.TrimSpace(data)
+	if len(trimmed) == 0 || trimmed[0] != '{' || !utf8.Valid(data) {
+		return Unit{}, fmt.Errorf("invalid program JSON framing")
+	}
+	shape := json.NewDecoder(bytes.NewReader(data))
+	shape.UseNumber()
+	if err := programJSONShape(shape, reflect.TypeOf(program.Program{}), 0); err != nil {
+		return Unit{}, err
+	}
+	if _, err := shape.Token(); err != io.EOF {
+		return Unit{}, fmt.Errorf("trailing program JSON data")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	var p program.Program
+	if err := decoder.Decode(&p); err != nil {
+		return Unit{}, fmt.Errorf("program JSON decode: %w", err)
+	}
+	p.Surface = program.SurfaceDOM
+	return admittedUnit(component, &p, contract)
+}
+
+func programJSONShape(decoder *json.Decoder, typ reflect.Type, depth int) error {
+	if depth > 64 {
+		return fmt.Errorf("program JSON nesting limit")
+	}
+	token, err := decoder.Token()
+	if err != nil {
+		return fmt.Errorf("program JSON token: %w", err)
+	}
+	if token == nil {
+		return nil
+	}
+	delimiter, container := token.(json.Delim)
+	if !container {
+		return nil
+	}
+	if delimiter == '[' {
+		if typ.Kind() != reflect.Slice && typ.Kind() != reflect.Array {
+			return fmt.Errorf("unexpected program JSON array")
+		}
+		for decoder.More() {
+			if err := programJSONShape(decoder, typ.Elem(), depth+1); err != nil {
+				return err
+			}
+		}
+		end, err := decoder.Token()
+		if err != nil || end != json.Delim(']') {
+			return fmt.Errorf("invalid program JSON array")
+		}
+		return nil
+	}
+	if delimiter != '{' || (typ.Kind() != reflect.Struct && typ.Kind() != reflect.Map) {
+		return fmt.Errorf("unexpected program JSON object")
+	}
+	fields := map[string]reflect.Type{}
+	if typ.Kind() == reflect.Struct {
+		for i := 0; i < typ.NumField(); i++ {
+			field := typ.Field(i)
+			name := strings.Split(field.Tag.Get("json"), ",")[0]
+			if field.PkgPath != "" || name == "-" {
+				continue
+			}
+			if name == "" {
+				name = field.Name
+			}
+			fields[name] = field.Type
+		}
+	}
+	seen := map[string]bool{}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return fmt.Errorf("invalid program JSON key")
+		}
+		name, ok := key.(string)
+		if !ok || seen[name] {
+			return fmt.Errorf("duplicate program JSON field")
+		}
+		seen[name] = true
+		field, known := fields[name]
+		if typ.Kind() == reflect.Map {
+			field, known = typ.Elem(), true
+		}
+		if !known {
+			return fmt.Errorf("unknown program JSON field")
+		}
+		if err := programJSONShape(decoder, field, depth+1); err != nil {
+			return err
+		}
+	}
+	end, err := decoder.Token()
+	if err != nil || end != json.Delim('}') {
+		return fmt.Errorf("invalid program JSON object")
+	}
+	return nil
+}
+
+// NewBinaryUnit accepts the complete canonical version-1 envelope. Framing
+// checks precede the compatible VM decoder, which skips unknown sections.
+func NewBinaryUnit(component string, data []byte, contract ScalarContract) (Unit, error) {
+	if len(data) < 8 || !bytes.Equal(data[:4], []byte{'G', 'S', 'X', 0}) || binary.LittleEndian.Uint16(data[4:6]) != 1 || binary.LittleEndian.Uint16(data[6:8]) != 11 {
+		return Unit{}, fmt.Errorf("invalid program binary header")
+	}
+	cursor := uint64(8)
+	seen := [11]bool{}
+	for range 11 {
+		if cursor+5 > uint64(len(data)) {
+			return Unit{}, fmt.Errorf("truncated program section header")
+		}
+		tag := data[cursor]
+		length := uint64(binary.LittleEndian.Uint32(data[cursor+1 : cursor+5]))
+		if tag >= 11 || seen[tag] {
+			return Unit{}, fmt.Errorf("unknown or duplicate program section")
+		}
+		seen[tag] = true
+		cursor += 5
+		if length > uint64(len(data))-cursor {
+			return Unit{}, fmt.Errorf("truncated program section")
+		}
+		cursor += length
+	}
+	if cursor != uint64(len(data)) {
+		return Unit{}, fmt.Errorf("trailing program binary data")
+	}
+	p, err := program.DecodeBinary(data)
+	if err != nil {
+		return Unit{}, fmt.Errorf("program binary decode: %w", err)
+	}
+	u, err := admittedUnit(component, p, contract)
+	if err != nil {
+		return Unit{}, err
+	}
+	// Canonical equality also rejects ignored bytes inside sections, invalid
+	// string references, and alternate flag encodings lost during decoding.
+	if !bytes.Equal(data, u.ProgramBytes) {
+		return Unit{}, fmt.Errorf("noncanonical program binary data")
+	}
+	return u, nil
+}
+
+func admittedUnit(component string, p *program.Program, contract ScalarContract) (Unit, error) {
+	u, err := NewUnit(component, p, contract)
+	if err != nil {
+		return Unit{}, err
+	}
+	if receipt := Classify(u, ScalarDOMV1); !receipt.Eligible {
+		return Unit{}, fmt.Errorf("program profile: %s[%d]: %s", receipt.Table, receipt.Index, receipt.Reason)
+	}
+	return u, nil
 }
