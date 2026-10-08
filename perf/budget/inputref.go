@@ -174,6 +174,12 @@ func validateInputAt(value, raw any, pointer string) error {
 	}
 	fail := func() error { return invalidInput(pointer) }
 	if ref, ok := s["$ref"].(string); ok {
+		if ref == "#/$defs/Path" {
+			path, ok := value.(string)
+			if !ok || !safePath(path) {
+				return fail()
+			}
+		}
 		return validateInputAt(value, inputDefinitions[strings.TrimPrefix(ref, "#/$defs/")], pointer)
 	}
 	if choices, ok := s["oneOf"].([]any); ok {

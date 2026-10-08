@@ -1,18 +1,17 @@
 package budget
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
-	"path/filepath"
+	"os"
+	"sort"
+	"strconv"
 	"strings"
 )
 
 type Goal struct {
-	Metric string  `json:"metric"`
-	Max    float64 `json:"max"`
-	Unit   string  `json:"unit"`
+	Metric string      `json:"metric"`
+	Max    json.Number `json:"max"`
+	Unit   string      `json:"unit"`
 }
 type Mix struct {
 	JSPPM                    int64 `json:"jsPPM"`
@@ -135,7 +134,8 @@ type File struct {
 
 // Load validates configuration and its hash-bound inputs under one project root.
 // It does not certify the recorded allocation arithmetic.
-func Load(path string, opts LoadOptions) (*File, error) {
+func Load(path string, opts LoadOptions) (result *File, resultErr error) {
+	defer func() { resultErr = inputReference(resultErr, "budget", "") }()
 	var f File
 	root, err := loadInput(path, opts, "Budget", &f)
 	if err != nil {
@@ -151,27 +151,27 @@ func Load(path string, opts LoadOptions) (*File, error) {
 	}{{f.Profile, "Profile", &p}, {f.Coefficients, "Coefficients", &c}, {f.Toolchain, "Toolchain", &tc}} {
 		data, err := readReference(root, input.ref, maxInputBytes)
 		if err != nil {
-			return nil, err
+			return nil, inputReference(err, referenceLabel(input.definition), "")
 		}
 		if err := decodeInput(data, input.definition, input.out); err != nil {
 			return nil, err
 		}
 	}
 	if err := p.validate(); err != nil {
-		return nil, err
+		return nil, inputReference(err, "profile", "")
 	}
 	if err := c.validate(); err != nil {
-		return nil, err
+		return nil, inputReference(err, "coefficients", "")
 	}
 	if err := tc.validate(root); err != nil {
-		return nil, err
+		return nil, inputReference(err, "toolchain", "")
 	}
 	if c.ProfileSHA256 != f.Profile.SHA256 || c.Reference != p.Reference {
-		return nil, errors.New("coefficient profile does not match")
+		return nil, inputReference(invalidInput("/profileSHA256"), "coefficients", "")
 	}
 	fixtureBytes, err := readReference(root, f.Fixtures, maxInputBytes)
 	if err != nil {
-		return nil, err
+		return nil, inputReference(err, "fixtures", "")
 	}
 	var catalog json.RawMessage
 	if err := decodeInput(fixtureBytes, "FixtureCatalog", &catalog); err != nil {
@@ -186,25 +186,32 @@ func Load(path string, opts LoadOptions) (*File, error) {
 		} `json:"routes"`
 	}
 	if err := json.Unmarshal(catalog, &refs); err != nil {
-		return nil, errors.New("invalid fixture references")
+		return nil, inputReference(invalidInput(""), "fixtures", "")
 	}
 	if _, err := readReference(root, refs.InteractionContract, maxInputBytes); err != nil {
-		return nil, err
+		return nil, inputReference(err, "interaction", "")
 	}
 	registered := make(map[string]bool)
-	for _, route := range refs.Routes {
+	for i, route := range refs.Routes {
+		location := "/routes/" + strconv.Itoa(i)
 		key := route.App + "|" + route.RouteTemplate
 		if !safePath(route.SourcePath) || !validRoute(route.RouteTemplate) || registered[key] {
-			return nil, errors.New("invalid fixture route")
+			return nil, inputReference(invalidInput(location), "fixtures", "")
 		}
-		if _, err := readWithin(root, filepath.Join(root, route.SourcePath), 16<<20); err != nil {
-			return nil, err
+		r, err := os.OpenRoot(root)
+		if err != nil {
+			return nil, inputReference(invalidInput(location+"/sourcePath"), "fixtures", "")
+		}
+		info, statErr := r.Stat(route.SourcePath)
+		closeErr := r.Close()
+		if statErr != nil || closeErr != nil || !info.Mode().IsRegular() {
+			return nil, inputReference(invalidInput(location+"/sourcePath"), "fixtures", "")
 		}
 		registered[key] = true
 	}
 	for _, route := range f.Routes {
 		if !registered[route.App+"|"+route.RouteTemplate] {
-			return nil, errors.New("unregistered route template")
+			return nil, invalidInput("/routes")
 		}
 	}
 	if err := f.validate(p, c); err != nil {
@@ -218,66 +225,80 @@ func (f File) validate(p Profile, c Coefficients) error {
 	for _, s := range c.Sets {
 		sets[s.ID] = s
 	}
-	for name, page := range f.PageTypes {
-		if !knownPageType(name) {
-			return errors.New("unregistered page type")
+	keys := make([]string, 0, len(f.PageTypes))
+	for name := range f.PageTypes {
+		keys = append(keys, name)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		page := f.PageTypes[name]
+		family, backend, known := pageTypeVariant(name)
+		location := "/pageTypes"
+		if !known {
+			return invalidInput(location)
 		}
-		for _, backend := range []string{"webgpu", "webgl2"} {
-			if strings.HasSuffix(name, "-"+backend) && page.Backend != backend {
-				return errors.New("page backend does not match its variant")
-			}
+		location = pointerChild(location, name)
+		if page.Backend != backend {
+			return invalidInput(location + "/backend")
 		}
 		if page.Mix.JSPPM+page.Mix.WASMPPM+page.Mix.ProgramPPM+page.Mix.OtherPPM != 1000000 || page.MinAppPPM < 500000 {
-			return errors.New("invalid byte mix or app minimum")
+			return invalidInput(location + "/mix")
 		}
 		set, ok := sets[page.CoefficientSet]
 		if !ok || set.Scenario != "hard-cold" || set.Backend != page.Backend {
-			return errors.New("page requires a matching cold coefficient set")
+			return invalidInput(location + "/coefficientSet")
 		}
 		goals := make(map[string]bool)
-		for _, goal := range page.Goals {
+		for i, goal := range page.Goals {
+			goalLocation := location + "/goals/" + strconv.Itoa(i)
+			if goal.Unit == "B" || goal.Unit == "count" {
+				n, err := goal.Max.Int64()
+				if err != nil || n < 0 || n > 9007199254740991 {
+					return invalidInput(goalLocation + "/max")
+				}
+			}
 			if goals[goal.Metric] || goal.Unit != metricUnit(goal.Metric) {
-				return errors.New("invalid goal unit or duplicate metric")
+				return invalidInput(goalLocation)
 			}
 			goals[goal.Metric] = true
 		}
 		if !goals[page.PrimaryMetric] {
-			return errors.New("primary goal is missing")
+			return invalidInput(location + "/primaryMetric")
 		}
 		if page.Allocation.AppCriticalReserveBytes != page.AppReserveBytes {
-			return errors.New("critical reserve does not match allocation")
+			return invalidInput(location + "/appReserveBytes")
 		}
 		if page.AfterReadyAllocation.AppCriticalReserveBytes != 0 {
-			return errors.New("after-ready work cannot reserve critical bytes")
+			return invalidInput(location + "/afterReadyAllocation/appCriticalReserveBytes")
 		}
 		for _, entry := range set.Entries {
 			if entry.Status == "unused" && (coefficientUsed(entry.Name, page.Mix, page.Workload) || coefficientUsed(entry.Name, page.Mix, page.AfterReadyWorkload)) {
-				return errors.New("unused coefficient has nonzero workload")
+				return invalidInput(location + "/workload")
 			}
 		}
 		for _, d := range []Derivation{page.Allocation, page.AfterReadyAllocation} {
 			if d.FrameworkBytes+d.MinAppBytes+d.AppCriticalReserveBytes != d.TotalBytes {
-				return errors.New("allocation totals do not reconcile")
+				return invalidInput(location + "/allocation")
 			}
-			if name == "static" && d.FrameworkBytes != 0 {
-				return errors.New("static allocation must leave all bytes to apps")
+			if family == "static" && d.FrameworkBytes != 0 {
+				return invalidInput(location + "/allocation/frameworkBytes")
 			}
 			pool := d.TotalBytes - d.AppCriticalReserveBytes
 			minimum := pool/1000000*page.MinAppPPM + (pool%1000000*page.MinAppPPM+999999)/1000000
 			minimum = (minimum + p.QuantumBytes - 1) / p.QuantumBytes * p.QuantumBytes
 			if d.MinAppBytes < minimum {
-				return errors.New("allocation does not guarantee the app minimum")
+				return invalidInput(location + "/allocation/minAppBytes")
 			}
 			if d.Status != "illustrative" {
 				if d.Status == "phone-measured" {
-					return errors.New("phone certification is unavailable")
+					return invalidInput(location + "/allocation/status")
 				}
-				if d.Status == "phone-measured" && p.Reference != "phone-4gb" || d.Status == "proxy-measured" && p.Reference != "desktop-cpu-proxy" {
-					return errors.New("allocation reference does not match evidence")
+				if d.Status == "proxy-measured" && p.Reference != "desktop-cpu-proxy" {
+					return invalidInput(location + "/allocation/status")
 				}
 				for _, e := range set.Entries {
 					if e.Status != "measured" && e.Status != "unused" {
-						return errors.New("allocation has unsupported measured status")
+						return invalidInput(location + "/allocation/status")
 					}
 				}
 			}
@@ -287,27 +308,48 @@ func (f File) validate(p Profile, c Coefficients) error {
 	for _, route := range f.Routes {
 		key := route.App + "|" + route.RouteTemplate
 		if seen[key] || !validRoute(route.RouteTemplate) {
-			return errors.New("invalid or duplicate route rule")
+			return invalidInput("/routes")
 		}
 		seen[key] = true
 		for _, name := range route.PageTypes {
 			if _, ok := f.PageTypes[name]; !ok {
-				return errors.New("route names an unconfigured page type")
+				return invalidInput("/routes")
 			}
 		}
 	}
+	// Expiry admission, overlapping caps and trusted approval are checked in S12.
+	registeredRoutes := seen
 	seen = make(map[string]bool)
-	for _, e := range f.Exceptions {
+	for i, e := range f.Exceptions {
+		location := "/exceptions/" + strconv.Itoa(i)
 		if seen[e.ID] || e.Metric == "frameworkBytes" {
-			return errors.New("duplicate or forbidden framework-share exception")
+			return invalidInput(location)
 		}
 		seen[e.ID] = true
+		scope, target, ok := strings.Cut(e.Scope, ":")
+		switch scope {
+		case "type":
+			_, configured := f.PageTypes[target]
+			ok = ok && configured
+		case "route":
+			app, route, parsed := strings.Cut(target, ":")
+			ok = ok && parsed && validRoute(route) && registeredRoutes[app+"|"+route]
+		default:
+			ok = false
+		}
+		if !ok {
+			return invalidInput(location + "/scope")
+		}
+		if (e.Metric == "policy") != (e.Policy != "") {
+			return invalidInput(location + "/policy")
+		}
 	}
+
 	seen = make(map[string]bool)
 	want := map[string]Guardrail{
-		"criticalRequests":         {Limit: 10, Unit: "count", Mode: "gate", ReasonCode: "guardrail"},
-		"startupRequests":          {Limit: 20, Unit: "count", Mode: "gate", ReasonCode: "guardrail"},
-		"afterReadyRequests":       {Limit: 24, Unit: "count", Mode: "gate", ReasonCode: "guardrail"},
+		"criticalRequests":         {Limit: 10, Unit: "count", Mode: "target", ReasonCode: "guardrail"},
+		"startupRequests":          {Limit: 20, Unit: "count", Mode: "target", ReasonCode: "guardrail"},
+		"afterReadyRequests":       {Limit: 24, Unit: "count", Mode: "target", ReasonCode: "guardrail"},
 		"inlineAppExecutableBytes": {Limit: 1024, Unit: "B", Mode: "gate", ReasonCode: "guardrail"},
 		"htmlFirstFlightBytes":     {Limit: 14600, Unit: "B", Mode: "target", ReasonCode: "initial-cwnd"},
 		"fontCount":                {Limit: 2, Unit: "count", Mode: "target", ReasonCode: "first-paint"},
@@ -316,7 +358,7 @@ func (f File) validate(p Profile, c Coefficients) error {
 		w := want[g.Key]
 		w.Key = g.Key
 		if seen[g.Key] || g != w {
-			return errors.New("invalid or duplicate guardrail")
+			return invalidInput("/guardrails")
 		}
 		seen[g.Key] = true
 	}
@@ -336,20 +378,29 @@ func metricUnit(metric string) string {
 	return "ms"
 }
 
-func knownPageType(name string) bool {
-	for _, suffix := range []string{"-webgpu", "-webgl2"} {
-		if strings.HasSuffix(name, suffix) {
-			name = strings.TrimSuffix(name, suffix)
+func knownPageType(name string) bool { _, _, ok := pageTypeVariant(name); return ok }
+func pageTypeVariant(name string) (family, backend string, known bool) {
+	family, backend = name, "none"
+	for _, suffix := range []string{"webgpu", "webgl2"} {
+		if strings.HasSuffix(name, "-"+suffix) {
+			family, backend = strings.TrimSuffix(name, "-"+suffix), suffix
 			break
 		}
 	}
-	switch name {
-	case "static", "enhanced", "island", "engine/js", "engine/shared", "go-wasm", "video", "scene3d/shared", "game/shared", "preview", "scene3d/js", "game/js":
-		return true
+	if backend != "none" && !strings.HasPrefix(family, "scene3d/") && !strings.HasPrefix(family, "game/") {
+		return family, backend, false
 	}
-	return false
+	switch family {
+	case "static", "enhanced", "island", "engine/js", "engine/shared", "go-wasm", "video", "scene3d/shared", "game/shared", "preview", "scene3d/js", "game/js":
+		known = true
+	}
+	return
 }
 func validRoute(route string) bool {
+	pattern, err := schemaPattern(inputDefinitions["Route"].(map[string]any)["pattern"].(string))
+	if err != nil || !pattern.MatchString(route) || len(route) > 160 {
+		return false
+	}
 	for _, part := range strings.Split(route, "/") {
 		if part == "." || part == ".." {
 			return false
@@ -380,4 +431,3 @@ func coefficientUsed(name string, mix Mix, w Workload) bool {
 		return true
 	}
 }
-func inputDigest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
