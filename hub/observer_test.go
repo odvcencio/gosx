@@ -66,6 +66,28 @@ func (o *observedHub) Broadcast(h *Hub, accepted, dropped int) {
 	o.broadcasts <- [2]int{accepted, dropped}
 }
 
+func BenchmarkObserverDispatch(b *testing.B) {
+	for _, enabled := range []bool{false, true} {
+		name := "nil"
+		if enabled {
+			name = "one"
+		}
+		b.Run(name, func(b *testing.B) {
+			h := New("bench")
+			if enabled {
+				_, _ = h.UseObserver(NoopObserver{})
+			}
+			c := &Client{}
+			e := TrafficEvent{Bytes: 64, QueueDepth: -1}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for range b.N {
+				h.observeMessage(c, e)
+			}
+		})
+	}
+}
+
 func observedConnection(t *testing.T, h *Hub) *websocket.Conn {
 	t.Helper()
 	s := httptest.NewServer(h)

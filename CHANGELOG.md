@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Hub closing retires every observer and drains admitted callbacks before
+  delivering Closed. Closed is the final callback, including after Close returns;
+  callbacks must remain bounded and cannot wait for that same hub to close.
+
 - Add additive hub observers configured before the first connection, with
   logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
   classifications. Connection rejections are separate from malformed and
