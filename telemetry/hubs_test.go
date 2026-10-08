@@ -329,7 +329,22 @@ func TestHubGroupActualSuccessfulPayloadBytesAndShutdown(t *testing.T) {
 }
 
 func TestHubGroupSignalKeepsDrainCallbacksAndCloseOwnsDetach(t *testing.T) {
-	tel, _ := hubTelemetry(t)
+	t.Setenv("GOSX_TELEMETRY", "on")
+	tel, err := Enable(server.New(), hubCoreOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDeadline := false
+	t.Cleanup(func() {
+		err := tel.Close(context.Background())
+		if wantDeadline {
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Error("lost shared Flush deadline", err)
+			}
+		} else if err != nil {
+			t.Error(err)
+		}
+	})
 	g, _ := tel.NewHubGroup("room", HubOptions{})
 	h := hub.New("fixture")
 	g.Attach(h)
@@ -348,6 +363,7 @@ func TestHubGroupSignalKeepsDrainCallbacksAndCloseOwnsDetach(t *testing.T) {
 	a.detach = func() { close(entered); <-release; original() }
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Millisecond)
 	defer cancel()
+	wantDeadline = true
 	if err := tel.Close(ctx); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
@@ -358,7 +374,7 @@ func TestHubGroupSignalKeepsDrainCallbacksAndCloseOwnsDetach(t *testing.T) {
 	default:
 	}
 	close(release)
-	if err := tel.Close(context.Background()); err != nil {
+	if err := tel.Close(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
 	}
 	if g.instances != 0 || g.clients != 0 {
