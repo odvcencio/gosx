@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -21,6 +22,8 @@ type requestMeters struct {
 }
 type requestTable struct{ rows map[requestKey]*requestMeters }
 type requestState struct {
+	liveMu    sync.Mutex
+	live      int64
 	counts    *metric.CounterVec
 	durations *metric.HistogramVec
 	bytes     *metric.CounterVec
@@ -178,8 +181,8 @@ func (t *Telemetry) admitRequestCatalog(rows []server.ObservationPattern) {
 	t.requests.building = nil
 }
 
-// Owner integration supplies measured bytes/hijack state after the response
-// writer seam lands. This hot path never binds or learns a request label.
+// This hot path uses measured bytes/hijack state from the server-owned writer.
+// It never binds or learns a request label.
 func (t *Telemetry) observeRequest(kind, pattern, method string, status int, bytes int64, elapsed time.Duration, hijacked bool) {
 	if !t.Enabled() || t.requests == nil {
 		return

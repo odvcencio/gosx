@@ -136,6 +136,9 @@ func Enable(app *server.App, opts Options) (*Telemetry, error) {
 	if !o.Metrics.DisableOperations {
 		app.UseOperationObserver(t)
 	}
+	if !o.Metrics.DisableRequests {
+		app.UseObserver(requestObserver{owner: t})
+	}
 	t.active.Store(true)
 	attached = true
 	go t.run()
@@ -150,7 +153,7 @@ func availableFeatures(o Options) error {
 		return invalid("desktop", "unsupported")
 	case o.Listen.Addr != "off" || o.Listen.Metrics != (Credential{}) || o.Listen.Admin != (Credential{}) || o.Listen.DangerouslyAllowUnauthenticatedMetricsOnNonLoopback:
 		return invalid("listener", "unsupported")
-	case !o.Metrics.DisableRequests || !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
+	case !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
 		return invalid("metric_adapters", "unsupported")
 	case o.Sessions.Enabled:
 		return invalid("sessions", "unsupported")

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Attach built-in request aggregates once at the App observer owner. Route
+  labels use the admitted catalog, response bytes come from its writer, and
+  the in-flight gauge covers application middleware. RequestStartObserver
+  adds an optional bounded entry callback without another request context.
+
 - Request observers report accepted response body bytes and successful hijacks.
   The first final status wins; interim responses, ReaderFrom and response
   controller operations retain their HTTP behavior. Nested observers share

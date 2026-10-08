@@ -35,6 +35,15 @@ type RequestObserver interface {
 	Observe(RequestEvent)
 }
 
+// RequestStartObserver optionally receives entry at the same wrapper that
+// reports completion. ObserveRequestStart runs before application middleware;
+// Observe still fires once on return. Callbacks must do bounded work and must
+// not perform I/O. Implementing only RequestObserver remains supported.
+type RequestStartObserver interface {
+	RequestObserver
+	ObserveRequestStart()
+}
+
 // RequestObserverFunc adapts a function into a request observer.
 type RequestObserverFunc func(RequestEvent)
 
@@ -65,6 +74,11 @@ func ObserveHandler(handler http.Handler, observers []RequestObserver) http.Hand
 		}
 		recorder := &observedResponseWriter{ResponseWriter: w}
 		started := time.Now()
+		for _, observer := range observers {
+			if entry, ok := observer.(RequestStartObserver); ok {
+				entry.ObserveRequestStart()
+			}
+		}
 		handler.ServeHTTP(recorder, r)
 
 		status := recorder.status
