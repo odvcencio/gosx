@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/basepath"
 )
 
 // PageHandler renders an HTML page for a given request context.
@@ -188,13 +189,14 @@ func documentContextPath(r *http.Request) string {
 		return "/"
 	}
 	if requestURI := strings.TrimSpace(r.URL.RequestURI()); requestURI != "" {
-		return requestURI
+		return basepath.URL(basepath.FromRequest(r), requestURI)
 	}
 	return "/"
 }
 
 type documentContract struct {
 	Version     int                         `json:"version"`
+	BasePath    string                      `json:"basePath,omitempty"`
 	Page        documentContractPage        `json:"page"`
 	Enhancement documentContractEnhancement `json:"enhancement"`
 	Assets      documentContractAssets      `json:"assets"`
@@ -243,7 +245,8 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		return gosx.Text("")
 	}
 	payload, err := json.Marshal(documentContract{
-		Version: 1,
+		Version:  1,
+		BasePath: basepath.FromRequest(doc.Request),
 		Page: documentContractPage{
 			ID:        doc.PageID,
 			Pattern:   doc.Pattern,
@@ -260,19 +263,19 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		Assets: documentContractAssets{
 			BootstrapMode:                   documentBootstrapMode(doc.Runtime.BootstrapMode),
 			Manifest:                        doc.Runtime.Manifest,
-			RuntimePath:                     doc.Runtime.RuntimePath,
-			WASMExecPath:                    doc.Runtime.WASMExecPath,
-			StandardGoWASMExecPath:          doc.Runtime.StandardGoWASMExecPath,
-			PatchPath:                       doc.Runtime.PatchPath,
-			BootstrapPath:                   doc.Runtime.BootstrapPath,
-			BootstrapFeatureIslandsPath:     doc.Runtime.BootstrapFeatureIslandsPath,
-			BootstrapFeatureEnginesPath:     doc.Runtime.BootstrapFeatureEnginesPath,
-			BootstrapFeatureHubsPath:        doc.Runtime.BootstrapFeatureHubsPath,
-			BootstrapFeatureControllersPath: doc.Runtime.BootstrapFeatureControllersPath,
-			BootstrapControllerInputPath:    doc.Runtime.BootstrapControllerInputPath,
-			BootstrapFeatureScene3DPath:     doc.Runtime.BootstrapFeatureScene3DPath,
-			BootstrapFeatureTextLayoutPath:  doc.Runtime.BootstrapFeatureTextLayoutPath,
-			HLSPath:                         doc.Runtime.HLSPath,
+			RuntimePath:                     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.RuntimePath),
+			WASMExecPath:                    basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.WASMExecPath),
+			StandardGoWASMExecPath:          basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.StandardGoWASMExecPath),
+			PatchPath:                       basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.PatchPath),
+			BootstrapPath:                   basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapPath),
+			BootstrapFeatureIslandsPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureIslandsPath),
+			BootstrapFeatureEnginesPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureEnginesPath),
+			BootstrapFeatureHubsPath:        basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureHubsPath),
+			BootstrapFeatureControllersPath: basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureControllersPath),
+			BootstrapControllerInputPath:    basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapControllerInputPath),
+			BootstrapFeatureScene3DPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureScene3DPath),
+			BootstrapFeatureTextLayoutPath:  basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureTextLayoutPath),
+			HLSPath:                         basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.HLSPath),
 			Islands:                         doc.Runtime.Islands,
 			ComputeIslands:                  doc.Runtime.ComputeIslands,
 			Engines:                         doc.Runtime.Engines,
