@@ -17,6 +17,7 @@ import (
 
 	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/internal/telemetryauthority"
 	"m31labs.dev/gosx/server"
 	"m31labs.dev/gosx/telemetry/metric"
 )
@@ -120,7 +121,7 @@ func TestHubGroupValidationAdmissionAndDisabled(t *testing.T) {
 			t.Fatal(err)
 		}
 		detach()
-		if _, err := h.UseTelemetryObserver(hub.NoopObserver{}, 0); err != nil {
+		if _, err := h.UseTelemetryObserver(hub.NoopObserver{}, 0, telemetryauthority.New()); err != nil {
 			t.Fatal("disabled group reserved a slot", err)
 		}
 		if _, err := g.Attach(nil); !errors.Is(err, ErrInvalidOptions) {
