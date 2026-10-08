@@ -1,6 +1,10 @@
 package hubclient
 
-import "net/http"
+import (
+	"context"
+	"net/http"
+	"sync"
+)
 
 // frameKind identifies one event delivered on a conn's event channel.
 type frameKind int
@@ -21,6 +25,31 @@ type frameEvent struct {
 	Err    error  // frameError, frameClosed (may be nil on a clean close)
 }
 
+// eventStream lets transports stop producing events when Close retires their
+// consumer. A full queue must not trap a read loop or a browser close callback.
+type eventStream struct {
+	events   chan frameEvent
+	stopped  chan struct{}
+	stopOnce sync.Once
+}
+
+func newEventStream(size int) *eventStream {
+	return &eventStream{events: make(chan frameEvent, size), stopped: make(chan struct{})}
+}
+
+func (s *eventStream) emit(event frameEvent) bool {
+	select {
+	case <-s.stopped:
+		return false
+	case s.events <- event:
+		return true
+	}
+}
+
+func (s *eventStream) stop() { s.stopOnce.Do(func() { close(s.stopped) }) }
+
+func (s *eventStream) Events() <-chan frameEvent { return s.events }
+
 // conn is one dialed transport connection. A conn's Events channel delivers
 // exactly one frameOpen (if the connection reaches an open state at all)
 // before any frameMessage, and is closed by the transport after it sends a
@@ -38,11 +67,9 @@ type conn interface {
 // ignores it, because the browser WebSocket API does not allow custom
 // request headers.
 //
-// Dial itself only fails for input the transport can reject synchronously
-// (a malformed URL, for example). A rejected or dropped connection attempt
-// is reported asynchronously as a frameError/frameClosed pair on the
-// returned conn's Events channel, so Client's reconnect loop has one failure
-// path regardless of platform.
+// Dial observes ctx cancellation. Native Dial waits for the handshake and may
+// return an error; browser Dial returns a pending socket and reports handshake
+// failures asynchronously through its Events channel.
 type dialer interface {
-	Dial(rawURL string, header http.Header) (conn, error)
+	Dial(ctx context.Context, rawURL string, header http.Header) (conn, error)
 }

@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 
@@ -34,50 +35,75 @@ Checks bundle policy, asset sizes/checksums, server launch files, and exported
 pages without starting the app, reading runtime secrets, or contacting a host.
 This is an offline artifact check; configure secrets and verify health on the
 destination separately. Build with gosx build --prod first.
+Exit codes: 0 checks passed, 1 checks failed, 2 invalid command arguments.
+With --json, check failures and argument errors both produce JSON reports.
 `)
 }
 
 func cmdDeploy() {
 	if err := runDeploy(os.Args[2:], os.Stdout); err != nil {
 		fmt.Fprintln(os.Stderr, "deploy check:", err)
-		os.Exit(1)
+		os.Exit(deploymentExitCode(err))
 	}
 }
 
-func runDeploy(args []string, out io.Writer) error {
+type deploymentUsageError struct{ error }
+
+func deploymentExitCode(err error) int {
+	if err == nil {
+		return 0
+	}
+	var usage *deploymentUsageError
+	if errors.As(err, &usage) {
+		return 2
+	}
+	return 1
+}
+
+func runDeploy(args []string, out io.Writer) (err error) {
+	jsonOut := slices.Contains(args, "--json")
+	report := deploymentCheckReport{Version: 1}
+	defer func() {
+		if !jsonOut {
+			return
+		}
+		report.OK = err == nil
+		if err != nil {
+			report.Errors = []string{err.Error()}
+		}
+		encoder := json.NewEncoder(out)
+		encoder.SetIndent("", "  ")
+		err = errors.Join(err, encoder.Encode(report))
+	}()
 	if len(args) > 0 && (args[0] == "--help" || args[0] == "-h" || args[0] == "help") {
+		jsonOut = false
 		deployUsage(out)
 		return nil
 	}
 	if len(args) == 0 || args[0] != "check" {
-		return errors.New("expected: gosx deploy check [--json] <dist>")
+		return &deploymentUsageError{errors.New("expected: gosx deploy check [--json] <dist>")}
 	}
-	jsonOut, target := false, ""
+	target := ""
 	for _, arg := range args[1:] {
 		switch arg {
 		case "--help", "-h":
+			jsonOut = false
 			deployUsage(out)
 			return nil
 		case "--json":
 			jsonOut = true
 		default:
 			if strings.HasPrefix(arg, "-") || target != "" {
-				return fmt.Errorf("unexpected argument %q", arg)
+				return &deploymentUsageError{fmt.Errorf("unexpected argument %q", arg)}
 			}
 			target = arg
 		}
 	}
 	if target == "" {
-		return errors.New("missing bundle directory; run gosx build --prod first")
+		return &deploymentUsageError{errors.New("missing bundle directory; run gosx build --prod first")}
 	}
-	report, err := checkDeploymentBundle(target)
-	if jsonOut {
-		encoder := json.NewEncoder(out)
-		encoder.SetIndent("", "  ")
-		if encodeErr := encoder.Encode(report); encodeErr != nil {
-			return encodeErr
-		}
-	} else if err == nil {
+	report, err = checkDeploymentBundle(target)
+	if !jsonOut && err == nil {
 		fmt.Fprintf(out, "Bundle checks passed: %d assets (%d bytes), %d static routes.\nLaunch the checked bundle with its run.sh script.\nConfigure runtime secrets and verify destination health before routing traffic.\n", report.Assets, report.AssetBytes, report.StaticRoutes)
 	}
 	return err
@@ -152,13 +178,22 @@ func checkDeploymentBundle(dir string) (report deploymentCheckReport, resultErr 
 			return report, fmt.Errorf("build.json: required runtime asset %s is missing", required.name)
 		}
 	}
-	for _, file := range []string{"server/app", "run.sh"} {
+	server := "server/app"
+	if _, err := root.Lstat(server); errors.Is(err, fs.ErrNotExist) {
+		server = "server/app.exe"
+	}
+	for _, file := range []string{server, "run.sh"} {
 		info, err := deploymentFileInfo(root, file)
 		if err != nil {
 			return report, err
 		}
-		if info.Size() == 0 || (runtime.GOOS != "windows" && info.Mode().Perm()&0111 == 0) {
+		if info.Size() == 0 || (runtime.GOOS != "windows" && file != "server/app.exe" && info.Mode().Perm()&0111 == 0) {
 			return report, fmt.Errorf("%s: expected a nonempty executable launch file", file)
+		}
+	}
+	if manifest.SceneAssets != nil {
+		if _, err := readDeploymentMetadata(root, manifest.SceneAssets.File); err != nil {
+			return report, err
 		}
 	}
 	seen := make(map[string]buildmanifest.HashedAsset)
@@ -208,8 +243,11 @@ func deploymentFileInfo(root *os.Root, name string) (fs.FileInfo, error) {
 		return nil, fmt.Errorf("invalid bundle path %q", name)
 	}
 	info, err := root.Lstat(name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("%s is missing; run gosx build --prod: %w", name, fs.ErrNotExist)
+	}
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", name, err)
+		return nil, fmt.Errorf("inspect %s: %w", name, err)
 	}
 	if !info.Mode().IsRegular() {
 		return nil, fmt.Errorf("%s: expected a regular file", name)

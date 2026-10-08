@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -78,6 +79,17 @@ func TestDeploymentCheckRejectsIncompleteOrUnsafeBundle(t *testing.T) {
 		edit func(*testing.T, string, *buildmanifest.Manifest)
 		want string
 	}{
+		{"missing policy", func(t *testing.T, d string, m *buildmanifest.Manifest) {
+			os.Remove(filepath.Join(d, "bundle-policy.json"))
+		}, "bundle-policy.json is missing; run gosx build --prod"},
+		{"missing scene report", func(t *testing.T, d string, m *buildmanifest.Manifest) {
+			m.SceneAssets = &buildmanifest.SceneAssetManifest{File: "scene-assets.json"}
+			writeDeploymentFixtureManifest(t, d, m)
+		}, "scene-assets.json is missing"},
+		{"scene report traversal", func(t *testing.T, d string, m *buildmanifest.Manifest) {
+			m.SceneAssets = &buildmanifest.SceneAssetManifest{File: "../outside"}
+			writeDeploymentFixtureManifest(t, d, m)
+		}, "invalid bundle path"},
 		{"missing asset", func(t *testing.T, d string, m *buildmanifest.Manifest) {
 			os.Remove(filepath.Join(d, "assets/runtime", m.Runtime.Bootstrap.File))
 		}, "bootstrap.fixture.js"},
@@ -165,10 +177,25 @@ func TestDeploymentCheckJSONFailureAndArguments(t *testing.T) {
 		t.Fatalf("missing JSON failure: %s (%v)", &out, err)
 	}
 	for _, args := range [][]string{nil, {"push"}, {"check"}, {"check", "--unknown", "dist"}, {"check", "one", "two"}} {
-		if err := runDeploy(args, &out); err == nil {
-			t.Fatalf("accepted invalid arguments %q", args)
+		for _, jsonOut := range []bool{false, true} {
+			command := append([]string(nil), args...)
+			if jsonOut {
+				command = append(command, "--json")
+			}
+			out.Reset()
+			err := runDeploy(command, &out)
+			if err == nil || deploymentExitCode(err) != 2 {
+				t.Fatalf("usage error %q: %v", command, err)
+			}
+			if jsonOut && (json.Unmarshal(out.Bytes(), &report) != nil || report.OK || report.Version != 1 || len(report.Errors) != 1) {
+				t.Fatalf("missing JSON argument error %q: %s", command, &out)
+			}
 		}
 	}
+	if deploymentExitCode(nil) != 0 || deploymentExitCode(err) != 1 {
+		t.Fatal("incorrect success/check exit codes")
+	}
+
 }
 
 func TestDeploymentRuntimeWalkIncludesSliceAssets(t *testing.T) {
@@ -222,5 +249,84 @@ func TestDeploymentRuntimeSliceCannotSkipValidation(t *testing.T) {
 				t.Fatalf("slice asset validation failures=%d, want 1", failures)
 			}
 		})
+	}
+}
+
+func TestDeploymentCheckAcceptsWindowsServer(t *testing.T) {
+	dir, _ := deploymentFixture(t)
+	exe := filepath.Join(dir, "server", "app.exe")
+	if err := os.Rename(filepath.Join(dir, "server", "app"), exe); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(exe, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if report, err := checkDeploymentBundle(dir); err != nil || !report.OK {
+		t.Fatalf("Windows bundle: %+v %v", report, err)
+	}
+	// A broken primary binary must not be hidden by the Windows fallback.
+	mustWriteFile(t, filepath.Join(dir, "server", "app"), "")
+	if _, err := checkDeploymentBundle(dir); err == nil {
+		t.Fatal("accepted empty primary server")
+	}
+}
+
+func TestDeploymentAssetsCoverManifest(t *testing.T) {
+	var manifest buildmanifest.Manifest
+	expected := make(map[string]string)
+	hashed := reflect.TypeFor[buildmanifest.HashedAsset]()
+	var fill func(reflect.Value, string)
+	fill = func(v reflect.Value, field string) {
+		if v.Type() == hashed {
+			asset := buildmanifest.HashedAsset{File: fmt.Sprintf("asset-%d.js", len(expected)), Size: 1}
+			expected[asset.File] = field
+			v.Set(reflect.ValueOf(asset))
+			return
+		}
+		switch v.Kind() {
+		case reflect.Struct:
+			for i := 0; i < v.NumField(); i++ {
+				fill(v.Field(i), field+"."+v.Type().Field(i).Name)
+			}
+		case reflect.Pointer:
+			v.Set(reflect.New(v.Type().Elem()))
+			fill(v.Elem(), field)
+		case reflect.Slice:
+			v.Set(reflect.MakeSlice(v.Type(), 1, 1))
+			fill(v.Index(0), field+"[]")
+		case reflect.Array:
+			for i := 0; i < v.Len(); i++ {
+				fill(v.Index(i), field+"[]")
+			}
+		case reflect.Map:
+			value := reflect.New(v.Type().Elem()).Elem()
+			fill(value, field+"{}")
+			v.Set(reflect.MakeMap(v.Type()))
+			v.SetMapIndex(reflect.Zero(v.Type().Key()), value)
+		}
+	}
+	fill(reflect.ValueOf(&manifest).Elem(), "Manifest")
+	for _, asset := range deploymentAssets(&manifest) {
+		if _, ok := expected[asset.File]; !ok {
+			t.Errorf("unexpected or duplicate asset %s", asset.File)
+		}
+		delete(expected, asset.File)
+	}
+	for _, field := range expected {
+		t.Errorf("uncovered HashedAsset field: %s", field)
+	}
+	// SceneAssets.File points to an unhashed report, which must also be present.
+	dir, fixture := deploymentFixture(t)
+	fixture.SceneAssets = &buildmanifest.SceneAssetManifest{File: "scene-assets.json"}
+	mustWriteFile(t, filepath.Join(dir, "scene-assets.json"), "{}")
+	writeDeploymentFixtureManifest(t, dir, fixture)
+	if _, err := checkDeploymentBundle(dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(dir, "scene-assets.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := checkDeploymentBundle(dir); err == nil || !strings.Contains(err.Error(), "scene-assets.json is missing") {
+		t.Fatalf("uncovered SceneAssets.File: %v", err)
 	}
 }

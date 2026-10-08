@@ -768,6 +768,7 @@ gosx desktop --bundle dist/offline    # Run a packaged app://gosx bundle
 gosx desktop --url <url> --native-bridge
                                       # Direct trusted host with built-in desktop APIs
 gosx build [--prod] <app>              # Build with hashed assets, optional static prerender
+gosx deploy check [--json] dist        # Validate a production bundle before upload
 gosx build --offline <app>             # Stage a versioned offline asset bundle
 gosx build --msix <app>                # Stage and package Windows MSIX output
 gosx build --sign --msix <app>         # Sign MSIX via signtool
@@ -1007,13 +1008,15 @@ manifest, and edge worker support. Validate the server bundle before upload:
 
 ```sh
 gosx deploy check dist
-gosx deploy check --json dist # structured result and nonzero exit on failure
+gosx deploy check --json dist # JSON for check failures and invalid arguments
 ```
 
 The check verifies the existing bundle policy, declared asset sizes, content
 hashes and script integrity, compressed sidecars, executable launch files, and
 exported route files. It reads only the bundle and works without starting the
-application, connecting to a database, or supplying production secrets. It is
+application, connecting to a database, or supplying production secrets.
+Exit codes are 0 for success, 1 for failed checks and 2 for invalid arguments.
+With `--json`, invalid arguments also produce a JSON report. This command is
 an offline artifact check; host compatibility, runtime configuration, migrations,
 and live health still need validation on the destination. It currently accepts
 server bundles from `gosx build`, not static-only `gosx export` output.

@@ -138,7 +138,7 @@ props and fetched only for first-person walking. Evidence lives in
 
 | Corpus ID | Current state | Closure needed |
 | --- | --- | --- |
-| `gltf-single-buffer-textured` | blocked | Add one end-to-end textured GLB case, not only isolated loader tests. |
+| `gltf-single-buffer-textured` | enforced | Single-BIN GLB with embedded PNG and standard PBR material produces four texture colors in native WebGL2 canvas pixels and production WebGPU pixels from the proof-private target. A white-image control fails both color oracles; actual WebGPU canvas presentation still requires release-pinned hardware evidence. |
 | `gltf-multi-buffer-external` | enforced | Indexed data-URI and same-origin external buffers are tested. |
 | `glb-bin-plus-external` | enforced | GLB BIN buffer 0 plus external buffer 1 is tested. |
 | `gltf-sparse-embedded-image` | enforced | Sparse overlays and embedded bufferView images are tested. |

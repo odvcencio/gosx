@@ -3,6 +3,7 @@
 package hubclient
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,7 +30,10 @@ func newDefaultDialer(enableCompression bool) dialer { return browserDialer{} }
 
 type browserDialer struct{}
 
-func (browserDialer) Dial(rawURL string, _ http.Header) (result conn, dialErr error) {
+func (browserDialer) Dial(ctx context.Context, rawURL string, _ http.Header) (result conn, dialErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			result = nil
@@ -38,20 +42,20 @@ func (browserDialer) Dial(rawURL string, _ http.Header) (result conn, dialErr er
 	}()
 	ws := js.Global().Get("WebSocket").New(rawURL)
 	ws.Set("binaryType", "arraybuffer")
-	bc := &browserConn{ws: ws, events: make(chan frameEvent, 64)}
+	bc := &browserConn{ws: ws, eventStream: newEventStream(64)}
 	bc.bind()
 	return bc, nil
 }
 
 type browserConn struct {
+	*eventStream
 	ws                                  js.Value
-	events                              chan frameEvent
 	onOpen, onMessage, onError, onClose js.Func
 }
 
 func (c *browserConn) bind() {
 	c.onOpen = js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		c.events <- frameEvent{Kind: frameOpen}
+		c.emit(frameEvent{Kind: frameOpen})
 		return nil
 	})
 	c.onMessage = js.FuncOf(func(_ js.Value, args []js.Value) any {
@@ -60,7 +64,7 @@ func (c *browserConn) bind() {
 		}
 		data := args[0].Get("data")
 		if data.Type() == js.TypeString {
-			c.events <- frameEvent{Kind: frameMessage, Data: []byte(data.String())}
+			c.emit(frameEvent{Kind: frameMessage, Data: []byte(data.String())})
 			return nil
 		}
 		// binaryType is "arraybuffer": a binary frame arrives as an
@@ -69,11 +73,11 @@ func (c *browserConn) bind() {
 		view := js.Global().Get("Uint8Array").New(data)
 		buf := make([]byte, view.Get("length").Int())
 		js.CopyBytesToGo(buf, view)
-		c.events <- frameEvent{Kind: frameMessage, Data: buf, Binary: true}
+		c.emit(frameEvent{Kind: frameMessage, Data: buf, Binary: true})
 		return nil
 	})
 	c.onError = js.FuncOf(func(_ js.Value, _ []js.Value) any {
-		c.events <- frameEvent{Kind: frameError, Err: errors.New("hubclient: websocket error")}
+		c.emit(frameEvent{Kind: frameError, Err: errors.New("hubclient: websocket error")})
 		return nil
 	})
 	c.onClose = js.FuncOf(func(_ js.Value, args []js.Value) any {
@@ -88,7 +92,7 @@ func (c *browserConn) bind() {
 		// event — it fires whether the socket closed locally, remotely, or
 		// because "error" preceded it — so it is the only safe place to
 		// close the channel and release the JS callbacks.
-		c.events <- frameEvent{Kind: frameClosed, Err: err}
+		c.emit(frameEvent{Kind: frameClosed, Err: err})
 		close(c.events)
 		c.release()
 		return nil
@@ -129,6 +133,7 @@ func (c *browserConn) Send(data []byte, binary bool) (err error) {
 }
 
 func (c *browserConn) Close() (err error) {
+	c.stop()
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("hubclient: close: %v", r)
@@ -136,8 +141,4 @@ func (c *browserConn) Close() (err error) {
 	}()
 	c.ws.Call("close", 1000)
 	return nil
-}
-
-func (c *browserConn) Events() <-chan frameEvent {
-	return c.events
 }
