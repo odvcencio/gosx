@@ -81,6 +81,8 @@ const (
 // remains an extension point for the permitted browser association integration.
 // Closed is last: closing stops admission for every subscriber and drains all
 // admitted callbacks before invoking it. Callbacks must not wait for Hub.Close.
+// Callers must release any lock a callback may acquire before calling Close,
+// which waits for those callbacks; holding that lock can deadlock shutdown.
 type Observer interface {
 	ClientConnected(*Hub, *Client, *http.Request)
 	ClientDisconnected(*Hub, *Client, DisconnectEvent)
