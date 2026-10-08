@@ -56,7 +56,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	if err != nil {
 		return result, err
 	}
-	if manifest.SourceSHA != opts.Public.SHA || manifest.FixturesSHA256 != opts.Public.FixtureSHA256 {
+	if manifest.SourceSHA != opts.Public.SHA || manifest.CatalogSHA256 != opts.Public.FixtureSHA256 || opts.Public.ArtifactSHA256 == nil || manifest.FixturesSHA256 != *opts.Public.ArtifactSHA256 {
 		return result, measureFailure("wrong-fixture", "/manifest/provenance")
 	}
 	selected := map[string]bool{}

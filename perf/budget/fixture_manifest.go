@@ -1,8 +1,13 @@
 package budget
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"io"
 	"os"
+	"strings"
 
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/internal/pagecaps"
@@ -77,6 +82,10 @@ func DecodeFixtureManifest(r io.Reader) (*FixtureManifest, error) {
 			return nil, measureFailure("wrong-fixture", "/manifest/routes/capabilities")
 		}
 	}
+	digest, err := FixtureManifestSHA256(manifest)
+	if err != nil || digest != manifest.FixturesSHA256 {
+		return nil, measureFailure("wrong-fixture", "/manifest/fixturesSHA256")
+	}
 	return &manifest, nil
 }
 
@@ -98,4 +107,32 @@ func readMeasureFile(root *os.Root, name string, limit int64) ([]byte, error) {
 		return nil, measureFailure("wrong-fixture", "/file")
 	}
 	return data, nil
+}
+
+// FixtureManifestSHA256 hashes the complete producer contract independently
+// of the stable catalog reference. Its own digest and fixed schema label are
+// omitted; nested keys are canonical and integer values retain their spelling.
+func FixtureManifestSHA256(manifest FixtureManifest) (string, error) {
+	manifest.FixturesSHA256 = strings.Repeat("0", 64)
+	if err := validateTyped("FixtureManifest", manifest); err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return "", measureFailure("wrong-fixture", "/manifest")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	var fields map[string]any
+	if decoder.Decode(&fields) != nil {
+		return "", measureFailure("wrong-fixture", "/manifest")
+	}
+	delete(fields, "fixturesSHA256")
+	delete(fields, "schema")
+	data, err = json.Marshal(fields)
+	if err != nil {
+		return "", measureFailure("wrong-fixture", "/manifest")
+	}
+	sum := sha256.Sum256(append(data, '\n'))
+	return hex.EncodeToString(sum[:]), nil
 }

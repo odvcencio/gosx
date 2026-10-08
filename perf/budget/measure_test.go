@@ -55,10 +55,16 @@ func testRouteMeasurement(t *testing.T) (MeasureOptions, *FixtureManifest, []byt
 		w.WriteHeader(404)
 	}))
 	t.Cleanup(server.Close)
-	return MeasureOptions{App: "fixture", DistDir: dir, BaseURL: server.URL, Client: server.Client(), Public: publicTestReport(t).Info}, manifest, document, program
+	public := publicTestReport(t).Info
+	public.FixtureSHA256, public.ArtifactSHA256 = manifest.CatalogSHA256, &manifest.FixturesSHA256
+	return MeasureOptions{App: "fixture", DistDir: dir, BaseURL: server.URL, Client: server.Client(), Public: public}, manifest, document, program
 }
 func writeTestFixtureManifest(t *testing.T, dir string, manifest *FixtureManifest) {
 	t.Helper()
+	digest, digestErr := FixtureManifestSHA256(*manifest)
+	if digestErr == nil {
+		manifest.FixturesSHA256 = digest
+	}
 	data, err := json.Marshal(manifest)
 	if err != nil {
 		t.Fatal(err)
