@@ -25,6 +25,7 @@ import vm from "node:vm";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import rendererSourceSet from "./scene3d-renderer-source-set.js";
+import ts from "../runtime/node_modules/typescript/lib/typescript.js";
 
 const { readSceneRendererBackendSrc } = rendererSourceSet;
 
@@ -218,3 +219,50 @@ test(
     }
   },
 );
+
+// Inspect the HLSL output too: valid WGSL can still lower to duplicate array
+// constructor definitions, which DXC rejects when Firefox uses the DX12 path.
+function loadBuiltinPostShaders() {
+  const statements = [];
+  const names = [];
+  const tree = ts.createSourceFile("webgpu.js", webgpuSource, ts.ScriptTarget.Latest, true);
+  for (const node of tree.statements) {
+    if (ts.isFunctionDeclaration(node) &&
+        ["sceneWebGPUPostPrecisionPreamble", "sceneWebGPUPostShaderSource"].includes(node.name?.text)) {
+      statements.push(node.getText(tree));
+    }
+    if (!ts.isVariableStatement(node)) continue;
+    for (const declaration of node.declarationList.declarations) {
+      const name = declaration.name.getText(tree);
+      if (!name.startsWith("WGSL_POST_")) continue;
+      statements.push(`var ${name} = ${declaration.initializer.getText(tree)};`);
+      if (!name.endsWith("_BODY")) names.push(name);
+    }
+  }
+  const context = {};
+  vm.runInNewContext(statements.join("\n") + `\nshaders = { ${names.join(", ")} };`, context);
+  return context.shaders;
+}
+
+test("all built-in post shaders lower to HLSL without duplicate constructors", {
+  skip: !hasNaga && process.env.GOSX_REQUIRE_NAGA_HLSL !== "1" ? "naga is not on PATH" : false,
+}, () => {
+  const shaders = loadBuiltinPostShaders();
+  assert.ok(Object.keys(shaders).length >= 13, "cover every built-in post shader and both precisions");
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "gosx-post-hlsl-"));
+  try {
+    for (const [name, code] of Object.entries(shaders)) {
+      const input = path.join(directory, name + ".wgsl");
+      const output = path.join(directory, name + ".hlsl");
+      fs.writeFileSync(input, code);
+      execFileSync("naga", [input, output], { stdio: "pipe" });
+      const hlsl = fs.readFileSync(output, "utf8");
+      const constructors = [...hlsl.matchAll(/^\s*[\w<>]+(?:\s*\[[^\]]+\])?\s+(Construct\w+)\s*\([^;{}]*\)\s*\{/gm)]
+        .map(match => match[1]);
+      assert.equal(new Set(constructors).size, constructors.length,
+        `${name}: HLSL must not redefine an array constructor`);
+    }
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
