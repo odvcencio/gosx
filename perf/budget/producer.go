@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/assetmeasure"
 	"m31labs.dev/gosx/internal/pagecaps"
 )
 
@@ -146,6 +147,9 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if err := writeProducerFile(root, strings.TrimPrefix(urlPath, "/"), body); err != nil {
 			return "", err
 		}
+		if err := copyProducerSidecars(root, relative, strings.TrimPrefix(urlPath, "/"), body); err != nil {
+			return "", err
+		}
 		if seen[rule.ID] {
 			return "", fail("/public/id")
 		}
@@ -201,6 +205,22 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if err := writeProducerFile(root, file, body); err != nil {
 			return "", err
 		}
+		// Prerendered release encodings differ from live HTML compression. Retain
+		// them only when the static document is exactly the fetched snapshot.
+		static := "static/" + file
+		if _, err := root.Stat(static); err == nil {
+			built, err := readMeasureFile(root, static, maxMeasureBody)
+			if err != nil {
+				return "", fail("/routes/document")
+			}
+			if bytes.Equal(built, body) {
+				if err := copyProducerSidecars(root, static, file, body); err != nil {
+					return "", err
+				}
+			}
+		} else if !os.IsNotExist(err) {
+			return "", fail("/routes/document")
+		}
 		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: id, SHA256: producerHash(body), URL: route.RouteTemplate, Owner: "app", Kind: "html", Phase: "critical", Condition: "always", Dependencies: []string{}})
 		seen[id] = true
 	}
@@ -224,6 +244,24 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 }
 
 func producerHash(body []byte) string { sum := sha256.Sum256(body); return hex.EncodeToString(sum[:]) }
+
+func copyProducerSidecars(root *os.Root, source, target string, body []byte) error {
+	for _, encoding := range []struct{ suffix, name string }{{".gz", "gzip"}, {".br", "br"}} {
+		_, err := root.Stat(source + encoding.suffix)
+		if os.IsNotExist(err) {
+			continue
+		}
+		encoded, readErr := readMeasureFile(root, source+encoding.suffix, maxMeasureBody)
+		if err != nil || readErr != nil || assetmeasure.VerifySidecar(body, encoded, encoding.name) != nil {
+			return &InputError{Code: "stale-sidecar", Reference: "producer", Pointer: "/encoding"}
+		}
+		if err := writeProducerFile(root, target+encoding.suffix, encoded); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func writeProducerFile(root *os.Root, name string, data []byte) error {
 	fail := func() error { return &InputError{Code: "write-failed", Reference: "producer", Pointer: "/output"} }
 	if !safePath(name) {

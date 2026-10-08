@@ -2,6 +2,7 @@ package budget
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,82 @@ func fixtureProducer(t *testing.T) (ProducerOptions, []byte) {
 		t.Fatal(err)
 	}
 	return ProducerOptions{Inputs: inputs, Build: build, App: "fixture", DistDir: measured.DistDir, BaseURL: measured.BaseURL, SourceSHA: manifest.SourceSHA, Client: measured.Client}, document
+}
+
+func TestProducerPublicSidecarsMatchWholeBodies(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(map[bool]string{false: "valid", true: "stale"}[stale], func(t *testing.T) {
+			opts, _ := fixtureProducer(t)
+			catalogPath := filepath.Join(opts.Inputs.rootDir, "catalog.json")
+			raw, _ := os.ReadFile(catalogPath)
+			var catalog map[string]any
+			json.Unmarshal(raw, &catalog)
+			rule := map[string]any{"id": "app/fixture/public/styles.css", "owner": "app", "kind": "css", "phase": "dormant", "condition": "always", "dependencies": []string{}}
+			catalog["assetRules"] = append(catalog["assetRules"].([]any), rule)
+			raw, _ = json.Marshal(catalog)
+			os.WriteFile(catalogPath, raw, 0600)
+			opts.Inputs.File.Fixtures.SHA256 = producerHash(raw)
+			os.MkdirAll(filepath.Join(opts.DistDir, "public"), 0700)
+			body := []byte("body{color:green}")
+			os.WriteFile(filepath.Join(opts.DistDir, "public/styles.css"), body, 0600)
+			var encoded bytes.Buffer
+			writer := gzip.NewWriter(&encoded)
+			if stale {
+				body = []byte("body{color:red}")
+			}
+			writer.Write(body)
+			writer.Close()
+			os.WriteFile(filepath.Join(opts.DistDir, "public/styles.css.gz"), encoded.Bytes(), 0600)
+			digest, err := ProduceFixture(context.Background(), opts)
+			if stale {
+				if err == nil || digest != "" {
+					t.Fatal("stale release representation accepted")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			saved, err := os.ReadFile(filepath.Join(opts.DistDir, "styles.css.gz"))
+			if err != nil || !bytes.Equal(saved, encoded.Bytes()) {
+				t.Fatal("verified release sidecar was discarded", err)
+			}
+		})
+	}
+}
+
+func TestProducerPreservesVerifiedPrerenderSidecars(t *testing.T) {
+	for _, stale := range []bool{false, true} {
+		t.Run(map[bool]string{false: "valid", true: "stale"}[stale], func(t *testing.T) {
+			opts, body := fixtureProducer(t)
+			static := filepath.Join(opts.DistDir, "static/counter")
+			if err := os.MkdirAll(static, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(static, "index.html"), body, 0600); err != nil {
+				t.Fatal(err)
+			}
+			var encoded bytes.Buffer
+			writer := gzip.NewWriter(&encoded)
+			if stale {
+				body = []byte("stale document")
+			}
+			writer.Write(body)
+			writer.Close()
+			os.WriteFile(filepath.Join(static, "index.html.gz"), encoded.Bytes(), 0600)
+			digest, err := ProduceFixture(context.Background(), opts)
+			if stale {
+				if err == nil || digest != "" {
+					t.Fatal("stale prerender encoding accepted")
+				}
+				return
+			}
+			saved, readErr := os.ReadFile(filepath.Join(opts.DistDir, "counter/index.html.gz"))
+			if err != nil || readErr != nil || !bytes.Equal(saved, encoded.Bytes()) {
+				t.Fatal("prerender encoding missing", err, readErr)
+			}
+		})
+	}
 }
 
 func TestProducerSnapshotsVerifiedBodiesAndIndependentProof(t *testing.T) {
