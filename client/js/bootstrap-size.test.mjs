@@ -731,7 +731,9 @@ const budgets = [
     // 430293). Raise only this exceeded target; governed allowances stay fixed.
     // Pending-pose and CPU playback retention adds 551 more Brotli bytes
     // (430293 -> 430844); only the exceeded target moves, by 500 bytes.
-    file: "bootstrap.js", raw: 1861800, gzip: 524000, brotli: 413800 },
+    file: "bootstrap.js", raw: 1861800, gzip: 524000,
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432078.
+    brotli: 432100 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1254,7 +1256,9 @@ const budgets = [
     // 152948); this is the smallest 100-byte target step that clears the cap.
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
-    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600, brotli: 145650 },
+    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600,
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 153692.
+    brotli: 153700 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1467,7 +1471,11 @@ const budgets = [
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 436000 -> 436600 (measured 458426); gzip 110700 -> 111000 (measured 116451); brotli 91800 -> 92100 (measured 96629). Governed allowances stay fixed.
     // Detail cache lifecycle adds 1,086 raw / 314 gzip / 280 Brotli WebGPU bytes.
     // Raise only breached measured targets; the size policy stays fixed.
-    file: "bootstrap-feature-scene3d-webgpu.js", raw: 436600, gzip: 111000, brotli: 92100 },
+    file: "bootstrap-feature-scene3d-webgpu.js",
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 460873.
+    raw: 460900, gzip: 111000,
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97791.
+    brotli: 97800 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1931,7 +1939,8 @@ const routeBudgets = [
     gzip: 383800,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
-    brotli: 320000,
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337813.
+    brotli: 337900,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2497,7 +2506,8 @@ const routeBudgets = [
     raw: 1235900,
     gzip: 340400,
     // The same 564-byte shared runtime addition exceeds this route's cap.
-    brotli: 283305,
+    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299186.
+    brotli: 299200,
   },
 
 ];

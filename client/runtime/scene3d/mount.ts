@@ -1476,7 +1476,6 @@
         }
         renderFrame(now, lastRenderReason || "refresh");
     }
-
 	    let sceneRendererRecentlySwapped = false;
 	    let sceneRendererLastSwapReason = "";
 	    let sceneControlHandle = null;
@@ -1485,7 +1484,6 @@
 	    let pickHandle = null;
         let releaseControllerPickBridge = null;
 	    let latestScenePickDetail = null;
-
 	    function swapRenderer(nextRenderer, fallbackReason) {
 	      if (!nextRenderer) {
 	        return false;
@@ -2199,7 +2197,6 @@
         }
       };
     }
-
     function readSceneSourceCamera() {
       if (latestBundle && latestBundle.sourceCamera) {
         return latestBundle.sourceCamera;
@@ -2209,7 +2206,6 @@
       }
       return sceneState.camera;
     }
-
 	    function disposeSceneCanvasInteractionHandles() {
           if (releaseControllerPickBridge) releaseControllerPickBridge();
           releaseControllerPickBridge = null;
@@ -2230,7 +2226,6 @@
 	      gizmoDragHandle = null;
 	      pickHandle = null;
 	    }
-
 	    function installSceneCanvasInteractionHandles() {
           releaseControllerPickBridge = setupSceneControllerPickBridge(mount, canvas, () => viewport, () => latestBundle);
 	      pickHandle = setupScenePickInteractions(canvas, props, function() {
