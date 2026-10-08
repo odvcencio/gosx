@@ -4233,6 +4233,10 @@
         state.lights.delete(sceneObjectKey(command.objectId));
         return;
       case SCENE_CMD_SET_TRANSFORM:
+        const modelResult = applySceneModelTransformCommand(state, command.objectId, command.data);
+        if (modelResult !== false) return modelResult;
+        applySceneObjectPatch(state, command.objectId, command.data);
+        return;
       case SCENE_CMD_SET_MATERIAL:
         applySceneObjectPatch(state, command.objectId, command.data);
         return;
@@ -4385,6 +4389,39 @@
       return null;
     }
     return sceneTrackModelHydrationPromise(state, hydrateSceneStateModels(state, null));
+  }
+
+  function applySceneModelTransformCommand(state, objectID, data) {
+    const models = state && state.models;
+    const index = Array.isArray(models) ? models.findIndex(function(model) {
+      return model.id === sceneObjectKey(objectID);
+    }) : -1;
+    if (index < 0) return false;
+    const current = models[index];
+    const next = Object.assign({}, current);
+    for (const key of ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) {
+      if (!sceneOwns(data, key)) continue;
+      next[key] = key === "parentMatrix" ? sceneNormalizeParentMatrix(data[key], current[key])
+        : sceneNumber(data[key], current[key]);
+    }
+    const records = state._hydratedModelRecords;
+    const key = sceneRigidInstanceHydrationKey(state, current, sceneModelTransformMatrix(current));
+    const staged = records && records.rigidInstances && records.rigidInstances.get(key);
+    // A Model's children use root/primitive IDs, so a root command cannot go
+    // through the ordinary object lookup. Retained rigid geometry needs only
+    // a new parent matrix; preserve every material and resident vertex stream.
+    const fitted = staged ? sceneModelWithAssetFit(next, { bounds: staged.rigidInstanceModel._fitBounds }) : next;
+    const matrix = sceneModelTransformMatrix(fitted);
+    const retained = !state._modelHydrationPromise && sceneRigidInstanceHydrationEligible(next, matrix)
+      ? scenePrepareRigidInstancePatch(state, staged, fitted, matrix) : null;
+    models[index] = next;
+    if (retained) {
+      sceneCommitRigidInstancePatch(retained);
+      return null;
+    }
+    // Static, animated, mirrored, and in-flight models keep the established
+    // hydration semantics. A new generation fences any older pending pose.
+    return sceneRehydrateModelsAfterCommand(state);
   }
 
   function applySceneModelsCommand(state, data) {

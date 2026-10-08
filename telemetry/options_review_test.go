@@ -3,9 +3,91 @@ package telemetry
 import (
 	"errors"
 	"net/http"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+func TestListenerOffCaseAndUnixPathLimit(t *testing.T) {
+	clearTelemetryEnv(t)
+	for _, value := range []string{"OFF", "Off", "oFf"} {
+		base := Defaults()
+		base.Listen.Addr = value
+		n, err := FromEnv(base)
+		if err != nil || n.Listen.Addr != "off" {
+			t.Fatalf("off address normalization: %v", err)
+		}
+		t.Setenv("GOSX_TELEMETRY_ADDR", value)
+		n, err = FromEnv(Defaults())
+		if err != nil || n.Listen.Addr != "off" {
+			t.Fatalf("off environment normalization: %v", err)
+		}
+		t.Setenv("GOSX_TELEMETRY_ADDR", "")
+	}
+	capacity := unixSocketPathCapacity()
+	if runtime.GOOS == "linux" && capacity != 108 {
+		t.Fatalf("Linux sockaddr_un capacity = %d", capacity)
+	}
+	if capacity == 0 {
+		if err := validateListenerOptions(ListenOptions{Addr: "unix:/socket"}); err == nil {
+			t.Fatal("unsupported Unix address accepted")
+		}
+		return
+	}
+	for _, size := range []int{capacity - 1, capacity, capacity + 1} {
+		addr := "unix:/" + strings.Repeat("x", size-1)
+		err := validateListenerOptions(ListenOptions{Addr: addr})
+		if size < capacity {
+			if err != nil {
+				t.Fatal("valid maximum Unix path rejected", err)
+			}
+		} else if err == nil || strings.Contains(err.Error(), strings.TrimPrefix(addr, "unix:")) {
+			t.Fatal("oversized Unix path accepted or disclosed", err)
+		}
+	}
+}
+
+func TestEnvironmentCredentialReplacesCodeSource(t *testing.T) {
+	clearTelemetryEnv(t)
+	for _, role := range []string{"METRICS", "ADMIN"} {
+		t.Run(role, func(t *testing.T) {
+			base := Defaults()
+			credential := &base.Listen.Metrics
+			if role == "ADMIN" {
+				credential = &base.Listen.Admin
+			}
+			*credential = Credential{TokenFile: "configured-credential-file"}
+			name := "GOSX_TELEMETRY_" + role + "_TOKEN"
+			token := strings.Repeat("c", 32)
+			t.Setenv(name, token)
+			n, err := FromEnv(base)
+			got := n.Listen.Metrics
+			if role == "ADMIN" {
+				got = n.Listen.Admin
+			}
+			if err != nil || got.Token != token || got.TokenFile != "" {
+				t.Fatal("environment token did not replace the code file", err)
+			}
+			t.Setenv(name, "")
+			t.Setenv(name+"_FILE", "environment-credential-file")
+			*credential = Credential{Token: token}
+			n, err = FromEnv(base)
+			got = n.Listen.Metrics
+			if role == "ADMIN" {
+				got = n.Listen.Admin
+			}
+			if err != nil || got.Token != "" || got.TokenFile != "environment-credential-file" {
+				t.Fatal("environment file did not replace the code token", err)
+			}
+			t.Setenv(name, token)
+			_, err = FromEnv(base)
+			var config *ConfigError
+			if !errors.As(err, &config) || config.Code != "duplicate_source" {
+				t.Fatal("ambiguous environment sources accepted", err)
+			}
+		})
+	}
+}
 
 func clearTelemetryEnv(t *testing.T) {
 	t.Helper()

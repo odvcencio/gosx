@@ -4,12 +4,16 @@
 // swap contract; this file isolates just the rescan-trigger event, whose
 // contract fix/region-rescan-countdowns adds a navigation.ts listener for
 // (see runtime-30-region-rescan.test.js for that listener's own coverage).
+import { createRequire } from 'node:module';
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+
+const ts = createRequire(new URL('../runtime/package.json', import.meta.url))('typescript');
+const transpile = source => ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const moduleSrc = [
@@ -87,7 +91,7 @@ function runModule(regions, payload, opts) {
         dispatchedEvents.push(event);
         return true;
       },
-      createElement: () => ({}),
+      createElement: () => ({ setAttribute() {} }),
       head: { appendChild: (script) => script },
     },
     window: {
@@ -101,6 +105,7 @@ function runModule(regions, payload, opts) {
   };
   ctx.window.document = ctx.document;
   vm.createContext(ctx);
+  vm.runInContext(transpile(fs.readFileSync(new URL("../runtime/scene3d/script-loader.ts", import.meta.url), "utf8")), ctx);
   vm.runInContext(scene3dBridgeSrc, ctx);
   vm.runInContext(moduleSrc, ctx);
   return { dispatchedEvents, fetches, context: ctx };

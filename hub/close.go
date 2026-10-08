@@ -92,12 +92,20 @@ func (h *Hub) finishClose() {
 	h.telemetryObserver = nil
 	h.queueSampleEvery.Store(0)
 	h.mu.Unlock()
-	// Remove the list before callbacks: even a reentrant Broadcast from a
-	// Closed callback must not admit another dispatch to these subscribers.
+	// Retire every subscriber before waiting for any callback. Atomic admission
+	// prevents dispatch from entering a retired subscriber.
 	if list != nil {
+		active := make([]bool, len(list.slots))
+		for i, slot := range list.slots {
+			active[i] = slot.retire()
+		}
 		for _, slot := range list.slots {
-			h.visitObserver(slot, func(o Observer) { o.Closed(h) })
-			slot.active.Store(false)
+			<-slot.drained
+		}
+		for i, slot := range list.slots {
+			if active[i] {
+				h.invokeObserver(slot, func(o Observer) { o.Closed(h) })
+			}
 		}
 	}
 	h.mu.Lock()
