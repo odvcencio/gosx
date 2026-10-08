@@ -133,6 +133,7 @@ func stagePerfBuildAssets(dist string, manifest *BuildManifest, appID string) er
 		}
 		file, url := "assets/runtime/"+asset.file, buildmanifest.AssetURL("/gosx/assets", "runtime", asset.file)
 		if asset.embedded != nil {
+			staged := file
 			file, url = "", runtimehost.NavigationRuntimePath
 			for _, sidecar := range []struct {
 				data     []byte
@@ -145,6 +146,19 @@ func stagePerfBuildAssets(dist string, manifest *BuildManifest, appID string) er
 			hash, ok := runtimehost.NavigationRuntimeAssetHash(url)
 			if !ok || hash != perfBuildDigest(asset.embedded) {
 				return perfBuildError("invalid-input", "/perfAssetUses")
+			}
+			// Retain this revision's embedded body and representations so a
+			// collector built from a later revision can measure the base build.
+			if err := root.WriteFile(staged, asset.embedded, 0600); err != nil {
+				return perfBuildError("asset-unavailable", "/perfAssetUses")
+			}
+			for _, sidecar := range []struct {
+				suffix string
+				data   []byte
+			}{{".gz", asset.gzipSidecar}, {".br", asset.brotliSidecar}} {
+				if err := root.WriteFile(staged+sidecar.suffix, sidecar.data, 0600); err != nil {
+					return perfBuildError("asset-unavailable", "/perfAssetUses")
+				}
 			}
 		}
 		if err := add("framework/runtime/"+name, file, url, "framework", kind, condition, asset.embedded); err != nil {
