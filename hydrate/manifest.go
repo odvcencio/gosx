@@ -41,6 +41,9 @@ type Manifest struct {
 	// Bundles maps bundle IDs to WASM asset paths.
 	Bundles map[string]BundleRef `json:"bundles"`
 
+	// Preview starts the shared signal bridge even when the page has no islands.
+	Preview bool `json:"preview,omitempty"`
+
 	// Runtime points to the shared island WASM runtime.
 	Runtime RuntimeRef `json:"runtime"`
 

@@ -240,7 +240,7 @@
     if (manifestHasEntries(manifest, "controllers")) {
       names.push("controllers");
     }
-    if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
+    if (manifest.preview || manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
       names.push("islands");
     }
     return names;
@@ -251,7 +251,7 @@
   }
 
   function manifestNeedsWASMRuntime(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
+    return Boolean(manifest && manifest.preview) || manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
   }
 
   function manifestNeedsSharedEngineRuntime(manifest) {

@@ -1,10 +1,12 @@
 package island
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/buildmanifest"
 )
 
 // preview-bootstrap tests cover the island.EnablePreviewBootstrap() flag.
@@ -101,5 +103,84 @@ func TestEnablePreviewBootstrapDoesNotBlockIslands(t *testing.T) {
 	}
 	if !strings.Contains(head, "/gosx/relay.js") {
 		t.Fatalf("preview bootstrap should still emit relay.js when islands also present; got %q", head)
+	}
+}
+
+func TestPreviewSelectiveBootstrapInitializesRuntime(t *testing.T) {
+	EnablePreviewBootstrap()
+	t.Cleanup(ResetPreviewBootstrap)
+	r := NewRenderer("main")
+	r.SetRuntime("/runtime.wasm", "", 123)
+	r.SetBootstrapRuntimePath("/bootstrap-runtime.js")
+	r.SetBootstrapFeaturePaths("/bootstrap-feature-islands.js", "", "")
+
+	if got := r.Summary(); got.BootstrapPath != "/bootstrap-runtime.js" || got.BootstrapFeatureIslandsPath != "/bootstrap-feature-islands.js" || !got.Manifest {
+		t.Fatalf("preview runtime plan = %+v", got)
+	}
+	manifestJSON, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		Preview bool `json:"preview"`
+		Runtime struct {
+			Path string `json:"path"`
+		} `json:"runtime"`
+	}
+	if err := json.Unmarshal([]byte(manifestJSON), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if !manifest.Preview || manifest.Runtime.Path != "/runtime.wasm" {
+		t.Fatalf("preview manifest = %s", manifestJSON)
+	}
+	head := gosx.RenderHTML(r.PreloadHints()) + gosx.RenderHTML(r.PageHead())
+	if !strings.Contains(head, `href="/bootstrap-feature-islands.js" as="script"`) {
+		t.Fatalf("preview must preload its islands feature: %s", head)
+	}
+	if strings.Contains(head, `data-gosx-script="patch"`) || strings.Contains(head, "bootstrap-feature-engines.js") {
+		t.Fatalf("preview emitted unrelated features: %s", head)
+	}
+	assertPreviewRelayBeforeBootstrap(t, head)
+}
+
+func TestPreviewSelectiveBootstrapCompatibilityFallback(t *testing.T) {
+	EnablePreviewBootstrap()
+	t.Cleanup(ResetPreviewBootstrap)
+	for _, missing := range []string{"runtime", "islands", "both", "manifest"} {
+		t.Run(missing, func(t *testing.T) {
+			r := NewRenderer("main")
+			if missing == "manifest" {
+				if err := r.ApplyBuildManifest(&buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+					Bootstrap: buildmanifest.HashedAsset{File: "bootstrap.js"},
+				}}, "/gosx/assets"); err != nil {
+					t.Fatal(err)
+				}
+			}
+			r.SetRuntime("/runtime.wasm", "", 123)
+			if missing == "runtime" || missing == "both" {
+				r.bootstrapRuntimePath = ""
+			}
+			if missing == "islands" || missing == "both" {
+				r.bootstrapFeatureIslandsPath = ""
+			}
+			if r.clientRuntimePlan().Selective || r.Summary().BootstrapPath != r.bootstrapPath || r.Summary().BootstrapFeatureIslandsPath != "" {
+				t.Fatalf("incomplete selective assets must use compatibility bootstrap: %+v", r.Summary())
+			}
+			head := gosx.RenderHTML(r.PreloadHints()) + gosx.RenderHTML(r.PageHead())
+			if !strings.Contains(head, `"preview":true`) || !strings.Contains(head, `"path":"/runtime.wasm"`) {
+				t.Fatalf("fallback must still initialize the preview bridge: %s", head)
+			}
+			assertPreviewRelayBeforeBootstrap(t, head)
+		})
+	}
+}
+
+func assertPreviewRelayBeforeBootstrap(t *testing.T, head string) {
+	t.Helper()
+	relay := strings.Index(head, `data-gosx-script="relay"`)
+	loader := strings.Index(head, `data-gosx-script="wasm-exec"`)
+	bootstrap := strings.Index(head, `data-gosx-script="bootstrap"`)
+	if relay < 0 || loader < relay || bootstrap < loader {
+		t.Fatalf("preview scripts must run relay, WASM loader, then bootstrap: %s", head)
 	}
 }
