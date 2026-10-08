@@ -375,6 +375,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 		frame.Diagnostics = append(frame.Diagnostics, unsupported("html", html.ID, "native PNG previews do not rasterize HTML surfaces yet"))
 	}
 	frame.Diagnostics = append(frame.Diagnostics, textures.diagnostics()...)
+	frame.Diagnostics = append(frame.Diagnostics, bundle.MaterialDiagnostics(frame)...)
 	frame.ObjectCount = len(ir.Objects) + len(ir.InstancedMeshes)
 	return frame
 }
