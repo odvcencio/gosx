@@ -17,9 +17,21 @@ type projectConfig struct {
 }
 
 type projectBuildConfig struct {
-	Hooks   projectBuildHooks   `json:"hooks"`
-	Bundle  bundlepolicy.Config `json:"bundle"`
-	Runtime projectBuildRuntime `json:"runtime"`
+	Hooks     projectBuildHooks     `json:"hooks"`
+	Bundle    bundlepolicy.Config   `json:"bundle"`
+	Runtime   projectBuildRuntime   `json:"runtime"`
+	Prerender projectBuildPrerender `json:"prerender"`
+}
+
+// projectBuildPrerender controls production-build snapshots. An absent setting
+// retains automatic export of static routes; false builds assets and the server
+// without starting the application. Explicit gosx export remains available.
+type projectBuildPrerender struct {
+	Enabled *bool `json:"enabled"`
+}
+
+func (p projectBuildPrerender) enabled() bool {
+	return p.Enabled == nil || *p.Enabled
 }
 
 type projectBuildHooks struct {

@@ -183,3 +183,51 @@ window.__gosx_action("counter-1", "increment", "{}");
 		t.Fatal("expected dispatch log entries")
 	}
 }
+
+func TestInjectReadyHandlerChaining(t *testing.T) {
+	d := requireDriver(t, 10*time.Second)
+	if err := InjectDriver(d); err != nil {
+		t.Fatal(err)
+	}
+	page := `<!DOCTYPE html><html><body><script>
+var calls = [];
+window.__gosx_runtime_ready = function(value) { calls.push("first:" + value + ":" + this.tag); return 7; };
+var prior = window.__gosx_runtime_ready;
+var stable = prior === window.__gosx_runtime_ready;
+window.__gosx_runtime_ready = function(value) { prior.call(this, value); calls.push("second:" + value); return 9; };
+var chained = window.__gosx_runtime_ready;
+window.__gosx_runtime_ready = chained;
+var idempotent = chained === window.__gosx_runtime_ready;
+var result = window.__gosx_runtime_ready.call({tag: "owner"}, "ready");
+window.__gosx_runtime_ready = undefined;
+var cleared = window.__gosx_runtime_ready === undefined;
+var priorResult = prior.call({tag: "saved"}, "later");
+window.chainResult = {calls: calls, stable: stable, idempotent: idempotent, result: result, cleared: cleared, priorResult: priorResult};
+</script></body></html>`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { fmt.Fprint(w, page) }))
+	defer srv.Close()
+	if err := d.Navigate(srv.URL); err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Calls       []string `json:"calls"`
+		Stable      bool     `json:"stable"`
+		Idempotent  bool     `json:"idempotent"`
+		Result      int      `json:"result"`
+		Cleared     bool     `json:"cleared"`
+		PriorResult int      `json:"priorResult"`
+	}
+	if err := d.Evaluate(`window.chainResult`, &result); err != nil {
+		t.Fatal(err)
+	}
+	if !result.Stable || !result.Idempotent || !result.Cleared || result.Result != 9 || result.PriorResult != 7 || fmt.Sprint(result.Calls) != "[first:ready:owner second:ready first:later:saved]" {
+		t.Fatalf("ready chain: %+v", result)
+	}
+	var count int
+	if err := d.Evaluate(`performance.getEntriesByName("gosx:perf:ready").length`, &count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("readiness marks=%d, want 1", count)
+	}
+}

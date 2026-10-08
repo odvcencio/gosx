@@ -54,6 +54,9 @@ type appShutdown struct {
 	errors    []error
 	result    error
 	panicOnce sync.Once
+	// Tests may shorten the no-deadline cooperative window before Shutdown.
+	// Zero preserves the production 30-second window.
+	noDeadlineGrace time.Duration
 }
 
 // ConfigurationOpen reports whether lifecycle extensions can be attached.
@@ -111,9 +114,10 @@ func (a *App) UseShutdownHook(name string, hooks ShutdownHooks) (func(), error) 
 // Shutdown is terminal: this App cannot subsequently ListenAndServe again.
 // Scheduled work drains for at most 30 seconds (or ShutdownGrace when a
 // deadline is present). A deadline reserves max(5 seconds, 25% of its remaining
-// time) for hooks. The scheduler is cancelled at that boundary, then joined
-// within the shared context. Drain and Flush callbacks are always attempted
-// afterward, even when that context has expired.
+// time) for hooks. After cancellation, deadline shutdowns wait only until the
+// deadline minus half that reserve; hooks can therefore overlap a cancelled
+// run still unwinding. Without a deadline, cancelled runs are joined without
+// limit. Drain and Flush callbacks are always attempted afterward.
 func (a *App) Shutdown(ctx context.Context) error {
 	if a == nil {
 		return nil
@@ -161,13 +165,34 @@ func (a *App) runShutdown(ctx context.Context, srv *http.Server, scheduler *sche
 	}
 	if scheduler != nil {
 		grace := scheduledDrainWindow(ctx, scheduler.ShutdownGrace())
-		drainCtx, cancel := context.WithTimeout(ctx, grace)
+		deadline, hasDeadline := ctx.Deadline()
+		var joinDeadline time.Time
+		if hasDeadline {
+			remaining := max(0, time.Until(deadline))
+			// A reserve cannot exceed the owner's remaining time. For a short
+			// deadline, spend at most half that time joining cancelled work.
+			reserve := min(remaining, max(5*time.Second, remaining/4))
+			joinDeadline = deadline.Add(-reserve / 2)
+		} else if a.shutdown.noDeadlineGrace > 0 {
+			grace = a.shutdown.noDeadlineGrace
+		}
+		// Cancellation retains the legacy context.Canceled task cause, even
+		// when the cooperative window or the owner's deadline expires.
+		drainCtx, cancel := context.WithCancel(context.WithoutCancel(ctx))
+		stopCancel := context.AfterFunc(ctx, cancel)
+		timer := time.AfterFunc(grace, cancel)
 		err := scheduler.StopContext(drainCtx)
+		timer.Stop()
+		stopCancel()
 		cancel()
 		if err != nil && ctx.Err() == nil {
-			// The cooperative window elapsed; runs have been cancelled.
-			// Keep the same owner until they unwind or the shared deadline.
-			err = scheduler.StopContext(ctx)
+			joinCtx := ctx
+			joinCancel := func() {}
+			if hasDeadline {
+				joinCtx, joinCancel = context.WithDeadline(ctx, joinDeadline)
+			}
+			err = scheduler.StopContext(joinCtx)
+			joinCancel()
 		}
 		a.addShutdownError("scheduler_stop_failed", err)
 	}
