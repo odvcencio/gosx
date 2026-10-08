@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add optional whole-tick simulation and visible-frame observers at the existing
+  ticker and animation owners. Simulation lag uses elapsed scheduled deadlines;
+  timing includes the existing single snapshot and state broadcast. Nil observers
+  skip timing reads. Frame observers are fixed before Start and run outside locks.
+
 - Add finite loop kinds and a shared arena for 256 lifetime health meters.
   Observe records whole ticks with zero warm allocations. Health copies bins
   under the instance lock and scans outside it; scoped tokens end once.
