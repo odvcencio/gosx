@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Keep observed hub control pings on a fixed 54-second schedule, using the
+  existing writer timer with a cadence that divides the ping period. Ping
+  sequences start from cryptographic per-connection randomness. Invalid
+  slow-client policy logs a fixed class at most once per minute.
+- Hub Close waits for application enqueue callbacks as well as pumps. Release
+  locks that callbacks may acquire before Close. The framework-only telemetry
+  observer slot requires an internal authority key; observer conflicts match
+  the telemetry conflict class. Queue samples describe depth before an accepted
+  enqueue, including zero. TrafficEvent.Dropped/Count and nil-client Message
+  callbacks extend the observer contract: Message accounts for all drops, so
+  Broadcast's drop summary must not be added again. SlowClientPolicy.Validate
+  and ErrInvalidSlowClient are explicit policy-validation API extensions.
+
 - Keep peer-controlled WebSocket close text out of hub read diagnostics. Normal
   peer closes are quiet; other failures report only a fixed transport class.
 

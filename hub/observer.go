@@ -7,6 +7,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"m31labs.dev/gosx/internal/telemetryauthority"
+	"m31labs.dev/gosx/internal/telemetryerr"
 )
 
 // ErrAfterServe means an upgrade reservation has closed observer configuration.
@@ -16,7 +19,17 @@ var ErrAfterServe = errors.New("hub: observer configuration closed")
 var ErrClosed = errors.New("hub: closed")
 
 // ErrObserverConflict means a telemetry subscriber already owns this hub slot.
-var ErrObserverConflict = errors.New("hub: telemetry observer already registered")
+var ErrObserverConflict error = observerConflictError{}
+
+type observerConflictError struct{}
+
+func (observerConflictError) Error() string { return "hub: telemetry observer already registered" }
+func (observerConflictError) Unwrap() error { return telemetryerr.ErrConflict }
+
+type observerAuthorityError struct{}
+
+func (observerAuthorityError) Error() string { return "hub: invalid telemetry authority" }
+func (observerAuthorityError) Unwrap() error { return telemetryerr.ErrInvalidOptions }
 
 // Direction identifies logical WebSocket application payload traffic.
 type Direction uint8
@@ -31,6 +44,8 @@ const (
 // unless a queue sample accompanies an enqueue. Count zero means one event.
 // Broadcast queue/drop callbacks coalesce identical samples with Count and a
 // nil Client; this preserves their multiplicity outside the fanout lock.
+// Message with Dropped=true accounts for every full-queue drop. Broadcast's
+// dropped argument summarizes those same losses; do not count it again.
 type TrafficEvent struct {
 	Direction  Direction
 	Binary     bool
@@ -81,6 +96,9 @@ const (
 // remains an extension point for the permitted browser association integration.
 // Closed is last: closing stops admission for every subscriber and drains all
 // admitted callbacks before invoking it. Callbacks must not wait for Hub.Close.
+// Close also waits for Send, latch replay and CRDT enqueue callbacks on
+// application goroutines. Release any lock a callback may acquire before
+// calling Close, otherwise the caller and callback can deadlock.
 type Observer interface {
 	ClientConnected(*Hub, *Client, *http.Request)
 	ClientDisconnected(*Hub, *Client, DisconnectEvent)
@@ -149,7 +167,10 @@ func (h *Hub) UseObserver(o Observer) (detach func(), err error) {
 // application observers. It supports the same startup/removal boundary as
 // UseObserver. Queue sampling defaults to every 64 attempts per text/binary
 // queue; 1 explicitly samples every attempt. Drops are always reported.
-func (h *Hub) UseTelemetryObserver(o Observer, queueSampleEvery uint32) (detach func(), err error) {
+func (h *Hub) UseTelemetryObserver(o Observer, queueSampleEvery uint32, key telemetryauthority.Key) (detach func(), err error) {
+	if !key.Valid() {
+		return nil, observerAuthorityError{}
+	}
 	if queueSampleEvery == 0 {
 		queueSampleEvery = 64
 	}
@@ -315,6 +336,9 @@ func (c *Client) queueEventLocked(binary bool, bytes int, dropped bool) (Traffic
 		if c.transport.enqueues[index] >= every {
 			c.transport.enqueues[index] = 0
 			event.QueueDepth = len(queue)
+			if !dropped && event.QueueDepth > 0 {
+				event.QueueDepth--
+			}
 		}
 	}
 	return event, dropped || event.QueueDepth >= 0

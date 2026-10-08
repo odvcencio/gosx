@@ -1,7 +1,9 @@
 package hub
 
 import (
+	"crypto/rand"
 	"encoding/binary"
+	"io"
 	"sync"
 	"time"
 
@@ -25,9 +27,13 @@ type transportState struct {
 	lastDrops           DropStats
 }
 
-func (h *Hub) transport(policy SlowClientPolicy) *transportState {
+func (h *Hub) transport(policy SlowClientPolicy) (*transportState, error) {
 	if policy.DropThreshold == 0 && h.observers.Load() == nil {
-		return nil
+		return nil, nil
+	}
+	sequence, err := readPingSequence(rand.Reader)
+	if err != nil {
+		return nil, err
 	}
 	h.mu.Lock()
 	if h.transportClock == nil {
@@ -35,7 +41,34 @@ func (h *Hub) transport(policy SlowClientPolicy) *transportState {
 	}
 	c := h.transportClock
 	h.mu.Unlock()
-	return &transportState{clock: c, slow: policy}
+	return &transportState{clock: c, slow: policy, sequence: sequence}, nil
+}
+
+func readPingSequence(reader io.Reader) (uint64, error) {
+	var seed [8]byte
+	if _, err := io.ReadFull(reader, seed[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint64(seed[:]), nil
+}
+
+// Keep the heartbeat on its original phase. Rounded tick periods can fall a
+// nanosecond short, and handling delay can shrink between ticks. Half a tick
+// of tolerance avoids skipping the scheduled ping in either case. Coalesced
+// ticks send once and advance past elapsed deadlines without a catch-up burst.
+func (s *transportState) pingDue(now time.Duration) bool {
+	cutoff := after(now, s.interval()/2)
+	if cutoff < s.nextPing {
+		return false
+	}
+	steps := (cutoff-s.nextPing)/pingPeriod + 1
+	const max = time.Duration(1<<63 - 1)
+	if steps > (max-s.nextPing)/pingPeriod {
+		s.nextPing = max
+	} else {
+		s.nextPing += steps * pingPeriod
+	}
+	return true
 }
 
 // startPing replaces at most one measured ping. Replacement reports the

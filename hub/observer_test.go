@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log"
+	"m31labs.dev/gosx/internal/telemetryauthority"
+	"m31labs.dev/gosx/internal/telemetryerr"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -451,7 +453,7 @@ func queueFixture(h *Hub) *Client {
 func TestQueueSamplesAreIndependentAndDropsAlwaysFire(t *testing.T) {
 	h := New("queue-fixture")
 	o := &queueObserver{}
-	if _, err := h.UseTelemetryObserver(o, 0); err != nil {
+	if _, err := h.UseTelemetryObserver(o, 0, telemetryauthority.New()); err != nil {
 		t.Fatal(err)
 	}
 	c := queueFixture(h)
@@ -463,11 +465,11 @@ func TestQueueSamplesAreIndependentAndDropsAlwaysFire(t *testing.T) {
 		t.Fatal("default queue sample fired before its 64th attempt")
 	}
 	c.trySend(nil)
-	if o.text.Load() != 1 || o.binary.Load() != 0 || o.depth.Load() != 64 {
+	if o.text.Load() != 1 || o.binary.Load() != 0 || o.depth.Load() != 63 {
 		t.Fatal("text sampling changed the binary cadence")
 	}
 	c.tryBinarySend(nil)
-	if o.binary.Load() != 1 || o.depth.Load() != 64 {
+	if o.binary.Load() != 1 || o.depth.Load() != 63 {
 		t.Fatal("binary queue was not sampled independently")
 	}
 	for range 192 {
@@ -490,17 +492,23 @@ func TestTelemetryObserverSlotReservationAndRemoval(t *testing.T) {
 		t.Fatal(err)
 	}
 	o := &queueObserver{}
-	detach, err := h.UseTelemetryObserver(o, 1)
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.Key{}); !errors.Is(err, telemetryerr.ErrInvalidOptions) {
+		t.Fatal("unauthorized code claimed the telemetry slot", err)
+	}
+	if h.telemetryObserver != nil || h.queueSampleEvery.Load() != 0 {
+		t.Fatal("invalid authority mutated the hub")
+	}
+	detach, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.UseTelemetryObserver(NoopObserver{}, 1); !errors.Is(err, ErrObserverConflict) {
+	if _, err := h.UseTelemetryObserver(NoopObserver{}, 1, telemetryauthority.New()); !errors.Is(err, ErrObserverConflict) || !errors.Is(err, telemetryerr.ErrConflict) {
 		t.Fatal("duplicate telemetry slot was accepted", err)
 	}
 	c := queueFixture(h)
 	c.trySend(nil)
 	c.tryBinarySend(nil)
-	if o.text.Load() != 1 || o.binary.Load() != 1 || app.text.Load() != 1 {
+	if o.text.Load() != 1 || o.binary.Load() != 1 || app.text.Load() != 1 || o.depth.Load() != 0 {
 		t.Fatal("diagnostic queue override or additive observer failed")
 	}
 	detach()
@@ -508,14 +516,14 @@ func TestTelemetryObserverSlotReservationAndRemoval(t *testing.T) {
 	if h.queueSampleEvery.Load() != 0 || h.telemetryObserver != nil {
 		t.Fatal("detaching retained the reservation or override")
 	}
-	if _, err := h.UseTelemetryObserver(o, 1); err != nil {
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New()); err != nil {
 		t.Fatal("pre-serve slot could not be reused", err)
 	}
 	if !h.reserveClientSlot() {
 		t.Fatal("fixture admission failed")
 	}
 	h.releaseClientSlot()
-	if _, err := h.UseTelemetryObserver(o, 1); !errors.Is(err, ErrObserverConflict) {
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New()); !errors.Is(err, ErrObserverConflict) {
 		t.Fatal("duplicate slot lost its error after serving", err)
 	}
 	appDetach()
@@ -524,7 +532,7 @@ func TestTelemetryObserverSlotReservationAndRemoval(t *testing.T) {
 func TestQueueObservationWarmAllocations(t *testing.T) {
 	for _, every := range []uint32{0, 1} {
 		h := New("queue-fixture")
-		if _, err := h.UseTelemetryObserver(&queueObserver{}, every); err != nil {
+		if _, err := h.UseTelemetryObserver(&queueObserver{}, every, telemetryauthority.New()); err != nil {
 			t.Fatal(err)
 		}
 		c := queueFixture(h)
@@ -542,7 +550,7 @@ func TestQueueObservationWarmAllocations(t *testing.T) {
 func TestBroadcastQueueSamplesReleaseLocksAndPreserveMultiplicity(t *testing.T) {
 	h := New("queue-fixture")
 	o := &queueObserver{}
-	if _, err := h.UseTelemetryObserver(o, 1); err != nil {
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New()); err != nil {
 		t.Fatal(err)
 	}
 	for _, id := range []string{"first", "second"} {
