@@ -168,11 +168,7 @@ func (a *App) runShutdown(ctx context.Context, srv *http.Server, scheduler *sche
 		deadline, hasDeadline := ctx.Deadline()
 		var joinDeadline time.Time
 		if hasDeadline {
-			remaining := max(0, time.Until(deadline))
-			// A reserve cannot exceed the owner's remaining time. For a short
-			// deadline, spend at most half that time joining cancelled work.
-			reserve := min(remaining, max(5*time.Second, remaining/4))
-			joinDeadline = deadline.Add(-reserve / 2)
+			joinDeadline = scheduledJoinDeadline(deadline, time.Now())
 		} else if a.shutdown.noDeadlineGrace > 0 {
 			grace = a.shutdown.noDeadlineGrace
 		}
@@ -232,6 +228,18 @@ func scheduledDrainWindow(ctx context.Context, configured time.Duration) time.Du
 	remaining := time.Until(deadline)
 	reserve := max(5*time.Second, remaining/4)
 	return max(0, min(configured, remaining-reserve))
+}
+
+func scheduledJoinDeadline(deadline, now time.Time) time.Time {
+	remaining := max(0, deadline.Sub(now))
+	reserve := max(5*time.Second, remaining/4)
+	cutoff := deadline.Add(-reserve / 2)
+	if remaining > 0 && cutoff.Before(now) {
+		// A cutoff already in the past cannot join even a promptly cancelled
+		// run. Only this case splits the remaining time between join and hooks.
+		return now.Add(remaining / 2)
+	}
+	return cutoff
 }
 
 // Keep lifecycle errors in the server namespace while preserving the shared
