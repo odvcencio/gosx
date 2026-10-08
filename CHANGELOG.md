@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add finite loop kinds and a shared arena for 256 lifetime health meters.
+  Observe records whole ticks with zero warm allocations. Health copies bins
+  under the instance lock and scans outside it; scoped tokens end once.
+  Closing a meter leaves the application's runtime owner in control.
+
 - Register bounded hub telemetry groups with finite event and disconnect labels,
   exact logical payload counts, sampled queue depths, control RTT, and slow-client
   counters. Attachments release automatically when pumps finish, and telemetry

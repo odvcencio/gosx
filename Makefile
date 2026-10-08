@@ -140,7 +140,7 @@ test-telemetry-helpers-race:
 
 .PHONY: test-telemetry-wasm bench-telemetry
 test-telemetry-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry ./telemetry/metric ./internal/clock ./telemetry/telemetrytest
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry ./telemetry/metric ./telemetry/schema ./internal/clock ./telemetry/telemetrytest
 
 bench-telemetry:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim

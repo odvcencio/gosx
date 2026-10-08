@@ -8,6 +8,7 @@ import (
 
 func (t *Telemetry) run() {
 	defer func() {
+		t.releaseLoops()
 		t.releaseHubs()
 		if err := stopTicker(t.ticker); err != nil {
 			t.clockFailed(err)

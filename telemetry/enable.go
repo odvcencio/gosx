@@ -35,6 +35,7 @@ type Telemetry struct {
 	boot, limiterSalt   [16]byte
 	core                coreMetrics
 	hubs                *hubState
+	loops               *loopState
 	ownerBytes          int64
 	faultOnce           sync.Once
 }

@@ -80,6 +80,9 @@ func (t *Telemetry) initializeRegistry() (err error) {
 	if err := t.initializeHubs(); err != nil {
 		return err
 	}
+	if err := t.initializeLoops(); err != nil {
+		return err
+	}
 	t.updateCore(t.start)
 	return nil
 }
@@ -95,6 +98,9 @@ func (t *Telemetry) updateCore(now Instant) {
 	bytes := t.ownerBytes
 	if t.hubs != nil {
 		bytes += t.hubs.bytes.Load()
+	}
+	if t.loops != nil {
+		bytes += t.loops.bytes.Load()
 	}
 	t.core.memory.Set(float64(usage.Bytes + bytes))
 	// Publish the collection time after refreshing its usage gauges.
