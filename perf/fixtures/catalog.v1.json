@@ -141,6 +141,17 @@
     {"id":"app/docs/public/water/xpos.jpg","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/water/ypos.jpg","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/water/zneg.jpg","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/blackglass-content.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/checkers-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/cms-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/collab-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/docs/copy-controls.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/fluid-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/livesim-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/motion-adapter-report.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/playground-editor.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/scene3d-bench-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/water-diag.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/water/zpos.jpg","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]}
   ],
   "interactionContract": {"file":"perf/fixtures/interaction.v1.json","sha256":"e455f9568007db01e5a168dbe60749e825f5ee516682593a938f96fcb2143335"}
