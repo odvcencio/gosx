@@ -1,0 +1,184 @@
+package wasmgen
+
+import (
+	"bytes"
+	"encoding/hex"
+	"math"
+	"reflect"
+	"slices"
+	"testing"
+)
+
+func testSections(t *testing.T, binary []byte) ([]byte, map[byte][]byte) {
+	t.Helper()
+	if len(binary) < 8 || !bytes.Equal(binary[:8], header[:]) {
+		t.Fatal("invalid header")
+	}
+	ids, sections := []byte{}, map[byte][]byte{}
+	for pos := 8; pos < len(binary); {
+		id := binary[pos]
+		pos++
+		var size uint32
+		for shift := uint(0); ; shift += 7 {
+			if pos >= len(binary) || shift >= 35 {
+				t.Fatal("invalid section length")
+			}
+			b := binary[pos]
+			pos++
+			size |= uint32(b&0x7f) << shift
+			if b&0x80 == 0 {
+				break
+			}
+		}
+		end := uint64(pos) + uint64(size)
+		if end > uint64(len(binary)) {
+			t.Fatal("section exceeds binary")
+		}
+		if _, duplicate := sections[id]; duplicate {
+			t.Fatal("duplicate section")
+		}
+		ids = append(ids, id)
+		sections[id] = binary[pos:int(end)]
+		pos = int(end)
+	}
+	return ids, sections
+}
+
+func TestEmptyModuleGolden(t *testing.T) {
+	got, err := Encode(Module{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := hex.DecodeString("0061736d01000000010100020100030100050401010303060100070a01066d656d6f727902000a01000b0701004180080b00000c0b676f73782e616f742e7631")
+	if !bytes.Equal(got, want) {
+		t.Fatalf("module=%x\nwant  =%x", got, want)
+	}
+	ids, sections := testSections(t, got)
+	if !bytes.Equal(ids, []byte{1, 2, 3, 5, 6, 7, 10, 11, 0}) || !bytes.Equal(sections[5], []byte{1, 1, 3, 3}) {
+		t.Fatalf("section order or memory: %v", ids)
+	}
+}
+
+func encoderFixture() Module {
+	sig := Signature{Params: []ValueType{I32}, Result: I32}
+	return Module{
+		Imports: []Import{{Module: "host", Name: "alpha", Signature: sig}, {Module: "host", Name: "beta", Signature: sig}},
+		Functions: []Function{
+			{Signature: Signature{Result: I64}, I32Locals: 2, I64Locals: 1, Body: []byte{0x42, 0x7f, 0x0b}},
+			{Signature: sig, Body: []byte{0x20, 0x00, 0x0b}},
+		},
+		Globals: []Global{{Mutable: true, Initial: math.MinInt32}, {}},
+		Exports: []Export{{Name: "zeta", Function: 2}, {Name: "alpha", Function: 3}},
+		Data:    []byte("héllo 🌴\x00"), Metadata: []byte{0, 0xff, 0x7f},
+	}
+}
+
+func TestModuleTablesIndicesAndLocals(t *testing.T) {
+	m := encoderFixture()
+	binary, err := Encode(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sections := testSections(t, binary)
+	for id, want := range map[byte][]byte{
+		1:  {2, 0x60, 0, 1, 0x7e, 0x60, 1, 0x7f, 1, 0x7f},
+		2:  {2, 4, 'h', 'o', 's', 't', 5, 'a', 'l', 'p', 'h', 'a', 0, 1, 4, 'h', 'o', 's', 't', 4, 'b', 'e', 't', 'a', 0, 1},
+		3:  {2, 0, 1},
+		6:  {2, 0x7f, 1, 0x41, 0x80, 0x80, 0x80, 0x80, 0x78, 0x0b, 0x7f, 0, 0x41, 0, 0x0b},
+		7:  {3, 5, 'a', 'l', 'p', 'h', 'a', 0, 3, 6, 'm', 'e', 'm', 'o', 'r', 'y', 2, 0, 4, 'z', 'e', 't', 'a', 0, 2},
+		10: {2, 8, 2, 2, 0x7f, 1, 0x7e, 0x42, 0x7f, 0x0b, 4, 0, 0x20, 0, 0x0b},
+	} {
+		if !bytes.Equal(sections[id], want) {
+			t.Fatalf("section %d: %x want %x", id, sections[id], want)
+		}
+	}
+	wantData := append([]byte{1, 0, 0x41, 0x80, 0x08, 0x0b, byte(len(m.Data))}, m.Data...)
+	if !bytes.Equal(sections[11], wantData) || !bytes.Equal(sections[0], append(appendName(nil, CustomName), m.Metadata...)) {
+		t.Fatal("constant or metadata bytes changed")
+	}
+	for local := uint32(0); local < 2; local++ {
+		if index, err := m.FunctionIndex(local); err != nil || index != local+2 {
+			t.Fatalf("function index %d: %d %v", local, index, err)
+		}
+	}
+	if _, err := m.FunctionIndex(2); err == nil {
+		t.Fatal("accepted missing function")
+	}
+}
+
+func TestCanonicalTypesAndExportPermutation(t *testing.T) {
+	m := encoderFixture()
+	original := append([]Export{}, m.Exports...)
+	a, err := Encode(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(m.Exports, original) {
+		t.Fatal("encoder mutated export order")
+	}
+	slices.Reverse(m.Exports)
+	b, err := Encode(m)
+	if err != nil || !bytes.Equal(a, b) {
+		t.Fatalf("export order changed bytes: %v", err)
+	}
+	m = Module{Functions: []Function{
+		{Signature: Signature{Params: []ValueType{I32, I64}, Result: I32}, Body: []byte{0x41, 0, 0x0b}},
+		{Signature: Signature{Params: []ValueType{I64}, Result: I64}, Body: []byte{0x42, 0, 0x0b}},
+		{Signature: Signature{Params: []ValueType{I32}, Result: I32}, Body: []byte{0x41, 0, 0x0b}},
+		{Signature: Signature{}, Body: []byte{0x0b}},
+	}}
+	b, err = Encode(m)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, sections := testSections(t, b)
+	want := []byte{4, 0x60, 0, 0, 0x60, 1, 0x7e, 1, 0x7e, 0x60, 1, 0x7f, 1, 0x7f, 0x60, 2, 0x7f, 0x7e, 1, 0x7f}
+	if !bytes.Equal(sections[1], want) || !bytes.Equal(sections[3], []byte{4, 3, 1, 2, 0}) {
+		t.Fatalf("canonical types: %x indices: %x", sections[1], sections[3])
+	}
+}
+
+func TestEncoderRejectsUnsupportedDeclarations(t *testing.T) {
+	for _, mutate := range []func(*Module){
+		func(m *Module) { m.Functions[0].Signature.Result = 0x7d },
+		func(m *Module) { m.Functions[0].Signature.Params = []ValueType{Void} },
+		func(m *Module) { m.Functions[0].Body = nil },
+		func(m *Module) { m.Functions[0].Body = []byte{0x41, 0} },
+		func(m *Module) { m.Functions[0].I32Locals = math.MaxUint32 },
+		func(m *Module) { m.Functions[0].I32Locals = 65536; m.Functions[0].I64Locals = 1 },
+		func(m *Module) { m.Imports[0].Signature.Params = []ValueType{0x7d} },
+		func(m *Module) { m.Exports[0].Function = 4 },
+		func(m *Module) { m.Exports[0].Name = "memory" },
+		func(m *Module) { m.Exports[0].Name = "alpha" },
+		func(m *Module) { m.Exports[0].Name = string([]byte{0xff}) },
+		func(m *Module) { m.Imports[0].Module = string([]byte{0xff}) },
+		func(m *Module) { m.Imports[0].Name = string([]byte{0xff}) },
+		func(m *Module) { m.Data = make([]byte, MaxDataBytes+1) },
+		func(m *Module) { m.Metadata = make([]byte, MaxModuleBytes+1) },
+		func(m *Module) { m.Functions[0].Body = append(make([]byte, MaxModuleBytes), 0x0b) },
+	} {
+		m := encoderFixture()
+		mutate(&m)
+		if binary, err := Encode(m); err == nil || binary != nil {
+			t.Fatalf("accepted invalid module: %d bytes, %v", len(binary), err)
+		}
+	}
+	for _, size := range []int{0, MaxDataBytes} {
+		if _, err := Encode(Module{Data: make([]byte, size)}); err != nil {
+			t.Fatalf("data boundary %d: %v", size, err)
+		}
+	}
+}
+
+func TestModuleFramingCountsTowardByteLimit(t *testing.T) {
+	// At this length the custom section's size uses three LEB bytes rather
+	// than the one byte in the empty golden, adding two framing bytes.
+	metadata := MaxModuleBytes - 64 - 2
+	binary, err := Encode(Module{Metadata: make([]byte, metadata)})
+	if err != nil || len(binary) != MaxModuleBytes {
+		t.Fatalf("exact module limit: %d %v", len(binary), err)
+	}
+	if _, err := Encode(Module{Metadata: make([]byte, metadata+1)}); err == nil {
+		t.Fatal("ignored section framing at module limit")
+	}
+}

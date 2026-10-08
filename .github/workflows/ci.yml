@@ -119,6 +119,9 @@ jobs:
       - name: Island scalar contract tests
         run: make test-island-aot
 
+      - name: WebAssembly encoder tests
+        run: make test-wasmgen
+
       # editor/ is a nested Go module, so nothing above reaches it: `go list
       # ./editor/...` fails from the root and `make test` never compiles it.
       # That left 3404 non-test lines and 68 tests with no gate on any runner.

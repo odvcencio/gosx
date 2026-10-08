@@ -111,6 +111,10 @@ test-cli:
 test-island-aot:
 	GOWORK=off $(GO) test -count=1 ./island/aot
 
+.PHONY: test-wasmgen
+test-wasmgen:
+	GOWORK=off $(GO) test -count=1 ./internal/wasmgen
+
 test-ci-partitions:
 	$(GO) test ./internal/citest
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
