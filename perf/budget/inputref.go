@@ -18,6 +18,9 @@ import (
 
 const maxInputBytes = 2 << 20
 
+var pathPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
+var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
+
 // LoadOptions sets the private project root for every file reference.
 type LoadOptions struct{ RootDir string }
 
@@ -75,7 +78,7 @@ func inputRoot(path string, opts LoadOptions) (string, error) {
 }
 
 func safePath(path string) bool {
-	if len(path) > 240 || !regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`).MatchString(path) {
+	if len(path) > 240 || !pathPattern.MatchString(path) {
 		return false
 	}
 	for _, part := range strings.Split(path, "/") {
@@ -122,7 +125,7 @@ func readWithin(root, path string, limit int64) ([]byte, error) {
 }
 
 func readReference(root string, ref Ref, limit int64) ([]byte, error) {
-	if !safePath(ref.File) || !regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(ref.SHA256) {
+	if !safePath(ref.File) || !shaPattern.MatchString(ref.SHA256) {
 		return nil, errors.New("invalid input reference")
 	}
 	data, err := readWithin(root, filepath.Join(root, filepath.FromSlash(ref.File)), limit)
