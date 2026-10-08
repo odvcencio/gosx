@@ -806,4 +806,3 @@ test("active clip ownership preserves order, mutable playback and removal lifecy
   assert.deepEqual(result.finished, []);
   assert.equal(result.hasClips, false);
 });
-
