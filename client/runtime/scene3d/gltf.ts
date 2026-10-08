@@ -1771,7 +1771,7 @@
   }
 
   // One embedded image can feed several material slots and channel roles.
-  // Keep its byte copy and URL shared within this extraction. A fresh scene
+  // Keep its Blob snapshot and URL shared within this extraction. A fresh scene
   // extraction resets the map, so re-parsing mutable input cannot retain old
   // image bytes. Weak document ownership does not retain parsed GLBs.
   var gltfEmbeddedImageURLs = new WeakMap();
@@ -1781,9 +1781,8 @@
     if (urls && urls.has(image)) return urls.get(image);
     var view = gltfResolveBufferView(gltf, binaryBuffer, image.bufferView, "image");
     var mimeType = image.mimeType || "application/octet-stream";
-    var start = view.bytes.byteOffset + view.offset;
-    var slice = view.bytes.buffer.slice(start, start + view.byteLength);
-    var blob = new Blob([slice], { type: mimeType });
+    var imageBytes = view.bytes.subarray(view.offset, view.offset + view.byteLength);
+    var blob = new Blob([imageBytes], { type: mimeType });
     var uri = URL.createObjectURL(blob);
     if (urls) urls.set(image, uri);
     return uri;
