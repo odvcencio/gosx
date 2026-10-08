@@ -41,23 +41,16 @@
       var animOverridesTRS = !!(anim && (anim.translation || anim.position || anim.rotation || anim.scale));
 
       var local;
-      if (animOverridesTRS) {
+      if (!animOverridesTRS && node.matrix && node.matrix.length === 16) {
+        // Authored matrices survive weights-only poses. Copy the asset buffer:
+        // traversal results are mutable and must never alias decoded node data.
+        local = new Float32Array(node.matrix);
+      } else {
+        // Animated and authored TRS use the same defaults and composition path.
         local = sceneTRSToMat4(
           anim && (anim.translation || anim.position) ? (anim.translation || anim.position) : (node.translation || [0, 0, 0]),
           anim && anim.rotation ? anim.rotation : (node.rotation || [0, 0, 0, 1]),
           anim && anim.scale ? anim.scale : (node.scale || [1, 1, 1])
-        );
-      } else if (node.matrix && node.matrix.length === 16) {
-        // Authored 4x4 node matrix (column-major, translation in elements
-        // 12-14). Copy it: the traversal map is reused across frames and its
-        // entries are handed to callers, so they must never alias or mutate
-        // the source asset buffers.
-        local = new Float32Array(node.matrix);
-      } else {
-        local = sceneTRSToMat4(
-          node.translation || [0, 0, 0],
-          node.rotation || [0, 0, 0, 1],
-          node.scale || [1, 1, 1]
         );
       }
 
@@ -132,14 +125,6 @@
   // Scalar math helpers
   // ---------------------------------------------------------------------------
 
-  function sceneAnimLerpVec(a, b, t) {
-    var result = new Array(a.length);
-    for (var i = 0; i < a.length; i++) {
-      result[i] = a[i] + (b[i] - a[i]) * t;
-    }
-    return result;
-  }
-
   // Non-allocating lerp: writes into pre-allocated `out`.
   function sceneAnimLerpVecInto(out, a, b, t) {
     for (var i = 0; i < a.length; i++) {
@@ -148,68 +133,10 @@
     return out;
   }
 
-  function sceneAnimNormalizeQuat(q) {
-    var len = Math.sqrt(q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]);
-    if (len < 1e-10) return [0, 0, 0, 1];
-    return [q[0] / len, q[1] / len, q[2] / len, q[3] / len];
-  }
-
-  function sceneAnimSlerpQuat(a, b, t) {
-    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-
-    // Ensure shortest path.
-    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
-    if (dot < 0) {
-      dot = -dot;
-      bx = -bx; by = -by; bz = -bz; bw = -bw;
-    }
-
-    // When quaternions are very close, fall back to normalized lerp.
-    if (dot > 0.9995) {
-      return sceneAnimNormalizeQuat(sceneAnimLerpVec(a, [bx, by, bz, bw], t));
-    }
-
-    var theta = Math.acos(dot);
-    var sinTheta = Math.sin(theta);
-    var w0 = Math.sin((1 - t) * theta) / sinTheta;
-    var w1 = Math.sin(t * theta) / sinTheta;
-
-    return [
-      a[0] * w0 + bx * w1,
-      a[1] * w0 + by * w1,
-      a[2] * w0 + bz * w1,
-      a[3] * w0 + bw * w1,
-    ];
-  }
-
-  // Non-allocating slerp: writes into pre-allocated `out`.
+  // Share the offset implementation so both channel interpolation and clip
+  // blending use the same shortest-path math without temporary arrays.
   function sceneAnimSlerpQuatInto(out, a, b, t) {
-    var dot = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[3] * b[3];
-
-    var bx = b[0], by = b[1], bz = b[2], bw = b[3];
-    if (dot < 0) {
-      dot = -dot;
-      bx = -bx; by = -by; bz = -bz; bw = -bw;
-    }
-
-    if (dot > 0.9995) {
-      sceneAnimLerpVecInto(out, a, [bx, by, bz, bw], t);
-      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
-      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
-      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
-      return out;
-    }
-
-    var theta = Math.acos(dot);
-    var sinTheta = Math.sin(theta);
-    var w0 = Math.sin((1 - t) * theta) / sinTheta;
-    var w1 = Math.sin(t * theta) / sinTheta;
-
-    out[0] = a[0] * w0 + bx * w1;
-    out[1] = a[1] * w0 + by * w1;
-    out[2] = a[2] * w0 + bz * w1;
-    out[3] = a[3] * w0 + bw * w1;
-    return out;
+    return _sceneAnimSlerpQuatOffset(out, a, 0, b, 0, t);
   }
 
   // Non-allocating slerp from offset into flat value arrays.
@@ -385,9 +312,9 @@
     existing.totalWeight += weight;
 
     if (property === "rotation") {
-      existing.value = sceneAnimSlerpQuat(existing.value, newValue, t);
+      sceneAnimSlerpQuatInto(existing.value, existing.value, newValue, t);
     } else {
-      existing.value = sceneAnimLerpVec(existing.value, newValue, t);
+      sceneAnimLerpVecInto(existing.value, existing.value, newValue, t);
     }
   }
 
@@ -610,7 +537,7 @@
 
   function createSceneAnimationMixer() {
     var clips = new Map();  // name -> clip data
-    var active = [];        // active playback entries
+    var active = new Map(); // clip name -> playback entry, in blend order
 
     function addClip(name, clip) {
       // Pre-compute composite keys on channels to avoid per-frame string concat.
@@ -633,13 +560,6 @@
       clips.delete(name);
     }
 
-    function findActive(name) {
-      for (var i = 0; i < active.length; i++) {
-        if (active[i].name === name) return active[i];
-      }
-      return null;
-    }
-
     function play(name, options) {
       var clip = clips.get(name);
       if (!clip) {
@@ -654,7 +574,7 @@
       var weight = opts.weight !== undefined ? opts.weight : 1.0;
 
       // If already playing, update mutable options and return.
-      var existing = findActive(name);
+      var existing = active.get(name);
       if (existing) {
         existing.speed = speed;
         existing.loop = loop;
@@ -678,11 +598,11 @@
         fadeTime: 0,
         stopping: false,
       };
-      active.push(entry);
+      active.set(name, entry);
     }
 
     function stop(name, options) {
-      var entry = findActive(name);
+      var entry = active.get(name);
       if (!entry) return;
 
       var opts = options || {};
@@ -693,26 +613,19 @@
         entry.fadeOut = fadeOut;
         entry.fadeTime = 0;
       } else {
-        // Immediate removal.
-        for (var i = active.length - 1; i >= 0; i--) {
-          if (active[i].name === name) {
-            active.splice(i, 1);
-            break;
-          }
-        }
+        active.delete(name);
       }
     }
 
     function stopAll() {
-      active.length = 0;
+      active.clear();
     }
 
     function update(deltaTime, applyTransform) {
-      var i, entry, channel, value, key, existing;
+      var channel, value, key, existing;
 
-      // 1. Advance time and handle fading for every active entry.
-      for (i = 0; i < active.length; i++) {
-        entry = active[i];
+      // 1. Advance time, handle fading, and retire finished entries in one pass.
+      for (const entry of active.values()) {
         entry.time += deltaTime * entry.speed;
 
         // Looping.
@@ -731,26 +644,18 @@
           entry.fadeTime += deltaTime;
           entry.weight = Math.max(0, 1.0 - entry.fadeTime / entry.fadeOut) * entry.targetWeight;
         }
-      }
 
-      // 2. Remove finished entries (iterate backwards for safe splicing).
-      for (i = active.length - 1; i >= 0; i--) {
-        entry = active[i];
-        if (entry.stopping && (entry.fadeOut <= 0 || entry.fadeTime >= entry.fadeOut)) {
-          active.splice(i, 1);
-          continue;
-        }
-        if (!entry.loop && entry.clip.duration > 0 && entry.time >= entry.clip.duration) {
-          active.splice(i, 1);
-          continue;
+        // Deleting the current map entry leaves surviving blend order intact.
+        if ((entry.stopping && (entry.fadeOut <= 0 || entry.fadeTime >= entry.fadeOut))
+          || (!entry.loop && entry.clip.duration > 0 && entry.time >= entry.clip.duration)) {
+          active.delete(entry.name);
         }
       }
 
-      // 3. Interpolate channels and blend per target+property.
+      // 2. Interpolate channels and blend per target+property.
       _mixerResults.clear();
 
-      for (i = 0; i < active.length; i++) {
-        entry = active[i];
+      for (const entry of active.values()) {
         if (entry.weight <= 0) continue;
 
         for (var c = 0; c < entry.clip.channels.length; c++) {
@@ -776,7 +681,7 @@
         }
       }
 
-      // 4. Apply blended transforms.
+      // 3. Apply blended transforms.
       _mixerResults.forEach(function(result) {
         applyTransform(result.targetID, result.property, result.value);
       });
@@ -787,11 +692,11 @@
     }
 
     function isPlaying(name) {
-      return findActive(name) !== null;
+      return active.has(name);
     }
 
     function dispose() {
-      active.length = 0;
+      active.clear();
       clips.clear();
     }
 
@@ -808,14 +713,157 @@
     };
   }
 
+  // Model playback control belongs to the animation authority. Core hydration
+  // owns records and geometry; these adapters only drive their existing mixers.
+  const sceneModelAnimationControlFields = ["loop", "animationSpeed", "animationWeight", "animationFadeInMS", "animationFadeOutMS"];
+
+  function sceneAnimationOwns(source: any, key: string): boolean {
+    return Boolean(source && Object.prototype.hasOwnProperty.call(source, key));
+  }
+
+  function sceneModelAnimationValue(model: any, key: string, fallback: number, divisor = 1) {
+    if (!sceneAnimationOwns(model, key)) return fallback;
+    const value = Number(model[key]);
+    return Number.isFinite(value) ? Math.max(0, value) / divisor : fallback;
+  }
+
+  // Live control patches are copied into record.model before playback. Resolve
+  // that one current model instead of layering the identical patch twice.
+  function sceneModelAnimationPlayOptions(model: any, fadeIn = 0) {
+    return {
+      loop: !sceneAnimationOwns(model, "loop") || model.loop !== false,
+      speed: sceneModelAnimationValue(model, "animationSpeed", 1),
+      weight: sceneModelAnimationValue(model, "animationWeight", 1),
+      fadeIn: sceneModelAnimationValue(model, "animationFadeInMS", fadeIn, 1000),
+    };
+  }
+
+  // Route a clip play through the active mixer. opts is the JS-mixer options
+  // shape ({loop, speed, weight, fadeIn}); the WASM mixer takes the same values
+  // as positional arguments.
+  function sceneModelRecordPlay(record: any, name: string, options: ReturnType<typeof sceneModelAnimationPlayOptions>) {
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_play === "function") {
+        window.__gosx_motion_mixer_play(
+          record.wasmMixer,
+          name,
+          options.fadeIn, options.loop, options.speed, options.weight
+        );
+      }
+      return;
+    }
+    if (record && record.mixer) {
+      record.mixer.play(name, options);
+    }
+  }
+
+  // Route a clip stop through the active mixer. opts is the JS-mixer options
+  // shape ({fadeOut}); the WASM mixer takes fadeOut positionally.
+  function sceneModelRecordStop(record: any, name: string, fadeOut: number) {
+    if (record && record.wasmMixerActive) {
+      if (typeof window !== "undefined" && typeof window.__gosx_motion_mixer_stop === "function") {
+        window.__gosx_motion_mixer_stop(record.wasmMixer, name, fadeOut);
+      }
+    } else if (record && record.mixer) {
+      record.mixer.stop(name, { fadeOut });
+    } else {
+      return;
+    }
+    // One final pose tick restores morph and node defaults after stopping.
+    if ((record.morphTargets && record.morphTargets.length > 0)
+      || (record.nodeAnimTargets && record.nodeAnimTargets.length > 0)) {
+      record.poseDirty = true;
+    }
+  }
+
+  // Query either a named clip or the current selection through the active mixer.
+  function sceneModelRecordIsPlaying(record: any, name: string = record && record.animation) {
+    if (!record || !name) {
+      return false;
+    }
+    if (record.wasmMixerActive) {
+      return Boolean(
+        typeof window !== "undefined" &&
+        typeof window.__gosx_motion_mixer_is_playing === "function" &&
+        window.__gosx_motion_mixer_is_playing(record.wasmMixer, name)
+      );
+    }
+    return Boolean(record.mixer && record.mixer.isPlaying(name));
+  }
+
+  function sceneInitializeModelPlayback(record: any, model: any) {
+    const animation = typeof model.animation === "string" ? model.animation.trim() : "";
+    if (!animation) return;
+    sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(model));
+    if (sceneModelRecordIsPlaying(record, animation)) {
+      record.animation = animation;
+      record.animationSeq = typeof model.animationSeq === "string" ? model.animationSeq : "";
+    }
+  }
+
+  function sceneApplyModelLiveAnimation(record: any, patch: any) {
+    if (!record || (!record.mixer && !record.wasmMixerActive) || (!patch || typeof patch !== "object" || Array.isArray(patch) || ArrayBuffer.isView(patch))) {
+      return false;
+    }
+    const hasAnimation = sceneAnimationOwns(patch, "animation");
+    const hasControls = sceneModelAnimationControlFields.some(key => sceneAnimationOwns(patch, key));
+    if (!hasAnimation && !hasControls) {
+      return false;
+    }
+    const animation = hasAnimation
+      ? (typeof patch.animation === "string" ? patch.animation.trim() : "")
+      : record.animation;
+    const hasSeq = sceneAnimationOwns(patch, "animationSeq");
+    const animationSeq = hasSeq ? String(patch.animationSeq == null ? "" : patch.animationSeq) : "";
+    const replay = Boolean(hasSeq && animationSeq && record.animation === animation && record.animationSeq !== animationSeq);
+    if (record.model) {
+      for (const key of sceneModelAnimationControlFields) {
+        if (sceneAnimationOwns(patch, key)) record.model[key] = patch[key];
+      }
+    }
+    const model = record.model || patch;
+    if (!animation) {
+      if (record.animation && sceneModelRecordIsPlaying(record)) {
+        const fadeOut = sceneModelAnimationValue(model, "animationFadeOutMS", 0.05, 1000);
+        sceneModelRecordStop(record, record.animation, fadeOut);
+        if (fadeOut <= 0) {
+          record.animation = "";
+        }
+      }
+      record.animationSeq = animationSeq;
+      record.poseDirty = true;
+      return true;
+    }
+    if (record.animation === animation && sceneModelRecordIsPlaying(record) && !replay) {
+      if (hasControls) {
+        sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(model));
+        record.poseDirty = true;
+        return true;
+      }
+      return false;
+    }
+    if (record.animation && sceneModelRecordIsPlaying(record)) {
+      sceneModelRecordStop(record, record.animation, sceneModelAnimationValue(model, "animationFadeOutMS", replay ? 0 : 0.05, 1000));
+    }
+    sceneModelRecordPlay(record, animation, sceneModelAnimationPlayOptions(model, replay ? 0 : 0.04));
+    if (!sceneModelRecordIsPlaying(record, animation)) {
+      return false;
+    }
+    record.animation = animation;
+    record.animationSeq = animationSeq;
+    record.poseDirty = true;
+    return true;
+  }
+
   // Publish the animation API onto window for the legacy monolithic
-  // bootstrap.js bundle that inlines 19a-scene-animation.js. The split
-  // bootstrap-feature-scene3d-animation.js bundle also publishes in
-  // 26g-feature-scene3d-animation-suffix.js; both writing the same
-  // value is a harmless double-set.
+  // bootstrap.js bundle that inlines this source. The lazy chunk suffix
+  // extends this same API with crowd helpers after their constants initialize.
   if (typeof window !== "undefined") {
     window.__gosx_scene3d_animation_api = {
       createMixer: createSceneAnimationMixer,
+      initializeModelPlayback: sceneInitializeModelPlayback,
+      isModelPlaying: sceneModelRecordIsPlaying,
+      applyModelAnimation: sceneApplyModelLiveAnimation,
       buildNodeTransforms: sceneAnimBuildNodeTransforms,
       computeJointMatrices: sceneAnimComputeJointMatrices,
       wasmClipJSON: sceneAnimWasmClipJSON,
@@ -827,6 +875,23 @@
   // Immutable CPU palettes are owned by decoded assets, never actor identities.
   const sceneCrowdAtlasCache = new WeakMap();
   let sceneCrowdAtlasSequence = 0;
+  // Explicit CPU poses and scene-clock motion sample the same clip clock and
+  // palette rows. Keep the output caller-owned on both paths.
+  function sceneAnimationSampleTime(time: number, duration: number, loop: boolean) {
+    if (!Number.isFinite(time) || time < 0) time = 0;
+    return duration > 0 ? (loop ? time % duration : Math.min(time, duration)) : 0;
+  }
+
+  function sceneCrowdWritePoseRows(out: Float32Array, start: number, segments: number, duration: number, time: number, loop: boolean) {
+    const sampled = sceneAnimationSampleTime(time, duration, loop);
+    const frame = duration > 0 ? sampled / duration * segments : 0;
+    const a = Math.min(segments, Math.floor(frame));
+    out[0] = start + a;
+    out[1] = start + Math.min(segments, a + 1);
+    out[2] = frame - a;
+    return out;
+  }
+
   function sceneCrowdPoseRows(atlas, pose, out) {
     out = out || new Float32Array(3);
     const clip = atlas.clips.get(pose && pose.animation || "");
@@ -835,15 +900,7 @@
       if (name && !atlas.missingClips.has(name)) { atlas.missingClips.add(name); console.warn("[gosx] crowd animation clip not found:", name); }
       out[0] = out[1] = out[2] = 0; return out;
     }
-    let t = Number(pose.animationTime);
-    if (!Number.isFinite(t) || t < 0) t = 0;
-    t = clip.duration > 0 ? (pose.animationLoop ? t % clip.duration : Math.min(t, clip.duration)) : 0;
-    const frame = clip.duration > 0 ? t / clip.duration * clip.segments : 0;
-    const a = Math.min(clip.segments, Math.floor(frame));
-    out[0] = clip.start + a;
-    out[1] = clip.start + Math.min(clip.segments, a + 1);
-    out[2] = frame - a;
-    return out;
+    return sceneCrowdWritePoseRows(out, clip.start, clip.segments, clip.duration, Number(pose.animationTime), pose.animationLoop);
   }
 
   function sceneCrowdIncludeBoundPoint(bounds, x, y, z) {
@@ -909,6 +966,19 @@
     return bounds;
   }
 
+  // Palette construction and explicit playback materialize the same channel
+  // samples. Copy scratch values before the next channel can overwrite them.
+  function sceneSampleAnimationChannels(channels: any[], time: number, output: Map<number, any>, nodes?: any[]) {
+    for (const channel of channels) {
+      const node = channel.targetNode != null ? channel.targetNode : channel.targetID;
+      if (nodes && (!Number.isInteger(node) || !nodes[node])) throw new Error("invalid crowd animation node");
+      let entry = output.get(node);
+      if (!entry) { entry = {}; output.set(node, entry); }
+      entry[channel.property] = Array.from(sceneAnimInterpolateChannel(channel, time));
+    }
+    return output;
+  }
+
   function sceneBuildCrowdAtlas(asset, skinIndex) {
     let cache = sceneCrowdAtlasCache.get(asset);
     if (!cache) { cache = new Map(); sceneCrowdAtlasCache.set(asset, cache); }
@@ -930,15 +1000,8 @@
     if (height > 4096 || height * asset.nodes.length > 500000 || width * height * 16 > 16 * 1024 * 1024) throw new Error("crowd palette budget exceeded");
     const data = new Float32Array(width * height * 4);
     function sample(channels, time, row) {
-      const pose = new Map();
-      for (const channel of channels) {
-        const node = channel.targetNode != null ? channel.targetNode : channel.targetID;
-        if (!Number.isInteger(node) || !asset.nodes[node]) throw new Error("invalid crowd animation node");
-        let entry = pose.get(node);
-        if (!entry) { entry = {}; pose.set(node, entry); }
-        // The interpolation helper uses reusable scratch arrays. Copy now.
-        entry[channel.property] = Array.from(sceneAnimInterpolateChannel(channel, time));
-      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
+      const pose = sceneSampleAnimationChannels(channels, time, new Map(), asset.nodes);
+      // @ts-expect-error TS2554 -- rootNodes is optional for decoded asset sampling.
       const matrices = sceneAnimComputeJointMatrices(skin, sceneAnimBuildNodeTransforms(asset.nodes, pose, null));
       for (const value of matrices) if (!Number.isFinite(value)) throw new Error("nonfinite crowd matrix");
       data.set(matrices, row * width * 4);
@@ -983,15 +1046,8 @@
     output.clear();
     const clip = clips.find(c => c.name === (pose && pose.animation));
     if (!clip) return output;
-    let t = Number(pose.animationTime);
-    if (!Number.isFinite(t) || t < 0) t = 0;
-    t = clip.duration > 0 ? (pose.animationLoop ? t % clip.duration : Math.min(t, clip.duration)) : 0;
-    for (const channel of clip.channels) {
-      const node = channel.targetNode != null ? channel.targetNode : channel.targetID;
-      let entry = output.get(node); if (!entry) { entry = {}; output.set(node, entry); }
-      entry[channel.property] = Array.from(sceneAnimInterpolateChannel(channel, t));
-    }
-    return output;
+    const t = sceneAnimationSampleTime(Number(pose.animationTime), clip.duration, pose.animationLoop);
+    return sceneSampleAnimationChannels(clip.channels, t, output);
   }
 
   // ---------------------------------------------------------------------------
@@ -1079,15 +1135,7 @@
     const row = Math.max(0, Math.min(clipTable.count - 1, Math.floor(clipRow) || 0));
     const data = clipTable.data;
     const start = data[row * 4], segments = data[row * 4 + 1], duration = data[row * 4 + 2];
-    let elapsed = (now - clipStartTime) * rate;
-    if (!Number.isFinite(elapsed) || elapsed < 0) elapsed = 0;
-    const t = duration > 0 ? (loop ? elapsed % duration : Math.min(elapsed, duration)) : 0;
-    const frame = duration > 0 ? t / duration * segments : 0;
-    const a = Math.min(segments, Math.floor(frame));
-    out[0] = start + a;
-    out[1] = start + Math.min(segments, a + 1);
-    out[2] = frame - a;
-    return out;
+    return sceneCrowdWritePoseRows(out, start, segments, duration, (now - clipStartTime) * rate, loop);
   }
 
   // sceneCrowdMotionAngleLerp is the JS mirror of
