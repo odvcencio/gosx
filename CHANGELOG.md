@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Cache bounded readiness snapshots without rerunning checks or retaining request
+  IDs and errors. LastReadiness reports unknown before a probe, UTC completion
+  time, and completeness when more than 64 checks exist. Panicking checks fail
+  readiness and are disabled with a fixed log class.
+
 - Attach built-in request aggregates once at the App observer owner. Route
   labels use the admitted catalog, response bytes come from its writer, and
   the in-flight gauge covers application middleware. RequestStartObserver
