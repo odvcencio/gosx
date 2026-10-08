@@ -78,6 +78,12 @@ func TestProductionBuildHydratesStrictIsland(t *testing.T) {
 		t.Fatalf("initial hydrated island text = %q, want it to contain the proven props \"Draft Pick\" and \"7\"", before)
 	}
 
+	// The server-rendered button is visible before its client handler is bound.
+	if err := chromedp.Run(page.ctx, chromedp.Poll(
+		`window.__gosx?.ready === true`, nil, chromedp.WithPollingTimeout(10*time.Second),
+	)); err != nil {
+		t.Fatalf("wait for strict island hydration: %v\nconsole:\n%s\npage errors: %v", err, page.Console(), page.PageErrors())
+	}
 	page.eval(t, `document.querySelector("#strict-counter-button").click()`, nil)
 	if err := chromedp.Run(page.ctx, chromedp.Poll(
 		`document.querySelector("#strict-counter-button").textContent === "8"`,
