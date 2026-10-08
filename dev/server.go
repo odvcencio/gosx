@@ -318,7 +318,8 @@ func (s *Server) serveAssetFile(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, path)
 		return
 	}
-	http.NotFound(w, r)
+	// Framework assets embedded in the app have no staged file in dev builds.
+	s.serveProxy(w, r)
 }
 
 func safeDevAssetPath(root, rel string) (string, bool) {

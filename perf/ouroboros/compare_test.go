@@ -613,41 +613,63 @@ func TestCanonicalSizeBundleRejectsManifestHashNotBoundToBytes(t *testing.T) {
 }
 
 func TestCanonicalSizeBundleAcceptsManifestBoundInputs(t *testing.T) {
-	root := t.TempDir()
-	inputDir := filepath.Join(root, "size", "input", "primary")
-	runtimeBody := []byte("real-runtime")
-	runtimeSHA := sha256.Sum256(runtimeBody)
-	runtimeHex := hex.EncodeToString(runtimeSHA[:])
-	runtimeDir := filepath.Join(inputDir, "assets", "runtime")
-	writeFixtureFile(t, filepath.Join(runtimeDir, "bootstrap-runtime.js"), runtimeBody)
-	buildJSON := []byte(fmt.Sprintf(`{"runtime":{"bootstrapRuntime":{"file":"bootstrap-runtime.js","hash":"%s","size":12}},"islands":[],"css":[]}`, runtimeHex[:16]))
-	exportJSON := []byte(`{"pages":["/lite"],"routes":[{"path":"/lite","file":"static/lite/index.html","capabilities":{"bootstrap":true}}]}`)
-	writeFixtureFile(t, filepath.Join(inputDir, "build.json"), buildJSON)
-	writeFixtureFile(t, filepath.Join(inputDir, "export.json"), exportJSON)
-	writeFixtureFile(t, filepath.Join(inputDir, "static", "lite", "index.html"), []byte(`<script src="/gosx/bootstrap-runtime.js"></script>`))
-	id := stableAssetID("/gosx/bootstrap-runtime.js", runtimeHex)
-	evidence := &SizeEvidence{
-		Canonical:  true,
-		BundleRoot: "size/input",
-		BuildInput: BuildInputEvidence{ManifestSHA256: hashFixtureBytes(buildJSON), ExportSHA256: hashFixtureBytes(exportJSON)},
-		Assets: []TransferredAsset{{
-			ID: id, URL: "/gosx/bootstrap-runtime.js", SourcePath: "primary/assets/runtime/bootstrap-runtime.js",
-			EvidencePath: "size/input/primary/assets/runtime/bootstrap-runtime.js", ManifestHash: runtimeHex[:16],
-			SHA256: runtimeHex, Bytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody), UsedByRoutes: []string{"/lite"},
-		}},
-		Routes: []RouteAssetEvidence{{
-			ID: "R01", Route: "/lite", File: "static/lite/index.html", Capabilities: &ExportCapabilities{Bootstrap: true}, AssetIDs: []string{id},
-			RawBytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody),
-			UniqueRawBytes: int64(len(runtimeBody)), UniqueGzipBytes: GzipLength(runtimeBody), UniqueBrotliBytes: BrotliLength(runtimeBody),
-		}},
-	}
-	fillSizeEvidenceTotals(evidence)
-	paths, err := resolveCompareManifestPath(writeMinimalCompareManifest(t, root))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := validateCanonicalSizeEvidenceBundle(paths, evidence); err != nil {
-		t.Fatalf("manifest-bound canonical size bundle rejected: %v", err)
+	for _, navigation := range []bool{false, true} {
+		t.Run(fmt.Sprintf("navigation=%t", navigation), func(t *testing.T) {
+			root := t.TempDir()
+			inputDir := filepath.Join(root, "size", "input", "primary")
+			runtimeBody := []byte("real-runtime")
+			runtimeSHA := sha256.Sum256(runtimeBody)
+			runtimeHex := hex.EncodeToString(runtimeSHA[:])
+			ref := "/gosx/bootstrap-runtime.js"
+			assetRel := "assets/runtime/bootstrap-runtime.js"
+			if navigation {
+				ref = "/gosx/assets/runtime/navigation." + runtimeHex + ".js"
+				assetRel = "static/" + strings.TrimPrefix(ref, "/")
+			}
+			writeFixtureFile(t, filepath.Join(inputDir, filepath.FromSlash(assetRel)), runtimeBody)
+			buildJSON := []byte(fmt.Sprintf(`{"runtime":{"bootstrapRuntime":{"file":"bootstrap-runtime.js","hash":"%s","size":12}},"islands":[],"css":[]}`, runtimeHex[:16]))
+			if navigation {
+				buildJSON = []byte(`{"runtime":{},"islands":[],"css":[]}`)
+			}
+			exportJSON := []byte(`{"pages":["/lite"],"routes":[{"path":"/lite","file":"static/lite/index.html","capabilities":{"bootstrap":true}}]}`)
+			writeFixtureFile(t, filepath.Join(inputDir, "build.json"), buildJSON)
+			writeFixtureFile(t, filepath.Join(inputDir, "export.json"), exportJSON)
+			writeFixtureFile(t, filepath.Join(inputDir, "static", "lite", "index.html"), []byte(`<script src="`+ref+`"></script>`))
+			id := stableAssetID(ref, runtimeHex)
+			manifestHash := runtimeHex[:16]
+			if navigation {
+				manifestHash = runtimeHex
+			}
+			evidence := &SizeEvidence{
+				Canonical:  true,
+				BundleRoot: "size/input",
+				BuildInput: BuildInputEvidence{ManifestSHA256: hashFixtureBytes(buildJSON), ExportSHA256: hashFixtureBytes(exportJSON)},
+				Assets: []TransferredAsset{{
+					ID: id, URL: ref, SourcePath: "primary/" + assetRel,
+					EvidencePath: "size/input/primary/" + assetRel, ManifestHash: manifestHash,
+					SHA256: runtimeHex, Bytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody), UsedByRoutes: []string{"/lite"},
+				}},
+				Routes: []RouteAssetEvidence{{
+					ID: "R01", Route: "/lite", File: "static/lite/index.html", Capabilities: &ExportCapabilities{Bootstrap: true}, AssetIDs: []string{id},
+					RawBytes: int64(len(runtimeBody)), GzipBytes: GzipLength(runtimeBody), BrotliBytes: BrotliLength(runtimeBody),
+					UniqueRawBytes: int64(len(runtimeBody)), UniqueGzipBytes: GzipLength(runtimeBody), UniqueBrotliBytes: BrotliLength(runtimeBody),
+				}},
+			}
+			fillSizeEvidenceTotals(evidence)
+			paths, err := resolveCompareManifestPath(writeMinimalCompareManifest(t, root))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := validateCanonicalSizeEvidenceBundle(paths, evidence); err != nil {
+				t.Fatalf("manifest-bound canonical size bundle rejected: %v", err)
+			}
+			if navigation {
+				writeFixtureFile(t, filepath.Join(inputDir, filepath.FromSlash(assetRel)), []byte("tampered-runtime"))
+				if err := validateCanonicalSizeEvidenceBundle(paths, evidence); err == nil {
+					t.Fatal("tampered navigation evidence accepted")
+				}
+			}
+		})
 	}
 }
 

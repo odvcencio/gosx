@@ -350,16 +350,17 @@ test("render truth: a rejected authored compute kernel is published, not just lo
 //
 // The three authored-pipeline builders in 16a live inside the renderer
 // closure and are not separately constructible, so their contribution to the
-// shared stack is asserted structurally: only the two scopes that are
-// provably balanced may remain.
+// shared stack is asserted structurally: creation scopes pop in their own
+// synchronous block, and async authored builds validate per object.
 
-test("webgpu: 16a keeps only the two error scopes that cannot interleave", () => {
+test("webgpu: resource scopes pop synchronously and authored async builds use per-object validation", () => {
   const pushes = (webgpuSource.match(/\.pushErrorScope\(/g) || []).length;
   // 1. ensureFBOs' "out-of-memory" allocation guard: pushed and popped in one
   //    synchronous block, so nothing can be pushed between them.
   // 2. beginWebGPUErrorScope's per-frame "validation" scope: guarded against
   //    re-entry by pendingWebGPUErrorScope.
-  assert.equal(pushes, 2, "16a must push exactly the ensureFBOs and per-frame error scopes");
+  // 3. Builtin pipeline and shader-module scopes pop before returning.
+  assert.equal(pushes, 4, "pipeline, module, allocation and frame scopes must be accounted for");
   assert.match(webgpuSource, /device\.pushErrorScope\("out-of-memory"\)/);
   assert.match(webgpuSource, /device\.pushErrorScope\("validation"\)/);
 
