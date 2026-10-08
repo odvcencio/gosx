@@ -477,3 +477,7 @@ ci: fmt-check verify-danmuji test test-telemetry test-race test-fuzz-smoke test-
 .PHONY: test-assetmeasure
 test-assetmeasure:
 	GOWORK=off go test ./internal/assetmeasure ./cmd/gosx -run 'Test(AssetMeasure|Sidecar|Size)'
+
+.PHONY: test-pagecaps
+test-pagecaps:
+	GOWORK=off go test ./internal/pagecaps ./cmd/gosx -run 'Test(PageCaps|Classify|Export.*Capabilities)'
