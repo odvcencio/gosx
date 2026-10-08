@@ -33,7 +33,8 @@ globalThis.result = (async function () {
     closures: closures.map(read => read()), events,
     shader: shader.replace("return 5.0", "return 6.0"),
     regexp: "a/b".replace(/\//g, "-"),
-    negativeZero: Object.is(-0, -0), bigint: String(2n ** 4n),
+    negativeZeroEqualsPositive: Object.is(-0, 0),
+    negativeZeroReciprocal: String(1 / -0), bigint: String(2n ** 4n),
   };
 })();
 //# sourceMappingURL=obsolete.js.map
@@ -137,7 +138,8 @@ const sources = JSON.parse(fs.readFileSync(0, "utf8"));
   const expected = { changed: 5, zero: 0, fallback: 7, current: 5,
     closures: [2, 4], events: ["awaited", "cleanup", "read"],
     shader: "fn shade() {\n  return 6.0;\n}", regexp: "a-b",
-    negativeZero: true, bigint: "16" };
+    negativeZeroEqualsPositive: false, negativeZeroReciprocal: "-Infinity",
+    bigint: "16" };
   for (const [name, source] of Object.entries(sources)) {
     const context = vm.createContext({});
     vm.runInContext(source, context, { timeout: 1000 });
