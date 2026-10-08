@@ -1114,6 +1114,234 @@ func TestLinkedCheckpointPageEnforcesDenseStringBudgetAndExactIOEnd(t *testing.T
 	}
 }
 
+func TestLinkedWireValuesValidateNativeScalarsAndAdvanceDenseCursor(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{staticUnit(t)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "wireValue", Function: c.wireScalar})
+	frame := checkpointTestFrame{}
+	for i, item := range []struct {
+		value   vm.Value
+		present bool
+	}{{vm.ZeroValue(program.TypeString), false}, {vm.StringVal(""), true},
+		{vm.StringVal("héllo\x00🌴e\u0301"), true}, {vm.StringVal("héllo\x00🌴e\u0301"), true},
+		{vm.IntVal(-2147483648), true}, {vm.IntVal(2147483647), true},
+		{vm.BoolVal(false), true}, {vm.BoolVal(true), true}, {vm.ZeroValue(program.TypeAny), false},
+		{vm.StringVal(strings.Repeat("x", 4096)), true}} {
+		flags := uint32(0)
+		if item.value.Type == program.TypeString && item.present {
+			flags = 1
+		} else if item.value.Type == program.TypeBool && item.value.Truth() {
+			flags = 2
+		}
+		packet := scalarTransport(item.value.Type, flags, int64(item.value.Number()), item.value.Text())
+		frame.Locals = append(frame.Locals, checkpointTestValue{uint32(i), packet})
+	}
+	document := checkpointTestBytes(t, l.inputSetSHA, 0, []checkpointTestFrame{frame}, nil)
+	start := uint32(len(document)) - binary.LittleEndian.Uint32(document[28:])
+	data := struct {
+		Document string
+		Start    uint32
+		Count    int
+	}{base64.StdEncoding.EncodeToString(document), start, len(frame.Locals)}
+	var got []struct {
+		Cursors []int32
+		Pure    bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, document = Buffer.from(data.Document,'base64'), results = [];
+  for (const base of [32769,65536-document.length]) {
+    memory.set(document,base);
+    const before = Buffer.from(memory), allocation = api.cursor(), cursors = [];
+    let cursor = base+data.Start;
+    for (let i=0;i<data.Count;i++) {
+      cursor = api.wireValue(base+92+i*28,base,base+document.length,cursor);
+      cursors.push(cursor);
+    }
+    results.push({Cursors:cursors,Pure:before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation&&api.pending()===0});
+  }
+  process.stdout.write(JSON.stringify(results));`, data, &got)
+	if len(got) != 2 {
+		t.Fatal("both wire document positions were not exercised")
+	}
+	for position, result := range got {
+		base := uint32(32769)
+		if position != 0 {
+			base = uint32(65536 - len(document))
+		}
+		cursor := base + start
+		var want []int32
+		for _, entry := range frame.Locals {
+			raw, _ := base64.StdEncoding.DecodeString(entry.Packet)
+			cursor += uint32(len(raw) - 24)
+			want = append(want, int32(cursor))
+		}
+		if !result.Pure || !reflect.DeepEqual(result.Cursors, want) || cursor != base+uint32(len(document)) {
+			t.Fatalf("wire scalar shape, dense cursor or validation purity: %+v", result)
+		}
+	}
+}
+
+func TestLinkedWireValuesRejectBadTagsPayloadsUTF8AndWidenedBounds(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{staticUnit(t)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "wireValue", Function: c.wireScalar})
+	type testCase struct {
+		Document                  string
+		Record, Base, End, Cursor uint32
+		Want                      int32
+	}
+	var cases []testCase
+	add := func(packet string, want int32) {
+		raw, _ := base64.StdEncoding.DecodeString(packet)
+		if len(raw) > 24 {
+			binary.LittleEndian.PutUint32(raw[16:], 24)
+		}
+		cases = append(cases, testCase{base64.StdEncoding.EncodeToString(raw), 32768, 32768, uint32(32768 + len(raw)), 32792, want})
+	}
+	for _, item := range []struct {
+		tag    program.ExprType
+		flags  uint32
+		number int64
+		text   string
+		want   int32
+	}{{program.TypeInt, 0, -2147483649, "", -3}, {program.TypeInt, 0, 2147483648, "", -3},
+		{program.TypeInt, 1, 0, "", -2}, {program.TypeInt, 0, 0, "x", -2},
+		{program.TypeBool, 1, 0, "", -2}, {program.TypeBool, 3, 0, "", -2}, {program.TypeBool, 2, 1, "", -2},
+		{program.TypeString, 0, 0, "x", -2}, {program.TypeString, 2, 0, "", -2}, {program.TypeString, 1, 1, "", -2},
+		{program.TypeString, 1, 0, strings.Repeat("x", 4097), -4},
+		{program.TypeAny, 1, 0, "", -2}, {program.TypeAny, 0, 1, "", -2},
+		{program.TypeFloat, 0, 0, "", -2}, {program.TypeNode, 0, 0, "", -2}, {255, 0, 0, "", -2}} {
+		add(scalarTransport(item.tag, item.flags, item.number, item.text), item.want)
+	}
+	for _, text := range []string{"\xff", "\x80", "\xc0\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80", "\xe2\x82"} {
+		add(scalarTransport(program.TypeString, 1, 0, text), -2)
+	}
+	for _, pointer := range []uint32{0, 1, 23, 25, 32792, 4294967295} {
+		add(scalarTransport(program.TypeString, 1, 0, "x"), -2)
+		raw, _ := base64.StdEncoding.DecodeString(cases[len(cases)-1].Document)
+		binary.LittleEndian.PutUint32(raw[16:], pointer)
+		cases[len(cases)-1].Document = base64.StdEncoding.EncodeToString(raw)
+	}
+	for _, fields := range [][2]uint32{{16, 24}, {20, 1}, {4, 4}} {
+		add(scalarTransport(program.TypeAny, 0, 0, ""), -2)
+		raw, _ := base64.StdEncoding.DecodeString(cases[len(cases)-1].Document)
+		binary.LittleEndian.PutUint32(raw[fields[0]:], fields[1])
+		cases[len(cases)-1].Document = base64.StdEncoding.EncodeToString(raw)
+	}
+	valid := scalarTransport(program.TypeInt, 0, 0, "")
+	for _, bounds := range [][4]uint32{{32767, 32768, 32792, 32792}, {32769, 32768, 32792, 32792},
+		{4294967295, 32768, 65536, 65536}, {32768, 32767, 32792, 32792}, {32768, 32793, 32792, 32792},
+		{32768, 32768, 65537, 32792}, {32768, 32768, 32792, 32791}, {32768, 32768, 32792, 32793},
+		{32768, 32768, 32792, 4294967295}} {
+		cases = append(cases, testCase{valid, bounds[0], bounds[1], bounds[2], bounds[3], -2})
+	}
+	add(scalarTransport(program.TypeString, 1, 0, "x"), -2)
+	cases[len(cases)-1].End--
+	var got struct {
+		Statuses []int32
+		Pure     bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], allocation = api.cursor();
+  let pure = true;
+  for (const item of data) {
+    memory.fill(0,32768,65536);
+    memory.set(Buffer.from(item.Document,'base64'),32768);
+    const before = Buffer.from(memory);
+    statuses.push(api.wireValue(item.Record,item.Base,item.End,item.Cursor));
+    pure = pure&&before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation;
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Pure:pure}));`, cases, &got)
+	if len(got.Statuses) != len(cases) || !got.Pure {
+		t.Fatal("wire validation skipped records or wrote memory or transaction state")
+	}
+	for i, item := range cases {
+		if got.Statuses[i] != item.Want {
+			t.Fatalf("wire case %d: %d want %d", i, got.Statuses[i], item.Want)
+		}
+	}
+}
+
+func TestLinkedWireValuesRejectStringAliasingAndPadding(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{staticUnit(t)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "wireValue", Function: c.wireScalar})
+	packet := scalarTransport(program.TypeString, 1, 0, "same")
+	document := checkpointTestBytes(t, l.inputSetSHA, 0, []checkpointTestFrame{{Locals: []checkpointTestValue{{0, packet}, {1, packet}}}}, nil)
+	var cases []string
+	for _, pointer := range []uint32{144, 145, 149} {
+		modified := append([]byte{}, document...)
+		binary.LittleEndian.PutUint32(modified[120+16:], pointer)
+		cases = append(cases, base64.StdEncoding.EncodeToString(modified))
+	}
+	var got []int32
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [];
+  for (const packet of data) {
+    const document = Buffer.from(packet,'base64');
+    memory.set(document,32768);
+    const next = api.wireValue(32768+92,32768,32768+document.length,32768+144);
+    statuses.push(next,api.wireValue(32768+120,32768,32768+document.length,next));
+  }
+  process.stdout.write(JSON.stringify(statuses));`, cases, &got)
+	if !reflect.DeepEqual(got, []int32{32916, -2, 32916, -2, 32916, -2}) {
+		t.Fatalf("wire strings accepted overlap or per-string padding: %v", got)
+	}
+}
+
+func TestLinkedWireValuesAcceptEmptyPayloadsAtExactIOEnd(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{staticUnit(t)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "wireValue", Function: c.wireScalar})
+	packets := []string{scalarTransport(program.TypeString, 0, 0, ""), scalarTransport(program.TypeString, 1, 0, ""),
+		scalarTransport(program.TypeInt, 0, -2147483648, ""), scalarTransport(program.TypeBool, 2, 0, ""), scalarTransport(program.TypeAny, 0, 0, "")}
+	var got []int32
+	runExpressionModule(t, m, `
+  const statuses = [], api = instance.exports;
+  for (const packet of data) {
+    memory.set(Buffer.from(packet,'base64'),65512);
+    statuses.push(api.wireValue(65512,65512,65536,65536));
+    statuses.push(api.wireValue(65513,65512,65536,65536));
+    statuses.push(api.wireValue(65512,65512,65535,65535));
+  }
+  process.stdout.write(JSON.stringify(statuses));`, packets, &got)
+	var want []int32
+	for range packets {
+		want = append(want, 65536, -2, -2)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("wire records at the IO boundary: %v want %v", got, want)
+	}
+}
+
 func TestLinkedCheckpointValuesPreserveScalarBytesAndDenseStringOrder(t *testing.T) {
 	l, err := buildLinkedLayout([]Unit{layoutUnit(t, "CheckpointValues", 1, 0, 0)}, DefaultOptions())
 	if err != nil {

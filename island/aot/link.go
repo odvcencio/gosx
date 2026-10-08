@@ -548,6 +548,7 @@ type linkedCode struct {
 	notify, publish, scalar, dispose   uint32
 	dispatch, initialize, bind, render uint32
 	checkpointValue, checkpoint        uint32
+	wireScalar                         uint32
 }
 
 const linkedRenderMaskGlobal = 25
@@ -591,7 +592,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.render = c.notify + 7
 	c.checkpointValue = c.notify + 8
 	c.checkpoint = c.notify + 9
-	c.module.Functions = make([]wasmgen.Function, len(common)+10)
+	c.wireScalar = c.notify + 10
+	c.module.Functions = make([]wasmgen.Function, len(common)+11)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -616,7 +618,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 10 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 11 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -668,6 +670,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+7] = l.frameOperationFunction(c, "render")
 	c.module.Functions[len(common)+8] = checkpointValueFunction(c)
 	c.module.Functions[len(common)+9] = l.checkpointFunction(c)
+	c.module.Functions[len(common)+10] = scalarRecordValidationFunction(c.indices[0][c.programs[0].inputUTF8], true)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -1203,136 +1206,196 @@ func (l *linkedLayout) publishFunction(c *linkedCode) wasmgen.Function {
 // Validate a scalar inside one bounded interval without allocating, importing
 // or changing transaction state. Callers choose their error-publication policy.
 func scalarValidationFunction(utf8 uint32) wasmgen.Function {
+	return scalarRecordValidationFunction(utf8, false)
+}
+
+// Wire records use document-relative pointers. Their string bytes must start
+// exactly at the supplied dense cursor, and successful validation advances it.
+// Both record forms share tag, flag, integer-domain and UTF-8 validation.
+func scalarRecordValidationFunction(utf8 uint32, wire bool) wasmgen.Function {
+	params, end := uint32(3), int32(196608)
+	if wire {
+		params, end = 4, 65536
+	}
+	tag, flags, pointer, length, number := params, params+1, params+2, params+3, params+4
 	var b instructions
+	status := func(code int32) int32 {
+		if wire {
+			return -code
+		}
+		return code
+	}
+	fail := func(code int32) { b.statusFailure(status(code)) }
+	success := func() {
+		if wire {
+			b.get(3)
+			b.get(length)
+			b.op(0x6a)
+		} else {
+			b.i32(0)
+		}
+		b.op(0x0f)
+	}
+	if wire {
+		b.get(1)
+		b.i32(32768)
+		b.op(0x49)
+		fail(statusBadInput)
+		b.get(3)
+		b.get(1)
+		b.op(0x49)
+		b.get(3)
+		b.get(2)
+		b.op(0x4b)
+		b.op(0x72)
+		fail(statusBadInput)
+	}
 	b.get(1)
 	b.get(2)
 	b.op(0x4b)
 	b.get(2)
-	b.i32(196608)
+	b.i32(end)
 	b.op(0x4b)
 	b.op(0x72)
 	b.get(0)
 	b.get(1)
 	b.op(0x49)
 	b.op(0x72)
-	b.statusFailure(statusBadInput)
+	fail(statusBadInput)
 	b.get(0)
 	b.op(0xad)
 	b.i64(valueBytes)
 	b.op(0x7c)
-	b.get(2)
+	if wire {
+		b.get(3)
+	} else {
+		b.get(2)
+	}
 	b.op(0xad)
 	b.op(0x56)
-	b.statusFailure(statusBadInput)
+	fail(statusBadInput)
 	for i, offset := range []uint32{0, 4, 16, 20} {
 		b.get(0)
 		b.memory(0x28, 2, offset)
-		b.set(uint32(3 + i))
+		b.set(params + uint32(i))
 	}
 	b.get(0)
 	b.memory(0x29, 3, 8)
-	b.set(7)
-	b.get(3)
+	b.set(number)
+	b.get(tag)
 	b.i32(0)
 	b.op(0x46)
 	b.op(0x04)
 	b.op(0x40)
-	b.get(4)
+	b.get(flags)
 	b.i32(1)
 	b.op(0x4b)
-	b.get(7)
+	b.get(number)
 	b.i64(0)
 	b.op(0x52)
 	b.op(0x72)
-	b.statusFailure(statusBadInput)
-	b.get(6)
+	fail(statusBadInput)
+	b.get(length)
 	b.i32(4096)
 	b.op(0x4b)
-	b.statusFailure(statusStringLimit)
-	b.get(6)
+	fail(statusStringLimit)
+	b.get(length)
 	b.op(0x45)
 	b.op(0x04)
 	b.op(0x40)
-	b.get(5)
-	b.statusFailure(statusBadInput)
+	b.get(pointer)
+	fail(statusBadInput)
 	b.op(0x05)
-	b.get(4)
+	b.get(flags)
 	b.op(0x45)
-	b.get(5)
-	b.get(1)
-	b.op(0x49)
-	b.op(0x72)
-	b.statusFailure(statusBadInput)
-	b.get(5)
+	fail(statusBadInput)
+	b.get(pointer)
+	if wire {
+		b.get(3)
+		b.get(1)
+		b.op(0x6b)
+		b.op(0x47)
+	} else {
+		b.get(1)
+		b.op(0x49)
+	}
+	fail(statusBadInput)
+	if wire {
+		b.get(3)
+	} else {
+		b.get(pointer)
+	}
 	b.op(0xad)
-	b.get(6)
+	b.get(length)
 	b.op(0xad)
 	b.op(0x7c)
 	b.get(2)
 	b.op(0xad)
 	b.op(0x56)
-	b.statusFailure(statusBadInput)
-	b.get(5)
-	b.get(6)
+	fail(statusBadInput)
+	if wire {
+		b.get(1)
+	}
+	b.get(pointer)
+	if wire {
+		b.op(0x6a)
+	}
+	b.get(length)
 	b.index(0x10, utf8)
 	b.op(0x45)
-	b.statusFailure(statusBadInput)
+	fail(statusBadInput)
 	b.op(0x0b)
-	b.i32(0)
-	b.op(0x0f)
+	success()
 	b.op(0x0b)
-	b.get(5)
-	b.get(6)
+	b.get(pointer)
+	b.get(length)
 	b.op(0x72)
-	b.statusFailure(statusBadInput)
-	b.get(3)
+	fail(statusBadInput)
+	b.get(tag)
 	b.i32(1)
 	b.op(0x46)
 	b.op(0x04)
 	b.op(0x40)
-	b.get(4)
-	b.statusFailure(statusBadInput)
-	b.get(7)
+	b.get(flags)
+	fail(statusBadInput)
+	b.get(number)
 	b.i64(-2147483648)
 	b.op(0x53)
-	b.get(7)
+	b.get(number)
 	b.i64(2147483647)
 	b.op(0x55)
 	b.op(0x72)
-	b.statusFailure(statusIntegerDomain)
-	b.i32(0)
-	b.op(0x0f)
+	fail(statusIntegerDomain)
+	success()
 	b.op(0x0b)
-	b.get(7)
+	b.get(number)
 	b.i64(0)
 	b.op(0x52)
-	b.statusFailure(statusBadInput)
-	b.get(3)
+	fail(statusBadInput)
+	b.get(tag)
 	b.i32(3)
 	b.op(0x46)
 	b.op(0x04)
 	b.op(0x40)
-	b.get(4)
+	b.get(flags)
 	b.i32(-3)
 	b.op(0x71)
-	b.statusFailure(statusBadInput)
-	b.i32(0)
-	b.op(0x0f)
+	fail(statusBadInput)
+	success()
 	b.op(0x0b)
-	b.get(3)
+	b.get(tag)
 	b.i32(5)
 	b.op(0x46)
-	b.get(4)
+	b.get(flags)
 	b.op(0x45)
 	b.op(0x71)
 	b.op(0x04)
 	b.op(0x40)
-	b.i32(0)
-	b.op(0x0f)
+	success()
 	b.op(0x0b)
-	b.i32(statusBadInput)
+	b.i32(status(statusBadInput))
 	b.op(0x0b)
-	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 4, I64Locals: 1, Body: b}
+	return wasmgen.Function{Signature: i32Signature(int(params)), I32Locals: 4, I64Locals: 1, Body: b}
 }
 
 // Disposal validates all owned roots before clearing any committed byte.
