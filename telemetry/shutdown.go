@@ -21,7 +21,6 @@ func (t *Telemetry) run() {
 			}
 			cancel = t.closeCancel
 		}
-		t.closeSource = nil
 		t.active.Store(false)
 		close(t.done)
 		t.mu.Unlock()
@@ -37,16 +36,20 @@ func (t *Telemetry) run() {
 				return
 			}
 			if t.Enabled() {
-				now, err := stampTicker(t.ticker, stamp)
+				scheduled, err := stampTicker(t.ticker, stamp)
 				if err != nil {
 					t.clockFailed(err)
 					return
 				}
 				// Stamp is the scheduled deadline. Collection and expiry use
 				// the current coordinates even after a delayed or missed tick.
-				now, err = readClock(t.opts.Clock)
+				now, err := readClock(t.opts.Clock)
 				if err != nil {
 					t.clockFailed(err)
+					return
+				}
+				if scheduled.Monotonic > now.Monotonic {
+					t.clockFailed(invalid("clock", "future_tick"))
 					return
 				}
 				t.updateCore(now)
@@ -74,11 +77,6 @@ func (t *Telemetry) closeContextError() error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if t.closeSource != nil {
-		if err := t.closeSource.Err(); err != nil {
-			return err
-		}
-	}
 	if deadline, ok := ctx.Deadline(); ok && !time.Now().Before(deadline) {
 		return context.DeadlineExceeded
 	}
@@ -93,7 +91,7 @@ func (t *Telemetry) clockFailed(err error) {
 	t.active.Store(false)
 	t.mu.Unlock()
 	t.faultOnce.Do(func() {
-		t.core.dropped["observer_panic"].Add(1)
+		t.core.dropped["clock"].Add(1)
 		logger := t.opts.Logger
 		if logger == nil {
 			logger = slog.Default()
@@ -160,8 +158,11 @@ func (t *Telemetry) prepareShutdown(ctx context.Context) {
 		if ctx == nil {
 			ctx = context.Background()
 		}
-		t.closeSource = ctx
-		t.closeContext, t.closeCancel = context.WithTimeout(ctx, 20*time.Second)
+		deadline := time.Now().Add(20 * time.Second)
+		if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
+			deadline = callerDeadline
+		}
+		t.closeContext, t.closeCancel = context.WithDeadline(context.WithoutCancel(ctx), deadline)
 		t.active.Store(false)
 	}
 	t.mu.Unlock()
@@ -179,7 +180,8 @@ func (t *Telemetry) signal(ctx context.Context) {
 }
 
 // Close shares the one worker completion. Every caller keeps its own deadline;
-// the first caller supplies a shared close context capped at 20 seconds.
+// the first caller bounds shared work to its deadline or 20 seconds. Cancelling
+// that caller stops only its wait, not the shared work or another caller's wait.
 func (t *Telemetry) Close(ctx context.Context) error {
 	if t == nil || t.done == nil {
 		return nil

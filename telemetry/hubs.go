@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/internal/telemetryauthority"
 	"m31labs.dev/gosx/telemetry/metric"
 )
 
@@ -324,7 +325,7 @@ func (g *HubGroup) Attach(h *hub.Hub) (func(), error) {
 	}
 	a := &hubAttachment{group: g, h: h}
 	a.alive.Store(true)
-	detach, err := h.UseTelemetryObserver(a, g.every)
+	detach, err := h.UseTelemetryObserver(a, g.every, telemetryauthority.New())
 	if err != nil {
 		if err == hub.ErrObserverConflict {
 			return nil, ErrConflict
