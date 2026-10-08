@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep peer-controlled WebSocket close text out of hub read diagnostics. Normal
+  peer closes are quiet; other failures report only a fixed transport class.
+
 - Add measured WebSocket control-ping RTT with matching sequence payloads and
   once-only timeouts. Queue sampling reports text and binary depth independently,
   and all full-buffer drops remain visible. Broadcast samples coalesce by depth
