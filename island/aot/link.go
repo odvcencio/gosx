@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"m31labs.dev/gosx/internal/wasmgen"
 	"m31labs.dev/gosx/island/program"
 )
 
@@ -141,6 +142,266 @@ func buildLinkedLayout(units []Unit, options Options) (*linkedLayout, error) {
 				p.inputs = append(p.inputs, root)
 			}
 		}
+		p.state.inputRows = append([]uint32{}, p.inputs...)
 	}
 	return l, nil
+}
+
+// Selector leaves load the normalized input directly. Compiler-only aggregate
+// prefixes have no emitted function, allocation, or runtime lookup chain.
+func (e *expressionEmitter) inputExpression(id program.ExprID) (wasmgen.Function, error) {
+	if e.state == nil || !e.transactional {
+		return wasmgen.Function{}, fmt.Errorf("input access requires a bound state layout")
+	}
+	var input *InputContract
+	for i := range e.unit.Contract.Inputs {
+		for _, expr := range e.unit.Contract.Inputs[i].Exprs {
+			if expr == id {
+				input = &e.unit.Contract.Inputs[i]
+			}
+		}
+	}
+	if input == nil {
+		return wasmgen.Function{}, fmt.Errorf("input expression has no scalar leaf")
+	}
+	var b instructions
+	b.errorGuard()
+	b.index(0x23, pendingGlobal)
+	b.op(0x45)
+	b.guard(statusBusy)
+	b.get(0)
+	b.index(0x10, e.state.lookup)
+	b.set(3)
+	b.errorGuard()
+	if input.Source == "prop" {
+		b.i32(e.state.inputDataBase + int32(input.ID)*4)
+		b.get(3)
+		b.i32(int32(len(e.unit.Contract.Inputs)) * 4)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.memory(0x28, 2, 0)
+		b.i32(valueBytes)
+		b.op(0x6c)
+		b.index(0x23, arenaBaseGlobal)
+		b.op(0x6a)
+		b.set(2)
+		e.inputKindGuard(&b, input, 2)
+		b.copyRecord(id, 2)
+		return wasmgen.Function{I32Locals: 3, Body: b}, nil
+	}
+	// Imports may overwrite IO, so a successful read owns its bytes before
+	// returning to any expression that could perform a second input call.
+	b.i32(32768)
+	b.set(2)
+	b.get(0)
+	b.i32(int32(input.ID))
+	b.get(2)
+	b.i32(valueBytes + 4096)
+	b.index(0x10, 0)
+	b.set(4)
+	b.get(4)
+	b.i32(0)
+	b.op(0x48)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(0)
+	b.get(4)
+	b.op(0x6b)
+	b.set(4)
+	b.get(4)
+	b.i32(10)
+	b.op(0x4b)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(statusBadInput)
+	b.set(4)
+	b.op(0x0b)
+	b.get(4)
+	b.index(0x24, errorGlobal)
+	b.i32(0)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.get(4)
+	b.i32(valueBytes)
+	b.op(0x49)
+	b.get(4)
+	b.i32(valueBytes + 4096)
+	b.op(0x4b)
+	b.op(0x72)
+	b.guard(statusBadInput)
+	e.inputKindGuard(&b, input, 2)
+	b.get(2)
+	b.memory(0x28, 2, 0)
+	b.set(3)
+	b.typeBranch(3, program.TypeString)
+	b.textFields(2, 5, 6)
+	b.get(6)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(5)
+	b.i32(32768 + valueBytes)
+	b.op(0x47)
+	b.guard(statusBadInput)
+	b.get(5)
+	b.get(6)
+	b.index(0x10, e.inputUTF8)
+	b.op(0x45)
+	b.guard(statusBadInput)
+	b.op(0x0b)
+	b.op(0x05)
+	b.typeBranch(3, program.TypeInt)
+	b.numericShape(2, 0, false)
+	b.get(2)
+	b.memory(0x29, 3, 8)
+	b.set(8)
+	b.integerGuard(8)
+	b.op(0x05)
+	b.typeBranch(3, program.TypeBool)
+	b.numericShape(2, 2, true)
+	b.op(0x05)
+	b.failure(statusBadInput)
+	for range 3 {
+		b.op(0x0b)
+	}
+	b.get(4)
+	b.i32(valueBytes)
+	b.get(6)
+	b.op(0x6a)
+	b.op(0x47)
+	b.guard(statusBadInput)
+	b.get(6)
+	e.callHelper(&b, helperAllocate)
+	b.set(7)
+	b.errorGuard()
+	b.get(7)
+	b.get(5)
+	b.get(6)
+	e.callHelper(&b, helperCopy)
+	b.op(0x1a)
+	b.errorGuard()
+	b.destination(id, 1)
+	for offset := uint32(0); offset < valueBytes; offset += 8 {
+		b.get(1)
+		b.get(2)
+		b.memory(0x29, 3, offset)
+		b.memory(0x37, 3, offset)
+	}
+	b.get(3)
+	b.i32(int32(program.TypeString))
+	b.op(0x46)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(1)
+	b.get(7)
+	b.memory(0x36, 2, 16)
+	b.op(0x0b)
+	b.get(1)
+	b.op(0x0b)
+	return wasmgen.Function{I32Locals: 7, I64Locals: 1, Body: b}, nil
+}
+
+func (e *expressionEmitter) inputKindGuard(b *instructions, input *InputContract, record uint32) {
+	typ := program.TypeInt
+	if input.Kind == Bool {
+		typ = program.TypeBool
+	} else if input.Kind == String {
+		typ = program.TypeString
+	}
+	b.get(record)
+	b.memory(0x28, 2, 0)
+	b.i32(int32(typ))
+	b.op(0x47)
+	if absent, _ := InputDefaultType(e.unit.Program, *input); absent == program.TypeAny {
+		b.get(record)
+		b.memory(0x28, 2, 0)
+		b.i32(int32(program.TypeAny))
+		b.op(0x47)
+		b.op(0x71)
+	}
+	b.guard(statusBadInput)
+}
+
+// inputUTF8Function accepts the exact UTF-8 scalar encodings produced by Go
+// JSON decoding. It excludes overlong forms, surrogates, and values above U+10FFFF.
+// Its caller has already checked the complete byte interval with widened sums.
+func inputUTF8Function() wasmgen.Function {
+	var b instructions
+	b.op(0x03)
+	b.op(0x40)
+	b.get(1)
+	b.op(0x45)
+	b.statusFailure(1)
+	b.get(0)
+	b.memory(0x2d, 0, 0)
+	b.set(2)
+	b.i32(1)
+	b.set(3)
+	for _, encoding := range []struct{ low, high, count int32 }{{0x80, 0xff, 0}, {0xc2, 0xdf, 2}, {0xe0, 0xef, 3}, {0xf0, 0xf4, 4}} {
+		b.get(2)
+		b.i32(encoding.low)
+		b.op(0x4f)
+		b.get(2)
+		b.i32(encoding.high)
+		b.op(0x4d)
+		b.op(0x71)
+		b.op(0x04)
+		b.op(0x40)
+		b.i32(encoding.count)
+		b.set(3)
+		b.op(0x0b)
+	}
+	b.get(3)
+	b.op(0x45)
+	b.get(3)
+	b.get(1)
+	b.op(0x4b)
+	b.op(0x72)
+	b.statusFailure(0)
+	for offset := uint32(1); offset <= 3; offset++ {
+		b.get(3)
+		b.i32(int32(offset))
+		b.op(0x4b)
+		b.op(0x04)
+		b.op(0x40)
+		b.get(0)
+		b.memory(0x2d, 0, offset)
+		b.set(4)
+		b.get(4)
+		b.i32(0x80)
+		b.op(0x49)
+		b.get(4)
+		b.i32(0xbf)
+		b.op(0x4b)
+		b.op(0x72)
+		b.statusFailure(0)
+		if offset == 1 {
+			for _, edge := range []struct {
+				lead, bound int32
+				op          byte
+			}{{0xe0, 0xa0, 0x49}, {0xed, 0x9f, 0x4b}, {0xf0, 0x90, 0x49}, {0xf4, 0x8f, 0x4b}} {
+				b.get(2)
+				b.i32(edge.lead)
+				b.op(0x46)
+				b.get(4)
+				b.i32(edge.bound)
+				b.op(edge.op)
+				b.op(0x71)
+				b.statusFailure(0)
+			}
+		}
+		b.op(0x0b)
+	}
+	b.get(0)
+	b.get(3)
+	b.op(0x6a)
+	b.set(0)
+	b.get(1)
+	b.get(3)
+	b.op(0x6b)
+	b.set(1)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.i32(1)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(2), I32Locals: 3, Body: b}
 }

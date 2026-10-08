@@ -19,6 +19,8 @@ type stateLayout struct {
 	lookup        uint32
 	mutableRoots  uint32
 	computedCount uint32
+	inputRows     []uint32
+	inputDataBase int32
 }
 
 func emitStateExpressions(u Unit, instances []uint32) (*expressionEmitter, error) {
@@ -58,6 +60,16 @@ func buildStateLayout(u Unit, instances []uint32) (*stateLayout, error) {
 		sharedSlots[name] = uint32(len(s.instances)*len(locals) + i)
 	}
 	s.roots = uint32(len(s.instances)*len(locals) + len(shared))
+	for range s.instances {
+		for _, input := range u.Contract.Inputs {
+			root := NoBindingName
+			if input.Source == "prop" {
+				root = s.roots
+				s.roots++
+			}
+			s.inputRows = append(s.inputRows, root)
+		}
+	}
 	s.mutableRoots = s.roots
 	s.computedCount = uint32(len(u.Program.Computeds))
 	s.roots += uint32(len(s.instances)) * s.computedCount
@@ -82,6 +94,10 @@ func (e *expressionEmitter) setupState() error {
 	}
 	e.state.dataBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
 	for _, root := range e.state.rows {
+		e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, root)
+	}
+	e.state.inputDataBase = int32(wasmgen.ConstantOffset + len(e.module.Data))
+	for _, root := range e.state.inputRows {
 		e.module.Data = binary.LittleEndian.AppendUint32(e.module.Data, root)
 	}
 	if len(e.module.Data) > wasmgen.MaxDataBytes {

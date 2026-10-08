@@ -1,10 +1,15 @@
 package aot
 
 import (
+	"encoding/base64"
+	"encoding/binary"
 	"reflect"
 	"strconv"
 	"testing"
+	"unicode/utf8"
 
+	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/internal/wasmgen"
 	"m31labs.dev/gosx/island/program"
 )
 
@@ -252,6 +257,202 @@ func TestLinkedLayoutAllowsFullCatalogWithoutActiveInstances(t *testing.T) {
 	for _, p := range l.programs {
 		if len(p.state.rows) != 0 || len(p.inputs) != 0 || len(p.state.instances) != 16 {
 			t.Fatal("unused catalog program required a mutable root or lost frame capacity")
+		}
+	}
+}
+
+func scalarInputUnit(t *testing.T, source string, kind ScalarKind, nested bool) (Unit, program.ExprID) {
+	t.Helper()
+	u := staticUnit(t)
+	typ := program.TypeString
+	if integerKind(kind) {
+		typ = program.TypeInt
+	} else if kind == Bool {
+		typ = program.TypeBool
+	}
+	root, path := "value", []string{}
+	op := program.OpEventGet
+	if source == "prop" {
+		op, root = program.OpPropGet, "Value"
+		u.Program.Props = []program.PropDef{{Name: root, Type: typ}}
+	}
+	var leaf program.ExprID
+	if nested {
+		root, path = "props", []string{"detail", "value"}
+		u.Program.Props = nil
+		prefix := addExpression(&u, program.OpPropGet, program.TypeAny, SelectorPath, root)
+		key := addExpression(&u, program.OpLitString, program.TypeString, String, path[0])
+		prefix = addExpression(&u, program.OpIndex, program.TypeAny, SelectorPath, "", prefix, key)
+		key = addExpression(&u, program.OpLitString, program.TypeString, String, path[1])
+		leaf = addExpression(&u, program.OpIndex, typ, kind, "", prefix, key)
+	} else {
+		leaf = addExpression(&u, op, typ, kind, root)
+	}
+	u.Contract.Inputs = []InputContract{{Source: source, Root: root, Path: path, Kind: kind, Exprs: []program.ExprID{leaf}}}
+	if source == "event" {
+		if typ == program.TypeInt {
+			u.Program.Exprs[leaf].Value, u.Contract.Inputs[0].Root = "selectedIndex", "selectedIndex"
+		} else if typ == program.TypeBool {
+			u.Program.Exprs[leaf].Value, u.Contract.Inputs[0].Root = "checked", "checked"
+		}
+		u.Program.Handlers = []program.Handler{{Name: "read", Body: []program.ExprID{leaf}}}
+	}
+	return refreshUnit(t, u), leaf
+}
+
+func inputTestModule(t *testing.T, u Unit, leaf program.ExprID) *expressionEmitter {
+	t.Helper()
+	e, err := emitStateExpressions(u, []uint32{0, 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	exportStateModule(e)
+	e.module.Exports = append(e.module.Exports, wasmgen.Export{Name: "read", Function: e.functions[leaf]})
+	return e
+}
+
+func TestEmitImmutableInputsKeepTagsDefaultsAndFrameOwnership(t *testing.T) {
+	for _, tc := range []struct {
+		kind   ScalarKind
+		value  vm.Value
+		absent vm.Value
+		nested bool
+	}{{Int, vm.IntVal(-2147483648), vm.ZeroValue(program.TypeInt), false},
+		{Bool, vm.BoolVal(false), vm.ZeroValue(program.TypeBool), false},
+		{String, vm.StringVal("héllo\x00🌴"), vm.ZeroValue(program.TypeString), false},
+		{String, vm.StringVal(""), vm.ZeroValue(program.TypeString), false},
+		{String, vm.StringVal("e\u0301"), vm.ZeroValue(program.TypeAny), true}} {
+		u, leaf := scalarInputUnit(t, "prop", tc.kind, tc.nested)
+		e := inputTestModule(t, u, leaf)
+		for i, proof := range u.Contract.Expressions {
+			if proof.Kind == SelectorPath && e.functions[i] != NoBindingName {
+				t.Fatal("aggregate selector prefix has a runtime function")
+			}
+		}
+		encode := func(value vm.Value, present bool) string {
+			flags := uint32(0)
+			if value.Type == program.TypeString && present {
+				flags = 1
+			} else if value.Type == program.TypeBool && value.Truth() {
+				flags = 2
+			}
+			return scalarTransport(value.Type, flags, int64(value.Number()), value.Text())
+		}
+		var got struct {
+			Statuses []uint32
+			Records  []string
+			Texts    []string
+		}
+		runExpressionModule(t, e.module, `
+  const api = instance.exports, statuses = [api.begin(0,0,1)], records = [], texts = [];
+  for (let frame = 0; frame < 2; frame++) {
+    memory.set(Buffer.from(data[frame],'base64'),32768); statuses.push(api.store(frame,32768));
+  }
+  statuses.push(api.commit(0,0),api.begin(1,0,0));
+  for (let frame = 0; frame < 2; frame++) {
+    const p = api.read(frame); statuses.push(api.status());
+    records.push(Buffer.from(memory.slice(p,p+16)).toString('base64'));
+    texts.push(Buffer.from(memory.slice(view.getUint32(p+16,true),view.getUint32(p+16,true)+view.getUint32(p+20,true))).toString('base64'));
+  }
+  api.abort(); process.stdout.write(JSON.stringify({Statuses:statuses,Records:records,Texts:texts}));`, []string{encode(tc.value, true), encode(tc.absent, false)}, &got)
+		for _, status := range got.Statuses {
+			if status != 0 {
+				t.Fatalf("prop/default status: %+v", got)
+			}
+		}
+		for frame, value := range []vm.Value{tc.value, tc.absent} {
+			transport, _ := base64.StdEncoding.DecodeString(encode(value, frame == 0))
+			if got.Records[frame] != base64.StdEncoding.EncodeToString(transport[:16]) || got.Texts[frame] != base64.StdEncoding.EncodeToString([]byte(value.Text())) {
+				t.Fatalf("prop/default scalar changed: %+v", got)
+			}
+		}
+	}
+}
+
+type importedInputCase struct {
+	Record string
+	Result int32
+}
+
+const inputTestImports = `{input: (id, field, dst, cap) => {
+  if (id !== 0 || field !== 0 || dst !== 32768 || cap !== 4120) throw new Error('input ownership');
+  const entry = data.Cases[data.Index], bytes = Buffer.from(entry.Record,'base64');
+  memory.set(bytes,dst); return entry.Result;
+}, bind: unexpected, patch: unexpected}`
+
+func TestEmitEventInputFramingUTF8AndScalarGuards(t *testing.T) {
+	for _, kind := range []ScalarKind{String, Int, Bool} {
+		u, leaf := scalarInputUnit(t, "event", kind, false)
+		e := inputTestModule(t, u, leaf)
+		var cases []importedInputCase
+		var want []uint32
+		add := func(record string, result int32, status uint32) {
+			cases = append(cases, importedInputCase{record, result})
+			want = append(want, status)
+		}
+		base := scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴")
+		if kind == Int {
+			base = scalarTransport(program.TypeInt, 0, 2147483647, "")
+		} else if kind == Bool {
+			base = scalarTransport(program.TypeBool, 2, 0, "")
+		}
+		raw, _ := base64.StdEncoding.DecodeString(base)
+		add(base, int32(len(raw)), 0)
+		for _, result := range []int32{-1, -2, -10, -11, -2147483648, 0, 23, int32(len(raw) + 1), 4121} {
+			status := uint32(statusBadInput)
+			if result < 0 && result >= -10 {
+				status = uint32(-result)
+			}
+			add(base, result, status)
+		}
+		for _, offset := range []int{0, 4, 8, 16, 20} {
+			bad := append([]byte{}, raw...)
+			binary.LittleEndian.PutUint32(bad[offset:], ^uint32(0))
+			add(base64.StdEncoding.EncodeToString(bad), int32(len(bad)), statusBadInput)
+			if kind == String && offset == 20 {
+				want[len(want)-1] = statusStringLimit
+			} else if kind == Int && offset == 8 {
+				want[len(want)-1] = statusIntegerDomain
+			}
+		}
+		if kind == Int {
+			add(scalarTransport(program.TypeInt, 0, 2147483648, ""), 24, statusIntegerDomain)
+			add(scalarTransport(program.TypeInt, 0, -2147483649, ""), 24, statusIntegerDomain)
+		}
+		if kind == String {
+			for _, text := range []string{"", "\x00", "e\u0301", "🌴", "\xc2\x80", "\xe0\xa0\x80", "\xed\x9f\xbf", "\xf0\x90\x80\x80", "\xf4\x8f\xbf\xbf", "\x80", "\xc0\x80", "\xc1\xbf", "\xe0\x9f\xbf", "\xed\xa0\x80", "\xf0\x8f\xbf\xbf", "\xf4\x90\x80\x80", "\xf5\x80\x80\x80", "\xff", "\xe2\x82", "\xc2a"} {
+				status := uint32(0)
+				if !utf8.ValidString(text) {
+					status = statusBadInput
+				}
+				add(scalarTransport(program.TypeString, 1, 0, text), int32(valueBytes+len(text)), status)
+			}
+			add(scalarTransport(program.TypeString, 0, 0, ""), 24, 0)
+		}
+		var got []uint32
+		runExpressionModule(t, e.module, `
+  const api = instance.exports, statuses = [];
+  if (api.begin(0,0,1) || api.commit(0,0)) throw new Error('initialization');
+  for (data.Index = 0; data.Index < data.Cases.length; data.Index++) {
+    if (api.begin(data.Index+1,0,0)) throw new Error('begin');
+    const pointer = api.read(0), status = api.status(); statuses.push(status);
+    if ((status === 0) !== (pointer !== 0)) throw new Error('partial input result');
+    if (pointer) {
+      const bytes = Buffer.from(data.Cases[data.Index].Record,'base64');
+      if (!Buffer.from(memory.slice(pointer,pointer+16)).equals(bytes.subarray(0,16))) throw new Error('input tag or payload changed');
+      const p = view.getUint32(pointer+16,true), n = view.getUint32(pointer+20,true);
+      memory.fill(165,32768,65536);
+      if (n && p < api.working()) throw new Error('retained IO pointer');
+      if (!Buffer.from(memory.slice(p,p+n)).equals(bytes.subarray(24))) throw new Error('input bytes changed');
+    }
+    api.abort();
+  }
+  process.stdout.write(JSON.stringify(statuses));`, struct {
+			Cases []importedInputCase
+			Index int
+		}{Cases: cases}, &got, inputTestImports)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s event statuses: %v want %v", kind, got, want)
 		}
 	}
 }

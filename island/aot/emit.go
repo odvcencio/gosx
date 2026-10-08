@@ -37,6 +37,7 @@ type expressionEmitter struct {
 	handlers      []uint32
 	computed      *computedLayout
 	dom           *domLayout
+	inputUTF8     uint32
 }
 
 func emitExpressions(u Unit) (*expressionEmitter, error) {
@@ -79,9 +80,12 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 		e.memoryGlobals()
 	}
 	e.functions = make([]uint32, len(u.Program.Exprs))
-	e.module.Functions = make([]wasmgen.Function, len(u.Program.Exprs))
 	for i := range e.functions {
-		e.functions[i] = uint32(len(e.module.Imports) + i)
+		e.functions[i] = NoBindingName
+		if u.Contract.Expressions[i].Kind != SelectorPath {
+			e.functions[i] = uint32(len(e.module.Imports) + len(e.module.Functions))
+			e.module.Functions = append(e.module.Functions, wasmgen.Function{})
+		}
 	}
 	if err := e.setupStrings(); err != nil {
 		return nil, err
@@ -94,18 +98,25 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 	if transactions {
 		e.setupTransactions()
 	}
+	if len(u.Contract.Inputs) != 0 {
+		e.inputUTF8 = uint32(len(e.module.Imports) + len(e.module.Functions))
+		e.module.Functions = append(e.module.Functions, inputUTF8Function())
+	}
 	if state != nil && state.computedCount != 0 {
 		if err := e.setupComputed(); err != nil {
 			return nil, err
 		}
 	}
 	for i, expr := range u.Program.Exprs {
+		if e.functions[i] == NoBindingName {
+			continue
+		}
 		fn, err := e.expression(program.ExprID(i), expr)
 		if err != nil {
 			return nil, fmt.Errorf("expression %d: %w", i, err)
 		}
 		fn.Signature = sig(1)
-		e.module.Functions[i] = fn
+		e.module.Functions[e.functions[i]-uint32(len(e.module.Imports))] = fn
 	}
 	if state != nil {
 		e.setupHandlers()
@@ -125,6 +136,8 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 
 func (e *expressionEmitter) expression(id program.ExprID, expr program.Expr) (wasmgen.Function, error) {
 	switch expr.Op {
+	case program.OpPropGet, program.OpEventGet, program.OpIndex:
+		return e.inputExpression(id)
 	case program.OpAdd:
 		if e.unit.Contract.Expressions[id].Kind == String {
 			return e.stringExpression(id, expr)
