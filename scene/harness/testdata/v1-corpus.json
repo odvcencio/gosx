@@ -21,11 +21,15 @@
   "cases": [
     {
       "id": "gltf-single-buffer-textured",
-      "state": "blocked",
+      "state": "enforced",
       "requirement": "Uncompressed single-buffer GLB with a textured standard material renders end to end.",
       "targetBackends": ["webgpu", "webgl2"],
-      "ciOwners": [],
-      "evidence": []
+      "ciOwners": [
+        {"label": "scene3d-v1-browser-renderer-proof", "job": "scene3d-v1-browser-renderer-proof", "step": "Run Scene3D CUBICSPLINE browser renderer proof", "command": "node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs \"$GITHUB_WORKSPACE\" \"$artifact_dir\""}
+      ],
+      "evidence": [
+        {"kind": "browser-test", "path": "client/js/testdata/scene3d-cubic-spline-browser.cjs", "contains": "gltf-single-buffer-textured", "backends": ["webgpu", "webgl2"], "ciLabel": "scene3d-v1-browser-renderer-proof"}
+      ]
     },
     {
       "id": "gltf-multi-buffer-external",
