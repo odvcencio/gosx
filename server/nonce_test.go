@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/engine"
 )
 
@@ -40,7 +41,7 @@ func TestNavigationScriptWithNonceEscapesAttributeValue(t *testing.T) {
 }
 
 func TestNavigationRuntimePropagatesNonceToDynamicManagedScripts(t *testing.T) {
-	html := gosx.RenderHTML(navigationScriptWithNonce("nav-nonce"))
+	html := runtimehost.NavigationRuntime
 
 	// The navigation runtime ships minified (gosx#221): buildInlineAsset
 	// (cmd/buildbootstrap) safely renames the local identifiers this test
@@ -104,7 +105,7 @@ func TestAppThreadsPerRequestNonceToOwnedInlineAndRuntimeScripts(t *testing.T) {
 
 	body := w.Body.String()
 	for _, snippet := range []string{
-		`<script data-gosx-navigation="true" nonce="req-nonce-1">`,
+		`<script data-gosx-navigation="true" nonce="req-nonce-1" defer crossorigin="anonymous" referrerpolicy="no-referrer" src="` + runtimehost.NavigationRuntimePath + `"></script>`,
 		`data-gosx-document-contract nonce="req-nonce-1">`,
 		`data-gosx-script="bootstrap" data-gosx-bootstrap-mode="lite" src="/gosx/bootstrap-lite.js"`,
 		`type="text/javascript" crossorigin="anonymous" referrerpolicy="no-referrer" nonce="req-nonce-1"`,

@@ -863,7 +863,7 @@
   // "could not acquire a renderer". Validating on a throwaway canvas keeps the
   // mount canvas clean so the fallback path works. Returns true only when the
   // browser can actually create AND configure a WebGPU canvas context.
-  function sceneWebGPUProbeCanvasContext(device) {
+  async function sceneWebGPUProbeCanvasContext(device) {
     if (typeof document === "undefined" || typeof document.createElement !== "function") {
       return true; // non-DOM env: no mount canvas to taint; let the renderer decide
     }
@@ -888,6 +888,9 @@
       console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
       return false;
     }
+    var scoped = typeof device.pushErrorScope === "function" && typeof device.popErrorScope === "function";
+    if (scoped) device.pushErrorScope("validation");
+    var validation, failure;
     try {
       ctx.configure({
         device: device,
@@ -895,13 +898,16 @@
         alphaMode: "premultiplied",
       });
     } catch (e) {
-      _webgpuProbeError = "canvas configure failed: " + String(e && (e.message || e) || "unknown");
-      console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+      failure = e;
+    } finally {
+      if (scoped) validation = device.popErrorScope().catch(function(error) { return error; });
       try { if (typeof ctx.unconfigure === "function") ctx.unconfigure(); } catch (_e) {}
-      return false;
     }
-    try { if (typeof ctx.unconfigure === "function") ctx.unconfigure(); } catch (_e) {}
-    return true;
+    failure = failure || await validation;
+    if (!failure) return true;
+    _webgpuProbeError = "canvas configure failed: " + String(failure.message || failure);
+    console.warn("[gosx] WebGPU probe: " + _webgpuProbeError);
+    return false;
   }
 
   function sceneWebGPUStartProbe() {
@@ -951,7 +957,7 @@
       // adapter succeeds immediately after, so empty descriptors get one
       // adapter reacquire retry. Required features/limits remain strict.
       return sceneWebGPUProbeDevice(adapter, adapterRequest, false);
-    }).then(function(device) {
+    }).then(async function(device) {
       if (device === false) {
         return false;
       }
@@ -968,7 +974,7 @@
       // adapter+device; catching it here keeps the mount canvas clean so the
       // WebGL2 fallback can acquire a context instead of dying with
       // "could not acquire a renderer".
-      if (!sceneWebGPUProbeCanvasContext(device)) {
+      if (!await sceneWebGPUProbeCanvasContext(device)) {
         if (!_webgpuProbeError) { _webgpuProbeError = "canvas webgpu context unavailable"; }
         _webgpuAdapterProbe = false;
         _webgpuDeviceProbe = false;

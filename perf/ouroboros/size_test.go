@@ -14,6 +14,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
 
 func TestBuildSizeEvidenceAttributesRouteAssetsAndDedupesTotals(t *testing.T) {
@@ -112,6 +113,29 @@ func TestBuildSizeEvidenceResolvesHashedURLsWithQuery(t *testing.T) {
 	}
 	if asset := findAssetByURL(report.Assets, "/gosx/assets/runtime/bootstrap-runtime.abcd.js"); asset == nil || asset.ManifestHash != "abcd" {
 		t.Fatalf("hashed asset not resolved through manifest: %#v", report.Assets)
+	}
+}
+
+func TestCollectTransferredAssetsResolvesExportedNavigation(t *testing.T) {
+	for _, body := range []string{runtimehost.NavigationRuntime, "previous navigation runtime"} {
+		t.Run(shaHex(body), func(t *testing.T) {
+			dir := t.TempDir()
+			ref := "/gosx/assets/runtime/navigation." + shaHex(body) + ".js"
+			file := filepath.Join(dir, "static", filepath.FromSlash(strings.TrimPrefix(ref, "/")))
+			writeTestFile(t, file, body)
+			refs := map[string]string{ref: "route-transfer"}
+			assets, unresolved, err := collectTransferredAssets(dir, &buildmanifest.Manifest{}, refs, true)
+			if err != nil || len(unresolved) != 0 || len(assets) != 1 {
+				t.Fatalf("canonical navigation resolution: assets=%d unresolved=%v err=%v", len(assets), unresolved, err)
+			}
+			if asset := assets[0]; asset.SourcePath != file || asset.ManifestHash != shaHex(body) || asset.SHA256 != asset.ManifestHash || asset.Bytes != int64(len(body)) {
+				t.Fatalf("navigation evidence = %+v", asset)
+			}
+			writeTestFile(t, file, body+"tampered")
+			if _, _, err := collectTransferredAssets(dir, &buildmanifest.Manifest{}, refs, true); err == nil || !strings.Contains(err.Error(), "does not match its URL") {
+				t.Fatalf("tampered navigation asset accepted: %v", err)
+			}
+		})
 	}
 }
 
