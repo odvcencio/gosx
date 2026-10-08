@@ -13,6 +13,7 @@ import (
 	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/internal/wasmgen"
 	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/signal"
 )
 
 func layoutUnit(t *testing.T, name string, locals, computeds, fields int, shared ...string) Unit {
@@ -643,9 +644,16 @@ func exportLinkedTestModule(c *linkedCode) wasmgen.Module {
 	for p, source := range c.programs {
 		for name, index := range map[string]uint32{
 			"initialize": source.computed.initialize, "bind": source.dom.bind,
-			"render": source.dom.render, "handler": source.handlers[0],
+			"render": source.dom.render,
 		} {
 			e.module.Exports = append(e.module.Exports, wasmgen.Export{Name: name + strconv.Itoa(p), Function: c.indices[p][index]})
+		}
+		for handler, index := range source.handlers {
+			name := "handler" + strconv.Itoa(p)
+			if handler != 0 {
+				name = "other" + strconv.Itoa(p)
+			}
+			e.module.Exports = append(e.module.Exports, wasmgen.Export{Name: name, Function: c.indices[p][index]})
 		}
 	}
 	return e.module
@@ -661,7 +669,7 @@ func TestLinkedCodeRunsProgramsAndRepeatedInstancesInOneModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(c.module.Imports) != 3 || len(c.module.Exports) != 0 || len(c.module.Globals) != 25 || !bytes.Equal(c.module.Data, l.data) {
+	if len(c.module.Imports) != 3 || len(c.module.Exports) != 0 || len(c.module.Globals) != 26 || !bytes.Equal(c.module.Data, l.data) {
 		t.Fatal("linked library changed storage or exposed a private function")
 	}
 	for helper, index := range commonFunctions(c.programs[0]) {
@@ -822,7 +830,245 @@ func TestFunctionRelocationRejectsMalformedFramingAndUnresolvedIndices(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := linkProgramCode(l); err == nil {
-		t.Fatal("admitted cross-program subscriptions before their dispatcher")
+	if _, err := linkProgramCode(l); err != nil {
+		t.Fatalf("shared set without computed rows: %v", err)
+	}
+}
+
+func linkedSharedUnit(t *testing.T, name string, diamond, swap bool) (Unit, []program.ExprID) {
+	u, reads := computedBatchUnit(t, diamond)
+	u.Component, u.Contract.Component, u.Program.Name = "example/components."+name, "example/components."+name, name
+	u.Program.Signals[0].Name, u.Contract.Signals[0].Name = "$count", "$count"
+	for i := range u.Program.Exprs {
+		expr := &u.Program.Exprs[i]
+		if (expr.Op == program.OpSignalGet || expr.Op == program.OpSignalSet) && expr.Value == "count" {
+			expr.Value = "$count"
+		}
+	}
+	if swap {
+		u.Program.Signals[0], u.Program.Signals[1] = u.Program.Signals[1], u.Program.Signals[0]
+		u.Contract.Signals[0], u.Contract.Signals[1] = u.Contract.Signals[1], u.Contract.Signals[0]
+		for i := range u.Contract.Signals {
+			u.Contract.Signals[i].Slot = uint32(i)
+		}
+	}
+	return refreshUnit(t, u), reads
+}
+
+func TestLinkedSharedNotificationsMatchNativeBatchTraceAndAbort(t *testing.T) {
+	a, ar := linkedSharedUnit(t, "SharedFirst", false, false)
+	b, br := linkedSharedUnit(t, "SharedSecond", true, true)
+	l, err := buildLinkedLayout([]Unit{b, layoutUnit(t, "Unrelated", 0, 0, 0, "$Count", "$$count"), a}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := exportLinkedTestModule(c)
+	reads := map[string][]program.ExprID{"SharedFirst": ar, "SharedSecond": br}
+	data := struct {
+		Owners     []uint32
+		Roots      []string
+		LocalRoots []uint32
+		Steps      []struct {
+			Frame, Handler, Sequence uint32
+			Read                     bool
+		}
+		FrameTable, SharedRoot         uint32
+		Versions, ComputedStride, Rows uint32
+	}{Owners: make([]uint32, 16), FrameTable: l.frameTable, ComputedStride: l.computedStride, Rows: l.roots}
+	for i := range data.Owners {
+		data.Owners[i] = NoBindingName
+	}
+	for id, e := range c.programs {
+		for i, expr := range reads[e.unit.Program.Name] {
+			m.Exports = append(m.Exports, wasmgen.Export{Name: "read" + strconv.Itoa(id) + "_" + strconv.Itoa(i), Function: c.indices[id][e.functions[expr]]})
+		}
+		switch e.unit.Program.Name {
+		case "SharedFirst":
+			data.Owners[0], data.Owners[15] = uint32(id), uint32(id)
+		case "SharedSecond":
+			data.Owners[1] = uint32(id)
+		case "Unrelated":
+			data.Owners[9] = uint32(id)
+		}
+	}
+	for _, frame := range []uint32{0, 1, 15} {
+		p := &l.programs[data.Owners[frame]]
+		data.LocalRoots = append(data.LocalRoots, p.state.rows[frame*uint32(len(p.unit.Program.Signals))+p.state.signals["observed"]])
+	}
+	for _, shared := range l.shared {
+		if shared.name == "$count" {
+			data.SharedRoot, data.Versions = shared.root, l.sharedVersions+shared.id*16
+		}
+	}
+	for root := uint32(0); root < l.computedBase; root++ {
+		value := int64(0)
+		if root == data.SharedRoot {
+			value = 10
+		}
+		data.Roots = append(data.Roots, scalarTransport(program.TypeInt, 0, value, ""))
+	}
+	for i, frame := range []uint32{0, 1, 15, 1, 0, 15} {
+		data.Steps = append(data.Steps, struct {
+			Frame, Handler, Sequence uint32
+			Read                     bool
+		}{frame, uint32(i % 3 / 2), []uint32{1, 2, 5, 9, 10, 20}[i], i == 2 || i == 4})
+	}
+	var mask instructions
+	mask.index(0x23, linkedRenderMaskGlobal)
+	mask.op(0x0b)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "mask", Function: uint32(len(m.Imports) + len(m.Functions))}, wasmgen.Export{Name: "notify", Function: c.notify})
+	m.Functions = append(m.Functions, wasmgen.Function{Signature: i32Signature(0), Body: mask})
+	var got struct {
+		States            [][]int64
+		Masks, Versions   []uint32
+		Statuses, Fault   []uint32
+		Aborted, Restored bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], states = [], masks = [], versions = [];
+  for (const [frame,owner] of data.Owners.entries()) {
+    if (owner === 4294967295) continue;
+    view.setUint32(data.FrameTable+frame*16,owner,true); view.setUint32(data.FrameTable+frame*16+4,1,true);
+  }
+  statuses.push(api.begin(0,0,1));
+  for (const [root,value] of data.Roots.entries()) {
+    memory.set(Buffer.from(value,'base64'),32768); statuses.push(api.store(root,32768));
+  }
+  for (const [frame,owner] of data.Owners.entries()) if (owner !== 4294967295) statuses.push(api['initialize'+owner](frame));
+  statuses.push(api.commit(0,0));
+  for (const step of data.Steps) {
+    statuses.push(api.begin(step.Sequence,0,0),api[(step.Handler?'other':'handler')+data.Owners[step.Frame]](step.Frame));
+    if (step.Read) for (const frame of [0,1,15]) api['read'+data.Owners[frame]+'_2'](frame);
+    states.push([...data.LocalRoots,data.SharedRoot].map(root => view.getInt32(api.working()+root*24+8,true)));
+    masks.push(api.mask()); statuses.push(api.commit(step.Sequence,0));
+    versions.push(view.getUint32(data.Versions,true));
+  }
+  const before = Buffer.from(memory.slice(api.committed(),api.committed()+data.Rows*24));
+  statuses.push(api.begin(30,0,0),api['handler'+data.Owners[0]](0));
+  const staged = view.getUint32(data.Versions+8,true) === 30 && view.getUint32(data.Versions,true) === 20;
+  statuses.push(api.abort());
+  const aborted = staged && !api.mask() && before.equals(Buffer.from(memory.slice(api.committed(),api.committed()+data.Rows*24)));
+  statuses.push(api.begin(31,0,0));
+  const restored = view.getUint32(data.Versions+8,true) === 20;
+  statuses.push(api.abort());
+  const fault = [];
+  for (const [i,row] of [3*data.ComputedStride,9*data.ComputedStride,16*data.ComputedStride,-1].entries()) {
+    statuses.push(api.begin(100+i,0,0)); fault.push(api.notify(row),api.commit(100+i,0)); statuses.push(api.abort());
+  }
+  process.stdout.write(JSON.stringify({States:states,Masks:masks,Versions:versions,Statuses:statuses,Fault:fault,Aborted:aborted,Restored:restored}));`, data, &got)
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("shared transaction: %+v", got)
+		}
+	}
+	shared := signal.New(vm.IntVal(10))
+	models := map[uint32]*vm.VM{}
+	for _, frame := range []uint32{0, 1, 15} {
+		p := &l.programs[data.Owners[frame]]
+		model := vm.NewVM(p.unit.Program, nil)
+		vm.InitSignals(model, p.unit.Program)
+		model.SetSignal("$count", shared)
+		models[frame] = model
+	}
+	var want [][]int64
+	for i, step := range data.Steps {
+		p := &l.programs[data.Owners[step.Frame]]
+		signal.Batch(func() {
+			for _, expr := range p.unit.Program.Handlers[step.Handler].Body {
+				models[step.Frame].Eval(expr)
+			}
+		})
+		if step.Read {
+			for _, frame := range []uint32{0, 1, 15} {
+				models[frame].Eval(reads[l.programs[data.Owners[frame]].unit.Program.Name][2])
+			}
+		}
+		var values []int64
+		for _, frame := range []uint32{0, 1, 15} {
+			values = append(values, int64(models[frame].Eval(reads[l.programs[data.Owners[frame]].unit.Program.Name][1]).Number()))
+		}
+		want = append(want, append(values, int64(shared.Get().Number())))
+		if got.Masks[i] != 1|2|1<<15 || got.Versions[i] != step.Sequence {
+			t.Fatalf("affected peers or equal-write version: %+v", got)
+		}
+	}
+	if !reflect.DeepEqual(got.States, want) || !got.Aborted || !got.Restored {
+		t.Fatalf("linked shared trace: %+v want %v", got, want)
+	}
+	for _, status := range got.Fault {
+		if status != statusBadInput {
+			t.Fatalf("invalid callback admitted: %+v", got)
+		}
+	}
+}
+
+func TestLinkedSharedStringsWithoutComputedsPreserveVersionsAndOwnership(t *testing.T) {
+	var units []Unit
+	for i, name := range []string{"PlainFirst", "PlainSecond"} {
+		u := layoutUnit(t, name, 0, 0, 0, "$text")
+		empty := addExpression(&u, program.OpLitString, program.TypeString, String, "")
+		text := addExpression(&u, program.OpLitString, program.TypeString, String, []string{"héllo\x00🌴", "e\u0301"}[i])
+		u.Program.Signals[0].Type, u.Program.Signals[0].Init, u.Contract.Signals[0].Kind = program.TypeString, empty, String
+		write := addExpression(&u, program.OpSignalSet, program.TypeAny, AnyZero, "$text", text)
+		u.Contract.Expressions[write].Pure = false
+		u.Program.Handlers = []program.Handler{{Name: "write", Body: []program.ExprID{write, write}}}
+		units = append(units, refreshUnit(t, u))
+	}
+	l, err := buildLinkedLayout(units, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := struct {
+		FrameTable, Root, Versions uint32
+		Initial                    string
+	}{l.frameTable, l.shared[0].root, l.sharedVersions, scalarTransport(program.TypeString, 1, 0, "")}
+	var got struct {
+		Texts    []string
+		Versions [][]uint32
+		Statuses []uint32
+		Owned    bool
+	}
+	runExpressionModule(t, exportLinkedTestModule(c), `
+  const api = instance.exports, statuses = [], texts = [], versions = [];
+  for (const [owner,frame] of [0,15].entries()) {
+    view.setUint32(data.FrameTable+frame*16,owner,true); view.setUint32(data.FrameTable+frame*16+4,1,true);
+  }
+  statuses.push(api.begin(0,0,1)); memory.set(Buffer.from(data.Initial,'base64'),32768);
+  statuses.push(api.store(data.Root,32768),api.initialize0(0),api.initialize1(15),api.commit(0,0));
+  let owned = true;
+  for (const [owner,frame] of [0,15].entries()) {
+    statuses.push(api.begin(1,owner+1,0),api['handler'+owner](frame),api.commit(1,owner+1));
+    const record = api.committed()+data.Root*24, start = view.getUint32(record+16,true), length = view.getUint32(record+20,true);
+    owned = owned && start >= api.committed() && start+length <= api.committed()+65536;
+    texts.push(Buffer.from(memory.subarray(start,start+length)).toString('utf8'));
+    versions.push([view.getUint32(data.Versions,true),view.getUint32(data.Versions+4,true)]);
+  }
+  process.stdout.write(JSON.stringify({Texts:texts,Versions:versions,Statuses:statuses,Owned:owned}));`, data, &got)
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("shared string transaction: %+v", got)
+		}
+	}
+	shared := signal.New(vm.StringVal(""))
+	for id, p := range l.programs {
+		model := vm.NewVM(p.unit.Program, nil)
+		vm.InitSignals(model, p.unit.Program)
+		model.SetSignal("$text", shared)
+		signal.Batch(func() {
+			for _, expr := range p.unit.Program.Handlers[0].Body {
+				model.Eval(expr)
+			}
+		})
+		if got.Texts[id] != shared.Get().Text() || !reflect.DeepEqual(got.Versions[id], []uint32{1, uint32(id + 1)}) || !got.Owned {
+			t.Fatalf("shared string/version identity: %+v", got)
+		}
 	}
 }

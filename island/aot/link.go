@@ -31,6 +31,7 @@ type linkedLayout struct {
 	data                                                     []byte
 	strings                                                  map[string]stringConstant
 	instancesBase                                            int32
+	sharedMasksBase                                          int32
 	programs                                                 []linkedProgram
 	shared                                                   []linkedShared
 	tags                                                     []string
@@ -207,6 +208,19 @@ func (l *linkedLayout) encodeData() error {
 		instances = append(instances, i)
 	}
 	l.instancesBase = table(instances)
+	var masks []uint32
+	for _, p := range l.programs {
+		for _, shared := range l.shared {
+			mask := uint32(0)
+			for slot, signal := range p.unit.Program.Signals {
+				if signal.Name == shared.name {
+					mask = 1 << slot
+				}
+			}
+			masks = append(masks, mask)
+		}
+	}
+	l.sharedMasksBase = table(masks)
 	if len(l.data) > wasmgen.MaxDataBytes {
 		return fmt.Errorf("linked constants exceed the fixed interval")
 	}
@@ -481,16 +495,20 @@ func inputUTF8Function() wasmgen.Function {
 }
 
 type linkedCode struct {
-	module   wasmgen.Module
-	programs []*expressionEmitter
-	indices  [][]uint32
+	module          wasmgen.Module
+	programs        []*expressionEmitter
+	indices         [][]uint32
+	notify, publish uint32
 }
+
+const linkedRenderMaskGlobal = 25
 
 func commonFunctions(e *expressionEmitter) []uint32 {
 	indices := append([]uint32{}, e.helpers[:]...)
 	indices = append(indices, e.inputUTF8, e.rootCopy)
 	indices = append(indices, e.transactions[:]...)
-	return append(indices, e.computed.begin, e.computed.commit, e.computed.abort, e.dom.patch)
+	return append(indices, e.computed.begin, e.computed.commit, e.computed.abort, e.dom.patch,
+		e.computed.snapshot, e.computed.deliver, e.computed.flush)
 }
 
 // linkProgramCode combines already proved programs without decoding source at
@@ -498,17 +516,6 @@ func commonFunctions(e *expressionEmitter) []uint32 {
 func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	if l == nil || len(l.programs) == 0 {
 		return nil, fmt.Errorf("empty linked layout")
-	}
-	shared := map[string]bool{}
-	for _, p := range l.programs {
-		for _, signal := range p.unit.Program.Signals {
-			if strings.HasPrefix(signal.Name, "$") {
-				if shared[signal.Name] {
-					return nil, fmt.Errorf("cross-program shared subscriptions are unsupported")
-				}
-				shared[signal.Name] = true
-			}
-		}
 	}
 	c := &linkedCode{}
 	for i := range l.programs {
@@ -520,11 +527,14 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	}
 	first := c.programs[0].module
 	c.module = wasmgen.Module{Imports: append([]wasmgen.Import{}, first.Imports...), Globals: append([]wasmgen.Global{}, first.Globals...), Data: append([]byte{}, l.data...)}
+	c.module.Globals = append(c.module.Globals, wasmgen.Global{Mutable: true})
 	for i := range c.module.Imports {
 		c.module.Imports[i].Signature.Params = append([]wasmgen.ValueType{}, first.Imports[i].Signature.Params...)
 	}
 	common := commonFunctions(c.programs[0])
-	c.module.Functions = make([]wasmgen.Function, len(common))
+	c.notify = uint32(len(first.Imports) + len(common))
+	c.publish = c.notify + 1
+	c.module.Functions = make([]wasmgen.Function, len(common)+2)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -549,7 +559,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 2 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -562,14 +572,25 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			add(uint32(len(first.Imports) + i))
 		}
 	}
-	globals := make([]uint32, len(first.Globals))
+	globals := make([]uint32, len(c.module.Globals))
 	for i := range globals {
 		globals[i] = uint32(i)
 	}
 	for helper := range common {
 		for p, e := range c.programs {
 			index := commonFunctions(e)[helper]
-			fn, err := relocateFunction(e.module.Functions[index-uint32(len(first.Imports))], c.indices[p], globals)
+			fn := e.module.Functions[index-uint32(len(first.Imports))]
+			mapping := c.indices[p]
+			switch index {
+			case e.computed.begin, e.computed.commit, e.computed.abort:
+				fn = l.sharedBoundaryFunction(e, index)
+			case e.computed.snapshot:
+				fn = l.snapshotFunction(e)
+			case e.computed.deliver:
+				mapping = append([]uint32{}, mapping...)
+				mapping[e.computed.notify] = c.notify
+			}
+			fn, err := relocateFunction(fn, mapping, globals)
 			if err != nil {
 				return nil, err
 			}
@@ -580,9 +601,17 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			}
 		}
 	}
+	c.module.Functions[len(common)] = l.notifyFunction(c)
+	c.module.Functions[len(common)+1] = l.publishFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
-		fn, err := relocateFunction(e.module.Functions[source.index-uint32(len(first.Imports))], c.indices[source.program], globals)
+		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
+		mapping := c.indices[source.program]
+		if source.index == e.computed.publish {
+			fn = l.programPublishFunction(e, uint32(len(mapping)))
+			mapping = append(append([]uint32{}, mapping...), c.publish)
+		}
+		fn, err := relocateFunction(fn, mapping, globals)
 		if err != nil {
 			return nil, err
 		}
@@ -710,4 +739,385 @@ func relocateFunction(fn wasmgen.Function, functions, globals []uint32) (wasmgen
 	fn.Body = body
 	fn.Signature.Params = append([]wasmgen.ValueType{}, fn.Signature.Params...)
 	return fn, nil
+}
+
+func (l *linkedLayout) snapshotFunction(e *expressionEmitter) wasmgen.Function {
+	var b instructions
+	if l.computedStride == 0 {
+		b.i32(0)
+		b.op(0x0b)
+		return wasmgen.Function{Signature: i32Signature(3), Body: b}
+	}
+	b.errorGuard()
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.i32(-1)
+	b.set(4)
+	b.i64(-1)
+	b.set(13)
+	b.i32(0)
+	b.set(3)
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.get(3)
+	b.i32(int32(len(e.state.instances)) * int32(e.state.computedStride))
+	b.op(0x4f)
+	b.index(0x0d, 1)
+	b.i32(computedMetaBase + computedWorking)
+	b.get(3)
+	b.i32(computedMetaBytes)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.set(8)
+	b.get(3)
+	b.i32(int32(l.computedStride))
+	b.op(0x6e)
+	b.set(10)
+	b.i32(int32(l.frameTable))
+	b.get(10)
+	b.i32(16)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.memory(0x28, 2, 0)
+	b.set(11)
+	b.get(2)
+	b.i32(-1)
+	b.op(0x46)
+	b.op(0x04)
+	b.op(byte(wasmgen.I32))
+	b.i32(1)
+	b.get(1)
+	b.op(0x74)
+	b.set(9)
+	b.get(10)
+	b.get(0)
+	b.op(0x46)
+	b.op(0x05)
+	b.get(11)
+	b.i32(int32(len(l.programs)))
+	b.op(0x4f)
+	b.get(2)
+	b.i32(int32(len(l.shared)))
+	b.op(0x4f)
+	b.op(0x72)
+	b.op(0x04)
+	b.op(byte(wasmgen.I32))
+	b.i32(0)
+	b.op(0x05)
+	b.i32(l.sharedMasksBase)
+	b.get(11)
+	b.i32(int32(len(l.shared)))
+	b.op(0x6c)
+	b.get(2)
+	b.op(0x6a)
+	b.i32(4)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.memory(0x28, 2, 0)
+	b.op(0x0b)
+	b.index(0x22, 9)
+	b.op(0x45)
+	b.op(0x45)
+	b.op(0x0b)
+	b.i32(int32(l.frameTable))
+	b.get(10)
+	b.i32(16)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.memory(0x28, 2, 4)
+	b.i32(1)
+	b.op(0x46)
+	b.op(0x71)
+	b.get(8)
+	b.memory(0x28, 2, 0)
+	b.i32(computedCreated)
+	b.op(0x71)
+	b.op(0x71)
+	b.get(8)
+	b.memory(0x28, 2, 4)
+	b.get(9)
+	b.op(0x71)
+	b.op(0x45)
+	b.op(0x45)
+	b.op(0x71)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(8)
+	b.memory(0x29, 3, 8)
+	b.index(0x22, 14)
+	b.get(12)
+	b.op(0x56)
+	b.get(4)
+	b.i32(-1)
+	b.op(0x46)
+	b.get(14)
+	b.get(13)
+	b.op(0x54)
+	b.op(0x72)
+	b.op(0x71)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(3)
+	b.set(4)
+	b.get(14)
+	b.set(13)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.get(3)
+	b.i32(1)
+	b.op(0x6a)
+	b.set(3)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.get(4)
+	b.i32(-1)
+	b.op(0x46)
+	b.index(0x0d, 1)
+	b.i32(8)
+	e.callHelper(&b, helperAllocate)
+	b.set(5)
+	b.errorGuard()
+	b.get(5)
+	b.i32(0)
+	b.memory(0x36, 2, 0)
+	b.get(5)
+	b.get(4)
+	b.memory(0x36, 2, 4)
+	b.get(7)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(7)
+	b.get(5)
+	b.memory(0x36, 2, 0)
+	b.op(0x05)
+	b.get(5)
+	b.set(6)
+	b.op(0x0b)
+	b.get(5)
+	b.set(7)
+	b.get(13)
+	b.set(12)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.get(6)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 9, I64Locals: 3, Body: b}
+}
+
+// Versions share the same generation boundary as scalar roots and caches.
+func (l *linkedLayout) sharedBoundaryFunction(e *expressionEmitter, index uint32) wasmgen.Function {
+	fn := e.module.Functions[index-uint32(len(e.module.Imports))]
+	var b instructions
+	if index == e.computed.begin || index == e.computed.commit {
+		from, to := uint32(0), uint32(8)
+		if index == e.computed.commit {
+			from, to = to, from
+		}
+		for i := range l.shared {
+			base := int32(l.sharedVersions) + int32(i)*16
+			b.i32(base)
+			b.i32(base)
+			b.memory(0x29, 3, from)
+			b.memory(0x37, 3, to)
+		}
+	}
+	if index != e.computed.commit {
+		b.i32(0)
+		b.index(0x24, linkedRenderMaskGlobal)
+	}
+	fn.Body = append(b, fn.Body...)
+	return fn
+}
+
+func (b *instructions) poisonStatus(status int32) {
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(status)
+	b.index(0x24, errorGlobal)
+	b.i32(status)
+	b.op(0x0f)
+	b.op(0x0b)
+}
+
+func (l *linkedLayout) notifyFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.statusGuard()
+	if l.computedStride != 0 {
+		b.get(0)
+		b.i32(int32(ProfileLimits().Instances * l.computedStride))
+		b.op(0x4f)
+		b.poisonStatus(statusBadInput)
+		b.get(0)
+		b.i32(int32(l.computedStride))
+		b.op(0x6e)
+		b.set(1)
+		b.i32(int32(l.frameTable))
+		b.get(1)
+		b.i32(16)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.index(0x22, 2)
+		b.memory(0x28, 2, 4)
+		b.i32(1)
+		b.op(0x47)
+		b.poisonStatus(statusBadInput)
+		b.get(2)
+		b.memory(0x28, 2, 0)
+		b.set(2)
+		for id, e := range c.programs {
+			b.get(2)
+			b.i32(int32(id))
+			b.op(0x46)
+			b.op(0x04)
+			b.op(0x40)
+			b.get(0)
+			b.i32(int32(l.computedStride))
+			b.op(0x70)
+			b.i32(int32(e.state.computedCount))
+			b.op(0x4f)
+			b.poisonStatus(statusBadInput)
+			b.get(0)
+			b.index(0x10, c.indices[id][e.computed.notify])
+			b.op(0x0f)
+			b.op(0x0b)
+		}
+	}
+	b.i32(statusBadInput)
+	b.index(0x24, errorGlobal)
+	b.i32(statusBadInput)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(1), I32Locals: 2, Body: b}
+}
+
+// The private publisher translates a source SignalID to the exact page-wide
+// shared ID. Computed and local dependency bits keep their program meaning.
+func (l *linkedLayout) programPublishFunction(e *expressionEmitter, common uint32) wasmgen.Function {
+	var b instructions
+	b.statusGuard()
+	b.get(0)
+	b.index(0x10, e.state.lookup)
+	b.set(3)
+	b.statusGuard()
+	b.i32(-1)
+	b.set(4)
+	b.get(2)
+	b.op(0x04)
+	b.op(0x40)
+	for slot, signal := range e.unit.Program.Signals {
+		for _, shared := range l.shared {
+			if signal.Name != shared.name {
+				continue
+			}
+			b.get(1)
+			b.i32(int32(slot))
+			b.op(0x46)
+			b.op(0x04)
+			b.op(0x40)
+			b.i32(int32(shared.id))
+			b.set(4)
+			b.op(0x0b)
+		}
+	}
+	b.get(4)
+	b.i32(-1)
+	b.op(0x46)
+	b.poisonStatus(statusBadInput)
+	b.op(0x0b)
+	b.get(3)
+	b.get(1)
+	b.get(4)
+	b.index(0x10, common)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 2, Body: b}
+}
+
+func (l *linkedLayout) publishFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.statusGuard()
+	b.index(0x23, pendingGlobal)
+	b.op(0x45)
+	b.statusFailure(statusBusy)
+	b.get(0)
+	b.i32(int32(ProfileLimits().Instances))
+	b.op(0x4f)
+	b.poisonStatus(statusBadInput)
+	b.get(1)
+	b.i32(32)
+	b.op(0x4f)
+	b.poisonStatus(statusBadInput)
+	b.index(0x23, linkedRenderMaskGlobal)
+	b.i32(1)
+	b.get(0)
+	b.op(0x74)
+	b.op(0x72)
+	b.index(0x24, linkedRenderMaskGlobal)
+	b.get(2)
+	b.i32(-1)
+	b.op(0x47)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(2)
+	b.i32(int32(len(l.shared)))
+	b.op(0x4f)
+	b.poisonStatus(statusBadInput)
+	for i, global := range []uint32{pendingLoGlobal, pendingHiGlobal} {
+		b.i32(int32(l.sharedVersions))
+		b.get(2)
+		b.i32(16)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.index(0x23, global)
+		b.memory(0x36, 2, uint32(8+i*4))
+	}
+	for frame := uint32(0); frame < ProfileLimits().Instances; frame++ {
+		base := int32(l.frameTable + frame*16)
+		b.i32(base)
+		b.memory(0x28, 2, 0)
+		b.set(3)
+		b.i32(base)
+		b.memory(0x28, 2, 4)
+		b.i32(1)
+		b.op(0x46)
+		b.get(3)
+		b.i32(int32(len(l.programs)))
+		b.op(0x49)
+		b.op(0x71)
+		b.op(0x04)
+		b.op(0x40)
+		b.i32(l.sharedMasksBase)
+		b.get(3)
+		b.i32(int32(len(l.shared)))
+		b.op(0x6c)
+		b.get(2)
+		b.op(0x6a)
+		b.i32(4)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.memory(0x28, 2, 0)
+		b.op(0x04)
+		b.op(0x40)
+		b.index(0x23, linkedRenderMaskGlobal)
+		b.i32(int32(uint32(1) << frame))
+		b.op(0x72)
+		b.index(0x24, linkedRenderMaskGlobal)
+		b.op(0x0b)
+		b.op(0x0b)
+	}
+	b.op(0x0b)
+	b.get(0)
+	b.get(1)
+	b.get(2)
+	b.index(0x10, c.indices[0][c.programs[0].computed.snapshot])
+	b.set(4)
+	b.statusGuard()
+	b.get(4)
+	b.index(0x10, c.indices[0][c.programs[0].computed.deliver])
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 2, Body: b}
 }
