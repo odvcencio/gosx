@@ -8,6 +8,9 @@ import (
 )
 
 func (e *expressionEmitter) comparison(id program.ExprID, expr program.Expr) (wasmgen.Function, error) {
+	if len(expr.Operands) != 0 && e.unit.Contract.Expressions[expr.Operands[0]].Kind == String {
+		return e.stringComparison(id, expr), nil
+	}
 	var b, flags instructions
 	b.errorGuard()
 	fn := wasmgen.Function{I32Locals: 1}

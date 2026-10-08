@@ -22,6 +22,7 @@ type scalarResult struct {
 	Low, High                    int32
 	StringPointer, Length        uint32
 	Slot                         string
+	Text                         string
 }
 
 const scalarExecutionScript = `
@@ -45,6 +46,8 @@ const requests = JSON.parse(fs.readFileSync(0, 'utf8'));
       High: pointer ? value.getInt32(pointer + 12, true) : 0,
       StringPointer: pointer ? value.getUint32(pointer + 16, true) : 0,
       Length: pointer ? value.getUint32(pointer + 20, true) : 0,
+      Text: pointer ? Buffer.from(new Uint8Array(memory.buffer,
+        value.getUint32(pointer + 16, true), value.getUint32(pointer + 20, true))).toString('base64') : '',
       Slot: Buffer.from(new Uint8Array(memory.buffer, request.Slot, 24)).toString('hex')});
   }
   process.stdout.write(JSON.stringify(results));
@@ -273,9 +276,9 @@ func TestEmitRejectsWidthCasesAndUnimplementedKinds(t *testing.T) {
 		}
 	}
 	u := staticUnit(t)
-	addExpression(&u, program.OpLitString, program.TypeString, String, "text")
+	addExpression(&u, program.OpSeq, program.TypeAny, AnyZero, "")
 	if e, err := emitExpressions(refreshUnit(t, u)); err == nil || e != nil {
-		t.Fatal("returned partial string emitter")
+		t.Fatal("returned partial statement emitter")
 	}
 }
 

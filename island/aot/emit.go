@@ -13,6 +13,9 @@ const (
 	workingBaseGlobal   = 1
 	statusBadInput      = 2
 	statusIntegerDomain = 3
+	statusStringLimit   = 4
+	statusArenaLimit    = 5
+	allocationGlobal    = 2
 )
 
 // expressionEmitter builds internal expression functions, not a page ABI.
@@ -23,6 +26,8 @@ type expressionEmitter struct {
 	unit      Unit
 	module    wasmgen.Module
 	functions []uint32
+	strings   map[string]stringConstant
+	helpers   [4]uint32
 }
 
 func emitExpressions(u Unit) (*expressionEmitter, error) {
@@ -49,6 +54,9 @@ func emitExpressions(u Unit) (*expressionEmitter, error) {
 	for i := range e.functions {
 		e.functions[i] = uint32(len(e.module.Imports) + i)
 	}
+	if err := e.setupStrings(); err != nil {
+		return nil, err
+	}
 	for i, expr := range u.Program.Exprs {
 		fn, err := e.expression(program.ExprID(i), expr)
 		if err != nil {
@@ -69,8 +77,15 @@ func emitExpressions(u Unit) (*expressionEmitter, error) {
 
 func (e *expressionEmitter) expression(id program.ExprID, expr program.Expr) (wasmgen.Function, error) {
 	switch expr.Op {
-	case program.OpLitInt, program.OpAdd, program.OpSub, program.OpMul, program.OpNeg:
+	case program.OpAdd:
+		if e.unit.Contract.Expressions[id].Kind == String {
+			return e.stringExpression(id, expr)
+		}
 		return e.integer(id, expr)
+	case program.OpLitInt, program.OpSub, program.OpMul, program.OpNeg:
+		return e.integer(id, expr)
+	case program.OpLitString, program.OpConcat, program.OpLen:
+		return e.stringExpression(id, expr)
 	case program.OpLitBool, program.OpEq, program.OpNeq, program.OpLt, program.OpGt,
 		program.OpLte, program.OpGte, program.OpAnd, program.OpOr, program.OpNot:
 		return e.comparison(id, expr)
@@ -85,6 +100,8 @@ type instructions []byte
 
 func (b *instructions) op(op byte)                  { *b = append(*b, op) }
 func (b *instructions) index(op byte, index uint32) { b.op(op); *b = wasmgen.AppendU32(*b, index) }
+func (b *instructions) get(local uint32)            { b.index(0x20, local) }
+func (b *instructions) set(local uint32)            { b.index(0x21, local) }
 func (b *instructions) i32(value int32)             { b.op(0x41); *b = wasmgen.AppendI32(*b, value) }
 func (b *instructions) i64(value int64)             { b.op(0x42); *b = wasmgen.AppendI64(*b, value) }
 func (b *instructions) memory(op byte, alignment, offset uint32) {
@@ -106,6 +123,32 @@ func (b *instructions) errorGuard() {
 	b.op(0x40)
 	b.i32(0)
 	b.op(0x0f)
+	b.op(0x0b)
+}
+
+func (b *instructions) guard(status int32) {
+	b.op(0x04)
+	b.op(0x40)
+	b.failure(status)
+	b.op(0x0b)
+}
+
+func (e *expressionEmitter) value(b *instructions, id program.ExprID, local uint32) {
+	b.get(0)
+	b.index(0x10, e.functions[id])
+	b.set(local)
+	b.errorGuard()
+}
+
+func (b *instructions) copyRecord(id program.ExprID, source uint32) {
+	b.destination(id, 1)
+	for offset := uint32(0); offset < valueBytes; offset += 8 {
+		b.get(1)
+		b.get(source)
+		b.memory(0x29, 3, offset)
+		b.memory(0x37, 3, offset)
+	}
+	b.get(1)
 	b.op(0x0b)
 }
 
@@ -165,7 +208,7 @@ func i64Instructions(value int64) instructions { var b instructions; b.i64(value
 
 func (e *expressionEmitter) conditional(id program.ExprID, expr program.Expr) (wasmgen.Function, error) {
 	kind := e.unit.Contract.Expressions[id].Kind
-	if !integerKind(kind) && kind != Bool {
+	if !integerKind(kind) && kind != Bool && kind != String {
 		return wasmgen.Function{}, fmt.Errorf("conditional kind not implemented")
 	}
 	var b instructions
