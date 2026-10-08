@@ -273,7 +273,44 @@ type publicFailedWriter struct{}
 
 func (publicFailedWriter) Write([]byte) (int, error) { return 0, errors.New("private writer error") }
 
+// Public wrapper tests own their default catalog; application defaults may differ.
+func fixturePublicWorkingRoot(t *testing.T) {
+	t.Helper()
+	repo := projectRoot(t)
+	dir := t.TempDir()
+	files := map[string]string{
+		"perf/fixtures/catalog.v1.json":       "perf/budget/testdata/catalog.v1.json",
+		"testdata/public-report.v1.json":      "perf/budget/testdata/public-report.v1.json",
+		"perf/wire/testdata/counter/page.gsx": "perf/wire/testdata/counter/page.gsx",
+	}
+	for dest, source := range files {
+		data, err := os.ReadFile(filepath.Join(repo, source))
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, dest)
+		if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module fixture\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"init", "--quiet"}, {"add", "."}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		if cmd.Run() != nil {
+			t.Fatal("fixture repository setup failed")
+		}
+	}
+	t.Chdir(dir)
+}
+
 func TestPublicWritersValidateBeforeOutputAndFieldRead(t *testing.T) {
+	fixturePublicWorkingRoot(t)
 	r := publicTestReport(t)
 	var out bytes.Buffer
 	if err := WriteJSON(&out, *r); err != nil {
