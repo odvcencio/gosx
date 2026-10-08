@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -30,6 +32,45 @@ func testCollect(ctx context.Context, opts CollectOptions) (*Report, error) {
 	return collect(ctx, opts, assetmeasure.CompressorPin{}, func(ctx context.Context, options MeasureOptions) (AppReport, error) {
 		return measureApp(ctx, options, testBodyNormalizer)
 	}, testBodyNormalizer)
+}
+
+func TestCollectUsesLoadedCanonicalCompressorPins(t *testing.T) {
+	// A normal executable retains the module metadata used by the pin check.
+	dir := t.TempDir()
+	source := filepath.Join(dir, "collect.go")
+	binary := filepath.Join(dir, "collect")
+	program := `package main
+import (
+ "context"
+ "fmt"
+ "os"
+ "m31labs.dev/gosx/perf/budget"
+)
+func main() {
+ inputs, err := budget.LoadInputs(os.Args[1], budget.LoadOptions{RootDir:os.Args[2]})
+ if err != nil { fmt.Fprintln(os.Stderr,err); os.Exit(2) }
+ opts := budget.CollectOptions{Inputs:inputs,SHA:os.Args[5],ChunksOnly:os.Args[7]=="true",
+ Bindings:[]budget.CollectionBinding{{App:"fixture",DistDir:os.Args[3],BaseURL:os.Args[4],ArtifactSHA256:os.Args[6]}}}
+ report,err := budget.Collect(context.Background(),opts)
+ if err != nil { fmt.Fprintln(os.Stderr,err); os.Exit(2) }
+ if !report.Info.Canonical || len(report.Assets)!=2 { os.Exit(1) }
+ for _,a:=range report.Assets { if a.Raw<=0 || a.Gzip<=0 || a.Brotli<=0 { os.Exit(1) } }
+}`
+	if err := os.WriteFile(source, []byte(program), 0600); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-o", binary, source)
+	build.Dir = projectRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("collector executable build failed: %v: %s", err, out)
+	}
+	for _, chunks := range []bool{false, true} {
+		opts, _ := testCollection(t)
+		cmd := exec.Command(binary, filepath.Join(projectRoot(t), "perf/budget/testdata/budget.v2.json"), projectRoot(t), opts.Bindings[0].DistDir, opts.Bindings[0].BaseURL, opts.SHA, opts.Bindings[0].ArtifactSHA256, strconv.FormatBool(chunks))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("canonical collection failed: %v: %s", err, out)
+		}
+	}
 }
 
 func TestCollectProductionObservationsAndIndependentProvenance(t *testing.T) {

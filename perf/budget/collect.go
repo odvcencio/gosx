@@ -42,7 +42,7 @@ func Collect(ctx context.Context, opts CollectOptions) (*Report, error) {
 	if t == nil {
 		return nil, collectionFailure("invalid-input", "/inputs")
 	}
-	pin := assetmeasure.CompressorPin{GoVersion: t.Toolchain.Go, BrotliVersion: "v" + t.Toolchain.Brotli, GzipLevel: t.Toolchain.GzipLevel, BrotliQuality: t.Toolchain.BrotliQuality, BrotliWindow: t.Toolchain.BrotliWindow}
+	pin := assetmeasure.CompressorPin{GoVersion: t.Toolchain.Go, BrotliVersion: t.Toolchain.Brotli, GzipLevel: t.Toolchain.GzipLevel, BrotliQuality: t.Toolchain.BrotliQuality, BrotliWindow: t.Toolchain.BrotliWindow}
 	if _, err := assetmeasure.Measure(nil, pin); err != nil {
 		return nil, collectionFailure("noncanonical", "/pin")
 	}
