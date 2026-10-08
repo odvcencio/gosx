@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { bootstrapRuntimeSource, createContext, runScript, flushAsyncWork, FakeElement } = require("./runtime-test-harness.js");
+const { bootstrapRuntimeSource, bootstrapFeatureEnginesSource, createContext, runScript, flushAsyncWork, FakeElement } = require("./runtime-test-harness.js");
 
 const BRIDGE_URL = "/gosx/assets/runtime/bootstrap-feature-engine-bridge.abcd.js";
 const chunk = (name, marker) => `(function(){
@@ -44,4 +44,37 @@ test("a feature with no contract key falls back to the unhashed /gosx/ URL", asy
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   await flushAsyncWork();
   assert.equal(env.context.__painter_calls, 1);
+});
+
+test("a missing feature chunk is logged once and the page still mounts", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "js-root";
+  const env = createContext({
+    elements: [contractElement({}), mount],
+    engineFactories: { JSFixture() { return { dispose() {} }; } },
+    fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource } },
+    manifest: { engines: [{ id: "js-engine", component: "JSFixture", kind: "surface", mountId: "js-root" }], features: ["nope"] },
+  });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  assert.ok(env.context.__gosx.engines.get("js-engine"), "the engine must mount despite the missing chunk");
+  assert.equal(env.context.__gosx.ready, true);
+  assert.equal(env.consoleLogs.warn.filter((line) => line.includes("nope")).length, 1);
+});
+
+test("the preload fallback matches the whole feature name, not a prefix", async () => {
+  const env = createContext({
+    elements: [contractElement({})],
+    fetchRoutes: { "/gosx/bootstrap-feature-engine.js": { text: chunk("engine", "__engine_calls") } },
+    manifest: { features: ["engine"] },
+  });
+  const preload = env.document.createElement("link");
+  preload.setAttribute("rel", "preload");
+  preload.setAttribute("as", "script");
+  preload.setAttribute("href", "/gosx/assets/runtime/bootstrap-feature-engines.abcd.js");
+  env.document.head.appendChild(preload);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  assert.deepEqual(env.fetchCalls.map((c) => String(c.url)), ["/gosx/bootstrap-feature-engine.js"]);
+  assert.equal(env.context.__engine_calls, 1);
 });

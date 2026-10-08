@@ -73,7 +73,7 @@
       const rel = String((node.getAttribute && node.getAttribute("rel")) || node.rel || "").toLowerCase();
       const as = String((node.getAttribute && node.getAttribute("as")) || node.as || "").toLowerCase();
       const href = String((node.getAttribute && node.getAttribute("href")) || node.href || "");
-      if (rel === "preload" && as === "script" && href.includes(fileName)) {
+      if (rel === "preload" && as === "script" && href.includes(fileName + ".")) {
         return href;
       }
     }
@@ -93,7 +93,7 @@
   }
 
   function bootstrapFeatureKey(name) {
-    return "bootstrapFeature" + String(name).replace(/(^|-)([a-z0-9])/g, function(_m, _sep, ch) { return ch.toUpperCase(); }) + "Path";
+    return "bootstrapFeature" + name.replace(/(?:^|-)(\w)/g, function(_m, ch) { return ch.toUpperCase(); }) + "Path";
   }
 
   function bootstrapFeatureURL(name) {
@@ -277,9 +277,10 @@
     }
     return Promise.all(names.map(function(name) {
       const load = ensureBootstrapFeature(name);
-      // Optional: without it the browser wraps label text. Never block mounts.
-      return name !== "textlayout" ? load : load.catch(function(error) {
-        console.warn("[gosx] textlayout:", error);
+      // textlayout and opt-in manifest.features are optional: a missing chunk
+      // is logged and skipped, never allowed to block the mounts.
+      return /^(islands|engines|hubs|controllers|scene3d)$/.test(name) ? load : load.catch(function(error) {
+        console.warn("[gosx] " + name + ":", error);
         return null;
       });
     })).then(function(features) {

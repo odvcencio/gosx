@@ -2842,17 +2842,17 @@
   async function submitForm(form, submitter) {
     if (!form) return;
     const queue = window.__gosx && window.__gosx.editQueue;
-    if (queue && form.hasAttribute(FORM_QUEUE_ATTR)) {
-      // Serialize at enqueue: the queue sends this snapshot, not later edits.
-      return queue.submit(form, submitter, serializeForm(form, submitter), submitFormWith);
-    }
-    if (pendingManagedForms.has(form)) return;
-    pendingManagedForms.add(form);
-    try {
-      return await submitFormWith(form, submitter, serializeForm(form, submitter));
-    } finally {
-      pendingManagedForms.delete(form);
-    }
+    const queued = queue && form.hasAttribute(FORM_QUEUE_ATTR);
+    if (!queued && pendingManagedForms.has(form)) return;
+    // The in-flight set also covers queued sends, so refresh ticks and live
+    // regions do not swap the DOM under a queued edit.
+    const send = function(f, s, data) {
+      pendingManagedForms.add(form);
+      return submitFormWith(f, s, data).finally(function() { pendingManagedForms.delete(form); });
+    };
+    // Serialize at enqueue: the queue sends this snapshot, not later edits.
+    const snapshot = serializeForm(form, submitter);
+    return queued ? queue.submit(form, submitter, snapshot, send) : send(form, submitter, snapshot);
   }
 
   async function submitFormWith(form, submitter, formData) {

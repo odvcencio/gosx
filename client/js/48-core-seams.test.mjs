@@ -13,7 +13,7 @@ import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
 const here = path.dirname(fileURLToPath(import.meta.url));
 const read = (...parts) => fs.readFileSync(path.join(here, ...parts), "utf8");
-const { navigationSource, createContext, runScript, flushAsyncWork, FakeElement } = require("./runtime-test-harness.js");
+const { navigationSource, createContext, runScript, flushAsyncWork, FakeElement, installManualTimers, buildNavigatedDocument } = require("./runtime-test-harness.js");
 
 const actionsSrc = read("..", "runtime", "host", "actions.ts");
 const navigationSrc = read("..", "runtime", "host", "navigation.ts");
@@ -221,4 +221,78 @@ test("the host authority guard still passes", () => {
     env: { ...process.env, GOWORK: "off" },
     stdio: "pipe",
   });
+});
+
+test("a queued submit holds the form in the in-flight set, so refresh ticks skip", async () => {
+  const url = "http://localhost:3000/scoreboard";
+  const actionURL = "http://localhost:3000/scoreboard/__actions/save";
+  const main = new FakeElement("main", null);
+  main.id = "scoreboard";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const { form } = managedForm({ "data-gosx-queue": "serial" }, actionURL);
+  let resolveAction;
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main, form],
+    fetchRoutes: {
+      [actionURL]: () => new Promise((resolve) => { resolveAction = resolve; }),
+      [url]: { text: "__REFRESH__", url },
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "scoreboard";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  parsedDocs.set("__REFRESH__", buildNavigatedDocument({ title: "Scoreboard", bodyNodes: [freshMain] }));
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.context.__gosx.editQueue = { submit(f, submitter, snapshot, send) { return send(f, submitter, snapshot); } };
+
+  env.document.eventListeners.get("submit")[0](submitEvent(form));
+  await flushAsyncWork();
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.filter((call) => call.url === url).length, 0, "a queued edit in flight must skip the refresh tick");
+
+  resolveAction({ text: "{}" });
+  await flushAsyncWork();
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.filter((call) => call.url === url).length, 1, "the next tick runs once the queued send settles");
+});
+
+test("a synchronous go.run throw clears the boot token", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "a-root";
+  const contract = new FakeElement("script", null);
+  contract.id = "gosx-document";
+  contract.textContent = JSON.stringify({ version: 1, assets: { bootstrapMode: "full", manifest: true } });
+  const { bootstrapRuntimeSource, bootstrapFeatureEnginesSource } = require("./runtime-test-harness.js");
+  const env = createContext({
+    elements: [contract, mount],
+    fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource }, "/engines/a.wasm": { text: "a" } },
+    manifest: { engines: [{ id: "a", component: "A", kind: "surface", runtime: "go-wasm", programRef: "/engines/a.wasm", mountId: "a-root" }] },
+  });
+  const ctx = env.context;
+  ctx.__gosx_standard_go_wasm_ctor = function FakeGo() { this.env = {}; this.importObject = {}; this.run = () => { throw new Error("sync trap"); }; };
+  // The engine boot failure rejects the page bootstrap, which is the expected
+  // outcome of a trapping module; keep the test runner from counting it.
+  const listeners = process.listeners("unhandledRejection");
+  process.removeAllListeners("unhandledRejection");
+  const rejections = [];
+  process.on("unhandledRejection", (reason) => rejections.push(reason));
+  try {
+    runScript(bootstrapRuntimeSource, ctx, "bootstrap-runtime.js");
+    await flushAsyncWork();
+    await new Promise((r) => setTimeout(r, 20));
+    await flushAsyncWork();
+  } finally {
+    process.removeAllListeners("unhandledRejection");
+    for (const fn of listeners) process.on("unhandledRejection", fn);
+  }
+  assert.ok(rejections.length >= 1, "the trapping module must fail the boot");
+  assert.equal(ctx.__gosx.goWASMBootToken, "");
 });

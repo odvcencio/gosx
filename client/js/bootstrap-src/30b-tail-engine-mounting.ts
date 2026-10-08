@@ -327,6 +327,7 @@
       );
     } finally {
       clearTimeout(record.timeout);
+      window.__gosx.goWASMBootToken = "";
       goWASMEngineRegistrationTokens.delete(record.token);
     }
     return record;
