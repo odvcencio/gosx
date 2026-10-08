@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Record `gzipSize` and `brotliSize` for compressed assets in `build.json`.
+  Choose compatible WASM runtimes by Brotli size, then gzip or raw size when
+  metadata is absent, with raw size and path as deterministic tie-breaks.
+
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
   to replace its code-configured token or file source. Two environment sources

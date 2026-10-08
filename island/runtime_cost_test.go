@@ -93,6 +93,18 @@ func TestRendererCompressedCostFallsBackForOlderManifests(t *testing.T) {
 	if got := r.selectedRuntimeRef().Variant; got != "engine" {
 		t.Fatalf("older manifests must use raw size before path: %s", got)
 	}
+	for name, ref := range m.Runtime.WASMVariants {
+		ref.Size = 0
+		m.Runtime.WASMVariants[name] = ref
+	}
+	for i := 0; i < 100; i++ {
+		if err := r.ApplyBuildManifest(m, "/gosx/assets"); err != nil {
+			t.Fatal(err)
+		}
+		if got := r.selectedRuntimeRef().Variant; got != "core" {
+			t.Fatalf("unknown sizes must use the path regardless of map order: %s", got)
+		}
+	}
 }
 
 func TestRendererLegacyRuntimeAssetsCarryCompressedCost(t *testing.T) {

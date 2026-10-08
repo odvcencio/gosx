@@ -2358,6 +2358,8 @@ func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
 }
 
 // runtimeRefTransferCost uses the best recorded representation for each asset.
+// Mixed metadata can compare one ref's Brotli size with another's raw size,
+// favoring refs with compressed sidecars rather than estimating missing sizes.
 func runtimeRefTransferCost(ref hydrate.RuntimeRef) int64 {
 	if ref.BrotliSize > 0 {
 		return ref.BrotliSize
