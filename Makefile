@@ -128,16 +128,19 @@ test-race-pr:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test race
 
 # Native telemetry checks stay non-short so cap and ownership tests execute.
-.PHONY: test-telemetry test-telemetry-metric-race
+.PHONY: test-telemetry test-telemetry-metric-race test-telemetry-helpers-race
 test-telemetry:
 	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/...
 
 test-telemetry-metric-race:
 	GOWORK=off $(GO) test -race ./telemetry/metric
 
+test-telemetry-helpers-race:
+	GOWORK=off $(GO) test -race ./internal/clock ./telemetry/telemetrytest
+
 .PHONY: test-telemetry-wasm bench-telemetry
 test-telemetry-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry/metric
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry/metric ./internal/clock ./telemetry/telemetrytest
 
 bench-telemetry:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim

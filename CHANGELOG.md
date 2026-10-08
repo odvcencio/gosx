@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Accept telemetry listener `off` case-insensitively, reject Unix paths that
+  exceed the platform address limit, and allow a nonempty environment credential
+  to replace its code-configured token or file source. Two environment sources
+  for the same credential remain an error.
+
+- Add pure telemetry defaults and bounded, redacted option validation, plus
+  portable wall/elapsed clock types and a deterministic fake clock. Wall jumps
+  do not advance elapsed deadlines, and tickers need no conversion goroutine.
+  Native attachment and feature implementations follow in separate slices.
+  Unimplemented opt-in features return a fixed unsupported configuration error.
+  Listener validation rejects short, malformed and shared credentials, requires
+  authentication for non-loopback IPs, and rejects DNS listener names. Empty
+  environment variables preserve code settings; environment enables cannot
+  override an explicit Disabled flag. Credential files are read at startup.
 - Catalog observer configuration errors use the `server:` namespace while
   retaining their configuration identities for error inspection.
 
