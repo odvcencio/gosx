@@ -2155,16 +2155,16 @@
       return source;
     }
     if (/^\s*#version\s+300\s+es\b/.test(source)) {
-      return source;
+      source = source.replace(/\bprecision\s+(lowp|mediump|highp)\s+int\s*;/g, "precision highp int;");
+      return /\bprecision\s+highp\s+int\s*;/.test(source) ? source
+        : source.replace(/^(\s*#version[^\r\n]*)(\r?\n|$)/, "$1\nprecision highp int;\n");
     }
     let out = source.replace(/\bprecision\s+(lowp|mediump|highp)\s+float\s*;/g, "precision highp float;");
     out = out.replace(/\bprecision\s+(lowp|mediump|highp)\s+int\s*;/g, "precision highp int;");
-    if (!/\bprecision\s+highp\s+float\s*;/.test(out)) {
-      out = "precision highp float;\n" + out;
-    }
-    if (!/\bprecision\s+highp\s+int\s*;/.test(out)) {
-      out = out.replace(/precision\s+highp\s+float\s*;/, "precision highp float;\nprecision highp int;");
-    }
+    out = /\bprecision\s+highp\s+float\s*;/.test(out) ? out
+      : "precision highp float;\n" + out;
+    out = /\bprecision\s+highp\s+int\s*;/.test(out) ? out
+      : out.replace(/precision\s+highp\s+float\s*;/, "precision highp float;\nprecision highp int;");
     return out;
   }
 
