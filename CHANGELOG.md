@@ -4,7 +4,9 @@
 
 - Add `gosx deploy check [--json] dist` to validate server launch files, bundle
   policy, asset checksums and compressed sidecars, and exported pages before
-  uploading a production bundle. The check never starts the application.
+  uploading a production bundle. Accept `server/app.exe` for Windows bundles.
+  Exit codes are 0 for success, 1 for failed checks and 2 for usage errors.
+  The check never starts the application.
 
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential

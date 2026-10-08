@@ -107,7 +107,7 @@ func TestDeploymentCheckRejectsIncompleteOrUnsafeBundle(t *testing.T) {
 			m.Runtime.Bootstrap.File = "../../outside"
 			writeDeploymentFixtureManifest(t, d, m)
 		}, "invalid asset filename"},
-		{"missing server", func(t *testing.T, d string, m *buildmanifest.Manifest) { os.Remove(filepath.Join(d, "server/app")) }, "server/app"},
+		{"missing server", func(t *testing.T, d string, m *buildmanifest.Manifest) { os.Remove(filepath.Join(d, "server/app")) }, "server/app and server/app.exe are missing; run gosx build --prod"},
 		{"empty manifest", func(t *testing.T, d string, m *buildmanifest.Manifest) {
 			mustWriteFile(t, filepath.Join(d, "build.json"), "{}")
 		}, "no runtime assets"},

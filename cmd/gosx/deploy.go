@@ -185,6 +185,9 @@ func checkDeploymentBundle(dir string) (report deploymentCheckReport, resultErr 
 	for _, file := range []string{server, "run.sh"} {
 		info, err := deploymentFileInfo(root, file)
 		if err != nil {
+			if file == "server/app.exe" && errors.Is(err, fs.ErrNotExist) {
+				return report, fmt.Errorf("server/app and server/app.exe are missing; run gosx build --prod: %w", fs.ErrNotExist)
+			}
 			return report, err
 		}
 		if info.Size() == 0 || (runtime.GOOS != "windows" && file != "server/app.exe" && info.Mode().Perm()&0111 == 0) {

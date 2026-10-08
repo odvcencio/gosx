@@ -768,11 +768,11 @@ gosx desktop --bundle dist/offline    # Run a packaged app://gosx bundle
 gosx desktop --url <url> --native-bridge
                                       # Direct trusted host with built-in desktop APIs
 gosx build [--prod] <app>              # Build with hashed assets, optional static prerender
-gosx deploy check [--json] dist        # Validate a production bundle before upload
 gosx build --offline <app>             # Stage a versioned offline asset bundle
 gosx build --msix <app>                # Stage and package Windows MSIX output
 gosx build --sign --msix <app>         # Sign MSIX via signtool
 gosx build --appinstaller <uri> <app>  # Emit AppInstaller update feed XML
+gosx deploy check [--json] dist        # Validate a production bundle before upload
 gosx assets plan [path...]            # Inspect 3D/game assets and planned build optimizations
 gosx scene render --out image.png <scene-file>
                                       # Render a typed scene natively to PNG (no browser or GPU)
