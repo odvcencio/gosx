@@ -136,6 +136,12 @@ func TestDeriveRejectAlteredResults(t *testing.T) {
 		"wire": func(f *File) { p := f.PageTypes["island"]; p.WireEnvelope.TotalBytes++; f.PageTypes["island"] = p },
 		"goal": func(f *File) { p := f.PageTypes["island"]; p.Goals[0].Max += 100; f.PageTypes["island"] = p },
 		"pin":  func(f *File) { f.Toolchain.SHA256 = strings.Repeat("f", 64) },
+		"metric": func(f *File) {
+			p := f.PageTypes["island"]
+			p.PrimaryMetric = "lcp"
+			p.Goals[0].Metric = "lcp"
+			f.PageTypes["island"] = p
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, p, c := deriveInputs(t)

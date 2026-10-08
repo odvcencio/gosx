@@ -195,8 +195,9 @@ func newModel(file File, profile Profile, coefficients Coefficients, name string
 		Workload        Workload
 		Reserve, Share  int64
 		Set, Backend    string
+		Metric          string
 	}{"transfer-cpu/v1", name, after, []Ref{file.Profile, file.Coefficients, file.Toolchain, file.Fixtures}, profile, coefficients,
-		page.Network, goal, page.Mix, work, reserve, page.MinAppPPM, page.CoefficientSet, page.Backend})
+		page.Network, goal, page.Mix, work, reserve, page.MinAppPPM, page.CoefficientSet, page.Backend, page.PrimaryMetric})
 	return planningModel{network: network, initial: profile.InitCwndBytes, quantum: profile.QuantumBytes, reserve: reserve,
 		share: page.MinAppPPM, static: name == "static", window: window, slope: slope, fixed: fixed, status: status, fingerprint: inputDigest(fingerprint)}, nil
 }
