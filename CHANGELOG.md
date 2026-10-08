@@ -2,10 +2,6 @@
 
 ## Unreleased
 
-- Record `gzipSize` and `brotliSize` for compressed assets in `build.json`.
-  Choose compatible WASM runtimes by Brotli size, then gzip or raw size when
-  metadata is absent, with raw size and path as deterministic tie-breaks.
-
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
   to replace its code-configured token or file source. Two environment sources
@@ -87,6 +83,10 @@
   before `Closed` and drains admitted callbacks before completion.
   `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
+- Record `gzipSize` and `brotliSize` for compressed assets in `build.json`.
+  Choose compatible WASM runtimes by Brotli size, then gzip or raw size when
+  metadata is absent, with raw size and path as deterministic tie-breaks.
+
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
   request-time compression. Static exports include the asset. Defer execution
