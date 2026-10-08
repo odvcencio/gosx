@@ -641,3 +641,43 @@ func TestLowerIslandEmitsComponentScopeDefs(t *testing.T) {
 		t.Fatalf("expected handler lowering to expose event value in expr table, got %+v", island.Exprs)
 	}
 }
+
+func TestLowerIslandRejectsUnknownEventAttr(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeElement, Tag: "div",
+		Attrs: []Attr{{Kind: AttrExpr, Name: "onLaserPointer", Expr: "zap", IsEvent: true}},
+	})
+	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
+	_, err := LowerIsland(prog, 0)
+	if err == nil || !strings.Contains(err.Error(), `unknown island event handler "onLaserPointer"`) {
+		t.Fatalf("err = %v, want unknown island event handler", err)
+	}
+	if !strings.Contains(err.Error(), "onWheel") {
+		t.Fatalf("error must list the supported handlers, got %v", err)
+	}
+}
+
+func TestLowerIslandAcceptsGestureEvents(t *testing.T) {
+	for _, name := range []string{"onWheel", "onDblClick", "onContextMenu", "onLostPointerCapture"} {
+		prog := &Program{}
+		prog.Nodes = append(prog.Nodes, Node{
+			Kind: NodeElement, Tag: "div",
+			Attrs: []Attr{{Kind: AttrExpr, Name: name, Expr: "h", IsEvent: true}},
+		})
+		prog.Components = append(prog.Components, Component{Name: "Ok", Root: 0, IsIsland: true})
+		island, err := LowerIsland(prog, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := island.Nodes[0].Attrs[0]
+		if got.Kind != program.AttrEvent || got.Name != name || got.Event != "h" {
+			t.Fatalf("%s: attr = %#v", name, got)
+		}
+	}
+	for _, legacy := range []string{"wheel", "dblclick", "contextmenu", "lostpointercapture"} {
+		if !legacyInlineEventSupported(legacy) {
+			t.Fatalf("legacy data-on-%s must be supported", legacy)
+		}
+	}
+}

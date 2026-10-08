@@ -1040,6 +1040,9 @@ func (l *islandLowerer) lowerAttr(attr Attr, context *islandInlineContext) (prog
 		}, nil
 	case AttrExpr:
 		if attr.IsEvent {
+			if _, ok := islandEventTypes[attr.Name]; !ok {
+				return program.Attr{}, fmt.Errorf("unknown island event handler %q; supported: %s", attr.Name, islandEventNames())
+			}
 			return program.Attr{
 				Kind:  program.AttrEvent,
 				Name:  attr.Name,
@@ -1064,6 +1067,47 @@ func (l *islandLowerer) lowerAttr(attr Attr, context *islandInlineContext) (prog
 	}
 }
 
+// islandEventTypes maps each supported island handler attribute to its DOM
+// event type. It is the contract with client/runtime/host/events.ts
+// DELEGATED_EVENTS and GLOBAL_DELEGATED_EVENTS; an attribute outside it is a
+// compile error because the runtime would never attach a listener for it.
+var islandEventTypes = map[string]string{
+	"onClick":              "click",
+	"onInput":              "input",
+	"onChange":             "change",
+	"onSubmit":             "submit",
+	"onKeyDown":            "keydown",
+	"onKeyUp":              "keyup",
+	"onFocus":              "focus",
+	"onBlur":               "blur",
+	"onDragStart":          "dragstart",
+	"onDragEnd":            "dragend",
+	"onDragOver":           "dragover",
+	"onDragLeave":          "dragleave",
+	"onDrop":               "drop",
+	"onPointerDown":        "pointerdown",
+	"onPointerMove":        "pointermove",
+	"onPointerUp":          "pointerup",
+	"onPointerCancel":      "pointercancel",
+	"onDocumentKeyDown":    "document-keydown",
+	"onDocumentKeyUp":      "document-keyup",
+	"onWindowResize":       "window-resize",
+	"onLostPointerCapture": "lostpointercapture",
+	"onWheel":              "wheel",
+	"onDblClick":           "dblclick",
+	"onContextMenu":        "contextmenu",
+}
+
+// islandEventNames returns the supported handler attributes, sorted.
+func islandEventNames() string {
+	names := make([]string, 0, len(islandEventTypes))
+	for name := range islandEventTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
 // legacyInlineEventType recognizes the original island event spelling:
 //
 //	<button data-on-click="count.Set(count.Get() + 1)">+1</button>
@@ -1084,15 +1128,12 @@ func legacyInlineEventType(name string) (string, bool) {
 }
 
 func legacyInlineEventSupported(eventType string) bool {
-	switch eventType {
-	case "click", "input", "change", "submit", "keydown", "keyup", "focus", "blur",
-		"dragstart", "dragend", "dragover", "dragleave", "drop",
-		"pointerdown", "pointermove", "pointerup", "pointercancel",
-		"document-keydown", "document-keyup", "window-resize":
-		return true
-	default:
-		return false
+	for _, supported := range islandEventTypes {
+		if supported == eventType {
+			return true
+		}
 	}
+	return false
 }
 
 func (l *islandLowerer) lowerInlineEvent(eventType, source string) (program.Attr, error) {
