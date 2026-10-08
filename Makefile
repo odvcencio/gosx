@@ -104,6 +104,10 @@ test:
 test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
+.PHONY: test-budget-contract
+test-budget-contract:
+	GOWORK=off $(GO) test ./perf/budget
+
 test-cli:
 	$(GO) test -timeout 25m ./cmd/gosx
 
