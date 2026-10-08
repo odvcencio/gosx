@@ -343,9 +343,14 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-particle-burst.js",
+      "sources": [
+        "../runtime/scene3d/particle-burst.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-timeline.js",
       "sources": [
-        "../runtime/scene3d/command-hooks.ts",
         "../runtime/scene3d/timeline.ts"
       ]
     },

@@ -1476,8 +1476,8 @@ test("Scene3D WebGPU bloom blur avoids sparse radius tap grids", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /let radiusStep = clamp\(params\.radius \* 0\.35, 1\.0, 4\.0\)/);
-  assert.match(webgpu, /offsets\[i\] \* radiusStep/);
-  assert.doesNotMatch(webgpu, /offsets\[i\] \* params\.radius/);
+  assert.match(webgpu, /f32\(i \+ 1u\) \* radiusStep/);
+  assert.doesNotMatch(webgpu, /f32\(i \+ 1u\) \* params\.radius/);
 });
 
 test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
