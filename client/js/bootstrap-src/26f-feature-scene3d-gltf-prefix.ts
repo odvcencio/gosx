@@ -20,6 +20,7 @@
   "use strict";
 
   var sceneApi = window.__gosx_scene3d_api || {};
+  var loadManifest = (window.__gosx_runtime_api || {}).loadManifest;
   var SCENE_IDENTITY_MAT4 = sceneApi.SCENE_IDENTITY_MAT4;
   var sceneMat4Multiply = sceneApi.sceneMat4Multiply;
   var sceneTRSToMat4 = sceneApi.sceneTRSToMat4;
