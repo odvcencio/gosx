@@ -182,6 +182,23 @@ func (h *Hub) detachObserver(slot *observerSlot) {
 }
 
 func (h *Hub) observe(visit func(Observer)) {
+	// Pumps and reserved registrations keep finishClose from starting until
+	// their callbacks return. These dispatches only need the detach check;
+	// writing a shared admission counter would contend on every message.
+	list := h.observers.Load()
+	if list == nil {
+		return
+	}
+	for _, slot := range list.slots {
+		if slot.state.Load()&observerRetired == 0 {
+			h.invokeObserver(slot, visit)
+		}
+	}
+}
+
+// observeConcurrent protects dispatches whose owner can race finishClose:
+// broadcasts, unreserved/released rejections, and nested panic notifications.
+func (h *Hub) observeConcurrent(visit func(Observer)) {
 	list := h.observers.Load()
 	if list == nil {
 		return
@@ -217,7 +234,7 @@ func (h *Hub) invokeObserver(slot *observerSlot, visit func(Observer)) {
 	defer func() {
 		if recover() != nil {
 			h.detachObserver(slot)
-			h.observe(func(o Observer) { o.ObserverPanicked(h) })
+			h.observeConcurrent(func(o Observer) { o.ObserverPanicked(h) })
 			h.observerWarningMu.Lock()
 			warn := h.observerWarningAt.IsZero() || time.Since(h.observerWarningAt) >= time.Minute
 			if warn {

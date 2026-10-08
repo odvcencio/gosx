@@ -19,14 +19,16 @@ With a deadline, the reserve is the greater of 5 seconds and 25% of the time
 remaining after HTTP drains. Tasks are cancelled at the earlier of the
 configured `ShutdownGrace` boundary and the deadline minus that reserve.
 Shutdown waits for cancelled runs only until the deadline minus half the
-reserve, then calls Drain and Flush with the remaining time. A task that
+smaller of that reserve and the remaining time, then calls Drain and Flush
+with the remaining time. A task that
 ignores cancellation can therefore overlap those hooks; its scheduler owner
 retains it until it returns. Hooks must account for that possibility when
 closing resources shared with scheduled tasks. An unfinished scheduler returns
 an error matching `context.DeadlineExceeded` even when hooks finish in time.
-If the join cutoff is already in the past, cancellation is immediate and the
-join uses at most half the remaining time, leaving the other half for hooks.
-Deadlines with a future cutoff retain the full half-reserve for hooks.
+When fewer than five seconds remain, cancellation is immediate and the join
+uses at most half the remaining time, leaving the other half for hooks. This
+budget grows continuously as the deadline increases. With at least five
+seconds remaining, hooks retain half the reserve after scheduler joining.
 
 Concurrent shutdown callers share one pipeline and wait only until their own
 context expires. Hook errors retain their original identity for `errors.Is`

@@ -4,7 +4,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"testing"
+
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
 
 func TestEdgeWorkerSessionCacheBoundaries(t *testing.T) {
@@ -92,5 +95,49 @@ for (const headers of [{ "Set-Cookie": "session=example" }, { "Cache-Control": "
 	}
 	if output, err := exec.Command(node, path).CombinedOutput(); err != nil {
 		t.Fatalf("generated edge worker: %v\n%s", err, output)
+	}
+}
+
+func TestEdgeWorkerNavigationStaleHashRevalidates(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is required to execute the generated worker")
+	}
+	dir := t.TempDir()
+	writeTempFile(t, dir, "worker.mjs", edgeWorkerSource(exportManifest{}))
+	script := `import assert from "node:assert/strict";
+import worker from "./worker.mjs";
+const current = ` + strconv.Quote(runtimehost.NavigationRuntimePath) + `;
+const stale = "/gosx/assets/runtime/navigation." + "0".repeat(64) + ".js";
+let calls = [];
+const env = { ASSETS: { fetch: async request => {
+  const path = new URL(request.url).pathname;
+  calls.push(path);
+  if (path !== current) return new Response("missing", { status: 404 });
+  const headers = { "Content-Type": "application/javascript", "Cache-Control": "public, max-age=31536000, immutable", "ETag": '"current"' };
+  if (request.headers.get("If-None-Match") === '"current"') return new Response(null, { status: 304, headers });
+  return new Response(request.method === "HEAD" ? null : "current navigation", { headers });
+} } };
+for (const options of [{}, { method: "HEAD" }, { headers: { "If-None-Match": '"current"' } }]) {
+  calls = [];
+  const response = await worker.fetch(new Request("https://app.example" + stale, options), env);
+  assert.equal(response.status, options.headers ? 304 : 200);
+  assert.equal(response.headers.get("Cache-Control"), "no-cache");
+  assert.equal(response.headers.get("ETag"), '"current"');
+  assert.equal(await response.text(), options.method === "HEAD" || options.headers ? "" : "current navigation");
+  assert.deepEqual(calls, [stale, current]);
+}
+calls = [];
+let response = await worker.fetch(new Request("https://app.example" + current), env);
+assert.equal(response.headers.get("Cache-Control"), "public, max-age=31536000, immutable");
+assert.deepEqual(calls, [current]);
+calls = [];
+response = await worker.fetch(new Request("https://app.example/gosx/assets/runtime/navigation.wrong.js"), env);
+assert.equal(response.status, 404);
+assert.deepEqual(calls, ["/gosx/assets/runtime/navigation.wrong.js"]);
+`
+	writeTempFile(t, dir, "check.mjs", script)
+	if output, err := exec.Command(node, filepath.Join(dir, "check.mjs")).CombinedOutput(); err != nil {
+		t.Fatalf("generated edge worker navigation fallback: %v\n%s", err, output)
 	}
 }
