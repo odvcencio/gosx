@@ -4,6 +4,8 @@ package ir
 
 import (
 	"fmt"
+	"go/constant"
+	"go/token"
 	"slices"
 	"strings"
 
@@ -118,6 +120,9 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		}
 	}
 	kinds := make([]aot.ScalarKind, len(p.Exprs))
+	// A default int kind does not distinguish an untyped constant from a
+	// typed int expression. Retain exact constant values for contextual typing.
+	constants := make([]constant.Value, len(p.Exprs))
 	pure := make([]bool, len(p.Exprs))
 	visiting := make([]bool, len(p.Exprs))
 	inferDepth := 0
@@ -148,6 +153,10 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			kind = aot.String
 		case program.OpLitInt:
 			kind = aot.Int
+			constants[id] = constant.MakeFromLiteral(e.Value, token.INT, 0)
+			if constants[id].Kind() != constant.Int {
+				return "", fmt.Errorf("expression %d has an unproved integer literal", id)
+			}
 		case program.OpLitBool:
 			kind = aot.Bool
 		case program.OpSignalGet:
@@ -163,7 +172,32 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 				input.Exprs = []program.ExprID{id}
 				c.Inputs = append(c.Inputs, input)
 			}
-		case program.OpAdd, program.OpSub, program.OpMul, program.OpNeg, program.OpCond, program.OpSeq:
+		case program.OpAdd, program.OpSub, program.OpMul:
+			if len(args) != 2 {
+				break
+			}
+			left, right := constants[e.Operands[0]], constants[e.Operands[1]]
+			if left != nil && right != nil {
+				op := map[program.OpCode]token.Token{program.OpAdd: token.ADD, program.OpSub: token.SUB, program.OpMul: token.MUL}[e.Op]
+				constants[id] = constant.BinaryOp(left, op, right)
+				kind = aot.Int
+			} else if left != nil && aotConstantFits(left, args[1]) {
+				kind = args[1]
+			} else if right != nil && aotConstantFits(right, args[0]) {
+				kind = args[0]
+			} else if left == nil && right == nil && args[0] == args[1] {
+				if args[0] == aot.Int || args[0] == aot.Int32 || args[0] == aot.String && e.Op == program.OpAdd {
+					kind = args[0]
+				}
+			}
+		case program.OpNeg:
+			if len(args) == 1 && (args[0] == aot.Int || args[0] == aot.Int32) {
+				kind = args[0]
+				if value := constants[e.Operands[0]]; value != nil {
+					constants[id] = constant.UnaryOp(token.SUB, value, 0)
+				}
+			}
+		case program.OpCond, program.OpSeq:
 			if len(args) > 0 {
 				kind = args[len(args)-1]
 			}
@@ -196,6 +230,16 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		return aot.Unit{}, aotSourceError(comp, "source_graph", err.Error())
 	}
 	return aot.NewUnit(identity, p, c)
+}
+
+func aotConstantFits(value constant.Value, kind aot.ScalarKind) bool {
+	if kind != aot.Int && kind != aot.Int32 {
+		return false
+	}
+	// Both admitted integer kinds execute in the signed int32 domain. Never
+	// contextualize an out-of-domain constant by narrowing its value.
+	n, exact := constant.Int64Val(value)
+	return exact && n >= -1<<31 && n <= 1<<31-1
 }
 
 func aotSourceKind(name string) aot.ScalarKind {
