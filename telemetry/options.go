@@ -320,7 +320,7 @@ func normalize(o Options) (Options, error) {
 	if len(o.Metrics.Operations) > 64 || len(o.Vitals.Engines) > 16 {
 		return Options{}, invalid("descriptors", "capacity")
 	}
-	if len(operationPairs(o.Metrics.Operations)) > 64 || len(o.Metrics.AuthTypes) > 16 || len(o.Metrics.AuthProviders) > 16 || len(uniqueHubValues(append(append([]string(nil), frameworkDegraded...), o.Metrics.DegradedComponents...))) > 64 {
+	if len(operationPairs(o.Metrics.Operations)) > 64 || len(uniqueHubValues(append([]string{"sign_in", "sign_out"}, o.Metrics.AuthTypes...))) > 16 || len(o.Metrics.AuthProviders) > 16 || len(uniqueHubValues(append(append([]string(nil), frameworkDegraded...), o.Metrics.DegradedComponents...))) > 64 {
 		return Options{}, invalid("descriptors", "capacity")
 	}
 	o.Metrics.Operations = append([]Operation(nil), o.Metrics.Operations...)

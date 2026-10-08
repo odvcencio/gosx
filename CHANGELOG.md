@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reserve default telemetry aggregate families before route admission, with
+  whole page/error reservations and shared page duration histograms. Operation
+  and explicitly attached auth observers use finite startup labels; degradation
+  accepts declared components. Request writer, runtime, readiness, scheduler
+  and client ingress attachment follow their owner seams.
+
 - Add typed telemetry domain codecs and copied field views with finite enum,
   array, nesting and byte limits. Eight staging leases isolate synchronous
   encoders; invalid fields and encoder failures discard the whole projection.

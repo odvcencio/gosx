@@ -1,6 +1,10 @@
 package telemetry
 
-import "m31labs.dev/gosx/telemetry/metric"
+import (
+	"unicode/utf8"
+
+	"m31labs.dev/gosx/telemetry/metric"
+)
 
 func (t *Telemetry) initializeDegraded() error {
 	components := uniqueHubValues(append(append([]string(nil), frameworkDegraded...), t.opts.Metrics.DegradedComponents...))
@@ -21,7 +25,7 @@ func (t *Telemetry) initializeDegraded() error {
 // SetDegraded accepts only startup-declared components and fixed framework
 // components. Unknown values never create a metric label, including when off.
 func (t *Telemetry) SetDegraded(component string, degraded bool) error {
-	if len(component) == 0 || len(component) > 128 {
+	if len(component) == 0 || len(component) > 128 || !utf8.ValidString(component) {
 		return invalid("degraded_component", "name")
 	}
 	if t == nil || t.registry == nil {

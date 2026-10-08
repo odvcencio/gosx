@@ -137,13 +137,20 @@ func (t *Telemetry) initializeDefaultAdapters() error {
 			}
 		}
 	}
-	for _, name := range []string{"gosx_telemetry_queue_bytes", "gosx_telemetry_queue_records", "gosx_telemetry_pending_finals", "gosx_telemetry_insecure_metrics_listener"} {
-		if _, err := t.gauge(name); err != nil {
-			return err
+	if !t.opts.Activities.Disabled || t.opts.Persistence.Enabled || t.opts.Sessions.Enabled {
+		for _, name := range []string{"gosx_telemetry_queue_bytes", "gosx_telemetry_queue_records", "gosx_telemetry_pending_finals"} {
+			if _, err := t.gauge(name); err != nil {
+				return err
+			}
 		}
 	}
-	if _, err := t.histogram("gosx_telemetry_scrape_duration_seconds", requestBounds); err != nil {
-		return err
+	if t.opts.Listen.Addr != "off" {
+		if _, err := t.gauge("gosx_telemetry_insecure_metrics_listener"); err != nil {
+			return err
+		}
+		if _, err := t.histogram("gosx_telemetry_scrape_duration_seconds", requestBounds); err != nil {
+			return err
+		}
 	}
 	v, err := t.counter("gosx_telemetry_clock_adjustments_total", enumLabel("source", "server", "client"))
 	if err != nil {
