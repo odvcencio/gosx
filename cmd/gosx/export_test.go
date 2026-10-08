@@ -241,7 +241,9 @@ func TestExportHTMLCapabilitiesReadRuntimeManifestAndEnhancements(t *testing.T) 
 </body></html>`
 
 	caps, err := routeCapabilitiesFromHTML(input)
- if err!=nil {t.Fatal(err)}
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !caps.Navigation || !caps.Bootstrap || caps.BootstrapMode != "full" || !caps.WASM {
 		t.Fatalf("unexpected runtime capabilities: %#v", caps)
 	}
@@ -255,7 +257,9 @@ func TestExportHTMLCapabilitiesReadRuntimeManifestAndEnhancements(t *testing.T) 
 
 func TestExportStaticCapabilitiesStayZeroCost(t *testing.T) {
 	caps, err := routeCapabilitiesFromHTML(`<!DOCTYPE html><html><body><main>Static</main></body></html>`)
- if err!=nil {t.Fatal(err)}
+	if err != nil {
+		t.Fatal(err)
+	}
 	if caps.Navigation || caps.Bootstrap || caps.WASM || caps.Islands != 0 || caps.Engines != 0 || caps.Hubs != 0 || caps.Scene3D || caps.Video || caps.Motion {
 		t.Fatalf("expected zero-cost static capabilities, got %#v", caps)
 	}
@@ -403,11 +407,18 @@ func tidyModule(t *testing.T, dir string) {
 }
 
 func TestExportComputeCapabilitiesRetainRuntime(t *testing.T) {
- input:="<script id=\"gosx-manifest\" type=\"application/json\">{\"computeIslands\":[{}],\"controllers\":[{}],\"runtime\":{\"path\":\"core.wasm\"}}</script>"
- caps,err:=routeCapabilitiesFromHTML(input);if err!=nil {t.Fatal(err)}
- if caps.ComputeIslands!=1 || caps.Controllers!=1 || caps.Engines!=0 || !caps.WASM || caps.Runtime!="shared" {t.Fatal("export dropped compute requirements",caps)}
+	input := "<script id=\"gosx-manifest\" type=\"application/json\">{\"computeIslands\":[{}],\"controllers\":[{}],\"runtime\":{\"path\":\"core.wasm\"}}</script>"
+	caps, err := routeCapabilitiesFromHTML(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps.ComputeIslands != 1 || caps.Controllers != 1 || caps.Engines != 0 || !caps.WASM || caps.Runtime != "shared" {
+		t.Fatal("export dropped compute requirements", caps)
+	}
 }
 
 func TestExportCapabilitiesRejectMalformedManifest(t *testing.T) {
- if _,err:=routeCapabilitiesFromHTML("<script id=gosx-manifest type=application/json>{</script>");err==nil {t.Fatal("invalid manifest became a static export")}
+	if _, err := routeCapabilitiesFromHTML("<script id=gosx-manifest type=application/json>{</script>"); err == nil {
+		t.Fatal("invalid manifest became a static export")
+	}
 }
