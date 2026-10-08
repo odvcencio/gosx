@@ -2821,10 +2821,10 @@
       console.warn("[gosx] failed to load Scene3D animation support:", error && error.message ? error.message : error);
       return;
     }
-    if (!animationApi || typeof animationApi.buildNodeTransforms !== "function" || typeof animationApi.computeJointMatrices !== "function") {
+    if (!animationApi || typeof animationApi.buildNodeTransforms !== "function" || typeof animationApi.computeJointMatrices !== "function"
+      || typeof animationApi.initializeModelPlayback !== "function" || typeof animationApi.isModelPlaying !== "function" || typeof animationApi.applyModelAnimation !== "function") {
       return;
     }
-
     const record = {
       id: typeof instanceModel.id === "string" ? instanceModel.id : "",
       model: Object.assign({}, instanceModel || {}),
