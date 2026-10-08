@@ -601,6 +601,7 @@ type linkedCode struct {
 	wireStore, abortPage, initPage     uint32
 	envelopeValidate                   uint32
 	freezeEnvelope                     uint32
+	prepareEvent                       uint32
 }
 
 const (
@@ -656,7 +657,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.initPage = c.notify + 14
 	c.envelopeValidate = c.notify + 15
 	c.freezeEnvelope = c.notify + 16
-	c.module.Functions = make([]wasmgen.Function, len(common)+17)
+	c.prepareEvent = c.notify + 17
+	c.module.Functions = make([]wasmgen.Function, len(common)+18)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -681,7 +683,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 17 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 18 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -740,6 +742,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+14] = l.initPageFunction(c)
 	c.module.Functions[len(common)+15] = l.envelopeValidationFunction(c)
 	c.module.Functions[len(common)+16] = l.freezeEnvelopeFunction(c)
+	c.module.Functions[len(common)+17] = l.prepareEventFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -3330,4 +3333,38 @@ func (l *linkedLayout) freezeEnvelopeFunction(c *linkedCode) wasmgen.Function {
 	b.get(owned)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(5), I32Locals: 8, Body: b}
+}
+
+// Admit one sequence, freeze its normalized event, and stage the handler and
+// affected renders. A failed prepare cannot commit its working generation.
+// Busy admission leaves an existing prepared transaction intact.
+func (l *linkedLayout) prepareEventFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.index(0x23, pendingGlobal)
+	b.statusFailure(statusBusy)
+	b.get(2)
+	b.get(3)
+	b.i32(0)
+	b.index(0x10, c.indices[0][c.programs[0].transactions[transactionBegin]])
+	b.index(0x22, 6)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(6)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.i32(0)
+	b.get(0)
+	b.get(1)
+	b.get(4)
+	b.get(5)
+	b.index(0x10, c.freezeEnvelope)
+	b.op(0x1a)
+	b.statusGuard()
+	b.get(0)
+	b.get(1)
+	b.checkedStatusCall(c.dispatch, 6)
+	b.i32(0)
+	b.index(0x10, c.render)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(6), I32Locals: 1, Body: b}
 }

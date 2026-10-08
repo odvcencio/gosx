@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/binary"
+	"encoding/json"
 	"reflect"
 	"strconv"
 	"strings"
@@ -3175,5 +3176,366 @@ func TestLinkedEnvelopeFreezeRejectsBeforeCopyAndGuardsArenaCapacity(t *testing.
   process.stdout.write(JSON.stringify({Statuses:statuses,Atomic:atomic}));`, data, &got)
 	if !got.Atomic || !reflect.DeepEqual(got.Statuses, []int32{0, 0, 0, 2, 2, 0, 0, 5, 5, 0}) {
 		t.Fatalf("invalid or oversized transport changed state before failure: %+v", got)
+	}
+}
+
+func eventTransactionUnit(t *testing.T) Unit {
+	t.Helper()
+	u := staticUnit(t)
+	u.Component, u.Contract.Component, u.Program.Name = "example/components.Capture", "example/components.Capture", "Capture"
+	var reads []program.ExprID
+	for i, field := range []struct {
+		name, literal string
+		kind          ScalarKind
+		typ           program.ExprType
+		op            program.OpCode
+	}{{"number", "7", Int32, program.TypeInt, program.OpLitInt}, {"text", "seed", String, program.TypeString, program.OpLitString},
+		{"checked", "false", Bool, program.TypeBool, program.OpLitBool}} {
+		init := addExpression(&u, field.op, field.typ, field.kind, field.literal)
+		reads = append(reads, addExpression(&u, program.OpSignalGet, field.typ, field.kind, field.name))
+		u.Program.Signals = append(u.Program.Signals, program.SignalDef{Name: field.name, Type: field.typ, Init: init})
+		u.Contract.Signals = append(u.Contract.Signals, StateContract{Slot: uint32(i), Name: field.name, Kind: field.kind})
+	}
+	var inputs []program.ExprID
+	for i, field := range []struct {
+		name string
+		kind ScalarKind
+		typ  program.ExprType
+	}{{"checked", Bool, program.TypeBool}, {"selectedIndex", Int32, program.TypeInt}, {"value", String, program.TypeString}} {
+		leaf := addExpression(&u, program.OpEventGet, field.typ, field.kind, field.name)
+		inputs = append(inputs, leaf)
+		u.Contract.Inputs = append(u.Contract.Inputs, InputContract{ID: uint32(i), Source: "event", Root: field.name,
+			Path: []string{}, Kind: field.kind, Exprs: []program.ExprID{leaf}})
+	}
+	suffix := addExpression(&u, program.OpPropGet, program.TypeString, String, "Suffix")
+	u.Program.Props = []program.PropDef{{Name: "Suffix", Type: program.TypeString}}
+	u.Contract.Inputs = append(u.Contract.Inputs, InputContract{ID: 3, Source: "prop", Root: "Suffix", Path: []string{}, Kind: String, Exprs: []program.ExprID{suffix}})
+	one := addExpression(&u, program.OpLitInt, program.TypeInt, Int32, "1")
+	next := addExpression(&u, program.OpAdd, program.TypeInt, Int32, "", inputs[1], one)
+	text := addExpression(&u, program.OpConcat, program.TypeString, String, "", inputs[2], suffix)
+	var writes []program.ExprID
+	for i, value := range []program.ExprID{text, inputs[0], next} {
+		name := []string{"text", "checked", "number"}[i]
+		write := addExpression(&u, program.OpSignalSet, program.TypeAny, AnyZero, name, value)
+		u.Contract.Expressions[write].Pure = false
+		writes = append(writes, write)
+	}
+	u.Program.Handlers = []program.Handler{{Name: "capture", Body: writes}, {Name: "idle", Body: []program.ExprID{one}}}
+	u.Program.Nodes = []program.Node{{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1, 3, 5}}}
+	for _, read := range reads {
+		u.Program.Nodes = append(u.Program.Nodes, program.Node{Kind: program.NodeElement, Tag: "span", Children: []program.NodeID{program.NodeID(len(u.Program.Nodes) + 1)}},
+			program.Node{Kind: program.NodeExpr, Expr: read})
+	}
+	u.Program.StaticMask = make([]bool, len(u.Program.Nodes))
+	return refreshBindingUnit(t, u)
+}
+
+func eventTransactionFixture(t *testing.T) (*linkedLayout, *linkedCode, wasmgen.Module, []byte) {
+	t.Helper()
+	l, err := buildLinkedLayout([]Unit{eventTransactionUnit(t)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointImportTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "prepareEvent", Function: c.prepareEvent})
+	frame := checkpointTestFrame{Instance: 15, Locals: []checkpointTestValue{
+		{0, scalarTransport(program.TypeInt, 0, 7, "")}, {1, scalarTransport(program.TypeString, 1, 0, "seed")},
+		{2, scalarTransport(program.TypeBool, 0, 0, "")}}, Inputs: []checkpointTestValue{{3, scalarTransport(program.TypeString, 1, 0, "!")}}}
+	return l, c, m, checkpointTestBytes(t, l.inputSetSHA, 0, []checkpointTestFrame{frame}, nil)
+}
+
+func TestLinkedEventTransactionsMatchNativePatchesAndCheckpointGenerations(t *testing.T) {
+	l, c, m, document := eventTransactionFixture(t)
+	type step struct {
+		Low, High, Handler uint32
+		Envelope           string
+	}
+	var steps []step
+	var patches [][]vm.PatchOp
+	var candidates []string
+	model := vm.NewIsland(l.programs[0].unit.Program, `{"Suffix":"!"}`)
+	defer model.Dispose()
+	current := checkpointTestFrame{Instance: 15, Locals: []checkpointTestValue{
+		{0, scalarTransport(program.TypeInt, 0, 7, "")}, {1, scalarTransport(program.TypeString, 1, 0, "seed")},
+		{2, scalarTransport(program.TypeBool, 0, 0, "")}}, Inputs: []checkpointTestValue{{3, scalarTransport(program.TypeString, 1, 0, "!")}}}
+	for i, event := range []struct {
+		checked bool
+		number  int32
+		text    string
+		seq     uint64
+	}{{true, 20, "héllo\x00🌴", 1}, {false, -1, "", 2}, {false, -1, "", 1<<32 + 1}, {true, 30, "e\u0301", 2<<32 + 1}} {
+		bits := uint32(0)
+		if event.checked {
+			bits = 2
+		}
+		values := []checkpointTestValue{{0, scalarTransport(program.TypeBool, bits, 0, "")},
+			{1, scalarTransport(program.TypeInt, 0, int64(event.number), "")}, {2, scalarTransport(program.TypeString, 1, 0, event.text)}}
+		encoded, err := json.Marshal(map[string]any{"checked": event.checked, "selectedIndex": event.number, "value": event.text})
+		if err != nil {
+			t.Fatal(err)
+		}
+		patches = append(patches, append([]vm.PatchOp{}, model.Dispatch("capture", string(encoded))...))
+		current.Last = event.seq
+		current.Locals = []checkpointTestValue{{0, scalarTransport(program.TypeInt, 0, int64(event.number)+1, "")},
+			{1, scalarTransport(program.TypeString, 1, 0, event.text+"!")}, {2, scalarTransport(program.TypeBool, bits, 0, "")}}
+		candidates = append(candidates, base64.StdEncoding.EncodeToString(checkpointTestBytes(t, l.inputSetSHA, event.seq, []checkpointTestFrame{current}, nil)))
+		steps = append(steps, step{uint32(event.seq), uint32(event.seq >> 32), 0,
+			base64.StdEncoding.EncodeToString(envelopeTestBytes(t, false, 15, values))})
+		if i == 1 {
+			if len(patches[i]) == 0 {
+				t.Fatal("fixture did not change the initial event state")
+			}
+		}
+	}
+	data := struct {
+		domTestData
+		Document string
+		Steps    []step
+	}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), steps}
+	var got struct {
+		Statuses   []int32
+		Patches    [][]vm.PatchOp
+		Candidates []string
+		Preserved  bool
+		Bound      [][4]uint32
+	}
+	host := strings.Replace(domTestImports, "patches.push(patch);", "patches.push(patch); memory.fill(0xff,32768,65536);", 1)
+	runExpressionModule(t, m, `
+  const api = instance.exports, bound = [], patches = [], statuses = [], batches = [], candidates = [];
+  const document = Buffer.from(data.Document,'base64'); memory.set(document,32768);
+  statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  function checkpoint(which) {
+    const length = api.checkpoint(which,32768,32768);
+    if (length<=0) throw new Error('checkpoint failed: '+length);
+    return Buffer.from(memory.slice(32768,32768+length)).toString('base64');
+  }
+  let previous = checkpoint(0), preserved = previous===data.Document;
+  for (const step of data.Steps) {
+    const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+    const envelope = Buffer.from(step.Envelope,'base64'); memory.set(envelope,32768);
+    statuses.push(api.prepareEvent(15,step.Handler,step.Low,step.High,32768,envelope.length));
+    preserved = preserved&&committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)))&&checkpoint(0)===previous;
+    const candidate = checkpoint(1); candidates.push(candidate); batches.push(patches.splice(0));
+    statuses.push(api.prepareEvent(0xffffffff,0xffffffff,0,0,0xffffffff,0xffffffff));
+    preserved = preserved&&checkpoint(1)===candidate;
+    statuses.push(api.commit(step.Low,step.High),api.commit(step.Low,step.High));
+    previous = checkpoint(0); preserved = preserved&&previous===candidate;
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Patches:batches,Candidates:candidates,Preserved:preserved,Bound:bound}));`, data, &got, host)
+	if !got.Preserved || !reflect.DeepEqual(got.Candidates, candidates) || !reflect.DeepEqual(got.Patches, patches) || len(got.Bound) != len(c.programs[0].dom.bindings.Bindings) {
+		t.Fatalf("prepared event differs from native patches or wire state: %+v want patches %+v", got, patches)
+	}
+	for i, status := range got.Statuses {
+		want := int32(0)
+		if i >= 2 && (i-2)%4 == 1 {
+			want = 7
+		}
+		if status != want {
+			t.Fatalf("event status %d: %d want %d", i, status, want)
+		}
+	}
+}
+
+func TestLinkedEventTransactionsRejectSequencesAndPartialFailuresWithoutCommit(t *testing.T) {
+	_, c, m, document := eventTransactionFixture(t)
+	valid := envelopeTestBytes(t, false, 15, []checkpointTestValue{{0, scalarTransport(program.TypeBool, 2, 0, "")},
+		{1, scalarTransport(program.TypeInt, 0, 20, "")}, {2, scalarTransport(program.TypeString, 1, 0, "changed")}})
+	invalid := append([]byte{}, valid...)
+	invalid[0] = 0
+	overflow := envelopeTestBytes(t, false, 15, []checkpointTestValue{{0, scalarTransport(program.TypeBool, 2, 0, "")},
+		{1, scalarTransport(program.TypeInt, 0, 2147483647, "")}, {2, scalarTransport(program.TypeString, 1, 0, "partially changed")}})
+	for _, tc := range []struct {
+		name      string
+		envelope  []byte
+		patchFail int32
+		want      int32
+	}{{"malformed envelope", invalid, 0, 2}, {"integer overflow after writes", overflow, 0, 3},
+		{"patch failure after writes", valid, 6, 6}, {"thrown patch after writes", valid, -1, 6}} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := struct {
+				domTestData
+				Document, Envelope string
+				Throw              bool
+			}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(tc.envelope), tc.patchFail < 0}
+			if tc.patchFail > 0 {
+				data.PatchStatus = int(tc.patchFail)
+			}
+			var got struct {
+				Statuses  []int32
+				Preserved bool
+				Patches   int
+				Threw     bool
+			}
+			host := strings.Replace(domTestImports, "patches.push(patch);", "patches.push(patch); if (data.Throw) throw new Error('patch failed');", 1)
+			runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], bound = [], patches = [];
+  const document = Buffer.from(data.Document,'base64'), envelope = Buffer.from(data.Envelope,'base64');
+  statuses.push(api.prepareEvent(15,0,1,0,32768,envelope.length));
+  memory.set(document,32768); statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+  statuses.push(api.prepareEvent(15,0,0,0,32768,envelope.length));
+  memory.set(envelope,32768); let threw = false;
+  try {statuses.push(api.prepareEvent(15,0,1,0,32768,envelope.length));} catch {threw = true;}
+  let preserved = committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)));
+  if (!threw) statuses.push(api.checkpoint(1,32768,32768),api.commit(1,0));
+  statuses.push(api.abortPage(),api.abortPage());
+  const length = api.checkpoint(0,32768,32768);
+  preserved = preserved&&Buffer.from(memory.slice(32768,32768+length)).equals(document)&&api.pending()===0&&api.status()===0;
+  process.stdout.write(JSON.stringify({Statuses:statuses,Preserved:preserved,Patches:patches.length,Threw:threw}));`, data, &got, host)
+			want := []int32{8, 0, 0, 8, tc.want, -tc.want, tc.want, 0, 0}
+			if data.Throw {
+				want = []int32{8, 0, 0, 8, 0, 0}
+			}
+			if !got.Preserved || !reflect.DeepEqual(got.Statuses, want) || got.Threw != data.Throw || tc.want != 6 && got.Patches != 0 {
+				t.Fatalf("event failure committed state or survived abort: %+v", got)
+			}
+		})
+	}
+}
+
+func TestLinkedEventTransactionSequenceAdmissionAndNoInputHandlers(t *testing.T) {
+	l, c, m, document := eventTransactionFixture(t)
+	empty := envelopeTestBytes(t, false, 15, nil)
+	frame := checkpointTestFrame{Instance: 15, Last: 1, Locals: []checkpointTestValue{
+		{0, scalarTransport(program.TypeInt, 0, 7, "")}, {1, scalarTransport(program.TypeString, 1, 0, "seed")},
+		{2, scalarTransport(program.TypeBool, 0, 0, "")}}, Inputs: []checkpointTestValue{{3, scalarTransport(program.TypeString, 1, 0, "!")}}}
+	first := checkpointTestBytes(t, l.inputSetSHA, 1, []checkpointTestFrame{frame}, nil)
+	frame.Last = ^uint64(0)
+	last := checkpointTestBytes(t, l.inputSetSHA, ^uint64(0), []checkpointTestFrame{frame}, nil)
+	data := struct {
+		domTestData
+		Document, Envelope, First, Last string
+	}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(empty),
+		base64.StdEncoding.EncodeToString(first), base64.StdEncoding.EncodeToString(last)}
+	var got struct {
+		Statuses  []int32
+		Preserved bool
+		Patches   int
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, bound = [], patches = [], statuses = [];
+  const document = Buffer.from(data.Document,'base64'), envelope = Buffer.from(data.Envelope,'base64');
+  memory.set(document,32768);statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  const checkpoint = which => {
+    const length = api.checkpoint(which,32768,32768);
+    if (length<=0) throw new Error('invalid checkpoint');
+    return Buffer.from(memory.slice(32768,32768+length)).toString('base64');
+  };
+  memory.set(envelope,32768);statuses.push(api.prepareEvent(15,1,1,0,32768,envelope.length));
+  let preserved = checkpoint(1)===data.First&&checkpoint(0)===data.Document;
+  const before = Buffer.from(memory);
+  statuses.push(api.commit(0,0),api.prepareEvent(0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff,0xffffffff));
+  preserved = preserved&&before.equals(Buffer.from(memory))&&api.pending()===1&&api.status()===0&&checkpoint(1)===data.First;
+  statuses.push(api.commit(1,0));preserved = preserved&&checkpoint(0)===data.First;
+  for (const seq of [[0,0],[1,0]]) {
+    const before = Buffer.from(memory), allocation = api.cursor();
+    statuses.push(api.prepareEvent(15,1,...seq,32768,envelope.length));
+    preserved = preserved&&before.equals(Buffer.from(memory))&&api.cursor()===allocation&&api.pending()===0&&api.status()===0;
+  }
+  memory.set(envelope,32768);
+  statuses.push(api.prepareEvent(15,1,0xffffffff,0xffffffff,32768,envelope.length));
+  preserved = preserved&&checkpoint(1)===data.Last&&checkpoint(0)===data.First;
+  statuses.push(api.commit(0xffffffff,0xffffffff),api.commit(0xffffffff,0xffffffff));
+  preserved = preserved&&checkpoint(0)===data.Last;
+  for (const seq of [[0,0],[1,0],[0xffffffff,0xffffffff],[0xffffffff,0x7fffffff]]) {
+    const before = Buffer.from(memory), allocation = api.cursor();
+    statuses.push(api.prepareEvent(15,1,...seq,32768,envelope.length));
+    preserved = preserved&&before.equals(Buffer.from(memory))&&api.cursor()===allocation&&api.pending()===0&&api.status()===0;
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Preserved:preserved,Patches:patches.length}));`, data, &got, domTestImports)
+	want := []int32{0, 0, 0, 0, 7, 0, 8, 8, 0, 0, 0, 8, 8, 8, 8}
+	if !got.Preserved || got.Patches != 0 || !reflect.DeepEqual(got.Statuses, want) {
+		t.Fatalf("sequence admission, carry, wrap or no-input handler changed state: %+v", got)
+	}
+}
+
+func TestLinkedEventTransactionAbortPreservesRootsAndDisposedInstances(t *testing.T) {
+	l, c, m, document := eventTransactionFixture(t)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "dispose", Function: c.dispose})
+	event := envelopeTestBytes(t, false, 15, []checkpointTestValue{{0, scalarTransport(program.TypeBool, 2, 0, "")},
+		{1, scalarTransport(program.TypeInt, 0, 20, "")}, {2, scalarTransport(program.TypeString, 1, 0, "changed")}})
+	empty := envelopeTestBytes(t, false, 15, nil)
+	disposed := checkpointTestBytes(t, l.inputSetSHA, 0, nil, nil)
+	data := struct {
+		domTestData
+		Document, Event, Empty, Disposed string
+	}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(event),
+		base64.StdEncoding.EncodeToString(empty), base64.StdEncoding.EncodeToString(disposed)}
+	var got struct {
+		Statuses  []int32
+		Preserved bool
+		Patches   []int
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], bound = [], patches = [], batches = [];
+  const document = Buffer.from(data.Document,'base64'), event = Buffer.from(data.Event,'base64'), empty = Buffer.from(data.Empty,'base64');
+  memory.set(document,32768);statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  const checkpoint = which => {
+    const length = api.checkpoint(which,32768,32768);
+    if (length<=0) throw new Error('invalid checkpoint');
+    return Buffer.from(memory.slice(32768,32768+length)).toString('base64');
+  };
+  let preserved = true;
+  for (let i=0;i<2;i++) {
+    const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+    memory.set(i?empty:event,32768);
+    statuses.push(api.prepareEvent(15,i?1:0,2,0,32768,i?empty.length:event.length),api.dispose(15));
+    preserved = preserved&&committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)))
+      &&checkpoint(0)===data.Document&&checkpoint(1)!==data.Document;
+    batches.push(patches.length); patches.length=0;
+    statuses.push(api.abortPage(),api.abortPage());preserved = preserved&&checkpoint(0)===data.Document;
+  }
+  statuses.push(api.dispose(15),api.dispose(15));preserved = preserved&&checkpoint(0)===data.Disposed;
+  const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+  memory.set(event,32768);statuses.push(api.prepareEvent(15,0,3,0,32768,event.length),api.commit(3,0),api.abortPage());
+  preserved = preserved&&committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)))&&checkpoint(0)===data.Disposed;
+  process.stdout.write(JSON.stringify({Statuses:statuses,Preserved:preserved,Patches:batches}));`, data, &got, domTestImports)
+	want := []int32{0, 0, 0, 7, 0, 0, 0, 7, 0, 0, 0, 0, 2, 2, 0}
+	if !got.Preserved || !reflect.DeepEqual(got.Statuses, want) || !reflect.DeepEqual(got.Patches, []int{3, 0}) {
+		t.Fatalf("abort or disposal changed committed state: %+v", got)
+	}
+}
+
+func TestLinkedEventTransactionRejectsForeignHandlersAndUnboundedTransport(t *testing.T) {
+	_, c, m, document := eventTransactionFixture(t)
+	event := envelopeTestBytes(t, false, 15, []checkpointTestValue{{0, scalarTransport(program.TypeBool, 2, 0, "")},
+		{1, scalarTransport(program.TypeInt, 0, 20, "")}, {2, scalarTransport(program.TypeString, 1, 0, "changed")}})
+	data := struct {
+		domTestData
+		Document, Event string
+	}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(event)}
+	var got struct {
+		Statuses  []int32
+		Preserved bool
+		Patches   int
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], bound = [], patches = [];
+  const document = Buffer.from(data.Document,'base64'), event = Buffer.from(data.Event,'base64');
+  memory.set(document,32768);statuses.push(api.initPage(32768,document.length),api.commit(0,0));
+  const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536)); let preserved = true;
+  const cases = [[0,0,32768,event.length],[16,0,32768,event.length],[0xffffffff,0,32768,event.length],
+    [15,2,32768,event.length],[15,0xffffffff,32768,event.length],[15,1,32768,event.length],
+    [15,0,0,event.length],[15,0,32767,event.length],[15,0,65536,event.length],
+    [15,0,0xffffffff,event.length],[15,0,32768,0],[15,0,32768,0xffffffff],[15,0,32768,32769]];
+  for (let i=0;i<cases.length;i++) {
+    memory.set(event,32768);const [id,handler,ptr,length] = cases[i];
+    statuses.push(api.prepareEvent(id,handler,i+1,0,ptr,length),api.checkpoint(1,32768,32768),api.commit(i+1,0));
+    preserved = preserved&&committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)));
+    statuses.push(api.abortPage());
+    const size = api.checkpoint(0,32768,32768);
+    preserved = preserved&&Buffer.from(memory.slice(32768,32768+size)).equals(document)&&api.status()===0&&api.pending()===0;
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Preserved:preserved,Patches:patches.length}));`, data, &got, domTestImports)
+	want := []int32{0, 0}
+	for range 13 {
+		want = append(want, 2, -2, 2, 0)
+	}
+	if !got.Preserved || got.Patches != 0 || !reflect.DeepEqual(got.Statuses, want) {
+		t.Fatalf("foreign or unbounded transport reached handler effects: %+v", got)
 	}
 }
