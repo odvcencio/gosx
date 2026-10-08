@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -152,4 +153,44 @@ func fakePackages(importPaths ...string) []listedPackage {
 		packages[i] = listedPackage{ImportPath: importPath}
 	}
 	return packages
+}
+
+func TestCLIShardsAreCompleteDisjointAndStable(t *testing.T) {
+	var output strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&output, "TestCase%d\n", i)
+	}
+	output.WriteString("ExampleCLI\nFuzzCLI\nok example.test/cli 0.01s\n")
+	shards, err := splitCLITests(output.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]int)
+	for index, names := range shards {
+		for _, name := range names {
+			if _, exists := seen[name]; exists {
+				t.Fatalf("overlapping test %s", name)
+			}
+			seen[name] = index
+		}
+	}
+	if len(seen) != 102 {
+		t.Fatalf("covered %d names, want 102", len(seen))
+	}
+	extended, err := splitCLITests(output.String() + "TestAnotherCase\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, names := range extended {
+		for _, name := range names {
+			if prior, exists := seen[name]; exists && prior != index {
+				t.Fatalf("%s moved shards", name)
+			}
+		}
+	}
+	for _, output := range []string{"", "TestCase\nTestCase\n", "Test Bad\n"} {
+		if _, err := splitCLITests(output); err == nil {
+			t.Fatalf("accepted invalid discovery %q", output)
+		}
+	}
 }
