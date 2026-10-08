@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- App shutdown is terminal. The HTTP server drains before scheduled work,
+  followed by resource Drain and Flush hooks. Scheduled cancellation preserves
+  `context.Canceled`; deadline shutdowns reserve time for hooks even when a
+  cancelled task is still stopping.
+- `scheduled.Scheduler.ShutdownGrace` exposes the configured cooperative window
+  so the server can honor it when coordinating a deadline shutdown.
+
 - Add named App shutdown hooks: drain HTTP and scheduled work before source
   drains, then flush in reverse registration order. Concurrent shutdown callers
   share one terminal pipeline and respect their own deadlines; `/readyz` reports
@@ -25,7 +32,7 @@
   classifications. Connection rejections are separate from malformed and
   rate-limited messages; observers preserve existing hub panic diagnostics.
   Embed `NoopObserver` for future callbacks. Closing detaches subscriptions
-  before `Closed`; already admitted callbacks may overlap completion.
+  before `Closed` and drains admitted callbacks before completion.
   `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
 - Add controller payload projections and named intent events, pointer drag/drop
