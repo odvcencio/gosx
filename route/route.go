@@ -18,6 +18,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/server"
 )
 
@@ -118,8 +119,8 @@ func (ctx *RouteContext) Query(name string) string {
 	return ctx.Request.URL.Query().Get(name)
 }
 
-// ActionPath returns the current page-relative action endpoint for the given
-// action name.
+// ActionPath returns the internal page-relative action endpoint for the given
+// action name. GoSX prefixes it when rendering URL attributes.
 func (ctx *RouteContext) ActionPath(name string) string {
 	if ctx == nil || strings.TrimSpace(name) == "" {
 		return ""
@@ -197,6 +198,8 @@ func (ctx *RouteContext) Document(defaultTitle string, body gosx.Node) *server.D
 
 // Router builds an http.Handler from a route tree.
 type Router struct {
+	basePath        string
+	basePathOptions server.BasePathOptions
 	routes          []Route
 	handlers        []handlerRoute
 	defaultLayout   LayoutFunc
@@ -385,7 +388,7 @@ func (r *Router) BuildChecked() (http.Handler, error) {
 	if len(r.observers) > 0 {
 		handler = server.ObserveHandler(root, append([]server.RequestObserver(nil), r.observers...))
 	}
-	return &builtRouter{router: r, handler: handler}, nil
+	return &builtRouter{router: r, handler: basepath.Handler(r.basePath, r.basePathOptions.ProxyStripsPrefix, handler)}, nil
 }
 
 // builtRouter is what Build/BuildChecked return. It serves exactly like the
