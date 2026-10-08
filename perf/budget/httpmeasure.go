@@ -27,20 +27,23 @@ type HTTPMeasureOptions struct {
 	BaseURL, URL, Kind, ExpectedSHA256 string
 	ExpectedBody                       []byte
 	Representations                    map[string][]byte
+	HTMLFields                         []HTMLField
+	ServingCompressor                  string
 	Pin                                assetmeasure.CompressorPin
 }
 
 // HTTPMeasurement keeps served bytes separate from canonical normalization.
 // Body, response headers and resolved URLs remain private intermediate data.
 type HTTPMeasurement struct {
-	Sizes         assetmeasure.Sizes
-	RedirectSizes []assetmeasure.Sizes
-	WireBytes     int64
-	Requests      int64
-	Policies      []PolicyResult
-	body          []byte
-	header        http.Header
-	finalURL      string
+	Sizes          assetmeasure.Sizes
+	RedirectSizes  []assetmeasure.Sizes
+	WireBytes      int64
+	Requests       int64
+	Policies       []PolicyResult
+	body           []byte
+	header         http.Header
+	finalURL       string
+	finalWireBytes int64
 }
 
 type bodyNormalizer func([]byte) (assetmeasure.Sizes, error)
@@ -120,11 +123,22 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			current = location
 			continue
 		}
-		if response.StatusCode != http.StatusOK || !bytes.Equal(raw, opts.ExpectedBody) || sizes.SHA256 != opts.ExpectedSHA256 {
+		matched := bytes.Equal(raw, opts.ExpectedBody) && sizes.SHA256 == opts.ExpectedSHA256
+		if opts.Kind == "html" && len(opts.HTMLFields) != 0 {
+			expected, expectedErr := measureHTML(opts.ExpectedBody, HTMLMeasureOptions{Fields: opts.HTMLFields}, normalize)
+			served, servedErr := measureHTML(raw, HTMLMeasureOptions{Fields: opts.HTMLFields}, normalize)
+			matched = expectedErr == nil && servedErr == nil && VerifyHTMLRenders(expected, served) == nil
+			sizes = served.Sizes
+		}
+		if response.StatusCode != http.StatusOK || !matched {
 			return out, measureFailure("wrong-fixture", "/body")
 		}
 		if encoding != "" && encoding != "identity" {
 			representation, declared := opts.Representations[encoding]
+			if opts.Kind == "html" && opts.ServingCompressor != "" && (!declared || !bytes.Equal(wire, representation)) {
+				representation, err = encodeServingHTML(raw, encoding, opts.ServingCompressor)
+				declared = err == nil
+			}
 			if !declared || !bytes.Equal(wire, representation) || assetmeasure.VerifySidecar(raw, wire, encoding) != nil {
 				return out, measureFailure("stale-sidecar", "/encoding")
 			}
@@ -139,6 +153,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		out.body = raw
 		out.header = response.Header.Clone()
 		out.finalURL = current.String()
+		out.finalWireBytes = int64(len(wire))
 		out.Policies = []PolicyResult{{Name: "served-matches-build", Passed: true}, {Name: "no-cookie", Passed: noCookie},
 			{Name: "assets-compressed", Passed: len(raw) == 0 || encoding == "gzip" || encoding == "br"}, {Name: "immutable-hashed", Passed: immutable && measureHashedPath(current.Path, opts.ExpectedSHA256)}}
 		if opts.Kind == "wasm" {
