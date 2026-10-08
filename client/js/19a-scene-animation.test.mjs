@@ -48,7 +48,7 @@ function createMixerContext() {
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
-  vm.runInContext(readSource("../runtime/scene3d/animation.ts"), context, { filename: "animation.ts" });
+  vm.runInContext(ts.transpileModule(readSource("../runtime/scene3d/animation.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "animation.ts" });
   return { context, sandbox };
 }
 
@@ -761,4 +761,48 @@ test("wasmClipJSON serializes weightCount at the inclusive 2147482648 bound, omi
   assert.deepEqual(out.scaleTimes, [0, 1]);
   assert.deepEqual(out.scaleValues, [0, 0, 0, 1, 1, 1]);
   assert.equal(out.callerUntouched, true);
+});
+
+test("active clip ownership preserves order, mutable playback and removal lifecycles", () => {
+  const { context } = createMixerContext();
+  const result = run(context, `(() => {
+    const mixer = createSceneAnimationMixer();
+    for (let id = 1; id <= 3; id++) mixer.addClip(String(id), {
+      duration: 10, channels: [{ targetID: id, property: "translation",
+        times: [0, 10], values: [0, 0, 0, 10, 0, 0], interpolation: "LINEAR" }],
+    });
+    const sample = dt => {
+      const values = [];
+      mixer.update(dt, (id, property, value) => values.push([id, value[0]]));
+      return values;
+    };
+    mixer.play("1", { fadeIn: 0 });
+    mixer.play("2", { fadeIn: 0 });
+    sample(0.25);
+    mixer.play("1", { fadeIn: 0, speed: 2 });
+    const updated = sample(0.25);
+    mixer.stop("1", { fadeOut: 0 });
+    mixer.play("1", { fadeIn: 0 });
+    const restarted = sample(0.25);
+    mixer.stop("2", { fadeOut: 0.5 });
+    mixer.play("3", { fadeIn: 0 });
+    const fading = sample(0.25);
+    const afterFade = sample(0.25);
+    mixer.removeClip("1");
+    const removed = mixer.isPlaying("1");
+    mixer.stopAll();
+    const stopped = sample(1);
+    mixer.play("3", { fadeIn: 0, loop: false, speed: 20 });
+    const finished = sample(1);
+    mixer.dispose();
+    return { updated, restarted, fading, afterFade, removed, stopped, finished, hasClips: mixer.hasClips() };
+  })()`);
+  assert.deepEqual(result.updated, [[1, 0.75], [2, 0.5]], "updating options must retain time and blend order");
+  assert.deepEqual(result.restarted, [[2, 0.75], [1, 0.25]], "an immediate stop and replay begins at the end");
+  assert.deepEqual(result.fading.map(value => value[0]), [2, 1, 3]);
+  assert.deepEqual(result.afterFade.map(value => value[0]), [1, 3], "deleting a finished entry must not skip its successor");
+  assert.equal(result.removed, false);
+  assert.deepEqual(result.stopped, []);
+  assert.deepEqual(result.finished, []);
+  assert.equal(result.hasClips, false);
 });
