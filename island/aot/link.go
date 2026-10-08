@@ -32,6 +32,8 @@ type linkedLayout struct {
 	strings                                                  map[string]stringConstant
 	instancesBase                                            int32
 	sharedMasksBase                                          int32
+	checkpointPlanBase, digestBase                           int32
+	inputSetSHA                                              [32]byte
 	programs                                                 []linkedProgram
 	shared                                                   []linkedShared
 	tags                                                     []string
@@ -42,11 +44,11 @@ type linkedLayout struct {
 }
 
 func buildLinkedLayout(units []Unit, options Options) (*linkedLayout, error) {
-	ordered, _, _, err := canonicalUnits(units, options)
+	ordered, _, digest, err := canonicalUnits(units, options)
 	if err != nil {
 		return nil, err
 	}
-	l := &linkedLayout{}
+	l := &linkedLayout{inputSetSHA: digest}
 	shared := map[string]ScalarKind{}
 	tags := map[string]bool{}
 	instances := make([]uint32, options.Limits.Instances)
@@ -222,6 +224,41 @@ func (l *linkedLayout) encodeData() error {
 		}
 	}
 	l.sharedMasksBase = table(masks)
+	var plans []uint32
+	for _, p := range l.programs {
+		var entries []uint32
+		local, input := uint32(0), uint32(0)
+		for slot, signal := range p.unit.Contract.Signals {
+			if strings.HasPrefix(signal.Name, "$") {
+				continue
+			}
+			tag, err := checkpointWireType(signal.Kind)
+			if err != nil {
+				return err
+			}
+			entries = append(entries, uint32(slot), local, l.localStride, uint32(tag), 0)
+			local++
+		}
+		for _, leaf := range p.unit.Contract.Inputs {
+			if leaf.Source != "prop" {
+				continue
+			}
+			tag, err := checkpointWireType(leaf.Kind)
+			if err != nil {
+				return err
+			}
+			anyZero := uint32(0)
+			if len(leaf.Path) != 0 {
+				anyZero = 1
+			}
+			entries = append(entries, leaf.ID, l.inputBase+input, l.inputStride, uint32(tag), anyZero)
+			input++
+		}
+		plans = append(plans, local, input, uint32(table(entries)))
+	}
+	l.checkpointPlanBase = table(plans)
+	l.digestBase = int32(wasmgen.ConstantOffset + len(l.data))
+	l.data = append(l.data, l.inputSetSHA[:]...)
 	if len(l.data) > wasmgen.MaxDataBytes {
 		return fmt.Errorf("linked constants exceed the fixed interval")
 	}
@@ -501,6 +538,7 @@ type linkedCode struct {
 	indices                            [][]uint32
 	notify, publish, scalar, dispose   uint32
 	dispatch, initialize, bind, render uint32
+	checkpointValue                    uint32
 }
 
 const linkedRenderMaskGlobal = 25
@@ -542,7 +580,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.initialize = c.notify + 5
 	c.bind = c.notify + 6
 	c.render = c.notify + 7
-	c.module.Functions = make([]wasmgen.Function, len(common)+8)
+	c.checkpointValue = c.notify + 8
+	c.module.Functions = make([]wasmgen.Function, len(common)+9)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -567,7 +606,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 8 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 9 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -617,6 +656,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+5] = l.frameOperationFunction(c, "initialize")
 	c.module.Functions[len(common)+6] = l.frameOperationFunction(c, "bind")
 	c.module.Functions[len(common)+7] = l.frameOperationFunction(c, "render")
+	c.module.Functions[len(common)+8] = checkpointValueFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -1603,4 +1643,122 @@ func (l *linkedLayout) frameOperationFunction(c *linkedCode, operation string) w
 	b.i32(0)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(int(params)), I32Locals: 4, Body: b}
+}
+
+func checkpointWireType(kind ScalarKind) (program.ExprType, error) {
+	if integerKind(kind) {
+		return program.TypeInt, nil
+	}
+	switch kind {
+	case Bool:
+		return program.TypeBool, nil
+	case String:
+		return program.TypeString, nil
+	default:
+		return 0, fmt.Errorf("unsupported checkpoint scalar kind")
+	}
+}
+
+// Copy one owned value to a checkpoint record and its dense string tail.
+// Arguments are source, destination record, string cursor, document base and
+// source arena. Return the next cursor, or zero without writing on rejection.
+// This helper has no imports, allocation or transaction-global writes.
+func checkpointValueFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.get(4)
+	b.i32(65536)
+	b.op(0x47)
+	b.get(4)
+	b.i32(131072)
+	b.op(0x47)
+	b.op(0x71)
+	b.statusFailure(0)
+	b.get(0)
+	b.get(4)
+	b.get(4)
+	b.i32(65536)
+	b.op(0x6a)
+	b.index(0x10, c.scalar)
+	b.statusFailure(0)
+	b.get(3)
+	b.i32(32768)
+	b.op(0x49)
+	b.get(3)
+	b.get(1)
+	b.op(0x4b)
+	b.op(0x72)
+	b.get(1)
+	b.i32(32768)
+	b.op(0x49)
+	b.op(0x72)
+	b.get(2)
+	b.i32(65536)
+	b.op(0x4b)
+	b.op(0x72)
+	b.statusFailure(0)
+	b.get(1)
+	b.op(0xad)
+	b.i64(valueBytes)
+	b.op(0x7c)
+	b.get(2)
+	b.op(0xad)
+	b.op(0x56)
+	b.statusFailure(0)
+	b.get(0)
+	b.memory(0x28, 2, 16)
+	b.set(5)
+	b.get(0)
+	b.memory(0x28, 2, 20)
+	b.set(6)
+	b.get(2)
+	b.op(0xad)
+	b.get(6)
+	b.op(0xad)
+	b.op(0x7c)
+	b.i64(65536)
+	b.op(0x56)
+	b.statusFailure(0)
+	for offset := uint32(0); offset < valueBytes; offset += 8 {
+		b.get(1)
+		b.get(0)
+		b.memory(0x29, 3, offset)
+		b.memory(0x37, 3, offset)
+	}
+	b.get(6)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(1)
+	b.get(2)
+	b.get(3)
+	b.op(0x6b)
+	b.memory(0x36, 2, 16)
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.get(7)
+	b.get(6)
+	b.op(0x4f)
+	b.index(0x0d, 1)
+	b.get(2)
+	b.get(7)
+	b.op(0x6a)
+	b.get(5)
+	b.get(7)
+	b.op(0x6a)
+	b.memory(0x2d, 0, 0)
+	b.memory(0x3a, 0, 0)
+	b.get(7)
+	b.i32(1)
+	b.op(0x6a)
+	b.set(7)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.op(0x0b)
+	b.get(2)
+	b.get(6)
+	b.op(0x6a)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(5), I32Locals: 3, Body: b}
 }

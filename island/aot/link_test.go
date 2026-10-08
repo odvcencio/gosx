@@ -633,8 +633,253 @@ func TestLinkedIdenticalRootTablesShareConstantStorage(t *testing.T) {
 			t.Fatal("identical frame tables have separate constant allocations")
 		}
 	}
-	if len(l.data) > 1200 || l.roots != 256 {
+	var rootTable []byte
+	for _, root := range l.programs[0].state.rows {
+		rootTable = binary.LittleEndian.AppendUint32(rootTable, root)
+	}
+	if bytes.Count(l.data, rootTable) != 1 || l.roots != 256 {
 		t.Fatalf("deduplicated catalog layout: %d bytes, %d roots", len(l.data), l.roots)
+	}
+}
+
+func TestLinkedCheckpointPlansKeepDeclaredIDsTypesAndFrameAddresses(t *testing.T) {
+	u, _ := scalarInputUnit(t, "prop", Int32, true)
+	u.Component, u.Contract.Component, u.Program.Name = "example/components.CheckpointInputs", "example/components.CheckpointInputs", "CheckpointInputs"
+	event := addExpression(&u, program.OpEventGet, program.TypeString, String, "value")
+	flag := addExpression(&u, program.OpPropGet, program.TypeBool, Bool, "Flag")
+	u.Program.Props = []program.PropDef{{Name: "Flag", Type: program.TypeBool}}
+	u.Program.Handlers = []program.Handler{{Name: "read", Body: []program.ExprID{event}}}
+	nested := u.Contract.Inputs[0]
+	nested.ID = 2
+	u.Contract.Inputs = []InputContract{
+		{ID: 0, Source: "event", Root: "value", Path: []string{}, Kind: String, Exprs: []program.ExprID{event}},
+		{ID: 1, Source: "prop", Root: "Flag", Path: []string{}, Kind: Bool, Exprs: []program.ExprID{flag}}, nested,
+	}
+	integer := addExpression(&u, program.OpLitInt, program.TypeInt, Int32, "0")
+	boolean := addExpression(&u, program.OpLitBool, program.TypeBool, Bool, "false")
+	text := addExpression(&u, program.OpLitString, program.TypeString, String, "")
+	for i, def := range []struct {
+		name string
+		kind ScalarKind
+		typ  program.ExprType
+		init program.ExprID
+	}{{"number", Int32, program.TypeInt, integer}, {"$shared", String, program.TypeString, text},
+		{"enabled", Bool, program.TypeBool, boolean}, {"text", String, program.TypeString, text}} {
+		u.Program.Signals = append(u.Program.Signals, program.SignalDef{Name: def.name, Type: def.typ, Init: def.init})
+		u.Contract.Signals = append(u.Contract.Signals, StateContract{Slot: uint32(i), Name: def.name, Kind: def.kind})
+	}
+	u = refreshUnit(t, u)
+	other := layoutUnit(t, "OtherCheckpointInputs", 5, 0, 0)
+	l, err := buildLinkedLayout([]Unit{other, u, other}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	read := func(pointer int32, count int) []uint32 {
+		result := make([]uint32, count)
+		for i := range result {
+			result[i] = binary.LittleEndian.Uint32(l.data[int(pointer)-1024+i*4:])
+		}
+		return result
+	}
+	for index, p := range l.programs {
+		header := read(l.checkpointPlanBase+int32(index*12), 3)
+		if p.unit.Program.Name != u.Program.Name {
+			if header[0] != 5 || header[1] != 0 {
+				t.Fatal("checkpoint catalog did not retain inactive program schema")
+			}
+			continue
+		}
+		if header[0] != 3 || header[1] != 2 {
+			t.Fatalf("checkpoint counts include shared state or events: %v", header)
+		}
+		entries := read(int32(header[2]), 25)
+		want := []uint32{0, 0, 5, 1, 0, 2, 1, 5, 3, 0, 3, 2, 5, 0, 0,
+			1, l.inputBase, 2, 3, 0, 2, l.inputBase + 1, 2, 1, 1}
+		if !reflect.DeepEqual(entries, want) {
+			t.Fatalf("checkpoint scalar plan: %v want %v", entries, want)
+		}
+		for _, frame := range []uint32{0, 15} {
+			for i := range 5 {
+				entry := entries[i*5 : (i+1)*5]
+				root := entry[1] + frame*entry[2]
+				want := p.state.rows[frame*4+entry[0]]
+				if i >= 3 {
+					want = p.inputs[frame*3+entry[0]]
+				}
+				if root != want {
+					t.Fatal("checkpoint plan does not address the owned frame")
+				}
+			}
+		}
+	}
+	_, _, digest, err := canonicalUnits([]Unit{u, other}, DefaultOptions())
+	if err != nil || l.inputSetSHA != digest || !bytes.Equal(l.data[l.digestBase-1024:], digest[:]) {
+		t.Fatalf("checkpoint digest differs from canonical catalog: %v", err)
+	}
+	for _, kind := range []ScalarKind{AnyZero, SelectorPath, ScalarKind("unknown")} {
+		if _, err := checkpointWireType(kind); err == nil {
+			t.Fatal("unsupported checkpoint declaration acquired a wire type")
+		}
+	}
+}
+
+func TestLinkedCheckpointPlansDeduplicateIdenticalSchemas(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{layoutUnit(t, "FirstSchema", 3, 0, 0), layoutUnit(t, "SecondSchema", 3, 0, 0)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := binary.LittleEndian.Uint32(l.data[l.checkpointPlanBase-1024+8:])
+	second := binary.LittleEndian.Uint32(l.data[l.checkpointPlanBase-1024+20:])
+	if first != second || first%4 != 0 || l.digestBase%4 != 0 {
+		t.Fatal("identical checkpoint plans acquired separate or unaligned storage")
+	}
+	plan := l.data[first-1024 : first-1024+60]
+	if bytes.Count(l.data, plan) != 1 {
+		t.Fatal("checkpoint schema is duplicated in the constant segment")
+	}
+}
+
+func checkpointValueTestModule(c *linkedCode) wasmgen.Module {
+	m := exportLinkedTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "encodeValue", Function: c.checkpointValue})
+	for _, item := range []struct {
+		name   string
+		global uint32
+	}{{"cursor", allocationGlobal}, {"pending", pendingGlobal}} {
+		index := uint32(len(m.Imports) + len(m.Functions))
+		var body instructions
+		body.index(0x23, item.global)
+		body.op(0x0b)
+		m.Functions = append(m.Functions, wasmgen.Function{Signature: i32Signature(0), Body: body})
+		m.Exports = append(m.Exports, wasmgen.Export{Name: item.name, Function: index})
+	}
+	return m
+}
+
+func TestLinkedCheckpointValuesPreserveScalarBytesAndDenseStringOrder(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{layoutUnit(t, "CheckpointValues", 1, 0, 0)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	packets := []string{
+		scalarTransport(program.TypeString, 0, 0, ""), scalarTransport(program.TypeString, 1, 0, ""),
+		scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴e\u0301"), scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴e\u0301"),
+		scalarTransport(program.TypeInt, 0, -2147483648, ""), scalarTransport(program.TypeInt, 0, 2147483647, ""),
+		scalarTransport(program.TypeBool, 0, 0, ""), scalarTransport(program.TypeBool, 2, 0, ""),
+		scalarTransport(program.TypeAny, 0, 0, ""), scalarTransport(program.TypeString, 1, 0, strings.Repeat("x", 4096)),
+	}
+	var got []struct {
+		Records, Strings string
+		Cursor           uint32
+		Pure             bool
+	}
+	runExpressionModule(t, m, `
+  const results = [], api = instance.exports, allocation = api.cursor();
+  for (const arena of [65536,131072]) {
+    memory.fill(0xa5,32768,65536);
+    let cursor = 34000;
+    for (let i=0;i<data.length;i++) {
+      const packet = Buffer.from(data[i],'base64');
+      if (view.getUint32(arena+20,true)!==0) memory.fill(0,arena,arena+8192);
+      memory.set(packet,arena);
+      if (packet.length>24) view.setUint32(arena+16,arena+24,true);
+      const before = Buffer.from(memory.slice(arena,arena+8192));
+      cursor = api.encodeValue(arena,32840+i*24,cursor,32768,arena);
+      if (!before.equals(Buffer.from(memory.slice(arena,arena+8192)))) throw new Error('source changed');
+    }
+    results.push({Records:Buffer.from(memory.slice(32840,32840+data.length*24)).toString('base64'),
+      Strings:Buffer.from(memory.slice(34000,cursor)).toString('base64'),Cursor:cursor,
+      Pure:api.status()===0&&api.cursor()===allocation&&api.pending()===0});
+  }
+  process.stdout.write(JSON.stringify(results));`, packets, &got)
+	var records, tail []byte
+	for _, packet := range packets {
+		raw, _ := base64.StdEncoding.DecodeString(packet)
+		value := append([]byte{}, raw[:24]...)
+		if len(raw) > 24 {
+			binary.LittleEndian.PutUint32(value[16:], uint32(34000-32768+len(tail)))
+			tail = append(tail, raw[24:]...)
+		}
+		records = append(records, value...)
+	}
+	if len(got) != 2 {
+		t.Fatalf("source arena results: %v", got)
+	}
+	for _, result := range got {
+		if result.Records != base64.StdEncoding.EncodeToString(records) || result.Strings != base64.StdEncoding.EncodeToString(tail) || result.Cursor != uint32(34000+len(tail)) || !result.Pure {
+			t.Fatal("checkpoint changed tags, zero flags, relative offsets, dense strings or transaction state")
+		}
+	}
+}
+
+func TestLinkedCheckpointValueRejectsMalformedRecordsAndBoundsBeforeWriting(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{layoutUnit(t, "InvalidCheckpointValues", 0, 0, 0)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	type testCase struct {
+		Packet                                   string
+		Source, Destination, Cursor, Base, Arena uint32
+		CorruptPointer                           bool
+	}
+	var cases []testCase
+	add := func(packet string) {
+		cases = append(cases, testCase{Packet: packet, Source: 65536, Destination: 32840, Cursor: 33000, Base: 32768, Arena: 65536})
+	}
+	for _, item := range []struct {
+		tag    program.ExprType
+		flags  uint32
+		number int64
+		text   string
+	}{{program.TypeString, 0, 0, "x"}, {program.TypeString, 1, 0, "\xff"}, {program.TypeString, 1, 0, strings.Repeat("x", 4097)},
+		{program.TypeInt, 0, 2147483648, ""}, {program.TypeInt, 1, 0, ""}, {program.TypeBool, 2, 1, ""},
+		{program.TypeAny, 1, 0, ""}, {program.TypeFloat, 0, 0, ""}} {
+		add(scalarTransport(item.tag, item.flags, item.number, item.text))
+	}
+	valid := scalarTransport(program.TypeString, 1, 0, "x")
+	for _, bounds := range [][5]uint32{
+		{65535, 32840, 33000, 32768, 65536}, {131049, 32840, 33000, 32768, 65536},
+		{4294967295, 32840, 33000, 32768, 65536}, {65536, 32767, 33000, 32768, 65536},
+		{65536, 32840, 32863, 32768, 65536}, {65536, 65513, 65536, 32768, 65536},
+		{65536, 4294967295, 65536, 32768, 65536}, {65536, 32840, 65536, 32768, 65536},
+		{65536, 32840, 33000, 32767, 65536}, {65536, 32840, 33000, 32841, 65536},
+		{65536, 32840, 33000, 32768, 0}, {65536, 32840, 33000, 32768, 196608},
+	} {
+		cases = append(cases, testCase{valid, bounds[0], bounds[1], bounds[2], bounds[3], bounds[4], false})
+	}
+	add(valid)
+	cases[len(cases)-1].CorruptPointer = true
+	var got []bool
+	runExpressionModule(t, m, `
+  const results = [], api = instance.exports, allocation = api.cursor();
+  for (const item of data) {
+    memory.fill(0xa5,32768,65536);
+    memory.fill(0,65536,131072);
+    const packet = Buffer.from(item.Packet,'base64');
+    memory.set(packet,65536);
+    if (packet.length>24) view.setUint32(65552,item.CorruptPointer?0xffffffff:65560,true);
+    const before = Buffer.from(memory);
+    const result = api.encodeValue(item.Source,item.Destination,item.Cursor,item.Base,item.Arena);
+    results.push(result===0&&before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation);
+  }
+  process.stdout.write(JSON.stringify(results));`, cases, &got)
+	for i, unchanged := range got {
+		if !unchanged {
+			t.Fatalf("invalid checkpoint value case %d changed memory or returned success", i)
+		}
+	}
+	if len(got) != len(cases) {
+		t.Fatal("not all checkpoint bounds were exercised")
 	}
 }
 
