@@ -26,10 +26,15 @@
   managed forms), `window.__gosx.goWASMBootToken` (set only while a Go-WASM
   module runs its registration phase), and an engine `toolchain` pick of
   `window.__gosx.tinyGoWASMCtor`. Without those hooks, behavior does not change.
-- Owner-approved one-time M0 core change: `bootstrap-runtime.js` grows by 381 B
-  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 260 B.
-  The video selective runtime route budget rises from 288,689 to 289,100 raw and
-  from 73,139 to 73,250 brotli; no other size budget changes.
+- Owner-approved one-time M0 core change: `bootstrap-runtime.js` grows by 403 B
+  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 302 B.
+  The video selective runtime route budget rises from 288,689 to 289,289 raw and
+  from 73,139 to 73,439 brotli, and the `/demos/scene3d/` `jsWireBytes` wire
+  budget rises from 258,118 to 260,973; no other size budget changes.
+- A manifest-declared feature chunk that fails to load is logged and skipped
+  instead of stopping the page from mounting. Queued form submits count as in
+  flight, so refresh ticks do not swap the DOM under them. The Go-WASM boot token
+  is cleared even when `go.run` throws.
 
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
