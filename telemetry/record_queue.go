@@ -19,14 +19,17 @@ type recordQueue struct {
 	maxBytes              int64
 }
 
+func recordQueueMetadataBytes(maxRecords int) int64 {
+	return int64(maxRecords) * int64(unsafe.Sizeof(schema.Record{}))
+}
+
 func newRecordQueue(maxRecords int, maxBytes int64) *recordQueue {
 	header := int64(unsafe.Sizeof(schema.Record{}))
-	count := maxRecords
-	if int64(count) > maxBytes/(2*header) {
-		count = int(maxBytes / (2 * header))
+	if maxRecords <= 0 || int64(maxRecords) > maxBytes/header {
+		return nil
 	}
-	q := &recordQueue{slots: make([]schema.Record, count), maxBytes: maxBytes}
-	q.used.Store(int64(count) * header)
+	q := &recordQueue{slots: make([]schema.Record, maxRecords), maxBytes: maxBytes}
+	q.used.Store(recordQueueMetadataBytes(maxRecords))
 	return q
 }
 func queueRecordCharge(r schema.Record) int64 {

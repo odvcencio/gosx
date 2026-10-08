@@ -61,6 +61,9 @@ type ActivityKind[A, P, E any] struct {
 }
 
 func (t *Telemetry) initializeActivities() error {
+	if !t.opts.Activities.Disabled && t.opts.Limits.MaxQueuedBytes < recordQueueMetadataBytes(t.opts.Limits.MaxQueuedRecords)+int64(t.opts.Activities.MaxRecordBytes)+256 {
+		return invalid("queue_bytes", "incompatible_reservations")
+	}
 	const bytes = fieldPoolBytes + 64<<10
 	if !t.reserveMisc(bytes) {
 		return ErrCapacity
@@ -69,6 +72,9 @@ func (t *Telemetry) initializeActivities() error {
 		live: make(map[string]*activityEntity, t.opts.Activities.MaxOpen), attached: make(map[*Loop]*activityEntity, t.opts.Activities.MaxOpen)}
 	if !t.opts.Activities.Disabled {
 		s.events = newRecordQueue(t.opts.Limits.MaxQueuedRecords, t.opts.Limits.MaxQueuedBytes)
+		if s.events == nil {
+			return invalid("queue_bytes", "incompatible_reservations")
+		}
 	}
 	s.boot = hex.EncodeToString(t.boot[:])
 	s.stream = s.boot
