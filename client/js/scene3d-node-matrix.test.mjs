@@ -19,6 +19,9 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -45,7 +48,7 @@ function createMixerContext() {
   sandbox.globalThis = sandbox;
   const context = vm.createContext(sandbox);
   vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
-  vm.runInContext(readSource("../runtime/scene3d/animation.ts"), context, { filename: "animation.ts" });
+  vm.runInContext(ts.transpileModule(readSource("../runtime/scene3d/animation.ts"), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context, { filename: "animation.ts" });
   return { context, sandbox };
 }
 
