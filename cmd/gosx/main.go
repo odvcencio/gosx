@@ -137,7 +137,7 @@ func commandUsage(cmd string, w io.Writer) bool {
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>
+  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] [--perf-app ID] <dir>
 
 `)
 	case "build-runtime":
@@ -310,7 +310,7 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] [--perf-app ID] <dir>")
 		os.Exit(1)
 	}
 	opts := BuildOptions{Dev: true}
@@ -345,6 +345,13 @@ func cmdBuild() {
 			opts.SceneBudgetPath = os.Args[i]
 		case "--scene-budget-strict":
 			opts.SceneBudgetStrict = true
+		case "--perf-app":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --perf-app requires an app ID")
+				os.Exit(1)
+			}
+			opts.PerfAppID = os.Args[i]
 		default:
 			if strings.HasPrefix(arg, "--appinstaller=") {
 				opts.AppInstallerURI = strings.TrimPrefix(arg, "--appinstaller=")

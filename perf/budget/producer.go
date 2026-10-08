@@ -1,0 +1,256 @@
+package budget
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/url"
+	"os"
+	"path"
+	"sort"
+	"strings"
+	"time"
+
+	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/pagecaps"
+)
+
+// ProducerOptions are private bindings for a completed production build.
+// ProduceFixture snapshots documents from its running server and verifies every
+// supplied build body. It neither starts servers nor derives budgets.
+type ProducerOptions struct {
+	Inputs                           *Inputs                 `json:"-"`
+	Build                            *buildmanifest.Manifest `json:"-"`
+	App, DistDir, BaseURL, SourceSHA string                  `json:"-"`
+	Client                           *http.Client            `json:"-"`
+}
+
+// ProduceFixture writes the private fixture contract and returns its independent
+// producer proof. Callers retain that proof outside the manifest when collecting.
+func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
+	fail := func(pointer string) error {
+		return &InputError{Code: "wrong-fixture", Reference: "producer", Pointer: pointer}
+	}
+	if ctx == nil || opts.Inputs == nil || opts.Build == nil || opts.Build.PerfAssetUses == nil || validateInput(opts.SourceSHA, inputDefinitions["Commit"]) != nil {
+		return "", fail("/inputs")
+	}
+	if ctx.Err() != nil {
+		return "", fail("/context")
+	}
+	if err := opts.Build.ValidatePerfAssetUses(); err != nil {
+		return "", fail("/build")
+	}
+	data, err := readReference(opts.Inputs.RootDir(), opts.Inputs.File.Fixtures, maxInputBytes)
+	if err != nil {
+		return "", inputReference(err, "producer", "/catalog")
+	}
+	var catalog struct {
+		Routes     []FixtureRoute                     `json:"routes"`
+		AssetRules []struct{ ID, Owner, Kind string } `json:"assetRules"`
+	}
+	var checked json.RawMessage
+	if err := decodeInput(data, "FixtureCatalog", &checked); err != nil {
+		return "", inputReference(err, "producer", "/catalog")
+	}
+	if err := json.Unmarshal(checked, &catalog); err != nil {
+		return "", fail("/catalog")
+	}
+	routes := []FixtureRoute{}
+	expected := map[string]bool{}
+	for _, r := range opts.Inputs.File.Routes {
+		if r.App == opts.App {
+			expected[r.RouteTemplate] = true
+		}
+	}
+	for _, r := range catalog.Routes {
+		if r.App == opts.App && expected[r.RouteTemplate] {
+			routes = append(routes, r)
+		}
+	}
+	if len(routes) == 0 || len(routes) != len(expected) {
+		return "", fail("/app")
+	}
+	sort.Slice(routes, func(i, j int) bool { return routes[i].RouteTemplate < routes[j].RouteTemplate })
+	allowed := map[string]string{}
+	for _, r := range catalog.AssetRules {
+		allowed[r.ID] = r.Owner + "|" + r.Kind
+	}
+	base, err := url.Parse(opts.BaseURL)
+	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
+		return "", fail("/base")
+	}
+	root, err := os.OpenRoot(opts.DistDir)
+	if err != nil {
+		return "", fail("/dist")
+	}
+	defer root.Close()
+	client := opts.Client
+	if client == nil {
+		client = &http.Client{Timeout: 30 * time.Second}
+	}
+	owned := *client
+	owned.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	if owned.Timeout == 0 {
+		owned.Timeout = 30 * time.Second
+	}
+	manifest := FixtureManifest{Schema: "gosx.perf-fixtures/v1", Version: 1, SourceSHA: opts.SourceSHA, CatalogSHA256: opts.Inputs.File.Fixtures.SHA256, Routes: routes, Assets: []buildmanifest.PerfAssetUse{}}
+	seen := map[string]bool{}
+	for _, use := range opts.Build.PerfAssetUses.Assets {
+		if ctx.Err() != nil {
+			return "", fail("/context")
+		}
+		if seen[use.ID] || use.Owner == "app" && !strings.HasPrefix(use.ID, "app/"+opts.App+"/") {
+			return "", fail("/build/assets")
+		}
+		if use.Owner == "app" && allowed[use.ID] != use.Owner+"|"+use.Kind {
+			return "", fail("/build/assets")
+		}
+		body, _, err := readFixtureBody(root, use.URL, use.Kind)
+		if err != nil || producerHash(body) != use.SHA256 {
+			return "", fail("/build/assets/body")
+		}
+		if use.Kind == "wasm" {
+			name := strings.TrimSuffix(strings.TrimPrefix(use.ID, "framework/runtime/"), ".wasm")
+			proof, ok := opts.Build.Runtime.WASMOptimization[name]
+			if !ok || !proof.Applied || proof.Tool != "wasm-opt" || proof.Version != opts.Inputs.Toolchain.Binaryen || proof.OutputSHA256 != use.SHA256 || !shaPattern.MatchString(proof.InputSHA256) {
+				return "", fail("/build/optimizer")
+			}
+		}
+		use.Dependencies = append([]string{}, use.Dependencies...)
+		manifest.Assets = append(manifest.Assets, use)
+		seen[use.ID] = true
+	}
+	// Public files are whole app-owned bodies. Their catalog IDs bind their native
+	// file locations without accepting an arbitrary filesystem walk.
+	prefix := "app/" + opts.App + "/public/"
+	for _, rule := range catalog.AssetRules {
+		if !strings.HasPrefix(rule.ID, prefix) {
+			continue
+		}
+		relative := strings.TrimPrefix(rule.ID, "app/"+opts.App+"/")
+		_, err := root.Stat(relative)
+		if os.IsNotExist(err) {
+			continue
+		}
+		body, err := readMeasureFile(root, relative, maxMeasureBody)
+		if err != nil {
+			return "", fail("/public/body")
+		}
+		urlPath := "/" + strings.TrimPrefix(relative, "public/")
+		// Measurement paths are rooted in the fixture directory. Copy public bodies
+		// there while leaving the production server's own public tree intact.
+		if err := writeProducerFile(root, strings.TrimPrefix(urlPath, "/"), body); err != nil {
+			return "", err
+		}
+		if seen[rule.ID] {
+			return "", fail("/public/id")
+		}
+		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: rule.ID, SHA256: producerHash(body), URL: urlPath, Owner: "app", Kind: rule.Kind, Phase: "dormant", Condition: "always", Dependencies: []string{}})
+		seen[rule.ID] = true
+	}
+	for _, route := range routes {
+		if !validRoute(route.RouteTemplate) || strings.ContainsAny(route.RouteTemplate, "[]") {
+			return "", fail("/routes/template")
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, base.ResolveReference(&url.URL{Path: route.RouteTemplate}).String(), nil)
+		if err != nil {
+			return "", fail("/routes/request")
+		}
+		req.Header.Set("Accept-Encoding", "identity")
+		req.Header.Set("Cache-Control", "no-cache")
+		response, err := owned.Do(req)
+		if err != nil {
+			return "", fail("/routes/request")
+		}
+		body, readErr := io.ReadAll(io.LimitReader(response.Body, maxMeasureBody+1))
+		closeErr := response.Body.Close()
+		if readErr != nil || closeErr != nil || len(body) > maxMeasureBody || response.StatusCode != http.StatusOK || response.Uncompressed || response.Header.Get("Content-Encoding") != "" && response.Header.Get("Content-Encoding") != "identity" || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/html") {
+			return "", fail("/routes/response")
+		}
+		caps, err := pagecaps.FromHTML(body)
+		if err != nil {
+			return "", fail("/routes/capabilities")
+		}
+		observed, _ := json.Marshal(caps)
+		declared, _ := json.Marshal(route.Capabilities)
+		families, classErr := pagecaps.Classify(caps, false)
+		if !bytes.Equal(observed, declared) || classErr != nil || !fixtureCoversTypes(route.PageTypes, families) {
+			return "", fail("/routes/capabilities")
+		}
+		id := ""
+		for _, critical := range route.CriticalAssetIDs {
+			if allowed[critical] == "app|html" {
+				if id != "" {
+					return "", fail("/routes/document")
+				}
+				id = critical
+			}
+		}
+		if id == "" || seen[id] {
+			return "", fail("/routes/document")
+		}
+		file := strings.Trim(route.RouteTemplate, "/")
+		if file != "" {
+			file += "/"
+		}
+		file += "index.html"
+		if err := writeProducerFile(root, file, body); err != nil {
+			return "", err
+		}
+		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: id, SHA256: producerHash(body), URL: route.RouteTemplate, Owner: "app", Kind: "html", Phase: "critical", Condition: "always", Dependencies: []string{}})
+		seen[id] = true
+	}
+	sort.Slice(manifest.Assets, func(i, j int) bool { return manifest.Assets[i].ID < manifest.Assets[j].ID })
+	digest, err := FixtureManifestSHA256(manifest)
+	if err != nil {
+		return "", inputReference(err, "producer", "/manifest")
+	}
+	manifest.FixturesSHA256 = digest
+	data, err = json.Marshal(manifest)
+	if err != nil {
+		return "", fail("/manifest")
+	}
+	if _, err := DecodeFixtureManifest(bytes.NewReader(data)); err != nil {
+		return "", inputReference(err, "producer", "/manifest")
+	}
+	if err := writeProducerFile(root, "perf-fixtures.v1.json", append(data, '\n')); err != nil {
+		return "", err
+	}
+	return digest, nil
+}
+
+func producerHash(body []byte) string { sum := sha256.Sum256(body); return hex.EncodeToString(sum[:]) }
+func writeProducerFile(root *os.Root, name string, data []byte) error {
+	fail := func() error { return &InputError{Code: "write-failed", Reference: "producer", Pointer: "/output"} }
+	if !safePath(name) {
+		return fail()
+	}
+	if err := root.MkdirAll(path.Dir(name), 0700); err != nil {
+		return fail()
+	}
+	pending := name + ".new"
+	f, err := root.OpenFile(pending, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if err != nil {
+		return fail()
+	}
+	defer root.Remove(pending)
+	n, writeErr := f.Write(data)
+	closeErr := f.Close()
+	if writeErr != nil || closeErr != nil || n != len(data) {
+		return fail()
+	}
+	if err := root.Rename(pending, name); err != nil {
+		return fail()
+	}
+	// A fresh snapshot cannot retain encodings from a different body.
+	for _, suffix := range []string{".gz", ".br"} {
+		if err := root.Remove(name + suffix); err != nil && !os.IsNotExist(err) {
+			return fail()
+		}
+	}
+	return nil
+}
