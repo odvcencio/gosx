@@ -45,6 +45,12 @@ type BuildOptions struct {
 	SceneBudgetStrict bool
 }
 
+// runtimeFeatureChunks lists opt-in feature chunks that ship as
+// client/js/bootstrap-feature-<name>.js and load by name at runtime
+// (hydrate.Manifest.Features). Each row's role is a runtimeExcludableAssetRoles
+// key. The change that adds a chunk file appends its row here.
+var runtimeFeatureChunks = []struct{ name, role string }{}
+
 type wasmCompiler string
 
 const (
@@ -688,6 +694,41 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 
+	// Opt-in feature chunks (see runtimeFeatureChunks) are staged like the
+	// fixed entries above and recorded under manifest.Runtime.Features so the
+	// document contract can publish one flat bootstrapFeature<Name>Path key
+	// per chunk.
+	for _, chunk := range runtimeFeatureChunks {
+		if cfg.Build.Runtime.excludesRole(chunk.role) {
+			fmt.Printf("    (skipped: bootstrap-feature-%s, excluded by build.runtime.exclude %q)\n", chunk.name, chunk.role)
+			continue
+		}
+		srcPath := filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-"+chunk.name+".js")
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", srcPath, err)
+		}
+		assetName := "bootstrap-feature-" + chunk.name
+		data = runtimeJSAssetData(assetName, data)
+		asset, err := writeHashed(runtimeDir, assetName, ".js", data)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", assetName, err)
+		}
+		asset = withRuntimeIntegrity(asset, data)
+		if manifest.Runtime.Features == nil {
+			manifest.Runtime.Features = map[string]HashedAsset{}
+		}
+		manifest.Runtime.Features[chunk.name] = asset
+		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+		if cfg.Build.Runtime.sourceMapsEnabled() {
+			if mapData, err := os.ReadFile(srcPath + ".map"); err == nil {
+				if err := os.WriteFile(filepath.Join(runtimeDir, assetName+".js.map"), mapData, 0644); err != nil {
+					return fmt.Errorf("write %s source map: %w", assetName, err)
+				}
+			}
+		}
+	}
+
 	if assetReport, err := writeBuildSceneAssetPlan(dir, distDir); err != nil {
 		return fmt.Errorf("scene asset plan: %w", err)
 	} else if assetReport != nil {
@@ -1294,6 +1335,11 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return "", false
 	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
+	if name, ok := buildmanifest.FeatureChunkName(strings.TrimPrefix(ref, "/gosx/")); ok && strings.HasPrefix(ref, "/gosx/") {
+		if asset, found := manifest.Runtime.Features[name]; found {
+			return manifestRuntimeFilePath(runtimeDir, asset.File)
+		}
+	}
 	switch ref {
 	case "/gosx/runtime.wasm":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASM.File)
