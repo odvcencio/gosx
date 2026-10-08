@@ -33,13 +33,21 @@ type domLayout struct {
 }
 
 func emitDOMExpressions(u Unit, instances []uint32) (*expressionEmitter, error) {
-	bindings, err := BuildBindings(u)
+	state, dom, err := buildDOMLayout(u, instances)
 	if err != nil {
 		return nil, err
 	}
+	return emitConfiguredModule(u, state.roots, true, state, dom)
+}
+
+func buildDOMLayout(u Unit, instances []uint32) (*stateLayout, *domLayout, error) {
+	bindings, err := BuildBindings(u)
+	if err != nil {
+		return nil, nil, err
+	}
 	state, err := buildStateLayout(u, instances)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	d := &domLayout{bindings: bindings, rootBase: state.roots}
 	for _, binding := range bindings.Bindings {
@@ -71,10 +79,10 @@ func emitDOMExpressions(u Unit, instances []uint32) (*expressionEmitter, error) 
 		}
 	}
 	if err := d.validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	state.roots += uint32(len(state.instances) * len(d.fields))
-	return emitConfiguredModule(u, state.roots, true, state, d)
+	return state, d, nil
 }
 
 func (e *expressionEmitter) setupDOM() {
