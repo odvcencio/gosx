@@ -109,6 +109,8 @@ type App struct {
 	operations          []OperationObserver
 	clientEventsLogger  *slog.Logger
 	headDecorators      []HeadDecorator
+	catalogObservers    []ObservationCatalogObserver
+	catalogOnce         sync.Once
 	securityPolicy      SecurityPolicy
 	compressionOff      bool
 	legacyGzip          bool
@@ -568,6 +570,7 @@ func (a *App) Build() http.Handler {
 	a.mux = mux
 	dispatch = a.buildDispatcher(mux, redirectMux, rewriteMux, mountMux)
 	a.registerRewriteRoutes(rewriteMux, dispatch)
+	a.notifyObservationCatalog()
 	// Regeneration must observe the same auth/session and cache boundaries as
 	// a normal request. It never calls the ISR lookup recursively.
 	regeneration := basepath.Handler(a.basePath, true, a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -668,10 +671,11 @@ func (a *App) pageRouteHandler(route registeredPageRoute) http.Handler {
 			if recovered := recover(); recovered != nil {
 				err := panicError(recovered)
 				log.Printf("[gosx] page render panic on %s: %v", r.URL.Path, err)
-				a.renderError(w, r, err)
+				a.renderErrorPattern(w, r, err, pattern)
 			}
 		}()
 		ctx := newContext(r)
+		ctx.Pattern = pattern
 		node := handler(ctx)
 		a.renderPage(w, ctx, pattern, node, "GoSX")
 	})
@@ -694,6 +698,7 @@ func (a *App) apiRouteHandler(route registeredAPIRoute) http.Handler {
 			}
 		}()
 		ctx := newContext(r)
+		ctx.Pattern = pattern
 		payload, err := handler(ctx)
 		if err != nil {
 			writeJSONError(w, r, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.Header())
@@ -738,6 +743,9 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 	for _, route := range a.mounts {
 		pattern := route.pattern
 		handler := route.handler
+		if configurable, ok := handler.(HeadConfigurable); ok {
+			configurable.SetHeadDecorators(append([]HeadDecorator(nil), a.headDecorators...))
+		}
 		// Wired here, at Build time, rather than back in Mount — see the N3
 		// ordering note on EnableNavigation and Mount. This makes
 		// EnableNavigation order-independent relative to Mount: it only has
@@ -1076,6 +1084,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 }
 
 func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defaultTitle string) gosx.Node {
+	ctx.Pattern = pattern
 	// Render the body once up front so islands/engines/hubs register with the
 	// page runtime before we finalize managed head assets.
 	bodyHTML := gosx.RenderHTML(body)
@@ -1135,7 +1144,11 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
-	MarkObservedRequest(r, "error", "")
+	a.renderErrorPattern(w, r, err, "")
+}
+
+func (a *App) renderErrorPattern(w http.ResponseWriter, r *http.Request, err error, pattern string) {
+	MarkObservedRequest(r, "error", pattern)
 	if WriteDevelopmentError(w, r, err) {
 		return
 	}
@@ -1145,6 +1158,7 @@ func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 
 	ctx := newContext(r)
+	ctx.Pattern = pattern
 	ctx.SetStatus(errorStatus(err, 0, http.StatusInternalServerError))
 
 	var node gosx.Node
@@ -1158,7 +1172,7 @@ func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 		ctx.SetMetadata(Metadata{Title: Title{Absolute: title}})
 		node = defaultStatusBody(title, defaultErrorMessage(err, r))
 	}
-	a.renderPage(w, ctx, "", node, http.StatusText(ctx.status))
+	a.renderPage(w, ctx, pattern, node, http.StatusText(ctx.status))
 }
 
 func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
