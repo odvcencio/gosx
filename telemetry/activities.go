@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io"
 	"math"
 	"sync"
@@ -43,6 +44,17 @@ type activityEntity struct {
 
 const activitySlotBytes = int64(32 << 10)
 const activityMetadataBytes = int64(1024)
+
+func encodeActivityFields[T any](kind *activityKindCore, codec *compiledDomainCodec[T], value T) (schema.Fields, error) {
+	fields, err := codec.encodeFields(kind.owner.activities.pool, value)
+	if err != nil {
+		kind.meters.records[0][2].Add(1)
+		if errors.Is(err, ErrFieldBudget) {
+			kind.owner.core.dropped["field_budget"].Add(1)
+		}
+	}
+	return fields, err
+}
 
 func (s *activityState) transaction() (func(), error) {
 	for {
@@ -171,7 +183,7 @@ func (k *ActivityKind[A, P, E]) begin(start ActivityStart[A]) (*Activity[A, P, E
 		return nil, err
 	}
 	defer release()
-	fields, err := k.activity.encodeFields(s.pool, start.Fields)
+	fields, err := encodeActivityFields(k.core, k.activity, start.Fields)
 	if err != nil {
 		return nil, err
 	}
@@ -272,7 +284,7 @@ func (a *Activity[A, P, E]) Set(fields A) error {
 	if err != nil {
 		return err
 	}
-	staged, err := a.kind.activity.encodeFields(s.pool, fields)
+	staged, err := encodeActivityFields(e.kind, a.kind.activity, fields)
 	if err != nil {
 		return err
 	}
@@ -351,7 +363,7 @@ func (a *Activity[A, P, E]) End(end ActivityEnd[A]) (Receipt, error) {
 		return Receipt{}, err
 	}
 	defer release()
-	staged, err := a.kind.activity.encodeFields(s.pool, end.Fields)
+	staged, err := encodeActivityFields(e.kind, a.kind.activity, end.Fields)
 	if err != nil {
 		return Receipt{}, err
 	}

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add the activity lifecycle owner with copied revision-checked projections,
+  reserved immutable finals, monotonic duration, frozen loop health and shared
+  memory receipts. Source drain preserves admitted work; idle and shutdown
+  finals run on the existing worker without application encoders. Public
+  construction follows the participant and event owners.
+
 - Reserve finite activity kind and codec declarations before route admission.
   Dimensions share fixed metric labels, complete-kind admission is atomic,
   and metadata/staging capacity shares one bounded arena with hub attachments

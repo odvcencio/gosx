@@ -326,3 +326,83 @@ func TestActivityCapsAndEntropyCollisionRollback(t *testing.T) {
 		t.Fatal("collision changed live admission")
 	}
 }
+
+func TestActivityWorkerSignalThenDrainAndFlush(t *testing.T) {
+	tel, clock := lifecycleOwner(t)
+	k := emptyActivityKind(t, tel)
+	tel.done = make(chan struct{})
+	tel.ticker = clock.NewTicker(time.Second)
+	tel.ticks = tel.ticker.C()
+	tel.start = clock.Now()
+	go tel.run()
+	defer tel.Close(context.Background())
+	a, err := k.begin(ActivityStart[NoFields]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tel.prepareShutdown(context.Background())
+	if _, err = k.begin(ActivityStart[NoFields]{}); !errors.Is(err, ErrClosed) {
+		t.Fatal(err)
+	}
+	if err = a.Set(NoFields{}); err != nil {
+		t.Fatal("source drain lost an admitted projection", err)
+	}
+	receipt, err := a.End(ActivityEnd[NoFields]{Outcome: "won", Reason: "complete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err = receipt.Wait(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-tel.done:
+		t.Fatal("activity wake finished shutdown before Flush")
+	default:
+	}
+	if err = tel.Close(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestActivityIdleCheckpointAndTouch(t *testing.T) {
+	tel, clock := lifecycleOwner(t)
+	tel.opts.Activities.IdleTimeout = time.Minute
+	k := emptyActivityKind(t, tel)
+	a, err := k.begin(ActivityStart[NoFields]{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	clock.Advance(50 * time.Second)
+	a.Touch()
+	tel.maintainActivities(clock.Now())
+	clock.Advance(50 * time.Second)
+	tel.maintainActivities(clock.Now())
+	v, _ := a.Snapshot()
+	if v.Outcome != "" {
+		t.Fatal("Touch did not reset idle timeout")
+	}
+	clock.Advance(10 * time.Second)
+	tel.maintainActivities(clock.Now())
+	final, _ := a.Snapshot()
+	if final.Outcome != "interrupted" || final.Reason != "idle" || final.ElapsedMS != 110000 {
+		t.Fatal(final)
+	}
+	if len(tel.activities.live) != 0 {
+		t.Fatal("idle final was not acknowledged")
+	}
+}
+
+func BenchmarkMemoryReceiptWait(b *testing.B) {
+	receipt := newMemoryReceipt()
+	receipt.complete(nil)
+	ctx := context.Background()
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := receipt.Wait(ctx); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
