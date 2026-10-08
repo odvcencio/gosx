@@ -4,8 +4,8 @@ package hubclient
 
 import (
 	"context"
+	"net"
 	"net/http"
-	"net/http/httptrace"
 	"sync"
 	"time"
 
@@ -35,14 +35,34 @@ type nativeDialer struct {
 func (d nativeDialer) Dial(ctx context.Context, rawURL string, header http.Header) (conn, error) {
 	dialer := *websocket.DefaultDialer
 	dialer.EnableCompression = d.enableCompression
-	// Gorilla observes cancellation while dialing TCP/TLS, but its HTTP upgrade
-	// read only observes a deadline. Close that socket on cancellation as well.
+	// Gorilla observes cancellation while dialing TCP/TLS, but proxy CONNECT
+	// and HTTP upgrade reads only observe deadlines. Watch each socket from
+	// creation so cancellation closes it during either handshake as well.
 	var stopCancel func() bool
-	ctx = httptrace.WithClientTrace(ctx, &httptrace.ClientTrace{
-		GotConn: func(info httptrace.GotConnInfo) {
-			stopCancel = context.AfterFunc(ctx, func() { _ = info.Conn.Close() })
-		},
-	})
+	watchDial := func(dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
+		return func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+			cn, err := dial(dialCtx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			stopCancel = context.AfterFunc(ctx, func() { _ = cn.Close() })
+			return cn, nil
+		}
+	}
+	dialTCP := dialer.NetDialContext
+	if dialTCP == nil {
+		if dialer.NetDial != nil {
+			dialTCP = func(_ context.Context, network, addr string) (net.Conn, error) {
+				return dialer.NetDial(network, addr)
+			}
+		} else {
+			dialTCP = (&net.Dialer{}).DialContext
+		}
+	}
+	dialer.NetDialContext = watchDial(dialTCP)
+	if dialer.NetDialTLSContext != nil {
+		dialer.NetDialTLSContext = watchDial(dialer.NetDialTLSContext)
+	}
 	defer func() {
 		if stopCancel != nil {
 			stopCancel()

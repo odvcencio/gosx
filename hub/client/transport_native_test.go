@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -15,19 +16,44 @@ import (
 )
 
 func TestCloseCancelsNativeHandshake(t *testing.T) {
-	requestSeen, release := make(chan struct{}), make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		close(requestSeen)
-		<-release // Accept TCP and HTTP, but never complete the upgrade.
-	}))
-	defer server.Close()
-	defer close(release)
-	c := New(Options{URL: wsURL(server.URL)})
-	c.Connect()
-	awaitLifecycle(t, requestSeen, "native WebSocket upgrade request")
-	closeClient(t, c)
-	if c.State() != StateClosed {
-		t.Fatal("cancelled dial did not reach StateClosed")
+	for _, phase := range []string{"upgrade", "proxy"} {
+		t.Run(phase, func(t *testing.T) {
+			requestSeen, release := make(chan struct{}), make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if phase == "proxy" && r.Method != http.MethodConnect {
+					t.Errorf("proxy method=%s, want CONNECT", r.Method)
+				}
+				close(requestSeen)
+				<-release // Accept the request but never complete the handshake.
+				// On assertion failure, stop the dial before restoring the default
+				// dialer; an implicit 200 response could otherwise advance CONNECT.
+				if cn, _, err := w.(http.Hijacker).Hijack(); err == nil {
+					_ = cn.Close()
+				}
+			}))
+			defer server.Close()
+			defer close(release)
+			endpoint := wsURL(server.URL)
+			if phase == "proxy" {
+				proxyURL, err := url.Parse(server.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				previous := websocket.DefaultDialer
+				dialer := *previous
+				dialer.Proxy = func(*http.Request) (*url.URL, error) { return proxyURL, nil }
+				websocket.DefaultDialer = &dialer
+				t.Cleanup(func() { websocket.DefaultDialer = previous })
+				endpoint = "ws://example.test/stalled"
+			}
+			c := New(Options{URL: endpoint})
+			c.Connect()
+			awaitLifecycle(t, requestSeen, "native handshake request")
+			closeClient(t, c)
+			if c.State() != StateClosed {
+				t.Fatal("cancelled dial did not reach StateClosed")
+			}
+		})
 	}
 }
 
