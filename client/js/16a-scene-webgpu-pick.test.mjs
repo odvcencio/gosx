@@ -135,6 +135,10 @@ function createFakeGPU() {
       });
       return { label: desc.label };
     },
+    pushErrorScope() {},
+    popErrorScope() {
+      return { then(resolve) { return Promise.resolve(resolve(null)); } };
+    },
     createBuffer: makeBuffer,
     createTexture(desc) {
       const texture = {

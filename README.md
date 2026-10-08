@@ -347,6 +347,9 @@ Island expressions are constrained to what the client VM can evaluate: literals,
 
 ## Reactive State
 
+For typed browser intents, drag/drop and modal focus
+ownership, see [browser controllers](docs/controllers.md).
+
 Signals provide fine-grained reactivity in islands:
 
 ```go
@@ -558,6 +561,12 @@ Supported capability declarations today are:
 Kinds choose the mount model. Capabilities declare which browser APIs the engine expects to use. Engines get their own mount point or worker context, communicate through typed message ports, and do not touch island DOM.
 
 ## Scene3D — 3D Engine
+
+[Scene3D particle bursts](docs/scene3d-particle-bursts.md) start finite event effects with typed Go emitters and automatic browser cleanup.
+
+[Scene3D timelines](docs/scene3d-timeline.md) sequence object and camera tweens in Go, with seekable browser playback and reduced-motion settling.
+
+[Text3D](docs/scene3d-text.md) draws Go-authored scores and labels on world-space texture planes.
 
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
 
@@ -795,6 +804,20 @@ Production builds require TinyGo on `PATH`, emit capability-linked `core`,
 compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
+
+Production builds start the server for prerendering only when static routes
+exist. Apps that need request-time authentication or a database can also disable
+build-time prerendering in `gosx.config.json`:
+
+```json
+{"build":{"prerender":{"enabled":false}}}
+```
+
+This keeps the server binary and normal production assets, and omits static
+snapshots and the edge export. The default is `true`; `gosx export` remains an
+explicit export command. Export harnesses supply a numeric `PORT` and a loopback
+`GOSX_LISTEN_ADDR`. Use `server.App.ListenAndServe` to honor both, including when
+your app's default address comes from another environment variable.
 
 Install the CLI at the version required by your project's `go.mod`, using
 `go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the

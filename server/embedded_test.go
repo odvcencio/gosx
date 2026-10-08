@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
 )
@@ -113,6 +114,7 @@ func TestAppBasePathRenderingAndStreaming(t *testing.T) {
 		app.Page("/", func(ctx *Context) gosx.Node {
 			ctx.Runtime().BindHub("room", "/ws", []hydrate.HubBinding{{Event: "update", Signal: "$state"}})
 			ctx.Runtime().Engine(engine.Config{Name: "worker", Kind: engine.KindWorker, WASMPath: "/gosx/worker.wasm"}, gosx.Text(""))
+			ctx.Runtime().Controller(controller.Config{Events: []controller.Event{{Type: "click", Output: "$click", Project: &controller.Projection{}}}})
 			return gosx.Fragment(gosx.El("a", gosx.Attrs(gosx.Attr("href", "/next")), gosx.Text("Next")), ctx.Defer(gosx.Text("loading"), func() (gosx.Node, error) { return gosx.El("img", gosx.Attrs(gosx.Attr("src", "/image.png"))), nil }))
 		})
 		path := "/.proxy/game/"
@@ -122,7 +124,7 @@ func TestAppBasePathRenderingAndStreaming(t *testing.T) {
 		w := httptest.NewRecorder()
 		app.Build().ServeHTTP(w, httptest.NewRequest("GET", path, nil))
 		body := w.Body.String()
-		for _, want := range []string{`href="/.proxy/game/next"`, `"path":"/.proxy/game/ws"`, `"programRef":"/.proxy/game/gosx/worker.wasm"`, `src="/.proxy/game/gosx/`, `name="gosx-base-path"`, `/.proxy/game/image.png`} {
+		for _, want := range []string{`href="/.proxy/game/next"`, `"path":"/.proxy/game/ws"`, `"programRef":"/.proxy/game/gosx/worker.wasm"`, `"bootstrapControllerInputPath":"/.proxy/game/gosx/bootstrap-controller-input.js"`, `src="/.proxy/game/gosx/`, `name="gosx-base-path"`, `/.proxy/game/image.png`} {
 			if !strings.Contains(body, want) {
 				t.Errorf("missing %s in %s", want, body)
 			}

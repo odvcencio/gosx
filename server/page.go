@@ -229,6 +229,7 @@ type documentContractAssets struct {
 	BootstrapFeatureEnginesPath     string `json:"bootstrapFeatureEnginesPath,omitempty"`
 	BootstrapFeatureHubsPath        string `json:"bootstrapFeatureHubsPath,omitempty"`
 	BootstrapFeatureControllersPath string `json:"bootstrapFeatureControllersPath,omitempty"`
+	BootstrapControllerInputPath    string `json:"bootstrapControllerInputPath,omitempty"`
 	BootstrapFeatureScene3DPath     string `json:"bootstrapFeatureScene3dPath,omitempty"`
 	BootstrapFeatureTextLayoutPath  string `json:"bootstrapFeatureTextLayoutPath,omitempty"`
 	HLSPath                         string `json:"hlsPath,omitempty"`
@@ -271,6 +272,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			BootstrapFeatureEnginesPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureEnginesPath),
 			BootstrapFeatureHubsPath:        basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureHubsPath),
 			BootstrapFeatureControllersPath: basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureControllersPath),
+			BootstrapControllerInputPath:    basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapControllerInputPath),
 			BootstrapFeatureScene3DPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureScene3DPath),
 			BootstrapFeatureTextLayoutPath:  basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureTextLayoutPath),
 			HLSPath:                         basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.HLSPath),
