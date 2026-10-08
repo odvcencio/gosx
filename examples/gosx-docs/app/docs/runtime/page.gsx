@@ -1,5 +1,7 @@
 package docs
 
+import "m31labs.dev/gosx"
+
 func Page() Node {
 	return <div>
 		<section class="docs-live-example" aria-label="Managed navigation example">
@@ -56,7 +58,9 @@ func Page() Node {
 			</p>
 			<p>
 				Navigation loads as a deferred external script before bootstrap. Each page makes one more request. Proxies, CDNs and auth middleware must allow
-				<span class="inline-code">/gosx/assets/runtime/navigation.*.js</span>
+				<span class="inline-code">
+					{gosx.RawHTML("&#47;gosx&#47;assets&#47;runtime&#47;navigation.*.js")}
+				</span>
 				.
 			</p>
 			<p>
