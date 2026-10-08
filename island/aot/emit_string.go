@@ -27,15 +27,22 @@ func i32Signature(count int) wasmgen.Signature {
 
 func (e *expressionEmitter) setupStrings() error {
 	needed := false
+	formatNeeded := false
 	values := map[string]bool{}
 	for i, expr := range e.unit.Program.Exprs {
 		needed = needed || e.unit.Contract.Expressions[i].Kind == String
+		formatNeeded = formatNeeded || expr.Op == program.OpFormat || expr.Op == program.OpToString
 		if expr.Op == program.OpLitString || expr.Op == program.OpFormat {
 			values[expr.Value] = true
 		}
 	}
 	if !needed {
 		return nil
+	}
+	if formatNeeded {
+		for _, value := range []string{"true", "false", "0"} {
+			values[value] = true
+		}
 	}
 	keys := make([]string, 0, len(values))
 	for value := range values {
@@ -60,6 +67,9 @@ func (e *expressionEmitter) setupStrings() error {
 	}
 	e.module.Functions = append(e.module.Functions, e.allocateFunction(), e.copyFunction(),
 		e.compareFunction(), e.joinFunction())
+	if formatNeeded {
+		e.module.Functions = append(e.module.Functions, e.formatFunction())
+	}
 	return nil
 }
 

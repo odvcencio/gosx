@@ -27,7 +27,7 @@ type expressionEmitter struct {
 	module    wasmgen.Module
 	functions []uint32
 	strings   map[string]stringConstant
-	helpers   [4]uint32
+	helpers   [5]uint32
 }
 
 func emitExpressions(u Unit) (*expressionEmitter, error) {
@@ -86,6 +86,8 @@ func (e *expressionEmitter) expression(id program.ExprID, expr program.Expr) (wa
 		return e.integer(id, expr)
 	case program.OpLitString, program.OpConcat, program.OpLen:
 		return e.stringExpression(id, expr)
+	case program.OpFormat, program.OpToString:
+		return e.formatExpression(id, expr)
 	case program.OpLitBool, program.OpEq, program.OpNeq, program.OpLt, program.OpGt,
 		program.OpLte, program.OpGte, program.OpAnd, program.OpOr, program.OpNot:
 		return e.comparison(id, expr)
