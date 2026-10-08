@@ -1,11 +1,13 @@
 package budget
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"math/big"
 	"reflect"
-	"strconv"
+	"sort"
 )
 
 func validateTyped(definition string, value any) error {
@@ -45,7 +47,13 @@ func Derive(file File, profile Profile, coefficients Coefficients) (File, error)
 	if err := json.Unmarshal(data, &result); err != nil {
 		return File{}, errors.New("cannot copy budget input")
 	}
-	for name, page := range result.PageTypes {
+	names := make([]string, 0, len(result.PageTypes))
+	for name := range result.PageTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		page := result.PageTypes[name]
 		cold, err := newModel(file, profile, coefficients, name, false)
 		if err != nil {
 			return File{}, err
@@ -122,7 +130,7 @@ func newModel(file File, profile Profile, coefficients Coefficients, name string
 			if g.Unit != "ms" || metricUnit(g.Metric) != "ms" {
 				return planningModel{}, errors.New("primary goal must be a duration")
 			}
-			if _, ok := goal.SetString(strconv.FormatFloat(g.Max, 'g', -1, 64)); !ok {
+			if _, ok := goal.SetString(g.Max.String()); !ok {
 				return planningModel{}, errors.New("invalid goal")
 			}
 			goal.Mul(goal, ratio(1000, 1))
@@ -198,6 +206,8 @@ func newModel(file File, profile Profile, coefficients Coefficients, name string
 		Metric          string
 	}{"transfer-cpu/v1", name, after, []Ref{file.Profile, file.Coefficients, file.Toolchain, file.Fixtures}, profile, coefficients,
 		page.Network, goal, page.Mix, work, reserve, page.MinAppPPM, page.CoefficientSet, page.Backend, page.PrimaryMetric})
+	digest := sha256.Sum256(fingerprint)
+	family, _, _ := pageTypeVariant(name)
 	return planningModel{network: network, initial: profile.InitCwndBytes, quantum: profile.QuantumBytes, reserve: reserve,
-		share: page.MinAppPPM, static: name == "static", window: window, slope: slope, fixed: fixed, status: status, fingerprint: inputDigest(fingerprint)}, nil
+		share: page.MinAppPPM, static: family == "static", window: window, slope: slope, fixed: fixed, status: status, fingerprint: hex.EncodeToString(digest[:])}, nil
 }
