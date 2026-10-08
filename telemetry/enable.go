@@ -25,7 +25,6 @@ type Telemetry struct {
 	active              atomic.Bool
 	mu                  sync.Mutex
 	closeContext        context.Context
-	closeSource         context.Context
 	closeCancel         context.CancelFunc
 	closeResult         error
 	wake, done          chan struct{}
@@ -121,7 +120,7 @@ func Enable(app *server.App, opts Options) (*Telemetry, error) {
 	if err = t.initializeRegistry(); err != nil {
 		return nil, err
 	}
-	if err = app.UseObservationCatalogObserver(t); err != nil {
+	if err = app.UseObservationCatalogObserver(observationCatalogAdapter{owner: t}); err != nil {
 		return nil, err
 	}
 	t.active.Store(true)
@@ -227,10 +226,15 @@ func (t *Telemetry) Metrics() *metric.Registry {
 func (t *Telemetry) MetricsHandler() http.Handler { return http.NotFoundHandler() }
 func (t *Telemetry) AdminHandler() http.Handler   { return http.NotFoundHandler() }
 
-// ObserveCatalog seals registration before public serving, including registries
-// retained after Close or a worker failure. Later adapters use this callback to
-// admit bounded route tuples from the trusted owner catalog.
-func (t *Telemetry) ObserveCatalog([]server.ObservationPattern) {
+// Only the server-owned callback can admit routes or seal this registry.
+type observationCatalogAdapter struct{ owner *Telemetry }
+
+func (o observationCatalogAdapter) ObserveCatalog(rows []server.ObservationPattern) {
+	o.owner.observeCatalog(rows)
+}
+
+// Seal registries retained after Close or a worker failure as well.
+func (t *Telemetry) observeCatalog([]server.ObservationPattern) {
 	if t != nil && t.registry != nil {
 		t.registry.Seal()
 	}

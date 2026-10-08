@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -288,7 +289,7 @@ func TestCoreMetricsUseElapsedTimeAndPublicRegistry(t *testing.T) {
 			t.Fatal(err)
 		}
 		if values["gosx_process_uptime_seconds"] == 10 {
-			if values["process_start_time_seconds"] != 1234.5 || values["gosx_build_info"] != 1 || values["gosx_telemetry_series"] != float64(tel.registry.Usage().Samples) || values["gosx_telemetry_memory_bytes"] > float64(o.Limits.MemoryBudgetBytes) {
+			if values["process_start_time_seconds"] != processStartSeconds() || values["gosx_build_info"] != 1 || values["gosx_telemetry_series"] != float64(tel.registry.Usage().Samples) || values["gosx_telemetry_memory_bytes"] > float64(o.Limits.MemoryBudgetBytes) {
 				t.Fatal(values)
 			}
 			break
@@ -297,5 +298,42 @@ func TestCoreMetricsUseElapsedTimeAndPublicRegistry(t *testing.T) {
 			t.Fatal("worker used a missed deadline instead of current elapsed time", values)
 		}
 		runtime.Gosched()
+	}
+}
+
+func TestCatalogAdmissionIsNotPublicTelemetryAPI(t *testing.T) {
+	if reflect.TypeFor[*Telemetry]().Implements(reflect.TypeFor[server.ObservationCatalogObserver]()) {
+		t.Fatal("application code can submit an observation catalog directly")
+	}
+}
+
+func TestProcessStartIsIndependentOfTelemetryOwners(t *testing.T) {
+	for _, wall := range []time.Time{time.Unix(1, 0), time.Unix(100000, 0)} {
+		o := aggregateCoreOptions(t)
+		o.Clock = telemetrytest.NewClock(wall)
+		tel, err := Enable(server.New(), o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tel.registry.WithSnapshot(context.Background(), func(snapshot metric.Snapshot) error {
+			found := false
+			for _, family := range snapshot.Families {
+				if family.Name == "process_start_time_seconds" {
+					found = true
+					if family.Series[0].Gauge != processStartSeconds() || family.Series[0].Gauge == float64(wall.Unix()) {
+						t.Fatal("start time belongs to Enable", family.Series[0].Gauge)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing process start")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := tel.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
