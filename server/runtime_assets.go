@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/internal/httpcache"
 	"m31labs.dev/gosx/internal/httpcompress"
 	"m31labs.dev/gosx/island"
@@ -112,6 +113,10 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 
 	// Embedded runtime assets resolve before (and independently of) the
 	// runtime asset root.
+	if _, ok := runtimehost.NavigationRuntimeAssetHash("/gosx/" + name); ok {
+		a.serveNavigationRuntime(w, r)
+		return
+	}
 	if name == "devtools-lantern.js" {
 		serveDevtoolsLantern(w, r)
 		return

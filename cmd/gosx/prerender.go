@@ -17,6 +17,7 @@ import (
 
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/internal/bundlepolicy"
@@ -228,6 +229,25 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 	}
 
 	manifest := exportManifest{BasePath: mount.prefix, Pages: pages, Routes: exportedRoutes, AssetRefs: sortedExportRuntimeAssetRefs(assetRefs)}
+	for _, ref := range manifest.AssetRefs {
+		if ref != runtimehost.NavigationRuntimePath {
+			continue
+		}
+		data, err := fetchExportPage(client, baseURL+mount.upstreamURL(mount.publicPath(ref)))
+		if err != nil {
+			return exportManifest{}, fmt.Errorf("export navigation runtime: %w", err)
+		}
+		dst, ok := exportRuntimeOutputPath(contentDir, ref)
+		if !ok {
+			return exportManifest{}, fmt.Errorf("invalid navigation runtime path %q", ref)
+		}
+		if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+			return exportManifest{}, err
+		}
+		if err := os.WriteFile(dst, []byte(data), 0644); err != nil {
+			return exportManifest{}, err
+		}
+	}
 	return completeStaticExport(opts, outputDir, manifest)
 }
 

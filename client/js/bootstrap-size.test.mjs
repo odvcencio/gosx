@@ -2520,17 +2520,9 @@ function fileSize(relativePath) {
   return fs.statSync(absolute).size;
 }
 
-// navigationRuntimeMinBudget governs client/runtime/host/navigation-
-// runtime.min.js on its own, separately from the budgets/routeBudgets
-// arrays above: those pair every raw size with a matching .gz/.br
-// sidecar this file has never generated (see navigation_asset.go's own
-// doc comment — the server's EnableGzip middleware compresses it
-// on-the-fly instead), so a raw-only budget is this file's own shape.
-// It ships in the lean, always-on navigation payload every page loads
-// regardless of whether a bootstrap bundle is present at all (gosx#221),
-// so its own growth deserves its own governance rather than riding along
-// only inside bootstrap-runtime.js's/bootstrap-lite.js's shared budgets
-// above.
+// Navigation has its own raw size budget, independent of bootstrap bundles.
+// Its compressed sidecars are generated and checked by buildbootstrap.
+// Keep the existing raw ceiling when moving it out of HTML.
 //
 // gosx#217 review follow-up: hub-identity scoping, page-wide cue mute,
 // and the region-key/-cursor validation. Measured: 88_076. Cap set with

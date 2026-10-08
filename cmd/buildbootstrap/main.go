@@ -678,19 +678,11 @@ var outputs = []output{
 	},
 }
 
-// inlineAssets lists artifacts this tool prepares for direct Go embedding
-// rather than for a fetched <script src> bundle. app.EnableNavigation
-// (server/navigation.go) inlines the navigation runtime straight into every
-// page's <head> so it runs before any other script fetches — it must stay
-// out of the outputs bundle graph above, which is why navigation.ts is a
-// named exemption in TestEveryRuntimeTypeScriptAuthorityIsInTheBuildGraph.
-//
-// An inline asset gets the same concatenate/erase-types/minify treatment as
-// a bundle (buildBundle), but the build writes only the minified .min.js
-// file next to its .ts sources: no .map, no .gz/.br sidecars, and it never
-// joins chunks.json, because nothing ever fetches it over the network —
-// client/runtime/host/navigation_asset.go go:embeds it straight into the Go
-// binary that the framework-owned navigation head writes inline into the page.
+// inlineAssets lists standalone artifacts embedded in the Go binary rather
+// than staged through the bootstrap chunk graph. The navigation head loads
+// its embedded asset by content hash as a deferred script before bootstrap. Generate
+// compressed sidecars for serving and exporting, without a source map or a
+// chunks.json entry (the server owns the URL).
 var inlineAssets = []output{
 	{
 		name: "../runtime/host/navigation-runtime.min.js",
@@ -1319,12 +1311,8 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 	}
 }
 
-// buildInlineAsset builds one inlineAssets entry down to its minified code
-// only. Unlike buildBundle for a client/js/ bundle, an inline asset never
-// carries a sourceMappingURL trailer (debugSourcemaps is always false):
-// nothing ever fetches the artifact at a URL, so a dangling comment
-// referencing a .map file this build never writes would only confuse a
-// reader working from the served page's inline <script> tag.
+// buildInlineAsset builds an embedded standalone runtime without a source
+// map trailer. Its URL and compressed representations are owned by the server.
 func buildInlineAsset(dir string, entry output, minifier string) (string, error) {
 	built, err := buildBundle(dir, entry, minifier, false)
 	if err != nil {
@@ -1450,7 +1438,11 @@ func run() error {
 			}
 			assetPath := filepath.Join(dir, entry.name)
 			current, _ := os.ReadFile(assetPath)
-			if string(current) != next {
+			match, err := sidecarsMatch(assetPath, next)
+			if err != nil {
+				return err
+			}
+			if string(current) != next || !match {
 				recordStale(entry.name)
 			}
 		}
@@ -1486,6 +1478,9 @@ func run() error {
 		}
 		assetPath := filepath.Join(dir, entry.name)
 		if err := os.WriteFile(assetPath, []byte(code), 0o644); err != nil {
+			return err
+		}
+		if err := writeCompressedSidecars(assetPath, code); err != nil {
 			return err
 		}
 	}

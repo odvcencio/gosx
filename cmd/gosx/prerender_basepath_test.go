@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
 
 func TestPrerenderBasePathWithEitherProxyMode(t *testing.T) {
@@ -31,6 +33,7 @@ import (
 )
 func main() {
  app := server.New()
+ app.EnableNavigation()
  if err := app.SetBasePath(os.Getenv("TEST_EXPORT_PREFIX"), server.BasePathOptions{ProxyStripsPrefix: os.Getenv("TEST_EXPORT_STRIPS") == "1"}); err != nil { log.Fatal(err) }
  app.SetPublicDir("public")
  app.Mount("/_gosx/css/page.css", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Type", "text/css"); w.Write([]byte("p{color:blue}")) }))
@@ -126,6 +129,10 @@ func main() {
 					t.Fatal(css)
 				}
 				readFile(t, filepath.Join(output, mountDir, "style.css"))
+				navigationPath := filepath.FromSlash(strings.TrimPrefix(runtimehost.NavigationRuntimePath, "/"))
+				if got := readFile(t, filepath.Join(output, mountDir, navigationPath)); got != runtimehost.NavigationRuntime {
+					t.Fatal("exported navigation runtime differs from the served asset")
+				}
 			})
 		}
 	}
