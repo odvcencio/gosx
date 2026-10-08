@@ -3,11 +3,23 @@
 ## Unreleased
 
 - Islands: `onWheel` (non-passive), `onDblClick`, `onContextMenu` and
-  `onLostPointerCapture`; event fields `offsetX`, `offsetY` (relative to the
-  handler element), `deltaX`, `deltaY` and `deltaMode`; and
-  `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. An unknown
-  `onX` island attribute is now a compile error. Pre-selective manifests attach
-  the four new listeners on every island root. See `docs/island-events.md`.
+  `onLostPointerCapture`; event fields `offsetX`, `offsetY` (viewport position
+  minus the handler element's bounding box, borders included, transforms not
+  undone), `elementWidth`, `elementHeight`, `deltaX`, `deltaY` and `deltaMode`;
+  and `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. Disposing an
+  island releases the pointers it captured. Legacy manifests attach the wheel
+  listener only on islands that have a wheel handler. See
+  `docs/island-events.md`.
+- Diagnostics: an island handler attribute that no runtime name mapper resolves
+  (`onMouseDown`, `onScroll`, `onKey`) now produces a warning with a source
+  position and a "did you mean" suggestion. It does not fail the build, and the
+  spellings that already resolved (`onKeydown`, `onPointerdown`, `onDragstart`)
+  stay accepted. Nothing breaks, so there is no migration step.
+- Size budgets (decision 0014 exception, owner-approved 2026-10-08):
+  `bootstrap-feature-islands.js` grows 1,101 raw bytes (18,766 to 19,867) and
+  the legacy `bootstrap.js` monolith 1,108 (1,911,512 to 1,912,620). The owner
+  approved +536 and +539 for the gesture events; the review fixes (element size,
+  pointer-capture release, legacy wheel gate) account for the rest.
 
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential

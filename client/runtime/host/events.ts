@@ -116,6 +116,8 @@
       const offsets = { offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
       copyNumberField(data, offsets, "offsetX", "offsetX");
       copyNumberField(data, offsets, "offsetY", "offsetY");
+      copyNumberField(data, rect, "width", "elementWidth");
+      copyNumberField(data, rect, "height", "elementHeight");
     }
     if (e.type === "wheel") {
       copyNumberField(data, e, "deltaX", "deltaX");
@@ -232,6 +234,10 @@
 
     for (const eventType of DELEGATED_EVENTS) {
       if (declared && !declared.has(eventType)) continue;
+      // Legacy manifests declare nothing, so a non-passive wheel listener
+      // would slow scrolling on every island. Attach it only where a handler
+      // exists.
+      if (!declared && eventType === "wheel" && !(islandRoot.querySelector && islandRoot.querySelector("[data-gosx-on-wheel]"))) continue;
       const listener = createDelegatedListener(islandRoot, islandID, eventType);
       const useCapture = delegatedEventCapture(eventType);
       islandRoot.addEventListener(eventType, listener, eventType === "wheel" ? { capture: useCapture, passive: false } : useCapture);
@@ -305,7 +311,19 @@
       }
       e.__gosx_handled = true;
       dispatchIslandAction(islandID, match.name, extractEventData(e, match.element), e, match.element);
+      if (eventType === "pointerdown") rememberPointerCapture(islandID, match.element, e.pointerId);
     };
+  }
+
+  // browser.CapturePointer runs synchronously inside the handler, so a capture
+  // exists right after dispatch. Disposal releases what is still held.
+  function rememberPointerCapture(islandID, element, pointerId) {
+    if (typeof pointerId !== "number" || !element || typeof element.hasPointerCapture !== "function") return;
+    if (!element.hasPointerCapture(pointerId)) return;
+    const record = window.__gosx.islands.get(islandID);
+    if (!record) return;
+    if (!record.pointerCaptures) record.pointerCaptures = new Map();
+    record.pointerCaptures.set(pointerId, element);
   }
 
   function createGlobalDelegatedListener(islandRoot, islandID, config) {

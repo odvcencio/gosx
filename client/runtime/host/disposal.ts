@@ -22,6 +22,18 @@
       }
     }
 
+    // Release pointers a handler captured with browser.CapturePointer.
+    if (record.pointerCaptures) {
+      for (const [pointerId, element] of record.pointerCaptures) {
+        try {
+          if (element.hasPointerCapture(pointerId)) element.releasePointerCapture(pointerId);
+        } catch (e) {
+          // The element may already be detached; nothing is left to release.
+        }
+      }
+      record.pointerCaptures.clear();
+    }
+
     // Notify WASM side if dispose function is available.
     if (typeof window.__gosx_dispose === "function") {
       try {
