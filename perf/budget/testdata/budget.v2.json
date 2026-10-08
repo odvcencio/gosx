@@ -1,0 +1,163 @@
+{
+  "schema": "gosx.budget/v2",
+  "profile": {
+    "file": "perf/budget/testdata/profile.v1.json",
+    "sha256": "9b0a475dcf760674ed2bbd9a104bcf07c0303918f2c95b99ce1931729b202343"
+  },
+  "coefficients": {
+    "file": "perf/budget/testdata/coefficients.v1.json",
+    "sha256": "c711a3a659f0959f44bce45db23cd0b24ffe8395a066e0f9142c3d543c940095"
+  },
+  "toolchain": {
+    "file": "perf/budget/testdata/toolchain.v1.json",
+    "sha256": "b7f8f39951d829346ab20409752f6f0fb2c2dd026e7b3de2ecf51bba14cc722d"
+  },
+  "fixtures": {
+    "file": "perf/budget/testdata/fixtures.v1.json",
+    "sha256": "021f09dfb7b327516422a46a1d76a326ba135332203d85fdda9f252f0e67de1c"
+  },
+  "tripwire": {
+    "minBytes": 1024,
+    "fractionPPM": 10000
+  },
+  "pageTypes": {
+    "island": {
+      "network": "slow4g",
+      "goals": [
+        {
+          "metric": "island_interactive",
+          "max": 3500,
+          "unit": "ms"
+        }
+      ],
+      "primaryMetric": "island_interactive",
+      "mix": {
+        "jsPPM": 200000,
+        "wasmPPM": 730000,
+        "programPPM": 0,
+        "otherPPM": 70000,
+        "wasmExpansionNumerator": 304,
+        "wasmExpansionDenominator": 100
+      },
+      "appReserveBytes": 51200,
+      "minAppPPM": 500000,
+      "workload": {
+        "islands": 1,
+        "pipelines": 0,
+        "shaderKB": 0,
+        "engines": 0,
+        "wasmModules": 1
+      },
+      "allocation": {
+        "kind": "transfer-cpu",
+        "status": "illustrative",
+        "inputSHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "totalBytes": 438272,
+        "appCriticalReserveBytes": 51200,
+        "minAppBytes": 193536,
+        "frameworkBytes": 193536,
+        "steps": [
+          {
+            "name": "total",
+            "numerator": "438272",
+            "denominator": "1",
+            "unit": "B"
+          }
+        ]
+      },
+      "memory": null,
+      "requiredPolicies": [
+        "html-compressed",
+        "assets-compressed"
+      ],
+      "coefficientSet": "illustrative-cold",
+      "afterReadyWorkload": {
+        "islands": 0,
+        "pipelines": 0,
+        "shaderKB": 0,
+        "engines": 0,
+        "wasmModules": 0
+      },
+      "afterReadyAllocation": {
+        "kind": "transfer-cpu",
+        "status": "illustrative",
+        "inputSHA256": "0000000000000000000000000000000000000000000000000000000000000000",
+        "totalBytes": 94208,
+        "appCriticalReserveBytes": 0,
+        "minAppBytes": 47104,
+        "frameworkBytes": 47104,
+        "steps": [
+          {
+            "name": "total",
+            "numerator": "94208",
+            "denominator": "1",
+            "unit": "B"
+          }
+        ]
+      },
+      "wireEnvelope": {
+        "kind": "production",
+        "compressor": "canonical",
+        "totalBytes": 438272
+      },
+      "backend": "none"
+    }
+  },
+  "routes": [
+    {
+      "app": "fixture",
+      "routeTemplate": "/counter/",
+      "pageTypes": [
+        "island"
+      ],
+      "source": "detected",
+      "scenario": "hard-cold"
+    }
+  ],
+  "exceptions": [],
+  "guardrails": [
+    {
+      "key": "criticalRequests",
+      "limit": 10,
+      "unit": "count",
+      "mode": "gate",
+      "reasonCode": "guardrail"
+    },
+    {
+      "key": "startupRequests",
+      "limit": 20,
+      "unit": "count",
+      "mode": "gate",
+      "reasonCode": "guardrail"
+    },
+    {
+      "key": "afterReadyRequests",
+      "limit": 24,
+      "unit": "count",
+      "mode": "gate",
+      "reasonCode": "guardrail"
+    },
+    {
+      "key": "inlineAppExecutableBytes",
+      "limit": 1024,
+      "unit": "B",
+      "mode": "gate",
+      "reasonCode": "guardrail"
+    },
+    {
+      "key": "htmlFirstFlightBytes",
+      "limit": 14600,
+      "unit": "B",
+      "mode": "target",
+      "reasonCode": "initial-cwnd"
+    },
+    {
+      "key": "fontCount",
+      "limit": 2,
+      "unit": "count",
+      "mode": "target",
+      "reasonCode": "first-paint"
+    }
+  ],
+  "hubBudgets": []
+}
