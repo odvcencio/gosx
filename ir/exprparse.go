@@ -886,7 +886,7 @@ func eventFieldType(name string) program.ExprType {
 	case "selectedIndex", "pointerID", "button", "buttons", "deltaMode":
 		return program.TypeInt
 	case "timeStamp", "clientX", "clientY", "pressure", "width", "height",
-		"offsetX", "offsetY", "deltaX", "deltaY":
+		"offsetX", "offsetY", "elementWidth", "elementHeight", "deltaX", "deltaY":
 		return program.TypeFloat
 	default:
 		return program.TypeAny

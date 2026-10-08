@@ -343,7 +343,7 @@ var islandEventFields = []string{
 	"ctrlKey", "metaKey", "altKey", "shiftKey", "repeat", "timeStamp", "editable",
 	"targetID", "currentTargetID", "pointerID", "pointerType", "isPrimary",
 	"clientX", "clientY", "button", "buttons", "pressure", "width", "height",
-	"offsetX", "offsetY", "deltaX", "deltaY", "deltaMode",
+	"offsetX", "offsetY", "elementWidth", "elementHeight", "deltaX", "deltaY", "deltaMode",
 	"data", "eventData",
 }
 
@@ -1041,9 +1041,6 @@ func (l *islandLowerer) lowerAttr(attr Attr, context *islandInlineContext) (prog
 		}, nil
 	case AttrExpr:
 		if attr.IsEvent {
-			if _, ok := islandEventTypes[attr.Name]; !ok {
-				return program.Attr{}, fmt.Errorf("unknown island event handler %q; supported: %s", attr.Name, islandEventNames())
-			}
 			return program.Attr{
 				Kind:  program.AttrEvent,
 				Name:  attr.Name,
@@ -1099,6 +1096,31 @@ var islandEventTypes = map[string]string{
 	"onContextMenu":        "contextmenu",
 }
 
+// islandEventType resolves an island handler attribute to its DOM event type.
+// Besides the exact spellings in islandEventTypes it accepts the lowercase-tail
+// aliases that both runtime name mappers (client/vm eventAttrType and island
+// eventNameToType) already resolved before the table existed: "on" plus a word
+// whose only capital is its first letter, such as onKeydown or onPointerdown.
+func islandEventType(name string) (string, bool) {
+	if eventType, ok := islandEventTypes[name]; ok {
+		return eventType, true
+	}
+	if len(name) <= 2 || !strings.HasPrefix(name, "on") {
+		return "", false
+	}
+	rest := name[2:]
+	if strings.ToLower(rest[1:]) != rest[1:] {
+		return "", false
+	}
+	lowered := strings.ToLower(rest)
+	for _, eventType := range islandEventTypes {
+		if eventType == lowered && !strings.Contains(eventType, "-") {
+			return eventType, true
+		}
+	}
+	return "", false
+}
+
 // islandEventNames returns the supported handler attributes, sorted.
 func islandEventNames() string {
 	names := make([]string, 0, len(islandEventTypes))
@@ -1107,6 +1129,65 @@ func islandEventNames() string {
 	}
 	sort.Strings(names)
 	return strings.Join(names, ", ")
+}
+
+// islandEventWarnings flags an island handler attribute that no runtime name
+// mapper resolves (onMouseDown, onScroll, onKey). Such a handler never fires.
+// It is a warning, not an error, so existing builds keep compiling.
+func islandEventWarnings(prog *Program, comp *Component) []Diagnostic {
+	if !comp.IsIsland || int(comp.Root) >= len(prog.Nodes) {
+		return nil
+	}
+	var diags []Diagnostic
+	for _, id := range collectComponentNodeIDs(prog, comp.Root) {
+		node := &prog.Nodes[id]
+		for _, attr := range node.Attrs {
+			if !attr.IsEvent || attr.Kind != AttrExpr {
+				continue
+			}
+			if _, ok := islandEventType(attr.Name); ok {
+				continue
+			}
+			message := fmt.Sprintf("island event handler %q is not a supported event, so the handler never runs", attr.Name)
+			hint := "supported handlers: " + islandEventNames()
+			if match, ok := nearestIslandEventName(attr.Name); ok {
+				message += fmt.Sprintf("; did you mean %q?", match)
+				hint = fmt.Sprintf("rename %s to %s", attr.Name, match)
+			}
+			diags = append(diags, Diagnostic{Span: node.Span, Severity: SeverityWarning, Message: message, Hint: hint})
+		}
+	}
+	return diags
+}
+
+// nearestIslandEventName finds a supported handler for a case-insensitive
+// match, a prefix match (onKey -> onKeyDown) or a near edit distance.
+func nearestIslandEventName(name string) (string, bool) {
+	lower := strings.ToLower(name)
+	names := make([]string, 0, len(islandEventTypes))
+	for candidate := range islandEventTypes {
+		names = append(names, candidate)
+	}
+	sort.Strings(names)
+	for _, candidate := range names {
+		if strings.ToLower(candidate) == lower {
+			return candidate, true
+		}
+	}
+	if len(lower) > 3 {
+		for _, candidate := range names {
+			if strings.HasPrefix(strings.ToLower(candidate), lower) {
+				return candidate, true
+			}
+		}
+	}
+	best, bestDistance := "", 3
+	for _, candidate := range names {
+		if d := attrNameEditDistance(lower, strings.ToLower(candidate)); d < bestDistance {
+			best, bestDistance = candidate, d
+		}
+	}
+	return best, best != ""
 }
 
 // legacyInlineEventType recognizes the original island event spelling:

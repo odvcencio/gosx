@@ -643,19 +643,36 @@ func TestLowerIslandEmitsComponentScopeDefs(t *testing.T) {
 	}
 }
 
-func TestLowerIslandRejectsUnknownEventAttr(t *testing.T) {
+func TestIslandEventTypeAliasesAndUnknownNames(t *testing.T) {
+	// Spellings both runtime name mappers resolved on main keep working.
+	for name, want := range map[string]string{
+		"onClick": "click", "onKeyDown": "keydown", "onWheel": "wheel",
+		"onKeydown": "keydown", "onKeyup": "keyup", "onPointerdown": "pointerdown",
+		"onPointermove": "pointermove", "onPointerup": "pointerup",
+		"onPointercancel": "pointercancel", "onDragstart": "dragstart",
+		"onDragend": "dragend", "onDragover": "dragover", "onDragleave": "dragleave",
+		"onclick": "click", "onDblclick": "dblclick",
+	} {
+		if got, ok := islandEventType(name); !ok || got != want {
+			t.Errorf("islandEventType(%q) = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+	for _, name := range []string{"onMouseDown", "onScroll", "onKey", "onLaserPointer", "on", "x"} {
+		if got, ok := islandEventType(name); ok {
+			t.Errorf("islandEventType(%q) = %q, want unresolved", name, got)
+		}
+	}
+}
+
+func TestLowerIslandKeepsUnknownEventAttrBuilding(t *testing.T) {
 	prog := &Program{}
 	prog.Nodes = append(prog.Nodes, Node{
 		Kind: NodeElement, Tag: "div",
-		Attrs: []Attr{{Kind: AttrExpr, Name: "onLaserPointer", Expr: "zap", IsEvent: true}},
+		Attrs: []Attr{{Kind: AttrExpr, Name: "onKey", Expr: "zap", IsEvent: true}},
 	})
-	prog.Components = append(prog.Components, Component{Name: "Bad", Root: 0, IsIsland: true})
-	_, err := LowerIsland(prog, 0)
-	if err == nil || !strings.Contains(err.Error(), `unknown island event handler "onLaserPointer"`) {
-		t.Fatalf("err = %v, want unknown island event handler", err)
-	}
-	if !strings.Contains(err.Error(), "onWheel") {
-		t.Fatalf("error must list the supported handlers, got %v", err)
+	prog.Components = append(prog.Components, Component{Name: "Legacy", Root: 0, IsIsland: true})
+	if _, err := LowerIsland(prog, 0); err != nil {
+		t.Fatalf("an unresolved handler name must not break the build: %v", err)
 	}
 }
 
@@ -686,6 +703,7 @@ func TestLowerIslandAcceptsGestureEvents(t *testing.T) {
 func TestEventFieldTypeCoversGestureFields(t *testing.T) {
 	for name, want := range map[string]program.ExprType{
 		"offsetX": program.TypeFloat, "offsetY": program.TypeFloat,
+		"elementWidth": program.TypeFloat, "elementHeight": program.TypeFloat,
 		"deltaX": program.TypeFloat, "deltaY": program.TypeFloat,
 		"deltaMode": program.TypeInt,
 	} {

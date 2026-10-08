@@ -74,6 +74,7 @@ var playgroundAllowedEvents = map[string]struct{}{
 	"input": {}, "keydown": {}, "keyup": {},
 	"pointercancel": {}, "pointerdown": {}, "pointermove": {},
 	"pointerup": {}, "submit": {}, "window-resize": {},
+	"wheel": {}, "dblclick": {}, "contextmenu": {}, "lostpointercapture": {},
 }
 
 // validatePlaygroundProgram is the authority for every DOM mutation the VM can
