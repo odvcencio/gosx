@@ -3,7 +3,11 @@
 package hubclient
 
 import (
+	"context"
+	"net"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -28,10 +32,43 @@ type nativeDialer struct {
 	enableCompression bool
 }
 
-func (d nativeDialer) Dial(rawURL string, header http.Header) (conn, error) {
+func (d nativeDialer) Dial(ctx context.Context, rawURL string, header http.Header) (conn, error) {
 	dialer := *websocket.DefaultDialer
 	dialer.EnableCompression = d.enableCompression
-	ws, _, err := dialer.Dial(rawURL, header)
+	// Gorilla observes cancellation while dialing TCP/TLS, but proxy CONNECT
+	// and HTTP upgrade reads only observe deadlines. Watch each socket from
+	// creation so cancellation closes it during either handshake as well.
+	var stopCancel func() bool
+	watchDial := func(dial func(context.Context, string, string) (net.Conn, error)) func(context.Context, string, string) (net.Conn, error) {
+		return func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+			cn, err := dial(dialCtx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			stopCancel = context.AfterFunc(ctx, func() { _ = cn.Close() })
+			return cn, nil
+		}
+	}
+	dialTCP := dialer.NetDialContext
+	if dialTCP == nil {
+		if dialer.NetDial != nil {
+			dialTCP = func(_ context.Context, network, addr string) (net.Conn, error) {
+				return dialer.NetDial(network, addr)
+			}
+		} else {
+			dialTCP = (&net.Dialer{}).DialContext
+		}
+	}
+	dialer.NetDialContext = watchDial(dialTCP)
+	if dialer.NetDialTLSContext != nil {
+		dialer.NetDialTLSContext = watchDial(dialer.NetDialTLSContext)
+	}
+	defer func() {
+		if stopCancel != nil {
+			stopCancel()
+		}
+	}()
+	ws, _, err := dialer.DialContext(ctx, rawURL, header)
 	if err != nil {
 		return nil, err
 	}
@@ -46,7 +83,9 @@ func (d nativeDialer) Dial(rawURL string, header http.Header) (conn, error) {
 
 type nativeConn struct {
 	*eventStream
-	ws *websocket.Conn
+	ws        *websocket.Conn
+	closeOnce sync.Once
+	closeErr  error
 }
 
 func (c *nativeConn) Send(data []byte, binary bool) error {
@@ -58,8 +97,16 @@ func (c *nativeConn) Send(data []byte, binary bool) error {
 }
 
 func (c *nativeConn) Close() error {
-	c.stop()
-	return c.ws.Close()
+	c.closeOnce.Do(func() {
+		c.stop()
+		// WriteControl may run concurrently with Send and the read loop. Keep
+		// shutdown bounded even if a peer stops reading or Send holds the writer.
+		_ = c.ws.WriteControl(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
+			time.Now().Add(100*time.Millisecond))
+		c.closeErr = c.ws.Close()
+	})
+	return c.closeErr
 }
 
 func (c *nativeConn) readLoop() {
