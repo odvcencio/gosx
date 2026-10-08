@@ -104,8 +104,14 @@ test:
 test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
+# CI runs the two exhaustive name partitions separately. An ordinary test-cli
+# invocation still runs the full package with the same 25-minute timeout.
 test-cli:
+ifdef CLI_SHARD
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest cli $(CLI_SHARD)
+else
 	$(GO) test -timeout 25m ./cmd/gosx
+endif
 
 test-ci-partitions:
 	$(GO) test ./internal/citest
@@ -242,13 +248,14 @@ test-editor:
 # could never fail and the prose rotted beside it.
 #
 # `make test` cannot catch this: it builds for the host, where a _js.go suffix
-# excludes the offending file. test-wasm below builds only ./client/wasm.
+# excludes the offending file. test-wasm below tests selected packages.
 # This target builds EVERY package for js/wasm, which is what the claim says.
 build-wasm-all:
 	GOOS=js GOARCH=wasm $(GO) build ./...
 
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
+	GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
