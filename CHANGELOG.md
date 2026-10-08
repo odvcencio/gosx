@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Insert single metric tuple admissions into their sorted position instead of
+  sorting the whole family. Retained-heap checks cover counters, gauges and
+  histograms under the existing memory reservations.
+
+- Add a bounded metric registry with finite label domains, atomic tuple batches,
+  scalar sample and byte reservations, sealed registration, and consistent
+  counter, gauge, and histogram instruments. Application families cannot use
+  the framework's reserved `gosx_` prefix, or labels starting with `__`.
+  Batch admission sorts once and reserves measured object and slice capacity;
+  counters and gauges retain no unused histogram state. The default request
+  metric inventory fits the unchanged sample and byte budgets.
 - App shutdown is terminal. The HTTP server drains before scheduled work,
   followed by resource Drain and Flush hooks. Scheduled cancellation preserves
   `context.Canceled`; deadline shutdowns reserve time for hooks even when a
