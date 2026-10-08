@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -678,6 +679,21 @@ func TestLowerIslandAcceptsGestureEvents(t *testing.T) {
 	for _, legacy := range []string{"wheel", "dblclick", "contextmenu", "lostpointercapture"} {
 		if !legacyInlineEventSupported(legacy) {
 			t.Fatalf("legacy data-on-%s must be supported", legacy)
+		}
+	}
+}
+
+func TestEventFieldTypeCoversGestureFields(t *testing.T) {
+	for name, want := range map[string]program.ExprType{
+		"offsetX": program.TypeFloat, "offsetY": program.TypeFloat,
+		"deltaX": program.TypeFloat, "deltaY": program.TypeFloat,
+		"deltaMode": program.TypeInt,
+	} {
+		if got := eventFieldType(name); got != want {
+			t.Errorf("eventFieldType(%s) = %v, want %v", name, got, want)
+		}
+		if !slices.Contains(islandEventFields, name) {
+			t.Errorf("islandEventFields lacks %s", name)
 		}
 	}
 }

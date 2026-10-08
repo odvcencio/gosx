@@ -10,6 +10,8 @@ func TestParseEventDataPreservesTypedAndStructuredFields(t *testing.T) {
 	data := parseEventData(`{
 		"checked":true,
 		"clientX":13,
+		"offsetX":12,
+		"deltaY":-3,
 		"timeStamp":3000000000,
 		"pointerID":7,
 		"customIntegral":13,
@@ -23,6 +25,10 @@ func TestParseEventDataPreservesTypedAndStructuredFields(t *testing.T) {
 		data["timeStamp"].Number() != 3000000000 {
 		t.Fatalf("known float fields = clientX(%v,%v) timeStamp(%v,%v)",
 			data["clientX"].Type, data["clientX"].Number(), data["timeStamp"].Type, data["timeStamp"].Number())
+	}
+	if data["offsetX"].Type != program.TypeFloat || data["deltaY"].Type != program.TypeFloat || data["deltaY"].Number() != -3 {
+		t.Fatalf("gesture fields = offsetX %v, deltaY %v/%v, want TypeFloat and -3",
+			data["offsetX"].Type, data["deltaY"].Type, data["deltaY"].Number())
 	}
 	if data["customIntegral"].Type != program.TypeInt {
 		t.Fatalf("generic integral payload type = %v, want TypeInt", data["customIntegral"].Type)

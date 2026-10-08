@@ -881,9 +881,10 @@ func eventFieldType(name string) program.ExprType {
 		return program.TypeString
 	case "checked", "ctrlKey", "metaKey", "altKey", "shiftKey", "repeat", "editable", "isPrimary":
 		return program.TypeBool
-	case "selectedIndex", "pointerID", "button", "buttons":
+	case "selectedIndex", "pointerID", "button", "buttons", "deltaMode":
 		return program.TypeInt
-	case "timeStamp", "clientX", "clientY", "pressure", "width", "height":
+	case "timeStamp", "clientX", "clientY", "pressure", "width", "height",
+		"offsetX", "offsetY", "deltaX", "deltaY":
 		return program.TypeFloat
 	default:
 		return program.TypeAny

@@ -343,6 +343,7 @@ var islandEventFields = []string{
 	"ctrlKey", "metaKey", "altKey", "shiftKey", "repeat", "timeStamp", "editable",
 	"targetID", "currentTargetID", "pointerID", "pointerType", "isPrimary",
 	"clientX", "clientY", "button", "buttons", "pressure", "width", "height",
+	"offsetX", "offsetY", "deltaX", "deltaY", "deltaMode",
 	"data", "eventData",
 }
 
