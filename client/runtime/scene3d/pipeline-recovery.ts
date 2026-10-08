@@ -1,5 +1,5 @@
-// Failure handling is fetched only after a rejected WebGPU pipeline.
-// Successful frames retain validation without loading degradation/reporting.
+// Compatibility entry point for first-failure loading by older WebGPU chunks.
+// Current WebGPU chunks keep rejection handling with the renderer.
 (function() {
   "use strict";
   function wgpuOptionalPipelinePass(label: string): string {

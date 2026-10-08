@@ -20,7 +20,10 @@ async function failureHarness(pattern, mode = "scope", options = {}) {
       env.context.__gosx_emit = (level, category, message, detail) => events.push({ message, detail });
       env.context.console = { warn: message => warnings.push(message), error() {}, log() {} };
       device.pushErrorScope = (filter) => stack.push({ filter, error: null });
-      device.popErrorScope = () => Promise.resolve(stack.pop().error);
+      device.popErrorScope = () => {
+        const error = stack.pop().error;
+        return error && options.deferValidation ? options.deferValidation(error) : Promise.resolve(error);
+      };
       device.addEventListener = (kind, callback) => { if (kind === "uncapturederror") listeners.add(callback); };
       device.removeEventListener = (kind, callback) => listeners.delete(callback);
       for (const method of ["createRenderPipeline", "createComputePipeline"]) {
@@ -266,7 +269,7 @@ test("lazy authored water pipelines preserve the initial seed across validation 
 });
 
 for (const mode of ["scope", "throw"]) {
-  test(`lazy ${mode} pipeline rejection reaches the mount's real WebGL2 fallback`, async () => {
+  test(`WebGPU ${mode} pipeline rejection reaches the mount's real WebGL2 fallback`, async () => {
     const h = await failureHarness(/^gosx-pbr-opaque$/, mode);
     h.renderer.dispose();
     const mount = new FakeElement("div", null);
@@ -304,34 +307,45 @@ for (const mode of ["scope", "throw"]) {
       assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), "webgpu-pipeline-failed");
       assert.notEqual(mount.children[0], firstCanvas);
       assert.ok(mount.children[0].contextCalls.some(call => call.kind === "webgl2"));
-      assert.equal(env.fetchCalls.filter(call => call.url.includes("pipeline-recovery")).length, 1);
+      assert.equal(env.fetchCalls.filter(call => call.url.includes("pipeline-recovery")).length, 0);
       assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 1);
       assert.equal(h.fake.state.renderPasses.some(pass => pass.pipelines.some(pipeline => pipeline.desc.label === "gosx-pbr-opaque")), false);
     } finally { if (handle) handle.dispose(); }
   });
 }
 
-test("a missing lazy recovery chunk stops the failed renderer and requests fallback", async () => {
+test("WebGPU recovery works without a separate recovery asset", async () => {
   const h = await failureHarness(/^gosx-pbr-opaque$/, "scope", {
     fetchRoutes: { "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js": { text: "" } },
   });
   await frames(h);
   assert.equal(h.renderer.getFailureReason(), "webgpu-pipeline-failed");
-  assert.match(h.renderer.diagnostics().pipelineCoreError, /Pipeline recovery unavailable/);
-  assert.ok(h.renderer.diagnostics().pipelineCoreError.includes(validationMessage));
-  assert.equal(h.env.fetchCalls.filter(call => call.url.includes("pipeline-recovery")).length, 1);
+  assert.equal(h.renderer.diagnostics().pipelineCoreError, validationMessage);
+  assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 1);
+  assert.equal(h.env.fetchCalls.filter(call => call.url.includes("pipeline-recovery")).length, 0);
   h.renderer.dispose();
 });
 
-test("disposing during the lazy fetch leaves the retired renderer silent", async () => {
-  const h = await failureHarness(/does-not-match/);
-  const load = h.env.document.scriptLoader;
-  let finish;
-  h.env.document.scriptLoader = (url, script) => { finish = () => load(url, script); };
-  Array.from(h.listeners)[0]({ error: { message: validationMessage } });
-  assert.equal(h.renderer.diagnostics().pipelinePending, 1);
+test("core recovery remains available without the shared render-truth API", async () => {
+  const h = await failureHarness(/^gosx-pbr-opaque$/);
+  delete h.env.context.__gosx_scene3d_render_truth_api;
+  await frames(h);
+  assert.equal(h.renderer.getFailureReason(), "webgpu-pipeline-failed");
+  assert.equal(h.renderer.diagnostics().pipelineCoreError, validationMessage);
+  assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 1);
   h.renderer.dispose();
-  finish();
+});
+
+test("disposing before validation settles leaves the retired renderer silent", async () => {
+  const pending = [];
+  const h = await failureHarness(/^gosx-pbr-opaque$/, "scope", {
+    deferValidation: error => new Promise(resolve => pending.push(() => resolve(error))),
+  });
+  h.renderer.render(h.scene, { width: 64, height: 64 });
+  assert.ok(pending.length > 0, "a rejected pipeline must still be waiting for validation");
+  assert.ok(h.renderer.diagnostics().pipelinePending > 0);
+  h.renderer.dispose();
+  for (const settle of pending) settle();
   await flushAsyncWork();
   assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
   assert.equal(h.warnings.length, 0);

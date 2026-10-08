@@ -1,3 +1,35 @@
+  // Keep rejection handling with its renderer; loading Scene3D alone cannot run it.
+  function wgpuOptionalPipelinePass(label: string): string {
+    if (/^gosx-post-/.test(label)) {
+      var name = label.slice("gosx-post-".length);
+      if (/^bloom|^blur$/.test(name)) return "bloom";
+      if (/^atmosphere:/.test(name)) return "atmosphere";
+      if (["toneMapping", "colorGrade", "contactShadows", "ssao", "dof", "fxaa", "vignette"].includes(name)) return name;
+    }
+    if (/^(gosx-post|post-|gosx-transmission)/.test(label)) return "post";
+    if (/^gosx-(?:planar-)?reflection/.test(label)) return "reflections";
+    return "";
+  }
+  function wgpuRecoverPipeline(guard: any, canvas: any, truth: any, label: string, message: string) {
+    if (!label) {
+      var match = message.match(/(?:RenderPipeline|ComputePipeline|ShaderModule) with ['"]([^'"]+)['"] label|['"](gosx-(?:post|reflection|transmission)[^'"]*)['"]/);
+      label = match && (match[1] || match[2]) || "uncaptured";
+    }
+    if (guard.disposed || guard.coreError) return;
+    var pass = wgpuOptionalPipelinePass(label);
+    if (pass && guard.disabled.has(pass)) return;
+    if (pass) guard.disabled.add(pass);
+    else guard.coreError = message;
+    guard.failures.push({ label: label, pass: pass || "core", message: message });
+    guard.changed();
+    truth.pipelineFailure(pass || "core", label, message);
+    var detail = { pipeline: label, pass: pass || "core", error: message, action: pass ? "disabled" : "webgl2-fallback" };
+    try { if (typeof window.__gosx_emit === "function") window.__gosx_emit("warn", "scene3d-webgpu", "pipeline-failed", detail); } catch (_err) {}
+    console.warn("[gosx] WebGPU " + (pass ? pass + " disabled" : "core pipeline failed; falling back to WebGL2") + ": " + message);
+    if (canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
+      canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-pipeline-failed", JSON.stringify(guard.failures));
+    }
+  }
   function wgpuCreatePipelineGuard(canvas: any): any {
     var guard = { pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
     var notificationPending = false;
@@ -12,13 +44,7 @@
       });
     }
     function fail(label: string, message: string) {
-      if (guard.disposed || guard.coreError) return;
-      guard.pending++;
-      window.__gosx_scene3d_api.ensurePipelineRecovery().then(function(api) {
-        api.recover(guard, canvas, renderTruth(), label, message);
-      }, function(error) {
-        if (!guard.disposed) guard.coreError = message + "\nPipeline recovery unavailable: " + String(error);
-      }).finally(function() { guard.pending--; changed(); });
+      wgpuRecoverPipeline(guard, canvas, renderTruth(), label, message);
     }
     function uncaptured(event: any) {
       if (event && typeof event.preventDefault === "function") event.preventDefault();
@@ -53,19 +79,19 @@
 
   function wgpuRequirePipeline(pipeline: any): any {
     var state = pipeline && wgpuPipelineValidation.get(pipeline);
-    if (state && state.status !== "ready") throw state;
+    if (state && !state.ready) throw state;
     return pipeline;
   }
 
   function wgpuCreateValidatedPipeline(device: any, kind: string, descriptor: any): any {
     var guard = device.__gosxPipelineGuard;
-    var state = { status: "pending", pipelineValidation: true };
+    var state = { ready: false, pipelineValidation: true };
     var pipeline: any;
     var scoped = false;
     var error: any = null;
     if (guard) guard.pending++;
     function finish(failure: any) {
-      state.status = failure ? "failed" : "ready";
+      state.ready = !failure;
       if (guard) {
         guard.pending--;
         if (failure && !guard.disposed) guard.fail(descriptor.label || kind, failure.message || String(failure));
@@ -199,6 +225,7 @@
     record: function() {},
     latch: function() {},
     captureShaderInfo: function() {},
+    pipelineFailure: function() {},
     implementation: function() { return "unknown"; },
     PIPELINE_MISSING: "missing",
     PIPELINE_PENDING: "pending",

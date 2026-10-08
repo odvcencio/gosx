@@ -1493,10 +1493,12 @@ func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 	html := gosx.RenderHTML(r.BootstrapScript())
 
 	if strings.Contains(html, `data-gosx-script="feature-scene3d-pipeline-recovery"`) {
-		t.Fatal("recovery must not load before a pipeline failure")
+		t.Fatal("recovery must load only inside the WebGPU renderer")
+	}
+	if strings.Contains(html, `data-gosx-scene3d-pipeline-recovery-url=`) {
+		t.Fatal("the WebGPU renderer contains recovery and must not advertise a separate dependency")
 	}
 	for _, want := range []string{
-		`data-gosx-scene3d-pipeline-recovery-url="/gosx/assets/runtime/bootstrap-feature-scene3d-pipeline-recovery.js"`,
 		`data-gosx-scene3d-webgl-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgl.js"`,
 		`data-gosx-scene3d-webgpu-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgpu.js"`,
 		`data-gosx-scene3d-gltf-url="/gosx/assets/runtime/bootstrap-feature-scene3d-gltf.js"`,

@@ -1209,11 +1209,6 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 			b.WriteString(html.EscapeString(animPath))
 			b.WriteByte('"')
 		}
-		if recoveryPath := r.bootstrapFeatureScene3dPipelineRecoveryPath; recoveryPath != "" {
-			b.WriteString(` data-gosx-scene3d-pipeline-recovery-url="`)
-			b.WriteString(html.EscapeString(recoveryPath))
-			b.WriteByte('"')
-		}
 		if webgpuPath := r.bootstrapFeatureScene3dWebGPUPath; webgpuPath != "" {
 			b.WriteString(` data-gosx-scene3d-webgpu-url="`)
 			b.WriteString(html.EscapeString(webgpuPath))
