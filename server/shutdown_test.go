@@ -513,10 +513,18 @@ func TestScheduledDrainWindow(t *testing.T) {
 
 func TestScheduledJoinDeadlineBoundaries(t *testing.T) {
 	now := time.Unix(0, 0)
+	var previous time.Duration
 	for _, tc := range []struct{ remaining, join time.Duration }{
 		{time.Second, 500 * time.Millisecond},
-		{2500 * time.Millisecond, 0},
-		{4 * time.Second, 1500 * time.Millisecond},
+		{2 * time.Second, time.Second},
+		{2400 * time.Millisecond, 1200 * time.Millisecond},
+		{2500 * time.Millisecond, 1250 * time.Millisecond},
+		{2600 * time.Millisecond, 1300 * time.Millisecond},
+		{3 * time.Second, 1500 * time.Millisecond},
+		{3500 * time.Millisecond, 1750 * time.Millisecond},
+		{4 * time.Second, 2 * time.Second},
+		{4500 * time.Millisecond, 2250 * time.Millisecond},
+		{5 * time.Second, 2500 * time.Millisecond},
 		{6 * time.Second, 3500 * time.Millisecond},
 		{100 * time.Second, 87500 * time.Millisecond},
 	} {
@@ -524,6 +532,10 @@ func TestScheduledJoinDeadlineBoundaries(t *testing.T) {
 		if got != tc.join {
 			t.Fatalf("remaining=%s: join cutoff=%s, want %s", tc.remaining, got, tc.join)
 		}
+		if got < previous {
+			t.Fatalf("remaining=%s: join budget fell from %s to %s", tc.remaining, previous, got)
+		}
+		previous = got
 	}
 }
 

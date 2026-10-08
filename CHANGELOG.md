@@ -13,8 +13,10 @@
   drains, then flush in reverse registration order. Concurrent shutdown callers
   share one terminal pipeline and respect their own deadlines; `/readyz` reports
   draining. Scheduled runs cancel after 30 seconds without a deadline. With a
-  deadline, their cooperative window leaves at least five seconds or a quarter
-  of the remaining time for hooks. Every Drain and Flush is then attempted with
+  deadline, cancellation uses a reserve of five seconds or a quarter of the
+  remaining time, whichever is greater. Scheduler joining leaves half the
+  smaller of that reserve and the time remaining after HTTP drains for hooks.
+  Every Drain and Flush is then attempted with
   the shared context. Lifecycle configuration errors use the server namespace.
   `Scheduler.StopContext` stops admission and cancels on its context deadline
   without allocating waiter goroutines. The legacy `Stop(grace)` also bounds
