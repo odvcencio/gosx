@@ -402,7 +402,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # scene3d-v1-browser-renderer-proof: one bounded four-mode renderer-contract
+  # scene3d-v1-browser-renderer-proof: one bounded five-mode renderer-contract
   # matrix. Hosted WebGPU uses a private target; canvas presentation remains a
   # release-pinned hardware obligation. Successful runs trap-clean artifacts;
   # failed runs upload every mode before the always cleanup step.
