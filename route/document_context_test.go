@@ -3,6 +3,7 @@ package route
 import (
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -50,7 +51,7 @@ func TestRouteContextDocumentPreservesNativePageState(t *testing.T) {
 	if doc.RequestID != "request-123" || doc.Metadata.Title.Absolute != "Runtime docs" {
 		t.Fatalf("request ID/metadata lost: id=%q metadata=%#v", doc.RequestID, doc.Metadata)
 	}
-	if !doc.Bootstrap || doc.Runtime != wantRuntime || doc.RuntimeActive != wantRuntime.Runtime || !doc.Navigation || doc.Runtime.BootstrapMode == "none" {
+	if !doc.Bootstrap || !reflect.DeepEqual(doc.Runtime, wantRuntime) || doc.RuntimeActive != wantRuntime.Runtime || !doc.Navigation || doc.Runtime.BootstrapMode == "none" {
 		t.Fatalf("runtime/navigation state lost: bootstrap=%v runtimeActive=%v runtime=%v navigation=%v runtime=%#v want=%#v", doc.Bootstrap, doc.RuntimeActive, doc.Runtime.Runtime, doc.Navigation, doc.Runtime, wantRuntime)
 	}
 	if doc.Nonce != "route-nonce" || len(doc.BodyAttrs) == 0 || doc.Body.IsZero() {
