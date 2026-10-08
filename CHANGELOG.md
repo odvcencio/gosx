@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Hub closing retires every observer and drains admitted callbacks before
+  delivering Closed. Closed is the final callback, including after Close returns;
+  callbacks must remain bounded and cannot wait for that same hub to close.
+
+- Add additive hub observers configured before the first connection, with
+  logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
+  classifications. Connection rejections are separate from malformed and
+  rate-limited messages; observers preserve existing hub panic diagnostics.
+  Embed `NoopObserver` for future callbacks. Closing detaches subscriptions
+  before `Closed`; already admitted callbacks may overlap completion.
+  `Hub.Close(ctx)` rejects upgrades and waits for connection
+  pumps within each caller's deadline; unfinished owners retain subscriptions.
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
   request-time compression. Static exports include the asset. Defer execution
