@@ -22,13 +22,14 @@ type HTMLMeasureOptions struct {
 	Pin                   assetmeasure.CompressorPin
 }
 type HTMLMeasurement struct {
-	Sizes              assetmeasure.Sizes
-	Framework          SizeTriple
-	App                SizeTriple
-	InlineAppScriptMax int64
-	ExecutableScripts  int64
-	full               []byte
-	withoutFramework   []byte
+	Sizes                 assetmeasure.Sizes
+	Framework             SizeTriple
+	App                   SizeTriple
+	InlineAppScriptMax    int64
+	ExecutableScripts     int64
+	SyncExecutableScripts int64
+	full                  []byte
+	withoutFramework      []byte
 }
 
 // MeasureHTML uses complete recompressed documents for inline ownership; it
@@ -118,6 +119,9 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 			if token.Data == "script" {
 				active = true
 				executable = templates == 0 && attributes["src"] == "" && executableScriptType(attributes["type"])
+				if templates == 0 && executableScriptType(attributes["type"]) && strings.TrimSpace(strings.ToLower(attributes["type"])) != "module" && (attributes["src"] == "" || !seen["defer"] && !seen["async"]) {
+					result.SyncExecutableScripts++
+				}
 				if templates == 0 && attributes["src"] != "" && executableScriptType(attributes["type"]) {
 					result.ExecutableScripts++
 				}

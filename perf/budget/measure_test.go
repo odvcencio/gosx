@@ -465,3 +465,20 @@ func TestMeasureExpandsOnlyRequestedBackendAndKeepsCommonGoals(t *testing.T) {
 		})
 	}
 }
+
+func TestMeasurePolicyObservationsReachGate(t *testing.T) {
+	opts, _, _, _ := testRouteMeasurement(t)
+	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := map[string]bool{}
+	for _, policy := range report.Rows[0].Policies {
+		policies[policy.Name] = policy.Passed
+	}
+	for _, name := range []string{inlineExecutablePolicy, "no-sync-script", "runtime-hashed", "declared-fetches", "canonical-build", "zero-js"} {
+		if !policies[name] {
+			t.Fatal("verified policy missing from measurement", name)
+		}
+	}
+}

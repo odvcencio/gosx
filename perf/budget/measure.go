@@ -180,6 +180,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			return result, measureFailure("capability", "/routes/pageTypes")
 		}
 		row := Row{App: opts.App, RouteTemplate: route.RouteTemplate, Scenario: "hard-cold", Status: "unavailable", ReasonCode: "unknown-reachability", Backend: opts.Public.Backend, ModelStatus: "unknown", Policies: append([]PolicyResult{}, first.Policies...)}
+		row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(measuredHTML))
 		if row.Backend == "" {
 			row.Backend = "none"
 		}
@@ -192,6 +193,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		} else {
 			row.ReasonCode = "insufficient-data"
 		}
+		row.Policies = mergeMeasurePolicies(row.Policies, []PolicyResult{{Name: "declared-fetches", Passed: plan.Reachability == "known"}, {Name: "canonical-build", Passed: opts.Public.Canonical}})
 		phases := map[string]string{}
 		for _, asset := range plan.Assets {
 			phases[asset.ID] = asset.Phase
@@ -206,6 +208,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		inline := map[string]int64{first.finalURL: measuredHTML.Framework.Brotli}
 		coldInline := map[string]bool{first.finalURL: true}
 		noExecutableAssets := true
+		runtimeHashed := measuredHTML.Framework.Raw == 0
 		for _, fixture := range fixtures {
 			phase := phases[fixture.id]
 			if phase != "dormant" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
@@ -227,6 +230,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			if err != nil {
 				return result, err
 			}
+			var childHTML HTMLMeasurement
 			if fixture.kind == "html" {
 				repeat, err := measureHTTP(ctx, options, normalize)
 				if err != nil {
@@ -243,6 +247,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				if err := VerifyHTMLRenders(html, again); err != nil {
 					return result, err
 				}
+				childHTML = html
 				if fixture.owner == "app" {
 					inline[observed.finalURL] = html.Framework.Brotli
 					coldInline[observed.finalURL] = coldInline[observed.finalURL] || phaseRank(phase) <= 1
@@ -253,6 +258,16 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				costs = append(costs, PhaseCost{RequestIdentity: "asset-redirect:" + fixture.id + ":" + strconv.Itoa(i), Phase: phase, Owner: fixture.owner, Sizes: redirect, WireBytes: observed.redirectWireBytes[i], Requests: 1})
 			}
 			row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
+			if fixture.owner == "framework" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
+				for _, policy := range observed.Policies {
+					if policy.Name == "immutable-hashed" {
+						runtimeHashed = runtimeHashed && policy.Passed
+					}
+				}
+			}
+			if fixture.kind == "html" && phaseRank(phase) <= 1 {
+				row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(childHTML))
+			}
 		}
 		totals, err := SumPhases(costs)
 		if err != nil {
@@ -272,7 +287,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				row.AppBytes -= n
 			}
 		}
-		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && measuredHTML.ExecutableScripts == 0 && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
+		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && measuredHTML.ExecutableScripts == 0 && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0}, PolicyResult{Name: "runtime-hashed", Passed: runtimeHashed})
 		row.HeadroomBytes = -row.NormalizedBytes
 		for _, name := range route.PageTypes {
 			family, backend, _ := pageTypeVariant(name)
