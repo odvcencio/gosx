@@ -1001,9 +1001,24 @@ the player follows the returned download page and reinstalls Setup. Both paths
 are separate from the optional `CrashReporterOptions`, which captures Go
 panics plus Windows minidumps with optional user-consented upload.
 
-`gosx build --prod` emits a deployable `dist/` bundle with a server binary,
-hashed assets, prerendered static pages, an ISR manifest, and edge worker
-support. Add `--offline` to stage `dist/offline/` with a versioned asset
+`gosx build --prod` emits a deployable `dist/` bundle with a server binary and
+hashed assets. With prerendering enabled it also emits static pages, an ISR
+manifest, and edge worker support. Validate the server bundle before upload:
+
+```sh
+gosx deploy check dist
+gosx deploy check --json dist # structured result and nonzero exit on failure
+```
+
+The check verifies the existing bundle policy, declared asset sizes, content
+hashes and script integrity, compressed sidecars, executable launch files, and
+exported route files. It reads only the bundle and works without starting the
+application, connecting to a database, or supplying production secrets. It is
+an offline artifact check; host compatibility, runtime configuration, migrations,
+and live health still need validation on the destination. It currently accepts
+server bundles from `gosx build`, not static-only `gosx export` output.
+
+Add `--offline` to stage `dist/offline/` with a versioned asset
 manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `dist/app.msix` through MakeAppx, `--sign` to run signtool with
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
