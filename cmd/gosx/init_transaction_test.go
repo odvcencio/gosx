@@ -7,7 +7,71 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
+
+type scaffoldUnreadableFS struct {
+	fs.FS
+	err error
+}
+
+func (s scaffoldUnreadableFS) Open(name string) (fs.File, error) {
+	if name == "private" {
+		return nil, &fs.PathError{Op: "open", Path: name, Err: s.err}
+	}
+	return s.FS.Open(name)
+}
+
+func TestScaffoldGoFileScanDirectoryErrors(t *testing.T) {
+	for _, denied := range []error{fs.ErrPermission, fs.ErrInvalid} {
+		t.Run(denied.Error(), func(t *testing.T) {
+			filesystem := scaffoldUnreadableFS{
+				FS:  fstest.MapFS{"private/package.go": &fstest.MapFile{Data: []byte("package private\n")}},
+				err: denied,
+			}
+			existingGo, err := scaffoldHasGoFiles(filesystem)
+			if errors.Is(denied, fs.ErrPermission) {
+				if err != nil || !existingGo {
+					t.Fatalf("permission error must request final tidy: existing=%v err=%v", existingGo, err)
+				}
+			} else if !errors.Is(err, denied) {
+				t.Fatalf("unexpected filesystem error was suppressed: %v", err)
+			}
+		})
+	}
+}
+
+func TestInitSkipsUnreadableDirectory(t *testing.T) {
+	dir := t.TempDir()
+	private := filepath.Join(dir, "private")
+	if err := os.Mkdir(private, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(private, 0000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(private, 0700) })
+	if _, err := os.ReadDir(private); !errors.Is(err, fs.ErrPermission) {
+		t.Skip("filesystem does not enforce directory permission bits")
+	}
+	output, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	oldStderr := os.Stderr
+	os.Stderr = output
+	defer func() { os.Stderr = oldStderr }()
+	if err := RunInit(dir, "example.com/app", "app"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, output.Name()); !strings.Contains(got, "go mod tidy") {
+		t.Fatalf("missing final tidy reminder: %s", got)
+	}
+	if got := readFile(t, filepath.Join(dir, "go.mod")); !strings.Contains(got, "module example.com/app") {
+		t.Fatalf("scaffold was not published: %s", got)
+	}
+}
 
 func TestInitPreflightsEveryOutput(t *testing.T) {
 	for _, name := range []string{"public/styles.css", "modules/modules.go", "go.sum"} {

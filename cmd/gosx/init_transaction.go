@@ -54,17 +54,8 @@ func createScaffold(dir, module string, files []scaffoldFile, tidy func(string) 
 	if err != nil {
 		return nil, err
 	}
-	existingGo := false
-	if err = fs.WalkDir(root.FS(), ".", func(_ string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-			existingGo = true
-			return fs.SkipAll
-		}
-		return nil
-	}); err != nil {
+	existingGo, err := scaffoldHasGoFiles(root.FS())
+	if err != nil {
 		return nil, err
 	}
 	stage, err := os.MkdirTemp("", "gosx-init-")
@@ -138,6 +129,30 @@ func createScaffold(dir, module string, files []scaffoldFile, tidy func(string) 
 		return tidyErr, err
 	}
 	return tidyErr, publishScaffold(root, files, nil)
+}
+
+func scaffoldHasGoFiles(filesystem fs.FS) (bool, error) {
+	existingGo := false
+	err := fs.WalkDir(filesystem, ".", func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			if errors.Is(walkErr, fs.ErrPermission) {
+				// Unreadable directories may contain packages absent from staging.
+				// Allow publication and request a final tidy in the completed project.
+				existingGo = true
+				if entry != nil && entry.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			return walkErr
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+			existingGo = true
+			return fs.SkipAll
+		}
+		return nil
+	})
+	return existingGo, err
 }
 
 func preflightScaffold(root *os.Root, files []scaffoldFile) error {
