@@ -202,6 +202,46 @@ test("a rotation channel still slerps four values", () => {
   assert.deepEqual(value, [0, 0, 0, 1]);
 });
 
+test("quaternion interpolation preserves shortest paths and permits either input as output", () => {
+  const { context } = createMixerContext();
+  const cases = [
+    { a: [0, 0, 0, 1], b: [0, 0, 1, 0], t: 0.5, expected: [0, 0, Math.SQRT1_2, Math.SQRT1_2] },
+    { a: [0, 0, 0, 1], b: [0, 0, 0, -1], t: 0.5, expected: [0, 0, 0, 1] },
+    { a: [0, 0, 0, 1], b: [0, 0, Math.sin(0.01), Math.cos(0.01)], t: 0.5, expected: [0, 0, Math.sin(0.005), Math.cos(0.005)] },
+    { a: [0, 0, 0, 1], b: [1, 0, 0, 0], t: 0, expected: [0, 0, 0, 1] },
+    { a: [0, 0, 0, 1], b: [1, 0, 0, 0], t: 1, expected: [1, 0, 0, 0] },
+  ];
+  for (const { a, b, t, expected } of cases) {
+    for (const output of ["new Array(4)", "a", "b"]) {
+      const actual = run(context, `(() => {
+        const a = ${JSON.stringify(a)}, b = ${JSON.stringify(b)}, out = ${output};
+        return { same: sceneAnimSlerpQuatInto(out, a, b, ${t}) === out, value: out };
+      })()`);
+      assert.equal(actual.same, true);
+      actual.value.forEach((value, index) => assert.ok(Math.abs(value - expected[index]) < 1e-12));
+    }
+  }
+});
+
+test("weighted clip blending reuses its owned result and preserves incoming samples", () => {
+  const { context } = createMixerContext();
+  for (const property of ["rotation", "weights"]) {
+    const result = run(context, `(() => {
+      const owned = ${property === "rotation" ? "[0, 0, 0, 1]" : "[0, 1, 2, 3, 4]"};
+      const incoming = ${property === "rotation" ? "[0, 0, 1, 0]" : "[2, 3, 4, 5, 6]"};
+      const before = incoming.slice();
+      const existing = { value: owned, totalWeight: 1 };
+      sceneAnimBlendValue(existing, incoming, 1, ${JSON.stringify(property)});
+      return { same: existing.value === owned, value: owned, totalWeight: existing.totalWeight, incoming, before };
+    })()`);
+    assert.equal(result.same, true);
+    assert.equal(result.totalWeight, 2);
+    assert.deepEqual(result.incoming, result.before);
+    const expected = property === "rotation" ? [0, 0, Math.SQRT1_2, Math.SQRT1_2] : [1, 2, 3, 4, 5];
+    result.value.forEach((value, index) => assert.ok(Math.abs(value - expected[index]) < 1e-12));
+  }
+});
+
 // ---------------------------------------------------------------------------
 // WASM transport (wasmClipJSON / wasmDecodePose)
 // ---------------------------------------------------------------------------
