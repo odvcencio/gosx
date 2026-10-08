@@ -675,10 +675,11 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 	case signalCallNew:
 		initExpr := l.extractArg(argsNode, 0)
 		return SignalInfo{
-			Name:     varName,
-			Local:    varName,
-			InitExpr: initExpr,
-			TypeHint: l.inferTypeHint(initExpr),
+			Name:       varName,
+			Local:      varName,
+			InitExpr:   initExpr,
+			TypeHint:   l.inferTypeHint(initExpr),
+			SourceType: l.signalSourceType(initExpr),
 		}, true
 	case signalCallNewShared, signalCallShared:
 		sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
@@ -687,10 +688,11 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			return SignalInfo{}, false
 		}
 		return SignalInfo{
-			Name:     sharedName,
-			Local:    varName,
-			InitExpr: initExpr,
-			TypeHint: l.inferTypeHint(initExpr),
+			Name:       sharedName,
+			Local:      varName,
+			InitExpr:   initExpr,
+			TypeHint:   l.inferTypeHint(initExpr),
+			SourceType: l.signalSourceType(initExpr),
 		}, true
 	default:
 		return SignalInfo{}, false
@@ -707,9 +709,30 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 		l.errorf(rightExpr, "computed %q: %v", varName, err)
 	}
 	return ComputedInfo{
-		Name:     varName,
-		BodyExpr: bodyExpr,
+		Name:       varName,
+		BodyExpr:   bodyExpr,
+		ReturnType: l.computedSourceType(argsNode),
 	}, true
+}
+
+func (l *lowerer) signalSourceType(source string) string {
+	source = strings.TrimSpace(source)
+	if strings.HasPrefix(source, "'") {
+		return "rune"
+	}
+	return l.inferTypeHint(source)
+}
+
+func (l *lowerer) computedSourceType(args *gotreesitter.Node) string {
+	for i := 0; i < int(args.NamedChildCount()); i++ {
+		fn := args.NamedChild(i)
+		if l.nodeType(fn) == "func_literal" {
+			if result := l.childByField(fn, "result"); result != nil {
+				return l.text(result)
+			}
+		}
+	}
+	return ""
 }
 
 func (l *lowerer) handlerInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node) (HandlerInfo, bool) {

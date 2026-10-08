@@ -1,0 +1,146 @@
+package ir_test
+
+import (
+	"bytes"
+	"errors"
+	"fmt"
+	"testing"
+
+	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/aot"
+	"m31labs.dev/gosx/island/program"
+)
+
+func TestIslandAOTSourceContract(t *testing.T) {
+	src := []byte(`package example
+type CounterProps struct { Label string; Initial int32 }
+//gosx:island
+func Counter(props CounterProps) Node {
+ count := signal.New(0)
+ doubled := signal.Derive(func() int { return count.Get() + count.Get() })
+ increment := func() { count.Set(count.Get() + 1) }
+ return <div><button type="button" onClick={increment}>Count: {count}</button><span>{props.Label}{props.Initial}</span></div>
+}`)
+	p, err := parse(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.PackagePath = "example/components"
+	vmProgram, err := ir.LowerIsland(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vmBytes, err := program.EncodeBinary(vmProgram)
+	if err != nil {
+		t.Fatal(err)
+	}
+	u, err := ir.LowerIslandAOT(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(vmBytes, u.ProgramBytes) {
+		t.Fatal("source evidence changed the fallback program")
+	}
+	if u.Component != "example/components.Counter" || len(u.Contract.Expressions) != len(vmProgram.Exprs) {
+		t.Fatalf("incomplete contract: %+v", u.Contract)
+	}
+	if len(u.Contract.Inputs) != 2 || u.Contract.Inputs[0].Root != "Initial" || u.Contract.Inputs[0].Kind != aot.Int32 || u.Contract.Inputs[1].Root != "Label" {
+		t.Fatalf("inputs: %+v", u.Contract.Inputs)
+	}
+	if len(u.Contract.Signals) != 1 || u.Contract.Signals[0].Kind != aot.Int || len(u.Contract.Computeds) != 1 || u.Contract.Computeds[0].Kind != aot.Int {
+		t.Fatalf("state evidence: %+v", u.Contract)
+	}
+	if len(u.Contract.Bindings) != 5 || len(u.Contract.Bindings[2].Nodes) != 2 || u.Contract.Bindings[2].Kind != program.NodeText {
+		t.Fatalf("physical text groups: %+v", u.Contract.Bindings)
+	}
+	u2, err := ir.LowerIslandAOT(p, 0)
+	if err != nil || u.Digest != u2.Digest {
+		t.Fatalf("nondeterministic contract: %v", err)
+	}
+}
+
+func TestIslandAOTRejectsErasedAndUnsupportedSourceTypes(t *testing.T) {
+	for _, typ := range []string{"int8", "int16", "int64", "uint", "uint32", "rune", "float32", "float64", "CounterInt"} {
+		t.Run(typ, func(t *testing.T) {
+			src := []byte(fmt.Sprintf(`package example
+type CounterInt int
+//gosx:island
+func Counter() Node {
+ derived := signal.Derive(func() %s { return 1 })
+ return <div>{derived}</div>
+}`, typ))
+			p, err := parse(t, src)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.PackagePath = "example/components"
+			_, err = ir.LowerIslandAOT(p, 0)
+			var diagnostic *ir.DiagnosticsError
+			if !errors.As(err, &diagnostic) || diagnostic.Diagnostics[0].Code != "aot_source_type" {
+				t.Fatalf("unproved %s: %v", typ, err)
+			}
+		})
+	}
+}
+
+func TestIslandAOTRejectsRuneStringErasure(t *testing.T) {
+	for _, body := range []string{`label := signal.New('x'); return <div>{label}</div>`, `return <div>{'x'}</div>`, `return <div><Badge /></div>`} {
+		src := []byte("package example\n//gosx:island\nfunc Counter() Node { " + body + " }\ncomponent Badge() { return <span>{'x'}</span> }")
+		p, err := parse(t, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		p.PackagePath = "example/components"
+		if _, err := ir.LowerIslandAOT(p, 0); err == nil {
+			t.Fatalf("accepted erased rune: %s", body)
+		}
+	}
+}
+
+func TestIslandAOTMissingTypeEvidenceAndIdentity(t *testing.T) {
+	p := &ir.Program{PackagePath: "example/components", Nodes: []ir.Node{{Kind: ir.NodeElement, Tag: "div"}}, Components: []ir.Component{{Name: "Counter", IsIsland: true, Scope: &ir.ComponentScope{Signals: []ir.SignalInfo{{Name: "n", InitExpr: "1", TypeHint: "int"}}}}}}
+	if _, err := ir.LowerIslandAOT(p, 0); err == nil {
+		t.Fatal("accepted a VM hint as source type proof")
+	}
+	p.Components[0].Scope = nil
+	p.PackagePath = ""
+	if _, err := ir.LowerIslandAOT(p, 0); err == nil {
+		t.Fatal("accepted an unqualified identity")
+	}
+	for _, index := range []int{-1, 1} {
+		if _, err := ir.LowerIslandAOT(p, index); err == nil {
+			t.Fatal("accepted invalid component index")
+		}
+	}
+	if _, err := ir.LowerIslandAOT(nil, 0); err == nil {
+		t.Fatal("accepted absent source")
+	}
+}
+
+func TestIslandAOTNestedInputsAndEvents(t *testing.T) {
+	src := []byte(`package example
+type Detail struct { Label string }
+type EditorProps struct { Detail Detail }
+//gosx:island
+func Editor(props EditorProps) Node {
+ text := signal.New("")
+ edit := func() { text.Set(value) }
+ return <div><input value={text} onInput={edit} /><span>{props.Detail.Label}{props.Detail.Label}</span></div>
+}`)
+	p, err := parse(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.PackagePath = "example/components"
+	u, err := ir.LowerIslandAOT(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(u.Contract.Inputs) != 2 || u.Contract.Inputs[0].Source != "event" || u.Contract.Inputs[0].Root != "value" || u.Contract.Inputs[0].Kind != aot.String {
+		t.Fatalf("event: %+v", u.Contract.Inputs)
+	}
+	input := u.Contract.Inputs[1]
+	if input.Root != "Detail" || len(input.Path) != 1 || input.Path[0] != "Label" || len(input.Exprs) != 2 {
+		t.Fatalf("selector interning: %+v", input)
+	}
+}

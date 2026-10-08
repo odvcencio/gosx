@@ -107,6 +107,10 @@ test-unit:
 test-cli:
 	$(GO) test -timeout 25m ./cmd/gosx
 
+.PHONY: test-island-aot
+test-island-aot:
+	GOWORK=off $(GO) test -count=1 ./island/aot
+
 test-ci-partitions:
 	$(GO) test ./internal/citest
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify

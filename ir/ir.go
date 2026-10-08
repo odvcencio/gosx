@@ -300,6 +300,9 @@ type SignalInfo struct {
 	Local    string // local variable name used inside the component (e.g., "count")
 	InitExpr string // source text of the init expression (e.g., "0")
 	TypeHint string // inferred type from init value (e.g., "int", "string")
+	// SourceType retains scalar source evidence separately from VM type hints.
+	// Empty means the source kind was not proved.
+	SourceType string
 }
 
 // ComputedInfo describes a computed/derived signal declaration.
@@ -307,6 +310,8 @@ type SignalInfo struct {
 type ComputedInfo struct {
 	Name     string // variable name
 	BodyExpr string // source text of the return expression
+	// ReturnType is the declared Go result type, without alias resolution.
+	ReturnType string
 }
 
 // HandlerInfo describes a handler function declaration.
