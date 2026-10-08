@@ -82,6 +82,10 @@ func (e *expressionEmitter) beginFunction() wasmgen.Function {
 	b.index(0x24, allocationGlobal)
 	b.i32(0)
 	b.index(0x24, workingStringsGlobal)
+	if e.dom != nil {
+		b.i32(0)
+		b.index(0x24, e.dom.patchCount)
+	}
 	b.i32(1)
 	b.index(0x24, pendingGlobal)
 	for i, global := range []uint32{pendingLoGlobal, pendingHiGlobal} {

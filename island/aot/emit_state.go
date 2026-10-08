@@ -26,7 +26,7 @@ func emitStateExpressions(u Unit, instances []uint32) (*expressionEmitter, error
 	if err != nil {
 		return nil, err
 	}
-	return emitConfiguredModule(u, state.roots, true, state)
+	return emitConfiguredModule(u, state.roots, true, state, nil)
 }
 
 // Local roots are distinct per numeric instance. Shared roots are keyed by

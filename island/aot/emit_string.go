@@ -27,13 +27,23 @@ func i32Signature(count int) wasmgen.Signature {
 
 func (e *expressionEmitter) setupStrings() error {
 	needed := e.transactional
-	formatNeeded := false
+	formatNeeded := e.dom != nil
 	values := map[string]bool{}
 	for i, expr := range e.unit.Program.Exprs {
 		needed = needed || e.unit.Contract.Expressions[i].Kind == String
 		formatNeeded = formatNeeded || expr.Op == program.OpFormat || expr.Op == program.OpToString
 		if expr.Op == program.OpLitString || expr.Op == program.OpFormat {
 			values[expr.Value] = true
+		}
+	}
+	if e.dom != nil {
+		for _, node := range e.unit.Program.Nodes {
+			if node.Kind == program.NodeText {
+				values[node.Text] = true
+			}
+		}
+		for _, name := range append(append([]string{}, e.dom.bindings.Tags...), e.dom.bindings.Attributes...) {
+			values[name] = true
 		}
 	}
 	if !needed {

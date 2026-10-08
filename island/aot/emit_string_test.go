@@ -109,7 +109,7 @@ func TestEmitStringLengthAndArenaLimits(t *testing.T) {
 
 // This harness only transports bytes and invokes emitted functions. Expression
 // evaluation and formatting remain in the module and native VM references.
-func runExpressionModule(t *testing.T, module wasmgen.Module, script string, input, output any) {
+func runExpressionModule(t *testing.T, module wasmgen.Module, script string, input, output any, imports ...string) {
 	t.Helper()
 	node, err := exec.LookPath("node")
 	if err != nil {
@@ -128,12 +128,16 @@ func runExpressionModule(t *testing.T, module wasmgen.Module, script string, inp
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	host := "{input: unexpected, bind: unexpected, patch: unexpected}"
+	if len(imports) != 0 {
+		host = imports[0]
+	}
 	bootstrap := `const fs = require('node:fs');
 const data = JSON.parse(fs.readFileSync(0, 'utf8'));
 (async () => {
   const unexpected = () => { throw new Error('unexpected expression host call'); };
-  const {instance} = await WebAssembly.instantiate(Buffer.from(process.argv[1], 'base64'),
-    {gosx_aot_v1: {input: unexpected, bind: unexpected, patch: unexpected}});
+	  const {instance} = await WebAssembly.instantiate(Buffer.from(process.argv[1], 'base64'),
+	    {gosx_aot_v1: ` + host + `});
   const memory = new Uint8Array(instance.exports.memory.buffer);
   const view = new DataView(memory.buffer);
 ` + script + `

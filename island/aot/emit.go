@@ -36,6 +36,7 @@ type expressionEmitter struct {
 	state         *stateLayout
 	handlers      []uint32
 	computed      *computedLayout
+	dom           *domLayout
 }
 
 func emitExpressions(u Unit) (*expressionEmitter, error) {
@@ -47,10 +48,10 @@ func emitArenaExpressions(u Unit, roots uint32) (*expressionEmitter, error) {
 }
 
 func emitScalarModule(u Unit, roots uint32, transactions bool) (*expressionEmitter, error) {
-	return emitConfiguredModule(u, roots, transactions, nil)
+	return emitConfiguredModule(u, roots, transactions, nil, nil)
 }
 
-func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateLayout) (*expressionEmitter, error) {
+func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateLayout, dom *domLayout) (*expressionEmitter, error) {
 	if roots > ProfileLimits().Values {
 		return nil, fmt.Errorf("scalar root layout exceeds the profile")
 	}
@@ -64,7 +65,7 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 		}
 		return wasmgen.Signature{Params: params, Result: wasmgen.I32}
 	}
-	e := &expressionEmitter{unit: u, rootSlots: roots, transactional: transactions, state: state, module: wasmgen.Module{
+	e := &expressionEmitter{unit: u, rootSlots: roots, transactional: transactions, state: state, dom: dom, module: wasmgen.Module{
 		Imports: []wasmgen.Import{
 			{Module: "gosx_aot_v1", Name: "input", Signature: sig(4)},
 			{Module: "gosx_aot_v1", Name: "bind", Signature: sig(4)},
@@ -108,6 +109,9 @@ func emitConfiguredModule(u Unit, roots uint32, transactions bool, state *stateL
 	}
 	if state != nil {
 		e.setupHandlers()
+	}
+	if dom != nil {
+		e.setupDOM()
 	}
 	binary, err := wasmgen.Encode(e.module)
 	if err == nil {
