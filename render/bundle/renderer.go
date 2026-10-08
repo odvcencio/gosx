@@ -35,6 +35,8 @@ const cascadeCount = 3
 // a gpu.Device. One Renderer instance serves one canvas / one engine runtime.
 // Not safe for concurrent use.
 type Renderer struct {
+	materialDiagnostics materialDiagnosticsCache
+
 	device        gpu.Device
 	surface       gpu.Surface
 	surfaceFormat gpu.TextureFormat
@@ -739,6 +741,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	if width <= 0 || height <= 0 {
 		return nil
 	}
+	r.stats.setMaterialFallbacks(r.materialDiagnostics.update(b))
 	b = applyNativeAnimations(b, timeSeconds)
 	r.updatePickSpans(b)
 	if err := r.prepareMeshStates(b); err != nil {
