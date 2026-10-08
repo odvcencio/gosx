@@ -17,7 +17,7 @@ import (
 	"m31labs.dev/gosx/telemetry/metric"
 )
 
-func activityDeclarationOwner(t *testing.T) *Telemetry {
+func activityDeclarationOwner(t testing.TB) *Telemetry {
 	t.Helper()
 	o := Defaults()
 	o.Metrics.DisableRequests = true

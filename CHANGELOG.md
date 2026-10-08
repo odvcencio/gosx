@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add bounded activity seats with revision-checked field replacement, one
+  active connection reference, idempotent joins and leaves, monotonic presence
+  time and frozen final totals. Consented human links are copied and trimmed
+  to preserve final capacity; bots and unconsented refs persist no client data.
+
 - Add the activity lifecycle owner with copied revision-checked projections,
   reserved immutable finals, monotonic duration, frozen loop health and shared
   memory receipts. Source drain preserves admitted work; idle and shutdown

@@ -40,10 +40,11 @@ type activityEntity struct {
 	loop             *Loop
 	dirty, final     bool
 	receipt          Receipt
+	presence         map[string]participantPresence
 }
 
 const activitySlotBytes = int64(32 << 10)
-const activityMetadataBytes = int64(1024)
+const activityMetadataBytes = int64(12 << 10) // entity, bounded presence map and opaque refs
 
 func encodeActivityFields[T any](kind *activityKindCore, codec *compiledDomainCodec[T], value T) (schema.Fields, error) {
 	fields, err := codec.encodeFields(kind.owner.activities.pool, value)
@@ -98,6 +99,14 @@ func (t *Telemetry) activityNow() (Instant, error) {
 	return now, nil
 }
 func activityElapsed(v *schema.Activity, e *activityEntity, now Instant, final bool) {
+	e.mu.Lock()
+	for i := range v.Participants {
+		sessionPresence(&v.Participants[i], e.presence[v.Participants[i].ID], now.Monotonic)
+	}
+	e.mu.Unlock()
+	activityTiming(v, e, now, final)
+}
+func activityTiming(v *schema.Activity, e *activityEntity, now Instant, final bool) {
 	elapsed := now.Monotonic - e.start
 	if elapsed < 0 {
 		elapsed = 0
@@ -126,8 +135,14 @@ func activityElapsed(v *schema.Activity, e *activityEntity, now Instant, final b
 }
 func (k *activityKindCore) buildActivityRecord(v schema.Activity, state schema.RecordState, revision uint64, now Instant, reserveHealth bool) (schema.Record, error) {
 	t := k.owner
-	if err := k.validateFinalCapacity(v, reserveHealth); err != nil {
-		return schema.Record{}, err
+	for {
+		err := k.validateFinalCapacity(v, reserveHealth)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrFieldBudget) || !trimActivityLink(&v) {
+			return schema.Record{}, err
+		}
 	}
 	s := t.activities
 	s.mu.Lock()
@@ -247,16 +262,22 @@ func (a *Activity[A, P, E]) Snapshot() (schema.Activity, error) {
 	}
 	e := a.entity
 	e.mu.Lock()
-	r := e.record
+	v, _ := e.record.Activity()
 	final := e.final
+	var presence [33]participantPresence
+	for i := range v.Participants {
+		presence[i] = e.presence[v.Participants[i].ID]
+	}
 	e.mu.Unlock()
-	v, _ := r.Activity()
 	if !final {
 		now, err := e.kind.owner.activityNow()
 		if err != nil {
 			return schema.Activity{}, err
 		}
-		activityElapsed(&v, e, now, false)
+		for i := range v.Participants {
+			sessionPresence(&v.Participants[i], presence[i], now.Monotonic)
+		}
+		activityTiming(&v, e, now, false)
 	}
 	return v, nil
 }
@@ -595,4 +616,18 @@ func participantFieldViews(participants []schema.Participant) []schema.Fields {
 		out[i] = p.Fields
 	}
 	return out
+}
+
+// Optional correlation links yield to the already reserved final projection.
+// Domain fields and logical counters are never discarded to fit a record.
+func trimActivityLink(v *schema.Activity) bool {
+	for i := range v.Participants {
+		p := &v.Participants[i]
+		if len(p.Sessions) != 0 {
+			p.Sessions = p.Sessions[1:]
+			p.LinksTruncated = true
+			return true
+		}
+	}
+	return false
 }

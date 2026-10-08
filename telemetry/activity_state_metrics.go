@@ -17,11 +17,18 @@ type activityMeters struct {
 	durations    [18]*metric.Histogram
 	interrupted  *metric.Counter
 	records      [2][4]*metric.Counter
+	reconnects   *metric.Counter
+	leaves       map[string]*metric.Counter
 }
 
 func (k *activityKindCore) bindActivityMeters() {
 	t := k.owner
 	m := &k.meters
+	m.reconnects, _ = t.adapters.counters["gosx_activity_participant_reconnects_total"].Bind(k.name)
+	m.leaves = make(map[string]*metric.Counter, len(k.reasons)+4)
+	for _, reason := range uniqueHubValues(append(append([]string(nil), k.reasons...), "process_restart", "server_shutdown", "idle", "other")) {
+		m.leaves[reason], _ = t.adapters.counters["gosx_activity_participant_leaves_total"].Bind(k.name, reason)
+	}
 	m.outcomes = uniqueHubValues(append(append([]string(nil), k.outcomes...), "interrupted", "other"))
 	m.open, _ = t.adapters.gauges["gosx_activities_open"].Bind(k.name)
 	for _, combo := range append(append([][2]string(nil), k.combinations...), [2]string{"other", "other"}) {

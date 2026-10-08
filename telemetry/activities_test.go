@@ -16,7 +16,7 @@ import (
 	"m31labs.dev/gosx/telemetry/telemetrytest"
 )
 
-func lifecycleOwner(t *testing.T) (*Telemetry, *telemetrytest.FakeClock) {
+func lifecycleOwner(t testing.TB) (*Telemetry, *telemetrytest.FakeClock) {
 	t.Helper()
 	tel := activityDeclarationOwner(t)
 	clock := telemetrytest.NewClock(time.Unix(100, 0))
