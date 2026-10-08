@@ -362,7 +362,7 @@ func TestShutdownDrainsOwnedHTTPThenScheduler(t *testing.T) {
 }
 
 func TestShutdownCancelsScheduledRunWithoutDeadline(t *testing.T) {
-	testShutdownCancelsScheduledRun(t, context.Background(), 35*time.Second)
+	testShutdownCancelsScheduledRun(t, context.Background(), time.Second)
 }
 
 func TestShutdownReservesHooksWithOneSecondDeadline(t *testing.T) {
@@ -374,11 +374,15 @@ func TestShutdownReservesHooksWithOneSecondDeadline(t *testing.T) {
 func testShutdownCancelsScheduledRun(t *testing.T, ctx context.Context, timeout time.Duration) {
 	t.Helper()
 	a := New()
+	a.shutdown.noDeadlineGrace = 30 * time.Millisecond
 	s := a.Scheduler()
 	entered, cancelled := make(chan struct{}), make(chan struct{})
 	if err := s.Register(scheduled.Task{Name: "waiting", Fn: func(ctx context.Context, _ scheduled.TickHandle) error {
 		close(entered)
 		<-ctx.Done()
+		if !errors.Is(context.Cause(ctx), context.Canceled) {
+			t.Error("shutdown cancellation cause must match context.Canceled")
+		}
 		close(cancelled)
 		return nil
 	}}); err != nil {
@@ -431,8 +435,59 @@ func testShutdownCancelsScheduledRun(t *testing.T, ctx context.Context, timeout 
 	if !drained.Load() || !flushed.Load() {
 		t.Fatal("scheduler consumed the hook window")
 	}
-	if _, deadline := ctx.Deadline(); !deadline && time.Since(start) < 30*time.Second {
-		t.Fatal("background shutdown cancelled before its 30-second window")
+	if _, deadline := ctx.Deadline(); !deadline && time.Since(start) < a.shutdown.noDeadlineGrace {
+		t.Fatal("background shutdown cancelled before its cooperative window")
+	}
+}
+
+func TestShutdownSlowCancelledRunPreservesHookReserve(t *testing.T) {
+	a := New()
+	s := a.Scheduler()
+	entered, finished := make(chan struct{}), make(chan struct{})
+	if err := s.Register(scheduled.Task{Name: "slow", Fn: func(ctx context.Context, _ scheduled.TickHandle) error {
+		close(entered)
+		<-ctx.Done()
+		if !errors.Is(context.Cause(ctx), context.Canceled) {
+			t.Error("shutdown cancellation cause must match context.Canceled")
+		}
+		time.Sleep(10 * time.Second)
+		close(finished)
+		return nil
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Enqueue("slow", nil); err != nil {
+		t.Fatal(err)
+	}
+	<-entered
+	t.Cleanup(func() { <-finished })
+	remaining := make(chan time.Duration, 1)
+	var flushed atomic.Bool
+	if _, err := a.UseShutdownHook("owner", ShutdownHooks{
+		Drain: func(ctx context.Context) error {
+			deadline, _ := ctx.Deadline()
+			remaining <- time.Until(deadline)
+			select {
+			case <-finished:
+				t.Error("slow task already finished before the reserved hook window")
+			default:
+			}
+			return ctx.Err()
+		},
+		Flush: func(ctx context.Context) error { flushed.Store(true); return ctx.Err() },
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Second)
+	defer cancel()
+	if err := a.Shutdown(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unfinished scheduler: %v", err)
+	}
+	if got := <-remaining; got < 2*time.Second {
+		t.Fatalf("Drain reserve = %s, want at least 2s", got)
+	}
+	if !flushed.Load() {
+		t.Fatal("missing Flush")
 	}
 }
 

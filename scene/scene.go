@@ -129,6 +129,8 @@ type Props struct {
 	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
 	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
 	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	// Timelines advertises the optional runtime for finite object and camera playback.
+	Timelines *bool `json:"timelines,omitempty"`
 	// CameraInputSignal: when set, the engine applies the camera from this shared
 	// signal (null/absent = user controls). Drives follow-mode without app JS.
 	CameraInputSignal string `json:"cameraInputSignal,omitempty"`
@@ -1894,6 +1896,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "ariaLabel", p.AriaLabel)
 	setString(out, "background", p.Background)
 	setString(out, "controls", p.Controls)
+	setBool(out, "timelines", p.Timelines)
 	if p.Walk != nil {
 		out["walk"] = p.Walk
 	}
@@ -2340,6 +2343,17 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		}
 	case HTML:
 		l.pendingHTML = append(l.pendingHTML, pendingHTML{html: current, parent: parent})
+	case Text3D:
+		if surface, err := current.Surface(); err == nil {
+			if parent.Rotation != (quaternion{W: 1}) {
+				surface.Rotation = eulerFromQuaternion(parent.Rotation.mul(quaternionFromEuler(surface.Rotation)).normalized())
+			}
+			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: surface, parent: parent})
+		}
+	case *Text3D:
+		if current != nil {
+			l.lowerNode(*current, parent)
+		}
 	case *HTML:
 		if current != nil {
 			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: *current, parent: parent})
