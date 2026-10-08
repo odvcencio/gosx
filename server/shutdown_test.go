@@ -511,6 +511,22 @@ func TestScheduledDrainWindow(t *testing.T) {
 	}
 }
 
+func TestScheduledJoinDeadlineBoundaries(t *testing.T) {
+	now := time.Unix(0, 0)
+	for _, tc := range []struct{ remaining, join time.Duration }{
+		{time.Second, 500 * time.Millisecond},
+		{2500 * time.Millisecond, 0},
+		{4 * time.Second, 1500 * time.Millisecond},
+		{6 * time.Second, 3500 * time.Millisecond},
+		{100 * time.Second, 87500 * time.Millisecond},
+	} {
+		got := scheduledJoinDeadline(now.Add(tc.remaining), now).Sub(now)
+		if got != tc.join {
+			t.Fatalf("remaining=%s: join cutoff=%s, want %s", tc.remaining, got, tc.join)
+		}
+	}
+}
+
 func TestShutdownAttemptsHooksWithCancelledContext(t *testing.T) {
 	a := New()
 	var drained, flushed atomic.Bool
