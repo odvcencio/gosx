@@ -20,7 +20,10 @@ function runtime(reduce = false, features = ['particle-burst']) {
     requestAnimationFrame(fn) { frames.set(++frameID, fn); return frameID; }, cancelAnimationFrame(id) { frames.delete(id); } };
   const context = vm.createContext({ window, document, console, performance: { now: () => clock }, Date, setTimeout, clearTimeout });
   vm.runInContext(read('bootstrap-src/06-motion-core.ts'), context);
-  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-hooks.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/script-loader.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
+  vm.runInContext('window.__gosx_scene3d_api.loadPresentation = ensureSceneGatedFeatureLoaded', context);
+  context.gosxApplyCurrentScriptNonce = script => { script.nonce = document.querySelector()?.nonce; };
   function load(name) {
     vm.runInContext(ts.transpileModule(read('../runtime/scene3d/' + name + '.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, context);
   }
@@ -178,7 +181,9 @@ test('public bursts coalesce versioned requests, retry failures and wait for com
   r.handle.__gosxScene3DCommandReady = true;
   Object.assign(r.document, {
     querySelector: () => ({ dataset: { gosxScene3dParticleBurstUrl: '/runtime/burst.hash.js?v=1' }, nonce: 'current-page' }),
-    createElement: () => ({}), head: { appendChild: script => scripts.push(script) },
+    createElement: () => ({ setAttribute(name, value) {
+      this[({ crossorigin: 'crossOrigin', referrerpolicy: 'referrerPolicy' })[name] || name] = value;
+    } }), head: { appendChild: script => scripts.push(script) },
   });
   vm.runInContext(ts.transpileModule(read('../runtime/scene3d/command-runtime.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
   const play = () => r.window.__gosx_scene3d_command_bridge.burstParticles(r.mount, fixture);

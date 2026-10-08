@@ -141,7 +141,7 @@
   function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void) => unknown) {
     var id = key(target, opts);
     var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    return new Promise(function poll(resolve, reject) {
+    return new Promise<any>(function poll(resolve, reject) {
       var rec = record(target, opts);
       if (rec) return apply(rec, resolve, reject);
       if (!id) return reject(new Error("Scene3D " + format + " target is not ready and has no stable id"));
@@ -161,24 +161,46 @@
 
   const sceneAPI = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
 
-  const presentationLoads: Record<string, Promise<any>> = {};
-  function loadPresentation(kind: string, datasetKey: string) {
-    if (sceneAPI[kind]) return Promise.resolve(sceneAPI[kind]);
-    return presentationLoads[kind] || (presentationLoads[kind] = new Promise((resolve, reject) => {
-      const tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
-      // @ts-expect-error TS2339 -- the selector matches a script element.
-      const url = tag && tag.dataset[datasetKey], name = "Scene3D " + kind + " chunk";
-      if (!url) return reject(new Error(name + " URL was not advertised"));
-      const script = document.createElement("script");
-      script.src = url; script.async = true; script.type = "text/javascript";
-      script.crossOrigin = "anonymous"; script.referrerPolicy = "no-referrer";
-      // @ts-expect-error TS2339 -- the selector matches a script element.
-      script.nonce = tag.nonce;
-      script.onload = () => sceneAPI[kind] ? resolve(sceneAPI[kind]) : reject(new Error(name + " did not publish its API"));
-      script.onerror = () => reject(new Error("failed to load " + name));
-      document.head.appendChild(script);
-    }).catch(error => { delete presentationLoads[kind]; throw error; }));
+  // One adapter per handle, shared by optional presentation features. Lower
+  // orders run first, regardless of the order in which chunks were loaded.
+  const commandHooks = new WeakMap<object, any>();
+  function addCommandHook(mount: any, handle: any, name: string, order: number,
+    beforeCommands: (commands: any[]) => void, dispose: () => void, alive: () => boolean) {
+    let rec = commandHooks.get(handle);
+    if (!rec) {
+      const apply = handle.applyCommands, teardown = handle.dispose;
+      rec = { hooks: new Map(), ordered: [], observer: null };
+      const close = () => {
+        if (!commandHooks.delete(handle)) return;
+        rec.observer?.disconnect();
+        if (handle.applyCommands === rec.commands) handle.applyCommands = apply;
+        if (handle.dispose === rec.dispose) handle.dispose = teardown;
+        const hooks = rec.ordered;
+        rec.hooks.clear(); rec.ordered = [];
+        let failure;
+        for (const hook of hooks) {
+          try { hook.dispose(); } catch (error) { failure ??= error; }
+        }
+        if (failure) throw failure;
+      };
+      rec.commands = handle.applyCommands = function(commands: any[]) {
+        for (const hook of rec.ordered) hook.beforeCommands(commands);
+        return apply.call(handle, commands);
+      };
+      rec.dispose = handle.dispose = function() { try { close(); } finally { teardown?.apply(handle, arguments); } };
+      rec.apply = (commands: any[]) => apply.call(handle, commands);
+      if (typeof MutationObserver !== 'undefined') {
+        rec.observer = new MutationObserver(() => { if (!alive() || !mount.isConnected) close(); });
+        rec.observer.observe(mount, { attributes: true, attributeFilter: ['data-gosx-scene3d-command-ready'] });
+        if (mount.parentNode) rec.observer.observe(mount.parentNode, { childList: true });
+      }
+      commandHooks.set(handle, rec);
+    }
+    rec.hooks.set(name, { order, beforeCommands, dispose });
+    rec.ordered = Array.from(rec.hooks.values()).sort((a: any, b: any) => a.order - b.order);
+    return rec.apply;
   }
+  sceneAPI.addCommandHook = addCommandHook;
 
   async function playPresentation(target: any, plan: any, opts: any, kind: string, method: string, datasetKey: string) {
     opts ||= {};
@@ -186,7 +208,7 @@
     if (!rec.mount && typeof rec.handle[method] === "function") return Promise.resolve().then(() => rec.handle[method](plan));
     const mount = rec.mount || Array.from(document.querySelectorAll('[data-gosx-scene3d-command-ready]')).find(function() { return arguments[0].__gosxScene3DHandle === rec.handle; });
     if (!mount) throw new Error("Scene3D " + kind + " mount is unavailable");
-    const api = await loadPresentation(kind, datasetKey);
+    const api = await sceneAPI.loadPresentation(kind, datasetKey);
     if (api.load) await api.load();
     return api.attach(plan, mount, rec.handle, () => mount.__gosxScene3DHandle === rec.handle);
   }
@@ -240,18 +262,18 @@
     });
   }
 
-  function poseStats(target, opts) {
-    var queue = poseQueues.get(key(target, opts) || target);
-    var rec = record(target, opts);
-    if (rec && rec.handle.__gosxPoseFrameStats) return rec.handle.__gosxPoseFrameStats;
-    var stats = queue && queue.stats || {
-      accepted: 0, plannerCallsSkipped: 0, fallback: 0, superseded: 0,
-      errors: 0, lastError: "", rejected: Object.create(null),
-    };
+  function frameStats(target: any, opts: any, motion: boolean) {
+    const queue = (motion ? motionQueues : poseQueues).get(key(target, opts) || target);
+    const rec = record(target, opts), property = "__gosx" + (motion ? "Motion" : "Pose") + "FrameStats";
+    if (rec && rec.handle[property]) return rec.handle[property];
+    const stats = queue && queue.stats || { accepted: 0, superseded: 0, errors: 0, lastError: "", rejected: Object.create(null) };
+    if (!motion && !queue?.stats) Object.assign(stats, { plannerCallsSkipped: 0, fallback: 0 });
     if (queue) queue.stats = stats;
-    if (rec) rec.handle.__gosxPoseFrameStats = stats;
+    if (rec) rec.handle[property] = stats;
     return stats;
   }
+
+  function poseStats(target, opts) { return frameStats(target, opts, false); }
 
   function runPoseQueue(queueKey, queue) {
     var job = queue.pending;
@@ -424,17 +446,7 @@
   }
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-  function motionStats(target, opts) {
-    var queue = motionQueues.get(key(target, opts) || target);
-    var rec = record(target, opts);
-    if (rec && rec.handle.__gosxMotionFrameStats) return rec.handle.__gosxMotionFrameStats;
-    var stats = queue && queue.stats || {
-      accepted: 0, superseded: 0, errors: 0, lastError: "", rejected: Object.create(null),
-    };
-    if (queue) queue.stats = stats;
-    if (rec) rec.handle.__gosxMotionFrameStats = stats;
-    return stats;
-  }
+  function motionStats(target, opts) { return frameStats(target, opts, true); }
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
   function runMotionQueue(queueKey, queue) {

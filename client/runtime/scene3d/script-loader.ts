@@ -13,6 +13,7 @@ function resolveSceneSubFeatureURL(datasetKey: string, fallback: string) {
 
 function sceneGatedFeatureAPI(kind: string) {
   if (kind === "command") return window.__gosx_scene3d_command_bridge;
+  if (kind === "timeline" || kind === "particle-burst") return window.__gosx_scene3d_api?.[kind];
   return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : kind === "zoom" ? window.__gosx_runtime_api.scene3DZoom : window["__gosx_scene3d_" + kind.replace(/-/g, "_") + "_api"];
 }
 
