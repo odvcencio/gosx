@@ -269,3 +269,33 @@ func TestMeasurePhysicalAliasesAndRedirects(t *testing.T) {
 		t.Fatal("redirect ownership or canonical sums differ")
 	}
 }
+
+func TestMeasureExpandsOnlyRequestedBackendAndKeepsCommonGoals(t *testing.T) {
+	for _, requested := range []string{"webgpu", "webgl2", "none"} {
+		t.Run(requested, func(t *testing.T) {
+			opts, manifest, _, _ := testRouteMeasurement(t)
+			manifest.Routes[0].PageTypes = []string{"static", "scene3d/js-webgpu", "scene3d/js-webgl2"}
+			writeTestFixtureManifest(t, opts.DistDir, manifest)
+			opts.Public.Backend = requested
+			report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 2
+			if requested == "none" {
+				want = 3
+			}
+			if len(report.Rows) != want || report.Rows[0].PageType != "static" || report.Rows[0].Backend != "none" {
+				t.Fatal("common goal or backend expansion differs", report.Rows)
+			}
+			for _, row := range report.Rows[1:] {
+				if requested != "none" && row.Backend != requested {
+					t.Fatal("another requested backend was reported", row)
+				}
+				if validateCellSchema(Cell{App: row.App, RouteTemplate: row.RouteTemplate, PageType: row.PageType, Scenario: row.Scenario, Backend: row.Backend, Metric: "fif", Unit: "ms"}) != nil {
+					t.Fatal("expanded row is not a valid public cell", row)
+				}
+			}
+		})
+	}
+}
