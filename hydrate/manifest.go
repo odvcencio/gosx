@@ -14,6 +14,9 @@ import (
 
 // Manifest describes all islands and engines on a page.
 type Manifest struct {
+	basePath       string
+	basePathSource *Manifest
+
 	// Version of the manifest format.
 	Version string `json:"version"`
 

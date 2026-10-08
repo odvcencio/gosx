@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/session"
 )
 
@@ -70,7 +71,7 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 		res.Cache.SetPolicy(NoStoreCache())
 	}
 
-	html := gosx.RenderHTML(res.Node)
+	html := basepath.HTML(basepath.FromRequest(res.Request), gosx.RenderHTML(res.Node))
 	streaming := res.Deferred != nil && res.Deferred.HasDeferred()
 
 	if res.Cache.SharedCacheable() {
@@ -122,7 +123,7 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 		flusher.Flush()
 	}
 
-	streamDeferredChunks(w, res.Deferred, flusher, res.Nonce)
+	streamDeferredChunksWithBasePath(w, res.Deferred, flusher, res.Nonce, basepath.FromRequest(res.Request))
 
 	if marked {
 		io.WriteString(w, suffix)
@@ -168,6 +169,10 @@ func splitStreamTail(html string) (string, string, bool) {
 }
 
 func streamDeferredChunks(w http.ResponseWriter, registry *DeferredRegistry, flusher http.Flusher, nonce string) {
+	streamDeferredChunksWithBasePath(w, registry, flusher, nonce, "")
+}
+
+func streamDeferredChunksWithBasePath(w http.ResponseWriter, registry *DeferredRegistry, flusher http.Flusher, nonce, prefix string) {
 	blocks := registry.snapshot()
 	if len(blocks) == 0 {
 		return
@@ -190,7 +195,7 @@ func streamDeferredChunks(w http.ResponseWriter, registry *DeferredRegistry, flu
 
 	for range blocks {
 		chunk := <-chunks
-		io.WriteString(w, renderDeferredChunk(chunk.slotID, chunk.html, nonce))
+		io.WriteString(w, renderDeferredChunk(chunk.slotID, basepath.HTML(prefix, chunk.html), nonce))
 		if flusher != nil {
 			flusher.Flush()
 		}
