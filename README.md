@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.57.5**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.6**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -347,6 +347,9 @@ Island expressions are constrained to what the client VM can evaluate: literals,
 
 ## Reactive State
 
+For typed browser intents, drag/drop and modal focus
+ownership, see [browser controllers](docs/controllers.md).
+
 Signals provide fine-grained reactivity in islands:
 
 ```go
@@ -556,6 +559,10 @@ Supported capability declarations today are:
 Kinds choose the mount model. Capabilities declare which browser APIs the engine expects to use. Engines get their own mount point or worker context, communicate through typed message ports, and do not touch island DOM.
 
 ## Scene3D — 3D Engine
+
+[Scene3D timelines](docs/scene3d-timeline.md) sequence object and camera tweens in Go, with seekable browser playback and reduced-motion settling.
+
+[Text3D](docs/scene3d-text.md) draws Go-authored scores and labels on world-space texture planes.
 
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
 
@@ -785,11 +792,28 @@ gosx perf budget perf.json budget.json # Check a saved report
 gosx size [--json] dist               # Report exact gzip sizes and feature chunks
 ```
 
+Performance instrumentation preserves chained runtime-ready callbacks, including
+soft navigation, and records readiness once per page.
+
 Production builds require TinyGo on `PATH`, emit capability-linked `core`,
 `engine`, `collab`, and `full` runtime profiles (plus the legacy `islands`
 compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
+
+Production builds start the server for prerendering only when static routes
+exist. Apps that need request-time authentication or a database can also disable
+build-time prerendering in `gosx.config.json`:
+
+```json
+{"build":{"prerender":{"enabled":false}}}
+```
+
+This keeps the server binary and normal production assets, and omits static
+snapshots and the edge export. The default is `true`; `gosx export` remains an
+explicit export command. Export harnesses supply a numeric `PORT` and a loopback
+`GOSX_LISTEN_ADDR`. Use `server.App.ListenAndServe` to honor both, including when
+your app's default address comes from another environment variable.
 
 Install the CLI at the version required by your project's `go.mod`, using
 `go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the
@@ -1236,7 +1260,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.57.5**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.6**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 
