@@ -512,7 +512,7 @@ func (r *fileRouteRegistrar) buildRoute(page FilePage) (Route, error) {
 		}
 	}
 	if len(resolved.module.Actions) > 0 {
-		r.router.Handle(filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions, resolved.module.MaxActionBodyBytes), routeMiddleware...)
+		r.router.handleKind("action", filePageActionPattern(resolved.page.Pattern), buildFileActionHandler(resolved.page, resolved.module.Actions, resolved.module.MaxActionBodyBytes), routeMiddleware...)
 	}
 	return Route{
 		Pattern:      resolved.page.Pattern,
