@@ -1754,9 +1754,14 @@ const routeBudgets = [
     // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
     // CSS compilation (cssCompiled bindings skipped when scroll timelines are
     // supported) adds about 840 raw bytes to the shared motion core.
-    raw: 288689,
+    // M0 manifest-driven feature loader, probe API and inert edit/boot seams
+    // (owner-approved one-time core cost, 2026-10-08). Measured: 303_524 / 85_344 /
+    // 76_898, up 556 / 226 / 210 from 302_968 / 85_118 / 76_688. Bumped raw
+    // 288_689 -> 289_100 and brotli 73_139 -> 73_250; the hard limits rise by
+    // 431 raw and 117 brotli. Gzip fits its existing cap.
+    raw: 289100,
     gzip: 83400,
-    brotli: 73139,
+    brotli: 73250,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface

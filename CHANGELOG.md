@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+- Add manifest-driven runtime feature chunks. A page names an opt-in chunk with
+  `hydrate.Manifest.RequireFeature`, `island.Renderer.RequireFeature` or
+  `server.PageRuntime.RequireFeature`; the manifest carries it in `features`,
+  `build.json` records it under `runtime.features`, and the document contract
+  publishes a flat `bootstrapFeature<Name>Path` key for it (`engine-bridge`
+  becomes `bootstrapFeatureEngineBridgePath`; the six existing chunk keys are
+  unchanged). The browser loader derives the key from the name, fetches the
+  chunk once, and hands it the feature API, which now includes
+  `ensureBootstrapFeature`. `gosx build`, `gosx export`, `gosx dev` and the
+  runtime asset server serve any `bootstrap-feature-<name>.js` listed in
+  `runtime.features`. `island.Summary` and `server.PageRuntimeSummary` gain a
+  `FeaturePaths` map, so they are no longer comparable with `==`.
+- Add `api.registerCapabilityProbe(name, fn)` to the feature API. A feature chunk
+  can answer a `requiredCapabilities` name the runtime does not know. An unknown
+  name with no probe stays unsupported and is not cached, so a probe that
+  registers later takes effect.
+- Add inert core seams that later chunks switch on: `window.__gosx.editQueue`
+  (used for `data-gosx-queue` forms and actions, and the `queue` option of
+  `submitAction`), `window.__gosx.editConflict` (a hook for 409 responses to
+  managed forms), `window.__gosx.goWASMBootToken` (set only while a Go-WASM
+  module runs its registration phase), and an engine `toolchain` pick of
+  `window.__gosx.tinyGoWASMCtor`. Without those hooks, behavior does not change.
+- Owner-approved one-time M0 core change: `bootstrap-runtime.js` grows by 381 B
+  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 260 B.
+  The video selective runtime route budget rises from 288,689 to 289,100 raw and
+  from 73,139 to 73,250 brotli; no other size budget changes.
+
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
   to replace its code-configured token or file source. Two environment sources
