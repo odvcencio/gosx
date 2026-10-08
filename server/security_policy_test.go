@@ -1,11 +1,98 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"m31labs.dev/gosx"
 )
+
+func TestInvalidFrameAncestorsApplyPolicyWithFramingDenied(t *testing.T) {
+	for _, invalid := range []struct {
+		name    string
+		sources []string
+		options string
+	}{
+		{"trailing slash", []string{"https://frames.example/"}, ""},
+		{"injected directive", []string{"https://frames.example; script-src *"}, ""},
+		{"mixed none", []string{"'none'", "'self'"}, ""},
+		{"conflicting same origin", []string{"https://frames.example"}, "SAMEORIGIN"},
+		{"conflicting deny", []string{"https://frames.example"}, "DENY"},
+	} {
+		for _, shared := range []bool{false, true} {
+			for _, reportOnly := range []bool{false, true} {
+				for _, ignored := range []bool{false, true} {
+					t.Run(fmt.Sprintf("%s/shared=%t/reportOnly=%t/ignored=%t", invalid.name, shared, reportOnly, ignored), func(t *testing.T) {
+						app := New()
+						if err := app.EnableSecurityPolicy(SecurityPolicy{FrameAncestors: []string{"https://old.example"}}); err != nil {
+							t.Fatal(err)
+						}
+						policy := SecurityPolicy{
+							FrameAncestors: invalid.sources, FrameOptions: invalid.options, ReportOnly: reportOnly,
+							ContentSecurityPolicy:       "default-src 'none'; script-src 'self' 'nonce-{nonce}'; img-src data:; frame-ancestors *",
+							SharedContentSecurityPolicy: "default-src 'none'; script-src 'none'; img-src 'self'; frame-ancestors https://old.example",
+							ReferrerPolicy:              "no-referrer", PermissionsPolicy: "camera=()", StrictTransportSecurity: "max-age=63072000",
+						}
+						if ignored {
+							app.EnableSecurityPolicy(policy)
+						} else if err := app.EnableSecurityPolicy(policy); err == nil {
+							t.Fatal("invalid framing policy returned no error")
+						}
+						app.Page("/", func(ctx *Context) gosx.Node {
+							if shared {
+								ctx.CachePublic(time.Minute)
+							}
+							return gosx.Text("policy test")
+						})
+						w := httptest.NewRecorder()
+						app.Build().ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+						header := "Content-Security-Policy"
+						if reportOnly {
+							header += "-Report-Only"
+							if got := w.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'none'" {
+								t.Fatalf("enforced framing = %q", got)
+							}
+						}
+						csp := w.Header().Get(header)
+						if !strings.Contains(csp, "default-src 'none'") || !strings.Contains(csp, "frame-ancestors 'none'") || strings.Count(csp, "frame-ancestors") != 1 {
+							t.Fatalf("custom CSP or framing lost: %q", csp)
+						}
+						if shared {
+							if csp != "default-src 'none'; script-src 'none'; img-src 'self'; frame-ancestors 'none'" {
+								t.Fatalf("shared CSP = %q", csp)
+							}
+						} else if !strings.Contains(csp, "script-src 'self' 'nonce-") || strings.Contains(csp, NoncePlaceholder) || !strings.Contains(csp, "img-src data:") {
+							t.Fatalf("request CSP = %q", csp)
+						}
+						for name, want := range map[string]string{"X-Frame-Options": "DENY", "Referrer-Policy": "no-referrer", "Permissions-Policy": "camera=()", "Strict-Transport-Security": "max-age=63072000"} {
+							if got := w.Header().Get(name); got != want {
+								t.Errorf("%s = %q, want %q", name, got, want)
+							}
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestInvalidFrameAncestorsDeriveSharedPolicyWithFramingDenied(t *testing.T) {
+	app := New()
+	app.EnableSecurityPolicy(SecurityPolicy{FrameAncestors: []string{"https://frames.example/"}, ContentSecurityPolicy: "default-src 'none'; script-src 'nonce-{nonce}'; frame-ancestors *"})
+	app.Page("/", func(ctx *Context) gosx.Node {
+		ctx.CachePublic(time.Minute)
+		return gosx.Text("shared policy")
+	})
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest("GET", "/", nil))
+	if got, want := w.Header().Get("Content-Security-Policy"), "default-src 'none'; script-src 'none'; frame-ancestors 'none'"; got != want {
+		t.Fatalf("derived shared CSP = %q, want %q", got, want)
+	}
+}
 
 func TestRemoveNonceSourcesPreservesDirectiveBoundaries(t *testing.T) {
 	tests := []struct {

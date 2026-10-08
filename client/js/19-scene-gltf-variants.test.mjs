@@ -448,3 +448,11 @@ test("an early external-buffer failure stays handled while renderer context sett
     process.removeListener("unhandledRejection", onUnhandled);
   }
 });
+
+test("prefixed model-relative textures match public manifest keys", () => {
+  const variants = woodVariants().map((variant) => ({...variant, uri: "/.proxy/game" + variant.uri}));
+  const loader = loadLoader({tokens: BC_TOKENS, manifest: {textureVariants: {"/.proxy/game/assets/wood.png": variants}}});
+  const doc = {images: [{uri: "../assets/wood.png"}]};
+  loader.gltfResolveExternalImageURIs(doc, "https://example.test/.proxy/game/models/city.gltf", loader.context);
+  assert.equal(doc.images[0].uri, "https://example.test/.proxy/game/assets/wood.bc7.ktx2");
+});

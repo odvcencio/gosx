@@ -69,3 +69,31 @@ func TestRunExportSkipsLoadAndActionsUnlessOptedIn(t *testing.T) {
 		t.Fatal("revalidating loader produced a frozen-data warning")
 	}
 }
+
+func TestPrerenderEmptyRoutesDoesNotStartAuthenticatedServer(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "app", "page.gsx"), "package app\nfunc Page() Node { return <p>Private</p> }\n")
+	mustWriteFile(t, filepath.Join(root, "app", "route.config.json"), `{"prerender":false}`)
+	mustWriteFile(t, filepath.Join(root, "public", "style.css"), "body {}")
+	output := filepath.Join(root, "static")
+	mustWriteFile(t, filepath.Join(output, "index.html"), "stale private page")
+	staged := false
+	manifest, err := prerenderStaticBundle(staticExportOptions{
+		AppRoot: root, OutputDir: output,
+		// A missing executable proves no server is started, including readiness.
+		BinaryPath:  filepath.Join(root, "requires-runtime-credentials"),
+		StageAssets: func(dir string, manifest exportManifest) error { staged = true; return nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Pages) != 0 || manifest.Pages == nil || !staged {
+		t.Fatalf("empty export: %+v staged=%v", manifest, staged)
+	}
+	if _, err := os.Stat(filepath.Join(output, "index.html")); !os.IsNotExist(err) {
+		t.Fatal("stale HTML survived empty export")
+	}
+	if got := readFile(t, filepath.Join(output, "style.css")); got != "body {}" {
+		t.Fatal(got)
+	}
+}
