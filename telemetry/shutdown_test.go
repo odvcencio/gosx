@@ -14,6 +14,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"m31labs.dev/gosx/telemetry/metric"
 )
 
 type controlledClock struct{ ticker *controlledTicker }
@@ -168,8 +170,10 @@ func TestCloseRecordsElapsedDeadlineBeforeCancellationPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	<-tick.entered
-	if err := tel.closeContext.Err(); err != nil {
-		t.Fatal("fixture propagated cancellation early", err)
+	sharedDeadline, _ := tel.closeContext.Deadline()
+	callerDeadline, _ := parent.Deadline()
+	if !sharedDeadline.Equal(callerDeadline) {
+		t.Fatal("shared work lost the caller's deadline")
 	}
 	close(tick.release)
 	if err := tel.Close(context.Background()); !errors.Is(err, context.DeadlineExceeded) {
@@ -177,7 +181,7 @@ func TestCloseRecordsElapsedDeadlineBeforeCancellationPropagates(t *testing.T) {
 	}
 }
 
-func TestCloseRecordsParentCancellationBeforeItPropagates(t *testing.T) {
+func TestCloseCallerCancellationDoesNotCancelSharedWork(t *testing.T) {
 	o := aggregateCoreOptions(t)
 	tick := &controlledTicker{ch: make(chan time.Time), entered: make(chan struct{}), release: make(chan struct{})}
 	o.Clock = controlledClock{tick}
@@ -198,11 +202,41 @@ func TestCloseRecordsParentCancellationBeforeItPropagates(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := tel.closeContext.Err(); err != nil {
-		t.Fatal("fixture propagated cancellation early", err)
+		t.Fatal("caller cancellation reached shared work", err)
+	}
+	other := make(chan error, 1)
+	go func() { other <- tel.Close(context.Background()) }()
+	select {
+	case err := <-other:
+		t.Fatal("another caller stopped waiting on the first caller's cancellation", err)
+	case <-time.After(10 * time.Millisecond):
 	}
 	close(tick.release)
-	if err := tel.Close(context.Background()); !errors.Is(err, context.Canceled) {
-		t.Fatal("owner cancellation was lost", err)
+	if err := <-other; err != nil {
+		t.Fatal("caller cancellation poisoned shared completion", err)
+	}
+}
+
+func TestAlreadyCancelledCloseCallerStillStartsIndependentWork(t *testing.T) {
+	o := aggregateCoreOptions(t)
+	tick := &controlledTicker{ch: make(chan time.Time), entered: make(chan struct{}), release: make(chan struct{})}
+	o.Clock = controlledClock{tick}
+	tel, err := Enable(server.New(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := tel.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatal(err)
+	}
+	<-tick.entered
+	if err := tel.closeContext.Err(); err != nil {
+		t.Fatal("cancelled caller cancelled the owner", err)
+	}
+	close(tick.release)
+	if err := tel.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -260,6 +294,22 @@ func TestClockCallbackPanicIsFixedAndIsolated(t *testing.T) {
 			err = tel.Close(context.Background())
 			if !errors.Is(err, ErrInvalidOptions) || strings.Contains(err.Error(), "private-canary") || strings.Contains(logs.String(), "private-canary") || strings.Count(logs.String(), "telemetry clock failed") != 1 {
 				t.Fatalf("panic boundary: %v %s", err, logs.String())
+			}
+			if err := tel.registry.WithSnapshot(context.Background(), func(snapshot metric.Snapshot) error {
+				for _, family := range snapshot.Families {
+					if family.Name != "gosx_telemetry_dropped_total" {
+						continue
+					}
+					for _, series := range family.Series {
+						reason := series.Labels[0].Value
+						if reason == "clock" && series.Counter != 1 || reason == "observer_panic" && series.Counter != 0 {
+							t.Fatal("clock failure misclassified", reason, series.Counter)
+						}
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
 			}
 		})
 	}

@@ -1,7 +1,11 @@
 package hub
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"errors"
+	"io"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -10,6 +14,96 @@ import (
 	"github.com/gorilla/websocket"
 	"m31labs.dev/gosx/telemetry/telemetrytest"
 )
+
+func TestControlPingKeepsPhaseWhenHandlingDelayShrinks(t *testing.T) {
+	s := &transportState{nextPing: pingPeriod}
+	if !s.pingDue(pingPeriod+200*time.Millisecond) || s.nextPing != 2*pingPeriod {
+		t.Fatal("first delayed tick lost its phase", s.nextPing)
+	}
+	if !s.pingDue(2*pingPeriod+50*time.Millisecond) || s.nextPing != 3*pingPeriod {
+		t.Fatal("a less delayed tick skipped the next ping", s.nextPing)
+	}
+	if s.pingDue(2*pingPeriod + time.Second) {
+		t.Fatal("same deadline sent twice")
+	}
+}
+
+func TestControlPingMaximumScheduledGap(t *testing.T) {
+	for _, seconds := range []int{1, 5, 10, 30, 40, 50, 60} {
+		t.Run((time.Duration(seconds) * time.Second).String(), func(t *testing.T) {
+			s := &transportState{slow: SlowClientPolicy{DropThreshold: 1, CheckInterval: time.Duration(seconds) * time.Second}, nextPing: pingPeriod}
+			interval := s.interval()
+			if interval > s.slow.CheckInterval || interval > pingPeriod {
+				t.Fatal("timer exceeds its check or ping period", interval)
+			}
+			last, largest := time.Duration(0), time.Duration(0)
+			pings := 0
+			for tick := 1; tick <= 600; tick++ {
+				now := time.Duration(tick) * interval
+				if !s.pingDue(now) {
+					continue
+				}
+				gap := now - last
+				if gap > largest {
+					largest = gap
+				}
+				if gap > pingPeriod {
+					t.Fatalf("ping gap %s exceeds %s at tick %d", gap, pingPeriod, tick)
+				}
+				if s.nextPing%pingPeriod != 0 {
+					t.Fatal("deadline drifted from its original schedule")
+				}
+				last = now
+				pings++
+			}
+			if pings < 10 {
+				t.Fatal("cadence test exercised too few pings", pings)
+			}
+			t.Logf("check=%ds tick=%s largest_ping_gap=%s", seconds, interval, largest)
+		})
+	}
+}
+
+func TestControlPingCoalescesMissedDeadlines(t *testing.T) {
+	s := &transportState{nextPing: pingPeriod}
+	if !s.pingDue(3*pingPeriod+time.Second) || s.nextPing != 4*pingPeriod {
+		t.Fatal("missed deadlines changed phase", s.nextPing)
+	}
+	if s.pingDue(3*pingPeriod + time.Second) {
+		t.Fatal("coalesced ticks caused a catch-up burst")
+	}
+}
+
+func TestControlPingSequenceUsesConnectionEntropy(t *testing.T) {
+	seed := []byte{0x41, 0x28, 0x96, 0x37, 0x02, 0x55, 0x68, 0x19}
+	sequence, err := readPingSequence(bytes.NewReader(seed))
+	if err != nil || sequence != binary.BigEndian.Uint64(seed) {
+		t.Fatal("entropy was not used", sequence, err)
+	}
+	if _, err := readPingSequence(bytes.NewReader(seed[:7])); !errors.Is(err, io.ErrUnexpectedEOF) {
+		t.Fatal("short entropy accepted", err)
+	}
+	h := New("entropy-fixture")
+	if _, err := h.UseObserver(NoopObserver{}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := h.transport(SlowClientPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := h.transport(SlowClientPolicy{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.sequence == second.sequence {
+		t.Fatal("connections reused a ping seed")
+	}
+	c := &Client{Hub: h, transport: &transportState{sequence: sequence}}
+	ping := c.startPing(0)
+	if binary.BigEndian.Uint64(ping[:]) != sequence+1 {
+		t.Fatal("first ping discarded its randomized seed")
+	}
+}
 
 type transportObserver struct {
 	NoopObserver

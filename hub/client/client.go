@@ -68,6 +68,7 @@ type Client struct {
 	resumeToken string
 	handlers    map[string]func(json.RawMessage)
 	current     conn
+	started     bool
 	closed      bool
 	closeCh     chan struct{}
 	wg          sync.WaitGroup
@@ -190,8 +191,9 @@ func (c *Client) Send(event string, data any) error {
 		return ErrClosed
 	}
 	cn := c.current
+	connected := c.state == StateConnected
 	c.mu.Unlock()
-	if cn == nil {
+	if cn == nil || !connected {
 		return ErrNotConnected
 	}
 	return cn.Send(msg, false)
@@ -204,16 +206,17 @@ func (c *Client) Connect() {
 		return
 	}
 	c.mu.Lock()
-	if c.closed || c.state != StateDisconnected {
+	if c.closed || c.started {
 		c.mu.Unlock()
 		return
 	}
-	c.mu.Unlock()
+	c.started = true
 	c.wg.Add(1)
+	c.mu.Unlock()
 	go c.run()
 }
 
-// Close stops the reconnect loop and closes any open connection. It blocks
+// Close stops the reconnect loop and closes any pending or open connection. It blocks
 // until the background goroutine has exited. A closed Client cannot be
 // reused; construct a new one with New.
 func (c *Client) Close() error {
@@ -253,6 +256,17 @@ func (c *Client) run() {
 			}
 			continue
 		}
+		// Own the transport as soon as Dial returns. Browser sockets can
+		// remain connecting until a later frameOpen, and native Dial may
+		// finish after Close has already stopped the client.
+		c.mu.Lock()
+		if c.closed {
+			c.mu.Unlock()
+			_ = cn.Close()
+			return
+		}
+		c.current = cn
+		c.mu.Unlock()
 		opened := c.pump(cn)
 		c.mu.Lock()
 		c.current = nil
@@ -271,18 +285,24 @@ func (c *Client) run() {
 	}
 }
 
-// pump consumes cn's event channel until it closes, dispatching messages and
-// tracking connection state. It returns whether the connection ever reached
-// the open state.
+// pump consumes cn's event channel until it or the client closes, dispatching
+// messages and tracking state. It returns whether the connection ever opened.
 func (c *Client) pump(cn conn) bool {
 	opened := false
-	for ev := range cn.Events() {
+	for {
+		var ev frameEvent
+		select {
+		case <-c.closeCh:
+			return opened
+		case next, ok := <-cn.Events():
+			if !ok || c.isClosed() {
+				return opened
+			}
+			ev = next
+		}
 		switch ev.Kind {
 		case frameOpen:
 			opened = true
-			c.mu.Lock()
-			c.current = cn
-			c.mu.Unlock()
 			c.setState(StateConnected)
 		case frameMessage:
 			c.dispatch(ev.Data)
@@ -294,7 +314,6 @@ func (c *Client) pump(cn conn) bool {
 			// queued, but there normally isn't one after frameClosed.
 		}
 	}
-	return opened
 }
 
 func (c *Client) dispatch(data []byte) {
@@ -303,6 +322,10 @@ func (c *Client) dispatch(data []byte) {
 		return
 	}
 	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
 	handler := c.handlers[msg.Event]
 	c.mu.Unlock()
 	if handler != nil {
@@ -339,6 +362,10 @@ func (c *Client) isClosed() bool {
 
 func (c *Client) setState(state State) {
 	c.mu.Lock()
+	if c.closed && state != StateClosed {
+		c.mu.Unlock()
+		return
+	}
 	changed := c.state != state
 	c.state = state
 	fn := c.opts.OnStateChange

@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"errors"
+	"m31labs.dev/gosx/internal/telemetryauthority"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -123,7 +124,7 @@ func TestHubClosedWaitsForEnqueueCallbacks(t *testing.T) {
 			o := &blockingEnqueueObserver{closingObserver: closingObserver{
 				entered: make(chan struct{}), release: make(chan struct{}),
 			}}
-			_, _ = h.UseTelemetryObserver(o, 1)
+			_, _ = h.UseTelemetryObserver(o, 1, telemetryauthority.New())
 			done := make(chan struct{})
 			go func() {
 				if broadcast {
