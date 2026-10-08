@@ -2,6 +2,7 @@ package hub
 
 import (
 	"errors"
+	"log"
 	"time"
 )
 
@@ -38,9 +39,22 @@ func (p SlowClientPolicy) normalized() (SlowClientPolicy, error) {
 
 func (s *transportState) interval() time.Duration {
 	if s.slow.DropThreshold > 0 && s.slow.CheckInterval < pingPeriod {
-		return s.slow.CheckInterval
+		steps := (pingPeriod + s.slow.CheckInterval - 1) / s.slow.CheckInterval
+		return pingPeriod / steps
 	}
 	return pingPeriod
+}
+
+func (h *Hub) warnInvalidSlowClient(now time.Time) {
+	h.observerWarningMu.Lock()
+	warn := h.policyWarningAt.IsZero() || now.Sub(h.policyWarningAt) >= time.Minute
+	if warn {
+		h.policyWarningAt = now
+	}
+	h.observerWarningMu.Unlock()
+	if warn {
+		log.Print("[gosx hub] configuration refused; class=invalid_slow_client")
+	}
 }
 
 // slowClient is called by the writer's existing timer, outside connection/hub

@@ -5,9 +5,14 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/clock"
 	"m31labs.dev/gosx/internal/telemetryauthority"
 	"m31labs.dev/gosx/telemetry/metric"
 )
+
+// Capture process initialization once, independently of any telemetry owner or
+// injected application clock. Static Go packages initialize before main runs.
+var processStartedAt = clock.New().Now().Wall
 
 type coreMetrics struct {
 	uptime, series, memory *metric.Gauge
@@ -40,7 +45,7 @@ func (t *Telemetry) initializeRegistry() (err error) {
 			return err
 		}
 	}
-	start, err := t.authority.NewGauge(metric.GaugeOptions{Name: "process_start_time_seconds", Help: "Telemetry owner start timestamp in Unix seconds."})
+	start, err := t.authority.NewGauge(metric.GaugeOptions{Name: "process_start_time_seconds", Help: "Process initialization timestamp in Unix seconds."})
 	if err != nil {
 		return err
 	}
@@ -48,7 +53,7 @@ func (t *Telemetry) initializeRegistry() (err error) {
 	if err != nil {
 		return err
 	}
-	g.Set(float64(t.start.Wall.Unix()) + float64(t.start.Wall.Nanosecond())/float64(time.Second))
+	g.Set(processStartSeconds())
 	values := []string{gosx.Version, runtime.Version(), t.opts.Identity.App, t.opts.Identity.Version, t.opts.Identity.Revision, "unknown"}
 	names := []string{"gosx_version", "go_version", "app", "app_version", "revision", "modified"}
 	labels := make([]metric.Label, len(names))
@@ -64,7 +69,7 @@ func (t *Telemetry) initializeRegistry() (err error) {
 		return err
 	}
 	g.Set(1)
-	reasons := []string{"series", "memory", "queue", "unknown_route", "unknown_label", "visit_cap", "hub_session_cap", "loop_instances", "activity_cap", "event_cap", "field_budget", "observer_panic"}
+	reasons := []string{"series", "memory", "queue", "unknown_route", "unknown_label", "visit_cap", "hub_session_cap", "loop_instances", "activity_cap", "event_cap", "field_budget", "observer_panic", "clock"}
 	dropped, err := t.authority.NewCounter(metric.CounterOptions{Name: "gosx_telemetry_dropped_total", Help: "Rejected telemetry operations by fixed reason.", Labels: []metric.Label{{Name: "reason", Values: reasons}}})
 	if err != nil {
 		return err
@@ -88,6 +93,10 @@ func (t *Telemetry) initializeRegistry() (err error) {
 	}
 	t.updateCore(t.start)
 	return nil
+}
+
+func processStartSeconds() float64 {
+	return float64(processStartedAt.Unix()) + float64(processStartedAt.Nanosecond())/float64(time.Second)
 }
 
 func (t *Telemetry) updateCore(now Instant) {

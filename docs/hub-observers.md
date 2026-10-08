@@ -12,12 +12,17 @@ panicking subscriber is detached, and other subscribers receive
 Connection callbacks report registration and cleanup. `Rejected` reports
 connection admission failures; `MessageRejected` reports malformed or
 rate-limited payloads on accepted connections. `Message` reports logical
-payload bytes and sampled queue/drop events. Broadcast, handler, control RTT,
+payload bytes and sampled queue/drop events. `Message` with `Dropped=true`
+accounts for every queue loss; `Broadcast` summarizes those same losses and
+must not be added again. `Count` preserves coalesced multiplicity (zero means
+one); such callbacks may have a nil client. Accepted queue samples describe
+depth before the enqueue, including zero. Broadcast, handler, control RTT,
 RTT timeout and `Closed` callbacks are active. `ClientAssociated` is reserved
 for browser association integration.
 
 `Hub.Close(ctx)` stops admission and waits for reservations, both pumps and
-admitted observer callbacks. `Closed` is the final callback for each active
+admitted observer callbacks, including `Send`, latch replay and CRDT enqueue
+callbacks on application goroutines. `Closed` is the final callback for each active
 subscriber, even after `Close` returns. An expired caller leaves the shared
 close owner running until cleanup completes.
 

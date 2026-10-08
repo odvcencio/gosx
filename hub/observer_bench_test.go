@@ -1,6 +1,8 @@
 package hub
 
 import (
+	"m31labs.dev/gosx/internal/telemetryauthority"
+	"os"
 	"runtime"
 	"strconv"
 	"testing"
@@ -32,7 +34,7 @@ func BenchmarkHubObservedEnqueue(b *testing.B) {
 			h := New("queue-fixture")
 			c := queueFixture(h)
 			if observed {
-				if _, err := h.UseTelemetryObserver(&queueObserver{}, 0); err != nil {
+				if _, err := h.UseTelemetryObserver(&queueObserver{}, 0, telemetryauthority.New()); err != nil {
 					b.Fatal(err)
 				}
 			} else {
@@ -62,7 +64,7 @@ func BenchmarkHubObservedBroadcast256(b *testing.B) {
 				clients[i], h.clients[c.ID] = c, c
 			}
 			if observed {
-				if _, err := h.UseTelemetryObserver(&queueObserver{}, 0); err != nil {
+				if _, err := h.UseTelemetryObserver(&queueObserver{}, 0, telemetryauthority.New()); err != nil {
 					b.Fatal(err)
 				}
 			}
@@ -81,6 +83,9 @@ func BenchmarkHubObservedBroadcast256(b *testing.B) {
 
 // Timings are reported; zero added allocation remains a separate hard gate.
 func TestHubTransportTimingPairs(t *testing.T) {
+	if os.Getenv("GOSX_TELEMETRY_TIMING_PAIRS") != "1" {
+		t.Skip("paired timing receipt runs explicitly with GOSX_TELEMETRY_TIMING_PAIRS=1")
+	}
 	previous := runtime.GOMAXPROCS(1)
 	defer runtime.GOMAXPROCS(previous)
 	for _, recipients := range []int{1, 256} {
@@ -92,7 +97,7 @@ func TestHubTransportTimingPairs(t *testing.T) {
 			id := strconv.Itoa(i)
 			baseline.clients[id], head.clients[id] = baseClients[i], headClients[i]
 		}
-		if _, err := head.UseTelemetryObserver(NoopObserver{}, 0); err != nil {
+		if _, err := head.UseTelemetryObserver(NoopObserver{}, 0, telemetryauthority.New()); err != nil {
 			t.Fatal(err)
 		}
 		payload := []byte{0, 1}
