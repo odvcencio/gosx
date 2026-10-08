@@ -205,11 +205,12 @@
 
   async function bootGoWASMEngineModule(record) {
     const programRef = record.programRef;
-    const StandardGo = window.__gosx_standard_go_wasm_ctor;
+    const tinyGo = record.toolchain === "tinygo";
+    const StandardGo = tinyGo ? window.__gosx.tinyGoWASMCtor : window.__gosx_standard_go_wasm_ctor;
     if (typeof StandardGo !== "function") {
       throw goWASMEngineError(
         "go-wasm-runtime-missing",
-        "the isolated standard-Go wasm_exec asset must be loaded before a Go-WASM engine",
+        "the isolated " + (tinyGo ? "TinyGo" : "standard-Go") + " wasm_exec asset must be loaded before a Go-WASM engine",
         { programRef: programRef },
       );
     }
@@ -269,7 +270,13 @@
     goWASMEngineRegistrationTokens.set(record.token, record);
     let runResult;
     try {
+      // TinyGo's js target reads the environment only at link time; the
+      // synchronous registration phase inside go.run() reads this instead, so
+      // clear it as soon as run returns. Nothing awaits between the set and
+      // the clear, so concurrent module boots cannot see each other's token.
+      window.__gosx.goWASMBootToken = record.token;
       runResult = go.run(result.instance);
+      window.__gosx.goWASMBootToken = "";
       const exited = runResult && typeof runResult.then === "function"
         ? Promise.resolve(runResult).then(function() {
             return goWASMEngineError(
@@ -325,12 +332,13 @@
     return record;
   }
 
-  function loadGoWASMEngineModule(programRef, pending) {
+  function loadGoWASMEngineModule(programRef, pending, toolchain) {
     let record = goWASMEngineModules.get(programRef);
     if (!record) {
       let rejectCancellation;
       record = {
         programRef,
+        toolchain,
         token: goWASMEngineRegistrationToken(),
         state: "booting",
         error: null,
@@ -367,7 +375,7 @@
         entry,
       );
     }
-    const record = loadGoWASMEngineModule(programRef, pending);
+    const record = loadGoWASMEngineModule(programRef, pending, entry && entry.toolchain);
     try {
       await record.boot;
     } finally {

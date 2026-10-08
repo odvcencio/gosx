@@ -38,6 +38,7 @@
   const FORM_MANAGED_SHORTHAND_ATTR = "data-gosx-managed";
   const FORM_MODE_ATTR = "data-gosx-form-mode";
   const FORM_STATE_ATTR = "data-gosx-form-state";
+  const FORM_QUEUE_ATTR = "data-gosx-queue";
   const FORM_PENDING_ATTR = "data-gosx-pending";
   const FORM_PROJECT_ATTR = "data-gosx-form-project";
   const FORM_ERROR_DESCRIPTION_ATTR = "data-gosx-form-error-describedby";
@@ -1384,6 +1385,7 @@
     form.setAttribute(FORM_STATE_ATTR, "idle");
     form.setAttribute("hidden", "");
     form.hidden = true;
+    if (opts.queue) form.setAttribute(FORM_QUEUE_ATTR, "serial");
 
     const entries = actionFieldEntries(fields);
     for (const entry of entries) {
@@ -2769,7 +2771,7 @@
     });
   }
 
-  async function submitManagedActionForm(url, method, formData) {
+  async function submitManagedActionForm(url, method, formData, form) {
     const csrfToken = formCSRFToken(formData);
     const response = await gosxRuntimeRequest(url.href, {
       method: method,
@@ -2781,6 +2783,8 @@
       body: formData,
       redirect: "follow",
     });
+    const conflict = window.__gosx && window.__gosx.editConflict;
+    if (form && conflict && response.status === 409) return conflict(form, response, url.href, method);
     let result = null;
     try {
       result = await parseJSONResponse(response);
@@ -2836,21 +2840,26 @@
   }
 
   async function submitForm(form, submitter) {
-    if (!form || pendingManagedForms.has(form)) return;
+    if (!form) return;
+    const queue = window.__gosx && window.__gosx.editQueue;
+    if (queue && form.hasAttribute(FORM_QUEUE_ATTR)) {
+      // Serialize at enqueue: the queue sends this snapshot, not later edits.
+      return queue.submit(form, submitter, serializeForm(form, submitter), submitFormWith);
+    }
+    if (pendingManagedForms.has(form)) return;
     pendingManagedForms.add(form);
     try {
-      return await submitFormOnce(form, submitter);
+      return await submitFormWith(form, submitter, serializeForm(form, submitter));
     } finally {
       pendingManagedForms.delete(form);
     }
   }
 
-  async function submitFormOnce(form, submitter) {
+  async function submitFormWith(form, submitter, formData) {
 
     const method = formSubmissionMethod(form, submitter);
     const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
-    const formData = serializeForm(form, submitter);
     const previous = captureManagedFormState(form);
     let outcome = null;
 
@@ -2861,7 +2870,7 @@
         await submitManagedGetForm(url, method, formData);
         return;
       }
-      outcome = await submitManagedActionForm(url, method, formData);
+      outcome = await submitManagedActionForm(url, method, formData, form);
       return outcome;
     } catch (err) {
       console.error("[gosx] form action failed:", err);
