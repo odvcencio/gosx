@@ -336,8 +336,7 @@ func TestMeasureServedCSSFontModuleClosureAndCriticalContent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	graph.Route.App = "fixture"
-	graph.Route.SourcePath = "fixture/page.gsx"
+	graph.Route.App, graph.Route.SourcePath = "fixture", "fixture/page.gsx"
 	graph.Route.PageTypes = []string{"island"}
 	graph.Route.Capabilities = caps
 	graph.Route.InputSequenceID = "counter-input"
@@ -358,6 +357,7 @@ func TestMeasureServedCSSFontModuleClosureAndCriticalContent(t *testing.T) {
 		byURL[asset.URL] = asset
 	}
 	writeTestFixtureManifest(t, opts.DistDir, manifest)
+	opts.Public.ArtifactSHA256 = &manifest.FixturesSHA256
 	var fetchedFull atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		asset, ok := byURL[r.URL.Path]
