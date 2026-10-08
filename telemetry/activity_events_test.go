@@ -327,3 +327,39 @@ func FuzzActivityTransitions(f *testing.F) {
 		tel.collectActivityReceipts()
 	})
 }
+
+func TestActivityEventsExistingWorkerConsumesMemoryQueue(t *testing.T) {
+	a, tel := eventFixture(t)
+	tel.done = make(chan struct{})
+	ticker := &controlledTicker{ch: make(chan time.Time)}
+	tel.ticker = ticker
+	tel.ticks = ticker.ch
+	go tel.run()
+	t.Cleanup(func() {
+		if err := tel.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	baseline := tel.activities.events.used.Load()
+	if err := a.Event("round", 1); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(time.Second)
+	for {
+		q := tel.activities.events
+		q.mu.Lock()
+		empty := q.count == 0 && q.inFlight == 0 && q.used.Load() == baseline
+		q.mu.Unlock()
+		if empty {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("existing worker retained memory event")
+		}
+		runtime.Gosched()
+	}
+	view, err := a.Snapshot()
+	if err != nil || view.EventsAccepted != 1 {
+		t.Fatal(view, err)
+	}
+}

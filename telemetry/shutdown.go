@@ -60,6 +60,7 @@ func (t *Telemetry) run() {
 				t.maintainActivities(now)
 			}
 		case <-t.wake:
+			t.drainActivityEvents()
 			t.collectActivityReceipts()
 			t.mu.Lock()
 			ctx := t.closeContext
