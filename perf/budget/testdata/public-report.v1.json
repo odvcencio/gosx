@@ -1,0 +1,87 @@
+{
+  "schema": "gosx.budget-report/v1",
+  "info": {
+    "sha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "epochSHA256": null,
+    "profileSHA256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "coefficientSHA256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "toolchainSHA256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "fixtureSHA256": "1111111111111111111111111111111111111111111111111111111111111111",
+    "runner": "cpu-linux",
+    "canonical": true,
+    "transport": "local-h1",
+    "headless": true,
+    "muted": true,
+    "rendererClass": "none",
+    "artifactSHA256": null
+  },
+  "mode": "report-only",
+  "rows": [
+    {
+      "app": "fixture",
+      "routeTemplate": "/counter/",
+      "pageType": "island",
+      "scenario": "hard-cold",
+      "normalizedBytes": 2048,
+      "wireBytes": 2048,
+      "frameworkBytes": 1024,
+      "appBytes": 1024,
+      "baseBytes": null,
+      "deltaBytes": null,
+      "allocationBytes": 4096,
+      "headroomBytes": 2048,
+      "requests": 2,
+      "policies": [
+        {
+          "name": "assets-compressed",
+          "passed": true
+        }
+      ],
+      "reasonCode": "ok",
+      "status": "advisory",
+      "backend": "none",
+      "phaseBytes": {
+        "critical": 1024,
+        "startup": 1024,
+        "afterReady": 0,
+        "dormant": 0
+      },
+      "frameworkCeilingBytes": 2048,
+      "appRemainingBytes": 1024,
+      "modelMicros": null,
+      "modelStatus": "illustrative"
+    }
+  ],
+  "assets": [
+    {
+      "id": "app/fixture/counter",
+      "sha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "owner": "app",
+      "phase": "startup",
+      "raw": 128,
+      "gzip": 64,
+      "brotli": 48,
+      "changedSources": [
+        "perf/wire/testdata/counter/page.gsx"
+      ],
+      "app": "fixture",
+      "kind": "program",
+      "condition": "always",
+      "dependencies": [
+        "framework/island-core"
+      ],
+      "baseSizes": null
+    }
+  ],
+  "exceptionIDs": [],
+  "passed": false,
+  "acknowledgments": [],
+  "violations": [],
+  "coverage": {
+    "routesExpected": 1,
+    "routesMeasured": 1,
+    "assetsExpected": 1,
+    "assetsMeasured": 1,
+    "reachability": "known"
+  }
+}

@@ -222,6 +222,10 @@ func validateInputAt(value, raw any, pointer string) error {
 		kind = "integer"
 		if _, err := value.(json.Number).Int64(); err != nil {
 			kind = "number"
+			// Public sampling seeds use the full uint64 domain.
+			if _, err := strconv.ParseUint(string(value.(json.Number)), 10, 64); err == nil {
+				kind = "integer"
+			}
 		}
 	case []any:
 		kind = "array"

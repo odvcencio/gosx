@@ -108,6 +108,10 @@ test-unit:
 test-budget-contract:
 	GOWORK=off $(GO) test ./perf/budget
 
+.PHONY: test-budget-public
+test-budget-public:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Public|ReportSchema)'
+
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 

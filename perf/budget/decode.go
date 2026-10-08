@@ -107,7 +107,9 @@ func validateNumber(value json.Number, s map[string]any) error {
 	fail := invalidInput("")
 	if s["type"] == "integer" {
 		if _, err := value.Int64(); err != nil {
-			return fail
+			if _, err := strconv.ParseUint(string(value), 10, 64); err != nil {
+				return fail
+			}
 		}
 	}
 	n, err := value.Float64()

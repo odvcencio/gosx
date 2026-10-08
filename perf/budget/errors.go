@@ -32,6 +32,16 @@ func referenceLabel(definition string) string {
 		return "fixtures"
 	case "Budget":
 		return "budget"
+	case "Report":
+		return "report"
+	case "SeriesPoint":
+		return "series"
+	case "PairReport":
+		return "pair"
+	case "FieldSnapshot":
+		return "field"
+	case "RunStatus":
+		return "run-status"
 	default:
 		return "input"
 	}
