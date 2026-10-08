@@ -495,10 +495,10 @@ func inputUTF8Function() wasmgen.Function {
 }
 
 type linkedCode struct {
-	module          wasmgen.Module
-	programs        []*expressionEmitter
-	indices         [][]uint32
-	notify, publish uint32
+	module                           wasmgen.Module
+	programs                         []*expressionEmitter
+	indices                          [][]uint32
+	notify, publish, scalar, dispose uint32
 }
 
 const linkedRenderMaskGlobal = 25
@@ -534,7 +534,9 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	common := commonFunctions(c.programs[0])
 	c.notify = uint32(len(first.Imports) + len(common))
 	c.publish = c.notify + 1
-	c.module.Functions = make([]wasmgen.Function, len(common)+2)
+	c.scalar = c.notify + 2
+	c.dispose = c.notify + 3
+	c.module.Functions = make([]wasmgen.Function, len(common)+4)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -559,7 +561,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 2 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 4 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -603,6 +605,8 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	}
 	c.module.Functions[len(common)] = l.notifyFunction(c)
 	c.module.Functions[len(common)+1] = l.publishFunction(c)
+	c.module.Functions[len(common)+2] = scalarValidationFunction(c.indices[0][c.programs[0].inputUTF8])
+	c.module.Functions[len(common)+3] = l.disposeFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -1120,4 +1124,275 @@ func (l *linkedLayout) publishFunction(c *linkedCode) wasmgen.Function {
 	b.index(0x10, c.indices[0][c.programs[0].computed.deliver])
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 2, Body: b}
+}
+
+// Validate a scalar inside one bounded interval without allocating, importing
+// or changing transaction state. Callers choose their error-publication policy.
+func scalarValidationFunction(utf8 uint32) wasmgen.Function {
+	var b instructions
+	b.get(1)
+	b.get(2)
+	b.op(0x4b)
+	b.get(2)
+	b.i32(196608)
+	b.op(0x4b)
+	b.op(0x72)
+	b.get(0)
+	b.get(1)
+	b.op(0x49)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	b.get(0)
+	b.op(0xad)
+	b.i64(valueBytes)
+	b.op(0x7c)
+	b.get(2)
+	b.op(0xad)
+	b.op(0x56)
+	b.statusFailure(statusBadInput)
+	for i, offset := range []uint32{0, 4, 16, 20} {
+		b.get(0)
+		b.memory(0x28, 2, offset)
+		b.set(uint32(3 + i))
+	}
+	b.get(0)
+	b.memory(0x29, 3, 8)
+	b.set(7)
+	b.get(3)
+	b.i32(0)
+	b.op(0x46)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(4)
+	b.i32(1)
+	b.op(0x4b)
+	b.get(7)
+	b.i64(0)
+	b.op(0x52)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	b.get(6)
+	b.i32(4096)
+	b.op(0x4b)
+	b.statusFailure(statusStringLimit)
+	b.get(6)
+	b.op(0x45)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(5)
+	b.statusFailure(statusBadInput)
+	b.op(0x05)
+	b.get(4)
+	b.op(0x45)
+	b.get(5)
+	b.get(1)
+	b.op(0x49)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	b.get(5)
+	b.op(0xad)
+	b.get(6)
+	b.op(0xad)
+	b.op(0x7c)
+	b.get(2)
+	b.op(0xad)
+	b.op(0x56)
+	b.statusFailure(statusBadInput)
+	b.get(5)
+	b.get(6)
+	b.index(0x10, utf8)
+	b.op(0x45)
+	b.statusFailure(statusBadInput)
+	b.op(0x0b)
+	b.i32(0)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.get(5)
+	b.get(6)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	b.get(3)
+	b.i32(1)
+	b.op(0x46)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(4)
+	b.statusFailure(statusBadInput)
+	b.get(7)
+	b.i64(-2147483648)
+	b.op(0x53)
+	b.get(7)
+	b.i64(2147483647)
+	b.op(0x55)
+	b.op(0x72)
+	b.statusFailure(statusIntegerDomain)
+	b.i32(0)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.get(7)
+	b.i64(0)
+	b.op(0x52)
+	b.statusFailure(statusBadInput)
+	b.get(3)
+	b.i32(3)
+	b.op(0x46)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(4)
+	b.i32(-3)
+	b.op(0x71)
+	b.statusFailure(statusBadInput)
+	b.i32(0)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.get(3)
+	b.i32(5)
+	b.op(0x46)
+	b.get(4)
+	b.op(0x45)
+	b.op(0x71)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(0)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.i32(statusBadInput)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 4, I64Locals: 1, Body: b}
+}
+
+// Disposal validates all owned roots before clearing any committed byte.
+// The four frame banks exclude shared roots and preserve their versions.
+func (l *linkedLayout) disposeFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.index(0x23, pendingGlobal)
+	b.statusFailure(statusBusy)
+	b.get(0)
+	b.i32(int32(ProfileLimits().Instances))
+	b.op(0x4f)
+	b.statusFailure(statusBadInput)
+	b.i32(int32(l.frameTable))
+	b.get(0)
+	b.i32(16)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.index(0x22, 1)
+	b.memory(0x28, 2, 4)
+	b.op(0x45)
+	b.statusFailure(0)
+	b.get(1)
+	b.memory(0x28, 2, 4)
+	b.i32(1)
+	b.op(0x47)
+	b.get(1)
+	b.memory(0x28, 2, 0)
+	b.i32(int32(len(l.programs)))
+	b.op(0x4f)
+	b.op(0x72)
+	b.statusFailure(statusBadInput)
+	banks := [][2]uint32{{0, l.localStride}, {l.inputBase, l.inputStride}, {l.computedBase, l.computedStride}, {l.baselineBase, l.baselineStride}}
+	visit := func(bank [2]uint32, clear bool) {
+		if bank[1] == 0 {
+			return
+		}
+		b.i32(0)
+		b.set(2)
+		b.op(0x02)
+		b.op(0x40)
+		b.op(0x03)
+		b.op(0x40)
+		b.get(2)
+		b.i32(int32(bank[1]))
+		b.op(0x4f)
+		b.index(0x0d, 1)
+		b.index(0x23, committedBaseGlobal)
+		b.get(0)
+		b.i32(int32(bank[1]))
+		b.op(0x6c)
+		b.i32(int32(bank[0]))
+		b.op(0x6a)
+		b.get(2)
+		b.op(0x6a)
+		b.i32(valueBytes)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.set(3)
+		if clear {
+			for offset := uint32(0); offset < valueBytes; offset += 8 {
+				b.get(3)
+				b.i64(0)
+				b.memory(0x37, 3, offset)
+			}
+		} else {
+			b.get(3)
+			b.index(0x23, committedBaseGlobal)
+			b.index(0x23, committedBaseGlobal)
+			b.i32(65536)
+			b.op(0x6a)
+			b.index(0x10, c.scalar)
+			b.index(0x22, 4)
+			b.op(0x04)
+			b.op(0x40)
+			b.get(4)
+			b.op(0x0f)
+			b.op(0x0b)
+			b.get(5)
+			b.get(3)
+			b.memory(0x28, 2, 20)
+			b.op(0xad)
+			b.op(0x7c)
+			b.set(5)
+		}
+		b.get(2)
+		b.i32(1)
+		b.op(0x6a)
+		b.set(2)
+		b.index(0x0c, 0)
+		b.op(0x0b)
+		b.op(0x0b)
+	}
+	for _, bank := range banks {
+		visit(bank, false)
+	}
+	b.get(5)
+	b.index(0x23, committedStringsGlobal)
+	b.op(0xad)
+	b.op(0x56)
+	b.statusFailure(statusBadInput)
+	for _, bank := range banks {
+		visit(bank, true)
+	}
+	b.index(0x23, committedStringsGlobal)
+	b.get(5)
+	b.op(0xa7)
+	b.op(0x6b)
+	b.index(0x24, committedStringsGlobal)
+	for i := uint32(0); i < l.computedStride; i++ {
+		for offset := uint32(0); offset < computedMetaBytes; offset += 8 {
+			b.i32(computedMetaBase + int32(i*computedMetaBytes))
+			b.get(0)
+			b.i32(int32(l.computedStride * computedMetaBytes))
+			b.op(0x6c)
+			b.op(0x6a)
+			b.i64(0)
+			b.memory(0x37, 3, offset)
+		}
+	}
+	b.get(1)
+	b.i64(0)
+	b.memory(0x37, 3, 8)
+	b.get(1)
+	b.i32(0)
+	b.memory(0x36, 2, 4)
+	b.index(0x23, linkedRenderMaskGlobal)
+	b.i32(1)
+	b.get(0)
+	b.op(0x74)
+	b.i32(-1)
+	b.op(0x73)
+	b.op(0x71)
+	b.index(0x24, linkedRenderMaskGlobal)
+	b.i32(0)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(1), I32Locals: 4, I64Locals: 1, Body: b}
 }

@@ -1072,3 +1072,193 @@ func TestLinkedSharedStringsWithoutComputedsPreserveVersionsAndOwnership(t *test
 		}
 	}
 }
+
+func TestLinkedScalarValidationIsBoundedPureAndPreservesDefaults(t *testing.T) {
+	l, err := buildLinkedLayout([]Unit{linkedComputedUnit(t, "Validation", 1, 1, 4)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := exportLinkedTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "validate", Function: c.scalar})
+	type testCase struct {
+		Packet                   string
+		Pointer, Base, End, Want uint32
+	}
+	var cases []testCase
+	add := func(packet string, want uint32) { cases = append(cases, testCase{packet, 32768, 32768, 65536, want}) }
+	for _, packet := range []string{
+		scalarTransport(program.TypeString, 0, 0, ""), scalarTransport(program.TypeString, 1, 0, ""),
+		scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴e\u0301"), scalarTransport(program.TypeString, 1, 0, strings.Repeat("x", 4096)),
+		scalarTransport(program.TypeInt, 0, -2147483648, ""), scalarTransport(program.TypeInt, 0, 2147483647, ""),
+		scalarTransport(program.TypeBool, 0, 0, ""), scalarTransport(program.TypeBool, 2, 0, ""), scalarTransport(program.TypeAny, 0, 0, ""),
+	} {
+		add(packet, 0)
+	}
+	for _, item := range []struct {
+		Tag    program.ExprType
+		Flags  uint32
+		Number int64
+		Text   string
+		Want   uint32
+	}{
+		{program.TypeInt, 0, -2147483649, "", 3}, {program.TypeInt, 0, 2147483648, "", 3},
+		{program.TypeString, 1, 0, strings.Repeat("x", 4097), 4}, {program.TypeString, 1, 0, "\xff", 2}, {program.TypeString, 0, 0, "x", 2},
+		{program.TypeString, 2, 0, "", 2}, {program.TypeString, 1, 1, "", 2}, {program.TypeBool, 1, 0, "", 2}, {program.TypeBool, 2, 1, "", 2},
+		{program.TypeInt, 1, 0, "", 2}, {program.TypeInt, 0, 0, "x", 2}, {program.TypeFloat, 0, 0, "", 2}, {program.TypeNode, 0, 0, "", 2},
+		{program.TypeAny, 2, 0, "", 2}, {program.TypeAny, 0, 1, "", 2},
+	} {
+		add(scalarTransport(item.Tag, item.Flags, item.Number, item.Text), item.Want)
+	}
+	for _, fields := range [][2]uint32{{16, 1}, {16, 65536}, {16, 4294967295}} {
+		packet, _ := base64.StdEncoding.DecodeString(scalarTransport(program.TypeString, 1, 0, "x"))
+		binary.LittleEndian.PutUint32(packet[fields[0]:], fields[1])
+		add(base64.StdEncoding.EncodeToString(packet), 2)
+	}
+	packet := scalarTransport(program.TypeInt, 0, 0, "")
+	cases = append(cases, testCase{packet, 65512, 32768, 65536, 0})
+	for _, bounds := range [][3]uint32{{0, 32768, 65536}, {65513, 32768, 65536}, {4294967295, 32768, 65536}, {32768, 65536, 32768}, {32768, 32768, 196609}} {
+		cases = append(cases, testCase{packet, bounds[0], bounds[1], bounds[2], 2})
+	}
+	var got struct {
+		Statuses []uint32
+		Pure     bool
+	}
+	runExpressionModule(t, m, `
+  const before = Buffer.concat([Buffer.from(memory.slice(0,32768)),Buffer.from(memory.slice(65536))]);
+  const statuses = [];
+  for (const item of data) {
+    memory.set(Buffer.from(item.Packet,'base64'),32768);
+    statuses.push(instance.exports.validate(item.Pointer,item.Base,item.End));
+  }
+  const after = Buffer.concat([Buffer.from(memory.slice(0,32768)),Buffer.from(memory.slice(65536))]);
+  process.stdout.write(JSON.stringify({Statuses:statuses,Pure:before.equals(after)&&instance.exports.status()===0}));`, cases, &got)
+	for i, item := range cases {
+		if got.Statuses[i] != item.Want {
+			t.Fatalf("scalar case %d: %d want %d", i, got.Statuses[i], item.Want)
+		}
+	}
+	if !got.Pure {
+		t.Fatal("validation changed memory or transaction error state")
+	}
+}
+
+func TestLinkedDisposeClearsOwnedBanksAndKeepsPeersAndSharedValues(t *testing.T) {
+	u := boolDOMUnit(t)
+	u.Component, u.Contract.Component, u.Program.Name = "example/components.Disposable", "example/components.Disposable", "Disposable"
+	u.Program.Signals[1].Name, u.Contract.Signals[1].Name = "$text", "$text"
+	var read program.ExprID
+	for i := range u.Program.Exprs {
+		expr := &u.Program.Exprs[i]
+		if (expr.Op == program.OpSignalGet || expr.Op == program.OpSignalSet) && expr.Value == "text" {
+			expr.Value = "$text"
+			if expr.Op == program.OpSignalGet {
+				read = program.ExprID(i)
+			}
+		}
+	}
+	addComputed(&u, "copy", String, read)
+	derived := addExpression(&u, program.OpSignalGet, program.TypeString, String, "copy")
+	for i := range u.Program.Nodes {
+		node := &u.Program.Nodes[i]
+		if node.Kind == program.NodeExpr && node.Expr == read {
+			node.Expr = derived
+		}
+		for j := range node.Attrs {
+			if node.Attrs[j].Expr == read && node.Attrs[j].Kind == program.AttrExpr {
+				node.Attrs[j].Expr = derived
+			}
+		}
+	}
+	u = refreshBindingUnit(t, u)
+	input, _ := scalarInputUnit(t, "prop", Int, false)
+	input.Component, input.Contract.Component, input.Program.Name = "example/components.Inputs", "example/components.Inputs", "Inputs"
+	input = refreshUnit(t, input)
+	l, err := buildLinkedLayout([]Unit{input, u}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := struct {
+		Bindings                                                                   BindingSet
+		ProgramID, InputID, FrameTable, MetaBase, MetaStride, SharedRoot, PropRoot uint32
+		Owned, Peer                                                                []uint32
+		Initial                                                                    [3]string
+	}{FrameTable: l.frameTable, MetaBase: computedMetaBase, MetaStride: l.computedStride * computedMetaBytes, SharedRoot: l.shared[0].root, PropRoot: l.inputBase + 9*l.inputStride,
+		Initial: [3]string{scalarTransport(program.TypeBool, 2, 0, ""), scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴"), scalarTransport(program.TypeInt, 0, 7, "")}}
+	for id, p := range l.programs {
+		if p.unit.Program.Name == "Disposable" {
+			data.ProgramID = uint32(id)
+			data.Bindings = p.dom.bindings
+		} else {
+			data.InputID = uint32(id)
+		}
+	}
+	for _, bank := range [][2]uint32{{0, l.localStride}, {l.inputBase, l.inputStride}, {l.computedBase, l.computedStride}, {l.baselineBase, l.baselineStride}} {
+		for i := uint32(0); i < bank[1]; i++ {
+			data.Owned = append(data.Owned, bank[0]+i)
+			data.Peer = append(data.Peer, bank[0]+15*bank[1]+i)
+		}
+	}
+	m := exportLinkedTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "dispose", Function: c.dispose})
+	var live instructions
+	live.index(0x23, committedStringsGlobal)
+	live.op(0x0b)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "live", Function: uint32(len(m.Imports) + len(m.Functions))})
+	m.Functions = append(m.Functions, wasmgen.Function{Signature: i32Signature(0), Body: live})
+	var got struct {
+		Statuses                                                 []uint32
+		Busy, Invalid, Corrupt                                   []uint32
+		Cleared, Preserved, Atomic, Live, Metadata, Prop, Shared bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, bound = [], patches = [], statuses = [];
+  for (const frame of [0,15,9]) {
+    view.setUint32(data.FrameTable+frame*16,frame===9?data.InputID:data.ProgramID,true);
+    view.setUint32(data.FrameTable+frame*16+4,1,true);
+  }
+  statuses.push(api.begin(0,0,1));
+  for (const frame of [0,15]) { memory.set(Buffer.from(data.Initial[0],'base64'),32768); statuses.push(api.store(frame,32768)); }
+  memory.set(Buffer.from(data.Initial[1],'base64'),32768); statuses.push(api.store(data.SharedRoot,32768));
+  memory.set(Buffer.from(data.Initial[2],'base64'),32768); statuses.push(api.store(data.PropRoot,32768));
+  for (const frame of [0,15]) statuses.push(api['initialize'+data.ProgramID](frame),api['bind'+data.ProgramID](frame),api['render'+data.ProgramID](frame,1));
+  statuses.push(api['initialize'+data.InputID](9),api.commit(0,0));
+  const sharedBefore = Buffer.from(memory.slice(api.committed()+data.SharedRoot*24,api.committed()+data.SharedRoot*24+24));
+  const peerBefore = Buffer.concat(data.Peer.map(root=>Buffer.from(memory.slice(api.committed()+root*24,api.committed()+root*24+24))));
+  let released = data.Owned.reduce((sum,root)=>sum+view.getUint32(api.committed()+root*24+20,true),0);
+  const liveBefore = api.live();
+  statuses.push(api.begin(1,0,0)); const busy = [api.dispose(0),api.dispose(15)]; statuses.push(api.abort());
+  const invalid = [api.dispose(-1),api.dispose(16)];
+  const pointer = api.committed()+data.Owned.at(-1)*24;
+  const flags = view.getUint32(pointer+4,true); view.setUint32(pointer+4,128,true);
+  const beforeFailure = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+  const corrupt = [api.dispose(0)];
+  const atomic = beforeFailure.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536))) && view.getUint32(data.FrameTable+4,true)===1;
+  view.setUint32(pointer+4,flags,true);
+  statuses.push(api.dispose(0),api.dispose(0));
+  const cleared = data.Owned.every(root=>memory.slice(api.committed()+root*24,api.committed()+root*24+24).every(byte=>byte===0));
+  const preserved = peerBefore.equals(Buffer.concat(data.Peer.map(root=>Buffer.from(memory.slice(api.committed()+root*24,api.committed()+root*24+24))))) && sharedBefore.equals(Buffer.from(memory.slice(api.committed()+data.SharedRoot*24,api.committed()+data.SharedRoot*24+24)));
+  const metadata = memory.slice(data.MetaBase,data.MetaBase+data.MetaStride).every(byte=>byte===0);
+  const live = api.live()===liveBefore-released;
+  statuses.push(api.dispose(9),api.dispose(9));
+  const prop = memory.slice(api.committed()+data.PropRoot*24,api.committed()+data.PropRoot*24+24).every(byte=>byte===0);
+  statuses.push(api.begin(2,0,0),api['handler'+data.ProgramID](15),api['render'+data.ProgramID](15,0),api.commit(2,0));
+  const record = api.committed()+data.SharedRoot*24, start = view.getUint32(record+16,true), length = view.getUint32(record+20,true);
+  const shared = Buffer.from(memory.slice(start,start+length)).toString('utf8')==='e\u0301';
+  process.stdout.write(JSON.stringify({Statuses:statuses,Busy:busy,Invalid:invalid,Corrupt:corrupt,Cleared:cleared,Preserved:preserved,Atomic:atomic,Live:live,Metadata:metadata,Prop:prop,Shared:shared}));`, data, &got, domTestImports)
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("dispose transaction: %+v", got)
+		}
+	}
+	if !reflect.DeepEqual(got.Busy, []uint32{7, 7}) || !reflect.DeepEqual(got.Invalid, []uint32{2, 2}) || !reflect.DeepEqual(got.Corrupt, []uint32{2}) || !got.Cleared || !got.Preserved || !got.Atomic || !got.Live || !got.Metadata || !got.Prop || !got.Shared {
+		t.Fatalf("dispose isolation: %+v", got)
+	}
+}
