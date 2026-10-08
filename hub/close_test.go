@@ -36,6 +36,11 @@ func (o *closingObserver) Rejected(*Hub, RejectionReason) {
 		o.late.Add(1)
 	}
 }
+func (o *closingObserver) Message(*Hub, *Client, TrafficEvent) {
+	if o.closed.Load() {
+		o.late.Add(1)
+	}
+}
 func (o *closingObserver) Closed(*Hub) { o.closed.Store(true) }
 
 func TestHubClosedWaitsForEveryAdmittedCallback(t *testing.T) {
@@ -85,6 +90,7 @@ func TestHubClosedLastUnderConcurrentDispatch(t *testing.T) {
 				for !stop.Load() {
 					h.BroadcastBinary([]byte{1})
 					h.observeConcurrent(func(obs Observer) { obs.Rejected(h, RejectedClosed) })
+					h.publishBatch(&enqueueBatch{drops: 1}, false, 1)
 					runtime.Gosched()
 				}
 			}()
@@ -98,6 +104,50 @@ func TestHubClosedLastUnderConcurrentDispatch(t *testing.T) {
 		if o.late.Load() != 0 {
 			t.Fatal("callback after Closed or Close return", o.late.Load())
 		}
+	}
+}
+
+type blockingEnqueueObserver struct{ closingObserver }
+
+func (o *blockingEnqueueObserver) Message(*Hub, *Client, TrafficEvent) {
+	close(o.entered)
+	<-o.release
+}
+
+func TestHubClosedWaitsForEnqueueCallbacks(t *testing.T) {
+	for _, broadcast := range []bool{false, true} {
+		t.Run(map[bool]string{false: "send", true: "broadcast"}[broadcast], func(t *testing.T) {
+			h := New("test")
+			c := queueFixture(h)
+			h.clients[c.ID] = c
+			o := &blockingEnqueueObserver{closingObserver: closingObserver{
+				entered: make(chan struct{}), release: make(chan struct{}),
+			}}
+			_, _ = h.UseTelemetryObserver(o, 1)
+			done := make(chan struct{})
+			go func() {
+				if broadcast {
+					h.BroadcastBinary([]byte{1})
+				} else {
+					h.Send(c.ID, "test", nil)
+				}
+				close(done)
+			}()
+			receiveHubEvent(t, o.entered)
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+			defer cancel()
+			if err := h.Close(ctx); !errors.Is(err, context.DeadlineExceeded) || o.closed.Load() {
+				t.Fatal(err, "premature Closed during enqueue callback")
+			}
+			close(o.release)
+			receiveHubEvent(t, done)
+			if err := h.Close(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !o.closed.Load() || o.late.Load() != 0 {
+				t.Fatal("enqueue callback reached observer after Closed")
+			}
+		})
 	}
 }
 

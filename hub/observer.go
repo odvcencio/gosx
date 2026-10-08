@@ -287,6 +287,12 @@ func (h *Hub) observeMessage(c *Client, event TrafficEvent) {
 	h.observe(func(o Observer) { o.Message(h, c, event) })
 }
 
+// Enqueue notifications can come from broadcasts or application Send calls
+// after their queue locks are released, without a pump retaining the owner.
+func (h *Hub) observeEnqueue(c *Client, event TrafficEvent) {
+	h.observeConcurrent(func(o Observer) { o.Message(h, c, event) })
+}
+
 // queueEventLocked is part of the existing enqueue/channel-close critical
 // section. Dispatch occurs after that lock is released. Sampling each queue
 // has no observer work on the nil path and never rescans broadcast recipients.
@@ -365,7 +371,7 @@ func (h *Hub) observedFanoutLocked(payload []byte, binary bool, predicate func(*
 
 func (c *Client) publishEnqueue(event TrafficEvent, batch *enqueueBatch) {
 	if batch == nil {
-		c.Hub.observeMessage(c, event)
+		c.Hub.observeEnqueue(c, event)
 		return
 	}
 	if event.Dropped {
@@ -379,12 +385,12 @@ func (c *Client) publishEnqueue(event TrafficEvent, batch *enqueueBatch) {
 
 func (h *Hub) publishBatch(batch *enqueueBatch, binary bool, bytes int) {
 	if batch.drops != 0 {
-		h.observeMessage(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: -1, Dropped: true, Count: batch.drops})
+		h.observeEnqueue(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: -1, Dropped: true, Count: batch.drops})
 	}
 	if batch.sampled {
 		for depth, count := range batch.depths {
 			if count != 0 {
-				h.observeMessage(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: depth, Count: count})
+				h.observeEnqueue(nil, TrafficEvent{Direction: Outbound, Binary: binary, Bytes: bytes, QueueDepth: depth, Count: count})
 			}
 		}
 	}

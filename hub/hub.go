@@ -733,7 +733,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, metadata ConnectionMetadata) {
 	policy, err := h.SlowClient.normalized()
 	if err != nil {
-		h.observe(func(o Observer) { o.Rejected(h, RejectedOther) })
+		h.observeConcurrent(func(o Observer) { o.Rejected(h, RejectedOther) })
 		http.Error(w, "invalid hub policy", http.StatusServiceUnavailable)
 		return
 	}
