@@ -3,29 +3,31 @@ package budget
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"io"
 	"math"
+	"strconv"
+	"strings"
 	"unicode/utf8"
 )
 
-func decodeInput(data []byte, definition string, out any) error {
+func decodeInput(data []byte, definition string, out any) (resultErr error) {
+	defer func() { resultErr = inputReference(resultErr, referenceLabel(definition), "") }()
 	if len(data) > maxInputBytes || !utf8.Valid(data) {
-		return errors.New("invalid input encoding or size")
+		return invalidInput("")
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
-	if err := scanJSON(d, 0); err != nil {
+	if err := scanJSON(d, 0, inputDefinitions[definition], ""); err != nil {
 		return err
 	}
 	if _, err := d.Token(); err != io.EOF {
-		return errors.New("input must contain one JSON value")
+		return invalidInput("")
 	}
 	d = json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	var value any
 	if err := d.Decode(&value); err != nil {
-		return errors.New("invalid input JSON")
+		return invalidInput("")
 	}
 	if err := validateInput(value, inputDefinitions[definition]); err != nil {
 		return err
@@ -33,49 +35,76 @@ func decodeInput(data []byte, definition string, out any) error {
 	d = json.NewDecoder(bytes.NewReader(data))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
-		return errors.New("input does not match typed contract")
+		return invalidInput("")
 	}
 	return nil
 }
 
-func scanJSON(d *json.Decoder, depth int) error {
+func scanSchema(raw any) map[string]any {
+	s, _ := raw.(map[string]any)
+	for s != nil {
+		ref, ok := s["$ref"].(string)
+		if !ok {
+			break
+		}
+		s, _ = inputDefinitions[strings.TrimPrefix(ref, "#/$defs/")].(map[string]any)
+	}
+	return s
+}
+
+func scanJSON(d *json.Decoder, depth int, raw any, pointer string) error {
 	if depth > 64 {
-		return errors.New("input nesting exceeds limit")
+		return invalidInput(pointer)
 	}
 	token, err := d.Token()
 	if err != nil {
-		return errors.New("invalid input JSON")
+		return invalidInput(pointer)
 	}
 	delim, ok := token.(json.Delim)
 	if !ok {
 		return nil
 	}
+	s := scanSchema(raw)
 	seen := make(map[string]bool)
+	index := 0
 	for d.More() {
+		childPointer := pointer
+		var childSchema any
 		if delim == '{' {
 			key, err := d.Token()
 			if err != nil {
-				return errors.New("invalid input JSON")
+				return invalidInput(pointer)
 			}
 			name, ok := key.(string)
+			props, _ := s["properties"].(map[string]any)
+			if prop, known := props[name]; known {
+				childSchema = prop
+				childPointer = pointerChild(pointer, name)
+			} else {
+				childSchema = s["additionalProperties"]
+			}
 			if !ok || seen[name] {
-				return errors.New("duplicate or invalid JSON member")
+				return invalidInput(childPointer)
 			}
 			seen[name] = true
+		} else {
+			childPointer = pointerChild(pointer, strconv.Itoa(index))
+			childSchema = s["items"]
 		}
-		if err := scanJSON(d, depth+1); err != nil {
+		if err := scanJSON(d, depth+1, childSchema, childPointer); err != nil {
 			return err
 		}
+		index++
 	}
 	end, err := d.Token()
 	if err != nil || delim == '{' && end != json.Delim('}') || delim == '[' && end != json.Delim(']') {
-		return errors.New("invalid input JSON")
+		return invalidInput(pointer)
 	}
 	return nil
 }
 
 func validateNumber(value json.Number, s map[string]any) error {
-	fail := errors.New("input number does not match schema")
+	fail := invalidInput("")
 	if s["type"] == "integer" {
 		if _, err := value.Int64(); err != nil {
 			return fail
