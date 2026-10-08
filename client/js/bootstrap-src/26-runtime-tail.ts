@@ -27,6 +27,7 @@
   function bootstrapFeatureAPI() {
     return {
       ensureBootstrapFeature,
+      registerCapabilityProbe,
       engineFactories,
       fetchProgram,
       inferProgramFormat,

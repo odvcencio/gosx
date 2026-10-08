@@ -930,6 +930,17 @@
     return runtimeCapabilityStatus(entry);
   }
 
+  // Probes registered by feature chunks through api.registerCapabilityProbe
+  // answer for capability names the switch below does not know.
+  const capabilityProbes = Object.create(null);
+
+  function registerCapabilityProbe(name, probe) {
+    const key = normalizeCapabilityName(name);
+    if (!key || typeof probe !== "function") return;
+    capabilityProbes[key] = probe;
+    delete browserCapabilityCache[key];
+  }
+
   function browserCapabilitySupported(capability) {
     const name = normalizeCapabilityName(capability);
     if (!name) {
@@ -947,6 +958,11 @@
     }
     if (dynamicWebGPUFeature) {
       return Boolean(supported);
+    }
+    // Unknown to every probe and switch case: do not cache, a feature chunk
+    // may register its probe later.
+    if (supported === undefined) {
+      return false;
     }
     browserCapabilityCache[name] = Boolean(supported);
     return browserCapabilityCache[name];
@@ -1023,8 +1039,10 @@
         return Boolean(typeof navigator !== "undefined" && navigator && navigator.gpu);
       case "worker":
         return typeof Worker === "function";
-      default:
-        return false;
+      default: {
+        const probe = capabilityProbes[name];
+        return typeof probe === "function" ? Boolean(probe()) : undefined;
+      }
     }
   }
 
