@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -112,7 +113,7 @@ func TestExcludedRuntimeAssetsProduceNoRendererTagOrPreloadHint(t *testing.T) {
 	if fullPreloads != excludedPreloads {
 		t.Fatalf("PreloadHints changed when scene3d/video/payments/relay/textlayout were absent from the manifest:\nfull:     %s\nexcluded: %s", fullPreloads, excludedPreloads)
 	}
-	if fullSummary != excludedSummary {
+	if !reflect.DeepEqual(fullSummary, excludedSummary) {
 		t.Fatalf("Summary changed when scene3d/video/payments/relay/textlayout were absent from the manifest:\nfull:     %#v\nexcluded: %#v", fullSummary, excludedSummary)
 	}
 

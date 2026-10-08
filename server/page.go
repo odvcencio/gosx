@@ -240,6 +240,69 @@ type documentContractAssets struct {
 	Engines                         int    `json:"engines,omitempty"`
 	Hubs                            int    `json:"hubs,omitempty"`
 	Controllers                     int    `json:"controllers,omitempty"`
+
+	// FeaturePaths carries the public URL of each opt-in runtime chunk. It is
+	// flattened into one bootstrapFeature<Name>Path key per non-legacy chunk
+	// (see MarshalJSON), because the browser loader reads flat keys only.
+	FeaturePaths map[string]string `json:"-"`
+}
+
+// legacyContractFeatures are the chunks whose contract keys are declared as
+// struct fields above and must not be written twice.
+var legacyContractFeatures = map[string]bool{
+	"islands": true, "engines": true, "hubs": true,
+	"controllers": true, "scene3d": true, "textlayout": true,
+}
+
+// MarshalJSON writes the declared fields and adds a flat
+// bootstrapFeature<Name>Path key for every non-legacy feature chunk, for
+// example engine-bridge becomes bootstrapFeatureEngineBridgePath.
+func (a documentContractAssets) MarshalJSON() ([]byte, error) {
+	type plain documentContractAssets
+	base, err := json.Marshal(plain(a))
+	if err != nil {
+		return nil, err
+	}
+	extra := map[string]string{}
+	for name, path := range a.FeaturePaths {
+		if !legacyContractFeatures[name] && strings.TrimSpace(path) != "" {
+			extra[documentFeatureKey(name)] = path
+		}
+	}
+	if len(extra) == 0 {
+		// Keep the struct field order for pages with no opt-in chunks.
+		return base, nil
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(base, &fields); err != nil {
+		return nil, err
+	}
+	for key, path := range extra {
+		fields[key] = path
+	}
+	return json.Marshal(fields)
+}
+
+// documentFeatureKey converts a feature name to its contract key. It must
+// match bootstrapFeatureKey in client/js/bootstrap-src/26-runtime-tail.ts.
+func documentFeatureKey(name string) string {
+	var b strings.Builder
+	b.WriteString("bootstrapFeature")
+	upper := true
+	for _, ch := range name {
+		if ch == '-' {
+			upper = true
+			continue
+		}
+		if upper {
+			b.WriteString(strings.ToUpper(string(ch)))
+			upper = false
+			continue
+		}
+		b.WriteRune(ch)
+	}
+	b.WriteString("Path")
+	return b.String()
 }
 
 func documentContractNode(doc *DocumentContext) gosx.Node {
@@ -283,6 +346,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			Engines:                         doc.Runtime.Engines,
 			Hubs:                            doc.Runtime.Hubs,
 			Controllers:                     doc.Runtime.Controllers,
+			FeaturePaths:                    documentFeaturePaths(basepath.FromRequest(doc.Request), doc.Runtime.FeaturePaths),
 		},
 	})
 	if err != nil {
@@ -294,6 +358,17 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		"&", "\\u0026",
 	).Replace(string(payload))
 	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract` + nonceAttr(doc.Nonce) + `>` + safe + `</script>`)
+}
+
+func documentFeaturePaths(prefix string, in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for name, path := range in {
+		out[name] = basepath.URL(prefix, path)
+	}
+	return out
 }
 
 func documentBootstrapMode(value string) string {

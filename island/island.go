@@ -104,7 +104,10 @@ type Renderer struct {
 	islandRuntime                  hydrate.RuntimeRef
 	runtimeVariants                map[string]hydrate.RuntimeRef
 	runtimeAssets                  buildmanifest.RuntimeAssets
-	bootstrapOnly                  bool
+	// featureChunkPaths maps an opt-in feature name (hydrate.Manifest.Features)
+	// to its hashed public chunk URL, filled by ApplyBuildManifest.
+	featureChunkPaths map[string]string
+	bootstrapOnly     bool
 }
 
 type programAsset struct {
@@ -115,6 +118,12 @@ type programAsset struct {
 
 // Summary describes the client bootstrap/runtime surface required by a page.
 type Summary struct {
+	// FeaturePaths maps each runtime feature chunk the page can load to its
+	// public URL: the six legacy chunks the page uses (islands, engines, hubs,
+	// controllers, scene3d, textlayout) plus every feature the page requires
+	// through RequireFeature. The document contract publishes a flat
+	// bootstrapFeature<Name>Path key for each non-legacy entry.
+	FeaturePaths                    map[string]string
 	Bootstrap                       bool
 	BootstrapMode                   string
 	Manifest                        bool
@@ -815,6 +824,11 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 	case runtimeScriptAssetPathMatches(target, "/gosx/relay.js", r.relayPath, r.runtimeAssets.Relay):
 		return r.runtimeAssets.Relay, true
 	default:
+		for name, asset := range r.runtimeAssets.Features {
+			if runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-"+name+".js", r.featureChunkPaths[name], asset) {
+				return asset, true
+			}
+		}
 		return buildmanifest.HashedAsset{}, false
 	}
 }
@@ -939,6 +953,13 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	// alias must not compete with core as an independent fifth profile.
 	if len(manifest.Runtime.WASMVariants) > 0 {
 		delete(r.runtimeVariants, string(runtimewasm.VariantIslands))
+	}
+	r.featureChunkPaths = nil
+	if len(runtime.Features) > 0 {
+		r.featureChunkPaths = make(map[string]string, len(runtime.Features))
+		for name, url := range runtime.Features {
+			r.featureChunkPaths[name] = url
+		}
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetStandardGoWASMExecPath(runtime.StandardGoWASMExec)
@@ -1082,6 +1103,47 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 		}
 	}
 	return manifest.WithBasePath(r.basePath)
+}
+
+// RequireFeature asks the browser loader to fetch the opt-in runtime chunk
+// bootstrap-feature-<name>.js for this page. The name must be lowercase words
+// joined by dashes. The chunk loads only on pages that already bootstrap the
+// selective runtime (engines, islands, hubs or controllers).
+func (r *Renderer) RequireFeature(name string) error {
+	if r == nil {
+		return fmt.Errorf("island renderer is nil")
+	}
+	return r.manifest.RequireFeature(name)
+}
+
+// legacyFeatureNames are the chunks that predate manifest.features. Their
+// contract keys and Summary fields keep their original names.
+var legacyFeatureNames = map[string]bool{
+	"islands": true, "engines": true, "hubs": true,
+	"controllers": true, "scene3d": true, "textlayout": true,
+}
+
+// requiredFeaturePath returns the public URL for a non-legacy required
+// feature: the hashed manifest URL when the build recorded one, otherwise the
+// unversioned /gosx/ compatibility URL the server resolves at request time.
+func (r *Renderer) requiredFeaturePath(name string) string {
+	if path := r.featureChunkPaths[name]; path != "" {
+		return path
+	}
+	return "/gosx/bootstrap-feature-" + name + ".js"
+}
+
+// requiredFeatureNames returns the sorted non-legacy feature names the page
+// requires.
+func (r *Renderer) requiredFeatureNames() []string {
+	var names []string
+	for _, name := range r.manifest.Features {
+		if !legacyFeatureNames[name] {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
 }
 
 // SetBasePath selects the public prefix for client manifest URLs.
@@ -2040,6 +2102,16 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
 			b.WriteByte('\n')
 		}
+		// Required opt-in chunks are fetched by the loader, never by a script
+		// tag, so a preload hint is the only server-side signal they get.
+		for _, name := range r.requiredFeatureNames() {
+			path := r.requiredFeaturePath(name)
+			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
+				continue
+			}
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
+			b.WriteByte('\n')
+		}
 	}
 
 	r.writeScene3DPreloads(&b)
@@ -2211,6 +2283,25 @@ func (r *Renderer) Summary() Summary {
 		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
 		summary.BootstrapFeatureControllersPath = r.selectedBootstrapFeaturePath("controllers")
 		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
+		summary.FeaturePaths = map[string]string{}
+		for name, path := range map[string]string{
+			"islands":     summary.BootstrapFeatureIslandsPath,
+			"engines":     summary.BootstrapFeatureEnginesPath,
+			"hubs":        summary.BootstrapFeatureHubsPath,
+			"controllers": summary.BootstrapFeatureControllersPath,
+			"scene3d":     summary.BootstrapFeatureScene3DPath,
+			"textlayout":  summary.BootstrapFeatureTextLayoutPath,
+		} {
+			if strings.TrimSpace(path) != "" {
+				summary.FeaturePaths[name] = path
+			}
+		}
+		for _, name := range r.requiredFeatureNames() {
+			summary.FeaturePaths[name] = r.requiredFeaturePath(name)
+		}
+		if len(summary.FeaturePaths) == 0 {
+			summary.FeaturePaths = nil
+		}
 	}
 	for _, entry := range r.manifest.Controllers {
 		if entry.Config.NeedsInputRuntime() {

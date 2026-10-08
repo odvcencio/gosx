@@ -1,6 +1,7 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 
 	"m31labs.dev/gosx"
@@ -34,6 +35,9 @@ type pageRuntimeManagedScript struct {
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
 type PageRuntimeSummary struct {
+	// FeaturePaths maps runtime feature chunk names to public URLs; see
+	// island.Summary.FeaturePaths.
+	FeaturePaths                    map[string]string
 	Bootstrap                       bool
 	Runtime                         bool
 	BootstrapMode                   string
@@ -77,6 +81,20 @@ func (r *PageRuntime) EnableBootstrap() {
 	if r.renderer != nil {
 		r.renderer.EnableBootstrap()
 	}
+}
+
+// RequireFeature asks the browser loader to fetch the opt-in runtime chunk
+// bootstrap-feature-<name>.js (for example "engine-bridge") on this page. It
+// marks the page runtime active. See island.Renderer.RequireFeature.
+func (r *PageRuntime) RequireFeature(name string) error {
+	if r == nil || r.renderer == nil {
+		return fmt.Errorf("page runtime is nil")
+	}
+	if err := r.renderer.RequireFeature(name); err != nil {
+		return err
+	}
+	r.active = true
+	return nil
 }
 
 // Engine registers a client engine and returns its server-rendered mount shell.
@@ -369,6 +387,7 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 	}
 	summary := r.renderer.Summary()
 	return PageRuntimeSummary{
+		FeaturePaths:                    copyFeaturePaths(summary.FeaturePaths),
 		Bootstrap:                       summary.Bootstrap,
 		Runtime:                         strings.TrimSpace(summary.RuntimePath) != "",
 		BootstrapMode:                   summary.BootstrapMode,
@@ -400,4 +419,15 @@ func (r *PageRuntime) usesCompatRuntimeAssets() bool {
 	}
 	head := gosx.RenderHTML(r.renderer.PageHead())
 	return strings.Contains(head, "/gosx/")
+}
+
+func copyFeaturePaths(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for name, path := range in {
+		out[name] = path
+	}
+	return out
 }
