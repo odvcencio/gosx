@@ -1,6 +1,7 @@
 package hubclient
 
 import (
+	"context"
 	"net/http"
 	"sync"
 )
@@ -66,11 +67,9 @@ type conn interface {
 // ignores it, because the browser WebSocket API does not allow custom
 // request headers.
 //
-// Dial itself only fails for input the transport can reject synchronously
-// (a malformed URL, for example). A rejected or dropped connection attempt
-// is reported asynchronously as a frameError/frameClosed pair on the
-// returned conn's Events channel, so Client's reconnect loop has one failure
-// path regardless of platform.
+// Dial observes ctx cancellation. Native Dial waits for the handshake and may
+// return an error; browser Dial returns a pending socket and reports handshake
+// failures asynchronously through its Events channel.
 type dialer interface {
-	Dial(rawURL string, header http.Header) (conn, error)
+	Dial(ctx context.Context, rawURL string, header http.Header) (conn, error)
 }
