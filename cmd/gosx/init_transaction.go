@@ -24,6 +24,10 @@ func createScaffold(dir, module string, files []scaffoldFile, tidy func(string) 
 	if err = os.MkdirAll(dir, 0755); err != nil {
 		return nil, err
 	}
+	dir, err = filepath.EvalSymlinks(dir)
+	if err != nil {
+		return nil, err
+	}
 	before, err := os.Lstat(dir)
 	if err != nil {
 		return nil, err
@@ -48,6 +52,19 @@ func createScaffold(dir, module string, files []scaffoldFile, tidy func(string) 
 	}
 	existingImports, err := discoverModuleImports(dir, dir, module)
 	if err != nil {
+		return nil, err
+	}
+	existingGo := false
+	if err = fs.WalkDir(root.FS(), ".", func(_ string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
+			existingGo = true
+			return fs.SkipAll
+		}
+		return nil
+	}); err != nil {
 		return nil, err
 	}
 	stage, err := os.MkdirTemp("", "gosx-init-")
@@ -87,10 +104,10 @@ func createScaffold(dir, module string, files []scaffoldFile, tidy func(string) 
 			}
 		}
 	}
-	if len(existingImports) > 0 {
-		// Preserve registration of existing routes without exposing their import
-		// paths to a staging tidy that cannot see those local packages.
-		tidyErr = fmt.Errorf("existing route modules require dependency resolution in the completed project")
+	if existingGo {
+		// Existing packages, including those outside app/, are absent from staging.
+		// Resolve all their dependencies in the completed project instead.
+		tidyErr = fmt.Errorf("existing Go files require dependency resolution in the completed project")
 	} else {
 		tidyErr = tidy(stage)
 	}
@@ -173,11 +190,12 @@ func publishScaffold(root *os.Root, files []scaffoldFile, beforePublish func(int
 	return publishScaffoldWithFS(root, files, beforePublish, scaffoldFS{})
 }
 
-// scaffoldFS keeps file creation and unsupported hard links testable without
-// changing process-wide functions or requiring a particular mounted filesystem.
+// scaffoldFS tests publication using only no-clobber creation, without requiring
+// hard-link support or changing process-wide functions.
 type scaffoldFS struct {
 	openFile func(*os.Root, string, int, fs.FileMode) (*os.File, error)
-	link     func(*os.Root, string, string) error
+	stat     func(*os.File) (os.FileInfo, error)
+	close    func(*os.File) error
 }
 
 func publishScaffoldWithFS(root *os.Root, files []scaffoldFile, beforePublish func(int) error, filesystem scaffoldFS) (err error) {
@@ -188,15 +206,23 @@ func publishScaffoldWithFS(root *os.Root, files []scaffoldFile, beforePublish fu
 	if openFile == nil {
 		openFile = (*os.Root).OpenFile
 	}
+	stat, closeFile := filesystem.stat, filesystem.close
+	if stat == nil {
+		stat = (*os.File).Stat
+	}
+	if closeFile == nil {
+		closeFile = (*os.File).Close
+	}
 	var entries []*scaffoldPublication
 	defer func() {
+		failed := err != nil
 		for i := len(entries) - 1; i >= 0; i-- {
 			e := entries[i]
-			if err != nil && e.installed {
+			if failed && e.installed {
 				err = errors.Join(err, rollbackScaffoldFile(e))
 			}
 			if e.handle != nil {
-				err = errors.Join(err, e.handle.Close())
+				err = errors.Join(err, closeFile(e.handle))
 			}
 			err = errors.Join(err, e.parent.Close())
 		}
@@ -230,8 +256,10 @@ func publishScaffoldWithFS(root *os.Root, files []scaffoldFile, beforePublish fu
 			return fmt.Errorf("publish %s: %w", e.file.Path, createErr)
 		}
 		e.handle = f
-		e.info, err = f.Stat()
+		e.info, err = stat(f)
 		if err != nil {
+			err = errors.Join(err, closeFile(f), e.parent.Remove(path.Base(e.file.Path)))
+			e.handle = nil
 			return err
 		}
 		e.installed = true
@@ -285,6 +313,8 @@ func openScaffoldParent(root *os.Root, target string, create bool) (*os.Root, er
 }
 
 func rollbackScaffoldFile(e *scaffoldPublication) error {
+	// Ownership checks and removal are best effort: Go has no unlink-by-handle,
+	// so a concurrent replacement between the last check and Remove can race.
 	name := path.Base(e.file.Path)
 	info, err := e.parent.Lstat(name)
 	if errors.Is(err, os.ErrNotExist) {

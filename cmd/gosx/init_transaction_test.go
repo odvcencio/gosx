@@ -71,18 +71,20 @@ func TestInitRejectsSymlinkParentsAndDanglingTargets(t *testing.T) {
 	}
 }
 
-func TestInitRejectsSymlinkRoot(t *testing.T) {
-	outside := t.TempDir()
+func TestInitAcceptsSymlinkRoot(t *testing.T) {
+	target := t.TempDir()
 	link := filepath.Join(t.TempDir(), "project")
-	if err := os.Symlink(outside, link); err != nil {
+	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
-	if err := RunInit(link, "example.com/app", "app"); err == nil {
-		t.Fatal("init accepted a symlink root")
+	files := []scaffoldFile{{"go.mod", "module example.com/app\n"}, {"app/page.gsx", "package app\n"}}
+	if tidyErr, err := createScaffold(link, "example.com/app", files, func(string) error { return nil }); err != nil || tidyErr != nil {
+		t.Fatalf("init through symlink: tidy=%v err=%v", tidyErr, err)
 	}
-	entries, err := os.ReadDir(outside)
-	if err != nil || len(entries) != 0 {
-		t.Fatalf("init wrote through a symlink root: %v, %v", entries, err)
+	for _, file := range files {
+		if got := readFile(t, filepath.Join(target, filepath.FromSlash(file.Path))); got != file.Contents {
+			t.Fatalf("%s = %q", file.Path, got)
+		}
 	}
 }
 
@@ -202,7 +204,6 @@ func TestScaffoldPublicationPreservesConcurrentFiles(t *testing.T) {
 			} else if link, err := os.Readlink(filepath.Join(dir, "last")); err != nil || link != "caller-target" {
 				t.Fatalf("overwrote concurrent symlink: %s, %v", link, err)
 			}
-			assertNoScaffoldStages(t, dir)
 		})
 	}
 }
@@ -237,7 +238,6 @@ func TestScaffoldRollbackPreservesCallerEdits(t *testing.T) {
 			if got := readFile(t, filepath.Join(dir, "first")); got != content {
 				t.Fatalf("rollback lost caller edit: %q", got)
 			}
-			assertNoScaffoldStages(t, dir)
 		})
 	}
 }
@@ -259,7 +259,6 @@ func TestScaffoldRejectsParentSwapDuringPublication(t *testing.T) {
 			t.Fatalf("published into swapped parent %s: %v", parent, err)
 		}
 	}
-	assertNoScaffoldStages(t, dir)
 }
 
 func TestScaffoldRejectsInvalidPlanBeforeWriting(t *testing.T) {
@@ -292,27 +291,11 @@ func openScaffoldTestRoot(t *testing.T, dir string) *os.Root {
 	return root
 }
 
-func assertNoScaffoldStages(t *testing.T, dir string) {
-	t.Helper()
-	if err := filepath.WalkDir(dir, func(name string, entry os.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if strings.HasPrefix(entry.Name(), ".gosx-init-") {
-			t.Errorf("staging file remains: %s", name)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestScaffoldPublicationWithoutHardLinks(t *testing.T) {
 	dir := t.TempDir()
 	root := openScaffoldTestRoot(t, dir)
-	opens, links := 0, 0
+	opens := 0
 	filesystem := scaffoldFS{
-		link: func(*os.Root, string, string) error { links++; return errors.ErrUnsupported },
 		openFile: func(parent *os.Root, name string, flags int, mode fs.FileMode) (*os.File, error) {
 			opens++
 			if flags&os.O_EXCL == 0 || flags&os.O_CREATE == 0 || flags&os.O_TRUNC != 0 {
@@ -328,8 +311,8 @@ func TestScaffoldPublicationWithoutHardLinks(t *testing.T) {
 	if err := publishScaffoldWithFS(root, files, nil, filesystem); err != nil {
 		t.Fatal(err)
 	}
-	if opens != len(files) || links != 0 {
-		t.Fatalf("operations: opens=%d links=%d", opens, links)
+	if opens != len(files) {
+		t.Fatalf("no-clobber opens=%d, want %d", opens, len(files))
 	}
 	for _, file := range files {
 		if got := readFile(t, filepath.Join(dir, filepath.FromSlash(file.Path))); got != file.Contents {
@@ -355,5 +338,72 @@ func TestScaffoldOpenFailureRollsBackEarlierWrites(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(dir, name)); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("%s remains after rollback: %v", name, err)
 		}
+	}
+}
+
+func TestInitExistingGoFilesRequireFinalTidy(t *testing.T) {
+	dir := t.TempDir()
+	name := filepath.Join(dir, "services", "service.go")
+	if err := os.MkdirAll(filepath.Dir(name), 0755); err != nil {
+		t.Fatal(err)
+	}
+	const existing = "package services\nimport _ \"example.com/existing-dependency\"\n"
+	if err := os.WriteFile(name, []byte(existing), 0644); err != nil {
+		t.Fatal(err)
+	}
+	output, err := os.CreateTemp(t.TempDir(), "stderr")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	oldStderr := os.Stderr
+	os.Stderr = output
+	defer func() { os.Stderr = oldStderr }()
+	if err := RunInit(dir, "example.com/app", "app"); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFile(t, output.Name()); !strings.Contains(got, "existing Go files") || !strings.Contains(got, "go mod tidy") {
+		t.Fatalf("missing final tidy reminder: %s", got)
+	}
+	if got := readFile(t, name); got != existing {
+		t.Fatalf("existing package changed: %q", got)
+	}
+}
+
+func TestScaffoldStatAndCloseFailures(t *testing.T) {
+	for _, operation := range []string{"stat", "close"} {
+		t.Run(operation, func(t *testing.T) {
+			dir := t.TempDir()
+			root := openScaffoldTestRoot(t, dir)
+			failure := errors.New("injected " + operation + " failure")
+			filesystem := scaffoldFS{
+				stat: func(f *os.File) (os.FileInfo, error) {
+					if operation == "stat" && filepath.Base(f.Name()) == "last" {
+						return nil, failure
+					}
+					return f.Stat()
+				},
+				close: func(f *os.File) error {
+					err := f.Close()
+					if operation == "close" && filepath.Base(f.Name()) == "last" {
+						return errors.Join(err, failure)
+					}
+					return err
+				},
+			}
+			files := []scaffoldFile{{"first", "complete"}, {"last", "complete"}}
+			if err := publishScaffoldWithFS(root, files, nil, filesystem); !errors.Is(err, failure) {
+				t.Fatalf("missing failure: %v", err)
+			}
+			for _, file := range files {
+				if operation == "stat" {
+					if _, err := os.Stat(filepath.Join(dir, file.Path)); !errors.Is(err, os.ErrNotExist) {
+						t.Fatalf("%s remains after stat failure: %v", file.Path, err)
+					}
+				} else if got := readFile(t, filepath.Join(dir, file.Path)); got != file.Contents {
+					t.Fatalf("close error removed %s: %q", file.Path, got)
+				}
+			}
+		})
 	}
 }
