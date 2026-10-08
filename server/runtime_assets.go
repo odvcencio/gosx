@@ -281,15 +281,16 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 		"bootstrap-feature-engines.js":                 filepath.Join(buildDir, "bootstrap-feature-engines.js"),
 		"bootstrap-feature-hubs.js":                    filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
 		"bootstrap-feature-controllers.js":             filepath.Join(buildDir, "bootstrap-feature-controllers.js"),
+		"bootstrap-controller-input.js":                filepath.Join(buildDir, "bootstrap-controller-input.js"),
 		"bootstrap-feature-textlayout.js":              filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
 		"bootstrap-feature-scene3d.js":                 filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
 		"bootstrap-feature-scene3d-command.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
 		"bootstrap-feature-scene3d-hydrate.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-hydrate.js"),
 		"bootstrap-feature-scene3d-instance-stream.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-instance-stream.js"),
-		"patch.js":                                     filepath.Join(buildDir, "patch.js"),
-		"hls.min.js":                                   filepath.Join(buildDir, "hls.min.js"),
-		"stripe-bridge.js":                             filepath.Join(buildDir, "stripe-bridge.js"),
-		"relay.js":                                     filepath.Join(buildDir, "relay.js"),
+		"patch.js":         filepath.Join(buildDir, "patch.js"),
+		"hls.min.js":       filepath.Join(buildDir, "hls.min.js"),
+		"stripe-bridge.js": filepath.Join(buildDir, "stripe-bridge.js"),
+		"relay.js":         filepath.Join(buildDir, "relay.js"),
 	}
 	if direct, ok := candidates[name]; ok && isFile(direct) {
 		return direct, true
@@ -388,6 +389,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureHubs.File)
 	case "bootstrap-feature-controllers.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureControllers.File)
+	case "bootstrap-controller-input.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapControllerInput.File)
 	case "bootstrap-feature-textlayout.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureTextlayout.File)
 	case "bootstrap-feature-scene3d.js":
