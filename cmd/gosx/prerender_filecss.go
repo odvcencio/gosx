@@ -15,7 +15,11 @@ import (
 
 // Fetch generated sidecar CSS while the export router and its scoped assets
 // are alive. Both export and production builds use this prerender path.
-func stageExportFileCSS(client *http.Client, baseURL, outputDir, input string, staged map[string]bool) error {
+func stageExportFileCSS(client *http.Client, baseURL, outputDir, input string, staged map[string]bool, mounts ...exportMount) error {
+	var mount exportMount
+	if len(mounts) > 0 {
+		mount = mounts[0]
+	}
 	tokenizer := html.NewTokenizer(strings.NewReader(input))
 	for {
 		switch tokenizer.Next() {
@@ -50,7 +54,7 @@ func stageExportFileCSS(client *http.Client, baseURL, outputDir, input string, s
 			if staged[ref.Path] {
 				continue
 			}
-			if err := fetchExportFileCSS(client, baseURL+ref.String(), filepath.Join(outputDir, filepath.FromSlash(strings.TrimPrefix(ref.Path, "/")))); err != nil {
+			if err := fetchExportFileCSS(client, baseURL+mount.upstreamURL(ref.String()), filepath.Join(outputDir, filepath.FromSlash(strings.TrimPrefix(ref.Path, "/")))); err != nil {
 				return err
 			}
 			staged[ref.Path] = true
