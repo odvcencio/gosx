@@ -2,12 +2,16 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
 
 func (t *Telemetry) run() {
 	defer func() {
+		if t.activities != nil {
+			t.activities.stopping.Store(true)
+		}
 		t.releaseLoops()
 		t.releaseHubs()
 		if err := stopTicker(t.ticker); err != nil {
@@ -53,15 +57,18 @@ func (t *Telemetry) run() {
 					return
 				}
 				t.updateCore(now)
+				t.maintainActivities(now)
 			}
 		case <-t.wake:
+			t.collectActivityReceipts()
 			t.mu.Lock()
 			ctx := t.closeContext
 			t.mu.Unlock()
 			if ctx != nil {
+				activityError := t.stopActivities(ctx)
 				t.mu.Lock()
 				if t.closeResult == nil {
-					t.closeResult = t.closeContextError()
+					t.closeResult = errors.Join(activityError, t.closeContextError())
 				}
 				t.mu.Unlock()
 				return

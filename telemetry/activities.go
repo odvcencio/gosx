@@ -145,6 +145,27 @@ func (k *ActivityKind[A, P, E]) begin(start ActivityStart[A]) (*Activity[A, P, E
 	if !t.Enabled() {
 		return nil, ErrClosed
 	}
+	if s.stopping.Load() {
+		return nil, ErrClosed
+	}
+	if start.Loop != nil {
+		l := start.Loop
+		if l.kind == nil || l.kind.owner != t {
+			return nil, invalid("activity_loop", "foreign")
+		}
+		if l.slot == nil {
+			if l.closed.Load() {
+				return nil, ErrClosed
+			}
+		} else {
+			l.slot.mu.Lock()
+			open := l.slot.epoch == l.epoch && l.slot.kind == l.kind
+			l.slot.mu.Unlock()
+			if !open {
+				return nil, ErrClosed
+			}
+		}
+	}
 	release, err := s.transaction()
 	if err != nil {
 		return nil, err
@@ -181,6 +202,9 @@ func (k *ActivityKind[A, P, E]) begin(start ActivityStart[A]) (*Activity[A, P, E
 	if len(s.live) >= t.opts.Activities.MaxOpen {
 		t.core.dropped["activity_cap"].Add(1)
 		return nil, ErrCapacity
+	}
+	if s.live[id] != nil {
+		return nil, invalid("entropy", "collision")
 	}
 	if start.ParentID != "" && s.live[string(start.ParentID)] == nil {
 		return nil, invalid("activity_parent", "unknown")
@@ -254,6 +278,9 @@ func (a *Activity[A, P, E]) Set(fields A) error {
 	}
 	v, _ := original.Activity()
 	v.Fields = staged
+	if original.Envelope().Revision == math.MaxUint64 {
+		return ErrCapacity
+	}
 	now, err := t.activityNow()
 	if err != nil {
 		return err
@@ -350,6 +377,9 @@ func (a *Activity[A, P, E]) End(end ActivityEnd[A]) (Receipt, error) {
 	v.Fields = staged
 	v.Outcome = outcome
 	v.Reason = reason
+	if original.Envelope().Revision == math.MaxUint64 {
+		return Receipt{}, ErrCapacity
+	}
 	now, err := t.activityNow()
 	if err != nil {
 		return Receipt{}, err
@@ -361,7 +391,16 @@ func (a *Activity[A, P, E]) End(end ActivityEnd[A]) (Receipt, error) {
 	}
 	receipt := newMemoryReceipt()
 	e.mu.Lock()
-	if e.final || e.record.Envelope().Revision != original.Envelope().Revision {
+	if e.final {
+		frozen, existing := e.record, e.receipt
+		e.mu.Unlock()
+		v, _ := frozen.Activity()
+		if v.Outcome == outcome && v.Reason == reason && sameActivityFields(v.Fields, staged) {
+			return existing, nil
+		}
+		return Receipt{}, ErrConflict
+	}
+	if e.record.Envelope().Revision != original.Envelope().Revision {
 		e.mu.Unlock()
 		return Receipt{}, ErrConflict
 	}
@@ -382,22 +421,57 @@ func (a *Activity[A, P, E]) Checkpoint() (Receipt, error) {
 	if a == nil || a.entity == nil {
 		return Receipt{}, nil
 	}
-	e := a.entity
+	now, err := a.entity.kind.owner.activityNow()
+	if err != nil {
+		return Receipt{}, err
+	}
+	return checkpointActivity(a.entity, now)
+}
+func checkpointActivity(e *activityEntity, now Instant) (Receipt, error) {
+	s := e.kind.owner.activities
+	release, err := s.transaction()
+	if err != nil {
+		return Receipt{}, err
+	}
+	defer release()
+	e.mu.Lock()
+	if e.final || !e.dirty {
+		receipt := e.receipt
+		e.mu.Unlock()
+		return receipt, nil
+	}
+	if s.stopping.Load() {
+		e.mu.Unlock()
+		return Receipt{}, ErrClosed
+	}
+	original := e.record
+	e.mu.Unlock()
+	v, _ := original.Activity()
+	activityElapsed(&v, e, now, false)
+	if original.Envelope().Revision == math.MaxUint64 {
+		return Receipt{}, ErrCapacity
+	}
+	r, err := e.kind.buildActivityRecord(v, schema.StateCheckpoint, original.Envelope().Revision+1, now, e.loop != nil)
+	if err != nil {
+		return Receipt{}, err
+	}
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.final {
 		return e.receipt, nil
 	}
-	if e.kind.owner.activities.stopping.Load() {
+	if s.stopping.Load() {
 		return Receipt{}, ErrClosed
 	}
-	if !e.dirty || !e.receipt.ready() {
-		return e.receipt, nil
+	if e.record.Envelope().Revision != original.Envelope().Revision {
+		return Receipt{}, ErrConflict
 	}
-	e.receipt = newMemoryReceipt()
-	e.receipt.complete(nil)
+	receipt := newMemoryReceipt()
+	receipt.complete(nil)
+	e.record = r
+	e.receipt = receipt
 	e.dirty = false
-	return e.receipt, nil
+	return receipt, nil
 }
 func (t *Telemetry) wakeActivityWorker() {
 	select {
@@ -426,12 +500,17 @@ func (t *Telemetry) collectActivityReceipts() {
 		e.mu.Unlock()
 		if final {
 			s.mu.Lock()
+			committed := false
 			if s.live[id] == e {
+				committed = true
 				delete(s.live, id)
 				delete(s.attached, loop)
 				s.bytes.Add(-activitySlotBytes)
 			}
 			s.mu.Unlock()
+			if committed {
+				e.kind.meters.records[1][1].Add(1)
+			}
 		}
 		receipt.complete(nil)
 	}
