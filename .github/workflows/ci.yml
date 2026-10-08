@@ -113,6 +113,9 @@ jobs:
       - name: Non-CLI unit and integration tests
         run: make test-unit
 
+      - name: Telemetry contract tests
+        run: make test-telemetry
+
       # editor/ is a nested Go module, so nothing above reaches it: `go list
       # ./editor/...` fails from the root and `make test` never compiles it.
       # That left 3404 non-test lines and 68 tests with no gate on any runner.
@@ -296,6 +299,9 @@ jobs:
 
       - name: WASM runtime tests
         run: make test-wasm
+
+      - name: Portable telemetry tests
+        run: make test-telemetry-wasm
 
       - name: Island-only WASM runtime tests
         run: make test-wasm-islands

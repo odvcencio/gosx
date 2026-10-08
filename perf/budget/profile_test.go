@@ -82,7 +82,10 @@ func TestProfileContract(t *testing.T) {
 }
 
 func TestInputReferenceConfinement(t *testing.T) {
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(root, "profile.json")
 	data := fixture(t, "profile")
 	if err := os.WriteFile(path, data, 0600); err != nil {
@@ -129,7 +132,10 @@ func TestInputReferenceConfinement(t *testing.T) {
 
 func TestInputRootAndReadLimit(t *testing.T) {
 	data := fixture(t, "profile")
-	root := t.TempDir()
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	path := filepath.Join(root, "profile.json")
 	if err := os.WriteFile(path, data, 0600); err != nil {
 		t.Fatal(err)

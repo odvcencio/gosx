@@ -1,7 +1,7 @@
 package budget
 
 import (
-	"errors"
+	"strconv"
 	"time"
 )
 
@@ -38,57 +38,60 @@ func LoadCoefficients(path string, opts LoadOptions) (*Coefficients, error) {
 		return nil, err
 	}
 	if err := c.validate(); err != nil {
-		return nil, err
+		return nil, inputReference(err, "coefficients", "")
 	}
 	return &c, nil
 }
 
 func (c Coefficients) validate() error {
 	if _, err := time.Parse(time.RFC3339, c.MeasuredAt); err != nil {
-		return errors.New("invalid coefficient timestamp")
+		return invalidInput("/measuredAt")
 	}
 	ids := make(map[string]bool)
-	for _, set := range c.Sets {
+	for si, set := range c.Sets {
+		setPointer := "/sets/" + strconv.Itoa(si)
 		if ids[set.ID] {
-			return errors.New("duplicate coefficient set")
+			return invalidInput(setPointer + "/id")
 		}
 		ids[set.ID] = true
 		names := make(map[string]bool)
-		for _, e := range set.Entries {
+		for ei, e := range set.Entries {
+			entryPointer := setPointer + "/entries/" + strconv.Itoa(ei)
 			if names[e.Name] {
-				return errors.New("duplicate coefficient name")
+				return invalidInput(entryPointer + "/name")
 			}
 			names[e.Name] = true
 			lo, hi := e.CI95[0], e.CI95[1]
 			if (lo == nil) != (hi == nil) || lo != nil && (*lo > *hi || e.Value == nil || *e.Value < *lo || *e.Value > *hi) {
-				return errors.New("invalid coefficient interval")
+				return invalidInput(entryPointer + "/ci95")
 			}
 			if e.NBlocks > e.NVisits {
-				return errors.New("invalid coefficient support")
+				return invalidInput(entryPointer + "/nBlocks")
 			}
 			switch e.Status {
 			case "unknown":
 				if e.Value != nil || lo != nil || e.NVisits != 0 || e.NBlocks != 0 {
-					return errors.New("unknown coefficient must have null value and no support")
+					return invalidInput(entryPointer)
 				}
 			case "unused":
 				if e.Value == nil || *e.Value != 0 || e.Method != "unused" || e.NVisits != 0 || e.NBlocks != 0 {
-					return errors.New("unused coefficient must be explicit zero")
+					return invalidInput(entryPointer)
 				}
 			case "provisional":
 				if e.Value == nil || e.Method != "prior" {
-					return errors.New("provisional coefficient requires a prior")
+					return invalidInput(entryPointer)
 				}
 			case "pilot", "measured":
 				if e.Value == nil || lo == nil || e.NVisits == 0 || e.NBlocks == 0 || e.Method == "prior" || e.Method == "unused" {
-					return errors.New("observed coefficient requires an interval and support")
+					return invalidInput(entryPointer)
 				}
+				// Spec 4.3 requires 30 visits and held-out error at most 200,000 ppm.
 				if e.Status == "measured" && (e.NVisits < 30 || set.PredictionErrorPPM == nil || *set.PredictionErrorPPM > 200000) {
-					return errors.New("measured coefficient requires accepted visits and held-out validation")
+					return invalidInput(entryPointer)
 				}
 			}
 			if e.Name == "wasmOverlapPPM" && (e.Value != nil && *e.Value > 1000000 || hi != nil && *hi > 1000000) {
-				return errors.New("overlap exceeds one million ppm")
+				return invalidInput(entryPointer)
 			}
 		}
 	}

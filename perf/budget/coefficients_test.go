@@ -25,7 +25,7 @@ func TestCoefficientsPreserveEvidence(t *testing.T) {
 			t.Fatal("illustrative prior claimed measured evidence")
 		}
 	}
-	// Three-size, ten-visit calibration is a pilot, rounded to us/raw KB.
+	// This synthetic ten-visit WASM pilot exercises loading; it is not calibration evidence.
 	pilot := c.Sets[1].Entries[3]
 	if pilot.Name != "wasmCompileMicrosPerRawKB" || pilot.Status != "pilot" || *pilot.Value != 2 || *pilot.CI95[1] != 3 {
 		t.Fatalf("wrong pilot: %+v", pilot)
@@ -65,11 +65,18 @@ func TestCoefficientsRejectInvalidEvidence(t *testing.T) {
 		"pilot-no-interval":     func(v map[string]any) { coefficientEntry(v, 1, 3)["ci95"] = []any{nil, nil} },
 		"pilot-no-block":        func(v map[string]any) { coefficientEntry(v, 1, 3)["nBlocks"] = 0 },
 		"too-many-blocks":       func(v map[string]any) { coefficientEntry(v, 1, 3)["nBlocks"] = 11 },
-		"unsupported-measured":  func(v map[string]any) { coefficientEntry(v, 1, 3)["status"] = "measured" },
-		"measured-no-holdout":   func(v map[string]any) { e := coefficientEntry(v, 1, 3); e["status"] = "measured"; e["nVisits"] = 30 },
-		"unused-nonzero":        func(v map[string]any) { e := coefficientEntry(v, 0, 0); e["status"] = "unused"; e["method"] = "unused" },
-		"bad-profile-hash":      func(v map[string]any) { v["profileSHA256"] = "not-a-sha" },
-		"bad-time":              func(v map[string]any) { v["measuredAt"] = "2026-02-30T00:00:00Z" },
+		"measured-29-visits": func(v map[string]any) {
+			s := v["sets"].([]any)[1].(map[string]any)
+			s["predictionErrorPPM"] = 0
+			e := coefficientEntry(v, 1, 3)
+			e["status"] = "measured"
+			e["nVisits"] = 29
+		},
+		"unsupported-measured": func(v map[string]any) { coefficientEntry(v, 1, 3)["status"] = "measured" },
+		"measured-no-holdout":  func(v map[string]any) { e := coefficientEntry(v, 1, 3); e["status"] = "measured"; e["nVisits"] = 30 },
+		"unused-nonzero":       func(v map[string]any) { e := coefficientEntry(v, 0, 0); e["status"] = "unused"; e["method"] = "unused" },
+		"bad-profile-hash":     func(v map[string]any) { v["profileSHA256"] = "not-a-sha" },
+		"bad-time":             func(v map[string]any) { v["measuredAt"] = "2026-02-30T00:00:00Z" },
 		"too-few-entries": func(v map[string]any) {
 			s := v["sets"].([]any)[0].(map[string]any)
 			s["entries"] = s["entries"].([]any)[:10]

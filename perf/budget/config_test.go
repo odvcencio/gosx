@@ -1,6 +1,9 @@
 package budget
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -35,7 +38,7 @@ func configFixture(t *testing.T, edit func(*File, *Profile, *Coefficients, *Tool
 		out  any
 	}{
 		{"budget.v2.json", &f}, {"profile.v1.json", &p}, {"coefficients.v1.json", &c},
-		{"toolchain.v1.json", &tc}, {"fixtures.v1.json", &catalog},
+		{"toolchain.v1.json", &tc}, {"catalog.v1.json", &catalog},
 	} {
 		data, err := os.ReadFile(filepath.Join("testdata", input.name))
 		if err != nil {
@@ -59,7 +62,7 @@ func configFixture(t *testing.T, edit func(*File, *Profile, *Coefficients, *Tool
 	c.ProfileSHA256 = f.Profile.SHA256
 	f.Coefficients = putConfigInput(t, root, "coefficients.json", c)
 	f.Toolchain = putConfigInput(t, root, "toolchain.json", tc)
-	f.Fixtures = putConfigInput(t, root, "fixtures.json", catalog)
+	f.Fixtures = putConfigInput(t, root, "catalog.json", catalog)
 	putConfigInput(t, root, "budget.json", f)
 	return filepath.Join(root, "budget.json")
 }
@@ -87,6 +90,10 @@ func TestConfigRejectSemanticErrors(t *testing.T) {
 	for name, edit := range map[string]func(*PageType, *CoefficientSet){
 		"mix-total":      func(p *PageType, _ *CoefficientSet) { p.Mix.OtherPPM++ },
 		"share-fraction": func(p *PageType, _ *CoefficientSet) { p.MinAppPPM = 499999 },
+		"rounded-pool": func(p *PageType, _ *CoefficientSet) {
+			p.Allocation.TotalBytes += 1024
+			p.Allocation.FrameworkBytes += 1024
+		},
 		"share-bytes": func(p *PageType, _ *CoefficientSet) {
 			p.Allocation.MinAppBytes -= 1024
 			p.Allocation.FrameworkBytes += 1024
@@ -95,16 +102,19 @@ func TestConfigRejectSemanticErrors(t *testing.T) {
 			p.AfterReadyAllocation.MinAppBytes -= 1024
 			p.AfterReadyAllocation.FrameworkBytes += 1024
 		},
-		"reserve":             func(p *PageType, _ *CoefficientSet) { p.AppReserveBytes++ },
-		"after-ready-reserve": func(p *PageType, _ *CoefficientSet) { p.AfterReadyAllocation.AppCriticalReserveBytes = 1 },
-		"totals":              func(p *PageType, _ *CoefficientSet) { p.Allocation.TotalBytes++ },
-		"missing-primary":     func(p *PageType, _ *CoefficientSet) { p.PrimaryMetric = "fif" },
-		"goal-unit":           func(p *PageType, _ *CoefficientSet) { p.Goals[0].Unit = "B" },
-		"duplicate-goal":      func(p *PageType, _ *CoefficientSet) { p.Goals = append(p.Goals, p.Goals[0]) },
-		"missing-set":         func(p *PageType, _ *CoefficientSet) { p.CoefficientSet = "missing" },
-		"warm-set":            func(_ *PageType, s *CoefficientSet) { s.Scenario = "hard-warm" },
-		"backend-set":         func(p *PageType, _ *CoefficientSet) { p.Backend = "webgpu" },
-		"prior-certificate":   func(p *PageType, _ *CoefficientSet) { p.Allocation.Status = "proxy-measured" },
+		"reserve": func(p *PageType, _ *CoefficientSet) { p.AppReserveBytes++ },
+		"after-ready-reserve": func(p *PageType, _ *CoefficientSet) {
+			p.AfterReadyAllocation.AppCriticalReserveBytes = 1024
+			p.AfterReadyAllocation.FrameworkBytes -= 1024
+		},
+		"totals":            func(p *PageType, _ *CoefficientSet) { p.Allocation.TotalBytes++ },
+		"missing-primary":   func(p *PageType, _ *CoefficientSet) { p.PrimaryMetric = "fif" },
+		"goal-unit":         func(p *PageType, _ *CoefficientSet) { p.Goals[0].Unit = "B" },
+		"duplicate-goal":    func(p *PageType, _ *CoefficientSet) { p.Goals = append(p.Goals, p.Goals[0]) },
+		"missing-set":       func(p *PageType, _ *CoefficientSet) { p.CoefficientSet = "missing" },
+		"warm-set":          func(_ *PageType, s *CoefficientSet) { s.Scenario = "hard-warm" },
+		"backend-set":       func(p *PageType, _ *CoefficientSet) { p.Backend = "webgpu" },
+		"prior-certificate": func(p *PageType, _ *CoefficientSet) { p.Allocation.Status = "proxy-measured" },
 		"unused-work": func(_ *PageType, s *CoefficientSet) {
 			e := &s.Entries[3]
 			zero := int64(0)
@@ -138,9 +148,9 @@ func TestConfigRejectSemanticErrors(t *testing.T) {
 		"guardrail-duplicate": func(f *File, _ map[string]any) { f.Guardrails[0] = f.Guardrails[1] },
 		"guardrail-limit":     func(f *File, _ map[string]any) { f.Guardrails[0].Limit++ },
 		"guardrail-unit":      func(f *File, _ map[string]any) { f.Guardrails[0].Unit = "B" },
-		"guardrail-mode":      func(f *File, _ map[string]any) { f.Guardrails[0].Mode = "target" },
+		"guardrail-mode":      func(f *File, _ map[string]any) { f.Guardrails[0].Mode = "gate" },
 		"framework-exception": func(f *File, _ map[string]any) {
-			f.Exceptions = []Exception{{ID: "EX-2026-001", Scope: "island", Metric: "frameworkBytes", Extra: 1024, ReasonCode: "guardrail", OwnerRole: "runtime", ApprovedRole: "owner", Issue: 1, ApprovalReview: 1, Expires: "2026-11-01"}}
+			f.Exceptions = []Exception{{ID: "EX-2026-001", Scope: "type:island", Metric: "frameworkBytes", Extra: 1024, ReasonCode: "temporary", OwnerRole: "runtime", ApprovedRole: "owner", Issue: 1, ApprovalReview: 1, Expires: "2026-11-01"}}
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -153,7 +163,7 @@ func TestConfigRejectSemanticErrors(t *testing.T) {
 }
 
 func TestConfigBoundReferences(t *testing.T) {
-	for _, name := range []string{"profile.json", "coefficients.json", "toolchain.json", "fixtures.json", "interaction.json"} {
+	for _, name := range []string{"profile.json", "coefficients.json", "toolchain.json", "catalog.json", "interaction.json"} {
 		t.Run(name, func(t *testing.T) {
 			path := configFixture(t, nil)
 			root := filepath.Dir(path)
@@ -258,7 +268,161 @@ func TestConfigMeasuredEvidence(t *testing.T) {
 			t.Fatal("wrong metric unit", metric)
 		}
 	}
-	if validRoute("/a/../b/") || !validRoute("/items/[id]/") || !strings.Contains(metricUnit("js_heap_peak"), "B") {
+	if validRoute("/a/../b/") || !validRoute("/items/{id}/") || !strings.Contains(metricUnit("js_heap_peak"), "B") {
 		t.Fatal("invalid semantic vocabulary")
+	}
+}
+
+func inputDigest(data []byte) string { sum := sha256.Sum256(data); return hex.EncodeToString(sum[:]) }
+
+func testException() Exception {
+	return Exception{ID: "EX-2026-001", Scope: "type:island", Metric: "totalBytes", Extra: 1024, ReasonCode: "temporary", OwnerRole: "runtime", ApprovedRole: "owner", Issue: 1, ApprovalReview: 1, Expires: "2026-11-01"}
+}
+
+func TestConfigExceptionContract(t *testing.T) {
+	for _, input := range []struct{ scope, metric, policy string }{{"type:island", "totalBytes", ""}, {"route:fixture:/counter/", "totalBytes", ""}, {"type:island", "policy", "html-compressed"}} {
+		path := configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+			e := testException()
+			e.Scope, e.Metric, e.Policy = input.scope, input.metric, input.policy
+			f.Exceptions = []Exception{e}
+		})
+		if _, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, edit := range []func(*Exception){
+		func(e *Exception) { e.Scope = "C:/private/file" }, func(e *Exception) { e.Scope = "route:fixture:/counter/?q=1" },
+		func(e *Exception) { e.Scope = "route:fixture:/counter/#part" }, func(e *Exception) { e.Scope = "route:other:/counter/" },
+		func(e *Exception) { e.Scope = "type:static" }, func(e *Exception) { e.Metric = "policy" },
+		func(e *Exception) { e.Policy = "html-compressed" },
+		func(e *Exception) { e.Metric = "policy"; e.Policy = "not-a-policy" },
+		func(e *Exception) { e.ReasonCode = "ok" }, func(e *Exception) { e.Expires = "2026-02-30" },
+		func(e *Exception) { e.Expires = "2026-11-01T00:00:00Z" },
+	} {
+		path := configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+			e := testException()
+			edit(&e)
+			f.Exceptions = []Exception{e}
+		})
+		if _, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)}); err == nil {
+			t.Fatal("invalid exception accepted")
+		}
+	}
+	path := configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+		f.Exceptions = []Exception{testException(), testException()}
+	})
+	if _, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)}); err == nil {
+		t.Fatal("duplicate exception ID accepted")
+	}
+	path = configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+		f.Exceptions = []Exception{testException()}
+	})
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body = bytes.Replace(body, []byte("type:island"), []byte{'t', 'y', 'p', 'e', ':', 0xff}, 1)
+	if err := os.WriteFile(path, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = Load(path, LoadOptions{RootDir: filepath.Dir(path)})
+	requireInputError(t, err, "budget", "")
+}
+
+func TestConfigStaticAndBackendRules(t *testing.T) {
+	for _, family := range []string{"static", "enhanced", "island", "engine/js", "engine/shared", "go-wasm", "video", "preview", "scene3d/js", "scene3d/shared", "game/js", "game/shared"} {
+		for _, backend := range []string{"webgpu", "webgl2"} {
+			name := family + "-" + backend
+			want := strings.HasPrefix(family, "scene3d/") || strings.HasPrefix(family, "game/")
+			if knownPageType(name) != want {
+				t.Fatalf("wrong backend family: %s", name)
+			}
+		}
+	}
+	for _, name := range []string{"static", "island-webgpu", "island", "scene3d/js-webgpu"} {
+		path := configFixture(t, func(f *File, _ *Profile, c *Coefficients, _ *Toolchain, _ map[string]any) {
+			page := f.PageTypes["island"]
+			if name != "static" {
+				page.Backend = "webgpu"
+				c.Sets[0].Backend = "webgpu"
+			}
+			if name == "static" {
+				page.Allocation.MinAppBytes += page.Allocation.FrameworkBytes - 1
+				page.Allocation.FrameworkBytes = 1
+				page.AfterReadyAllocation.MinAppBytes += page.AfterReadyAllocation.FrameworkBytes
+				page.AfterReadyAllocation.FrameworkBytes = 0
+			}
+			f.PageTypes = map[string]PageType{name: page}
+			f.Routes[0].PageTypes = []string{name}
+		})
+		_, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)})
+		if (err == nil) != (name == "scene3d/js-webgpu") {
+			t.Fatalf("backend/static rule %s: %v", name, err)
+		}
+	}
+}
+
+func TestConfigAllPathsAndProfileBinding(t *testing.T) {
+	for _, field := range []string{"criticalAssetIDs", "id", "dependencies"} {
+		path := configFixture(t, func(_ *File, _ *Profile, _ *Coefficients, _ *Toolchain, c map[string]any) {
+			if field == "criticalAssetIDs" {
+				c["routes"].([]any)[0].(map[string]any)[field] = []any{"nested/../asset.js"}
+				return
+			}
+			rule := map[string]any{"id": "asset.js", "owner": "app", "kind": "js", "phase": "startup", "condition": "always", "dependencies": []any{}}
+			if field == "id" {
+				rule[field] = "nested/../asset.js"
+			} else {
+				rule[field] = []any{"nested/./asset.js"}
+			}
+			c["assetRules"] = []any{rule}
+		})
+		if _, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)}); err == nil {
+			t.Fatal("unsafe Path accepted", field)
+		}
+	}
+	path := configFixture(t, nil)
+	root := filepath.Dir(path)
+	f, err := Load(path, LoadOptions{RootDir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c Coefficients
+	body, err := os.ReadFile(filepath.Join(root, "coefficients.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(body, &c); err != nil {
+		t.Fatal(err)
+	}
+	c.ProfileSHA256 = strings.Repeat("a", 64)
+	f.Coefficients = putConfigInput(t, root, "coefficients.json", c)
+	putConfigInput(t, root, "budget.json", f)
+	_, err = Load(path, LoadOptions{RootDir: root})
+	requireInputError(t, err, "coefficients", "/profileSHA256")
+}
+
+func TestConfigErrorOrderAndIntegralLimits(t *testing.T) {
+	path := configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+		page := f.PageTypes["island"]
+		page.Backend = "webgpu"
+		f.PageTypes["static"] = page
+		page = f.PageTypes["island"]
+		page.Mix.OtherPPM++
+		f.PageTypes["island"] = page
+	})
+	for i := 0; i < 32; i++ {
+		_, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)})
+		requireInputError(t, err, "budget", "/pageTypes/island/mix")
+	}
+	for _, goal := range []Goal{{Metric: "long_tasks", Max: "1.5", Unit: "count"}, {Metric: "js_heap_peak", Max: "1.5", Unit: "B"}} {
+		path := configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+			page := f.PageTypes["island"]
+			page.Goals = append(page.Goals, goal)
+			f.PageTypes["island"] = page
+		})
+		if _, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)}); err == nil {
+			t.Fatal("fractional discrete limit accepted")
+		}
 	}
 }
