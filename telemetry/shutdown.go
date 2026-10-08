@@ -141,8 +141,24 @@ func stampTicker(t Ticker, stamp time.Time) (now Instant, err error) {
 }
 
 // Signal closes admission. Existing hub callbacks stay subscribed through
-// source drain; only the later Flush/Close wakes the worker to detach them.
-func (t *Telemetry) prepareShutdown(ctx context.Context) {
+// source drain. Only Flush/Close starts the shared deadline and source cleanup;
+// a collector wake during source drain must not close the worker.
+func (t *Telemetry) prepareShutdown(_ context.Context) {
+	if t == nil || t.done == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	select {
+	case <-t.done:
+		return
+	default:
+	}
+	t.active.Store(false)
+}
+
+func (t *Telemetry) signal(ctx context.Context) {
+	t.prepareShutdown(ctx)
 	if t == nil || t.done == nil {
 		return
 	}
@@ -162,16 +178,8 @@ func (t *Telemetry) prepareShutdown(ctx context.Context) {
 			deadline = callerDeadline
 		}
 		t.closeContext, t.closeCancel = context.WithDeadline(context.WithoutCancel(ctx), deadline)
-		t.active.Store(false)
 	}
 	t.mu.Unlock()
-}
-
-func (t *Telemetry) signal(ctx context.Context) {
-	t.prepareShutdown(ctx)
-	if t == nil || t.done == nil {
-		return
-	}
 	select {
 	case t.wake <- struct{}{}:
 	default:

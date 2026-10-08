@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Start the telemetry close deadline at Flush or Close, after source drain.
+  Shutdown Signal stops admission; collector wakes keep source subscriptions
+  alive until the flush phase starts.
+
 - Register bounded hub telemetry groups with finite event and disconnect labels,
   exact logical payload counts, sampled queue depths, control RTT, and slow-client
   counters. Attachments release automatically when pumps finish, and telemetry
