@@ -1601,6 +1601,9 @@ const budgets = [
   { file: "bootstrap-feature-engines.js", raw: 109773, gzip: 32481, brotli: 28771 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
   { file: "bootstrap-feature-controllers.js", raw: 15220, gzip: 3989, brotli: 3572 },
+  // Optional projected intents, drag/drop, and modal focus. Loaded only for
+  // configured input contracts: storage: measured 7_630 / 2_928 / 2_655.
+  { file: "bootstrap-controller-input.js", raw: 7630, gzip: 2930, brotli: 2660 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
   // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw

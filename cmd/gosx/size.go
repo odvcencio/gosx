@@ -258,6 +258,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-engines.js", file: rt.BootstrapFeatureEngines.File, role: "feature chunk"},
 		{name: "bootstrap-feature-hubs.js", file: rt.BootstrapFeatureHubs.File, role: "feature chunk"},
 		{name: "bootstrap-feature-controllers.js", file: rt.BootstrapFeatureControllers.File, role: "feature chunk"},
+		{name: "bootstrap-controller-input.js", file: rt.BootstrapControllerInput.File, role: "feature chunk"},
 		{name: "bootstrap-feature-textlayout.js", file: rt.BootstrapFeatureTextlayout.File, role: "feature chunk"},
 		{name: "bootstrap-feature-scene3d.js", file: rt.BootstrapFeatureScene3D.File, role: "scene3d chunk"},
 		{name: "bootstrap-feature-scene3d-command.js", file: rt.BootstrapFeatureScene3DCommand.File, role: "scene3d command chunk"},
@@ -295,7 +296,7 @@ var runtimeExcludableAssetRoles = map[string][]string{
 	"islands":     {"bootstrap-feature-islands.js"},
 	"engines":     {"bootstrap-feature-engines.js"},
 	"hubs":        {"bootstrap-feature-hubs.js"},
-	"controllers": {"bootstrap-feature-controllers.js"},
+	"controllers": {"bootstrap-feature-controllers.js", "bootstrap-controller-input.js"},
 	"textlayout":  {"bootstrap-feature-textlayout.js"},
 	"scene3d": {
 		"bootstrap-feature-scene3d.js",
