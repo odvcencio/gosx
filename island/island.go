@@ -52,7 +52,6 @@ type Renderer struct {
 	bootstrapLitePath                  string
 	bootstrapRuntimePath               string
 	bootstrapRuntimeConfigured         bool
-	bootstrapFeatureIslandsConfigured  bool
 	bootstrapFeatureIslandsPath        string
 	bootstrapFeatureEnginesPath        string
 	bootstrapFeatureHubsPath           string
@@ -226,7 +225,6 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
 	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
 	renderer.bootstrapRuntimeConfigured = true
-	renderer.bootstrapFeatureIslandsConfigured = true
 	renderer.bootstrapRuntimePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-runtime.js", strings.TrimSpace(runtimeAssets.BootstrapRuntime.Hash))
 	renderer.bootstrapFeatureIslandsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-islands.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureIslands.Hash))
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
@@ -513,7 +511,6 @@ func (r *Renderer) SetBootstrapRuntimePath(path string) {
 func (r *Renderer) SetBootstrapFeaturePaths(islandsPath, enginesPath, hubsPath string) {
 	if strings.TrimSpace(islandsPath) != "" {
 		r.bootstrapFeatureIslandsPath = r.versionCompatRuntimePath(islandsPath, r.compatRuntimeHash(islandsPath))
-		r.bootstrapFeatureIslandsConfigured = true
 	}
 	if strings.TrimSpace(enginesPath) != "" {
 		r.bootstrapFeatureEnginesPath = r.versionCompatRuntimePath(enginesPath, r.compatRuntimeHash(enginesPath))
@@ -911,7 +908,6 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
 	r.bootstrapRuntimeConfigured = runtime.BootstrapRuntime != ""
-	r.bootstrapFeatureIslandsConfigured = runtime.BootstrapFeatureIslands != ""
 	r.runtimeAssets = manifest.Runtime
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
@@ -1984,8 +1980,9 @@ func (r *Renderer) PreloadHints() gosx.Node {
 	var b strings.Builder
 
 	// Preload the shared WASM runtime only when the page declares islands or a
-	// shared-runtime engine bridge.
-	if r.needsSharedRuntime() {
+	// shared-runtime engine bridge. Preview-only pages wait for the browser to
+	// confirm preview context before downloading WASM.
+	if r.needsSharedRuntime() && r.clientRuntimePlan().Mode != "preview" {
 		runtime := r.selectedRuntimeRef()
 		if runtime.Path != "" {
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, runtime.Path))
@@ -2168,7 +2165,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	selective := bootstrap && mode != "lite"
 	if previewNeedsRuntime {
 		// Older asset configurations can keep using the compatibility bootstrap.
-		selective = selective && r.bootstrapRuntimeConfigured && r.bootstrapFeatureIslandsConfigured && strings.TrimSpace(r.bootstrapRuntimePath) != "" && strings.TrimSpace(r.bootstrapFeatureIslandsPath) != ""
+		selective = selective && r.bootstrapRuntimeConfigured && strings.TrimSpace(r.bootstrapRuntimePath) != ""
 	}
 	return clientRuntimePlan{
 		Bootstrap:          bootstrap,
@@ -2256,7 +2253,7 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 	}
 	switch name {
 	case "islands":
-		if len(r.manifest.Islands) == 0 && len(r.manifest.ComputeIslands) == 0 && r.clientRuntimePlan().Mode != "preview" {
+		if len(r.manifest.Islands) == 0 && len(r.manifest.ComputeIslands) == 0 {
 			return ""
 		}
 		return r.bootstrapFeatureIslandsPath

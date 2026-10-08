@@ -251,20 +251,13 @@
   }
 
   function manifestNeedsIslandsFeature(manifest) {
-    return Boolean(manifest && manifest.preview) || manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands");
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands");
   }
 
   function manifestNeedsWASMRuntime(manifest) {
-    return manifestNeedsIslandsFeature(manifest) || manifestNeedsSharedEngineRuntime(manifest);
-  }
-
-  function manifestNeedsSharedEngineRuntime(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      return entry && entry.runtime === "shared";
-    });
+    return (manifest?.preview && gosxHost.relay?.isPreview?.())
+      || manifestNeedsIslandsFeature(manifest)
+      || manifest?.engines?.some(entry => entry && entry.runtime === "shared");
   }
 
   function ensureManifestFeatures(manifest) {

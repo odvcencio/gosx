@@ -63,7 +63,7 @@
   }
 
   function manifestNeedsRuntimeBridge(manifest) {
-    return Boolean(manifest && manifest.preview)
+    return (manifest?.preview && gosxHost.relay?.isPreview?.())
       || manifestHasEntries(manifest, "islands")
       || manifestHasEntries(manifest, "computeIslands")
       || manifestHasEntries(manifest, "hubs")

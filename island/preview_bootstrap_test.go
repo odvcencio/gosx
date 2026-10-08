@@ -13,7 +13,7 @@ import (
 //
 // EnablePreviewBootstrap() is a process-level idempotent flag. When set, any
 // Renderer constructed AFTER the call (or already constructed) emits a
-// minimal islands-style bootstrap regardless of whether the page registered
+// selective bootstrap regardless of whether the page registered
 // any islands — so the storefront iframe gets a WASM Bridge that can receive
 // cross-frame $preview.* signal writes. Tests reset the flag via
 // ResetPreviewBootstrap() so they remain isolated.
@@ -112,9 +112,8 @@ func TestPreviewSelectiveBootstrapInitializesRuntime(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetRuntime("/runtime.wasm", "", 123)
 	r.SetBootstrapRuntimePath("/bootstrap-runtime.js")
-	r.SetBootstrapFeaturePaths("/bootstrap-feature-islands.js", "", "")
 
-	if got := r.Summary(); got.BootstrapPath != "/bootstrap-runtime.js" || got.BootstrapFeatureIslandsPath != "/bootstrap-feature-islands.js" || !got.Manifest {
+	if got := r.Summary(); got.BootstrapPath != "/bootstrap-runtime.js" || got.BootstrapFeatureIslandsPath != "" || !got.Manifest {
 		t.Fatalf("preview runtime plan = %+v", got)
 	}
 	manifestJSON, err := r.ManifestJSON()
@@ -134,8 +133,8 @@ func TestPreviewSelectiveBootstrapInitializesRuntime(t *testing.T) {
 		t.Fatalf("preview manifest = %s", manifestJSON)
 	}
 	head := gosx.RenderHTML(r.PreloadHints()) + gosx.RenderHTML(r.PageHead())
-	if !strings.Contains(head, `href="/bootstrap-feature-islands.js" as="script"`) {
-		t.Fatalf("preview must preload its islands feature: %s", head)
+	if strings.Contains(head, "bootstrap-feature-islands") || strings.Contains(head, `as="fetch" type="application/wasm"`) {
+		t.Fatalf("preview must wait for browser context before downloading WASM and omit the islands feature: %s", head)
 	}
 	if strings.Contains(head, `data-gosx-script="patch"`) || strings.Contains(head, "bootstrap-feature-engines.js") {
 		t.Fatalf("preview emitted unrelated features: %s", head)
@@ -146,7 +145,7 @@ func TestPreviewSelectiveBootstrapInitializesRuntime(t *testing.T) {
 func TestPreviewSelectiveBootstrapCompatibilityFallback(t *testing.T) {
 	EnablePreviewBootstrap()
 	t.Cleanup(ResetPreviewBootstrap)
-	for _, missing := range []string{"runtime", "islands", "both", "manifest"} {
+	for _, missing := range []string{"runtime", "both", "manifest"} {
 		t.Run(missing, func(t *testing.T) {
 			r := NewRenderer("main")
 			if missing == "manifest" {
@@ -173,6 +172,33 @@ func TestPreviewSelectiveBootstrapCompatibilityFallback(t *testing.T) {
 			assertPreviewRelayBeforeBootstrap(t, head)
 		})
 	}
+}
+
+func TestPreviewSelectiveBootstrapWithoutIslandsAssets(t *testing.T) {
+	EnablePreviewBootstrap()
+	t.Cleanup(ResetPreviewBootstrap)
+	r := NewRenderer("main")
+	if err := r.ApplyBuildManifest(&buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:        buildmanifest.HashedAsset{File: "bootstrap.js"},
+		BootstrapRuntime: buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Integrity: "sha384-bootstrap"},
+		WASMExec:         buildmanifest.HashedAsset{File: "wasm_exec.js", Integrity: "sha384-loader"},
+		Relay:            buildmanifest.HashedAsset{File: "relay.js", Integrity: "sha384-relay"},
+	}}, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	if !r.clientRuntimePlan().Selective || r.Summary().BootstrapPath != "/gosx/assets/runtime/bootstrap-runtime.js" {
+		t.Fatalf("missing islands assets must not force the monolith: %+v", r.Summary())
+	}
+	head := gosx.RenderHTML(r.PageHead())
+	for _, integrity := range []string{"sha384-bootstrap", "sha384-loader", "sha384-relay"} {
+		if !strings.Contains(head, `integrity="`+integrity+`"`) {
+			t.Fatalf("preview script integrity %q missing: %s", integrity, head)
+		}
+	}
+	if strings.Contains(head, "bootstrap-feature-islands") {
+		t.Fatalf("preview must not name the islands chunk: %s", head)
+	}
+	assertPreviewRelayBeforeBootstrap(t, head)
 }
 
 func assertPreviewRelayBeforeBootstrap(t *testing.T, head string) {
