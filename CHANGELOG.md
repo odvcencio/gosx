@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Request observers report accepted response body bytes and successful hijacks.
+  The first final status wins; interim responses, ReaderFrom and response
+  controller operations retain their HTTP behavior. Nested observers share
+  route metadata, and file actions mark their registered dispatch pattern.
+
 - Expose typed activity kind registration and Begin after the lifecycle,
   participant and event owners are complete. Enable accepts memory activities,
   and receipts explicitly distinguish memory acknowledgement from durability.
