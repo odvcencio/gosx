@@ -1,6 +1,9 @@
 package hubclient
 
-import "net/http"
+import (
+	"net/http"
+	"sync"
+)
 
 // frameKind identifies one event delivered on a conn's event channel.
 type frameKind int
@@ -20,6 +23,31 @@ type frameEvent struct {
 	Binary bool   // frameMessage
 	Err    error  // frameError, frameClosed (may be nil on a clean close)
 }
+
+// eventStream lets transports stop producing events when Close retires their
+// consumer. A full queue must not trap a read loop or a browser close callback.
+type eventStream struct {
+	events   chan frameEvent
+	stopped  chan struct{}
+	stopOnce sync.Once
+}
+
+func newEventStream(size int) *eventStream {
+	return &eventStream{events: make(chan frameEvent, size), stopped: make(chan struct{})}
+}
+
+func (s *eventStream) emit(event frameEvent) bool {
+	select {
+	case <-s.stopped:
+		return false
+	case s.events <- event:
+		return true
+	}
+}
+
+func (s *eventStream) stop() { s.stopOnce.Do(func() { close(s.stopped) }) }
+
+func (s *eventStream) Events() <-chan frameEvent { return s.events }
 
 // conn is one dialed transport connection. A conn's Events channel delivers
 // exactly one frameOpen (if the connection reaches an open state at all)
