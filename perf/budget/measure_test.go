@@ -2,6 +2,7 @@ package budget
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,8 +15,59 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/internal/pagecaps"
 )
+
+func TestMeasureNavigationUsesRevisionSpecificBodies(t *testing.T) {
+	for _, cause := range []string{"base", "legacy-current", "staged-current", "tampered-current", "stale-current"} {
+		t.Run(cause, func(t *testing.T) {
+			dir := t.TempDir()
+			body := []byte("/* synthetic earlier navigation revision */")
+			assetURL := "/gosx/assets/runtime/navigation." + testMeasureHash(body) + ".js"
+			if cause != "base" {
+				body, assetURL = []byte(host.NavigationRuntime), host.NavigationRuntimePath
+			}
+			file := filepath.Join(dir, "assets/runtime", filepath.Base(assetURL))
+			if cause != "legacy-current" {
+				if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+					t.Fatal(err)
+				}
+				staged := body
+				if cause == "tampered-current" {
+					staged = []byte("/* changed */")
+				}
+				if err := os.WriteFile(file, staged, 0600); err != nil {
+					t.Fatal(err)
+				}
+				var encoded bytes.Buffer
+				writer := gzip.NewWriter(&encoded)
+				if cause == "stale-current" {
+					writer.Write([]byte("/* stale */"))
+				} else {
+					writer.Write(body)
+				}
+				writer.Close()
+				if err := os.WriteFile(file+".gz", encoded.Bytes(), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			root, err := os.OpenRoot(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer root.Close()
+			got, encodings, err := readFixtureBody(root, assetURL, "js")
+			if cause == "tampered-current" || cause == "stale-current" {
+				if err == nil {
+					t.Fatal("staged navigation corruption was hidden by embedded bytes")
+				}
+			} else if err != nil || !bytes.Equal(got, body) || len(encodings["gzip"]) == 0 {
+				t.Fatal("revision-specific navigation missing", err)
+			}
+		})
+	}
+}
 
 func testRouteMeasurement(t *testing.T) (MeasureOptions, *FixtureManifest, []byte, []byte) {
 	t.Helper()
