@@ -17,6 +17,7 @@ type CheckOptions struct {
 	Profile      Profile
 	Coefficients Coefficients
 	Head, Base   *Report
+	Pair         *PairReport
 	Trailers     Trailers
 	Now          time.Time
 	ReportOnly   bool
@@ -58,6 +59,10 @@ func Check(opts CheckOptions) (*Report, error) {
 		return nil, err
 	}
 	if err := checkProvenance(opts.File, head.Info, base.Info); err != nil {
+		return nil, err
+	}
+	timing, err := requiredPairTiming(opts.File, head, base, opts.Pair)
+	if err != nil {
 		return nil, err
 	}
 	exceptions, err := EvaluateExceptions(ExceptionOptions{File: opts.File, Approvals: opts.Approvals, Now: opts.Now})
@@ -184,6 +189,7 @@ func Check(opts CheckOptions) (*Report, error) {
 	if err != nil {
 		return nil, inputReference(err, "growth", "")
 	}
+	required = append(required, timing...)
 	acknowledgments, err := ValidateAcknowledgments(AcknowledgeOptions{Required: required, Trailers: opts.Trailers, File: opts.File, Assets: head.Assets, Now: opts.Now})
 	if err != nil {
 		var input *InputError
