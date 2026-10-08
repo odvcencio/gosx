@@ -27,7 +27,7 @@ func validateListenerOptions(o ListenOptions) error {
 	if o.Metrics.Token != "" && o.Metrics.Token == o.Admin.Token || o.Metrics.TokenFile != "" && o.Admin.TokenFile != "" && filepath.Clean(o.Metrics.TokenFile) == filepath.Clean(o.Admin.TokenFile) {
 		return invalid("credential", "shared_credential")
 	}
-	if o.Addr == "" || o.Addr == "off" {
+	if o.Addr == "" || strings.EqualFold(o.Addr, "off") {
 		return nil
 	}
 	if len(o.Addr) > 4096 || strings.ContainsRune(o.Addr, 0) {
@@ -38,8 +38,12 @@ func validateListenerOptions(o ListenOptions) error {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path || path == string(filepath.Separator) {
 			return invalid("listen", "unix_path")
 		}
-		if runtime.GOOS == "windows" || runtime.GOOS == "js" {
+		capacity := unixSocketPathCapacity()
+		if capacity == 0 {
 			return invalid("listen", "unsupported")
+		}
+		if len(path) >= capacity { // One byte is reserved for the terminating NUL.
+			return invalid("listen", "unix_path")
 		}
 		return nil
 	}
@@ -64,6 +68,21 @@ func validateListenerOptions(o ListenOptions) error {
 		return errors.Join(ErrInsecureListener, invalid("listen", "auth_required"))
 	}
 	return nil
+}
+
+// Match the platform sockaddr_un path array without importing native syscall
+// structures into the portable options package.
+func unixSocketPathCapacity() int {
+	switch runtime.GOOS {
+	case "linux", "android", "solaris", "illumos":
+		return 108
+	case "darwin", "ios", "freebsd", "openbsd", "netbsd", "dragonfly":
+		return 104
+	case "aix":
+		return 1023
+	default:
+		return 0
+	}
 }
 
 // This only validates configuration grammar. HTTP authentication uses the

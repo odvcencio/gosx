@@ -20,6 +20,8 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // branch allocations; shared allowances are unchanged.
 // Merge retains main's existing asynchronous shader startup allocations.
 const budgets = [
+  // Finite choreography remains demand-loaded; existing route limits are unchanged.
+  { file: "bootstrap-feature-scene3d-timeline.js", raw: 5_400, gzip: 2_400, brotli: 2_200 },
   { file: "bootstrap-feature-scene3d-zoom.js", raw: 3_900, gzip: 1_650, brotli: 1_450 },
   // Ocean-driven heel, cloth normals, rig sway, impact spray and reduced-motion
   // deck bob remain lazy. Dormant-wake guards avoid unnecessary ocean queries.
@@ -726,7 +728,11 @@ const budgets = [
   // the shared governed allowances remain fixed.
   {
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 1852200 -> 1854000 (measured 1919449); gzip 520900 -> 521500 (measured 537869); brotli 411200 -> 411700 (measured 428049). Governed allowances stay fixed.
-    file: "bootstrap.js", raw: 1861800, gzip: 524000, brotli: 413800 },
+    // Model-root transform routing adds 203 measured Brotli bytes (430090 ->
+    // 430293). Raise only this exceeded target; governed allowances stay fixed.
+    // Pending-pose and CPU playback retention adds 551 more Brotli bytes
+    // (430293 -> 430844); only the exceeded target moves, by 500 bytes.
+    file: "bootstrap.js", raw: 1861800, gzip: 524000, brotli: 414500 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1245,7 +1251,11 @@ const budgets = [
   // Portrait reset reads the authored camera: measured 644799 / 184952 / 152586.
   {
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 614100 -> 614200 (measured 644895). Governed allowances stay fixed.
-    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600, brotli: 145650 },
+    // Model-root command routing adds 219 measured Brotli bytes (152729 ->
+    // 152948); this is the smallest 100-byte target step that clears the cap.
+    // Pending-pose and CPU playback retention adds 564 more Brotli bytes
+    // (152948 -> 153512); the smallest clearing target step is 500 bytes.
+    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600, brotli: 146250 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1591,6 +1601,9 @@ const budgets = [
   { file: "bootstrap-feature-engines.js", raw: 109773, gzip: 32481, brotli: 28771 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
   { file: "bootstrap-feature-controllers.js", raw: 15220, gzip: 3989, brotli: 3572 },
+  // Optional projected intents, drag/drop, and modal focus. Loaded only for
+  // configured input contracts: storage: measured 7_630 / 2_928 / 2_655.
+  { file: "bootstrap-controller-input.js", raw: 7630, gzip: 2930, brotli: 2660 },
   // Bumped brotli 12_325 -> 12_333 for the O-series propagation merge. Raw
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
   // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
@@ -1917,7 +1930,9 @@ const routeBudgets = [
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     raw: 1384500,
     gzip: 383800,
-    brotli: 320000,
+    // Retained pending poses and CPU playback add 564 measured Brotli bytes;
+    // move only this exceeded route target, keeping allowances unchanged.
+    brotli: 320500,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2482,7 +2497,8 @@ const routeBudgets = [
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1235900,
     gzip: 340400,
-    brotli: 283305,
+    // The same 564-byte shared runtime addition exceeds this route's cap.
+    brotli: 283705,
   },
 
 ];

@@ -229,6 +229,7 @@ type documentContractAssets struct {
 	BootstrapFeatureEnginesPath     string `json:"bootstrapFeatureEnginesPath,omitempty"`
 	BootstrapFeatureHubsPath        string `json:"bootstrapFeatureHubsPath,omitempty"`
 	BootstrapFeatureControllersPath string `json:"bootstrapFeatureControllersPath,omitempty"`
+	BootstrapControllerInputPath    string `json:"bootstrapControllerInputPath,omitempty"`
 	BootstrapFeatureScene3DPath     string `json:"bootstrapFeatureScene3dPath,omitempty"`
 	BootstrapFeatureTextLayoutPath  string `json:"bootstrapFeatureTextLayoutPath,omitempty"`
 	HLSPath                         string `json:"hlsPath,omitempty"`
@@ -270,6 +271,7 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 			BootstrapFeatureEnginesPath:     doc.Runtime.BootstrapFeatureEnginesPath,
 			BootstrapFeatureHubsPath:        doc.Runtime.BootstrapFeatureHubsPath,
 			BootstrapFeatureControllersPath: doc.Runtime.BootstrapFeatureControllersPath,
+			BootstrapControllerInputPath:    doc.Runtime.BootstrapControllerInputPath,
 			BootstrapFeatureScene3DPath:     doc.Runtime.BootstrapFeatureScene3DPath,
 			BootstrapFeatureTextLayoutPath:  doc.Runtime.BootstrapFeatureTextLayoutPath,
 			HLSPath:                         doc.Runtime.HLSPath,

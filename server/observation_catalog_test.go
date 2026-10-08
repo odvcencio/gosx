@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx"
@@ -15,6 +16,23 @@ import (
 type catalogObserverFunc func([]ObservationPattern)
 
 func (f catalogObserverFunc) ObserveCatalog(rows []ObservationPattern) { f(rows) }
+
+func TestObservationCatalogConfigurationErrorsUseServerNamespace(t *testing.T) {
+	var absent *App
+	for _, app := range []*App{absent, New()} {
+		err := app.UseObservationCatalogObserver(nil)
+		var config *telemetryerr.ConfigError
+		if err == nil || !strings.HasPrefix(err.Error(), "server:") || !errors.As(err, &config) || config.Field != "catalog_observer" {
+			t.Fatalf("required observer: %v", err)
+		}
+	}
+	a := New()
+	a.Build()
+	err := a.UseObservationCatalogObserver(catalogObserverFunc(func([]ObservationPattern) {}))
+	if err == nil || !strings.HasPrefix(err.Error(), "server:") || !errors.Is(err, telemetryerr.ErrAfterBuild) {
+		t.Fatalf("configuration closed: %v", err)
+	}
+}
 
 type catalogHandler struct {
 	rows     []ObservationPattern
