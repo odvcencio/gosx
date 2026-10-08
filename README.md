@@ -1185,6 +1185,16 @@ a separate, future change.
 Both fields default to today's behavior: `sourceMaps` true, nothing
 excluded. A project with no `build.runtime` block builds unchanged.
 
+Framework bundle generation applies a second minification pass to `bootstrap.js`
+and the Scene3D core, WebGL, WebGPU, and animation chunks. Their release `.map`
+files describe the intermediate esbuild output, so release scripts omit
+`sourceMappingURL` trailers. `build.runtime.sourceMaps` controls copying those
+sidecars; enabling it does not make the release maps exact. For accurate debugging
+maps, rebuild framework bundles with `GOSX_BUNDLE_DEBUG=1 make build-bootstrap`;
+this retains esbuild's code and composed maps and adds the matching trailers.
+GLTF and other chunks
+keep their existing minification path.
+
 ## Deploy
 
 Three tiers:
