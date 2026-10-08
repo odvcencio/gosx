@@ -123,3 +123,11 @@ func TestInputErrorReferenceForThirdFont(t *testing.T) {
 	_, err = LoadToolchain(path, LoadOptions{RootDir: root})
 	requireInputError(t, err, "fonts[2]", "/sha256")
 }
+
+func TestInputErrorPointerIncludesValidatedMapKeys(t *testing.T) {
+	schema := map[string]any{"type": "object", "propertyNames": map[string]any{"type": "string", "pattern": "^[a-z]+$"}, "additionalProperties": map[string]any{"type": "array", "items": map[string]any{"type": "number", "minimum": float64(0)}}}
+	err := validateInput(map[string]any{"slot": []any{json.Number("-1")}}, schema)
+	requireInputError(t, err, "", "/slot/0")
+	err = validateInput(map[string]any{"unaccepted-key": []any{json.Number("-1")}}, schema)
+	requireInputError(t, err, "", "")
+}
