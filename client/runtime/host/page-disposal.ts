@@ -33,6 +33,7 @@
         gosxHost.controllers.dispose(controllerID);
       }
     }
+    window.__gosx.controllers = new Map();
     disposeManagedMotion();
     disposeManagedTextLayouts();
     pendingManifest = null;

@@ -1485,6 +1485,7 @@
 	    let dragHandle = null;
 	    let gizmoDragHandle = null;
 	    let pickHandle = null;
+        let releaseControllerPickBridge = null;
 	    let latestScenePickDetail = null;
 
 	    function swapRenderer(nextRenderer, fallbackReason) {
@@ -2212,6 +2213,8 @@
     }
 
 	    function disposeSceneCanvasInteractionHandles() {
+          if (releaseControllerPickBridge) releaseControllerPickBridge();
+          releaseControllerPickBridge = null;
 	      if (dragHandle && typeof dragHandle.dispose === "function") {
 	        dragHandle.dispose();
 	      }
@@ -2231,6 +2234,7 @@
 	    }
 
 	    function installSceneCanvasInteractionHandles() {
+          releaseControllerPickBridge = setupSceneControllerPickBridge(mount, canvas, () => viewport, () => latestBundle);
 	      pickHandle = setupScenePickInteractions(canvas, props, function() {
 	        return viewport;
 	      }, function() {
@@ -3486,6 +3490,9 @@
         return applyMountedSceneCommands(commands, "commands");
       },
       applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
+      get applyPendingPoseFrame() {
+        return sceneState._modelHydrationPromise ? this.applyPoseFrame : null;
+      },
       // applyMotionFrame: the GSP3 sibling of applyPoseFrame above -- see
       // command-runtime.ts's "GPU-driven crowd motion" section and
       // sceneUpdateRigidInstanceMotion's doc comment (mount-webgl.ts) for
@@ -3655,6 +3662,7 @@
       releaseSceneDebugSurface();
       dragHandle.dispose();
       pickHandle.dispose();
+      if (releaseControllerPickBridge) releaseControllerPickBridge();
       sceneControlHandle.dispose();
       if (typeof mount.removeEventListener === "function") mount.removeEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
       renderer.dispose();
