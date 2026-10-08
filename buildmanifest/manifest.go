@@ -38,8 +38,11 @@ type Manifest struct {
 }
 
 type RuntimeAssets struct {
-	WASM        HashedAsset `json:"wasm"`
-	WASMIslands HashedAsset `json:"wasmIslands,omitempty"`
+	// WASMOptimization records successful producer operations bound to their
+	// exact input/output bodies. Absence means optimizer evidence is unknown.
+	WASMOptimization map[string]WASMOptimization `json:"wasmOptimization,omitempty"`
+	WASM             HashedAsset                 `json:"wasm"`
+	WASMIslands      HashedAsset                 `json:"wasmIslands,omitempty"`
 	// WASMVariants contains the capability-linked artifacts. WASM remains the
 	// full-runtime compatibility field so older servers and source builds keep
 	// working while new renderers select the smallest compatible entry.

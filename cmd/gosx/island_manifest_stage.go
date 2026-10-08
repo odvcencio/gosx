@@ -50,6 +50,9 @@ func islandManifestStage(dir string, dev bool) (*BuildManifest, string, error) {
 // writeBuildManifest marshals manifest and writes it to distDir/build.json —
 // the same write RunBuildWithOptions performs for the full manifest.
 func writeBuildManifest(distDir string, manifest *BuildManifest) (string, error) {
+	if err := manifest.ValidatePerfAssetUses(); err != nil {
+		return "", err
+	}
 	if err := manifest.ValidateIslandAssets(); err != nil {
 		return "", fmt.Errorf("validate manifest: %w", err)
 	}

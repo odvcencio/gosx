@@ -485,3 +485,7 @@ test-pagecaps:
 .PHONY: test-perf-manifest
 test-perf-manifest:
 	GOWORK=off go test ./buildmanifest -run TestPerfAsset
+
+.PHONY: test-perf-graph
+test-perf-graph:
+	GOWORK=off go test ./cmd/gosx ./buildmanifest -run 'TestPerf(Graph|Asset)'

@@ -43,6 +43,9 @@ type BuildOptions struct {
 	AppInstallerURI   string
 	SceneBudgetPath   string
 	SceneBudgetStrict bool
+	// PerfAppID enables private performance asset metadata for a production
+	// build. The stable app identity must be provided explicitly.
+	PerfAppID string
 }
 
 type wasmCompiler string
@@ -259,6 +262,9 @@ func RunBuild(dir string, dev bool) error {
 }
 
 func RunBuildWithOptions(dir string, opts BuildOptions) error {
+	if err := validatePerfBuildOptions(opts); err != nil {
+		return err
+	}
 	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
@@ -407,11 +413,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	type wasmResult struct {
-		data     []byte
-		asset    HashedAsset
-		compiler string
-		label    string
-		err      error
+		data         []byte
+		asset        HashedAsset
+		compiler     string
+		label        string
+		optimization *buildmanifest.WASMOptimization
+		err          error
 	}
 
 	compiler, tinygoPath, prebuiltRuntime, err := resolveWASMCompilerForProject(opts, dir, exec.LookPath)
@@ -447,7 +454,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				return
 			}
 			result.compiler = string(wasmCompilerTinyGo)
-			if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
+			if optimized, err := optimizeOptionalBuildWASM(tmpPath, opts.PerfAppID == ""); err != nil {
 				result.err = err
 				return
 			} else if optimized {
@@ -483,7 +490,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				return
 			}
 			result.compiler = string(wasmCompilerGo)
-			if standardGoWASMOptEnabled() {
+			if opts.PerfAppID == "" && standardGoWASMOptEnabled() {
 				if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
 					result.err = err
 					return
@@ -493,6 +500,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			}
 		}
 
+		if opts.PerfAppID != "" {
+			result.optimization, result.err = optimizePerfBuildWASM(tmpPath)
+			if result.err != nil {
+				return
+			}
+		}
 		data, err := os.ReadFile(tmpPath)
 		if err != nil {
 			result.err = fmt.Errorf("read compiled WASM: %w", err)
@@ -564,6 +577,14 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 
+	if opts.PerfAppID != "" {
+		manifest.Runtime.WASMOptimization = make(map[string]buildmanifest.WASMOptimization)
+		for _, result := range []*wasmResult{&coreResult, &engineResult, &collabResult, &runtimeResult, &islandsResult} {
+			if result.optimization != nil {
+				manifest.Runtime.WASMOptimization[result.label] = *result.optimization
+			}
+		}
+	}
 	// wasm_exec.js — use TinyGo's version if we built with TinyGo, or the
 	// prebuilt runtime's own verified shim if we built with that instead.
 	wasmExecFound := false
@@ -735,6 +756,11 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// so build.json must already carry Images by the time that subprocess
 	// launches.
 
+	if opts.PerfAppID != "" {
+		if err := stagePerfBuildAssets(distDir, &manifest, opts.PerfAppID); err != nil {
+			return err
+		}
+	}
 	manifestPath, err := writeBuildManifest(distDir, &manifest)
 	if err != nil {
 		return err
@@ -985,7 +1011,12 @@ func optimizeWASMWithWasmOpt(path string) (bool, error) {
 	if woptErr != nil {
 		return false, nil
 	}
+	return optimizeWASMUsing(path, woptPath)
+}
+
+func optimizeWASMUsing(path, woptPath string) (bool, error) {
 	optTmp := path + ".opt"
+	defer os.Remove(optTmp)
 	optCmd := exec.Command(woptPath, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
 	if optCmd.Run() != nil {
 		return false, nil
