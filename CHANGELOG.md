@@ -2,9 +2,8 @@
 
 ## Unreleased
 
-- Remove the unused standalone Scene3D pipeline recovery asset and its
-  unreleased renderer setter. Pipeline recovery remains inside the WebGPU
-  renderer bundle.
+- Clean up the unused, unreleased Scene3D recovery asset, setter, and
+  `buildmanifest.RuntimeAssets` and `RuntimePaths` fields.
 
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential

@@ -105,12 +105,12 @@ func Page() Node {
 			</Scene3D>
 		</section>
 		<p>
-			Inline scripts must wait for DOMContentLoaded before calling the deferred navigation runtime.
+			Inline scripts must wait for DOMContentLoaded before calling the deferred bootstrap and navigation runtimes.
 		</p>
 		<pre class="code-block">
-			{`window.__gosx_dispose_page()
-		window.__gosx_bootstrap_page()
-		document.addEventListener("DOMContentLoaded", () => {
+			{`document.addEventListener("DOMContentLoaded", () => {
+		    window.__gosx_dispose_page()
+		    window.__gosx_bootstrap_page()
 		    window.__gosx_page_nav.navigate("/docs/routing")
 		}, { once: true })`}
 		</pre>
