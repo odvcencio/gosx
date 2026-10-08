@@ -24,10 +24,10 @@
   };
 
   // All public command and presentation calls share one demand-loaded bridge.
-  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline"].forEach(function(method) {
+  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline", "burstParticles"].forEach(function(method) {
     api[method] = function() {
       const args = arguments;
-      return loadCommandBridge().then(function(bridge) { return bridge[method].apply(bridge, args); });
+      return loadCommandBridge().then(function(bridge) { return bridge[method](...args); });
     };
   });
   function forceWebGLRequested() {

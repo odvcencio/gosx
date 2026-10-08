@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
@@ -12,6 +13,9 @@ func init() {
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 				return map[string]any{
+					// This allowlist is display text, not an export asset reference.
+					"navigationAssetPattern": gosx.RawHTML("&#47;gosx&#47;assets&#47;runtime&#47;navigation.*.js"),
+
 					"sample001":   docsapp.DocSample("runtime/code-001.gosx.sample"),
 					"sample002":   docsapp.DocSample("runtime/code-002.go.sample"),
 					"sample003":   docsapp.DocSample("runtime/code-003.js.sample"),
