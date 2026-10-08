@@ -26,13 +26,19 @@ const scheduledStatusLimit = 64
 // ScheduledStatus returns at most 64 task statuses and whether the snapshot is
 // complete. It removes progress and error text and never creates a scheduler.
 func (a *App) ScheduledStatus(limit int) ([]scheduled.TaskStatus, bool) {
-	if a == nil || a.scheduler == nil {
+	if a == nil {
+		return nil, true
+	}
+	a.shutdown.mu.Lock()
+	scheduler := a.scheduler
+	a.shutdown.mu.Unlock()
+	if scheduler == nil {
 		return nil, true
 	}
 	if limit <= 0 || limit > scheduledStatusLimit {
 		limit = scheduledStatusLimit
 	}
-	return sanitizedScheduledStatus(a.scheduler, limit)
+	return sanitizedScheduledStatus(scheduler, limit)
 }
 
 func sanitizedScheduledStatus(s *scheduled.Scheduler, limit int) ([]scheduled.TaskStatus, bool) {

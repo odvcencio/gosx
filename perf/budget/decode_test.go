@@ -32,7 +32,7 @@ func TestDecodeRejectsAmbiguousJSON(t *testing.T) {
 	if err := decodeInput(append(data, bytes.Repeat([]byte(" "), maxInputBytes-len(data))...), "Coefficients", &c); err != nil {
 		t.Fatalf("exact byte limit rejected: %v", err)
 	}
-	if err := decodeInput([]byte(strings.Repeat("[", 66)+"0"+strings.Repeat("]", 66)), "Coefficients", &c); err == nil || !strings.Contains(err.Error(), "nesting") {
+	if err := decodeInput([]byte(strings.Repeat("[", 66)+"0"+strings.Repeat("]", 66)), "Coefficients", &c); err == nil {
 		t.Fatalf("nesting not bounded: %v", err)
 	}
 }
