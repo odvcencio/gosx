@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Insert single metric tuple admissions into their sorted position instead of
+  sorting the whole family. Retained-heap checks cover counters, gauges and
+  histograms under the existing memory reservations.
+
 - Add a bounded metric registry with finite label domains, atomic tuple batches,
   scalar sample and byte reservations, sealed registration, and consistent
   counter, gauge, and histogram instruments. Application families cannot use

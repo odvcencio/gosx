@@ -175,7 +175,11 @@ func declareLocked(s *registryState, declarations []TupleDeclaration) error {
 		for key, index := range p.cells {
 			f.addCell(key, declarations[index].Values)
 		}
-		f.sortCells()
+		if len(p.cells) == 1 {
+			f.insertLastCell()
+		} else {
+			f.sortCells()
+		}
 	}
 	s.samples += samples
 	s.bytes += bytes
@@ -237,12 +241,24 @@ func (f *family) addCell(key string, values []string) {
 }
 
 func (f *family) sortCells() {
-	slices.SortFunc(f.ordered, func(a, b *cell) int {
-		for i, value := range a.values {
-			if n := strings.Compare(value, b.values[i]); n != 0 {
-				return n
-			}
+	slices.SortFunc(f.ordered, compareCells)
+}
+
+func compareCells(a, b *cell) int {
+	for i, value := range a.values {
+		if n := strings.Compare(value, b.values[i]); n != 0 {
+			return n
 		}
-		return 0
-	})
+	}
+	return 0
+}
+
+// A single admission need not sort the already sorted family again. Keep the
+// public snapshot order by inserting just the appended cell at its position.
+func (f *family) insertLastCell() {
+	last := len(f.ordered) - 1
+	c := f.ordered[last]
+	index, _ := slices.BinarySearchFunc(f.ordered[:last], c, compareCells)
+	copy(f.ordered[index+1:], f.ordered[index:last])
+	f.ordered[index] = c
 }
