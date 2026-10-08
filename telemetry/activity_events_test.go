@@ -245,6 +245,7 @@ func TestRecordQueueConcurrentAdmissionsStayWithinBothCaps(t *testing.T) {
 	done, drained := make(chan struct{}), make(chan struct{})
 	go func() {
 		defer close(drained)
+		producersDone := false
 		for {
 			r, ok := q.take()
 			if ok {
@@ -252,9 +253,14 @@ func TestRecordQueueConcurrentAdmissionsStayWithinBothCaps(t *testing.T) {
 				q.release(r)
 				continue
 			}
+			if producersDone {
+				return
+			}
 			select {
 			case <-done:
-				return
+				// The earlier empty take can precede the final admission.
+				// Recheck only after every producer has finished.
+				producersDone = true
 			default:
 				runtime.Gosched()
 			}
