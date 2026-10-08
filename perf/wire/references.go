@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/evanw/esbuild/pkg/api"
 	ts "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 	"golang.org/x/net/html"
@@ -291,6 +292,24 @@ func scanSyntaxReferences(body []byte, kind string, out *ReferenceSet) error {
 	tree, err := ts.NewParser(lang).Parse(body)
 	if err != nil || tree == nil {
 		return referenceFailure()
+	}
+	if kind == KindScript && tree.RootNode().HasErrorOrMissing() {
+		// Retry valid minified statement boundaries through the bundle producer's
+		// pinned parser. Formatting changes neither emitted bodies nor byte counts.
+		// Existing successfully parsed syntax retains its conservative treatment.
+		tree.Release()
+		formatted := api.Transform(string(body), api.TransformOptions{
+			Loader: api.LoaderJS, Target: api.ESNext, Charset: api.CharsetUTF8,
+			TreeShaking: api.TreeShakingFalse, LogLevel: api.LogLevelSilent,
+		})
+		if len(formatted.Errors) != 0 || len(formatted.Code) > 32<<20 {
+			return referenceFailure()
+		}
+		body = formatted.Code
+		tree, err = ts.NewParser(lang).Parse(body)
+		if err != nil || tree == nil {
+			return referenceFailure()
+		}
 	}
 	defer tree.Release()
 	if tree.RootNode().HasErrorOrMissing() {
