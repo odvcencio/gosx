@@ -31,7 +31,10 @@ func (t *Telemetry) initializeActivityMetrics() error {
 	if _, err := t.histogram("gosx_activity_duration_seconds", activityBounds, kind, metric.Label{Name: "outcome", MaxValues: 1024}); err != nil {
 		return err
 	}
-	return t.bindActivityMetrics("other", [2]string{"none", "none"}, [][2]string{{"none", "none"}}, nil, nil)
+	if err := t.bindActivityMetrics("other", [2]string{"none", "none"}, [][2]string{{"none", "none"}}, nil, nil); err != nil {
+		return err
+	}
+	return t.initializeActivities()
 }
 
 func (t *Telemetry) bindActivityMetrics(kind string, names [2]string, combinations [][2]string, outcomes, reasons []string) error {

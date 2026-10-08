@@ -39,8 +39,10 @@ type Telemetry struct {
 	degraded            map[string]*metric.Gauge
 	requests            *requestState
 	adapterBytes        atomic.Int64
+	miscBytes           atomic.Int64
 	hubs                *hubState
 	loops               *loopState
+	activities          *activityState
 	ownerBytes          int64
 	faultOnce           sync.Once
 }

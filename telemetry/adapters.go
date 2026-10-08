@@ -65,6 +65,9 @@ func (t *Telemetry) declareProduct(v metric.InstrumentVec, domains ...[]string) 
 }
 
 func (t *Telemetry) initializeDefaultAdapters() error {
+	if !t.reserveMisc(64 << 10) {
+		return ErrCapacity
+	}
 	t.adapters = adapterVectors{make(map[string]*metric.CounterVec), make(map[string]*metric.GaugeVec), make(map[string]*metric.HistogramVec)}
 	// Account the vector maps, pre-bound lookup tables and immutable route index
 	// separately from the registry's descriptors/cells/snapshot arenas.

@@ -20,6 +20,9 @@ type coreMetrics struct {
 }
 
 func (t *Telemetry) initializeRegistry() (err error) {
+	if !t.reserveMisc(t.ownerBytes) {
+		return ErrCapacity
+	}
 	t.registry, err = metric.NewRegistry(metric.RegistryOptions{MaxSeries: t.opts.Metrics.MaxSeries, MaxBytes: 8 << 20})
 	if err != nil {
 		return err
@@ -114,6 +117,9 @@ func (t *Telemetry) updateCore(now Instant) {
 	}
 	if t.loops != nil {
 		bytes += t.loops.bytes.Load()
+	}
+	if t.activities != nil {
+		bytes += t.activities.bytes.Load()
 	}
 	t.core.memory.Set(float64(usage.Bytes + bytes))
 	// Publish the collection time after refreshing its usage gauges.

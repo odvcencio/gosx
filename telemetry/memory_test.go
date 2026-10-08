@@ -28,7 +28,10 @@ func defaultInventory(t *testing.T, opts Options) *Telemetry {
 	if _, err := tel.NewLoopKind("simulation", LoopOptions{Budget: 20 * time.Millisecond}); err != nil {
 		t.Fatal(err)
 	}
-	if err := tel.bindActivityMetrics("match", [2]string{"mode", "players"}, [][2]string{{"team", "4"}}, []string{"won", "lost"}, nil); err != nil {
+	if _, err := NewActivityKind(tel, "match", ActivityKindOptions{
+		Dimensions: []Dimension{{Name: "mode", Values: []string{"team"}}, {Name: "players", Values: []string{"4"}}},
+		Outcomes:   []string{"won", "lost"},
+	}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {
 		t.Fatal(err)
 	}
 	return tel
@@ -92,6 +95,7 @@ func TestRealDefaultMetricInventoryFits(t *testing.T) {
 			runtime.ReadMemStats(&after)
 			retained := int64(after.HeapAlloc) - int64(before.HeapAlloc)
 			charged := usage.Bytes + tel.ownerBytes + tel.adapterBytes.Load() + tel.hubs.bytes.Load() + tel.loops.bytes.Load()
+			charged += tel.activities.bytes.Load()
 			if charged > opts.Limits.MemoryBudgetBytes {
 				t.Fatalf("default reservations %d exceed total memory budget %d", charged, opts.Limits.MemoryBudgetBytes)
 			}

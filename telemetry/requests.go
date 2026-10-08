@@ -118,7 +118,15 @@ func (t *Telemetry) reserveRequest(row server.ObservationPattern) error {
 			batch = append(batch, metric.TupleDeclaration{Instrument: s.durations, Values: []string{key.kind, key.route}})
 		}
 	}
+	charge := int64(0)
+	for _, k := range keys {
+		charge += 768 + int64(len(k.kind)+len(k.route))*2
+	}
+	if !t.reserveMisc(charge) {
+		return ErrCapacity
+	}
 	if err := t.authority.DeclareBatch(batch); err != nil {
+		t.releaseMisc(charge)
 		return err
 	}
 	for _, key := range keys {

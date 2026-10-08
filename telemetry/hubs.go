@@ -80,6 +80,9 @@ var hubHandlerBounds = []float64{.0001, .00025, .0005, .001, .0025, .005, .01, .
 var hubRTTBounds = []float64{.005, .01, .025, .05, .1, .2, .35, .5, 1, 2, 5, 10}
 
 func (t *Telemetry) initializeHubs() error {
+	if !t.reserveMisc(hubStateBytes) {
+		return ErrCapacity
+	}
 	s := &hubState{groups: make(map[string]*HubGroup, 32), attached: make(map[*hub.Hub]*hubAttachment, 1024)}
 	v := &s.vectors
 	label := []metric.Label{{Name: "hub", MaxValues: 33}}
@@ -281,12 +284,13 @@ func (t *Telemetry) NewHubGroup(kind string, opts HubOptions) (*HubGroup, error)
 			charge += int64(32 + len(value))
 		}
 	}
-	if charge > hubMiscBytes-t.ownerBytes-s.bytes.Load() {
+	if !t.reserveMisc(charge) {
 		t.core.dropped["memory"].Add(1)
 		return nil, ErrCapacity
 	}
 	m, err := t.bindHub(kind, opts.Events, opts.DisconnectReasons)
 	if err != nil {
+		t.releaseMisc(charge)
 		if err == ErrCapacity {
 			t.core.dropped["series"].Add(1)
 		}
@@ -319,7 +323,11 @@ func (g *HubGroup) Attach(h *hub.Hub) (func(), error) {
 	if s.attached[h] != nil {
 		return nil, ErrConflict
 	}
-	if len(s.attached) == 1024 || hubAttachmentBytes > hubMiscBytes-t.ownerBytes-s.bytes.Load() {
+	if len(s.attached) == 1024 {
+		t.core.dropped["memory"].Add(1)
+		return nil, ErrCapacity
+	}
+	if !t.reserveMisc(hubAttachmentBytes) {
 		t.core.dropped["memory"].Add(1)
 		return nil, ErrCapacity
 	}
@@ -327,6 +335,7 @@ func (g *HubGroup) Attach(h *hub.Hub) (func(), error) {
 	a.alive.Store(true)
 	detach, err := h.UseTelemetryObserver(a, g.every, telemetryauthority.New())
 	if err != nil {
+		t.releaseMisc(hubAttachmentBytes)
 		if err == hub.ErrObserverConflict {
 			return nil, ErrConflict
 		}
@@ -355,6 +364,7 @@ func (a *hubAttachment) finish() {
 	g.metrics.clients.Set(float64(g.clients))
 	delete(s.attached, a.h)
 	s.bytes.Add(-hubAttachmentBytes)
+	g.owner.releaseMisc(hubAttachmentBytes)
 	detach := a.detach
 	a.detach = nil
 	a.h = nil
