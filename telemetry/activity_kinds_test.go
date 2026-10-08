@@ -33,7 +33,7 @@ func TestActivityKindDeclarationsCopiedAndFinite(t *testing.T) {
 	tel := activityDeclarationOwner(t)
 	opts := ActivityKindOptions{Dimensions: []Dimension{{Name: "mode", Values: []string{"team", "solo"}}, {Name: "players", Values: []string{"2", "4"}}}, Outcomes: []string{"won"}, Reasons: []string{"complete"}, Events: []string{"round"}, Roles: []string{"player"}}
 	codecs := ActivityCodecs[int, NoFields, NoFields]{Activity: DomainCodec[int]{Name: "match", Version: 1, Fields: []FieldDefinition{{Name: "score", Type: FieldInt}}, Encode: func(f *FieldSet, v int) error { return f.Int("score", int64(v)) }}}
-	kind, err := NewActivityKind(tel, "match", opts, codecs)
+	kind, err := newActivityKind(tel, "match", opts, codecs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -56,7 +56,7 @@ func TestActivityKindDeclarationsCopiedAndFinite(t *testing.T) {
 	if err != nil || len(fields) != 1 || fields[0].Name != "score" || fields[0].Int != 12 {
 		t.Fatal(fields, err)
 	}
-	if _, err := NewActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrConflict) {
+	if _, err := newActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrConflict) {
 		t.Fatal(err)
 	}
 	before := tel.registry.Usage()
@@ -70,6 +70,7 @@ func TestActivityKindDeclarationsCopiedAndFinite(t *testing.T) {
 
 func TestActivityKindValidationRollbackAndSeal(t *testing.T) {
 	cases := []ActivityKindOptions{
+		{Dimensions: []Dimension{{Name: "mode", Values: []string{strings.Repeat("x", 65)}}}},
 		{Dimensions: []Dimension{{Name: "mode", Values: nil}}},
 		{Dimensions: []Dimension{{Name: "mode", Values: []string{"a"}}, {Name: "mode", Values: []string{"b"}}}},
 		{Dimensions: []Dimension{{Name: "mode", Values: []string{"a", "a"}}}},
@@ -83,7 +84,7 @@ func TestActivityKindValidationRollbackAndSeal(t *testing.T) {
 	for _, opts := range cases {
 		tel := activityDeclarationOwner(t)
 		before, bytes := tel.registry.Usage(), tel.miscBytes.Load()
-		if _, err := NewActivityKind(tel, "match", opts, ActivityCodecs[NoFields, NoFields, NoFields]{}); err == nil {
+		if _, err := newActivityKind(tel, "match", opts, ActivityCodecs[NoFields, NoFields, NoFields]{}); err == nil {
 			t.Fatal("accepted invalid declaration", opts)
 		}
 		if tel.registry.Usage() != before || tel.miscBytes.Load() != bytes || len(tel.activities.kinds) != 0 {
@@ -93,7 +94,7 @@ func TestActivityKindValidationRollbackAndSeal(t *testing.T) {
 	tel := activityDeclarationOwner(t)
 	before, bytes := tel.registry.Usage(), tel.miscBytes.Load()
 	tel.authority.Seal()
-	if _, err := NewActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrAfterBuild) {
+	if _, err := newActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrAfterBuild) {
 		t.Fatal(err)
 	}
 	before.Sealed = true
@@ -101,7 +102,7 @@ func TestActivityKindValidationRollbackAndSeal(t *testing.T) {
 		t.Fatal("sealed registration changed reservation")
 	}
 	tel.active.Store(false)
-	if _, err := NewActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrClosed) {
+	if _, err := newActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrClosed) {
 		t.Fatal(err)
 	}
 }
@@ -109,12 +110,12 @@ func TestActivityKindValidationRollbackAndSeal(t *testing.T) {
 func TestActivityKindsGlobalCapAndWholeMetricFailure(t *testing.T) {
 	tel := activityDeclarationOwner(t)
 	for i := 0; i < 32; i++ {
-		if _, err := NewActivityKind(tel, fmt.Sprintf("kind_%d", i), ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {
+		if _, err := newActivityKind(tel, fmt.Sprintf("kind_%d", i), ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {
 			t.Fatal(i, err)
 		}
 	}
 	before, bytes := tel.registry.Usage(), tel.miscBytes.Load()
-	if _, err := NewActivityKind(tel, "over", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrCapacity) {
+	if _, err := newActivityKind(tel, "over", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrCapacity) {
 		t.Fatal(err)
 	}
 	if tel.registry.Usage() != before || tel.miscBytes.Load() != bytes {
@@ -129,12 +130,12 @@ func TestActivityKindsGlobalCapAndWholeMetricFailure(t *testing.T) {
 	}
 	failed.active.Store(true)
 	for i := 0; i < 31; i++ {
-		if _, err := NewActivityKind(failed, fmt.Sprintf("kind_%d", i), ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {
+		if _, err := newActivityKind(failed, fmt.Sprintf("kind_%d", i), ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {
 			t.Fatal(i, err)
 		}
 	}
 	usage, reserved := failed.registry.Usage(), failed.miscBytes.Load()
-	if _, err := NewActivityKind(failed, "last", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrCapacity) {
+	if _, err := newActivityKind(failed, "last", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrCapacity) {
 		t.Fatal(err)
 	}
 	if failed.registry.Usage() != usage || failed.miscBytes.Load() != reserved || len(failed.activities.kinds) != 31 {
@@ -146,18 +147,18 @@ func TestActivityDimensionShapesAndExplicitCombinations(t *testing.T) {
 	tel := activityDeclarationOwner(t)
 	values := []string{"a", "b", "c", "d", "e", "f", "g", "h", "i"}
 	opts := ActivityKindOptions{Dimensions: []Dimension{{Name: "mode", Values: values}, {Name: "size", Values: values}}}
-	if _, err := NewActivityKind(tel, "wide", opts, ActivityCodecs[NoFields, NoFields, NoFields]{}); err == nil {
+	if _, err := newActivityKind(tel, "wide", opts, ActivityCodecs[NoFields, NoFields, NoFields]{}); err == nil {
 		t.Fatal("expanded more than 64 combinations")
 	}
 	opts.Combinations = [][2]string{{"a", "b"}}
-	k, err := NewActivityKind(tel, "wide", opts, ActivityCodecs[NoFields, NoFields, NoFields]{})
+	k, err := newActivityKind(tel, "wide", opts, ActivityCodecs[NoFields, NoFields, NoFields]{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if k.core.dimensionTuple([2]string{"a", "b"}) != [2]string{"a", "b"} || k.core.dimensionTuple([2]string{"a", "a"}) != [2]string{"other", "other"} {
 		t.Fatal("ignored finite combination declaration")
 	}
-	if _, err = NewActivityKind(tel, "plain", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {
+	if _, err = newActivityKind(tel, "plain", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {
 		t.Fatal(err)
 	}
 	if err = tel.registry.WithSnapshot(context.Background(), func(s metric.Snapshot) error {
@@ -183,14 +184,14 @@ func TestActivityDimensionShapesAndExplicitCombinations(t *testing.T) {
 
 func TestActivityKindDisabledValidation(t *testing.T) {
 	for _, tel := range []*Telemetry{nil, {}, {opts: Defaults()}} {
-		k, err := NewActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{})
+		k, err := newActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{})
 		if err != nil || k.core != nil {
 			t.Fatal(k, err)
 		}
-		if _, err = NewActivityKind(tel, "private/name", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err == nil || strings.Contains(err.Error(), "private/name") {
+		if _, err = newActivityKind(tel, "private/name", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err == nil || strings.Contains(err.Error(), "private/name") {
 			t.Fatal(err)
 		}
-		if _, err = NewActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[int, NoFields, NoFields]{}); err == nil {
+		if _, err = newActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[int, NoFields, NoFields]{}); err == nil {
 			t.Fatal("disabled codec was not validated")
 		}
 	}
@@ -204,7 +205,7 @@ func TestSharedMiscReservationConcurrentAdmissionAndRelease(t *testing.T) {
 		t.Fatal("shared cap")
 	}
 	usage := tel.registry.Usage()
-	if _, err := NewActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrCapacity) {
+	if _, err := newActivityKind(tel, "match", ActivityKindOptions{}, ActivityCodecs[NoFields, NoFields, NoFields]{}); !errors.Is(err, ErrCapacity) {
 		t.Fatal(err)
 	}
 	if _, err := tel.NewHubGroup("room", HubOptions{}); !errors.Is(err, ErrCapacity) {
@@ -267,7 +268,7 @@ func TestActivityCodecMemoryRejectionBeforePublication(t *testing.T) {
 	}
 	codec := DomainCodec[int]{Name: "wide", Version: 1, Fields: fields, Encode: func(*FieldSet, int) error { return nil }}
 	codecs := ActivityCodecs[int, int, int]{Activity: codec, Participant: codec, Event: codec}
-	if _, err := NewActivityKind(tel, "wide", ActivityKindOptions{}, codecs); !errors.Is(err, ErrCapacity) {
+	if _, err := newActivityKind(tel, "wide", ActivityKindOptions{}, codecs); !errors.Is(err, ErrCapacity) {
 		t.Fatal(err)
 	}
 	if tel.registry.Usage() != before || tel.miscBytes.Load() != reserved || len(tel.activities.kinds) != 0 {

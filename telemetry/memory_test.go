@@ -28,7 +28,7 @@ func defaultInventory(t *testing.T, opts Options) *Telemetry {
 	if _, err := tel.NewLoopKind("simulation", LoopOptions{Budget: 20 * time.Millisecond}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := NewActivityKind(tel, "match", ActivityKindOptions{
+	if _, err := newActivityKind(tel, "match", ActivityKindOptions{
 		Dimensions: []Dimension{{Name: "mode", Values: []string{"team"}}, {Name: "players", Values: []string{"4"}}},
 		Outcomes:   []string{"won", "lost"},
 	}, ActivityCodecs[NoFields, NoFields, NoFields]{}); err != nil {

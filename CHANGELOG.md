@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reserve finite activity kind and codec declarations before route admission.
+  Dimensions share fixed metric labels, complete-kind admission is atomic,
+  and metadata/staging capacity shares one bounded arena with hub attachments
+  and route tables. Public activity lifecycles follow in the next slice.
+
 - Add a portable, bounded MemorySink test helper with synchronized record and
   byte admission, copied readers and one injected failure per operation.
   Its zero value uses 128 records and 1 MiB. Memory acceptance makes no local

@@ -36,7 +36,7 @@ type activityKindCore struct {
 
 // ActivityKind owns a startup declaration of one finite activity shape. Its
 // codecs are retained for the telemetry lifetime; avoid capturing game state.
-// Lifecycle methods arrive with the activity state owner.
+// Construction and lifecycle methods arrive with the activity state owner.
 type ActivityKind[A, P, E any] struct {
 	core        *activityKindCore
 	activity    *compiledDomainCodec[A]
@@ -96,6 +96,11 @@ func prepareActivityOptions(opts ActivityKindOptions) (ActivityKindOptions, int6
 		}
 		if err := validateHubValues(d.Values, 16); err != nil {
 			return opts, 0, err
+		}
+		for _, value := range d.Values {
+			if len(value) > 64 {
+				return opts, 0, invalid("activity_dimension", "text")
+			}
 		}
 		values[i] = d.Values
 	}
@@ -168,10 +173,10 @@ func freezeActivityKind(t *Telemetry, name string, opts ActivityKindOptions) *ac
 	return k
 }
 
-// NewActivityKind validates all descriptors and atomically reserves the whole
+// newActivityKind validates all descriptors and atomically reserves the whole
 // kind before route admission. Nil/disabled owners validate then return inert
 // declarations. Neither failed registration nor Build admits a partial kind.
-func NewActivityKind[A, P, E any](t *Telemetry, name string, opts ActivityKindOptions, codecs ActivityCodecs[A, P, E]) (*ActivityKind[A, P, E], error) {
+func newActivityKind[A, P, E any](t *Telemetry, name string, opts ActivityKindOptions, codecs ActivityCodecs[A, P, E]) (*ActivityKind[A, P, E], error) {
 	if !kindName(name) {
 		return nil, invalid("activity_kind", "name")
 	}
