@@ -83,6 +83,7 @@ func (c Coefficients) validate() error {
 				if e.Value == nil || lo == nil || e.NVisits == 0 || e.NBlocks == 0 || e.Method == "prior" || e.Method == "unused" {
 					return errors.New("observed coefficient requires an interval and support")
 				}
+				// Spec 4.3 requires 30 visits and held-out error at most 200,000 ppm.
 				if e.Status == "measured" && (e.NVisits < 30 || set.PredictionErrorPPM == nil || *set.PredictionErrorPPM > 200000) {
 					return errors.New("measured coefficient requires accepted visits and held-out validation")
 				}
