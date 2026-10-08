@@ -35,16 +35,17 @@ const (
 )
 
 type family struct {
-	registry   *registryState
-	name, help string
-	kind       InstrumentKind
-	labels     []labelDomain
-	bounds     []float64
-	cells      map[string]*cell
-	ordered    []*cell
-	counter    CounterVec
-	gauge      GaugeVec
-	histogram  HistogramVec
+	registry       *registryState
+	name, help     string
+	kind           InstrumentKind
+	labels         []labelDomain
+	bounds         []float64
+	cells          map[string]*cell
+	ordered        []*cell
+	snapshotSeries []SeriesSnapshot
+	counter        CounterVec
+	gauge          GaugeVec
+	histogram      HistogramVec
 }
 
 type labelDomain struct {
@@ -137,6 +138,7 @@ func (r *Registry) register(d descriptor) (*family, error) {
 		f.addCell("", nil)
 	}
 	s.families[f.name] = f
+	s.snapshotFamilies = append(s.snapshotFamilies, FamilySnapshot{})
 	s.ordered = append(s.ordered, f)
 	slices.SortFunc(s.ordered, func(a, b *family) int { return strings.Compare(a.name, b.name) })
 	s.samples += samples
@@ -250,8 +252,10 @@ func cellBytes(kind InstrumentKind, values []string, bounds []float64) int64 {
 		keyBytes += len(value)
 	}
 	n += allocationBytes(int64(keyBytes))
+	n += allocationBytes(int64(len(values)) * int64(unsafe.Sizeof(LabelValue{})))
 	if kind == KindHistogram {
 		n += allocationBytes(int64(unsafe.Sizeof(Histogram{}))) + allocationBytes(int64(8*(len(bounds)+1)))
+		n += allocationBytes(int64(unsafe.Sizeof(histogramScratch{}))) + allocationBytes(int64(8*len(bounds))) + allocationBytes(int64(8*(len(bounds)+1)))
 	}
 	return n
 }
@@ -287,7 +291,7 @@ func cellCapacity(current, needed, maximum int) int {
 }
 
 func cellCapacityBytes(capacity int) int64 {
-	return allocationBytes(int64(capacity) * int64(unsafe.Sizeof((*cell)(nil))))
+	return allocationBytes(int64(capacity)*int64(unsafe.Sizeof((*cell)(nil)))) + allocationBytes(int64(capacity)*int64(unsafe.Sizeof(SeriesSnapshot{})))
 }
 
 func (f *family) growCells(added int) {
@@ -298,6 +302,9 @@ func (f *family) growCells(added int) {
 	ordered := make([]*cell, len(f.ordered), capacity)
 	copy(ordered, f.ordered)
 	f.ordered = ordered
+	series := make([]SeriesSnapshot, len(f.snapshotSeries), capacity)
+	copy(series, f.snapshotSeries)
+	f.snapshotSeries = series
 }
 
 func (f *family) matches(d descriptor) bool {

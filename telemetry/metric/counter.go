@@ -3,11 +3,13 @@ package metric
 import "sync/atomic"
 
 type cell struct {
-	values    []string
-	value     atomic.Uint64
-	counter   Counter
-	gauge     Gauge
-	histogram *Histogram
+	values            []string
+	value             atomic.Uint64
+	counter           Counter
+	gauge             Gauge
+	histogram         *Histogram
+	snapshotLabels    []LabelValue
+	snapshotHistogram *histogramScratch
 }
 
 type CounterVec struct{ family *family }

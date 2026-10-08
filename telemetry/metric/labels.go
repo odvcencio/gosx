@@ -224,11 +224,13 @@ func tupleKey(values []string) string {
 
 func (f *family) addCell(key string, values []string) {
 	c := &cell{values: make([]string, len(values))}
+	c.snapshotLabels = make([]LabelValue, len(values))
 	for i, value := range values {
 		c.values[i] = f.labels[i].values[value]
 	}
 	if f.kind == KindHistogram {
 		c.histogram = &Histogram{cell: c, bounds: f.bounds, counts: make([]uint64, len(f.bounds)+1)}
+		c.snapshotHistogram = &histogramScratch{bounds: make([]float64, len(f.bounds)), counts: make([]uint64, len(f.bounds)+1)}
 	}
 	c.counter.cell, c.gauge.cell = c, c
 	// Multi-label keys come from the private length-framed builder. Reuse
@@ -238,6 +240,7 @@ func (f *family) addCell(key string, values []string) {
 	}
 	f.cells[key] = c
 	f.ordered = append(f.ordered, c)
+	f.snapshotSeries = append(f.snapshotSeries, SeriesSnapshot{})
 }
 
 func (f *family) sortCells() {

@@ -26,7 +26,7 @@ const (
 	defaultMaxSeries  = 32768
 	defaultMaxBytes   = 8 << 20
 	maxFamilies       = 256
-	registryBaseBytes = 1024
+	registryBaseBytes = 8192
 )
 
 // Registry reserves scalar samples and retained bytes before publishing any
@@ -39,13 +39,17 @@ type Registry struct {
 }
 
 type registryState struct {
-	mu       sync.Mutex
-	opts     RegistryOptions
-	families map[string]*family
-	ordered  []*family
-	samples  int
-	bytes    int64
-	sealed   bool
+	mu               sync.Mutex
+	opts             RegistryOptions
+	families         map[string]*family
+	ordered          []*family
+	samples          int
+	bytes            int64
+	sealed           bool
+	snapshotGate     chan struct{}
+	snapshotWaiters  int
+	snapshotFamilies []FamilySnapshot
+	textScratch      [4096]byte
 }
 
 func NewRegistry(opts RegistryOptions) (*Registry, error) {
@@ -68,7 +72,7 @@ func NewRegistry(opts RegistryOptions) (*Registry, error) {
 }
 
 func newState(opts RegistryOptions) *registryState {
-	return &registryState{opts: opts, families: make(map[string]*family), bytes: registryBaseBytes}
+	return &registryState{opts: opts, families: make(map[string]*family), bytes: registryBaseBytes, snapshotGate: make(chan struct{}, 1)}
 }
 
 func (r *Registry) get() *registryState {

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Independently check retained gauge and histogram heap, including their
+  leased snapshot storage, against the existing byte reservations.
+
+- Export bounded, copied metric snapshots and deterministic Prometheus text
+  with shared admission, consistent histogram buckets, and a 2 MiB output cap.
+  Snapshot adapters can retain an explicit clone within their own capacity.
+  Snapshot labels, histogram scratch and series slices reserve their actual
+  bounded capacity; the default request inventory fits the unchanged budget.
+  Network adapters must render into their own buffer and release the snapshot
+  lease before writing a response.
 - Insert single metric tuple admissions into their sorted position instead of
   sorting the whole family. Retained-heap checks cover counters, gauges and
   histograms under the existing memory reservations.

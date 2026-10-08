@@ -47,7 +47,12 @@ func BenchmarkSingleAdmission(b *testing.B) {
 		b.Run(mode, func(b *testing.B) {
 			b.ReportAllocs()
 			for b.Loop() {
-				r := &Registry{}
+				// Admission speed is measured at 32,768 tuples with room for
+				// snapshot storage. Default capacity is gated separately.
+				r, err := NewRegistry(RegistryOptions{MaxBytes: 16 << 20})
+				if err != nil {
+					b.Fatal(err)
+				}
 				labels := []Label{{Name: "first", MaxValues: 256}, {Name: "second", MaxValues: 128}}
 				if mode == "bind" {
 					labels[0].Values, labels[1].Values = first, second

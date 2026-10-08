@@ -300,6 +300,9 @@ jobs:
       - name: WASM runtime tests
         run: make test-wasm
 
+      - name: Portable telemetry tests
+        run: make test-telemetry-wasm
+
       - name: Island-only WASM runtime tests
         run: make test-wasm-islands
 
