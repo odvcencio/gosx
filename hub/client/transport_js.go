@@ -3,6 +3,7 @@
 package hubclient
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -29,7 +30,10 @@ func newDefaultDialer(enableCompression bool) dialer { return browserDialer{} }
 
 type browserDialer struct{}
 
-func (browserDialer) Dial(rawURL string, _ http.Header) (result conn, dialErr error) {
+func (browserDialer) Dial(ctx context.Context, rawURL string, _ http.Header) (result conn, dialErr error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	defer func() {
 		if r := recover(); r != nil {
 			result = nil
