@@ -24,8 +24,9 @@ ignores cancellation can therefore overlap those hooks; its scheduler owner
 retains it until it returns. Hooks must account for that possibility when
 closing resources shared with scheduled tasks. An unfinished scheduler returns
 an error matching `context.DeadlineExceeded` even when hooks finish in time.
-For deadlines shorter than the reserve, cancellation is immediate and the
+If the join cutoff is already in the past, cancellation is immediate and the
 join uses at most half the remaining time, leaving the other half for hooks.
+Deadlines with a future cutoff retain the full half-reserve for hooks.
 
 Concurrent shutdown callers share one pipeline and wait only until their own
 context expires. Hook errors retain their original identity for `errors.Is`
