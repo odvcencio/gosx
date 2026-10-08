@@ -8,6 +8,7 @@ import (
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/session"
 )
@@ -15,6 +16,7 @@ import (
 // PageState carries shared request-scoped page response state used by both
 // server.Context and route.RouteContext.
 type PageState struct {
+	basePath       string
 	requestPath    string
 	headers        http.Header
 	status         int
@@ -47,7 +49,8 @@ func NewPageState() *PageState {
 func NewPageStateForRequest(r *http.Request) *PageState {
 	state := NewPageState()
 	if r != nil && r.URL != nil {
-		state.requestPath = r.URL.Path
+		state.basePath = basepath.FromRequest(r)
+		state.requestPath = basepath.URL(state.basePath, r.URL.Path)
 	}
 	state.PrepareCache(r)
 	return state
@@ -341,6 +344,9 @@ func (s *PageState) Head() gosx.Node {
 		return gosx.Text("")
 	}
 	nodes := []gosx.Node{}
+	if s.basePath != "" {
+		nodes = append(nodes, gosx.El("meta", gosx.Attrs(gosx.Attr("name", "gosx-base-path"), gosx.Attr("content", s.basePath))))
+	}
 	if metaHead := s.metadata.head(SiteMetadata{}, s.requestPath); !metaHead.IsZero() {
 		nodes = append(nodes, metaHead)
 	}
@@ -379,6 +385,7 @@ func (s *PageState) Runtime() *PageRuntime {
 	}
 	if s.runtime == nil {
 		s.runtime = NewPageRuntime()
+		s.runtime.renderer.SetBasePath(s.basePath)
 	}
 	return s.runtime
 }
