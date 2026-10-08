@@ -1690,6 +1690,14 @@ func eventNameToType(name string) string {
 		return "document-keyup"
 	case "onWindowResize":
 		return "window-resize"
+	case "onWheel":
+		return "wheel"
+	case "onDblClick":
+		return "dblclick"
+	case "onContextMenu":
+		return "contextmenu"
+	case "onLostPointerCapture":
+		return "lostpointercapture"
 	default:
 		// DOM event names are case-insensitive but addEventListener strings are
 		// conventionally lowercase. Lower the entire suffix so multiword event

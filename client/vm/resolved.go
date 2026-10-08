@@ -148,6 +148,14 @@ func eventMarkerAttr(eventType string) string {
 		return "data-gosx-on-document-keyup"
 	case "window-resize":
 		return "data-gosx-on-window-resize"
+	case "wheel":
+		return "data-gosx-on-wheel"
+	case "dblclick":
+		return "data-gosx-on-dblclick"
+	case "contextmenu":
+		return "data-gosx-on-contextmenu"
+	case "lostpointercapture":
+		return "data-gosx-on-lostpointercapture"
 	default:
 		return "data-gosx-on-" + eventType
 	}
@@ -195,6 +203,14 @@ func eventAttrType(name string) string {
 		return "document-keyup"
 	case "onWindowResize":
 		return "window-resize"
+	case "onWheel":
+		return "wheel"
+	case "onDblClick":
+		return "dblclick"
+	case "onContextMenu":
+		return "contextmenu"
+	case "onLostPointerCapture":
+		return "lostpointercapture"
 	default:
 		if len(name) > 2 && name[:2] == "on" {
 			return strings.ToLower(name[2:3]) + name[3:]

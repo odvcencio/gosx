@@ -42,6 +42,11 @@ func TestIslandEventMarkerConventionsAreStable(t *testing.T) {
 		"onDocumentKeyDown": "data-gosx-on-document-keydown",
 		"onDocumentKeyUp":   "data-gosx-on-document-keyup",
 		"onWindowResize":    "data-gosx-on-window-resize",
+
+		"onWheel":              "data-gosx-on-wheel",
+		"onDblClick":           "data-gosx-on-dblclick",
+		"onContextMenu":        "data-gosx-on-contextmenu",
+		"onLostPointerCapture": "data-gosx-on-lostpointercapture",
 	}
 	for source, marker := range tests {
 		if got := eventMarkerAttr(eventAttrType(source)); got != marker {
