@@ -23,6 +23,6 @@ publishing a projection. A wall-clock rollback cannot make elapsed duration
 negative; final end time is clamped to start and marked clock_adjusted. Health
 is frozen with the final and cannot change when a meter later receives ticks.
 
-This prerequisite keeps construction internal until participant and event
-owners complete the required API. Public Enable still rejects configured
-activities with the fixed unsupported class. No file or logger sink is implied.
+Register with `telemetry.NewActivityKind`, then call `Begin` before updating
+participants or emitting events. Enable supports memory activities. No file
+or logger sink is implied; durable persistence follows separately.

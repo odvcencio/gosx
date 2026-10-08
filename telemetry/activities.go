@@ -232,10 +232,10 @@ func (k *ActivityKind[A, P, E]) begin(start ActivityStart[A]) (*Activity[A, P, E
 		t.core.dropped["activity_cap"].Add(1)
 		return nil, ErrCapacity
 	}
-	if s.live[id] != nil {
+	if s.knownActivity(id) {
 		return nil, invalid("entropy", "collision")
 	}
-	if start.ParentID != "" && s.live[string(start.ParentID)] == nil {
+	if start.ParentID != "" && !s.knownActivity(string(start.ParentID)) {
 		return nil, invalid("activity_parent", "unknown")
 	}
 	if start.Loop != nil {
@@ -542,6 +542,8 @@ func (t *Telemetry) collectActivityReceipts() {
 			if s.live[id] == e {
 				committed = true
 				delete(s.live, id)
+				s.known[s.nextKnown] = id
+				s.nextKnown = (s.nextKnown + 1) % len(s.known)
 				delete(s.attached, loop)
 				s.bytes.Add(-activitySlotBytes)
 			}
@@ -631,6 +633,25 @@ func trimActivityLink(v *schema.Activity) bool {
 		if len(p.Sessions) != 0 {
 			p.Sessions = p.Sessions[1:]
 			p.LinksTruncated = true
+			return true
+		}
+	}
+	return false
+}
+
+// Begin admits a live record and reserves its immutable final before returning.
+// Memory receipts acknowledge live state, with no crash-durability promise.
+func (k *ActivityKind[A, P, E]) Begin(start ActivityStart[A]) (*Activity[A, P, E], error) {
+	return k.begin(start)
+}
+
+// Caller holds activityState.mu. This bounded catalog retains IDs, not finals.
+func (s *activityState) knownActivity(id string) bool {
+	if s.live[id] != nil {
+		return true
+	}
+	for _, known := range s.known {
+		if known == id {
 			return true
 		}
 	}

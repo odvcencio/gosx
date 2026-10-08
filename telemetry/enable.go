@@ -152,8 +152,6 @@ func availableFeatures(o Options) error {
 		return invalid("listener", "unsupported")
 	case !o.Metrics.DisableRequests || !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
 		return invalid("metric_adapters", "unsupported")
-	case !o.Activities.Disabled:
-		return invalid("activities", "unsupported")
 	case o.Sessions.Enabled:
 		return invalid("sessions", "unsupported")
 	case o.Persistence.Enabled:

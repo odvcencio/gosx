@@ -18,9 +18,8 @@ shared bounded staging leases. Avoid capturing mutable game or request state
 in an encoder closure. The framework accounts for descriptor memory, while
 application-owned closure state belongs to the application's own budget.
 
-This prerequisite installs the internal declaration owner. Public construction
-and lifecycle methods follow with the activity state machine. Selecting activity
-recording before those owners exist still returns the fixed unsupported class.
+Use `telemetry.NewActivityKind` before `App.Build` to register the declaration.
+The activity guide describes Begin, participants, events and memory receipts.
 There is no implicit file or logger sink.
 
 Hub attachments, route lookup tables, activity descriptors and staging leases

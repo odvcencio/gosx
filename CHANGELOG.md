@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Expose typed activity kind registration and Begin after the lifecycle,
+  participant and event owners are complete. Enable accepts memory activities,
+  and receipts explicitly distinguish memory acknowledgement from durability.
+  A bounded catalog retains 256 acknowledged parent IDs without final records.
+
 - Queue copied activity events through one fixed count and byte budget on the
   existing telemetry worker. In-flight records keep their reservations, event
   caps and rejected writes preserve truthful terminal totals, and accepted

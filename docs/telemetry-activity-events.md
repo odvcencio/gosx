@@ -8,4 +8,4 @@ The default activity cap is 1,024 accepted events. Cap, queue and validation fai
 
 The field budget applies to activity, participant and current event fields together. Event data cannot consume the space already reserved for framework final fields. Encoders run outside entity locks, and failed encodings cannot replace the activity projection.
 
-Memory processing has no file, logger or historical list. The sink worker and durable persistence follow separately. This prerequisite keeps activity construction internal until the public API slice completes.
+Memory processing has no file, logger or historical list. The sink worker and durable persistence follow separately. Use `Activity.Event` after Begin.

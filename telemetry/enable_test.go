@@ -153,7 +153,7 @@ func TestEnableEntropyAndUnsupportedFeatures(t *testing.T) {
 	}
 	for _, selectFeature := range []func(*Options){
 		func(o *Options) { o.Listen.Addr = "127.0.0.1:0" }, func(o *Options) { o.Metrics.DisableRequests = false },
-		func(o *Options) { o.Activities.Disabled = false }, func(o *Options) { o.Sessions.Enabled = true }, func(o *Options) { o.Persistence.Enabled = true },
+		func(o *Options) { o.Sessions.Enabled = true }, func(o *Options) { o.Persistence.Enabled = true },
 		func(o *Options) { o.Vitals.SampleRate = .1 },
 	} {
 		o = aggregateCoreOptions(t)

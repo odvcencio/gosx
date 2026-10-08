@@ -8,4 +8,4 @@ Each participant has one active opaque connection reference. Repeating the same 
 
 Connection references belong to one telemetry owner. Bot participants and unconsented references do not persist client or session details. Consented human associations retain at most 16 historical session links. Optional oldest links are removed when the reserved final projection needs room, setting `links_truncated` while preserving join, leave and reconnect totals. Activities remain able to finalize as these framework fields grow.
 
-This prerequisite retains internal activity construction until the event owner completes the required public API. The framework session association source follows in the privacy and browser slices; there is no application constructor accepting arbitrary session IDs.
+Use `Activity.Participant` after Begin. The framework session association source follows in the privacy and browser slices; there is no application constructor accepting arbitrary session IDs.

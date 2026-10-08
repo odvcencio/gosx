@@ -34,6 +34,8 @@ type activityState struct {
 	sequence        uint64
 	stream, boot    string
 	lastMaintenance time.Duration
+	known           [256]string
+	nextKnown       int
 	events          *recordQueue
 	eventPublish    sync.Mutex
 }
@@ -50,7 +52,7 @@ type activityKindCore struct {
 
 // ActivityKind owns a startup declaration of one finite activity shape. Its
 // codecs are retained for the telemetry lifetime; avoid capturing game state.
-// Construction and lifecycle methods arrive with the activity state owner.
+// Register kinds before Build; Begin creates an activity with copied fields.
 type ActivityKind[A, P, E any] struct {
 	core        *activityKindCore
 	activity    *compiledDomainCodec[A]
@@ -59,7 +61,7 @@ type ActivityKind[A, P, E any] struct {
 }
 
 func (t *Telemetry) initializeActivities() error {
-	const bytes = fieldPoolBytes + 16<<10
+	const bytes = fieldPoolBytes + 64<<10
 	if !t.reserveMisc(bytes) {
 		return ErrCapacity
 	}
@@ -217,7 +219,7 @@ func newActivityKind[A, P, E any](t *Telemetry, name string, opts ActivityKindOp
 		return nil, err
 	}
 	charge += ab + pb + eb + int64(len(name))
-	if t == nil || t.activities == nil {
+	if t == nil || t.activities == nil || t.opts.Activities.Disabled {
 		return &ActivityKind[A, P, E]{}, nil
 	}
 	s := t.activities
@@ -273,4 +275,10 @@ func (k *activityKindCore) schemaDimensions(tuple [2]string) []schema.Dimension 
 		out[i] = schema.Dimension{Name: d.Name, Value: tuple[i]}
 	}
 	return out
+}
+
+// NewActivityKind registers a finite typed activity declaration before Build.
+// Encoders must avoid capturing game/request state; they live with telemetry.
+func NewActivityKind[A, P, E any](t *Telemetry, name string, opts ActivityKindOptions, codecs ActivityCodecs[A, P, E]) (*ActivityKind[A, P, E], error) {
+	return newActivityKind(t, name, opts, codecs)
 }
