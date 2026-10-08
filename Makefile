@@ -120,6 +120,10 @@ test-budget-measure:
 test-budget-trailers:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Trailer|Acknowledge)'
 
+.PHONY: test-budget-gate
+test-budget-gate:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Check|Policy|Exception|Approval)'
+
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 
