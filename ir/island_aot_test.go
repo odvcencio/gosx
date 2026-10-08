@@ -146,3 +146,109 @@ func Editor(props EditorProps) Node {
 		t.Fatalf("selector interning: %+v", input)
 	}
 }
+
+func TestIslandAOTArithmeticSourceKinds(t *testing.T) {
+	for _, typ := range []string{"int", "int32", "int64", "float64"} {
+		for _, op := range []string{"+", "-", "*", "/", "%"} {
+			for _, literal := range []string{"1", "-2", "(1 + 2)", "-(1 + 2)"} {
+				for _, expr := range []string{"props.Initial " + op + " " + literal, literal + " " + op + " props.Initial"} {
+					t.Run(typ+"/"+expr, func(t *testing.T) {
+						p := parseAOTArithmetic(t, typ, expr)
+						vm, err := ir.LowerIsland(p, 0)
+						if err != nil {
+							t.Fatal(err)
+						}
+						u, err := ir.LowerIslandAOT(p, 0)
+						if typ == "int64" || typ == "float64" || op == "/" || op == "%" {
+							if err == nil {
+								t.Fatal("accepted arithmetic outside the scalar profile")
+							}
+							return
+						}
+						if err != nil {
+							t.Fatal(err)
+						}
+						binding := vm.Nodes[vm.Nodes[vm.Root].Children[0]].Expr
+						if got := u.Contract.Expressions[binding].Kind; got != aot.ScalarKind(typ) {
+							t.Fatalf("arithmetic result kind = %s, want %s", got, typ)
+						}
+						before, err := program.EncodeBinary(vm)
+						if err != nil || !bytes.Equal(before, u.ProgramBytes) {
+							t.Fatalf("changed the fallback program: %v", err)
+						}
+					})
+				}
+			}
+		}
+	}
+}
+
+func TestIslandAOTArithmeticRequiresCompatibleEvidence(t *testing.T) {
+	for _, op := range []string{"+", "-", "*"} {
+		for _, expr := range []string{
+			"props.Initial " + op + " props.Other",
+			"props.Other " + op + " props.Initial",
+			"props.Initial " + op + " (props.Other + 1)",
+			"(1 + props.Other) " + op + " props.Initial",
+			"props.Initial " + op + " 1.0",
+			"1.0 " + op + " props.Initial",
+			"props.Initial " + op + " (1 + 2.0)",
+			"(2.0 + 1) " + op + " props.Initial",
+			"props.Initial " + op + " 2147483648",
+			"2147483648 " + op + " props.Initial",
+			"props.Initial " + op + " (2147483647 + 1)",
+			"(2147483647 + 1) " + op + " props.Initial",
+			"props.Initial " + op + " true",
+			"true " + op + " props.Initial",
+		} {
+			t.Run(expr, func(t *testing.T) {
+				p := parseAOTArithmetic(t, "int32", expr)
+				_, err := ir.LowerIslandAOT(p, 0)
+				var diagnostic *ir.DiagnosticsError
+				if !errors.As(err, &diagnostic) || diagnostic.Diagnostics[0].Code != "aot_source_type" {
+					t.Fatalf("accepted unproved arithmetic: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestIslandAOTArithmeticPreservesTypedExpressions(t *testing.T) {
+	for _, typ := range []string{"int", "int32"} {
+		for _, expr := range []string{
+			"props.Initial + props.Initial",
+			"props.Initial + (1 + 2) * (3 - 1)",
+			"(1 + 2) * (3 - 1) + props.Initial",
+			"-(props.Initial + 1)",
+			"(props.Initial + 1) * (2 - props.Initial)",
+		} {
+			t.Run(typ+"/"+expr, func(t *testing.T) {
+				p := parseAOTArithmetic(t, typ, expr)
+				u, err := ir.LowerIslandAOT(p, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				binding := u.Program.Nodes[u.Program.Nodes[u.Program.Root].Children[0]].Expr
+				if got := u.Contract.Expressions[binding].Kind; got != aot.ScalarKind(typ) {
+					t.Fatalf("arithmetic result kind = %s, want %s", got, typ)
+				}
+			})
+		}
+	}
+}
+
+func parseAOTArithmetic(t *testing.T, typ, expr string) *ir.Program {
+	t.Helper()
+	src := []byte(fmt.Sprintf(`package example
+type CounterProps struct { Initial %s; Other int }
+//gosx:island
+func Counter(props CounterProps) Node {
+ return <div>{%s}</div>
+}`, typ, expr))
+	p, err := parse(t, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.PackagePath = "example/components"
+	return p
+}
