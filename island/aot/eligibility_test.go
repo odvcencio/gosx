@@ -183,6 +183,117 @@ func TestClassifyParserTopologyAndUnsafeAttributes(t *testing.T) {
 	}
 }
 
+func TestClassifyPhysicalTextGroups(t *testing.T) {
+	expression := program.Node{Kind: program.NodeExpr}
+	empty := program.Node{Kind: program.NodeText}
+	span := program.Node{Kind: program.NodeElement, Tag: "span"}
+	text := func(value string) program.Node { return program.Node{Kind: program.NodeText, Text: value} }
+	for _, tc := range []struct {
+		name, tag, literal string
+		children           []program.Node
+		eligible           bool
+	}{
+		{"empty expression", "div", "", []program.Node{expression}, false},
+		{"empty static text", "div", "", []program.Node{empty}, false},
+		{"empty adjacent static text", "div", "", []program.Node{empty, empty}, false},
+		{"empty adjacent expression", "div", "", []program.Node{empty, expression}, false},
+		{"empty adjacent expressions", "div", "", []program.Node{expression, expression}, false},
+		{"empty text next to element", "div", "", []program.Node{empty, span}, false},
+		{"empty expression between elements", "div", "", []program.Node{span, expression, {Kind: program.NodeElement, Tag: "strong"}}, false},
+		{"pre leading newline", "pre", "", []program.Node{text("\n")}, false},
+		{"pre literal leading newline", "pre", "\n", []program.Node{expression}, false},
+		{"pre adjacent leading newline", "pre", "", []program.Node{text("\n"), expression}, false},
+		{"textarea leading newline", "textarea", "", []program.Node{text("\n")}, false},
+		{"textarea literal leading newline", "textarea", "\n", []program.Node{expression}, false},
+		{"textarea adjacent leading newline", "textarea", "", []program.Node{text("\n"), expression}, false},
+		{"pre stripped whitespace next to element", "pre", "", []program.Node{text("\n"), span}, false},
+		{"nonempty expression", "div", "content", []program.Node{expression}, true},
+		{"empty expression after static text", "div", "", []program.Node{text("content"), expression}, true},
+		{"empty static text before expression", "div", "content", []program.Node{empty, expression}, true},
+		{"empty static text after expression", "div", "content", []program.Node{expression, empty}, true},
+		{"pre surviving newline", "pre", "", []program.Node{text("\n\n")}, true},
+		{"textarea surviving newline", "textarea", "\n\n", []program.Node{expression}, true},
+		{"pre content after newline", "pre", "", []program.Node{text("\ncontent")}, true},
+		{"textarea content after newline", "textarea", "\ncontent", []program.Node{expression}, true},
+		{"whitespace next to element", "div", "", []program.Node{text(" \n\t"), span}, true},
+		{"literal whitespace next to element", "div", " \n\t", []program.Node{expression, span}, true},
+		{"whitespace between elements", "div", "", []program.Node{span, text(" "), {Kind: program.NodeElement, Tag: "strong"}}, true},
+		{"escaped static markup", "div", "", []program.Node{text("<span>&amp;</span>")}, true},
+		{"escaped literal markup", "div", "<span>&amp;</span>", []program.Node{expression}, true},
+		{"escaped textarea closing tag", "textarea", "</textarea><span>", []program.Node{expression}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := textTopologyUnit(t, tc.tag, tc.literal, tc.children...)
+			r := Classify(u, ScalarDOMV1)
+			if r.Eligible != tc.eligible {
+				t.Fatalf("physical text groups: %+v", r)
+			}
+			if !tc.eligible && (r.Reason != "parser_topology" || r.Table != "nodes" || r.Index != -1) {
+				t.Fatalf("topology rejection: %+v", r)
+			}
+			if !reflect.DeepEqual(r, Classify(u, ScalarDOMV1)) {
+				t.Fatal("unstable topology receipt")
+			}
+		})
+	}
+}
+
+func TestClassifyTextTopologyRequiresLiteralProof(t *testing.T) {
+	for _, tc := range []struct {
+		expr   program.Expr
+		kind   ScalarKind
+		reason string
+	}{
+		{program.Expr{Op: program.OpAdd, Type: program.TypeAny}, Int, "opcode_unsupported"},
+		{program.Expr{Op: program.OpLitInt, Type: program.TypeInt}, Int, "integer_literal"},
+		{program.Expr{Op: program.OpLitBool, Type: program.TypeBool}, Bool, "boolean_literal"},
+		{program.Expr{Op: program.OpLitString, Type: program.TypeString}, Int, "type_mismatch"},
+	} {
+		t.Run(tc.reason, func(t *testing.T) {
+			u := textTopologyUnit(t, "div", "", program.Node{Kind: program.NodeExpr})
+			u.Program.Exprs[0] = tc.expr
+			u.Contract.Expressions[0].Kind = tc.kind
+			u = refreshUnit(t, u)
+			if r := Classify(u, ScalarDOMV1); r.Eligible || r.Reason != tc.reason {
+				t.Fatalf("literal proof: %+v", r)
+			}
+		})
+	}
+	for _, expr := range []program.Expr{
+		{Op: program.OpLitInt, Type: program.TypeInt, Value: "0"},
+		{Op: program.OpLitBool, Type: program.TypeBool, Value: "false"},
+	} {
+		u := textTopologyUnit(t, "div", "", program.Node{Kind: program.NodeExpr})
+		u.Program.Exprs[0] = expr
+		u.Contract.Expressions[0].Kind = map[program.ExprType]ScalarKind{program.TypeInt: Int, program.TypeBool: Bool}[expr.Type]
+		u = refreshUnit(t, u)
+		if r := Classify(u, ScalarDOMV1); !r.Eligible {
+			t.Fatalf("nonempty scalar text %s: %+v", expr.Value, r)
+		}
+	}
+}
+
+func textTopologyUnit(t *testing.T, tag, literal string, children ...program.Node) Unit {
+	t.Helper()
+	u := staticUnit(t)
+	u.Program.Nodes[0].Tag = tag
+	u.Program.Exprs = []program.Expr{{Op: program.OpLitString, Type: program.TypeString, Value: literal}}
+	u.Contract.Expressions = []ExpressionContract{{Kind: String, Pure: true}}
+	for _, child := range children {
+		u.Program.Nodes[0].Children = append(u.Program.Nodes[0].Children, program.NodeID(len(u.Program.Nodes)))
+		u.Program.Nodes = append(u.Program.Nodes, child)
+		static := child.Kind != program.NodeExpr
+		u.Program.StaticMask = append(u.Program.StaticMask, static)
+		u.Program.StaticMask[0] = u.Program.StaticMask[0] && static
+	}
+	var err error
+	u.Contract.Bindings, err = ContractBindings(u.Program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return refreshUnit(t, u)
+}
+
 func TestClassifyDependencyDepthAndComputedCycle(t *testing.T) {
 	for _, count := range []int{64, 65} {
 		u := literalUnit(t)
