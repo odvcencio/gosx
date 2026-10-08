@@ -35,6 +35,20 @@
   before `Closed` and drains admitted callbacks before completion.
   `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
+- Serve page navigation as a content-hashed, immutable runtime asset with
+  precompressed gzip and Brotli representations, reducing HTML bytes and
+  request-time compression. Static exports include the asset. Defer execution
+  until parsing finishes, before bootstrap, so it does not delay first paint.
+  Each page makes one more script request. Proxies, CDNs and auth middleware
+  must allow `/gosx/assets/runtime/navigation.*.js`.
+  **Migration:** code running while HTML is parsed (inline body scripts and
+  `ctx.ManagedScript`/`ctx.LifecycleScript` without `defer`) must wait for
+  `DOMContentLoaded` before calling `window.__gosx.navigation`,
+  `window.__gosx_page_nav`, `window.__gosx_submit_action` or `window.__gosx.cues`.
+  For example: `document.addEventListener("DOMContentLoaded", () => window.__gosx.navigation.revalidate(), { once: true });`.
+  On streamed pages, the runtime waits for the last fragment and parsing to
+  finish; links and managed forms use native behavior until then.
+
 - Add controller payload projections and named intent events, pointer drag/drop
   with correlated Scene3D/native ray hits, and modal
   focus owners with inert backgrounds and return focus. The input runtime loads
