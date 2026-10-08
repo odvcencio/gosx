@@ -88,6 +88,31 @@ func TestHTTPMeasureRedirectBodyAndCookieAccounting(t *testing.T) {
 	}
 }
 
+func TestHTTPMeasureGLTFContentTypesStayBoundToModelBodies(t *testing.T) {
+	for _, media := range []string{"model/gltf-binary", "model/gltf+json", "application/octet-stream", "text/javascript", "text/html"} {
+		t.Run(media, func(t *testing.T) {
+			body := []byte("model fixture")
+			opts := testHTTPOptions(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", media)
+				w.Write(body)
+			}, body)
+			opts.Kind = "model"
+			_, err := measureHTTP(context.Background(), opts, testBodyNormalizer)
+			allowed := media == "model/gltf-binary" || media == "model/gltf+json" || media == "application/octet-stream"
+			if (err == nil) != allowed {
+				t.Fatal("model MIME policy accepted the wrong representation", err)
+			}
+			if allowed {
+				opts.Kind = "program"
+				_, err = measureHTTP(context.Background(), opts, testBodyNormalizer)
+				if media != "application/octet-stream" && err == nil {
+					t.Fatal("model MIME type admitted for an island program")
+				}
+			}
+		})
+	}
+}
+
 func TestHTTPMeasureRejectsWrongRepresentationsAndPolicies(t *testing.T) {
 	body := []byte("fixture()")
 	gz, _ := testMeasureEncodings(body)
