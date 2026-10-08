@@ -4,9 +4,13 @@ package hubclient
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -73,8 +77,7 @@ func TestNativeDroppedSocketIsClosedBeforeRetry(t *testing.T) {
 	defer close(drop)
 	retrying := make(chan struct{})
 	c := New(Options{
-		URL:     wsURL(server.URL),
-		Backoff: Backoff{Base: time.Hour, Max: time.Hour},
+		URL: wsURL(server.URL),
 		OnStateChange: func(s State) {
 			if s == StateReconnecting {
 				close(retrying)
@@ -82,6 +85,8 @@ func TestNativeDroppedSocketIsClosedBeforeRetry(t *testing.T) {
 		},
 	})
 	counted := make(chan *closeCountingConn, 1)
+	// The recording dialer holds retries until cancellation, so no second
+	// connection can replace the dropped socket before its close count is read.
 	c.dial = &nativeRecordingDialer{counted: counted}
 	c.Connect()
 	awaitLifecycle(t, serverReady, "native connection")
@@ -123,6 +128,74 @@ func TestCloseSendsNormalWebSocketFrame(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("hub did not observe client closure")
+	}
+}
+
+func TestCloseInterruptsBlockedHandlerSend(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ws, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer ws.Close()
+		// Keep the receive window small so the client fills its send buffer
+		// promptly. After this event, the server never reads client messages.
+		if err := ws.UnderlyingConn().(*net.TCPConn).SetReadBuffer(1024); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := ws.WriteMessage(websocket.TextMessage, []byte(`{"event":"fill","data":null}`)); err != nil {
+			t.Error(err)
+			return
+		}
+		<-release
+	}))
+	defer server.Close()
+	c := New(Options{URL: wsURL(server.URL)})
+	defer func() {
+		close(release) // Release a blocked Send even if a regression fails Close.
+		closeClient(t, c)
+	}()
+	payload := strings.Repeat("x", 256<<10)
+	var started, finished atomic.Int64
+	sendFailed := make(chan error, 1)
+	c.On("fill", func(json.RawMessage) {
+		for {
+			started.Add(1)
+			if err := c.Send("payload", payload); err != nil {
+				sendFailed <- err
+				return
+			}
+			finished.Add(1)
+		}
+	})
+	c.Connect()
+	var pending int64
+	var pendingSince time.Time
+	waitFor(t, 5*time.Second, func() bool {
+		n := started.Load()
+		if n == 0 || n == finished.Load() || n != pending {
+			pending, pendingSince = n, time.Now()
+			return false
+		}
+		return time.Since(pendingSince) >= 200*time.Millisecond
+	})
+	// Close must interrupt the socket write before waiting for this handler's
+	// goroutine. The successful write count must stay fixed until shutdown.
+	before := finished.Load()
+	closeClient(t, c)
+	select {
+	case err := <-sendFailed:
+		if errors.Is(err, ErrClosed) || errors.Is(err, ErrNotConnected) {
+			t.Fatalf("Send = %v; want an error from the interrupted socket write", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("handler Send did not fail after Close")
+	}
+	if got := finished.Load(); got != before {
+		t.Fatalf("successful Sends advanced from %d to %d during Close", before, got)
 	}
 }
 

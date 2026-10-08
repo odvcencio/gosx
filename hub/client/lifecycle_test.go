@@ -175,6 +175,47 @@ func TestCloseFromStateChangeCallback(t *testing.T) {
 	}
 }
 
+func TestCloseFromCallbackWithoutGoroutineID(t *testing.T) {
+	for _, callback := range []string{"message", "state"} {
+		t.Run(callback, func(t *testing.T) {
+			cn := newPendingConn()
+			cn.events <- frameEvent{Kind: frameOpen}
+			cn.events <- frameEvent{Kind: frameMessage, Data: []byte(`{"event":"stop","data":{}}`)}
+			returned := make(chan struct{})
+			var c *Client
+			stop := func() {
+				c.mu.Lock()
+				c.loopID = 0 // Simulate a runtime without goroutine identification.
+				c.mu.Unlock()
+				_ = c.Close()
+				_ = c.Close()
+				close(returned)
+			}
+			c = New(Options{OnStateChange: func(s State) {
+				if callback == "state" && s == StateConnected {
+					stop()
+				}
+			}})
+			c.On("stop", func(json.RawMessage) {
+				if callback == "message" {
+					stop()
+				}
+			})
+			c.dial = lifecycleDialer(func() (conn, error) { return cn, nil })
+			c.Connect()
+			awaitLifecycle(t, returned, "Close without goroutine identification")
+			awaitLifecycle(t, c.done, "callback shutdown completion")
+			closeClient(t, c)
+			c.mu.Lock()
+			depth := c.callbackDepth
+			c.mu.Unlock()
+			if depth != 0 || c.State() != StateClosed {
+				t.Fatalf("callback depth=%d state=%v, want 0/closed", depth, c.State())
+			}
+		})
+	}
+}
+
 func TestCloseConcurrentCallersWaitForLoop(t *testing.T) {
 	dialing, finishDial := make(chan struct{}), make(chan struct{})
 	closedCallback, finishCallback := make(chan struct{}), make(chan struct{})
