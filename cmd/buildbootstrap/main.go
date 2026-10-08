@@ -548,6 +548,10 @@ var outputs = []output{
 		},
 	},
 	{
+		name:    "bootstrap-feature-scene3d-pipeline-recovery.js",
+		sources: []source{sourceFile("../runtime/scene3d/pipeline-recovery.ts")},
+	},
+	{
 		name: "bootstrap-feature-scene3d-webgpu.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts"),
