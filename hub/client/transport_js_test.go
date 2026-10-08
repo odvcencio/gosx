@@ -3,6 +3,7 @@
 package hubclient
 
 import (
+	"context"
 	"syscall/js"
 	"testing"
 )
@@ -39,7 +40,7 @@ func TestBrowserCloseReleasesCallbacksWithFullQueue(t *testing.T) {
 	defer remove.Release()
 	defer closeSocket.Release()
 	global.Set("WebSocket", constructor)
-	connection, err := (browserDialer{}).Dial("ws://example.test/pending", nil)
+	connection, err := (browserDialer{}).Dial(context.Background(), "ws://example.test/pending", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -48,6 +49,13 @@ func TestBrowserCloseReleasesCallbacksWithFullQueue(t *testing.T) {
 		c.emit(frameEvent{Kind: frameMessage})
 	}
 	done := make(chan struct{})
+	defer func() {
+		// If Close stops retiring the event producer, release the blocked JS
+		// callback before restoring globals. Otherwise even a failed timeout
+		// assertion cannot finish the test while that callback is suspended.
+		c.stop()
+		awaitLifecycle(t, done, "browser close cleanup")
+	}()
 	go func() {
 		defer close(done)
 		if err := c.Close(); err != nil {
