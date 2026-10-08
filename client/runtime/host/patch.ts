@@ -828,6 +828,7 @@
    */
   function setAttr(el, name, value) {
     var normalized = String(name).toLowerCase();
+    value = publicAttribute(normalized, value);
     if (normalized === "hidden" && String(value).toLowerCase() === "until-found") {
       el.setAttribute(name, "until-found");
       return;
@@ -840,6 +841,31 @@
     }
     if (name === "value") el.value = value;
     else el.setAttribute(name, value);
+  }
+
+  // VM URLs are authored relative to the application root, just like SSR URLs.
+  function publicURL(value) {
+    value = String(value);
+    var meta = document.querySelector && document.querySelector('meta[name="gosx-base-path"]');
+    var prefix = meta && meta.getAttribute("content") || "";
+    if (!prefix || value.charAt(0) !== "/" || value.charAt(1) === "/" || value.charAt(1) === "\\") return value;
+    return prefix + value;
+  }
+
+  function publicAttribute(name, value) {
+    if (/^(href|src|action|formaction|poster|data-gosx-(engine-bytecode|region-(src|url)|revalidate-src|live-src|scene3d-.*-url))$/.test(name)) return publicURL(value);
+    if (/^data-gosx-(action|reorder-action|transfer-action)$/.test(name)) {
+      var split = String(value).indexOf(" ");
+      return split < 0 ? publicURL(value) : value.slice(0, split + 1) + publicURL(value.slice(split + 1));
+    }
+    if (name === "srcset" && String(value).indexOf("data:") < 0) {
+      return String(value).split(",").map(function(part) {
+        var fields = part.trim().split(/\s+/);
+        fields[0] = publicURL(fields[0]);
+        return fields.join(" ");
+      }).join(", ");
+    }
+    return value;
   }
 
   // ---------------------------------------------------------------------------

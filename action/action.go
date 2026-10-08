@@ -30,6 +30,7 @@ import (
 	"sync"
 	"unicode/utf8"
 
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/session"
 )
 
@@ -800,6 +801,7 @@ func writeResponse(w http.ResponseWriter, req *http.Request, status int, result 
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	result.Redirect = basepath.URL(basepath.FromRequest(req), result.Redirect)
 	_ = json.NewEncoder(w).Encode(result)
 }
 
@@ -878,6 +880,17 @@ func sanitizedReferer(req *http.Request) string {
 	escapedPath := referer.EscapedPath()
 	if escapedPath == "" || !strings.HasPrefix(escapedPath, "/") {
 		return ""
+	}
+	// A browser Referer is already public. Convert it to an internal path
+	// before the response writer applies the app's mount to the redirect.
+	if prefix := basepath.FromRequest(req); prefix != "" {
+		if escapedPath == prefix {
+			escapedPath = "/"
+		} else if strings.HasPrefix(escapedPath, prefix+"/") {
+			escapedPath = strings.TrimPrefix(escapedPath, prefix)
+		} else {
+			return ""
+		}
 	}
 	target := escapedPath
 	if referer.ForceQuery || referer.RawQuery != "" {
