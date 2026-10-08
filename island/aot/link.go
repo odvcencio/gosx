@@ -549,6 +549,7 @@ type linkedCode struct {
 	dispatch, initialize, bind, render uint32
 	checkpointValue, checkpoint        uint32
 	wireScalar, checkpointValidate     uint32
+	wireStore, abortPage, initPage     uint32
 }
 
 const linkedRenderMaskGlobal = 25
@@ -594,7 +595,10 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.checkpoint = c.notify + 9
 	c.wireScalar = c.notify + 10
 	c.checkpointValidate = c.notify + 11
-	c.module.Functions = make([]wasmgen.Function, len(common)+12)
+	c.wireStore = c.notify + 12
+	c.abortPage = c.notify + 13
+	c.initPage = c.notify + 14
+	c.module.Functions = make([]wasmgen.Function, len(common)+15)
 	for _, e := range c.programs {
 		if !reflect.DeepEqual(first.Imports, e.module.Imports) || !reflect.DeepEqual(first.Globals, e.module.Globals) || !bytes.Equal(first.Data, e.module.Data) {
 			return nil, fmt.Errorf("incompatible linked module storage or imports")
@@ -619,7 +623,7 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 			if index == NoBindingName || indices[index] != NoBindingName {
 				return
 			}
-			indices[index] = uint32(len(first.Imports) + len(common) + 12 + len(sources))
+			indices[index] = uint32(len(first.Imports) + len(common) + 15 + len(sources))
 			sources = append(sources, functionSource{uint32(p), index})
 		}
 		for _, index := range e.functions {
@@ -673,6 +677,9 @@ func linkProgramCode(l *linkedLayout) (*linkedCode, error) {
 	c.module.Functions[len(common)+9] = l.checkpointFunction(c)
 	c.module.Functions[len(common)+10] = scalarRecordValidationFunction(c.indices[0][c.programs[0].inputUTF8], true)
 	c.module.Functions[len(common)+11] = l.checkpointValidationFunction(c)
+	c.module.Functions[len(common)+12] = l.wireStoreFunction(c)
+	c.module.Functions[len(common)+13] = l.abortPageFunction(c)
+	c.module.Functions[len(common)+14] = l.initPageFunction(c)
 	for _, source := range sources {
 		e := c.programs[source.program]
 		fn := e.module.Functions[source.index-uint32(len(first.Imports))]
@@ -2497,4 +2504,325 @@ func (l *linkedLayout) checkpointValidationFunction(c *linkedCode) wasmgen.Funct
 	b.i32(0)
 	b.op(0x0b)
 	return wasmgen.Function{Signature: i32Signature(2), I32Locals: 19, I64Locals: 1, Body: b}
+}
+
+// Import one validated wire value into an owned working root. String bytes are
+// copied before any binding or patch import can overwrite the IO document.
+func (l *linkedLayout) wireStoreFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.index(0x23, pendingGlobal)
+	b.op(0x45)
+	b.statusFailure(statusBusy)
+	b.statusGuard()
+	b.get(0)
+	b.i32(int32(l.roots))
+	b.op(0x4f)
+	b.poisonStatus(statusBadInput)
+	b.get(2)
+	b.i32(32768)
+	b.op(0x49)
+	b.get(3)
+	b.i32(65536)
+	b.op(0x4b)
+	b.op(0x72)
+	b.get(1)
+	b.get(2)
+	b.op(0x49)
+	b.op(0x72)
+	b.poisonStatus(statusBadInput)
+	b.get(1)
+	b.op(0xad)
+	b.i64(valueBytes)
+	b.op(0x7c)
+	b.get(3)
+	b.op(0xad)
+	b.op(0x56)
+	b.poisonStatus(statusBadInput)
+	b.get(1)
+	b.i32(valueBytes)
+	b.op(0x6a)
+	b.set(4)
+	b.get(1)
+	b.memory(0x28, 2, 20)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(2)
+	b.op(0xad)
+	b.get(1)
+	b.memory(0x28, 2, 16)
+	b.op(0xad)
+	b.op(0x7c)
+	b.get(3)
+	b.op(0xad)
+	b.op(0x56)
+	b.poisonStatus(statusBadInput)
+	b.get(2)
+	b.get(1)
+	b.memory(0x28, 2, 16)
+	b.op(0x6a)
+	b.set(4)
+	b.op(0x0b)
+	b.get(1)
+	b.get(2)
+	b.get(3)
+	b.get(4)
+	b.index(0x10, c.wireScalar)
+	b.index(0x22, 5)
+	b.i32(0)
+	b.op(0x48)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(0)
+	b.get(5)
+	b.op(0x6b)
+	b.index(0x22, 5)
+	b.index(0x24, errorGlobal)
+	b.get(5)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.index(0x23, arenaBaseGlobal)
+	b.i32(int32(l.roots) * valueBytes)
+	b.op(0x6a)
+	b.set(6)
+	for offset := uint32(0); offset < valueBytes; offset += 8 {
+		b.get(6)
+		b.get(1)
+		b.memory(0x29, 3, offset)
+		b.memory(0x37, 3, offset)
+	}
+	b.get(1)
+	b.memory(0x28, 2, 20)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(6)
+	b.get(4)
+	b.memory(0x36, 2, 16)
+	b.op(0x0b)
+	b.get(0)
+	b.get(6)
+	b.index(0x10, c.indices[0][c.programs[0].transactions[transactionStore]])
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(4), I32Locals: 3, Body: b}
+}
+
+// Abort also drops initialization assignments, which have no committed owner.
+// Once initialized, ordinary abort preserves the active frame catalog.
+func (l *linkedLayout) abortPageFunction(c *linkedCode) wasmgen.Function {
+	var b instructions
+	b.index(0x10, c.indices[0][c.programs[0].transactions[transactionAbort]])
+	b.op(0x1a)
+	b.index(0x23, initializedGlobal)
+	b.op(0x45)
+	b.op(0x04)
+	b.op(0x40)
+	for frame := uint32(0); frame < ProfileLimits().Instances; frame++ {
+		for offset := uint32(0); offset < 16; offset += 8 {
+			b.i32(int32(l.frameTable + frame*16 + offset))
+			b.i64(0)
+			b.memory(0x37, 3, 0)
+		}
+		b.i32(int32(l.frameSequences + frame*8))
+		b.i64(0)
+		b.memory(0x37, 3, 0)
+	}
+	b.op(0x0b)
+	b.i32(0)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(0), Body: b}
+}
+
+// Import the complete page, then rebuild computeds and stage fixed bindings.
+// Signal initializers and handlers are never called during checkpoint import.
+func (l *linkedLayout) initPageFunction(c *linkedCode) wasmgen.Function {
+	const (
+		status = 2 + iota
+		end
+		lo
+		hi
+		cursor
+		instances
+		frameIndex
+		instance
+		owner
+		plan
+		entries
+		count
+		index
+		schema
+		root
+		row
+	)
+	var b instructions
+	b.index(0x23, pendingGlobal)
+	b.statusFailure(statusBusy)
+	b.index(0x23, initialAttemptGlobal)
+	b.statusFailure(statusBadSequence)
+	b.get(0)
+	b.get(1)
+	b.index(0x10, c.checkpointValidate)
+	b.index(0x22, status)
+	b.op(0x04)
+	b.op(0x40)
+	b.i32(1)
+	b.index(0x24, initialAttemptGlobal)
+	b.get(status)
+	b.op(0x0f)
+	b.op(0x0b)
+	b.get(0)
+	b.get(1)
+	b.op(0x6a)
+	b.set(end)
+	for i, local := range []uint32{lo, hi} {
+		b.get(0)
+		b.memory(0x28, 2, uint32(20+i*4))
+		b.set(local)
+	}
+	b.get(lo)
+	b.get(hi)
+	b.i32(1)
+	b.index(0x10, c.indices[0][c.programs[0].transactions[transactionBegin]])
+	b.index(0x22, status)
+	b.op(0x04)
+	b.op(0x40)
+	b.get(status)
+	b.op(0x0f)
+	b.op(0x0b)
+	call := func(function uint32) {
+		b.index(0x10, function)
+		b.index(0x22, status)
+		b.op(0x04)
+		b.op(0x40)
+		b.index(0x10, c.abortPage)
+		b.op(0x1a)
+		b.get(status)
+		b.op(0x0f)
+		b.op(0x0b)
+	}
+	loop := func(local uint32, limit func(), visit func()) {
+		b.i32(0)
+		b.set(local)
+		b.op(0x02)
+		b.op(0x40)
+		b.op(0x03)
+		b.op(0x40)
+		b.get(local)
+		limit()
+		b.op(0x4f)
+		b.index(0x0d, 1)
+		visit()
+		b.get(local)
+		b.i32(1)
+		b.op(0x6a)
+		b.set(local)
+		b.index(0x0c, 0)
+		b.op(0x0b)
+		b.op(0x0b)
+	}
+	advance := func(bytes int32) {
+		b.get(cursor)
+		b.i32(bytes)
+		b.op(0x6a)
+		b.set(cursor)
+	}
+	store := func(offset int32) {
+		b.get(root)
+		b.get(cursor)
+		b.i32(offset)
+		b.op(0x6a)
+		b.get(0)
+		b.get(end)
+		call(c.wireStore)
+	}
+	b.get(0)
+	b.memory(0x28, 2, 12)
+	b.set(instances)
+	b.get(0)
+	b.i32(64)
+	b.op(0x6a)
+	b.set(cursor)
+	loop(frameIndex, func() { b.get(instances) }, func() {
+		b.get(cursor)
+		b.memory(0x28, 2, 0)
+		b.set(instance)
+		b.get(cursor)
+		b.memory(0x28, 2, 4)
+		b.set(owner)
+		b.i32(int32(l.frameTable))
+		b.get(instance)
+		b.i32(16)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.set(row)
+		b.get(row)
+		b.get(owner)
+		b.memory(0x36, 2, 0)
+		b.get(row)
+		b.i32(1)
+		b.memory(0x36, 2, 4)
+		b.i32(int32(l.frameSequences))
+		b.get(instance)
+		b.i32(8)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.get(cursor)
+		b.memory(0x29, 3, 16)
+		b.memory(0x37, 3, 0)
+		b.i32(l.checkpointPlanBase)
+		b.get(owner)
+		b.i32(12)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.set(plan)
+		b.get(plan)
+		b.memory(0x28, 2, 0)
+		b.get(plan)
+		b.memory(0x28, 2, 4)
+		b.op(0x6a)
+		b.set(count)
+		b.get(plan)
+		b.memory(0x28, 2, 8)
+		b.set(entries)
+		advance(24)
+		loop(index, func() { b.get(count) }, func() {
+			b.get(entries)
+			b.get(index)
+			b.i32(20)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.set(schema)
+			b.get(schema)
+			b.memory(0x28, 2, 4)
+			b.get(instance)
+			b.get(schema)
+			b.memory(0x28, 2, 8)
+			b.op(0x6c)
+			b.op(0x6a)
+			b.set(root)
+			store(4)
+			advance(28)
+		})
+	})
+	loop(index, func() { b.i32(int32(len(l.shared))) }, func() {
+		b.i32(int32(l.sharedVersions + 8))
+		b.get(index)
+		b.i32(16)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.get(cursor)
+		b.memory(0x29, 3, 4)
+		b.memory(0x37, 3, 0)
+		b.i32(int32(l.sharedBase))
+		b.get(index)
+		b.op(0x6a)
+		b.set(root)
+		store(12)
+		advance(36)
+	})
+	call(c.initialize)
+	call(c.bind)
+	b.i32(1)
+	call(c.render)
+	b.i32(0)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(2), I32Locals: 16, Body: b}
 }

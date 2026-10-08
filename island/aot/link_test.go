@@ -2479,3 +2479,185 @@ func TestLinkedCheckpointValidationRejectsWidenedIOBounds(t *testing.T) {
 		t.Fatalf("checkpoint IO bounds: %v", got)
 	}
 }
+
+func checkpointImportTestModule(c *linkedCode) wasmgen.Module {
+	m := checkpointValueTestModule(c)
+	for _, item := range []struct {
+		name  string
+		index uint32
+	}{{"initPage", c.initPage}, {"abortPage", c.abortPage}, {"checkpoint", c.checkpoint},
+		{"dispatch", c.dispatch}, {"renderPage", c.render}, {"wireStore", c.wireStore}} {
+		m.Exports = append(m.Exports, wasmgen.Export{Name: item.name, Function: item.index})
+	}
+	return m
+}
+
+func TestLinkedCheckpointImportOwnsScalarsAndPreservesWireState(t *testing.T) {
+	l, _, document := checkpointValidationFixture(t)
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data := struct {
+		Document   string
+		FrameTable uint32
+		RootBytes  uint32
+	}{base64.StdEncoding.EncodeToString(document), l.frameTable, l.roots * valueBytes}
+	var got struct {
+		Documents []string
+		Statuses  []int32
+		Bindings  [][4]int32
+		Unchanged bool
+	}
+	runExpressionModule(t, checkpointImportTestModule(c), `
+  const api = instance.exports, statuses = [], bindings = [], documents = [];
+  const original = Buffer.from(memory.slice(api.committed(),api.committed()+data.RootBytes));
+  memory.set(Buffer.from(data.Document,'base64'),32769);
+  const document = Buffer.from(data.Document,'base64');
+  statuses.push(api.initPage(32769,document.length));
+  const unchanged = original.equals(Buffer.from(memory.slice(api.committed(),api.committed()+data.RootBytes)));
+  statuses.push(api.initPage(32769,document.length));
+  const read = which => {
+    const length = api.checkpoint(which,32768,32768);
+    if (length<=0) throw new Error('checkpoint failed');
+    documents.push(Buffer.from(memory.slice(32768,32768+length)).toString('base64'));
+  };
+  read(1);
+  statuses.push(api.commit(view.getUint32(32768+20,true),view.getUint32(32768+24,true)));
+  read(0);
+  statuses.push(api.initPage(32768,document.length));
+  statuses.push(api.begin(0xfffffff1,0x80000001,0),api.abortPage()); read(0);
+  process.stdout.write(JSON.stringify({Documents:documents,Statuses:statuses,Bindings:bindings,Unchanged:unchanged}));`, data, &got,
+		`{input:unexpected,bind:(id,binding,kind,tag)=>{bindings.push([id,binding,kind,tag]);memory.fill(0xff,32768,65536);return 0;},patch:unexpected}`)
+	want := base64.StdEncoding.EncodeToString(document)
+	if !got.Unchanged || !reflect.DeepEqual(got.Documents, []string{want, want, want}) || !reflect.DeepEqual(got.Statuses, []int32{0, 7, 0, 8, 0, 0}) {
+		t.Fatalf("checkpoint import, sequence or arena ownership: %+v", got)
+	}
+	if len(got.Bindings) != 3 {
+		t.Fatalf("initial binding count: %v", got.Bindings)
+	}
+	for i, id := range []int32{0, 7, 15} {
+		if got.Bindings[i][0] != id || got.Bindings[i][1] != 0 {
+			t.Fatal("import did not bind active instances in manifest order")
+		}
+	}
+}
+
+func TestLinkedCheckpointImportRebuildsComputedsWithoutRunningInitializers(t *testing.T) {
+	u := linkedComputedUnit(t, "ImportedComputeds", 2, 2, 4)
+	l, err := buildLinkedLayout([]Unit{u}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frames := []checkpointTestFrame{
+		{Instance: 0, Last: 3, Locals: []checkpointTestValue{{0, scalarTransport(program.TypeInt, 0, 77, "")}}},
+		{Instance: 15, Last: 9, Locals: []checkpointTestValue{{0, scalarTransport(program.TypeInt, 0, 777, "")}}},
+	}
+	document := checkpointTestBytes(t, l.inputSetSHA, 100, frames, nil)
+	data := struct {
+		domTestData
+		Document                     string
+		ComputedBase, ComputedStride uint32
+	}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), l.computedBase, l.computedStride}
+	var got struct {
+		Statuses []int32
+		Cache    []int32
+		Patches  []vm.PatchOp
+		Bindings [][4]uint32
+		Initial  string
+	}
+	host := strings.Replace(domTestImports, "bound.push([id, binding, kind, tag >>> 0]);", "bound.push([id, binding, kind, tag >>> 0]); memory.fill(0xff,32768,65536);", 1)
+	runExpressionModule(t, checkpointImportTestModule(c), `
+  const api = instance.exports, bound = [], patches = [], statuses = [], cache = [];
+  const document = Buffer.from(data.Document,'base64');
+  memory.set(document,32768);
+  statuses.push(api.initPage(32768,document.length));
+  for (const frame of [0,15]) cache.push(view.getInt32(api.working()+(data.ComputedBase+frame*data.ComputedStride+1)*24+8,true));
+  if (patches.length) throw new Error('initialization patched visible DOM');
+  const length = api.checkpoint(1,32768,32768);
+  const initial = Buffer.from(memory.slice(32768,32768+length)).toString('base64');
+  statuses.push(api.commit(100,0),api.begin(101,0,0),api.dispatch(15,0),api.renderPage(0),api.commit(101,0));
+  process.stdout.write(JSON.stringify({Statuses:statuses,Cache:cache,Patches:patches,Bindings:bound,Initial:initial}));`, data, &got, host)
+	native := *u.Program
+	native.Exprs = append([]program.Expr{}, u.Program.Exprs...)
+	valueID := program.ExprID(len(native.Exprs))
+	native.Exprs = append(native.Exprs, program.Expr{Op: program.OpLitInt, Type: program.TypeInt, Value: "777"})
+	writeID := program.ExprID(len(native.Exprs))
+	native.Exprs = append(native.Exprs, program.Expr{Op: program.OpSignalSet, Type: program.TypeAny, Value: "local0", Operands: []program.ExprID{valueID}})
+	model := vm.NewIsland(&native, "")
+	defer model.Dispose()
+	model.EvalExpr(writeID)
+	model.Reconcile()
+	wantPatches := model.Dispatch("increment", "")
+	if !reflect.DeepEqual(got.Patches, wantPatches) || !reflect.DeepEqual(got.Cache, []int32{79, 779}) || got.Initial != base64.StdEncoding.EncodeToString(document) {
+		t.Fatalf("imported roots/computed caches differ from native state: %+v want patches %+v", got, wantPatches)
+	}
+	for _, status := range got.Statuses {
+		if status != 0 {
+			t.Fatalf("import/dispatch status: %+v", got)
+		}
+	}
+	if len(got.Bindings) != 2*len(l.programs[0].dom.bindings.Bindings) {
+		t.Fatal("computed page was not fully bound")
+	}
+}
+
+func TestLinkedCheckpointImportFailuresAndAbortPreserveCommittedState(t *testing.T) {
+	l, _, document := checkpointValidationFixture(t)
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	invalid := append([]byte{}, document...)
+	invalid[0] = 0
+	for _, tc := range []struct {
+		name          string
+		packet        []byte
+		bindStatus    int32
+		abortPrepared bool
+		want          int32
+	}{{"invalid document", invalid, 0, false, 10}, {"failed binding", document, 6, false, 6}, {"aborted initialization", document, 0, true, 0}} {
+		t.Run(tc.name, func(t *testing.T) {
+			data := struct {
+				Document, Valid            string
+				FrameTable, FrameSequences uint32
+				BindStatus                 int32
+				AbortPrepared              bool
+			}{base64.StdEncoding.EncodeToString(tc.packet), base64.StdEncoding.EncodeToString(document), l.frameTable, l.frameSequences, tc.bindStatus, tc.abortPrepared}
+			var got struct {
+				Statuses  []int32
+				Unchanged bool
+				Bindings  int
+			}
+			runExpressionModule(t, checkpointImportTestModule(c), `
+  const api = instance.exports, statuses = [];
+  let bindings = 0;
+  const committed = Buffer.from(memory.slice(api.committed(),api.committed()+65536));
+  const frames = Buffer.from(memory.slice(data.FrameTable,data.FrameTable+256));
+  const sequences = Buffer.from(memory.slice(data.FrameSequences,data.FrameSequences+128));
+  const document = Buffer.from(data.Document,'base64');
+  memory.set(document,32768);
+  statuses.push(api.initPage(32768,document.length));
+  if (data.AbortPrepared) statuses.push(api.abortPage());
+  const unchanged = committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)))
+    &&frames.equals(Buffer.from(memory.slice(data.FrameTable,data.FrameTable+256)))
+    &&sequences.equals(Buffer.from(memory.slice(data.FrameSequences,data.FrameSequences+128)))
+    &&api.pending()===0&&api.status()===0;
+  memory.set(Buffer.from(data.Valid,'base64'),32768);
+  statuses.push(api.initPage(32768,Buffer.from(data.Valid,'base64').length),api.abortPage(),api.abortPage());
+  process.stdout.write(JSON.stringify({Statuses:statuses,Unchanged:unchanged,Bindings:bindings}));`, data, &got,
+				`{input:unexpected,bind:()=>{bindings++;return data.BindStatus;},patch:unexpected}`)
+			want := []int32{tc.want, 8, 0, 0}
+			if tc.abortPrepared {
+				want = []int32{0, 0, 8, 0, 0}
+			}
+			if !got.Unchanged || !reflect.DeepEqual(got.Statuses, want) || tc.want == 10 && got.Bindings != 0 {
+				t.Fatalf("failed initialization published state or allowed a retry: %+v", got)
+			}
+		})
+	}
+}
