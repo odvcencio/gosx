@@ -69,6 +69,7 @@ type Hub struct {
 	observers          atomic.Pointer[observerList]
 	observerWarningMu  sync.Mutex
 	observerWarningAt  time.Time
+	policyWarningAt    time.Time     // protected by observerWarningMu
 	telemetryObserver  *observerSlot // protected by mu
 	queueSampleEvery   atomic.Uint32
 	transportClock     clock.Clock // configured before serving; initialized under mu
@@ -733,6 +734,7 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, metadata ConnectionMetadata) {
 	policy, err := h.SlowClient.normalized()
 	if err != nil {
+		h.warnInvalidSlowClient(time.Now())
 		h.observeConcurrent(func(o Observer) { o.Rejected(h, RejectedOther) })
 		http.Error(w, "invalid hub policy", http.StatusServiceUnavailable)
 		return
@@ -797,6 +799,13 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		return
 	}
 	clientID := generateClientID(h.name)
+	transport, err := h.transport(policy)
+	if err != nil {
+		h.observe(func(o Observer) { o.Rejected(h, RejectedOther) })
+		log.Print("[gosx hub] connection refused; class=entropy_unavailable")
+		_ = conn.Close()
+		return
+	}
 	client := &Client{
 		ID:         clientID,
 		Hub:        h,
@@ -805,7 +814,7 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		send:       make(chan []byte, 256),
 		binarySend: make(chan []byte, 256),
 		syncStates: newPeerSyncState(),
-		transport:  h.transport(policy),
+		transport:  transport,
 	}
 	conn.SetPongHandler(func(payload string) error {
 		client.observePong(payload)
@@ -1078,10 +1087,9 @@ func (c *Client) writePump() {
 					c.setDisconnectReason("slow_client", "")
 					return
 				}
-				if now < c.transport.nextPing {
+				if !c.transport.pingDue(now) {
 					continue
 				}
-				c.transport.nextPing = after(now, pingPeriod)
 				if c.Hub.observers.Load() != nil {
 					ping := c.startPing(now)
 					payload = ping[:]

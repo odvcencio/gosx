@@ -7,6 +7,20 @@
   counters. Attachments release automatically when pumps finish, and telemetry
   shutdown preserves source-drain callbacks before removing its subscriptions.
   Counted histogram observations preserve coalesced broadcast samples atomically.
+
+- Keep observed hub control pings on a fixed 54-second schedule, using the
+  existing writer timer with a cadence that divides the ping period. Ping
+  sequences start from cryptographic per-connection randomness. Invalid
+  slow-client policy logs a fixed class at most once per minute.
+- Hub Close waits for application enqueue callbacks as well as pumps. Release
+  locks that callbacks may acquire before Close. The framework-only telemetry
+  observer slot requires an internal authority key; observer conflicts match
+  the telemetry conflict class. Queue samples describe depth before an accepted
+  enqueue, including zero. TrafficEvent.Dropped/Count and nil-client Message
+  callbacks extend the observer contract: Message accounts for all drops, so
+  Broadcast's drop summary must not be added again. SlowClientPolicy.Validate
+  and ErrInvalidSlowClient are explicit policy-validation API extensions.
+
 - Keep peer-controlled WebSocket close text out of hub read diagnostics. Normal
   peer closes are quiet; other failures report only a fixed transport class.
 
@@ -21,8 +35,12 @@
 - Add transactional aggregate telemetry setup with one maintenance worker and
   one named application shutdown hook. Disabled handles own no resources;
   failed setup removes its reservation. Shared close deadlines retain unfinished
-  owners, and clock or logger panics expose fixed error classes. Late completion
-  preserves owner cancellation and elapsed deadlines when propagation is delayed.
+  owners, and clock or logger panics expose fixed error classes. The shared close
+  work keeps the earlier of the first caller's deadline and a 20-second limit;
+  caller cancellation ends only that caller's wait. Catalog admission is private
+  to the server callback, which also seals inactive registries at Build. Process
+  start time is captured once during initialization, independently of Enable;
+  clock failures have their own fixed drop reason.
   Native features remain unavailable on WebAssembly. Listener, subsystem and record adapters
   follow in their own slices; selecting them returns a fixed unsupported class.
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
