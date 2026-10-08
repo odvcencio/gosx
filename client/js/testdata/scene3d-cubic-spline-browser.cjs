@@ -1477,6 +1477,23 @@ async function settleFrames(send, n) {
   if (v !== true) throw new Error('settling ' + n + ' real frames failed');
 }
 
+// Validation can submit a partial frame before a lazy draw pipeline settles.
+// Keep the pixel and affine oracles strict, and wait for a completed product
+// frame instead of treating a pass or queue submission as render readiness.
+async function waitForWebGPUFrame(send, mount) {
+  const expression = '(function(){var debug=window.__gosx_scene3d_debug;' +
+    'var snapshot=debug&&debug.inspect(' + JSON.stringify(mount) + ');' +
+    'return !!(snapshot&&snapshot.rendererDiagnostics&&' +
+      'snapshot.rendererDiagnostics.pipelinePending===0&&' +
+      'snapshot.webgpuStats&&snapshot.webgpuStats.frameSeq>0);})()';
+  const deadline = Date.now() + MOUNT_WAIT_MS;
+  while (Date.now() < deadline) {
+    if ((await evalSend(send, expression)) === true) return;
+    await sleep(25);
+  }
+  throw new Error('WebGPU validation did not produce a completed frame');
+}
+
 function disposeExpr(engine, mount) {
   return '(function(){try{if(typeof __gosx_dispose_engine!=="function")return false;' +
     '__gosx_dispose_engine(' + JSON.stringify(engine) + ');' +
@@ -1756,6 +1773,7 @@ async function runAffineCase(send, c, sessionId) {
   }
 
   await settleFrames(send, 10);
+  if (c.webgpu) await waitForWebGPUFrame(send, c.mount);
   if ((await evalSend(send, affinePickExpr())) !== true) {
     fail('[' + c.name + '] real canvas pointer pick dispatch failed');
   }
@@ -1938,6 +1956,7 @@ async function runCase(send, c, sessionId) {
   }
 
   await settleFrames(send, 10);
+  if (c.webgpu) await waitForWebGPUFrame(send, c.mount);
 
   // Load-time checks: JS mixer, all five channels, first-clamp authored pose.
   const load = await evalSend(send, poseExpr());

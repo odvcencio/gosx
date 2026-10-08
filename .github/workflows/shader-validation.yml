@@ -1,0 +1,51 @@
+name: shader-validation
+
+on:
+  pull_request:
+    paths:
+      - 'client/runtime/scene3d/webgpu*.ts'
+      - 'client/js/16a-scene-webgpu-f16.test.mjs'
+      - 'client/js/bootstrap-feature-scene3d-webgpu.js*'
+      - '.github/workflows/shader-validation.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'client/runtime/scene3d/webgpu*.ts'
+      - 'client/js/16a-scene-webgpu-f16.test.mjs'
+      - 'client/js/bootstrap-feature-scene3d-webgpu.js*'
+      - '.github/workflows/shader-validation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: 'off'
+
+jobs:
+  post-shader-hlsl:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Cache pinned Naga
+        id: naga
+        uses: actions/cache@v4
+        with:
+          path: ~/.cargo/bin/naga
+          key: ${{ runner.os }}-naga-cli-29.0.3
+      - name: Install pinned Naga
+        if: steps.naga.outputs.cache-hit != 'true'
+        run: cargo install naga-cli --version 29.0.3 --locked
+      - name: Install runtime test dependencies
+        run: npm ci --prefix client/runtime
+      - name: Validate every built-in post shader through HLSL
+        env:
+          GOSX_REQUIRE_NAGA_HLSL: '1'
+        run: |
+          test "$(naga --version)" = '29.0.3'
+          node --test --test-name-pattern HLSL client/js/16a-scene-webgpu-f16.test.mjs

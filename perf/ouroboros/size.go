@@ -19,6 +19,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 )
 
 const (
@@ -1283,6 +1284,9 @@ func collectTransferredAssetsForSource(distDir string, manifest *buildmanifest.M
 		if err != nil {
 			return nil, nil, fmt.Errorf("measure %s: %w", sourcePath, err)
 		}
+		if hash, ok := runtimehost.NavigationRuntimeAssetHash(ref); ok && metrics.SHA256 != hash {
+			return nil, nil, fmt.Errorf("navigation asset %s SHA-256 does not match its URL", ref)
+		}
 		entry := TransferredAsset{
 			ID:           stableAssetID(ref, metrics.SHA256),
 			URL:          ref,
@@ -1348,6 +1352,20 @@ func manifestRefSource(distDir string, manifest *buildmanifest.Manifest, ref str
 	ref = normalizeGosxRef(ref)
 	if ref == "" || manifest == nil {
 		return "", buildmanifest.HashedAsset{}, false
+	}
+	if hash, ok := runtimehost.NavigationRuntimeAssetHash(ref); ok {
+		// Navigation is embedded in the app rather than listed in build.json.
+		// Export preserves its full content hash in the static asset's URL.
+		// Recognize older hashes too so compare can verify previous receipts.
+		full, err := containedPath(distDir, "static/"+strings.TrimPrefix(ref, "/"))
+		if err != nil {
+			return "", buildmanifest.HashedAsset{}, false
+		}
+		info, err := os.Stat(full)
+		if err != nil || !info.Mode().IsRegular() {
+			return "", buildmanifest.HashedAsset{}, false
+		}
+		return full, buildmanifest.HashedAsset{File: filepath.Base(full), Hash: hash, Size: info.Size()}, true
 	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
 	if rel, ok := strings.CutPrefix(ref, "/gosx/assets/"); ok && rel != "" {

@@ -531,7 +531,7 @@ func (h *Hub) Broadcast(event string, data any) {
 		}
 	}
 	h.mu.RUnlock()
-	h.observe(func(o Observer) { o.Broadcast(h, sent, dropped) })
+	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 }
 
 // BroadcastWhere sends an event only to connections accepted by predicate.
@@ -561,7 +561,7 @@ func (h *Hub) BroadcastWhere(event string, data any, predicate func(*Client) boo
 		}
 	}
 	h.mu.RUnlock()
-	h.observe(func(o Observer) { o.Broadcast(h, sent, dropped) })
+	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 }
 
 // BroadcastBinary sends one binary WebSocket frame to every connected client
@@ -590,7 +590,7 @@ func (h *Hub) BroadcastBinary(payload []byte) int {
 		}
 	}
 	h.mu.RUnlock()
-	h.observe(func(o Observer) { o.Broadcast(h, sent, dropped) })
+	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 	return sent
 }
 
@@ -763,7 +763,7 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 			body = "hub closing"
 		}
 		h.mu.RUnlock()
-		h.observe(func(o Observer) { o.Rejected(h, reason) })
+		h.observeConcurrent(func(o Observer) { o.Rejected(h, reason) })
 		http.Error(w, body, http.StatusServiceUnavailable)
 		return
 	}
@@ -841,7 +841,7 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		h.mu.Unlock()
 		reserved = false
 		_ = conn.Close()
-		h.observe(func(o Observer) { o.Rejected(h, RejectedClosed) })
+		h.observeConcurrent(func(o Observer) { o.Rejected(h, RejectedClosed) })
 		if finish {
 			h.finishClose()
 		}

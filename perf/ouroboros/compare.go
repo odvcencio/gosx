@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/visual"
 )
@@ -1320,7 +1321,13 @@ func validateCanonicalSizeEvidenceBundle(paths comparePathSet, ev *SizeEvidence)
 		if metrics.SHA256 != asset.SHA256 || metrics.Bytes != asset.Bytes || metrics.GzipBytes != asset.GzipBytes || metrics.BrotliBytes != asset.BrotliBytes {
 			return fmt.Errorf("canonical size asset %s metrics do not match bundled bytes", asset.ID)
 		}
-		if len(metrics.SHA256) < 16 || hashed.Hash != metrics.SHA256[:16] {
+		hashBound := len(metrics.SHA256) >= 16 && hashed.Hash == metrics.SHA256[:16]
+		if hash, ok := runtimehost.NavigationRuntimeAssetHash(asset.URL); ok {
+			// Navigation URLs bind all 64 hex digits, rather than the shorter
+			// hashes used by build manifests for other runtime assets.
+			hashBound = hashed.Hash == hash && metrics.SHA256 == hash
+		}
+		if !hashBound {
 			return fmt.Errorf("canonical size asset %s manifest hash does not bind bundled bytes", asset.ID)
 		}
 	}
