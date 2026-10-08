@@ -17,6 +17,7 @@ import (
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/ir"
@@ -643,6 +644,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D, "scene3d"},
 		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand, "scene3d"},
 		{"bootstrap-feature-scene3d-hydrate", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hydrate.js"), &manifest.Runtime.BootstrapFeatureScene3DHydrate, "scene3d"},
+		{"bootstrap-feature-scene3d-pipeline-recovery", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-pipeline-recovery.js"), &manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery, "scene3d"},
 		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU, "scene3d"},
 		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL, "scene3d"},
 		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF, "scene3d"},
@@ -650,6 +652,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute, "scene3d"},
 		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress, "scene3d"},
 		{"bootstrap-feature-scene3d-walk", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-walk.js"), &manifest.Runtime.BootstrapFeatureScene3DWalk, "scene3d"},
+		{"bootstrap-feature-scene3d-particle-burst", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-particle-burst.js"), &manifest.Runtime.BootstrapFeatureScene3DParticleBurst, "scene3d"},
 		{"bootstrap-feature-scene3d-zoom", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-zoom.js"), &manifest.Runtime.BootstrapFeatureScene3DZoom, "scene3d"},
 		{"bootstrap-feature-scene3d-timeline", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-timeline.js"), &manifest.Runtime.BootstrapFeatureScene3DTimeline, "scene3d"},
 		{"bootstrap-feature-scene3d-vessel", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-vessel.js"), &manifest.Runtime.BootstrapFeatureScene3DVessel, "scene3d"},
@@ -1279,6 +1282,11 @@ func copyCompressedSidecars(dst, src string) error {
 
 func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref string) (string, bool) {
 	ref = path.Clean("/" + strings.TrimLeft(strings.TrimSpace(ref), "/"))
+	// Prerender fetches the embedded navigation asset from the app binary;
+	// it has no source file in the manifest runtime directory.
+	if ref == runtimehost.NavigationRuntimePath {
+		return "", false
+	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/assets/"); ok && rel != "" {
 		return filepath.Join(distDir, "assets", filepath.FromSlash(rel)), true
 	}
@@ -1325,6 +1333,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCommand.File)
 	case "/gosx/bootstrap-feature-scene3d-hydrate.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
+	case "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery.File)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
 	case "/gosx/bootstrap-feature-scene3d-webgl.js":
@@ -1337,6 +1347,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCompute.File)
 	case "/gosx/bootstrap-feature-scene3d-walk.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWalk.File)
+	case "/gosx/bootstrap-feature-scene3d-particle-burst.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
 	case "/gosx/bootstrap-feature-scene3d-zoom.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DZoom.File)
 	case "/gosx/bootstrap-feature-scene3d-timeline.js":

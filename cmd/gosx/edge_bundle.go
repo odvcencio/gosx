@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/internal/httpcompress"
 )
 
@@ -87,6 +88,7 @@ func edgeWorkerSource(manifest exportManifest) string {
 	return strings.Join([]string{
 		"const GOSX_STATIC_ROUTES = new Map((" + string(routesJSON) + ").map((route) => [normalizePath(route.path), route]));",
 		"const GOSX_STATIC_PREFIXES = [\"/assets/\", \"/gosx/\"];",
+		"const GOSX_NAVIGATION_RUNTIME = " + fmt.Sprintf("%q", runtimehost.NavigationRuntimePath) + ";",
 		"",
 		"function normalizePath(pathname) {",
 		"  if (!pathname) return \"/\";",
@@ -228,7 +230,16 @@ func edgeWorkerSource(manifest exportManifest) string {
 		"        }",
 		"      }",
 		"      if (!routeAsset && isStaticAsset(pathname) && (!hasState || !/\\.html$/i.test(pathname))) {",
-		"        const response = await fetchStatic(request, url.pathname, env);",
+		"        let response = await fetchStatic(request, url.pathname, env);",
+		"        if (response && response.status === 404 && url.pathname !== GOSX_NAVIGATION_RUNTIME && /^\\/gosx\\/assets\\/runtime\\/navigation\\.[0-9a-f]{64}\\.js$/i.test(url.pathname)) {",
+		"          if (response.body) await response.body.cancel();",
+		"          response = await fetchStatic(request, GOSX_NAVIGATION_RUNTIME, env);",
+		"          if (response) {",
+		"            const headers = new Headers(response.headers);",
+		"            headers.set(\"Cache-Control\", \"no-cache\");",
+		"            response = new Response(response.body, {status: response.status, statusText: response.statusText, headers, encodeBody: \"manual\"});",
+		"          }",
+		"        }",
 		"        if (response) {",
 		"          const asset = /\\.html$/i.test(pathname) ? sharedPageResponse(response, null) : response;",
 		"          if (asset) return asset;",

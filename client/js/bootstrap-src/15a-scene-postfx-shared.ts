@@ -463,7 +463,7 @@ var sceneRenderTruthPipelineFailureList = [];
 function sceneRenderTruthPipelineFailure(stage, id, reason) {
   sceneRenderTruthPipelineFailures++;
   var label = sceneRenderTruthToken(stage || "pipeline") + "@" + sceneRenderTruthToken(id || "-");
-  var text = String(reason == null ? "" : (reason.message || reason)).slice(0, 120);
+  var text = String(reason == null ? "" : (reason.message || reason));
   if (sceneRenderTruthPipelineFailureList.length < SCENE_RENDER_TRUTH_MAX_PIPELINE_FAILURES) {
     sceneRenderTruthPipelineFailureList.push(label + ":" + text.replace(/[|]+/g, "/"));
   }
