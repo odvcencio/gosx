@@ -145,7 +145,7 @@
       "predictionErrorPPM": null
     },
     {
-      "id": "wasm-pilot-cold",
+      "id": "synthetic-wasm-pilot-cold",
       "backend": "none",
       "scenario": "hard-cold",
       "entries": [
