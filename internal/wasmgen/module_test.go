@@ -2,11 +2,20 @@ package wasmgen
 
 import (
 	"bytes"
+	"context"
+	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"math"
+	"os"
+	"os/exec"
 	"reflect"
 	"slices"
 	"testing"
+	"time"
+
+	"github.com/chromedp/chromedp"
+	"m31labs.dev/gosx/internal/chrometest"
 )
 
 func testSections(t *testing.T, binary []byte) ([]byte, map[byte][]byte) {
@@ -53,6 +62,9 @@ func TestEmptyModuleGolden(t *testing.T) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("module=%x\nwant  =%x", got, want)
 	}
+	if err := Validate(got); err != nil {
+		t.Fatal(err)
+	}
 	ids, sections := testSections(t, got)
 	if !bytes.Equal(ids, []byte{1, 2, 3, 5, 6, 7, 10, 11, 0}) || !bytes.Equal(sections[5], []byte{1, 1, 3, 3}) {
 		t.Fatalf("section order or memory: %v", ids)
@@ -79,6 +91,9 @@ func TestModuleTablesIndicesAndLocals(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := Validate(binary); err != nil {
+		t.Fatal(err)
+	}
 	_, sections := testSections(t, binary)
 	for id, want := range map[byte][]byte{
 		1:  {2, 0x60, 0, 1, 0x7e, 0x60, 1, 0x7f, 1, 0x7f},
@@ -103,6 +118,64 @@ func TestModuleTablesIndicesAndLocals(t *testing.T) {
 	}
 	if _, err := m.FunctionIndex(2); err == nil {
 		t.Fatal("accepted missing function")
+	}
+}
+
+func TestModuleBrowserValidation(t *testing.T) {
+	if testing.Short() {
+		t.Skip("browser validation skipped in short mode")
+	}
+	executable := os.Getenv("GOSX_CHROME_BIN")
+	if executable == "" {
+		for _, name := range []string{"google-chrome", "chromium", "chromium-browser"} {
+			if path, err := exec.LookPath(name); err == nil {
+				executable = path
+				break
+			}
+		}
+	}
+	if executable == "" {
+		t.Skip("Chrome is unavailable")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancel()
+	browser, err := chrometest.Start(ctx, executable, "--no-sandbox")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer browser.Close()
+	invalidCore := map[string]bool{"underflow": true, "wrong result": true, "extra result": true, "block underflow": true, "unreachable known type": true, "branch depth": true, "branch result": true, "table label types": true, "if predicate": true, "if no else": true, "duplicate else": true, "unexpected else": true, "unclosed block": true, "trailing end": true, "select kinds": true, "load address": true, "load alignment": true, "truncated constant": true}
+	var cases []struct {
+		Binary string
+		Valid  bool
+	}
+	var names []string
+	for _, fixture := range codeFixtures() {
+		if !fixture.valid && !invalidCore[fixture.name] {
+			continue
+		}
+		cases = append(cases, struct {
+			Binary string
+			Valid  bool
+		}{base64.StdEncoding.EncodeToString(fixtureBinary(t, fixture)), fixture.valid})
+		names = append(names, fixture.name)
+	}
+	payload, err := json.Marshal(cases)
+	if err != nil {
+		t.Fatal(err)
+	}
+	script := "(" + string(payload) + ").map(f => WebAssembly.validate(Uint8Array.from(atob(f.Binary), c => c.charCodeAt(0))))"
+	var actual []bool
+	if err := chromedp.Run(browser.Context, chromedp.Evaluate(script, &actual)); err != nil {
+		t.Fatal(err)
+	}
+	if len(actual) != len(cases) {
+		t.Fatal("browser result count")
+	}
+	for i, result := range actual {
+		if result != cases[i].Valid {
+			t.Fatalf("browser %s: %v want %v", names[i], result, cases[i].Valid)
+		}
 	}
 }
 
