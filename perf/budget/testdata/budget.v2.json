@@ -3,7 +3,7 @@
   "profile": {"file": "perf/budget/testdata/profile.v1.json", "sha256": "9b0a475dcf760674ed2bbd9a104bcf07c0303918f2c95b99ce1931729b202343"},
   "coefficients": {"file": "perf/budget/testdata/coefficients.v1.json", "sha256": "64132390ac522922a1996f1d66c701fad75afb297718ec4c0c41daab370f039b"},
   "toolchain": {"file": "perf/budget/testdata/toolchain.v1.json", "sha256": "b7f8f39951d829346ab20409752f6f0fb2c2dd026e7b3de2ecf51bba14cc722d"},
-  "fixtures": {"file": "perf/budget/testdata/catalog.v1.json", "sha256": "021f09dfb7b327516422a46a1d76a326ba135332203d85fdda9f252f0e67de1c"},
+  "fixtures": {"file": "perf/budget/testdata/catalog.v1.json", "sha256": "691168e213183caf130e31821d093092aa68451f63b4afa7e44b5b613e86cc04"},
   "tripwire": {"minBytes": 1024, "fractionPPM": 10000},
   "pageTypes": {
     "island": {

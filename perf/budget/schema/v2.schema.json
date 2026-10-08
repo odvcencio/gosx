@@ -1,8 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://example.invalid/gosx/perf/v2.schema.json",
-  "oneOf": [{"$ref": "#/$defs/Budget"}, {"$ref": "#/$defs/Profile"}, {"$ref": "#/$defs/Coefficients"}, {"$ref": "#/$defs/Toolchain"}, {"$ref": "#/$defs/FixtureCatalog"}],
+  "oneOf": [{"$ref": "#/$defs/Budget"}, {"$ref": "#/$defs/Profile"}, {"$ref": "#/$defs/Coefficients"}, {"$ref": "#/$defs/Toolchain"}, {"$ref": "#/$defs/FixtureCatalog"}, {"$ref": "#/$defs/FixtureManifest"}],
   "$defs": {
+    "Commit": {"type":"string","pattern":"^[0-9a-f]{40}$"},
+    "AssetURL": {"type":"string","pattern":"^/[A-Za-z0-9_./-]*$","maxLength":240},
+    "AssetUse": {"type":"object","additionalProperties":false,"required":["id","sha256","url","owner","kind","phase","condition","dependencies"],"properties":{"id":{"$ref":"#/$defs/Path"},"sha256":{"$ref":"#/$defs/SHA"},"url":{"$ref":"#/$defs/AssetURL"},"owner":{"enum":["framework","app"]},"kind":{"enum":["html","js","wasm","program","css","font","image","model","video","other"]},"phase":{"enum":["critical","startup","after-ready","dormant"]},"condition":{"enum":["always","webgpu","webgl","device-loss","pipeline-recovery","hls-required","interaction"]},"dependencies":{"type":"array","minItems":0,"maxItems":128,"items":{"$ref":"#/$defs/Path"}}}},
+    "FixtureManifest": {"type":"object","additionalProperties":false,"required":["schema","version","routes","assets","sourceSHA","fixturesSHA256","catalogSHA256"],"properties":{"schema":{"const":"gosx.perf-fixtures/v1"},"version":{"type":"integer","minimum":1},"routes":{"type":"array","minItems":1,"maxItems":512,"items":{"$ref":"#/$defs/RouteFixture"}},"assets":{"type":"array","minItems":0,"maxItems":4096,"items":{"$ref":"#/$defs/AssetUse"}},"sourceSHA":{"$ref":"#/$defs/Commit"},"fixturesSHA256":{"$ref":"#/$defs/SHA"},"catalogSHA256":{"$ref":"#/$defs/SHA"}}},
     "ID": {"type":"string","pattern":"^[a-z][a-z0-9-]{0,47}$"},
     "SHA": {"type":"string","pattern":"^[0-9a-f]{64}$"},
     "Path": {"type":"string","pattern":"^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$","maxLength":240},

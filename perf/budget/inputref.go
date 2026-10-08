@@ -180,6 +180,12 @@ func validateInputAt(value, raw any, pointer string) error {
 				return fail()
 			}
 		}
+		if ref == "#/$defs/AssetURL" {
+			path, ok := value.(string)
+			if !ok || len(path) > 240 || !strings.HasPrefix(path, "/") || path != "/" && !safePath(strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/")) {
+				return fail()
+			}
+		}
 		return validateInputAt(value, inputDefinitions[strings.TrimPrefix(ref, "#/$defs/")], pointer)
 	}
 	if choices, ok := s["oneOf"].([]any); ok {

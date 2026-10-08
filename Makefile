@@ -481,3 +481,7 @@ test-assetmeasure:
 .PHONY: test-pagecaps
 test-pagecaps:
 	GOWORK=off go test ./internal/pagecaps ./cmd/gosx -run 'Test(PageCaps|Classify|Export.*Capabilities)'
+
+.PHONY: test-perf-manifest
+test-perf-manifest:
+	GOWORK=off go test ./buildmanifest -run TestPerfAsset

@@ -28,7 +28,7 @@ func referenceLabel(definition string) string {
 		return "coefficients"
 	case "Toolchain":
 		return "toolchain"
-	case "FixtureCatalog":
+	case "FixtureCatalog", "FixtureManifest", "AssetUse":
 		return "fixtures"
 	case "Budget":
 		return "budget"
