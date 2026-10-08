@@ -920,3 +920,19 @@ test("custom post link failures report once after completion", () => {
   assert.equal(warnings.filter(args => args[0].includes("custom post pass")).length, 1);
   assert.equal(failures.lens, true);
 });
+
+
+test("GLSL ES 3.00 normalization keeps version first and matches integer precision", () => {
+  const context = vm.createContext({});
+  runSource(sourceBetween(webglSource, "function sceneWebGLNormalizeCustomShaderSource(", "// createSceneCustomPostProgram"), context);
+  const normalize = context.sceneWebGLNormalizeCustomShaderSource;
+  for (const precision of ["", "precision mediump int;\n", "precision highp int;\n"]) {
+    const source = "#version 300 es\nprecision highp float;\n" + precision + "uniform bool u_hasFog;\nvoid main() {}";
+    const normalized = normalize(source);
+    assert.ok(normalized.startsWith("#version 300 es\n"));
+    assert.equal((normalized.match(/precision highp int;/g) || []).length, 1);
+    assert.equal(normalize(normalized), normalized);
+  }
+  assert.match(normalize("#version 300 es"), /^#version 300 es\nprecision highp int;/);
+  assert.match(normalize("precision mediump float;\nvoid main() {}"), /precision highp float;\nprecision highp int;/);
+});

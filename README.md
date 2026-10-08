@@ -645,6 +645,7 @@ separate release-pinned hardware certification obligation in that contract.
 - **Scene graph** — `Group`, `Mesh`, `LODGroup`, `Decal`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
+
   Selena browser shaders use GLSL ES 3.00 for GoSX's WebGL2 contexts. The returned
   binding layout contains the WebGL2 host requirements. Materials with extra host
   requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(material.ShaderLayout, target)`
@@ -657,7 +658,9 @@ separate release-pinned hardware certification obligation in that contract.
   To retain native programs, set `SelenaMaterialOptions.Targets: selena.AllTargets()`.
   `CustomMaterial.ShaderProgram(target)`, `IRMaterial.ShaderProgram(target)`, and
   `engine.RenderMaterial.ShaderProgram(target)` let native host adapters read the
-  same compiler artifact through JSON and native render bundles. Source and binding
+  same compiler artifact through JSON and native render bundles. Opting into
+  `Targets` also sends every requested program artifact in browser scene payloads,
+  increasing their size. Source and binding
   descriptors travel together in `shaderLayout.programs`; browser host adaptations
   remain in `VertexGLSL`/`FragmentGLSL` and `VertexWGSL`/`FragmentWGSL`. Default browser
   materials avoid duplicating shader sources. Transport does not imply execution:
