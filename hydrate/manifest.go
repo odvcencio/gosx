@@ -5,12 +5,31 @@ package hydrate
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"m31labs.dev/gosx/assetpipe"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 )
+
+var featureNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// RequireFeature records an opt-in runtime chunk by name. Names are trimmed,
+// validated as lowercase dash-separated words, and deduplicated.
+func (m *Manifest) RequireFeature(name string) error {
+	name = strings.TrimSpace(name)
+	if !featureNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid runtime feature name %q", name)
+	}
+	for _, have := range m.Features {
+		if have == name {
+			return nil
+		}
+	}
+	m.Features = append(m.Features, name)
+	return nil
+}
 
 // Manifest describes all islands and engines on a page.
 type Manifest struct {
@@ -34,6 +53,10 @@ type Manifest struct {
 
 	// Controllers lists headless declarative browser controllers for the page.
 	Controllers []ControllerEntry `json:"controllers,omitempty"`
+
+	// Features names opt-in runtime chunks the page needs beyond those inferred
+	// from entries; the loader fetches bootstrap-feature-<name>.js for each.
+	Features []string `json:"features,omitempty"`
 
 	// ClientIdentity describes optional browser-owned client identity state.
 	ClientIdentity *ClientIdentityConfig `json:"clientIdentity,omitempty"`
