@@ -1,0 +1,14 @@
+# HELP a_counter Requests \\path\nwith "quotes"
+# TYPE a_counter counter
+a_counter{kind="a\"line\n\\"} 2
+a_counter{kind="z"} 1
+# HELP latency Complete work
+# TYPE latency histogram
+latency_bucket{le="1"} 2
+latency_bucket{le="2"} 3
+latency_bucket{le="+Inf"} 4
+latency_sum 5
+latency_count 4
+# HELP z_gauge
+# TYPE z_gauge gauge
+z_gauge -3.5
