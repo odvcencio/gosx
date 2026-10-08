@@ -16,6 +16,11 @@
     "keydown", "keyup", "focus", "blur",
     "dragstart", "dragend", "dragover", "dragleave", "drop",
     "pointerdown", "pointermove", "pointerup", "pointercancel",
+    // Gesture events (wave 1): wheel needs a non-passive listener so a handler
+    // may call browser.PreventDefault(); lostpointercapture pairs with
+    // browser.CapturePointer. A pre-selective manifest attaches all of them; a
+    // modern manifest attaches only the declared subset.
+    "wheel", "dblclick", "contextmenu", "lostpointercapture",
   ];
 
   // Convention-based events that intentionally escape an island root. Their
@@ -86,8 +91,9 @@
     if (e.type === "keydown" || e.type === "keyup") {
       copyNumberField(data, e, "timeStamp", "timeStamp", true);
     }
-    const pointerEvent = e.type.indexOf("pointer") === 0;
-    const mouseEvent = pointerEvent || e.type === "click" || e.type === "drop" || e.type.indexOf("drag") === 0;
+    const pointerEvent = e.type.indexOf("pointer") === 0 || e.type === "lostpointercapture";
+    const mouseEvent = pointerEvent || e.type === "click" || e.type === "drop" || e.type.indexOf("drag") === 0
+      || e.type === "dblclick" || e.type === "contextmenu" || e.type === "wheel";
     if (pointerEvent) {
       copyNumberField(data, e, "pointerId", "pointerID");
       if (e.pointerType) data.pointerType = String(e.pointerType);
@@ -101,6 +107,20 @@
       copyNumberField(data, e, "clientY", "clientY");
       copyNumberField(data, e, "button", "button");
       copyNumberField(data, e, "buttons", "buttons");
+    }
+    if (mouseEvent && handlerElement && typeof handlerElement.getBoundingClientRect === "function"
+      && typeof e.clientX === "number" && typeof e.clientY === "number") {
+      // Relative to the element that owns the handler, not to e.target: a
+      // fader's inner track must not change the coordinate space.
+      const rect = handlerElement.getBoundingClientRect();
+      const offsets = { offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
+      copyNumberField(data, offsets, "offsetX", "offsetX");
+      copyNumberField(data, offsets, "offsetY", "offsetY");
+    }
+    if (e.type === "wheel") {
+      copyNumberField(data, e, "deltaX", "deltaX");
+      copyNumberField(data, e, "deltaY", "deltaY");
+      copyNumberField(data, e, "deltaMode", "deltaMode");
     }
     if (e.type === "resize") {
       if (typeof window.innerWidth === "number" && window.innerWidth !== 0) data.width = window.innerWidth;
@@ -214,7 +234,7 @@
       if (declared && !declared.has(eventType)) continue;
       const listener = createDelegatedListener(islandRoot, islandID, eventType);
       const useCapture = delegatedEventCapture(eventType);
-      islandRoot.addEventListener(eventType, listener, useCapture);
+      islandRoot.addEventListener(eventType, listener, eventType === "wheel" ? { capture: useCapture, passive: false } : useCapture);
       entries.push({ target: islandRoot, type: eventType, listener, capture: useCapture });
     }
 
