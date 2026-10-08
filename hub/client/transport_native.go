@@ -35,18 +35,18 @@ func (d nativeDialer) Dial(rawURL string, header http.Header) (conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	nc := &nativeConn{ws: ws, events: make(chan frameEvent, 16)}
+	nc := &nativeConn{ws: ws, eventStream: newEventStream(16)}
 	// gorilla's Dial is synchronous: a successful return means the connection
 	// is already open, so frameOpen is queued before the read loop starts,
 	// keeping it first on the channel as conn's contract requires.
-	nc.events <- frameEvent{Kind: frameOpen}
+	nc.emit(frameEvent{Kind: frameOpen})
 	go nc.readLoop()
 	return nc, nil
 }
 
 type nativeConn struct {
-	ws     *websocket.Conn
-	events chan frameEvent
+	*eventStream
+	ws *websocket.Conn
 }
 
 func (c *nativeConn) Send(data []byte, binary bool) error {
@@ -58,11 +58,8 @@ func (c *nativeConn) Send(data []byte, binary bool) error {
 }
 
 func (c *nativeConn) Close() error {
+	c.stop()
 	return c.ws.Close()
-}
-
-func (c *nativeConn) Events() <-chan frameEvent {
-	return c.events
 }
 
 func (c *nativeConn) readLoop() {
@@ -70,9 +67,11 @@ func (c *nativeConn) readLoop() {
 	for {
 		messageType, data, err := c.ws.ReadMessage()
 		if err != nil {
-			c.events <- frameEvent{Kind: frameClosed, Err: err}
+			c.emit(frameEvent{Kind: frameClosed, Err: err})
 			return
 		}
-		c.events <- frameEvent{Kind: frameMessage, Data: data, Binary: messageType == websocket.BinaryMessage}
+		if !c.emit(frameEvent{Kind: frameMessage, Data: data, Binary: messageType == websocket.BinaryMessage}) {
+			return
+		}
 	}
 }

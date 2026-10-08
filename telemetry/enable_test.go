@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -190,6 +191,63 @@ func TestAppShutdownClosesTelemetryWorker(t *testing.T) {
 	}
 }
 
+func TestBuildSealsInactiveTelemetryRegistry(t *testing.T) {
+	for _, state := range []string{"closed", "worker_failed"} {
+		t.Run(state, func(t *testing.T) {
+			o := aggregateCoreOptions(t)
+			tick := &controlledTicker{ch: make(chan time.Time)}
+			o.Clock = controlledClock{tick}
+			a := server.New()
+			tel, err := Enable(a, o)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = tel.Close(context.Background()) })
+			registry := tel.Metrics()
+			counter, err := registry.NewCounter(metric.CounterOptions{
+				Name: "turns_total", Labels: []metric.Label{{Name: "phase", Values: []string{"before", "after"}}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := counter.Bind("before"); err != nil {
+				t.Fatal(err)
+			}
+			if state == "closed" {
+				if err := tel.Close(context.Background()); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				close(tick.ch)
+				select {
+				case <-tel.done:
+				case <-time.After(time.Second):
+					t.Fatal("failed clock worker did not stop")
+				}
+				if err := tel.Close(context.Background()); !errors.Is(err, ErrInvalidOptions) {
+					t.Fatal("worker failure was not reported", err)
+				}
+			}
+			if tel.Enabled() || registry.Usage().Sealed {
+				t.Fatal("expected inactive telemetry with registration still open before Build")
+			}
+			a.Build()
+			if !registry.Usage().Sealed {
+				t.Fatal("Build did not seal the inactive telemetry registry")
+			}
+			if _, err := registry.NewCounter(metric.CounterOptions{Name: "late_total"}); !errors.Is(err, ErrAfterBuild) {
+				t.Fatal("Build allowed a new metric", err)
+			}
+			if _, err := counter.Bind("after"); !errors.Is(err, ErrAfterBuild) {
+				t.Fatal("Build allowed a new tuple", err)
+			}
+			if _, err := counter.Bind("before"); err != nil {
+				t.Fatal("Build rejected an existing tuple", err)
+			}
+		})
+	}
+}
+
 func TestCoreMetricsUseElapsedTimeAndPublicRegistry(t *testing.T) {
 	o := aggregateCoreOptions(t)
 	c := telemetrytest.NewClock(time.Unix(1234, 500000000))
@@ -231,7 +289,7 @@ func TestCoreMetricsUseElapsedTimeAndPublicRegistry(t *testing.T) {
 			t.Fatal(err)
 		}
 		if values["gosx_process_uptime_seconds"] == 10 {
-			if values["process_start_time_seconds"] != 1234.5 || values["gosx_build_info"] != 1 || values["gosx_telemetry_series"] != float64(tel.registry.Usage().Samples) || values["gosx_telemetry_memory_bytes"] > float64(o.Limits.MemoryBudgetBytes) {
+			if values["process_start_time_seconds"] != processStartSeconds() || values["gosx_build_info"] != 1 || values["gosx_telemetry_series"] != float64(tel.registry.Usage().Samples) || values["gosx_telemetry_memory_bytes"] > float64(o.Limits.MemoryBudgetBytes) {
 				t.Fatal(values)
 			}
 			break
@@ -240,5 +298,42 @@ func TestCoreMetricsUseElapsedTimeAndPublicRegistry(t *testing.T) {
 			t.Fatal("worker used a missed deadline instead of current elapsed time", values)
 		}
 		runtime.Gosched()
+	}
+}
+
+func TestCatalogAdmissionIsNotPublicTelemetryAPI(t *testing.T) {
+	if reflect.TypeFor[*Telemetry]().Implements(reflect.TypeFor[server.ObservationCatalogObserver]()) {
+		t.Fatal("application code can submit an observation catalog directly")
+	}
+}
+
+func TestProcessStartIsIndependentOfTelemetryOwners(t *testing.T) {
+	for _, wall := range []time.Time{time.Unix(1, 0), time.Unix(100000, 0)} {
+		o := aggregateCoreOptions(t)
+		o.Clock = telemetrytest.NewClock(wall)
+		tel, err := Enable(server.New(), o)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := tel.registry.WithSnapshot(context.Background(), func(snapshot metric.Snapshot) error {
+			found := false
+			for _, family := range snapshot.Families {
+				if family.Name == "process_start_time_seconds" {
+					found = true
+					if family.Series[0].Gauge != processStartSeconds() || family.Series[0].Gauge == float64(wall.Unix()) {
+						t.Fatal("start time belongs to Enable", family.Series[0].Gauge)
+					}
+				}
+			}
+			if !found {
+				t.Fatal("missing process start")
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if err := tel.Close(context.Background()); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
