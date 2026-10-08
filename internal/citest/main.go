@@ -8,6 +8,7 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -137,12 +138,15 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: citest verify | list <unit|cli|race|full-race> | test <unit|race|full-race|ouroboros-race>")
+		return errors.New("usage: citest verify | cli <0|1> | list <unit|cli|race|full-race> | test <unit|race|full-race|ouroboros-race>")
 	}
 
 	goBinary := os.Getenv("GOSX_CI_GO")
 	if goBinary == "" {
 		goBinary = "go"
+	}
+	if args[0] == "cli" {
+		return runCLIShard(args[1:], goBinary, stdout, stderr)
 	}
 	plan, err := buildTestPlan(goBinary)
 	if err != nil {
@@ -562,4 +566,61 @@ func printPlan(w io.Writer, plan testPlan) {
 	for _, skip := range plan.ouroborosRace.skips {
 		fmt.Fprintf(w, "citest: scoped race skip %s reason=%q\n", skip.testName, skip.reason)
 	}
+}
+
+// Discover runnable tests with the same Go tool and build tags used to execute
+// them, including examples and fuzz seed corpora. Hashing names keeps a test's
+// assignment stable when other tests are added; both jobs run all its subtests.
+func runCLIShard(args []string, goBinary string, stdout, stderr io.Writer) error {
+	if len(args) != 1 || (args[0] != "0" && args[0] != "1") {
+		return errors.New("usage: citest cli <0|1>")
+	}
+	index, _ := strconv.Atoi(args[0])
+	list := exec.Command(goBinary, "test", "-list", ".", "./cmd/gosx")
+	list.Stderr = stderr
+	output, err := list.Output()
+	if err != nil {
+		return fmt.Errorf("discover CLI tests: %w", err)
+	}
+	shards, err := splitCLITests(string(output))
+	if err != nil {
+		return err
+	}
+	names := make([]string, len(shards[index]))
+	for i, name := range shards[index] {
+		names[i] = regexp.QuoteMeta(name)
+	}
+	pattern := "^(" + strings.Join(names, "|") + ")$"
+	fmt.Fprintf(stderr, "citest: CLI shard %d runs %d of %d tests/seed corpora with timeout 25m\n", index, len(names), len(shards[0])+len(shards[1]))
+	command := exec.Command(goBinary, "test", "-timeout", "25m", "-run", pattern, "./cmd/gosx")
+	command.Stdout, command.Stderr, command.Stdin = stdout, stderr, os.Stdin
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("CLI shard %d: %w", index, err)
+	}
+	return nil
+}
+
+func splitCLITests(output string) ([2][]string, error) {
+	var shards [2][]string
+	seen := make(map[string]bool)
+	for _, name := range strings.Split(output, "\n") {
+		name = strings.TrimSpace(name)
+		if !strings.HasPrefix(name, "Test") && !strings.HasPrefix(name, "Example") && !strings.HasPrefix(name, "Fuzz") {
+			continue
+		}
+		if strings.ContainsAny(name, " \t/") || seen[name] {
+			return shards, fmt.Errorf("invalid or duplicate CLI test name %q", name)
+		}
+		seen[name] = true
+		sum := sha256.Sum256([]byte(name))
+		index := int(sum[0] & 1)
+		shards[index] = append(shards[index], name)
+	}
+	for i := range shards {
+		if len(shards[i]) == 0 {
+			return shards, fmt.Errorf("CLI shard %d contains no tests", i)
+		}
+		sort.Strings(shards[i])
+	}
+	return shards, nil
 }
