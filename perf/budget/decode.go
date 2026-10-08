@@ -32,7 +32,13 @@ func decodeInput(data []byte, definition string, out any) (resultErr error) {
 	if err := validateInput(value, inputDefinitions[definition]); err != nil {
 		return err
 	}
-	d = json.NewDecoder(bytes.NewReader(data))
+	// Typed decoding consumes the validated value, never a second object merge
+	// from the original input. The token scan also rejects duplicate keys.
+	validated, err := json.Marshal(value)
+	if err != nil {
+		return invalidInput("")
+	}
+	d = json.NewDecoder(bytes.NewReader(validated))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return invalidInput("")
