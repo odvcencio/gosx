@@ -111,14 +111,14 @@ function createSceneReflectWebGPU(device) {
     let pipeline = pipelines.get(k);
     if (!pipeline) {
       const module = device.createShaderModule({ label: "gosx-reflection-capture",code: sceneReflectCaptureWGSL(opts.samples) });
-      pipeline = device.createRenderPipeline({ label: "gosx-reflection-capture",layout: "auto",
+      pipeline = wgpuCreateValidatedPipeline(device, "render", { label: "gosx-reflection-capture",layout: "auto",
         vertex: { module,entryPoint: "vertexMain" },fragment: { module,entryPoint: "fragmentMain",targets: [{format: opts.format},{format: "r32float"}] },primitive: {topology:"triangle-strip"} });
       pipelines.set(k,pipeline);
     }
-    const group = device.createBindGroup({ layout: pipeline.getBindGroupLayout(0),entries: [
+    const group = device.createBindGroup({ layout: wgpuRequirePipeline(pipeline).getBindGroupLayout(0),entries: [
       {binding: 0,resource: opts.colorView},{binding: 1,resource: opts.depthView} ] });
     const pass = encoder.beginRenderPass({ label: "gosx-reflection-capture",colorAttachments: [targets.color,targets.depth].map(view => ({view,loadOp: "clear",storeOp: "store",clearValue: {r:1,g:1,b:1,a:1}})) });
-    pass.setPipeline(pipeline); pass.setBindGroup(0,group); pass.draw(4); pass.end();
+    pass.setPipeline(wgpuRequirePipeline(pipeline)); pass.setBindGroup(0,group); pass.draw(4); pass.end();
   }
   return {
     prepare: function(opts,config,quality) {

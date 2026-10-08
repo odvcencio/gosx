@@ -6,6 +6,9 @@ import "context"
 // reservations and both pumps to finish. Concurrent callers share completion
 // and wait only until their own context expires. An expired call leaves the
 // owner and observers in place until pump cleanup finishes.
+// Close also waits for admitted observer callbacks before delivering Closed.
+// Release any lock those callbacks may acquire before calling Close; otherwise
+// the caller and callback can deadlock waiting for each other.
 func (h *Hub) Close(ctx context.Context) error {
 	if h == nil {
 		return nil

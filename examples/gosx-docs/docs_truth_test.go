@@ -2,6 +2,9 @@ package main
 
 import (
 	"bytes"
+	"html"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -431,6 +434,7 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 			},
 			forbidden: []string{
 				"window.__gosx_page_nav",
+				"window.__gosx_submit_action",
 				"window.__gosx_dispose_page",
 				"window.__gosx_bootstrap_page",
 				"data-gosx-lifecycle-script",
@@ -484,6 +488,27 @@ func TestRuntimeDeploymentSceneAndRelayDocsUseCurrentContracts(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.page, func(t *testing.T) {
 			body := readDocsPagePair(t, docsRoot, test.page)
+			if test.page == "runtime" {
+				// Legacy aliases belong only in the migration warning, never
+				// in current API guidance or executable samples.
+				migration := regexp.MustCompile(`(?s)<p id="navigation-migration">.*?</p>`)
+				paragraphs := migration.FindAllString(body, -1)
+				if len(paragraphs) != 1 {
+					t.Fatalf("runtime docs need one explicit navigation migration paragraph, got %d", len(paragraphs))
+				}
+				assertDocsContract(t, paragraphs[0], []string{
+					"Code that runs while HTML is parsed",
+					"ctx.ManagedScript", "ctx.LifecycleScript",
+					"without defer, must wait for", "DOMContentLoaded",
+					"window.__gosx.navigation", "window.__gosx_page_nav",
+					"window.__gosx_submit_action", "window.__gosx.cues",
+				}, nil)
+				body = migration.ReplaceAllString(body, "")
+				assertDocsContract(t, body, []string{
+					`document.addEventListener("DOMContentLoaded"`,
+					`document.readyState === "loading"`, "await new Promise",
+				}, nil)
+			}
 			assertDocsContract(t, body, test.required, test.forbidden)
 		})
 	}
@@ -544,4 +569,23 @@ func readDocsPagePair(t *testing.T, root, page string) string {
 		}
 	}
 	return joined.String()
+}
+
+func TestRuntimeNavigationMigrationRendersAllowlist(t *testing.T) {
+	configureDocsTestSecret(t)
+	_, thisFile, _, _ := runtime.Caller(0)
+	app, err := buildDocsApp(filepath.Dir(thisFile), "8080")
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/docs/runtime/", nil))
+	pattern := "/gosx/assets/runtime/navigation.*.js"
+	body := w.Body.String()
+	if w.Code != http.StatusOK || !strings.Contains(html.UnescapeString(body), pattern) {
+		t.Fatalf("runtime migration must display the navigation asset allowlist: status=%d", w.Code)
+	}
+	if strings.Contains(body, pattern) {
+		t.Fatal("the display-only wildcard must not become a literal export asset reference")
+	}
 }

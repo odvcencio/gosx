@@ -1,3 +1,6 @@
+if (document.readyState === "loading") {
+  await new Promise(resolve => document.addEventListener("DOMContentLoaded", resolve, { once: true }))
+}
 await window.__gosx.navigation.navigate("/docs/routing")
-	await window.__gosx.navigation.revalidate()
-	console.log(window.__gosx.navigation.getState())
+await window.__gosx.navigation.revalidate()
+console.log(window.__gosx.navigation.getState())
