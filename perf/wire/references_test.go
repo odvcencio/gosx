@@ -13,7 +13,7 @@ import (
 func TestReferencesHTMLActiveRootsAndPotentialChunks(t *testing.T) {
 	body := []byte(`<!doctype html><head>
 <link rel="stylesheet" href="/style.css"><link rel="modulepreload" href="/main.js">
-<link rel="preload" as="font" href="/font.woff2"><link rel="preload" as="image" href="/cover.avif">
+<link rel="preload" as="font" href="/font.woff2"><link rel="preload" as="image" href="/cover.avif"><link rel="prefetch" href="/prefetched.js">
 <script defer src="/main.js"></script><script type="application/json" src="/data.js">{"asset":"/not-loaded.js"}</script>
 <script type="text/ecmascript" src="/compat.js"></script><script>import("/inline.js")</script>
 <style>.banner{background:url("/banner.webp")}</style></head>
@@ -32,7 +32,7 @@ func TestReferencesHTMLActiveRootsAndPotentialChunks(t *testing.T) {
 		{"/first.mp4", KindOther, false}, {"/font.woff2", KindFont, false},
 		{"/gpu.js", KindScript, true}, {"/inline.js", KindScript, false},
 		{"/later.png", KindImage, false}, {"/main.js", KindScript, false},
-		{"/poster.jpg", KindImage, false}, {"/style.css", KindStyle, false}, {"/thumb.png", KindImage, false},
+		{"/poster.jpg", KindImage, false}, {"/prefetched.js", KindScript, false}, {"/style.css", KindStyle, false}, {"/thumb.png", KindImage, false},
 	}
 	if !reflect.DeepEqual(set.Resources, want) {
 		t.Fatalf("active roots or conditional hints differ: %#v", set.Resources)

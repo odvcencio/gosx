@@ -194,7 +194,7 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 						addReference(out, attr(n, "href"), KindStyle, false)
 					case "modulepreload":
 						addReference(out, attr(n, "href"), KindScript, false)
-					case "preload":
+					case "preload", "prefetch":
 						kind := ""
 						switch strings.ToLower(attr(n, "as")) {
 						case "script":
