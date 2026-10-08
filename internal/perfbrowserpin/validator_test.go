@@ -248,12 +248,37 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 			want: "browser docs E2E gate: unexpected field \"if\"",
 		},
 		{
+			name:   "encoder browser skipped",
+			mutate: insertAfter("      - name: WebAssembly encoder browser validation\n", "        if: false\n"),
+			want:   "WebAssembly encoder browser validation: unexpected field \"if\"",
+		},
+		{
+			name:   "encoder browser failure ignored",
+			mutate: insertAfter("      - name: WebAssembly encoder browser validation\n", "        continue-on-error: true\n"),
+			want:   "WebAssembly encoder browser validation: unexpected field \"continue-on-error\"",
+		},
+		{
+			name:   "encoder browser availability weakened",
+			mutate: replace("          test -x \"$GOSX_CHROME_BIN\"\n", "          true\n"),
+			want:   "WebAssembly encoder browser validation.run",
+		},
+		{
+			name:   "encoder browser command masks failure",
+			mutate: replace("          make test-wasmgen\n", "          make test-wasmgen || true\n"),
+			want:   "WebAssembly encoder browser validation.run",
+		},
+		{
+			name:   "encoder browser source changed",
+			mutate: replaceBrowserOnce("          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}\n", "          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-version }}\n"),
+			want:   "WebAssembly encoder browser validation.env.GOSX_CHROME_BIN",
+		},
+		{
 			name: "pre-driver BASH_ENV injection",
 			mutate: insertAfterBrowser(
 				"        run: scripts/install-ci-tinygo.sh\n",
 				"\n      - name: Poison later shells\n        run: |\n          printf '%s\\n' 'sh() { :; }' 'make() { :; }' > /tmp/fail-open-shell-prelude\n          printf '%s\\n' 'BASH_ENV=/tmp/fail-open-shell-prelude' >> \"$GITHUB_ENV\"\n",
 			),
-			want: "browser-tests job.steps: got 12 steps, want exact governed roster of 11",
+			want: "browser-tests job.steps: got 13 steps, want exact governed roster of 12",
 		},
 		{
 			name: "governed ordering interrupted",
