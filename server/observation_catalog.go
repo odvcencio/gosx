@@ -36,12 +36,12 @@ type HeadConfigurable interface {
 // UseObservationCatalogObserver attaches an observer before the first Build.
 func (a *App) UseObservationCatalogObserver(o ObservationCatalogObserver) error {
 	if a == nil || o == nil {
-		return &telemetryerr.ConfigError{Field: "catalog_observer", Code: "required"}
+		return shutdownConfigError(&telemetryerr.ConfigError{Field: "catalog_observer", Code: "required"})
 	}
 	a.shutdown.mu.Lock()
 	defer a.shutdown.mu.Unlock()
 	if !a.ConfigurationOpen() {
-		return telemetryerr.ErrAfterBuild
+		return shutdownConfigError(telemetryerr.ErrAfterBuild)
 	}
 	a.catalogObservers = append(a.catalogObservers, o)
 	return nil

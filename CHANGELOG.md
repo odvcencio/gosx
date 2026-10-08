@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Catalog observer configuration errors use the `server:` namespace while
+  retaining their configuration identities for error inspection.
+
 - Expose bounded, copied catalogs of registered observation patterns, merging
   method sets across mounts without expanding router-relative paths. App head
   decorators now reach mounted router pages and errors through their existing
