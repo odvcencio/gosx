@@ -2295,3 +2295,187 @@ func TestLinkedPageOperationFailuresPreserveRootsAndInstanceSequences(t *testing
 		t.Fatalf("failed operation published roots or sequences: %+v", got)
 	}
 }
+
+func checkpointValidationFixture(t *testing.T) (*linkedLayout, wasmgen.Module, []byte) {
+	t.Helper()
+	u := checkpointRecordUnit(t)
+	u.Program.Signals = []program.SignalDef{u.Program.Signals[0], u.Program.Signals[3], u.Program.Signals[1], u.Program.Signals[2]}
+	u.Contract.Signals = []StateContract{u.Contract.Signals[0], u.Contract.Signals[3], u.Contract.Signals[1], u.Contract.Signals[2]}
+	for i := range u.Contract.Signals {
+		u.Contract.Signals[i].Slot = uint32(i)
+	}
+	u = refreshUnit(t, u)
+	other, _ := scalarInputUnit(t, "prop", Int32, true)
+	other.Component, other.Contract.Component, other.Program.Name = "example/components.NestedWire", "example/components.NestedWire", "NestedWire"
+	other = refreshUnit(t, other)
+	l, err := buildLinkedLayout([]Unit{other, u, staticUnit(t)}, DefaultOptions())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := linkProgramCode(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := checkpointValueTestModule(c)
+	m.Exports = append(m.Exports, wasmgen.Export{Name: "validateCheckpoint", Function: c.checkpointValidate})
+	integer := func(n int64) string { return scalarTransport(program.TypeInt, 0, n, "") }
+	text := scalarTransport(program.TypeString, 1, 0, "héllo\x00🌴e\u0301")
+	first := linkedProgramByName(t, l, u.Program.Name).state.programID
+	second := linkedProgramByName(t, l, other.Program.Name).state.programID
+	frames := []checkpointTestFrame{
+		{Instance: 0, Program: first, Last: 3, Locals: []checkpointTestValue{{0, integer(-2147483648)}, {2, scalarTransport(program.TypeBool, 0, 0, "")}, {3, scalarTransport(program.TypeString, 0, 0, "")}}, Inputs: []checkpointTestValue{{0, scalarTransport(program.TypeString, 1, 0, "")}}},
+		{Instance: 7, Program: second, Last: 6, Inputs: []checkpointTestValue{{0, scalarTransport(program.TypeAny, 0, 0, "")}}},
+		{Instance: 15, Program: first, Last: 0x8000000100000042, Locals: []checkpointTestValue{{0, integer(2147483647)}, {2, scalarTransport(program.TypeBool, 2, 0, "")}, {3, text}}, Inputs: []checkpointTestValue{{0, text}}},
+	}
+	wire := checkpointTestBytes(t, l.inputSetSHA, 0x80000001fffffff0, frames, []checkpointTestShared{{0, 0x8000000100000007, text}})
+	return l, m, wire
+}
+
+func TestLinkedCheckpointValidationAcceptsCanonicalPagesWithoutEffects(t *testing.T) {
+	l, m, document := checkpointValidationFixture(t)
+	retained := checkpointTestBytes(t, l.inputSetSHA, 0, nil, []checkpointTestShared{{0, 0, scalarTransport(program.TypeString, 0, 0, "")}})
+	var got struct {
+		Statuses []int32
+		Pure     bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], allocation = api.cursor();
+  let pure = true;
+  for (const packet of data) {
+    const document = Buffer.from(packet,'base64');
+    for (const base of [32769,65536-document.length]) {
+      memory.set(document,base);
+      const before = Buffer.from(memory);
+      statuses.push(api.validateCheckpoint(base,document.length));
+      pure = pure&&before.equals(Buffer.from(memory))&&api.cursor()===allocation&&api.status()===0&&api.pending()===0;
+    }
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Pure:pure}));`, []string{base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(retained)}, &got)
+	if !got.Pure || !reflect.DeepEqual(got.Statuses, []int32{0, 0, 0, 0}) {
+		t.Fatalf("canonical checkpoint validation: %+v", got)
+	}
+}
+
+func TestLinkedCheckpointValidationRejectsIdentitySchemaAndSequenceForgery(t *testing.T) {
+	l, m, document := checkpointValidationFixture(t)
+	type testCase struct {
+		Document string
+		Want     int32
+	}
+	var cases []testCase
+	for _, item := range []struct {
+		offset int
+		value  uint32
+		want   int32
+	}{{0, 0, 10}, {4, 2, 1}, {4, 65537, 1}, {8, uint32(len(document) + 1), 10},
+		{12, 0, 10}, {12, 17, 10}, {16, 0, 10}, {16, 2, 10}, {28, 16385, 4},
+		{24, 0, 10}, {64, 16, 10}, {68, uint32(len(l.programs)), 10}, {72, 2, 10}, {76, 0, 10},
+		{84, 4294967295, 10}, {88, 1, 10}, {116, 0, 10}, {92, 5, 10}, {104, 0, 3},
+		{120, 1, 10}, {124, 1, 10}, {148, 5, 10}, {152, 2, 10}, {200, 0, 10}, {252, 0, 10},
+		{224, 1, 10}, {228, 0, 10}, {388, 1, 10}, {396, 0x80000002, 10}, {400, 3, 10},
+		{416, 424, 10}, {352, 0, 10}, {352, 425, 10}, {380, 424, 10}, {344, 1, 10}, {356, 4097, 4}} {
+		modified := append([]byte{}, document...)
+		binary.LittleEndian.PutUint32(modified[item.offset:], item.value)
+		cases = append(cases, testCase{base64.StdEncoding.EncodeToString(modified), item.want})
+	}
+	for _, delta := range []int32{-1, 1} {
+		modified := append([]byte{}, document...)
+		length := binary.LittleEndian.Uint32(document[28:])
+		binary.LittleEndian.PutUint32(modified[28:], uint32(int32(length)+delta))
+		cases = append(cases, testCase{base64.StdEncoding.EncodeToString(modified), 10})
+	}
+	for offset := 32; offset < 64; offset++ {
+		modified := append([]byte{}, document...)
+		modified[offset] ^= 1
+		cases = append(cases, testCase{base64.StdEncoding.EncodeToString(modified), 10})
+	}
+	modified := append([]byte{}, document...)
+	modified[425] = 0xff
+	cases = append(cases, testCase{base64.StdEncoding.EncodeToString(modified), 10})
+	var got struct {
+		Statuses []int32
+		Pure     bool
+	}
+	runExpressionModule(t, m, `
+  const api = instance.exports, statuses = [], allocation = api.cursor();
+  let pure = true;
+  for (const item of data) {
+    const document = Buffer.from(item.Document,'base64');
+    memory.set(document,32768);
+    const before = Buffer.from(memory);
+    statuses.push(api.validateCheckpoint(32768,document.length));
+    pure = pure&&before.equals(Buffer.from(memory))&&api.status()===0&&api.cursor()===allocation;
+  }
+  process.stdout.write(JSON.stringify({Statuses:statuses,Pure:pure}));`, cases, &got)
+	if len(got.Statuses) != len(cases) || !got.Pure {
+		t.Fatal("checkpoint validation skipped documents or changed memory or transaction state")
+	}
+	for i, item := range cases {
+		if got.Statuses[i] != item.Want {
+			t.Fatalf("checkpoint forgery %d: %d want %d", i, got.Statuses[i], item.Want)
+		}
+	}
+}
+
+func TestLinkedCheckpointValidationRejectsEveryTruncationAndTrailingBytes(t *testing.T) {
+	_, m, document := checkpointValidationFixture(t)
+	body := len(document) - int(binary.LittleEndian.Uint32(document[28:]))
+	var cases []string
+	for length := 0; length < len(document); length++ {
+		modified := append([]byte{}, document[:length]...)
+		if length >= 64 {
+			binary.LittleEndian.PutUint32(modified[8:], uint32(length))
+			stringBytes := max(length-body, 0)
+			binary.LittleEndian.PutUint32(modified[28:], uint32(stringBytes))
+		}
+		cases = append(cases, base64.StdEncoding.EncodeToString(modified))
+	}
+	for _, adjustStrings := range []bool{false, true} {
+		modified := append(append([]byte{}, document...), 0)
+		binary.LittleEndian.PutUint32(modified[8:], uint32(len(modified)))
+		if adjustStrings {
+			binary.LittleEndian.PutUint32(modified[28:], binary.LittleEndian.Uint32(document[28:])+1)
+		}
+		cases = append(cases, base64.StdEncoding.EncodeToString(modified))
+	}
+	var got []int32
+	runExpressionModule(t, m, `
+  const statuses = [];
+  for (const packet of data) {
+    memory.fill(0,32768,65536);
+    const document = Buffer.from(packet,'base64');
+    memory.set(document,32768);
+    statuses.push(instance.exports.validateCheckpoint(32768,document.length));
+  }
+  process.stdout.write(JSON.stringify(statuses));`, cases, &got)
+	if len(got) != len(cases) {
+		t.Fatal("not every wire truncation was checked")
+	}
+	for i, status := range got {
+		if status != 10 {
+			t.Fatalf("checkpoint truncation/trailer %d: %d want 10", i, status)
+		}
+	}
+}
+
+func TestLinkedCheckpointValidationRejectsWidenedIOBounds(t *testing.T) {
+	_, m, document := checkpointValidationFixture(t)
+	length := uint32(len(document))
+	bounds := [][2]uint32{{32767, length}, {4294967295, length}, {65536 - length + 1, length},
+		{65536, 0}, {32768, 4294967295}, {32768, 32769}, {32768, 63}}
+	data := struct {
+		Document string
+		Bounds   [][2]uint32
+	}{base64.StdEncoding.EncodeToString(document), bounds}
+	var got []int32
+	runExpressionModule(t, m, `
+  memory.set(Buffer.from(data.Document,'base64'),32768);
+  process.stdout.write(JSON.stringify(data.Bounds.map(b=>instance.exports.validateCheckpoint(b[0],b[1]))));`, data, &got)
+	want := make([]int32, len(bounds))
+	for i := range want {
+		want[i] = 10
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("checkpoint IO bounds: %v", got)
+	}
+}
