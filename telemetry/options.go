@@ -156,6 +156,8 @@ func telemetrySwitch(value string) (bool, error) {
 // The environment can disable telemetry, but cannot reenable Disabled in code.
 // An environment secret never enables visitor identity. Values stay out of errors.
 // Credential files are read only at startup, not during this pure validation.
+// A nonempty environment credential replaces the corresponding code source.
+// Providing both token and token-file variables for one role remains an error.
 func FromEnv(base Options) (Options, error) {
 	var err error
 	if value, ok := os.LookupEnv("GOSX_TELEMETRY"); ok {
@@ -171,13 +173,23 @@ func FromEnv(base Options) (Options, error) {
 		dst  *string
 	}{
 		{"GOSX_TELEMETRY_ADDR", &base.Listen.Addr},
-		{"GOSX_TELEMETRY_METRICS_TOKEN", &base.Listen.Metrics.Token},
-		{"GOSX_TELEMETRY_METRICS_TOKEN_FILE", &base.Listen.Metrics.TokenFile},
-		{"GOSX_TELEMETRY_ADMIN_TOKEN", &base.Listen.Admin.Token},
-		{"GOSX_TELEMETRY_ADMIN_TOKEN_FILE", &base.Listen.Admin.TokenFile},
 	} {
 		if value, ok := os.LookupEnv(item.name); ok && value != "" {
 			*item.dst = value
+		}
+	}
+	for _, item := range []struct {
+		name string
+		dst  *Credential
+	}{{"GOSX_TELEMETRY_METRICS_TOKEN", &base.Listen.Metrics}, {"GOSX_TELEMETRY_ADMIN_TOKEN", &base.Listen.Admin}} {
+		token, file := os.Getenv(item.name), os.Getenv(item.name+"_FILE")
+		if token != "" && file != "" {
+			return Options{}, invalid("credential", "duplicate_source")
+		}
+		if token != "" {
+			*item.dst = Credential{Token: token}
+		} else if file != "" {
+			*item.dst = Credential{TokenFile: file}
 		}
 	}
 	if value, ok := os.LookupEnv("GOSX_TELEMETRY_SECRET"); ok && value != "" && base.Visitor.Enabled && base.Visitor.Key != nil {
@@ -191,6 +203,9 @@ func FromEnv(base Options) (Options, error) {
 
 func normalize(o Options) (Options, error) {
 	d := Defaults()
+	if strings.EqualFold(o.Listen.Addr, "off") {
+		o.Listen.Addr = "off"
+	}
 	if o.Mode > ModeDesktop {
 		return Options{}, invalid("mode", "enum")
 	}

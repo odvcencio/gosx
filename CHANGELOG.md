@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Accept telemetry listener `off` case-insensitively, reject Unix paths that
+  exceed the platform address limit, and allow a nonempty environment credential
+  to replace its code-configured token or file source. Two environment sources
+  for the same credential remain an error.
+
 - Add pure telemetry defaults and bounded, redacted option validation, plus
   portable wall/elapsed clock types and a deterministic fake clock. Wall jumps
   do not advance elapsed deadlines, and tickers need no conversion goroutine.
