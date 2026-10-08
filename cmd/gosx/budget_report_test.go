@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,11 +14,19 @@ import (
 
 func budgetPublicCommandFixture(t *testing.T) (string, string, *budget.Report) {
 	t.Helper()
-	root, err := filepath.Abs("../..")
+	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	body, err := os.ReadFile(filepath.Join(root, "perf/budget/testdata/public-report.v1.json"))
+	root, _ := budgetCommandFixture(t)
+	for _, args := range [][]string{{"init", "-q"}, {"add", "."}, {"-c", "user.name=Fixture", "-c", "user.email=fixture", "-c", "commit.gpgSign=false", "commit", "-qm", "Add fixtures"}} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = root
+		if err := cmd.Run(); err != nil {
+			t.Fatal("fixture repository setup failed", err)
+		}
+	}
+	body, err := os.ReadFile(filepath.Join(repo, "perf/budget/testdata/public-report.v1.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
