@@ -109,10 +109,14 @@ type App struct {
 	operations          []OperationObserver
 	clientEventsLogger  *slog.Logger
 	headDecorators      []HeadDecorator
+	catalogObservers    []ObservationCatalogObserver
+	catalogOnce         sync.Once
 	securityPolicy      SecurityPolicy
 	compressionOff      bool
 	legacyGzip          bool
 	configurationClosed atomic.Bool
+	draining            atomic.Bool
+	shutdown            appShutdown
 
 	schedulerOnce         sync.Once
 	scheduler             *scheduled.Scheduler
@@ -546,7 +550,9 @@ func (a *App) preloadGrammarBlob() {
 }
 
 func (a *App) Build() http.Handler {
+	a.shutdown.mu.Lock()
 	a.configurationClosed.Store(true)
+	a.shutdown.mu.Unlock()
 	a.preloadGrammarBlob()
 	a.warnStaleIslands()
 	mux := http.NewServeMux()
@@ -564,6 +570,7 @@ func (a *App) Build() http.Handler {
 	a.mux = mux
 	dispatch = a.buildDispatcher(mux, redirectMux, rewriteMux, mountMux)
 	a.registerRewriteRoutes(rewriteMux, dispatch)
+	a.notifyObservationCatalog()
 	// Regeneration must observe the same auth/session and cache boundaries as
 	// a normal request. It never calls the ISR lookup recursively.
 	regeneration := basepath.Handler(a.basePath, true, a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -639,21 +646,14 @@ func (a *App) SetClientEventsLogger(logger *slog.Logger) {
 // default options. Callers that never invoke Scheduler pay no overhead.
 func (a *App) Scheduler() *scheduled.Scheduler {
 	a.schedulerOnce.Do(func() {
+		a.shutdown.mu.Lock()
+		defer a.shutdown.mu.Unlock()
 		a.scheduler = scheduled.New(scheduled.Options{})
+		if a.draining.Load() {
+			_ = a.scheduler.StopContext(context.Background())
+		}
 	})
 	return a.scheduler
-}
-
-// Shutdown stops the scheduler (if one was created) and then gracefully shuts
-// down the HTTP server using the provided context.
-func (a *App) Shutdown(ctx context.Context) error {
-	if a.scheduler != nil {
-		a.scheduler.Stop(30 * time.Second)
-	}
-	if a.srv != nil {
-		return a.srv.Shutdown(ctx)
-	}
-	return nil
 }
 
 func (a *App) registerPageRoutes(mux *http.ServeMux) {
@@ -671,10 +671,11 @@ func (a *App) pageRouteHandler(route registeredPageRoute) http.Handler {
 			if recovered := recover(); recovered != nil {
 				err := panicError(recovered)
 				log.Printf("[gosx] page render panic on %s: %v", r.URL.Path, err)
-				a.renderError(w, r, err)
+				a.renderErrorPattern(w, r, err, pattern)
 			}
 		}()
 		ctx := newContext(r)
+		ctx.Pattern = pattern
 		node := handler(ctx)
 		a.renderPage(w, ctx, pattern, node, "GoSX")
 	})
@@ -697,6 +698,7 @@ func (a *App) apiRouteHandler(route registeredAPIRoute) http.Handler {
 			}
 		}()
 		ctx := newContext(r)
+		ctx.Pattern = pattern
 		payload, err := handler(ctx)
 		if err != nil {
 			writeJSONError(w, r, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.Header())
@@ -741,6 +743,9 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 	for _, route := range a.mounts {
 		pattern := route.pattern
 		handler := route.handler
+		if configurable, ok := handler.(HeadConfigurable); ok {
+			configurable.SetHeadDecorators(append([]HeadDecorator(nil), a.headDecorators...))
+		}
 		// Wired here, at Build time, rather than back in Mount — see the N3
 		// ordering note on EnableNavigation and Mount. This makes
 		// EnableNavigation order-independent relative to Mount: it only has
@@ -801,7 +806,13 @@ func (a *App) ListenAndServe(addr string) error {
 		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	a.shutdown.mu.Lock()
+	if a.draining.Load() {
+		a.shutdown.mu.Unlock()
+		return http.ErrServerClosed
+	}
 	a.srv = srv
+	a.shutdown.mu.Unlock()
 	a.Scheduler().Start(context.Background())
 	return srv.ListenAndServe()
 }
@@ -1073,6 +1084,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 }
 
 func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defaultTitle string) gosx.Node {
+	ctx.Pattern = pattern
 	// Render the body once up front so islands/engines/hubs register with the
 	// page runtime before we finalize managed head assets.
 	bodyHTML := gosx.RenderHTML(body)
@@ -1132,7 +1144,11 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
-	MarkObservedRequest(r, "error", "")
+	a.renderErrorPattern(w, r, err, "")
+}
+
+func (a *App) renderErrorPattern(w http.ResponseWriter, r *http.Request, err error, pattern string) {
+	MarkObservedRequest(r, "error", pattern)
 	if WriteDevelopmentError(w, r, err) {
 		return
 	}
@@ -1142,6 +1158,7 @@ func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 	}
 
 	ctx := newContext(r)
+	ctx.Pattern = pattern
 	ctx.SetStatus(errorStatus(err, 0, http.StatusInternalServerError))
 
 	var node gosx.Node
@@ -1155,7 +1172,7 @@ func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 		ctx.SetMetadata(Metadata{Title: Title{Absolute: title}})
 		node = defaultStatusBody(title, defaultErrorMessage(err, r))
 	}
-	a.renderPage(w, ctx, "", node, http.StatusText(ctx.status))
+	a.renderPage(w, ctx, pattern, node, http.StatusText(ctx.status))
 }
 
 func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
@@ -1225,6 +1242,12 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	report := ReadinessReport{OK: true}
+	if a.draining.Load() {
+		report.OK = false
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(report)
+		return
+	}
 	for _, entry := range a.readyChecks {
 		if entry.check == nil {
 			continue

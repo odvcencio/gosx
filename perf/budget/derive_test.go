@@ -4,25 +4,18 @@ import (
 	"encoding/json"
 	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
 func deriveInputs(t *testing.T) (File, Profile, Coefficients) {
 	t.Helper()
-	f, err := Load("testdata/budget.v2.json", LoadOptions{})
+	inputs, err := loadInputs("testdata/budget.v2.json", LoadOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err := LoadProfile("testdata/profile.v1.json", LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	c, err := LoadCoefficients("testdata/coefficients.v1.json", LoadOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	return *f, *p, *c
+	return inputs.file, inputs.profile, inputs.coefficients
 }
 
 func workedFile(t *testing.T) (File, Profile, Coefficients) {
@@ -32,21 +25,21 @@ func workedFile(t *testing.T) (File, Profile, Coefficients) {
 	f.PageTypes = make(map[string]PageType)
 	for _, row := range []struct {
 		name, metric, network string
-		goal                  float64
+		goal                  json.Number
 		js, wasm, exp         int64
 	}{
-		{"static", "lcp", "slow4g", 1500, 0, 0, 100},
-		{"enhanced", "lcp", "slow4g", 2000, 650000, 0, 100},
-		{"island", "island_interactive", "slow4g", 3500, 200000, 730000, 304},
-		{"engine/js", "engine_first_tick", "p75", 3500, 650000, 0, 100},
-		{"engine/shared", "engine_first_tick", "p75", 3500, 250000, 650000, 343},
-		{"go-wasm", "engine_first_tick", "p75", 4000, 120000, 780000, 343},
-		{"video", "video_first_frame", "p75", 3000, 150000, 0, 100},
-		{"scene3d/shared", "fif", "p75", 3000, 350000, 600000, 343},
-		{"game/shared", "fif", "p75", 4000, 350000, 600000, 343},
-		{"preview", "enhancement_ready", "p75", 4000, 500000, 450000, 304},
-		{"scene3d/js", "fif", "p75", 3000, 750000, 0, 100},
-		{"game/js", "fif", "p75", 4000, 750000, 0, 100},
+		{"static", "lcp", "slow4g", "1500", 0, 0, 100},
+		{"enhanced", "lcp", "slow4g", "2000", 650000, 0, 100},
+		{"island", "island_interactive", "slow4g", "3500", 200000, 730000, 304},
+		{"engine/js", "engine_first_tick", "p75", "3500", 650000, 0, 100},
+		{"engine/shared", "engine_first_tick", "p75", "3500", 250000, 650000, 343},
+		{"go-wasm", "engine_first_tick", "p75", "4000", 120000, 780000, 343},
+		{"video", "video_first_frame", "p75", "3000", 150000, 0, 100},
+		{"scene3d/shared", "fif", "p75", "3000", 350000, 600000, 343},
+		{"game/shared", "fif", "p75", "4000", 350000, 600000, 343},
+		{"preview", "enhancement_ready", "p75", "4000", 500000, 450000, 304},
+		{"scene3d/js", "fif", "p75", "3000", 750000, 0, 100},
+		{"game/js", "fif", "p75", "4000", 750000, 0, 100},
 	} {
 		page := base
 		page.PrimaryMetric = row.metric
@@ -102,9 +95,9 @@ func TestDeriveWorkedRows(t *testing.T) {
 		t.Fatal("derive mutated input")
 	}
 	page := derived.PageTypes["island"]
-	page.Goals[0].Max = 1
+	page.Goals[0].Max = "1"
 	derived.PageTypes["island"] = page
-	if f.PageTypes["island"].Goals[0].Max != 3500 {
+	if f.PageTypes["island"].Goals[0].Max != "3500" {
 		t.Fatal("result aliases input slices")
 	}
 }
@@ -134,7 +127,7 @@ func TestDeriveRejectAlteredResults(t *testing.T) {
 			f.PageTypes["island"] = p
 		},
 		"wire": func(f *File) { p := f.PageTypes["island"]; p.WireEnvelope.TotalBytes++; f.PageTypes["island"] = p },
-		"goal": func(f *File) { p := f.PageTypes["island"]; p.Goals[0].Max += 100; f.PageTypes["island"] = p },
+		"goal": func(f *File) { p := f.PageTypes["island"]; p.Goals[0].Max = "3600"; f.PageTypes["island"] = p },
 		"pin":  func(f *File) { f.Toolchain.SHA256 = strings.Repeat("f", 64) },
 		"metric": func(f *File) {
 			p := f.PageTypes["island"]
@@ -166,12 +159,12 @@ func TestDeriveLimitsAndUnknowns(t *testing.T) {
 	for name, edit := range map[string]func(*File, *Coefficients){
 		"negative-window": func(f *File, _ *Coefficients) {
 			p := f.PageTypes["island"]
-			p.Goals[0].Max = 100
+			p.Goals[0].Max = "100"
 			f.PageTypes["island"] = p
 		},
 		"search-limit": func(f *File, _ *Coefficients) {
 			p := f.PageTypes["island"]
-			p.Goals[0].Max = 1e9
+			p.Goals[0].Max = "1e9"
 			f.PageTypes["island"] = p
 		},
 		"critical-reserve": func(f *File, _ *Coefficients) {
@@ -242,5 +235,28 @@ func TestDeriveMeasuredEndpoints(t *testing.T) {
 	}
 	if model.slope.Cmp(new(big.Rat).SetFrac64(14774, 10000)) != 0 {
 		t.Fatal("wrong upper-endpoint slope", model.slope)
+	}
+}
+
+func TestDeriveUsesLoadedInputs(t *testing.T) {
+	path := configFixture(t, nil)
+	inputs, err := loadInputs(path, LoadOptions{RootDir: filepath.Dir(path)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.toolchain.Brotli != "v1.2.1" {
+		t.Fatal("toolchain not retained with the loaded inputs")
+	}
+	for _, ref := range []Ref{inputs.file.Profile, inputs.file.Coefficients, inputs.file.Toolchain} {
+		if err := os.Remove(filepath.Join(filepath.Dir(path), ref.File)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	derived, err := Derive(inputs.file, inputs.profile, inputs.coefficients)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := VerifyDerivation(derived, inputs.profile, inputs.coefficients); err != nil {
+		t.Fatal(err)
 	}
 }
