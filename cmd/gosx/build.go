@@ -638,10 +638,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines, "engines"},
 		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs, "hubs"},
 		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers, "controllers"},
+		{"bootstrap-controller-input", filepath.Join(gosxRoot, "client", "js", "bootstrap-controller-input.js"), &manifest.Runtime.BootstrapControllerInput, "controllers"},
 		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout, "textlayout"},
 		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D, "scene3d"},
 		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand, "scene3d"},
 		{"bootstrap-feature-scene3d-hydrate", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hydrate.js"), &manifest.Runtime.BootstrapFeatureScene3DHydrate, "scene3d"},
+		{"bootstrap-feature-scene3d-pipeline-recovery", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-pipeline-recovery.js"), &manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery, "scene3d"},
 		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU, "scene3d"},
 		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL, "scene3d"},
 		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF, "scene3d"},
@@ -799,6 +801,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		manifest.Runtime.BootstrapFeatureEngines.File,
 		manifest.Runtime.BootstrapFeatureHubs.File,
 		manifest.Runtime.BootstrapFeatureControllers.File,
+		manifest.Runtime.BootstrapControllerInput.File,
 		manifest.Runtime.BootstrapFeatureTextlayout.File,
 		manifest.Runtime.Patch.File,
 		manifest.Runtime.VideoHLS.File,
@@ -1314,6 +1317,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureHubs.File)
 	case "/gosx/bootstrap-feature-controllers.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureControllers.File)
+	case "/gosx/bootstrap-controller-input.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapControllerInput.File)
 	case "/gosx/bootstrap-feature-textlayout.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureTextlayout.File)
 	case "/gosx/bootstrap-feature-scene3d.js":
@@ -1322,6 +1327,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCommand.File)
 	case "/gosx/bootstrap-feature-scene3d-hydrate.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
+	case "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery.File)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
 	case "/gosx/bootstrap-feature-scene3d-webgl.js":

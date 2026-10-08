@@ -90,6 +90,7 @@
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
+        "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
@@ -199,6 +200,12 @@
       ]
     },
     {
+      "name": "bootstrap-controller-input.js",
+      "sources": [
+        "../runtime/host/controller-input.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
         "bootstrap-src/26i-feature-textlayout-prefix.ts",
@@ -244,6 +251,7 @@
         "../runtime/scene3d/mount-controls.ts",
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
+        "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"
       ]
@@ -284,6 +292,12 @@
       "name": "bootstrap-feature-scene3d-hydrate.js",
       "sources": [
         "../runtime/scene3d/hydrate-input.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-scene3d-pipeline-recovery.js",
+      "sources": [
+        "../runtime/scene3d/pipeline-recovery.ts"
       ]
     },
     {

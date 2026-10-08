@@ -17,6 +17,7 @@
     "scene3d/webgl.ts",
     "scene3d/webgpu-detail.ts",
     "scene3d/webgpu.ts",
+    "scene3d/pipeline-recovery.ts",
     "scene3d/mount-webgl.ts",
     "scene3d/gltf.ts",
     "scene3d/mount.ts",
@@ -49,6 +50,7 @@
     "scene3d/webgl-depth-post.ts",
     "scene3d/webgl-contact-shadows.ts",
     "scene3d/webgl-taa.ts",
-    "scene3d/webgpu-contact-shadows.ts"
+    "scene3d/webgpu-contact-shadows.ts",
+    "scene3d/mount-input.ts"
   ]
 }

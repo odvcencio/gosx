@@ -53,6 +53,7 @@ type Renderer struct {
 	bootstrapFeatureEnginesPath        string
 	bootstrapFeatureHubsPath           string
 	bootstrapFeatureControllersPath    string
+	bootstrapControllerInputPath       string
 	bootstrapFeatureScene3dPath        string
 	bootstrapFeatureScene3dCommandPath string
 	// bootstrapFeatureScene3dInstanceStreamPath serves the opt-in binary
@@ -62,9 +63,10 @@ type Renderer struct {
 	// caller's first handle.applyInstanceStream(bytes) call, so the URL
 	// must be on the page before any scene-content heuristic could ever
 	// decide the page "needs" it — there is no such heuristic.
-	bootstrapFeatureScene3dInstanceStreamPath string
-	bootstrapFeatureScene3dHydratePath        string
-	bootstrapFeatureScene3dWebGPUPath         string
+	bootstrapFeatureScene3dInstanceStreamPath   string
+	bootstrapFeatureScene3dHydratePath          string
+	bootstrapFeatureScene3dPipelineRecoveryPath string
+	bootstrapFeatureScene3dWebGPUPath           string
 	// bootstrapFeatureScene3dWebGLPath serves the WebGL2 renderer, which now
 	// loads on demand. A WebGPU-capable browser never fetches it. The mount
 	// code also fetches it when a WebGPU device is lost, so the fallback
@@ -123,6 +125,7 @@ type Summary struct {
 	BootstrapFeatureEnginesPath     string
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
+	BootstrapControllerInputPath    string
 	BootstrapFeatureScene3DPath     string
 	// BootstrapFeatureTextLayoutPath is the content-hashed text-layout chunk
 	// URL, set on Scene3D pages. The client fetches that chunk on demand for
@@ -223,10 +226,12 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
 	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
 	renderer.bootstrapFeatureControllersPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-controllers.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureControllers.Hash))
+	renderer.bootstrapControllerInputPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-controller-input.js", strings.TrimSpace(runtimeAssets.BootstrapControllerInput.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
 	renderer.bootstrapFeatureScene3dCommandPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-command.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCommand.Hash))
 	renderer.bootstrapFeatureScene3dInstanceStreamPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-instance-stream.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DInstanceStream.Hash))
 	renderer.bootstrapFeatureScene3dHydratePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hydrate.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHydrate.Hash))
+	renderer.bootstrapFeatureScene3dPipelineRecoveryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DPipelineRecovery.Hash))
 	renderer.bootstrapFeatureScene3dWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash))
 	renderer.bootstrapFeatureScene3dWebGLPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgl.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGL.Hash))
 	renderer.bootstrapFeatureScene3dGLTFPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-gltf.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DGLTF.Hash))
@@ -519,6 +524,14 @@ func (r *Renderer) SetBootstrapFeatureControllersPath(path string) {
 	r.bootstrapFeatureControllersPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapControllerInputPath overrides the demand-loaded input chunk URL.
+func (r *Renderer) SetBootstrapControllerInputPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapControllerInputPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureTextlayoutPath overrides the demand-loaded text-layout
 // engine chunk URL.
 func (r *Renderer) SetBootstrapFeatureTextlayoutPath(path string) {
@@ -572,6 +585,15 @@ func (r *Renderer) SetBootstrapFeatureScene3DHydratePath(path string) {
 		return
 	}
 	r.bootstrapFeatureScene3dHydratePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DPipelineRecoveryPath overrides the lazy pipeline recovery
+// chunk URL. The renderer emits it only for a shared Scene3D program.
+func (r *Renderer) SetBootstrapFeatureScene3DPipelineRecoveryPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dPipelineRecoveryPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
 // SetBootstrapFeatureScene3DWebGLPath overrides the demand-loaded Scene3D
@@ -746,6 +768,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureHubs, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-controllers.js", r.bootstrapFeatureControllersPath, r.runtimeAssets.BootstrapFeatureControllers):
 		return r.runtimeAssets.BootstrapFeatureControllers, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-controller-input.js", r.bootstrapControllerInputPath, r.runtimeAssets.BootstrapControllerInput):
+		return r.runtimeAssets.BootstrapControllerInput, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d.js", r.bootstrapFeatureScene3dPath, r.runtimeAssets.BootstrapFeatureScene3D):
 		return r.runtimeAssets.BootstrapFeatureScene3D, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-command.js", r.bootstrapFeatureScene3dCommandPath, r.runtimeAssets.BootstrapFeatureScene3DCommand):
@@ -754,6 +778,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DInstanceStream, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-hydrate.js", r.bootstrapFeatureScene3dHydratePath, r.runtimeAssets.BootstrapFeatureScene3DHydrate):
 		return r.runtimeAssets.BootstrapFeatureScene3DHydrate, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", r.bootstrapFeatureScene3dPipelineRecoveryPath, r.runtimeAssets.BootstrapFeatureScene3DPipelineRecovery):
+		return r.runtimeAssets.BootstrapFeatureScene3DPipelineRecovery, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgpu.js", r.bootstrapFeatureScene3dWebGPUPath, r.runtimeAssets.BootstrapFeatureScene3DWebGPU):
 		return r.runtimeAssets.BootstrapFeatureScene3DWebGPU, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgl.js", r.bootstrapFeatureScene3dWebGLPath, r.runtimeAssets.BootstrapFeatureScene3DWebGL):
@@ -816,7 +842,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 		return path
 	}
 	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -918,11 +944,13 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
 	r.SetBootstrapFeatureControllersPath(runtime.BootstrapFeatureControllers)
+	r.SetBootstrapControllerInputPath(runtime.BootstrapControllerInput)
 	r.SetBootstrapFeatureTextlayoutPath(runtime.BootstrapFeatureTextlayout)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
 	r.SetBootstrapFeatureScene3DCommandPath(runtime.BootstrapFeatureScene3DCommand)
 	r.SetBootstrapFeatureScene3DInstanceStreamPath(runtime.BootstrapFeatureScene3DInstanceStream)
 	r.SetBootstrapFeatureScene3DHydratePath(runtime.BootstrapFeatureScene3DHydrate)
+	r.SetBootstrapFeatureScene3DPipelineRecoveryPath(runtime.BootstrapFeatureScene3DPipelineRecovery)
 	r.SetBootstrapFeatureScene3DWebGPUPath(runtime.BootstrapFeatureScene3DWebGPU)
 	r.SetBootstrapFeatureScene3DWebGLPath(runtime.BootstrapFeatureScene3DWebGL)
 	r.SetBootstrapFeatureScene3DGLTFPath(runtime.BootstrapFeatureScene3DGLTF)
@@ -2178,6 +2206,12 @@ func (r *Renderer) Summary() Summary {
 		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
 		summary.BootstrapFeatureControllersPath = r.selectedBootstrapFeaturePath("controllers")
 		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
+	}
+	for _, entry := range r.manifest.Controllers {
+		if entry.Config.NeedsInputRuntime() {
+			summary.BootstrapControllerInputPath = r.bootstrapControllerInputPath
+			break
+		}
 	}
 	if plan.Mode == "lite" {
 		summary.PatchPath = ""
