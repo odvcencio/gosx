@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -172,5 +173,69 @@ func TestSlowClientUsesIntervalDropDelta(t *testing.T) {
 	c.binaryDropped.Store(^uint64(0))
 	if !c.slowClient(5 * time.Second) {
 		t.Fatal("drop arithmetic overflow bypassed eviction")
+	}
+}
+
+// simulateSlowClientChecks drives slowClient from shared ticks, each delayed
+// by a small deterministic handling time. It returns the check windows, the
+// time of the first eviction (or -1), and the number of ticks run.
+func simulateSlowClientChecks(t *testing.T, checkInterval time.Duration, dropFactor float64, total time.Duration) (windows []time.Duration, evictedAt time.Duration) {
+	t.Helper()
+	const threshold = 1000
+	c, _, _ := syntheticTransportClient(t)
+	c.transport.slow = SlowClientPolicy{DropThreshold: threshold, CheckInterval: checkInterval}
+	interval := c.transport.interval()
+	rng := rand.New(rand.NewPCG(uint64(checkInterval), 7))
+	perSecond := dropFactor * threshold / checkInterval.Seconds()
+	var added uint64
+	last := time.Duration(0)
+	for k := time.Duration(1); k*interval <= total; k++ {
+		now := k*interval + 100*time.Microsecond + time.Duration(rng.Int64N(int64(4900*time.Microsecond)))
+		want := uint64(perSecond * (k * interval).Seconds())
+		c.textDropped.Add(want - added)
+		added = want
+		before := c.transport.lastCheck
+		evict := c.slowClient(now)
+		if c.transport.lastCheck != before {
+			windows = append(windows, now-last)
+			last = now
+		}
+		if evict {
+			return windows, now
+		}
+	}
+	return windows, -1
+}
+
+func TestSlowClientChecksFollowConfiguredInterval(t *testing.T) {
+	for _, seconds := range []int{1, 5, 7, 10, 20, 30, 40, 50, 60} {
+		checkInterval := time.Duration(seconds) * time.Second
+		t.Run(checkInterval.String(), func(t *testing.T) {
+			interval := (&transportState{slow: SlowClientPolicy{DropThreshold: 1, CheckInterval: checkInterval}}).interval()
+			low, high := checkInterval-interval/2, checkInterval+interval/2
+
+			windows, evictedAt := simulateSlowClientChecks(t, checkInterval, 0.6, time.Hour)
+			if evictedAt >= 0 {
+				t.Fatalf("client at 0.6x the threshold rate evicted at %v", evictedAt)
+			}
+			if len(windows) == 0 {
+				t.Fatal("no checks ran")
+			}
+			for i, w := range windows {
+				if w < low || w > high {
+					t.Fatalf("window %d = %v, want within [%v, %v]", i, w, low, high)
+				}
+			}
+
+			windows, evictedAt = simulateSlowClientChecks(t, checkInterval, 1.5, time.Hour)
+			if evictedAt < 0 || evictedAt > 2*high {
+				t.Fatalf("client at 1.5x the threshold rate evicted at %v, want within %v", evictedAt, 2*high)
+			}
+			for i, w := range windows {
+				if w < low || w > high {
+					t.Fatalf("window %d = %v, want within [%v, %v]", i, w, low, high)
+				}
+			}
+		})
 	}
 }
