@@ -1,15 +1,17 @@
 'use strict';
-/* Bounded, causal four-mode verifier for the Scene3D CUBICSPLINE browser
+/* Bounded, causal five-mode verifier for the Scene3D CUBICSPLINE and textured GLB browser
  * renderer proof. One selected Chrome binary runs every mode:
  *
  *   positive      native WebGL2 canvas + WebGPU private-target renderer proof
  *   gap100        the same proof with a 100ms atomic restore scheduler gap
  *   no-draw       WebGPU draw suppression must fail only the pixel oracle
  *   no-submit     WebGPU submit suppression must fail forwarding + pixels
+ *   white-texture an embedded white image must fail both texture color oracles
  *
- * A negative mode is accepted only when its exact WebGPU oracle diagnostics
+ * A draw/submit negative mode is accepted only when its exact WebGPU oracle diagnostics
  * appear while WebGL pixels, WebGPU pass/submit counters, analytic vertices,
- * identity, restoration, telemetry, and network surfaces remain green. */
+ * identity, restoration, telemetry, and network surfaces remain green. The
+ * white-image control must fail only the eight texture color checks. */
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -37,6 +39,7 @@ const HARNESS = path.join(REPO, 'client', 'js', 'testdata',
   'scene3d-cubic-spline-browser.cjs');
 const fixture = require(path.join(REPO, 'client', 'js', 'testdata',
   'cubic-spline-fixture.cjs'));
+const texturedFixture = require('./textured-glb-fixture.cjs');
 const CHROME_BIN = process.env.GOSX_CHROME_BIN || '/usr/bin/google-chrome';
 const EXPECTED_VERSION_ENV = 'GOSX_EXPECTED_CHROME_VERSION';
 const IDENTITY_SELF_CHECK_ENV = 'GOSX_SCENE3D_CUBIC_IDENTITY_SELF_CHECK_ONLY';
@@ -77,6 +80,7 @@ const MODES = [
   { name: 'gap100', mutation: '', gapMS: 100, expectedExitCode: 0 },
   { name: 'no-draw', mutation: 'webgpu-no-draw', gapMS: 0, expectedExitCode: 1 },
   { name: 'no-submit', mutation: 'webgpu-no-submit', gapMS: 0, expectedExitCode: 1 },
+  { name: 'white-texture', mutation: 'texture-white', gapMS: 0, expectedExitCode: 1 },
 ];
 
 const NEGATIVE_ERRORS = {
@@ -95,8 +99,11 @@ const NEGATIVE_ERRORS = {
     '[wg] restored product queue submission was not forwarded',
     '[wg] restored mapped renderer target contains 0 non-background pixels, expected > 20',
   ],
+  'white-texture': ['textured-gl', 'textured-wg'].flatMap((name) =>
+    ['red', 'green', 'blue', 'yellow'].map((color) =>
+      '[' + name + '] texture lacks ' + color + ' pixels (expected >= 100)')),
 };
-const EXPECTED_CASE_NAMES = Object.freeze(['affine-gl', 'affine-wg', 'gl', 'wg']);
+const EXPECTED_CASE_NAMES = Object.freeze(['affine-gl', 'affine-wg', 'gl', 'wg', 'textured-gl', 'textured-wg']);
 const AFFINE_PARENT = Object.freeze([
   -2, 0, 0, 0,
   0, 1, 0, 0,
@@ -125,6 +132,8 @@ function verifyHostedClaimSources() {
     matrix: __filename,
     diagnostics: path.join(REPO, 'client', 'js', 'testdata',
       'scene3d-browser-diagnostics.cjs'),
+    texturedFixture: path.join(REPO, 'client', 'js', 'testdata',
+      'textured-glb-fixture.cjs'),
     workflow: path.join(REPO, '.github', 'workflows', 'ci.yml'),
     corpus: path.join(REPO, 'scene', 'harness', 'testdata', 'v1-corpus.json'),
     readme: path.join(REPO, 'README.md'),
@@ -994,6 +1003,93 @@ function checkTopLevel(failures, report, mode, browser) {
     EXPECTED_CASE_NAMES, 'report.case order');
 }
 
+function checkTextured(failures, value, webgpu, mode) {
+  const name = webgpu ? 'textured-wg' : 'textured-gl';
+  check(failures, value && typeof value === 'object', name + ': case missing');
+  if (!value) return;
+  exact(failures, value.kind, 'gltf-single-buffer-textured', name + '.kind');
+  exact(failures, value.webgpu, webgpu, name + '.webgpu');
+  exact(failures, value.modelLoaded, true, name + '.modelLoaded');
+  const png = texturedFixture.quadrantPNG(mode.name === 'white-texture');
+  const images = value.embeddedImages;
+  check(failures, Array.isArray(images) && images.length === 1, name + '.embeddedImages missing');
+  if (images && images.length === 1) {
+    exact(failures, images[0].type, 'image/png', name + '.embeddedImages.type');
+    exact(failures, images[0].size, png.length, name + '.embeddedImages.size');
+    exact(failures, images[0].sha256, crypto.createHash('sha256').update(png).digest('hex'), name + '.embeddedImages.sha256');
+    check(failures, /^blob:http:\/\/127\.0\.0\.1:\d+\/[a-f0-9-]+$/.test(images[0].url), name + '.embeddedImages.url');
+  }
+  exact(failures, value.attrs, { mounted: 'true', renderer: webgpu ? 'webgpu' : 'webgl', fallback: null }, name + '.attrs');
+  const pixels = webgpu ? value.readback : value.pixelStats;
+  check(failures, pixels && pixels.width === 320 && pixels.height === 180 &&
+    (webgpu ? pixels.foregroundPixels : pixels.nonBackgroundPixels) > 20,
+  name + ': native pixels missing');
+  exact(failures, value.textureColors, pixels && pixels.textureColors, name + '.textureColors receipt');
+  for (const color of ['red', 'green', 'blue', 'yellow']) {
+    const count = value.textureColors && value.textureColors[color];
+    if (mode.name === 'white-texture') exact(failures, count, 0, name + '.textureColors.' + color);
+    else check(failures, Number.isInteger(count) && count >= 100 && count <= 320 * 180,
+      name + '.textureColors.' + color + ' must contain >= 100 actual pixels');
+  }
+  if (!webgpu) {
+    exact(failures, value.draw && value.draw.gl, 'webgl2', name + '.draw.gl');
+    check(failures, value.draw && value.draw.draws > 0, name + '.draws missing');
+  } else {
+    check(failures, value.draw && value.draw.wgPasses > 0 && value.draw.wgSubmits > 0,
+      name + ': WebGPU pass/submission missing');
+    const proof = value.webgpuProof, diagnostics = value.webgpuDiagnostics;
+    check(failures, diagnostics && diagnostics.ready === true && diagnostics.deviceAvailable === true &&
+      diagnostics.error === '' && diagnostics.lost === null, name + '.webgpuDiagnostics invalid');
+    exact(failures, diagnostics && diagnostics.adapterAvailable, true, name + '.adapterAvailable');
+    exact(failures, diagnostics && diagnostics.adapterInfo &&
+      String(diagnostics.adapterInfo.architecture).toLowerCase(), 'swiftshader', name + '.adapter architecture');
+    exact(failures, diagnostics && diagnostics.warnings, [], name + '.device warnings');
+    check(failures, proof && proof.proofTarget === EXPECTED_PROOF_TARGET &&
+      proof.renderTargetKind === 'proof-private-gpu-texture' && proof.canvasPresented === false,
+    name + '.webgpuProof missing private target scope');
+    exact(failures, proof && proof.failures, [], name + '.webgpuProof.failures');
+    exact(failures, proof && proof.capturedLabels, [name + '-texture'], name + '.webgpuProof.capturedLabels');
+    if (pixels) {
+      exact(failures, pixels.label, name + '-texture', name + '.readback.label');
+      exact(failures, pixels.renderTargetKind, 'proof-private-gpu-texture', name + '.readback.kind');
+      exact(failures, pixels.canvasPresented, false, name + '.readback.canvasPresented');
+      exact(failures, pixels.byteLength, 320 * 180 * 4, name + '.readback.byteLength');
+      check(failures, /^[a-f0-9]{64}$/.test(pixels.pixelSHA256 || ''), name + '.readback.pixelSHA256 invalid');
+      for (const key of ['returnedToProduct', 'productRenderPassLinked', 'productCommandBufferLinked',
+        'productQueueMatched', 'productSubmissionForwarded']) {
+        exact(failures, pixels[key], true, name + '.readback.' + key);
+      }
+      exact(failures, pixels.proofCommandKinds, ['copyTextureToBuffer'], name + '.readback.proofCommandKinds');
+      for (const key of ['nativeConfigureCalls', 'nativeGetCurrentTextureCalls']) {
+        exact(failures, pixels[key], 0, name + '.readback.' + key);
+        exact(failures, proof && proof[key], 0, name + '.webgpuProof.' + key);
+      }
+      for (const key of ['sequence', 'targetGeneration', 'configureSequence', 'getCurrentTextureSequence',
+        'targetViewSequence', 'renderPassSequence', 'commandBufferSequence', 'productSubmitSequence', 'proofCopySequence']) {
+        check(failures, Number.isInteger(pixels[key]) && pixels[key] > 0, name + '.readback.' + key + ' invalid');
+      }
+      for (const key of ['contextID', 'deviceID', 'queueID', 'targetID']) {
+        check(failures, typeof pixels[key] === 'string' && pixels[key] !== '', name + '.readback.' + key + ' missing');
+      }
+      exact(failures, pixels.sequence, proof && proof.proofCopySubmitCalls, name + '.readback.copy count');
+      check(failures, (pixels.targetUsage & 0x11) === 0x11, name + '.readback target usage invalid');
+      const targets = proof && Array.isArray(proof.configuredTargets) ? proof.configuredTargets : [];
+      exact(failures, proof && proof.targetGenerationCount, targets.length, name + '.target generation count');
+      exact(failures, proof && proof.interceptedConfigureCalls,
+        targets.length + (proof && proof.reusedConfigureCalls), name + '.configure count');
+      const returned = targets.filter((target) => target.returnedToProduct === true);
+      exact(failures, returned.length, 1, name + '.returned target count');
+      const target = returned[0];
+      for (const key of ['contextID', 'deviceID', 'queueID', 'targetID', 'targetGeneration', 'configureSequence',
+        'format', 'targetUsage', 'alphaMode', 'colorSpace', 'toneMapping']) {
+        exact(failures, pixels[key], target && target[key], name + '.readback.target.' + key);
+      }
+    }
+  }
+  exact(failures, value.disposed, true, name + '.disposed');
+  checkTelemetry(failures, value.telemetry, name + '.telemetry');
+}
+
 function verifyReport(report, mode, browser) {
   const failures = [];
   check(failures, report && typeof report === 'object', 'report is not an object');
@@ -1009,6 +1105,10 @@ function verifyReport(report, mode, browser) {
   checkAffine(failures, affineWG, true);
   checkGL(failures, gl);
   checkWG(failures, wg, mode);
+  for (const webgpu of [false, true]) {
+    const name = webgpu ? 'textured-wg' : 'textured-gl';
+    checkTextured(failures, Array.isArray(report.cases) && report.cases.find((value) => value.name === name), webgpu, mode);
+  }
   return failures;
 }
 
@@ -1293,7 +1393,7 @@ function runMode(mode, browser) {
     for (const error of receipt.errors) console.error('  ' + error);
     process.exit(1);
   }
-  console.log('Scene3D browser-renderer proof matrix verified all four modes');
+  console.log('Scene3D browser-renderer proof matrix verified all five modes');
 })().catch((error) => {
   receipt.finishedAt = new Date().toISOString();
   receipt.verified = false;
