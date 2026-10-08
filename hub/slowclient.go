@@ -58,16 +58,19 @@ func (h *Hub) warnInvalidSlowClient(now time.Time) {
 }
 
 // slowClient is called by the writer's existing timer, outside connection/hub
-// locks. Each interval uses a fresh delta, never the lifetime drop total.
+// locks. Each interval uses a fresh delta, never the lifetime drop total. A
+// tick that lands within half a tick of CheckInterval counts as due, so checks
+// follow the shared tick without skipping every second one.
 func (c *Client) slowClient(now time.Duration) bool {
 	s := c.transport
-	if s.slow.DropThreshold == 0 || now-s.lastCheck < s.slow.CheckInterval {
+	elapsed := now - s.lastCheck
+	if s.slow.DropThreshold == 0 || elapsed+s.interval()/2 <= s.slow.CheckInterval {
 		return false
 	}
 	drops := c.DropStats()
 	text, binary := drops.Text-s.lastDrops.Text, drops.Binary-s.lastDrops.Binary
 	s.lastDrops, s.lastCheck = drops, now
-	threshold := uint64(s.slow.DropThreshold)
-	// Comparing before summing avoids overflow even at saturated totals.
-	return text >= threshold || binary >= threshold || text >= threshold-binary
+	// A window shorter than CheckInterval needs proportionally fewer drops.
+	limit := float64(s.slow.DropThreshold) * float64(min(elapsed, s.slow.CheckInterval)) / float64(s.slow.CheckInterval)
+	return float64(text)+float64(binary) >= limit
 }
