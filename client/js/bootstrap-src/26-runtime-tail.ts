@@ -26,6 +26,7 @@
 
   function bootstrapFeatureAPI() {
     return {
+      ensureBootstrapFeature,
       engineFactories,
       fetchProgram,
       inferProgramFormat,
@@ -90,18 +91,16 @@
     return prefix + path;
   }
 
+  function bootstrapFeatureKey(name) {
+    return "bootstrapFeature" + String(name).replace(/(^|-)([a-z0-9])/g, function(_m, _sep, ch) { return ch.toUpperCase(); }) + "Path";
+  }
+
   function bootstrapFeatureURL(name) {
     const assets = runtimeFeatureAssets();
-    const key = {
-      islands: "bootstrapFeatureIslandsPath",
-      engines: "bootstrapFeatureEnginesPath",
-      hubs: "bootstrapFeatureHubsPath",
-      controllers: "bootstrapFeatureControllersPath",
-      textlayout: "bootstrapFeatureTextLayoutPath",
-      scene3d: "bootstrapFeatureScene3dPath",
-    }[name];
-    if (!key) return "";
-    const publicPath = assets[key] || runtimeFeaturePreloadPath("bootstrap-feature-" + name);
+    // textlayout predates the derived-key rule; its contract key keeps a capital L.
+    const publicPath = assets[bootstrapFeatureKey(name)]
+      || (name === "textlayout" ? assets.bootstrapFeatureTextLayoutPath : "")
+      || runtimeFeaturePreloadPath("bootstrap-feature-" + name);
     return publicPath ? String(publicPath).trim() : gosxBasePathURL("/gosx/bootstrap-feature-" + name + ".js");
   }
 
@@ -242,6 +241,10 @@
     }
     if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
       names.push("islands");
+    }
+    for (const name of (manifest && manifest.features) || []) {
+      const key = String(name || "").trim();
+      if (key && names.indexOf(key) < 0) names.push(key);
     }
     return names;
   }
