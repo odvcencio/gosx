@@ -735,8 +735,8 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 551 more Brotli bytes
     // (430293 -> 430844); only the exceeded target moves, by 500 bytes.
     // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
-    // owner-approved 2026-10-08 at +539 raw). Measured 1910377 / 524305 / 432293,
-    // +336 raw over the 1910041 merge base. Targets stay at the approved figures.
+    // owner-approved 2026-10-08 at +539 raw). Measured 1910574 / 524371 / 432557,
+    // +533 raw over the 1910041 merge base. Targets stay at the approved figures.
     file: "bootstrap.js", raw: 1862400, gzip: 524100,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 432800 },
@@ -1628,10 +1628,10 @@ const budgets = [
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
   // measurement: 12_963 / 3_560 / 3_184.
   // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
-  // owner-approved 2026-10-08 at +536 raw). Measured 19104 / 4556 / 4152,
-  // +338 / +164 / +147 over the merge base 18766 / 4392 / 4005; targets are the
+  // owner-approved 2026-10-08 at +536 raw). Measured 19298 / 4648 / 4243,
+  // +532 / +256 / +238 over the merge base 18766 / 4392 / 4005; targets are the
   // measurement rounded up to 100 bytes.
-  { file: "bootstrap-feature-islands.js", raw: 19200, gzip: 4600, brotli: 4200 },
+  { file: "bootstrap-feature-islands.js", raw: 19300, gzip: 4700, brotli: 4300 },
 ];
 
 const routeBudgets = [
