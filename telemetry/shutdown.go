@@ -11,6 +11,8 @@ func (t *Telemetry) run() {
 	defer func() {
 		if t.activities != nil {
 			t.activities.stopping.Store(true)
+			// Accepted finals need no clock or application callbacks to acknowledge.
+			t.collectActivityReceipts()
 		}
 		t.releaseLoops()
 		t.releaseHubs()
