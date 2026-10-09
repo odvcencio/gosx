@@ -104,6 +104,10 @@ test:
 test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
+.PHONY: test-budget-contract
+test-budget-contract:
+	GOWORK=off $(GO) test ./perf/budget
+
 # CI runs the two exhaustive name partitions separately. An ordinary test-cli
 # invocation still runs the full package with the same 25-minute timeout.
 test-cli:
