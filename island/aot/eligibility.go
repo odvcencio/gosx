@@ -278,7 +278,7 @@ func classify(u Unit) *rejection {
 	if failure := effectRules(u); failure != nil {
 		return failure
 	}
-	if !parserTopology(p) {
+	if !parserTopology(p, c) {
 		return reject("parser_topology", "nodes", -1)
 	}
 	canonical, err := NewUnit(u.Component, p, c)
@@ -461,7 +461,12 @@ func fixedAttribute(name string, kind ScalarKind) bool {
 
 // Compare the marked tree with the HTML parser using proved literal text.
 // Empty text and stripped initial newlines must not certify absent bindings.
-func parserTopology(p *program.Program) bool {
+//
+// An expression contributes its proved initial spelling: a literal, or a
+// signal or computed whose initializer is proved. Other integer and boolean values always
+// print as non-empty text, so they stand in as "0". Any other string may be
+// empty, which would remove its text node, so it contributes nothing.
+func parserTopology(p *program.Program, c ScalarContract) bool {
 	var source strings.Builder
 	expected := []string{}
 	var emit func(program.NodeID)
@@ -471,7 +476,7 @@ func parserTopology(p *program.Program) bool {
 			text := n.Text
 			if n.Kind == program.NodeExpr {
 				// The literal subset has proved the value's canonical spelling.
-				text = p.Exprs[n.Expr].Value
+				text = initialText(p, c, n.Expr, 0)
 			}
 			source.WriteString(html.EscapeString(text))
 			return
@@ -528,4 +533,33 @@ func parserTopology(p *program.Program) bool {
 		inspect(node)
 	}
 	return slices.Equal(expected, actual)
+}
+
+func initialText(p *program.Program, c ScalarContract, id program.ExprID, depth int) string {
+	if int(id) >= len(p.Exprs) || depth > 64 {
+		return ""
+	}
+	e := p.Exprs[id]
+	switch e.Op {
+	case program.OpLitString, program.OpLitInt, program.OpLitBool:
+		return e.Value
+	case program.OpSignalGet:
+		for _, signal := range p.Signals {
+			if signal.Name == e.Value {
+				return initialText(p, c, signal.Init, depth+1)
+			}
+		}
+		for _, computed := range p.Computeds {
+			if computed.Name == e.Value {
+				return initialText(p, c, computed.Expr, depth+1)
+			}
+		}
+	}
+	if int(id) < len(c.Expressions) {
+		switch c.Expressions[id].Kind {
+		case Int, Int32, Bool:
+			return "0"
+		}
+	}
+	return ""
 }

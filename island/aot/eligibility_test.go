@@ -244,7 +244,7 @@ func TestClassifyTextTopologyRequiresLiteralProof(t *testing.T) {
 		kind   ScalarKind
 		reason string
 	}{
-		{program.Expr{Op: program.OpAdd, Type: program.TypeAny}, Int, "opcode_unsupported"},
+		{program.Expr{Op: program.OpHostCall, Type: program.TypeAny}, Int, "opcode_unsupported"},
 		{program.Expr{Op: program.OpLitInt, Type: program.TypeInt}, Int, "integer_literal"},
 		{program.Expr{Op: program.OpLitBool, Type: program.TypeBool}, Bool, "boolean_literal"},
 		{program.Expr{Op: program.OpLitString, Type: program.TypeString}, Int, "type_mismatch"},
@@ -455,5 +455,35 @@ func TestContractBindingsGroupsTextAndRejectsGraphs(t *testing.T) {
 	p.Nodes[2].Kind = program.NodeConditional
 	if _, err := ContractBindings(p); err == nil {
 		t.Fatal("accepted structural node")
+	}
+}
+
+// A signal read has no literal spelling of its own. Its proved initial value
+// supplies the text, so an empty initial string must not certify a binding.
+func TestClassifyTextTopologyUsesSignalInitialValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, initial string
+		eligible      bool
+	}{{"empty initial string", "", false}, {"nonempty initial string", "x", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := textTopologyUnit(t, "div", "", program.Node{Kind: program.NodeExpr})
+			u.Program.Exprs = []program.Expr{
+				{Op: program.OpLitString, Type: program.TypeString, Value: tc.initial},
+				{Op: program.OpSignalGet, Type: program.TypeString, Value: "text"},
+			}
+			u.Contract.Expressions = []ExpressionContract{{Expr: 0, Kind: String, Pure: true}, {Expr: 1, Kind: String, Pure: true}}
+			u.Program.Signals = []program.SignalDef{{Name: "text", Type: program.TypeString, Init: 0}}
+			u.Contract.Signals = []StateContract{{Slot: 0, Name: "text", Kind: String}}
+			u.Program.Nodes[1].Expr = 1
+			var err error
+			if u.Contract.Bindings, err = ContractBindings(u.Program); err != nil {
+				t.Fatal(err)
+			}
+			u = refreshUnit(t, u)
+			r := Classify(u, ScalarDOMV1)
+			if r.Eligible != tc.eligible || !tc.eligible && r.Reason != "parser_topology" {
+				t.Fatalf("signal text: %+v", r)
+			}
+		})
 	}
 }
