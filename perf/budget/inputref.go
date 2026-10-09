@@ -2,7 +2,6 @@
 package budget
 
 import (
-	"bytes"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -13,7 +12,10 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
+	"time"
 )
 
 const maxInputBytes = 2 << 20
@@ -39,6 +41,9 @@ var inputDefinitions = func() map[string]any {
 	}
 	if err := json.Unmarshal(inputSchema, &s); err != nil {
 		panic(err)
+	}
+	if err := checkSchemaShape(s.Defs, s.Defs, true); err != nil {
+		panic("invalid embedded input schema")
 	}
 	return s.Defs
 }()
@@ -125,8 +130,11 @@ func readWithin(root, path string, limit int64) ([]byte, error) {
 }
 
 func readReference(root string, ref Ref, limit int64) ([]byte, error) {
-	if !safePath(ref.File) || !shaPattern.MatchString(ref.SHA256) {
-		return nil, errors.New("invalid input reference")
+	if !safePath(ref.File) {
+		return nil, invalidInput("/file")
+	}
+	if !shaPattern.MatchString(ref.SHA256) {
+		return nil, invalidInput("/sha256")
 	}
 	data, err := readWithin(root, filepath.Join(root, filepath.FromSlash(ref.File)), limit)
 	if err != nil {
@@ -134,12 +142,13 @@ func readReference(root string, ref Ref, limit int64) ([]byte, error) {
 	}
 	digest := sha256.Sum256(data)
 	if hex.EncodeToString(digest[:]) != ref.SHA256 {
-		return nil, errors.New("input reference hash mismatch")
+		return nil, invalidInput("/sha256")
 	}
 	return data, nil
 }
 
-func loadInput(path string, opts LoadOptions, definition string, out any) (string, error) {
+func loadInput(path string, opts LoadOptions, definition string, out any) (rootResult string, resultErr error) {
+	defer func() { resultErr = inputReference(resultErr, referenceLabel(definition), "") }()
 	root, err := inputRoot(path, opts)
 	if err != nil {
 		return "", err
@@ -148,39 +157,36 @@ func loadInput(path string, opts LoadOptions, definition string, out any) (strin
 	if err != nil {
 		return "", err
 	}
-	d := json.NewDecoder(bytes.NewReader(data))
-	d.UseNumber()
-	var value any
-	if err := d.Decode(&value); err != nil {
-		return "", errors.New("invalid input JSON")
-	}
-	if err := d.Decode(new(any)); err != io.EOF {
-		return "", errors.New("input must contain one JSON value")
-	}
-	if err := validateInput(value, inputDefinitions[definition]); err != nil {
+	if err := decodeInput(data, definition, out); err != nil {
 		return "", err
-	}
-	// Decode the exact value checked above. Replaying duplicate object keys into
-	// a struct can merge fields that the map decoder already discarded.
-	validated, err := json.Marshal(value)
-	if err != nil {
-		return "", errors.New("input does not match typed contract")
-	}
-	d = json.NewDecoder(bytes.NewReader(validated))
-	d.DisallowUnknownFields()
-	if err := d.Decode(out); err != nil {
-		return "", errors.New("input does not match typed contract")
 	}
 	return root, nil
 }
 
 // validateInput evaluates the schema vocabulary used by the input contracts.
 // Typed decoding follows this check so required nulls and absent fields differ.
-func validateInput(value, raw any) error {
-	s := raw.(map[string]any)
-	fail := func() error { return errors.New("input does not match schema") }
+func validateInput(value, raw any) error { return validateInputAt(value, raw, "") }
+
+func validateInputAt(value, raw any, pointer string) error {
+	s, ok := raw.(map[string]any)
+	if !ok || s == nil {
+		return invalidInput(pointer)
+	}
+	fail := func() error { return invalidInput(pointer) }
 	if ref, ok := s["$ref"].(string); ok {
-		return validateInput(value, inputDefinitions[strings.TrimPrefix(ref, "#/$defs/")])
+		return validateInputAt(value, inputDefinitions[strings.TrimPrefix(ref, "#/$defs/")], pointer)
+	}
+	if choices, ok := s["oneOf"].([]any); ok {
+		matches := 0
+		for _, choice := range choices {
+			if validateInputAt(value, choice, pointer) == nil {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return fail()
+		}
+		return nil
 	}
 	if c, ok := s["const"]; ok && !equalJSON(value, c) {
 		return fail()
@@ -202,16 +208,19 @@ func validateInput(value, raw any) error {
 		kind = "boolean"
 	case json.Number:
 		kind = "integer"
+		if _, err := value.(json.Number).Int64(); err != nil {
+			kind = "number"
+		}
 	case []any:
 		kind = "array"
 	case map[string]any:
 		kind = "object"
 	}
 	if t, ok := s["type"]; ok {
-		match := t == kind
+		match := t == kind || t == "number" && kind == "integer"
 		if ts, ok := t.([]any); ok {
 			for _, k := range ts {
-				match = match || k == kind
+				match = match || k == kind || k == "number" && kind == "integer"
 			}
 		}
 		if !match {
@@ -220,32 +229,53 @@ func validateInput(value, raw any) error {
 	}
 	switch v := value.(type) {
 	case json.Number:
-		n, err := v.Int64()
-		if err != nil {
-			return fail()
-		}
-		if low, ok := s["minimum"].(float64); ok && n < int64(low) {
-			return fail()
-		}
-		if high, ok := s["maximum"].(float64); ok && n > int64(high) {
+		if err := validateNumber(v, s); err != nil {
 			return fail()
 		}
 	case string:
 		if max, ok := s["maxLength"].(float64); ok && len(v) > int(max) {
 			return fail()
 		}
-		if pattern, ok := s["pattern"].(string); ok && !regexp.MustCompile(pattern).MatchString(v) {
-			return fail()
+		if pattern, ok := s["pattern"].(string); ok {
+			re, err := schemaPattern(pattern)
+			if err != nil || !re.MatchString(v) {
+				return fail()
+			}
+		}
+		if format, ok := s["format"].(string); ok {
+			var layout string
+			switch format {
+			case "date":
+				layout = time.DateOnly
+			case "date-time":
+				layout = time.RFC3339
+			default:
+				return fail()
+			}
+			if _, err := time.Parse(layout, v); err != nil {
+				return fail()
+			}
 		}
 	case []any:
+		items, ok := s["items"].(map[string]any)
+		if !ok {
+			return fail()
+		}
 		if min, ok := s["minItems"].(float64); ok && len(v) < int(min) {
 			return fail()
 		}
 		if max, ok := s["maxItems"].(float64); ok && len(v) > int(max) {
 			return fail()
 		}
-		for _, item := range v {
-			if err := validateInput(item, s["items"]); err != nil {
+		for i, item := range v {
+			if s["uniqueItems"] == true {
+				for _, prior := range v[:i] {
+					if equalJSON(prior, item) {
+						return fail()
+					}
+				}
+			}
+			if err := validateInputAt(item, items, pointerChild(pointer, strconv.Itoa(i))); err != nil {
 				return err
 			}
 		}
@@ -253,20 +283,43 @@ func validateInput(value, raw any) error {
 		if min, ok := s["minProperties"].(float64); ok && len(v) < int(min) {
 			return fail()
 		}
+		if max, ok := s["maxProperties"].(float64); ok && len(v) > int(max) {
+			return fail()
+		}
 		props, _ := s["properties"].(map[string]any)
 		if required, ok := s["required"].([]any); ok {
 			for _, k := range required {
 				if _, ok := v[k.(string)]; !ok {
-					return fail()
+					return invalidInput(pointerChild(pointer, k.(string)))
 				}
 			}
 		}
-		for k, child := range v {
-			p, ok := props[k]
-			if !ok {
-				return fail()
+		keys := make([]string, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		for _, k := range keys {
+			child := v[k]
+			if names, ok := s["propertyNames"]; ok {
+				if err := validateInputAt(k, names, pointer); err != nil {
+					return err
+				}
 			}
-			if err := validateInput(child, p); err != nil {
+			p, ok := props[k]
+			childPointer := pointerChild(pointer, k)
+			if !ok {
+				// Include only keys accepted by the schema name domain.
+				if s["propertyNames"] == nil {
+					childPointer = pointer
+				}
+				if extra, ok := s["additionalProperties"].(map[string]any); ok {
+					p = extra
+				} else {
+					return fail()
+				}
+			}
+			if err := validateInputAt(child, p, childPointer); err != nil {
 				return err
 			}
 		}
@@ -275,6 +328,13 @@ func validateInput(value, raw any) error {
 }
 
 func equalJSON(a, b any) bool {
+	if n, ok := b.(json.Number); ok {
+		f, err := n.Float64()
+		if err != nil {
+			return false
+		}
+		b = f
+	}
 	if n, ok := a.(json.Number); ok {
 		f, err := n.Float64()
 		return err == nil && reflect.DeepEqual(f, b)
