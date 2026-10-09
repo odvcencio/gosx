@@ -45,6 +45,12 @@ type BuildOptions struct {
 	SceneBudgetStrict bool
 }
 
+// runtimeFeatureChunks lists opt-in feature chunks that ship as
+// client/js/bootstrap-feature-<name>.js and load by name at runtime
+// (hydrate.Manifest.Features). Each row's role is a runtimeExcludableAssetRoles
+// key. The change that adds a chunk file appends its row here.
+var runtimeFeatureChunks = []struct{ name, role string }{}
+
 type wasmCompiler string
 
 const (
@@ -90,11 +96,21 @@ func writeHashedWithOptions(dir, name, ext string, data []byte, opts hashedWrite
 			return HashedAsset{}, err
 		}
 	}
-	return HashedAsset{
-		File: filename,
-		Hash: hash,
-		Size: int64(len(data)),
-	}, nil
+	asset := HashedAsset{File: filename, Hash: hash, Size: int64(len(data))}
+	if opts.CompressedSidecars {
+		for _, sidecar := range []struct {
+			ext  string
+			size *int64
+		}{{".gz", &asset.GzipSize}, {".br", &asset.BrotliSize}} {
+			info, err := os.Stat(path + sidecar.ext)
+			if err == nil {
+				*sidecar.size = info.Size()
+			} else if !os.IsNotExist(err) {
+				return HashedAsset{}, err
+			}
+		}
+	}
+	return asset, nil
 }
 
 func writeHashedWithoutCompressedSidecars(dir, name, ext string, data []byte) (HashedAsset, error) {
@@ -429,6 +445,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// Build both WASM binaries in parallel. The islands-only runtime is a
 	// route-selected Go WASM variant that drops shared engine, CRDT, syntax
 	// highlighting, and text-layout exports for pages that only hydrate islands.
+	optimizer := newOptionalWASMOptimizer(os.Stderr)
 	var wg sync.WaitGroup
 	coreResult := wasmResult{label: "core"}
 	engineResult := wasmResult{label: "engine"}
@@ -447,7 +464,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				return
 			}
 			result.compiler = string(wasmCompilerTinyGo)
-			if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
+			if optimized, err := optimizer.optimize(tmpPath); err != nil {
 				result.err = err
 				return
 			} else if optimized {
@@ -484,7 +501,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			}
 			result.compiler = string(wasmCompilerGo)
 			if standardGoWASMOptEnabled() {
-				if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
+				if optimized, err := optimizer.optimize(tmpPath); err != nil {
 					result.err = err
 					return
 				} else if optimized {
@@ -683,6 +700,41 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			if mapData, err := os.ReadFile(js.path + ".map"); err == nil {
 				if err := os.WriteFile(filepath.Join(runtimeDir, js.name+".js.map"), mapData, 0644); err != nil {
 					return fmt.Errorf("write %s source map: %w", js.name, err)
+				}
+			}
+		}
+	}
+
+	// Opt-in feature chunks (see runtimeFeatureChunks) are staged like the
+	// fixed entries above and recorded under manifest.Runtime.Features so the
+	// document contract can publish one flat bootstrapFeature<Name>Path key
+	// per chunk.
+	for _, chunk := range runtimeFeatureChunks {
+		if cfg.Build.Runtime.excludesRole(chunk.role) {
+			fmt.Printf("    (skipped: bootstrap-feature-%s, excluded by build.runtime.exclude %q)\n", chunk.name, chunk.role)
+			continue
+		}
+		srcPath := filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-"+chunk.name+".js")
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", srcPath, err)
+		}
+		assetName := "bootstrap-feature-" + chunk.name
+		data = runtimeJSAssetData(assetName, data)
+		asset, err := writeHashed(runtimeDir, assetName, ".js", data)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", assetName, err)
+		}
+		asset = withRuntimeIntegrity(asset, data)
+		if manifest.Runtime.Features == nil {
+			manifest.Runtime.Features = map[string]HashedAsset{}
+		}
+		manifest.Runtime.Features[chunk.name] = asset
+		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+		if cfg.Build.Runtime.sourceMapsEnabled() {
+			if mapData, err := os.ReadFile(srcPath + ".map"); err == nil {
+				if err := os.WriteFile(filepath.Join(runtimeDir, assetName+".js.map"), mapData, 0644); err != nil {
+					return fmt.Errorf("write %s source map: %w", assetName, err)
 				}
 			}
 		}
@@ -980,14 +1032,49 @@ func standardGoWASMOptEnabled() bool {
 	}
 }
 
-func optimizeWASMWithWasmOpt(path string) (bool, error) {
-	woptPath, woptErr := exec.LookPath("wasm-opt")
-	if woptErr != nil {
+type optionalWASMOptimizer struct {
+	tool        string
+	diagnostics io.Writer
+	missing     sync.Once
+	mu          sync.Mutex
+}
+
+func newOptionalWASMOptimizer(diagnostics io.Writer) *optionalWASMOptimizer {
+	tool, err := exec.LookPath("wasm-opt")
+	if err != nil {
+		tool = ""
+	}
+	return &optionalWASMOptimizer{tool: tool, diagnostics: diagnostics}
+}
+
+func optimizeWASMWithWasmOptDiagnostics(path string, diagnostics io.Writer) (bool, error) {
+	return newOptionalWASMOptimizer(diagnostics).optimize(path)
+}
+
+// Each build shares an optimizer. Missing-tool warnings appear once, and each
+// complete warning (including subprocess output) is emitted with one write.
+func (optimizer *optionalWASMOptimizer) warn(message string) {
+	optimizer.mu.Lock()
+	defer optimizer.mu.Unlock()
+	_, _ = io.WriteString(optimizer.diagnostics, message)
+}
+
+func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
+	if optimizer.tool == "" {
+		optimizer.missing.Do(func() {
+			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH; keeping compiled WASM. Install Binaryen matching your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
+		})
 		return false, nil
 	}
 	optTmp := path + ".opt"
-	optCmd := exec.Command(woptPath, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
-	if optCmd.Run() != nil {
+	defer os.Remove(optTmp)
+	optCmd := exec.Command(optimizer.tool, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
+	if output, err := optCmd.CombinedOutput(); err != nil {
+		message := fmt.Sprintf("warning: optional wasm-opt optimization skipped for %s: %s failed: %v; keeping compiled WASM. Check this optimizer's version against your CI toolchain.\n", filepath.Base(path), optimizer.tool, err)
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			message += detail + "\n"
+		}
+		optimizer.warn(message)
 		return false, nil
 	}
 	if err := os.Rename(optTmp, path); err != nil {
@@ -1294,6 +1381,11 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return "", false
 	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
+	if name, ok := buildmanifest.FeatureChunkName(strings.TrimPrefix(ref, "/gosx/")); ok && strings.HasPrefix(ref, "/gosx/") {
+		if asset, found := manifest.Runtime.Features[name]; found {
+			return manifestRuntimeFilePath(runtimeDir, asset.File)
+		}
+	}
 	switch ref {
 	case "/gosx/runtime.wasm":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASM.File)

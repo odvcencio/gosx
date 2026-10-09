@@ -443,6 +443,13 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Relay.File)
 	}
 
+	// Opt-in feature chunks are listed by name in build.json runtime.features.
+	if featureName, ok := buildmanifest.FeatureChunkName(name); ok {
+		if asset, found := manifest.Runtime.Features[featureName]; found {
+			return runtimeManifestAssetPath(assetsDir, "runtime", asset.File)
+		}
+	}
+
 	if strings.HasPrefix(name, "islands/") {
 		base := strings.TrimSuffix(filepath.Base(name), filepath.Ext(name))
 		if asset, ok := manifest.IslandAssetByName(base); ok {

@@ -498,3 +498,45 @@ func TestAppServesBootstrapFeatureScene3DInstanceStreamChunkCacheControlMatchesC
 		t.Fatalf("instance-stream chunk: versioned and plain requests both got %q; a ?v= request must be immutable and a plain request must not", instanceStreamVersionedCache)
 	}
 }
+
+// TestAppServesManifestFeatureChunk pins the generic lookup: a chunk named in
+// build.json runtime.features is served at /gosx/bootstrap-feature-<name>.js
+// without a dedicated switch case.
+func TestAppServesManifestFeatureChunk(t *testing.T) {
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets", "runtime")
+	if err := os.MkdirAll(assetsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("window.__gosx_register_bootstrap_feature('engine-bridge', function(){});")
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap-feature-engine-bridge.abcd.js"), body, 0644); err != nil {
+		t.Fatal(err)
+	}
+	manifest := buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Features: map[string]buildmanifest.HashedAsset{
+			"engine-bridge": {File: "bootstrap-feature-engine-bridge.abcd.js", Hash: "abcd", Size: int64(len(body))},
+		},
+	}}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "build.json"), data, 0644); err != nil {
+		t.Fatal(err)
+	}
+	app := New()
+	app.SetRuntimeRoot(root)
+	handler := app.Build()
+	for _, target := range []string{"/gosx/bootstrap-feature-engine-bridge.js", "/gosx/bootstrap-feature-engine-bridge.js?v=abcd"} {
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, target, nil))
+		if w.Code != http.StatusOK || w.Body.String() != string(body) {
+			t.Fatalf("GET %s = %d %q", target, w.Code, w.Body.String())
+		}
+	}
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/gosx/bootstrap-feature-painter.js", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("unlisted feature chunk = %d, want 404", w.Code)
+	}
+}

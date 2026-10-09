@@ -734,7 +734,10 @@ const budgets = [
     // 430293). Raise only this exceeded target; governed allowances stay fixed.
     // Pending-pose and CPU playback retention adds 551 more Brotli bytes
     // (430293 -> 430844); only the exceeded target moves, by 500 bytes.
-    file: "bootstrap.js", raw: 1861800, gzip: 524000,
+    // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
+    // owner-approved 2026-10-08 at +539 raw). Measured 1911072 / 524570 / 432280,
+    // +390 raw over main's 1910682. Targets stay at the approved figures.
+    file: "bootstrap.js", raw: 1862400, gzip: 524100,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 432800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
@@ -1624,7 +1627,11 @@ const budgets = [
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
   // measurement: 12_963 / 3_560 / 3_184.
-  { file: "bootstrap-feature-islands.js", raw: 18730, gzip: 4428, brotli: 3969 },
+  // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
+  // owner-approved 2026-10-08 at +536 raw). Measured 19156 / 4577 / 4182,
+  // +390 / +185 / +177 over main's 18766 / 4392 / 4005; targets are the
+  // measurement rounded up to 100 bytes.
+  { file: "bootstrap-feature-islands.js", raw: 19200, gzip: 4600, brotli: 4200 },
 ];
 
 const routeBudgets = [
@@ -1755,9 +1762,20 @@ const routeBudgets = [
     // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
     // CSS compilation (cssCompiled bindings skipped when scroll timelines are
     // supported) adds about 840 raw bytes to the shared motion core.
-    raw: 288689,
+    // M0 manifest-driven feature loader, probe API and inert edit/boot seams
+    // (owner-approved one-time core cost, 2026-10-08). Bumped raw 288_689 ->
+    // 289_289 and brotli 73_139 -> 73_439: the measured growth rounded up to
+    // the next 100 bytes (see the PR table). Gzip fits its existing cap. The
+    // rounding leaves room for the one engines-chunk hook M2 adds, so no later
+    // milestone needs a second raise.
+    // Native ESM interop adds 639 raw / 199 gzip / 177 Brotli bytes to the
+    // engines chunk for normalized HTTP(S) imports, shared loads, and retry
+    // after rejection. Move only the raw and Brotli reviewed targets by the
+    // measured delta (289_289 + 639 = 289_928; 73_439 + 177 = 73_616). Retain
+    // the 5% allowance, existing gzip target, and all other route budgets.
+    raw: 289928,
     gzip: 83400,
-    brotli: 73139,
+    brotli: 73616,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface

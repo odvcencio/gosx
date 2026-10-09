@@ -196,8 +196,10 @@ func eventAttrType(name string) string {
 	case "onWindowResize":
 		return "window-resize"
 	default:
+		// Lowercase the whole suffix, as the island renderer does, so multiword
+		// names (onDblClick, onLostPointerCapture) agree between both mappers.
 		if len(name) > 2 && name[:2] == "on" {
-			return strings.ToLower(name[2:3]) + name[3:]
+			return strings.ToLower(name[2:])
 		}
 		return strings.ToLower(name)
 	}

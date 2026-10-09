@@ -6,6 +6,9 @@ import "context"
 // reservations and both pumps to finish. Concurrent callers share completion
 // and wait only until their own context expires. An expired call leaves the
 // owner and observers in place until pump cleanup finishes.
+// Close waits for in-flight observers, including Send, latch replay and CRDT
+// enqueue callbacks on application goroutines. Release any lock a callback
+// may acquire before calling Close, otherwise both sides can deadlock.
 func (h *Hub) Close(ctx context.Context) error {
 	if h == nil {
 		return nil
@@ -89,6 +92,8 @@ func (h *Hub) finishCloseLocked() bool {
 func (h *Hub) finishClose() {
 	h.mu.Lock()
 	list := h.observers.Swap(nil)
+	h.telemetryObserver = nil
+	h.queueSampleEvery.Store(0)
 	h.mu.Unlock()
 	// Retire every subscriber before waiting for any callback. Atomic admission
 	// prevents dispatch from entering a retired subscriber.

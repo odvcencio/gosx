@@ -272,6 +272,15 @@ func TestWriteHashedWritesCompressedSidecarsWhenSmaller(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected %s sidecar: %v", ext, err)
 		}
+		var recorded int64
+		if ext == ".gz" {
+			recorded = asset.GzipSize
+		} else {
+			recorded = asset.BrotliSize
+		}
+		if recorded != info.Size() {
+			t.Fatalf("recorded %s size = %d, sidecar size = %d", ext, recorded, info.Size())
+		}
 		if info.Size() >= int64(len(data)) {
 			t.Fatalf("expected %s sidecar smaller than raw data, raw=%d compressed=%d", ext, len(data), info.Size())
 		}
@@ -295,6 +304,9 @@ func TestWriteHashedWithoutCompressedSidecarsSkipsDevRuntimeSidecars(t *testing.
 	devAsset, err := writeHashedWithoutCompressedSidecars(dir, "gosx-runtime", ".wasm", data)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if devAsset.GzipSize != 0 || devAsset.BrotliSize != 0 {
+		t.Fatalf("dev asset must omit absent compressed sizes: %+v", devAsset)
 	}
 	if devAsset.File != prodAsset.File {
 		t.Fatalf("expected same hashed runtime path, got %q want %q", devAsset.File, prodAsset.File)
@@ -1254,4 +1266,14 @@ component Page() {
 }
 `)
 	return dir
+}
+
+func TestWriteHashedOmitsCompressedSizesWhenSidecarsAreNotSmaller(t *testing.T) {
+	asset, err := writeHashed(t.TempDir(), "tiny", ".wasm", []byte{0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asset.GzipSize != 0 || asset.BrotliSize != 0 {
+		t.Fatalf("absent compressed sidecars must not have transfer sizes: %+v", asset)
+	}
 }
