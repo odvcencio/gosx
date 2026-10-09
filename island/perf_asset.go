@@ -278,7 +278,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 			}
 			if backend == "webgpu" && r.perfSceneAllowsWebGLFallback() {
 				// Recovery is inside the WebGPU body. Only the WebGL fallback is an
-				// additional device-loss fetch; the old recovery chunk stays dormant.
+				// additional device-loss fetch.
 				if err := mark(public(r.bootstrapFeatureScene3dWebGLPath), "after-ready", "device-loss", base); err != nil {
 					return nil, err
 				}

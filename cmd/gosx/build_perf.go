@@ -126,8 +126,6 @@ func stagePerfBuildAssets(dist string, manifest *BuildManifest, appID string) er
 			condition = "webgpu"
 		case "bootstrap-feature-scene3d-webgl.js":
 			condition = "webgl"
-		case "bootstrap-feature-scene3d-pipeline-recovery.js":
-			condition = "pipeline-recovery"
 		case "hls.min.js":
 			condition = "hls-required"
 		}

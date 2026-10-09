@@ -65,8 +65,9 @@ func TestPerfGraphWholeOutputInventory(t *testing.T) {
 			t.Fatalf("backend closure: %+v", a)
 		}
 	}
-	if a := seen["framework/runtime/bootstrap-feature-scene3d-pipeline-recovery.js"]; a.Phase != "dormant" || a.Condition != "pipeline-recovery" {
-		t.Fatalf("dormant recovery: %+v", a)
+	// Recovery ships inside the WebGPU renderers, not as its own output.
+	if a, ok := seen["framework/runtime/bootstrap-feature-scene3d-pipeline-recovery.js"]; ok {
+		t.Fatalf("removed recovery chunk is still in the inventory: %+v", a)
 	}
 	if a := seen["framework/runtime/navigation.js"]; !strings.Contains(a.URL, a.SHA256) {
 		t.Fatal("navigation URL not bound to output")

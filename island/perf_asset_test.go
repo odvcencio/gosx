@@ -47,7 +47,7 @@ func perfAssetRendererFixture(t *testing.T) (*Renderer, *buildmanifest.Manifest)
 		{"bootstrap-feature-hubs.js", &m.Runtime.BootstrapFeatureHubs}, {"bootstrap-feature-controllers.js", &m.Runtime.BootstrapFeatureControllers},
 		{"bootstrap-controller-input.js", &m.Runtime.BootstrapControllerInput}, {"bootstrap-feature-scene3d.js", &m.Runtime.BootstrapFeatureScene3D},
 		{"bootstrap-feature-scene3d-hydrate.js", &m.Runtime.BootstrapFeatureScene3DHydrate}, {"bootstrap-feature-scene3d-webgpu.js", &m.Runtime.BootstrapFeatureScene3DWebGPU},
-		{"bootstrap-feature-scene3d-webgl.js", &m.Runtime.BootstrapFeatureScene3DWebGL}, {"bootstrap-feature-scene3d-pipeline-recovery.js", &m.Runtime.BootstrapFeatureScene3DPipelineRecovery},
+		{"bootstrap-feature-scene3d-webgl.js", &m.Runtime.BootstrapFeatureScene3DWebGL},
 		{"bootstrap-feature-scene3d-zoom.js", &m.Runtime.BootstrapFeatureScene3DZoom}, {"bootstrap-feature-scene3d-walk.js", &m.Runtime.BootstrapFeatureScene3DWalk},
 		{"bootstrap-feature-scene3d-vessel.js", &m.Runtime.BootstrapFeatureScene3DVessel}, {"bootstrap-feature-scene3d-ocean-query.js", &m.Runtime.BootstrapFeatureScene3DOceanQuery},
 		{"bootstrap-feature-scene3d-compute.js", &m.Runtime.BootstrapFeatureScene3DCompute}, {"bootstrap-feature-scene3d-decompress.js", &m.Runtime.BootstrapFeatureScene3DDecompress},
@@ -590,9 +590,6 @@ func TestPerfAssetRendererBackendClosure(t *testing.T) {
 				}
 			} else if gl.Phase != "startup" || gl.Condition != "webgl" || gpu.Phase != "dormant" {
 				t.Fatalf("GL closure: %+v %+v", gpu, gl)
-			}
-			if a := perfAssetByID(t, uses, "framework/runtime/bootstrap-feature-scene3d-pipeline-recovery.js"); a.Phase != "dormant" {
-				t.Fatal("dormant recovery charged as a fetch")
 			}
 			if !reflect.DeepEqual(gl.Dependencies, []string{"framework/runtime/bootstrap-feature-scene3d.js"}) {
 				t.Fatalf("backend prerequisite: %+v", gl)

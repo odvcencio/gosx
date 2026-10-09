@@ -53,7 +53,6 @@ func perfGraphBuildFixture(t *testing.T) (string, *BuildManifest) {
 	m.Runtime.BootstrapRuntime = write("runtime", "bootstrap-runtime", ".js", []byte("/* selected loader */"))
 	m.Runtime.BootstrapFeatureScene3DWebGPU = write("runtime", "webgpu", ".js", []byte("/* webgpu */"))
 	m.Runtime.BootstrapFeatureScene3DWebGL = write("runtime", "webgl", ".js", []byte("/* webgl */"))
-	m.Runtime.BootstrapFeatureScene3DPipelineRecovery = write("runtime", "pipeline-recovery", ".js", []byte("/* dormant recovery */"))
 	m.Runtime.VideoHLS = write("runtime", "hls", ".js", []byte("/* hls */"))
 	m.Islands = []IslandAsset{{Name: "counter", Format: "bin", HashedAsset: write("islands", "counter", ".gxi", []byte("program"))}}
 	m.CSS = []CSSAsset{{Component: "counter", Source: "app/counter.css", HashedAsset: write("css", "counter", ".css", []byte(".counter{}"))}}
@@ -78,7 +77,7 @@ func TestPerfGraphBuildInventory(t *testing.T) {
 			t.Fatalf("unproven startup use: %+v", a)
 		}
 	}
-	if !sort.StringsAreSorted(ids) || len(ids) != 14 {
+	if !sort.StringsAreSorted(ids) || len(ids) != 13 {
 		t.Fatalf("inventory: %v", ids)
 	}
 	for _, name := range []string{"core", "engine", "collab", "full", "islands"} {
@@ -86,7 +85,7 @@ func TestPerfGraphBuildInventory(t *testing.T) {
 			t.Fatalf("missing capability artifact %s", name)
 		}
 	}
-	for name, condition := range map[string]string{"bootstrap-feature-scene3d-webgpu.js": "webgpu", "bootstrap-feature-scene3d-webgl.js": "webgl", "bootstrap-feature-scene3d-pipeline-recovery.js": "pipeline-recovery", "hls.min.js": "hls-required"} {
+	for name, condition := range map[string]string{"bootstrap-feature-scene3d-webgpu.js": "webgpu", "bootstrap-feature-scene3d-webgl.js": "webgl", "hls.min.js": "hls-required"} {
 		if a := seen["framework/runtime/"+name]; a.Condition != condition {
 			t.Fatalf("condition %s: %+v", name, a)
 		}
