@@ -153,6 +153,10 @@ func modelWithCosts(file File, profile Profile, coefficients Coefficients, name 
 	status := "proxy-measured"
 	costs := make(map[string]*big.Rat)
 	for _, e := range selected.Entries {
+		// Both phases classify the whole selected set, including inactive costs.
+		if e.Status != "measured" && e.Status != "unused" {
+			status = "illustrative"
+		}
 		used := coefficientUsed(e.Name, page.Mix, work)
 		if !used {
 			costs[e.Name] = new(big.Rat)
@@ -167,8 +171,6 @@ func modelWithCosts(file File, profile Profile, coefficients Coefficients, name 
 			if e.Name == "wasmOverlapPPM" {
 				value = *e.CI95[0]
 			}
-		} else {
-			status = "illustrative"
 		}
 		costs[e.Name] = ratio(value, 1)
 		if override, ok := overrides[e.Name]; ok {

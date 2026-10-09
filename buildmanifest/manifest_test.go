@@ -23,7 +23,7 @@ func TestLoadAndURLs(t *testing.T) {
     "wasm": {"file": "gosx-runtime.11111111.wasm", "hash": "11111111", "size": 10},
     "wasmIslands": {"file": "gosx-runtime-islands.99999999.wasm", "hash": "99999999", "size": 9},
 	"wasmVariants": {
-	  "core": {"file": "gosx-runtime-core.aaaaaaa1.wasm", "hash": "aaaaaaa1", "size": 8, "variant": "core", "featureMask": 17},
+	  "core": {"file": "gosx-runtime-core.aaaaaaa1.wasm", "hash": "aaaaaaa1", "size": 8, "gzipSize": 6, "brotliSize": 5, "variant": "core", "featureMask": 17},
 	  "engine": {"file": "gosx-runtime-engine.bbbbbbb2.wasm", "hash": "bbbbbbb2", "size": 12, "variant": "engine", "featureMask": 11}
 	},
 	    "wasmExec": {"file": "wasm_exec.22222222.js", "hash": "22222222", "size": 20},
@@ -51,6 +51,10 @@ func TestLoadAndURLs(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
+	core := manifest.Runtime.WASMVariants["core"]
+	if core.Size != 8 || core.GzipSize != 6 || core.BrotliSize != 5 {
+		t.Fatalf("runtime compressed sizes were not loaded: %+v", core)
+	}
 	runtime := manifest.RuntimeURLs("/gosx/assets")
 	if runtime.WASM != "/gosx/assets/runtime/gosx-runtime.11111111.wasm" {
 		t.Fatalf("unexpected wasm url: %s", runtime.WASM)
