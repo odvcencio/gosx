@@ -93,11 +93,21 @@ func writeHashedWithOptions(dir, name, ext string, data []byte, opts hashedWrite
 			return HashedAsset{}, err
 		}
 	}
-	return HashedAsset{
-		File: filename,
-		Hash: hash,
-		Size: int64(len(data)),
-	}, nil
+	asset := HashedAsset{File: filename, Hash: hash, Size: int64(len(data))}
+	if opts.CompressedSidecars {
+		for _, sidecar := range []struct {
+			ext  string
+			size *int64
+		}{{".gz", &asset.GzipSize}, {".br", &asset.BrotliSize}} {
+			info, err := os.Stat(path + sidecar.ext)
+			if err == nil {
+				*sidecar.size = info.Size()
+			} else if !os.IsNotExist(err) {
+				return HashedAsset{}, err
+			}
+		}
+	}
+	return asset, nil
 }
 
 func writeHashedWithoutCompressedSidecars(dir, name, ext string, data []byte) (HashedAsset, error) {
@@ -436,6 +446,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// Build both WASM binaries in parallel. The islands-only runtime is a
 	// route-selected Go WASM variant that drops shared engine, CRDT, syntax
 	// highlighting, and text-layout exports for pages that only hydrate islands.
+	optimizer := newOptionalWASMOptimizer(os.Stderr)
 	var wg sync.WaitGroup
 	coreResult := wasmResult{label: "core"}
 	engineResult := wasmResult{label: "engine"}
@@ -454,7 +465,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				return
 			}
 			result.compiler = string(wasmCompilerTinyGo)
-			if optimized, err := optimizeOptionalBuildWASM(tmpPath, opts.PerfAppID == ""); err != nil {
+			if optimized, err := optimizeOptionalBuildWASM(optimizer, tmpPath, opts.PerfAppID == ""); err != nil {
 				result.err = err
 				return
 			} else if optimized {
@@ -491,7 +502,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			}
 			result.compiler = string(wasmCompilerGo)
 			if opts.PerfAppID == "" && standardGoWASMOptEnabled() {
-				if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
+				if optimized, err := optimizer.optimize(tmpPath); err != nil {
 					result.err = err
 					return
 				} else if optimized {
@@ -1006,25 +1017,61 @@ func standardGoWASMOptEnabled() bool {
 	}
 }
 
-func optimizeWASMWithWasmOpt(path string) (bool, error) {
-	woptPath, woptErr := exec.LookPath("wasm-opt")
-	if woptErr != nil {
-		return false, nil
-	}
-	return optimizeWASMUsing(path, woptPath)
+type optionalWASMOptimizer struct {
+	tool        string
+	diagnostics io.Writer
+	missing     sync.Once
+	mu          sync.Mutex
 }
 
-func optimizeWASMUsing(path, woptPath string) (bool, error) {
+func newOptionalWASMOptimizer(diagnostics io.Writer) *optionalWASMOptimizer {
+	tool, err := exec.LookPath("wasm-opt")
+	if err != nil {
+		tool = ""
+	}
+	return &optionalWASMOptimizer{tool: tool, diagnostics: diagnostics}
+}
+
+func optimizeWASMWithWasmOptDiagnostics(path string, diagnostics io.Writer) (bool, error) {
+	return newOptionalWASMOptimizer(diagnostics).optimize(path)
+}
+
+// Each build shares an optimizer. Missing-tool warnings appear once, and each
+// complete warning (including subprocess output) is emitted with one write.
+func (optimizer *optionalWASMOptimizer) warn(message string) {
+	optimizer.mu.Lock()
+	defer optimizer.mu.Unlock()
+	_, _ = io.WriteString(optimizer.diagnostics, message)
+}
+
+func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
+	if optimizer.tool == "" {
+		optimizer.missing.Do(func() {
+			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH; keeping compiled WASM. Install Binaryen matching your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
+		})
+		return false, nil
+	}
 	optTmp := path + ".opt"
 	defer os.Remove(optTmp)
-	optCmd := exec.Command(woptPath, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
-	if optCmd.Run() != nil {
+	optCmd := exec.Command(optimizer.tool, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
+	if output, err := optCmd.CombinedOutput(); err != nil {
+		message := fmt.Sprintf("warning: optional wasm-opt optimization skipped for %s: %s failed: %v; keeping compiled WASM. Check this optimizer's version against your CI toolchain.\n", filepath.Base(path), optimizer.tool, err)
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			message += detail + "\n"
+		}
+		optimizer.warn(message)
 		return false, nil
 	}
 	if err := os.Rename(optTmp, path); err != nil {
 		return false, fmt.Errorf("rename optimized wasm: %w", err)
 	}
 	return true, nil
+}
+
+// optimizeWASMUsing runs one pinned wasm-opt binary. Perf builds record that
+// tool and require it to succeed; a failure warns on stderr and returns false.
+func optimizeWASMUsing(path, tool string) (bool, error) {
+	return (&optionalWASMOptimizer{tool: tool, diagnostics: os.Stderr}).optimize(path)
 }
 
 func countNonEmpty(strs ...string) int {

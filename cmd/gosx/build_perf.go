@@ -21,11 +21,11 @@ import (
 var perfBuildAppID = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
 var perfBuildFile = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
 
-func optimizeOptionalBuildWASM(path string, enabled bool) (bool, error) {
+func optimizeOptionalBuildWASM(optimizer *optionalWASMOptimizer, path string, enabled bool) (bool, error) {
 	if !enabled {
 		return false, nil
 	}
-	return optimizeWASMWithWasmOpt(path)
+	return optimizer.optimize(path)
 }
 
 func validatePerfBuildOptions(opts BuildOptions) error {

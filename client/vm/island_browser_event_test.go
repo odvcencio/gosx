@@ -10,6 +10,8 @@ func TestParseEventDataPreservesTypedAndStructuredFields(t *testing.T) {
 	data := parseEventData(`{
 		"checked":true,
 		"clientX":13,
+		"offsetX":12,
+		"deltaY":-3,
 		"timeStamp":3000000000,
 		"pointerID":7,
 		"customIntegral":13,
@@ -23,6 +25,14 @@ func TestParseEventDataPreservesTypedAndStructuredFields(t *testing.T) {
 		data["timeStamp"].Number() != 3000000000 {
 		t.Fatalf("known float fields = clientX(%v,%v) timeStamp(%v,%v)",
 			data["clientX"].Type, data["clientX"].Number(), data["timeStamp"].Type, data["timeStamp"].Number())
+	}
+	// The lowered handler reads these through eventValue, which promotes numbers
+	// to the declared float type, so the decoder needs no per-field case.
+	if offsetX := data["offsetX"].ToFloatVal(); offsetX.Type != program.TypeFloat || offsetX.Number() != 12 {
+		t.Fatalf("offsetX = %+v, want float 12", offsetX)
+	}
+	if deltaY := data["deltaY"].ToFloatVal(); deltaY.Type != program.TypeFloat || deltaY.Number() != -3 {
+		t.Fatalf("deltaY = %+v, want float -3", deltaY)
 	}
 	if data["customIntegral"].Type != program.TypeInt {
 		t.Fatalf("generic integral payload type = %v, want TypeInt", data["customIntegral"].Type)
@@ -42,6 +52,11 @@ func TestIslandEventMarkerConventionsAreStable(t *testing.T) {
 		"onDocumentKeyDown": "data-gosx-on-document-keydown",
 		"onDocumentKeyUp":   "data-gosx-on-document-keyup",
 		"onWindowResize":    "data-gosx-on-window-resize",
+
+		"onWheel":              "data-gosx-on-wheel",
+		"onDblClick":           "data-gosx-on-dblclick",
+		"onContextMenu":        "data-gosx-on-contextmenu",
+		"onLostPointerCapture": "data-gosx-on-lostpointercapture",
 	}
 	for source, marker := range tests {
 		if got := eventMarkerAttr(eventAttrType(source)); got != marker {
