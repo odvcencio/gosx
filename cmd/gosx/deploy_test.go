@@ -330,3 +330,53 @@ func TestDeploymentAssetsCoverManifest(t *testing.T) {
 		t.Fatalf("uncovered SceneAssets.File: %v", err)
 	}
 }
+
+func TestDeploymentCheckGoWASMAssets(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		want string
+	}{
+		{"valid", ""},
+		{"missing", "is missing"},
+		{"modified", "checksum mismatch"},
+		{"corrupt sidecar", ".br"},
+		{"invalid name", "Go WASM"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir, manifest := deploymentFixture(t)
+			data := append([]byte("\x00asm\x01\x00\x00\x00"), bytes.Repeat([]byte("module fixture"), 20)...)
+			assetDir := filepath.Join(dir, "assets", "go-wasm")
+			if err := os.MkdirAll(assetDir, 0755); err != nil {
+				t.Fatal(err)
+			}
+			asset, err := writeHashed(assetDir, "controls", ".wasm", data)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.GoWASM = map[string]buildmanifest.HashedAsset{"controls": asset}
+			filename := filepath.Join(dir, "assets", "go-wasm", asset.File)
+			switch tc.name {
+			case "missing":
+				if err := os.Remove(filename); err != nil {
+					t.Fatal(err)
+				}
+			case "modified":
+				data[len(data)-1] ^= 1
+				mustWriteFile(t, filename, string(data))
+			case "corrupt sidecar":
+				mustWriteFile(t, filename+".br", "corrupt")
+			case "invalid name":
+				manifest.GoWASM = map[string]buildmanifest.HashedAsset{"Upper": asset}
+			}
+			writeDeploymentFixtureManifest(t, dir, manifest)
+			report, err := checkDeploymentBundle(dir)
+			if tc.want == "" {
+				if err != nil || !report.OK || report.Assets != 5 || report.AssetBytes != 4*manifest.Runtime.Bootstrap.Size+asset.Size {
+					t.Fatalf("Go WASM omitted from bundle report: %+v, %v", report, err)
+				}
+			} else if err == nil || report.OK || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Go WASM validation: %+v, %v; want %q", report, err, tc.want)
+			}
+		})
+	}
+}

@@ -161,6 +161,9 @@ func checkDeploymentBundle(dir string) (report deploymentCheckReport, resultErr 
 	if err := manifest.ValidateIslandAssets(); err != nil {
 		return report, fmt.Errorf("build.json: %w", err)
 	}
+	if err := manifest.ValidateGoWASMAssets(); err != nil {
+		return report, fmt.Errorf("build.json: %w", err)
+	}
 	assets := deploymentAssets(&manifest)
 	if len(assets) == 0 {
 		return report, errors.New("build.json contains no runtime assets; rebuild with gosx build --prod")
@@ -291,6 +294,9 @@ func deploymentAssets(manifest *buildmanifest.Manifest) []deploymentAsset {
 	// Walk the typed runtime structure so optional/future chunks and WASM
 	// variants cannot silently escape validation when the manifest grows.
 	walkDeploymentRuntimeAssets(reflect.ValueOf(manifest.Runtime), func(asset buildmanifest.HashedAsset) { add("assets/runtime", asset) })
+	for _, asset := range manifest.GoWASM {
+		add("assets/go-wasm", asset)
+	}
 	for _, asset := range manifest.Islands {
 		add("assets/islands", asset.HashedAsset)
 	}
