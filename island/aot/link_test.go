@@ -3354,13 +3354,15 @@ func TestLinkedEventTransactionsRejectSequencesAndPartialFailuresWithoutCommit(t
 		patchFail int32
 		want      int32
 	}{{"malformed envelope", invalid, 0, 2}, {"integer overflow after writes", overflow, 0, 3},
-		{"patch failure after writes", valid, 6, 6}, {"thrown patch after writes", valid, -1, 6}} {
+		{"patch failure after writes", valid, 6, 6}, {"thrown patch after writes", valid, -1, 6},
+		{"thrown patch after successful patch", valid, -2, 6}} {
 		t.Run(tc.name, func(t *testing.T) {
 			data := struct {
 				domTestData
 				Document, Envelope string
 				Throw              bool
-			}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(tc.envelope), tc.patchFail < 0}
+				ThrowAt            int
+			}{domData(c.programs[0]), base64.StdEncoding.EncodeToString(document), base64.StdEncoding.EncodeToString(tc.envelope), tc.patchFail < 0, int(-tc.patchFail)}
 			if tc.patchFail > 0 {
 				data.PatchStatus = int(tc.patchFail)
 			}
@@ -3370,7 +3372,7 @@ func TestLinkedEventTransactionsRejectSequencesAndPartialFailuresWithoutCommit(t
 				Patches   int
 				Threw     bool
 			}
-			host := strings.Replace(domTestImports, "patches.push(patch);", "patches.push(patch); if (data.Throw) throw new Error('patch failed');", 1)
+			host := strings.Replace(domTestImports, "patches.push(patch);", "patches.push(patch); if (data.Throw && patches.length===data.ThrowAt) throw new Error('patch failed');", 1)
 			runExpressionModule(t, m, `
   const api = instance.exports, statuses = [], bound = [], patches = [];
   const document = Buffer.from(data.Document,'base64'), envelope = Buffer.from(data.Envelope,'base64');
@@ -3381,16 +3383,17 @@ func TestLinkedEventTransactionsRejectSequencesAndPartialFailuresWithoutCommit(t
   memory.set(envelope,32768); let threw = false;
   try {statuses.push(api.prepareEvent(15,0,1,0,32768,envelope.length));} catch {threw = true;}
   let preserved = committed.equals(Buffer.from(memory.slice(api.committed(),api.committed()+65536)));
-  if (!threw) statuses.push(api.checkpoint(1,32768,32768),api.commit(1,0));
+  statuses.push(api.checkpoint(1,32768,32768),api.commit(1,0));
   statuses.push(api.abortPage(),api.abortPage());
   const length = api.checkpoint(0,32768,32768);
   preserved = preserved&&Buffer.from(memory.slice(32768,32768+length)).equals(document)&&api.pending()===0&&api.status()===0;
   process.stdout.write(JSON.stringify({Statuses:statuses,Preserved:preserved,Patches:patches.length,Threw:threw}));`, data, &got, host)
 			want := []int32{8, 0, 0, 8, tc.want, -tc.want, tc.want, 0, 0}
 			if data.Throw {
-				want = []int32{8, 0, 0, 8, 0, 0}
+				want = []int32{8, 0, 0, 8, -tc.want, tc.want, 0, 0}
 			}
-			if !got.Preserved || !reflect.DeepEqual(got.Statuses, want) || got.Threw != data.Throw || tc.want != 6 && got.Patches != 0 {
+			if !got.Preserved || !reflect.DeepEqual(got.Statuses, want) || got.Threw != data.Throw ||
+				tc.want != 6 && got.Patches != 0 || data.Throw && got.Patches != data.ThrowAt {
 				t.Fatalf("event failure committed state or survived abort: %+v", got)
 			}
 		})
