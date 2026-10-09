@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -148,7 +149,9 @@ func (w *observedResponseWriter) Flush() { _ = w.FlushError() }
 
 func (w *observedResponseWriter) FlushError() error {
 	err := http.NewResponseController(w.ResponseWriter).Flush()
-	if err == nil && w.status == 0 && !w.hijacked {
+	// A supported flush commits headers before an I/O error can be returned.
+	// Unsupported flushes leave the response uncommitted.
+	if !errors.Is(err, http.ErrNotSupported) && w.status == 0 && !w.hijacked {
 		w.status = http.StatusOK
 	}
 	return err

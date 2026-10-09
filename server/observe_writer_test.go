@@ -302,7 +302,7 @@ func TestObservedHijackStatus(t *testing.T) {
 
 func TestObservedUnsupportedController(t *testing.T) {
 	p := &responseProbe{header: make(http.Header)}
-	captureResponse(t, p, func(w http.ResponseWriter, _ *http.Request) {
+	event := captureResponse(t, p, func(w http.ResponseWriter, _ *http.Request) {
 		c := http.NewResponseController(w)
 		if err := c.Flush(); !errors.Is(err, http.ErrNotSupported) {
 			t.Fatalf("flush=%v", err)
@@ -313,7 +313,46 @@ func TestObservedUnsupportedController(t *testing.T) {
 		if err := w.(http.Pusher).Push("/asset", nil); !errors.Is(err, http.ErrNotSupported) {
 			t.Fatalf("push=%v", err)
 		}
+		w.WriteHeader(http.StatusBadGateway)
 	})
+	if event.Status != http.StatusBadGateway || len(p.statuses) != 1 || p.statuses[0] != http.StatusBadGateway {
+		t.Fatalf("unsupported operations committed a response: event=%+v headers=%v", event, p.statuses)
+	}
+}
+
+type failedFlushProbe struct {
+	*httptest.ResponseRecorder
+	err error
+}
+
+func (w *failedFlushProbe) FlushError() error {
+	w.ResponseRecorder.Flush()
+	return w.err
+}
+
+func TestObservedFailedFlushPreservesCommittedStatus(t *testing.T) {
+	failure := errors.New("flush write failure")
+	for _, method := range []string{"controller", "flusher"} {
+		t.Run(method, func(t *testing.T) {
+			p := &failedFlushProbe{ResponseRecorder: httptest.NewRecorder(), err: failure}
+			event := captureResponse(t, unwrapProbe{p}, func(w http.ResponseWriter, _ *http.Request) {
+				if method == "controller" {
+					if err := http.NewResponseController(w).Flush(); !errors.Is(err, failure) {
+						t.Fatalf("flush error=%v want=%v", err, failure)
+					}
+				} else {
+					w.(http.Flusher).Flush()
+				}
+				w.WriteHeader(http.StatusBadGateway)
+			})
+			if !p.Flushed || p.Code != http.StatusOK {
+				t.Fatalf("flush committed status=%d flushed=%v", p.Code, p.Flushed)
+			}
+			if event.Status != p.Code || event.ResponseBytes != 0 {
+				t.Fatalf("observed status=%d bytes=%d; want=%d, 0", event.Status, event.ResponseBytes, p.Code)
+			}
+		})
+	}
 }
 
 type pushProbe struct {
