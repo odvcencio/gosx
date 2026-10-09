@@ -399,3 +399,90 @@ func TestActivityEventsExistingWorkerConsumesMemoryQueue(t *testing.T) {
 		t.Fatal(view, err)
 	}
 }
+
+type blockedEventClock struct {
+	Clock
+	Ticker
+	entered, release chan struct{}
+	failed           atomic.Bool
+}
+
+func (c *blockedEventClock) Now() Instant {
+	if c.failed.Load() {
+		panic("clock-test-canary")
+	}
+	return c.Clock.Now()
+}
+func (c *blockedEventClock) Stamp(time.Time) Instant {
+	close(c.entered)
+	<-c.release
+	return c.Now()
+}
+
+func TestActivityEventsReleasedAfterWorkerClockFailure(t *testing.T) {
+	a, tel := eventFixture(t)
+	clock := tel.opts.Clock
+	c := &blockedEventClock{Clock: clock, Ticker: clock.NewTicker(time.Second), entered: make(chan struct{}), release: make(chan struct{})}
+	tel.opts.Clock = c
+	tel.ticker, tel.ticks, tel.done = c, c.C(), make(chan struct{})
+	tel.start = clock.Now()
+	go tel.run()
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(c.release) }) }
+	defer func() {
+		unblock()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tel.Close(ctx)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := clock.(interface{ Advance(time.Duration) error }).Advance(time.Second); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.entered:
+	case <-ctx.Done():
+		t.Fatal("worker did not enter clock callback")
+	}
+	q := tel.activities.events
+	baseline := q.used.Load()
+	if err := a.Event("round", 1); err != nil {
+		t.Fatal(err)
+	}
+	q.mu.Lock()
+	queued := q.count == 1 && q.inFlight == 0 && q.used.Load() > baseline
+	q.mu.Unlock()
+	if !queued {
+		t.Fatal("blocked worker did not retain the accepted event")
+	}
+	// Cleanup must not need the failed clock or run application codecs.
+	c.failed.Store(true)
+	a.kind.event.encode = func(*FieldSet, int) error { panic("cleanup called codec") }
+	unblock()
+	select {
+	case <-tel.done:
+	case <-ctx.Done():
+		t.Fatal("worker did not finish after clock failure")
+	}
+	if err := tel.Close(context.Background()); !errors.Is(err, ErrInvalidOptions) {
+		t.Error("worker clock failure was not preserved", err)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.count != 0 || q.inFlight != 0 || q.used.Load() != baseline {
+		t.Errorf("accepted event retained after worker completion: count=%d inFlight=%d payloadBytes=%d", q.count, q.inFlight, q.used.Load()-baseline)
+	}
+	for _, slot := range q.slots {
+		if telemetryrecord.Valid(slot) {
+			t.Error("drained slot retained an accepted event")
+			break
+		}
+	}
+	if !tel.activities.stopping.Load() || tel.Enabled() {
+		t.Error("worker completion left event admission open")
+	}
+	if err := a.Event("round", 2); !errors.Is(err, ErrClosed) {
+		t.Error("event was admitted after worker completion", err)
+	}
+}

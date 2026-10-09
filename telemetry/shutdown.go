@@ -15,6 +15,7 @@ func (t *Telemetry) run() {
 			t.collectActivityReceipts()
 			t.releaseUnfinishedActivities()
 		}
+		t.drainActivityEvents()
 		t.releaseLoops()
 		t.releaseHubs()
 		t.updateCoreUsage()
