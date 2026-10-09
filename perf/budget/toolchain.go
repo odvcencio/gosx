@@ -1,8 +1,8 @@
 package budget
 
 import (
-	"errors"
 	"runtime/debug"
+	"strconv"
 )
 
 type PlatformArchives struct {
@@ -41,22 +41,30 @@ func LoadToolchain(path string, opts LoadOptions) (*Toolchain, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := t.validate(root); err != nil {
+		return nil, inputReference(err, "toolchain", "")
+	}
+	return &t, nil
+}
+
+func (t Toolchain) validate(root string) error {
 	if info, ok := debug.ReadBuildInfo(); ok {
 		if err := t.validateModules(info.Deps); err != nil {
-			return nil, err
+			return err
 		}
 	}
 	seen := make(map[string]bool)
-	for _, font := range t.Fonts {
+	for i, font := range t.Fonts {
+		label := "fonts[" + strconv.Itoa(i) + "]"
 		if seen[font.File] {
-			return nil, errors.New("duplicate font reference")
+			return inputReference(invalidInput("/file"), label, "")
 		}
 		seen[font.File] = true
 		if _, err := readReference(root, font, 16<<20); err != nil {
-			return nil, err
+			return inputReference(err, label, "")
 		}
 	}
-	return &t, nil
+	return nil
 }
 
 func (t Toolchain) validateModules(modules []*debug.Module) error {
@@ -64,7 +72,7 @@ func (t Toolchain) validateModules(modules []*debug.Module) error {
 	for _, module := range modules {
 		if pin, ok := pins[module.Path]; ok {
 			if module.Replace != nil || module.Version != pin {
-				return errors.New("selected module does not match toolchain pin")
+				return invalidInput("/" + map[string]string{"github.com/andybalholm/brotli": "brotli", "github.com/chromedp/cdproto": "cdproto", "github.com/chromedp/chromedp": "chromedp"}[module.Path])
 			}
 		}
 	}

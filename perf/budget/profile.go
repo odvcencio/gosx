@@ -1,7 +1,5 @@
 package budget
 
-import "errors"
-
 type Network struct {
 	RTTMicros       int64 `json:"rttMicros"`
 	DownBytesPerSec int64 `json:"downBytesPerSec"`
@@ -36,8 +34,15 @@ func LoadProfile(path string, opts LoadOptions) (*Profile, error) {
 	if _, err := loadInput(path, opts, "Profile", &p); err != nil {
 		return nil, err
 	}
-	if p.Reference == "phone-4gb" && p.BenchmarkIndexTarget == nil {
-		return nil, errors.New("phone profile requires a benchmark target")
+	if err := p.validate(); err != nil {
+		return nil, inputReference(err, "profile", "/benchmarkIndexTarget")
 	}
 	return &p, nil
+}
+
+func (p Profile) validate() error {
+	if p.Reference == "phone-4gb" && p.BenchmarkIndexTarget == nil {
+		return invalidInput("/benchmarkIndexTarget")
+	}
+	return nil
 }
