@@ -133,7 +133,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		if mimeErr != nil || !measureMIME(opts.Kind, contentType) {
 			return out, measureFailure("policy", "/contentType")
 		}
-		cache := strings.ToLower(response.Header.Get("Cache-Control"))
+		cache := strings.ToLower(strings.Join(response.Header.Values("Cache-Control"), ","))
 		immutable := cacheDirective(cache, "immutable") && cacheDirective(cache, "max-age=31536000")
 		out.Sizes = sizes
 		out.body = raw
