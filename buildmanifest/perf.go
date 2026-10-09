@@ -12,6 +12,8 @@ import (
 	"unicode/utf8"
 )
 
+const maxPerfAssetBytes = 2 << 20
+
 // PerfAssetUses describes versioned reachability evidence. A nil field in an
 // older manifest means unknown reachability, even when compatibility validation
 // succeeds. It never establishes a certified performance pass.
@@ -46,6 +48,21 @@ type PerfAssetError struct {
 func (e *PerfAssetError) Error() string { return e.Code + " at " + e.Pointer }
 func perfError(pointer string) error {
 	return &PerfAssetError{Code: "invalid-input", Pointer: "/perfAssetUses" + pointer}
+}
+
+// MarshalJSON enforces the metadata byte limit including the production
+// writer's two-space indentation and nesting inside the build manifest.
+func (p PerfAssetUses) MarshalJSON() ([]byte, error) {
+	type plain PerfAssetUses
+	data, err := json.Marshal(plain(p))
+	if err != nil || len(data) > maxPerfAssetBytes {
+		return nil, perfError("")
+	}
+	var indented bytes.Buffer
+	if err := json.Indent(&indented, data, "  ", "  "); err != nil || indented.Len() > maxPerfAssetBytes {
+		return nil, perfError("")
+	}
+	return data, nil
 }
 
 func (p *PerfAssetUses) UnmarshalJSON(data []byte) error {
@@ -96,7 +113,7 @@ func (a *PerfAssetUse) UnmarshalJSON(data []byte) error {
 }
 
 func perfObject(data []byte, required []string) (map[string]json.RawMessage, error) {
-	if len(data) > 2<<20 || !utf8.Valid(data) {
+	if len(data) > maxPerfAssetBytes || !utf8.Valid(data) {
 		return nil, perfError("")
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -174,6 +191,8 @@ func perfEnum(value string, allowed ...string) bool {
 
 // ValidatePerfAssetUses validates a single graph without requiring new metadata
 // on older manifests. Consumers must separately require PerfAssetUses != nil.
+// The byte limit includes production indentation so accepted graphs load from
+// both compact JSON and the production writer's output.
 func (m *Manifest) ValidatePerfAssetUses() error {
 	if m == nil {
 		return perfError("")
@@ -248,7 +267,8 @@ func (m *Manifest) ValidatePerfAssetUses() error {
 			return err
 		}
 	}
-	return nil
+	_, err := p.MarshalJSON()
+	return err
 }
 
 // ValidatePerfAssetConsistency verifies global ID identity across app manifests.
