@@ -401,7 +401,11 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 		raw, ok := referenceLiteral(args.NamedChild(0), lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
-			addReference(out, raw, "", false)
+			kind := ""
+			if parent := n.Parent(); parent != nil && parent.Type(lang) == "import_statement" {
+				kind = KindStyle
+			}
+			addReference(out, raw, kind, false)
 		}
 	} else if name == "image-set" || name == "-webkit-image-set" {
 		for i := 0; i < args.NamedChildCount(); i++ {
@@ -467,7 +471,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		out.Complete = out.Complete && ok
 		if ok {
 			kind := ""
-			if value == "import" || value == "Worker" || value == "SharedWorker" {
+			if value == "import" || value == "Worker" || value == "SharedWorker" || value == "URL" && workerURLArgument(n, lang, body) {
 				kind = KindScript
 			}
 			addReference(out, raw, kind, false)
@@ -483,4 +487,20 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			}
 		}
 	}
+}
+
+func workerURLArgument(n *ts.Node, lang *ts.Language, body []byte) bool {
+	args := n.Parent()
+	if args == nil || args.Type(lang) != "arguments" || args.NamedChildCount() == 0 || args.NamedChild(0) != n {
+		return false
+	}
+	call := args.Parent()
+	if call == nil {
+		return false
+	}
+	name := call.ChildByFieldName("constructor", lang)
+	if name == nil {
+		name = call.ChildByFieldName("function", lang)
+	}
+	return name != nil && (name.Text(body) == "Worker" || name.Text(body) == "SharedWorker")
 }

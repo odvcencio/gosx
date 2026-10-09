@@ -114,6 +114,46 @@ const text="import('/string.js')"; const regex=/import("regex.js")/;
 	}
 }
 
+func TestReferencesWrappedURLsPreserveContextKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, extension, direct, wrapped string
+	}{
+		{"stylesheet", KindStyle, ".css", `@import "TARGET";`, `@import url("TARGET");`},
+		{"worker", KindScript, ".js", `new Worker("TARGET");`, `new Worker(new URL("TARGET", import.meta.url));`},
+		{"shared-worker", KindScript, ".js", `new SharedWorker("TARGET");`, `new SharedWorker(new URL("TARGET", import.meta.url));`},
+	} {
+		for _, target := range []string{"./dependency", "./dependency#x", "./dependency" + tc.extension + "#x"} {
+			t.Run(tc.name+"/"+target, func(t *testing.T) {
+				want := ReferenceSet{Resources: []Reference{{target, tc.kind, false}}, Complete: true}
+				for _, template := range []string{tc.direct, tc.wrapped} {
+					set, err := ScanReferences([]byte(strings.ReplaceAll(template, "TARGET", target)), tc.kind)
+					if err != nil || !reflect.DeepEqual(set, want) {
+						t.Errorf("direct and wrapped references must preserve context kind: %#v %v", set, err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestReferencesURLKindsStayWithinLoadContext(t *testing.T) {
+	for _, tc := range []struct {
+		name, kind, body string
+		want             []Reference
+	}{
+		{"background", KindStyle, `.a { background: url("./resource"); }`, []Reference{{"./resource", KindOther, false}}},
+		{"standalone", KindScript, `new URL("./resource", import.meta.url);`, []Reference{{"./resource", KindOther, false}}},
+		{"worker-options", KindScript, `new Worker("./worker", {resource: new URL("./resource", import.meta.url)});`, []Reference{{"./resource", KindOther, false}, {"./worker", KindScript, false}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set, err := ScanReferences([]byte(tc.body), tc.kind)
+			if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, tc.want) {
+				t.Fatal("URL outside a typed load context gained a kind", set, err)
+			}
+		})
+	}
+}
+
 func TestReferencesUnresolvedSyntaxDoesNotProveClosure(t *testing.T) {
 	tests := []struct{ name, kind, body string }{
 		{"computed-import", KindScript, "import(selected)"},
@@ -124,6 +164,7 @@ func TestReferencesUnresolvedSyntaxDoesNotProveClosure(t *testing.T) {
 		{"xhr", KindScript, "new XMLHttpRequest()"},
 		{"worker", KindScript, "new Worker(selected)"},
 		{"worker-unknown-constructor", KindScript, "new Worker(new Date())"},
+		{"worker-url-base", KindScript, "new Worker(new URL('./worker',base))"},
 		{"url-base", KindScript, "new URL('./model.glb',base)"},
 		{"single-quote-escape", KindScript, "import('./\\u0061.js')"},
 		{"eval", KindScript, "eval(source)"},
