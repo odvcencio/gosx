@@ -48,6 +48,13 @@
   One optional telemetry subscriber has its own reservation and sampling policy.
   Opt-in slow-client eviction uses interval drop deltas and the existing pump
   timer; it does not increase the 54-second ping frequency or add a scanner.
+- Stage `gosx init` before publishing files with no-clobber writes. Existing
+  files and symlinks below the destination cause a conflict; root symlinks work.
+  Late failures roll back files still owned by the invocation on a best-effort
+  basis. The app template uses component syntax for `Page`, `NotFoundPage` and
+  `ErrorPage`. Dependency resolution runs in staging; offline failures and
+  destinations containing any existing Go files prompt a final `go mod tidy`,
+  because existing packages outside `app/` are not staged.
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
