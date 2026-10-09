@@ -91,9 +91,9 @@
     if (e.type === "keydown" || e.type === "keyup") {
       copyNumberField(data, e, "timeStamp", "timeStamp", true);
     }
-    const pointerEvent = e.type.indexOf("pointer") === 0 || e.type === "lostpointercapture";
-    const mouseEvent = pointerEvent || e.type === "click" || e.type === "drop" || e.type.indexOf("drag") === 0
-      || e.type === "dblclick" || e.type === "contextmenu" || e.type === "wheel";
+    // "pointer" also matches lostpointercapture; "click" also matches dblclick.
+    const pointerEvent = e.type.indexOf("pointer") >= 0;
+    const mouseEvent = pointerEvent || /click|drop|drag|contextmenu|wheel/.test(e.type);
     if (pointerEvent) {
       copyNumberField(data, e, "pointerId", "pointerID");
       if (e.pointerType) data.pointerType = String(e.pointerType);
@@ -108,22 +108,17 @@
       copyNumberField(data, e, "button", "button");
       copyNumberField(data, e, "buttons", "buttons");
     }
-    if (mouseEvent && handlerElement && typeof handlerElement.getBoundingClientRect === "function"
-      && typeof e.clientX === "number" && typeof e.clientY === "number") {
+    if (mouseEvent && handlerElement && handlerElement.getBoundingClientRect) {
       // Relative to the element that owns the handler, not to e.target: a
-      // fader's inner track must not change the coordinate space.
+      // fader's inner track must not change the coordinate space. A missing
+      // clientX/clientY gives NaN, which copyNumberField drops.
       const rect = handlerElement.getBoundingClientRect();
-      const offsets = { offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top };
-      copyNumberField(data, offsets, "offsetX", "offsetX");
-      copyNumberField(data, offsets, "offsetY", "offsetY");
-      copyNumberField(data, rect, "width", "elementWidth");
-      copyNumberField(data, rect, "height", "elementHeight");
+      copyNumberFields(data, {
+        offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+        elementWidth: rect.width, elementHeight: rect.height,
+      }, ["offsetX", "offsetY", "elementWidth", "elementHeight"]);
     }
-    if (e.type === "wheel") {
-      copyNumberField(data, e, "deltaX", "deltaX");
-      copyNumberField(data, e, "deltaY", "deltaY");
-      copyNumberField(data, e, "deltaMode", "deltaMode");
-    }
+    if (e.type === "wheel") copyNumberFields(data, e, ["deltaX", "deltaY", "deltaMode"]);
     if (e.type === "resize") {
       if (typeof window.innerWidth === "number" && window.innerWidth !== 0) data.width = window.innerWidth;
       if (typeof window.innerHeight === "number" && window.innerHeight !== 0) data.height = window.innerHeight;
@@ -144,6 +139,10 @@
     }
 
     return data;
+  }
+
+  function copyNumberFields(data, source, names) {
+    for (const name of names) copyNumberField(data, source, name, name);
   }
 
   function copyNumberField(data, event, sourceName, targetName, preserveZero) {
@@ -237,10 +236,13 @@
       // Legacy manifests declare nothing, so a non-passive wheel listener
       // would slow scrolling on every island. Attach it only where a handler
       // exists.
-      if (!declared && eventType === "wheel" && !(islandRoot.querySelector && islandRoot.querySelector("[data-gosx-on-wheel]"))) continue;
+      if (!declared && eventType === "wheel" && !islandRoot.querySelector("[data-gosx-on-wheel]")) continue;
       const listener = createDelegatedListener(islandRoot, islandID, eventType);
       const useCapture = delegatedEventCapture(eventType);
-      islandRoot.addEventListener(eventType, listener, eventType === "wheel" ? { capture: useCapture, passive: false } : useCapture);
+      // passive: false lets a wheel handler call browser.PreventDefault(); it
+      // is already the default for non-document targets, so other events are
+      // unchanged.
+      islandRoot.addEventListener(eventType, listener, { capture: useCapture, passive: false });
       entries.push({ target: islandRoot, type: eventType, listener, capture: useCapture });
     }
 
@@ -311,19 +313,13 @@
       }
       e.__gosx_handled = true;
       dispatchIslandAction(islandID, match.name, extractEventData(e, match.element), e, match.element);
-      if (eventType === "pointerdown") rememberPointerCapture(islandID, match.element, e.pointerId);
+      if (eventType === "pointerdown") {
+        // Disposal releases these. Releasing a pointer the element no longer
+        // holds is a no-op, so no capture check is needed here.
+        const record = window.__gosx.islands.get(islandID);
+        if (record) (record.pointerCaptures || (record.pointerCaptures = new Map())).set(e.pointerId, match.element);
+      }
     };
-  }
-
-  // browser.CapturePointer runs synchronously inside the handler, so a capture
-  // exists right after dispatch. Disposal releases what is still held.
-  function rememberPointerCapture(islandID, element, pointerId) {
-    if (typeof pointerId !== "number" || !element || typeof element.hasPointerCapture !== "function") return;
-    if (!element.hasPointerCapture(pointerId)) return;
-    const record = window.__gosx.islands.get(islandID);
-    if (!record) return;
-    if (!record.pointerCaptures) record.pointerCaptures = new Map();
-    record.pointerCaptures.set(pointerId, element);
   }
 
   function createGlobalDelegatedListener(islandRoot, islandID, config) {

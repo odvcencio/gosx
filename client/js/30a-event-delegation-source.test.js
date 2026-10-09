@@ -33,6 +33,9 @@ test("delegation source carries typed pointer/dataset context and clears current
     contextDuringAction = [env.context.__gosx_current_event, env.context.__gosx_current_handler];
     return 0;
   };
+  // The core runtime always provides the island registry before events fire.
+  env.context.__gosx = env.context.__gosx || {};
+  env.context.__gosx.islands = new Map();
   runScript(source, env.context, "30a-tail-event-delegation.js");
   env.context.__gosx_test_setup_event_delegation(root, root.id);
 

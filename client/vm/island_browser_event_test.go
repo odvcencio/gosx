@@ -26,9 +26,13 @@ func TestParseEventDataPreservesTypedAndStructuredFields(t *testing.T) {
 		t.Fatalf("known float fields = clientX(%v,%v) timeStamp(%v,%v)",
 			data["clientX"].Type, data["clientX"].Number(), data["timeStamp"].Type, data["timeStamp"].Number())
 	}
-	if data["offsetX"].Type != program.TypeFloat || data["deltaY"].Type != program.TypeFloat || data["deltaY"].Number() != -3 {
-		t.Fatalf("gesture fields = offsetX %v, deltaY %v/%v, want TypeFloat and -3",
-			data["offsetX"].Type, data["deltaY"].Type, data["deltaY"].Number())
+	// The lowered handler reads these through eventValue, which promotes numbers
+	// to the declared float type, so the decoder needs no per-field case.
+	if offsetX := data["offsetX"].ToFloatVal(); offsetX.Type != program.TypeFloat || offsetX.Number() != 12 {
+		t.Fatalf("offsetX = %+v, want float 12", offsetX)
+	}
+	if deltaY := data["deltaY"].ToFloatVal(); deltaY.Type != program.TypeFloat || deltaY.Number() != -3 {
+		t.Fatalf("deltaY = %+v, want float -3", deltaY)
 	}
 	if data["customIntegral"].Type != program.TypeInt {
 		t.Fatalf("generic integral payload type = %v, want TypeInt", data["customIntegral"].Type)

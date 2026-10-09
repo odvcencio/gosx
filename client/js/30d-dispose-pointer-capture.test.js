@@ -49,16 +49,13 @@ test("disposing an island releases pointers captured by its handlers", () => {
   assert.equal(env.context.__gosx.islands.has(root.id), false);
 });
 
-test("disposal skips pointers the browser already released", () => {
+test("disposal survives a release that throws for an ended pointer", () => {
   const root = new FakeElement("div", null);
   const handle = new FakeElement("div", null);
-  root.id = "island-released";
+  root.id = "island-ended";
   handle.setAttribute("data-gosx-on-pointerdown", "grab");
   root.appendChild(handle);
-  let held = true;
-  let releaseCalls = 0;
-  handle.hasPointerCapture = () => held;
-  handle.releasePointerCapture = () => { releaseCalls++; };
+  handle.releasePointerCapture = () => { throw new Error("NotFoundError"); };
   const env = createContext({ elements: [root] });
   env.context.__gosx_action = () => 0;
   env.context.__gosx = env.context.__gosx || {};
@@ -67,7 +64,6 @@ test("disposal skips pointers the browser already released", () => {
   const listeners = env.context.__gosx_test_setup_event_delegation(root, root.id, [{ eventType: "pointerdown" }]);
   env.context.__gosx.islands.set(root.id, { root, listeners });
   root.dispatchEvent({ type: "pointerdown", target: handle, pointerId: 2 });
-  held = false;
   env.context.__gosx_test_dispose_island(root.id);
-  assert.equal(releaseCalls, 0);
+  assert.equal(env.context.__gosx.islands.has(root.id), false);
 });

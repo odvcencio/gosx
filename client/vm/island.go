@@ -506,8 +506,7 @@ func parseEventFieldValue(key string, value any) Value {
 	// perfectly valid DOMHighResTimeStamp such as 3e9 would otherwise clamp
 	// before OpEventGet could promote it back to float.
 	switch key {
-	case "timeStamp", "clientX", "clientY", "pressure", "width", "height",
-		"offsetX", "offsetY", "deltaX", "deltaY":
+	case "timeStamp", "clientX", "clientY", "pressure", "width", "height":
 		if number, ok := value.(float64); ok {
 			return FloatVal(number)
 		}
