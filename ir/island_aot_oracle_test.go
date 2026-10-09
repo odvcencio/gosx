@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"go/ast"
+	"go/build/constraint"
 	"go/constant"
 	"go/parser"
 	"go/token"
@@ -405,8 +406,10 @@ func TestIslandAOTTypeCheckerHostOnly(t *testing.T) {
 		for _, imp := range file.Imports {
 			path, _ := strconv.Unquote(imp.Path.Value)
 			if path == "go/types" || path == "go/importer" || path == "go/build" {
-				if !bytes.HasPrefix(data, []byte("//go:build !tinygo\n")) {
-					t.Errorf("%s imports host checker %s without a TinyGo boundary", name, path)
+				line, _, _ := strings.Cut(string(data), "\n")
+				boundary, err := constraint.Parse(line)
+				if err != nil || boundary.Eval(func(tag string) bool { return tag == "tinygo" }) || boundary.Eval(func(tag string) bool { return tag == "js" }) {
+					t.Errorf("%s imports host checker %s without client build boundaries", name, path)
 				}
 			}
 		}
