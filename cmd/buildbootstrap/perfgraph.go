@@ -19,6 +19,7 @@ import (
 // chunks.json remains source provenance; minification/compression prevent
 // additive byte attribution to individual source files.
 func perfGraph(dir string) (*buildmanifest.PerfAssetUses, error) {
+	dir = filepath.Clean(dir)
 	root, err := os.OpenRoot(filepath.Dir(dir))
 	if err != nil {
 		return nil, perfGraphError("asset-unavailable")

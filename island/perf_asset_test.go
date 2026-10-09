@@ -9,6 +9,8 @@ import (
 	"errors"
 	"os/exec"
 	"reflect"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -17,6 +19,7 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 )
 
@@ -45,6 +48,13 @@ func perfAssetRendererFixture(t *testing.T) (*Renderer, *buildmanifest.Manifest)
 		{"bootstrap-controller-input.js", &m.Runtime.BootstrapControllerInput}, {"bootstrap-feature-scene3d.js", &m.Runtime.BootstrapFeatureScene3D},
 		{"bootstrap-feature-scene3d-hydrate.js", &m.Runtime.BootstrapFeatureScene3DHydrate}, {"bootstrap-feature-scene3d-webgpu.js", &m.Runtime.BootstrapFeatureScene3DWebGPU},
 		{"bootstrap-feature-scene3d-webgl.js", &m.Runtime.BootstrapFeatureScene3DWebGL}, {"bootstrap-feature-scene3d-pipeline-recovery.js", &m.Runtime.BootstrapFeatureScene3DPipelineRecovery},
+		{"bootstrap-feature-scene3d-zoom.js", &m.Runtime.BootstrapFeatureScene3DZoom}, {"bootstrap-feature-scene3d-walk.js", &m.Runtime.BootstrapFeatureScene3DWalk},
+		{"bootstrap-feature-scene3d-vessel.js", &m.Runtime.BootstrapFeatureScene3DVessel}, {"bootstrap-feature-scene3d-ocean-query.js", &m.Runtime.BootstrapFeatureScene3DOceanQuery},
+		{"bootstrap-feature-scene3d-compute.js", &m.Runtime.BootstrapFeatureScene3DCompute}, {"bootstrap-feature-scene3d-decompress.js", &m.Runtime.BootstrapFeatureScene3DDecompress},
+		{"bootstrap-feature-scene3d-gltf.js", &m.Runtime.BootstrapFeatureScene3DGLTF}, {"bootstrap-feature-scene3d-animation.js", &m.Runtime.BootstrapFeatureScene3DAnimation},
+		{"bootstrap-feature-scene3d-command.js", &m.Runtime.BootstrapFeatureScene3DCommand}, {"bootstrap-feature-scene3d-instance-stream.js", &m.Runtime.BootstrapFeatureScene3DInstanceStream},
+		{"bootstrap-feature-scene3d-timeline.js", &m.Runtime.BootstrapFeatureScene3DTimeline}, {"bootstrap-feature-scene3d-particle-burst.js", &m.Runtime.BootstrapFeatureScene3DParticleBurst},
+		{"bootstrap-feature-textlayout.js", &m.Runtime.BootstrapFeatureTextlayout},
 		{"hls.min.js", &m.Runtime.VideoHLS},
 	} {
 		*entry.dest = add("framework/runtime/"+entry.name, "runtime", strings.TrimSuffix(entry.name, ".js"), "js", "framework", []byte(entry.name), 10)
@@ -67,6 +77,290 @@ func perfAssetRendererFixture(t *testing.T) (*Renderer, *buildmanifest.Manifest)
 		t.Fatal(err)
 	}
 	return r, m
+}
+
+func TestPerfAssetRendererStartupZoom(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		for _, missing := range []bool{false, true} {
+			t.Run(strconv.FormatBool(enabled)+"/missing-"+strconv.FormatBool(missing), func(t *testing.T) {
+				r, _ := perfAssetRendererFixture(t)
+				r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface,
+					Props: json.RawMessage(`{"controlZoom":` + strconv.FormatBool(enabled) + `}`)}, gosx.Text(""))
+				id := "framework/runtime/bootstrap-feature-scene3d-zoom.js"
+				if missing {
+					for i, asset := range r.perfAssets.Assets {
+						if asset.ID == id {
+							r.perfAssets.Assets = append(r.perfAssets.Assets[:i], r.perfAssets.Assets[i+1:]...)
+							break
+						}
+					}
+				}
+				uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu"})
+				if enabled && missing {
+					var input *buildmanifest.PerfAssetError
+					if uses != nil || !errors.As(err, &input) || input.Code != "unknown-reachability" {
+						t.Fatalf("missing startup zoom body accepted: %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if missing {
+					return
+				}
+				asset := perfAssetByID(t, uses, id)
+				if enabled {
+					if asset.Phase != "startup" || !reflect.DeepEqual(asset.Dependencies, []string{"framework/runtime/bootstrap-feature-scene3d.js"}) {
+						t.Fatalf("startup zoom: %+v", asset)
+					}
+				} else if asset.Phase != "dormant" {
+					t.Fatalf("disabled zoom fetched: %+v", asset)
+				}
+			})
+		}
+	}
+}
+
+func TestPerfAssetRendererSceneContentGates(t *testing.T) {
+	for _, tc := range []struct{ name, props, chunk, phase string }{
+		{"walk", `{"controls":"first-person","walk":{}}`, "walk", "startup"},
+		{"walk-alias", `{"controls":" FPS ","walk":{}}`, "walk", "startup"},
+		{"walk-orbit", `{"controls":"orbit","walk":{}}`, "walk", "dormant"},
+		{"vessel", `{"vessel":{"nodeId":"boat"}}`, "vessel", "startup"},
+		{"ocean-query", `{"vessel":{"nodeId":"boat"}}`, "ocean-query", "startup"},
+		{"empty-vessel", `{"vessel":{"nodeId":""}}`, "vessel", "dormant"},
+		{"particles", `{"computeParticles":[{}]}`, "compute", "startup"},
+		{"instancing", `{"scene":{"instancedMeshes":[{}]}}`, "compute", "startup"},
+		{"nested-empty-particles-preload", `{"computeParticles":[{}],"scene":{"computeParticles":[]}}`, "compute", "startup"},
+		{"burst-opt-in-preload", `{"particleBursts":true}`, "compute", "startup"},
+		{"compression", `{"compression":{}}`, "decompress", "startup"},
+		{"compressed-points", `{"scene":{"points":[{"compressedPositions":{}}]}}`, "decompress", "startup"},
+		{"plain-points-preload", `{"points":[{"compressedPositions":null}]}`, "decompress", "startup"},
+		{"nested-policy-preload", `{"scene":{"compression":{}}}`, "decompress", "startup"},
+		{"ibl", `{"scene":{"environment":{"ibl":{"radiance":{"uri":"/r.ktx2"},"irradiance":{"uri":"/i.ktx2"},"brdfLUT":{"uri":"/b.ktx2"}}}}}`, "gltf", "startup"},
+		{"incomplete-ibl", `{"environment":{"ibl":{"radiance":{"uri":"/r.ktx2"}}}}`, "gltf", "dormant"},
+		{"ktx2", `{"objects":[{"texture":"/a.KTX2#x"}]}`, "gltf", "startup"},
+		{"ktx2-descriptor", `{"sprites":[{"textureDescriptors":{"base":{"uri":"/a.ktx2?q=1"}}}]}`, "gltf", "startup"},
+		{"ktx2-query-value", `{"sprites":[{"textureDescriptors":{"base":{"uri":"/texture?asset=a.ktx2"}}}]}`, "gltf", "startup"},
+		{"plain-texture", `{"environment":{"envMap":"/a.png"}}`, "gltf", "dormant"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, _ := perfAssetRendererFixture(t)
+			r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(tc.props)}, gosx.Text(""))
+			uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			asset := perfAssetByID(t, uses, "framework/runtime/bootstrap-feature-scene3d-"+tc.chunk+".js")
+			if asset.Phase != tc.phase || tc.phase == "startup" && !reflect.DeepEqual(asset.Dependencies, []string{"framework/runtime/bootstrap-feature-scene3d.js"}) {
+				t.Fatalf("content gate: %+v", asset)
+			}
+		})
+	}
+}
+
+func TestPerfAssetRendererSceneMonolith(t *testing.T) {
+	r, _ := perfAssetRendererFixture(t)
+	r.bootstrapRuntimePath = ""
+	r.bootstrapFeatureScene3dPath = ""
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, asset := range uses.Assets {
+		if strings.Contains(asset.ID, "bootstrap-feature-scene3d") && asset.Phase != "dormant" {
+			t.Fatalf("inline implementation charged as an external fetch: %+v", asset)
+		}
+	}
+}
+
+func TestPerfAssetRendererObservedSceneLoads(t *testing.T) {
+	for _, chunk := range []string{"animation", "command", "instance-stream", "timeline", "particle-burst"} {
+		for _, phase := range []string{"startup", "after-ready"} {
+			t.Run(chunk+"/"+phase, func(t *testing.T) {
+				r, _ := perfAssetRendererFixture(t)
+				r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+				id := "framework/runtime/bootstrap-feature-scene3d-" + chunk + ".js"
+				url := perfAssetByID(t, r.perfAssets, id).URL
+				uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu", RuntimeFetches: []PerfRuntimeFetch{{url, phase}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				asset := perfAssetByID(t, uses, id)
+				dependencies := []string{"framework/runtime/bootstrap-feature-scene3d.js"}
+				if chunk == "timeline" || chunk == "particle-burst" {
+					dependencies = append(dependencies, "framework/runtime/bootstrap-feature-scene3d-command.js")
+				}
+				if chunk == "particle-burst" {
+					dependencies = append(dependencies, "framework/runtime/bootstrap-feature-scene3d-compute.js")
+				}
+				sort.Strings(dependencies)
+				if asset.Phase != phase || !reflect.DeepEqual(asset.Dependencies, dependencies) {
+					t.Fatalf("observed load omitted: %+v", asset)
+				}
+				for _, dependency := range dependencies {
+					want := phase
+					if strings.HasSuffix(dependency, "scene3d.js") {
+						want = "startup"
+					}
+					if a := perfAssetByID(t, uses, dependency); a.Phase != want {
+						t.Fatalf("observed prerequisite omitted: %+v", a)
+					}
+				}
+			})
+		}
+	}
+	for _, phase := range []string{"dormant", "private-phase"} {
+		r, _ := perfAssetRendererFixture(t)
+		r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+		if _, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu", RuntimeFetches: []PerfRuntimeFetch{{r.bootstrapFeatureScene3dZoomPath, phase}}}); err == nil {
+			t.Fatal("invalid observed phase accepted")
+		}
+	}
+}
+
+func TestPerfAssetRendererObservedLoadVerification(t *testing.T) {
+	for _, input := range []string{"missing", "app-program", "missing-body"} {
+		r, _ := perfAssetRendererFixture(t)
+		r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+		url := "/gosx/missing.js"
+		if input == "app-program" {
+			url = perfAssetByID(t, r.perfAssets, "app/fixture/islands/Counter").URL
+		}
+		if input == "missing-body" {
+			url = r.bootstrapFeatureScene3dAnimationPath
+			for i, a := range r.perfAssets.Assets {
+				if a.ID == "framework/runtime/bootstrap-feature-scene3d-animation.js" {
+					r.perfAssets.Assets = append(r.perfAssets.Assets[:i], r.perfAssets.Assets[i+1:]...)
+					break
+				}
+			}
+		}
+		uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu", RuntimeFetches: []PerfRuntimeFetch{{url, "startup"}}})
+		var typed *buildmanifest.PerfAssetError
+		if uses != nil || !errors.As(err, &typed) {
+			t.Fatalf("unverified observed load accepted: %v", err)
+		}
+	}
+	r, _ := perfAssetRendererFixture(t)
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu", TextLayout: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perfAssetByID(t, uses, "framework/runtime/bootstrap-feature-textlayout.js").Phase != "startup" {
+		t.Fatal("document text-layout gate ignored")
+	}
+}
+
+func TestPerfAssetRendererModelLoadEvidence(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		r, _ := perfAssetRendererFixture(t)
+		r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface,
+			Props: json.RawMessage(`{"models":[{"src":"/mesh.glb#x"}],"renderBeforeModels":true}`)}, gosx.Text(""))
+		opts := PerfAssetOptions{Backend: "webgpu"}
+		if observed {
+			opts.RuntimeFetches = []PerfRuntimeFetch{}
+		}
+		uses, err := r.PerfAssetUses(opts)
+		if !observed {
+			var input *buildmanifest.PerfAssetError
+			if uses != nil || !errors.As(err, &input) || input.Code != "unknown-reachability" {
+				t.Fatalf("unknown model contents certified: %v", err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if perfAssetByID(t, uses, "framework/runtime/bootstrap-feature-scene3d-gltf.js").Phase != "startup" {
+			t.Fatal("model reader request starts during mount, including renderBeforeModels")
+		}
+	}
+}
+
+func TestPerfAssetRendererProgressiveModelEvidence(t *testing.T) {
+	r, _ := perfAssetRendererFixture(t)
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface,
+		Props: json.RawMessage(`{"models":[{"progressive":true,"previewSrc":"/preview.glb","fullSrc":"/full.glb"}]}`)}, gosx.Text(""))
+	uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu"})
+	var typed *buildmanifest.PerfAssetError
+	if uses != nil || !errors.As(err, &typed) || typed.Code != "unknown-reachability" {
+		t.Fatalf("progressive model contents certified without evidence: %v", err)
+	}
+}
+
+func TestPerfAssetRendererTextLayoutAndVideoGates(t *testing.T) {
+	for _, props := range []string{`{"labels":[{"text":"test"}]}`, `{"labels":[]}`, `{}`} {
+		r, _ := perfAssetRendererFixture(t)
+		r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(props)}, gosx.Text(""))
+		uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := "dormant"
+		if strings.Contains(props, `"text"`) {
+			want = "startup"
+		}
+		if a := perfAssetByID(t, uses, "framework/runtime/bootstrap-feature-textlayout.js"); a.Phase != want {
+			t.Fatalf("manifest label gate: %+v", a)
+		}
+	}
+	for _, source := range []string{"/clip.mp4", "/live.M3U8?q=1", ""} {
+		for _, native := range []bool{false, true} {
+			r, _ := perfAssetRendererFixture(t)
+			props, _ := json.Marshal(map[string]string{"src": source})
+			r.RenderEngine(engine.Config{Name: "Video", Kind: engine.KindVideo, Props: props}, gosx.Text(""))
+			opts := PerfAssetOptions{RuntimeFetches: []PerfRuntimeFetch{}}
+			if strings.Contains(source, "M3U8") && !native {
+				opts.RuntimeFetches = append(opts.RuntimeFetches, PerfRuntimeFetch{r.videoHLSPath, "startup"})
+			}
+			uses, err := r.PerfAssetUses(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := "dormant"
+			if strings.Contains(source, "M3U8") && !native {
+				want = "startup"
+			}
+			if a := perfAssetByID(t, uses, "framework/runtime/hls.min.js"); a.Phase != want {
+				t.Fatalf("video source/browser gate: %+v", a)
+			}
+		}
+	}
+}
+
+func TestPerfAssetRendererStrictHydrateGate(t *testing.T) {
+	r, _ := perfAssetRendererFixture(t)
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Runtime: engine.Runtime("shared")}, gosx.Text(""))
+	r.manifest.Engines[0].ProgramRef = perfAssetByID(t, r.perfAssets, "app/fixture/islands/Counter").URL
+	uses, err := r.PerfAssetUses(PerfAssetOptions{Backend: "webgpu"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asset := perfAssetByID(t, uses, "framework/runtime/bootstrap-feature-scene3d-hydrate.js")
+	if asset.Phase != "startup" || len(asset.Dependencies) != 0 {
+		t.Fatalf("hydrate executes before the scene factory: %+v", asset)
+	}
+}
+
+func TestPerfAssetRendererControllerInputFallback(t *testing.T) {
+	for _, monolith := range []bool{false, true} {
+		r, _ := perfAssetRendererFixture(t)
+		if monolith {
+			r.bootstrapRuntimePath = ""
+		}
+		r.RegisterController(controller.Config{Storage: &controller.Storage{}})
+		uses, err := r.PerfAssetUses(PerfAssetOptions{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a := perfAssetByID(t, uses, "framework/runtime/bootstrap-controller-input.js"); a.Phase != "startup" {
+			t.Fatalf("controller input fallback omitted: %+v", a)
+		}
+	}
 }
 
 func perfAssetByID(t *testing.T, uses *buildmanifest.PerfAssetUses, id string) buildmanifest.PerfAssetUse {

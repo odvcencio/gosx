@@ -14,13 +14,23 @@ import (
 	"m31labs.dev/gosx/internal/urlpath"
 )
 
-// PerfAssetOptions declares the selected backend, GPU API presence and whether
-// the document enables navigation. A nil NavigatorGPU means unknown presence;
-// the graph conservatively includes downloads started by the inline loader.
+// PerfRuntimeFetch records a runtime request observed during a page visit.
+// Phase is startup or after-ready; URL must identify a verified runtime body.
+type PerfRuntimeFetch struct {
+	URL   string
+	Phase string
+}
+
+// PerfAssetOptions declares resolved browser/document gates and observed calls.
+// A nil NavigatorGPU conservatively includes the inline loader's download.
+// Model contents and video source/browser state require a non-nil
+// RuntimeFetches trace, including an empty trace proving no additional loads.
 type PerfAssetOptions struct {
-	Backend      string
-	Navigation   bool
-	NavigatorGPU *bool
+	Backend        string
+	Navigation     bool
+	NavigatorGPU   *bool
+	TextLayout     bool
+	RuntimeFetches []PerfRuntimeFetch
 }
 
 // PerfAssetUses produces private page-use evidence without adding HTML bytes.
@@ -197,13 +207,19 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 	// selected monolith, including in preview and lite fallback modes.
 	if plan.Selective && r.bootstrapRuntimePath != "" && summary.BootstrapPath == r.bootstrapRuntimePath {
 		for _, path := range []string{summary.BootstrapFeatureIslandsPath, summary.BootstrapFeatureEnginesPath,
-			summary.BootstrapFeatureHubsPath, summary.BootstrapFeatureControllersPath, summary.BootstrapControllerInputPath} {
+			summary.BootstrapFeatureHubsPath, summary.BootstrapFeatureControllersPath} {
 			if path == "" {
 				continue
 			}
 			if err := mark(public(path), "startup", "always", public(summary.BootstrapPath)); err != nil {
 				return nil, err
 			}
+		}
+	}
+	// Controller input is demand-loaded in both selective and monolithic hosts.
+	if summary.BootstrapControllerInputPath != "" {
+		if err := mark(public(summary.BootstrapControllerInputPath), "startup", "always", public(summary.BootstrapPath)); err != nil {
+			return nil, err
 		}
 	}
 	for _, entry := range r.manifest.Islands {
@@ -231,10 +247,8 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 			return nil, err
 		}
 	}
-	if r.hasVideoEngines() {
-		if err := mark(public(summary.HLSPath), "startup", "hls-required", public(summary.BootstrapPath)); err != nil {
-			return nil, err
-		}
+	if r.hasVideoEngines() && opts.RuntimeFetches == nil {
+		return fail("unknown-reachability", "/runtimeFetches")
 	}
 	if r.hasSceneEngines() {
 		base := public(summary.BootstrapFeatureScene3DPath)
@@ -246,24 +260,109 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 		}
 		// The emitted loader checks navigator.gpu before adapter acquisition.
 		// Its download is independent of the eventual rendering backend.
-		if path := r.selectedBootstrapFeaturePath("scene3d-webgpu"); path != "" && (opts.NavigatorGPU == nil || *opts.NavigatorGPU) {
+		if path := r.selectedBootstrapFeaturePath("scene3d-webgpu"); summary.BootstrapFeatureScene3DPath != "" && path != "" && (opts.NavigatorGPU == nil || *opts.NavigatorGPU) {
 			if err := mark(public(path), "startup", "always", base); err != nil {
 				return nil, err
 			}
 		}
-		primary, condition := r.bootstrapFeatureScene3dWebGPUPath, "webgpu"
-		if backend == "webgl2" {
-			primary, condition = r.bootstrapFeatureScene3dWebGLPath, "webgl"
-		}
-		if err := mark(public(primary), "startup", condition, base); err != nil {
-			return nil, err
-		}
-		if backend == "webgpu" && r.perfSceneAllowsWebGLFallback() {
-			// Recovery is inside the WebGPU body. Only the WebGL fallback is an
-			// additional device-loss fetch; the old recovery chunk stays dormant.
-			if err := mark(public(r.bootstrapFeatureScene3dWebGLPath), "after-ready", "device-loss", base); err != nil {
+		if summary.BootstrapFeatureScene3DPath != "" {
+			primary, condition := r.bootstrapFeatureScene3dWebGPUPath, "webgpu"
+			if backend == "webgl2" {
+				primary, condition = r.bootstrapFeatureScene3dWebGLPath, "webgl"
+			}
+			if err := mark(public(primary), "startup", condition, base); err != nil {
 				return nil, err
 			}
+			if backend == "webgpu" && r.perfSceneAllowsWebGLFallback() {
+				// Recovery is inside the WebGPU body. Only the WebGL fallback is an
+				// additional device-loss fetch; the old recovery chunk stays dormant.
+				if err := mark(public(r.bootstrapFeatureScene3dWebGLPath), "after-ready", "device-loss", base); err != nil {
+					return nil, err
+				}
+			}
+			gates, models, err := r.perfSceneStartupGates()
+			if err != nil {
+				return nil, err
+			}
+			if models && opts.RuntimeFetches == nil {
+				return fail("unknown-reachability", "/runtimeFetches")
+			}
+			for _, entry := range []struct{ name, path string }{
+				{"zoom", r.bootstrapFeatureScene3dZoomPath}, {"walk", r.bootstrapFeatureScene3dWalkPath},
+				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},
+				{"compute", r.bootstrapFeatureScene3dComputePath}, {"decompress", r.bootstrapFeatureScene3dDecompressPath},
+				{"gltf", r.bootstrapFeatureScene3dGLTFPath},
+			} {
+				if gates[entry.name] {
+					if err := mark(public(entry.path), "startup", "always", base); err != nil {
+						return nil, err
+					}
+				}
+			}
+			// Preloads start downloads even when the mount's content gate is
+			// false. Preserve those transfers and attach their Scene3D loader.
+			for i := range uses.Assets {
+				asset := uses.Assets[i]
+				if strings.HasPrefix(asset.ID, "framework/runtime/bootstrap-feature-scene3d-") && asset.ID != "framework/runtime/bootstrap-feature-scene3d-hydrate.js" && asset.Phase == "startup" {
+					if err := mark(asset.URL, "startup", asset.Condition, base); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+		text, err := json.Marshal(r.manifest)
+		if err != nil {
+			return fail("unknown-reachability", "/manifest")
+		}
+		if summary.BootstrapFeatureScene3DPath != "" && (strings.Contains(string(text), `"labels":[{`) || strings.Contains(string(text), `"label":{`) || strings.Contains(string(text), `"kind":"label"`)) {
+			if err := mark(public(summary.BootstrapFeatureTextLayoutPath), "startup", "always", public(summary.BootstrapPath)); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if opts.TextLayout && plan.Bootstrap {
+		path := summary.BootstrapFeatureTextLayoutPath
+		if path == "" {
+			// Without a manifest URL the production forwarder uses this
+			// compatibility URL; it still needs a body verified at that URL.
+			path = "/gosx/bootstrap-feature-textlayout.js"
+		}
+		if err := mark(public(path), "startup", "always", public(summary.BootstrapPath)); err != nil {
+			return nil, err
+		}
+	}
+	for i, fetch := range opts.RuntimeFetches {
+		pointer := "/runtimeFetches/" + strconv.Itoa(i)
+		if fetch.Phase != "startup" && fetch.Phase != "after-ready" {
+			return fail("invalid-input", pointer+"/phase")
+		}
+		j, err := index(public(fetch.URL))
+		if err != nil {
+			return nil, err
+		}
+		asset := uses.Assets[j]
+		if asset.Kind != "js" && asset.Kind != "wasm" || !strings.HasPrefix(asset.ID, "framework/runtime/") {
+			return fail("invalid-input", pointer+"/url")
+		}
+		prerequisites, condition := []string{public(summary.BootstrapPath)}, "always"
+		if strings.HasPrefix(asset.ID, "framework/runtime/bootstrap-feature-scene3d-") {
+			base := public(summary.BootstrapFeatureScene3DPath)
+			if base == "" {
+				base = public(summary.BootstrapPath)
+			}
+			prerequisites = []string{base}
+			if asset.ID == "framework/runtime/bootstrap-feature-scene3d-timeline.js" || asset.ID == "framework/runtime/bootstrap-feature-scene3d-particle-burst.js" {
+				prerequisites = append(prerequisites, public(r.bootstrapFeatureScene3dCommandPath))
+			}
+			if asset.ID == "framework/runtime/bootstrap-feature-scene3d-particle-burst.js" {
+				prerequisites = append(prerequisites, public(r.bootstrapFeatureScene3dComputePath))
+			}
+		}
+		if asset.ID == "framework/runtime/hls.min.js" {
+			condition = "hls-required"
+		}
+		if err := mark(public(fetch.URL), fetch.Phase, condition, prerequisites...); err != nil {
+			return nil, err
 		}
 	}
 	if opts.Navigation {

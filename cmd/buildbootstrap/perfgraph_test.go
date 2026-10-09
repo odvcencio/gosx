@@ -88,6 +88,21 @@ func TestPerfGraphWholeOutputInventory(t *testing.T) {
 	}
 }
 
+func TestPerfGraphEquivalentDirectorySpellings(t *testing.T) {
+	dir := perfGraphFixture(t)
+	plain, err := perfGraph(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSlash, err := perfGraph(dir + string(filepath.Separator))
+	if err != nil {
+		t.Fatal("directory with trailing slash:", err)
+	}
+	if !reflect.DeepEqual(plain, withSlash) {
+		t.Fatal("equivalent directory spellings changed the graph")
+	}
+}
+
 func TestPerfGraphCommittedOutputs(t *testing.T) {
 	dir, err := filepath.Abs("../../client/js")
 	if err != nil {
