@@ -103,6 +103,11 @@
   `ErrorPage`. Dependency resolution runs in staging; offline failures and
   destinations containing any existing Go files prompt a final `go mod tidy`,
   because existing packages outside `app/` are not staged.
+- Add `gosx deploy check [--json] dist` to validate server launch files, bundle
+  policy, asset checksums and compressed sidecars, and exported pages before
+  uploading a production bundle. Accept `server/app.exe` for Windows bundles.
+  Exit codes are 0 for success, 1 for failed checks and 2 for usage errors.
+  The check never starts the application.
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
