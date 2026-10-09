@@ -3,6 +3,7 @@ package wire
 import (
 	"bytes"
 	"encoding/json"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -90,17 +91,53 @@ func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error
 
 func addReference(out *ReferenceSet, raw, kind string, potential bool) {
 	value := strings.TrimSpace(raw)
-	if value == "" || strings.HasPrefix(value, "#") || strings.HasPrefix(strings.ToLower(value), "data:") {
+	if value == "" || strings.HasPrefix(value, "#") {
 		return
 	}
-	if strings.ContainsAny(value, "\\ \t\r\n") {
+	if !understoodReferenceURL(value, kind) {
 		out.Complete = false
+		return
+	}
+	if strings.HasPrefix(strings.ToLower(value), "data:") {
+		// Image/font data is opaque only in an understood non-executable
+		// context. Never infer that context from a data payload's suffix.
 		return
 	}
 	if kind == "" {
 		kind = referenceKind(value)
 	}
 	out.Resources = append(out.Resources, Reference{URL: value, Kind: kind, Potential: potential})
+}
+
+func understoodReferenceURL(value, kind string) bool {
+	if strings.ContainsAny(value, "\\ \t\r\n") {
+		return false
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	switch strings.ToLower(u.Scheme) {
+	case "", "http", "https":
+		return true
+	case "data":
+		return kind != "" && kind == opaqueDataReferenceKind(value)
+	default:
+		// Blob bodies, executable URLs and unknown scheme handlers have not
+		// been scanned. Fetch Standard 4.3 does not make them inert resources.
+		return false
+	}
+}
+
+func opaqueDataReferenceKind(value string) string {
+	value = strings.ToLower(value)
+	switch {
+	case strings.HasPrefix(value, "data:image/"):
+		return KindImage
+	case strings.HasPrefix(value, "data:font/"), strings.HasPrefix(value, "data:application/font-"), strings.HasPrefix(value, "data:application/x-font-"), strings.HasPrefix(value, "data:application/vnd.ms-fontobject"):
+		return KindFont
+	}
+	return ""
 }
 
 func referenceKind(raw string) string {
@@ -473,8 +510,16 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 		// A substituted value can contain a URL; bindings are not resolved here.
 		out.Complete = false
 	} else if name == "url" {
+		kind := ""
+		if parent := n.Parent(); parent != nil && parent.Type(lang) == "import_statement" {
+			kind = KindStyle
+		}
 		contents := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(args.Text(body), "("), ")"))
 		if strings.HasPrefix(strings.ToLower(contents), "data:") && !strings.ContainsAny(contents, "()") {
+			// The parser can split an unquoted data body into multiple nodes.
+			// It still needs the same context policy as a quoted URL, especially
+			// inside @import where a stylesheet can load more resources.
+			addCSSReference(out, contents, kind)
 			return
 		}
 		if args.NamedChildCount() != 1 {
@@ -484,11 +529,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 		raw, ok := cssReferenceLiteral(args.NamedChild(0), lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
-			kind := ""
-			if parent := n.Parent(); parent != nil && parent.Type(lang) == "import_statement" {
-				kind = KindStyle
-			}
-			addReference(out, raw, kind, false)
+			addCSSReference(out, raw, kind)
 		}
 	} else if name == "image-set" || name == "-webkit-image-set" {
 		if args.NamedChildCount() == 0 {
@@ -523,6 +564,15 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			out.Complete = false
 		}
 	}
+}
+
+func addCSSReference(out *ReferenceSet, raw, kind string) {
+	if kind == "" {
+		// CSS url() image/font data cannot create a nested document or script.
+		// An @import retains KindStyle and must never take this opaque path.
+		kind = opaqueDataReferenceKind(strings.TrimSpace(raw))
+	}
+	addReference(out, raw, kind, false)
 }
 
 func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {

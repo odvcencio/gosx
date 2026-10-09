@@ -1,7 +1,6 @@
 package wire
 
 import (
-	"net/url"
 	"strings"
 
 	"golang.org/x/net/html"
@@ -73,7 +72,7 @@ func understoodHTMLReferenceAttribute(n *html.Node, a html.Attribute) bool {
 		return false
 	}
 	if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
-		return htmlReferenceURL(a.Val, false)
+		return htmlReferenceURL(a.Val, "")
 	}
 	switch a.Key {
 	case "style":
@@ -86,18 +85,27 @@ func understoodHTMLReferenceAttribute(n *html.Node, a html.Attribute) bool {
 				return knownHTMLDataScript(attr(n, "type"))
 			}
 		case "img":
-			return htmlReferenceURL(a.Val, true)
+			return htmlReferenceURL(a.Val, KindImage)
 		case "input":
-			return strings.EqualFold(attr(n, "type"), "image") && htmlReferenceURL(a.Val, true)
+			return strings.EqualFold(attr(n, "type"), "image") && htmlReferenceURL(a.Val, KindImage)
 		case "audio", "iframe", "source", "track", "video":
 		default:
 			return false
 		}
-		return htmlReferenceURL(a.Val, false)
+		return htmlReferenceURL(a.Val, "")
 	case "href":
-		return n.Data == "link" && htmlReferenceURL(a.Val, false)
+		kind := ""
+		if strings.EqualFold(attr(n, "rel"), "preload") || strings.EqualFold(attr(n, "rel"), "prefetch") {
+			switch strings.ToLower(attr(n, "as")) {
+			case "image":
+				kind = KindImage
+			case "font":
+				kind = KindFont
+			}
+		}
+		return n.Data == "link" && htmlReferenceURL(a.Val, kind)
 	case "poster":
-		return n.Data == "video" && htmlReferenceURL(a.Val, true)
+		return n.Data == "video" && htmlReferenceURL(a.Val, KindImage)
 	case "srcset":
 		return (n.Data == "img" || n.Data == "source") && strings.TrimSpace(a.Val) == ""
 	case "imagesrcset":
@@ -127,24 +135,12 @@ func understoodHTMLReferenceAttribute(n *html.Node, a html.Attribute) bool {
 	return htmlReferenceGlobalAttributes[a.Key] || htmlReferenceElementAttributes[n.Data][a.Key]
 }
 
-func htmlReferenceURL(raw string, image bool) bool {
+func htmlReferenceURL(raw, kind string) bool {
 	value := strings.TrimSpace(raw)
-	if value == "" || strings.HasPrefix(value, "#") || strings.ContainsAny(value, "\\ \t\r\n") {
+	if value == "" || strings.HasPrefix(value, "#") {
 		return false
 	}
-	u, err := url.Parse(value)
-	if err != nil {
-		return false
-	}
-	switch strings.ToLower(u.Scheme) {
-	case "", "http", "https":
-		return true
-	case "data":
-		// Image data is an opaque, non-network body. Script, stylesheet and
-		// document data can themselves load dependencies and remain unresolved.
-		return image && strings.HasPrefix(strings.ToLower(value), "data:image/")
-	}
-	return false
+	return understoodReferenceURL(value, kind)
 }
 
 func knownHTMLDataScript(typ string) bool {
