@@ -27,10 +27,15 @@
   module runs its registration phase), and an engine `toolchain` pick of
   `window.__gosx.tinyGoWASMCtor`. Without those hooks, behavior does not change.
 - Owner-approved one-time M0 core change: `bootstrap-runtime.js` grows by 403 B
-  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 302 B.
+  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 318 B.
   The video selective runtime route budget rises from 288,689 to 289,289 raw and
   from 73,139 to 73,439 brotli, and the `/demos/scene3d/` `jsWireBytes` wire
-  budget rises from 258,118 to 260,973; no other size budget changes.
+  budget rises from 258,118 to 260,973 and the scaffold `/counter/` `jsWireBytes`
+  wire budget from 87,617 to 87,732; no other size budget changes.
+- `RequireFeature` rejects a name whose contract key collides with another
+  required feature or a legacy chunk's key (`a1` and `a-1`, or `text-layout`
+  and `textlayout`), and the error names both. `hydrate.FeatureContractKey`
+  returns the key for a name.
 - A manifest-declared feature chunk that fails to load is logged and skipped
   instead of stopping the page from mounting. Queued form submits count as in
   flight, so refresh ticks do not swap the DOM under them. The Go-WASM boot token
