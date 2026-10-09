@@ -104,6 +104,13 @@ test:
 test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
+.PHONY: test-budget-contract test-budget-derive
+test-budget-contract:
+	GOWORK=off $(GO) test ./perf/budget
+
+test-budget-derive:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
+
 # CI runs the two exhaustive name partitions separately. An ordinary test-cli
 # invocation still runs the full package with the same 25-minute timeout.
 test-cli:
@@ -256,6 +263,8 @@ build-wasm-all:
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
 	GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/audio -run '^TestHostJS'
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
