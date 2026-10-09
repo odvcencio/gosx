@@ -104,7 +104,10 @@ func addReference(out *ReferenceSet, raw, kind string, potential bool) {
 }
 
 func referenceKind(raw string) string {
-	switch strings.ToLower(path.Ext(strings.SplitN(raw, "?", 2)[0])) {
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		raw = raw[:i]
+	}
+	switch strings.ToLower(path.Ext(raw)) {
 	case ".css":
 		return KindStyle
 	case ".js", ".mjs":
@@ -157,6 +160,11 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					out.Complete = false
 				}
 				seen[a.Key] = true
+				if strings.Contains(a.Val, "&#") {
+					// The HTML tokenizer can retain unterminated numeric character
+					// references. Remaining entity text cannot prove URL coverage.
+					out.Complete = false
+				}
 				if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
 					addReference(out, a.Val, "", true)
 				}
@@ -346,18 +354,14 @@ func scanSyntaxReferences(body []byte, kind string, out *ReferenceSet) error {
 	return nil
 }
 
-func referenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool) {
+func javascriptReferenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool) {
 	if n == nil {
 		return "", false
 	}
-	kind := n.Type(lang)
-	if kind != "string" && kind != "string_value" && kind != "plain_value" {
+	if n.Type(lang) != "string" {
 		return "", false
 	}
 	raw := n.Text(body)
-	if kind == "plain_value" {
-		return raw, !strings.ContainsAny(raw, "\\()")
-	}
 	if len(raw) < 2 {
 		return "", false
 	}
@@ -367,10 +371,31 @@ func referenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool)
 			return decoded, true
 		}
 	}
-	// Escaped single-quoted JS/CSS and CSS escape syntax need a full
-	// language decoder. An unresolved literal never establishes coverage.
+	// Other JavaScript string forms need a full language decoder. An unresolved
+	// literal never establishes coverage.
 	if raw[0] == '\'' && raw[len(raw)-1] == '\'' && !strings.Contains(raw, "\\") {
 		return raw[1 : len(raw)-1], true
+	}
+	return "", false
+}
+
+func cssReferenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool) {
+	if n == nil {
+		return "", false
+	}
+	raw := n.Text(body)
+	// CSS Syntax Level 3 escapes are different from JavaScript/JSON escapes.
+	// Until decoded with CSS rules, every escaped value remains unresolved.
+	if strings.Contains(raw, "\\") {
+		return "", false
+	}
+	switch n.Type(lang) {
+	case "plain_value":
+		return raw, !strings.ContainsAny(raw, "()")
+	case "string_value":
+		if len(raw) >= 2 && (raw[0] == '"' || raw[0] == '\'') && raw[len(raw)-1] == raw[0] {
+			return raw[1 : len(raw)-1], true
+		}
 	}
 	return "", false
 }
@@ -387,7 +412,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			c := n.NamedChild(i)
 			if c.Type(lang) == "string_value" {
 				sourceSeen = true
-				raw, ok := referenceLiteral(c, lang, body)
+				raw, ok := cssReferenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
 					addReference(out, raw, KindStyle, false)
@@ -417,7 +442,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			out.Complete = false
 			return
 		}
-		raw, ok := referenceLiteral(args.NamedChild(0), lang, body)
+		raw, ok := cssReferenceLiteral(args.NamedChild(0), lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
 			kind := ""
@@ -434,7 +459,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			c := args.NamedChild(i)
 			switch c.Type(lang) {
 			case "string_value":
-				raw, ok := referenceLiteral(c, lang, body)
+				raw, ok := cssReferenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
 					addReference(out, raw, KindImage, false)
@@ -460,7 +485,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		if source == nil {
 			return
 		}
-		raw, ok := referenceLiteral(source, lang, body)
+		raw, ok := javascriptReferenceLiteral(source, lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
 			addReference(out, raw, KindScript, false)
@@ -486,7 +511,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			out.Complete = false
 			return
 		}
-		raw, ok := referenceLiteral(args.NamedChild(0), lang, body)
+		raw, ok := javascriptReferenceLiteral(args.NamedChild(0), lang, body)
 		// Worker(new URL(...)) is covered by the nested URL expression.
 		if !ok && (value == "Worker" || value == "SharedWorker") && args.NamedChild(0).Type(lang) == "new_expression" {
 			constructor := args.NamedChild(0).ChildByFieldName("constructor", lang)
@@ -542,7 +567,7 @@ func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			return
 		}
 		var ok bool
-		name, ok = referenceLiteral(n, lang, body)
+		name, ok = javascriptReferenceLiteral(n, lang, body)
 		if !ok {
 			out.Complete = false
 			return
