@@ -405,7 +405,7 @@ func (e *aotEvidence) pair(source string, origin islandExprOrigin, exprs []progr
 			nativeName, ok2 := call.Fun.(*ast.Ident)
 			object := e.checked.info.Uses[name]
 			helper := e.checked.functions[aotConditionalHelper]
-			if !ok || !ok2 || nativeName.Name != aotConditionalHelper || helper == nil || object != e.checked.info.Defs[helper.Name] {
+			if !ok || !ok2 || nativeName.Name != aotConditionalHelper || helper == nil || object != e.checked.info.Defs[helper.Name] || !e.checked.syntheticObjects[object] {
 				return mismatch()
 			}
 			for i := range call.Args {

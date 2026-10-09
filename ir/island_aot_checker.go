@@ -27,12 +27,13 @@ var aotSignalStub string
 const aotStubRevision = "signal-api-v1:7efe0270ca59f827910d9b5dcf9e22159092e299d37564cb62612e1a148c83d3"
 
 type aotCheckedSource struct {
-	fset       *token.FileSet
-	file       *ast.File
-	info       *types.Info
-	projection aotCheckingFile
-	errors     []types.Error
-	functions  map[string]*ast.FuncDecl
+	fset             *token.FileSet
+	file             *ast.File
+	info             *types.Info
+	projection       aotCheckingFile
+	errors           []types.Error
+	functions        map[string]*ast.FuncDecl
+	syntheticObjects map[types.Object]bool
 }
 
 var aotCheckCache = struct {
@@ -199,8 +200,17 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 		}
 	}}
 	_, _ = cfg.Check(p.PackagePath, fset, files, info)
+	trusted := map[types.Object]bool{}
+	for declaration, name := range synthesized {
+		if fn, ok := declaration.(*ast.FuncDecl); ok && functions[name] == fn {
+			if object := info.Defs[fn.Name]; object != nil {
+				trusted[object] = true
+			}
+		}
+	}
 	for _, view := range views {
 		view.errors = hardErrors
+		view.syntheticObjects = trusted
 	}
 	if len(aotCheckCache.order) == 64 {
 		delete(aotCheckCache.entries, aotCheckCache.order[0])
