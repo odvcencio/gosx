@@ -44,8 +44,8 @@ func freezeActivity(e *activityEntity, now Instant, reason string) error {
 	e.final = true
 	e.dirty = false
 	e.receipt = receipt
-	e.mu.Unlock()
 	e.kind.owner.activityFinishMetric(e, v)
+	e.mu.Unlock()
 	return nil
 }
 func (t *Telemetry) maintainActivities(now Instant) {
@@ -110,4 +110,20 @@ func (t *Telemetry) stopActivities(ctx context.Context) error {
 	t.drainActivityEvents()
 	t.collectActivityReceipts()
 	return result
+}
+
+// releaseUnfinishedActivities follows stopped admission and final collection.
+// Dropping the remaining owner references needs neither a clock nor codecs.
+// Caller-held projections remain caller-owned; no synthetic final is accepted.
+func (t *Telemetry) releaseUnfinishedActivities() {
+	s := t.activities
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for id, e := range s.live {
+		delete(s.live, id)
+		delete(s.attached, e.loop)
+		s.bytes.Add(-activitySlotBytes)
+		e.kind.open--
+		e.kind.meters.open.Set(float64(e.kind.open))
+	}
 }

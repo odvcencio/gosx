@@ -366,6 +366,99 @@ func TestActivityWorkerSignalThenDrainAndFlush(t *testing.T) {
 	}
 }
 
+type blockedActivityClock struct {
+	Clock
+	Ticker
+	entered, release chan struct{}
+	failed           atomic.Bool
+}
+
+func (c *blockedActivityClock) Now() Instant {
+	if c.failed.Load() {
+		panic("clock-test-canary")
+	}
+	return c.Clock.Now()
+}
+func (c *blockedActivityClock) Stamp(time.Time) Instant {
+	close(c.entered)
+	<-c.release
+	return c.Now()
+}
+
+func TestActivityFinalReceiptCompletedAfterWorkerClockFailure(t *testing.T) {
+	tel, clock := lifecycleOwner(t)
+	k := emptyActivityKind(t, tel)
+	loopKind, err := tel.NewLoopKind("simulation", LoopOptions{Budget: time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop, err := loopKind.Instance()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := tel.activities.bytes.Load()
+	a, err := k.begin(ActivityStart[NoFields]{Loop: loop})
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := &blockedActivityClock{Clock: clock, Ticker: clock.NewTicker(time.Second), entered: make(chan struct{}), release: make(chan struct{})}
+	tel.opts.Clock = c
+	tel.ticker, tel.ticks, tel.done = c, c.C(), make(chan struct{})
+	tel.start = clock.Now()
+	go tel.run()
+	var release sync.Once
+	unblock := func() { release.Do(func() { close(c.release) }) }
+	defer func() {
+		unblock()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = tel.Close(ctx)
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := clock.Advance(time.Second); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-c.entered:
+	case <-ctx.Done():
+		t.Fatal("worker did not enter clock callback")
+	}
+	// The worker cannot collect the final's wake while its clock is blocked.
+	receipt, err := a.End(ActivityEnd[NoFields]{Outcome: "won", Reason: "complete"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt.ready() {
+		t.Fatal("receipt completed before worker collection")
+	}
+	c.failed.Store(true)
+	unblock()
+	select {
+	case <-tel.done:
+	case <-ctx.Done():
+		t.Fatal("worker did not finish after clock failure")
+	}
+	if !receipt.ready() {
+		t.Error("worker completion left the accepted final receipt pending")
+	} else if err := receipt.Wait(context.Background()); err != nil {
+		t.Error("accepted final lost memory persistence", err)
+	}
+	s := tel.activities
+	s.mu.Lock()
+	live, attached := len(s.live), len(s.attached)
+	s.mu.Unlock()
+	if live != 0 || attached != 0 || s.bytes.Load() != baseline {
+		t.Errorf("accepted final retained resources: live=%d attached=%d bytes=%d want=%d", live, attached, s.bytes.Load(), baseline)
+	}
+	if !s.stopping.Load() || tel.Enabled() {
+		t.Error("worker completion left activity admission open")
+	}
+	if err := tel.Close(context.Background()); !errors.Is(err, ErrInvalidOptions) {
+		t.Error("worker clock failure was not preserved", err)
+	}
+}
+
 func TestActivityIdleCheckpointAndTouch(t *testing.T) {
 	tel, clock := lifecycleOwner(t)
 	tel.opts.Activities.IdleTimeout = time.Minute

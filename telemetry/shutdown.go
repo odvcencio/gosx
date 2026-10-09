@@ -11,9 +11,13 @@ func (t *Telemetry) run() {
 	defer func() {
 		if t.activities != nil {
 			t.activities.stopping.Store(true)
+			// Accepted finals need no clock or application callbacks to acknowledge.
+			t.collectActivityReceipts()
+			t.releaseUnfinishedActivities()
 		}
 		t.releaseLoops()
 		t.releaseHubs()
+		t.updateCoreUsage()
 		if err := stopTicker(t.ticker); err != nil {
 			t.clockFailed(err)
 		}
@@ -26,6 +30,10 @@ func (t *Telemetry) run() {
 			cancel = t.closeCancel
 		}
 		t.active.Store(false)
+		// All notification publishers hold mu, so none can enqueue after done.
+		for len(t.wake) != 0 {
+			<-t.wake
+		}
 		close(t.done)
 		t.mu.Unlock()
 		if cancel != nil {
@@ -188,11 +196,11 @@ func (t *Telemetry) signal(ctx context.Context) {
 		}
 		t.closeContext, t.closeCancel = context.WithDeadline(context.WithoutCancel(ctx), deadline)
 	}
-	t.mu.Unlock()
 	select {
 	case t.wake <- struct{}{}:
 	default:
 	}
+	t.mu.Unlock()
 }
 
 // Close shares the one worker completion. Every caller keeps its own deadline;

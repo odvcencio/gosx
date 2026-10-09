@@ -18,6 +18,11 @@ Shutdown stops new admission, lets admitted work finish during source drain,
 and interrupts abandoned activities at Flush without running application codecs.
 Idle maintenance uses the existing worker and defaults to a six-hour timeout.
 
+If the clock fails or the shared close deadline expires, worker exit releases
+unfinished live entries, loop attachments, slot charges and open counts without
+constructing a final record. Accepted final receipts still complete successfully.
+Caller-held projections stay in the caller's memory budget after owner cleanup.
+
 Framework-owned final health, counts and clock flags are reserved before
 publishing a projection. A wall-clock rollback cannot make elapsed duration
 negative; final end time is clamped to start and marked clock_adjusted. Health

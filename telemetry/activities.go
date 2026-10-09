@@ -336,7 +336,9 @@ func (a *Activity[A, P, E]) Set(fields A) error {
 	}
 	e.record = r
 	e.dirty = true
-	e.lastTouch = now.Monotonic
+	if now.Monotonic > e.lastTouch {
+		e.lastTouch = now.Monotonic
+	}
 	return nil
 }
 func (a *Activity[A, P, E]) Touch() {
@@ -449,8 +451,8 @@ func (a *Activity[A, P, E]) End(end ActivityEnd[A]) (Receipt, error) {
 	e.final = true
 	e.dirty = false
 	e.receipt = receipt
-	e.mu.Unlock()
 	t.activityFinishMetric(e, v)
+	e.mu.Unlock()
 	t.wakeActivityWorker()
 	return receipt, nil
 }
@@ -512,6 +514,11 @@ func checkpointActivity(e *activityEntity, now Instant) (Receipt, error) {
 	return receipt, nil
 }
 func (t *Telemetry) wakeActivityWorker() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.activities.stopping.Load() {
+		return
+	}
 	select {
 	case t.wake <- struct{}{}:
 	default:
