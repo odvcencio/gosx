@@ -817,7 +817,10 @@ const budgets = [
   // Native document liveness adds 961 raw / 292 gzip / 260 Brotli bytes.
   // Move only the exceeded reviewed raw/Brotli targets by those exact deltas;
   // preserve the governed allowance and the existing gzip headroom.
-  { file: "bootstrap-runtime.js", raw: 184950, gzip: 52300, brotli: 45955 },
+  // Demand-driven gamepad lifecycle adds 524 raw / 213 gzip / 153 Brotli bytes.
+  // Measured raw 194260; +59 to this raw target covers the 62-byte hard-limit
+  // excess. Keep compression targets and the governed allowance unchanged.
+  { file: "bootstrap-runtime.js", raw: 185009, gzip: 52300, brotli: 45955 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1768,9 +1771,13 @@ const routeBudgets = [
     // allowance, existing gzip target, and all other route budgets.
     // Document liveness + engine mount guards add 1,155 raw / 327 gzip /
     // 355 Brotli bytes. Move only the exceeded targets by the measured cost.
-    raw: 290483,
+    // The same gamepad lifecycle measures 305286 raw on this route. Only raw
+    // exceeded its hard limit: +265 reviewed bytes covers the 278-byte excess.
+    raw: 290748,
     gzip: 83400,
-    brotli: 73671,
+    // Measured Brotli 77373 exceeds this route's hard limit by 18 bytes;
+    // +17 reviewed bytes clears it without changing the governed allowance.
+    brotli: 73688,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
