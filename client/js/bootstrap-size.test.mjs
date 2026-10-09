@@ -1761,9 +1761,14 @@ const routeBudgets = [
     // the next 100 bytes (see the PR table). Gzip fits its existing cap. The
     // rounding leaves room for the one engines-chunk hook M2 adds, so no later
     // milestone needs a second raise.
-    raw: 289289,
+    // Native ESM interop adds 639 raw / 199 gzip / 177 Brotli bytes to the
+    // engines chunk for normalized HTTP(S) imports, shared loads, and retry
+    // after rejection. Move only the raw and Brotli reviewed targets by the
+    // measured delta (289_289 + 639 = 289_928; 73_439 + 177 = 73_616). Retain
+    // the 5% allowance, existing gzip target, and all other route budgets.
+    raw: 289928,
     gzip: 83400,
-    brotli: 73439,
+    brotli: 73616,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface

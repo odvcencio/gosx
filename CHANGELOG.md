@@ -55,6 +55,9 @@
   `engine.RenderMaterial`. Requested artifacts travel through both browser scene
   payloads and native bundles. `FrameStats.MaterialFallbacks` and native preview
   diagnostics report custom mesh programs replaced by the standard shader.
+- Report skipped optional `wasm-opt` passes instead of silently keeping the
+  compiled WASM. Missing tools warn once per build; failed passes include
+  optimizer output in one complete warning and remove temporary output.
 
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
