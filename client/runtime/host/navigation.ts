@@ -250,6 +250,7 @@
   // navigationOrFormSubmissionInFlight below. submitForm's try/finally keeps
   // every entry reliably removed once its submission settles.
   const pendingManagedForms = new Set();
+  const pendingFormHolds = new Map();
   const sentNavigationBeacons = new Set();
   let revalidateTimerHandle = null;
   let revalidateSrc = "";
@@ -2844,15 +2845,24 @@
     const queue = window.__gosx && window.__gosx.editQueue;
     const queued = queue && form.hasAttribute(FORM_QUEUE_ATTR);
     if (!queued && pendingManagedForms.has(form)) return;
-    // The in-flight set also covers queued sends, so refresh ticks and live
-    // regions do not swap the DOM under a queued edit.
-    const send = function(f, s, data) {
-      pendingManagedForms.add(form);
-      return submitFormWith(f, s, data).finally(function() { pendingManagedForms.delete(form); });
-    };
     // Serialize at enqueue: the queue sends this snapshot, not later edits.
     const snapshot = serializeForm(form, submitter);
-    return queued ? queue.submit(form, submitter, snapshot, send) : send(form, submitter, snapshot);
+    // Hold the form from enqueue until this submission settles, so refresh
+    // ticks and live regions cannot swap it while a queued edit waits. Holds
+    // are counted per form: one settling submission must not release another.
+    pendingFormHolds.set(form, (pendingFormHolds.get(form) || 0) + 1);
+    pendingManagedForms.add(form);
+    try {
+      return await (queued ? queue.submit(form, submitter, snapshot, submitFormWith) : submitFormWith(form, submitter, snapshot));
+    } finally {
+      const holds = pendingFormHolds.get(form) - 1;
+      if (holds > 0) {
+        pendingFormHolds.set(form, holds);
+      } else {
+        pendingFormHolds.delete(form);
+        pendingManagedForms.delete(form);
+      }
+    }
   }
 
   async function submitFormWith(form, submitter, formData) {

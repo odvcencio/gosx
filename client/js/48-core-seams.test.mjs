@@ -264,6 +264,73 @@ test("a queued submit holds the form in the in-flight set, so refresh ticks skip
   assert.equal(env.fetchCalls.filter((call) => call.url === url).length, 1, "the next tick runs once the queued send settles");
 });
 
+function queuedRefreshFixture() {
+  const url = "http://localhost:3000/scoreboard";
+  const actionURL = "http://localhost:3000/scoreboard/__actions/save";
+  const main = new FakeElement("main", null);
+  main.id = "scoreboard";
+  main.setAttribute("data-gosx-revalidate-interval", "4s");
+  const { form } = managedForm({ "data-gosx-queue": "serial" }, actionURL);
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [main, form],
+    fetchRoutes: { [actionURL]: { text: "{}", url: actionURL }, [url]: { text: "__REFRESH__", url } },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = url;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  const freshMain = new FakeElement("main", null);
+  freshMain.id = "scoreboard";
+  freshMain.setAttribute("data-gosx-revalidate-interval", "4s");
+  parsedDocs.set("__REFRESH__", buildNavigatedDocument({ title: "Scoreboard", bodyNodes: [freshMain] }));
+  const timers = installManualTimers(env.context);
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  // A queue that holds every submission until the test releases it.
+  const gates = [];
+  env.context.__gosx.editQueue = {
+    submit(f, submitter, snapshot, send) {
+      return new Promise((resolve) => gates.push(() => resolve(send(f, submitter, snapshot))));
+    },
+  };
+  const refreshes = () => env.fetchCalls.filter((call) => call.url === url).length;
+  return { env, form, timers, gates, refreshes };
+}
+
+test("a queued edit that is still waiting protects the form from refresh ticks", async () => {
+  const { env, form, timers, gates, refreshes } = queuedRefreshFixture();
+  env.document.eventListeners.get("submit")[0](submitEvent(form));
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.filter((c) => c.url.includes("__actions")).length, 0, "the queue is still holding the edit");
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(refreshes(), 0, "a waiting queued edit must skip the refresh tick");
+  gates.shift()();
+  await flushAsyncWork();
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(refreshes(), 1, "the tick runs once the queued edit settles");
+});
+
+test("two queued edits on one form: the first settling does not release the second", async () => {
+  const { env, form, timers, gates, refreshes } = queuedRefreshFixture();
+  const submit = env.document.eventListeners.get("submit")[0];
+  submit(submitEvent(form));
+  submit(submitEvent(form));
+  await flushAsyncWork();
+  assert.equal(gates.length, 2, "both submissions reach the queue");
+  gates.shift()();
+  await flushAsyncWork();
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(refreshes(), 0, "the second queued edit still protects the form");
+  gates.shift()();
+  await flushAsyncWork();
+  timers.runInterval(4000);
+  await flushAsyncWork();
+  assert.equal(refreshes(), 1, "all queued edits settled, so the tick runs");
+});
+
 test("a synchronous go.run throw clears the boot token", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "a-root";
