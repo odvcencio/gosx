@@ -1260,8 +1260,9 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
     file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600,
-    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 153653.
-    brotli: 153700 },
+    // Moving model controls and validating the lazy API reduces core Brotli bytes
+    // from 153692 to 153112. Lock in the saving; allowances stay fixed.
+    brotli: 153200 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1754,9 +1755,16 @@ const routeBudgets = [
     // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
     // CSS compilation (cssCompiled bindings skipped when scroll timelines are
     // supported) adds about 840 raw bytes to the shared motion core.
-    raw: 288689,
+    // Native ESM interop adds 639 raw / 199 gzip / 177 Brotli bytes to the
+    // engines chunk for normalized HTTP(S) imports, shared loads, and retry
+    // after rejection. Before this addition the route measured 302,968 raw,
+    // only 156 below its hard limit; it now measures 303,607. Move only the
+    // raw reviewed target by the measured delta. Brotli likewise moves by
+    // 177: its prior 76,688 was only 108 below the hard limit. Retain the 5%
+    // allowance, existing gzip target, and all other route budgets.
+    raw: 289328,
     gzip: 83400,
-    brotli: 73139,
+    brotli: 73316,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface

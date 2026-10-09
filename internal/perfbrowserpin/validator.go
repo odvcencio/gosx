@@ -51,6 +51,13 @@ const (
 	pinnedSnapshot   = "1688711"
 	productVersion   = "154.0.8034.0"
 
+	// Full lanes run on pushes and on pull requests that are not drafts. The
+	// aggregate binds the draft state itself and fails closed on drafts, because
+	// GitHub counts a skipped required check as passed.
+	fullLaneIf      = "${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}"
+	draftEnvName    = "DRAFT_PULL_REQUEST"
+	draftEnvBinding = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}"
+
 	identityRun = `sh scripts/verify-perf-browser-identity.sh \
   "$PERF_CHROME_PATH" \
   "$PERF_CHROME_VERSION" \
@@ -117,11 +124,20 @@ rm -rf -- "${RUNNER_TEMP}/gosx-adapter-proof"
 `
 )
 
+// draftFastNeeds are the lanes a draft pull request runs. The aggregate reports
+// them on drafts and then fails closed until the full suite runs.
+var draftFastNeeds = []string{
+	"release-gate",
+	"go-tests",
+	"js-tests",
+}
+
 var baseAggregateNeeds = []string{
 	"release-gate",
 	"go-tests",
 	"go-race-tests",
 	"go-cli-tests",
+	"go-cli-tests-b",
 	"js-tests",
 	"wire-gates",
 	"wasm-tests",
@@ -265,8 +281,11 @@ func validateNodeShape(node *yaml.Node, path string) error {
 
 func validateBrowserJob(node *yaml.Node) error {
 	const label = "browser-tests job"
-	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	job, err := exactMapping(node, label, "if", "runs-on", "timeout-minutes", "steps")
 	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", fullLaneIf); err != nil {
 		return err
 	}
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
@@ -663,8 +682,11 @@ func validateStableCleanup(node *yaml.Node) error {
 
 func validateStableJob(node *yaml.Node) error {
 	const label = "stable Scene3D renderer proof job"
-	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	job, err := exactMapping(node, label, "if", "runs-on", "timeout-minutes", "steps")
 	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", fullLaneIf); err != nil {
 		return err
 	}
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
@@ -762,8 +784,11 @@ func validateAdapterCleanup(node *yaml.Node) error {
 
 func validateAdapterJob(node *yaml.Node) error {
 	const label = "Scene3D adapter proof job"
-	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	job, err := exactMapping(node, label, "if", "runs-on", "timeout-minutes", "steps")
 	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", fullLaneIf); err != nil {
 		return err
 	}
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
@@ -837,7 +862,8 @@ func validateAggregateStep(node *yaml.Node, needs []string) error {
 	if err := exactString(step["name"], label+".name", aggregateStepName); err != nil {
 		return err
 	}
-	expectedEnv := make(map[string]string, len(needs))
+	expectedEnv := make(map[string]string, len(needs)+1)
+	expectedEnv[draftEnvName] = draftEnvBinding
 	for _, need := range needs {
 		expectedEnv[aggregateResultEnv(need)] = fmt.Sprintf("${{ needs.%s.result }}", need)
 	}
@@ -851,7 +877,8 @@ func aggregateNeeds(hasStableJob bool) []string {
 	needs := slices.Clone(baseAggregateNeeds)
 	if hasStableJob {
 		// The stable proof is optional only as a workflow composition. Once
-		// present, its exact job has no skip condition and is a required success.
+		// present, its only skip condition is the draft gate, and it is a
+		// required success for every run the aggregate can pass.
 		needs = slices.Insert(needs, len(needs)-1, stableJobName)
 	}
 	needs = slices.Insert(needs, len(needs)-1, adapterJobName)
@@ -864,7 +891,33 @@ func aggregateResultEnv(need string) string {
 
 func aggregateRun(needs []string) string {
 	var run strings.Builder
-	run.WriteString("set -eu\nfor result in \\\n")
+	run.WriteString("set -eu\n")
+	fmt.Fprintf(&run, "if [ \"$%s\" = true ]; then\n  for result in \\\n", draftEnvName)
+	for index, need := range draftFastNeeds {
+		suffix := " \\\n"
+		if index == len(draftFastNeeds)-1 {
+			suffix = "\n"
+		}
+		fmt.Fprintf(&run, "    \"%s=$%s\"%s", need, aggregateResultEnv(need), suffix)
+	}
+	run.WriteString(`  do
+    case "$result" in
+      *=success) ;;
+      *)
+        echo "draft fast check did not succeed: $result" >&2
+        exit 1
+        ;;
+    esac
+  done
+  echo "::error title=Draft pull request::`)
+	run.WriteString(strings.Join(draftFastNeeds[:len(draftFastNeeds)-1], ", "))
+	run.WriteString(" and ")
+	run.WriteString(draftFastNeeds[len(draftFastNeeds)-1])
+	run.WriteString(` passed. The full suite runs when the PR is marked ready for review; until then this required check fails closed."
+  exit 1
+fi
+`)
+	run.WriteString("for result in \\\n")
 	for index, need := range needs {
 		suffix := " \\\n"
 		if index == len(needs)-1 {

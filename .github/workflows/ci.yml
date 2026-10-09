@@ -5,7 +5,16 @@ on:
     branches:
       - main
       - master
+  # Draft pull requests run only the fast lanes: release-gate, go-tests
+  # (format, unit, editor vet, fuzz smoke) and js-tests (runtime contracts and
+  # bootstrap size budgets). Every other lane runs when the PR is not a draft,
+  # and ready_for_review starts that full run when a draft is marked ready.
+  # Owner decision 2026-10-08: stacked draft slices each reran the full matrix
+  # on every carried-up fix and queued about 1,000 jobs ahead of merge runs.
+  # The required `test` aggregate fails closed on drafts (see that job), so a
+  # draft run can never satisfy branch protection.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -150,6 +159,7 @@ jobs:
   # and vector-search kernels omitted from pull requests and keeps a 40-minute
   # per-package alarm inside this 50-minute job ceiling.
   go-race-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
 
@@ -179,13 +189,11 @@ jobs:
         if: github.event_name == 'push'
         run: make test-race
 
-  # cmd/gosx/build_test.go runs real production builds and therefore requires
-  # TinyGo. Isolating it gives PRs a ~6 minute Go critical path while preserving
-  # every production-build assertion and the standalone CLI build gate. A cold
-  # merged-main run reached Go's default 10-minute package timeout in the final
-  # generated-docs fixture, so the suite has a 15-minute Go timeout inside this
-  # 50-minute job ceiling.
+  # The full CLI package approaches its unchanged 25-minute test timeout.
+  # Two exhaustive partitions assign tests by name, including examples and
+  # fuzz seeds. Both jobs are required; documentation gates run once in job 0.
   go-cli-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 50
 
@@ -210,7 +218,7 @@ jobs:
         run: scripts/install-ci-tinygo.sh
 
       - name: CLI production-build integration tests
-        run: make test-cli
+        run: make test-cli CLI_SHARD=0
 
       - name: Documentation example tests
         run: GOWORK=off nice -n 10 go test ./examples/gosx-docs/...
@@ -223,6 +231,29 @@ jobs:
 
       - name: Compile documentation site pages and server
         run: GOWORK=off nice -n 10 ./gosx build --dev ./examples/gosx-docs
+
+  go-cli-tests-b:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: CLI production-build integration tests
+        run: make test-cli CLI_SHARD=1
 
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
@@ -267,6 +298,7 @@ jobs:
   # Pinning Node 22 here (same as js-tests) preserves exact prior behavior
   # instead of relying on whatever Node ships by default on the runner image.
   wasm-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -342,6 +374,7 @@ jobs:
   # route's raise map. CPU time and LCP are measured by paired A/B runs
   # outside this gate.
   wire-gates:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -407,6 +440,7 @@ jobs:
   # release-pinned hardware obligation. Successful runs trap-clean artifacts;
   # failed runs upload every mode before the always cleanup step.
   scene3d-v1-browser-renderer-proof:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -475,6 +509,7 @@ jobs:
   # Success removes artifacts immediately; failure retains the report and
   # screenshots for seven days.
   scene3d-v1-adapter-proof:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 12
 
@@ -545,6 +580,7 @@ jobs:
   # browser-tests: Go + Chrome + TinyGo. The wider browser suite executes WASM
   # directly; the bounded Scene3D proof runs in its separately named job.
   browser-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
@@ -643,7 +679,9 @@ jobs:
   # include release-gate so branch protection on the aggregate `test` check also
   # gates release policy and governed workflow topology. `always()` makes the
   # aggregate run after a failed/skipped dependency; the step then fails closed
-  # unless every required dependency reports success.
+  # unless every required dependency reports success. On a draft PR the full
+  # lanes are skipped, and GitHub counts a skipped required check as passed, so
+  # this job must not skip: it reports the fast lanes and then fails closed.
   test:
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -652,6 +690,7 @@ jobs:
       - go-tests
       - go-race-tests
       - go-cli-tests
+      - go-cli-tests-b
       - js-tests
       - wire-gates
       - wasm-tests
@@ -663,10 +702,12 @@ jobs:
     steps:
       - name: All test jobs passed
         env:
+          DRAFT_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
           RELEASE_GATE_RESULT: ${{ needs.release-gate.result }}
           GO_TESTS_RESULT: ${{ needs.go-tests.result }}
           GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
           GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
+          GO_CLI_TESTS_B_RESULT: ${{ needs.go-cli-tests-b.result }}
           JS_TESTS_RESULT: ${{ needs.js-tests.result }}
           WIRE_GATES_RESULT: ${{ needs.wire-gates.result }}
           WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
@@ -675,11 +716,29 @@ jobs:
           BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}
         run: |
           set -eu
+          if [ "$DRAFT_PULL_REQUEST" = true ]; then
+            for result in \
+              "release-gate=$RELEASE_GATE_RESULT" \
+              "go-tests=$GO_TESTS_RESULT" \
+              "js-tests=$JS_TESTS_RESULT"
+            do
+              case "$result" in
+                *=success) ;;
+                *)
+                  echo "draft fast check did not succeed: $result" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            echo "::error title=Draft pull request::release-gate, go-tests and js-tests passed. The full suite runs when the PR is marked ready for review; until then this required check fails closed."
+            exit 1
+          fi
           for result in \
             "release-gate=$RELEASE_GATE_RESULT" \
             "go-tests=$GO_TESTS_RESULT" \
             "go-race-tests=$GO_RACE_TESTS_RESULT" \
             "go-cli-tests=$GO_CLI_TESTS_RESULT" \
+            "go-cli-tests-b=$GO_CLI_TESTS_B_RESULT" \
             "js-tests=$JS_TESTS_RESULT" \
             "wire-gates=$WIRE_GATES_RESULT" \
             "wasm-tests=$WASM_TESTS_RESULT" \
@@ -695,13 +754,13 @@ jobs:
                 ;;
             esac
           done
-          echo "release-gate, go-tests, go-race-tests, go-cli-tests, js-tests, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
+          echo "release-gate, go-tests, go-race-tests, go-cli-tests, go-cli-tests-b, js-tests, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame
   # timing. Set WATER_WEBGPU_RUNNER to the runner label to enable this job.
   water-webgpu-certification:
-    if: ${{ vars.WATER_WEBGPU_RUNNER != '' }}
+    if: ${{ vars.WATER_WEBGPU_RUNNER != '' && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ${{ vars.WATER_WEBGPU_RUNNER }}
     timeout-minutes: 15
 
