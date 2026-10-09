@@ -21,10 +21,11 @@ import (
 
 // AppReport is a native measurement result, not an additional JSON root.
 type AppReport struct {
-	App      string
-	Rows     []Row
-	Assets   []AssetReport
-	Coverage ByteCoverage
+	App       string
+	Rows      []Row
+	Assets    []AssetReport
+	Coverage  ByteCoverage
+	execution map[string]HTMLExecution
 }
 type MeasureOptions struct {
 	App, DistDir, BaseURL string
@@ -45,7 +46,7 @@ func Measure(ctx context.Context, opts MeasureOptions) (AppReport, error) {
 }
 
 func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormalizer) (AppReport, error) {
-	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "known"}}
+	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "known"}, execution: map[string]HTMLExecution{}}
 	if validateInput(opts.App, inputDefinitions["ID"]) != nil {
 		return result, measureFailure("invalid-input", "/app")
 	}
@@ -168,10 +169,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if err := VerifyHTMLRenders(measuredHTML, repeatedHTML); err != nil {
 			return result, err
 		}
-		caps, err := pagecaps.FromHTML(first.body)
-		if err != nil {
-			return result, measureFailure("capability", "/routes/capabilities")
-		}
+		caps := measuredHTML.capabilities
 		observedCaps, _ := json.Marshal(caps)
 		declaredCaps, _ := json.Marshal(route.Capabilities)
 		if !bytes.Equal(observedCaps, declaredCaps) {
@@ -182,7 +180,6 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			return result, measureFailure("capability", "/routes/pageTypes")
 		}
 		row := Row{App: opts.App, RouteTemplate: route.RouteTemplate, Scenario: "hard-cold", Status: "unavailable", ReasonCode: "unknown-reachability", Backend: opts.Public.Backend, ModelStatus: "unknown", Policies: append([]PolicyResult{}, first.Policies...)}
-		row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(measuredHTML))
 		if row.Backend == "" {
 			row.Backend = "none"
 		}
@@ -211,6 +208,13 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		coldInline := map[string]bool{first.finalURL: true}
 		noExecutableAssets := true
 		noExecutableDocuments := documentZeroJS(caps)
+		type documentExecution struct {
+			HTMLExecution
+			phase string
+		}
+		// Count each verified physical document once, including its active
+		// embedded documents. Dormant HTML never enters this observed closure.
+		documents := map[string]documentExecution{first.finalURL: {measuredHTML.HTMLExecution, "critical"}}
 		runtimeHashed := measuredHTML.Framework.Raw == 0
 		for _, fixture := range fixtures {
 			phase := phases[fixture.id]
@@ -233,7 +237,6 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			if err != nil {
 				return result, err
 			}
-			var childHTML HTMLMeasurement
 			if fixture.kind == "html" {
 				repeat, err := measureHTTP(ctx, options, normalize)
 				if err != nil {
@@ -250,13 +253,13 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				if err := VerifyHTMLRenders(html, again); err != nil {
 					return result, err
 				}
-				childHTML = html
 				// Static enforcement covers every reachable document, at any phase.
-				childCaps, err := pagecaps.FromHTML(observed.body)
-				if err != nil {
-					return result, measureFailure("capability", "/assets/capabilities")
+				noExecutableDocuments = noExecutableDocuments && documentZeroJS(html.capabilities)
+				entry := documentExecution{html.HTMLExecution, phase}
+				if old, exists := documents[observed.finalURL]; exists {
+					entry.phase = earlierPhase(old.phase, phase)
 				}
-				noExecutableDocuments = noExecutableDocuments && documentZeroJS(childCaps)
+				documents[observed.finalURL] = entry
 				if fixture.owner == "app" {
 					inline[observed.finalURL] = html.Framework.Brotli
 					coldInline[observed.finalURL] = coldInline[observed.finalURL] || phaseRank(phase) <= 1
@@ -274,10 +277,16 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 					}
 				}
 			}
-			if fixture.kind == "html" && phaseRank(phase) <= 1 {
-				row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(childHTML))
+		}
+		var allExecution, coldExecution HTMLExecution
+		for _, document := range documents {
+			allExecution.include(document.HTMLExecution)
+			if phaseRank(document.phase) <= 1 {
+				coldExecution.include(document.HTMLExecution)
 			}
 		}
+		result.execution[route.RouteTemplate] = allExecution
+		row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(HTMLMeasurement{HTMLExecution: coldExecution}))
 		totals, err := SumPhases(costs)
 		if err != nil {
 			return result, err

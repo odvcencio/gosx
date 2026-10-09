@@ -22,41 +22,47 @@ import (
 // document position. Expected inert/active seeds prevent equal false negatives
 // from hiding a broken detector. Case mutations preserve script bodies and
 // attribute values, apart from the case-insensitive javascript: scheme.
-func TestCheckStaticDocumentCorpus(t *testing.T) {
-	type seed struct {
-		name, markup string
-		zeroJS       bool
-	}
-	seeds := []seed{}
+type executableSeed struct {
+	name, markup string
+	zeroJS       bool
+}
+
+func documentExecutableSeeds() []executableSeed {
+	seeds := []executableSeed{}
 	for _, typ := range []string{"", "module", "text/javascript", "application/javascript", "text/ecmascript", "application/ecmascript", "application/x-javascript", "application/x-ecmascript", "text/jscript", "text/livescript", "text/x-javascript", "text/x-ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/javascript; charset=utf-8"} {
-		seeds = append(seeds, seed{"script-" + typ, `<script type="` + typ + `">window.fixtureReady=1</script>`, false})
+		seeds = append(seeds, executableSeed{"script-" + typ, `<script type="` + typ + `">window.fixtureReady=1</script>`, false})
 	}
 	for _, typ := range []string{"application/json", "application/ld+json", "text/plain", "text/markdown", "importmap", "speculationrules"} {
-		seeds = append(seeds, seed{"inert-" + typ, `<script type="` + typ + `">{}</script>`, true})
+		seeds = append(seeds, executableSeed{"inert-" + typ, `<script type="` + typ + `">{}</script>`, true})
 	}
 	for _, event := range []string{"onclick", "onload", "onerror", "onfocus", "oninput", "onpointerdown", "ontouchstart", "onanimationend"} {
-		seeds = append(seeds, seed{event, `<button ` + event + `="window.fixtureReady=1">Run</button>`, false})
+		seeds = append(seeds, executableSeed{event, `<button ` + event + `="window.fixtureReady=1">Run</button>`, false})
 	}
 	for _, position := range []struct{ element, attribute string }{{"a", "href"}, {"iframe", "src"}, {"form", "action"}, {"button", "formaction"}} {
-		seeds = append(seeds, seed{"url-" + position.attribute, "<" + position.element + " " + position.attribute + `="javascript:window.fixtureReady=1"></` + position.element + ">", false})
+		seeds = append(seeds, executableSeed{"url-" + position.attribute, "<" + position.element + " " + position.attribute + `="javascript:window.fixtureReady=1"></` + position.element + ">", false})
 	}
 	seeds = append(seeds,
-		seed{"refresh", `<meta http-equiv="refresh" content="0;url=javascript:window.fixtureReady=1">`, false},
-		seed{"refresh-quoted", `<meta http-equiv="refresh" content="0; URL='javascript:window.fixtureReady=1'">`, false},
-		seed{"srcdoc-script", `<iframe srcdoc="` + html.EscapeString(`<script>window.fixtureReady=1</script>`) + `"></iframe>`, false},
-		seed{"srcdoc-handler", `<iframe srcdoc="` + html.EscapeString(`<button onclick="window.fixtureReady=1">Run</button>`) + `"></iframe>`, false},
-		seed{"srcdoc-inert", `<iframe srcdoc="` + html.EscapeString(`<script type="application/json">{}</script>`) + `"></iframe>`, true},
-		seed{"svg-script", `<svg><script>window.fixtureReady=1</script></svg>`, false},
-		seed{"svg-handler", `<svg onload="window.fixtureReady=1"></svg>`, false},
-		seed{"svg-link", `<svg><a href="javascript:window.fixtureReady=1">Run</a></svg>`, false},
-		seed{"template", `<template><script>window.fixtureReady=1</script><button onclick="run()">Run</button></template>`, true},
-		seed{"template-srcdoc", `<template><iframe srcdoc="` + html.EscapeString(`<script>window.fixtureReady=1</script>`) + `"></iframe></template>`, true},
-		seed{"nested-srcdoc", `<iframe srcdoc="` + html.EscapeString(`<iframe srcdoc="`+html.EscapeString(`<button onclick="run()">Run</button>`)+`"></iframe>`) + `"></iframe>`, false},
-		seed{"srcdoc-template", `<iframe srcdoc="` + html.EscapeString(`<template><script>window.fixtureReady=1</script></template>`) + `"></iframe>`, true},
-		seed{"svg-template", `<svg><template><script>window.fixtureReady=1</script></template></svg>`, false},
-		seed{"plain", `<p>Static content</p>`, true},
-		seed{"plain-svg", `<svg><text>Static content</text></svg>`, true},
-		seed{"plain-link", `<a href="#content">Content</a>`, true})
+		executableSeed{"refresh", `<meta http-equiv="refresh" content="0;url=javascript:window.fixtureReady=1">`, false},
+		executableSeed{"refresh-quoted", `<meta http-equiv="refresh" content="0; URL='javascript:window.fixtureReady=1'">`, false},
+		executableSeed{"srcdoc-script", `<iframe srcdoc="` + html.EscapeString(`<script>window.fixtureReady=1</script>`) + `"></iframe>`, false},
+		executableSeed{"srcdoc-handler", `<iframe srcdoc="` + html.EscapeString(`<button onclick="window.fixtureReady=1">Run</button>`) + `"></iframe>`, false},
+		executableSeed{"srcdoc-inert", `<iframe srcdoc="` + html.EscapeString(`<script type="application/json">{}</script>`) + `"></iframe>`, true},
+		executableSeed{"svg-script", `<svg><script>window.fixtureReady=1</script></svg>`, false},
+		executableSeed{"svg-handler", `<svg onload="window.fixtureReady=1"></svg>`, false},
+		executableSeed{"svg-link", `<svg><a href="javascript:window.fixtureReady=1">Run</a></svg>`, false},
+		executableSeed{"template", `<template><script>window.fixtureReady=1</script><button onclick="run()">Run</button></template>`, true},
+		executableSeed{"template-srcdoc", `<template><iframe srcdoc="` + html.EscapeString(`<script>window.fixtureReady=1</script>`) + `"></iframe></template>`, true},
+		executableSeed{"nested-srcdoc", `<iframe srcdoc="` + html.EscapeString(`<iframe srcdoc="`+html.EscapeString(`<button onclick="run()">Run</button>`)+`"></iframe>`) + `"></iframe>`, false},
+		executableSeed{"srcdoc-template", `<iframe srcdoc="` + html.EscapeString(`<template><script>window.fixtureReady=1</script></template>`) + `"></iframe>`, true},
+		executableSeed{"svg-template", `<svg><template><script>window.fixtureReady=1</script></template></svg>`, false},
+		executableSeed{"plain", `<p>Static content</p>`, true},
+		executableSeed{"plain-svg", `<svg><text>Static content</text></svg>`, true},
+		executableSeed{"plain-link", `<a href="#content">Content</a>`, true})
+	return seeds
+}
+
+func TestCheckStaticDocumentCorpus(t *testing.T) {
+	seeds := documentExecutableSeeds()
 	rng := rand.New(rand.NewSource(55002))
 	dir := t.TempDir()
 	info := publicTestReport(t).Info
@@ -76,23 +82,7 @@ func TestCheckStaticDocumentCorpus(t *testing.T) {
 	}
 	for i, s := range seeds {
 		for variant := 0; variant < 8; variant++ {
-			markup := s.markup
-			if variant > 0 {
-				// Mutate only ASCII markup identifiers and the URL scheme.
-				for _, token := range []string{"script", "type", "button", "onclick", "onload", "onerror", "onfocus", "oninput", "onpointerdown", "ontouchstart", "onanimationend", "href", "srcdoc", "src", "http-equiv", "refresh", "content", "action", "formaction", "javascript:"} {
-					mixed := strings.Map(func(r rune) rune {
-						if r >= 'a' && r <= 'z' && rng.Intn(2) == 0 {
-							return r - 32
-						}
-						return r
-					}, token)
-					// Foreign SVG element names are case-sensitive; only
-					// mutate HTML tags, or attributes/schemes within SVG.
-					if !strings.HasPrefix(markup, "<svg") || token != "script" {
-						markup = strings.ReplaceAll(markup, token, mixed)
-					}
-				}
-			}
+			markup := documentSeedVariant(s, variant, rng)
 			t.Run(fmt.Sprintf("%02d-%s/%d", i, s.name, variant), func(t *testing.T) {
 				root := measureCorpusDocument(t, dir, info, markup, false, normalize)
 				child := measureCorpusDocument(t, dir, info, markup, true, normalize)
@@ -108,13 +98,56 @@ func TestCheckStaticDocumentCorpus(t *testing.T) {
 	t.Logf("fixed-seed document corpus: %d snippets, %d root/child measurements", len(seeds)*8, len(seeds)*16)
 }
 
+func documentSeedVariant(s executableSeed, variant int, rng *rand.Rand) string {
+	markup := s.markup
+	if variant > 0 {
+		// Mutate only ASCII markup identifiers and the URL scheme.
+		for _, token := range []string{"script", "type", "button", "onclick", "onload", "onerror", "onfocus", "oninput", "onpointerdown", "ontouchstart", "onanimationend", "href", "srcdoc", "src", "http-equiv", "refresh", "content", "action", "formaction", "javascript:"} {
+			mixed := strings.Map(func(r rune) rune {
+				if r >= 'a' && r <= 'z' && rng.Intn(2) == 0 {
+					return r - 32
+				}
+				return r
+			}, token)
+			// Foreign SVG element names are case-sensitive; only
+			// mutate HTML tags, or attributes/schemes within SVG.
+			if !strings.HasPrefix(markup, "<svg") || token != "script" {
+				markup = strings.ReplaceAll(markup, token, mixed)
+			}
+		}
+	}
+	return markup
+}
+
 func measureCorpusDocument(t *testing.T, dir string, info PublicInfo, snippet string, asChild bool, normalize bodyNormalizer) bool {
 	t.Helper()
-	wrap := func(content string) []byte { return []byte("<!doctype html><html><body>" + content + "</body></html>") }
-	root, child := wrap(snippet), wrap("<p>Unused child</p>")
-	if asChild {
-		root, child = wrap(`<iframe src="/child/"></iframe>`), wrap(snippet)
+	report := measureCorpusReport(t, dir, info, snippet, asChild, normalize)
+	for _, row := range report.Rows {
+		if row.PageType == "static" {
+			for _, policy := range row.Policies {
+				if policy.Name == "zero-js" {
+					return policy.Passed
+				}
+			}
+		}
 	}
+	t.Fatal("static zero-JS policy observation missing")
+	return false
+}
+
+func measureCorpusReport(t *testing.T, dir string, info PublicInfo, snippet string, asChild bool, normalize bodyNormalizer) AppReport {
+	t.Helper()
+	root, child := snippet, "<p>Unused child</p>"
+	if asChild {
+		root, child = `<iframe src="/child/"></iframe>`, snippet
+	}
+	return measureCorpusDocuments(t, dir, info, root, child, normalize)
+}
+
+func measureCorpusDocuments(t *testing.T, dir string, info PublicInfo, rootSnippet, childSnippet string, normalize bodyNormalizer) AppReport {
+	t.Helper()
+	wrap := func(content string) []byte { return []byte("<!doctype html><html><body>" + content + "</body></html>") }
+	root, child := wrap(rootSnippet), wrap(childSnippet)
 	caps, err := pagecaps.FromHTML(root)
 	if err != nil {
 		t.Fatal("root capability parsing failed", err)
@@ -151,15 +184,5 @@ func measureCorpusDocument(t *testing.T, dir string, info PublicInfo, snippet st
 	if err != nil {
 		t.Fatal("corpus document measurement failed", err)
 	}
-	for _, row := range report.Rows {
-		if row.PageType == "static" {
-			for _, policy := range row.Policies {
-				if policy.Name == "zero-js" {
-					return policy.Passed
-				}
-			}
-		}
-	}
-	t.Fatal("static zero-JS policy observation missing")
-	return false
+	return report
 }

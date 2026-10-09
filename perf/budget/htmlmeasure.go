@@ -22,14 +22,29 @@ type HTMLMeasureOptions struct {
 	Pin                   assetmeasure.CompressorPin
 }
 type HTMLMeasurement struct {
-	Sizes                 assetmeasure.Sizes
-	Framework             SizeTriple
-	App                   SizeTriple
-	InlineAppScriptMax    int64
-	ExecutableScripts     int64
-	SyncExecutableScripts int64
-	full                  []byte
-	withoutFramework      []byte
+	HTMLExecution
+	Sizes            assetmeasure.Sizes
+	Framework        SizeTriple
+	App              SizeTriple
+	full             []byte
+	withoutFramework []byte
+	capabilities     pagecaps.Capabilities
+}
+
+// HTMLExecution records active document execution, including srcdoc. Sources
+// include script elements, event handlers and executable URLs. Script bytes
+// exclude verified framework bodies; Max is per script, Bytes is their sum.
+type HTMLExecution struct {
+	ExecutableSources, ExecutableScripts, SyncExecutableScripts int64
+	InlineAppScriptMax, InlineAppScriptBytes                    int64
+}
+
+func (total *HTMLExecution) include(other HTMLExecution) {
+	total.ExecutableSources += other.ExecutableSources
+	total.ExecutableScripts += other.ExecutableScripts
+	total.SyncExecutableScripts += other.SyncExecutableScripts
+	total.InlineAppScriptBytes += other.InlineAppScriptBytes
+	total.InlineAppScriptMax = max(total.InlineAppScriptMax, other.InlineAppScriptMax)
 }
 
 // MeasureHTML uses complete recompressed documents for inline ownership; it
@@ -59,6 +74,28 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		}
 		owned[hash] = true
 	}
+	caps, err := pagecaps.InspectHTML(body, func(source pagecaps.ExecutableSource) {
+		result.ExecutableSources++
+		if !source.Script {
+			return
+		}
+		result.ExecutableScripts++
+		if source.Synchronous {
+			result.SyncExecutableScripts++
+		}
+		hash := sha256.Sum256(source.Body)
+		if source.Inline && (!source.ExactBody || !owned[hex.EncodeToString(hash[:])]) {
+			size := int64(len(source.Body))
+			result.InlineAppScriptMax = max(result.InlineAppScriptMax, size)
+			result.InlineAppScriptBytes += size
+		}
+	})
+	if err != nil {
+		return HTMLMeasurement{}, measureFailure("capability", "/html")
+	}
+	result.capabilities = caps
+	// This token pass preserves source bytes for structural normalization and
+	// whole-document framework attribution. Execution uses only InspectHTML.
 	tokenizer := html.NewTokenizer(bytes.NewReader(body))
 	var full, remaining, script bytes.Buffer
 	active, executable := false, false
@@ -87,12 +124,6 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 			if !framework {
 				remaining.Write(script.Bytes())
 			}
-			if executable {
-				result.ExecutableScripts++
-				if !framework && int64(script.Len()) > result.InlineAppScriptMax {
-					result.InlineAppScriptMax = int64(script.Len())
-				}
-			}
 			full.Write(raw)
 			remaining.Write(raw)
 			active = false
@@ -119,12 +150,6 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 			if token.Data == "script" {
 				active = true
 				executable = templates == 0 && attributes["src"] == "" && pagecaps.ExecutableScriptType(attributes["type"])
-				if templates == 0 && pagecaps.ExecutableScriptType(attributes["type"]) && strings.TrimSpace(strings.ToLower(attributes["type"])) != "module" && (attributes["src"] == "" || !seen["defer"] && !seen["async"]) {
-					result.SyncExecutableScripts++
-				}
-				if templates == 0 && attributes["src"] != "" && pagecaps.ExecutableScriptType(attributes["type"]) {
-					result.ExecutableScripts++
-				}
 			}
 		} else if kind == html.EndTagToken {
 			token := tokenizer.Token()

@@ -14,6 +14,12 @@ import (
 // FromHTML reads capabilities from active markup and hydration contracts.
 // A dormant bundle reference alone never establishes a WASM requirement.
 func FromHTML(data []byte) (Capabilities, error) {
+	return InspectHTML(data, nil)
+}
+
+// InspectHTML reads capabilities and emits execution evidence during the same
+// traversal of active markup, including entity-decoded srcdoc documents.
+func InspectHTML(data []byte, observe func(ExecutableSource)) (Capabilities, error) {
 	if len(data) > 16<<20 || !utf8.Valid(data) {
 		return Capabilities{}, errors.New("invalid capability HTML")
 	}
@@ -21,25 +27,18 @@ func FromHTML(data []byte) (Capabilities, error) {
 	if err != nil {
 		return Capabilities{}, errors.New("invalid capability HTML")
 	}
-	executable, err := executableMarkup(root)
-	if err != nil {
-		return Capabilities{}, err
-	}
+	executable := false
 	c := Capabilities{BootstrapMode: "none", Runtime: "none", decoded: true}
 	modes := map[string]bool{}
 	bootstrapModes := map[string]bool{}
 	var manifest *hydrate.Manifest
-	var visit func(*html.Node) error
-	visit = func(node *html.Node) error {
+	visit := func(node *html.Node, attrs map[string]string, depth int) error {
+		// Hydration contracts belong to this document. Embedded documents
+		// contribute execution evidence, not another root hydration manifest.
+		if depth != 0 {
+			return nil
+		}
 		if node.Type == html.ElementNode {
-			if node.Data == "template" {
-				return nil
-			}
-			attrs := map[string]string{}
-			for _, attr := range node.Attr {
-				key := strings.ToLower(attr.Key)
-				attrs[key] = attr.Val
-			}
 			if _, ok := attrs["data-gosx-navigation"]; ok {
 				c.Navigation = true
 			}
@@ -94,14 +93,14 @@ func FromHTML(data []byte) (Capabilities, error) {
 				}
 			}
 		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			if err := visit(child); err != nil {
-				return err
-			}
-		}
 		return nil
 	}
-	if err := visit(root); err != nil {
+	if err := walkActiveDocuments(root, readScriptSources(data), visit, func(source ExecutableSource) {
+		executable = true
+		if observe != nil {
+			observe(source)
+		}
+	}); err != nil {
 		return Capabilities{}, err
 	}
 	// Preview and island contracts require the shared VM even if a compatibility
@@ -176,58 +175,6 @@ func FromHTML(data []byte) (Capabilities, error) {
 		return Capabilities{}, err
 	}
 	return c, nil
-}
-
-// executableMarkup applies one detector to active HTML, SVG and inline child
-// documents. Template content stays inert; srcdoc is parsed as HTML rather
-// than searched as a string, so data blocks and nested templates stay inert.
-func executableMarkup(root *html.Node) (bool, error) {
-	type pending struct {
-		node  *html.Node
-		depth int
-	}
-	queue := []pending{{node: root}}
-	for len(queue) > 0 {
-		item := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
-		node := item.node
-		if node.Type == html.ElementNode {
-			if node.Namespace == "" && node.Data == "template" {
-				continue
-			}
-			attrs := map[string]string{}
-			for _, attr := range node.Attr {
-				key := strings.ToLower(attr.Key)
-				attrs[key] = attr.Val
-				if strings.HasPrefix(key, "on") && len(key) > 2 || javascriptURL(attr.Val) {
-					return true, nil
-				}
-			}
-			if node.Data == "script" && ExecutableScriptType(attrs["type"]) {
-				return true, nil
-			}
-			if node.Data == "meta" && strings.EqualFold(strings.TrimSpace(attrs["http-equiv"]), "refresh") && refreshJavascriptURL(attrs["content"]) {
-				return true, nil
-			}
-			if node.Namespace == "" && node.Data == "iframe" {
-				if content, ok := attrs["srcdoc"]; ok {
-					// Bound nested parsing independently of the outer byte limit.
-					if item.depth >= 32 {
-						return false, errors.New("invalid capability HTML")
-					}
-					child, err := html.Parse(strings.NewReader(content))
-					if err != nil {
-						return false, errors.New("invalid capability HTML")
-					}
-					queue = append(queue, pending{child, item.depth + 1})
-				}
-			}
-		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			queue = append(queue, pending{child, item.depth})
-		}
-	}
-	return false, nil
 }
 
 func javascriptURL(value string) bool {

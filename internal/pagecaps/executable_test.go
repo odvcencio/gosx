@@ -17,6 +17,11 @@ func TestPageCapsEmbeddedExecutableMarkup(t *testing.T) {
 		{"refresh-inert", `<meta http-equiv="refresh" content="0;url=/next/">`, false},
 		{"srcdoc-handler", `<iframe srcdoc="&lt;p ONCLICK=run()&gt;Run&lt;/p&gt;"></iframe>`, true},
 		{"srcdoc-inert", `<iframe srcdoc="&lt;script type=application/json&gt;{}&lt;/script&gt;"></iframe>`, false},
+		{"srcdoc-plain-url", `<iframe srcdoc="javascript:run()"></iframe>`, false},
+		{"srcdoc-overrides-src", `<iframe src="javascript:run()" srcdoc="&lt;p&gt;Static&lt;/p&gt;"></iframe>`, false},
+		{"srcdoc-overrides-src-reversed", `<iframe srcdoc="&lt;p&gt;Static&lt;/p&gt;" src="javascript:run()"></iframe>`, false},
+		{"sandbox-blocks-src", `<iframe sandbox src="javascript:run()"></iframe>`, false},
+		{"sandbox-outer-handler", `<iframe sandbox onload="run()" srcdoc="&lt;script&gt;run()&lt;/script&gt;"></iframe>`, true},
 		{"template", `<template><iframe srcdoc="&lt;script&gt;run()&lt;/script&gt;"></iframe></template>`, false},
 		{"svg-template", `<svg><template><script>run()</script></template></svg>`, true},
 	} {
