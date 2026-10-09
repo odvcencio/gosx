@@ -250,12 +250,10 @@ func scanHydrationReferences(raw string, out *ReferenceSet) error {
 	if manifest.Version != "0.1.0" {
 		out.Complete = false
 	}
-	shared := false
 	for _, entry := range manifest.Islands {
 		if entry.Static {
 			continue
 		}
-		shared = true
 		if entry.ProgramRef != "" {
 			addReference(out, entry.ProgramRef, KindProgram, false)
 		} else {
@@ -268,25 +266,55 @@ func scanHydrationReferences(raw string, out *ReferenceSet) error {
 		}
 	}
 	for _, entry := range manifest.ComputeIslands {
-		shared = true
 		if entry.ProgramRef == "" {
 			out.Complete = false
 		}
 		addReference(out, entry.ProgramRef, KindProgram, false)
 	}
 	for _, entry := range manifest.Engines {
-		shared = shared || entry.Runtime == "shared"
 		addReference(out, entry.ProgramRef, "", false)
 		if entry.Runtime == "go-wasm" && entry.ProgramRef == "" {
 			out.Complete = false
 		}
 	}
-	if manifest.Runtime.Path != "" {
-		addReference(out, manifest.Runtime.Path, KindWASM, false)
-	} else if shared {
-		out.Complete = false
+	common, bridge := hydrationRuntimeConsumers(manifest)
+	if common || bridge {
+		if manifest.Runtime.Path != "" {
+			addReference(out, manifest.Runtime.Path, KindWASM, !common)
+		}
+		if manifest.Runtime.Path == "" || !common {
+			out.Complete = false
+		}
 	}
 	return nil
+}
+
+// hydrationRuntimeConsumers mirrors the cold-load predicates in
+// client/js/bootstrap-src. Both loaders select nonempty islands and
+// computeIslands, including static island entries (26-runtime-tail.ts:253-254,
+// 30k-tail-init.ts:66-67), and engines with runtime exactly "shared"
+// (26-runtime-tail.ts:257-262, 30b-tail-engine-mounting.ts:45-46).
+// The monolith additionally selects hubs (30k-tail-init.ts:68), clientIdentity
+// (:69), video engines (:98-104), and the exact keyboard/pointer/gamepad
+// capabilities (:79-85; 10-runtime-scene-utils.ts:862-863).
+// Both require runtime.path (26-runtime-tail.ts:485-496, 30k-tail-init.ts:75-76).
+// A manifest does not identify which loader executes it. Bridge-only consumers
+// therefore yield a potential reference with incomplete coverage, rather than
+// certifying a WASM request that the selective loader does not make.
+func hydrationRuntimeConsumers(manifest hydrate.Manifest) (common, bridge bool) {
+	common = len(manifest.Islands) > 0 || len(manifest.ComputeIslands) > 0
+	bridge = len(manifest.Hubs) > 0 || manifest.ClientIdentity != nil
+	for _, entry := range manifest.Engines {
+		common = common || entry.Runtime == "shared"
+		bridge = bridge || entry.Kind == "video"
+		for _, capability := range entry.Capabilities {
+			switch capability {
+			case "keyboard", "pointer", "gamepad":
+				bridge = true
+			}
+		}
+	}
+	return common, bridge
 }
 
 func scanSyntaxReferences(body []byte, kind string, out *ReferenceSet) error {

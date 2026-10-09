@@ -372,7 +372,72 @@ func TestReferencesDoNotChangeCompatibilityCrawlerContract(t *testing.T) {
 	}
 	body := []byte(`<script id="gosx-manifest">{"version":"0.1.0","runtime":{"path":"/gosx/core.wasm"},"bundles":{"dormant":{"path":"/gosx/full.wasm"}}}</script>`)
 	set, err := ScanReferences(body, KindDocument)
-	if err != nil || len(set.Resources) != 1 || set.Resources[0].URL != "/gosx/core.wasm" {
+	if err != nil || !set.Complete || len(set.Resources) != 0 {
 		t.Fatal("new scanner did not distinguish inventory from selected runtime", set, err)
+	}
+}
+
+func TestReferencesHydrationRuntimeConsumerSelection(t *testing.T) {
+	for _, tc := range []struct {
+		name, fields string
+		selected     bool
+		conditional  bool
+	}{
+		{"unused-runtime", `"islands":[],"engines":[]`, false, false},
+		{"island-selected", `"islands":[{"programRef":"/counter.bin"}]`, true, false},
+		{"island-not-selected", `"islands":[]`, false, false},
+		{"static-island-selects-runtime", `"islands":[{"static":true,"programRef":"/static.bin"}]`, true, false},
+		{"compute-selected", `"computeIslands":[{"programRef":"/compute.bin"}]`, true, false},
+		{"compute-not-selected", `"computeIslands":[]`, false, false},
+		{"shared-engine-selected", `"engines":[{"runtime":"shared","programRef":"/engine.bin"}]`, true, false},
+		{"shared-engine-not-selected", `"engines":[{"runtime":"js"}]`, false, false},
+		{"shared-engine-exact-token", `"engines":[{"runtime":"Shared"}]`, false, false},
+		{"go-wasm-is-separate", `"engines":[{"runtime":"go-wasm","programRef":"/custom.wasm"}]`, false, false},
+		{"hub-selected-by-monolith", `"hubs":[{}]`, true, true},
+		{"hub-not-selected", `"hubs":[]`, false, false},
+		{"identity-selected-by-monolith", `"clientIdentity":{}`, true, true},
+		{"identity-not-selected", `"clientIdentity":null`, false, false},
+		{"video-selected-by-monolith", `"engines":[{"kind":"video"}]`, true, true},
+		{"video-not-selected", `"engines":[{"kind":"surface"}]`, false, false},
+		{"video-exact-token", `"engines":[{"kind":"Video"}]`, false, false},
+		{"keyboard-selected-by-monolith", `"engines":[{"capabilities":["keyboard"]}]`, true, true},
+		{"keyboard-not-selected", `"engines":[{"capabilities":["Keyboard"]}]`, false, false},
+		{"pointer-selected-by-monolith", `"engines":[{"capabilities":["pointer"]}]`, true, true},
+		{"pointer-not-selected", `"engines":[{"capabilities":[" pointer "]}]`, false, false},
+		{"gamepad-selected-by-monolith", `"engines":[{"capabilities":["gamepad"]}]`, true, true},
+		{"gamepad-not-selected", `"engines":[{"capabilities":["Gamepad"]}]`, false, false},
+		{"required-capabilities-are-separate", `"engines":[{"requiredCapabilities":["keyboard","pointer","gamepad"]}]`, false, false},
+		{"controller-is-not-a-consumer", `"controllers":[{}]`, false, false},
+		{"bundle-inventory-is-not-a-consumer", `"bundles":{"unused":{"path":"/other.wasm"}}`, false, false},
+		{"common-gate-wins-over-bridge", `"islands":[{"programRef":"/counter.bin"}],"hubs":[{}]`, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, runtime := range []string{"/runtime.wasm", ""} {
+				body := []byte(`<script type="application/json" id="gosx-manifest">{"version":"0.1.0","runtime":{"path":"` + runtime + `"},` + tc.fields + `}</script>`)
+				set, err := ScanReferences(body, KindDocument)
+				if err != nil {
+					t.Fatal(err)
+				}
+				wantComplete := !tc.selected || runtime != "" && !tc.conditional
+				if set.Complete != wantComplete {
+					t.Fatalf("runtime=%q completeness=%v want %v", runtime, set.Complete, wantComplete)
+				}
+				found := false
+				for _, ref := range set.Resources {
+					if ref.URL == "/runtime.wasm" {
+						found = true
+						if ref.Kind != KindWASM || ref.Potential != tc.conditional {
+							t.Fatal("runtime selection certainty differs", ref)
+						}
+					}
+					if ref.URL == "/static.bin" || ref.URL == "/other.wasm" {
+						t.Fatal("unselected program or inventory was scanned", ref)
+					}
+				}
+				if found != (tc.selected && runtime != "") {
+					t.Fatalf("runtime=%q found=%v want %v", runtime, found, tc.selected && runtime != "")
+				}
+			}
+		})
 	}
 }
