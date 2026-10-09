@@ -243,6 +243,37 @@ func TestRecordAggregateAndCompleteByteCaps(t *testing.T) {
 	}
 }
 
+func retainedActivity(n int) schema.Activity {
+	a := activity()
+	a.Fields, a.Dimensions = nil, nil
+	for n > 0 {
+		count := min(n, 64)
+		fields := make(schema.Fields, count)
+		for i := range fields {
+			fields[i] = schema.Field{Name: fmt.Sprintf("f_%014d", i), Type: schema.FieldBool, Bool: true}
+		}
+		if a.Fields == nil {
+			a.Fields = fields
+		} else {
+			i := len(a.Participants)
+			a.Participants = append(a.Participants, schema.Participant{ID: fmt.Sprintf("%032x", i+10), Seat: i, Role: "player", Codec: schema.Codec{Name: "seat", Version: 1}, Fields: fields})
+		}
+		n -= count
+	}
+	return a
+}
+
+func TestRecordRejectsRetainedMemoryOverflow(t *testing.T) {
+	if strconv.IntSize != 64 {
+		t.Skip("retained-memory overflow shape requires 64-bit object layouts")
+	}
+	// These 147 bools fit the field and line limits, but the copied record
+	// exceeds 32 KiB once allocation rounding is included.
+	if _, err := telemetryrecord.NewActivity(envelope(), retainedActivity(147)); !errors.Is(err, telemetryerr.ErrFieldBudget) {
+		t.Fatalf("retained-memory overflow: %v, want ErrFieldBudget", err)
+	}
+}
+
 func TestRecordUTCAndShortestFiniteNumbers(t *testing.T) {
 	e := envelope()
 	e.At = e.At.In(time.FixedZone("private-zone-canary", 3600))
