@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/json"
+	"html"
 	"reflect"
 	"slices"
 	"strconv"
@@ -245,9 +246,6 @@ func classify(u Unit) *rejection {
 	if failure := staticAnalysis(p); failure != nil {
 		return failure
 	}
-	if !parserTopology(p) {
-		return reject("parser_topology", "nodes", -1)
-	}
 	inputRefs := make([]bool, len(p.Exprs))
 	for i, input := range c.Inputs {
 		if input.ID != uint32(i) || input.Source != "prop" && input.Source != "event" || input.Root == "" || !utf8.ValidString(input.Root) || !scalarKind(input.Kind) || input.Path == nil || len(input.Exprs) == 0 {
@@ -279,6 +277,9 @@ func classify(u Unit) *rejection {
 	}
 	if failure := effectRules(u); failure != nil {
 		return failure
+	}
+	if !parserTopology(p) {
+		return reject("parser_topology", "nodes", -1)
 	}
 	canonical, err := NewUnit(u.Component, p, c)
 	contractBytes, _ := json.Marshal(c)
@@ -458,8 +459,8 @@ func fixedAttribute(name string, kind ScalarKind) bool {
 	return strings.Contains(" checked disabled hidden selected required readonly multiple ", " "+name+" ") && kind == Bool
 }
 
-// Compare a marked fixed skeleton with the HTML parser's physical tree. This
-// rejects implicit closing, reparenting, void children and invalid select trees.
+// Compare the marked tree with the HTML parser using proved literal text.
+// Empty text and stripped initial newlines must not certify absent bindings.
 func parserTopology(p *program.Program) bool {
 	var source strings.Builder
 	expected := []string{}
@@ -467,7 +468,12 @@ func parserTopology(p *program.Program) bool {
 	emit = func(id program.NodeID) {
 		n := p.Nodes[id]
 		if n.Kind != program.NodeElement {
-			source.WriteByte('x')
+			text := n.Text
+			if n.Kind == program.NodeExpr {
+				// The literal subset has proved the value's canonical spelling.
+				text = p.Exprs[n.Expr].Value
+			}
+			source.WriteString(html.EscapeString(text))
 			return
 		}
 		marker := strconv.Itoa(int(id))
