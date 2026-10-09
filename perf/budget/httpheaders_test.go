@@ -18,6 +18,8 @@ func TestHTTPMeasureAllEnforcedCSPPolicies(t *testing.T) {
 		allowed  bool
 	}{
 		{"conflicting-lines", []string{allow, deny}, false},
+		{"mixed-case-conflicting-lines", []string{allow, "SCRIPT-SRC 'NONE'"}, false},
+		{"mixed-case-compatible-lines", []string{allow, "SCRIPT-SRC 'NONCE-fixture'; STYLE-SRC 'NONCE-fixture'"}, true},
 		{"conflicting-lines-reversed", []string{deny, allow}, false},
 		{"conflicting-list", []string{allow + ", " + deny}, false},
 		{"conflicting-list-first-policy", []string{"default-src 'none', " + allow}, false},

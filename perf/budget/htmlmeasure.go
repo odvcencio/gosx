@@ -3,9 +3,12 @@ package budget
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
 	"io"
 	"mime"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -233,21 +236,25 @@ func executableScriptType(typ string) bool {
 	return false
 }
 
-// VerifyHTMLNonces binds declared nonce attributes to the served CSP list. Each
-// enforced policy with an applicable directive must allow the element's nonce.
-// Nonce values remain private and are never included in an error or report.
+// VerifyHTMLNonces verifies that nonce-bearing elements are allowed by each
+// enforced CSP policy. Inline elements can also be authorized by a matching
+// content hash or an effective unsafe-inline source. Nonce and hash values
+// remain private and are never included in an error or report.
 func VerifyHTMLNonces(body []byte, csp string) error {
 	var policies []map[string][]string
 	// CSP field values may themselves contain comma-separated policies.
 	for _, policy := range strings.Split(csp, ",") {
 		directives := map[string][]string{}
 		for _, part := range strings.Split(policy, ";") {
-			fields := strings.Fields(part)
+			fields := strings.FieldsFunc(part, cspSpace)
 			if len(fields) > 0 {
-				if _, exists := directives[fields[0]]; exists {
-					return measureFailure("policy", "/html/nonce")
+				// CSP3 §2.2.1: ASCII-fold names before checking duplicates;
+				// the first occurrence of a directive wins.
+				name := cspLower(fields[0])
+				if _, exists := directives[name]; exists {
+					continue
 				}
-				directives[fields[0]] = fields[1:]
+				directives[name] = fields[1:]
 			}
 		}
 		policies = append(policies, directives)
@@ -274,41 +281,114 @@ func VerifyHTMLNonces(body []byte, csp string) error {
 		if templates > 0 || kind != html.StartTagToken && kind != html.SelfClosingTagToken || token.Data != "script" && token.Data != "style" {
 			continue
 		}
+		var nonce string
+		hasNonce, external := false, false
 		for _, attribute := range token.Attr {
-			if attribute.Key != "nonce" {
+			if attribute.Key == "nonce" && !hasNonce {
+				nonce, hasNonce = attribute.Val, true
+			}
+			external = external || token.Data == "script" && attribute.Key == "src"
+		}
+		if !hasNonce {
+			continue
+		}
+		if nonce == "" {
+			return measureFailure("policy", "/html/nonce")
+		}
+		var source strings.Builder
+		if kind == html.StartTagToken {
+			// Hash the parsed element text, not HTML source bytes. HTML
+			// parsing normalizes CR/CRLF to LF before CSP3 §6.7.3.3.
+			for next := tokenizer.Next(); next != html.ErrorToken; next = tokenizer.Next() {
+				child := tokenizer.Token()
+				if next == html.EndTagToken && child.Data == token.Data {
+					break
+				}
+				if next == html.TextToken {
+					source.WriteString(child.Data)
+				}
+			}
+		}
+		key, fallback := "script-src-elem", "script-src"
+		if token.Data == "style" {
+			key, fallback = "style-src-elem", "style-src"
+		}
+		bound := false
+		for _, directives := range policies {
+			allowed, found := directives[key]
+			if !found {
+				allowed, found = directives[fallback]
+			}
+			if !found {
+				allowed, found = directives["default-src"]
+			}
+			// An unrelated policy does not restrict this element; another
+			// enforced policy must still provide an applicable directive.
+			if !found {
 				continue
 			}
-			key := "script-src-elem"
-			fallback := "script-src"
-			if token.Data == "style" {
-				key, fallback = "style-src-elem", "style-src"
-			}
-			bound := false
-			for _, directives := range policies {
-				allowed, found := directives[key]
-				if !found {
-					allowed, found = directives[fallback]
-				}
-				if !found {
-					allowed, found = directives["default-src"]
-				}
-				// A policy without a relevant directive does not restrict this
-				// element. Another policy must still establish nonce binding.
-				if !found {
-					continue
-				}
-				bound = true
-				matches := false
-				for _, source := range allowed {
-					matches = matches || source == "'nonce-"+attribute.Val+"'"
-				}
-				if !matches {
-					return measureFailure("policy", "/html/nonce")
-				}
-			}
-			if attribute.Val == "" || !bound {
+			bound = true
+			if !cspAllowsElement(allowed, token.Data, nonce, source.String(), external) {
 				return measureFailure("policy", "/html/nonce")
 			}
 		}
+		if !bound {
+			return measureFailure("policy", "/html/nonce")
+		}
 	}
+}
+
+var cspSourcePattern = regexp.MustCompile(`^'([A-Za-z0-9]+)-([A-Za-z0-9+/_-]+={0,2})'$`)
+
+// CSP3 §§6.7.3.2–6.7.3.3: nonce/hash sources suppress unsafe-inline;
+// strict-dynamic suppresses it for scripts only. Payloads are never folded.
+func cspAllowsElement(sources []string, element, nonce, text string, external bool) bool {
+	unsafe, restricted, matches := false, false, false
+	for _, source := range sources {
+		switch cspLower(source) {
+		case "'unsafe-inline'":
+			unsafe = true
+		case "'strict-dynamic'":
+			restricted = restricted || element == "script"
+		}
+		parts := cspSourcePattern.FindStringSubmatch(source)
+		if parts == nil {
+			continue
+		}
+		algorithm, payload := cspLower(parts[1]), parts[2]
+		var digest []byte
+		switch algorithm {
+		case "nonce":
+			restricted = true
+			matches = matches || payload == nonce
+			continue
+		case "sha256":
+			d := sha256.Sum256([]byte(text))
+			digest = d[:]
+		case "sha384":
+			d := sha512.Sum384([]byte(text))
+			digest = d[:]
+		case "sha512":
+			d := sha512.Sum512([]byte(text))
+			digest = d[:]
+		default:
+			continue
+		}
+		restricted = true
+		// External scripts need their fetched content and integrity metadata;
+		// an inline text hash or unsafe-inline cannot authorize that fetch.
+		payload = strings.NewReplacer("-", "+", "_", "/").Replace(payload)
+		matches = matches || !external && base64.StdEncoding.EncodeToString(digest) == payload
+	}
+	return matches || !external && unsafe && !restricted
+}
+
+func cspSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' }
+func cspLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, s)
 }

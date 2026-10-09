@@ -23,6 +23,8 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"golang.org/x/net/html"
+	"m31labs.dev/gosx/internal/httpcache"
+	"m31labs.dev/gosx/internal/httpcompress"
 )
 
 // MobileUserAgent is sent with every request. It is the Lighthouse moto g
@@ -485,12 +487,16 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 	}
 	// Preserve the ordered coding list across header lines. decode rejects
 	// stacked encodings explicitly instead of interpreting only the first.
-	enc := strings.ToLower(strings.TrimSpace(strings.Join(resp.Header.Values("Content-Encoding"), ", ")))
+	enc := httpcompress.ResponseEncoding(resp.Header.Values("Content-Encoding"))
 	decoded, err := decode(enc, wire)
 	if err != nil {
 		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: decode %s: %w", raw, enc, err)
 	}
 	cc := strings.Join(resp.Header.Values("Cache-Control"), ", ")
+	cache, validCache := httpcache.ParseDirectives(cc)
+	if !validCache {
+		return Resource{}, nil, nil, nil, fmt.Errorf("invalid Cache-Control field")
+	}
 	res := Resource{
 		URL:             req.URL.RequestURI(),
 		Initiator:       initiator,
@@ -499,7 +505,7 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 		DecodedBytes:    int64(len(decoded)),
 		ContentEncoding: enc,
 		CacheControl:    cc,
-		Immutable:       strings.Contains(strings.ToLower(cc), "immutable"),
+		Immutable:       cache.Has("immutable"),
 		Hashed:          IsHashedURL(req.URL.String()),
 		SetCookie:       len(resp.Header.Values("Set-Cookie")) > 0,
 	}
@@ -513,7 +519,7 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 		}
 		loc := ""
 		if len(locations) == 1 {
-			loc = locations[0]
+			loc = strings.Trim(locations[0], " \t")
 		}
 		if loc == "" {
 			return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: status %d without Location", raw, resp.StatusCode)

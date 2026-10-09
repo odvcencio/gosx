@@ -16,6 +16,8 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx/internal/assetmeasure"
+	"m31labs.dev/gosx/internal/httpcache"
+	"m31labs.dev/gosx/internal/httpcompress"
 )
 
 const maxMeasureBody = 64 << 20
@@ -102,7 +104,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		noCookie = noCookie && len(response.Header.Values("Set-Cookie")) == 0
 		// Repeated lines form an ordered coding list. The decoder accepts one
 		// supported coding and rejects stacked encodings rather than ignoring them.
-		encoding := strings.ToLower(strings.TrimSpace(strings.Join(response.Header.Values("Content-Encoding"), ", ")))
+		encoding := httpcompress.ResponseEncoding(response.Header.Values("Content-Encoding"))
 		raw, err := decodeServedBody(wire, encoding)
 		if err != nil {
 			return out, err
@@ -140,12 +142,18 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		if len(contentTypes) != 1 {
 			return out, measureFailure("policy", "/contentType")
 		}
-		contentType, _, mimeErr := mime.ParseMediaType(contentTypes[0])
+		contentType, mimeErr := measureContentType(contentTypes[0])
 		if mimeErr != nil || !measureMIME(opts.Kind, contentType) {
 			return out, measureFailure("policy", "/contentType")
 		}
-		cache := strings.ToLower(strings.Join(response.Header.Values("Cache-Control"), ","))
-		immutable := cacheDirective(cache, "immutable") && cacheDirective(cache, "max-age=31536000")
+		cache, validCache := httpcache.ParseDirectives(strings.Join(response.Header.Values("Cache-Control"), ","))
+		if !validCache {
+			return out, measureFailure("policy", "/cacheControl")
+		}
+		maxAge, uniqueMaxAge := cache.UniqueValue("max-age")
+		// RFC 9111 §1.2.2: delta-seconds are decimal digits; leading zeros
+		// do not change the declared lifetime. Repeated max-age stays stale.
+		immutable := cache.Has("immutable") && uniqueMaxAge && strings.TrimLeft(maxAge, "0") == "31536000"
 		out.Sizes = sizes
 		out.body = raw
 		out.header = response.Header.Clone()
@@ -160,7 +168,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 				return out, err
 			}
 			out.Policies[2].Name = "html-compressed"
-			out.Policies[3] = PolicyResult{Name: "html-shareable", Passed: !cacheDirective(cache, "private") && !cacheDirective(cache, "no-store") && noCookie}
+			out.Policies[3] = PolicyResult{Name: "html-shareable", Passed: !cache.Has("private") && !cache.Has("no-store") && noCookie}
 		}
 		return out, nil
 	}
@@ -191,14 +199,42 @@ func decodeServedBody(wire []byte, encoding string) ([]byte, error) {
 	}
 	return raw, nil
 }
-func cacheDirective(cache, directive string) bool {
-	for _, value := range strings.Split(cache, ",") {
-		if strings.TrimSpace(value) == directive {
-			return true
+
+// RFC 9110 §5.6.6 permits empty semicolon-delimited parameters. Drop only
+// those empty members before using the MIME parser; quoted semicolons and
+// escaped quotes remain part of their original parameter values.
+func measureContentType(value string) (string, error) {
+	var parts []string
+	start, quoted, escaped := 0, false, false
+	for i := 0; i <= len(value); i++ {
+		if i < len(value) {
+			c := value[i]
+			if escaped {
+				escaped = false
+				continue
+			}
+			if quoted && c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				quoted = !quoted
+				continue
+			}
+			if c != ';' || quoted {
+				continue
+			}
 		}
+		part := strings.Trim(value[start:i], " \t")
+		if part != "" || start == 0 {
+			parts = append(parts, part)
+		}
+		start = i + 1
 	}
-	return false
+	mediaType, _, err := mime.ParseMediaType(strings.Join(parts, ";"))
+	return mediaType, err
 }
+
 func measureMIME(kind, mediaType string) bool {
 	switch kind {
 	case "html":
