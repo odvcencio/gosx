@@ -745,7 +745,8 @@ test("engine factory context does not receive activateInputProviders even with i
   await flushAsyncWork();
 
   assert.equal(env.context.__gosx.engines.size, 1);
-  assert.equal(raf.count(), 1, "gamepad input provider should poll while the engine is mounted");
+  raf.flush(16); // Deliver the provider's initial neutral signals once.
+  assert.equal(raf.count(), 0, "gamepad capability alone must not keep disconnected polling alive");
   assert.deepEqual(capturedCtx.capabilities, ["keyboard", "pointer", "gamepad"]);
   assert.equal(capturedCtx.hasActivateInputProviders, false, "ctx must not expose activateInputProviders even with input capabilities");
   await env.context.__gosx_dispose_page();

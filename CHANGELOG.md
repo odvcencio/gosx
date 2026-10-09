@@ -4,6 +4,10 @@
 
 ## v0.57.7
 
+- Stop the shared gamepad provider's idle polling when controllers are absent
+  or the document is hidden. Clear stale button and axis signals on disconnect,
+  visibility loss, and disposal; connection and visibility events wake polling.
+
 - Retain WebGPU detail resources while atlas pipelines validate. Scenes with
   detailed materials now resume rendering after validation instead of allocating
   a new atlas and pipeline on every frame without presenting to the canvas.
