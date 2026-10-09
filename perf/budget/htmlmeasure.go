@@ -69,7 +69,9 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		kind := tokenizer.Next()
 		raw := append([]byte(nil), tokenizer.Raw()...)
 		if kind == html.ErrorToken {
-			if tokenizer.Err() != io.EOF || active {
+			// EOF can retain an unfinished tag in Raw without emitting a
+			// token. Reject it rather than silently dropping document bytes.
+			if tokenizer.Err() != io.EOF || active || len(raw) != 0 {
 				return result, measureFailure("wrong-fixture", "/html")
 			}
 			break
