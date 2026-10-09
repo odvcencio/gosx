@@ -16,6 +16,8 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx/internal/assetmeasure"
+	"m31labs.dev/gosx/internal/httpcache"
+	"m31labs.dev/gosx/internal/httpcompress"
 )
 
 const maxMeasureBody = 64 << 20
@@ -111,8 +113,9 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			return out, measureFailure("wrong-fixture", "/response")
 		}
 		noCookie = noCookie && len(response.Header.Values("Set-Cookie")) == 0
-		// Preserve the full ordered coding list. The decoder rejects stacks.
-		encoding := strings.ToLower(strings.TrimSpace(strings.Join(response.Header.Values("Content-Encoding"), ", ")))
+		// Repeated lines form an ordered coding list. The decoder accepts one
+		// supported coding and rejects stacked encodings rather than ignoring them.
+		encoding := httpcompress.ResponseEncoding(response.Header.Values("Content-Encoding"))
 		raw, err := decodeServedBody(wire, encoding)
 		if err != nil {
 			return out, err
@@ -125,6 +128,10 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		out.Requests++
 		if response.StatusCode >= 300 && response.StatusCode <= 399 && response.StatusCode != http.StatusNotModified {
 			out.RedirectSizes = append(out.RedirectSizes, sizes)
+			// Location is a singleton; a comma can be part of its URI.
+			if len(response.Header.Values("Location")) != 1 {
+				return out, measureFailure("wrong-fixture", "/redirect")
+			}
 			out.redirects = append(out.redirects, httpRedirectResponse{url: current.String(), sizes: sizes, wireBytes: int64(len(wire))})
 			location, err := response.Location()
 			if err != nil || hop == 10 || location.Scheme != base.Scheme || location.Host != base.Host || location.User != nil || location.RawQuery != "" || location.Fragment != "" {
@@ -157,12 +164,23 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			// Live streams have already passed bounded decoding and content
 			// checks. Flush boundaries can change their encoded bytes and size.
 		}
-		contentType, _, mimeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		// Content-Type is a singleton, not a list of alternative media types.
+		contentTypes := response.Header.Values("Content-Type")
+		if len(contentTypes) != 1 {
+			return out, measureFailure("policy", "/contentType")
+		}
+		contentType, mimeErr := measureContentType(contentTypes[0])
 		if mimeErr != nil || !measureMIME(opts.Kind, contentType) {
 			return out, measureFailure("policy", "/contentType")
 		}
-		cache := strings.ToLower(response.Header.Get("Cache-Control"))
-		immutable := cacheDirective(cache, "immutable") && cacheDirective(cache, "max-age=31536000")
+		cache, validCache := httpcache.ParseDirectives(strings.Join(response.Header.Values("Cache-Control"), ","))
+		if !validCache {
+			return out, measureFailure("policy", "/cacheControl")
+		}
+		maxAge, uniqueMaxAge := cache.UniqueValue("max-age")
+		// RFC 9111 §1.2.2: delta-seconds are decimal digits; leading zeros
+		// do not change the declared lifetime. Repeated max-age stays stale.
+		immutable := cache.Has("immutable") && uniqueMaxAge && strings.TrimLeft(maxAge, "0") == "31536000"
 		out.Sizes = sizes
 		out.body = raw
 		out.header = response.Header.Clone()
@@ -174,11 +192,11 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			out.Policies = append(out.Policies, PolicyResult{Name: "wasm-streaming", Passed: contentType == "application/wasm"})
 		}
 		if opts.Kind == "html" {
-			if err := VerifyHTMLNonces(raw, response.Header.Get("Content-Security-Policy")); err != nil {
+			if err := VerifyHTMLNonces(raw, strings.Join(response.Header.Values("Content-Security-Policy"), ", ")); err != nil {
 				return out, err
 			}
 			out.Policies[2].Name = "html-compressed"
-			out.Policies[3] = PolicyResult{Name: "html-shareable", Passed: !cacheDirective(cache, "private") && !cacheDirective(cache, "no-store") && noCookie}
+			out.Policies[3] = PolicyResult{Name: "html-shareable", Passed: !cache.Has("private") && !cache.Has("no-store") && noCookie}
 		}
 		return out, nil
 	}
@@ -209,14 +227,42 @@ func decodeServedBody(wire []byte, encoding string) ([]byte, error) {
 	}
 	return raw, nil
 }
-func cacheDirective(cache, directive string) bool {
-	for _, value := range strings.Split(cache, ",") {
-		if strings.TrimSpace(value) == directive {
-			return true
+
+// RFC 9110 §5.6.6 permits empty semicolon-delimited parameters. Drop only
+// those empty members before using the MIME parser; quoted semicolons and
+// escaped quotes remain part of their original parameter values.
+func measureContentType(value string) (string, error) {
+	var parts []string
+	start, quoted, escaped := 0, false, false
+	for i := 0; i <= len(value); i++ {
+		if i < len(value) {
+			c := value[i]
+			if escaped {
+				escaped = false
+				continue
+			}
+			if quoted && c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '"' {
+				quoted = !quoted
+				continue
+			}
+			if c != ';' || quoted {
+				continue
+			}
 		}
+		part := strings.Trim(value[start:i], " \t")
+		if part != "" || start == 0 {
+			parts = append(parts, part)
+		}
+		start = i + 1
 	}
-	return false
+	mediaType, _, err := mime.ParseMediaType(strings.Join(parts, ";"))
+	return mediaType, err
 }
+
 func measureMIME(kind, mediaType string) bool {
 	switch kind {
 	case "html":

@@ -40,7 +40,7 @@ func TestHTTPMeasureServedEncodingIsSeparateFromCanonical(t *testing.T) {
 				wire = br
 			}
 			opts := testHTTPOptions(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Accept-Encoding") != "br, gzip" {
+				if strings.Join(r.Header.Values("Accept-Encoding"), ", ") != "br, gzip" {
 					t.Error("encoding negotiation missing")
 				}
 				w.Header().Set("Content-Type", "text/javascript")
@@ -263,6 +263,42 @@ func TestHTTPMeasureCachePolicyNeedsTheHashedFilename(t *testing.T) {
 				if testHTTPPolicy(result, "immutable-hashed") {
 					t.Fatal("cache policy accepted unverified filename/directive")
 				}
+			}
+		})
+	}
+}
+
+func TestHTTPMeasureHTMLCacheControlAcrossHeaderLines(t *testing.T) {
+	body := []byte("<html>fixture</html>")
+	for _, tc := range []struct {
+		name      string
+		headers   []string
+		shareable bool
+	}{
+		{"public", []string{"public, max-age=60"}, true},
+		{"single-line", []string{"public, max-age=60, private, no-store"}, false},
+		{"separate-lines", []string{"public, max-age=60", "private, no-store"}, false},
+		{"separate-private", []string{"public, max-age=60", "private"}, false},
+		{"separate-no-store", []string{"public, max-age=60", "no-store"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			opts := testHTTPOptions(t, func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "text/html")
+				for _, value := range tc.headers {
+					w.Header().Add("Cache-Control", value)
+				}
+				w.Write(body)
+			}, body)
+			opts.Kind = "html"
+			result, err := measureHTTP(context.Background(), opts, testBodyNormalizer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(result.header.Values("Cache-Control")) != len(tc.headers) {
+				t.Fatal("response did not preserve separate header lines")
+			}
+			if got := testHTTPPolicy(result, "html-shareable"); got != tc.shareable {
+				t.Fatalf("html-shareable = %v, want %v", got, tc.shareable)
 			}
 		})
 	}

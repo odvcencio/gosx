@@ -3,13 +3,15 @@ package budget
 import (
 	"bytes"
 	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
 	"encoding/hex"
-	"io"
 	"mime"
+	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
-	"golang.org/x/net/html"
 	"m31labs.dev/gosx/internal/assetmeasure"
 )
 
@@ -58,81 +60,45 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		}
 		owned[hash] = true
 	}
-	tokenizer := html.NewTokenizer(bytes.NewReader(body))
-	var full, remaining, script bytes.Buffer
-	active, executable := false, false
-	templates := 0
-	for {
-		kind := tokenizer.Next()
-		raw := append([]byte(nil), tokenizer.Raw()...)
-		if kind == html.ErrorToken {
-			if tokenizer.Err() != io.EOF || active {
-				return result, measureFailure("wrong-fixture", "/html")
+	classified, err := classifyHTML(body)
+	if err != nil {
+		return result, err
+	}
+	var edits []htmlSourceEdit
+	for _, item := range classified.starts {
+		raw := body[item.start:item.end]
+		for _, attr := range item.token.Attr {
+			if fields[item.token.Data+"|"+attr.Key] {
+				raw = rewriteHTMLAttribute(raw, attr.Key)
 			}
-			break
 		}
-		if active {
-			if kind != html.EndTagToken {
-				script.Write(raw)
-				continue
-			}
-			token := tokenizer.Token()
-			if token.Data != "script" {
-				return result, measureFailure("wrong-fixture", "/html")
-			}
-			full.Write(script.Bytes())
-			hash := sha256.Sum256(script.Bytes())
-			framework := executable && owned[hex.EncodeToString(hash[:])]
-			if !framework {
-				remaining.Write(script.Bytes())
-			}
-			if executable {
-				result.ExecutableScripts++
-				if !framework && int64(script.Len()) > result.InlineAppScriptMax {
-					result.InlineAppScriptMax = int64(script.Len())
-				}
-			}
-			full.Write(raw)
-			remaining.Write(raw)
-			active = false
-			script.Reset()
+		if !bytes.Equal(raw, body[item.start:item.end]) {
+			edits = append(edits, htmlSourceEdit{item.start, item.end, raw})
+		}
+	}
+	// Remove only verified executable bodies from the complete raw document.
+	// Source order is independent of tree order (e.g. table foster parenting).
+	var framework []htmlSourceEdit
+	for _, element := range classified.elements {
+		if !element.executable {
 			continue
 		}
-		if kind == html.StartTagToken || kind == html.SelfClosingTagToken {
-			token := tokenizer.Token()
-			seen := map[string]bool{}
-			attributes := map[string]string{}
-			for _, attribute := range token.Attr {
-				if seen[attribute.Key] {
-					return result, measureFailure("wrong-fixture", "/html/attributes")
-				}
-				seen[attribute.Key] = true
-				attributes[attribute.Key] = attribute.Val
-				if fields[token.Data+"|"+attribute.Key] {
-					raw = rewriteHTMLAttribute(raw, attribute.Key)
-				}
-			}
-			if token.Data == "template" && kind == html.StartTagToken {
-				templates++
-			}
-			if token.Data == "script" {
-				active = true
-				executable = templates == 0 && attributes["src"] == "" && executableScriptType(attributes["type"])
-				if templates == 0 && attributes["src"] != "" && executableScriptType(attributes["type"]) {
-					result.ExecutableScripts++
-				}
-			}
-		} else if kind == html.EndTagToken {
-			token := tokenizer.Token()
-			if token.Data == "template" && templates > 0 {
-				templates--
-			}
+		result.ExecutableScripts++
+		if element.external {
+			continue
 		}
-		full.Write(raw)
-		remaining.Write(raw)
+		source := body[element.bodyStart:element.bodyEnd]
+		hash := sha256.Sum256(source)
+		if owned[hex.EncodeToString(hash[:])] {
+			framework = append(framework, htmlSourceEdit{element.bodyStart, element.bodyEnd, nil})
+		} else if int64(len(source)) > result.InlineAppScriptMax {
+			result.InlineAppScriptMax = int64(len(source))
+		}
 	}
-	result.full = full.Bytes()
-	result.withoutFramework = remaining.Bytes()
+	// Both documents apply tree-associated start-tag edits to original source
+	// offsets. Removing a verified body also removes any edits inside that body.
+	result.full = applyHTMLSourceEdits(body, edits)
+	result.withoutFramework = applyHTMLSourceEdits(body, append(framework, edits...))
 	sizes, err := normalize(result.full)
 	if err != nil {
 		return result, measureFailure("noncanonical", "/pin")
@@ -151,6 +117,34 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 	result.Framework = SizeTriple{Raw: marginal(sizes.Raw, app.Raw), Gzip: marginal(sizes.Gzip, app.Gzip), Brotli: marginal(sizes.Brotli, app.Brotli)}
 	result.App = SizeTriple{Raw: sizes.Raw - result.Framework.Raw, Gzip: sizes.Gzip - result.Framework.Gzip, Brotli: sizes.Brotli - result.Framework.Brotli}
 	return result, nil
+}
+
+type htmlSourceEdit struct {
+	start, end int
+	value      []byte
+}
+
+func applyHTMLSourceEdits(body []byte, edits []htmlSourceEdit) []byte {
+	sort.Slice(edits, func(i, j int) bool {
+		if edits[i].start != edits[j].start {
+			return edits[i].start < edits[j].start
+		}
+		return edits[i].end > edits[j].end
+	})
+	var result bytes.Buffer
+	offset := 0
+	for _, edit := range edits {
+		if edit.start < offset {
+			// Tree-associated tags and script bodies are nested or disjoint.
+			// The containing removed body takes precedence over nested edits.
+			continue
+		}
+		result.Write(body[offset:edit.start])
+		result.Write(edit.value)
+		offset = edit.end
+	}
+	result.Write(body[offset:])
+	return result.Bytes()
 }
 
 // Locate raw attribute value spans after structural token decoding, preserving
@@ -233,64 +227,123 @@ func executableScriptType(typ string) bool {
 	return false
 }
 
-// VerifyHTMLNonces binds declared nonce attributes to their served CSP directive.
-// Nonce values remain private and are never included in an error or report.
+// VerifyHTMLNonces verifies that nonce-bearing elements are allowed by each
+// enforced CSP policy. Inline elements can also be authorized by a matching
+// content hash or an effective unsafe-inline source. Nonce and hash values
+// remain private and are never included in an error or report.
 func VerifyHTMLNonces(body []byte, csp string) error {
-	directives := map[string][]string{}
-	for _, part := range strings.Split(csp, ";") {
-		fields := strings.Fields(part)
-		if len(fields) > 0 {
-			if _, exists := directives[fields[0]]; exists {
-				return measureFailure("policy", "/html/nonce")
+	var policies []map[string][]string
+	// CSP field values may themselves contain comma-separated policies.
+	for _, policy := range strings.Split(csp, ",") {
+		directives := map[string][]string{}
+		for _, part := range strings.Split(policy, ";") {
+			fields := strings.FieldsFunc(part, cspSpace)
+			if len(fields) > 0 {
+				// CSP3 §2.2.1: ASCII-fold names before checking duplicates;
+				// the first occurrence of a directive wins.
+				name := cspLower(fields[0])
+				if _, exists := directives[name]; exists {
+					continue
+				}
+				directives[name] = fields[1:]
 			}
-			directives[fields[0]] = fields[1:]
 		}
+		policies = append(policies, directives)
 	}
-	tokenizer := html.NewTokenizer(bytes.NewReader(body))
-	templates := 0
-	for {
-		kind := tokenizer.Next()
-		if kind == html.ErrorToken {
-			if tokenizer.Err() != io.EOF {
-				return measureFailure("wrong-fixture", "/html")
-			}
-			return nil
-		}
-		token := tokenizer.Token()
-		if token.Data == "template" {
-			if kind == html.StartTagToken {
-				templates++
-			}
-			if kind == html.EndTagToken && templates > 0 {
-				templates--
-			}
-		}
-		if templates > 0 || kind != html.StartTagToken && kind != html.SelfClosingTagToken || token.Data != "script" && token.Data != "style" {
+	classified, err := classifyHTML(body)
+	if err != nil {
+		return err
+	}
+	for _, element := range classified.elements {
+		if !element.hasNonce {
 			continue
 		}
-		for _, attribute := range token.Attr {
-			if attribute.Key != "nonce" {
+		if element.nonce == "" {
+			return measureFailure("policy", "/html/nonce")
+		}
+		bound := false
+		for _, directives := range policies {
+			allowed, found := directives[element.directive]
+			if !found {
+				allowed, found = directives[element.fallback]
+			}
+			if !found {
+				allowed, found = directives["default-src"]
+			}
+			if !found {
 				continue
 			}
-			key := "script-src-elem"
-			fallback := "script-src"
-			if token.Data == "style" {
-				key, fallback = "style-src-elem", "style-src"
+			bound = true
+			kind := "script"
+			if element.directive == "style-src-elem" {
+				kind = "style"
 			}
-			allowed, found := directives[key]
-			if !found {
-				allowed, found = directives[fallback]
-			}
-			if !found {
-				allowed = directives["default-src"]
-			}
-			matches := false
-			for _, source := range allowed {
-				matches = matches || source == "'nonce-"+attribute.Val+"'"
-			}
-			if attribute.Val == "" || !matches {
+			if !cspAllowsElement(allowed, kind, element.nonce, element.text, element.external) {
 				return measureFailure("policy", "/html/nonce")
 			}
 		}
+		if !bound {
+			return measureFailure("policy", "/html/nonce")
+		}
 	}
+	return nil
+}
+
+var cspSourcePattern = regexp.MustCompile(`^'([A-Za-z0-9]+)-([A-Za-z0-9+/_-]+={0,2})'$`)
+
+// CSP3 §§6.7.3.2–6.7.3.3: nonce/hash sources suppress unsafe-inline;
+// strict-dynamic suppresses it for scripts only. Payloads are never folded.
+func cspAllowsElement(sources []string, element, nonce, text string, external bool) bool {
+	unsafe, restricted, matches := false, false, false
+	for _, source := range sources {
+		switch cspLower(source) {
+		case "'unsafe-inline'":
+			unsafe = true
+		case "'strict-dynamic'":
+			restricted = restricted || element == "script"
+		}
+		parts := cspSourcePattern.FindStringSubmatch(source)
+		if parts == nil {
+			continue
+		}
+		algorithm, payload := cspLower(parts[1]), parts[2]
+		var digest []byte
+		switch algorithm {
+		case "nonce":
+			restricted = true
+			matches = matches || payload == nonce
+			continue
+		case "sha256":
+			d := sha256.Sum256([]byte(text))
+			digest = d[:]
+		case "sha384":
+			d := sha512.Sum384([]byte(text))
+			digest = d[:]
+		case "sha512":
+			d := sha512.Sum512([]byte(text))
+			digest = d[:]
+		default:
+			continue
+		}
+		restricted = true
+		// External scripts need their fetched content and integrity metadata;
+		// an inline text hash or unsafe-inline cannot authorize that fetch.
+		payload = strings.NewReplacer("-", "+", "_", "/").Replace(payload)
+		decoded, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			decoded, err = base64.RawStdEncoding.DecodeString(payload)
+		}
+		matches = matches || !external && err == nil && bytes.Equal(digest, decoded)
+	}
+	return matches || !external && unsafe && !restricted
+}
+
+func cspSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\f' }
+func cspLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + 'a' - 'A'
+		}
+		return r
+	}, s)
 }
