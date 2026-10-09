@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -25,7 +26,7 @@ type htmlElement struct {
 	bodyStart, bodyEnd                          int
 }
 type htmlClassification struct {
-	tokens   []htmlSourceToken
+	starts   []htmlSourceToken
 	elements []htmlElement
 }
 
@@ -60,11 +61,10 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 				}
 				seen[attr.Key] = true
 			}
-			if kind != html.EndTagToken && htmlSourceElement(item.token.DataAtom) {
+			if kind != html.EndTagToken && htmlNormalizedElement(item.token.DataAtom) {
 				starts[offset] = item
 			}
 		}
-		result.tokens = append(result.tokens, item)
 		offset = item.end
 	}
 	// This pass records possible source positions, not namespaces or activity.
@@ -82,7 +82,7 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 		}
 		if kind == html.StartTagToken || kind == html.SelfClosingTagToken {
 			token := tokenizer.Token()
-			if htmlSourceElement(token.DataAtom) {
+			if htmlNormalizedElement(token.DataAtom) {
 				starts[offset] = htmlSourceToken{kind, token, offset, offset + len(raw)}
 			}
 		}
@@ -127,13 +127,14 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 	}
 	strip := replacer.Replace
 	consumed := false
+	associated := map[int]bool{}
 	var walk func(*html.Node, bool) error
 	walk = func(node *html.Node, inert bool) error {
 		if node.Type == html.CommentNode && node.Data == tail || node.Type == html.TextNode && strings.Contains(node.Data, sentinel) {
 			consumed = true
 		}
 		inert = inert || node.Type == html.ElementNode && node.Namespace == "" && node.DataAtom == atom.Template
-		if node.Type == html.ElementNode && htmlSourceElement(node.DataAtom) && (node.Namespace == "" || node.Namespace == "svg") {
+		if node.Type == html.ElementNode && htmlNormalizedElement(node.DataAtom) {
 			attrs := map[string]string{}
 			source, found := htmlSourceToken{}, false
 			for _, attr := range node.Attr {
@@ -153,6 +154,20 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 					attrs[key] = strip(attr.Val)
 				}
 			}
+			if found && !associated[source.start] {
+				if source.token.DataAtom != node.DataAtom {
+					return measureFailure("wrong-fixture", "/html")
+				}
+				seen := map[string]bool{}
+				for _, attr := range source.token.Attr {
+					if seen[attr.Key] {
+						return measureFailure("wrong-fixture", "/html/attributes")
+					}
+					seen[attr.Key] = true
+				}
+				result.starts = append(result.starts, source)
+				associated[source.start] = true
+			}
 			var text strings.Builder
 			for child := node.FirstChild; child != nil; child = child.NextSibling {
 				if child.Type == html.TextNode {
@@ -163,6 +178,9 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 			element.nonce, element.hasNonce = attrs["nonce"]
 			switch node.DataAtom {
 			case atom.Script:
+				if node.Namespace != "" && node.Namespace != "svg" {
+					break
+				}
 				element.directive, element.fallback = "script-src-elem", "script-src"
 				element.executable = executableScriptType(attrs["type"])
 				_, element.external = attrs["src"]
@@ -195,7 +213,7 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 				}
 				element.external = true
 			}
-			if !inert && element.directive != "" {
+			if !inert && element.directive != "" && (node.Namespace == "" || node.Namespace == "svg") {
 				result.elements = append(result.elements, element)
 			}
 		}
@@ -214,7 +232,15 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 	if !consumed {
 		return result, measureFailure("wrong-fixture", "/html")
 	}
+	sort.Slice(result.starts, func(i, j int) bool { return result.starts[i].start < result.starts[j].start })
 	return result, nil
+}
+
+// These are the only elements with declarable transient attributes. A start
+// span enters normalization only after it is associated with a real tree node;
+// tag-shaped bytes in script text, noscript and srcdoc remain literal bytes.
+func htmlNormalizedElement(element atom.Atom) bool {
+	return htmlSourceElement(element) || element == atom.Html || element == atom.Body || element == atom.Meta
 }
 
 func htmlSourceElement(element atom.Atom) bool {

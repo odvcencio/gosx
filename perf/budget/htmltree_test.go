@@ -190,6 +190,9 @@ func htmlSemanticCorpus(t *testing.T) []htmlNormalizationCase {
 		`<noscript><script nonce="fixture">app()</script></noscript><script nonce="fixture">app()</script>`,
 		`<script nonce="fixture" type="application/json">{"tag":"<script>"}</script>`,
 		`<svg><noscript><foreignObject><script nonce="fixture">app()</script></foreignObject></noscript></svg>`,
+		`<svg><script/><script nonce="fixture">app()</script></svg>`,
+		`<svg><title><script nonce="fixture">const literal='<script nonce="literal">';app()</script></title></svg>`,
+		`<math><script nonce="fixture"/></math>`,
 	} {
 		corpus = append(corpus, htmlNormalizationCase{name: fmt.Sprintf("raw-%d", i), body: []byte(body)})
 	}

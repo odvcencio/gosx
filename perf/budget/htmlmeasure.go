@@ -12,7 +12,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"golang.org/x/net/html"
 	"m31labs.dev/gosx/internal/assetmeasure"
 )
 
@@ -65,22 +64,21 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 	if err != nil {
 		return result, err
 	}
-	var full bytes.Buffer
-	for _, item := range classified.tokens {
+	var edits []htmlSourceEdit
+	for _, item := range classified.starts {
 		raw := body[item.start:item.end]
-		if item.kind == html.StartTagToken || item.kind == html.SelfClosingTagToken {
-			for _, attr := range item.token.Attr {
-				if fields[item.token.Data+"|"+attr.Key] {
-					raw = rewriteHTMLAttribute(raw, attr.Key)
-				}
+		for _, attr := range item.token.Attr {
+			if fields[item.token.Data+"|"+attr.Key] {
+				raw = rewriteHTMLAttribute(raw, attr.Key)
 			}
 		}
-		full.Write(raw)
+		if !bytes.Equal(raw, body[item.start:item.end]) {
+			edits = append(edits, htmlSourceEdit{item.start, item.end, raw})
+		}
 	}
 	// Remove only verified executable bodies from the complete raw document.
 	// Source order is independent of tree order (e.g. table foster parenting).
-	type span struct{ start, end int }
-	var framework []span
+	var framework []htmlSourceEdit
 	for _, element := range classified.elements {
 		if !element.executable {
 			continue
@@ -92,41 +90,15 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		source := body[element.bodyStart:element.bodyEnd]
 		hash := sha256.Sum256(source)
 		if owned[hex.EncodeToString(hash[:])] {
-			framework = append(framework, span{element.bodyStart, element.bodyEnd})
+			framework = append(framework, htmlSourceEdit{element.bodyStart, element.bodyEnd, nil})
 		} else if int64(len(source)) > result.InlineAppScriptMax {
 			result.InlineAppScriptMax = int64(len(source))
 		}
 	}
-	sort.Slice(framework, func(i, j int) bool { return framework[i].start < framework[j].start })
-	// Normalization changes attribute lengths. Build both documents from the
-	// same source tokens instead of applying source offsets to normalized bytes.
-	var remaining bytes.Buffer
-	for _, item := range classified.tokens {
-		start := item.start
-		for _, removed := range framework {
-			if removed.end <= start || removed.start >= item.end {
-				continue
-			}
-			if removed.start > start {
-				remaining.Write(body[start:removed.start])
-			}
-			start = max(start, removed.end)
-		}
-		if start >= item.end {
-			continue
-		}
-		raw := body[start:item.end]
-		if start == item.start && (item.kind == html.StartTagToken || item.kind == html.SelfClosingTagToken) {
-			for _, attr := range item.token.Attr {
-				if fields[item.token.Data+"|"+attr.Key] {
-					raw = rewriteHTMLAttribute(raw, attr.Key)
-				}
-			}
-		}
-		remaining.Write(raw)
-	}
-	result.full = full.Bytes()
-	result.withoutFramework = remaining.Bytes()
+	// Both documents apply tree-associated start-tag edits to original source
+	// offsets. Removing a verified body also removes any edits inside that body.
+	result.full = applyHTMLSourceEdits(body, edits)
+	result.withoutFramework = applyHTMLSourceEdits(body, append(framework, edits...))
 	sizes, err := normalize(result.full)
 	if err != nil {
 		return result, measureFailure("noncanonical", "/pin")
@@ -145,6 +117,34 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 	result.Framework = SizeTriple{Raw: marginal(sizes.Raw, app.Raw), Gzip: marginal(sizes.Gzip, app.Gzip), Brotli: marginal(sizes.Brotli, app.Brotli)}
 	result.App = SizeTriple{Raw: sizes.Raw - result.Framework.Raw, Gzip: sizes.Gzip - result.Framework.Gzip, Brotli: sizes.Brotli - result.Framework.Brotli}
 	return result, nil
+}
+
+type htmlSourceEdit struct {
+	start, end int
+	value      []byte
+}
+
+func applyHTMLSourceEdits(body []byte, edits []htmlSourceEdit) []byte {
+	sort.Slice(edits, func(i, j int) bool {
+		if edits[i].start != edits[j].start {
+			return edits[i].start < edits[j].start
+		}
+		return edits[i].end > edits[j].end
+	})
+	var result bytes.Buffer
+	offset := 0
+	for _, edit := range edits {
+		if edit.start < offset {
+			// Tree-associated tags and script bodies are nested or disjoint.
+			// The containing removed body takes precedence over nested edits.
+			continue
+		}
+		result.Write(body[offset:edit.start])
+		result.Write(edit.value)
+		offset = edit.end
+	}
+	result.Write(body[offset:])
+	return result.Bytes()
 }
 
 // Locate raw attribute value spans after structural token decoding, preserving
