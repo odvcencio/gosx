@@ -4477,6 +4477,9 @@
     };
     pendingEngineRuntimes.set(entry.id, pending);
     await prepareRuntimeCapabilityProbe(entry);
+    while (!gosxHost.lifecycle.documentActive() && pendingEngineOwned(pending)) {
+      await gosxHost.lifecycle.whenDocumentActive();
+    }
     if (!pendingEngineOwned(pending)) {
       disposePendingEngine(pending, true);
       return;
@@ -4537,6 +4540,15 @@
     }
 
     try {
+      // A native navigation may have begun during the module download. Keep
+      // factories dormant until that navigation is canceled or BFCache resumes.
+      while (!gosxHost.lifecycle.documentActive() && pendingEngineOwned(pending)) {
+        await gosxHost.lifecycle.whenDocumentActive();
+      }
+      if (!pendingEngineOwned(pending)) {
+        disposePendingEngine(pending, true);
+        return;
+      }
       const mounted = await runEngineFactory(factory, ctx);
       if (!pendingEngineOwned(pending)) {
         if (mounted.handle && typeof mounted.handle.dispose === "function") {
