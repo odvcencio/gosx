@@ -11,6 +11,7 @@ import (
 
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/internal/pagecaps"
+	"m31labs.dev/gosx/internal/regularfile"
 )
 
 // FixtureManifest is a private production-body contract. It is not a public
@@ -93,7 +94,7 @@ func readMeasureFile(root *os.Root, name string, limit int64) ([]byte, error) {
 	if !safePath(name) {
 		return nil, measureFailure("wrong-fixture", "/file")
 	}
-	file, err := root.Open(name)
+	file, err := regularfile.Open(root, name)
 	if err != nil {
 		return nil, measureFailure("wrong-fixture", "/file")
 	}

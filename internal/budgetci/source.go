@@ -3,12 +3,16 @@ package budgetci
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"m31labs.dev/gosx/internal/regularfile"
 )
 
 // Identity is a private source snapshot. The UTC clock is frozen once when the
@@ -45,8 +49,17 @@ func LoadIdentity(ctx context.Context, root, localBase string) (Identity, error)
 	if localBase != "" || !repositoryPattern.MatchString(os.Getenv("GITHUB_REPOSITORY")) {
 		return Identity{}, failure("invalid-input", "/event")
 	}
-	f, err := os.Open(os.Getenv("GITHUB_EVENT_PATH"))
+	path := os.Getenv("GITHUB_EVENT_PATH")
+	rootDir, err := os.OpenRoot(filepath.Dir(path))
 	if err != nil {
+		return Identity{}, failure("environment", "/event")
+	}
+	defer rootDir.Close()
+	f, err := regularfile.Open(rootDir, filepath.Base(path))
+	if err != nil {
+		if errors.Is(err, regularfile.ErrUnsafe) {
+			return Identity{}, failure("invalid-input", "/event")
+		}
 		return Identity{}, failure("environment", "/event")
 	}
 	defer f.Close()

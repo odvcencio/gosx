@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/regularfile"
 )
 
 // Compiler owns only its scratch binary and log, not the source checkout.
@@ -115,7 +116,7 @@ func (c *Compiler) BuildApplication(ctx context.Context, app, scratch string) (*
 			return nil, failure("environment", "/production/scaffold")
 		}
 		for _, name := range []string{"page.gsx", "page.server.go"} {
-			data, err := os.ReadFile(filepath.Join(c.SourceRoot, "perf/wire/testdata/counter", name))
+			data, err := readProductionFile(c.SourceRoot, filepath.Join("perf/wire/testdata/counter", name))
 			if err != nil || len(data) > nativeLimit || os.WriteFile(filepath.Join(counter, name), data, 0600) != nil {
 				a.Close()
 				return nil, failure("wrong-fixture", "/production/scaffold")
@@ -136,32 +137,39 @@ func (c *Compiler) BuildApplication(ctx context.Context, app, scratch string) (*
 	}
 	// The builder manifest is a private input. Bound it before decoding and keep
 	// filesystem details out of diagnostics from the compatibility loader.
-	root, err := os.OpenRoot(a.DistDir)
-	if err != nil {
-		a.Close()
-		return nil, failure("wrong-fixture", "/production/manifest")
-	}
-	f, err := root.Open("build.json")
-	root.Close()
-	if err != nil {
-		a.Close()
-		return nil, failure("wrong-fixture", "/production/manifest")
-	}
-	info, statErr := f.Stat()
-	if statErr != nil || !info.Mode().IsRegular() {
-		f.Close()
-		a.Close()
-		return nil, failure("wrong-fixture", "/production/manifest")
-	}
-	data, readErr := io.ReadAll(io.LimitReader(f, nativeLimit+1))
-	closeErr := f.Close()
+	data, readErr := readProductionFile(a.DistDir, "build.json")
 	var manifest buildmanifest.Manifest
-	if readErr != nil || closeErr != nil || len(data) > nativeLimit || json.Unmarshal(data, &manifest) != nil || manifest.PerfAssetUses == nil || manifest.ValidateIslandAssets() != nil || manifest.ValidatePerfAssetUses() != nil {
+	if readErr != nil || json.Unmarshal(data, &manifest) != nil || manifest.PerfAssetUses == nil || manifest.ValidateIslandAssets() != nil || manifest.ValidatePerfAssetUses() != nil {
 		a.Close()
 		return nil, failure("wrong-fixture", "/production/manifest")
 	}
 	a.Manifest = &manifest
 	return a, nil
+}
+
+// readProductionFile bounds fixture and manifest reads on a checked descriptor.
+func readProductionFile(directory, name string) ([]byte, error) {
+	root, err := os.OpenRoot(directory)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	file, err := regularfile.Open(root, name)
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(file, nativeLimit+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	if len(data) > nativeLimit {
+		return nil, regularfile.ErrUnsafe
+	}
+	return data, nil
 }
 
 func (a *Application) Close() error {

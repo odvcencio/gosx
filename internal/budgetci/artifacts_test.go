@@ -6,10 +6,15 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/sys/unix"
 
 	"m31labs.dev/gosx/perf/budget"
 )
@@ -50,6 +55,106 @@ func TestArtifactsPublishOnlyValidatedMatchingRepresentations(t *testing.T) {
 	after, _ := os.ReadFile(filepath.Join(output, "report.json"))
 	if !bytes.Equal(before, after) {
 		t.Fatal("existing report changed")
+	}
+}
+
+func TestArtifactsRejectFIFOPromptly(t *testing.T) {
+	if directory := os.Getenv("GOSX_TEST_ARTIFACT_FIFO"); directory != "" {
+		root, path := os.Getenv("GOSX_TEST_ARTIFACT_ROOT"), os.Getenv("GOSX_TEST_ARTIFACT_BUDGET")
+		inputs, err := budget.LoadInputs(filepath.Join(root, path), budget.LoadOptions{RootDir: root})
+		if err != nil {
+			t.Fatal(err)
+		}
+		validator, err := inputs.PublicValidator()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if os.Getenv("GOSX_TEST_ARTIFACT_COMMAND") == "1" {
+			ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+			defer cancel()
+			var stdout, stderr bytes.Buffer
+			args := []string{"--root", root, "--budget", path, "--out", directory, "--public-check"}
+			code := execute(ctx, args, &stdout, &stderr, func(context.Context, RunOptions) (*budget.Report, error) {
+				t.Fatal("validation started a production build")
+				return nil, nil
+			})
+			if code != 2 || stdout.Len() != 0 || stderr.String() != "invalid-input: ci#/artifacts/files\n" {
+				t.Fatal("FIFO did not return a fixed input error", code, stderr.String())
+			}
+		} else {
+			var typed *budget.InputError
+			if err := ValidateArtifacts(validator, directory); !errors.As(err, &typed) || typed.Code != "invalid-input" || typed.Pointer != "/artifacts/files" {
+				t.Fatal("FIFO artifact accepted", err)
+			}
+		}
+		return
+	}
+	opts, validator, report := artifactFixture(t)
+	directory := filepath.Join(t.TempDir(), "public")
+	if err := PublishArtifacts(validator, report, directory); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "report.md")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := unix.Mkfifo(path, 0600); err != nil {
+		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENOSYS) {
+			t.Skip("temporary filesystem does not support FIFOs")
+		}
+		t.Fatal(err)
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, mode := range []string{"direct", "command"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			defer cancel()
+			cmd := exec.CommandContext(ctx, executable, "-test.run=^TestArtifactsRejectFIFOPromptly$")
+			cmd.Env = append(os.Environ(), "GOSX_TEST_ARTIFACT_FIFO="+directory, "GOSX_TEST_ARTIFACT_ROOT="+opts.Root, "GOSX_TEST_ARTIFACT_BUDGET="+opts.BudgetPath)
+			if mode == "command" {
+				cmd.Env = append(cmd.Env, "GOSX_TEST_ARTIFACT_COMMAND=1")
+			}
+			out, err := cmd.CombinedOutput()
+			if ctx.Err() != nil {
+				t.Fatal("FIFO validation blocked without a writer")
+			}
+			if err != nil {
+				t.Fatalf("FIFO rejection failed: %s: %v", out, err)
+			}
+		})
+	}
+}
+
+func TestArtifactsRejectSocketAsInputError(t *testing.T) {
+	_, validator, report := artifactFixture(t)
+	// Unix socket paths have a short platform limit, including the temp prefix.
+	temporary, err := os.MkdirTemp(os.TempDir(), "artifact-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(temporary) })
+	directory := filepath.Join(temporary, "public")
+	if err := PublishArtifacts(validator, report, directory); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "report.md")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", path)
+	if err != nil {
+		if errors.Is(err, unix.ENOTSUP) || errors.Is(err, unix.ENOSYS) {
+			t.Skip("temporary filesystem does not support Unix sockets")
+		}
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	var typed *budget.InputError
+	if err := ValidateArtifacts(validator, directory); !errors.As(err, &typed) || typed.Code != "invalid-input" || typed.Pointer != "/artifacts/files" {
+		t.Fatal("socket artifact did not return an input error", err)
 	}
 }
 

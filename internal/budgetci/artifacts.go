@@ -2,10 +2,12 @@ package budgetci
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
 
+	"m31labs.dev/gosx/internal/regularfile"
 	"m31labs.dev/gosx/perf/budget"
 )
 
@@ -84,8 +86,11 @@ func ValidateArtifacts(validator *budget.PublicValidator, directory string) erro
 		if name != "report.json" && name != "report.md" || entry.Type()&os.ModeSymlink != 0 {
 			return failure("invalid-input", "/artifacts/files")
 		}
-		f, err := root.Open(name)
+		f, err := regularfile.Open(root, name)
 		if err != nil {
+			if errors.Is(err, regularfile.ErrUnsafe) {
+				return failure("invalid-input", "/artifacts/files")
+			}
 			return failure("environment", "/artifacts/files")
 		}
 		info, statErr := f.Stat()
