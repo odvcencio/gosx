@@ -301,7 +301,11 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 test-e2e:
+ifdef E2E_SHARD
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest browser $(E2E_SHARD)
+else
 	$(GO) test -tags e2e -timeout 30m ./e2e
+endif
 
 # test-perf-browser runs the perf driver's own browser tests.
 #

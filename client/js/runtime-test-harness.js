@@ -2226,9 +2226,6 @@ function createContext(options) {
   // does a WebGPU page whose device is lost. A test can still override the
   // route through options.fetchRoutes, or drop it to prove the chunk is absent.
   routes.set("/gosx/bootstrap-feature-scene3d-webgl.js", { text: bootstrapFeatureScene3DWebGLSource });
-  routes.set("/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", {
-    text: fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-pipeline-recovery.js"), "utf8"),
-  });
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
     routes.set(url, response);
   }
