@@ -16,9 +16,12 @@ func TestReferencesPreserveURLBaseAndWorkerContext(t *testing.T) {
 		{`new SharedWorker("./x.js");`, ReferenceBaseEnvironment, true},
 		{`new Worker(new URL("./x.js", import.meta.url));`, ReferenceBaseSource, true},
 		{`new EventSource("./x.js");`, ReferenceBaseEnvironment, false},
+		{`new globalThis.EventSource("./x.js");`, ReferenceBaseEnvironment, false},
 		{`new WebSocket("./x.js");`, ReferenceBaseEnvironment, false},
+		{`new window.WebSocket("./x.js");`, ReferenceBaseEnvironment, false},
 		{`new XMLHttpRequest().open("GET", "./x.js");`, ReferenceBaseEnvironment, false},
 		{`importScripts("./x.js");`, ReferenceBaseWorker, false},
+		{`globalThis.importScripts("./x.js");`, ReferenceBaseWorker, false},
 	} {
 		t.Run(tc.body, func(t *testing.T) {
 			set, err := ScanReferences([]byte(tc.body), KindScript)

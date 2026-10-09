@@ -32,8 +32,8 @@ const (
 )
 
 // ReferenceSet never certifies runtime behavior. Complete means the supported
-// syntax had no unresolved reference; declarations and browser reconciliation
-// still determine whether the dependency graph covers a page.
+// syntax had no unresolved reference or loader escape; declarations and browser
+// reconciliation still determine whether the dependency graph covers a page.
 type ReferenceSet struct {
 	Resources   []Reference
 	Complete    bool
@@ -55,8 +55,13 @@ func referenceFailure() error {
 // ScanReferences extracts active HTML, CSS and module references without
 // changing the compatibility crawler or its accounting rules. It does not
 // resolve URLs, fetch resources or copy native values into a public report.
-func ScanReferences(body []byte, kind string) (ReferenceSet, error) {
-	out := ReferenceSet{Resources: []Reference{}, Complete: true}
+func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error) {
+	out = ReferenceSet{Resources: []Reference{}, Complete: true}
+	defer func() {
+		if resultErr != nil {
+			out.Complete = false
+		}
+	}()
 	if len(body) > 16<<20 || !utf8.Valid(body) {
 		return out, referenceFailure()
 	}
@@ -133,7 +138,10 @@ func scanInlineReferences(body []byte, kind string, out *ReferenceSet) error {
 }
 
 func referenceKind(raw string) string {
-	switch strings.ToLower(path.Ext(strings.SplitN(raw, "?", 2)[0])) {
+	if i := strings.IndexAny(raw, "?#"); i >= 0 {
+		raw = raw[:i]
+	}
+	switch strings.ToLower(path.Ext(raw)) {
 	case ".css":
 		return KindStyle
 	case ".js", ".mjs":
@@ -186,6 +194,11 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					out.Complete = false
 				}
 				seen[a.Key] = true
+				if strings.Contains(a.Val, "&#") {
+					// The HTML tokenizer can retain unterminated numeric character
+					// references. Remaining entity text cannot prove URL coverage.
+					out.Complete = false
+				}
 				if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
 					addReference(out, a.Val, "", true)
 				}
@@ -380,18 +393,14 @@ func scanSyntaxReferences(body []byte, kind string, out *ReferenceSet) error {
 	return nil
 }
 
-func referenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool) {
+func javascriptReferenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool) {
 	if n == nil {
 		return "", false
 	}
-	kind := n.Type(lang)
-	if kind != "string" && kind != "string_value" && kind != "plain_value" {
+	if n.Type(lang) != "string" {
 		return "", false
 	}
 	raw := n.Text(body)
-	if kind == "plain_value" {
-		return raw, !strings.ContainsAny(raw, "\\()")
-	}
 	if len(raw) < 2 {
 		return "", false
 	}
@@ -401,26 +410,58 @@ func referenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool)
 			return decoded, true
 		}
 	}
-	// Escaped single-quoted JS/CSS and CSS escape syntax need a full
-	// language decoder. An unresolved literal never establishes coverage.
+	// Other JavaScript string forms need a full language decoder. An unresolved
+	// literal never establishes coverage.
 	if raw[0] == '\'' && raw[len(raw)-1] == '\'' && !strings.Contains(raw, "\\") {
 		return raw[1 : len(raw)-1], true
 	}
 	return "", false
 }
 
+func cssReferenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool) {
+	if n == nil {
+		return "", false
+	}
+	raw := n.Text(body)
+	// CSS Syntax Level 3 escapes are different from JavaScript/JSON escapes.
+	// Until decoded with CSS rules, every escaped value remains unresolved.
+	if strings.Contains(raw, "\\") {
+		return "", false
+	}
+	switch n.Type(lang) {
+	case "plain_value":
+		return raw, !strings.ContainsAny(raw, "()")
+	case "string_value":
+		if len(raw) >= 2 && (raw[0] == '"' || raw[0] == '\'') && raw[len(raw)-1] == raw[0] {
+			return raw[1 : len(raw)-1], true
+		}
+	}
+	return "", false
+}
+
 func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+	if (n.Type(lang) == "plain_value" || n.Type(lang) == "function_name") && strings.Contains(n.Text(body), "\\") {
+		// Escaped names may conceal a loader that is not decoded here.
+		out.Complete = false
+		return
+	}
 	if n.Type(lang) == "import_statement" {
+		sourceSeen := false
 		for i := 0; i < n.NamedChildCount(); i++ {
 			c := n.NamedChild(i)
 			if c.Type(lang) == "string_value" {
-				raw, ok := referenceLiteral(c, lang, body)
+				sourceSeen = true
+				raw, ok := cssReferenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
 					addContextReference(out, raw, KindStyle, false, ReferenceBaseSource, false)
 				}
+			} else if c.Type(lang) == "call_expression" && c.NamedChildCount() > 0 && strings.EqualFold(c.NamedChild(0).Text(body), "url") {
+				// The nested URL call checks its own argument.
+				sourceSeen = true
 			}
 		}
+		out.Complete = out.Complete && sourceSeen
 		return
 	}
 	if n.Type(lang) != "call_expression" || n.NamedChildCount() < 2 {
@@ -428,7 +469,10 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 	}
 	name := strings.ToLower(n.NamedChild(0).Text(body))
 	args := n.NamedChild(1)
-	if name == "url" {
+	if name == "var" {
+		// A substituted value can contain a URL; bindings are not resolved here.
+		out.Complete = false
+	} else if name == "url" {
 		contents := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(args.Text(body), "("), ")"))
 		if strings.HasPrefix(strings.ToLower(contents), "data:") && !strings.ContainsAny(contents, "()") {
 			return
@@ -437,20 +481,37 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			out.Complete = false
 			return
 		}
-		raw, ok := referenceLiteral(args.NamedChild(0), lang, body)
+		raw, ok := cssReferenceLiteral(args.NamedChild(0), lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
-			addContextReference(out, raw, "", false, ReferenceBaseSource, false)
+			kind := ""
+			if parent := n.Parent(); parent != nil && parent.Type(lang) == "import_statement" {
+				kind = KindStyle
+			}
+			addContextReference(out, raw, kind, false, ReferenceBaseSource, false)
 		}
 	} else if name == "image-set" || name == "-webkit-image-set" {
+		if args.NamedChildCount() == 0 {
+			out.Complete = false
+		}
 		for i := 0; i < args.NamedChildCount(); i++ {
 			c := args.NamedChild(i)
-			if c.Type(lang) == "string_value" {
-				raw, ok := referenceLiteral(c, lang, body)
+			switch c.Type(lang) {
+			case "string_value":
+				raw, ok := cssReferenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
 					addContextReference(out, raw, KindImage, false, ReferenceBaseSource, false)
 				}
+			case "integer_value", "float_value":
+				// Resolution descriptors do not load a resource.
+			case "call_expression":
+				// URL calls are scanned separately; type() is a MIME descriptor.
+				if c.NamedChildCount() == 0 || (strings.ToLower(c.NamedChild(0).Text(body)) != "url" && strings.ToLower(c.NamedChild(0).Text(body)) != "type") {
+					out.Complete = false
+				}
+			default:
+				out.Complete = false
 			}
 		}
 	}
@@ -463,7 +524,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		if source == nil {
 			return
 		}
-		raw, ok := referenceLiteral(source, lang, body)
+		raw, ok := javascriptReferenceLiteral(source, lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
 			addContextReference(out, raw, KindScript, false, ReferenceBaseSource, false)
@@ -486,7 +547,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		}
 		if value == "importScripts" {
 			for i := 0; i < args.NamedChildCount(); i++ {
-				raw, ok := referenceLiteral(args.NamedChild(i), lang, body)
+				raw, ok := javascriptReferenceLiteral(args.NamedChild(i), lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
 					addContextReference(out, raw, KindScript, false, ReferenceBaseWorker, false)
@@ -506,7 +567,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			out.Complete = false
 			return
 		}
-		raw, ok := referenceLiteral(args.NamedChild(first), lang, body)
+		raw, ok := javascriptReferenceLiteral(args.NamedChild(first), lang, body)
 		if !ok && value != "URL" && loaderName(args.NamedChild(first), lang, body) == "URL" {
 			// The nested URL expression records its explicit module base.
 			return
@@ -523,44 +584,66 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		if value == "import" || worker {
 			kind = KindScript
 		}
-		if value == "URL" {
-			parent := n.Parent()
-			if parent != nil && parent.Type(lang) == "arguments" {
-				loader := loaderName(parent.Parent(), lang, body)
-				worker = loader == "Worker" || loader == "SharedWorker"
-				if worker {
-					kind = KindScript
-				}
-			}
+		if value == "URL" && workerURLArgument(n, lang, body) {
+			worker, kind = true, KindScript
 		}
 		addContextReference(out, raw, kind, false, base, worker)
-	case "identifier":
-		value := n.Text(body)
-		switch value {
-		case "eval", "Function":
-			out.Complete = false
-		case "XMLHttpRequest":
-			out.Complete = out.Complete && directXHROpen(n.Parent(), lang, body)
-		case "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "importScripts":
-			parent := n.Parent()
-			if parent == nil || loaderName(parent, lang, body) != value {
-				out.Complete = false
-			}
-		}
-	case "member_expression":
-		property := n.ChildByFieldName("property", lang)
-		if property == nil {
+	case "identifier", "property_identifier", "shorthand_property_identifier", "shorthand_property_identifier_pattern", "string":
+		moduleLoaderUse(n, lang, body, out)
+	case "subscript_expression", "computed_property_name":
+		// Computed access can conceal any loader, including on an aliased global.
+		// No property evaluation or alias analysis establishes coverage here.
+		out.Complete = false
+	}
+}
+
+func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+	callee := n
+	name := n.Text(body)
+	if n.Type(lang) == "string" {
+		parent := n.Parent()
+		if parent == nil || parent.Type(lang) != "pair_pattern" || parent.ChildByFieldName("key", lang) != n {
 			return
 		}
-		switch property.Text(body) {
-		case "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "importScripts", "XMLHttpRequest":
-			if loaderName(n.Parent(), lang, body) != property.Text(body) {
-				out.Complete = false
-			}
+		var ok bool
+		name, ok = javascriptReferenceLiteral(n, lang, body)
+		if !ok {
+			out.Complete = false
+			return
 		}
-	case "subscript_expression":
-		object := n.ChildByFieldName("object", lang)
-		if object != nil && (object.Text(body) == "globalThis" || object.Text(body) == "window" || object.Text(body) == "self") {
+	}
+	if n.Type(lang) == "property_identifier" {
+		parent := n.Parent()
+		if parent == nil {
+			return
+		}
+		switch parent.Type(lang) {
+		case "member_expression":
+			if parent.ChildByFieldName("property", lang) != n {
+				return
+			}
+			callee = parent
+		case "pair_pattern":
+			// A destructured loader escapes the direct call analysis.
+		default:
+			return
+		}
+	}
+	if strings.Contains(name, "\\") {
+		out.Complete = false
+		return
+	}
+	switch name {
+	case "eval", "Function", "serviceWorker", "register", "Reflect", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors":
+		// Loading, reflection and dynamic-code APIs without a resolved model
+		// remain incomplete through accesses, bindings and direct calls.
+		out.Complete = false
+	case "XMLHttpRequest":
+		out.Complete = out.Complete && directXHROpen(callee.Parent(), lang, body)
+	case "open":
+		out.Complete = out.Complete && loaderName(callee.Parent(), lang, body) == "xhr-open"
+	case "fetch", "Worker", "SharedWorker", "URL", "WebSocket", "EventSource", "importScripts":
+		if loaderName(callee.Parent(), lang, body) != name {
 			out.Complete = false
 		}
 	}
@@ -601,4 +684,13 @@ func directXHROpen(n *ts.Node, lang *ts.Language, body []byte) bool {
 	}
 	parent := n.Parent()
 	return parent != nil && parent.Type(lang) == "member_expression" && loaderName(parent.Parent(), lang, body) == "xhr-open"
+}
+
+func workerURLArgument(n *ts.Node, lang *ts.Language, body []byte) bool {
+	args := n.Parent()
+	if args == nil || args.Type(lang) != "arguments" || args.NamedChildCount() == 0 || args.NamedChild(0) != n {
+		return false
+	}
+	loader := loaderName(args.Parent(), lang, body)
+	return loader == "Worker" || loader == "SharedWorker"
 }
