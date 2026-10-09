@@ -43,7 +43,11 @@ func TestIslandAOTAggregateRejectedAtEveryProgramRoot(t *testing.T) {
 			if err := aotScalarRoots(&tc.p, []aot.ScalarKind{aot.SelectorPath}, constants, states); err == nil {
 				t.Fatal("aggregate root admitted")
 			}
-			if err := aotScalarRoots(&tc.p, []aot.ScalarKind{aot.String}, constants, states); err != nil {
+			kind := aot.String
+			if tc.name == "handler" {
+				kind = aot.AnyZero
+			}
+			if err := aotScalarRoots(&tc.p, []aot.ScalarKind{kind}, constants, states); err != nil {
 				t.Fatalf("scalar root rejected: %v", err)
 			}
 		})

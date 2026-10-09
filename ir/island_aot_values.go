@@ -33,6 +33,19 @@ func aotValueFits(kind aot.ScalarKind, value constant.Value, target aot.ScalarKi
 	return aotScalar(kind) && aotScalar(target) && (kind == target || value != nil && aotConstantFits(value, target))
 }
 
+// Context belongs to the constant expression and its constant operands, not
+// just the containing state or arithmetic result. Only proved, representable
+// integer constants can acquire the other operand's or destination's kind.
+func aotContextualConstant(p *program.Program, id program.ExprID, kinds []aot.ScalarKind, constants []constant.Value, target aot.ScalarKind) {
+	if constants[id] == nil || !aotConstantFits(constants[id], target) {
+		return
+	}
+	kinds[id] = target
+	for _, operand := range p.Exprs[id].Operands {
+		aotContextualConstant(p, operand, kinds, constants, target)
+	}
+}
+
 // Roots have no expression parent, so operand checks cannot protect them.
 // Check every serialized consumer before producing the contract or digest.
 func aotScalarRoots(p *program.Program, kinds []aot.ScalarKind, constants []constant.Value, states map[string]aot.ScalarKind) error {
@@ -42,6 +55,9 @@ func aotScalarRoots(p *program.Program, kinds []aot.ScalarKind, constants []cons
 		}
 		if target != "" && !aotValueFits(kinds[id], constants[id], target) {
 			return fmt.Errorf("root expression %d does not match its declared scalar kind", id)
+		}
+		if target != "" {
+			aotContextualConstant(p, id, kinds, constants, target)
 		}
 		return nil
 	}
@@ -74,6 +90,9 @@ func aotScalarRoots(p *program.Program, kinds []aot.ScalarKind, constants []cons
 		for _, id := range handler.Body {
 			if err := check(id, true, ""); err != nil {
 				return err
+			}
+			if kinds[id] != aot.AnyZero {
+				return fmt.Errorf("handler expression %d is not a supported Go effect statement", id)
 			}
 		}
 	}

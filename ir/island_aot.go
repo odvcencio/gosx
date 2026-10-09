@@ -7,6 +7,7 @@ import (
 	"go/constant"
 	"go/token"
 	"slices"
+	"strconv"
 	"strings"
 
 	"m31labs.dev/gosx/island/aot"
@@ -163,12 +164,20 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			if constants[id].Kind() != constant.Int {
 				return "", fmt.Errorf("expression %d has an unproved integer literal", id)
 			}
+			// The VM reads decimal integers; Go also permits octal spelling.
+			// Admit only literals whose exact values agree in both paths.
+			vmValue, err := strconv.ParseInt(e.Value, 10, 64)
+			goValue, exact := constant.Int64Val(constants[id])
+			if err != nil || !exact || vmValue != goValue {
+				return "", fmt.Errorf("expression %d has incompatible integer literal semantics", id)
+			}
 		case program.OpLitBool:
 			kind = aot.Bool
 		case program.OpSignalGet:
 			kind = stateKinds[e.Value]
 		case program.OpSignalSet:
 			if len(args) == 1 && aotValueFits(args[0], constants[e.Operands[0]], stateKinds[e.Value]) {
+				aotContextualConstant(p, e.Operands[0], kinds, constants, stateKinds[e.Value])
 				kind, isPure = aot.AnyZero, false
 			}
 		case program.OpPropGet, program.OpIndex, program.OpEventGet:
@@ -190,8 +199,10 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 				constants[id] = constant.BinaryOp(left, op, right)
 				kind = aot.Int
 			} else if left != nil && aotConstantFits(left, args[1]) {
+				aotContextualConstant(p, e.Operands[0], kinds, constants, args[1])
 				kind = args[1]
 			} else if right != nil && aotConstantFits(right, args[0]) {
+				aotContextualConstant(p, e.Operands[1], kinds, constants, args[0])
 				kind = args[0]
 			} else if left == nil && right == nil && args[0] == args[1] {
 				if args[0] == aot.Int || args[0] == aot.Int32 || args[0] == aot.String && e.Op == program.OpAdd {
@@ -212,10 +223,12 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			left, right := constants[e.Operands[1]], constants[e.Operands[2]]
 			if left != nil && right == nil {
 				if aotConstantFits(left, args[2]) {
+					aotContextualConstant(p, e.Operands[1], kinds, constants, args[2])
 					kind = args[2]
 				}
 			} else if right != nil && left == nil {
 				if aotConstantFits(right, args[1]) {
+					aotContextualConstant(p, e.Operands[2], kinds, constants, args[1])
 					kind = args[1]
 				}
 			} else if args[1] == args[2] {
@@ -233,6 +246,8 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			}
 		case program.OpEq, program.OpNeq, program.OpLt, program.OpGt, program.OpLte, program.OpGte:
 			if len(args) == 2 && (aotValueFits(args[0], constants[e.Operands[0]], args[1]) || aotValueFits(args[1], constants[e.Operands[1]], args[0])) {
+				aotContextualConstant(p, e.Operands[0], kinds, constants, args[1])
+				aotContextualConstant(p, e.Operands[1], kinds, constants, args[0])
 				if e.Op == program.OpEq || e.Op == program.OpNeq || args[0] != aot.Bool {
 					kind = aot.Bool
 				}
@@ -265,14 +280,16 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		return kind, nil
 	}
 	for id := range p.Exprs {
-		kind, err := infer(program.ExprID(id))
+		_, err := infer(program.ExprID(id))
 		if err != nil {
 			return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
 		}
-		c.Expressions = append(c.Expressions, aot.ExpressionContract{Expr: program.ExprID(id), Kind: kind, Pure: pure[id]})
 	}
 	if err := aotScalarRoots(p, kinds, constants, stateKinds); err != nil {
 		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
+	}
+	for id := range p.Exprs {
+		c.Expressions = append(c.Expressions, aot.ExpressionContract{Expr: program.ExprID(id), Kind: kinds[id], Pure: pure[id]})
 	}
 	c.Inputs = aotInternInputs(c.Inputs)
 	c.Bindings, err = aot.ContractBindings(p)

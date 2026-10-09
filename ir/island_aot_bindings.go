@@ -4,7 +4,6 @@ package ir
 
 import (
 	"fmt"
-	"go/types"
 	"maps"
 	"os"
 	"path/filepath"
@@ -124,8 +123,15 @@ func (b *aotSourceBindings) universe(name string) bool {
 	if _, imported := b.imports.Lookup(name); imported {
 		return false
 	}
-	obj := types.Universe.Lookup(name)
-	return obj != nil && obj.Parent() == types.Universe
+	// The profile uses only these predefined Go names. Declaration and
+	// import evidence above proves they are unshadowed; no runtime type
+	// checker is needed to resolve this closed set.
+	switch name {
+	case "int", "int32", "bool", "string", "true", "false", "len":
+		return true
+	default:
+		return false
+	}
 }
 
 func (l *lowerer) aotSignalConstructor(call *gotreesitter.Node) string {
