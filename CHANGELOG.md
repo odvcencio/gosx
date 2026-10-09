@@ -6,8 +6,10 @@
   `onLostPointerCapture`; event fields `offsetX`, `offsetY` (viewport position
   minus the handler element's bounding box, borders included, transforms not
   undone), `elementWidth`, `elementHeight`, `deltaX`, `deltaY` and `deltaMode`;
-  and `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. Disposing an
-  island releases the pointers it captured. Legacy manifests attach the wheel
+  and `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. A capture ends
+  as the Pointer Events specification defines (after `pointerup` or
+  `pointercancel`, on `ReleasePointer`, or when the element leaves the
+  document); disposing an island does not release it early. Legacy manifests attach the wheel
   listener only on islands that have a wheel handler. See
   `docs/island-events.md`.
 - Diagnostics: an island handler attribute that no runtime name mapper resolves

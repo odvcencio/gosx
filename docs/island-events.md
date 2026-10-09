@@ -53,9 +53,10 @@ pointer to the element that owns the handler. `browser.ReleasePointer(pointerID)
 undoes it. Call `CapturePointer` from `onPointerDown`: browsers honour the
 request only while that event dispatches. Outside a dispatch, or when the
 browser refuses, both calls return false. Each call takes one argument and an
-optional leading boolean guard. When the browser ends the capture, the island
-receives `onLostPointerCapture`. Disposing the island releases any pointer it
-still holds.
+optional leading boolean guard. Capture ends as the Pointer Events
+specification defines: after `pointerup` or `pointercancel`, on `ReleasePointer`,
+or when the element leaves the document. The island then receives
+`onLostPointerCapture`. Disposing an island does not release a capture early.
 
 ```gsx
 package fader
