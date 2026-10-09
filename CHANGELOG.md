@@ -122,6 +122,8 @@
 - Report skipped optional `wasm-opt` passes instead of silently keeping the
   compiled WASM. Missing tools warn once per build; failed passes include
   optimizer output in one complete warning and remove temporary output.
+- Clean up the unused, unreleased Scene3D recovery asset, setter, and
+  `buildmanifest.RuntimeAssets` and `RuntimePaths` fields.
 
 
 - Add transactional aggregate telemetry setup with one maintenance worker and
