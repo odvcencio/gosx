@@ -58,6 +58,12 @@ func TestIslandAOTGoTypesDifferential(t *testing.T) {
 			info := &types.Info{Types: make(map[ast.Expr]types.TypeAndValue)}
 			cfg := types.Config{Importer: imports, Sizes: &types.StdSizes{WordSize: 4, MaxAlign: 4}}
 			_, typeErr := cfg.Check("example/components", fset, []*ast.File{file}, info)
+			if typeErr == nil && p != nil && (tc.root != "inline_handler" || tc.expr == tc.goExpr) {
+				if hard := ir.AOTCheckingHardErrorsForTest(p); len(hard) > 0 {
+					t.Errorf("compiler-valid fixture has scaffold hard errors: %v", hard)
+					return
+				}
+			}
 			if admission != nil {
 				return
 			} // Conservative VM-only exclusions are permitted.

@@ -3,6 +3,7 @@
 package ir_test
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -73,5 +74,38 @@ func main(){ props:=Props{7,-3,"héllo",true,Detail{"ready"}}; count:=signal.New
 				t.Fatalf("VM=%q compiled Go=%q", got, expected[i])
 			}
 		})
+	}
+}
+
+func TestIslandAOTPrototypeCounter(t *testing.T) {
+	p := checkerProgram(t, "", `count := signal.New(0); change := func() { count.Set(count.Get()+1) }; return <button type="button" onClick={change}>{count.Get()}</button>`)
+	u, err := ir.LowerIslandAOT(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fallback, err := ir.LowerIsland(p, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left, right := vm.NewVM(u.Program, nil), vm.NewVM(fallback, nil)
+	vm.InitSignals(left, u.Program)
+	vm.InitSignals(right, fallback)
+	t.Cleanup(func() { left.SwapProgram(&program.Program{}); right.SwapProgram(&program.Program{}) })
+	for step := 0; step < 4; step++ {
+		a, _ := json.Marshal(left.EvalTree())
+		b, _ := json.Marshal(right.EvalTree())
+		if !bytes.Equal(a, b) {
+			t.Fatalf("VM-to-VM step %d differs", step)
+		}
+		id := u.Program.Nodes[u.Program.Nodes[u.Program.Root].Children[0]].Expr
+		if value := left.Eval(id).String(); value != fmt.Sprint(step) {
+			t.Fatalf("counter step %d = %s", step, value)
+		}
+		for _, id := range u.Program.Handlers[0].Body {
+			left.Eval(id)
+		}
+		for _, id := range fallback.Handlers[0].Body {
+			right.Eval(id)
+		}
 	}
 }

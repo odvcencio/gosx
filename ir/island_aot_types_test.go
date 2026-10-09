@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/client/vm"
@@ -148,9 +147,12 @@ func TestIslandAOTConditionalSourceKinds(t *testing.T) {
 			expr := condition + " ? " + tc.yes + " : " + tc.no
 			t.Run(tc.typ+"/"+expr, func(t *testing.T) {
 				p := parseAOTArithmetic(t, tc.typ, expr)
-				_, err := ir.LowerIslandAOT(p, 0)
-				if err == nil || !strings.Contains(err.Error(), "evidence_shape_mismatch") {
-					t.Fatalf("ternary requires VM: %v", err)
+				u, err := ir.LowerIslandAOT(p, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := u.Contract.Expressions[u.Program.Nodes[u.Program.Nodes[u.Program.Root].Children[0]].Expr].Kind; got != aot.ScalarKind(tc.typ) {
+					t.Fatalf("kind %s, want %s", got, tc.typ)
 				}
 				fallback, err := ir.LowerIsland(p, 0)
 				if err != nil {
@@ -224,7 +226,7 @@ func TestIslandAOTConstantDomainBoundaries(t *testing.T) {
 			t.Run(shape.name+"/"+boundary.name, func(t *testing.T) {
 				p := parseAOTArithmetic(t, "int", shape.expr)
 				u, err := ir.LowerIslandAOT(p, 0)
-				if !boundary.allowed || strings.HasPrefix(shape.name, "conditional") {
+				if !boundary.allowed {
 					var diagnostic *ir.DiagnosticsError
 					if !errors.As(err, &diagnostic) || diagnostic.Diagnostics[0].Code != "aot_source_type" {
 						t.Fatalf("accepted out-of-domain constant: %v", err)

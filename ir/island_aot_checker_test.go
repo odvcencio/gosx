@@ -95,30 +95,29 @@ func TestIslandAOTCheckerPositiveEvidence(t *testing.T) {
 	}
 }
 
-// These previously accepted VM recipes lack exact Go evidence. Keep explicit
-// receipts for conservative exclusions, including unused receiver opcodes.
+// Only forms outside the declared profile or lacking exact Go evidence stay VM-only.
 func TestIslandAOTCheckerVMOnlyFixtures(t *testing.T) {
 	for _, tc := range []struct{ name, body, reason string }{
-		{"bare signal", `count := signal.New(0); return <div>{count}</div>`, "evidence_shape_mismatch"},
-		{"unused computed", `count := signal.New(0); doubled := signal.Derive(func() int { return count.Get()+count.Get() }); return <div>{count}</div>`, "type_error"},
-		{"computed receiver", `count := signal.New(0); doubled := signal.Derive(func() int { return count.Get()+count.Get() }); return <div>{doubled.Get()}</div>`, "evidence_shape_mismatch"},
-		{"handler receiver", `count := signal.New(0); change := func(){count.Set(count.Get()+1)}; return <button type="button" onClick={change}>{count.Get()}</button>`, "evidence_shape_mismatch"},
-		{"implicit event", `text := signal.New(""); change := func(){text.Set(value)}; return <input value={text.Get()} onInput={change}/>`, "type_error"},
-		{"ternary", `return <div>{true ? 1 : 2}</div>`, "evidence_shape_mismatch"},
-		{"inline string handler", `count := signal.New(0); return <button type="button" data-on-click="count.Set(1)">{count.Get()}</button>`, "evidence_shape_mismatch"},
-		{"shared state", `count := signal.NewShared("count", 0); return <div>{count.Get()}</div>`, "shared_signal_profile"},
+		{"shared state", `count:=signal.NewShared("count",0);return <div>{count.Get()}</div>`, "shared_signal_profile"},
+		{"reserved dispatch", `count:=signal.New(0);return <div data-gosx-on-click={count.Get()}/>`, "reserved_attribute"},
+		{"uncovered conversion", `count := signal.New('x'); return <div>{count}</div>`, "evidence_shape_mismatch"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := checkerProgram(t, "", tc.body)
-			if _, err := ir.LowerIsland(p, 0); err != nil {
-				t.Fatal("VM fixture stopped lowering", err)
-			}
 			_, err := ir.LowerIslandAOT(p, 0)
 			if err == nil || !strings.Contains(err.Error(), tc.reason) {
-				t.Fatalf("want %s: %v", tc.reason, err)
+				t.Fatalf("want %s, got %v", tc.reason, err)
 			}
 		})
 	}
+	t.Run("missing directory", func(t *testing.T) {
+		p := checkerProgram(t, "", `return <div>{1}</div>`)
+		p.Dir = ""
+		_, err := ir.LowerIslandAOT(p, 0)
+		if err == nil || !strings.Contains(err.Error(), "package_scope_unknown") {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestIslandAOTCheckerShapeAndImports(t *testing.T) {

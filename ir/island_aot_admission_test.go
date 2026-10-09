@@ -40,7 +40,13 @@ func TestIslandAOTRejectsShadowedScalarNames(t *testing.T) {
 	} {
 		t.Run("local/"+local, func(t *testing.T) {
 			p := parseAOTAdmission(t, "", "", "int32", local+"\ncount := signal.New[int32](0)\nreturn <div>{count}</div>")
-			assertAOTAdmissionRejected(t, p)
+			if local == "{ type int32 = int64 }" {
+				if _, err := ir.LowerIslandAOT(p, 0); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				assertAOTAdmissionRejected(t, p)
+			}
 		})
 	}
 	for _, parameter := range []string{", int32 int", ", int32 ...int"} {
@@ -55,9 +61,7 @@ func TestIslandAOTRejectsShadowedScalarNames(t *testing.T) {
 	} {
 		t.Run("nested or grouped/"+declaration, func(t *testing.T) {
 			p := parseAOTAdmission(t, "", "", "int32", declaration+"\nreturn <div>{props.Initial}</div>")
-			if strings.HasPrefix(declaration, "var ") || strings.HasPrefix(declaration, "for ") {
-				assertAOTAdmissionRejected(t, p)
-			} else if _, err := ir.LowerIslandAOT(p, 0); err != nil {
+			if _, err := ir.LowerIslandAOT(p, 0); err != nil {
 				t.Fatal(err)
 			}
 		})

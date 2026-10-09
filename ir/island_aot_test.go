@@ -62,7 +62,7 @@ func Counter(props CounterProps) Node {
 }
 
 func TestIslandAOTRejectsErasedAndUnsupportedSourceTypes(t *testing.T) {
-	for _, typ := range []string{"int8", "int16", "int64", "uint", "uint32", "rune", "float32", "float64", "CounterInt"} {
+	for _, typ := range []string{"int8", "int16", "int64", "uint", "uint32", "float32", "float64", "CounterInt"} {
 		t.Run(typ, func(t *testing.T) {
 			src := []byte(fmt.Sprintf(`package example
 type CounterInt int

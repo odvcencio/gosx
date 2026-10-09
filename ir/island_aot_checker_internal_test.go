@@ -19,14 +19,14 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
+	"m31labs.dev/gosx/internal/gsxparse"
 )
 
 func checkerInternalProgram(t *testing.T, source string) *Program {
 	t.Helper()
 	lang := grammars.GoLanguage()
-	tree, err := gotreesitter.NewParser(lang).Parse([]byte(source))
+	tree, err := gsxparse.Parse(lang, []byte(source))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,6 +64,17 @@ func TestIslandAOTCheckingSpansAndCache(t *testing.T) {
 	c, err := aotCheckSource(p)
 	if err != nil || c == a {
 		t.Fatal("sibling change reused evidence", err)
+	}
+}
+
+func TestIslandAOTReferencedPackageBindingErrors(t *testing.T) {
+	p := checkerInternalProgram(t, "package example\nimport s \"m31labs.dev/gosx/signal\"\nvar s=0\nfunc Counter() Node { count:=s.New(0);_ = count;return Node{} }\ntype Node struct{}\n")
+	c, err := aotCheckSource(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.candidateError(map[string]bool{"Counter": true}); err == nil {
+		t.Fatalf("conflicting imported object admitted; checker errors: %+v", c.errors)
 	}
 }
 
@@ -192,4 +203,33 @@ func TestIslandAOTTinyGoDependencyBoundary(t *testing.T) {
 			t.Errorf("host checker in TinyGo client graph: %s", dependency)
 		}
 	}
+}
+
+// AOTCheckingHardErrorsForTest exposes scaffold diagnostics to the external corpus.
+func AOTCheckingHardErrorsForTest(p *Program) []string {
+	c, err := aotCheckSource(p)
+	if err != nil {
+		return []string{err.Error()}
+	}
+	var errors []string
+	for _, e := range c.errors {
+		errors = append(errors, e.Msg)
+	}
+	return errors
+}
+
+func AOTPackageEvidenceSharedForTest(a, b *Program) bool {
+	x, err := aotCheckSource(a)
+	if err != nil {
+		return false
+	}
+	y, err := aotCheckSource(b)
+	return err == nil && x.info == y.info
+}
+
+func AOTResetCheckCacheForTest() {
+	aotCheckCache.Lock()
+	defer aotCheckCache.Unlock()
+	clear(aotCheckCache.entries)
+	aotCheckCache.order = nil
 }
