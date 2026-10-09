@@ -645,6 +645,29 @@ separate release-pinned hardware certification obligation in that contract.
 - **Scene graph** — `Group`, `Mesh`, `LODGroup`, `Decal`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
+
+  Selena browser shaders use GLSL ES 3.00 for GoSX's WebGL2 contexts. The returned
+  binding layout contains the WebGL2 host requirements. Materials with extra host
+  requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(material.ShaderLayout, target)`
+  exposes requirements for each compiler target. Post vertices use the renderer's
+  quad and bottom-left texture origin. Derivatives need no extension on WebGL2.
+  Shader substitutions appear in the renderer's
+  `data-gosx-scene3d-render-mesh-material-fallback` count and its `-detail`
+  attribute, including cached compile failures.
+
+  To retain native programs, set `SelenaMaterialOptions.Targets: selena.AllTargets()`.
+  `CustomMaterial.ShaderProgram(target)`, `IRMaterial.ShaderProgram(target)`, and
+  `engine.RenderMaterial.ShaderProgram(target)` let native host adapters read the
+  same compiler artifact through JSON and native render bundles. Opting into
+  `Targets` also sends every requested program artifact in browser scene payloads,
+  increasing their size. Source and binding
+  descriptors travel together in `shaderLayout.programs`; browser host adaptations
+  remain in `VertexGLSL`/`FragmentGLSL` and `VertexWGSL`/`FragmentWGSL`. Default browser
+  materials avoid duplicating shader sources. Transport does not imply execution:
+  the current native mesh renderer uses the standard material and reports
+  `MaterialFallbacks` in frame stats and `scene.native.custom_material_fallback`
+  in preview diagnostics.
+
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadow maps on directional lights, with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap; spot lights render their cone and penumbra but do not yet cast shadows on either browser backend
 - **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
@@ -804,6 +827,12 @@ Production builds require TinyGo on `PATH`, emit capability-linked `core`,
 compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
+
+When Binaryen's `wasm-opt` is on `PATH`, the builder applies an optional `-Oz`
+pass before hashing and compressing WASM. A missing or failing optimizer emits
+a warning and keeps the compiled output. For comparable production sizes, use
+the same Go, TinyGo, and Binaryen versions as CI; the wire gate's optimizer is
+pinned in [`scripts/install-ci-binaryen.sh`](scripts/install-ci-binaryen.sh).
 
 Production builds start the server for prerendering only when static routes
 exist. Apps that need request-time authentication or a database can also disable

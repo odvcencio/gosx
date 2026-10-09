@@ -1,6 +1,7 @@
 package perfbrowserpin
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -186,11 +187,27 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name: "browser job skipped",
-			mutate: insertAfter(
-				"  browser-tests:\n",
-				"    if: false\n",
+			mutate: replace(
+				"  browser-tests:\n    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n",
+				"  browser-tests:\n    if: false\n",
 			),
-			want: "browser-tests job: unexpected field \"if\"",
+			want: "browser-tests job.if",
+		},
+		{
+			name: "browser job draft gate skips ready pull requests",
+			mutate: replace(
+				"  browser-tests:\n    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n",
+				"  browser-tests:\n    if: ${{ github.event_name != 'pull_request' }}\n",
+			),
+			want: "browser-tests job.if",
+		},
+		{
+			name: "browser job draft gate omitted",
+			mutate: replace(
+				"  browser-tests:\n    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n",
+				"  browser-tests:\n",
+			),
+			want: "browser-tests job: missing field \"if\"",
 		},
 		{
 			name: "browser job continue on error",
@@ -330,8 +347,32 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		{
 			name: "aggregate skipped result allowed",
 			mutate: replace(
-				"              *=success) ;;\n",
-				"              *=success|*=skipped) ;;\n",
+				"\n            case \"$result\" in\n              *=success) ;;\n",
+				"\n            case \"$result\" in\n              *=success|*=skipped) ;;\n",
+			),
+			want: "aggregate dependency assertion.run",
+		},
+		{
+			name: "aggregate draft binding omitted",
+			mutate: replace(
+				"          DRAFT_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}\n",
+				"",
+			),
+			want: "aggregate dependency assertion.env: missing field \"DRAFT_PULL_REQUEST\"",
+		},
+		{
+			name: "aggregate draft binding forced false",
+			mutate: replace(
+				"          DRAFT_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}\n",
+				"          DRAFT_PULL_REQUEST: ${{ false }}\n",
+			),
+			want: "aggregate dependency assertion.env.DRAFT_PULL_REQUEST",
+		},
+		{
+			name: "aggregate draft passes without full suite",
+			mutate: replace(
+				"            exit 1\n          fi\n",
+				"            exit 0\n          fi\n",
 			),
 			want: "aggregate dependency assertion.run",
 		},
@@ -433,11 +474,19 @@ func TestStableRendererProofComposition(t *testing.T) {
 		},
 		{
 			name: "stable job skipped",
-			mutate: insertAfter(
-				"  scene3d-v1-browser-renderer-proof:\n",
-				"    if: false\n",
+			mutate: replace(
+				"  scene3d-v1-browser-renderer-proof:\n    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n",
+				"  scene3d-v1-browser-renderer-proof:\n    if: false\n",
 			),
-			want: "stable Scene3D renderer proof job: unexpected field \"if\"",
+			want: "stable Scene3D renderer proof job.if",
+		},
+		{
+			name: "stable job draft gate omitted",
+			mutate: replace(
+				"  scene3d-v1-browser-renderer-proof:\n    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n",
+				"  scene3d-v1-browser-renderer-proof:\n",
+			),
+			want: "stable Scene3D renderer proof job: missing field \"if\"",
 		},
 		{
 			name: "stable checkout redirects to main",
@@ -495,8 +544,8 @@ func TestStableRendererProofComposition(t *testing.T) {
 		{
 			name: "stable aggregate skipped result allowed",
 			mutate: replace(
-				"              *=success) ;;\n",
-				"              *=success|scene3d-v1-browser-renderer-proof=skipped) ;;\n",
+				"\n            case \"$result\" in\n              *=success) ;;\n",
+				"\n            case \"$result\" in\n              *=success|scene3d-v1-browser-renderer-proof=skipped) ;;\n",
 			),
 			want: "aggregate dependency assertion.run",
 		},
@@ -543,11 +592,19 @@ func TestAdapterProofComposition(t *testing.T) {
 		},
 		{
 			name: "adapter job skipped",
-			mutate: insertAfter(
-				"  scene3d-v1-adapter-proof:\n",
-				"    if: false\n",
+			mutate: replace(
+				"  scene3d-v1-adapter-proof:\n    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n",
+				"  scene3d-v1-adapter-proof:\n    if: false\n",
 			),
-			want: "Scene3D adapter proof job: unexpected field \"if\"",
+			want: "Scene3D adapter proof job.if",
+		},
+		{
+			name: "adapter job draft gate omitted",
+			mutate: replace(
+				"  scene3d-v1-adapter-proof:\n    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n",
+				"  scene3d-v1-adapter-proof:\n",
+			),
+			want: "Scene3D adapter proof job: missing field \"if\"",
 		},
 		{
 			name: "adapter checkout redirects to main",
@@ -613,8 +670,8 @@ func TestAdapterProofComposition(t *testing.T) {
 		{
 			name: "adapter skipped result allowed",
 			mutate: replace(
-				"              *=success) ;;\n",
-				"              *=success|scene3d-v1-adapter-proof=skipped) ;;\n",
+				"\n            case \"$result\" in\n              *=success) ;;\n",
+				"\n            case \"$result\" in\n              *=success|scene3d-v1-adapter-proof=skipped) ;;\n",
 			),
 			want: "aggregate dependency assertion.run",
 		},
@@ -637,7 +694,7 @@ func TestAggregateRunFailsClosed(t *testing.T) {
 			name = "stable-composition"
 		}
 		t.Run(name+"/success", func(t *testing.T) {
-			output, err := runAggregate(t, needs, "", "")
+			output, err := runAggregate(t, needs, false, "", "")
 			if err != nil {
 				t.Fatalf("aggregate success: %v\n%s", err, output)
 			}
@@ -646,7 +703,7 @@ func TestAggregateRunFailsClosed(t *testing.T) {
 			for _, result := range []string{"failure", "cancelled", "skipped", ""} {
 				need, result := need, result
 				t.Run(name+"/"+need+"/"+result, func(t *testing.T) {
-					output, err := runAggregate(t, needs, need, result)
+					output, err := runAggregate(t, needs, false, need, result)
 					if err == nil {
 						t.Fatalf("aggregate unexpectedly accepted %s=%q\n%s", need, result, output)
 					}
@@ -656,13 +713,37 @@ func TestAggregateRunFailsClosed(t *testing.T) {
 				})
 			}
 		}
+		t.Run(name+"/draft/all-passed", func(t *testing.T) {
+			output, err := runAggregate(t, needs, true, "", "")
+			if err == nil {
+				t.Fatalf("aggregate accepted a draft run\n%s", output)
+			}
+			if want := "::error title=Draft pull request::"; !strings.Contains(output, want) {
+				t.Fatalf("aggregate output %q does not contain %q", output, want)
+			}
+		})
+		for _, need := range draftFastNeeds {
+			for _, result := range []string{"failure", "cancelled", "skipped", ""} {
+				need, result := need, result
+				t.Run(name+"/draft/"+need+"/"+result, func(t *testing.T) {
+					output, err := runAggregate(t, needs, true, need, result)
+					if err == nil {
+						t.Fatalf("aggregate unexpectedly accepted draft %s=%q\n%s", need, result, output)
+					}
+					if want := "draft fast check did not succeed: " + need + "=" + result; !strings.Contains(output, want) {
+						t.Fatalf("aggregate output %q does not contain %q", output, want)
+					}
+				})
+			}
+		}
 	}
 }
 
-func runAggregate(t *testing.T, needs []string, changedNeed, changedResult string) (string, error) {
+func runAggregate(t *testing.T, needs []string, draft bool, changedNeed, changedResult string) (string, error) {
 	t.Helper()
 	command := exec.Command("sh", "-c", aggregateRun(needs))
 	command.Env = append([]string{}, os.Environ()...)
+	command.Env = append(command.Env, fmt.Sprintf("%s=%t", draftEnvName, draft))
 	for _, need := range needs {
 		result := "success"
 		if need == changedNeed {
