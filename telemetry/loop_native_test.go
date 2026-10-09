@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"m31labs.dev/gosx/server"
 )
 
 // Native attachment uses the same startup and sealing fixture as hub metrics.
@@ -128,6 +130,40 @@ func TestLoopKindsAtomicCapacityAndAccountedHeap(t *testing.T) {
 	}
 	t.Logf("loop retained=%d charged=%d", retained, loopArenaBytes)
 	runtime.KeepAlive(loops)
+}
+
+func TestLoopKindRegistryCapacityCountsRejection(t *testing.T) {
+	baseline, _ := hubTelemetry(t)
+	opts := hubCoreOptions()
+	opts.Metrics.MaxSeries = baseline.registry.Usage().Samples
+	tel, err := Enable(server.New(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := tel.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	before := tel.registry.Usage()
+	if before.Samples != opts.Metrics.MaxSeries || len(tel.loops.kinds) != 0 {
+		t.Fatal("fixture must exhaust the registry before the kind limit", before)
+	}
+	beforeBytes := tel.loops.bytes.Load()
+	beforeLoss := hubSample(t, tel, "gosx_telemetry_dropped_total", "reason", "series").Counter
+	kind, err := tel.NewLoopKind("match", LoopOptions{TickRate: 60})
+	if kind != nil || !errors.Is(err, ErrCapacity) {
+		t.Fatal("expected registry-capacity rejection", kind, err)
+	}
+	if after := tel.registry.Usage(); after != before {
+		t.Error("failed kind changed registry reservations", before, after)
+	}
+	if len(tel.loops.kinds) != 0 || tel.loops.bytes.Load() != beforeBytes {
+		t.Error("failed kind changed loop reservations")
+	}
+	if after := hubSample(t, tel, "gosx_telemetry_dropped_total", "reason", "series").Counter; after != beforeLoss+1 {
+		t.Errorf("series rejection counter=%d want=%d", after, beforeLoss+1)
+	}
 }
 
 func TestLoopConcurrentCloseAndSlotReuse(t *testing.T) {

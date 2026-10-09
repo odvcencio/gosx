@@ -156,6 +156,9 @@ func (t *Telemetry) NewLoopKind(kind string, opts LoopOptions) (*LoopKind, error
 	}
 	m, err := t.bindLoop(kind)
 	if err != nil {
+		if err == ErrCapacity {
+			t.core.dropped["series"].Add(1)
+		}
 		return nil, err
 	}
 	k := &LoopKind{owner: t, opts: opts, metrics: m}
@@ -272,11 +275,16 @@ func (l *Loop) End(tok TickToken, info TickInfo) error {
 		return err
 	}
 	now, err := readClock(l.kind.owner.opts.Clock)
-	if err != nil {
-		return err
+	if err == nil && now.Monotonic < tok.start {
+		err = invalid("clock", "negative_elapsed")
 	}
-	if now.Monotonic < tok.start {
-		return invalid("clock", "negative_elapsed")
+	if err != nil {
+		x.mu.Lock()
+		if x.accepts(tok) {
+			x.pending = 0
+		}
+		x.mu.Unlock()
+		return err
 	}
 	d := now.Monotonic - tok.start
 	x.mu.Lock()
