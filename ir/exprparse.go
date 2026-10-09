@@ -642,6 +642,8 @@ var browserMethodSpecs = map[string]browserMethodSpec{
 	"preventdefault":  {name: "PreventDefault", minArgs: 0, maxArgs: 0, returnType: program.TypeBool},
 	"stoppropagation": {name: "StopPropagation", minArgs: 0, maxArgs: 0, returnType: program.TypeBool},
 	"scrollintoview":  {name: "ScrollIntoView", minArgs: 1, maxArgs: 2, returnType: program.TypeBool},
+	"capturepointer":  {name: "CapturePointer", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
+	"releasepointer":  {name: "ReleasePointer", minArgs: 1, maxArgs: 1, returnType: program.TypeBool},
 }
 
 func (p *exprParser) browserReceiver(id program.ExprID) bool {
@@ -881,9 +883,10 @@ func eventFieldType(name string) program.ExprType {
 		return program.TypeString
 	case "checked", "ctrlKey", "metaKey", "altKey", "shiftKey", "repeat", "editable", "isPrimary":
 		return program.TypeBool
-	case "selectedIndex", "pointerID", "button", "buttons":
+	case "selectedIndex", "pointerID", "button", "buttons", "deltaMode":
 		return program.TypeInt
-	case "timeStamp", "clientX", "clientY", "pressure", "width", "height":
+	case "timeStamp", "clientX", "clientY", "pressure", "width", "height",
+		"offsetX", "offsetY", "elementWidth", "elementHeight", "deltaX", "deltaY":
 		return program.TypeFloat
 	default:
 		return program.TypeAny

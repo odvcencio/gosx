@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Islands: `onWheel` (non-passive), `onDblClick`, `onContextMenu` and
+  `onLostPointerCapture`; event fields `offsetX`, `offsetY` (viewport position
+  minus the handler element's bounding box, borders included, transforms not
+  undone), `elementWidth`, `elementHeight`, `deltaX`, `deltaY` and `deltaMode`;
+  and `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. A capture ends
+  as the Pointer Events specification defines (after `pointerup` or
+  `pointercancel`, on `ReleasePointer`, or when the element leaves the
+  document); disposing an island does not release it early. On islands built without event metadata, a
+  wheel handler present at hydration is non-passive; one added later still
+  fires, but `browser.PreventDefault()` cannot block scrolling. Rebuilding with
+  the current `gosx` gives full wheel support. See
+  `docs/island-events.md`.
+- Diagnostics: an island handler attribute that no runtime name mapper resolves
+  (`onMouseDown`, `onScroll`, `onKey`) now produces a warning with a source
+  position and a "did you mean" suggestion. It does not fail the build, and the
+  spellings that already resolved (`onKeydown`, `onPointerdown`, `onDragstart`)
+  stay accepted. Nothing breaks, so there is no migration step.
+- Size budgets (decision 0014 exception, owner-approved 2026-10-08 at +536 raw
+  for `bootstrap-feature-islands.js` and +539 raw for the legacy `bootstrap.js`
+  monolith): the gesture events grow the islands chunk by 390 raw bytes (18,766
+  to 19,156) and the monolith by 390 (1,910,682 to 1,911,072).
 - Cache bounded readiness snapshots without rerunning checks or retaining request
   IDs and errors. LastReadiness reports unknown before a probe, UTC completion
   time, and completeness when more than 64 checks exist. Panicking checks fail
@@ -112,6 +133,13 @@
   One optional telemetry subscriber has its own reservation and sampling policy.
   Opt-in slow-client eviction uses interval drop deltas and the existing pump
   timer; it does not increase the 54-second ping frequency or add a scanner.
+- Stage `gosx init` before publishing files with no-clobber writes. Existing
+  files and symlinks below the destination cause a conflict; root symlinks work.
+  Late failures roll back files still owned by the invocation on a best-effort
+  basis. The app template uses component syntax for `Page`, `NotFoundPage` and
+  `ErrorPage`. Dependency resolution runs in staging; offline failures and
+  destinations containing any existing Go files prompt a final `go mod tidy`,
+  because existing packages outside `app/` are not staged.
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
@@ -123,6 +151,9 @@
   `engine.RenderMaterial`. Requested artifacts travel through both browser scene
   payloads and native bundles. `FrameStats.MaterialFallbacks` and native preview
   diagnostics report custom mesh programs replaced by the standard shader.
+- Report skipped optional `wasm-opt` passes instead of silently keeping the
+  compiled WASM. Missing tools warn once per build; failed passes include
+  optimizer output in one complete warning and remove temporary output.
 
 
 - Add transactional aggregate telemetry setup with one maintenance worker and
@@ -218,6 +249,10 @@
   before `Closed` and drains admitted callbacks before completion.
   `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
+- Record `gzipSize` and `brotliSize` for compressed assets in `build.json`.
+  Choose compatible WASM runtimes by Brotli size, then gzip or raw size when
+  metadata is absent, with raw size and path as deterministic tie-breaks.
+
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
   request-time compression. Static exports include the asset. Defer execution
@@ -246,6 +281,13 @@
 
 - Define controller-local pick ray and hit types, preserving the scene JSON
   shape without linking scene rendering dependencies into ordinary servers.
+
+- Use the selective bootstrap and relay for preview pages without loading the
+  islands feature chunk. Island-free previews now start the WASM signal bridge
+  inside an iframe or with `gosx-preview=1`; preview context persists for the
+  tab session across navigation. Public visitors do not start the preview bridge
+  or preload its WASM. Older assets without the selective bootstrap retain the
+  compatibility path.
 
 ## v0.57.6
 

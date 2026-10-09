@@ -43,5 +43,14 @@ func PreventDefault(args ...any) bool { return false }
 // StopPropagation stops the current event and remaining global-island fanout.
 func StopPropagation(args ...any) bool { return false }
 
+// CapturePointer routes later pointer events for pointerID to the element that
+// owns the dispatching handler until ReleasePointer or the pointer ends. Call
+// it from onPointerDown: browsers honour the request only while that event
+// dispatches. onLostPointerCapture reports an implicit release.
+func CapturePointer(args ...any) bool { return false }
+
+// ReleasePointer releases a pointer captured with CapturePointer.
+func ReleasePointer(args ...any) bool { return false }
+
 // ScrollIntoView scrolls a root-scoped element into view after reconciliation.
 func ScrollIntoView(args ...any) bool { return false }
