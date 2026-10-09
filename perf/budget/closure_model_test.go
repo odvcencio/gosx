@@ -23,9 +23,15 @@ import (
 // References are generated alongside markup, independently of the scanner.
 // The model uses no production reachability, phase or summation helpers.
 type closureNode struct {
-	use  buildmanifest.PerfAssetUse
-	body []byte
-	refs []string
+	use         buildmanifest.PerfAssetUse
+	body        []byte
+	refs        []string
+	contextRefs []closureReference
+	baseHref    *string
+}
+type closureReference struct {
+	url, base string
+	worker    bool
 }
 type closureGraph struct {
 	nodes     []closureNode
@@ -94,11 +100,22 @@ func TestMeasureFinalURLClosureCorpus(t *testing.T) {
 }
 
 func (g *closureGraph) add(id, path, kind, phase, body string, refs []string, deps ...string) {
+	deps = append([]string{}, deps...)
 	for i := range deps {
 		deps[i] = "app/fixture/" + deps[i]
 	}
 	use := graphAsset("app/fixture/"+id, path, kind, phase, "always", []byte(body), deps...)
-	g.nodes = append(g.nodes, closureNode{use, []byte(body), refs})
+	g.nodes = append(g.nodes, closureNode{use: use, body: []byte(body), refs: refs})
+}
+
+func (g *closureGraph) referenceContext(id string, href *string, refs ...closureReference) {
+	for i := range g.nodes {
+		if strings.HasSuffix(g.nodes[i].use.ID, "/"+id) {
+			g.nodes[i].baseHref, g.nodes[i].contextRefs = href, refs
+			return
+		}
+	}
+	panic("missing model node")
 }
 
 func generatedClosureGraph(i int, rng *rand.Rand) closureGraph {
@@ -213,27 +230,52 @@ func referenceClosure(g closureGraph) closureExpected {
 		panic("unknown model phase")
 	}
 	type pending struct {
-		path  string
-		phase int
+		path             string
+		phase            int
+		document, worker string
 	}
-	queue := []pending{{"/counter/", 0}}
+	queue := []pending{{path: "/counter/", phase: 0}}
 	for _, n := range g.nodes {
 		if n.use.Kind != "html" && n.use.Phase != "dormant" {
-			queue = append(queue, pending{n.use.URL, rank(n.use.Phase)})
+			queue = append(queue, pending{path: n.use.URL, phase: rank(n.use.Phase)})
 		}
 	}
 	final := map[string]string{}
 	redirectCount := map[string]int{}
 	fetched := map[string]bool{}
 	known := true
+	rootBase := ""
+	type location struct{ path, document, worker string }
+	seen := map[location]int{}
+	contexts := map[string][]location{}
 	drain := func() {
 		for len(queue) > 0 {
-			p := queue[0]
-			queue = queue[1:]
-			if phase[p.path] <= p.phase {
+			next := 0
+			for i, item := range queue {
+				if item.document != "" || item.worker != "" || nodes[item.path].use.Kind != "js" {
+					next = i
+					break
+				}
+			}
+			p := queue[next]
+			queue = append(queue[:next], queue[next+1:]...)
+			if p.phase < phase[p.path] {
+				phase[p.path] = p.phase
+			}
+			key := location{p.path, p.document, p.worker}
+			if previous, ok := seen[key]; ok && previous <= p.phase {
 				continue
 			}
-			phase[p.path] = p.phase
+			seen[key] = p.phase
+			if nodes[p.path].use.Kind == "js" && p.document == "" && p.worker == "" && len(contexts[p.path]) > 0 {
+				for _, c := range contexts[p.path] {
+					queue = append(queue, pending{p.path, p.phase, c.document, c.worker})
+				}
+				continue
+			}
+			if p.document != "" || p.worker != "" {
+				contexts[p.path] = append(contexts[p.path], key)
+			}
 			base, _ := url.Parse("https://example.invalid" + p.path)
 			fetched[base.Path] = true
 			hops := 0
@@ -249,15 +291,68 @@ func referenceClosure(g closureGraph) closureExpected {
 				n = g.responses[base.Path]
 			}
 			if base.Path != p.path && declared {
-				queue = append(queue, pending{base.Path, p.phase})
+				queue = append(queue, pending{base.Path, p.phase, p.document, p.worker})
 			}
-			for _, ref := range n.refs {
-				r, err := url.Parse(ref)
-				if err != nil || r.Scheme != "" || r.Host != "" || r.RawQuery != "" {
+			if n.use.Kind == "html" {
+				document := *base
+				if n.baseHref != nil {
+					href, _ := url.Parse(*n.baseHref)
+					document = *base.ResolveReference(href)
+				}
+				p.document, p.worker = document.String(), ""
+				if p.path == "/counter/" {
+					rootBase = p.document
+				}
+			}
+			references := n.contextRefs
+			if references == nil {
+				for _, raw := range n.refs {
+					rule := "source"
+					if n.use.Kind == "html" {
+						rule = "document"
+					}
+					references = append(references, closureReference{url: raw, base: rule})
+				}
+			}
+			for _, ref := range references {
+				r, err := url.Parse(ref.url)
+				if err != nil || r.RawQuery != "" {
 					known = false
 					continue
 				}
-				target := base.ResolveReference(r).Path
+				parent := base
+				switch ref.base {
+				case "document":
+					parent, _ = url.Parse(p.document)
+				case "environment", "worker":
+					address := p.document
+					if p.worker != "" {
+						address = "https://example.invalid" + p.worker
+						u, _ := url.Parse(address)
+						for g.redirects[u.Path] != "" {
+							next, _ := url.Parse(g.redirects[u.Path])
+							u = u.ResolveReference(next)
+						}
+						address = u.String()
+					} else if ref.base == "worker" {
+						known = false
+						continue
+					}
+					if address == "" && strings.HasPrefix(ref.url, "/") && !strings.HasPrefix(ref.url, "//") {
+						address = rootBase
+					}
+					if address == "" {
+						known = false
+						continue
+					}
+					parent, _ = url.Parse(address)
+				}
+				targetURL := parent.ResolveReference(r)
+				if targetURL.Scheme != "https" || targetURL.Host != "example.invalid" {
+					known = false
+					continue
+				}
+				target := targetURL.Path
 				if !declared && n.use.Kind != "html" {
 					edge := false
 					for _, dep := range n.use.Dependencies {
@@ -272,7 +367,11 @@ func referenceClosure(g closureGraph) closureExpected {
 				if n.use.Kind != "html" && rank(nodes[target].use.Phase) < childPhase {
 					childPhase = rank(nodes[target].use.Phase)
 				}
-				queue = append(queue, pending{target, childPhase})
+				document, worker := p.document, p.worker
+				if ref.worker {
+					document, worker = "", target
+				}
+				queue = append(queue, pending{target, childPhase, document, worker})
 			}
 		}
 	}
@@ -280,7 +379,7 @@ func referenceClosure(g closureGraph) closureExpected {
 	if !known {
 		for _, n := range g.nodes {
 			if n.use.Kind != "html" {
-				queue = append(queue, pending{n.use.URL, 1})
+				queue = append(queue, pending{path: n.use.URL, phase: 1})
 			}
 		}
 		drain()

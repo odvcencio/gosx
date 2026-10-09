@@ -20,14 +20,25 @@ import (
 type Reference struct {
 	URL, Kind string
 	Potential bool
+	Base      string
+	Worker    bool // The target starts a worker environment, rather than inheriting one.
 }
+
+const (
+	ReferenceBaseDocument    = "document"
+	ReferenceBaseSource      = "source"
+	ReferenceBaseEnvironment = "environment"
+	ReferenceBaseWorker      = "worker"
+)
 
 // ReferenceSet never certifies runtime behavior. Complete means the supported
 // syntax had no unresolved reference; declarations and browser reconciliation
 // still determine whether the dependency graph covers a page.
 type ReferenceSet struct {
-	Resources []Reference
-	Complete  bool
+	Resources   []Reference
+	Complete    bool
+	BaseHref    string
+	HasBaseHref bool
 }
 
 // ReferenceError identifies a failed scan without copying source text or URLs.
@@ -69,11 +80,17 @@ func ScanReferences(body []byte, kind string) (ReferenceSet, error) {
 		if a.Kind != b.Kind {
 			return a.Kind < b.Kind
 		}
+		if a.Base != b.Base {
+			return a.Base < b.Base
+		}
+		if a.Worker != b.Worker {
+			return !a.Worker
+		}
 		return !a.Potential && b.Potential
 	})
 	dedup := out.Resources[:0]
 	for _, ref := range out.Resources {
-		if len(dedup) > 0 && dedup[len(dedup)-1].URL == ref.URL && dedup[len(dedup)-1].Kind == ref.Kind {
+		if len(dedup) > 0 && dedup[len(dedup)-1].URL == ref.URL && dedup[len(dedup)-1].Kind == ref.Kind && dedup[len(dedup)-1].Base == ref.Base && dedup[len(dedup)-1].Worker == ref.Worker {
 			dedup[len(dedup)-1].Potential = dedup[len(dedup)-1].Potential && ref.Potential
 			continue
 		}
@@ -84,6 +101,10 @@ func ScanReferences(body []byte, kind string) (ReferenceSet, error) {
 }
 
 func addReference(out *ReferenceSet, raw, kind string, potential bool) {
+	addContextReference(out, raw, kind, potential, ReferenceBaseDocument, false)
+}
+
+func addContextReference(out *ReferenceSet, raw, kind string, potential bool, base string, worker bool) {
 	value := strings.TrimSpace(raw)
 	if value == "" || strings.HasPrefix(value, "#") || strings.HasPrefix(strings.ToLower(value), "data:") {
 		return
@@ -95,7 +116,20 @@ func addReference(out *ReferenceSet, raw, kind string, potential bool) {
 	if kind == "" {
 		kind = referenceKind(value)
 	}
-	out.Resources = append(out.Resources, Reference{URL: value, Kind: kind, Potential: potential})
+	out.Resources = append(out.Resources, Reference{URL: value, Kind: kind, Potential: potential, Base: base, Worker: worker})
+}
+
+func scanInlineReferences(body []byte, kind string, out *ReferenceSet) error {
+	start := len(out.Resources)
+	if err := scanSyntaxReferences(body, kind, out); err != nil {
+		return err
+	}
+	for i := start; i < len(out.Resources); i++ {
+		if out.Resources[i].Base == ReferenceBaseSource {
+			out.Resources[i].Base = ReferenceBaseDocument
+		}
+	}
+	return nil
 }
 
 func referenceKind(raw string) string {
@@ -156,15 +190,20 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					addReference(out, a.Val, "", true)
 				}
 				if a.Key == "style" {
-					if err := scanSyntaxReferences([]byte(".inline{"+a.Val+"}"), KindStyle, out); err != nil {
+					if err := scanInlineReferences([]byte(".inline{"+a.Val+"}"), KindStyle, out); err != nil {
 						return err
 					}
 				}
 			}
 			switch n.Data {
 			case "base":
-				if attr(n, "href") != "" {
-					out.Complete = false
+				if n.Namespace == "" && !out.HasBaseHref {
+					for _, a := range n.Attr {
+						if a.Key == "href" {
+							out.BaseHref, out.HasBaseHref = a.Val, true
+							break
+						}
+					}
 				}
 			case "script":
 				if attr(n, "id") == "gosx-manifest" {
@@ -178,14 +217,14 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 				} else if executableType(attr(n, "type")) {
 					if src := attr(n, "src"); src != "" {
 						addReference(out, src, KindScript, false)
-					} else if err := scanSyntaxReferences([]byte(textOf(n)), KindScript, out); err != nil {
+					} else if err := scanInlineReferences([]byte(textOf(n)), KindScript, out); err != nil {
 						return err
 					}
 				} else if strings.EqualFold(attr(n, "type"), "importmap") {
 					out.Complete = false
 				}
 			case "style":
-				if err := scanSyntaxReferences([]byte(textOf(n)), KindStyle, out); err != nil {
+				if err := scanInlineReferences([]byte(textOf(n)), KindStyle, out); err != nil {
 					return err
 				}
 			case "link":
@@ -378,7 +417,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 				raw, ok := referenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
-					addReference(out, raw, KindStyle, false)
+					addContextReference(out, raw, KindStyle, false, ReferenceBaseSource, false)
 				}
 			}
 		}
@@ -401,7 +440,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 		raw, ok := referenceLiteral(args.NamedChild(0), lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
-			addReference(out, raw, "", false)
+			addContextReference(out, raw, "", false, ReferenceBaseSource, false)
 		}
 	} else if name == "image-set" || name == "-webkit-image-set" {
 		for i := 0; i < args.NamedChildCount(); i++ {
@@ -410,7 +449,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 				raw, ok := referenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
-					addReference(out, raw, KindImage, false)
+					addContextReference(out, raw, KindImage, false, ReferenceBaseSource, false)
 				}
 			}
 		}
@@ -427,24 +466,17 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		raw, ok := referenceLiteral(source, lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
-			addReference(out, raw, KindScript, false)
+			addContextReference(out, raw, KindScript, false, ReferenceBaseSource, false)
 		}
 	case "call_expression", "new_expression":
-		name := n.ChildByFieldName("function", lang)
-		if name == nil {
-			name = n.ChildByFieldName("constructor", lang)
-		}
-		if name == nil {
+		value := loaderName(n, lang, body)
+		if value == "XMLHttpRequest" {
+			out.Complete = out.Complete && directXHROpen(n, lang, body)
 			return
 		}
-		value := name.Text(body)
-		if name.Type(lang) == "member_expression" {
-			property := name.ChildByFieldName("property", lang)
-			if property != nil && property.Type(lang) == "property_identifier" && property.Text(body) == "fetch" {
-				value = "fetch"
-			}
-		}
-		if value != "import" && value != "fetch" && value != "Worker" && value != "SharedWorker" && value != "URL" {
+		switch value {
+		case "import", "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "xhr-open", "importScripts":
+		default:
 			return
 		}
 		args := n.ChildByFieldName("arguments", lang)
@@ -452,35 +484,121 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			out.Complete = false
 			return
 		}
+		if value == "importScripts" {
+			for i := 0; i < args.NamedChildCount(); i++ {
+				raw, ok := referenceLiteral(args.NamedChild(i), lang, body)
+				out.Complete = out.Complete && ok
+				if ok {
+					addContextReference(out, raw, KindScript, false, ReferenceBaseWorker, false)
+				}
+			}
+			return
+		}
 		if value == "URL" && (args.NamedChildCount() != 2 || args.NamedChild(1).Text(body) != "import.meta.url") {
 			out.Complete = false
 			return
 		}
-		raw, ok := referenceLiteral(args.NamedChild(0), lang, body)
-		// Worker(new URL(...)) is covered by the nested URL expression.
-		if !ok && (value == "Worker" || value == "SharedWorker") && args.NamedChild(0).Type(lang) == "new_expression" {
-			constructor := args.NamedChild(0).ChildByFieldName("constructor", lang)
-			if constructor != nil && constructor.Text(body) == "URL" {
-				return
-			}
+		first := 0
+		if value == "xhr-open" {
+			first = 1
+		}
+		if args.NamedChildCount() <= first {
+			out.Complete = false
+			return
+		}
+		raw, ok := referenceLiteral(args.NamedChild(first), lang, body)
+		if !ok && value != "URL" && loaderName(args.NamedChild(first), lang, body) == "URL" {
+			// The nested URL expression records its explicit module base.
+			return
 		}
 		out.Complete = out.Complete && ok
-		if ok {
-			kind := ""
-			if value == "import" || value == "Worker" || value == "SharedWorker" {
-				kind = KindScript
-			}
-			addReference(out, raw, kind, false)
+		if !ok {
+			return
 		}
-	case "identifier":
-		switch n.Text(body) {
-		case "eval", "Function", "XMLHttpRequest", "WebSocket", "EventSource":
-			out.Complete = false
-		case "fetch":
+		base, kind := ReferenceBaseEnvironment, ""
+		worker := value == "Worker" || value == "SharedWorker"
+		if value == "import" || value == "URL" {
+			base = ReferenceBaseSource
+		}
+		if value == "import" || worker {
+			kind = KindScript
+		}
+		if value == "URL" {
 			parent := n.Parent()
-			if parent == nil || parent.Type(lang) != "call_expression" || parent.ChildByFieldName("function", lang) != n {
+			if parent != nil && parent.Type(lang) == "arguments" {
+				loader := loaderName(parent.Parent(), lang, body)
+				worker = loader == "Worker" || loader == "SharedWorker"
+				if worker {
+					kind = KindScript
+				}
+			}
+		}
+		addContextReference(out, raw, kind, false, base, worker)
+	case "identifier":
+		value := n.Text(body)
+		switch value {
+		case "eval", "Function":
+			out.Complete = false
+		case "XMLHttpRequest":
+			out.Complete = out.Complete && directXHROpen(n.Parent(), lang, body)
+		case "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "importScripts":
+			parent := n.Parent()
+			if parent == nil || loaderName(parent, lang, body) != value {
 				out.Complete = false
 			}
 		}
+	case "member_expression":
+		property := n.ChildByFieldName("property", lang)
+		if property == nil {
+			return
+		}
+		switch property.Text(body) {
+		case "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "importScripts", "XMLHttpRequest":
+			if loaderName(n.Parent(), lang, body) != property.Text(body) {
+				out.Complete = false
+			}
+		}
+	case "subscript_expression":
+		object := n.ChildByFieldName("object", lang)
+		if object != nil && (object.Text(body) == "globalThis" || object.Text(body) == "window" || object.Text(body) == "self") {
+			out.Complete = false
+		}
 	}
+}
+
+func loaderName(n *ts.Node, lang *ts.Language, body []byte) string {
+	if n == nil || n.Type(lang) != "call_expression" && n.Type(lang) != "new_expression" {
+		return ""
+	}
+	name := n.ChildByFieldName("function", lang)
+	if name == nil {
+		name = n.ChildByFieldName("constructor", lang)
+	}
+	if name == nil {
+		return ""
+	}
+	if name.Type(lang) != "member_expression" {
+		return name.Text(body)
+	}
+	object, property := name.ChildByFieldName("object", lang), name.ChildByFieldName("property", lang)
+	if object == nil || property == nil {
+		return ""
+	}
+	if property.Text(body) == "open" && loaderName(object, lang, body) == "XMLHttpRequest" {
+		return "xhr-open"
+	}
+	switch object.Text(body) {
+	case "globalThis", "window", "self":
+		return property.Text(body)
+	default:
+		return ""
+	}
+}
+
+func directXHROpen(n *ts.Node, lang *ts.Language, body []byte) bool {
+	if n == nil || n.Type(lang) != "new_expression" || loaderName(n, lang, body) != "XMLHttpRequest" {
+		return false
+	}
+	parent := n.Parent()
+	return parent != nil && parent.Type(lang) == "member_expression" && loaderName(parent.Parent(), lang, body) == "xhr-open"
 }

@@ -27,6 +27,11 @@ type ReachabilityOptions struct {
 // PlannedAsset retains its private declaration URL for traversal and accounting.
 type PlannedAsset struct{ ID, URL, Phase string }
 type assetUseIdentity struct{ id, url string }
+type referenceEnvironment struct{ document, worker string }
+type contextualUse struct {
+	key         assetUseIdentity
+	environment referenceEnvironment
+}
 type ResourcePlan struct {
 	Reachability string
 	Assets       []PlannedAsset
@@ -86,10 +91,22 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 	}
 	known := opts.Graph != nil && !(opts.Route.Capabilities.Scene3D && opts.Backend == "none")
 	type pending struct {
-		key   assetUseIdentity
-		phase string
+		key         assetUseIdentity
+		phase       string
+		environment referenceEnvironment
 	}
 	queue := []pending{}
+	visits := map[contextualUse]string{}
+	environments := map[assetUseIdentity][]referenceEnvironment{}
+	finalURLs := map[string]string{}
+	scanned := map[string]wire.ReferenceSet{}
+	rootBase := ""
+	type opaqueEdges struct {
+		source, phase string
+		dependencies  []string
+	}
+	edges := []opaqueEdges{}
+	literalTargets := map[string]map[string]bool{}
 	conservative := false
 	enabled := func(asset buildmanifest.PerfAssetUse) bool {
 		if conservative {
@@ -108,7 +125,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 			return true
 		}
 	}
-	mark := func(key assetUseIdentity, phase string) error {
+	mark := func(key assetUseIdentity, phase string, environment referenceEnvironment) error {
 		indexes, ok := byUse[key]
 		if !ok {
 			return measureFailure("undeclared-fetch", "/graph/dependencies")
@@ -123,14 +140,19 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 		for _, i := range byURL[key.url] {
 			alias := assets[i]
 			aliasKey := assetUseIdentity{alias.ID, alias.URL}
-			if enabled(alias) && phaseRank(phase) < phaseRank(phases[aliasKey]) {
-				phases[aliasKey] = phase
-				queue = append(queue, pending{aliasKey, phase})
+			state := contextualUse{aliasKey, environment}
+			if enabled(alias) && phaseRank(phase) < phaseRank(visits[state]) {
+				if visits[state] == "" && environment != (referenceEnvironment{}) {
+					environments[aliasKey] = append(environments[aliasKey], environment)
+				}
+				phases[aliasKey] = earlierPhase(phases[aliasKey], phase)
+				visits[state] = phase
+				queue = append(queue, pending{aliasKey, phase, environment})
 			}
 		}
 		return nil
 	}
-	markID := func(id, phase string) error {
+	markID := func(id, phase string, environment referenceEnvironment) error {
 		indexes, ok := byID[id]
 		if !ok {
 			return measureFailure("undeclared-fetch", "/graph/dependencies")
@@ -142,7 +164,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 				continue
 			}
 			available = true
-			if err := mark(assetUseIdentity{asset.ID, asset.URL}, phase); err != nil {
+			if err := mark(assetUseIdentity{asset.ID, asset.URL}, phase, environment); err != nil {
 				return err
 			}
 		}
@@ -151,7 +173,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 		}
 		return nil
 	}
-	markURL := func(assetURL, phase string) error {
+	markURL := func(assetURL, phase string, environment referenceEnvironment) error {
 		available := false
 		for _, i := range byURL[assetURL] {
 			asset := assets[i]
@@ -159,7 +181,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 				continue
 			}
 			available = true
-			if err := mark(assetUseIdentity{asset.ID, asset.URL}, phase); err != nil {
+			if err := mark(assetUseIdentity{asset.ID, asset.URL}, phase, environment); err != nil {
 				return err
 			}
 		}
@@ -168,22 +190,48 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 		}
 		return nil
 	}
-	if err := markURL(opts.Route.RouteTemplate, "critical"); err != nil {
+	if err := markURL(opts.Route.RouteTemplate, "critical", referenceEnvironment{}); err != nil {
 		return result, err
 	}
 	for _, id := range opts.Route.CriticalAssetIDs {
-		if err := markID(id, "critical"); err != nil {
+		if err := markID(id, "critical", referenceEnvironment{}); err != nil {
 			return result, err
 		}
 	}
 	for _, asset := range assets {
 		if asset.Phase != "dormant" && asset.Kind != "html" && enabled(asset) {
-			if err := mark(assetUseIdentity{asset.ID, asset.URL}, asset.Phase); err != nil {
+			if err := mark(assetUseIdentity{asset.ID, asset.URL}, asset.Phase, referenceEnvironment{}); err != nil {
 				return result, err
 			}
 		}
 	}
-	for len(queue) > 0 || !known && !conservative {
+	for len(queue) > 0 || len(edges) > 0 || !known && !conservative {
+		if len(queue) == 0 && len(edges) > 0 {
+			// Resolve every established execution context before treating an
+			// unrepresented typed edge as opaque. A shared script's document-
+			// relative literals can select different dependencies in each frame.
+			ready := edges
+			edges = nil
+			for _, edge := range ready {
+				for _, dep := range edge.dependencies {
+					if literalTargets[edge.source][dep] {
+						continue
+					}
+					phase := edge.phase
+					for _, i := range byID[dep] {
+						if enabled(assets[i]) {
+							phase = earlierPhase(phase, assets[i].Phase)
+						}
+					}
+					// A typed edge without a loader literal does not establish a
+					// window/worker realm. Relative environment APIs remain unknown.
+					if err := markID(dep, phase, referenceEnvironment{}); err != nil {
+						return result, err
+					}
+				}
+			}
+			continue
+		}
 		if len(queue) == 0 {
 			// Missing producer evidence and computed references cannot defer or
 			// exclude any potential body, even one labeled dormant. Traverse the
@@ -192,20 +240,38 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 			for _, asset := range assets {
 				if asset.Kind != "html" {
 					key := assetUseIdentity{asset.ID, asset.URL}
-					if err := mark(key, "startup"); err != nil {
+					if err := mark(key, "startup", referenceEnvironment{}); err != nil {
 						return result, err
 					}
 				}
 			}
 			continue
 		}
-		current := queue[0]
-		queue = queue[1:]
-		if phases[current.key] != current.phase {
+		// Establish document and worker environments through actual edges before
+		// interpreting unanchored inventory scripts. A shared script is scanned in
+		// every established environment, even when its body was already reached.
+		next := 0
+		for i, item := range queue {
+			if item.environment != (referenceEnvironment{}) || assets[byUse[item.key][0]].Kind != "js" {
+				next = i
+				break
+			}
+		}
+		current := queue[next]
+		queue = append(queue[:next], queue[next+1:]...)
+		if visits[contextualUse{current.key, current.environment}] != current.phase {
 			continue
 		}
 		indexes := byUse[current.key]
 		use := assets[indexes[0]]
+		if use.Kind == "js" && current.environment == (referenceEnvironment{}) && len(environments[current.key]) > 0 {
+			for _, environment := range environments[current.key] {
+				if err := mark(current.key, current.phase, environment); err != nil {
+					return result, err
+				}
+			}
+			continue
+		}
 		referenceBase := use.URL
 		missingFinalContract := false
 		if verify != nil {
@@ -226,7 +292,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 						return result, measureFailure("wrong-fixture", "/graph/finalURL")
 					}
 				}
-				if err := markURL(resolved.Path, current.phase); err != nil {
+				if err := markURL(resolved.Path, current.phase, current.environment); err != nil {
 					return result, err
 				}
 				indexes = targets
@@ -234,6 +300,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 				missingFinalContract = resolved.Path != use.URL
 			}
 		}
+		finalURLs[use.URL] = referenceBase
 		dependencies := map[string]bool{}
 		for _, i := range indexes {
 			asset := assets[i]
@@ -246,16 +313,30 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 		}
 		refs := wire.ReferenceSet{Complete: true}
 		if use.Kind == "html" || use.Kind == "css" || use.Kind == "js" {
-			var err error
-			refs, err = wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
-			if err != nil {
-				return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+			var found bool
+			refs, found = scanned[use.ID]
+			if !found {
+				var err error
+				refs, err = wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
+				if err != nil {
+					return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+				}
+				scanned[use.ID] = refs
+			}
+		}
+		if use.Kind == "html" {
+			current.environment = referenceEnvironment{document: documentReferenceBase(referenceBase, refs)}
+			if use.URL == opts.Route.RouteTemplate {
+				rootBase = current.environment.document
 			}
 		}
 		known = known && refs.Complete
-		referenced := map[string]bool{}
+		if literalTargets[referenceBase] == nil {
+			literalTargets[referenceBase] = map[string]bool{}
+		}
 		for _, ref := range refs.Resources {
-			resolved, ok := resolveReference(referenceBase, ref.URL)
+			base := referenceURLBase(ref, referenceBase, rootBase, current.environment, finalURLs)
+			resolved, ok := resolveReferenceFrom(base, ref.URL, referenceBase)
 			if !ok {
 				known = false
 				continue
@@ -288,32 +369,21 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 			for _, i := range targets {
 				asset := assets[i]
 				if enabled(asset) {
-					referenced[asset.ID] = true
+					literalTargets[referenceBase][asset.ID] = true
 					if dependencies[asset.ID] {
 						phase = earlierPhase(phase, earlierPhase(current.phase, asset.Phase))
 					}
 				}
 			}
-			if err := markURL(resolved, phase); err != nil {
+			environment := current.environment
+			if ref.Worker {
+				environment = referenceEnvironment{worker: resolved}
+			}
+			if err := markURL(resolved, phase, environment); err != nil {
 				return result, err
 			}
 		}
-		// Literal references select a dependency's declaration URL. Edges
-		// without a literal retain every enabled declaration conservatively.
-		for _, dep := range slices.Sorted(maps.Keys(dependencies)) {
-			if referenced[dep] {
-				continue
-			}
-			childPhase := current.phase
-			for _, i := range byID[dep] {
-				if enabled(assets[i]) {
-					childPhase = earlierPhase(childPhase, assets[i].Phase)
-				}
-			}
-			if err := markID(dep, childPhase); err != nil {
-				return result, err
-			}
-		}
+		edges = append(edges, opaqueEdges{referenceBase, current.phase, slices.Sorted(maps.Keys(dependencies))})
 	}
 	if known {
 		result.Reachability = "known"
@@ -341,18 +411,71 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 	return result, nil
 }
 
-func resolveReference(base, reference string) (string, bool) {
+// HTML's first base href sets the document API base, including inline scripts
+// and styles. Modules and external stylesheets retain their own final URL.
+func documentReferenceBase(final string, refs wire.ReferenceSet) string {
+	if !refs.HasBaseHref {
+		return final
+	}
+	parent, err := url.Parse(final)
+	if err != nil {
+		return ""
+	}
+	href, err := url.Parse(strings.Trim(refs.BaseHref, " \t\r\n\f"))
+	if err != nil {
+		return ""
+	}
+	return parent.ResolveReference(href).String()
+}
+
+func referenceURLBase(ref wire.Reference, source, root string, environment referenceEnvironment, finals map[string]string) string {
+	switch ref.Base {
+	case wire.ReferenceBaseSource:
+		return source
+	case wire.ReferenceBaseDocument:
+		return environment.document
+	case wire.ReferenceBaseEnvironment, wire.ReferenceBaseWorker:
+		if environment.worker != "" {
+			if final, ok := finals[environment.worker]; ok {
+				return final
+			}
+			return ""
+		}
+		if ref.Base == wire.ReferenceBaseWorker {
+			return ""
+		}
+		if environment.document != "" {
+			return environment.document
+		}
+		// A root-relative URL is independent of the script's unresolved realm
+		// only when both possible environments retain the verified origin.
+		if strings.HasPrefix(ref.URL, "/") && !strings.HasPrefix(ref.URL, "//") {
+			return root
+		}
+	}
+	return ""
+}
+
+func resolveReferenceFrom(base, reference, origin string) (string, bool) {
+	if base == "" {
+		return "", false
+	}
+	trusted, err := url.Parse(origin)
+	if err != nil {
+		return "", false
+	}
 	parent, err := url.Parse(base)
 	if err != nil {
 		return "", false
 	}
+	parent = trusted.ResolveReference(parent)
 	ref, err := url.Parse(reference)
-	if err != nil || ref.Scheme != "" || ref.Host != "" || ref.User != nil || ref.RawQuery != "" || ref.RawPath != "" {
+	if err != nil || ref.User != nil || ref.RawQuery != "" || ref.ForceQuery || ref.RawPath != "" {
 		return "", false
 	}
 	resolved := parent.ResolveReference(ref)
 	resolved.Fragment = ""
-	if resolved.Path == "" || !strings.HasPrefix(resolved.Path, "/") || strings.Contains(resolved.Path, "\\") {
+	if resolved.Scheme != trusted.Scheme || resolved.Host != trusted.Host || resolved.User != nil || resolved.Path == "" || !strings.HasPrefix(resolved.Path, "/") || strings.ContainsAny(resolved.Path, "\\ \t\r\n") {
 		return "", false
 	}
 	return resolved.Path, true

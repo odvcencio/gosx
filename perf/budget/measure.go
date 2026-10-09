@@ -318,7 +318,13 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			}
 		}
 		for i, fixture := range fixtures {
-			if observed, ok := verified[bodyIdentity{requestURLs[fixture.url], fixture.sha}]; ok {
+			identity := requestURLs[fixture.url]
+			if observed, ok := observations[fixture.url]; ok {
+				identity = observed.finalURL
+			}
+			// Report the physical body's earliest phase; a redirect's transfer
+			// remains charged at the phase of its own request above.
+			if observed, ok := verified[bodyIdentity{identity, fixture.sha}]; ok {
 				phases[fixture.url] = earlierPhase(phases[fixture.url], observed.Phase)
 			}
 			result.Assets[i].Phase = earlierPhase(result.Assets[i].Phase, phases[fixture.url])

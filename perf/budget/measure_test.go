@@ -215,15 +215,15 @@ func testMeasuredResourceGraph(t *testing.T, graph ReachabilityOptions, redirect
 func TestMeasureDeferredHTMLKeepsResourcesAfterReady(t *testing.T) {
 	bodies := map[string][]byte{
 		"app/fixture/html":   []byte(`<p>Fixture document</p>`),
-		"app/fixture/script": []byte(`fetch("./later/")`),
+		"app/fixture/script": []byte(`fetch("/counter/later/")`),
 		"app/fixture/later":  []byte(`<img src="./image.png">`),
 		"app/fixture/image":  []byte("fixture image"),
 	}
 	assets := []buildmanifest.PerfAssetUse{
 		graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", bodies["app/fixture/html"]),
 		graphAsset("app/fixture/script", "/entry.js", "js", "after-ready", "interaction", bodies["app/fixture/script"], "app/fixture/later"),
-		graphAsset("app/fixture/later", "/later/", "html", "dormant", "always", bodies["app/fixture/later"]),
-		graphAsset("app/fixture/image", "/later/image.png", "image", "dormant", "always", bodies["app/fixture/image"]),
+		graphAsset("app/fixture/later", "/counter/later/", "html", "dormant", "always", bodies["app/fixture/later"]),
+		graphAsset("app/fixture/image", "/counter/later/image.png", "image", "dormant", "always", bodies["app/fixture/image"]),
 	}
 	graph := ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: assets}, Bodies: bodies, Route: FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}}}
 	opts, _ := testMeasuredResourceGraph(t, graph, nil)
