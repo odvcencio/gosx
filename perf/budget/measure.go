@@ -214,7 +214,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		}
 		// Count each verified physical document once, including its active
 		// embedded documents. Dormant HTML never enters this observed closure.
-		documents := map[string]documentExecution{first.finalURL: {measuredHTML.HTMLExecution, "critical"}}
+		documents := map[string]documentExecution{first.finalURL: {measuredHTML.executionCounts(), "critical"}}
 		runtimeHashed := measuredHTML.Framework.Raw == 0
 		for _, fixture := range fixtures {
 			phase := phases[fixture.id]
@@ -255,7 +255,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				}
 				// Static enforcement covers every reachable document, at any phase.
 				noExecutableDocuments = noExecutableDocuments && documentZeroJS(html.capabilities)
-				entry := documentExecution{html.HTMLExecution, phase}
+				entry := documentExecution{html.executionCounts(), phase}
 				if old, exists := documents[observed.finalURL]; exists {
 					entry.phase = earlierPhase(old.phase, phase)
 				}
@@ -286,7 +286,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			}
 		}
 		result.execution[route.RouteTemplate] = allExecution
-		row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(HTMLMeasurement{HTMLExecution: coldExecution}))
+		row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(HTMLMeasurement{InlineAppScriptMax: coldExecution.InlineAppScriptMax, SyncExecutableScripts: coldExecution.SyncExecutableScripts}))
 		totals, err := SumPhases(costs)
 		if err != nil {
 			return result, err

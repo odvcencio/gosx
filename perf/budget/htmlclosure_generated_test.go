@@ -46,8 +46,8 @@ func TestInlineActiveDocumentClosureCorpus(t *testing.T) {
 						rejected++
 						return HTMLMeasurement{}, false
 					}
-					if documentZeroJS(caps) != seed.zeroJS || got.HTMLExecution != root.HTMLExecution {
-						t.Fatalf("placement differs: zero-js=%t want=%t execution=%+v want=%+v", documentZeroJS(caps), seed.zeroJS, got.HTMLExecution, root.HTMLExecution)
+					if documentZeroJS(caps) != seed.zeroJS || got.executionCounts() != root.executionCounts() {
+						t.Fatalf("placement differs: zero-js=%t want=%t execution=%+v want=%+v", documentZeroJS(caps), seed.zeroJS, got.executionCounts(), root.executionCounts())
 					}
 					if !seed.zeroJS && got.ExecutableSources == 0 {
 						t.Fatal("detected execution has no measured sources")
@@ -59,8 +59,8 @@ func TestInlineActiveDocumentClosureCorpus(t *testing.T) {
 				}
 				child := measureCorpusReport(t, dir, info, markup, true, executionCorpusEncoder)
 				placements++
-				if child.execution["/counter/"] != root.HTMLExecution {
-					t.Fatalf("reachable child differs: %+v want %+v", child.execution["/counter/"], root.HTMLExecution)
+				if child.execution["/counter/"] != root.executionCounts() {
+					t.Fatalf("reachable child differs: %+v want %+v", child.execution["/counter/"], root.executionCounts())
 				}
 				for _, row := range child.Rows {
 					for _, policy := range row.Policies {

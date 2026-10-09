@@ -18,6 +18,16 @@ func srcdocWrap(body string, depth int, attributes string) string {
 	return body
 }
 
+func TestInlineMeasurementKeyedLiteral(t *testing.T) {
+	// Existing callers construct measurements using these public fields.
+	measurement := HTMLMeasurement{InlineAppScriptMax: 1025, ExecutableScripts: 1, SyncExecutableScripts: 1}
+	for _, policy := range htmlGuardrailPolicies(measurement) {
+		if policy.Passed {
+			t.Fatal("constructed execution observations bypassed a guardrail", policy)
+		}
+	}
+}
+
 func TestInlineScriptSourceBytesAndFrameworkHash(t *testing.T) {
 	for _, tc := range []struct{ prefix, code, suffix string }{
 		{`<script>`, strings.Repeat("\r\n", 512) + "x", `</script>`},
@@ -31,8 +41,8 @@ func TestInlineScriptSourceBytesAndFrameworkHash(t *testing.T) {
 			t.Errorf("raw script source bytes were lost: max=%d bytes=%d want at least %d: %v", root.InlineAppScriptMax, root.InlineAppScriptBytes, len(tc.code), err)
 		}
 		child, err := measureHTML([]byte(srcdocWrap(body, 1, "")), HTMLMeasureOptions{}, testBodyNormalizer)
-		if err != nil || child.HTMLExecution != root.HTMLExecution {
-			t.Errorf("srcdoc changed script byte observations: got=%+v want=%+v: %v", child.HTMLExecution, root.HTMLExecution, err)
+		if err != nil || child.executionCounts() != root.executionCounts() {
+			t.Errorf("srcdoc changed script byte observations: got=%+v want=%+v: %v", child.executionCounts(), root.executionCounts(), err)
 		}
 	}
 	code := "const value=1;\r\n" + strings.Repeat("x", 1025)

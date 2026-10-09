@@ -22,13 +22,23 @@ type HTMLMeasureOptions struct {
 	Pin                   assetmeasure.CompressorPin
 }
 type HTMLMeasurement struct {
-	HTMLExecution
-	Sizes            assetmeasure.Sizes
-	Framework        SizeTriple
-	App              SizeTriple
-	full             []byte
-	withoutFramework []byte
-	capabilities     pagecaps.Capabilities
+	Sizes                 assetmeasure.Sizes
+	Framework             SizeTriple
+	App                   SizeTriple
+	InlineAppScriptMax    int64
+	ExecutableScripts     int64
+	SyncExecutableScripts int64
+	ExecutableSources     int64
+	InlineAppScriptBytes  int64
+	full                  []byte
+	withoutFramework      []byte
+	capabilities          pagecaps.Capabilities
+}
+
+func (m HTMLMeasurement) executionCounts() HTMLExecution {
+	return HTMLExecution{ExecutableSources: m.ExecutableSources, ExecutableScripts: m.ExecutableScripts,
+		SyncExecutableScripts: m.SyncExecutableScripts, InlineAppScriptMax: m.InlineAppScriptMax,
+		InlineAppScriptBytes: m.InlineAppScriptBytes}
 }
 
 // HTMLExecution records active document execution, including srcdoc. Sources
