@@ -102,7 +102,7 @@
       "/demos/scene3d/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 904855,
+          "frameworkJsWireBytes": 904889,
           "htmlWireBytes": 17708,
           "imageWireBytes": 8404,
           "inlineScriptBytes": 1551,
@@ -123,7 +123,7 @@
         ],
         "raise": {
           "cssWireBytes": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production cssWireBytes measures 12767 against the previous 256 limit. The new 13023 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load.",
-          "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
+          "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured. Native document-liveness guards share the core runtime on this route. The optimized hosted PR592 wire report 37912274232 measures 904889 bytes for this aggregate, 34 above its previous limit after main integration. Set the aggregate to that exact observed combined-runtime size; all compression/privacy/cache policies and tolerance remain unchanged.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
           "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
           "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014). Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 230415 to 258118 B; htmlWireBytes drops from 45498 to 17708 B. Runtime source bytes are unchanged. M0 feature loader: owner-approved one-time M0 core change (Cicada Studio spec section 4, 2026-10-08). The shared runtime and navigation bundles grow by 381 B and 260 B raw (jsWireBytes measured 258340 against the 258118 limit; 258390 after review fixes). The new 260973-byte limit uses the existing wire tolerance (decision 0014).",
@@ -296,7 +296,7 @@
           "jsWireBytes": 88124,
           "lazyJsWireBytes": 256,
           "requests": 9,
-          "totalWireBytes": 304319,
+          "totalWireBytes": 304357,
           "wasmWireBytes": 213874
         },
         "require": [
@@ -311,7 +311,7 @@
         "raise": {
           "frameworkJsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
           "jsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap. Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 59914 to 87617 B; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged. M0 feature loader: owner-approved one-time M0 core change (Cicada Studio spec section 4, 2026-10-08). The shared runtime and navigation bundles grow, so jsWireBytes measured 87668, then 87878 after merging main's own runtime growth, against the 87617 limit; the new 87942-byte limit is the latest measurement plus 64 bytes. Native document-liveness guards prevent cold engines from sending stale-CSRF requests after session rotation. Merging current main for PR592 measures 88124 JavaScript bytes on this route, 182 above the existing limit. Set only this JavaScript limit to the measured combined-runtime size; compression, privacy/cache policies, tolerance, and non-JavaScript limits stay unchanged.",
-          "totalWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
+          "totalWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap. Native document-liveness guards share the core runtime on this route. The optimized hosted PR592 wire report 37912274232 measures 304357 bytes for this aggregate, 38 above its previous limit after main integration. Set the aggregate to that exact observed combined-runtime size; all compression/privacy/cache policies and tolerance remain unchanged.",
           "requests": "Navigation re-baseline: The external navigation runtime adds one deferred, content-hashed script request. requests changes from 8 to 9 requests; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged."
         }
       },
