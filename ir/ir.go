@@ -49,6 +49,9 @@ type Program struct {
 
 	// Nodes is the flat array of all IR nodes (elements, text, expressions, etc).
 	Nodes []Node
+
+	// Source binding evidence is private and never changes the VM artifact.
+	aotBindings *aotSourceBindings
 }
 
 // Import represents a Go import.
@@ -305,8 +308,8 @@ type SignalInfo struct {
 	Local    string // local variable name used inside the component (e.g., "count")
 	InitExpr string // source text of the init expression (e.g., "0")
 	TypeHint string // inferred type from init value (e.g., "int", "string")
-	// SourceType retains scalar source evidence separately from VM type hints.
-	// Empty means the source kind was not proved.
+	// SourceType retains authored constructor spelling for diagnostics.
+	// Admission obtains the resolved type from the host checker.
 	SourceType string
 }
 

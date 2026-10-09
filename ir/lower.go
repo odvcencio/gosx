@@ -711,7 +711,7 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			Local:      varName,
 			InitExpr:   initExpr,
 			TypeHint:   l.inferTypeHint(initExpr),
-			SourceType: l.signalSourceType(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	case signalCallNewShared, signalCallShared:
 		sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
@@ -724,7 +724,7 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			Local:      varName,
 			InitExpr:   initExpr,
 			TypeHint:   l.inferTypeHint(initExpr),
-			SourceType: l.signalSourceType(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	default:
 		return SignalInfo{}, false
@@ -747,7 +747,15 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 	}, true
 }
 
-func (l *lowerer) signalSourceType(source string) string {
+func (l *lowerer) signalSourceType(call *gotreesitter.Node, source string) string {
+	if types := l.childByField(call, "type_arguments"); types != nil {
+		// An explicit type controls the signal's Go type. Preserve its spelling
+		// for diagnostics. The host checker resolves the actual type.
+		if types.NamedChildCount() != 1 {
+			return ""
+		}
+		return strings.TrimSpace(l.text(types.NamedChild(0)))
+	}
 	source = strings.TrimSpace(source)
 	if strings.HasPrefix(source, "'") {
 		return "rune"
@@ -1178,6 +1186,7 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 			l.lowerImportDecl(child)
 		}
 	}
+	l.collectAOTBindings(root)
 	l.collectStrictSchemas(root)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)

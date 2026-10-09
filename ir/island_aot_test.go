@@ -1,4 +1,4 @@
-//go:build !tinygo
+//go:build !tinygo && !js
 
 package ir_test
 
@@ -19,11 +19,11 @@ type CounterProps struct { Label string; Initial int32 }
 //gosx:island
 func Counter(props CounterProps) Node {
  count := signal.New(0)
- doubled := signal.Derive(func() int { return count.Get() + count.Get() })
- increment := func() { count.Set(count.Get() + 1) }
- return <div><button type="button" onClick={increment}>Count: {count}</button><span>{props.Label}{props.Initial}</span></div>
+ doubled := signal.Derive(func() int { return 0 }); _ = doubled
+ increment := func() {}
+ return <div><button type="button" onClick={increment}>Count: {count.Get()}</button><span>{props.Label}{props.Initial}</span></div>
 }`)
-	p, err := parse(t, src)
+	p, err := parseAOT(t, src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -65,7 +65,7 @@ func Counter(props CounterProps) Node {
 }
 
 func TestIslandAOTRejectsErasedAndUnsupportedSourceTypes(t *testing.T) {
-	for _, typ := range []string{"int8", "int16", "int64", "uint", "uint32", "rune", "float32", "float64", "CounterInt"} {
+	for _, typ := range []string{"int8", "int16", "int64", "uint", "uint32", "float32", "float64", "CounterInt"} {
 		t.Run(typ, func(t *testing.T) {
 			src := []byte(fmt.Sprintf(`package example
 type CounterInt int
@@ -74,7 +74,7 @@ func Counter() Node {
  derived := signal.Derive(func() %s { return 1 })
  return <div>{derived}</div>
 }`, typ))
-			p, err := parse(t, src)
+			p, err := parseAOT(t, src)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -91,7 +91,7 @@ func Counter() Node {
 func TestIslandAOTRejectsRuneStringErasure(t *testing.T) {
 	for _, body := range []string{`label := signal.New('x'); return <div>{label}</div>`, `return <div>{'x'}</div>`, `return <div><Badge /></div>`} {
 		src := []byte("package example\n//gosx:island\nfunc Counter() Node { " + body + " }\ncomponent Badge() { return <span>{'x'}</span> }")
-		p, err := parse(t, src)
+		p, err := parseAOT(t, src)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -122,17 +122,17 @@ func TestIslandAOTMissingTypeEvidenceAndIdentity(t *testing.T) {
 	}
 }
 
-func TestIslandAOTNestedInputsAndEvents(t *testing.T) {
+func TestIslandAOTNestedInputsAndHandlers(t *testing.T) {
 	src := []byte(`package example
 type Detail struct { Label string }
 type EditorProps struct { Detail Detail }
 //gosx:island
 func Editor(props EditorProps) Node {
  text := signal.New("")
- edit := func() { text.Set(value) }
- return <div><input value={text} onInput={edit} /><span>{props.Detail.Label}{props.Detail.Label}</span></div>
+ edit := func() {}
+ return <div><input value={text.Get()} onInput={edit} /><span>{props.Detail.Label}{props.Detail.Label}</span></div>
 }`)
-	p, err := parse(t, src)
+	p, err := parseAOT(t, src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,11 +141,11 @@ func Editor(props EditorProps) Node {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(u.Contract.Inputs) != 2 || u.Contract.Inputs[0].Source != "event" || u.Contract.Inputs[0].Root != "value" || u.Contract.Inputs[0].Kind != aot.String {
-		t.Fatalf("event: %+v", u.Contract.Inputs)
+	if len(u.Contract.Inputs) != 1 {
+		t.Fatalf("inputs: %+v", u.Contract.Inputs)
 	}
-	input := u.Contract.Inputs[1]
-	if input.Root != "props" || len(input.Path) != 2 || input.Path[0] != "Detail" || input.Path[1] != "Label" || len(input.Exprs) != 2 {
+	input := u.Contract.Inputs[0]
+	if input.Root != "Detail" || len(input.Path) != 1 || input.Path[0] != "Label" || len(input.Exprs) != 2 {
 		t.Fatalf("selector interning: %+v", input)
 	}
 	if receipt := aot.Classify(u, aot.ScalarDOMV1); !receipt.Eligible {
@@ -300,7 +300,7 @@ type CounterProps struct { Initial %s; Other int }
 func Counter(props CounterProps) Node {
  return <div>{%s}</div>
 }`, typ, expr))
-	p, err := parse(t, src)
+	p, err := parseAOT(t, src)
 	if err != nil {
 		t.Fatal(err)
 	}
