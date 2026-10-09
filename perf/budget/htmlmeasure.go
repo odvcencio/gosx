@@ -233,18 +233,24 @@ func executableScriptType(typ string) bool {
 	return false
 }
 
-// VerifyHTMLNonces binds declared nonce attributes to their served CSP directive.
+// VerifyHTMLNonces binds declared nonce attributes to the served CSP list. Each
+// enforced policy with an applicable directive must allow the element's nonce.
 // Nonce values remain private and are never included in an error or report.
 func VerifyHTMLNonces(body []byte, csp string) error {
-	directives := map[string][]string{}
-	for _, part := range strings.Split(csp, ";") {
-		fields := strings.Fields(part)
-		if len(fields) > 0 {
-			if _, exists := directives[fields[0]]; exists {
-				return measureFailure("policy", "/html/nonce")
+	var policies []map[string][]string
+	// CSP field values may themselves contain comma-separated policies.
+	for _, policy := range strings.Split(csp, ",") {
+		directives := map[string][]string{}
+		for _, part := range strings.Split(policy, ";") {
+			fields := strings.Fields(part)
+			if len(fields) > 0 {
+				if _, exists := directives[fields[0]]; exists {
+					return measureFailure("policy", "/html/nonce")
+				}
+				directives[fields[0]] = fields[1:]
 			}
-			directives[fields[0]] = fields[1:]
 		}
+		policies = append(policies, directives)
 	}
 	tokenizer := html.NewTokenizer(bytes.NewReader(body))
 	templates := 0
@@ -277,18 +283,30 @@ func VerifyHTMLNonces(body []byte, csp string) error {
 			if token.Data == "style" {
 				key, fallback = "style-src-elem", "style-src"
 			}
-			allowed, found := directives[key]
-			if !found {
-				allowed, found = directives[fallback]
+			bound := false
+			for _, directives := range policies {
+				allowed, found := directives[key]
+				if !found {
+					allowed, found = directives[fallback]
+				}
+				if !found {
+					allowed, found = directives["default-src"]
+				}
+				// A policy without a relevant directive does not restrict this
+				// element. Another policy must still establish nonce binding.
+				if !found {
+					continue
+				}
+				bound = true
+				matches := false
+				for _, source := range allowed {
+					matches = matches || source == "'nonce-"+attribute.Val+"'"
+				}
+				if !matches {
+					return measureFailure("policy", "/html/nonce")
+				}
 			}
-			if !found {
-				allowed = directives["default-src"]
-			}
-			matches := false
-			for _, source := range allowed {
-				matches = matches || source == "'nonce-"+attribute.Val+"'"
-			}
-			if attribute.Val == "" || !matches {
+			if attribute.Val == "" || !bound {
 				return measureFailure("policy", "/html/nonce")
 			}
 		}

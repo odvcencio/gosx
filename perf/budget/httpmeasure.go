@@ -100,7 +100,9 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			return out, measureFailure("wrong-fixture", "/response")
 		}
 		noCookie = noCookie && len(response.Header.Values("Set-Cookie")) == 0
-		encoding := strings.ToLower(strings.TrimSpace(response.Header.Get("Content-Encoding")))
+		// Repeated lines form an ordered coding list. The decoder accepts one
+		// supported coding and rejects stacked encodings rather than ignoring them.
+		encoding := strings.ToLower(strings.TrimSpace(strings.Join(response.Header.Values("Content-Encoding"), ", ")))
 		raw, err := decodeServedBody(wire, encoding)
 		if err != nil {
 			return out, err
@@ -113,6 +115,10 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		out.Requests++
 		if response.StatusCode >= 300 && response.StatusCode <= 399 && response.StatusCode != http.StatusNotModified {
 			out.RedirectSizes = append(out.RedirectSizes, sizes)
+			// Location is a singleton; a comma can be part of its URI.
+			if len(response.Header.Values("Location")) != 1 {
+				return out, measureFailure("wrong-fixture", "/redirect")
+			}
 			location, err := response.Location()
 			if err != nil || hop == 10 || location.Scheme != base.Scheme || location.Host != base.Host || location.User != nil || location.RawQuery != "" || location.Fragment != "" {
 				return out, measureFailure("wrong-fixture", "/redirect")
@@ -129,7 +135,12 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 				return out, measureFailure("stale-sidecar", "/encoding")
 			}
 		}
-		contentType, _, mimeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
+		// Content-Type is a singleton, not a list of alternative media types.
+		contentTypes := response.Header.Values("Content-Type")
+		if len(contentTypes) != 1 {
+			return out, measureFailure("policy", "/contentType")
+		}
+		contentType, _, mimeErr := mime.ParseMediaType(contentTypes[0])
 		if mimeErr != nil || !measureMIME(opts.Kind, contentType) {
 			return out, measureFailure("policy", "/contentType")
 		}
@@ -145,7 +156,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			out.Policies = append(out.Policies, PolicyResult{Name: "wasm-streaming", Passed: contentType == "application/wasm"})
 		}
 		if opts.Kind == "html" {
-			if err := VerifyHTMLNonces(raw, response.Header.Get("Content-Security-Policy")); err != nil {
+			if err := VerifyHTMLNonces(raw, strings.Join(response.Header.Values("Content-Security-Policy"), ", ")); err != nil {
 				return out, err
 			}
 			out.Policies[2].Name = "html-compressed"

@@ -40,7 +40,7 @@ func TestHTTPMeasureServedEncodingIsSeparateFromCanonical(t *testing.T) {
 				wire = br
 			}
 			opts := testHTTPOptions(t, func(w http.ResponseWriter, r *http.Request) {
-				if r.Header.Get("Accept-Encoding") != "br, gzip" {
+				if strings.Join(r.Header.Values("Accept-Encoding"), ", ") != "br, gzip" {
 					t.Error("encoding negotiation missing")
 				}
 				w.Header().Set("Content-Type", "text/javascript")

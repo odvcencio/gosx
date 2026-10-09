@@ -483,12 +483,14 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 	if err != nil {
 		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: read: %w", raw, err)
 	}
-	enc := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+	// Preserve the ordered coding list across header lines. decode rejects
+	// stacked encodings explicitly instead of interpreting only the first.
+	enc := strings.ToLower(strings.TrimSpace(strings.Join(resp.Header.Values("Content-Encoding"), ", ")))
 	decoded, err := decode(enc, wire)
 	if err != nil {
 		return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: decode %s: %w", raw, enc, err)
 	}
-	cc := resp.Header.Get("Cache-Control")
+	cc := strings.Join(resp.Header.Values("Cache-Control"), ", ")
 	res := Resource{
 		URL:             req.URL.RequestURI(),
 		Initiator:       initiator,
@@ -504,7 +506,15 @@ func fetchOnce(ctx context.Context, client *http.Client, ua, raw, initiator stri
 	var location *url.URL
 	switch resp.StatusCode {
 	case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther, http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
-		loc := resp.Header.Get("Location")
+		// Location is a singleton URI, so joining values would be ambiguous.
+		locations := resp.Header.Values("Location")
+		if len(locations) > 1 {
+			return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: multiple Location headers", raw)
+		}
+		loc := ""
+		if len(locations) == 1 {
+			loc = locations[0]
+		}
 		if loc == "" {
 			return Resource{}, nil, nil, nil, fmt.Errorf("GET %s: status %d without Location", raw, resp.StatusCode)
 		}
