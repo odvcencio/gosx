@@ -5,12 +5,12 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"io"
-	"mime"
 	"strings"
 	"unicode/utf8"
 
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/internal/assetmeasure"
+	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 // HTMLField declares a transient attribute whose value is normalized. Every
@@ -118,11 +118,11 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 			}
 			if token.Data == "script" {
 				active = true
-				executable = templates == 0 && attributes["src"] == "" && executableScriptType(attributes["type"])
-				if templates == 0 && executableScriptType(attributes["type"]) && strings.TrimSpace(strings.ToLower(attributes["type"])) != "module" && (attributes["src"] == "" || !seen["defer"] && !seen["async"]) {
+				executable = templates == 0 && attributes["src"] == "" && pagecaps.ExecutableScriptType(attributes["type"])
+				if templates == 0 && pagecaps.ExecutableScriptType(attributes["type"]) && strings.TrimSpace(strings.ToLower(attributes["type"])) != "module" && (attributes["src"] == "" || !seen["defer"] && !seen["async"]) {
 					result.SyncExecutableScripts++
 				}
-				if templates == 0 && attributes["src"] != "" && executableScriptType(attributes["type"]) {
+				if templates == 0 && attributes["src"] != "" && pagecaps.ExecutableScriptType(attributes["type"]) {
 					result.ExecutableScripts++
 				}
 			}
@@ -219,22 +219,6 @@ func VerifyHTMLRenders(first, second HTMLMeasurement) error {
 		return measureFailure("wrong-fixture", "/html/renders")
 	}
 	return nil
-}
-
-func executableScriptType(typ string) bool {
-	typ = strings.ToLower(strings.TrimSpace(typ))
-	if typ != "" && typ != "module" {
-		mediaType, _, err := mime.ParseMediaType(typ)
-		if err != nil {
-			return false
-		}
-		typ = mediaType
-	}
-	switch typ {
-	case "", "module", "application/javascript", "application/ecmascript", "application/x-javascript", "application/x-ecmascript", "text/javascript", "text/ecmascript", "text/jscript", "text/livescript", "text/x-javascript", "text/x-ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5":
-		return true
-	}
-	return false
 }
 
 // VerifyHTMLNonces binds declared nonce attributes to their served CSP directive.

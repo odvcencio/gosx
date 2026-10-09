@@ -21,11 +21,14 @@ func FromHTML(data []byte) (Capabilities, error) {
 	if err != nil {
 		return Capabilities{}, errors.New("invalid capability HTML")
 	}
+	executable, err := executableMarkup(root)
+	if err != nil {
+		return Capabilities{}, err
+	}
 	c := Capabilities{BootstrapMode: "none", Runtime: "none", decoded: true}
 	modes := map[string]bool{}
 	bootstrapModes := map[string]bool{}
 	var manifest *hydrate.Manifest
-	executable := false
 	var visit func(*html.Node) error
 	visit = func(node *html.Node) error {
 		if node.Type == html.ElementNode {
@@ -36,9 +39,6 @@ func FromHTML(data []byte) (Capabilities, error) {
 			for _, attr := range node.Attr {
 				key := strings.ToLower(attr.Key)
 				attrs[key] = attr.Val
-				if strings.HasPrefix(key, "on") && len(key) > 2 || strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Val)), "javascript:") {
-					executable = true
-				}
 			}
 			if _, ok := attrs["data-gosx-navigation"]; ok {
 				c.Navigation = true
@@ -59,10 +59,6 @@ func FromHTML(data []byte) (Capabilities, error) {
 				c.Video = true
 			}
 			if node.Data == "script" {
-				switch strings.ToLower(strings.TrimSpace(attrs["type"])) {
-				case "", "module", "text/javascript", "application/javascript":
-					executable = true
-				}
 				switch attrs["data-gosx-script"] {
 				case "bootstrap":
 					c.Bootstrap = true
@@ -180,4 +176,75 @@ func FromHTML(data []byte) (Capabilities, error) {
 		return Capabilities{}, err
 	}
 	return c, nil
+}
+
+// executableMarkup applies one detector to active HTML, SVG and inline child
+// documents. Template content stays inert; srcdoc is parsed as HTML rather
+// than searched as a string, so data blocks and nested templates stay inert.
+func executableMarkup(root *html.Node) (bool, error) {
+	type pending struct {
+		node  *html.Node
+		depth int
+	}
+	queue := []pending{{node: root}}
+	for len(queue) > 0 {
+		item := queue[len(queue)-1]
+		queue = queue[:len(queue)-1]
+		node := item.node
+		if node.Type == html.ElementNode {
+			if node.Namespace == "" && node.Data == "template" {
+				continue
+			}
+			attrs := map[string]string{}
+			for _, attr := range node.Attr {
+				key := strings.ToLower(attr.Key)
+				attrs[key] = attr.Val
+				if strings.HasPrefix(key, "on") && len(key) > 2 || javascriptURL(attr.Val) {
+					return true, nil
+				}
+			}
+			if node.Data == "script" && ExecutableScriptType(attrs["type"]) {
+				return true, nil
+			}
+			if node.Data == "meta" && strings.EqualFold(strings.TrimSpace(attrs["http-equiv"]), "refresh") && refreshJavascriptURL(attrs["content"]) {
+				return true, nil
+			}
+			if node.Namespace == "" && node.Data == "iframe" {
+				if content, ok := attrs["srcdoc"]; ok {
+					// Bound nested parsing independently of the outer byte limit.
+					if item.depth >= 32 {
+						return false, errors.New("invalid capability HTML")
+					}
+					child, err := html.Parse(strings.NewReader(content))
+					if err != nil {
+						return false, errors.New("invalid capability HTML")
+					}
+					queue = append(queue, pending{child, item.depth + 1})
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			queue = append(queue, pending{child, item.depth})
+		}
+	}
+	return false, nil
+}
+
+func javascriptURL(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "javascript:")
+}
+
+func refreshJavascriptURL(value string) bool {
+	if separator := strings.IndexAny(value, ";,"); separator >= 0 {
+		value = value[separator+1:]
+	}
+	value = strings.TrimSpace(value)
+	if len(value) >= 3 && strings.EqualFold(value[:3], "url") {
+		value = strings.TrimSpace(value[3:])
+		if !strings.HasPrefix(value, "=") {
+			return false
+		}
+		value = strings.TrimSpace(value[1:])
+	}
+	return javascriptURL(strings.TrimLeft(value, "'\""))
 }

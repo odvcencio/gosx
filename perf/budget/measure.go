@@ -210,7 +210,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		inline := map[string]int64{first.finalURL: measuredHTML.Framework.Brotli}
 		coldInline := map[string]bool{first.finalURL: true}
 		noExecutableAssets := true
-		noExecutableDocuments := measuredHTML.ExecutableScripts == 0
+		noExecutableDocuments := documentZeroJS(caps)
 		runtimeHashed := measuredHTML.Framework.Raw == 0
 		for _, fixture := range fixtures {
 			phase := phases[fixture.id]
@@ -252,7 +252,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				}
 				childHTML = html
 				// Static enforcement covers every reachable document, at any phase.
-				noExecutableDocuments = noExecutableDocuments && html.ExecutableScripts == 0
+				childCaps, err := pagecaps.FromHTML(observed.body)
+				if err != nil {
+					return result, measureFailure("capability", "/assets/capabilities")
+				}
+				noExecutableDocuments = noExecutableDocuments && documentZeroJS(childCaps)
 				if fixture.owner == "app" {
 					inline[observed.finalURL] = html.Framework.Brotli
 					coldInline[observed.finalURL] = coldInline[observed.finalURL] || phaseRank(phase) <= 1
@@ -292,7 +296,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				row.AppBytes -= n
 			}
 		}
-		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && noExecutableDocuments && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0}, PolicyResult{Name: "runtime-hashed", Passed: runtimeHashed})
+		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && noExecutableDocuments}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0}, PolicyResult{Name: "runtime-hashed", Passed: runtimeHashed})
 		row.HeadroomBytes = -row.NormalizedBytes
 		for _, name := range route.PageTypes {
 			family, backend, _ := pageTypeVariant(name)
@@ -314,6 +318,10 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	result.Coverage.AssetsMeasured = int64(len(fixtures))
 	sort.Slice(result.Assets, func(i, j int) bool { return result.Assets[i].ID < result.Assets[j].ID })
 	return result, nil
+}
+
+func documentZeroJS(caps pagecaps.Capabilities) bool {
+	return !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion
 }
 
 type fixtureBody struct {

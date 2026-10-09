@@ -18,10 +18,13 @@ func TestCheckStaticDocumentClosureZeroJS(t *testing.T) {
 		name, child string
 		reachable   bool
 		scripts     int64
+		executable  bool
 	}{
-		{"iframe-module", `<script type="module">window.fixtureReady=1</script>`, true, 1},
-		{"iframe-script-free", `<p>Child content</p>`, true, 0},
-		{"dormant-module", `<script type="module">window.fixtureReady=1</script>`, false, 1},
+		{"iframe-module", `<script type="module">window.fixtureReady=1</script>`, true, 1, true},
+		{"iframe-event-handler", `<button onclick="window.fixtureReady=1">Run</button>`, true, 0, true},
+		{"iframe-script-free", `<p>Child content</p>`, true, 0, false},
+		{"dormant-module", `<script type="module">window.fixtureReady=1</script>`, false, 1, true},
+		{"dormant-event-handler", `<button onclick="window.fixtureReady=1">Run</button>`, false, 0, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			gate := gateOptions(t)
@@ -101,7 +104,7 @@ func TestCheckStaticDocumentClosureZeroJS(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			passed := !tc.reachable || tc.scripts == 0
+			passed := !tc.reachable || !tc.executable
 			if passed {
 				if !out.Passed || len(out.Violations) != 0 || CheckExitCode(out, nil) != 0 {
 					t.Fatal("script-free closure failed", out)
