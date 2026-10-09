@@ -4,6 +4,10 @@
 
 ## v0.57.7
 
+- Retain WebGPU detail resources while atlas pipelines validate. Scenes with
+  detailed materials now resume rendering after validation instead of allocating
+  a new atlas and pipeline on every frame without presenting to the canvas.
+
 - Add dependency-light `game/host` browser frame and gamepad adapters for
   presentation-only WASM engines. Existing `game/loop` and `game/gamepad`
   adapters remain compatible aliases; using the host adapters directly avoids

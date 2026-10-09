@@ -282,6 +282,7 @@ test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
 	GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/host
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/audio -run '^TestHostJS'
 
 test-wasm-islands:

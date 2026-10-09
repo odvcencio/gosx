@@ -18521,10 +18521,14 @@
       beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      if (!detailResources && bundle.materials.some(function(material: any) { return material && material.detail; })) {
+        // Retain ownership before an atlas bake can suspend this frame for
+        // pipeline validation; the next frame must reuse the pending resources.
+        detailResources = sceneWebGPUCreateDetailResources(device, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
+      }
       // Prepare the full detail draw set before retiring resources from earlier frames.
       detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
-        frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout,
-        source: WGSL_PBR_FRAGMENT, placeholderView: placeholderView, enabled: detailEnabled,
+        placeholderView: placeholderView, enabled: detailEnabled,
       });
       // Reuse uniforms when color or detail controls change; retire buffers and
       // atlases that no longer belong to the active draw set.

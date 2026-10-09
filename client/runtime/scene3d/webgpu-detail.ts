@@ -137,10 +137,10 @@ function sceneWebGPUUploadDetail(device: any, resources: any, material: any, ena
 }
 
 function sceneWebGPUPrepareDetailFrame(device: any, resources: any, materials: any[], textureCache: any, options: any) {
+  if (!resources) return resources;
   sceneWebGPUBeginDetailFrame(resources);
   for (const material of materials) {
     if (!material || !material.detail) continue;
-    if (!resources) resources = sceneWebGPUCreateDetailResources(device, options.frameLayout, options.materialLayout, options.source);
     sceneWebGPUPrepareDetail(device, resources, material, textureCache, options.placeholderView);
     sceneWebGPUUploadDetail(device, resources, material, options.enabled);
   }
