@@ -15,6 +15,8 @@ var publicRecordDefinitions = map[string]string{
 	"gosx.perf-pair/v1": "PairReport", "gosx.perf-field/v1": "FieldSnapshot", "gosx.perf-run/v1": "RunStatus",
 }
 
+const maxPublicIntegerSample = 1<<53 - 1
+
 // DecodeRecord checks a closed public record's shape and numeric domains.
 // Catalog membership must be checked before publishing these records.
 func DecodeRecord(r io.Reader) (any, error) {
@@ -45,13 +47,95 @@ func DecodeRecord(r io.Reader) (any, error) {
 	case "RunStatus":
 		record = new(RunStatus)
 	}
-	if err := decodeInput(data, definition, record); err != nil {
-		return nil, err
+	value, err := decodeInputValue(data, definition)
+	if err != nil {
+		return nil, inputReference(err, referenceLabel(definition), "")
+	}
+	if err := validateRawRecordSamples(value, definition); err != nil {
+		return nil, inputReference(err, referenceLabel(definition), "")
+	}
+	if err := decodeValidatedInput(value, record); err != nil {
+		return nil, inputReference(err, referenceLabel(definition), "")
 	}
 	if err := validateRecordDomains(record); err != nil {
 		return nil, inputReference(err, referenceLabel(definition), "")
 	}
 	return record, nil
+}
+
+// The shape has already been validated; samples still contain json.Number.
+func validateRawRecordSamples(value any, definition string) error {
+	if definition != "SeriesPoint" && definition != "PairReport" {
+		return nil
+	}
+	root := value.(map[string]any)
+	check := func(row map[string]any, field, pointer string) error {
+		cell := row["cell"].(map[string]any)
+		for i, sample := range row[field].([]any) {
+			if !validRawSample(sample.(json.Number), cell["unit"].(string), cell["metric"].(string)) {
+				return invalidInput(pointer + "/" + field + "/" + strconv.Itoa(i))
+			}
+		}
+		return nil
+	}
+	if definition == "SeriesPoint" {
+		return check(root, "samples", "")
+	}
+	for i, value := range root["cells"].([]any) {
+		row, pointer := value.(map[string]any), "/cells/"+strconv.Itoa(i)
+		for _, field := range []string{"baseSamples", "headSamples"} {
+			if err := check(row, field, pointer); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validRawSample(value json.Number, unit, metric string) bool {
+	text := string(value)
+	negative := strings.HasPrefix(text, "-")
+	text = strings.TrimPrefix(text, "-")
+	exponent := 0
+	if i := strings.IndexAny(text, "eE"); i >= 0 {
+		rawExponent := text[i+1:]
+		parsed, err := strconv.Atoi(rawExponent)
+		// A nonzero bounded sample cannot need an exponent larger than its
+		// entire input. Clamp before arithmetic, without allocating powers.
+		if err != nil || parsed > maxInputBytes || parsed < -maxInputBytes {
+			parsed = maxInputBytes + 1
+			if strings.HasPrefix(rawExponent, "-") {
+				parsed = -parsed
+			}
+		}
+		exponent, text = parsed, text[:i]
+	}
+	fractionDigits := 0
+	if i := strings.IndexByte(text, '.'); i >= 0 {
+		fractionDigits = len(text) - i - 1
+		text = text[:i] + text[i+1:]
+	}
+	digits := strings.TrimLeft(text, "0")
+	if digits == "" {
+		return true
+	}
+	if negative {
+		return false
+	}
+	trimmed := strings.TrimRight(digits, "0")
+	scale := exponent - fractionDigits + len(digits) - len(trimmed)
+	digits = trimmed
+	if unit == "B" || unit == "count" {
+		if scale < 0 || len(digits)+scale > 16 {
+			return false
+		}
+		integer, err := strconv.ParseUint(digits+strings.Repeat("0", scale), 10, 64)
+		return err == nil && integer <= maxPublicIntegerSample
+	}
+	if metric == "dropped_frame_rate" {
+		return len(digits)+scale <= 0 || digits == "1" && scale == 0
+	}
+	return true
 }
 
 func validateRecordDomains(record any) error {
@@ -85,7 +169,7 @@ func validateRecordDomains(record any) error {
 			return false
 		}
 		if c.Unit == "B" || c.Unit == "count" {
-			return math.Trunc(value) == value && value <= 9007199254740991
+			return math.Trunc(value) == value && value <= maxPublicIntegerSample
 		}
 		return true
 	}
@@ -163,14 +247,27 @@ func validateRecordDomains(record any) error {
 			if len(row.BaseSamples) != len(row.HeadSamples) || int64(len(row.BaseSamples)) != row.Pairs {
 				return invalidInput(p + "/pairs")
 			}
-			for j, value := range row.BaseSamples {
-				if !sample(value, row.Cell) || !sample(row.HeadSamples[j], row.Cell) {
-					return invalidInput(p + "/baseSamples/" + strconv.Itoa(j))
+			for _, entry := range []struct {
+				field  string
+				values []float64
+			}{
+				{"baseSamples", row.BaseSamples}, {"headSamples", row.HeadSamples},
+			} {
+				for j, value := range entry.values {
+					if !sample(value, row.Cell) {
+						return invalidInput(p + "/" + entry.field + "/" + strconv.Itoa(j))
+					}
 				}
 			}
-			for _, interval := range []Interval{row.AdjustedInterval, row.DescriptiveInterval} {
+			for _, entry := range []struct {
+				field    string
+				interval Interval
+			}{
+				{"adjustedInterval", row.AdjustedInterval}, {"descriptiveInterval", row.DescriptiveInterval},
+			} {
+				interval := entry.interval
 				if interval.Bounded != (interval.Lower != nil && interval.Upper != nil) || interval.Lower != nil && interval.Upper != nil && *interval.Lower > *interval.Upper {
-					return invalidInput(p + "/adjustedInterval")
+					return invalidInput(p + "/" + entry.field)
 				}
 			}
 		}
@@ -226,7 +323,7 @@ func finiteNonnegative(value float64) bool {
 func validPublicSummary(value float64, cell Cell) bool {
 	// Integer observations can have fractional medians and percentiles.
 	return finiteNonnegative(value) && (cell.Metric != "dropped_frame_rate" || value <= 1) &&
-		(cell.Unit != "B" && cell.Unit != "count" || value <= 9007199254740991)
+		(cell.Unit != "B" && cell.Unit != "count" || value <= maxPublicIntegerSample)
 }
 
 func validPublicHistogram(bounds []float64, counts []int64, count int64) bool {

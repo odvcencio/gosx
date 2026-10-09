@@ -162,6 +162,160 @@ func TestReportSchemaFractionalSummaryAndUnknownCoverage(t *testing.T) {
 	}
 }
 
+func TestReportSchemaRawIntegerSampleDomains(t *testing.T) {
+	for _, domain := range []struct{ metric, unit string }{{"js_heap_peak", "B"}, {"long_tasks", "count"}} {
+		for _, field := range []string{"samples", "baseSamples", "headSamples"} {
+			for _, tc := range []struct {
+				name, number string
+				valid        bool
+				value        float64
+			}{
+				{"safe-max", "9007199254740991", true, 9007199254740991},
+				{"first-unsafe", "9007199254740992", false, 0},
+				{"rounded-unsafe", "9007199254740993", false, 0},
+				{"fraction", "1.5", false, 0},
+				{"rounded-fraction", "9007199254740990.5", false, 0},
+				{"rounded-over-bound", "9007199254740991.1", false, 0},
+				{"integer-decimal", "9007199254740991.0", true, 9007199254740991},
+				{"integer-exponent", "90071992547409910e-1", true, 9007199254740991},
+				{"fraction-exponent", "90071992547409911e-1", false, 0},
+				{"positive-exponent", "1e3", true, 1000},
+				{"decimal-exponent", "0.001e3", true, 1},
+				{"negative", "-1", false, 0},
+				{"negative-underflow", "-1e-400", false, 0},
+				{"underflow", "1e-400", false, 0},
+				{"negative-zero", "-0.00", true, 0},
+				{"zero-large-exponent", "0e-999999999", true, 0},
+			} {
+				t.Run(domain.unit+"/"+field+"/"+tc.name, func(t *testing.T) {
+					records := publicTestRecords(t)
+					var record any
+					pointer := "/" + field + "/0"
+					if field == "samples" {
+						s := records[1].(*SeriesPoint)
+						s.Cell.Metric, s.Cell.Unit = domain.metric, domain.unit
+						s.Samples, s.N = []float64{1}, 1
+						record = s
+					} else {
+						p := records[2].(*PairReport)
+						p.Cells[0].Cell.Metric, p.Cells[0].Cell.Unit = domain.metric, domain.unit
+						p.Cells[0].BaseSamples, p.Cells[0].HeadSamples, p.Cells[0].Pairs = []float64{1}, []float64{1}, 1
+						record, pointer = p, "/cells/0"+pointer
+					}
+					data, err := json.Marshal(record)
+					if err != nil {
+						t.Fatal(err)
+					}
+					needle := []byte(`"` + field + `":[1]`)
+					if !bytes.Contains(data, needle) {
+						t.Fatal("sample replacement target missing")
+					}
+					data = bytes.Replace(data, needle, []byte(`"`+field+`":[`+tc.number+`]`), 1)
+					decoded, err := DecodeRecord(bytes.NewReader(data))
+					if !tc.valid {
+						var input *InputError
+						if !errors.As(err, &input) || input.Code != "invalid-input" || input.Pointer != pointer {
+							t.Fatalf("invalid raw sample accepted or wrong location: %v", err)
+						}
+						return
+					}
+					if err != nil {
+						t.Fatal("exact integer sample rejected:", err)
+					}
+					var got float64
+					switch r := decoded.(type) {
+					case *SeriesPoint:
+						got = r.Samples[0]
+					case *PairReport:
+						got = r.Cells[0].BaseSamples[0]
+						if field == "headSamples" {
+							got = r.Cells[0].HeadSamples[0]
+						}
+					}
+					if got != tc.value {
+						t.Fatal("accepted integer sample changed value")
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestReportSchemaRawFractionalSampleDomains(t *testing.T) {
+	for _, tc := range []struct {
+		metric, unit, number string
+		valid                bool
+	}{
+		{"lcp", "ms", "1.5", true},
+		{"lcp", "ms", "-1e-400", false},
+		{"dropped_frame_rate", "ratio", "0.5", true},
+		{"dropped_frame_rate", "ratio", "1.000", true},
+		{"dropped_frame_rate", "ratio", "10e-1", true},
+		{"dropped_frame_rate", "ratio", "1.0000000000000000001", false},
+		{"dropped_frame_rate", "ratio", "10000000000000000001e-19", false},
+	} {
+		t.Run(tc.metric+"/"+tc.number, func(t *testing.T) {
+			record := publicTestRecords(t)[1].(*SeriesPoint)
+			record.Cell.Metric, record.Cell.Unit = tc.metric, tc.unit
+			record.Samples, record.N, record.Median, record.P75 = []float64{1}, 1, 1, 1
+			data, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			data = bytes.Replace(data, []byte(`"samples":[1]`), []byte(`"samples":[`+tc.number+`]`), 1)
+			_, err = DecodeRecord(bytes.NewReader(data))
+			if tc.valid {
+				if err != nil {
+					t.Fatal("valid fractional sample rejected:", err)
+				}
+				return
+			}
+			var input *InputError
+			if !errors.As(err, &input) || input.Pointer != "/samples/0" {
+				t.Fatalf("invalid raw sample accepted or wrong location: %v", err)
+			}
+		})
+	}
+}
+
+func TestReportSchemaPairDomainErrorPointers(t *testing.T) {
+	for _, field := range []string{"baseSamples", "headSamples", "adjustedInterval", "descriptiveInterval"} {
+		t.Run(field, func(t *testing.T) {
+			record := publicTestRecords(t)[2].(*PairReport)
+			row := &record.Cells[0]
+			row.BaseSamples, row.HeadSamples, row.Pairs = []float64{1}, []float64{1}, 1
+			pointer := "/cells/0/" + field
+			switch field {
+			case "baseSamples":
+				row.BaseSamples[0], pointer = -1, pointer+"/0"
+			case "headSamples":
+				row.HeadSamples[0], pointer = -1, pointer+"/0"
+			case "adjustedInterval", "descriptiveInterval":
+				lower, upper := 2.0, 1.0
+				interval := &row.AdjustedInterval
+				if field == "descriptiveInterval" {
+					interval = &row.DescriptiveInterval
+				}
+				interval.Lower, interval.Upper, interval.Bounded = &lower, &upper, true
+			}
+			data, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, decodeErr := DecodeRecord(bytes.NewReader(data))
+			for _, check := range []struct {
+				name string
+				err  error
+			}{{"domain", validateRecordDomains(record)}, {"decode", decodeErr}} {
+				var input *InputError
+				if !errors.As(check.err, &input) || input.Code != "invalid-input" || input.Pointer != pointer {
+					t.Errorf("%s named the wrong field: %v", check.name, check.err)
+				}
+			}
+		})
+	}
+}
+
 func TestReportSchemaLimitsAndPrivateRoots(t *testing.T) {
 	data, err := os.ReadFile("testdata/public-report.v1.json")
 	if err != nil {
