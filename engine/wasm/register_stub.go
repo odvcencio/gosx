@@ -3,6 +3,7 @@
 package wasm
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -41,3 +42,8 @@ func Register(component string, factory Factory) error {
 	}
 	return ErrUnsupported
 }
+
+func (Context) SignalJSON(string) (json.RawMessage, error)                { return nil, ErrUnsupported }
+func (Context) SetSignals(map[string]any) error                           { return ErrUnsupported }
+func (Context) Navigate(context.Context, string, NavigationOptions) error { return ErrUnsupported }
+func (Context) IsCurrent() bool                                           { return false }

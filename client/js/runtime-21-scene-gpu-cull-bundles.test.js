@@ -13,6 +13,15 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("../runtime/node_modules/typescript");
+
+// The joined mount authorities contain authored TypeScript. Apply the same
+// syntax lowering as the runtime builder before evaluating telemetry in a VM.
+function runTelemetrySource(source, context) {
+  vm.runInContext(ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+  }).outputText, context);
+}
 
 const {
   createContext,
@@ -1469,7 +1478,7 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
     parseFloat,
   });
   // Wire window.__gosx_scene3d_webgpu_diagnostics to undefined (not available).
-  vm.runInContext(fnSource + "\n", ctx);
+  runTelemetrySource(fnSource, ctx);
 
   const snap = ctx.window.__gosx_scene3d_telemetry(mount);
   assert.ok(snap !== null, "telemetry snapshot must not be null");
@@ -1517,7 +1526,7 @@ test("telemetry T2: __gosx_scene3d_telemetry(null) returns null when no mounted 
     JSON,
     parseFloat,
   });
-  vm.runInContext(fnSource + "\n", ctx);
+  runTelemetrySource(fnSource, ctx);
 
   const snap = ctx.window.__gosx_scene3d_telemetry(null);
   assert.equal(snap, null, "must return null when no mounted scene found");
@@ -1594,7 +1603,7 @@ test("telemetry T2a: explicit page scope exposes every registered mount and stan
     JSON,
     parseFloat,
   });
-  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+  runTelemetrySource(mountSrc.slice(fnStart, fnEnd), ctx);
 
   const page = ctx.window.__gosx_scene3d_telemetry({scope: "page"});
   assert.equal(webgpuProbeCalls, 1, "one page snapshot must read page-global WebGPU capability exactly once");
@@ -1651,7 +1660,7 @@ test("telemetry T2b: strict typed parsing surfaces invalid values and malformed 
     JSON,
     parseFloat,
   });
-  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+  runTelemetrySource(mountSrc.slice(fnStart, fnEnd), ctx);
 
   const snap = ctx.window.__gosx_scene3d_telemetry(mount);
   assert.equal(snap.ready, null);
@@ -1717,7 +1726,7 @@ test("telemetry T2c: missing attributes stay quiet while producer failures are c
     JSON,
     parseFloat,
   });
-  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+  runTelemetrySource(mountSrc.slice(fnStart, fnEnd), ctx);
 
   const quiet = ctx.window.__gosx_scene3d_telemetry(quietMount);
   assert.equal(webgpuProbeCalls, 1, "direct mount scope probes once");

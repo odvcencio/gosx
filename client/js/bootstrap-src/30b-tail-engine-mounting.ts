@@ -4393,7 +4393,10 @@
     if (!mount || !document || typeof document.createElement !== "function") {
       return;
     }
-    clearChildren(mount);
+    // The server authored fallback remains usable when the enhanced engine
+    // cannot mount. Replace only our previous capability notice on retries.
+    const previous = mount.querySelector && mount.querySelector("[data-gosx-engine-unsupported]");
+    if (previous && previous.parentNode) previous.parentNode.removeChild(previous);
     const wrapper = document.createElement("div");
     wrapper.setAttribute("class", "gosx-engine-unsupported");
     wrapper.setAttribute("data-gosx-engine-unsupported", "true");
@@ -4429,7 +4432,12 @@
   }
 
   function createEngineContext(entry, mount, runtime, capabilityStatus, pending) {
-    return {
+    const isCurrent = () => {
+      if (pendingEngineOwned(pending)) return true;
+      const record = window.__gosx && window.__gosx.engines && window.__gosx.engines.get(entry.id);
+      return !!(pending && pending.generation === goWASMEnginePageGeneration && record && !record.disposed && record.context === context);
+    };
+    const context = {
       id: entry.id,
       kind: entry.kind,
       component: entry.component,
@@ -4441,15 +4449,70 @@
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
       runtime: runtime,
-      setSignal: setSharedSignalValue,
-      subscribeSignal: gosxSubscribeSharedSignal,
-      isCurrent() { return pendingEngineOwned(pending); },
+      getSignal(name) {
+        if (!isCurrent()) return undefined;
+        return gosxReadSharedSignal(name, undefined);
+      },
+      setSignal(name, value) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        return setSharedSignalValue(name, value);
+      },
+      setSignals(values) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        if (!values || typeof values !== "object" || Array.isArray(values)) throw new TypeError("signal batch must be an object");
+        const names = Object.keys(values);
+        if (names.some(name => !name.trim())) throw new TypeError("signal name is required");
+        const encoded = JSON.stringify(values);
+        if (!names.length) return null;
+        gosxReadSharedSignal(names[0], undefined);
+        const store = window.__gosx.sharedSignals;
+        const before = names.map(name => [name, store.values.has(name), store.values.get(name)]);
+        // Prime all browser reads before the VM notifies any batch subscriber.
+        for (const name of names) store.values.set(name, values[name]);
+        const batch = window.__gosx_set_input_batch;
+        try {
+          if (typeof batch === "function") {
+            const error = batch(encoded);
+            if (error) throw new Error(String(error));
+          } else {
+            for (const name of names) gosxNotifySharedSignal(name, JSON.stringify(values[name]));
+          }
+        } catch (error) {
+          for (const [name, existed, value] of before) {
+            if (existed) store.values.set(name, value); else store.values.delete(name);
+          }
+          throw error;
+        }
+        return null;
+      },
+      subscribeSignal(name, handler, options) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        return gosxSubscribeSharedSignal(name, function(value, signalName) {
+          if (isCurrent()) handler(value, signalName);
+        }, options);
+      },
+      navigate(target, options) {
+        if (!isCurrent()) return Promise.reject(new Error("engine context is disposed"));
+        const navigation = window.__gosx && window.__gosx.navigation;
+        if (navigation && typeof navigation.navigate === "function") return navigation.navigate(target, options);
+        if (options && options.replace) window.location.replace(target);
+        else window.location.assign(target);
+        return Promise.resolve(false);
+      },
+      scene3D(method, target, ...args) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        const scene = window.__gosx && window.__gosx.scene3d;
+        if (!scene || typeof scene[method] !== "function") throw new Error("Scene3D command bridge is unavailable");
+        return scene[method](target, ...args);
+      },
+      isCurrent,
       emit: function(name, detail) {
         document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
           detail: { engineID: entry.id, component: entry.component, detail: detail },
         }));
       },
     };
+    return context;
   }
 
   async function mountEngine(entry, preflightError) {
@@ -4663,6 +4726,7 @@
     }
     activateInputProviders(entry);
     const record = {
+      context,
       component: entry.component,
       kind: entry.kind,
       capabilities: capabilityList(entry),

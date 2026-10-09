@@ -2,12 +2,6 @@
 // @ts-check
 // Mount closure: canvas, render loop, live updates, teardown, and gateable authorities.
 
-/**
- * @typedef {object} GoSXSceneEngineMountContext
- * @property {HTMLElement} mount
- * @property {object} props
- * @property {() => void} [dispose]
- */
   window.__gosx_register_engine_factory("GoSXScene3D", async function(ctx) {
     const mount = ctx.mount;
     if (!mount || typeof document.createElement !== "function") {
@@ -15,7 +9,7 @@
       return {};
     }
 
-    const props = ctx.props || {};
+    let props = ctx.props || {};
     const renderBeforeModels = props.renderBeforeModels === true;
     let handle = null;
     if (props.controlZoom === true) {
@@ -55,6 +49,13 @@
     if (!scene3DFactoryCurrent()) return {};
     await settleSceneIBLFeature(props);
     if (!scene3DFactoryCurrent()) return {};
+    const mountGeometry = sceneResolveMountGeometry(props, initialRuntimeCommands);
+    if (mountGeometry) {
+      const resolved = await mountGeometry;
+      if (!scene3DFactoryCurrent()) return {};
+      props = resolved.props;
+      initialRuntimeCommands = resolved.commands;
+    }
     const sceneState = createSceneState(props, capability);
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
@@ -268,6 +269,10 @@
     // array, so we stash the timing on the mount element.
     mount.__gosxScene3DCSSVarTransition = sceneExtractCSSVarTransitionTiming(props);
 
+    // Retain the authored fallback in the mounted subtree. Native companions
+    // may update it while graphics are healthy, so renderer loss can reveal
+    // the latest accessible view without reconstructing application markup.
+    const authoredFallback = sceneRetainFallback(mount, sceneMountOwner);
     clearChildren(mount);
     const readyAttr = sceneAttr("ready");
     const mountedAttr = sceneAttr("mounted");
@@ -383,6 +388,7 @@
     labelLayer.setAttribute("aria-hidden", "true");
     labelLayer.style.pointerEvents = "none";
     mount.appendChild(labelLayer);
+    if (authoredFallback.element) mount.appendChild(authoredFallback.element);
     const sceneFocusProxies = setupSceneNodeFocusProxies(mount);
     const statsOverlay = createSceneStatsOverlay(mount, sceneBool(props.stats, false));
     let inspectorOverlay = null;
@@ -453,7 +459,8 @@
       delete mount.__gosxScene3DCSSDynamic;
       delete mount.__gosxScene3DCSSRevision;
       delete mount.__gosxScene3DCSSAnimationUntil;
-      showSceneRequiredRendererMessage(mount, props, unsupportedReason);
+      if (authoredFallback.element) authoredFallback.show();
+      else showSceneRequiredRendererMessage(mount, props, unsupportedReason);
       return {
         dispose() {
           if (mount.__gosxScene3DOwner !== sceneMountOwner) return;
@@ -461,6 +468,7 @@
           if (unsupported && unsupported.parentNode === mount) {
             mount.removeChild(unsupported);
           }
+          authoredFallback?.restore();
           delete mount.__gosxScene3DOwner;
         },
       };
@@ -778,6 +786,7 @@
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ sceneWebGLFallbackOwner = false;
       applySceneRendererState(mount, { kind: "unsupported" }, sceneDebugAttr(mount, sceneAttr("renderer-fallback")) || reason);
       setAttrValue(mount, readyAttr, "false");
+      if (authoredFallback.element) { authoredFallback.show(); canvas.hidden = true; }
       publishSceneRenderWatchdogState(reason, 0);
     }
 
@@ -1494,6 +1503,7 @@
       const variantScopeChange = replaceSceneModelTextureVariantScope(sceneState, renderer);
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ publishSceneModelTextureVariantContext(mount, variantScopeChange.scope);
       applySceneRendererState(mount, renderer, renderer.kind === "webgpu" ? "" : fallbackReason);
+      authoredFallback?.hide(); canvas.hidden = false;
       publishSceneWaterRendererState(mount, sceneState, renderer, "");
       notifySceneRendererLifecycle(fallbackReason || "renderer-swap", true, false);
       renderWatchdogLastSeq = -1;
@@ -3690,6 +3700,7 @@
       if (sentinelLayer.parentNode) sentinelLayer.parentNode.removeChild(sentinelLayer);
       if (mount.__gosxScene3DSentinels === sceneNodeSentinels) delete mount.__gosxScene3DSentinels;
       if (ownsMount) {
+        authoredFallback?.restore();
         delete mount.__gosxScene3DState;
         delete mount.__gosxScene3DTextureVariantContext;
         delete mount.__gosxScene3DCSSDynamic;
@@ -3741,20 +3752,6 @@
     bindSceneAnimationToggle();
     return handle;
   });
-
-// Advance the capped animation clock by whole target intervals. The display
-// can present only on rAF ticks, so a non-divisor rate alternates tick counts.
-// Missed intervals are discarded in one step; there is no catch-up draw loop.
-// The tolerance matches the existing gate and absorbs sub-ms rAF jitter.
-function sceneAnimationFrameGate(now = 0, previous = 0, interval = 0, previousInterval = 0) {
-  var elapsed = now - previous;
-  if (!Number.isFinite(now) || !(interval > 0) || !(previous > 0) ||
-      interval !== previousInterval || elapsed < 0 || elapsed > interval * 4) {
-    return { shouldRender: true, atMS: Number.isFinite(now) ? now : 0 };
-  }
-  if (elapsed < interval - 0.75) return { shouldRender: false, atMS: previous };
-  return { shouldRender: true, atMS: previous + Math.floor((elapsed + 0.75) / interval) * interval };
-}
 
 // -----------------------------------------------------------------------
 // Adaptive frame pacing ("vsync-divisor") — pure decision helpers.

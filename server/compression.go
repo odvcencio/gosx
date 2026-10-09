@@ -30,6 +30,29 @@ type responseCompressor interface {
 // least 1 KiB. Flush commits the decision using the bytes buffered so far.
 // Small flushed prefixes use identity so streaming never waits for more data.
 func CompressionMiddleware() Middleware {
+	return CompressionMiddlewareWithOptions(CompressionOptions{})
+}
+
+// CompressionOptions selects a dynamic response policy. The zero value keeps
+// Brotli-first negotiation and default gzip compression. GzipOnly with
+// GzipLevel gzip.BestSpeed suits latency-sensitive JSON and scene updates.
+// GzipLevel accepts -2 through 9; zero means gzip.DefaultCompression.
+type CompressionOptions struct {
+	GzipOnly  bool
+	GzipLevel int
+}
+
+// CompressionMiddlewareWithOptions uses the same streaming, cache, range and
+// capability rules as CompressionMiddleware, with a route-local encoder pool.
+func CompressionMiddlewareWithOptions(options CompressionOptions) Middleware {
+	level := options.GzipLevel
+	if level == 0 {
+		level = gzip.DefaultCompression
+	}
+	if level < gzip.HuffmanOnly || level > gzip.BestCompression {
+		panic("gosx: invalid gzip compression level")
+	}
+	pool := &sync.Pool{New: func() any { writer, _ := gzip.NewWriterLevel(io.Discard, level); return writer }}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.Method == http.MethodHead {
@@ -43,12 +66,12 @@ func CompressionMiddleware() Middleware {
 				return
 			}
 			encoding := ""
-			if requestAcceptsBrotli(r) {
+			if !options.GzipOnly && requestAcceptsBrotli(r) {
 				encoding = "br"
 			} else if requestAcceptsGzip(r) {
 				encoding = "gzip"
 			}
-			cw := &compressionWriter{ResponseWriter: w, encoding: encoding, identityRejected: !requestAcceptsEncoding(r, "identity"), http11: r.ProtoAtLeast(1, 1)}
+			cw := &compressionWriter{gzipPool: pool, ResponseWriter: w, encoding: encoding, identityRejected: !requestAcceptsEncoding(r, "identity"), http11: r.ProtoAtLeast(1, 1)}
 			var writer http.ResponseWriter = cw
 			_, flush := w.(http.Flusher)
 			_, flushError := w.(interface{ FlushError() error })
@@ -62,6 +85,7 @@ func CompressionMiddleware() Middleware {
 }
 
 type compressionWriter struct {
+	gzipPool *sync.Pool
 	http.ResponseWriter
 	encoding         string
 	status           int
@@ -170,7 +194,11 @@ func (w *compressionWriter) start(compress bool) error {
 			br.Reset(&w.output)
 			w.compressor = br
 		} else {
-			gz := gzipWriterPool.Get().(*gzip.Writer)
+			pool := w.gzipPool
+			if pool == nil {
+				pool = &gzipWriterPool
+			}
+			gz := pool.Get().(*gzip.Writer)
 			gz.Reset(&w.output)
 			w.compressor = gz
 		}
@@ -233,7 +261,11 @@ func (w *compressionWriter) closeCompressor() error {
 		brotliWriterPool.Put(compressor)
 	case *gzip.Writer:
 		compressor.Reset(io.Discard)
-		gzipWriterPool.Put(compressor)
+		pool := w.gzipPool
+		if pool == nil {
+			pool = &gzipWriterPool
+		}
+		pool.Put(compressor)
 	}
 	w.compressor = nil
 	w.output.Writer = nil

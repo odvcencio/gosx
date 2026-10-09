@@ -24,12 +24,15 @@
   };
 
   // All public command and presentation calls share one demand-loaded bridge.
-  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline", "burstParticles"].forEach(function(method) {
+  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline", "burstParticles", "setCamera", "whenReady", "setAnimationClock"].forEach(function(method) {
     api[method] = function() {
       const args = arguments;
       return loadCommandBridge().then(function(bridge) { return bridge[method](...args); });
     };
   });
+  api.getCamera = function(target) {
+    return window.__gosx_scene3d_command_bridge?.getCamera(target) || null;
+  };
   function forceWebGLRequested() {
     if (window.__gosx_scene3d_force_webgl === true) return true;
     try {

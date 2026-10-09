@@ -942,7 +942,7 @@
       ),
       wireframe: sceneBool(
         sceneObjectMaterialHasValue(item, "wireframe") ? sceneObjectMaterialValue(item, "wireframe") : current.wireframe,
-        texture === "",
+        materialKind !== "standard" && texture === "",
       ),
       interactive: sceneBool(Object.prototype.hasOwnProperty.call(item, "interactive") ? item.interactive : current.interactive, false),
       label: typeof item.label === "string" ? item.label.trim() : (typeof current.label === "string" ? current.label.trim() : ""),
@@ -2992,6 +2992,7 @@
       zoom: sceneFallbackNumber(raw, base, "zoom", 1),
       near: sceneFallbackNumber(raw, base, "near", 0.05),
       far: sceneFallbackNumber(raw, base, "far", 128),
+      transitionMS: Math.max(0, sceneFallbackNumber(raw, base, "transitionMS", 0)),
     };
   }
 
