@@ -20,8 +20,9 @@ import (
 
 const maxMeasureBody = 64 << 20
 
-// HTTPMeasureOptions are private fixture inputs. Representations contain the
-// selected release sidecars or outputs of the declared serving compressor.
+// HTTPMeasureOptions are private fixture inputs. Representations contain exact
+// release sidecars. ServingCompressors declares live HTML profiles only for
+// encodings without a sidecar; it does not prescribe the compressed bytes.
 type HTTPMeasureOptions struct {
 	Client                             *http.Client
 	BaseURL, URL, Kind, ExpectedSHA256 string
@@ -103,7 +104,8 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			return out, measureFailure("wrong-fixture", "/response")
 		}
 		noCookie = noCookie && len(response.Header.Values("Set-Cookie")) == 0
-		encoding := strings.ToLower(strings.TrimSpace(response.Header.Get("Content-Encoding")))
+		// Preserve the full ordered coding list. The decoder rejects stacks.
+		encoding := strings.ToLower(strings.TrimSpace(strings.Join(response.Header.Values("Content-Encoding"), ", ")))
 		raw, err := decodeServedBody(wire, encoding)
 		if err != nil {
 			return out, err
@@ -135,14 +137,17 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		}
 		if encoding != "" && encoding != "identity" {
 			representation, declared := opts.Representations[encoding]
-			compressor := opts.ServingCompressors[encoding]
-			if opts.Kind == "html" && compressor != "" && (!declared || !bytes.Equal(wire, representation)) {
-				representation, err = encodeServingHTML(raw, encoding, compressor)
-				declared = err == nil
-			}
-			if !declared || !bytes.Equal(wire, representation) || assetmeasure.VerifySidecar(raw, wire, encoding) != nil {
+			if declared {
+				// A release sidecar must match exactly, even when a live profile
+				// is also declared. A reconstruction cannot replace that artifact.
+				if !bytes.Equal(wire, representation) || assetmeasure.VerifySidecar(raw, wire, encoding) != nil {
+					return out, measureFailure("stale-sidecar", "/encoding")
+				}
+			} else if opts.Kind != "html" || !knownServingHTMLCompressor(encoding, opts.ServingCompressors[encoding]) {
 				return out, measureFailure("stale-sidecar", "/encoding")
 			}
+			// Live streams have already passed bounded decoding and content
+			// checks. Flush boundaries can change their encoded bytes and size.
 		}
 		contentType, _, mimeErr := mime.ParseMediaType(response.Header.Get("Content-Type"))
 		if mimeErr != nil || !measureMIME(opts.Kind, contentType) {
