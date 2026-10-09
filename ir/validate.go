@@ -98,6 +98,7 @@ func ValidateWarnings(prog *Program) []Diagnostic {
 	}
 	for i := range prog.Components {
 		diags = append(diags, untypedLegacyPropsWarning(&prog.Components[i])...)
+		diags = append(diags, islandEventWarnings(prog, &prog.Components[i])...)
 	}
 	// navigationAttrNameWarnings (ir/validate_warnings.go, gosx#249) is the
 	// other built-in source of SeverityWarning diagnostics: a static
