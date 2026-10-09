@@ -238,7 +238,7 @@ func TestClassifyPhysicalTextGroups(t *testing.T) {
 	}
 }
 
-func TestClassifyTextTopologyRequiresLiteralProof(t *testing.T) {
+func TestClassifyTextExpressionRejectsUnsupportedOrMistypedLiterals(t *testing.T) {
 	for _, tc := range []struct {
 		expr   program.Expr
 		kind   ScalarKind
@@ -464,16 +464,21 @@ func TestClassifyTextTopologyUsesSignalInitialValue(t *testing.T) {
 	for _, tc := range []struct {
 		name, initial string
 		eligible      bool
-	}{{"empty initial string", "", false}, {"nonempty initial string", "x", true}} {
+		shared        bool
+	}{{"empty initial string", "", false, false}, {"nonempty initial string", "x", true, false}, {"shared nonempty initial string", "x", false, true}} {
 		t.Run(tc.name, func(t *testing.T) {
+			name := "text"
+			if tc.shared {
+				name = "$text"
+			}
 			u := textTopologyUnit(t, "div", "", program.Node{Kind: program.NodeExpr})
 			u.Program.Exprs = []program.Expr{
 				{Op: program.OpLitString, Type: program.TypeString, Value: tc.initial},
-				{Op: program.OpSignalGet, Type: program.TypeString, Value: "text"},
+				{Op: program.OpSignalGet, Type: program.TypeString, Value: name},
 			}
 			u.Contract.Expressions = []ExpressionContract{{Expr: 0, Kind: String, Pure: true}, {Expr: 1, Kind: String, Pure: true}}
-			u.Program.Signals = []program.SignalDef{{Name: "text", Type: program.TypeString, Init: 0}}
-			u.Contract.Signals = []StateContract{{Slot: 0, Name: "text", Kind: String}}
+			u.Program.Signals = []program.SignalDef{{Name: name, Type: program.TypeString, Init: 0}}
+			u.Contract.Signals = []StateContract{{Slot: 0, Name: name, Kind: String}}
 			u.Program.Nodes[1].Expr = 1
 			var err error
 			if u.Contract.Bindings, err = ContractBindings(u.Program); err != nil {
@@ -483,6 +488,30 @@ func TestClassifyTextTopologyUsesSignalInitialValue(t *testing.T) {
 			r := Classify(u, ScalarDOMV1)
 			if r.Eligible != tc.eligible || !tc.eligible && r.Reason != "parser_topology" {
 				t.Fatalf("signal text: %+v", r)
+			}
+		})
+	}
+}
+
+// Without a proved spelling, a text group is eligible only if its value cannot
+// be empty: integers and booleans always print, an unproved string may not.
+func TestClassifyTextTopologyUnprovedExpressionKinds(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		typ      program.ExprType
+		kind     ScalarKind
+		eligible bool
+	}{{"string", program.TypeString, String, false}, {"int", program.TypeInt, Int, true}, {"int32", program.TypeInt, Int32, true}, {"bool", program.TypeBool, Bool, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			u := textTopologyUnit(t, "div", "", program.Node{Kind: program.NodeExpr})
+			u.Program.Props = []program.PropDef{{Name: "Value", Type: tc.typ}}
+			u.Program.Exprs[0] = program.Expr{Op: program.OpPropGet, Type: tc.typ, Value: "Value"}
+			u.Contract.Expressions[0].Kind = tc.kind
+			u.Contract.Inputs = []InputContract{{Source: "prop", Root: "Value", Path: []string{}, Kind: tc.kind, Exprs: []program.ExprID{0}}}
+			u = refreshUnit(t, u)
+			r := Classify(u, ScalarDOMV1)
+			if r.Eligible != tc.eligible || !tc.eligible && r.Reason != "parser_topology" {
+				t.Fatalf("unproved %s text: %+v", tc.name, r)
 			}
 		})
 	}

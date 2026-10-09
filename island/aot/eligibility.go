@@ -463,7 +463,7 @@ func fixedAttribute(name string, kind ScalarKind) bool {
 // Empty text and stripped initial newlines must not certify absent bindings.
 //
 // An expression contributes its proved initial spelling: a literal, or a
-// signal or computed whose initializer is proved. Other integer and boolean values always
+// local signal or computed whose initializer is proved. Other integer and boolean values always
 // print as non-empty text, so they stand in as "0". Any other string may be
 // empty, which would remove its text node, so it contributes nothing.
 func parserTopology(p *program.Program, c ScalarContract) bool {
@@ -544,6 +544,11 @@ func initialText(p *program.Program, c ScalarContract, id program.ExprID, depth 
 	case program.OpLitString, program.OpLitInt, program.OpLitBool:
 		return e.Value
 	case program.OpSignalGet:
+		// A page-wide signal may take its value from another declarer, the hub
+		// or a checkpoint, so its own initializer proves nothing.
+		if strings.HasPrefix(e.Value, "$") {
+			break
+		}
 		for _, signal := range p.Signals {
 			if signal.Name == e.Value {
 				return initialText(p, c, signal.Init, depth+1)
