@@ -18,6 +18,7 @@ type Capabilities struct {
 	Runtime        string `json:"runtime"`
 
 	// Per-engine evidence keeps mixed runtimes distinct after HTML decoding.
-	engineTypes uint16
-	decoded     bool
+	engineTypes    uint16
+	engineRuntimes uint8
+	decoded        bool
 }

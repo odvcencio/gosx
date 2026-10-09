@@ -3,8 +3,10 @@ package buildmanifest
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -212,5 +214,106 @@ func TestPerfAssetLoadRejectsInvalidGraph(t *testing.T) {
 	}
 	if _, err := Load(path); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// perfSizeFixture fills the production-formatted metadata to an exact byte
+// count without exceeding the per-asset or asset-count limits.
+func perfSizeFixture(t *testing.T, size int) *Manifest {
+	t.Helper()
+	m := &Manifest{PerfAssetUses: &PerfAssetUses{Version: 1, Assets: []PerfAssetUse{}}}
+	for i := 0; i < 3000; i++ {
+		m.PerfAssetUses.Assets = append(m.PerfAssetUses.Assets, PerfAssetUse{
+			ID:     fmt.Sprintf("framework/asset-%04d-%s", i, strings.Repeat("a", 180)),
+			SHA256: strings.Repeat("a", 64), URL: "/" + strings.Repeat("u", 200),
+			Owner: "framework", Kind: "js", Phase: "startup", Condition: "always", Dependencies: []string{},
+		})
+	}
+	// Bypass custom marshaling so over-limit inputs can still reach the decoder.
+	type plain PerfAssetUses
+	data, err := json.MarshalIndent(plain(*m.PerfAssetUses), "  ", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remaining := size - len(data)
+	if remaining < 0 {
+		t.Fatal("fixture starts above the requested size")
+	}
+	for i := range m.PerfAssetUses.Assets {
+		a := &m.PerfAssetUses.Assets[i]
+		padding := min(remaining, 240-len(a.URL))
+		a.URL += strings.Repeat("u", padding)
+		remaining -= padding
+	}
+	if remaining != 0 {
+		t.Fatal("fixture cannot reach the requested size")
+	}
+	return m
+}
+
+func TestPerfAssetSizeBoundaryRoundTrip(t *testing.T) {
+	const limit = 2 << 20
+	for _, delta := range []int{-1, 0, 1} {
+		t.Run(fmt.Sprintf("limit%+d", delta), func(t *testing.T) {
+			m := perfSizeFixture(t, limit+delta)
+			accepted := delta <= 0
+			check := func(t *testing.T, label string, err error) {
+				t.Helper()
+				if accepted {
+					if err != nil {
+						t.Fatalf("%s: %v", label, err)
+					}
+					return
+				}
+				var input *PerfAssetError
+				if !errors.As(err, &input) || input.Code != "invalid-input" || input.Pointer != "/perfAssetUses" {
+					t.Errorf("%s: expected fixed size error, got %v", label, err)
+				}
+			}
+			check(t, "native validation", m.ValidatePerfAssetUses())
+			// This wrapper retains the real field's nesting and indentation while
+			// bypassing serialization checks for the decoder's over-limit case.
+			type plain PerfAssetUses
+			unchecked := struct {
+				PerfAssetUses plain `json:"perfAssetUses"`
+			}{plain(*m.PerfAssetUses)}
+			for _, format := range []string{"compact", "production-indent"} {
+				t.Run(format, func(t *testing.T) {
+					encode := func(value any) ([]byte, error) {
+						if format == "compact" {
+							return json.Marshal(value)
+						}
+						return json.MarshalIndent(value, "", "  ")
+					}
+					data, err := encode(unchecked)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var fields map[string]json.RawMessage
+					if err := json.Unmarshal(data, &fields); err != nil {
+						t.Fatal(err)
+					}
+					if format == "production-indent" && len(fields["perfAssetUses"]) != limit+delta {
+						t.Fatal("fixture missed the metadata byte boundary")
+					}
+					var restored Manifest
+					check(t, "decode", json.Unmarshal(data, &restored))
+					path := filepath.Join(t.TempDir(), "build.json")
+					if err := os.WriteFile(path, data, 0600); err != nil {
+						t.Fatal(err)
+					}
+					loaded, err := Load(path)
+					check(t, "Load", err)
+					if accepted && (!reflect.DeepEqual(restored.PerfAssetUses, m.PerfAssetUses) || !reflect.DeepEqual(loaded.PerfAssetUses, m.PerfAssetUses)) {
+						t.Fatal("metadata changed during round trip")
+					}
+					serialized, err := encode(m)
+					check(t, "serialization", err)
+					if accepted {
+						check(t, "serialized round trip", json.Unmarshal(serialized, &restored))
+					}
+				})
+			}
+		})
 	}
 }

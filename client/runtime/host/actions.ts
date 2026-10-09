@@ -112,6 +112,13 @@
   };
 
   function actionFetch(el, method, url, body, contractEl) {
+    var queue = window.__gosx.editQueue;
+    var queued = contractEl || el;
+    var run = function () { return actionFetchNow(el, method, url, body, contractEl); };
+    return queue && queued && queued.hasAttribute("data-gosx-queue") ? queue.run(run) : run();
+  }
+
+  function actionFetchNow(el, method, url, body, contractEl) {
     var actionEl = contractEl || el;
     var opts = { method: method, headers: { Accept: "application/json" } };
     if (body !== undefined) {

@@ -16,6 +16,11 @@
     "keydown", "keyup", "focus", "blur",
     "dragstart", "dragend", "dragover", "dragleave", "drop",
     "pointerdown", "pointermove", "pointerup", "pointercancel",
+    // Gesture events (wave 1): wheel needs a non-passive listener so a handler
+    // may call browser.PreventDefault(); lostpointercapture pairs with
+    // browser.CapturePointer. A pre-selective manifest attaches all of them; a
+    // modern manifest attaches only the declared subset.
+    "wheel", "dblclick", "contextmenu", "lostpointercapture",
   ];
 
   // Convention-based events that intentionally escape an island root. Their
@@ -86,8 +91,9 @@
     if (e.type === "keydown" || e.type === "keyup") {
       copyNumberField(data, e, "timeStamp", "timeStamp", true);
     }
-    const pointerEvent = e.type.indexOf("pointer") === 0;
-    const mouseEvent = pointerEvent || e.type === "click" || e.type === "drop" || e.type.indexOf("drag") === 0;
+    // "pointer" also matches lostpointercapture; "click" also matches dblclick.
+    const pointerEvent = e.type.indexOf("pointer") >= 0;
+    const mouseEvent = pointerEvent || /click|drop|drag|contextmenu|wheel/.test(e.type);
     if (pointerEvent) {
       copyNumberField(data, e, "pointerId", "pointerID");
       if (e.pointerType) data.pointerType = String(e.pointerType);
@@ -101,6 +107,18 @@
       copyNumberField(data, e, "clientY", "clientY");
       copyNumberField(data, e, "button", "button");
       copyNumberField(data, e, "buttons", "buttons");
+    }
+    if (mouseEvent && handlerElement && handlerElement.getBoundingClientRect) {
+      // Relative to the element that owns the handler, not to e.target: a
+      // fader's inner track must not change the coordinate space. A missing
+      // clientX/clientY gives NaN, which copyNumberField drops.
+      const rect = handlerElement.getBoundingClientRect();
+      const fields = {
+        offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
+        elementWidth: rect.width, elementHeight: rect.height,
+        deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
+      };
+      for (const name in fields) copyNumberField(data, fields, name, name);
     }
     if (e.type === "resize") {
       if (typeof window.innerWidth === "number" && window.innerWidth !== 0) data.width = window.innerWidth;
@@ -206,16 +224,27 @@
     return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
+  function addDelegatedListener(islandRoot, islandID, eventType, passive) {
+    const listener = createDelegatedListener(islandRoot, islandID, eventType);
+    const capture = delegatedEventCapture(eventType);
+    // passive: false lets a wheel handler call browser.PreventDefault(); it
+    // is already the default for non-document targets, so other events are
+    // unchanged.
+    islandRoot.addEventListener(eventType, listener, { capture, passive });
+    return { target: islandRoot, type: eventType, listener, capture };
+  }
+
   function setupEventDelegation(islandRoot, islandID, eventSlots) {
     const entries = [];
     const declared = delegatedEventSet(eventSlots);
 
     for (const eventType of DELEGATED_EVENTS) {
       if (declared && !declared.has(eventType)) continue;
-      const listener = createDelegatedListener(islandRoot, islandID, eventType);
-      const useCapture = delegatedEventCapture(eventType);
-      islandRoot.addEventListener(eventType, listener, useCapture);
-      entries.push({ target: islandRoot, type: eventType, listener, capture: useCapture });
+      // Legacy manifests declare nothing. Their wheel listener is passive unless
+      // a wheel handler exists now, so scrolling stays fast; a handler added
+      // later still fires, but cannot block scrolling.
+      const passive = !declared && eventType === "wheel" && !findGlobalHandler(islandRoot, "wheel");
+      entries.push(addDelegatedListener(islandRoot, islandID, eventType, passive));
     }
 
     for (const config of GLOBAL_DELEGATED_EVENTS) {

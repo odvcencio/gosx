@@ -90,7 +90,9 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   c.GPUShaderStage = { FRAGMENT: 2 };
   const device = { createBindGroupLayout: d => (layouts.push(d), d), createPipelineLayout: d => d,
     createShaderModule: d => (modules.push(d), d), createSampler: d => d };
-  const r = c.sceneWebGPUCreateDetailResources(device, "frame", "material", base);
+  assert.equal(c.sceneWebGPUEnsureDetailResources(device, null, [], "frame", "material", base), null);
+  assert.equal(layouts.length, 0, "scenes without detail must not allocate detail resources");
+  const r = c.sceneWebGPUEnsureDetailResources(device, null, [{ detail: {} }], "frame", "material", base);
   assert.equal(layouts[0].entries[1].texture.viewDimension, "2d-array");
   assert.deepEqual(Array.from(r.pipelineLayout.bindGroupLayouts.slice(0, 2)), ["frame", "material"]);
   assert.equal(modules.length, 1); assert.equal(modules[0].code, shader);

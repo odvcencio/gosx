@@ -265,6 +265,58 @@ func TestPublicJSONLAndRenderedMarkdown(t *testing.T) {
 	}
 }
 
+func TestPublicJSONLRawByteLimit(t *testing.T) {
+	v := testPublicValidator(t)
+	record, err := json.Marshal(publicTestRecords(t)[4])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := v.Validate(bytes.NewReader(record), "json"); err != nil {
+		t.Fatal("invalid boundary-test record:", err)
+	}
+	// Reuse one padded record across 32 readers rather than allocating a
+	// complete 64 MiB artifact or writing it to disk.
+	prefix := func(ending string, extra int) io.Reader {
+		line := func(size int) []byte {
+			data := make([]byte, 0, size)
+			data = append(data, record...)
+			data = append(data, bytes.Repeat([]byte(" "), size-len(record)-len(ending))...)
+			return append(data, ending...)
+		}
+		regular := line(maxInputBytes)
+		first := regular
+		if extra != 0 {
+			first = line(maxInputBytes + extra)
+		}
+		readers := []io.Reader{bytes.NewReader(first)}
+		for i := 1; i < 32; i++ {
+			readers = append(readers, bytes.NewReader(regular))
+		}
+		return io.MultiReader(readers...)
+	}
+	for _, tc := range []struct{ name, ending string }{{"lf", "\n"}, {"crlf", "\r\n"}} {
+		t.Run(tc.name+"-exact-limit", func(t *testing.T) {
+			if err := v.Validate(prefix(tc.ending, 0), "jsonl"); err != nil {
+				t.Fatal("valid JSONL exactly at the raw byte limit rejected:", err)
+			}
+		})
+	}
+	t.Run("crlf-unvalidated-suffix", func(t *testing.T) {
+		forbidden := append(bytes.Clone(record[:len(record)-1]), []byte(",\"hostname\":\"example.invalid\"}\r\n")...)
+		if err := v.Validate(bytes.NewReader(forbidden), "jsonl"); err == nil {
+			t.Fatal("forbidden-record control accepted")
+		}
+		// Exhaust the reader's limit-plus-one allowance on complete CRLF
+		// records, leaving a forbidden record entirely beyond its boundary.
+		reader := io.MultiReader(prefix("\r\n", 1), bytes.NewReader(forbidden))
+		err := v.Validate(reader, "jsonl")
+		var input *InputError
+		if !errors.As(err, &input) || input.Code != "invalid-input" || input.Reference != "public-record" {
+			t.Fatalf("JSONL with an unvalidated suffix approved or wrong error: %v", err)
+		}
+	})
+}
+
 type publicFailedReader struct{}
 
 func (publicFailedReader) Read([]byte) (int, error) { return 0, errors.New("private reader error") }

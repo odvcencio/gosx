@@ -8,7 +8,8 @@ function sceneWebGPUDetailFragment(source: string, detail: boolean) {
     let V = normalize(frame.cameraPos - in.worldPos);`);
 }
 
-function sceneWebGPUCreateDetailResources(device: any, frameLayout: any, materialLayout: any, source: string) {
+function sceneWebGPUEnsureDetailResources(device: any, resources: any, materials: any[], frameLayout: any, materialLayout: any, source: string) {
+  if (resources || !materials.some(function(material: any) { return material && material.detail; })) return resources;
   const layout = device.createBindGroupLayout({ label: "detail", entries: [
     { binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: "uniform" } },
     { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float", viewDimension: "2d-array" } },
@@ -137,10 +138,10 @@ function sceneWebGPUUploadDetail(device: any, resources: any, material: any, ena
 }
 
 function sceneWebGPUPrepareDetailFrame(device: any, resources: any, materials: any[], textureCache: any, options: any) {
+  if (!resources) return resources;
   sceneWebGPUBeginDetailFrame(resources);
   for (const material of materials) {
     if (!material || !material.detail) continue;
-    if (!resources) resources = sceneWebGPUCreateDetailResources(device, options.frameLayout, options.materialLayout, options.source);
     sceneWebGPUPrepareDetail(device, resources, material, textureCache, options.placeholderView);
     sceneWebGPUUploadDetail(device, resources, material, options.enabled);
   }

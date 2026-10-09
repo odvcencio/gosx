@@ -128,6 +128,15 @@ else
 	$(GO) test -timeout 25m ./cmd/gosx
 endif
 
+.PHONY: test-island-aot
+test-island-aot:
+	GOWORK=off $(GO) test -count=1 ./island/aot
+	GOWORK=off $(GO) test -count=1 ./ir -run '^TestIslandAOT(StubSignatures|TinyGoDependencyBoundary|GoWASMDependencyBoundary)$$'
+
+.PHONY: test-wasmgen
+test-wasmgen:
+	GOWORK=off $(GO) test -count=1 ./internal/wasmgen
+
 test-ci-partitions:
 	$(GO) test ./internal/citest
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
@@ -151,7 +160,7 @@ test-race-pr:
 # Native telemetry checks stay non-short so cap and ownership tests execute.
 .PHONY: test-telemetry test-telemetry-metric-race test-telemetry-helpers-race
 test-telemetry:
-	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/...
+	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/... ./server ./route ./scheduled ./hub ./sim ./game/loop
 
 test-telemetry-metric-race:
 	GOWORK=off $(GO) test -race ./telemetry/metric
@@ -161,12 +170,17 @@ test-telemetry-helpers-race:
 
 .PHONY: test-telemetry-wasm bench-telemetry
 test-telemetry-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry/metric ./internal/clock ./telemetry/telemetrytest
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry ./telemetry/metric ./telemetry/schema ./internal/clock ./telemetry/telemetrytest ./sim ./game/loop
 
 bench-telemetry:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim
 
-test-fuzz-smoke:
+.PHONY: test-telemetry-fuzz
+test-telemetry-fuzz:
+	GOWORK=off GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./telemetry -run '^$$' -fuzz FuzzDomainFields -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOWORK=off GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./telemetry -run '^$$' -fuzz FuzzActivityTransitions -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+
+test-fuzz-smoke: test-telemetry-fuzz
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./session -run '^$$' -fuzz FuzzDanmujiDecodeSessionCookieNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./crdt -run '^$$' -fuzz FuzzDanmujiLoadDocumentNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./physics -run '^$$' -fuzz FuzzDanmujiRaycastHandlesBoundedNumericInputs -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
@@ -271,6 +285,9 @@ build-wasm-all:
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
 	GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/host
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/audio -run '^TestHostJS'
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
@@ -302,7 +319,11 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 test-e2e:
+ifdef E2E_SHARD
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest browser $(E2E_SHARD)
+else
 	$(GO) test -tags e2e -timeout 30m ./e2e
+endif
 
 # test-perf-browser runs the perf driver's own browser tests.
 #

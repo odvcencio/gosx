@@ -276,7 +276,6 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-scene3d.js", file: rt.BootstrapFeatureScene3D.File, role: "scene3d chunk"},
 		{name: "bootstrap-feature-scene3d-command.js", file: rt.BootstrapFeatureScene3DCommand.File, role: "scene3d command chunk"},
 		{name: "bootstrap-feature-scene3d-hydrate.js", file: rt.BootstrapFeatureScene3DHydrate.File, role: "scene3d hydrate chunk"},
-		{name: "bootstrap-feature-scene3d-pipeline-recovery.js", file: rt.BootstrapFeatureScene3DPipelineRecovery.File, role: "scene3d recovery chunk"},
 		{name: "bootstrap-feature-scene3d-webgpu.js", file: rt.BootstrapFeatureScene3DWebGPU.File, role: "scene3d webgpu chunk"},
 		{name: "bootstrap-feature-scene3d-webgl.js", file: rt.BootstrapFeatureScene3DWebGL.File, role: "scene3d webgl chunk"},
 		{name: "bootstrap-feature-scene3d-gltf.js", file: rt.BootstrapFeatureScene3DGLTF.File, role: "scene3d gltf chunk"},
@@ -294,6 +293,14 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "hls.min.js", file: rt.VideoHLS.File, role: "video hls chunk"},
 		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
 		{name: "relay.js", file: rt.Relay.File, role: "cross-frame preview relay"},
+	}
+	featureNames := make([]string, 0, len(rt.Features))
+	for name := range rt.Features {
+		featureNames = append(featureNames, name)
+	}
+	sort.Strings(featureNames)
+	for _, name := range featureNames {
+		assets = append(assets, runtimeSizeAsset{name: "bootstrap-feature-" + name + ".js", file: rt.Features[name].File, role: "feature chunk"})
 	}
 	assets = append(assets, runtimeSizeAsset{name: "navigation.js", file: filepath.Base(runtimehost.NavigationRuntimePath), role: "navigation runtime",
 		embedded: []byte(runtimehost.NavigationRuntime), gzipSidecar: runtimehost.NavigationRuntimeGzip, brotliSidecar: runtimehost.NavigationRuntimeBrotli})
@@ -345,6 +352,10 @@ var runtimeExcludableAssetRoles = map[string][]string{
 	"video":    {"hls.min.js"},
 	"payments": {"stripe-bridge.js"},
 	"relay":    {"relay.js"},
+	// edits and morph are filled by the milestone that adds their chunks
+	// (they ship through runtimeFeatureChunks, not a fixed field).
+	"edits": {},
+	"morph": {},
 }
 
 // runtimeAssetRoles returns the sorted, valid build.runtime.exclude role

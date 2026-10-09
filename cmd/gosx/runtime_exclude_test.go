@@ -13,7 +13,7 @@ import (
 
 func TestRuntimeAssetRolesAllValidateAndRoundTrip(t *testing.T) {
 	roles := runtimeAssetRoles()
-	want := []string{"controllers", "engines", "hubs", "islands", "payments", "relay", "scene3d", "textlayout", "video"}
+	want := []string{"controllers", "edits", "engines", "hubs", "islands", "morph", "payments", "relay", "scene3d", "textlayout", "video"}
 	if len(roles) != len(want) {
 		t.Fatalf("runtimeAssetRoles() = %v, want %v", roles, want)
 	}

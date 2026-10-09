@@ -33,7 +33,7 @@ const canonicalRuntimeBundleRoot = "wasm/artifacts"
 
 var (
 	runtimeBuildTinyGoWASM              = buildTinyGoWASM
-	runtimeOptimizeWASMWithWasmOpt      = optimizeWASMWithWasmOpt
+	runtimeNewWASMOptimizer             = func() func(string) (bool, error) { return newOptionalWASMOptimizer(os.Stderr).optimize }
 	runtimeMetricsForFile               = ouroboros.MetricsForFile
 	runtimeStageTinyGoWASMExec          = stageTinyGoWASMExec
 	runtimeResolveGoSXModuleRoot        = resolveGoSXModuleRoot
@@ -168,6 +168,7 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 		return err
 	}
 
+	optimize := runtimeNewWASMOptimizer()
 	targets := runtimeBuildTargets()
 	for targetIndex, target := range targets {
 		outputPath := filepath.Join(buildOutDir, target.file)
@@ -179,7 +180,7 @@ func RunBuildRuntimeWithOptions(outDir string, opts buildRuntimeOptions) error {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
 			return fmt.Errorf("validate TinyGo wasm_exec.js after %s build: %w", target.label, err)
 		}
-		optimized, err := runtimeOptimizeWASMWithWasmOpt(outputPath)
+		optimized, err := optimize(outputPath)
 		if err != nil {
 			recordRuntimeBuildFailure(evidence, targets, targetIndex, target, err, canonical, buildOutDir, outDir, gosxRoot)
 			return fmt.Errorf("optimize %s runtime: %w", target.label, err)

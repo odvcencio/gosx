@@ -297,6 +297,12 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 	if err := copyFile(filepath.Join(buildDir, "relay.js"), filepath.Join(gosxRoot, "client", "js", "relay.js")); err != nil {
 		return fmt.Errorf("stage relay.js: %w", err)
 	}
+	for _, chunk := range runtimeFeatureChunks {
+		file := "bootstrap-feature-" + chunk.name + ".js"
+		if err := copyFile(filepath.Join(buildDir, file), filepath.Join(gosxRoot, "client", "js", file)); err != nil {
+			return fmt.Errorf("stage %s: %w", file, err)
+		}
+	}
 
 	if err := writeDevIslandPrograms(islandDir, islands); err != nil {
 		return err

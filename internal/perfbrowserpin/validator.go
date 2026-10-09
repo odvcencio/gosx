@@ -24,6 +24,7 @@ const (
 	testJobName    = "test"
 
 	latestSetupName   = "Set up Chrome"
+	encoderName       = "WebAssembly encoder browser validation"
 	checkoutName      = "Check out repository"
 	goSetupName       = "Set up Go"
 	tinyGoName        = "Install TinyGo"
@@ -44,6 +45,7 @@ const (
 	adapterUploadName = "Upload Scene3D adapter proof diagnostics"
 	adapterCleanName  = "Clean Scene3D adapter proof artifacts"
 	aggregateStepName = "All test jobs passed"
+	cliShardStepName  = "CLI production-build integration tests"
 
 	latestChromePath = "${{ steps.chrome.outputs.chrome-path }}"
 	pinnedChromePath = "${{ steps.perf-chrome.outputs.chrome-path }}"
@@ -51,10 +53,20 @@ const (
 	pinnedSnapshot   = "1688711"
 	productVersion   = "154.0.8034.0"
 
+	// Full lanes run on pushes and on pull requests that are not drafts. The
+	// aggregate binds the draft state itself and fails closed on drafts, because
+	// GitHub counts a skipped required check as passed.
+	fullLaneIf      = "${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}"
+	draftEnvName    = "DRAFT_PULL_REQUEST"
+	draftEnvBinding = "${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}"
+
 	identityRun = `sh scripts/verify-perf-browser-identity.sh \
   "$PERF_CHROME_PATH" \
   "$PERF_CHROME_VERSION" \
   build/perf-browser-identity.txt
+`
+	encoderRun = `test -x "$GOSX_CHROME_BIN"
+make test-wasmgen
 `
 	ouroborosRun = `chrome_bin="$(command -v google-chrome-stable || command -v google-chrome)"
 GOSX_CHROME_BIN="$chrome_bin" go test ./examples/ouroboros-corpus -run '^TestFixtureMP4BrowserLoadsMetadata$' -count=1
@@ -117,17 +129,37 @@ rm -rf -- "${RUNNER_TEMP}/gosx-adapter-proof"
 `
 )
 
+// draftFastNeeds are the lanes a draft pull request runs. The aggregate reports
+// them on drafts and then fails closed until the full suite runs.
+var draftFastNeeds = []string{
+	"release-gate",
+	"go-tests",
+	"js-tests",
+}
+
 var baseAggregateNeeds = []string{
 	"release-gate",
 	"go-tests",
 	"go-race-tests",
 	"go-cli-tests",
 	"go-cli-tests-b",
+	"go-cli-tests-c",
 	"js-tests",
 	"wire-gates",
 	"wasm-tests",
 	"browser-tests",
+	"browser-tests-b",
+	"browser-tests-c",
 }
+
+// cliShardJobs are the CLI test lanes in citest shard order. Each runs exactly
+// one share of cmd/gosx's tests, so a lane that is missing, renamed, or pointed
+// at another share silently drops tests from CI.
+var cliShardJobs = []string{"go-cli-tests", "go-cli-tests-b", "go-cli-tests-c"}
+
+// browserShardJobs are the e2e browser lanes in citest shard order. The first
+// is the governed browser-tests job, which also owns the perf and media steps.
+var browserShardJobs = []string{browserJobName, "browser-tests-b", "browser-tests-c"}
 
 // Validate checks a complete GitHub Actions workflow document.
 func Validate(source []byte) error {
@@ -164,12 +196,31 @@ func Validate(source []byte) error {
 		return err
 	}
 
+	for index, name := range cliShardJobs {
+		job, ok := jobs[name]
+		if !ok {
+			return fmt.Errorf("workflow.jobs: %s job is missing", name)
+		}
+		if err := validateCLIShardJob(job, name, index); err != nil {
+			return err
+		}
+	}
+
 	browserJob, ok := jobs[browserJobName]
 	if !ok {
 		return errors.New("workflow.jobs: browser-tests job is missing")
 	}
 	if err := validateBrowserJob(browserJob); err != nil {
 		return err
+	}
+	for index, name := range browserShardJobs[1:] {
+		job, ok := jobs[name]
+		if !ok {
+			return fmt.Errorf("workflow.jobs: %s job is missing", name)
+		}
+		if err := validateBrowserShardJob(job, name, index+1); err != nil {
+			return err
+		}
 	}
 
 	_, hasStableJob := jobs[stableJobName]
@@ -266,8 +317,11 @@ func validateNodeShape(node *yaml.Node, path string) error {
 
 func validateBrowserJob(node *yaml.Node) error {
 	const label = "browser-tests job"
-	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	job, err := exactMapping(node, label, "if", "runs-on", "timeout-minutes", "steps")
 	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", fullLaneIf); err != nil {
 		return err
 	}
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
@@ -289,13 +343,93 @@ type stepContract struct {
 	validate func(*yaml.Node) error
 }
 
+func docsContract(shard int) stepContract {
+	return stepContract{docsName, "browser docs E2E gate", func(node *yaml.Node) error {
+		return validateDocs(node, shard)
+	}}
+}
+
+// validateBrowserShardJob pins a browser-tests-b or -c lane. These lanes run
+// only their share of the e2e suite, on the floating browser, so they carry no
+// pinned-browser or perf step. The draft gate and the timeout match
+// browser-tests: a skipped or shortened shard would drop tests unnoticed.
+func validateBrowserShardJob(node *yaml.Node, name string, shard int) error {
+	label := name + " job"
+	job, err := exactMapping(node, label, "if", "runs-on", "timeout-minutes", "steps")
+	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", fullLaneIf); err != nil {
+		return err
+	}
+	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
+		return err
+	}
+	if err := exactInt(job["timeout-minutes"], label+".timeout-minutes", "45"); err != nil {
+		return err
+	}
+	contracts := []stepContract{
+		{checkoutName, name + " checkout", validateCheckout},
+		{goSetupName, name + " Go setup", validateGoSetup},
+		{latestSetupName, name + " browser setup", validateLatestSetup},
+		{tinyGoName, name + " TinyGo install", validateTinyGo},
+		docsContract(shard),
+	}
+	if err := validateExactStepRoster(job["steps"], label+".steps", contracts); err != nil {
+		return err
+	}
+	if got := countContainingScalar(node, pinnedChromePath) + countContainingScalar(node, pinnedVersion) + countExactScalar(node, pinnedSnapshot); got != 0 {
+		return fmt.Errorf("%s: pinned perf browser is referenced %d times, want 0", label, got)
+	}
+	if got := countContainingScalar(node, latestChromePath); got != 1 {
+		return fmt.Errorf("%s: latest browser path is referenced %d times, want 1", label, got)
+	}
+	return nil
+}
+
+// validateCLIShardJob pins the draft gate and the shard number of a CLI lane.
+// Together with the three-way citest partition, running lanes 0, 1 and 2 once
+// each is what makes the CLI suite complete.
+func validateCLIShardJob(node *yaml.Node, name string, shard int) error {
+	label := name + " job"
+	job, err := mapping(node, label)
+	if err != nil {
+		return err
+	}
+	ifNode, ok := job["if"]
+	if !ok {
+		return fmt.Errorf("%s: missing field \"if\"", label)
+	}
+	if err := exactString(ifNode, label+".if", fullLaneIf); err != nil {
+		return err
+	}
+	stepsNode, ok := job["steps"]
+	if !ok {
+		return fmt.Errorf("%s: missing field \"steps\"", label)
+	}
+	steps, err := namedSteps(stepsNode, label+".steps")
+	if err != nil {
+		return err
+	}
+	step, err := requiredStep(steps, cliShardStepName, label+" shard step")
+	if err != nil {
+		return err
+	}
+	fields, err := exactMapping(step.node, label+" shard step", "name", "run")
+	if err != nil {
+		return err
+	}
+	return exactString(fields["run"], label+" shard step.run", fmt.Sprintf("make test-cli CLI_SHARD=%d", shard))
+}
+
 func browserStepContracts() []stepContract {
 	return []stepContract{
 		{checkoutName, "browser checkout", validateCheckout},
 		{goSetupName, "browser Go setup", validateGoSetup},
 		{latestSetupName, "latest browser setup", validateLatestSetup},
+		{encoderName, "WebAssembly encoder browser validation", validateEncoder},
 		{tinyGoName, "browser TinyGo install", validateTinyGo},
-		{docsName, "browser docs E2E gate", validateDocs},
+		docsContract(0),
 		{ouroborosName, "Ouroboros browser smoke", validateOuroboros},
 		{driverName, "perf driver browser tests", validateDriver},
 		{pinnedSetupName, "pinned perf browser setup", validatePinnedSetup},
@@ -367,8 +501,8 @@ func validateBrowserIsolation(node *yaml.Node) error {
 	if got := countContainingScalar(node, pinnedVersion); got != 1 {
 		return fmt.Errorf("browser-tests job: pinned browser version is referenced %d times, want 1", got)
 	}
-	if got := countContainingScalar(node, latestChromePath); got != 2 {
-		return fmt.Errorf("browser-tests job: latest browser path is referenced %d times, want 2", got)
+	if got := countContainingScalar(node, latestChromePath); got != 3 {
+		return fmt.Errorf("browser-tests job: latest browser path is referenced %d times, want 3", got)
 	}
 	return nil
 }
@@ -426,7 +560,7 @@ func validateTinyGo(node *yaml.Node) error {
 	})
 }
 
-func validateDocs(node *yaml.Node) error {
+func validateDocs(node *yaml.Node, shard int) error {
 	const label = "browser docs E2E gate"
 	step, err := exactMapping(node, label, "name", "env", "run")
 	if err != nil {
@@ -434,12 +568,29 @@ func validateDocs(node *yaml.Node) error {
 	}
 	if err := exactStrings(step, label, map[string]string{
 		"name": docsName,
-		"run":  "make test-e2e",
+		"run":  fmt.Sprintf("make test-e2e E2E_SHARD=%d", shard),
 	}); err != nil {
 		return err
 	}
 	return exactStringMap(step["env"], label+".env", map[string]string{
 		"GOSX_E2E_CHROME": latestChromePath,
+	})
+}
+
+func validateEncoder(node *yaml.Node) error {
+	const label = "WebAssembly encoder browser validation"
+	step, err := exactMapping(node, label, "name", "env", "run")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": encoderName,
+		"run":  encoderRun,
+	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["env"], label+".env", map[string]string{
+		"GOSX_CHROME_BIN": latestChromePath,
 	})
 }
 
@@ -664,8 +815,11 @@ func validateStableCleanup(node *yaml.Node) error {
 
 func validateStableJob(node *yaml.Node) error {
 	const label = "stable Scene3D renderer proof job"
-	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	job, err := exactMapping(node, label, "if", "runs-on", "timeout-minutes", "steps")
 	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", fullLaneIf); err != nil {
 		return err
 	}
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
@@ -763,8 +917,11 @@ func validateAdapterCleanup(node *yaml.Node) error {
 
 func validateAdapterJob(node *yaml.Node) error {
 	const label = "Scene3D adapter proof job"
-	job, err := exactMapping(node, label, "runs-on", "timeout-minutes", "steps")
+	job, err := exactMapping(node, label, "if", "runs-on", "timeout-minutes", "steps")
 	if err != nil {
+		return err
+	}
+	if err := exactString(job["if"], label+".if", fullLaneIf); err != nil {
 		return err
 	}
 	if err := exactString(job["runs-on"], label+".runs-on", "ubuntu-latest"); err != nil {
@@ -838,7 +995,8 @@ func validateAggregateStep(node *yaml.Node, needs []string) error {
 	if err := exactString(step["name"], label+".name", aggregateStepName); err != nil {
 		return err
 	}
-	expectedEnv := make(map[string]string, len(needs))
+	expectedEnv := make(map[string]string, len(needs)+1)
+	expectedEnv[draftEnvName] = draftEnvBinding
 	for _, need := range needs {
 		expectedEnv[aggregateResultEnv(need)] = fmt.Sprintf("${{ needs.%s.result }}", need)
 	}
@@ -852,10 +1010,11 @@ func aggregateNeeds(hasStableJob bool) []string {
 	needs := slices.Clone(baseAggregateNeeds)
 	if hasStableJob {
 		// The stable proof is optional only as a workflow composition. Once
-		// present, its exact job has no skip condition and is a required success.
-		needs = slices.Insert(needs, len(needs)-1, stableJobName)
+		// present, its only skip condition is the draft gate, and it is a
+		// required success for every run the aggregate can pass.
+		needs = slices.Insert(needs, slices.Index(needs, browserJobName), stableJobName)
 	}
-	needs = slices.Insert(needs, len(needs)-1, adapterJobName)
+	needs = slices.Insert(needs, slices.Index(needs, browserJobName), adapterJobName)
 	return needs
 }
 
@@ -865,7 +1024,33 @@ func aggregateResultEnv(need string) string {
 
 func aggregateRun(needs []string) string {
 	var run strings.Builder
-	run.WriteString("set -eu\nfor result in \\\n")
+	run.WriteString("set -eu\n")
+	fmt.Fprintf(&run, "if [ \"$%s\" = true ]; then\n  for result in \\\n", draftEnvName)
+	for index, need := range draftFastNeeds {
+		suffix := " \\\n"
+		if index == len(draftFastNeeds)-1 {
+			suffix = "\n"
+		}
+		fmt.Fprintf(&run, "    \"%s=$%s\"%s", need, aggregateResultEnv(need), suffix)
+	}
+	run.WriteString(`  do
+    case "$result" in
+      *=success) ;;
+      *)
+        echo "draft fast check did not succeed: $result" >&2
+        exit 1
+        ;;
+    esac
+  done
+  echo "::error title=Draft pull request::`)
+	run.WriteString(strings.Join(draftFastNeeds[:len(draftFastNeeds)-1], ", "))
+	run.WriteString(" and ")
+	run.WriteString(draftFastNeeds[len(draftFastNeeds)-1])
+	run.WriteString(` passed. The full suite runs when the PR is marked ready for review; until then this required check fails closed."
+  exit 1
+fi
+`)
+	run.WriteString("for result in \\\n")
 	for index, need := range needs {
 		suffix := " \\\n"
 		if index == len(needs)-1 {

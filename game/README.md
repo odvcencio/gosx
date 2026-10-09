@@ -13,6 +13,12 @@ The package composes existing GoSX primitives instead of replacing them:
 - `game` owns fixed-step orchestration, ECS-style state, input actions, assets,
   and the bridge between those packages.
 
+Browser engines that only present server snapshots can use `game/host` for
+typed gamepad snapshots and animation-frame scheduling. This small leaf package
+does not import `game.Runtime`, server hubs, HTTP/TLS, or the GoSX compiler.
+`game/gamepad` and `game/loop` retain their existing adapter types as aliases,
+so applications that use the input mapper or fixed-step driver remain compatible.
+
 Minimal pattern:
 
 ```go

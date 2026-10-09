@@ -51,21 +51,29 @@ type Options struct {
 	// DisableReplay skips the unbounded input log for long-running simulations.
 	// Replay returns an empty log when recording is disabled.
 	DisableReplay bool
+	// Observer receives aggregate timing after the existing whole tick finishes.
+	// A nil observer skips timing reads and event construction.
+	Observer Observer
+	// Clock supplies ticker deadlines and elapsed time; nil uses a real clock.
+	Clock Clock
 }
 
 // Runner drives a Simulation at a fixed tick rate over a hub.
 type Runner struct {
-	hub       *hub.Hub
-	sim       Simulation
-	tickRate  int
-	mu        sync.Mutex
-	wg        sync.WaitGroup
-	inputs    map[string]Input
-	running   atomic.Bool
-	frame     atomic.Uint64
-	snapshots *snapshotRing
-	recorder  *replayRecorder
-	encoding  StateEncoding
+	hub        *hub.Hub
+	sim        Simulation
+	tickRate   int
+	mu         sync.Mutex
+	runMu      sync.Mutex
+	stop, done chan struct{}
+	inputs     map[string]Input
+	running    atomic.Bool
+	frame      atomic.Uint64
+	snapshots  *snapshotRing
+	recorder   *replayRecorder
+	encoding   StateEncoding
+	observer   Observer
+	clock      Clock
 }
 
 // New creates a Runner that will drive sim over h at the configured tick rate.
@@ -78,6 +86,10 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 	if !opts.DisableReplay {
 		recorder = newReplayRecorder()
 	}
+	c := opts.Clock
+	if c == nil {
+		c = newClock()
+	}
 	return &Runner{
 		hub:       h,
 		sim:       s,
@@ -86,6 +98,8 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 		snapshots: newSnapshotRing(128),
 		recorder:  recorder,
 		encoding:  normalizeStateEncoding(opts.StateEncoding),
+		observer:  opts.Observer,
+		clock:     c,
 	}
 }
 

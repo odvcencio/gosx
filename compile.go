@@ -8,6 +8,8 @@ import (
 	"os"
 	"sync"
 
+	"m31labs.dev/gosx/internal/gsxparse"
+
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"m31labs.dev/gosx/ir"
 )
@@ -175,8 +177,7 @@ func Parse(source []byte) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 		return nil, nil, fmt.Errorf("generate gosx language: %w", err)
 	}
 
-	parser := gotreesitter.NewParser(lang)
-	tree, err := parser.Parse(source)
+	tree, err := gsxparse.Parse(lang, source)
 	if err != nil {
 		return nil, nil, fmt.Errorf("parse: %w", err)
 	}

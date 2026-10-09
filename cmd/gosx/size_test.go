@@ -120,7 +120,7 @@ func TestSizeCanonicalBytesAndServedSidecars(t *testing.T) {
 	}
 }
 
-func TestSizeAllCapabilityVariantsAndRecovery(t *testing.T) {
+func TestSizeAllCapabilityVariants(t *testing.T) {
 	sizeTestCompressor(t)
 	dir := t.TempDir()
 	runtimeDir := filepath.Join(dir, "assets", "runtime")
@@ -128,7 +128,6 @@ func TestSizeAllCapabilityVariantsAndRecovery(t *testing.T) {
 	manifest.Runtime.WASM.File = "runtime.hash.wasm"
 	manifest.Runtime.WASMExec.File = "exec.hash.js"
 	manifest.Runtime.BootstrapRuntime.File = "bootstrap.hash.js"
-	manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery.File = "recovery.hash.js"
 	manifest.Runtime.WASMVariants = map[string]buildmanifest.RuntimeVariantAsset{}
 	for _, id := range []string{"full", "core", "engine", "collab"} {
 		name := id + ".hash.wasm"
@@ -140,7 +139,7 @@ func TestSizeAllCapabilityVariantsAndRecovery(t *testing.T) {
 		manifest.Runtime.WASMVariants[id] = variant
 		mustWriteFile(t, filepath.Join(runtimeDir, name), "wasm")
 	}
-	for _, name := range []string{"exec.hash.js", "bootstrap.hash.js", "recovery.hash.js"} {
+	for _, name := range []string{"exec.hash.js", "bootstrap.hash.js"} {
 		mustWriteFile(t, filepath.Join(runtimeDir, name), "body")
 	}
 	data, err := json.Marshal(manifest)
@@ -162,13 +161,13 @@ func TestSizeAllCapabilityVariantsAndRecovery(t *testing.T) {
 			total += entry.Bytes
 		}
 	}
-	for _, name := range []string{"navigation.js", "runtime-variant/full", "runtime-variant/core", "runtime-variant/engine", "runtime-variant/collab", "bootstrap-feature-scene3d-pipeline-recovery.js"} {
+	for _, name := range []string{"navigation.js", "runtime-variant/full", "runtime-variant/core", "runtime-variant/engine", "runtime-variant/collab"} {
 		if !names[name] {
 			t.Fatal("missing runtime asset", name)
 		}
 	}
-	// Four distinct WASM files and three JS files, plus navigation; full is an alias.
-	if report.TotalBytes != total || total != 28+int64(len(runtimehost.NavigationRuntime)) {
+	// Four distinct WASM files and two JS files, plus navigation; full is an alias.
+	if report.TotalBytes != total || total != 24+int64(len(runtimehost.NavigationRuntime)) {
 		t.Fatal("capability aliases counted twice", report.TotalBytes, total)
 	}
 	profiles := map[string]bool{}
