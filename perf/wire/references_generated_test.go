@@ -140,8 +140,14 @@ func generatedReferencePositions() []referencePosition {
 		positions = append(positions, referencePosition{tc.name, KindDocument, tc.template, tc.kind, tc.name == "html-potential", false, false})
 	}
 	for _, tag := range []string{"img", "source", "video", "audio", "track", "iframe", "embed"} {
+		kind := KindOther
+		if tag == "img" {
+			kind = KindImage
+		} else if tag == "iframe" {
+			kind = KindDocument
+		}
 		positions = append(positions,
-			referencePosition{"html-" + tag + "-src", KindDocument, "<" + tag + ` src="TARGET"></` + tag + ">", "", false, false, false},
+			referencePosition{"html-" + tag + "-src", KindDocument, "<" + tag + ` src="TARGET"></` + tag + ">", kind, false, false, false},
 			referencePosition{"html-" + tag + "-poster", KindDocument, "<" + tag + ` poster="TARGET"></` + tag + ">", KindImage, false, false, false})
 	}
 	return positions

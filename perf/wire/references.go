@@ -151,11 +151,13 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 			return referenceFailure()
 		}
 		if n.Type == html.ElementNode {
-			if n.Data == "template" {
+			if n.Namespace == "" && n.Data == "template" {
 				continue
 			}
+			out.Complete = out.Complete && n.Namespace == "" && htmlReferenceElements[n.Data]
 			seen := map[string]bool{}
 			for _, a := range n.Attr {
+				out.Complete = out.Complete && understoodHTMLReferenceAttribute(n, a)
 				if seen[a.Key] {
 					out.Complete = false
 				}
@@ -194,7 +196,7 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					} else if err := scanSyntaxReferences([]byte(textOf(n)), KindScript, out); err != nil {
 						return err
 					}
-				} else if strings.EqualFold(attr(n, "type"), "importmap") {
+				} else if !knownHTMLDataScript(attr(n, "type")) {
 					out.Complete = false
 				}
 			case "style":
@@ -202,6 +204,7 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					return err
 				}
 			case "link":
+				out.Complete = out.Complete && understoodHTMLLink(n)
 				for _, rel := range strings.Fields(strings.ToLower(attr(n, "rel"))) {
 					switch rel {
 					case "stylesheet":
@@ -223,14 +226,17 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 						addReference(out, attr(n, "href"), kind, false)
 					}
 				}
-			case "img", "source", "video", "audio", "track", "iframe", "embed":
-				addReference(out, attr(n, "src"), "", false)
-				addReference(out, attr(n, "poster"), KindImage, false)
-				// Candidate selection depends on viewport and MIME support.
-				// Keep coverage unknown until the producer/browser resolves it.
-				if attr(n, "srcset") != "" {
-					out.Complete = false
+			case "img":
+				addReference(out, attr(n, "src"), KindImage, false)
+			case "input":
+				if strings.EqualFold(attr(n, "type"), "image") {
+					addReference(out, attr(n, "src"), KindImage, false)
 				}
+			case "iframe":
+				addReference(out, attr(n, "src"), KindDocument, false)
+			case "source", "video", "audio", "track", "embed":
+				addReference(out, attr(n, "src"), KindOther, false)
+				addReference(out, attr(n, "poster"), KindImage, false)
 			case "object":
 				addReference(out, attr(n, "data"), "", false)
 			}
@@ -502,6 +508,14 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			default:
 				out.Complete = false
 			}
+		}
+	} else {
+		// Only understood functions can establish CSS coverage. Other functions
+		// may interpret strings as resources or synthesize substituted URLs.
+		switch name {
+		case "local", "format", "tech", "type", "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix", "calc", "min", "max", "clamp", "linear-gradient", "radial-gradient", "conic-gradient", "repeating-linear-gradient", "repeating-radial-gradient", "repeating-conic-gradient", "cubic-bezier", "steps", "counter", "counters":
+		default:
+			out.Complete = false
 		}
 	}
 }
