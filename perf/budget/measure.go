@@ -186,7 +186,49 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if row.Backend == "" {
 			row.Backend = "none"
 		}
-		plan, err := ResolveReachability(ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: uses}, Bodies: bodies, Route: route, Backend: row.Backend})
+		base, err := url.Parse(opts.BaseURL)
+		if err != nil {
+			return result, measureFailure("invalid-input", "/base")
+		}
+		type bodyIdentity struct{ url, sha string }
+		observations := map[string]HTTPMeasurement{document.url: first}
+		responses := map[bodyIdentity]HTTPMeasurement{{first.finalURL, document.sha}: first}
+		optionsFor := func(fixture fixtureBody) HTTPMeasureOptions {
+			options := HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}
+			if fixture.kind == "html" {
+				options.HTMLFields = fields
+				options.ServingCompressor = "go-brotli-4"
+			}
+			return options
+		}
+		observe := func(assetURL string) (HTTPMeasurement, error) {
+			if observed, ok := observations[assetURL]; ok {
+				return observed, nil
+			}
+			fixture := fixtures[byURL[assetURL]]
+			requestURL, err := base.Parse(assetURL)
+			if err != nil {
+				return HTTPMeasurement{}, measureFailure("invalid-input", "/url")
+			}
+			if observed, ok := responses[bodyIdentity{requestURL.String(), fixture.sha}]; ok {
+				// Reuse the verified final body without replaying its alias's
+				// redirects or adding another verification request.
+				observed.RedirectSizes, observed.redirectWireBytes = nil, nil
+				observed.WireBytes, observed.Requests = observed.finalWireBytes, 1
+				observations[assetURL] = observed
+				return observed, nil
+			}
+			observed, err := measureHTTP(ctx, optionsFor(fixture), normalize)
+			if err == nil {
+				observations[assetURL] = observed
+				responses[bodyIdentity{observed.finalURL, fixture.sha}] = observed
+			}
+			return observed, err
+		}
+		plan, err := resolveReachability(ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: uses}, Bodies: bodies, Route: route, Backend: row.Backend}, func(asset PlannedAsset) (string, error) {
+			observed, err := observe(asset.URL)
+			return observed.finalURL, err
+		})
 		if err != nil {
 			return result, err
 		}
@@ -200,12 +242,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			phases[asset.URL] = earlierPhase(phases[asset.URL], asset.Phase)
 		}
 		costs := []PhaseCost{{RequestIdentity: first.finalURL, Phase: "critical", Owner: "app", Sizes: measuredHTML.Sizes, WireBytes: first.finalWireBytes, Requests: 1}}
-		type bodyIdentity struct{ url, sha string }
 		verified := map[bodyIdentity]PhaseCost{{first.finalURL, document.sha}: costs[0]}
-		base, err := url.Parse(opts.BaseURL)
-		if err != nil {
-			return result, measureFailure("invalid-input", "/base")
-		}
 		requestURLs := map[string]string{}
 		for i, redirect := range first.RedirectSizes {
 			costs = append(costs, PhaseCost{RequestIdentity: "document-redirect:" + strconv.Itoa(i), Phase: "critical", Owner: "app", Sizes: redirect, WireBytes: first.redirectWireBytes[i], Requests: 1})
@@ -230,17 +267,12 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				costs = append(costs, PhaseCost{RequestIdentity: requestURL.String(), Phase: phase, Owner: fixture.owner, Sizes: fixture.sizes})
 				continue
 			}
-			options := HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}
-			if fixture.kind == "html" {
-				options.HTMLFields = fields
-				options.ServingCompressor = "go-brotli-4"
-			}
-			observed, err := measureHTTP(ctx, options, normalize)
+			observed, err := observe(fixture.url)
 			if err != nil {
 				return result, err
 			}
 			if fixture.kind == "html" {
-				repeat, err := measureHTTP(ctx, options, normalize)
+				repeat, err := measureHTTP(ctx, optionsFor(fixture), normalize)
 				if err != nil {
 					return result, err
 				}

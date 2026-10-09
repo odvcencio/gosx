@@ -36,6 +36,13 @@ type ResourcePlan struct {
 // "known" describes declared closure, not a certified browser observation.
 // An old graph or unresolved syntax retains all potential startup bytes.
 func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
+	return resolveReachability(opts, nil)
+}
+
+// verify returns the confined, verified final response URL for a reached use.
+// Offline callers retain declaration URLs; live collection verifies each use
+// before scanning it, so redirects cannot leave a stale dependency closure.
+func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (string, error)) (ResourcePlan, error) {
 	result := ResourcePlan{Reachability: "unknown", Assets: []PlannedAsset{}}
 	assets := opts.Inventory
 	if opts.Graph != nil {
@@ -83,7 +90,11 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		phase string
 	}
 	queue := []pending{}
+	conservative := false
 	enabled := func(asset buildmanifest.PerfAssetUse) bool {
+		if conservative {
+			return true
+		}
 		switch asset.Condition {
 		case "webgpu":
 			return opts.Route.Capabilities.Scene3D && opts.Backend == "webgpu"
@@ -172,7 +183,22 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			}
 		}
 	}
-	for len(queue) > 0 {
+	for len(queue) > 0 || !known && !conservative {
+		if len(queue) == 0 {
+			// Missing producer evidence and computed references cannot defer or
+			// exclude any potential body, even one labeled dormant. Traverse the
+			// promoted bodies too: they may reach HTML and redirect-relative edges.
+			conservative = true
+			for _, asset := range assets {
+				if asset.Kind != "html" {
+					key := assetUseIdentity{asset.ID, asset.URL}
+					if err := mark(key, "startup"); err != nil {
+						return result, err
+					}
+				}
+			}
+			continue
+		}
 		current := queue[0]
 		queue = queue[1:]
 		if phases[current.key] != current.phase {
@@ -180,6 +206,34 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		}
 		indexes := byUse[current.key]
 		use := assets[indexes[0]]
+		referenceBase := use.URL
+		missingFinalContract := false
+		if verify != nil {
+			final, err := verify(PlannedAsset{ID: use.ID, URL: use.URL, Phase: current.phase})
+			if err != nil {
+				return result, err
+			}
+			referenceBase = final
+			resolved, err := url.Parse(final)
+			if err != nil {
+				return result, measureFailure("wrong-fixture", "/graph/finalURL")
+			}
+			// A redirect selects the final declaration's dependency contract.
+			// The verified body still has to agree with the original use.
+			if targets := byURL[resolved.Path]; len(targets) > 0 {
+				for _, i := range targets {
+					if assets[i].SHA256 != use.SHA256 || assets[i].Kind != use.Kind {
+						return result, measureFailure("wrong-fixture", "/graph/finalURL")
+					}
+				}
+				if err := markURL(resolved.Path, current.phase); err != nil {
+					return result, err
+				}
+				indexes = targets
+			} else {
+				missingFinalContract = resolved.Path != use.URL
+			}
+		}
 		dependencies := map[string]bool{}
 		for _, i := range indexes {
 			asset := assets[i]
@@ -201,7 +255,7 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		known = known && refs.Complete
 		referenced := map[string]bool{}
 		for _, ref := range refs.Resources {
-			resolved, ok := resolveReference(use.URL, ref.URL)
+			resolved, ok := resolveReference(referenceBase, ref.URL)
 			if !ok {
 				known = false
 				continue
@@ -219,7 +273,12 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 					declared = declared || enabled(assets[i]) && dependencies[assets[i].ID]
 				}
 				if !declared {
-					return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/dependencies")
+					if !missingFinalContract {
+						return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/dependencies")
+					}
+					// The original URL's edge list cannot certify a new
+					// relative target without the final declaration.
+					known = false
 				}
 			}
 			phase := current.phase
@@ -256,16 +315,7 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			}
 		}
 	}
-	if !known {
-		// Missing producer evidence and computed references cannot defer or
-		// exclude any potential body, even one labeled dormant.
-		for _, asset := range assets {
-			if asset.Kind != "html" {
-				key := assetUseIdentity{asset.ID, asset.URL}
-				phases[key] = earlierPhase(phases[key], "startup")
-			}
-		}
-	} else {
+	if known {
 		result.Reachability = "known"
 	}
 	// Aliases share a physical response and therefore one earliest phase.
