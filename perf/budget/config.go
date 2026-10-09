@@ -134,7 +134,22 @@ type File struct {
 
 // Load validates configuration and its hash-bound inputs under one project root.
 // It does not certify the recorded allocation arithmetic.
-func Load(path string, opts LoadOptions) (result *File, resultErr error) {
+func Load(path string, opts LoadOptions) (*File, error) {
+	inputs, err := loadInputs(path, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &inputs.file, nil
+}
+
+type loadedInputs struct {
+	file         File
+	profile      Profile
+	coefficients Coefficients
+	toolchain    Toolchain
+}
+
+func loadInputs(path string, opts LoadOptions) (result *loadedInputs, resultErr error) {
 	defer func() { resultErr = inputReference(resultErr, "budget", "") }()
 	var f File
 	root, err := loadInput(path, opts, "Budget", &f)
@@ -217,7 +232,7 @@ func Load(path string, opts LoadOptions) (result *File, resultErr error) {
 	if err := f.validate(p, c); err != nil {
 		return nil, err
 	}
-	return &f, nil
+	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc}, nil
 }
 
 func (f File) validate(p Profile, c Coefficients) error {
