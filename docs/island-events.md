@@ -96,5 +96,12 @@ not compiled by the test suite; the compile path is covered by
 
 The runtime registers `wheel` listeners as non-passive, so a handler can call
 `browser.PreventDefault()` to stop the page from scrolling. Prevent the default
-only for a handler that uses the wheel, because a non-passive listener can
-slow scrolling.
+only for a handler that uses the wheel, because a non-passive listener can slow
+scrolling.
+
+Islands built without event metadata (older build output) work differently. If
+the island has a wheel handler when it hydrates, the listener is non-passive as
+above. If it has none, the listener is passive: a wheel handler added later
+still fires, but `browser.PreventDefault()` cannot block scrolling (the browser
+ignores it and logs a console warning). Rebuilding with the current `gosx`
+emits event metadata and gives full wheel support.

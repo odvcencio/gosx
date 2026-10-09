@@ -9,9 +9,10 @@
   and `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. A capture ends
   as the Pointer Events specification defines (after `pointerup` or
   `pointercancel`, on `ReleasePointer`, or when the element leaves the
-  document); disposing an island does not release it early. Legacy manifests attach the wheel
-  listener only on islands that have a wheel handler, and attach it when a patch
-  first adds one. See
+  document); disposing an island does not release it early. On islands built without event metadata, a
+  wheel handler present at hydration is non-passive; one added later still
+  fires, but `browser.PreventDefault()` cannot block scrolling. Rebuilding with
+  the current `gosx` gives full wheel support. See
   `docs/island-events.md`.
 - Diagnostics: an island handler attribute that no runtime name mapper resolves
   (`onMouseDown`, `onScroll`, `onKey`) now produces a warning with a source
@@ -20,8 +21,8 @@
   stay accepted. Nothing breaks, so there is no migration step.
 - Size budgets (decision 0014 exception, owner-approved 2026-10-08 at +536 raw
   for `bootstrap-feature-islands.js` and +539 raw for the legacy `bootstrap.js`
-  monolith): the gesture events grow the islands chunk by 532 raw bytes (18,766
-  to 19,298) and the monolith by 533 (1,910,041 to 1,910,574).
+  monolith): the gesture events grow the islands chunk by 390 raw bytes (18,766
+  to 19,156) and the monolith by 390 (1,910,682 to 1,911,072).
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
