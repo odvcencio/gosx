@@ -31,7 +31,7 @@
   The video selective runtime route budget rises from 288,689 to 289,289 raw and
   from 73,139 to 73,439 brotli, and the `/demos/scene3d/` `jsWireBytes` wire
   budget rises from 258,118 to 260,973 and the scaffold `/counter/` `jsWireBytes`
-  wire budget from 87,617 to 87,732; no other size budget changes.
+  wire budget from 87,617 to 87,942; no other size budget changes.
 - `RequireFeature` rejects a name whose contract key collides with another
   required feature or a legacy chunk's key (`a1` and `a-1`, or `text-layout`
   and `textlayout`), and the error names both. `hydrate.FeatureContractKey`

@@ -293,7 +293,7 @@
           "htmlWireBytes": 1514,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 87732,
+          "jsWireBytes": 87942,
           "lazyJsWireBytes": 256,
           "requests": 9,
           "totalWireBytes": 304319,
@@ -310,7 +310,7 @@
         ],
         "raise": {
           "frameworkJsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
-          "jsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap. Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 59914 to 87617 B; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged. M0 feature loader: owner-approved one-time M0 core change (Cicada Studio spec section 4, 2026-10-08). The shared runtime and navigation bundles grow, so jsWireBytes measures 87668 against the 87617 limit; the new 87732-byte limit is the measurement plus 64 bytes.",
+          "jsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap. Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 59914 to 87617 B; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged. M0 feature loader: owner-approved one-time M0 core change (Cicada Studio spec section 4, 2026-10-08). The shared runtime and navigation bundles grow, so jsWireBytes measured 87668, then 87878 after merging main's own runtime growth, against the 87617 limit; the new 87942-byte limit is the latest measurement plus 64 bytes.",
           "totalWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
           "requests": "Navigation re-baseline: The external navigation runtime adds one deferred, content-hashed script request. requests changes from 8 to 9 requests; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged."
         }
