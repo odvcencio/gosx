@@ -295,6 +295,14 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
 		{name: "relay.js", file: rt.Relay.File, role: "cross-frame preview relay"},
 	}
+	featureNames := make([]string, 0, len(rt.Features))
+	for name := range rt.Features {
+		featureNames = append(featureNames, name)
+	}
+	sort.Strings(featureNames)
+	for _, name := range featureNames {
+		assets = append(assets, runtimeSizeAsset{name: "bootstrap-feature-" + name + ".js", file: rt.Features[name].File, role: "feature chunk"})
+	}
 	assets = append(assets, runtimeSizeAsset{name: "navigation.js", file: filepath.Base(runtimehost.NavigationRuntimePath), role: "navigation runtime",
 		embedded: []byte(runtimehost.NavigationRuntime), gzipSidecar: runtimehost.NavigationRuntimeGzip, brotliSidecar: runtimehost.NavigationRuntimeBrotli})
 	ids := make([]string, 0, len(rt.WASMVariants))
@@ -345,6 +353,10 @@ var runtimeExcludableAssetRoles = map[string][]string{
 	"video":    {"hls.min.js"},
 	"payments": {"stripe-bridge.js"},
 	"relay":    {"relay.js"},
+	// edits and morph are filled by the milestone that adds their chunks
+	// (they ship through runtimeFeatureChunks, not a fixed field).
+	"edits": {},
+	"morph": {},
 }
 
 // runtimeAssetRoles returns the sorted, valid build.runtime.exclude role
