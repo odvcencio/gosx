@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +14,8 @@ import (
 
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	"m31labs.dev/gosx/internal/assetmeasure"
 	"m31labs.dev/gosx/perf/ouroboros"
 )
 
@@ -41,15 +41,20 @@ type sizeProfile struct {
 }
 
 type sizeReportFile struct {
-	Name        string `json:"name"`
-	File        string `json:"file"`
-	Role        string `json:"role"`
-	SHA256      string `json:"sha256,omitempty"`
-	Bytes       int64  `json:"bytes"`
-	GzipBytes   int64  `json:"gzipBytes"`
-	BrotliBytes int64  `json:"brotliBytes"`
-	ColdStart   bool   `json:"coldStart"`
+	Name            string `json:"name"`
+	File            string `json:"file"`
+	Role            string `json:"role"`
+	SHA256          string `json:"sha256,omitempty"`
+	Bytes           int64  `json:"bytes"`
+	GzipBytes       int64  `json:"gzipBytes"`
+	BrotliBytes     int64  `json:"brotliBytes"`
+	ColdStart       bool   `json:"coldStart"`
+	GzipWireBytes   *int64 `json:"gzipWireBytes,omitempty"`
+	BrotliWireBytes *int64 `json:"brotliWireBytes,omitempty"`
 }
+
+var measureSizeAsset = assetmeasure.Measure
+var canonicalSizePin = assetmeasure.CompressorPin{GoVersion: "1.26.0", BrotliVersion: "v1.2.1", GzipLevel: 9, BrotliQuality: 11, BrotliWindow: 0}
 
 func cmdSizeReport() {
 	if len(os.Args) < 3 {
@@ -201,6 +206,7 @@ func buildSizeReport(target string) (sizeReport, error) {
 		Manifest:   manifestPath,
 		RuntimeDir: runtimeDir,
 	}
+	seen := make(map[string]bool)
 	for _, asset := range runtimeSizeAssets(manifest) {
 		if asset.file == "" {
 			continue
@@ -210,6 +216,11 @@ func buildSizeReport(target string) (sizeReport, error) {
 			return sizeReport{}, err
 		}
 		report.Assets = append(report.Assets, entry)
+		// Capability aliases remain visible; inventory totals count one file once.
+		if seen[entry.File] {
+			continue
+		}
+		seen[entry.File] = true
 		report.TotalBytes += entry.Bytes
 		report.TotalGzip += entry.GzipBytes
 		report.TotalBrotli += entry.BrotliBytes
@@ -235,10 +246,12 @@ func resolveSizeReportTarget(target string) (manifestPath string, distDir string
 }
 
 type runtimeSizeAsset struct {
-	name      string
-	file      string
-	role      string
-	coldStart bool
+	name                       string
+	file                       string
+	role                       string
+	coldStart                  bool
+	embedded                   []byte
+	gzipSidecar, brotliSidecar []byte
 }
 
 func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
@@ -246,7 +259,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		return nil
 	}
 	rt := manifest.Runtime
-	return []runtimeSizeAsset{
+	assets := []runtimeSizeAsset{
 		{name: "runtime.wasm", file: rt.WASM.File, role: "core wasm", coldStart: true},
 		{name: "runtime-islands.wasm", file: rt.WASMIslands.File, role: "islands wasm"},
 		{name: "wasm_exec.js", file: rt.WASMExec.File, role: "wasm loader", coldStart: true},
@@ -263,6 +276,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-scene3d.js", file: rt.BootstrapFeatureScene3D.File, role: "scene3d chunk"},
 		{name: "bootstrap-feature-scene3d-command.js", file: rt.BootstrapFeatureScene3DCommand.File, role: "scene3d command chunk"},
 		{name: "bootstrap-feature-scene3d-hydrate.js", file: rt.BootstrapFeatureScene3DHydrate.File, role: "scene3d hydrate chunk"},
+		{name: "bootstrap-feature-scene3d-pipeline-recovery.js", file: rt.BootstrapFeatureScene3DPipelineRecovery.File, role: "scene3d recovery chunk"},
 		{name: "bootstrap-feature-scene3d-webgpu.js", file: rt.BootstrapFeatureScene3DWebGPU.File, role: "scene3d webgpu chunk"},
 		{name: "bootstrap-feature-scene3d-webgl.js", file: rt.BootstrapFeatureScene3DWebGL.File, role: "scene3d webgl chunk"},
 		{name: "bootstrap-feature-scene3d-gltf.js", file: rt.BootstrapFeatureScene3DGLTF.File, role: "scene3d gltf chunk"},
@@ -281,6 +295,25 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
 		{name: "relay.js", file: rt.Relay.File, role: "cross-frame preview relay"},
 	}
+	featureNames := make([]string, 0, len(rt.Features))
+	for name := range rt.Features {
+		featureNames = append(featureNames, name)
+	}
+	sort.Strings(featureNames)
+	for _, name := range featureNames {
+		assets = append(assets, runtimeSizeAsset{name: "bootstrap-feature-" + name + ".js", file: rt.Features[name].File, role: "feature chunk"})
+	}
+	assets = append(assets, runtimeSizeAsset{name: "navigation.js", file: filepath.Base(runtimehost.NavigationRuntimePath), role: "navigation runtime",
+		embedded: []byte(runtimehost.NavigationRuntime), gzipSidecar: runtimehost.NavigationRuntimeGzip, brotliSidecar: runtimehost.NavigationRuntimeBrotli})
+	ids := make([]string, 0, len(rt.WASMVariants))
+	for id := range rt.WASMVariants {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		assets = append(assets, runtimeSizeAsset{name: "runtime-variant/" + id, file: rt.WASMVariants[id].File, role: "capability wasm"})
+	}
+	return assets
 }
 
 // runtimeExcludableAssetRoles maps each build.runtime.exclude role (also
@@ -320,6 +353,10 @@ var runtimeExcludableAssetRoles = map[string][]string{
 	"video":    {"hls.min.js"},
 	"payments": {"stripe-bridge.js"},
 	"relay":    {"relay.js"},
+	// edits and morph are filled by the milestone that adds their chunks
+	// (they ship through runtimeFeatureChunks, not a fixed field).
+	"edits": {},
+	"morph": {},
 }
 
 // runtimeAssetRoles returns the sorted, valid build.runtime.exclude role
@@ -344,30 +381,67 @@ func runtimeAssetRoleSet() map[string]struct{} {
 }
 
 func sizeReportEntry(runtimeDir string, asset runtimeSizeAsset) (sizeReportFile, error) {
-	path := filepath.Join(runtimeDir, asset.file)
-	data, err := os.ReadFile(path)
+	data := asset.embedded
+	gz, br := asset.gzipSidecar, asset.brotliSidecar
+	if data == nil {
+		if filepath.Base(asset.file) != asset.file || filepath.IsAbs(asset.file) || strings.Contains(asset.file, "\\") {
+			return sizeReportFile{}, fmt.Errorf("invalid runtime asset file")
+		}
+		root, err := os.OpenRoot(runtimeDir)
+		if err != nil {
+			return sizeReportFile{}, err
+		}
+		defer root.Close()
+		read := func(name string) ([]byte, error) {
+			f, err := root.Open(name)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+			return io.ReadAll(f)
+		}
+		data, err = read(asset.file)
+		if err != nil {
+			return sizeReportFile{}, err
+		}
+		gz, err = read(asset.file + ".gz")
+		if err != nil && !os.IsNotExist(err) {
+			return sizeReportFile{}, err
+		}
+		br, err = read(asset.file + ".br")
+		if err != nil && !os.IsNotExist(err) {
+			return sizeReportFile{}, err
+		}
+	}
+	sizes, err := measureSizeAsset(data, canonicalSizePin)
 	if err != nil {
-		return sizeReportFile{}, fmt.Errorf("read runtime asset %s: %w", path, err)
+		return sizeReportFile{}, err
 	}
-	sum := sha256.Sum256(data)
-	gzipBytes := gzipLength(data)
-	if sidecar, err := os.ReadFile(path + ".gz"); err == nil && int64(len(sidecar)) < gzipBytes {
-		gzipBytes = int64(len(sidecar))
-	}
-	brotliBytes := brotliLength(data)
-	if sidecar, err := os.ReadFile(path + ".br"); err == nil && int64(len(sidecar)) < brotliBytes {
-		brotliBytes = int64(len(sidecar))
-	}
-	return sizeReportFile{
+	entry := sizeReportFile{
 		Name:        asset.name,
 		File:        asset.file,
 		Role:        asset.role,
-		SHA256:      hex.EncodeToString(sum[:]),
-		Bytes:       int64(len(data)),
-		GzipBytes:   gzipBytes,
-		BrotliBytes: brotliBytes,
+		SHA256:      sizes.SHA256,
+		Bytes:       sizes.Raw,
+		GzipBytes:   sizes.Gzip,
+		BrotliBytes: sizes.Brotli,
 		ColdStart:   asset.coldStart,
-	}, nil
+	}
+	for _, sidecar := range []struct {
+		encoding string
+		data     []byte
+		out      **int64
+	}{{"gzip", gz, &entry.GzipWireBytes}, {"br", br, &entry.BrotliWireBytes}} {
+		if sidecar.data == nil {
+			continue
+		}
+		if err := assetmeasure.VerifySidecar(data, sidecar.data, sidecar.encoding); err != nil {
+			return sizeReportFile{}, err
+		}
+		n := int64(len(sidecar.data))
+		*sidecar.out = &n
+	}
+	return entry, nil
 }
 
 func gzipLength(data []byte) int64 {
@@ -398,6 +472,15 @@ func sizeProfiles(assets []sizeReportFile) []sizeProfile {
 		{name: "full-runtime", names: []string{"runtime.wasm", "wasm_exec.js", "bootstrap-runtime.js"}},
 		{name: "islands-runtime", names: []string{"runtime-islands.wasm", "wasm_exec.js", "bootstrap-runtime.js", "bootstrap-feature-islands.js"}},
 		{name: "go-wasm-engine", names: []string{"standard-go-wasm_exec.js", "bootstrap-runtime.js", "bootstrap-feature-engines.js"}},
+		{name: "navigation", names: []string{"navigation.js"}},
+	}
+	for _, asset := range assets {
+		if id, ok := strings.CutPrefix(asset.Name, "runtime-variant/"); ok {
+			candidates = append(candidates, struct {
+				name  string
+				names []string
+			}{name: "capability-" + id, names: []string{asset.Name, "wasm_exec.js", "bootstrap-runtime.js"}})
+		}
 	}
 	profiles := make([]sizeProfile, 0, len(candidates))
 	for _, candidate := range candidates {

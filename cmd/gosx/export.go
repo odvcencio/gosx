@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/env"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 )
@@ -187,6 +188,12 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "stripe-bridge.js"), true
 	case "/gosx/relay.js":
 		return filepath.Join(buildDir, "relay.js"), true
+	}
+	// Any other opt-in feature chunk stages under its own file name.
+	if file, ok := strings.CutPrefix(ref, "/gosx/"); ok {
+		if _, valid := buildmanifest.FeatureChunkName(file); valid {
+			return filepath.Join(buildDir, file), true
+		}
 	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok && rel != "" {
 		return filepath.Join(buildDir, "islands", filepath.FromSlash(rel)), true

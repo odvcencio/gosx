@@ -94,6 +94,9 @@ func main() {
 	if err := RunBuild(dir, false); err != nil {
 		t.Fatal(err)
 	}
+	if report, err := checkDeploymentBundle(filepath.Join(dir, "dist")); err != nil || !report.OK {
+		t.Fatalf("production bundle failed deployment checks: %+v, %v", report, err)
+	}
 	for _, rel := range []string{"dist/build.json", "dist/server/app", "dist/run.sh", "dist/assets/runtime"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("missing production artifact %s: %v", rel, err)

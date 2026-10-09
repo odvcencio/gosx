@@ -363,6 +363,7 @@ var islandEventFields = []string{
 	"ctrlKey", "metaKey", "altKey", "shiftKey", "repeat", "timeStamp", "editable",
 	"targetID", "currentTargetID", "pointerID", "pointerType", "isPrimary",
 	"clientX", "clientY", "button", "buttons", "pressure", "width", "height",
+	"offsetX", "offsetY", "elementWidth", "elementHeight", "deltaX", "deltaY", "deltaMode",
 	"data", "eventData",
 }
 
@@ -1105,6 +1106,131 @@ func (l *islandLowerer) lowerAttr(attr Attr, context *islandInlineContext) (prog
 	}
 }
 
+// islandEventTypes maps each supported island handler attribute to its DOM
+// event type. It is the contract with client/runtime/host/events.ts
+// DELEGATED_EVENTS and GLOBAL_DELEGATED_EVENTS; an attribute outside it is a
+// compile error because the runtime would never attach a listener for it.
+var islandEventTypes = map[string]string{
+	"onClick":              "click",
+	"onInput":              "input",
+	"onChange":             "change",
+	"onSubmit":             "submit",
+	"onKeyDown":            "keydown",
+	"onKeyUp":              "keyup",
+	"onFocus":              "focus",
+	"onBlur":               "blur",
+	"onDragStart":          "dragstart",
+	"onDragEnd":            "dragend",
+	"onDragOver":           "dragover",
+	"onDragLeave":          "dragleave",
+	"onDrop":               "drop",
+	"onPointerDown":        "pointerdown",
+	"onPointerMove":        "pointermove",
+	"onPointerUp":          "pointerup",
+	"onPointerCancel":      "pointercancel",
+	"onDocumentKeyDown":    "document-keydown",
+	"onDocumentKeyUp":      "document-keyup",
+	"onWindowResize":       "window-resize",
+	"onLostPointerCapture": "lostpointercapture",
+	"onWheel":              "wheel",
+	"onDblClick":           "dblclick",
+	"onContextMenu":        "contextmenu",
+}
+
+// islandEventType resolves an island handler attribute to its DOM event type.
+// Besides the exact spellings in islandEventTypes it accepts the lowercase-tail
+// aliases that both runtime name mappers (client/vm eventAttrType and island
+// eventNameToType) already resolved before the table existed: "on" plus a word
+// whose only capital is its first letter, such as onKeydown or onPointerdown.
+func islandEventType(name string) (string, bool) {
+	if eventType, ok := islandEventTypes[name]; ok {
+		return eventType, true
+	}
+	if len(name) <= 2 || !strings.HasPrefix(name, "on") {
+		return "", false
+	}
+	rest := name[2:]
+	if strings.ToLower(rest[1:]) != rest[1:] {
+		return "", false
+	}
+	lowered := strings.ToLower(rest)
+	for _, eventType := range islandEventTypes {
+		if eventType == lowered && !strings.Contains(eventType, "-") {
+			return eventType, true
+		}
+	}
+	return "", false
+}
+
+// islandEventNames returns the supported handler attributes, sorted.
+func islandEventNames() string {
+	names := make([]string, 0, len(islandEventTypes))
+	for name := range islandEventTypes {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return strings.Join(names, ", ")
+}
+
+// islandEventWarnings flags an island handler attribute that no runtime name
+// mapper resolves (onMouseDown, onScroll, onKey). Such a handler never fires.
+// It is a warning, not an error, so existing builds keep compiling.
+func islandEventWarnings(prog *Program, comp *Component) []Diagnostic {
+	if !comp.IsIsland || int(comp.Root) >= len(prog.Nodes) {
+		return nil
+	}
+	var diags []Diagnostic
+	for _, id := range collectComponentNodeIDs(prog, comp.Root) {
+		node := &prog.Nodes[id]
+		for _, attr := range node.Attrs {
+			if !attr.IsEvent || attr.Kind != AttrExpr {
+				continue
+			}
+			if _, ok := islandEventType(attr.Name); ok {
+				continue
+			}
+			message := fmt.Sprintf("island event handler %q is not a supported event, so the handler never runs", attr.Name)
+			hint := "supported handlers: " + islandEventNames()
+			if match, ok := nearestIslandEventName(attr.Name); ok {
+				message += fmt.Sprintf("; did you mean %q?", match)
+				hint = fmt.Sprintf("rename %s to %s", attr.Name, match)
+			}
+			diags = append(diags, Diagnostic{Span: node.Span, Severity: SeverityWarning, Message: message, Hint: hint})
+		}
+	}
+	return diags
+}
+
+// nearestIslandEventName finds a supported handler for a case-insensitive
+// match, a prefix match (onKey -> onKeyDown) or a near edit distance.
+func nearestIslandEventName(name string) (string, bool) {
+	lower := strings.ToLower(name)
+	names := make([]string, 0, len(islandEventTypes))
+	for candidate := range islandEventTypes {
+		names = append(names, candidate)
+	}
+	sort.Strings(names)
+	for _, candidate := range names {
+		if strings.ToLower(candidate) == lower {
+			return candidate, true
+		}
+	}
+	if len(lower) > 3 {
+		for _, candidate := range names {
+			if strings.HasPrefix(strings.ToLower(candidate), lower) {
+				return candidate, true
+			}
+		}
+	}
+	best, bestDistance := "", 3
+	for _, candidate := range names {
+		if d := attrNameEditDistance(lower, strings.ToLower(candidate)); d < bestDistance {
+			best, bestDistance = candidate, d
+		}
+	}
+	return best, best != ""
+}
+
 // legacyInlineEventType recognizes the original island event spelling:
 //
 //	<button data-on-click="count.Set(count.Get() + 1)">+1</button>
@@ -1125,15 +1251,12 @@ func legacyInlineEventType(name string) (string, bool) {
 }
 
 func legacyInlineEventSupported(eventType string) bool {
-	switch eventType {
-	case "click", "input", "change", "submit", "keydown", "keyup", "focus", "blur",
-		"dragstart", "dragend", "dragover", "dragleave", "drop",
-		"pointerdown", "pointermove", "pointerup", "pointercancel",
-		"document-keydown", "document-keyup", "window-resize":
-		return true
-	default:
-		return false
+	for _, supported := range islandEventTypes {
+		if supported == eventType {
+			return true
+		}
 	}
+	return false
 }
 
 func (l *islandLowerer) lowerInlineEvent(eventType, source string) (program.Attr, error) {
