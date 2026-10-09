@@ -36,3 +36,16 @@ func (t *Telemetry) requestDelta(delta int64) {
 	// cannot publish an older count after a newer one.
 	_ = s.inFlight.Set(float64(s.live))
 }
+
+// Called after admission stops. Late request callbacks cannot restore a live
+// contribution, even when the worker exits before the application's handlers.
+func (t *Telemetry) releaseRequests() {
+	s := t.requests
+	if s == nil {
+		return
+	}
+	s.liveMu.Lock()
+	defer s.liveMu.Unlock()
+	s.live = 0
+	_ = s.inFlight.Set(0)
+}

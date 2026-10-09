@@ -9,6 +9,7 @@ import (
 
 func (t *Telemetry) run() {
 	defer func() {
+		t.active.Store(false)
 		if t.activities != nil {
 			t.activities.stopping.Store(true)
 			// Accepted finals need no clock or application callbacks to acknowledge.
@@ -18,6 +19,7 @@ func (t *Telemetry) run() {
 		t.drainActivityEvents()
 		t.releaseLoops()
 		t.releaseHubs()
+		t.releaseRequests()
 		t.updateCoreUsage()
 		if err := stopTicker(t.ticker); err != nil {
 			t.clockFailed(err)

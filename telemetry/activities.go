@@ -542,6 +542,10 @@ func (t *Telemetry) collectActivityReceipts() {
 	for _, e := range items[:n] {
 		e.mu.Lock()
 		final, receipt, id, loop := e.final, e.receipt, e.recordID, e.loop
+		if final {
+			// The copied final keeps presence history, not live connection tokens.
+			e.presence = nil
+		}
 		e.mu.Unlock()
 		if final {
 			s.mu.Lock()

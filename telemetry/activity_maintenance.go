@@ -118,12 +118,24 @@ func (t *Telemetry) stopActivities(ctx context.Context) error {
 func (t *Telemetry) releaseUnfinishedActivities() {
 	s := t.activities
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	var items [256]*activityEntity
+	n := 0
 	for id, e := range s.live {
+		items[n] = e
+		n++
 		delete(s.live, id)
 		delete(s.attached, e.loop)
 		s.bytes.Add(-activitySlotBytes)
 		e.kind.open--
 		e.kind.meters.open.Set(float64(e.kind.open))
+	}
+	// Parent correlation has no remaining use once activity admission stops.
+	clear(s.known[:])
+	s.nextKnown = 0
+	s.mu.Unlock()
+	for _, e := range items[:n] {
+		e.mu.Lock()
+		e.presence = nil
+		e.mu.Unlock()
 	}
 }
