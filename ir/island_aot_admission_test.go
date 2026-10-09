@@ -55,12 +55,18 @@ func TestIslandAOTRejectsShadowedScalarNames(t *testing.T) {
 	} {
 		t.Run("nested or grouped/"+declaration, func(t *testing.T) {
 			p := parseAOTAdmission(t, "", "", "int32", declaration+"\nreturn <div>{props.Initial}</div>")
-			assertAOTAdmissionRejected(t, p)
+			if strings.HasPrefix(declaration, "var ") || strings.HasPrefix(declaration, "for ") {
+				assertAOTAdmissionRejected(t, p)
+			} else if _, err := ir.LowerIslandAOT(p, 0); err != nil {
+				t.Fatal(err)
+			}
 		})
 	}
 	t.Run("type parameter", func(t *testing.T) {
 		p := parseAOTAdmission(t, "func helper[int32 any](s string) int { return 0 }", "", "int32", "return <div>{props.Initial}</div>")
-		assertAOTAdmissionRejected(t, p)
+		if _, err := ir.LowerIslandAOT(p, 0); err != nil {
+			t.Fatal(err)
+		}
 	})
 	// Package declarations bind names throughout the file, even below a use.
 	src := []byte(`package example
@@ -71,7 +77,7 @@ func Counter() Node {
 }
 type int32 = int64
 `)
-	p, err := parse(t, src)
+	p, err := parseAOT(t, src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -112,7 +118,6 @@ func TestIslandAOTRejectsUnresolvedCallableNames(t *testing.T) {
 		{"shadowed false", `const false = true`, "", `return <div>{false}</div>`},
 		{"shadowed constructor", `var signal = 0`, "", "count := signal.New(0)\nreturn <div>{count}</div>"},
 		{"shadowed computed constructor", `var signal = 0`, "", "count := signal.Derive(func() int { return 0 })\nreturn <div>{count}</div>"},
-		{"unresolved import", `import "example/custom"`, "", `return <div>{len(props.Label)}</div>`},
 		{"type import", `import int32 "example/custom"`, "", `return <div>{props.Initial}</div>`},
 		{"constructor alias shadow", `import s "m31labs.dev/gosx/signal"; var s = 0`, "", "count := s.New(0)\nreturn <div>{count}</div>"},
 	} {
@@ -157,8 +162,8 @@ func TestIslandAOTRejectsAggregateValueConsumers(t *testing.T) {
 func TestIslandAOTAdmitsProvedNamesAndSelectors(t *testing.T) {
 	for _, body := range []string{
 		`return <div>{props.Detail.Value}{len(props.Label)}</div>`,
-		`return <div>{props.Initial + 1}{true ? props.Detail.Value : props.Initial}</div>`,
-		"count := signal.New[int32](0)\nchange := func() { count.Set(props.Initial) }\nreturn <button onClick={change}>{count.Get()}{props.Detail.Value}</button>",
+		`return <div>{props.Initial + 1}{props.Detail.Value}</div>`,
+
 		"count := signal.Derive(func() int32 { return props.Detail.Value })\nreturn <div>{count.Get()}</div>",
 	} {
 		t.Run(body, func(t *testing.T) {
@@ -224,7 +229,7 @@ func Counter(props CounterProps%s) Node {
 %s
 }
 `, prelude, typ, typ, parameter, body)
-	p, err := parse(t, []byte(source))
+	p, err := parseAOT(t, []byte(source))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -27,6 +27,7 @@ import (
 
 func TestIslandAOTGoTypesDifferential(t *testing.T) {
 	corpus := scalarOracleCorpus()
+	sourceDirectory := t.TempDir()
 	if len(corpus) < 500 {
 		t.Fatal("scalar corpus must contain at least 500 cases")
 	}
@@ -46,6 +47,7 @@ func TestIslandAOTGoTypesDifferential(t *testing.T) {
 				sourceRejected++
 			} else {
 				p.PackagePath = "example/components"
+				p.Dir = sourceDirectory
 				u, admission = ir.LowerIslandAOT(p, 0)
 			}
 			fset := token.NewFileSet()
@@ -117,7 +119,7 @@ func TestIslandAOTGoTypesDifferential(t *testing.T) {
 			if kind := u.Contract.Expressions[id].Kind; kind != wantKind {
 				t.Errorf("AOT kind %s differs from Go kind %s (%v)", kind, wantKind, got.Type)
 			}
-			oracleVMEquality(t, p, u, id, got, tc.typ)
+			t.Run("VM-to-VM", func(t *testing.T) { oracleVMEquality(t, p, u, id, got, tc.typ) })
 		}) {
 			disagreements++
 		}
@@ -278,6 +280,11 @@ func oracleVMEquality(t *testing.T, source *ir.Program, unit aot.Unit, root int,
 		"Value": value, "Other": vm.IntVal(3), "I32": vm.IntVal(5), "I64": vm.IntVal(9), "Flag": vm.BoolVal(true), "Label": vm.StringVal("label"),
 		"Detail": vm.ObjectVal(map[string]vm.Value{"Label": vm.StringVal("nested"), "Number": vm.IntVal(11)}),
 	}
+	propsObject := make(map[string]vm.Value, len(props))
+	for name, value := range props {
+		propsObject[name] = value
+	}
+	props["props"] = vm.ObjectVal(propsObject)
 	machines := []*vm.VM{vm.NewVM(fallback, props), vm.NewVM(unit.Program, props)}
 	for i, machine := range machines {
 		p := fallback
@@ -372,7 +379,7 @@ func Fragment(v ...Node) Node { return Node{} }
 	return p, err
 }
 
-func TestIslandAOTTypeCheckerIsTestOnly(t *testing.T) {
+func TestIslandAOTTypeCheckerHostOnly(t *testing.T) {
 	files, err := filepath.Glob("island_aot*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -391,8 +398,10 @@ func TestIslandAOTTypeCheckerIsTestOnly(t *testing.T) {
 		}
 		for _, imp := range file.Imports {
 			path, _ := strconv.Unquote(imp.Path.Value)
-			if path == "go/types" || path == "go/importer" {
-				t.Errorf("%s imports production type checker %s", name, path)
+			if path == "go/types" || path == "go/importer" || path == "go/build" {
+				if !bytes.HasPrefix(data, []byte("//go:build !tinygo\n")) {
+					t.Errorf("%s imports host checker %s without a TinyGo boundary", name, path)
+				}
 			}
 		}
 	}

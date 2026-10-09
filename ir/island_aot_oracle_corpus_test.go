@@ -102,6 +102,8 @@ func scalarOracleCorpus() []scalarOracleCase {
 		{"true", "", "const true = 1"}, {"false", "", "const false = 1"},
 		{"props.Label.length", "", ""}, {"props.Value.ToString()", "", ""},
 		{"props.Value", "", "type int32 = int64"},
+		{"Value", `const Value = "hello"`, ""},
+		{"Value", "", `Value := "hello"; _ = Value`},
 	} {
 		for _, root := range roots {
 			add("binding", root, "int32", tc.expr, tc.expr, tc.pkg, tc.local)

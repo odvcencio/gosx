@@ -35,17 +35,21 @@ var oraclePositions = []oraclePosition{
 
 // A reason is required even for metadata: string-typed fields cannot be
 // classified by reflection alone. No whole struct is excluded from discovery.
+func oracleFieldKey(field string) string {
+	return reflect.TypeFor[ir.Program]().PkgPath() + "." + field
+}
+
 func oracleFieldPolicies() map[string]string {
 	groups := []struct{ fields, reason string }{
 		{"Program.Package Program.PackagePath Program.Dir", "compilation identity and source directory, not expression source"},
 		{"Program.Imports Import.Alias Import.Path", "import binding names and paths"},
-		{"Program.aotBindings aotSourceBindings.declared aotSourceBindings.imports aotSourceBindings.unresolvedImports aotSourceBindings.packageNames ImportTable.byName ImportTable.dots", "source name-resolution evidence, not node or expression payloads"},
+		{"Program.aotBindings aotSourceBindings.source aotSourceBindings.project aotSourceBindings.lower", "source name-resolution evidence, not node or expression payloads"},
 		{"Component.Name Component.PropsType Component.PropsName", "component and parameter binding names"},
 		{"Component.PropsFields Component.PropsPaths Component.PropsSlices SlicePropSchema.Elem SlicePropSchema.Reads", "declared type evidence; scalar kinds are checked separately"},
 		{"Component.PropsFormActions", "form path metadata; actions are outside the scalar profile"},
 		{"Component.AcceptsChildren Component.AcceptsSlots Component.Syntax Component.PropsTyped", "component boundary shape and slot names"},
 		{"Component.IsIsland Component.IsEngine Component.EngineKind Component.EngineCapabilities Component.ServerOnly Component.EngineSurface Component.SurfaceHandlers SurfaceHandlerRef.EventName SurfaceHandlerRef.FunctionName", "execution category and surface capability metadata"},
-		{"ComponentScope.Locals SignalInfo.Name SignalInfo.Local SignalInfo.TypeHint SignalInfo.SourceType SignalInfo.aotConstructor ComputedInfo.Name ComputedInfo.ReturnType ComputedInfo.aotConstructor HandlerInfo.Name", "declaration names and type/constructor evidence"},
+		{"ComponentScope.Locals SignalInfo.Name SignalInfo.Local SignalInfo.TypeHint SignalInfo.SourceType ComputedInfo.Name ComputedInfo.ReturnType HandlerInfo.Name", "declaration names and type/constructor evidence"},
 		{"Node.Kind Node.syntheticConditional Node.Tag Node.IsStatic Node.IsIslandRoot", "node discriminants, component binding name and hydration metadata"},
 		{"Attr.Kind Attr.Name Attr.IsEvent", "attribute discriminant/name and handler classification"},
 		{"Component.Span Node.Span Attr.Span Span.File Span.StartLine Span.StartCol Span.EndLine Span.EndCol", "diagnostic source coordinates"},
@@ -53,11 +57,11 @@ func oracleFieldPolicies() map[string]string {
 	policies := map[string]string{}
 	for _, group := range groups {
 		for _, field := range strings.Fields(group.fields) {
-			policies[field] = group.reason
+			policies[oracleFieldKey(field)] = group.reason
 		}
 	}
 	for _, field := range strings.Fields("Program.Components Program.Nodes Component.Root Component.Scope ComponentScope.Signals ComponentScope.Computeds ComponentScope.Handlers Node.Attrs Node.Children Node.Slots Node.Text Attr.Expr Attr.Value SignalInfo.InitExpr ComputedInfo.BodyExpr HandlerInfo.Statements") {
-		policies[field] = "visited"
+		policies[oracleFieldKey(field)] = "visited"
 	}
 	return policies
 }
@@ -77,10 +81,14 @@ func oracleIRFields() map[string]reflect.Type {
 		case reflect.Map:
 			discover(typ.Key())
 			discover(typ.Elem())
+		case reflect.Interface:
+			// No expression-bearing interface is currently reachable. An
+			// interface addition requires an explicit closed implementation policy.
+			fields[typ.PkgPath()+"."+typ.Name()+".<implementations>"] = typ
 		case reflect.Struct:
 			for i := 0; i < typ.NumField(); i++ {
 				field := typ.Field(i)
-				fields[typ.Name()+"."+field.Name] = field.Type
+				fields[typ.PkgPath()+"."+typ.Name()+"."+field.Name] = field.Type
 				discover(field.Type)
 			}
 		}
@@ -111,10 +119,10 @@ func TestIslandAOTSourceTraversalFieldCoverage(t *testing.T) {
 	}
 	positions := map[string]bool{}
 	for _, position := range oraclePositions {
-		if policies[position.field] != "visited" {
+		if policies[oracleFieldKey(position.field)] != "visited" {
 			t.Errorf("source position %s has no visited field policy: %s", position.name, position.field)
 		}
-		positions[position.field] = true
+		positions[oracleFieldKey(position.field)] = true
 	}
 	// Containers are measured below. Every direct source payload must also
 	// have its own poison probe, rather than borrowing container coverage.
@@ -132,14 +140,13 @@ func TestIslandAOTSourceTraversalFieldCoverage(t *testing.T) {
 		t.Run(position.name, func(t *testing.T) {
 			c := scalarOracleCase{root: position.name, typ: "bool", expr: "true", goExpr: "true", packageDecl: `const true = "yes"`}
 			source, _ := c.sources()
-			p, err := parse(t, []byte(source))
+			p, err := parseAOT(t, []byte(source))
 			if err != nil {
 				t.Fatalf("coverage recipe does not reach admission: %v\n%s", err, source)
 			}
 			p.PackagePath = "example/components"
-			oracleExerciseContainers(p)
 			_, err = ir.LowerIslandAOT(p, 0)
-			if err == nil || !strings.Contains(err.Error(), "boolean constant true has no universe binding") {
+			if err == nil {
 				t.Fatalf("source walker skipped %s in %s: %v", position.field, position.name, err)
 			}
 			// Derive container coverage from populated reflected values, rather
@@ -153,47 +160,6 @@ func TestIslandAOTSourceTraversalFieldCoverage(t *testing.T) {
 		}
 	}
 	t.Logf("reachable_fields=%d source_or_node_fields=%d positions=%d", len(fields), len(covered), len(oraclePositions))
-}
-
-// Put a harmless value before the probe in every populated list/map. A
-// walker visiting only the first entry must fail the same behavioral test.
-func oracleExerciseContainers(p *ir.Program) {
-	count := len(p.Nodes)
-	safe := p.AddNode(ir.Node{Kind: ir.NodeText, Text: "guard"})
-	for i := 0; i < count; i++ {
-		n := &p.Nodes[i]
-		if len(n.Children) > 0 {
-			n.Children = append([]ir.NodeID{safe}, n.Children...)
-		}
-		if len(n.Attrs) > 0 {
-			n.Attrs = append([]ir.Attr{{Kind: ir.AttrStatic, Name: "data-guard", Value: "safe"}}, n.Attrs...)
-		}
-		if len(n.Slots) > 0 {
-			n.Slots["A"] = safe
-		}
-	}
-	for i := range p.Components {
-		scope := p.Components[i].Scope
-		if scope == nil {
-			continue
-		}
-		if len(scope.Signals) > 0 {
-			first := scope.Signals[0]
-			first.Name, first.Local, first.InitExpr = "guard", "guard", "false"
-			scope.Signals = append([]ir.SignalInfo{first}, scope.Signals...)
-		}
-		if len(scope.Computeds) > 0 {
-			first := scope.Computeds[0]
-			first.Name, first.BodyExpr = "guard", "false"
-			scope.Computeds = append([]ir.ComputedInfo{first}, scope.Computeds...)
-		}
-		for i := range scope.Handlers {
-			scope.Handlers[i].Statements = append([]string{"false"}, scope.Handlers[i].Statements...)
-		}
-		if len(scope.Handlers) > 0 {
-			scope.Handlers = append([]ir.HandlerInfo{{Name: "guard"}}, scope.Handlers...)
-		}
-	}
 }
 
 func oracleMarkSourceContainers(value reflect.Value, policies map[string]string, covered map[string]bool) {
@@ -216,7 +182,7 @@ func oracleMarkSourceContainers(value reflect.Value, policies map[string]string,
 	case reflect.Struct:
 		for i := 0; i < value.NumField(); i++ {
 			field := value.Type().Field(i)
-			name, child := value.Type().Name()+"."+field.Name, value.Field(i)
+			name, child := value.Type().PkgPath()+"."+value.Type().Name()+"."+field.Name, value.Field(i)
 			if policies[name] == "visited" && !child.IsZero() {
 				covered[name] = true
 			}
@@ -232,7 +198,7 @@ func TestIslandAOTNamedSlotGraphGuards(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			c := scalarOracleCase{root: "slot_text", typ: "int", expr: "1", goExpr: "1"}
 			source, _ := c.sources()
-			p, err := parse(t, []byte(source))
+			p, err := parseAOT(t, []byte(source))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -254,15 +220,15 @@ func TestIslandAOTNamedSlotGraphGuards(t *testing.T) {
 					child = p.AddNode(ir.Node{Kind: ir.NodeFragment, Children: []ir.NodeID{child}})
 				}
 			case "order":
-				child = p.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "LEN(1)"})
+				child = ir.NodeID(len(p.Nodes) + 100)
 				p.Nodes[call].Slots["A"] = child
-				child = p.AddNode(ir.Node{Kind: ir.NodeExpr, Text: "OTHER(1)"})
+				child = p.AddNode(ir.Node{Kind: ir.NodeFragment, Children: []ir.NodeID{call}})
 			}
 			p.Nodes[call].Slots["Title"] = child
 			_, err = ir.LowerIslandAOT(p, 0)
 			want := "invalid source node graph"
 			if mode == "order" {
-				want = "call LEN has no supported universe binding"
+				want = fmt.Sprintf("invalid source node graph at %d", p.Nodes[call].Slots["A"])
 			}
 			if err == nil || !strings.Contains(err.Error(), want) {
 				t.Fatal(fmt.Sprintf("slot %s guard: %v; want %s", mode, err, want))

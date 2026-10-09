@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/client/vm"
@@ -36,16 +37,26 @@ func TestIslandAOTExplicitSignalTypes(t *testing.T) {
 					t.Errorf("source type = %q, want %q", signals[0].SourceType, tc.typ)
 				}
 				u, err := ir.LowerIslandAOT(p, 0)
+				if constructor != "New" {
+					if err == nil {
+						t.Fatal("shared constructor admitted")
+					}
+					return
+				}
 				switch tc.typ {
-				case "int", "int32", "bool", "string":
+				case "int", "int32", "bool", "string", "rune", "CounterAlias":
+					want := aot.ScalarKind(tc.typ)
+					if tc.typ == "rune" || tc.typ == "CounterAlias" {
+						want = aot.Int32
+					}
 					if err != nil {
 						t.Fatal(err)
 					}
-					if len(u.Contract.Signals) != 1 || u.Contract.Signals[0].Kind != aot.ScalarKind(tc.typ) {
+					if len(u.Contract.Signals) != 1 || u.Contract.Signals[0].Kind != want {
 						t.Fatalf("signal contract = %+v", u.Contract.Signals)
 					}
 					binding := u.Program.Nodes[u.Program.Nodes[u.Program.Root].Children[0]].Expr
-					if got := u.Contract.Expressions[binding].Kind; got != aot.ScalarKind(tc.typ) {
+					if got := u.Contract.Expressions[binding].Kind; got != want {
 						t.Fatalf("signal read kind = %s, want %s", got, tc.typ)
 					}
 				default:
@@ -108,7 +119,7 @@ func Counter() Node {
  count := sig.%s(%s)
  return <div>{count.Get()}</div>
 }`, constructor, args))
-	p, err := parse(t, src)
+	p, err := parseAOT(t, src)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,31 +148,25 @@ func TestIslandAOTConditionalSourceKinds(t *testing.T) {
 			expr := condition + " ? " + tc.yes + " : " + tc.no
 			t.Run(tc.typ+"/"+expr, func(t *testing.T) {
 				p := parseAOTArithmetic(t, tc.typ, expr)
-				u, err := ir.LowerIslandAOT(p, 0)
-				if err != nil {
-					t.Fatal(err)
-				}
-				binding := u.Program.Nodes[u.Program.Nodes[u.Program.Root].Children[0]].Expr
-				if got := u.Contract.Expressions[binding].Kind; got != aot.ScalarKind(tc.typ) {
-					t.Fatalf("conditional kind = %s, want %s", got, tc.typ)
-				}
-				machine := vm.NewVM(u.Program, map[string]vm.Value{"Initial": tc.prop})
-				branch := u.Program.Exprs[binding].Operands[2]
-				if condition == "true" {
-					branch = u.Program.Exprs[binding].Operands[1]
-				}
-				got, want := machine.Eval(binding), machine.Eval(branch)
-				if got.Type != want.Type || !got.Eq(want).Truth() {
-					t.Fatalf("selected value = %v, want %v", got, want)
+				_, err := ir.LowerIslandAOT(p, 0)
+				if err == nil || !strings.Contains(err.Error(), "evidence_shape_mismatch") {
+					t.Fatalf("ternary requires VM: %v", err)
 				}
 				fallback, err := ir.LowerIsland(p, 0)
 				if err != nil {
 					t.Fatal(err)
 				}
-				before, err := program.EncodeBinary(fallback)
-				if err != nil || !bytes.Equal(before, u.ProgramBytes) {
-					t.Fatalf("changed conditional fallback bytes: %v", err)
+				binding := fallback.Nodes[fallback.Nodes[fallback.Root].Children[0]].Expr
+				machine := vm.NewVM(fallback, map[string]vm.Value{"Initial": tc.prop})
+				branch := fallback.Exprs[binding].Operands[2]
+				if condition == "true" {
+					branch = fallback.Exprs[binding].Operands[1]
 				}
+				got, want := machine.Eval(binding), machine.Eval(branch)
+				if got.Type != want.Type || !got.Eq(want).Truth() {
+					t.Fatalf("VM branch changed: %v vs %v", got, want)
+				}
+
 			})
 		}
 	}
@@ -219,7 +224,7 @@ func TestIslandAOTConstantDomainBoundaries(t *testing.T) {
 			t.Run(shape.name+"/"+boundary.name, func(t *testing.T) {
 				p := parseAOTArithmetic(t, "int", shape.expr)
 				u, err := ir.LowerIslandAOT(p, 0)
-				if !boundary.allowed {
+				if !boundary.allowed || strings.HasPrefix(shape.name, "conditional") {
 					var diagnostic *ir.DiagnosticsError
 					if !errors.As(err, &diagnostic) || diagnostic.Diagnostics[0].Code != "aot_source_type" {
 						t.Fatalf("accepted out-of-domain constant: %v", err)
@@ -265,7 +270,7 @@ func TestIslandAOTRejectsOutOfDomainStateAndOperands(t *testing.T) {
 		`return <div>{(2147483647 + 1) - 1}</div>`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			p, err := parse(t, []byte("package example\n//gosx:island\nfunc Counter() Node {\n"+body+"\n}\n"))
+			p, err := parseAOT(t, []byte("package example\n//gosx:island\nfunc Counter() Node {\n"+body+"\n}\n"))
 			if err != nil {
 				t.Fatal(err)
 			}
