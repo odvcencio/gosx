@@ -2011,6 +2011,11 @@ func TestLinkedDisposeClearsOwnedBanksAndKeepsPeersAndSharedValues(t *testing.T)
 			}
 		}
 	}
+	// Static text before the copied shared value keeps the physical text group
+	// nonempty; the shared signal's own initializer does not prove its value.
+	u.Program.Nodes[0].Children = []program.NodeID{1, program.NodeID(len(u.Program.Nodes)), 2}
+	u.Program.Nodes = append(u.Program.Nodes, program.Node{Kind: program.NodeText, Text: "v="})
+	u.Program.StaticMask = append(u.Program.StaticMask, true)
 	u = refreshBindingUnit(t, u)
 	input, _ := scalarInputUnit(t, "prop", Int, false)
 	input.Component, input.Contract.Component, input.Program.Name = "example/components.Inputs", "example/components.Inputs", "Inputs"
@@ -3770,8 +3775,10 @@ func TestLinkedSharedTransactionsOwnStringDefaultsAndGuardLiveBytes(t *testing.T
 	read := addExpression(&u, program.OpSignalGet, program.TypeString, String, "$text")
 	u.Program.Signals = []program.SignalDef{{Name: "$text", Type: program.TypeString, Init: init}}
 	u.Contract.Signals = []StateContract{{Name: "$text", Kind: String}}
-	u.Program.Nodes = []program.Node{{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1}}, {Kind: program.NodeExpr, Expr: read}}
-	u.Program.StaticMask = []bool{false, false}
+	// Static text keeps the group nonempty: a shared signal's own initializer
+	// does not prove its page value.
+	u.Program.Nodes = []program.Node{{Kind: program.NodeElement, Tag: "div", Children: []program.NodeID{1, 2}}, {Kind: program.NodeText, Text: "v="}, {Kind: program.NodeExpr, Expr: read}}
+	u.Program.StaticMask = []bool{false, true, false}
 	u = refreshBindingUnit(t, u)
 	l, err := buildLinkedLayout([]Unit{u}, DefaultOptions())
 	if err != nil {
