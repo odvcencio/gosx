@@ -14,12 +14,13 @@ import (
 	"m31labs.dev/gosx/internal/urlpath"
 )
 
-// PerfAssetOptions declares the requested backend and whether the enclosing
-// document enables the external navigation runtime. The renderer does not
-// decide either browser capability or the server's navigation policy.
+// PerfAssetOptions declares the selected backend, GPU API presence and whether
+// the document enables navigation. A nil NavigatorGPU means unknown presence;
+// the graph conservatively includes downloads started by the inline loader.
 type PerfAssetOptions struct {
-	Backend    string
-	Navigation bool
+	Backend      string
+	Navigation   bool
+	NavigatorGPU *bool
 }
 
 // PerfAssetUses produces private page-use evidence without adding HTML bytes.
@@ -42,6 +43,9 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 	}
 	if r.hasSceneEngines() != (backend != "none") {
 		return fail("invalid-input", "/backend")
+	}
+	if backend == "webgpu" && opts.NavigatorGPU != nil && !*opts.NavigatorGPU {
+		return fail("invalid-input", "/navigatorGPU")
 	}
 	uses := clonePerfAssetUses(r.perfAssets)
 	byURL, byID := map[string]int{}, map[string]int{}
@@ -240,6 +244,13 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 		if !r.perfSceneBackendAllowed(backend) {
 			return fail("backend-unavailable", "/backend")
 		}
+		// The emitted loader checks navigator.gpu before adapter acquisition.
+		// Its download is independent of the eventual rendering backend.
+		if path := r.selectedBootstrapFeaturePath("scene3d-webgpu"); path != "" && (opts.NavigatorGPU == nil || *opts.NavigatorGPU) {
+			if err := mark(public(path), "startup", "always", base); err != nil {
+				return nil, err
+			}
+		}
 		primary, condition := r.bootstrapFeatureScene3dWebGPUPath, "webgpu"
 		if backend == "webgl2" {
 			primary, condition = r.bootstrapFeatureScene3dWebGLPath, "webgl"
@@ -247,7 +258,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 		if err := mark(public(primary), "startup", condition, base); err != nil {
 			return nil, err
 		}
-		if backend == "webgpu" {
+		if backend == "webgpu" && r.perfSceneAllowsWebGLFallback() {
 			// Recovery is inside the WebGPU body. Only the WebGL fallback is an
 			// additional device-loss fetch; the old recovery chunk stays dormant.
 			if err := mark(public(r.bootstrapFeatureScene3dWebGLPath), "after-ready", "device-loss", base); err != nil {
@@ -296,4 +307,31 @@ func (r *Renderer) perfSceneBackendAllowed(backend string) bool {
 		}
 	}
 	return true
+}
+
+func (r *Renderer) perfSceneAllowsWebGLFallback() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props scenePreloadProbe
+		if len(entry.Props) != 0 && json.Unmarshal(entry.Props, &props) != nil {
+			return false
+		}
+		// Device-loss fallback follows sceneBackendCapsAllowsKind, regardless
+		// of the preferences used to choose the initial rendering backend.
+		caps := props.BackendCaps
+		if props.Scene != nil && props.Scene.BackendCaps != nil {
+			caps = props.Scene.BackendCaps
+		}
+		if caps == nil || caps.Capable == nil {
+			return true
+		}
+		for _, backend := range caps.Capable {
+			if strings.EqualFold(backend, "webgl") || strings.EqualFold(backend, "webgl2") {
+				return true
+			}
+		}
+	}
+	return false
 }
