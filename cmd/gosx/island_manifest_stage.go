@@ -53,6 +53,9 @@ func writeBuildManifest(distDir string, manifest *BuildManifest) (string, error)
 	if err := manifest.ValidateIslandAssets(); err != nil {
 		return "", fmt.Errorf("validate manifest: %w", err)
 	}
+	if err := manifest.ValidateGoWASMAssets(); err != nil {
+		return "", fmt.Errorf("validate manifest: %w", err)
+	}
 	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("marshal manifest: %w", err)

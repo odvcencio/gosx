@@ -17,10 +17,16 @@ type projectConfig struct {
 }
 
 type projectBuildConfig struct {
+	GoWASM    map[string]string     `json:"goWASM"`
+	Server    projectBuildServer    `json:"server"`
 	Hooks     projectBuildHooks     `json:"hooks"`
 	Bundle    bundlepolicy.Config   `json:"bundle"`
 	Runtime   projectBuildRuntime   `json:"runtime"`
 	Prerender projectBuildPrerender `json:"prerender"`
+}
+
+type projectBuildServer struct {
+	Strip bool `json:"strip"`
 }
 
 // projectBuildPrerender controls production-build snapshots. An absent setting
@@ -128,6 +134,9 @@ func loadProjectConfig(dir string) (projectConfig, error) {
 		return projectConfig{}, fmt.Errorf("decode %s: %w", path, diagnostics)
 	}
 	if err := validateRuntimeExcludeRoles(cfg.Build.Runtime.Exclude); err != nil {
+		return projectConfig{}, fmt.Errorf("decode %s: %w", path, err)
+	}
+	if err := validateGoWASMEntries(cfg.Build.GoWASM); err != nil {
 		return projectConfig{}, fmt.Errorf("decode %s: %w", path, err)
 	}
 	return cfg, nil

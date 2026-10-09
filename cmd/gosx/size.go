@@ -219,6 +219,24 @@ func buildSizeReport(target string) (sizeReport, error) {
 			report.ColdStartBrotli += entry.BrotliBytes
 		}
 	}
+	names := make([]string, 0, len(manifest.GoWASM))
+	for name := range manifest.GoWASM {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		asset := manifest.GoWASM[name]
+		entry, err := sizeReportEntry(runtimeDir, runtimeSizeAsset{
+			name: "go-wasm:" + name, file: "../go-wasm/" + asset.File, role: "application Go WASM",
+		})
+		if err != nil {
+			return sizeReport{}, err
+		}
+		report.Assets = append(report.Assets, entry)
+		report.TotalBytes += entry.Bytes
+		report.TotalGzip += entry.GzipBytes
+		report.TotalBrotli += entry.BrotliBytes
+	}
 	report.Profiles = sizeProfiles(report.Assets)
 	return report, nil
 }
