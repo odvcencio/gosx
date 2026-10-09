@@ -101,7 +101,8 @@ type App struct {
 	isrStore            ISRStore
 	navigation          bool
 	observers           []RequestObserver
-	readyChecks         []namedReadyCheck
+	readyChecks         []*namedReadyCheck
+	readiness           readinessState
 	redirects           map[string]registeredRedirectRoute
 	rewrites            map[string]registeredRewriteRoute
 	mounts              map[string]registeredMountedRoute
@@ -522,9 +523,9 @@ func (a *App) UseReadyCheck(name string, check ReadyCheck) {
 	if check == nil {
 		return
 	}
-	a.readyChecks = append(a.readyChecks, namedReadyCheck{
-		name:  normalizeReadyCheckName(name),
-		check: check,
+	name = normalizeReadyCheckName(name)
+	a.readyChecks = append(a.readyChecks, &namedReadyCheck{
+		name: name, snapshotName: readinessSnapshotName(name), check: check,
 	})
 }
 
@@ -1244,6 +1245,7 @@ func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 	report := ReadinessReport{OK: true}
 	if a.draining.Load() {
 		report.OK = false
+		a.cacheReadiness(false, nil)
 		w.WriteHeader(http.StatusServiceUnavailable)
 		_ = json.NewEncoder(w).Encode(report)
 		return
@@ -1256,15 +1258,18 @@ func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 			Name: normalizeReadyCheckName(entry.name),
 			OK:   true,
 		}
-		if err := entry.check.CheckReady(r.Context()); err != nil {
+		if err := entry.evaluate(r.Context()); err != nil {
 			report.OK = false
 			result.OK = false
 			result.Error = http.StatusText(http.StatusServiceUnavailable)
 			report.RequestID = RequestID(r)
-			log.Printf("[gosx] readiness check %s failed (request %s): %v", result.Name, report.RequestID, err)
+			if err != errReadyCheckPanicked {
+				log.Printf("[gosx] readiness check %s failed (request %s): %v", result.Name, report.RequestID, err)
+			}
 		}
 		report.Checks = append(report.Checks, result)
 	}
+	a.cacheReadiness(report.OK, report.Checks)
 	if !report.OK {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}

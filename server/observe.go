@@ -3,7 +3,8 @@ package server
 import (
 	"bufio"
 	"context"
-	"fmt"
+	"errors"
+	"io"
 	"net"
 	"net/http"
 	"time"
@@ -23,11 +24,25 @@ type RequestEvent struct {
 	Kind     string
 	Status   int
 	Duration time.Duration
+	// ResponseBytes counts body bytes accepted by the underlying writer,
+	// including partial writes. App observers see compressed representation
+	// bytes, excluding headers and bytes written on a hijacked connection.
+	ResponseBytes int64
+	Hijacked      bool
 }
 
 // RequestObserver records framework request events.
 type RequestObserver interface {
 	Observe(RequestEvent)
+}
+
+// RequestStartObserver optionally receives entry at the same wrapper that
+// reports completion. ObserveRequestStart runs before application middleware;
+// Observe still fires once on return. Callbacks must do bounded work and must
+// not perform I/O. Implementing only RequestObserver remains supported.
+type RequestStartObserver interface {
+	RequestObserver
+	ObserveRequestStart()
 }
 
 // RequestObserverFunc adapts a function into a request observer.
@@ -45,31 +60,43 @@ type requestObservation struct {
 	pattern string
 }
 
-// ObserveHandler wraps a handler with status capture and observer callbacks.
+// ObserveHandler wraps a handler with response capture and observer callbacks.
+// Nested wrappers share route metadata. An observer explicitly installed at
+// both scopes receives a notification from each scope.
 func ObserveHandler(handler http.Handler, observers []RequestObserver) http.Handler {
 	if handler == nil || len(observers) == 0 {
 		return handler
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		state := &requestObservation{}
-		r = r.WithContext(context.WithValue(r.Context(), requestObservationContextKey, state))
+		state, _ := r.Context().Value(requestObservationContextKey).(*requestObservation)
+		if state == nil {
+			state = &requestObservation{}
+			r = r.WithContext(context.WithValue(r.Context(), requestObservationContextKey, state))
+		}
 		recorder := &observedResponseWriter{ResponseWriter: w}
 		started := time.Now()
+		for _, observer := range observers {
+			if entry, ok := observer.(RequestStartObserver); ok {
+				entry.ObserveRequestStart()
+			}
+		}
 		handler.ServeHTTP(recorder, r)
 
 		status := recorder.status
-		if status == 0 {
+		if status == 0 && !recorder.hijacked {
 			status = http.StatusOK
 		}
 		event := RequestEvent{
-			Request:  r,
-			ID:       recorder.Header().Get(requestIDHeader),
-			Method:   r.Method,
-			Path:     requestPath(r),
-			Pattern:  state.pattern,
-			Kind:     state.kind,
-			Status:   status,
-			Duration: time.Since(started),
+			Request:       r,
+			ID:            recorder.Header().Get(requestIDHeader),
+			Method:        r.Method,
+			Path:          requestPath(r),
+			Pattern:       state.pattern,
+			Kind:          state.kind,
+			Status:        status,
+			Duration:      time.Since(started),
+			ResponseBytes: recorder.bytes,
+			Hijacked:      recorder.hijacked,
 		}
 		for _, observer := range observers {
 			if observer != nil {
@@ -94,38 +121,62 @@ func MarkObservedRequest(r *http.Request, kind, pattern string) {
 
 type observedResponseWriter struct {
 	http.ResponseWriter
-	status int
+	status   int
+	bytes    int64
+	hijacked bool
 }
 
 func (w *observedResponseWriter) WriteHeader(status int) {
-	w.status = status
+	if w.status != 0 || w.hijacked {
+		return
+	}
 	w.ResponseWriter.WriteHeader(status)
+	// 101 switches protocols and is terminal; other 1xx responses are interim.
+	if status < 100 || status >= 200 || status == http.StatusSwitchingProtocols {
+		w.status = status
+	}
 }
 
 func (w *observedResponseWriter) Write(data []byte) (int, error) {
-	if w.status == 0 {
+	if w.status == 0 && !w.hijacked {
 		w.status = http.StatusOK
 	}
-	return w.ResponseWriter.Write(data)
+	n, err := w.ResponseWriter.Write(data)
+	w.bytes += int64(n)
+	return n, err
 }
 
-func (w *observedResponseWriter) Flush() {
-	flusher, ok := w.ResponseWriter.(http.Flusher)
-	if !ok {
-		return
+// ReadFrom preserves the underlying fast path after response commitment and
+// accounts its accepted bytes.
+func (w *observedResponseWriter) ReadFrom(r io.Reader) (int64, error) {
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok && w.status != 0 {
+		n, err := rf.ReadFrom(r)
+		w.bytes += n
+		return n, err
 	}
-	if w.status == 0 {
+	// Hide ReaderFrom so Copy routes every fallback write through Write.
+	// Empty or failing reads leave the status unset until a write commits it.
+	return io.Copy(struct{ io.Writer }{w}, r)
+}
+
+func (w *observedResponseWriter) Flush() { _ = w.FlushError() }
+
+func (w *observedResponseWriter) FlushError() error {
+	err := http.NewResponseController(w.ResponseWriter).Flush()
+	// A supported flush commits headers before an I/O error can be returned.
+	// Unsupported flushes leave the response uncommitted.
+	if !errors.Is(err, http.ErrNotSupported) && w.status == 0 && !w.hijacked {
 		w.status = http.StatusOK
 	}
-	flusher.Flush()
+	return err
 }
 
 func (w *observedResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
-	hijacker, ok := w.ResponseWriter.(http.Hijacker)
-	if !ok {
-		return nil, nil, fmt.Errorf("response writer does not support hijacking")
+	conn, rw, err := http.NewResponseController(w.ResponseWriter).Hijack()
+	if err == nil {
+		w.hijacked = true
 	}
-	return hijacker.Hijack()
+	return conn, rw, err
 }
 
 func (w *observedResponseWriter) Push(target string, opts *http.PushOptions) error {

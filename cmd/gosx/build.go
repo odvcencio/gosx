@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 
@@ -36,6 +37,8 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
+	IslandsBackend    string
+	CPUProfile        string
 	Dev               bool
 	Offline           bool
 	MSIX              bool
@@ -281,6 +284,18 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err := validatePerfBuildOptions(opts); err != nil {
 		return err
 	}
+	if opts.CPUProfile != "" {
+		profile, err := os.Create(opts.CPUProfile)
+		if err != nil {
+			return err
+		}
+		if err := pprof.StartCPUProfile(profile); err != nil {
+			profile.Close()
+			return err
+		}
+		defer func() { pprof.StopCPUProfile(); profile.Close() }()
+	}
+
 	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
@@ -310,6 +325,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return err
 	}
 	islandProgs, gsxFiles := discovery.Programs, discovery.GSXFiles
+	backend := opts.IslandsBackend
+	if backend == "" {
+		backend = cfg.Build.Islands.Backend
+	}
+	if err := admitBuildIslands(islandProgs, backend, ir.LowerIslandAOT); err != nil {
+		return err
+	}
 	printBundlePolicyWarnings(cfg.Build.Bundle)
 	if diagnostics := bundlepolicy.ValidateProject(dir, cfg.Build.Bundle); !diagnostics.Empty() {
 		return errors.New(diagnostics.Error())

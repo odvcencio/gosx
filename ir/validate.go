@@ -939,6 +939,15 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 	}
 
 	var diags []Diagnostic
+	if comp.Scope != nil {
+		keys := map[string]bool{}
+		for _, sig := range comp.Scope.Signals {
+			if keys[sig.Name] {
+				diags = append(diags, Diagnostic{Span: comp.Span, Code: "duplicate_signal_key", Message: "duplicate signal key " + sig.Name})
+			}
+			keys[sig.Name] = true
+		}
+	}
 	scope := mergedIslandScope(prog, *comp)
 	checker := newIslandLowerer(prog, comp.Name, scope)
 	if comp.AcceptsChildren || len(comp.AcceptsSlots) > 0 {

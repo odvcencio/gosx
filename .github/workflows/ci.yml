@@ -125,6 +125,12 @@ jobs:
       - name: Telemetry contract tests
         run: make test-telemetry
 
+      - name: Island scalar contract tests
+        run: make test-island-aot
+
+      - name: WebAssembly encoder tests
+        run: make test-wasmgen
+
       # editor/ is a nested Go module, so nothing above reaches it: `go list
       # ./editor/...` fails from the root and `make test` never compiles it.
       # That left 3404 non-test lines and 68 tests with no gate on any runner.
@@ -623,6 +629,13 @@ jobs:
       - name: Set up Chrome
         id: chrome
         uses: browser-actions/setup-chrome@v1
+
+      - name: WebAssembly encoder browser validation
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          test -x "$GOSX_CHROME_BIN"
+          make test-wasmgen
 
       # TinyGo is required: TestProductionBuildRunsMixedTinyGoAndStandardGoWASM
       # (e2e/go_wasm_mixed_prod_e2e_test.go) runs a real production GoSX build

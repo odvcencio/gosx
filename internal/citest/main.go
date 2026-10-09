@@ -54,6 +54,7 @@ var prRaceTargets = []raceTarget{
 	{"engine/surface", "asynchronous surface hosts and registries"},
 	{"engine/surface/runtime", "runtime instance registry"},
 	{"field", "parallel volumetric field work"},
+	{"game/loop", "frame scheduling, observer admission, and concurrent stop/restart"},
 	{"hub", "websocket client pumps and shared connection state"},
 	{"hub/scene3d", "authoritative shared Scene3D state"},
 	{"internal/chrometest", "Chrome startup, pipe draining, cancellation, and cleanup goroutines"},

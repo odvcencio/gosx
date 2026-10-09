@@ -39,20 +39,27 @@ func (v *HistogramVec) Declare(values ...string) error {
 }
 
 func (h *Histogram) Observe(value float64) error {
+	return h.ObserveN(value, 1)
+}
+
+// ObserveN adds n identical observations atomically. It lets counted producer
+// samples preserve multiplicity without replaying each observation in a loop.
+func (h *Histogram) ObserveN(value float64, n uint64) error {
 	if math.IsNaN(value) || math.IsInf(value, 0) {
 		return invalid("metric.value", "not_finite")
 	}
-	if h == nil || h.cell == nil {
+	if h == nil || h.cell == nil || n == 0 {
 		return nil
 	}
 	i := sort.SearchFloat64s(h.bounds, value)
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if h.count == ^uint64(0) || math.IsInf(h.sum+value, 0) {
+	addition := value * float64(n)
+	if n > ^uint64(0)-h.count || math.IsInf(addition, 0) || math.IsInf(h.sum+addition, 0) {
 		return ErrCapacity
 	}
-	h.counts[i]++
-	h.count++
-	h.sum += value
+	h.counts[i] += n
+	h.count += n
+	h.sum += addition
 	return nil
 }

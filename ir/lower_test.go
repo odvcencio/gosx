@@ -13,6 +13,7 @@ func parse(t *testing.T, source []byte) (*ir.Program, error) {
 	if err != nil {
 		return nil, err
 	}
+	defer tree.Release()
 	root := tree.RootNode()
 	return ir.Lower(root, source, lang)
 }
