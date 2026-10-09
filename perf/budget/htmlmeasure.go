@@ -6,9 +6,9 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"io"
 	"mime"
 	"regexp"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -61,79 +61,68 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		}
 		owned[hash] = true
 	}
-	tokenizer := html.NewTokenizer(bytes.NewReader(body))
-	var full, remaining, script bytes.Buffer
-	active, executable := false, false
-	templates := 0
-	for {
-		kind := tokenizer.Next()
-		raw := append([]byte(nil), tokenizer.Raw()...)
-		if kind == html.ErrorToken {
-			// EOF can retain an unfinished tag in Raw without emitting a
-			// token. Reject it rather than silently dropping document bytes.
-			if tokenizer.Err() != io.EOF || active || len(raw) != 0 {
-				return result, measureFailure("wrong-fixture", "/html")
-			}
-			break
-		}
-		if active {
-			if kind != html.EndTagToken {
-				script.Write(raw)
-				continue
-			}
-			token := tokenizer.Token()
-			if token.Data != "script" {
-				return result, measureFailure("wrong-fixture", "/html")
-			}
-			full.Write(script.Bytes())
-			hash := sha256.Sum256(script.Bytes())
-			framework := executable && owned[hex.EncodeToString(hash[:])]
-			if !framework {
-				remaining.Write(script.Bytes())
-			}
-			if executable {
-				result.ExecutableScripts++
-				if !framework && int64(script.Len()) > result.InlineAppScriptMax {
-					result.InlineAppScriptMax = int64(script.Len())
+	classified, err := classifyHTML(body)
+	if err != nil {
+		return result, err
+	}
+	var full bytes.Buffer
+	for _, item := range classified.tokens {
+		raw := body[item.start:item.end]
+		if item.kind == html.StartTagToken || item.kind == html.SelfClosingTagToken {
+			for _, attr := range item.token.Attr {
+				if fields[item.token.Data+"|"+attr.Key] {
+					raw = rewriteHTMLAttribute(raw, attr.Key)
 				}
-			}
-			full.Write(raw)
-			remaining.Write(raw)
-			active = false
-			script.Reset()
-			continue
-		}
-		if kind == html.StartTagToken || kind == html.SelfClosingTagToken {
-			token := tokenizer.Token()
-			seen := map[string]bool{}
-			attributes := map[string]string{}
-			for _, attribute := range token.Attr {
-				if seen[attribute.Key] {
-					return result, measureFailure("wrong-fixture", "/html/attributes")
-				}
-				seen[attribute.Key] = true
-				attributes[attribute.Key] = attribute.Val
-				if fields[token.Data+"|"+attribute.Key] {
-					raw = rewriteHTMLAttribute(raw, attribute.Key)
-				}
-			}
-			if token.Data == "template" && kind == html.StartTagToken {
-				templates++
-			}
-			if token.Data == "script" {
-				active = true
-				executable = templates == 0 && attributes["src"] == "" && executableScriptType(attributes["type"])
-				if templates == 0 && attributes["src"] != "" && executableScriptType(attributes["type"]) {
-					result.ExecutableScripts++
-				}
-			}
-		} else if kind == html.EndTagToken {
-			token := tokenizer.Token()
-			if token.Data == "template" && templates > 0 {
-				templates--
 			}
 		}
 		full.Write(raw)
+	}
+	// Remove only verified executable bodies from the complete raw document.
+	// Source order is independent of tree order (e.g. table foster parenting).
+	type span struct{ start, end int }
+	var framework []span
+	for _, element := range classified.elements {
+		if !element.executable {
+			continue
+		}
+		result.ExecutableScripts++
+		if element.external {
+			continue
+		}
+		source := body[element.bodyStart:element.bodyEnd]
+		hash := sha256.Sum256(source)
+		if owned[hex.EncodeToString(hash[:])] {
+			framework = append(framework, span{element.bodyStart, element.bodyEnd})
+		} else if int64(len(source)) > result.InlineAppScriptMax {
+			result.InlineAppScriptMax = int64(len(source))
+		}
+	}
+	sort.Slice(framework, func(i, j int) bool { return framework[i].start < framework[j].start })
+	// Normalization changes attribute lengths. Build both documents from the
+	// same source tokens instead of applying source offsets to normalized bytes.
+	var remaining bytes.Buffer
+	for _, item := range classified.tokens {
+		start := item.start
+		for _, removed := range framework {
+			if removed.end <= start || removed.start >= item.end {
+				continue
+			}
+			if removed.start > start {
+				remaining.Write(body[start:removed.start])
+			}
+			start = max(start, removed.end)
+		}
+		if start >= item.end {
+			continue
+		}
+		raw := body[start:item.end]
+		if start == item.start && (item.kind == html.StartTagToken || item.kind == html.SelfClosingTagToken) {
+			for _, attr := range item.token.Attr {
+				if fields[item.token.Data+"|"+attr.Key] {
+					raw = rewriteHTMLAttribute(raw, attr.Key)
+				}
+			}
+		}
 		remaining.Write(raw)
 	}
 	result.full = full.Bytes()
@@ -261,76 +250,35 @@ func VerifyHTMLNonces(body []byte, csp string) error {
 		}
 		policies = append(policies, directives)
 	}
-	tokenizer := html.NewTokenizer(bytes.NewReader(body))
-	templates := 0
-	for {
-		kind := tokenizer.Next()
-		if kind == html.ErrorToken {
-			if tokenizer.Err() != io.EOF {
-				return measureFailure("wrong-fixture", "/html")
-			}
-			return nil
-		}
-		token := tokenizer.Token()
-		if token.Data == "template" {
-			if kind == html.StartTagToken {
-				templates++
-			}
-			if kind == html.EndTagToken && templates > 0 {
-				templates--
-			}
-		}
-		if templates > 0 || kind != html.StartTagToken && kind != html.SelfClosingTagToken || token.Data != "script" && token.Data != "style" {
+	classified, err := classifyHTML(body)
+	if err != nil {
+		return err
+	}
+	for _, element := range classified.elements {
+		if !element.hasNonce {
 			continue
 		}
-		var nonce string
-		hasNonce, external := false, false
-		for _, attribute := range token.Attr {
-			if attribute.Key == "nonce" && !hasNonce {
-				nonce, hasNonce = attribute.Val, true
-			}
-			external = external || token.Data == "script" && attribute.Key == "src"
-		}
-		if !hasNonce {
-			continue
-		}
-		if nonce == "" {
+		if element.nonce == "" {
 			return measureFailure("policy", "/html/nonce")
-		}
-		var source strings.Builder
-		if kind == html.StartTagToken {
-			// Hash the parsed element text, not HTML source bytes. HTML
-			// parsing normalizes CR/CRLF to LF before CSP3 §6.7.3.3.
-			for next := tokenizer.Next(); next != html.ErrorToken; next = tokenizer.Next() {
-				child := tokenizer.Token()
-				if next == html.EndTagToken && child.Data == token.Data {
-					break
-				}
-				if next == html.TextToken {
-					source.WriteString(child.Data)
-				}
-			}
-		}
-		key, fallback := "script-src-elem", "script-src"
-		if token.Data == "style" {
-			key, fallback = "style-src-elem", "style-src"
 		}
 		bound := false
 		for _, directives := range policies {
-			allowed, found := directives[key]
+			allowed, found := directives[element.directive]
 			if !found {
-				allowed, found = directives[fallback]
+				allowed, found = directives[element.fallback]
 			}
 			if !found {
 				allowed, found = directives["default-src"]
 			}
-			// An unrelated policy does not restrict this element; another
-			// enforced policy must still provide an applicable directive.
 			if !found {
 				continue
 			}
 			bound = true
-			if !cspAllowsElement(allowed, token.Data, nonce, source.String(), external) {
+			kind := "script"
+			if element.directive == "style-src-elem" {
+				kind = "style"
+			}
+			if !cspAllowsElement(allowed, kind, element.nonce, element.text, element.external) {
 				return measureFailure("policy", "/html/nonce")
 			}
 		}
@@ -338,6 +286,7 @@ func VerifyHTMLNonces(body []byte, csp string) error {
 			return measureFailure("policy", "/html/nonce")
 		}
 	}
+	return nil
 }
 
 var cspSourcePattern = regexp.MustCompile(`^'([A-Za-z0-9]+)-([A-Za-z0-9+/_-]+={0,2})'$`)
