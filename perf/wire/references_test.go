@@ -161,14 +161,21 @@ func TestReferencesUnresolvedSyntaxDoesNotProveClosure(t *testing.T) {
 		{"computed-fetch", KindScript, "fetch(selected)"},
 		{"member-fetch", KindScript, "globalThis.fetch(selected)"},
 		{"aliased-fetch", KindScript, "const request=fetch; request(selected)"},
+		{"aliased-member-fetch", KindScript, `const request=globalThis.fetch; request("/mesh.glb")`},
+		{"destructured-fetch", KindScript, `const {fetch: request}=globalThis; request("/mesh.glb")`},
 		{"xhr", KindScript, "new XMLHttpRequest()"},
 		{"worker", KindScript, "new Worker(selected)"},
 		{"worker-unknown-constructor", KindScript, "new Worker(new Date())"},
 		{"worker-url-base", KindScript, "new Worker(new URL('./worker',base))"},
 		{"url-base", KindScript, "new URL('./model.glb',base)"},
 		{"single-quote-escape", KindScript, "import('./\\u0061.js')"},
+		{"static-import-escape", KindScript, `import './\u0061.js';`},
+		{"export-escape", KindScript, `export * from './\u0061.js';`},
 		{"eval", KindScript, "eval(source)"},
 		{"function", KindScript, "new Function(source)"},
+		{"css-escaped-url", KindStyle, `.a{background:u\72l("/image.png")}`},
+		{"css-escaped-import", KindStyle, `@\69mport "/sheet.css";`},
+		{"css-escaped-image-set", KindStyle, `.a{background:\69mage-set("/image.png" 1x)}`},
 		{"responsive-image", KindDocument, `<img src="/a.png" srcset="/a.png 1x,/b.png 2x">`},
 		{"base", KindDocument, `<base href="/other/"><script src="main.js"></script>`},
 		{"import-map", KindDocument, `<script type="importmap">{"imports":{}}</script>`},
@@ -182,6 +189,129 @@ func TestReferencesUnresolvedSyntaxDoesNotProveClosure(t *testing.T) {
 			set, err := ScanReferences([]byte(test.body), test.kind)
 			if err == nil && set.Complete {
 				t.Fatal("unresolved references established complete coverage")
+			}
+		})
+	}
+}
+
+func TestReferencesLoaderEscapesAreIncomplete(t *testing.T) {
+	for _, loader := range []string{
+		"fetch", "Worker", "SharedWorker", "URL", "importScripts",
+		"EventSource", "WebSocket", "XMLHttpRequest", "eval", "Function",
+	} {
+		for _, receiver := range []string{"globalThis", "window", "self"} {
+			member := receiver + "." + loader
+			for _, tc := range []struct{ name, body string }{
+				{"assigned", `const request=MEMBER; request("/resource")`},
+				{"argument", `consume(MEMBER)`},
+				{"returned", `function loader(){return MEMBER}`},
+				{"bound", `const request=MEMBER.bind(RECEIVER); request("/resource")`},
+				{"call", `MEMBER.call(RECEIVER,"/resource")`},
+				{"apply", `MEMBER.apply(RECEIVER,["/resource"])`},
+				{"destructured", `const {LOADER: request}=RECEIVER; request("/resource")`},
+				{"quoted-destructured", `const {"LOADER": request}=RECEIVER; request("/resource")`},
+				{"computed", `const request=RECEIVER[COMPUTED]; request("/resource")`},
+				{"computed-call", `RECEIVER[COMPUTED]("/resource")`},
+				{"computed-destructured", `const {[COMPUTED]: request}=RECEIVER; request("/resource")`},
+			} {
+				t.Run(loader+"/"+receiver+"/"+tc.name, func(t *testing.T) {
+					computed := `"` + loader[:1] + `"+"` + loader[1:] + `"`
+					body := strings.NewReplacer("MEMBER", member, "RECEIVER", receiver, "LOADER", loader, "COMPUTED", computed).Replace(tc.body)
+					set, err := ScanReferences([]byte(body), KindScript)
+					if err != nil || set.Complete {
+						t.Fatal("escaped loader claimed complete coverage", set, err)
+					}
+				})
+			}
+		}
+		t.Run(loader+"/bare-alias", func(t *testing.T) {
+			set, err := ScanReferences([]byte(`const request=`+loader+`; request("/resource")`), KindScript)
+			if err != nil || set.Complete {
+				t.Fatal("bare loader alias claimed complete coverage", set, err)
+			}
+		})
+		t.Run(loader+"/shorthand-destructured", func(t *testing.T) {
+			set, err := ScanReferences([]byte(`const {`+loader+`}=globalThis; `+loader+`("/resource")`), KindScript)
+			if err != nil || set.Complete {
+				t.Fatal("shorthand loader binding claimed complete coverage", set, err)
+			}
+		})
+	}
+}
+
+func TestReferencesGlobalLoaderCalls(t *testing.T) {
+	for _, receiver := range []string{"", "globalThis.", "window.", "self."} {
+		for _, tc := range []struct{ loader, body, kind string }{
+			{"fetch", `RECEIVERfetch("./resource")`, KindOther},
+			{"Worker", `new RECEIVERWorker("./resource")`, KindScript},
+			{"SharedWorker", `new RECEIVERSharedWorker(new RECEIVERURL("./resource",import.meta.url))`, KindScript},
+			{"URL", `new RECEIVERURL("./resource",import.meta.url)`, KindOther},
+		} {
+			t.Run(receiver+tc.loader, func(t *testing.T) {
+				body := strings.ReplaceAll(tc.body, "RECEIVER", receiver)
+				set, err := ScanReferences([]byte(body), KindScript)
+				want := ReferenceSet{Resources: []Reference{{"./resource", tc.kind, false}}, Complete: true}
+				if err != nil || !reflect.DeepEqual(set, want) {
+					t.Fatal("direct global loader lost its reference", set, err)
+				}
+			})
+		}
+	}
+}
+
+func TestReferencesUnsupportedLoaderFormsAreIncomplete(t *testing.T) {
+	for _, body := range []string{
+		`importScripts("/a.js","/b.js")`, `globalThis.importScripts("/a.js")`,
+		`new globalThis.EventSource("/events")`, `new window.WebSocket("wss://fixture.invalid/socket")`,
+		`new self.XMLHttpRequest()`, `xhr.open("GET","/resource")`,
+		`const request=xhr.open; request("GET","/resource")`, `const {open: request}=xhr`,
+		`navigator.serviceWorker.register("/worker.js")`, `window.navigator.serviceWorker.register("/worker.js")`,
+		`const register=navigator.serviceWorker.register; register("/worker.js")`,
+		`const {register}=navigator.serviceWorker; register("/worker.js")`,
+		`const {register: install}=sw; install("/worker.js")`,
+		`const {serviceWorker: sw}=navigator; sw.register("/worker.js")`,
+		`const sw=navigator.serviceWorker; sw.register("/worker.js")`,
+		`navigator["service"+"Worker"]["reg"+"ister"]("/worker.js")`,
+		`const request=globalThis.f\u0065tch; request("/resource")`,
+		`const {f\u0065tch: request}=window; request("/resource")`,
+		`const {"f\u0065tch": request}=self; request("/resource")`,
+		`const request=Reflect.get(globalThis,"fetch"); request("/resource")`,
+		`const lookup=window.Reflect.get; const request=lookup(self,"fetch"); request("/resource")`,
+		`const request=Object.getOwnPropertyDescriptor(window,"fetch").value; request("/resource")`,
+		`const lookup=Object.getOwnPropertyDescriptor; const request=lookup(self,"fetch").value; request("/resource")`,
+		`const {getOwnPropertyDescriptor: lookup}=Object; lookup(globalThis,"fetch").value("/resource")`,
+		`const descriptors=Object.getOwnPropertyDescriptors(window); consume(descriptors)`,
+		`window.open("/document")`, `const navigate=window.open; navigate("/document")`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			set, err := ScanReferences([]byte(body), KindScript)
+			if err != nil || set.Complete {
+				t.Fatal("unsupported loader claimed complete coverage", set, err)
+			}
+		})
+	}
+	for _, tc := range []struct{ name, kind, body string }{
+		{"dynamic-import", KindScript, `import(selected)`},
+		{"computed-callee", KindScript, `const root=globalThis; root["fe"+"tch"]("/resource")`},
+		{"computed-property", KindScript, `const { [selected]: request }=globalThis; request("/resource")`},
+		{"css-url", KindStyle, `.a{background:url(var(--asset))}`},
+		{"css-import", KindStyle, `@import url(var(--sheet));`},
+		{"css-import-function", KindStyle, `@import var(--sheet);`},
+		{"css-image-set", KindStyle, `.a{background:image-set(var(--asset) 1x)}`},
+		{"css-webkit-image-set", KindStyle, `.a{background:-webkit-image-set(var(--asset) 1x)}`},
+		{"css-variable-source", KindStyle, `.a{background-image:var(--asset)}`},
+		{"css-font-variable", KindStyle, `@font-face{font-family:Fixture;src:var(--font)}`},
+		{"html-link", KindDocument, `<link rel="preload modulepreload" href="/a.js" href="/b.js">`},
+		{"html-script", KindDocument, `<script>const request=window.fetch; request("/resource")</script>`},
+		{"html-media", KindDocument, `<source src="/a.webp" srcset="/a.webp 1x,/b.webp 2x">`},
+		{"html-object", KindDocument, `<object data="/a" data="/b"></object>`},
+		{"html-hint", KindDocument, `<div data-gosx-scene3d-url="/invalid path"></div>`},
+		{"html-manifest", KindDocument, `<script id="gosx-manifest">{"version":"0.1.0","islands":[{"bundleId":"unknown"}]}</script>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set, err := ScanReferences([]byte(tc.body), tc.kind)
+			if err != nil || set.Complete {
+				t.Fatal("unresolved resource syntax claimed complete coverage", set, err)
 			}
 		})
 	}
@@ -202,9 +332,9 @@ func TestReferencesInvalidInputsReturnFixedError(t *testing.T) {
 		{KindDocument, []byte(strings.Repeat("<div>", 258) + strings.Repeat("</div>", 258))},
 	}
 	for i, test := range cases {
-		_, err := ScanReferences(test.body, test.kind)
+		set, err := ScanReferences(test.body, test.kind)
 		var typed *ReferenceError
-		if !errors.As(err, &typed) || typed.Code != "invalid-input" || typed.Reference != "references" || typed.Pointer != "/body" {
+		if set.Complete || !errors.As(err, &typed) || typed.Code != "invalid-input" || typed.Reference != "references" || typed.Pointer != "/body" {
 			t.Fatalf("case %d lost fixed error: %v", i, err)
 		}
 	}

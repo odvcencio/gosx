@@ -23,8 +23,8 @@ type Reference struct {
 }
 
 // ReferenceSet never certifies runtime behavior. Complete means the supported
-// syntax had no unresolved reference; declarations and browser reconciliation
-// still determine whether the dependency graph covers a page.
+// syntax had no unresolved reference or loader escape; declarations and browser
+// reconciliation still determine whether the dependency graph covers a page.
 type ReferenceSet struct {
 	Resources []Reference
 	Complete  bool
@@ -44,8 +44,13 @@ func referenceFailure() error {
 // ScanReferences extracts active HTML, CSS and module references without
 // changing the compatibility crawler or its accounting rules. It does not
 // resolve URLs, fetch resources or copy native values into a public report.
-func ScanReferences(body []byte, kind string) (ReferenceSet, error) {
-	out := ReferenceSet{Resources: []Reference{}, Complete: true}
+func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error) {
+	out = ReferenceSet{Resources: []Reference{}, Complete: true}
+	defer func() {
+		if resultErr != nil {
+			out.Complete = false
+		}
+	}()
 	if len(body) > 16<<20 || !utf8.Valid(body) {
 		return out, referenceFailure()
 	}
@@ -371,17 +376,28 @@ func referenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bool)
 }
 
 func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+	if (n.Type(lang) == "plain_value" || n.Type(lang) == "function_name") && strings.Contains(n.Text(body), "\\") {
+		// Escaped names may conceal a loader that is not decoded here.
+		out.Complete = false
+		return
+	}
 	if n.Type(lang) == "import_statement" {
+		sourceSeen := false
 		for i := 0; i < n.NamedChildCount(); i++ {
 			c := n.NamedChild(i)
 			if c.Type(lang) == "string_value" {
+				sourceSeen = true
 				raw, ok := referenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
 					addReference(out, raw, KindStyle, false)
 				}
+			} else if c.Type(lang) == "call_expression" && c.NamedChildCount() > 0 && strings.EqualFold(c.NamedChild(0).Text(body), "url") {
+				// The nested URL call checks its own argument.
+				sourceSeen = true
 			}
 		}
+		out.Complete = out.Complete && sourceSeen
 		return
 	}
 	if n.Type(lang) != "call_expression" || n.NamedChildCount() < 2 {
@@ -389,7 +405,10 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 	}
 	name := strings.ToLower(n.NamedChild(0).Text(body))
 	args := n.NamedChild(1)
-	if name == "url" {
+	if name == "var" {
+		// A substituted value can contain a URL; bindings are not resolved here.
+		out.Complete = false
+	} else if name == "url" {
 		contents := strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(args.Text(body), "("), ")"))
 		if strings.HasPrefix(strings.ToLower(contents), "data:") && !strings.ContainsAny(contents, "()") {
 			return
@@ -408,14 +427,27 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			addReference(out, raw, kind, false)
 		}
 	} else if name == "image-set" || name == "-webkit-image-set" {
+		if args.NamedChildCount() == 0 {
+			out.Complete = false
+		}
 		for i := 0; i < args.NamedChildCount(); i++ {
 			c := args.NamedChild(i)
-			if c.Type(lang) == "string_value" {
+			switch c.Type(lang) {
+			case "string_value":
 				raw, ok := referenceLiteral(c, lang, body)
 				out.Complete = out.Complete && ok
 				if ok {
 					addReference(out, raw, KindImage, false)
 				}
+			case "integer_value", "float_value":
+				// Resolution descriptors do not load a resource.
+			case "call_expression":
+				// URL calls are scanned separately; type() is a MIME descriptor.
+				if c.NamedChildCount() == 0 || (strings.ToLower(c.NamedChild(0).Text(body)) != "url" && strings.ToLower(c.NamedChild(0).Text(body)) != "type") {
+					out.Complete = false
+				}
+			default:
+				out.Complete = false
 			}
 		}
 	}
@@ -441,14 +473,8 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		if name == nil {
 			return
 		}
-		value := name.Text(body)
-		if name.Type(lang) == "member_expression" {
-			property := name.ChildByFieldName("property", lang)
-			if property != nil && property.Type(lang) == "property_identifier" && property.Text(body) == "fetch" {
-				value = "fetch"
-			}
-		}
-		if value != "import" && value != "fetch" && value != "Worker" && value != "SharedWorker" && value != "URL" {
+		value := moduleLoaderName(name, lang, body)
+		if value == "" {
 			return
 		}
 		args := n.ChildByFieldName("arguments", lang)
@@ -464,7 +490,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		// Worker(new URL(...)) is covered by the nested URL expression.
 		if !ok && (value == "Worker" || value == "SharedWorker") && args.NamedChild(0).Type(lang) == "new_expression" {
 			constructor := args.NamedChild(0).ChildByFieldName("constructor", lang)
-			if constructor != nil && constructor.Text(body) == "URL" {
+			if moduleLoaderName(constructor, lang, body) == "URL" {
 				return
 			}
 		}
@@ -476,15 +502,84 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			}
 			addReference(out, raw, kind, false)
 		}
-	case "identifier":
-		switch n.Text(body) {
-		case "eval", "Function", "XMLHttpRequest", "WebSocket", "EventSource":
+	case "identifier", "property_identifier", "shorthand_property_identifier", "shorthand_property_identifier_pattern", "string":
+		moduleLoaderUse(n, lang, body, out)
+	case "subscript_expression", "computed_property_name":
+		// Computed access can conceal any loader, including on an aliased global.
+		// No property evaluation or alias analysis establishes coverage here.
+		out.Complete = false
+	}
+}
+
+func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
+	if n == nil {
+		return ""
+	}
+	if n.Type(lang) == "import" {
+		return "import"
+	}
+	if n.Type(lang) == "member_expression" {
+		n = n.ChildByFieldName("property", lang)
+		if n == nil || n.Type(lang) != "property_identifier" {
+			return ""
+		}
+	} else if n.Type(lang) != "identifier" {
+		return ""
+	}
+	switch name := n.Text(body); name {
+	case "fetch", "Worker", "SharedWorker", "URL":
+		return name
+	}
+	return ""
+}
+
+func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+	callee := n
+	name := n.Text(body)
+	if n.Type(lang) == "string" {
+		parent := n.Parent()
+		if parent == nil || parent.Type(lang) != "pair_pattern" || parent.ChildByFieldName("key", lang) != n {
+			return
+		}
+		var ok bool
+		name, ok = referenceLiteral(n, lang, body)
+		if !ok {
 			out.Complete = false
-		case "fetch":
-			parent := n.Parent()
-			if parent == nil || parent.Type(lang) != "call_expression" || parent.ChildByFieldName("function", lang) != n {
-				out.Complete = false
+			return
+		}
+	}
+	if n.Type(lang) == "property_identifier" {
+		parent := n.Parent()
+		if parent == nil {
+			return
+		}
+		switch parent.Type(lang) {
+		case "member_expression":
+			if parent.ChildByFieldName("property", lang) != n {
+				return
 			}
+			callee = parent
+		case "pair_pattern":
+			// A destructured loader escapes the direct call analysis.
+		default:
+			return
+		}
+	}
+	if strings.Contains(name, "\\") {
+		out.Complete = false
+		return
+	}
+	switch name {
+	case "eval", "Function", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts", "serviceWorker", "register", "open",
+		"Reflect", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors":
+		// These loading, reflection or dynamic-code APIs have no resolved call model.
+		// Recognize accesses and bindings as well as direct invocations.
+		out.Complete = false
+	case "fetch", "Worker", "SharedWorker", "URL":
+		parent := callee.Parent()
+		if parent == nil || (parent.Type(lang) != "call_expression" && parent.Type(lang) != "new_expression") ||
+			(parent.ChildByFieldName("function", lang) != callee && parent.ChildByFieldName("constructor", lang) != callee) {
+			out.Complete = false
 		}
 	}
 }
@@ -502,5 +597,6 @@ func workerURLArgument(n *ts.Node, lang *ts.Language, body []byte) bool {
 	if name == nil {
 		name = call.ChildByFieldName("function", lang)
 	}
-	return name != nil && (name.Text(body) == "Worker" || name.Text(body) == "SharedWorker")
+	loader := moduleLoaderName(name, lang, body)
+	return loader == "Worker" || loader == "SharedWorker"
 }
