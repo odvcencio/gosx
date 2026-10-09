@@ -183,6 +183,14 @@ func playgroundEventType(name string) string {
 		return "document-keyup"
 	case "onWindowResize":
 		return "window-resize"
+	case "onWheel":
+		return "wheel"
+	case "onDblClick":
+		return "dblclick"
+	case "onContextMenu":
+		return "contextmenu"
+	case "onLostPointerCapture":
+		return "lostpointercapture"
 	default:
 		return strings.ToLower(strings.TrimSpace(name))
 	}
