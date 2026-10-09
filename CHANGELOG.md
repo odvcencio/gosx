@@ -23,6 +23,31 @@
   for `bootstrap-feature-islands.js` and +539 raw for the legacy `bootstrap.js`
   monolith): the gesture events grow the islands chunk by 390 raw bytes (18,766
   to 19,156) and the monolith by 390 (1,910,682 to 1,911,072).
+- Keep observed hub control pings on a fixed 54-second schedule, using the
+  existing writer timer with a cadence that divides the ping period. Ping
+  sequences start from cryptographic per-connection randomness. Invalid
+  slow-client policy logs a fixed class at most once per minute.
+- Slow-client checks follow the shared hub tick and scale the drop threshold to
+  the elapsed window.
+- Hub Close waits for application enqueue callbacks as well as pumps. Release
+  locks that callbacks may acquire before Close. The framework-only telemetry
+  observer slot requires an internal authority key; observer conflicts match
+  the telemetry conflict class. Queue samples describe depth before an accepted
+  enqueue, including zero. TrafficEvent.Dropped/Count and nil-client Message
+  callbacks extend the observer contract: Message accounts for all drops, so
+  Broadcast's drop summary must not be added again. SlowClientPolicy.Validate
+  and ErrInvalidSlowClient are explicit policy-validation API extensions.
+
+- Keep peer-controlled WebSocket close text out of hub read diagnostics. Normal
+  peer closes are quiet; other failures report only a fixed transport class.
+
+- Add measured WebSocket control-ping RTT with matching sequence payloads and
+  once-only timeouts. Queue sampling reports text and binary depth independently,
+  and all full-buffer drops remain visible. Broadcast samples coalesce by depth
+  and preserve counts outside fanout locks, with no additional recipient scan.
+  One optional telemetry subscriber has its own reservation and sampling policy.
+  Opt-in slow-client eviction uses interval drop deltas and the existing pump
+  timer; it does not increase the 54-second ping frequency or add a scanner.
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
@@ -37,6 +62,7 @@
 - Report skipped optional `wasm-opt` passes instead of silently keeping the
   compiled WASM. Missing tools warn once per build; failed passes include
   optimizer output in one complete warning and remove temporary output.
+
 
 - Add transactional aggregate telemetry setup with one maintenance worker and
   one named application shutdown hook. Disabled handles own no resources;
