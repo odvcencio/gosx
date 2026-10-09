@@ -64,31 +64,37 @@ func TestIslandAOTGoTypesDifferential(t *testing.T) {
 				t.Errorf("AOT admitted Go type error: %v", typeErr)
 				return
 			}
-			// Also check the actual renderer's Go output. The projection above
-			// can check rejected recipes that the renderer itself excludes.
-			compatible := strings.ReplaceAll(gsx, tc.expr, tc.goExpr)
-			// Choose is a test-only Go lowering of ternary syntax. Removing the
-			// client marker lets the renderer emit it without first asking the
-			// restricted VM parser to recognize this oracle helper.
-			compatible = strings.ReplaceAll(compatible, "//gosx:island\n", "")
-			extra := "import gosx \"m31labs.dev/gosx\"\n"
-			if tc.expr != tc.goExpr {
-				extra += "import oracle \"example.test/scalaroracle\"\n"
-			}
-			compatible = strings.Replace(compatible, "package example\n", "package example\n"+extra, 1)
-			compatible = strings.Replace(compatible, "type Detail struct", "type Node = gosx.Node\ntype Detail struct", 1)
-			lowered, err := transpile.Transpile([]byte(compatible), transpile.Options{})
-			if err != nil {
-				t.Errorf("AOT admitted source that cannot lower to Go: %v", err)
-				return
-			}
-			loweredFile, err := parser.ParseFile(fset, "lowered.go", lowered, 0)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err := cfg.Check("example/components", fset, []*ast.File{loweredFile}, nil); err != nil {
-				t.Errorf("AOT admitted lowered Go type error: %v", err)
-				return
+			// Choose has no VM opcode and cannot pass a strict island's syntax
+			// gate. Its Go lowering is checked in the independent projection;
+			// additionally check real renderer output for native-Go recipes and
+			// legacy components, which can render the Go-only helper.
+			if tc.expr == tc.goExpr || !strings.Contains(gsx, "component Counter(") {
+				compatible := strings.ReplaceAll(gsx, tc.expr, tc.goExpr)
+				// Choose is a test-only Go lowering of ternary syntax. Removing the
+				// client marker lets the renderer emit it without first asking the
+				// restricted VM parser to recognize this oracle helper.
+				if !strings.Contains(compatible, "component Counter(") {
+					compatible = strings.ReplaceAll(compatible, "//gosx:island\n", "")
+				}
+				extra := "import gosx \"m31labs.dev/gosx\"\n"
+				if tc.expr != tc.goExpr && tc.root != "inline_handler" {
+					extra += "import oracle \"example.test/scalaroracle\"\n"
+				}
+				compatible = strings.Replace(compatible, "package example\n", "package example\n"+extra, 1)
+				compatible = strings.Replace(compatible, "type Detail struct", "type Node = gosx.Node\ntype Detail struct", 1)
+				lowered, err := transpile.Transpile([]byte(compatible), transpile.Options{})
+				if err != nil {
+					t.Errorf("AOT admitted source that cannot lower to Go: %v", err)
+					return
+				}
+				loweredFile, err := parser.ParseFile(fset, "lowered.go", lowered, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := cfg.Check("example/components", fset, []*ast.File{loweredFile}, nil); err != nil {
+					t.Errorf("AOT admitted lowered Go type error: %v", err)
+					return
+				}
 			}
 			root := oracleGoRoot(file, tc.root)
 			if root == nil {
@@ -123,6 +129,7 @@ func TestIslandAOTGoTypesDifferential(t *testing.T) {
 }
 
 func oracleGoRoot(file *ast.File, root string) ast.Expr {
+	root = oracleValueRoot(root)
 	var result ast.Expr
 	ast.Inspect(file, func(n ast.Node) bool {
 		if result != nil {
@@ -158,6 +165,7 @@ func oracleGoRoot(file *ast.File, root string) ast.Expr {
 		}
 		name := selector.Sel.Name
 		matches := root == "text" && name == "Emit" || root == "attribute" && name == "Attr" ||
+			root == "prop" && name == "Typed" ||
 			(root == "signal" || root == "shared") && (name == "New" || name == "NewShared") ||
 			root == "argument" && name == "Set" || root == "predicate" && name == "When" || root == "iteration" && name == "Each"
 		if matches {
@@ -202,6 +210,16 @@ func oracleConstantFits(value types.TypeAndValue, kind aot.ScalarKind) bool {
 }
 
 func oracleProgramRoot(p *program.Program, root string) int {
+	attribute := "title"
+	if root == "fallback" {
+		attribute = "fallback"
+	} else if root == "loop_key" {
+		attribute = "key"
+	}
+	root = oracleValueRoot(root)
+	if root == "prop" {
+		root = "text"
+	}
 	switch root {
 	case "signal", "shared":
 		return int(p.Signals[0].Init)
@@ -217,12 +235,26 @@ func oracleProgramRoot(p *program.Program, root string) int {
 			return int(n.Expr)
 		}
 		for _, attr := range n.Attrs {
-			if root == "attribute" && attr.Kind == program.AttrExpr && attr.Name == "title" {
+			if root == "attribute" && attr.Kind == program.AttrExpr && attr.Name == attribute {
 				return int(attr.Expr)
 			}
 		}
 	}
 	return -1
+}
+
+func oracleValueRoot(root string) string {
+	switch root {
+	case "inline_handler":
+		return "argument"
+	case "slot_text", "nested_slot", "default_child", "callee_text", "conditional_body", "loop_body":
+		return "text"
+	case "slot_attribute", "callee_attribute", "fallback", "loop_key", "spread", "event_attribute":
+		return "attribute"
+	case "slot_prop", "boolean_prop":
+		return "prop"
+	}
+	return root
 }
 
 func oracleVMEquality(t *testing.T, source *ir.Program, unit aot.Unit, root int, typed types.TypeAndValue, typ string) {
@@ -298,6 +330,7 @@ func (i *scalarOracleImporter) Import(path string) (*types.Package, error) {
 		source = `package oracle
 func Emit(v any) any { return v }
 func Attr(v any) any { return v }
+func Typed[T any](v T) any { return v }
 func Choose[T any](condition bool, yes, no T) T { if condition { return yes }; return no }
 func When(condition bool) any { return condition }
 func Each[T any](values []T) any { return values }

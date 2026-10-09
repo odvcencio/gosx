@@ -30,51 +30,8 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
 	}
 	src = resolved
-	// Source graphs are bounded before calling the ordinary tree lowerer.
-	active := make(map[NodeID]bool)
-	var visit func(NodeID, int) error
-	visit = func(id NodeID, depth int) error {
-		if int(id) >= len(src.Nodes) || depth > 64 || active[id] {
-			return fmt.Errorf("invalid source node graph")
-		}
-		active[id] = true
-		n := src.Nodes[id]
-		if n.Kind == NodeComponent && !n.IsSyntheticConditional() {
-			for _, callee := range src.Components {
-				if callee.Name != n.Tag {
-					continue
-				}
-				for _, typ := range callee.PropsFields {
-					if aotSourceKind(src, typ) == "" {
-						return fmt.Errorf("composed prop has an unproved scalar type")
-					}
-				}
-				if err := visit(callee.Root, depth+1); err != nil {
-					return err
-				}
-			}
-		}
-		if n.Kind == NodeExpr {
-			if err := aotSourceTokens(src, comp, n.Text); err != nil {
-				return err
-			}
-		}
-		for _, attr := range n.Attrs {
-			if attr.Expr != "" {
-				if err := aotSourceTokens(src, comp, attr.Expr); err != nil {
-					return err
-				}
-			}
-		}
-		for _, child := range n.Children {
-			if err := visit(child, depth+1); err != nil {
-				return err
-			}
-		}
-		delete(active, id)
-		return nil
-	}
-	if err := visit(comp.Root, 1); err != nil {
+	props, err := aotWalkSource(src, comp)
+	if err != nil {
 		return aot.Unit{}, aotSourceError(comp, "source_graph", err.Error())
 	}
 	p, err := LowerIsland(src, index)
@@ -123,6 +80,28 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			}
 		}
 	}
+	if err := aotCheckSourceProps(src, props, stateKinds); err != nil {
+		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
+	}
+	kinds, constants, pure, err := aotInferExpressions(src, comp, p, &c, stateKinds)
+	if err != nil {
+		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
+	}
+	if err := aotScalarRoots(p, kinds, constants, stateKinds); err != nil {
+		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
+	}
+	for id := range p.Exprs {
+		c.Expressions = append(c.Expressions, aot.ExpressionContract{Expr: program.ExprID(id), Kind: kinds[id], Pure: pure[id]})
+	}
+	c.Inputs = aotInternInputs(c.Inputs)
+	c.Bindings, err = aot.ContractBindings(p)
+	if err != nil {
+		return aot.Unit{}, aotSourceError(comp, "source_graph", err.Error())
+	}
+	return aot.NewUnit(identity, p, c)
+}
+
+func aotInferExpressions(src *Program, comp Component, p *program.Program, c *aot.ScalarContract, stateKinds map[string]aot.ScalarKind) ([]aot.ScalarKind, []constant.Value, []bool, error) {
 	kinds := make([]aot.ScalarKind, len(p.Exprs))
 	// A default int kind does not distinguish an untyped constant from a
 	// typed int expression. Retain exact constant values for contextual typing.
@@ -282,21 +261,10 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 	for id := range p.Exprs {
 		_, err := infer(program.ExprID(id))
 		if err != nil {
-			return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
+			return nil, nil, nil, err
 		}
 	}
-	if err := aotScalarRoots(p, kinds, constants, stateKinds); err != nil {
-		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
-	}
-	for id := range p.Exprs {
-		c.Expressions = append(c.Expressions, aot.ExpressionContract{Expr: program.ExprID(id), Kind: kinds[id], Pure: pure[id]})
-	}
-	c.Inputs = aotInternInputs(c.Inputs)
-	c.Bindings, err = aot.ContractBindings(p)
-	if err != nil {
-		return aot.Unit{}, aotSourceError(comp, "source_graph", err.Error())
-	}
-	return aot.NewUnit(identity, p, c)
+	return kinds, constants, pure, nil
 }
 
 func aotConstantFits(value constant.Value, kind aot.ScalarKind) bool {

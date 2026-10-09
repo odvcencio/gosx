@@ -4,6 +4,7 @@ package ir_test
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -106,7 +107,31 @@ func scalarOracleCorpus() []scalarOracleCase {
 			add("binding", root, "int32", tc.expr, tc.expr, tc.pkg, tc.local)
 		}
 	}
-	return cases
+	for _, name := range []string{"true", "false"} {
+		add("shadowed_string", "text", "bool", name, name, "const "+name+` = "yes"`, "")
+		add("shadowed_string", "text", "bool", name, name, "", "const "+name+` = "yes"`)
+	}
+	// Every distinct generated expression/declaration recipe runs at every
+	// source position, including component prop and slot boundaries.
+	type recipe struct{ typ, expr, goExpr, pkg, local string }
+	seen := map[recipe]bool{}
+	var expanded []scalarOracleCase
+	for _, c := range cases {
+		key := recipe{c.typ, c.expr, c.goExpr, c.packageDecl, c.localDecl}
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		for _, position := range oraclePositions {
+			copy := c
+			copy.name, copy.root = fmt.Sprintf("%s/%05d/%s", c.name, len(expanded), position.name), position.name
+			expanded = append(expanded, copy)
+		}
+	}
+	for _, decl := range []string{"", `const true = "yes"`, "const true = 1"} {
+		expanded = append(expanded, scalarOracleCase{name: fmt.Sprintf("implicit_bool/%d", len(expanded)), root: "boolean_prop", typ: "bool", expr: "true", goExpr: "true", packageDecl: decl})
+	}
+	return expanded
 }
 
 func oracleZero(typ string) string {
@@ -122,7 +147,7 @@ func oracleZero(typ string) string {
 
 func (c scalarOracleCase) sources() (string, string) {
 	imports := ""
-	if c.root == "signal" || c.root == "shared" || c.root == "computed" || c.root == "argument" {
+	if c.root == "signal" || c.root == "shared" || c.root == "computed" || c.root == "argument" || c.root == "inline_handler" {
 		imports = "import signal \"m31labs.dev/gosx/signal\"\n"
 	}
 	head := "package example\n" + imports + c.packageDecl + fmt.Sprintf(`
@@ -132,6 +157,7 @@ type Props struct {
  Detail Detail; List []int32; Map map[string]int32; Pointer *Detail
 }
 `, c.typ)
+	tailGSX, tailGo := "", ""
 	body := func(expr string, goSource bool) string {
 		value := "return <div>{" + expr + "}</div>"
 		if goSource {
@@ -162,6 +188,11 @@ type Props struct {
 			if goSource {
 				value = fmt.Sprintf("value := signal.New[%s](%s)\nchange := func() { value.Set(%s) }; _ = change\nreturn oracle.Emit(value.Get())", c.typ, oracleZero(c.typ), expr)
 			}
+		case "inline_handler":
+			value = fmt.Sprintf("value := signal.New[%s](%s)\nreturn <button data-on-click=%s>{value.Get()}</button>", c.typ, oracleZero(c.typ), strconv.Quote("value.Set("+expr+")"))
+			if goSource {
+				value = fmt.Sprintf("value := signal.New[%s](%s)\nchange := func() { value.Set(%s) }; _ = change\nreturn oracle.Emit(value.Get())", c.typ, oracleZero(c.typ), expr)
+			}
 		case "statement":
 			value = "change := func() { " + expr + " }\nreturn <button onClick={change}>ready</button>"
 			if goSource {
@@ -177,15 +208,94 @@ type Props struct {
 			if goSource {
 				value = "return oracle.Each(" + expr + ")"
 			}
+		case "slot_text", "slot_attribute", "slot_prop", "nested_slot", "default_child":
+			child := "<span>{" + expr + "}</span>"
+			if c.root != "default_child" {
+				child = "<span slot=\"Title\">{" + expr + "}</span>"
+			}
+			if c.root == "slot_attribute" {
+				child = "<span slot=\"Title\" title={" + expr + "}/>"
+			}
+			if c.root == "slot_prop" {
+				child = "<span slot=\"Title\"><Badge Value={" + expr + "}/></span>"
+			}
+			value = "return <div><Layout>" + child + "</Layout></div>"
+			tailGSX = "\ncomponent Layout() {\n return <article>{slotTitle}</article>\n}\n"
+			if c.root == "nested_slot" {
+				tailGSX = "\ncomponent Layout() {\n return <article><Nested><span slot=\"Title\">{slotTitle}</span></Nested></article>\n}\ncomponent Nested() {\n return <section>{slotTitle}</section>\n}\n"
+			}
+			if c.root == "default_child" {
+				tailGSX = "\ncomponent Layout() {\n return <article>{children}</article>\n}\n"
+			}
+			if c.root == "slot_prop" {
+				tailGSX += fmt.Sprintf("type BadgeProps struct { Value %s }\ncomponent Badge(props: BadgeProps) {\n return <span>{props.Value}</span>\n}\n", c.typ)
+			}
+			if goSource {
+				value = "return oracle.Emit(" + expr + ")"
+				if c.root == "slot_attribute" {
+					value = "return oracle.Attr(" + expr + ")"
+				} else if c.root == "slot_prop" {
+					value = "return oracle.Typed[" + c.typ + "](" + expr + ")"
+				}
+			}
+		case "prop", "boolean_prop":
+			attr := "Value={" + expr + "}"
+			if c.root == "boolean_prop" {
+				attr = "Value"
+			}
+			value = "return <div><Badge " + attr + "/></div>"
+			tailGSX = fmt.Sprintf("\ntype BadgeProps struct { Value %s }\ncomponent Badge(props: BadgeProps) {\n return <span>{props.Value}</span>\n}\n", c.typ)
+			if goSource {
+				value = "return oracle.Typed[" + c.typ + "](" + expr + ")"
+			}
+		case "callee_text", "callee_attribute":
+			value = "return <div><Layout/></div>"
+			tailGSX = "\ncomponent Layout() {\n return <article>{" + expr + "}</article>\n}\n"
+			if c.root == "callee_attribute" {
+				tailGSX = "\ncomponent Layout() {\n return <article title={" + expr + "}/>\n}\n"
+			}
+			if goSource {
+				value = "return Layout()"
+				tailGo = "\nfunc Layout() any { return oracle.Emit(" + expr + ") }\n"
+				if c.root == "callee_attribute" {
+					tailGo = "\nfunc Layout() any { return oracle.Attr(" + expr + ") }\n"
+				}
+			}
+		case "conditional_body", "loop_body":
+			value = "return <If when={props.Flag}><span>{" + expr + "}</span></If>"
+			if c.root == "loop_body" {
+				value = "return <Each of={props.List} as=\"item\"><span>{" + expr + "}</span></Each>"
+			}
+			if goSource {
+				value = "return oracle.Emit(" + expr + ")"
+			}
+		case "fallback", "loop_key", "spread", "event_attribute":
+			value = "return <If when={props.Flag} fallback={" + expr + "}><span>ready</span></If>"
+			if c.root == "loop_key" {
+				value = "return <Each of={props.List} as=\"item\" key={" + expr + "}><span>ready</span></Each>"
+			} else if c.root == "spread" {
+				value = "return <div {..." + expr + "}/>"
+			} else if c.root == "event_attribute" {
+				value = "return <button onClick={" + expr + "}>ready</button>"
+			}
+			if goSource {
+				value = "return oracle.Attr(" + expr + ")"
+			}
 		}
 		return c.localDecl + "\n" + value
 	}
-	gsx := head + "//gosx:island\nfunc Counter(props Props) Node {\n" + body(c.expr, false) + "\n}\n"
+	gsxBody := body(c.expr, false)
+	declaration := "func Counter(props Props) Node"
+	if tailGSX != "" {
+		declaration = "component Counter(props: Props)"
+	}
+	gsx := head + "//gosx:island\n" + declaration + " {\n" + gsxBody + "\n}\n" + tailGSX
 	// The independent Go projection replaces node construction only. Real
 	// imports, declaration scopes, generic signal arguments, return contexts
 	// and handler statements are retained. Go has no ternary syntax: Choose
 	// uses Go's own generic unification and requires a boolean condition.
 	goHead := strings.Replace(head, "package example\n", "package example\nimport oracle \"example.test/scalaroracle\"\n", 1)
-	goSource := goHead + "func Counter(props Props) any {\n" + body(c.goExpr, true) + "\n}\n"
+	goBody := body(c.goExpr, true)
+	goSource := goHead + "func Counter(props Props) any {\n" + goBody + "\n}\n" + tailGo
 	return gsx, goSource
 }
