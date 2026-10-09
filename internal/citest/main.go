@@ -710,6 +710,18 @@ func runBrowserShard(args []string, goBinary string, stdout, stderr io.Writer) e
 	if err != nil {
 		return err
 	}
+	// Each docs test starts `gosx dev`, which waits only 45s for /readyz. In the
+	// single-job suite earlier tests had already filled the Go build cache; a
+	// shard whose first test is a docs test would start cold and miss that
+	// deadline (run 37906534414, browser-tests-b). Build both programs first.
+	for _, pkg := range []string{"./cmd/gosx", "./examples/gosx-docs"} {
+		warm := exec.Command(goBinary, "build", "-o", os.DevNull, pkg)
+		warm.Stdout, warm.Stderr = stderr, stderr
+		fmt.Fprintf(stderr, "citest: warming build cache: go build %s\n", pkg)
+		if err := warm.Run(); err != nil {
+			return fmt.Errorf("warm build cache %s: %w", pkg, err)
+		}
+	}
 	return runShard(browserLayout, index, goBinary,
 		[]string{"-tags", browserBuildTag, "-v", "-timeout", "30m"}, "./"+browserRelativePath, stdout, stderr)
 }
