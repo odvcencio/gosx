@@ -30,15 +30,22 @@ import (
 	"strings"
 )
 
-// AOT uses a conservative declaration set for the whole compilation unit.
-// A name declared in any nested scope is excluded rather than guessing which
-// binding an expression uses. Missing evidence must keep execution on the VM.
+// Exact source and the host checking projection are kept outside VM artifacts.
 type aotSourceBindings struct {
-	declared          map[string]bool
-	imports           *ImportTable
-	unresolvedImports bool
-	packageNames      func([]byte) (string, map[string]bool, error)
+	source  []byte
+	project func(*Program) (aotCheckingFile, error)
+	lower   func([]byte) (*Program, error)
 }
+
+type aotCheckingFile struct {
+	bytes      []byte
+	regions    map[Span]aotCheckRegion
+	components map[string]aotCheckRegion
+	copies     []aotCheckCopy
+}
+
+type aotCheckRegion struct{ start, end int }
+type aotCheckCopy struct{ sourceStart, sourceEnd, checkStart int }
 
 // ImportTable is one source file's import table: every import spec's
 // resolved local identifier, keyed by that identifier, plus the set of

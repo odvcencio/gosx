@@ -22,7 +22,7 @@ func aotScalarOperands(e program.Expr, args []aot.ScalarKind) error {
 			continue
 		}
 		if kind == aot.SelectorPath && e.Op == program.OpIndex && i == 0 && len(args) == 2 {
-			continue // aotSourceInput separately proves the static selector key.
+			continue // Go selections separately prove the static selector key.
 		}
 		return fmt.Errorf("operand %d consumes a non-scalar value", i)
 	}
@@ -30,20 +30,7 @@ func aotScalarOperands(e program.Expr, args []aot.ScalarKind) error {
 }
 
 func aotValueFits(kind aot.ScalarKind, value constant.Value, target aot.ScalarKind) bool {
-	return aotScalar(kind) && aotScalar(target) && (kind == target || value != nil && aotConstantFits(value, target))
-}
-
-// Context belongs to the constant expression and its constant operands, not
-// just the containing state or arithmetic result. Only proved, representable
-// integer constants can acquire the other operand's or destination's kind.
-func aotContextualConstant(p *program.Program, id program.ExprID, kinds []aot.ScalarKind, constants []constant.Value, target aot.ScalarKind) {
-	if constants[id] == nil || !aotConstantFits(constants[id], target) {
-		return
-	}
-	kinds[id] = target
-	for _, operand := range p.Exprs[id].Operands {
-		aotContextualConstant(p, operand, kinds, constants, target)
-	}
+	return aotScalar(kind) && aotScalar(target) && kind == target && (value == nil || kind != aot.Int && kind != aot.Int32 || aotConstantFits(value, kind))
 }
 
 // Roots have no expression parent, so operand checks cannot protect them.
@@ -56,23 +43,27 @@ func aotScalarRoots(p *program.Program, kinds []aot.ScalarKind, constants []cons
 		if target != "" && !aotValueFits(kinds[id], constants[id], target) {
 			return fmt.Errorf("root expression %d does not match its declared scalar kind", id)
 		}
-		if target != "" {
-			aotContextualConstant(p, id, kinds, constants, target)
-		}
 		return nil
 	}
 	for _, node := range p.Nodes {
 		switch node.Kind {
+		case program.NodeElement, program.NodeText, program.NodeFragment:
 		case program.NodeExpr, program.NodeForEach, program.NodeConditional:
 			if err := check(node.Expr, false, ""); err != nil {
 				return err
 			}
+		default:
+			return fmt.Errorf("unknown node kind: %d", node.Kind)
 		}
 		for _, attr := range node.Attrs {
-			if attr.Kind == program.AttrExpr {
+			switch attr.Kind {
+			case program.AttrStatic, program.AttrBool, program.AttrEvent:
+			case program.AttrExpr:
 				if err := check(attr.Expr, false, ""); err != nil {
 					return err
 				}
+			default:
+				return fmt.Errorf("unknown attr kind: %d", attr.Kind)
 			}
 		}
 	}

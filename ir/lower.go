@@ -675,12 +675,11 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 	case signalCallNew:
 		initExpr := l.extractArg(argsNode, 0)
 		return SignalInfo{
-			Name:           varName,
-			Local:          varName,
-			InitExpr:       initExpr,
-			TypeHint:       l.inferTypeHint(initExpr),
-			SourceType:     l.signalSourceType(rightExpr, initExpr),
-			aotConstructor: l.aotSignalConstructor(rightExpr),
+			Name:       varName,
+			Local:      varName,
+			InitExpr:   initExpr,
+			TypeHint:   l.inferTypeHint(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	case signalCallNewShared, signalCallShared:
 		sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
@@ -689,12 +688,11 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			return SignalInfo{}, false
 		}
 		return SignalInfo{
-			Name:           sharedName,
-			Local:          varName,
-			InitExpr:       initExpr,
-			TypeHint:       l.inferTypeHint(initExpr),
-			SourceType:     l.signalSourceType(rightExpr, initExpr),
-			aotConstructor: l.aotSignalConstructor(rightExpr),
+			Name:       sharedName,
+			Local:      varName,
+			InitExpr:   initExpr,
+			TypeHint:   l.inferTypeHint(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	default:
 		return SignalInfo{}, false
@@ -711,18 +709,16 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 		l.errorf(rightExpr, "computed %q: %v", varName, err)
 	}
 	return ComputedInfo{
-		Name:           varName,
-		BodyExpr:       bodyExpr,
-		ReturnType:     l.computedSourceType(argsNode),
-		aotConstructor: l.aotSignalConstructor(rightExpr),
+		Name:       varName,
+		BodyExpr:   bodyExpr,
+		ReturnType: l.computedSourceType(argsNode),
 	}, true
 }
 
 func (l *lowerer) signalSourceType(call *gotreesitter.Node, source string) string {
 	if types := l.childByField(call, "type_arguments"); types != nil {
 		// An explicit type controls the signal's Go type. Preserve its spelling
-		// so AOT admission can reject named, unresolved and unsupported types.
-		// Never replace an unproved explicit type with the initializer's hint.
+		// for diagnostics. The host checker resolves the actual type.
 		if types.NamedChildCount() != 1 {
 			return ""
 		}

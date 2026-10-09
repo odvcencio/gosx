@@ -116,6 +116,7 @@ endif
 .PHONY: test-island-aot
 test-island-aot:
 	GOWORK=off $(GO) test -count=1 ./island/aot
+	GOWORK=off $(GO) test -count=1 ./ir -run '^TestIslandAOT(StubSignatures|TinyGoDependencyBoundary)$$'
 
 test-ci-partitions:
 	$(GO) test ./internal/citest
