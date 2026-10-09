@@ -101,6 +101,16 @@ func TestPerfGraphEquivalentDirectorySpellings(t *testing.T) {
 	if !reflect.DeepEqual(plain, withSlash) {
 		t.Fatal("equivalent directory spellings changed the graph")
 	}
+	t.Chdir(dir)
+	if err := os.Mkdir("js", 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, spelling := range []string{".", "./", "./js/..", "./js/../"} {
+		got, err := perfGraph(spelling)
+		if err != nil || !reflect.DeepEqual(plain, got) {
+			t.Errorf("directory %q changed the graph: %v", spelling, err)
+		}
+	}
 }
 
 func TestPerfGraphCommittedOutputs(t *testing.T) {

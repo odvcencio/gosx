@@ -1724,7 +1724,7 @@
     // Keep every feature chunk path: a dropped one sends the loader in
     // 26-runtime-tail to an unhashed /gosx/ URL the server may not serve.
     for (const key of Object.keys(assets)) {
-      if (/^bootstrapFeature/.test(key)) runtime[key] = String(assets[key] || "");
+      if (/^bootstrap(?:Feature|Controller)/.test(key)) runtime[key] = String(assets[key] || "");
     }
     return runtime;
   }

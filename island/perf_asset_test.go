@@ -170,9 +170,43 @@ func TestPerfAssetRendererSceneMonolith(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, asset := range uses.Assets {
+		if asset.ID == "framework/runtime/bootstrap-feature-scene3d-webgpu.js" {
+			if asset.Phase != "startup" {
+				t.Fatal("embedded scene omitted WebGPU request")
+			}
+			continue
+		}
 		if strings.Contains(asset.ID, "bootstrap-feature-scene3d") && asset.Phase != "dormant" {
 			t.Fatalf("inline implementation charged as an external fetch: %+v", asset)
 		}
+	}
+}
+
+func TestPerfAssetRendererMonolithDocumentTextLayout(t *testing.T) {
+	for _, shape := range []string{"lite-fallback", "scene-monolith", "monolith"} {
+		t.Run(shape, func(t *testing.T) {
+			r, _ := perfAssetRendererFixture(t)
+			opts := PerfAssetOptions{TextLayout: true}
+			switch shape {
+			case "lite-fallback":
+				r.EnableBootstrap()
+				r.bootstrapLitePath = ""
+			case "scene-monolith":
+				r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+				r.bootstrapRuntimePath, r.bootstrapFeatureScene3dPath = "", ""
+				opts.Backend = "webgpu"
+			case "monolith":
+				r.RenderIsland("Counter", nil, gosx.Text(""))
+				r.bootstrapRuntimePath = ""
+			}
+			uses, err := r.PerfAssetUses(opts)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if asset := perfAssetByID(t, uses, "framework/runtime/bootstrap-feature-textlayout.js"); asset.Phase != "dormant" {
+				t.Fatalf("inline text layout charged externally: %+v", asset)
+			}
+		})
 	}
 }
 

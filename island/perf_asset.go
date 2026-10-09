@@ -263,7 +263,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 		}
 		// The emitted loader checks navigator.gpu before adapter acquisition.
 		// Its download is independent of the eventual rendering backend.
-		if path := r.selectedBootstrapFeaturePath("scene3d-webgpu"); summary.BootstrapFeatureScene3DPath != "" && path != "" && (opts.NavigatorGPU == nil || *opts.NavigatorGPU) {
+		if path := r.bootstrapFeatureScene3dWebGPUPath; r.scene3DCanUseWebGPU() && path != "" && (opts.NavigatorGPU == nil || *opts.NavigatorGPU) {
 			if err := mark(public(path), "startup", "always", base); err != nil {
 				return nil, err
 			}
@@ -313,17 +313,37 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				}
 			}
 		}
+		if summary.BootstrapFeatureScene3DPath == "" {
+			// Embedded scenes still demand-load camera and locomotion chunks.
+			// Backend WebGL, compute, decompression and GLTF are inline.
+			gates, _, err := r.perfSceneStartupGates()
+			if err != nil {
+				return nil, err
+			}
+			for _, entry := range []struct{ name, path string }{
+				{"zoom", r.bootstrapFeatureScene3dZoomPath}, {"walk", r.bootstrapFeatureScene3dWalkPath},
+				{"vessel", r.bootstrapFeatureScene3dVesselPath}, {"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},
+			} {
+				if gates[entry.name] {
+					if err := mark(public(entry.path), "startup", "always", base); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
 		text, err := json.Marshal(r.manifest)
 		if err != nil {
 			return fail("unknown-reachability", "/manifest")
 		}
-		if summary.BootstrapFeatureScene3DPath != "" && (strings.Contains(string(text), `"labels":[{`) || strings.Contains(string(text), `"label":{`) || strings.Contains(string(text), `"kind":"label"`)) {
+		if summary.BootstrapPath != r.bootstrapPath && summary.BootstrapFeatureScene3DPath != "" && (strings.Contains(string(text), `"labels":[{`) || strings.Contains(string(text), `"label":{`) || strings.Contains(string(text), `"kind":"label"`)) {
 			if err := mark(public(summary.BootstrapFeatureTextLayoutPath), "startup", "always", public(summary.BootstrapPath)); err != nil {
 				return nil, err
 			}
 		}
 	}
-	if opts.TextLayout && plan.Bootstrap {
+	// bootstrap.js embeds the text-layout engine; the production forwarder
+	// returns its inline implementation without requesting another script.
+	if opts.TextLayout && plan.Bootstrap && summary.BootstrapPath != r.bootstrapPath {
 		path := summary.BootstrapFeatureTextLayoutPath
 		if path == "" {
 			// Without a manifest URL the production forwarder uses this
@@ -359,7 +379,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 			if asset.ID == "framework/runtime/bootstrap-feature-scene3d-timeline.js" || asset.ID == "framework/runtime/bootstrap-feature-scene3d-particle-burst.js" {
 				prerequisites = append(prerequisites, public(r.bootstrapFeatureScene3dCommandPath))
 			}
-			if asset.ID == "framework/runtime/bootstrap-feature-scene3d-particle-burst.js" {
+			if asset.ID == "framework/runtime/bootstrap-feature-scene3d-particle-burst.js" && summary.BootstrapPath != r.bootstrapPath {
 				prerequisites = append(prerequisites, public(r.bootstrapFeatureScene3dComputePath))
 			}
 		}

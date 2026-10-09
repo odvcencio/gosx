@@ -3,7 +3,7 @@ var sceneGatedFeaturePromises = Object.create(null);
 
 function resolveSceneSubFeatureURL(datasetKey: string, fallback: string) {
   try {
-    var tag = document.querySelector<HTMLScriptElement>('script[data-gosx-script="feature-scene3d"]');
+    var tag = document.querySelector<HTMLScriptElement>('script[data-gosx-script="feature-scene3d"]') || document.querySelector<HTMLScriptElement>('script[data-gosx-script="bootstrap"]');
     if (tag && tag.dataset && tag.dataset[datasetKey]) {
       return tag.dataset[datasetKey];
     }

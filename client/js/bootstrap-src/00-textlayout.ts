@@ -931,7 +931,8 @@
         return href;
       }
     }
-    return "/gosx/bootstrap-feature-textlayout.js";
+    const meta = document.querySelector('meta[name="gosx-base-path"]');
+    return String(meta?.getAttribute("content") || "") + "/gosx/bootstrap-feature-textlayout.js";
   }
 
   function loadTextLayoutEngine() {

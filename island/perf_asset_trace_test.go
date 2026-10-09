@@ -244,7 +244,7 @@ func assertPerfTraceClosure(t *testing.T, baseline, got *buildmanifest.PerfAsset
 			if strings.HasSuffix(a.ID, "-timeline.js") || strings.HasSuffix(a.ID, "-particle-burst.js") {
 				deps = append(deps, "framework/runtime/bootstrap-feature-scene3d-command.js")
 			}
-			if strings.HasSuffix(a.ID, "-particle-burst.js") {
+			if strings.HasSuffix(a.ID, "-particle-burst.js") && bootstrap != "framework/runtime/bootstrap.js" {
 				deps = append(deps, "framework/runtime/bootstrap-feature-scene3d-compute.js")
 			}
 		}
