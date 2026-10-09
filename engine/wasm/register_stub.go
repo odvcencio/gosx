@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"m31labs.dev/gosx/client/browser"
 	"m31labs.dev/gosx/engine"
 )
 
@@ -41,3 +42,5 @@ func Register(component string, factory Factory) error {
 	}
 	return ErrUnsupported
 }
+
+func (Context) MountElement() browser.Element { return browser.Element{} }

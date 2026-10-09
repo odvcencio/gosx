@@ -15,6 +15,39 @@ func float32Slice(n, stride int) []float32 {
 	return data
 }
 
+func TestInstanceStreamEncodeIntoReusesStorageAndClearsPadding(t *testing.T) {
+	frame := InstanceStreamFrame{BatchID: "ab", Revision: 9, Kind: InstanceStreamTransformColor, Count: 180, Data: float32Slice(180, 20)}
+	want, err := frame.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	storage := bytes.Repeat([]byte{0xff}, len(want)+128)
+	got, err := frame.EncodeInto(storage[:0])
+	if err != nil || !bytes.Equal(got, want) || &got[0] != &storage[0] {
+		t.Fatalf("reused frame differs from owned encoding: %v", err)
+	}
+	if allocations := testing.AllocsPerRun(100, func() {
+		if _, err := frame.EncodeInto(storage[:0]); err != nil {
+			panic(err)
+		}
+	}); allocations != 0 {
+		t.Fatalf("steady encoding allocations = %v, want 0", allocations)
+	}
+	frame.BatchID, frame.Revision, frame.Count, frame.Data = "x", 10, 0, nil
+	got, err = frame.EncodeInto(got)
+	want, _ = frame.Encode()
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("smaller reused frame leaked previous header/padding: %v", err)
+	}
+}
+
+func TestInstanceStreamEncodeRejectsCountOverflowBeforeMultiplication(t *testing.T) {
+	frame := InstanceStreamFrame{BatchID: "x", Revision: 1, Kind: InstanceStreamTransform, Count: int(^uint(0) >> 1)}
+	if _, err := frame.EncodeInto(make([]byte, 128)); err == nil {
+		t.Fatal("overflowing count accepted")
+	}
+}
+
 func TestInstanceStreamFrameEncodeDecodeRoundTrip(t *testing.T) {
 	cases := []struct {
 		name  string

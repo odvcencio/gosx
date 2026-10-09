@@ -217,6 +217,14 @@
     return view ? view.slice() : bytes;
   }
 
+  // Explicit residency for typed Go-WASM producers. This loads the shared
+  // codec without creating an invisible instance or queueing a dummy frame.
+  // The same promise and CSP-aware script loader serve every caller.
+  var namespace = window.__gosx || (window.__gosx = {});
+  var host = namespace.host || (namespace.host = {});
+  var sceneHost = host.scene3d || (host.scene3d = {});
+  sceneHost.preloadInstanceStream = loadInstanceStreamBridge;
+
   // applyInstanceStreamFrame is mount.ts's handle.applyInstanceStream body.
   // It lazy-loads the chunk on first use. A frame that arrives while that
   // one-time load is in flight is coalesced into pendingFrames, keyed by

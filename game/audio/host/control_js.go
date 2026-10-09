@@ -1,6 +1,6 @@
 //go:build js && wasm
 
-package audio
+package audiohost
 
 import (
 	"errors"
@@ -23,65 +23,16 @@ func audioNumber(value js.Value) float64 {
 	return 0
 }
 
-// await lets disposal unblock the Go caller even if a browser's pending fetch
-// or decode has not finished. The promise retains its handlers until settling,
-// so late resolution/rejection cannot call a released Go function or restart
-// audio after Close. There is no goroutine waiting on that late completion.
+// await uses the host lifetime to release Go promise handlers immediately on
+// Close, even when a decoder or worklet load never settles. Native Promise.race
+// handlers continue observing late settlements without calling released Go code.
 func (h *HostJS) await(promise js.Value) (value js.Value, err error) {
 	defer recoverAudio("await", &err)
-	type result struct {
-		value js.Value
-		err   error
-	}
-	results := make(chan result, 1)
-	var resolved, rejected js.Func
-	settled := false
-	finish := func(r result) {
-		if settled {
-			return
-		}
-		settled = true
-		resolved.Release()
-		rejected.Release()
-		results <- r
-	}
-	resolved = js.FuncOf(func(_ js.Value, args []js.Value) any {
-		value := js.Undefined()
-		if len(args) > 0 {
-			value = args[0]
-		}
-		finish(result{value: value})
-		return nil
-	})
-	rejected = js.FuncOf(func(_ js.Value, args []js.Value) any {
-		message := "unknown rejection"
-		if len(args) > 0 {
-			message = args[0].String()
-			if args[0].Type() == js.TypeObject && !args[0].IsNull() {
-				message = jsutil.Describe(args[0])
-			}
-		}
-		finish(result{err: fmt.Errorf("audio: promise rejected: %s", message)})
-		return nil
-	})
-	registered := false
-	defer func() {
-		if !registered && !settled {
-			resolved.Release()
-			rejected.Release()
-		}
-	}()
-	promise.Call("then", resolved, rejected)
-	registered = true
-	select {
-	case r := <-results:
-		if h.closed {
-			return js.Undefined(), ErrClosed
-		}
-		return r.value, r.err
-	case <-h.closing:
+	value, err = jsutil.AwaitPromiseContext(h.lifetime, promise)
+	if h.closed {
 		return js.Undefined(), ErrClosed
 	}
+	return value, err
 }
 
 func (h *HostJS) SampleRate() float64    { return audioNumber(h.ctx.Get("sampleRate")) }
@@ -116,7 +67,7 @@ func (h *HostJS) Close() (err error) {
 		return nil
 	}
 	h.closed = true
-	close(h.closing)
+	h.cancel()
 	for node := range h.worklets {
 		_ = node.Close()
 	}

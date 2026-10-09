@@ -19,6 +19,7 @@
         "../runtime/wasm/loader.ts",
         "../runtime/host/disclosure.ts",
         "../runtime/host/request.ts",
+        "../runtime/host/request-guard.ts",
         "../runtime/host/actions.ts",
         "../runtime/scene3d/script-loader.ts",
         "../runtime/scene3d/command-bridge.ts",
@@ -155,6 +156,14 @@
         "bootstrap-src/10-runtime-scene-utils.ts",
         "bootstrap-src/10-runtime-primitives.ts",
         "bootstrap-src/26-runtime-tail.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-browser-services.js",
+      "sources": [
+        "bootstrap-src/26d-feature-browser-services-prefix.ts",
+        "../runtime/host/request-guard.ts",
+        "bootstrap-src/26d-feature-browser-services-suffix.ts"
       ]
     },
     {

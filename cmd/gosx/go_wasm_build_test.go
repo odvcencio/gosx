@@ -211,3 +211,86 @@ func TestGoWASMAbsentConfigKeepsOutputUnchanged(t *testing.T) {
 		t.Fatal("unconfigured build created module output")
 	}
 }
+
+func TestGoWASMProductionBuildArguments(t *testing.T) {
+	for _, production := range []bool{false, true} {
+		args := goWASMModuleBuildArgs("module.wasm", "./cmd/browser", production)
+		if !slices.Contains(args, "-trimpath") || slices.Contains(args, "-ldflags=-s -w") != production || args[len(args)-1] != "./cmd/browser" {
+			t.Fatalf("production %v args %v", production, args)
+		}
+	}
+}
+
+func TestGoWASMOnlyBuildSkipsApplicationAndPreservesFullOutput(t *testing.T) {
+	sizeTestCompressor(t)
+	t.Setenv("GOSX_SKIP_VERSION_CHECK", "1")
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/module-only\n\ngo 1.24\n")
+	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{"build":{"goWASM":{"controls":"./cmd/browser"},"hooks":{"pre":["exit 72"],"post":["exit 73"]}}}`)
+	mustWriteFile(t, filepath.Join(dir, "cmd", "browser", "main_js.go"), "//go:build js && wasm\n\npackage main\nfunc main() {}\n")
+	// A full build would fail on both the native server and component. Neither
+	// should be discovered or compiled by the explicit module build.
+	mustWriteFile(t, filepath.Join(dir, "main.go"), "package main\nfunc main(){missingNativeFunction()}\n")
+	mustWriteFile(t, filepath.Join(dir, "broken.gsx"), "this is not a component")
+	mustWriteFile(t, filepath.Join(dir, "public", "unrelated.txt"), "do not copy")
+	fullManifest := filepath.Join(dir, "dist", "build.json")
+	mustWriteFile(t, fullManifest, "existing full build")
+	if err := RunBuildWithOptions(dir, BuildOptions{GoWASMOnly: true}); err != nil {
+		t.Fatal(err)
+	}
+	output := filepath.Join(dir, "dist", "go-wasm")
+	manifest, err := buildmanifest.Load(filepath.Join(output, "build.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.GoWASM) != 1 || manifest.GoWASMURL("/assets", "controls") == "" || manifest.Runtime.WASM.File != "" || manifest.Runtime.StandardGoWASMExec.File == "" {
+		t.Fatal("partial manifest lost explicit module or added shared runtime", manifest)
+	}
+	shim, err := os.ReadFile(filepath.Join(output, "assets", "runtime", manifest.Runtime.StandardGoWASMExec.File))
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected, err := readProjectStandardGoWASMExec(dir)
+	if err != nil || !bytes.Equal(shim, wrapStandardGoWASMExec(expected)) {
+		t.Fatal("module loader differs from application compiler", err)
+	}
+	if full, err := os.ReadFile(fullManifest); err != nil || string(full) != "existing full build" {
+		t.Fatal("module-only build destroyed full output", err)
+	}
+	for _, unexpected := range []string{"public", "server", "app"} {
+		if _, err := os.Stat(filepath.Join(output, unexpected)); !os.IsNotExist(err) {
+			t.Fatalf("module-only build copied %s", unexpected)
+		}
+	}
+}
+
+func TestGoWASMOnlyCustomOutputAndMissingConfig(t *testing.T) {
+	t.Setenv("GOSX_SKIP_VERSION_CHECK", "1")
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module example.com/module-only\n\ngo 1.24\n")
+	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{}`)
+	if err := RunBuildWithOptions(dir, BuildOptions{GoWASMOnly: true}); err == nil {
+		t.Fatal("empty module-only build succeeded")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(err) {
+		t.Fatal("unconfigured module-only build created output")
+	}
+	sizeTestCompressor(t)
+	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{"build":{"goWASM":{"controls":"."}}}`)
+	mustWriteFile(t, filepath.Join(dir, "main.go"), "package main\nfunc main(){}\n")
+	output := filepath.Join(t.TempDir(), "staged-modules")
+	if err := RunBuildWithOptions(dir, BuildOptions{GoWASMOnly: true, OutputDir: output}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(output, "build.json")); err != nil {
+		t.Fatal("custom output ignored", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(err) {
+		t.Fatal("custom output created default output")
+	}
+	for _, opts := range []BuildOptions{{GoWASMOnly: true, Offline: true}, {GoWASMOnly: true, MSIX: true}, {GoWASMOnly: true, IslandsBackend: "vm"}, {OutputDir: output}} {
+		if err := RunBuildWithOptions(dir, opts); err == nil {
+			t.Fatal("conflicting module-only options accepted", opts)
+		}
+	}
+}

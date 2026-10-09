@@ -110,6 +110,25 @@ function revisionOf(bytes) {
   return dv.getUint32(8, true);
 }
 
+test("explicit residency shares the lazy load without a dummy frame or mount", async () => {
+  const { window, scripts } = loadInstanceStreamBridge({
+    gosxScene3dInstanceStreamUrl: "/gosx/assets/runtime/instance-stream.hashed.js",
+  });
+  const first = window.__gosx.host.scene3d.preloadInstanceStream();
+  const second = window.__gosx.host.scene3d.preloadInstanceStream();
+  assert.equal(first, second);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].src, "/gosx/assets/runtime/instance-stream.hashed.js");
+  let applied = 0;
+  const apply = () => { applied++; return { applied: true }; };
+  window.__gosx_scene3d_instance_stream_apply = apply;
+  scripts[0].onload();
+  assert.equal(await first, apply);
+  assert.equal(applied, 0, "preloading must not mutate or fabricate a scene");
+  assert.equal(await window.__gosx.host.scene3d.preloadInstanceStream(), apply);
+  assert.equal(scripts.length, 1);
+});
+
 test("applyInstanceStreamFrame calls the already-loaded apply function directly, with no script fetch", () => {
   const { window, scripts } = loadInstanceStreamBridge();
   let calledWith = null;

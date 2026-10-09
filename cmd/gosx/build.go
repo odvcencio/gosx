@@ -37,6 +37,8 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
+	GoWASMOnly        bool
+	OutputDir         string
 	IslandsBackend    string
 	CPUProfile        string
 	Dev               bool
@@ -55,7 +57,9 @@ type BuildOptions struct {
 // client/js/bootstrap-feature-<name>.js and load by name at runtime
 // (hydrate.Manifest.Features). Each row's role is a runtimeExcludableAssetRoles
 // key. The change that adds a chunk file appends its row here.
-var runtimeFeatureChunks = []struct{ name, role string }{}
+var runtimeFeatureChunks = []struct{ name, role string }{
+	{"browser-services", "engines"},
+}
 
 type wasmCompiler string
 
@@ -301,6 +305,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	dir = absDir
+	if opts.GoWASMOnly {
+		return runGoWASMOnlyBuild(dir, opts)
+	}
+	if opts.OutputDir != "" {
+		return fmt.Errorf("--output requires --go-wasm-only")
+	}
 	// The initial discovery is a side-effect barrier: invalid source must fail
 	// before module sync, dependency resolution, or a user hook can run.
 	if _, err := collectProjectIslandDiscovery(dir); err != nil {
@@ -438,7 +448,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Explicit app modules use standard Go, independently of the compiler
 	// selected below for the shared framework runtime.
-	manifest.GoWASM, err = buildGoWASMAssets(dir, distDir, cfg.Build.GoWASM)
+	manifest.GoWASM, err = buildGoWASMAssetsWithOptions(dir, distDir, cfg.Build.GoWASM, !opts.Dev)
 	if err != nil {
 		return err
 	}

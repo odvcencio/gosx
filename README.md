@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.57.7**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.8**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -216,6 +216,11 @@ GoSX provides five execution primitives. A form submission is not a canvas game 
 Use what you need. A static marketing page uses only Server. A dashboard adds Islands. A game adds an Engine. A collaborative editor adds a Hub. You never pay for what you don't use.
 
 Scene3D is the built-in 3D engine primitive: prop-based scenes and composable `<Scene3D><Mesh /><Points /></Scene3D>` authoring both lower toward the same versioned SceneIR contract. The `game` package layers deterministic fixed-step simulation, input actions, ECS-style state, assets, physics, and Scene3D mounting on top of Engine + Hub when an app needs an interactive simulation/game runtime.
+
+Standard Go/WASM engines can keep browser interop inside GoSX with typed DOM,
+events, fetch, storage, audio, sockets, desktop services and retained Scene3D
+streams. See [browser services and lifetimes](docs/browser-services.md) for the
+small-package boundaries and buffer ownership contracts.
 
 ## Quick Start
 
@@ -476,6 +481,16 @@ toolchain selection and emits the matching standard-Go loader. Entry names
 start with a lowercase letter and contain lowercase letters, digits, `_` or
 `-`; package paths must be `.` or a single `./` directory inside the project.
 Wildcards, flags, external paths and non-`main` packages are rejected.
+
+`gosx build --prod --go-wasm-only .` builds just these modules and their
+matching standard-Go loader. It skips components, build hooks, public assets,
+the server and the shared runtime. Output defaults to `dist/go-wasm`; use
+`--output <directory>` to select an isolated staging directory. The output's
+`build.json` resolves the hashed modules and loader using the same manifest
+contract as a full build. This mode requires configured `build.goWASM` entries
+and cannot be combined with server, runtime or packaging options. Production
+module builds use `-trimpath -ldflags='-s -w'`; development builds retain debug
+information. Compiler diagnostics and compressed sidecars are preserved.
 
 Each entry becomes `assets/go-wasm/<name>.<hash>.wasm` with compressed sidecars
 and a `goWASM` entry in `build.json`. Use `app.GoWASMURL("visualizer")` for
@@ -1340,7 +1355,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.57.7**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.8**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

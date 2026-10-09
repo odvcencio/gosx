@@ -91,6 +91,26 @@ func BenchmarkInstancedMeshTransportBinary(b *testing.B) {
 	}
 }
 
+func BenchmarkInstancedMeshTransportBinaryReuse(b *testing.B) {
+	for _, count := range []int{180, 2000} {
+		frame := benchInstanceStreamFrame(count)
+		buffer, err := frame.Encode()
+		if err != nil {
+			b.Fatal(err)
+		}
+		b.Run(benchCountLabel(count), func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				frame.Revision = uint64(i + 1)
+				buffer, err = frame.EncodeInto(buffer)
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func benchCountLabel(count int) string {
 	switch count {
 	case 180:
