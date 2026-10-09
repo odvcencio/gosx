@@ -28,7 +28,7 @@ type HTTPMeasureOptions struct {
 	ExpectedBody                       []byte
 	Representations                    map[string][]byte
 	HTMLFields                         []HTMLField
-	ServingCompressor                  string
+	ServingCompressors                 map[string]string
 	Pin                                assetmeasure.CompressorPin
 }
 
@@ -135,8 +135,9 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		}
 		if encoding != "" && encoding != "identity" {
 			representation, declared := opts.Representations[encoding]
-			if opts.Kind == "html" && opts.ServingCompressor != "" && (!declared || !bytes.Equal(wire, representation)) {
-				representation, err = encodeServingHTML(raw, encoding, opts.ServingCompressor)
+			compressor := opts.ServingCompressors[encoding]
+			if opts.Kind == "html" && compressor != "" && (!declared || !bytes.Equal(wire, representation)) {
+				representation, err = encodeServingHTML(raw, encoding, compressor)
 				declared = err == nil
 			}
 			if !declared || !bytes.Equal(wire, representation) || assetmeasure.VerifySidecar(raw, wire, encoding) != nil {

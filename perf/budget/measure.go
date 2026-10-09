@@ -143,7 +143,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		}
 		document := fixtures[index]
 		fields := []HTMLField{{Element: "script", Attribute: "nonce"}, {Element: "style", Attribute: "nonce"}, {Element: "link", Attribute: "nonce"}}
-		httpOpts := HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: document.url, Kind: "html", ExpectedSHA256: document.sha, ExpectedBody: document.body, Representations: document.representations, HTMLFields: fields, ServingCompressor: "go-brotli-4", Pin: opts.Pin}
+		httpOpts := HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: document.url, Kind: "html", ExpectedSHA256: document.sha, ExpectedBody: document.body, Representations: document.representations, HTMLFields: fields, ServingCompressors: map[string]string{"br": "go-brotli-4", "gzip": "go-gzip-default"}, Pin: opts.Pin}
 		first, err := measureHTTP(ctx, httpOpts, normalize)
 		if err != nil {
 			return result, err
@@ -187,7 +187,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			row.AppBytes += redirect.Brotli
 			row.PhaseBytes.Critical += redirect.Brotli
 		}
-		physical := map[string]bool{first.finalURL + "|" + document.sha: true}
+		type physicalBody struct {
+			owner string
+			cost  int64
+		}
+		physical := map[string]physicalBody{first.finalURL + "|" + document.sha: {owner: document.owner, cost: measuredHTML.App.Brotli}}
 		for _, fixture := range fixtures {
 			if fixture.kind == "html" {
 				continue
@@ -197,38 +201,37 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				return result, err
 			}
 			key := observed.finalURL + "|" + fixture.sha
-			if physical[key] {
-				row.WireBytes += observed.WireBytes - observed.finalWireBytes
-				row.Requests += observed.Requests - 1
-				for _, redirect := range observed.RedirectSizes {
-					row.NormalizedBytes += redirect.Brotli
-					row.PhaseBytes.Startup += redirect.Brotli
-					if fixture.owner == "framework" {
-						row.FrameworkBytes += redirect.Brotli
-					} else {
-						row.AppBytes += redirect.Brotli
-					}
-				}
-				row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
-				continue
-			}
-			physical[key] = true
-			row.NormalizedBytes += observed.Sizes.Brotli
 			row.WireBytes += observed.WireBytes
 			row.Requests += observed.Requests
-			row.PhaseBytes.Startup += observed.Sizes.Brotli
+			if body, seen := physical[key]; seen {
+				row.WireBytes -= observed.finalWireBytes
+				row.Requests--
+				// Framework declarations own a shared final body regardless of
+				// which alias was measured first. Redirect ownership stays separate.
+				if fixture.owner == "framework" && body.owner != "framework" {
+					row.FrameworkBytes += body.cost
+					row.AppBytes -= body.cost
+					body.owner = "framework"
+					physical[key] = body
+				}
+			} else {
+				physical[key] = physicalBody{owner: fixture.owner, cost: observed.Sizes.Brotli}
+				row.NormalizedBytes += observed.Sizes.Brotli
+				row.PhaseBytes.Startup += observed.Sizes.Brotli
+				if fixture.owner == "framework" {
+					row.FrameworkBytes += observed.Sizes.Brotli
+				} else {
+					row.AppBytes += observed.Sizes.Brotli
+				}
+			}
 			for _, redirect := range observed.RedirectSizes {
 				row.NormalizedBytes += redirect.Brotli
 				row.PhaseBytes.Startup += redirect.Brotli
-			}
-			cost := observed.Sizes.Brotli
-			for _, redirect := range observed.RedirectSizes {
-				cost += redirect.Brotli
-			}
-			if fixture.owner == "framework" {
-				row.FrameworkBytes += cost
-			} else {
-				row.AppBytes += cost
+				if fixture.owner == "framework" {
+					row.FrameworkBytes += redirect.Brotli
+				} else {
+					row.AppBytes += redirect.Brotli
+				}
 			}
 			row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
 		}

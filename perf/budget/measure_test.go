@@ -10,12 +10,15 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/internal/pagecaps"
+	"m31labs.dev/gosx/server"
 )
 
 func TestMeasureNavigationUsesRevisionSpecificBodies(t *testing.T) {
@@ -272,6 +275,119 @@ func TestMeasureServingProfileAndPinAdmission(t *testing.T) {
 	opts, _, _, _ := testRouteMeasurement(t)
 	if _, err := Measure(context.Background(), opts); err == nil {
 		t.Fatal("production admitted unpinned normalization")
+	}
+}
+
+func TestMeasureFreshGzipHTMLWithoutSidecar(t *testing.T) {
+	opts, manifest, document, _ := testRouteMeasurement(t)
+	var content strings.Builder
+	for i := 0; i < 256; i++ {
+		content.WriteString("<p>Fixture content " + strconv.Itoa(i) + ": " + strings.Repeat("stable ", i%13+1) + "</p>")
+	}
+	build := bytes.Replace(document, []byte("</body>"), []byte(content.String()+`<script nonce="build">fixtureApp()</script></body>`), 1)
+	manifest.Assets = manifest.Assets[:1]
+	manifest.Assets[0].SHA256 = testMeasureHash(build)
+	manifest.Routes[0].PageTypes = []string{"enhanced"}
+	if err := os.WriteFile(filepath.Join(opts.DistDir, "counter/index.html"), build, 0600); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFixtureManifest(t, opts.DistDir, manifest)
+	count := 0
+	var firstBody []byte
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count++
+		nonce := "render-" + strconv.Itoa(count)
+		body := bytes.Replace(build, []byte(`nonce="build"`), []byte(`nonce="`+nonce+`"`), 1)
+		if count == 1 {
+			firstBody = bytes.Clone(body)
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Header().Set("Content-Security-Policy", "script-src 'nonce-"+nonce+"'")
+		w.Write(body)
+	})
+	httpServer := httptest.NewServer(server.GzipMiddleware()(handler))
+	t.Cleanup(httpServer.Close)
+	opts.BaseURL, opts.Client = httpServer.URL, httpServer.Client()
+	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+	httpServer.Close()
+	if err != nil {
+		t.Fatal("fresh production gzip HTML rejected:", err)
+	}
+	compress := func(level int) []byte {
+		var out bytes.Buffer
+		writer, err := gzip.NewWriterLevel(&out, level)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := writer.Write(firstBody); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		return out.Bytes()
+	}
+	wire := compress(gzip.DefaultCompression)
+	if bytes.Equal(wire, compress(gzip.BestCompression)) {
+		t.Fatal("gzip fixture does not distinguish production and normalization levels")
+	}
+	if count != 2 || len(report.Rows) != 1 || report.Rows[0].PageType != "enhanced" || report.Rows[0].WireBytes != int64(len(wire)) || !testHTTPPolicy(HTTPMeasurement{Policies: report.Rows[0].Policies}, "html-compressed") {
+		t.Fatal("fresh gzip renders or wire accounting differ")
+	}
+}
+
+func TestMeasureRedirectOwnershipIsDeclarationOrderIndependent(t *testing.T) {
+	opts, manifest, document, program := testRouteMeasurement(t)
+	doc, framework := manifest.Assets[0], manifest.Assets[1]
+	alias := framework
+	alias.ID, alias.Owner, alias.URL = "app/fixture/alias.js", "app", "/gosx/assets/runtime/alias.js"
+	if err := os.WriteFile(filepath.Join(opts.DistDir, "assets/runtime/alias.js"), program, 0600); err != nil {
+		t.Fatal(err)
+	}
+	redirect := []byte("app redirect fixture")
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case doc.URL:
+			w.Header().Set("Content-Type", "text/html")
+			w.Write(document)
+		case alias.URL:
+			w.Header().Set("Location", framework.URL)
+			w.WriteHeader(http.StatusFound)
+			w.Write(redirect)
+		case framework.URL:
+			w.Header().Set("Content-Type", "text/javascript")
+			w.Write(program)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(httpServer.Close)
+	opts.BaseURL, opts.Client = httpServer.URL, httpServer.Client()
+	docSizes, _ := testBodyNormalizer(document)
+	programSizes, _ := testBodyNormalizer(program)
+	redirectSizes, _ := testBodyNormalizer(redirect)
+	var reports []AppReport
+	for _, appFirst := range []bool{true, false} {
+		manifest.Assets = []buildmanifest.PerfAssetUse{doc, framework, alias}
+		if appFirst {
+			manifest.Assets[1], manifest.Assets[2] = alias, framework
+		}
+		writeTestFixtureManifest(t, opts.DistDir, manifest)
+		report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(report.Rows) != 1 {
+			t.Fatal("route report missing")
+		}
+		row := report.Rows[0]
+		if row.FrameworkBytes != programSizes.Brotli || row.AppBytes != docSizes.Brotli+redirectSizes.Brotli || row.NormalizedBytes != row.FrameworkBytes+row.AppBytes || row.PhaseBytes.Critical != docSizes.Brotli || row.PhaseBytes.Startup != programSizes.Brotli+redirectSizes.Brotli || row.Requests != 3 || row.WireBytes != int64(len(document)+len(program)+len(redirect)) {
+			t.Errorf("app-first=%v: resolved-body ownership or redirect accounting differs: %+v", appFirst, row)
+		}
+		reports = append(reports, report)
+	}
+	if !reflect.DeepEqual(reports[0], reports[1]) {
+		t.Fatal("changing declaration order changed the report")
 	}
 }
 

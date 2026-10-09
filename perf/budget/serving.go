@@ -20,8 +20,14 @@ func encodeServingHTML(body []byte, encoding, compressor string) ([]byte, error)
 		if err := writer.Close(); err != nil {
 			return nil, measureFailure("stale-sidecar", "/encoding")
 		}
-	case encoding == "gzip" && compressor == "go-gzip-best":
-		writer, _ := gzip.NewWriterLevel(&out, gzip.BestCompression)
+	case encoding == "gzip" && (compressor == "go-gzip-default" || compressor == "go-gzip-best"):
+		// Fresh production responses use the middleware's default level;
+		// explicitly declared best-compression outputs keep their own profile.
+		level := gzip.DefaultCompression
+		if compressor == "go-gzip-best" {
+			level = gzip.BestCompression
+		}
+		writer, _ := gzip.NewWriterLevel(&out, level)
 		writer.Header.OS = 255
 		if _, err := writer.Write(body); err != nil {
 			return nil, measureFailure("stale-sidecar", "/encoding")
