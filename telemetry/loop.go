@@ -156,6 +156,9 @@ func (t *Telemetry) NewLoopKind(kind string, opts LoopOptions) (*LoopKind, error
 	}
 	m, err := t.bindLoop(kind)
 	if err != nil {
+		if err == ErrCapacity {
+			t.core.dropped["series"].Add(1)
+		}
 		return nil, err
 	}
 	k := &LoopKind{owner: t, opts: opts, metrics: m}
