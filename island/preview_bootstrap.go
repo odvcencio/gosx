@@ -14,11 +14,10 @@ import "sync/atomic"
 var previewBootstrapEnabled int32
 
 // EnablePreviewBootstrap opts every Renderer constructed thereafter into
-// emitting a minimal cross-frame relay bootstrap (islands runtime + the
-// relay.js JS module), even when the page registers no islands. The
-// runtime activates only when the storefront detects it's loaded inside
-// a preview iframe (query param `gosx-preview=1` or `window.parent !==
-// window` with a matching editor origin).
+// emitting the selective bootstrap and cross-frame relay, even when the page
+// registers no islands. The preview bridge activates only inside an iframe or
+// with the query parameter `gosx-preview=1`. Preview context persists for the
+// tab session across navigation; relay delivery still requires an allowed origin.
 //
 // Idempotent — safe to call multiple times. Storefront layouts should call
 // this once in init() if they want to be previewable.

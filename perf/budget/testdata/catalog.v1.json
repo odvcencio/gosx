@@ -1,0 +1,44 @@
+{
+  "schema": "gosx.perf-fixture-catalog/v1",
+  "version": 1,
+  "routes": [
+    {
+      "app": "fixture",
+      "routeTemplate": "/counter/",
+      "sourcePath": "perf/wire/testdata/counter/page.gsx",
+      "pageTypes": [
+        "island"
+      ],
+      "capabilities": {
+        "navigation": true,
+        "bootstrap": true,
+        "wasm": true,
+        "scene3d": false,
+        "video": false,
+        "motion": false,
+        "bootstrapMode": "full",
+        "islands": 1,
+        "computeIslands": 0,
+        "engines": 0,
+        "hubs": 0,
+        "controllers": 0,
+        "runtime": "shared"
+      },
+      "startupCounts": {
+        "islands": 1,
+        "pipelines": 0,
+        "shaderKB": 0,
+        "engines": 0,
+        "wasmModules": 1
+      },
+      "criticalAssetIDs": [],
+      "inputSequenceID": "counter-input",
+      "gpuEstimate": null
+    }
+  ],
+  "assetRules": [],
+  "interactionContract": {
+    "file": "perf/budget/testdata/interaction.v1.json",
+    "sha256": "7bf7bc4b7c103d1a5ac8b83ab18b18afc48f2f20321cc82148422b2e380bbc49"
+  }
+}
