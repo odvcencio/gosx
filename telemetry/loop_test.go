@@ -44,7 +44,7 @@ func portableLoop(tb testing.TB) *Loop {
 		*item.dst, _ = v.Bind()
 	}
 	c := telemetrytest.NewClock(time.Unix(100, 0))
-	k.owner = &Telemetry{opts: Options{Clock: c}, loops: &loopState{}}
+	k.owner = &Telemetry{opts: Options{Clock: c}, registry: r, loops: &loopState{}}
 	return &Loop{kind: k, slot: x, epoch: 1}
 }
 
@@ -218,6 +218,7 @@ type loopClockProbe struct {
 	Clock
 	calls int
 	fail  bool
+	now   func() Instant
 }
 
 func (c *loopClockProbe) Now() Instant {
@@ -225,7 +226,111 @@ func (c *loopClockProbe) Now() Instant {
 	if c.fail {
 		panic("private-clock-canary")
 	}
+	if c.now != nil {
+		return c.now()
+	}
 	return c.Clock.Now()
+}
+
+func TestLoopEndClockFailuresConsumeToken(t *testing.T) {
+	for _, failure := range []string{"panic", "backward"} {
+		t.Run(failure, func(t *testing.T) {
+			l := portableLoop(t)
+			clock := l.kind.owner.opts.Clock.(*telemetrytest.FakeClock)
+			if err := clock.Advance(time.Millisecond); err != nil {
+				t.Fatal(err)
+			}
+			c := &loopClockProbe{Clock: clock}
+			l.kind.owner.opts.Clock = c
+			tok := l.Begin()
+			c.now = func() Instant {
+				if failure == "panic" {
+					panic("clock-test-canary")
+				}
+				now := clock.Now()
+				now.Monotonic -= time.Millisecond
+				return now
+			}
+			if err := l.End(tok, TickInfo{}); !errors.Is(err, ErrInvalidOptions) {
+				t.Fatalf("failed clock: %v", err)
+			}
+			c.now = nil
+			if err := clock.Advance(2 * time.Millisecond); err != nil {
+				t.Fatal(err)
+			}
+			if err := l.End(tok, TickInfo{}); !errors.Is(err, ErrConflict) {
+				t.Errorf("retry after clock recovery: %v, want ErrConflict", err)
+			}
+			if h := l.Health(); h.Samples != 0 || h.Overruns != 0 || h.MaxMS != 0 || h.P50MS != 0 || h.P99MS != 0 {
+				t.Errorf("failed tick affected health: %+v", h)
+			}
+			if err := l.kind.owner.registry.WithSnapshot(t.Context(), func(snapshot metric.Snapshot) error {
+				for _, family := range snapshot.Families {
+					for _, series := range family.Series {
+						if series.Counter != 0 || (series.Histogram != nil && series.Histogram.Count != 0) {
+							t.Errorf("failed tick affected %s: %+v", family.Name, series)
+						}
+					}
+				}
+				return nil
+			}); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+func TestLoopEndClockFailuresPreserveNewerTokens(t *testing.T) {
+	for _, failure := range []string{"panic", "backward"} {
+		for _, replacement := range []string{"new_tick", "reused_slot"} {
+			t.Run(failure+"/"+replacement, func(t *testing.T) {
+				l := portableLoop(t)
+				clock := l.kind.owner.opts.Clock.(*telemetrytest.FakeClock)
+				if err := clock.Advance(time.Millisecond); err != nil {
+					t.Fatal(err)
+				}
+				c := &loopClockProbe{Clock: clock}
+				l.kind.owner.opts.Clock = c
+				tok := l.Begin()
+				newer := l
+				var latest TickToken
+				c.now = func() Instant {
+					// Replace the token while End's clock callback runs outside the lock.
+					c.now = nil
+					if replacement == "reused_slot" {
+						x := l.slot
+						x.mu.Lock()
+						x.epoch++
+						x.next, x.pending, x.data = 0, 0, loopData{}
+						newer = &Loop{kind: l.kind, slot: x, epoch: x.epoch}
+						x.mu.Unlock()
+					}
+					latest = newer.Begin()
+					if failure == "panic" {
+						panic("clock-test-canary")
+					}
+					now := clock.Now()
+					now.Monotonic -= time.Millisecond
+					return now
+				}
+				if err := l.End(tok, TickInfo{}); !errors.Is(err, ErrInvalidOptions) {
+					t.Fatalf("failed clock: %v", err)
+				}
+				if err := l.End(tok, TickInfo{}); !errors.Is(err, ErrConflict) {
+					t.Fatalf("old token: %v, want ErrConflict", err)
+				}
+				if err := clock.Advance(100 * time.Microsecond); err != nil {
+					t.Fatal(err)
+				}
+				if err := newer.End(latest, TickInfo{}); err != nil {
+					t.Fatalf("newer token was consumed: %v", err)
+				}
+				if h := newer.Health(); h.Samples != 1 || h.MaxMS != .1 || h.Overruns != 0 {
+					t.Fatal(h)
+				}
+			})
+		}
+	}
 }
 
 func TestLoopTokenChecksPrecedeClockCallbacks(t *testing.T) {

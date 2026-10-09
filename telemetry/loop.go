@@ -272,11 +272,16 @@ func (l *Loop) End(tok TickToken, info TickInfo) error {
 		return err
 	}
 	now, err := readClock(l.kind.owner.opts.Clock)
-	if err != nil {
-		return err
+	if err == nil && now.Monotonic < tok.start {
+		err = invalid("clock", "negative_elapsed")
 	}
-	if now.Monotonic < tok.start {
-		return invalid("clock", "negative_elapsed")
+	if err != nil {
+		x.mu.Lock()
+		if x.accepts(tok) {
+			x.pending = 0
+		}
+		x.mu.Unlock()
+		return err
 	}
 	d := now.Monotonic - tok.start
 	x.mu.Lock()
