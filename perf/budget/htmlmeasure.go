@@ -6,7 +6,6 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"mime"
 	"regexp"
 	"sort"
 	"strings"
@@ -209,22 +208,6 @@ func VerifyHTMLRenders(first, second HTMLMeasurement) error {
 		return measureFailure("wrong-fixture", "/html/renders")
 	}
 	return nil
-}
-
-func executableScriptType(typ string) bool {
-	typ = strings.ToLower(strings.TrimSpace(typ))
-	if typ != "" && typ != "module" {
-		mediaType, _, err := mime.ParseMediaType(typ)
-		if err != nil {
-			return false
-		}
-		typ = mediaType
-	}
-	switch typ {
-	case "", "module", "application/javascript", "application/ecmascript", "application/x-javascript", "application/x-ecmascript", "text/javascript", "text/ecmascript", "text/jscript", "text/livescript", "text/x-javascript", "text/x-ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5":
-		return true
-	}
-	return false
 }
 
 // VerifyHTMLNonces verifies that nonce-bearing elements are allowed by each

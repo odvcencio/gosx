@@ -12,6 +12,7 @@ import (
 
 	"golang.org/x/net/html"
 	"golang.org/x/net/html/atom"
+	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 type htmlSourceToken struct {
@@ -207,7 +208,7 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 					break
 				}
 				element.directive, element.fallback = "script-src-elem", "script-src"
-				element.executable = executableScriptType(attrs["type"])
+				element.executable = pagecaps.ScriptExecutes(node.Namespace, attrs)
 				_, element.external = attrs["src"]
 				if node.Namespace == "svg" {
 					_, href := attrs["href"]

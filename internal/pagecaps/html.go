@@ -59,10 +59,7 @@ func FromHTML(data []byte) (Capabilities, error) {
 				c.Video = true
 			}
 			if node.Data == "script" {
-				switch strings.ToLower(strings.TrimSpace(attrs["type"])) {
-				case "", "module", "text/javascript", "application/javascript":
-					executable = true
-				}
+				executable = executable || ScriptExecutes(node.Namespace, attrs)
 				switch attrs["data-gosx-script"] {
 				case "bootstrap":
 					c.Bootstrap = true
