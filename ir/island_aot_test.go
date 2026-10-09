@@ -122,14 +122,14 @@ func TestIslandAOTMissingTypeEvidenceAndIdentity(t *testing.T) {
 	}
 }
 
-func TestIslandAOTNestedInputsAndHandlers(t *testing.T) {
+func TestIslandAOTNestedInputsAndEvents(t *testing.T) {
 	src := []byte(`package example
 type Detail struct { Label string }
 type EditorProps struct { Detail Detail }
 //gosx:island
 func Editor(props EditorProps) Node {
  text := signal.New("")
- edit := func() {}
+ edit := func() { text.Set(value) }
  return <div><input value={text.Get()} onInput={edit} /><span>Label: {props.Detail.Label}{props.Detail.Label}</span></div>
 }`)
 	p, err := parseAOT(t, src)
@@ -141,10 +141,10 @@ func Editor(props EditorProps) Node {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(u.Contract.Inputs) != 1 {
-		t.Fatalf("inputs: %+v", u.Contract.Inputs)
+	if len(u.Contract.Inputs) != 2 || u.Contract.Inputs[0].Source != "event" || u.Contract.Inputs[0].Root != "value" || len(u.Contract.Inputs[0].Path) != 0 || u.Contract.Inputs[0].Path == nil || u.Contract.Inputs[0].Kind != aot.String {
+		t.Fatalf("event: %+v", u.Contract.Inputs)
 	}
-	input := u.Contract.Inputs[0]
+	input := u.Contract.Inputs[1]
 	if input.Root != "props" || len(input.Path) != 2 || input.Path[0] != "Detail" || input.Path[1] != "Label" || len(input.Exprs) != 2 {
 		t.Fatalf("selector interning: %+v", input)
 	}
