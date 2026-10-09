@@ -19,10 +19,8 @@
   stay accepted. Nothing breaks, so there is no migration step.
 - Size budgets (decision 0014 exception, owner-approved 2026-10-08 at +536 raw
   for `bootstrap-feature-islands.js` and +539 raw for the legacy `bootstrap.js`
-  monolith): the islands chunk measures 19,436 raw bytes (+670 over 18,766) and
-  the monolith 1,910,709 (+668 over 1,910,041). The bytes above the approval
-  come from dropping capture records when a capture ends, and wait for an
-  owner decision.
+  monolith): the gesture events grow the islands chunk by 338 raw bytes (18,766
+  to 19,104) and the monolith by 336 (1,910,041 to 1,910,377).
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
