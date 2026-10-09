@@ -222,12 +222,12 @@ func TestPerfAssetRendererObservedSceneLoads(t *testing.T) {
 }
 
 func TestPerfAssetRendererObservedLoadVerification(t *testing.T) {
-	for _, input := range []string{"missing", "app-program", "missing-body"} {
+	for _, input := range []string{"missing", "unverified-program", "missing-body"} {
 		r, _ := perfAssetRendererFixture(t)
 		r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 		url := "/gosx/missing.js"
-		if input == "app-program" {
-			url = perfAssetByID(t, r.perfAssets, "app/fixture/islands/Counter").URL
+		if input == "unverified-program" {
+			url = "/gosx/assets/islands/missing.program"
 		}
 		if input == "missing-body" {
 			url = r.bootstrapFeatureScene3dAnimationPath

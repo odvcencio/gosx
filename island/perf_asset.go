@@ -15,7 +15,7 @@ import (
 )
 
 // PerfRuntimeFetch records a runtime request observed during a page visit.
-// Phase is startup or after-ready; URL must identify a verified runtime body.
+// Phase is startup or after-ready; URL must be public and in the verified graph.
 type PerfRuntimeFetch struct {
 	URL   string
 	Phase string
@@ -124,6 +124,9 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 				return err
 			}
 			id := uses.Assets[j].ID
+			if id == uses.Assets[i].ID {
+				continue
+			}
 			found := false
 			for _, previous := range uses.Assets[i].Dependencies {
 				found = found || id == previous
@@ -336,15 +339,17 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 		if fetch.Phase != "startup" && fetch.Phase != "after-ready" {
 			return fail("invalid-input", pointer+"/phase")
 		}
-		j, err := index(public(fetch.URL))
+		j, err := index(fetch.URL)
 		if err != nil {
 			return nil, err
 		}
 		asset := uses.Assets[j]
-		if asset.Kind != "js" && asset.Kind != "wasm" || !strings.HasPrefix(asset.ID, "framework/runtime/") {
-			return fail("invalid-input", pointer+"/url")
+		// Verified app programs and other bodies keep their declared identity
+		// and prerequisites. Only framework runtime loads imply bootstrap.
+		prerequisites, condition := []string{}, asset.Condition
+		if strings.HasPrefix(asset.ID, "framework/runtime/") {
+			prerequisites, condition = []string{public(summary.BootstrapPath)}, "always"
 		}
-		prerequisites, condition := []string{public(summary.BootstrapPath)}, "always"
 		if strings.HasPrefix(asset.ID, "framework/runtime/bootstrap-feature-scene3d-") {
 			base := public(summary.BootstrapFeatureScene3DPath)
 			if base == "" {
@@ -361,7 +366,7 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 		if asset.ID == "framework/runtime/hls.min.js" {
 			condition = "hls-required"
 		}
-		if err := mark(public(fetch.URL), fetch.Phase, condition, prerequisites...); err != nil {
+		if err := mark(fetch.URL, fetch.Phase, condition, prerequisites...); err != nil {
 			return nil, err
 		}
 	}
