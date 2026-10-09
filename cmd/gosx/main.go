@@ -139,7 +139,7 @@ func commandUsage(cmd string, w io.Writer) bool {
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>
+  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] <dir>
 
 `)
 	case "build-runtime":
@@ -336,6 +336,17 @@ func cmdBuild() {
 				os.Exit(1)
 			}
 			opts.AppInstallerURI = os.Args[i]
+		case "--islands-backend", "--cpu-profile":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintf(os.Stderr, "build error: %s requires a value\n", arg)
+				os.Exit(1)
+			}
+			if arg == "--islands-backend" {
+				opts.IslandsBackend = os.Args[i]
+			} else {
+				opts.CPUProfile = os.Args[i]
+			}
 		case "--scene-budget":
 			i++
 			if i >= len(os.Args) {
@@ -346,6 +357,14 @@ func cmdBuild() {
 		case "--scene-budget-strict":
 			opts.SceneBudgetStrict = true
 		default:
+			if strings.HasPrefix(arg, "--islands-backend=") {
+				opts.IslandsBackend = strings.TrimPrefix(arg, "--islands-backend=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--cpu-profile=") {
+				opts.CPUProfile = strings.TrimPrefix(arg, "--cpu-profile=")
+				continue
+			}
 			if strings.HasPrefix(arg, "--appinstaller=") {
 				opts.AppInstallerURI = strings.TrimPrefix(arg, "--appinstaller=")
 				continue

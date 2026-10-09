@@ -17,6 +17,7 @@ type projectConfig struct {
 }
 
 type projectBuildConfig struct {
+	Islands   projectBuildIslands   `json:"islands"`
 	Hooks     projectBuildHooks     `json:"hooks"`
 	Bundle    bundlepolicy.Config   `json:"bundle"`
 	Runtime   projectBuildRuntime   `json:"runtime"`
@@ -32,6 +33,10 @@ type projectBuildPrerender struct {
 
 func (p projectBuildPrerender) enabled() bool {
 	return p.Enabled == nil || *p.Enabled
+}
+
+type projectBuildIslands struct {
+	Backend string `json:"backend"`
 }
 
 type projectBuildHooks struct {
@@ -129,6 +134,9 @@ func loadProjectConfig(dir string) (projectConfig, error) {
 	}
 	if err := validateRuntimeExcludeRoles(cfg.Build.Runtime.Exclude); err != nil {
 		return projectConfig{}, fmt.Errorf("decode %s: %w", path, err)
+	}
+	if err := validateIslandsBackend(cfg.Build.Islands.Backend); err != nil {
+		return projectConfig{}, err
 	}
 	return cfg, nil
 }

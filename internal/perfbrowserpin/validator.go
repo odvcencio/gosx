@@ -24,6 +24,7 @@ const (
 	testJobName    = "test"
 
 	latestSetupName   = "Set up Chrome"
+	encoderName       = "WebAssembly encoder browser validation"
 	checkoutName      = "Check out repository"
 	goSetupName       = "Set up Go"
 	tinyGoName        = "Install TinyGo"
@@ -63,6 +64,9 @@ const (
   "$PERF_CHROME_PATH" \
   "$PERF_CHROME_VERSION" \
   build/perf-browser-identity.txt
+`
+	encoderRun = `test -x "$GOSX_CHROME_BIN"
+make test-wasmgen
 `
 	ouroborosRun = `chrome_bin="$(command -v google-chrome-stable || command -v google-chrome)"
 GOSX_CHROME_BIN="$chrome_bin" go test ./examples/ouroboros-corpus -run '^TestFixtureMP4BrowserLoadsMetadata$' -count=1
@@ -423,6 +427,7 @@ func browserStepContracts() []stepContract {
 		{checkoutName, "browser checkout", validateCheckout},
 		{goSetupName, "browser Go setup", validateGoSetup},
 		{latestSetupName, "latest browser setup", validateLatestSetup},
+		{encoderName, "WebAssembly encoder browser validation", validateEncoder},
 		{tinyGoName, "browser TinyGo install", validateTinyGo},
 		docsContract(0),
 		{ouroborosName, "Ouroboros browser smoke", validateOuroboros},
@@ -496,8 +501,8 @@ func validateBrowserIsolation(node *yaml.Node) error {
 	if got := countContainingScalar(node, pinnedVersion); got != 1 {
 		return fmt.Errorf("browser-tests job: pinned browser version is referenced %d times, want 1", got)
 	}
-	if got := countContainingScalar(node, latestChromePath); got != 2 {
-		return fmt.Errorf("browser-tests job: latest browser path is referenced %d times, want 2", got)
+	if got := countContainingScalar(node, latestChromePath); got != 3 {
+		return fmt.Errorf("browser-tests job: latest browser path is referenced %d times, want 3", got)
 	}
 	return nil
 }
@@ -569,6 +574,23 @@ func validateDocs(node *yaml.Node, shard int) error {
 	}
 	return exactStringMap(step["env"], label+".env", map[string]string{
 		"GOSX_E2E_CHROME": latestChromePath,
+	})
+}
+
+func validateEncoder(node *yaml.Node) error {
+	const label = "WebAssembly encoder browser validation"
+	step, err := exactMapping(node, label, "name", "env", "run")
+	if err != nil {
+		return err
+	}
+	if err := exactStrings(step, label, map[string]string{
+		"name": encoderName,
+		"run":  encoderRun,
+	}); err != nil {
+		return err
+	}
+	return exactStringMap(step["env"], label+".env", map[string]string{
+		"GOSX_CHROME_BIN": latestChromePath,
 	})
 }
 

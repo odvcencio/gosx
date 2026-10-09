@@ -12,6 +12,17 @@ import (
 // LowerIsland converts an IR component to an IslandProgram.
 // The component must have IsIsland == true.
 func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
+	return lowerIslandWithEvidence(prog, compIdx, nil)
+}
+
+type islandExprOrigin struct {
+	span        Span
+	declaration string
+	statement   int
+}
+type islandExprEvidence func(string, islandExprOrigin, []program.Expr, program.ExprID) (func(program.ExprID, program.ExprID), error)
+
+func lowerIslandWithEvidence(prog *Program, compIdx int, evidence islandExprEvidence) (*program.Program, error) {
 	comp, err := islandComponent(prog, compIdx)
 	if err != nil {
 		return nil, err
@@ -22,6 +33,7 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 
 	scope := mergedIslandScope(prog, comp)
 	l := newIslandLowerer(prog, comp.Name, scope)
+	l.evidence = evidence
 
 	if err := l.lowerComponent(comp); err != nil {
 		return nil, err
@@ -29,7 +41,9 @@ func LowerIsland(prog *Program, compIdx int) (*program.Program, error) {
 	if err := l.emitComponentScope(comp.Scope); err != nil {
 		return nil, err
 	}
-	l.populateStaticMask()
+	if err := l.populateStaticMask(); err != nil {
+		return nil, err
+	}
 	if err := l.validateProgramIntegrity(); err != nil {
 		return nil, err
 	}
@@ -146,6 +160,8 @@ func cloneExprScope(scope *ExprScope) *ExprScope {
 }
 
 type islandLowerer struct {
+	evidence           islandExprEvidence
+	origin             islandExprOrigin
 	src                *Program
 	dst                *program.Program
 	srcIDs             []NodeID // tracks source node ID for each dst node
@@ -175,6 +191,7 @@ func newIslandExpansionError(format string, args ...any) error {
 }
 
 type islandInlineExpr struct {
+	span    Span
 	source  string
 	context *islandInlineContext
 	scope   *ExprScope
@@ -249,6 +266,7 @@ func (l *islandLowerer) emitComponentScope(scope *ComponentScope) error {
 
 func (l *islandLowerer) emitSignalDefs(signals []SignalInfo) error {
 	for _, sig := range signals {
+		l.origin = islandExprOrigin{declaration: "signal/" + sig.Local}
 		initID, err := l.parseExprOrFallback(sig.InitExpr, l.scope, program.Expr{
 			Op:    program.OpLitString,
 			Value: sig.InitExpr,
@@ -279,6 +297,7 @@ func (l *islandLowerer) emitComputedDefs(computeds []ComputedInfo) error {
 	}
 
 	for _, computed := range computeds {
+		l.origin = islandExprOrigin{declaration: "computed/" + computed.Name}
 		bodySource := strings.TrimSpace(computed.BodyExpr)
 		if bodySource == "" {
 			return fmt.Errorf("parse computed %s: body must contain exactly one return expression", computed.Name)
@@ -287,7 +306,7 @@ func (l *islandLowerer) emitComputedDefs(computeds []ComputedInfo) error {
 		if err != nil {
 			return fmt.Errorf("parse computed %s expression %q: %w", computed.Name, bodySource, err)
 		}
-		bodyID, err := l.appendExprs(exprs, rootID)
+		bodyID, err := l.appendExprs(exprs, rootID, bodySource)
 		if err != nil {
 			return fmt.Errorf("emit computed %s expression: %w", computed.Name, err)
 		}
@@ -305,12 +324,13 @@ func (l *islandLowerer) emitHandlerDefs(handlers []HandlerInfo) error {
 	handlerScope := handlerExprScope(l.scope)
 	for _, handler := range handlers {
 		h := program.Handler{Name: handler.Name}
-		for _, stmtSource := range handler.Statements {
+		for stmtIndex, stmtSource := range handler.Statements {
+			l.origin = islandExprOrigin{declaration: "handler/" + handler.Name, statement: stmtIndex}
 			stmtExprs, stmtID, err := ParseExpr(stmtSource, handlerScope)
 			if err != nil {
 				return fmt.Errorf("parse handler %s statement %q: %w", handler.Name, stmtSource, err)
 			}
-			bodyID, err := l.appendExprs(stmtExprs, stmtID)
+			bodyID, err := l.appendExprs(stmtExprs, stmtID, stmtSource)
 			if err != nil {
 				return fmt.Errorf("emit handler %s statement: %w", handler.Name, err)
 			}
@@ -352,13 +372,20 @@ func (l *islandLowerer) parseExprOrFallback(source string, scope *ExprScope, fal
 	if err != nil {
 		return l.addExprDirect(fallback)
 	}
-	return l.appendExprs(exprs, rootID)
+	return l.appendExprs(exprs, rootID, source)
 }
 
-func (l *islandLowerer) populateStaticMask() {
+func (l *islandLowerer) populateStaticMask() error {
+	for _, n := range l.dst.Nodes {
+		switch n.Kind {
+		case program.NodeElement, program.NodeText, program.NodeExpr, program.NodeFragment, program.NodeForEach, program.NodeConditional:
+		default:
+			return fmt.Errorf("unknown node kind: %d", n.Kind)
+		}
+	}
 	if l.composed {
 		l.populateComposedStaticMask()
-		return
+		return nil
 	}
 	l.dst.StaticMask = make([]bool, len(l.dst.Nodes))
 	for i, srcID := range l.srcIDs {
@@ -366,6 +393,7 @@ func (l *islandLowerer) populateStaticMask() {
 			l.dst.StaticMask[i] = l.src.Nodes[srcID].IsStatic
 		}
 	}
+	return nil
 }
 
 func (l *islandLowerer) populateComposedStaticMask() {
@@ -401,6 +429,8 @@ func (l *islandLowerer) populateComposedStaticMask() {
 					}
 				}
 			}
+		default:
+			static = false
 		}
 		l.dst.StaticMask[id] = static
 		return static
@@ -539,6 +569,13 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, an
 		return 0, fmt.Errorf("node %d not found", srcID)
 	}
 	srcNode := l.src.NodeAt(srcID)
+	for _, attr := range srcNode.Attrs {
+		switch attr.Kind {
+		case AttrStatic, AttrBool, AttrExpr, AttrSpread:
+		default:
+			return 0, fmt.Errorf("unknown attr kind: %d", attr.Kind)
+		}
+	}
 
 	if srcNode.Kind == NodeComponent && !srcNode.IsSyntheticConditional() {
 		// A same-file declaration is authoritative even when its name shadows
@@ -614,6 +651,7 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, an
 		node.Kind = program.NodeText
 		node.Text = srcNode.Text
 	case NodeExpr:
+		l.origin = islandExprOrigin{span: srcNode.Span}
 		node.Kind = program.NodeExpr
 		exprID, err := l.addExprWithContext(srcNode.Text, context, l.scope)
 		if err != nil {
@@ -625,6 +663,8 @@ func (l *islandLowerer) lowerNode(srcID NodeID, context *islandInlineContext, an
 	case NodeRawHTML:
 		node.Kind = program.NodeText
 		node.Text = srcNode.Text
+	default:
+		return 0, fmt.Errorf("unknown node kind: %d", srcNode.Kind)
 	}
 
 	// Lower children
@@ -769,7 +809,7 @@ func (l *islandLowerer) lowerComposedCall(call *Node, targetIdx int, callerConte
 		default:
 			return 0, fmt.Errorf("component <%s> has unsupported prop %q inside island %s", target.Name, attr.Name, l.dst.Name)
 		}
-		context.props[attr.Name] = islandInlineExpr{source: source, context: callerContext, scope: callScope}
+		context.props[attr.Name] = islandInlineExpr{source: source, context: callerContext, scope: callScope, span: attr.Span}
 	}
 	projectionAncestry := append([]string(nil), ancestry...)
 	context.children = islandProjection{nodes: call.Children, context: callerContext, scope: callScope, ancestry: projectionAncestry}
@@ -1020,6 +1060,7 @@ func (l *islandLowerer) scopeForEach(node program.Node) *ExprScope {
 }
 
 func (l *islandLowerer) lowerAttr(attr Attr, context *islandInlineContext) (program.Attr, error) {
+	l.origin = islandExprOrigin{span: attr.Span}
 	switch attr.Kind {
 	case AttrStatic:
 		if strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Name)), "data-on-") {
@@ -1231,17 +1272,23 @@ func (l *islandLowerer) lowerInlineEvent(eventType, source string) (program.Attr
 	}
 
 	handlerName := l.nextInlineHandlerName()
-	exprs, rootID, err := ParseExpr(expression, handlerExprScope(l.scope))
-	if err != nil {
-		return program.Attr{}, fmt.Errorf("parse data-on-%s expression %q: %w", eventType, expression, err)
-	}
-	bodyID, err := l.appendExprs(exprs, rootID)
-	if err != nil {
-		return program.Attr{}, fmt.Errorf("emit data-on-%s expression: %w", eventType, err)
+	var body []program.ExprID
+	for statement, source := range islandInlineStatements(expression) {
+		l.origin.declaration = "inline/"
+		l.origin.statement = statement
+		exprs, rootID, err := ParseExpr(source, handlerExprScope(l.scope))
+		if err != nil {
+			return program.Attr{}, fmt.Errorf("parse data-on-%s expression %q: %w", eventType, expression, err)
+		}
+		bodyID, err := l.appendExprs(exprs, rootID, source)
+		if err != nil {
+			return program.Attr{}, fmt.Errorf("emit data-on-%s expression: %w", eventType, err)
+		}
+		body = append(body, bodyID)
 	}
 	l.dst.Handlers = append(l.dst.Handlers, program.Handler{
 		Name: handlerName,
-		Body: []program.ExprID{bodyID},
+		Body: body,
 	})
 
 	return program.Attr{
@@ -1325,6 +1372,8 @@ func islandAttrSource(attrs []Attr, names ...string) string {
 				}
 			case AttrBool:
 				return "true"
+			default:
+				return ""
 			}
 		}
 	}
@@ -1360,10 +1409,17 @@ func (l *islandLowerer) addExprWithContext(source string, context *islandInlineC
 	if err != nil {
 		return 0, fmt.Errorf("parse island expression %q: %w", source, err)
 	}
-	return l.appendInlineExpr(exprs, rootID, context, make(map[program.ExprID]program.ExprID))
+	var record func(program.ExprID, program.ExprID)
+	if l.evidence != nil {
+		record, err = l.evidence(source, l.origin, exprs, rootID)
+		if err != nil {
+			return 0, err
+		}
+	}
+	return l.appendInlineExpr(exprs, rootID, context, make(map[program.ExprID]program.ExprID), record)
 }
 
-func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID, context *islandInlineContext, memo map[program.ExprID]program.ExprID) (program.ExprID, error) {
+func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID, context *islandInlineContext, memo map[program.ExprID]program.ExprID, record func(program.ExprID, program.ExprID)) (program.ExprID, error) {
 	if mapped, ok := memo[id]; ok {
 		return mapped, nil
 	}
@@ -1375,6 +1431,7 @@ func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID
 		if !supplied {
 			return 0, fmt.Errorf("composed component <%s> requires scalar prop %s, but the call does not supply it", context.component, field)
 		}
+		l.origin = islandExprOrigin{span: binding.span}
 		mapped, err := l.addExprWithContext(binding.source, binding.context, binding.scope)
 		if err != nil {
 			return 0, fmt.Errorf("compose <%s> prop %s: %w", context.component, field, err)
@@ -1392,7 +1449,7 @@ func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID
 	if len(expr.Operands) > 0 {
 		operands := make([]program.ExprID, len(expr.Operands))
 		for i, operand := range expr.Operands {
-			mapped, err := l.appendInlineExpr(exprs, operand, context, memo)
+			mapped, err := l.appendInlineExpr(exprs, operand, context, memo, record)
 			if err != nil {
 				return 0, err
 			}
@@ -1405,6 +1462,9 @@ func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID
 		return 0, err
 	}
 	memo[id] = mapped
+	if record != nil {
+		record(id, mapped)
+	}
 	return mapped, nil
 }
 
@@ -1440,7 +1500,15 @@ func (l *islandLowerer) addExprDirect(e program.Expr) (program.ExprID, error) {
 
 // appendExprs appends parsed expressions to the program, offsetting operand
 // references, and returns the adjusted root ID.
-func (l *islandLowerer) appendExprs(exprs []program.Expr, rootID program.ExprID) (program.ExprID, error) {
+func (l *islandLowerer) appendExprs(exprs []program.Expr, rootID program.ExprID, source string) (program.ExprID, error) {
+	var record func(program.ExprID, program.ExprID)
+	if l.evidence != nil {
+		var err error
+		record, err = l.evidence(source, l.origin, exprs, rootID)
+		if err != nil {
+			return 0, err
+		}
+	}
 	if len(exprs) == 0 || int(rootID) >= len(exprs) {
 		return 0, fmt.Errorf("island expression root %d is outside %d parsed opcodes", rootID, len(exprs))
 	}
@@ -1448,7 +1516,7 @@ func (l *islandLowerer) appendExprs(exprs []program.Expr, rootID program.ExprID)
 	if len(exprs) > maxIslandProgramEntries-base {
 		return 0, newIslandExpansionError("island %s exceeds the 65,535 expression limit", l.dst.Name)
 	}
-	for _, e := range exprs {
+	for localID, e := range exprs {
 		adjusted := e
 		if len(adjusted.Operands) > 0 {
 			ops := make([]program.ExprID, len(adjusted.Operands))
@@ -1464,8 +1532,12 @@ func (l *islandLowerer) appendExprs(exprs []program.Expr, rootID program.ExprID)
 			}
 			adjusted.Operands = ops
 		}
-		if _, err := l.addExprDirect(adjusted); err != nil {
+		id, err := l.addExprDirect(adjusted)
+		if err != nil {
 			return 0, err
+		}
+		if record != nil {
+			record(program.ExprID(localID), id)
 		}
 	}
 	rootOffset := base + int(rootID)

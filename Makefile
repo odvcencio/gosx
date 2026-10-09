@@ -120,6 +120,15 @@ else
 	$(GO) test -timeout 25m ./cmd/gosx
 endif
 
+.PHONY: test-island-aot
+test-island-aot:
+	GOWORK=off $(GO) test -count=1 ./island/aot
+	GOWORK=off $(GO) test -count=1 ./ir -run '^TestIslandAOT(StubSignatures|TinyGoDependencyBoundary|GoWASMDependencyBoundary)$$'
+
+.PHONY: test-wasmgen
+test-wasmgen:
+	GOWORK=off $(GO) test -count=1 ./internal/wasmgen
+
 test-ci-partitions:
 	$(GO) test ./internal/citest
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
