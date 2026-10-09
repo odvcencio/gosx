@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -145,17 +146,16 @@ func (w *observedResponseWriter) Write(data []byte) (int, error) {
 	return n, err
 }
 
-// ReadFrom preserves the underlying fast path and accounts its accepted bytes.
+// ReadFrom preserves the underlying fast path after response commitment and
+// accounts its accepted bytes.
 func (w *observedResponseWriter) ReadFrom(r io.Reader) (int64, error) {
-	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok {
-		if w.status == 0 && !w.hijacked {
-			w.status = http.StatusOK
-		}
+	if rf, ok := w.ResponseWriter.(io.ReaderFrom); ok && w.status != 0 {
 		n, err := rf.ReadFrom(r)
 		w.bytes += n
 		return n, err
 	}
 	// Hide ReaderFrom so Copy routes every fallback write through Write.
+	// Empty or failing reads leave the status unset until a write commits it.
 	return io.Copy(struct{ io.Writer }{w}, r)
 }
 
@@ -163,7 +163,9 @@ func (w *observedResponseWriter) Flush() { _ = w.FlushError() }
 
 func (w *observedResponseWriter) FlushError() error {
 	err := http.NewResponseController(w.ResponseWriter).Flush()
-	if err == nil && w.status == 0 && !w.hijacked {
+	// A supported flush commits headers before an I/O error can be returned.
+	// Unsupported flushes leave the response uncommitted.
+	if !errors.Is(err, http.ErrNotSupported) && w.status == 0 && !w.hijacked {
 		w.status = http.StatusOK
 	}
 	return err

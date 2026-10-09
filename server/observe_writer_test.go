@@ -117,6 +117,58 @@ func (w *readerProbe) ReadFrom(r io.Reader) (int64, error) {
 
 type readerOnly struct{ io.Reader }
 
+type failedReader struct{ err error }
+
+func (r failedReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestObservedReaderFromPreservesUncommittedStatus(t *testing.T) {
+	failure := errors.New("source read failed")
+	for _, tc := range []struct {
+		name   string
+		reader io.Reader
+		status int
+		err    error
+	}{
+		{"empty", readerOnly{strings.NewReader("")}, http.StatusCreated, nil},
+		{"immediate-read-error", failedReader{failure}, http.StatusBadGateway, failure},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			events := make(chan RequestEvent, 1)
+			h := ObserveHandler(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				n, err := io.Copy(w, tc.reader)
+				if n != 0 || !errors.Is(err, tc.err) {
+					t.Errorf("copy=%d, %v; want=0, %v", n, err, tc.err)
+				}
+				w.WriteHeader(tc.status)
+			}), []RequestObserver{RequestObserverFunc(func(e RequestEvent) { events <- e })})
+			s := httptest.NewServer(h)
+			defer s.Close()
+			client := s.Client()
+			client.Timeout = 2 * time.Second
+			response, err := client.Get(s.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != tc.status {
+				t.Errorf("wire status=%d want=%d", response.StatusCode, tc.status)
+			}
+			body, err := io.ReadAll(response.Body)
+			if err != nil || len(body) != 0 {
+				t.Errorf("body=%q, %v; want empty body", body, err)
+			}
+			select {
+			case event := <-events:
+				if event.Status != tc.status || event.ResponseBytes != 0 {
+					t.Errorf("observed status=%d bytes=%d; want=%d, 0", event.Status, event.ResponseBytes, tc.status)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("request observation did not complete")
+			}
+		})
+	}
+}
+
 func TestObservedReaderFrom(t *testing.T) {
 	for _, fast := range []bool{false, true} {
 		for _, fail := range []bool{false, true} {
@@ -131,13 +183,14 @@ func TestObservedReaderFrom(t *testing.T) {
 				w = rf
 			}
 			event := captureResponse(t, w, func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusAccepted)
 				n, err := io.Copy(w, readerOnly{strings.NewReader("payload")})
 				if n != 7 || fail != errors.Is(err, failure) {
 					t.Fatalf("copy=%d, %v", n, err)
 				}
 			})
-			if event.ResponseBytes != 7 || p.String() != "payload" {
-				t.Fatalf("bytes=%d body=%q", event.ResponseBytes, p.String())
+			if event.Status != http.StatusAccepted || event.ResponseBytes != 7 || p.String() != "payload" {
+				t.Fatalf("status=%d bytes=%d body=%q", event.Status, event.ResponseBytes, p.String())
 			}
 			if fast && rf.calls != 1 {
 				t.Fatalf("fast-path calls=%d", rf.calls)
@@ -249,7 +302,7 @@ func TestObservedHijackStatus(t *testing.T) {
 
 func TestObservedUnsupportedController(t *testing.T) {
 	p := &responseProbe{header: make(http.Header)}
-	captureResponse(t, p, func(w http.ResponseWriter, _ *http.Request) {
+	event := captureResponse(t, p, func(w http.ResponseWriter, _ *http.Request) {
 		c := http.NewResponseController(w)
 		if err := c.Flush(); !errors.Is(err, http.ErrNotSupported) {
 			t.Fatalf("flush=%v", err)
@@ -260,7 +313,46 @@ func TestObservedUnsupportedController(t *testing.T) {
 		if err := w.(http.Pusher).Push("/asset", nil); !errors.Is(err, http.ErrNotSupported) {
 			t.Fatalf("push=%v", err)
 		}
+		w.WriteHeader(http.StatusBadGateway)
 	})
+	if event.Status != http.StatusBadGateway || len(p.statuses) != 1 || p.statuses[0] != http.StatusBadGateway {
+		t.Fatalf("unsupported operations committed a response: event=%+v headers=%v", event, p.statuses)
+	}
+}
+
+type failedFlushProbe struct {
+	*httptest.ResponseRecorder
+	err error
+}
+
+func (w *failedFlushProbe) FlushError() error {
+	w.ResponseRecorder.Flush()
+	return w.err
+}
+
+func TestObservedFailedFlushPreservesCommittedStatus(t *testing.T) {
+	failure := errors.New("flush write failure")
+	for _, method := range []string{"controller", "flusher"} {
+		t.Run(method, func(t *testing.T) {
+			p := &failedFlushProbe{ResponseRecorder: httptest.NewRecorder(), err: failure}
+			event := captureResponse(t, unwrapProbe{p}, func(w http.ResponseWriter, _ *http.Request) {
+				if method == "controller" {
+					if err := http.NewResponseController(w).Flush(); !errors.Is(err, failure) {
+						t.Fatalf("flush error=%v want=%v", err, failure)
+					}
+				} else {
+					w.(http.Flusher).Flush()
+				}
+				w.WriteHeader(http.StatusBadGateway)
+			})
+			if !p.Flushed || p.Code != http.StatusOK {
+				t.Fatalf("flush committed status=%d flushed=%v", p.Code, p.Flushed)
+			}
+			if event.Status != p.Code || event.ResponseBytes != 0 {
+				t.Fatalf("observed status=%d bytes=%d; want=%d, 0", event.Status, event.ResponseBytes, p.Code)
+			}
+		})
+	}
 }
 
 type pushProbe struct {
