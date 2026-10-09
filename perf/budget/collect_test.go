@@ -36,6 +36,10 @@ func testCollect(ctx context.Context, opts CollectOptions) (*Report, error) {
 
 func TestCollectUsesLoadedCanonicalCompressorPins(t *testing.T) {
 	// A normal executable retains the module metadata used by the pin check.
+	inputs, err := LoadInputs("testdata/budget.v2.json", LoadOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
 	dir := t.TempDir()
 	source := filepath.Join(dir, "collect.go")
 	binary := filepath.Join(dir, "collect")
@@ -61,6 +65,9 @@ func main() {
 	}
 	build := exec.Command("go", "build", "-o", binary, source)
 	build.Dir = projectRoot(t)
+	// The collector must be built with its declared Go pin even when the test
+	// runner uses a newer patch release.
+	build.Env = append(os.Environ(), "GOWORK=off", "GOTOOLCHAIN=go"+inputs.Toolchain.Go)
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("collector executable build failed: %v: %s", err, out)
 	}

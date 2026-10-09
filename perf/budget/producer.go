@@ -149,6 +149,25 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		public = append(public, producerPublicFile{rule.ID, rule.Kind, relative, urlPath, target})
 		seen[rule.ID] = true
 	}
+	// Validate all document identities before writing any snapshot, including
+	// public files. A document is app-owned just like a build or public body.
+	documents := map[string]string{}
+	for _, route := range routes {
+		id := ""
+		for _, critical := range route.CriticalAssetIDs {
+			if allowed[critical] == "app|html" {
+				if id != "" {
+					return "", fail("/routes/document")
+				}
+				id = critical
+			}
+		}
+		if !strings.HasPrefix(id, "app/"+opts.App+"/") || seen[id] {
+			return "", fail("/routes/document")
+		}
+		documents[route.RouteTemplate] = id
+		seen[id] = true
+	}
 	protection, err := preflightProducerPaths(root, opts, routes, public)
 	if err != nil {
 		return "", err
@@ -197,18 +216,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if !bytes.Equal(observed, declared) || classErr != nil || !fixtureCoversTypes(route.PageTypes, families) {
 			return "", fail("/routes/capabilities")
 		}
-		id := ""
-		for _, critical := range route.CriticalAssetIDs {
-			if allowed[critical] == "app|html" {
-				if id != "" {
-					return "", fail("/routes/document")
-				}
-				id = critical
-			}
-		}
-		if id == "" || seen[id] {
-			return "", fail("/routes/document")
-		}
+		id := documents[route.RouteTemplate]
 		file, err := fixtureFilePath(route.RouteTemplate, "html")
 		if err != nil {
 			return "", fail("/routes/document")
@@ -233,7 +241,6 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 			return "", fail("/routes/document")
 		}
 		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: id, SHA256: producerHash(body), URL: route.RouteTemplate, Owner: "app", Kind: "html", Phase: "critical", Condition: "always", Dependencies: []string{}})
-		seen[id] = true
 	}
 	sort.Slice(manifest.Assets, func(i, j int) bool { return manifest.Assets[i].ID < manifest.Assets[j].ID })
 	digest, err := FixtureManifestSHA256(manifest)

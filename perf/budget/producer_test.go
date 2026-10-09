@@ -197,6 +197,56 @@ func TestProducerRejectsMissingBindingsAndStaleBodies(t *testing.T) {
 	}
 }
 
+func TestProducerRejectsForeignDocumentBeforeWriting(t *testing.T) {
+	for _, id := range []string{"app/other/html", "app/fixture-extra/html"} {
+		t.Run(id, func(t *testing.T) {
+			opts, _ := fixtureProducer(t)
+			producerTestPublic(t, opts, "styles.css", "css", []byte("body{color:green}"))
+			file := filepath.Join(opts.Inputs.RootDir(), opts.Inputs.File.Fixtures.File)
+			raw, err := os.ReadFile(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var catalog map[string]any
+			if err := json.Unmarshal(raw, &catalog); err != nil {
+				t.Fatal(err)
+			}
+			catalog["routes"].([]any)[0].(map[string]any)["criticalAssetIDs"] = []string{id}
+			catalog["assetRules"].([]any)[0].(map[string]any)["id"] = id
+			raw, err = json.Marshal(catalog)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(file, raw, 0600); err != nil {
+				t.Fatal(err)
+			}
+			opts.Inputs.File.Fixtures.SHA256 = producerHash(raw)
+			before := map[string][]byte{
+				"counter/index.html": []byte("previous document"),
+				"styles.css":         []byte("previous public snapshot"),
+				"styles.css.gz":      []byte("previous public encoding"),
+			}
+			for name, body := range before {
+				producerTestFile(t, opts.DistDir, name, body)
+			}
+			digest, err := ProduceFixture(context.Background(), opts)
+			var typed *InputError
+			if digest != "" || !errors.As(err, &typed) || typed.Code != "wrong-fixture" || typed.Reference != "producer" || typed.Pointer != "/routes/document" {
+				t.Errorf("foreign document did not prevent publication: %q, %v", digest, err)
+			}
+			for name, body := range before {
+				saved, err := os.ReadFile(filepath.Join(opts.DistDir, name))
+				if err != nil || !bytes.Equal(saved, body) {
+					t.Errorf("foreign document changed %s: %v", name, err)
+				}
+			}
+			if _, err := os.Stat(filepath.Join(opts.DistDir, fixtureManifestFile)); !os.IsNotExist(err) {
+				t.Fatal("foreign document published a contract")
+			}
+		})
+	}
+}
+
 func TestProducerRejectsUnstableHTTPAndCapabilityContract(t *testing.T) {
 	for _, kind := range []string{"status", "encoding", "redirect", "private-error", "capabilities", "truncated"} {
 		t.Run(kind, func(t *testing.T) {
