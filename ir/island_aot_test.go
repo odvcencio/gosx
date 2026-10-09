@@ -130,7 +130,7 @@ type EditorProps struct { Detail Detail }
 func Editor(props EditorProps) Node {
  text := signal.New("")
  edit := func() {}
- return <div><input value={text.Get()} onInput={edit} /><span>{props.Detail.Label}{props.Detail.Label}</span></div>
+ return <div><input value={text.Get()} onInput={edit} /><span>Label: {props.Detail.Label}{props.Detail.Label}</span></div>
 }`)
 	p, err := parseAOT(t, src)
 	if err != nil {
@@ -145,7 +145,7 @@ func Editor(props EditorProps) Node {
 		t.Fatalf("inputs: %+v", u.Contract.Inputs)
 	}
 	input := u.Contract.Inputs[0]
-	if input.Root != "Detail" || len(input.Path) != 1 || input.Path[0] != "Label" || len(input.Exprs) != 2 {
+	if input.Root != "props" || len(input.Path) != 2 || input.Path[0] != "Detail" || input.Path[1] != "Label" || len(input.Exprs) != 2 {
 		t.Fatalf("selector interning: %+v", input)
 	}
 	if receipt := aot.Classify(u, aot.ScalarDOMV1); !receipt.Eligible {
@@ -162,7 +162,7 @@ func Counter(props CounterProps) Node {
  increment := func() { count.Set(count.Get() + 1) }
  return <button type="button" onClick={increment}>{count}</button>
 }`)
-	p, err := parse(t, src)
+	p, err := parseAOT(t, src)
 	if err != nil {
 		t.Fatal(err)
 	}

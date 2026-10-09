@@ -45,7 +45,7 @@ func oracleFieldPolicies() map[string]string {
 		{"Program.Imports Import.Alias Import.Path", "import binding names and paths"},
 		{"Program.aotBindings aotSourceBindings.source aotSourceBindings.project aotSourceBindings.lower", "source name-resolution evidence, not node or expression payloads"},
 		{"Component.Name Component.PropsType Component.PropsName", "component and parameter binding names"},
-		{"Component.PropsFields Component.PropsPaths Component.PropsSlices SlicePropSchema.Elem SlicePropSchema.Reads", "declared type evidence; scalar kinds are checked separately"},
+		{"Component.PropsFields Component.PropsPaths Component.PropsSlices SlicePropSchema.Elem SlicePropSchema.Reads ComponentScope.SourcePropsPaths Program.aotScalarShadows", "declared type evidence; scalar kinds are checked separately"},
 		{"Component.PropsFormActions", "form path metadata; actions are outside the scalar profile"},
 		{"Component.AcceptsChildren Component.AcceptsSlots Component.Syntax Component.PropsTyped", "component boundary shape and slot names"},
 		{"Component.IsIsland Component.IsEngine Component.EngineKind Component.EngineCapabilities Component.ServerOnly Component.EngineSurface Component.SurfaceHandlers SurfaceHandlerRef.EventName SurfaceHandlerRef.FunctionName", "execution category and surface capability metadata"},

@@ -357,7 +357,7 @@ func (e *aotEvidence) pair(source string, origin islandExprOrigin, exprs []progr
 			if proof.kind != aotEventKind(op.Value) {
 				return fmt.Errorf("evidence_binding_mismatch: event type")
 			}
-			proof.input = &aot.InputContract{Source: "event", Root: op.Value, Kind: proof.kind}
+			proof.input = &aot.InputContract{Source: "event", Root: op.Value, Path: []string{}, Kind: proof.kind}
 		case program.OpPropGet:
 			name, ok := native.(*ast.Ident)
 			bound, ok2 := checked.(*ast.Ident)
@@ -612,7 +612,7 @@ func (e *aotEvidence) input(expr *ast.SelectorExpr) (aot.InputContract, error) {
 	if !ok || !e.propsObjects[e.checked.info.Uses[name]] || len(fields) == 0 {
 		return aot.InputContract{}, fmt.Errorf("evidence_binding_mismatch: selector root")
 	}
-	return aot.InputContract{Source: "prop", Root: fields[0], Path: fields[1:]}, nil
+	return aot.InputContract{Source: "prop", Root: "props", Path: fields}, nil
 }
 
 func (e *aotEvidence) validateSourceRoots(src *Program, names map[string]bool) error {
