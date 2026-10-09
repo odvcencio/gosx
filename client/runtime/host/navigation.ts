@@ -249,8 +249,8 @@
   // submission is in flight" signal periodic revalidation reads — see
   // navigationOrFormSubmissionInFlight below. submitForm's try/finally keeps
   // every entry reliably removed once its submission settles.
-  const pendingManagedForms = new Set();
-  const pendingFormHolds = new Map();
+  // form -> outstanding submissions (more than one only for queued forms).
+  const pendingManagedForms = new Map();
   const sentNavigationBeacons = new Set();
   let revalidateTimerHandle = null;
   let revalidateSrc = "";
@@ -2850,18 +2850,13 @@
     // Hold the form from enqueue until this submission settles, so refresh
     // ticks and live regions cannot swap it while a queued edit waits. Holds
     // are counted per form: one settling submission must not release another.
-    pendingFormHolds.set(form, (pendingFormHolds.get(form) || 0) + 1);
-    pendingManagedForms.add(form);
+    pendingManagedForms.set(form, (pendingManagedForms.get(form) || 0) + 1);
     try {
       return await (queued ? queue.submit(form, submitter, snapshot, submitFormWith) : submitFormWith(form, submitter, snapshot));
     } finally {
-      const holds = pendingFormHolds.get(form) - 1;
-      if (holds > 0) {
-        pendingFormHolds.set(form, holds);
-      } else {
-        pendingFormHolds.delete(form);
-        pendingManagedForms.delete(form);
-      }
+      const holds = pendingManagedForms.get(form) - 1;
+      if (holds) pendingManagedForms.set(form, holds);
+      else pendingManagedForms.delete(form);
     }
   }
 
