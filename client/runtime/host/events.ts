@@ -224,22 +224,38 @@
     return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
+  function addDelegatedListener(islandRoot, islandID, eventType) {
+    const listener = createDelegatedListener(islandRoot, islandID, eventType);
+    const capture = delegatedEventCapture(eventType);
+    // passive: false lets a wheel handler call browser.PreventDefault(); it
+    // is already the default for non-document targets, so other events are
+    // unchanged.
+    islandRoot.addEventListener(eventType, listener, { capture, passive: false });
+    return { target: islandRoot, type: eventType, listener, capture };
+  }
+
   function setupEventDelegation(islandRoot, islandID, eventSlots) {
     const entries = [];
     const declared = delegatedEventSet(eventSlots);
 
     for (const eventType of DELEGATED_EVENTS) {
-      // Legacy manifests declare nothing, so a non-passive wheel listener
-      // would slow scrolling on every island. Attach it only where a handler
-      // exists.
-      if (declared ? !declared.has(eventType) : eventType === "wheel" && !findGlobalHandler(islandRoot, "wheel")) continue;
-      const listener = createDelegatedListener(islandRoot, islandID, eventType);
-      const useCapture = delegatedEventCapture(eventType);
-      // passive: false lets a wheel handler call browser.PreventDefault(); it
-      // is already the default for non-document targets, so other events are
-      // unchanged.
-      islandRoot.addEventListener(eventType, listener, { capture: useCapture, passive: false });
-      entries.push({ target: islandRoot, type: eventType, listener, capture: useCapture });
+      // Legacy manifests declare nothing, and a non-passive wheel listener
+      // slows scrolling, so wheel is attached below only where a handler exists.
+      if (declared ? !declared.has(eventType) : eventType === "wheel") continue;
+      entries.push(addDelegatedListener(islandRoot, islandID, eventType));
+    }
+
+    if (!declared) {
+      // Attach wheel now if a handler exists, otherwise on the first patch that
+      // introduces one, then stop watching.
+      const watch = () => {
+        if (!findGlobalHandler(islandRoot, "wheel")) return;
+        observer.disconnect();
+        entries.push(addDelegatedListener(islandRoot, islandID, "wheel"));
+      };
+      const observer = new MutationObserver(watch);
+      observer.observe(islandRoot, { subtree: true, childList: true, attributeFilter: ["data-gosx-on-wheel"] });
+      watch();
     }
 
     for (const config of GLOBAL_DELEGATED_EVENTS) {
