@@ -1,4 +1,4 @@
-//go:build !tinygo
+//go:build !tinygo && !js
 
 package ir
 
@@ -201,6 +201,22 @@ func TestIslandAOTTinyGoDependencyBoundary(t *testing.T) {
 		switch dependency {
 		case "go/types", "go/importer", "go/build":
 			t.Errorf("host checker in TinyGo client graph: %s", dependency)
+		}
+	}
+}
+
+func TestIslandAOTGoWASMDependencyBoundary(t *testing.T) {
+	command := exec.Command("go", "list", "-deps", "./client/wasm")
+	command.Dir = ".."
+	command.Env = append(os.Environ(), "GOWORK=off", "GOOS=js", "GOARCH=wasm", "GOPROXY=off")
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("Go WASM graph: %v %s", err, output)
+	}
+	for _, dependency := range strings.Fields(string(output)) {
+		switch dependency {
+		case "go/types", "go/importer", "go/build":
+			t.Errorf("host checker in Go WASM client graph: %s", dependency)
 		}
 	}
 }
