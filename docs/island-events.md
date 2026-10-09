@@ -87,11 +87,6 @@ signal, prop or handler with the same name shadows the field. Strict
 `component` syntax does not accept bare event fields, so use the `func` form
 for handlers that read them. `ir/island_docs_test.go` compiles this example.
 
-Inside a handler, payload fields are bare names (`pointerID`, `offsetY`). A
-signal, prop or handler with the same name shadows the field. This sketch is
-not compiled by the test suite; the compile path is covered by
-`ir/exprparse_browser_test.go`.
-
 ## Wheel and scrolling
 
 The runtime registers `wheel` listeners as non-passive, so a handler can call
