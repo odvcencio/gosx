@@ -155,13 +155,19 @@ func fakePackages(importPaths ...string) []listedPackage {
 	return packages
 }
 
+// splitSyntheticCLITests splits made-up names with the CLI cutoffs but no pins,
+// because pins name real tests that a synthetic list does not contain.
+func splitSyntheticCLITests(output string) ([][]string, error) {
+	return shardLayout{name: "CLI", cutoffs: cliLayout.cutoffs}.split(discoveredTests(output))
+}
+
 func TestCLIShardsAreCompleteDisjointAndStable(t *testing.T) {
 	var output strings.Builder
 	for i := 0; i < 100; i++ {
 		fmt.Fprintf(&output, "TestCase%d\n", i)
 	}
 	output.WriteString("ExampleCLI\nFuzzCLI\nok example.test/cli 0.01s\n")
-	shards, err := splitCLITests(output.String())
+	shards, err := splitSyntheticCLITests(output.String())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +186,7 @@ func TestCLIShardsAreCompleteDisjointAndStable(t *testing.T) {
 	if len(shards) != 3 {
 		t.Fatalf("got %d CLI shards, want 3", len(shards))
 	}
-	extended, err := splitCLITests(output.String() + "TestAnotherCase\n")
+	extended, err := splitSyntheticCLITests(output.String() + "TestAnotherCase\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -192,7 +198,7 @@ func TestCLIShardsAreCompleteDisjointAndStable(t *testing.T) {
 		}
 	}
 	for _, output := range []string{"", "TestCase\nTestCase\n", "Test Bad\n"} {
-		if _, err := splitCLITests(output); err == nil {
+		if _, err := splitSyntheticCLITests(output); err == nil {
 			t.Fatalf("accepted invalid discovery %q", output)
 		}
 	}
@@ -313,6 +319,36 @@ func TestBrowserShardsCoverRepositoryE2ETests(t *testing.T) {
 	for _, name := range names {
 		if seen[name] != 1 {
 			t.Fatalf("%s runs in %d browser shards, want 1", name, seen[name])
+		}
+	}
+}
+
+func TestCLIShardPinsNameCurrentTests(t *testing.T) {
+	names, err := testNamesInDir(filepath.Join("..", "..", cliRelativePath))
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := make(map[string]bool, len(names))
+	for _, name := range names {
+		current[name] = true
+	}
+	if err := cliLayout.validatePins(current); err != nil {
+		t.Fatal(err)
+	}
+	delete(current, "TestControllerInputAssetsAcrossBuildModes")
+	if err := cliLayout.validatePins(current); err == nil || !strings.Contains(err.Error(), "names no current test") {
+		t.Fatalf("validatePins() accepted a deleted pinned test: %v", err)
+	}
+}
+
+func TestPinnedShardsSpreadHeavyTests(t *testing.T) {
+	for _, layout := range []shardLayout{cliLayout, browserLayout} {
+		used := make(map[int]int)
+		for _, shard := range layout.pins {
+			used[shard]++
+		}
+		if len(used) != layout.count() {
+			t.Errorf("%s pins use %d of %d shards: %v", layout.name, len(used), layout.count(), used)
 		}
 	}
 }

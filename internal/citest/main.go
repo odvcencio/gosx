@@ -163,6 +163,9 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("verify takes no arguments")
 		}
 		printPlan(stdout, plan)
+		if err := verifyCLIShardPins(stdout); err != nil {
+			return err
+		}
 		return verifyBrowserShards(stdout)
 	case "list":
 		if len(args) != 2 {
@@ -599,6 +602,20 @@ func (l shardLayout) shardOf(name string) int {
 	return len(l.cutoffs)
 }
 
+// validatePins fails on a pin that names no current test or targets a shard
+// that does not exist.
+func (l shardLayout) validatePins(current map[string]bool) error {
+	for name, shard := range l.pins {
+		if !current[name] {
+			return fmt.Errorf("%s shard pin %q names no current test", l.name, name)
+		}
+		if shard < 0 || shard >= l.count() {
+			return fmt.Errorf("%s shard pin %q targets shard %d, want 0..%d", l.name, name, shard, l.count()-1)
+		}
+	}
+	return nil
+}
+
 // split assigns every name to exactly one shard. It fails on a duplicate or
 // malformed name, a pin that names no current test or an out-of-range shard,
 // and an empty shard, so a layout that drifts from the source stops the build.
@@ -615,13 +632,8 @@ func (l shardLayout) split(names []string) ([][]string, error) {
 		}
 		seen[name] = true
 	}
-	for name, shard := range l.pins {
-		if !seen[name] {
-			return nil, fmt.Errorf("%s shard pin %q names no current test", l.name, name)
-		}
-		if shard < 0 || shard >= l.count() {
-			return nil, fmt.Errorf("%s shard pin %q targets shard %d, want 0..%d", l.name, name, shard, l.count()-1)
-		}
+	if err := l.validatePins(seen); err != nil {
+		return nil, err
 	}
 	shards := make([][]string, l.count())
 	for _, name := range names {
@@ -639,11 +651,37 @@ func (l shardLayout) split(names []string) ([][]string, error) {
 
 // cliLayout: lane 0 also runs the documentation example tests, the tutorial
 // build and the docs-site compile (about 160s), so it takes the smaller share.
-var cliLayout = shardLayout{name: "CLI", cutoffs: []int{28, 64}}
+//
+// Pins spread the eight production-build tests that each take 90-230s; the hash
+// leaves them lumpy (run 37910090971: lane 0 ran 582s of tests, lane 1 313s).
+// Seconds are the measured test durations from that run. Re-measure with the
+// -v output of a full run before moving a pin.
+var cliLayout = shardLayout{name: "CLI", cutoffs: []int{28, 64}, pins: map[string]int{
+	"TestRunBuildProdPreservesFileModuleHooksInStaticExport": 0, // 214s
+	"TestRunBuildProdPrerenderDisabledKeepsServerAndAssets":  0, // 163s
+	"TestRunBuildProdWritesHybridStaticBundleForStarterApp":  1, // 229s
+	"TestControllerInputAssetsAcrossBuildModes":              1, // 194s
+	"TestRunInitStrictFormsBuildAndServe":                    1, //  89s
+	"TestExportStagesExternalFileCSS":                        2, // 187s
+	"TestRunBuildRelocatedBundleRendersSiblingFragment":      2, // 167s
+	"TestRunBuildProdHandlesRelativeProjectDir":              2, // 128s
+}}
 
 // browserLayout: shard 0 also runs the Ouroboros media smoke, the perf driver
 // tests and the perf budget gate (about 270s), so it takes the smaller share.
-var browserLayout = shardLayout{name: "browser", cutoffs: []int{21, 61}}
+//
+// Pins spread the seven tests that each take 88-260s; the hash put all of them
+// but two in one shard (run 37906534414: shards ran 63s, 423s and over 1000s of
+// tests). Seconds are measured durations from runs 37906534414 and 37910090971.
+var browserLayout = shardLayout{name: "browser", cutoffs: []int{21, 61}, pins: map[string]int{
+	"TestDocsHomeSceneCanvasesStayBounded":                0, // 257s
+	"TestPlaygroundDirectLoadMetadataAndMobileHeader":     1, // 197s
+	"TestPlaygroundCounterHydratesAndUpdates":             1, // 196s
+	"TestDocsSiteServes":                                  1, //  88s
+	"TestProductionBuildHydratesStrictIsland":             2, // 168s
+	"TestProductionBuildRunsMixedTinyGoAndStandardGoWASM": 2, // 182s
+	"TestPrefixedProductionBuild":                         2, // 148s
+}}
 
 const (
 	browserRelativePath = "e2e"
@@ -750,12 +788,28 @@ func discoveredTests(output string) []string {
 	return names
 }
 
-func splitCLITests(output string) ([][]string, error) {
-	return cliLayout.split(discoveredTests(output))
-}
-
 func splitBrowserTests(names []string) ([][]string, error) {
 	return browserLayout.split(names)
+}
+
+// verifyCLIShardPins checks that every CLI pin names a test in cmd/gosx. It
+// reads source rather than running `go test -list`, so it needs no compile.
+// Files with build tags are included, which is a superset of what any one run
+// lists; that is enough to catch a renamed or deleted pinned test.
+func verifyCLIShardPins(w io.Writer) error {
+	names, err := testNamesInDir(cliRelativePath)
+	if err != nil {
+		return err
+	}
+	current := make(map[string]bool, len(names))
+	for _, name := range names {
+		current[name] = true
+	}
+	if err := cliLayout.validatePins(current); err != nil {
+		return err
+	}
+	fmt.Fprintf(w, "citest: CLI shard pins verified pins=%d\n", len(cliLayout.pins))
+	return nil
 }
 
 // verifyBrowserShards checks the browser layout against the e2e test source:
@@ -781,11 +835,28 @@ func verifyBrowserShards(w io.Writer) error {
 // file there carries the e2e build tag, so parsing all of them matches what
 // `go test -tags e2e -list` reports, without compiling the package.
 func browserTestNames(dir string) ([]string, error) {
+	names, err := testNamesInDir(dir)
+	if err != nil {
+		return nil, err
+	}
+	filtered := names[:0]
+	for _, name := range names {
+		if strings.HasPrefix(name, "Test") && name != "TestMain" {
+			filtered = append(filtered, name)
+		}
+	}
+	return filtered, nil
+}
+
+// testNamesInDir returns the Test, Fuzz and Example functions declared in the
+// directory's _test.go files, sorted and without duplicates.
+func testNamesInDir(dir string) ([]string, error) {
 	files, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
 	if err != nil {
 		return nil, err
 	}
 	var names []string
+	seen := make(map[string]bool)
 	for _, path := range files {
 		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
 		if err != nil {
@@ -793,8 +864,14 @@ func browserTestNames(dir string) ([]string, error) {
 		}
 		for _, decl := range file.Decls {
 			fn, ok := decl.(*ast.FuncDecl)
-			if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Test") && fn.Name.Name != "TestMain" {
-				names = append(names, fn.Name.Name)
+			if !ok || fn.Recv != nil {
+				continue
+			}
+			for _, prefix := range []string{"Test", "Fuzz", "Example"} {
+				if strings.HasPrefix(fn.Name.Name, prefix) && !seen[fn.Name.Name] {
+					seen[fn.Name.Name] = true
+					names = append(names, fn.Name.Name)
+				}
 			}
 		}
 	}
