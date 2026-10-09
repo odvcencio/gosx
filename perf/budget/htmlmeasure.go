@@ -33,12 +33,13 @@ type HTMLMeasurement struct {
 	full                  []byte
 	withoutFramework      []byte
 	capabilities          pagecaps.Capabilities
+	inlineFramework       bool
 }
 
 func (m HTMLMeasurement) executionCounts() HTMLExecution {
 	return HTMLExecution{ExecutableSources: m.ExecutableSources, ExecutableScripts: m.ExecutableScripts,
 		SyncExecutableScripts: m.SyncExecutableScripts, InlineAppScriptMax: m.InlineAppScriptMax,
-		InlineAppScriptBytes: m.InlineAppScriptBytes}
+		InlineAppScriptBytes: m.InlineAppScriptBytes, inlineFramework: m.inlineFramework}
 }
 
 // HTMLExecution records active document execution, including srcdoc. Sources
@@ -47,6 +48,8 @@ func (m HTMLMeasurement) executionCounts() HTMLExecution {
 type HTMLExecution struct {
 	ExecutableSources, ExecutableScripts, SyncExecutableScripts int64
 	InlineAppScriptMax, InlineAppScriptBytes                    int64
+	// Verified framework presence is independent of compressed marginal bytes.
+	inlineFramework bool
 }
 
 func (total *HTMLExecution) include(other HTMLExecution) {
@@ -55,6 +58,7 @@ func (total *HTMLExecution) include(other HTMLExecution) {
 	total.SyncExecutableScripts += other.SyncExecutableScripts
 	total.InlineAppScriptBytes += other.InlineAppScriptBytes
 	total.InlineAppScriptMax = max(total.InlineAppScriptMax, other.InlineAppScriptMax)
+	total.inlineFramework = total.inlineFramework || other.inlineFramework
 }
 
 // union retains the permitted observation when verified aliases share one
@@ -65,6 +69,7 @@ func (total *HTMLExecution) union(other HTMLExecution) {
 	total.SyncExecutableScripts = max(total.SyncExecutableScripts, other.SyncExecutableScripts)
 	total.InlineAppScriptBytes = max(total.InlineAppScriptBytes, other.InlineAppScriptBytes)
 	total.InlineAppScriptMax = max(total.InlineAppScriptMax, other.InlineAppScriptMax)
+	total.inlineFramework = total.inlineFramework || other.inlineFramework
 }
 
 func (total *HTMLExecution) observe(source pagecaps.ExecutableSource, owned map[string]bool) {
@@ -77,7 +82,9 @@ func (total *HTMLExecution) observe(source pagecaps.ExecutableSource, owned map[
 		total.SyncExecutableScripts++
 	}
 	hash := sha256.Sum256(source.Body)
-	if source.Inline && (!source.ExactBody || !owned[hex.EncodeToString(hash[:])]) {
+	if source.Inline && source.ExactBody && owned[hex.EncodeToString(hash[:])] {
+		total.inlineFramework = true
+	} else if source.Inline {
 		size := int64(len(source.Body))
 		total.InlineAppScriptMax = max(total.InlineAppScriptMax, size)
 		total.InlineAppScriptBytes += size
@@ -118,6 +125,7 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 	result.SyncExecutableScripts = execution.SyncExecutableScripts
 	result.InlineAppScriptMax = execution.InlineAppScriptMax
 	result.InlineAppScriptBytes = execution.InlineAppScriptBytes
+	result.inlineFramework = execution.inlineFramework
 	if err != nil {
 		return HTMLMeasurement{}, measureFailure("capability", "/html")
 	}

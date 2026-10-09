@@ -194,6 +194,9 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			row.ReasonCode = "insufficient-data"
 		}
 		row.Policies = mergeMeasurePolicies(row.Policies, []PolicyResult{{Name: "declared-fetches", Passed: plan.Reachability == "known"}, {Name: "canonical-build", Passed: opts.Public.Canonical}})
+		// Resource policies are conjunctions over applicable fetched bodies.
+		// An empty set passes; any observed failure still wins during merging.
+		row.Policies = mergeMeasurePolicies(row.Policies, []PolicyResult{{Name: "assets-compressed", Passed: true}, {Name: "immutable-hashed", Passed: true}, {Name: "wasm-streaming", Passed: true}})
 		phases := map[string]string{}
 		for _, asset := range plan.Assets {
 			phases[asset.ID] = asset.Phase
@@ -234,7 +237,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		}
 		documents := map[string]documentExecution{first.finalURL: {treeExecution[document.url], "critical"}}
 		unresolvedDocuments := !documentURLMatches(first.finalURL, document.url)
-		runtimeHashed := measuredHTML.Framework.Raw == 0
+		runtimeHashed := true
 		for _, fixture := range fixtures {
 			phase := phases[fixture.id]
 			if phase != "dormant" && plan.executingAssets[fixture.id] && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
@@ -344,7 +347,8 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				row.AppBytes -= n
 			}
 		}
-		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && noExecutableDocuments}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0}, PolicyResult{Name: "runtime-hashed", Passed: runtimeHashed})
+		noInlineRuntime := !allExecution.inlineFramework
+		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && noExecutableDocuments}, PolicyResult{Name: "no-inline-runtime", Passed: noInlineRuntime}, PolicyResult{Name: "runtime-hashed", Passed: runtimeHashed && noInlineRuntime})
 		row.HeadroomBytes = -row.NormalizedBytes
 		for _, name := range route.PageTypes {
 			family, backend, _ := pageTypeVariant(name)
