@@ -817,7 +817,10 @@ const budgets = [
   // live in this always-on chunk. Measured: 156_318 / 42_985 / 37_518.
   // The complete motion fix measures 190,789 / 53,839 / 46,948. Reviewed
   // hard-limit headroom is 1,991 / 1,076 / 1,037 bytes.
-  { file: "bootstrap-runtime.js", raw: 183989, gzip: 52300, brotli: 45695 },
+  // Native document liveness adds 961 raw / 292 gzip / 260 Brotli bytes.
+  // Move only the exceeded reviewed raw/Brotli targets by those exact deltas;
+  // preserve the governed allowance and the existing gzip headroom.
+  { file: "bootstrap-runtime.js", raw: 184950, gzip: 52300, brotli: 45955 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -875,7 +878,8 @@ const budgets = [
   // 113_659 / 30_609 / 27_146.
   // The complete motion fix measures 147,576 / 41,324 / 36,551. Reviewed
   // hard-limit headroom is 1,944 / 1,096 / 1,039 bytes.
-  { file: "bootstrap-lite.js", raw: 142900, gzip: 40400, brotli: 35800 },
+  // The lite core carries the same document liveness guard: +961 raw / +294 Brotli.
+  { file: "bootstrap-lite.js", raw: 143861, gzip: 40400, brotli: 36094 },
   // Bumped raw 510_000 -> 512_000 for the WebGL Selena executor. Bumped gzip
   // 140_000 -> 140_500 for static GLB live model records and transform
   // reprojection used by baked computed meshes.
@@ -1773,9 +1777,11 @@ const routeBudgets = [
     // after rejection. Move only the raw and Brotli reviewed targets by the
     // measured delta (289_289 + 639 = 289_928; 73_439 + 177 = 73_616). Retain
     // the 5% allowance, existing gzip target, and all other route budgets.
-    raw: 289928,
+    // Document liveness + engine mount guards add 1,155 raw / 327 gzip /
+    // 355 Brotli bytes. Preserve both independently measured additions.
+    raw: 291083,
     gzip: 83400,
-    brotli: 73616,
+    brotli: 73971,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
