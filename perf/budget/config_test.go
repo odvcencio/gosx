@@ -519,3 +519,58 @@ func TestConfigNativeInputsReuseVerifiedSnapshots(t *testing.T) {
 		t.Fatal("fresh loader accepted changed referenced bytes")
 	}
 }
+
+func TestConfigSnapshotRejectsPermissionChange(t *testing.T) {
+	path := configFixture(t, nil)
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := LoadDerivationInputs(path, LoadOptions{RootDir: filepath.Dir(path)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.budgetInfo.Mode().Perm() != 0644 {
+		t.Skip("temporary filesystem does not implement permission bits")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inputs.BudgetFileMatches(inputs.budgetInfo, data) {
+		t.Fatal("unchanged snapshot rejected")
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.BudgetFileMatches(info, data) {
+		t.Fatal("permission restriction accepted as unchanged")
+	}
+}
+
+// Exercise each permission bit independently of the filesystem and ctime guard.
+type budgetAccessModeInfo struct {
+	os.FileInfo
+	mode os.FileMode
+}
+
+func (info budgetAccessModeInfo) Mode() os.FileMode { return info.mode }
+
+func TestConfigAccessModeComparison(t *testing.T) {
+	info, err := os.Stat("testdata/budget.v2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameBudgetFileAccess(info, info) {
+		t.Fatal("unchanged access rejected")
+	}
+	for _, bit := range []os.FileMode{0040, os.ModeSetuid, os.ModeSetgid, os.ModeSticky} {
+		changed := budgetAccessModeInfo{info, info.Mode() ^ bit}
+		if sameBudgetFileAccess(info, changed) {
+			t.Errorf("changed access bit %v accepted", bit)
+		}
+	}
+}

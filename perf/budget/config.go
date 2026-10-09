@@ -190,17 +190,25 @@ func loadSnapshot(path string, opts LoadOptions, checkAllocations bool) (*Inputs
 func (inputs *Inputs) RootDir() string { return inputs.rootDir }
 
 // BudgetPath and BudgetFileMatches expose only native snapshot state. File
-// identity includes device/inode (or the platform's equivalent), size and mtime.
+// identity includes device/inode (or the platform's equivalent), size, mtime
+// and access attributes supported by the platform.
 func (inputs *Inputs) BudgetPath() string { return inputs.budgetPath }
 func (inputs *Inputs) BudgetFileMatches(info os.FileInfo, data []byte) bool {
 	if info == nil || inputs.budgetInfo == nil || !info.Mode().IsRegular() ||
 		!os.SameFile(inputs.budgetInfo, info) || inputs.budgetInfo.Size() != info.Size() ||
-		!inputs.budgetInfo.ModTime().Equal(info.ModTime()) {
+		!inputs.budgetInfo.ModTime().Equal(info.ModTime()) || !sameBudgetFileAccess(inputs.budgetInfo, info) {
 		return false
 	}
 	digest := sha256.Sum256(data)
 	return hex.EncodeToString(digest[:]) == inputs.BudgetSHA256
 }
+
+// Shared with snapshot reads so concurrent access changes cannot be captured
+// as a mixture of attributes from before and after the read.
+func sameBudgetFileAccess(a, b os.FileInfo) bool {
+	return a.Mode() == b.Mode() && sameBudgetFileOwnership(a, b) && sameBudgetFileChangeTime(a, b)
+}
+
 func (inputs *Inputs) PublicValidator() (*PublicValidator, error) {
 	return NewPublicValidator(filepath.Join(inputs.rootDir, inputs.File.Fixtures.File), LoadOptions{RootDir: inputs.rootDir}, inputs.File.HubBudgets)
 }

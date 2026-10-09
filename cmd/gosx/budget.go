@@ -209,18 +209,29 @@ func writeBudgetAt(root *os.Root, path string, data []byte, expected ...*budget.
 }
 
 func stageBudgetAt(root *os.Root, path string, data []byte) (temp string, resultErr error) {
-	info, err := root.Stat(path)
+	before, err := root.Lstat(path)
 	mode := os.FileMode(0644)
+	var original *os.File
+	var info os.FileInfo
 	if err == nil {
-		if !info.Mode().IsRegular() {
+		if !before.Mode().IsRegular() {
 			return "", errors.New("invalid output")
 		}
-		mode = info.Mode().Perm()
+		original, err = root.OpenFile(path, os.O_RDONLY|budgetOpenFlags, 0)
+		if err != nil {
+			return "", errors.New("output unavailable")
+		}
+		defer original.Close()
+		info, err = original.Stat()
+		if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) {
+			return "", errors.New("invalid output")
+		}
+		mode = info.Mode() & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky)
 	} else if !os.IsNotExist(err) {
 		return "", errors.New("invalid output")
 	}
 	temp = filepath.Join(filepath.Dir(path), ".gosx-budget-"+rand.Text())
-	file, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
+	file, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return "", errors.New("output unavailable")
 	}
@@ -229,13 +240,32 @@ func stageBudgetAt(root *os.Root, path string, data []byte) (temp string, result
 			root.Remove(temp)
 		}
 	}()
+	if _, err := file.Write(data); err != nil {
+		file.Close()
+		return temp, errors.New("output unavailable")
+	}
+	// Chown and writes can clear special mode bits. Apply ownership first, then
+	// modes, then extended attributes; verify access before publishing the file.
+	if original != nil {
+		if err := preserveBudgetOwnership(file, info); err != nil {
+			file.Close()
+			return temp, errors.New("output unavailable")
+		}
+	}
 	if err := file.Chmod(mode); err != nil {
 		file.Close()
 		return temp, errors.New("output unavailable")
 	}
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		return temp, errors.New("output unavailable")
+	if original != nil {
+		if err := copyBudgetExtendedAttributes(original, file); err != nil {
+			file.Close()
+			return temp, errors.New("output unavailable")
+		}
+		staged, err := file.Stat()
+		if err != nil || staged.Mode() != info.Mode() {
+			file.Close()
+			return temp, errors.New("output unavailable")
+		}
 	}
 	if err := file.Sync(); err != nil {
 		file.Close()
@@ -307,7 +337,7 @@ func compareBudgetSource(root *os.Root, path string, source *budget.Inputs) erro
 	}
 	after, err := file.Stat()
 	current, pathErr := root.Lstat(path)
-	if err != nil || pathErr != nil || !os.SameFile(after, current) || !source.BudgetFileMatches(after, data) {
+	if err != nil || pathErr != nil || !os.SameFile(after, current) || !source.BudgetFileMatches(after, data) || !source.BudgetFileMatches(current, data) {
 		return errBudgetChanged
 	}
 	return nil

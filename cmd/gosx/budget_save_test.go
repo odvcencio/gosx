@@ -97,96 +97,115 @@ func TestBudgetSaveRejectsEditAfterStaging(t *testing.T) {
 }
 
 func TestBudgetSaveCLIRejectsEditWhileWaitingForLock(t *testing.T) {
-	for _, mode := range []string{"write", "out"} {
-		t.Run(mode, func(t *testing.T) {
-			dir, path := budgetCommandFixture(t)
-			old, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			r, err := os.OpenRoot(dir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer r.Close()
-			relative, err := filepath.Rel(dir, path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			lock, err := openBudgetLock(r, relative+".lock")
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer lock.Close()
-			if err := acquireBudgetLock(lock); err != nil {
-				t.Fatal(err)
-			}
-			args := []string{"derive", "--budget", path, "--root", dir, "--write"}
-			if mode == "out" {
-				args = append(args[:len(args)-1], "--out", path)
-			}
-			type result struct {
-				code               int
-				output, diagnostic string
-			}
-			done := make(chan result, 1)
-			go func() {
-				code, output, diagnostic := runBudgetTest(args...)
-				done <- result{code, output, diagnostic}
-			}()
-			// The lock prevents replacement while the proposal is staged. Seeing
-			// its temp file proves derive has already read the original budget.
-			deadline := time.NewTimer(5 * time.Second)
-			defer deadline.Stop()
-			tick := time.NewTicker(5 * time.Millisecond)
-			defer tick.Stop()
-			staged := false
-			for !staged {
+	for _, change := range []string{"contents", "permissions", "permissions-and-contents"} {
+		for _, mode := range []string{"write", "out"} {
+			t.Run(change+"/"+mode, func(t *testing.T) {
+				dir, path := budgetCommandFixture(t)
+				if change != "contents" {
+					requireBudgetMode(t, path, 0644)
+				}
+				old, err := os.ReadFile(path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				r, err := os.OpenRoot(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer r.Close()
+				relative, err := filepath.Rel(dir, path)
+				if err != nil {
+					t.Fatal(err)
+				}
+				lock, err := openBudgetLock(r, relative+".lock")
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer lock.Close()
+				if err := acquireBudgetLock(lock); err != nil {
+					t.Fatal(err)
+				}
+				args := []string{"derive", "--budget", path, "--root", dir, "--write"}
+				if mode == "out" {
+					args = append(args[:len(args)-1], "--out", path)
+				}
+				type result struct {
+					code               int
+					output, diagnostic string
+				}
+				done := make(chan result, 1)
+				go func() {
+					code, output, diagnostic := runBudgetTest(args...)
+					done <- result{code, output, diagnostic}
+				}()
+				// The lock prevents replacement while the proposal is staged. Seeing
+				// its temp file proves derive has already read the original budget.
+				deadline := time.NewTimer(5 * time.Second)
+				defer deadline.Stop()
+				tick := time.NewTicker(5 * time.Millisecond)
+				defer tick.Stop()
+				staged := false
+				for !staged {
+					select {
+					case early := <-done:
+						t.Fatalf("save bypassed the exclusive lock: %v", early)
+					case <-deadline.C:
+						t.Fatal("proposal was not staged before timeout")
+					case <-tick.C:
+						matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".gosx-budget-*"))
+						if err != nil {
+							t.Fatal(err)
+						}
+						staged = len(matches) > 0
+					}
+				}
 				select {
 				case early := <-done:
-					t.Fatalf("save bypassed the exclusive lock: %v", early)
-				case <-deadline.C:
-					t.Fatal("proposal was not staged before timeout")
-				case <-tick.C:
-					matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), ".gosx-budget-*"))
-					if err != nil {
+					t.Fatalf("staged save bypassed the exclusive lock: %v", early)
+				case <-time.After(150 * time.Millisecond):
+				}
+				newer := old
+				if change != "permissions" {
+					newer = append(bytes.Clone(old), '\n')
+					if err := os.WriteFile(path, newer, 0600); err != nil {
 						t.Fatal(err)
 					}
-					staged = len(matches) > 0
 				}
-			}
-			select {
-			case early := <-done:
-				t.Fatalf("staged save bypassed the exclusive lock: %v", early)
-			case <-time.After(150 * time.Millisecond):
-			}
-			newer := append(bytes.Clone(old), '\n')
-			if err := os.WriteFile(path, newer, 0600); err != nil {
-				t.Fatal(err)
-			}
-			if err := lock.Close(); err != nil {
-				t.Fatal(err)
-			}
-			select {
-			case saved := <-done:
-				if saved.code != 2 || saved.output != "" || saved.diagnostic != "budget file changed since it was read; re-run derive\n" {
-					t.Fatal("concurrent edit did not yield an actionable input error", saved)
+				if change != "contents" {
+					if err := os.Chmod(path, 0600); err != nil {
+						t.Fatal(err)
+					}
 				}
-			case <-time.After(5 * time.Second):
-				t.Fatal("save did not finish after releasing the lock")
-			}
-			got, err := os.ReadFile(path)
-			if err != nil || !bytes.Equal(got, newer) {
-				t.Fatal("CLI discarded concurrent edit", err)
-			}
-			matches, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".gosx-budget-*"))
-			if len(matches) != 0 {
-				t.Fatal("failed CLI save left scratch")
-			}
-		})
+				if err := lock.Close(); err != nil {
+					t.Fatal(err)
+				}
+				select {
+				case saved := <-done:
+					if saved.code != 2 || saved.output != "" || saved.diagnostic != "budget file changed since it was read; re-run derive\n" {
+						t.Fatal("concurrent edit did not yield an actionable input error", saved)
+					}
+				case <-time.After(5 * time.Second):
+					t.Fatal("save did not finish after releasing the lock")
+				}
+				got, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(got, newer) {
+					t.Fatal("CLI discarded concurrent edit", err)
+				}
+				if change != "contents" {
+					info, err := os.Stat(path)
+					if err != nil || info.Mode().Perm() != 0600 {
+						t.Fatal("save undid the permission restriction", err)
+					}
+				}
+				matches, _ := filepath.Glob(filepath.Join(filepath.Dir(path), ".gosx-budget-*"))
+				if len(matches) != 0 {
+					t.Fatal("failed CLI save left scratch")
+				}
+			})
+		}
 	}
-}
 
+}
 func TestBudgetSaveRejectsNonregularLock(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "target.json")
@@ -269,5 +288,44 @@ func TestBudgetSaveConcurrentProposalsHaveOneWinner(t *testing.T) {
 	got, err := os.ReadFile(path)
 	if err != nil || !bytes.Equal(got, want) {
 		t.Fatal("saved bytes differ from the winning proposal", err)
+	}
+}
+
+// Permission-sensitive tests need a filesystem that implements Unix modes.
+func requireBudgetMode(t *testing.T, path string, mode os.FileMode) {
+	t.Helper()
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != mode {
+		t.Skip("temporary filesystem does not implement permission bits")
+	}
+}
+
+func TestBudgetSavePreservesRestrictedMode(t *testing.T) {
+	for _, mode := range []string{"write", "out"} {
+		t.Run(mode, func(t *testing.T) {
+			dir, path := budgetCommandFixture(t)
+			requireBudgetMode(t, path, 0600)
+			args := []string{"derive", "--budget", path, "--root", dir, "--write"}
+			if mode == "out" {
+				args = append(args[:len(args)-1], "--out", path)
+			}
+			code, output, diagnostic := runBudgetTest(args...)
+			if code != 0 || output != "" || diagnostic != "" {
+				t.Fatal(code, diagnostic)
+			}
+			info, err := os.Stat(path)
+			if err != nil || info.Mode().Perm() != 0600 {
+				t.Fatal("save changed restricted permissions", err)
+			}
+			if _, err := budget.Load(path, budget.LoadOptions{RootDir: dir}); err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

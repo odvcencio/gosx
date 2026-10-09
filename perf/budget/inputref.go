@@ -132,7 +132,7 @@ func readWithinSnapshot(root, path string, limit int64) ([]byte, os.FileInfo, er
 		return nil, nil, errors.New("input exceeds read limit")
 	}
 	after, err := f.Stat()
-	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) || int64(len(data)) != after.Size() {
+	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) || int64(len(data)) != after.Size() || !sameBudgetFileAccess(info, after) {
 		return nil, nil, errors.New("input changed while it was read")
 	}
 	return data, after, nil
