@@ -110,6 +110,15 @@ func (e *expressionEmitter) setupDOM() {
 	put(e.transactions[transactionBegin], e.beginFunction())
 }
 
+// Poison the working generation before entering the host. An escaping
+// exception leaves this status set until abort; only a successful return
+// permits the caller to clear it and continue preparing.
+func (b *instructions) importCall(index uint32, failure int32) {
+	b.i32(failure)
+	b.index(0x24, errorGlobal)
+	b.index(0x10, index)
+}
+
 // Import status is zero or a bounded positive/negative ABI status. Unknown
 // results become the import's declared failure instead of entering state.
 func (b *instructions) importStatus(local uint32, fallback int32) {
@@ -139,6 +148,8 @@ func (b *instructions) importStatus(local uint32, fallback int32) {
 	b.index(0x24, errorGlobal)
 	b.statusGuard()
 	b.op(0x0b)
+	b.i32(0)
+	b.index(0x24, errorGlobal)
 }
 
 func (e *expressionEmitter) domBindFunction() wasmgen.Function {
@@ -156,7 +167,7 @@ func (e *expressionEmitter) domBindFunction() wasmgen.Function {
 		b.i32(int32(binding.ID))
 		b.i32(int32(binding.Kind))
 		b.i32(int32(binding.TagID))
-		b.index(0x10, 1)
+		b.importCall(1, statusBindingMismatch)
 		b.importStatus(1, statusBindingMismatch)
 	}
 	b.i32(0)
@@ -259,7 +270,7 @@ func (e *expressionEmitter) domPatchFunction() wasmgen.Function {
 	for local := uint32(0); local < 5; local++ {
 		b.get(local)
 	}
-	b.index(0x10, 2)
+	b.importCall(2, statusBindingMismatch)
 	b.importStatus(5, statusBadInput)
 	b.index(0x23, e.dom.patchCount)
 	b.i32(1)

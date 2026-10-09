@@ -381,7 +381,7 @@ func (e *expressionEmitter) inputExpression(id program.ExprID) (wasmgen.Function
 	b.i32(int32(input.ID))
 	b.get(2)
 	b.i32(valueBytes + 4096)
-	b.index(0x10, 0)
+	b.importCall(0, statusBadInput)
 	b.set(4)
 	b.get(4)
 	b.i32(0)
@@ -405,6 +405,10 @@ func (e *expressionEmitter) inputExpression(id program.ExprID) (wasmgen.Function
 	b.i32(0)
 	b.op(0x0f)
 	b.op(0x0b)
+	// Negative import results retain their existing normalized error above.
+	// A returned byte count leaves the host-call boundary successfully.
+	b.i32(0)
+	b.index(0x24, errorGlobal)
 	b.get(4)
 	b.i32(valueBytes)
 	b.op(0x49)
