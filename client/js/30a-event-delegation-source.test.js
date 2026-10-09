@@ -312,11 +312,11 @@ test("delegation source attaches only declared de-duplicated events with legacy 
   assert.deepEqual(Array.from(documentEntries, (entry) => entry.type), ["keydown"]);
 
   const legacyEntries = env.context.__gosx_test_setup_event_delegation(legacy, legacy.id);
-  assert.equal(legacyEntries.filter((entry) => entry.target === legacy).length, 20);
+  assert.equal(legacyEntries.filter((entry) => entry.target === legacy).length, 21);
   const modernEntry = JSON.parse('{"events":[]}');
   const oldNullEntry = JSON.parse('{"events":null}');
   assert.equal(env.context.__gosx_test_setup_event_delegation(explicitNone, explicitNone.id, modernEntry.events).length, 0);
-  assert.equal(env.context.__gosx_test_setup_event_delegation(legacyNull, legacyNull.id, oldNullEntry.events).length, 20);
+  assert.equal(env.context.__gosx_test_setup_event_delegation(legacyNull, legacyNull.id, oldNullEntry.events).length, 21);
 });
 
 test("wheel, dblclick, contextmenu and lostpointercapture delegate with offsets and deltas", () => {
@@ -359,24 +359,4 @@ test("wheel, dblclick, contextmenu and lostpointercapture delegate with offsets 
   // The options object is created in the vm realm; compare properties, not identity.
   assert.equal(wheel[1] && wheel[1].capture, false, "wheel listens in the bubble phase");
   assert.equal(wheel[1] && wheel[1].passive, false, "wheel must be a non-passive listener");
-});
-
-test("legacy manifests attach the non-passive wheel listener only for islands with a wheel handler", () => {
-  const withWheel = new FakeElement("div", null);
-  const without = new FakeElement("div", null);
-  const handle = new FakeElement("div", null);
-  withWheel.id = "with-wheel";
-  without.id = "without-wheel";
-  handle.setAttribute("data-gosx-on-wheel", "zoom");
-  withWheel.appendChild(handle);
-  const env = createContext({ elements: [withWheel, without] });
-  runScript(source, env.context, "30a-tail-event-delegation.js");
-
-  const legacyWith = env.context.__gosx_test_setup_event_delegation(withWheel, withWheel.id);
-  const legacyWithout = env.context.__gosx_test_setup_event_delegation(without, without.id);
-  assert.equal(legacyWith.filter((entry) => entry.type === "wheel").length, 1);
-  assert.equal(legacyWithout.filter((entry) => entry.type === "wheel").length, 0);
-  // A modern manifest that declares wheel always attaches it.
-  const declared = env.context.__gosx_test_setup_event_delegation(without, without.id, [{ eventType: "wheel" }]);
-  assert.equal(declared.filter((entry) => entry.type === "wheel").length, 1);
 });

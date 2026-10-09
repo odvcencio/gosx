@@ -224,13 +224,13 @@
     return Boolean(el && el.hasAttribute && el.hasAttribute(attr));
   }
 
-  function addDelegatedListener(islandRoot, islandID, eventType) {
+  function addDelegatedListener(islandRoot, islandID, eventType, passive) {
     const listener = createDelegatedListener(islandRoot, islandID, eventType);
     const capture = delegatedEventCapture(eventType);
     // passive: false lets a wheel handler call browser.PreventDefault(); it
     // is already the default for non-document targets, so other events are
     // unchanged.
-    islandRoot.addEventListener(eventType, listener, { capture, passive: false });
+    islandRoot.addEventListener(eventType, listener, { capture, passive });
     return { target: islandRoot, type: eventType, listener, capture };
   }
 
@@ -239,23 +239,12 @@
     const declared = delegatedEventSet(eventSlots);
 
     for (const eventType of DELEGATED_EVENTS) {
-      // Legacy manifests declare nothing, and a non-passive wheel listener
-      // slows scrolling, so wheel is attached below only where a handler exists.
-      if (declared ? !declared.has(eventType) : eventType === "wheel") continue;
-      entries.push(addDelegatedListener(islandRoot, islandID, eventType));
-    }
-
-    if (!declared) {
-      // Attach wheel now if a handler exists, otherwise on the first patch that
-      // introduces one, then stop watching.
-      const watch = () => {
-        if (!findGlobalHandler(islandRoot, "wheel")) return;
-        observer.disconnect();
-        entries.push(addDelegatedListener(islandRoot, islandID, "wheel"));
-      };
-      const observer = new MutationObserver(watch);
-      observer.observe(islandRoot, { subtree: true, childList: true, attributeFilter: ["data-gosx-on-wheel"] });
-      watch();
+      if (declared && !declared.has(eventType)) continue;
+      // Legacy manifests declare nothing. Their wheel listener is passive unless
+      // a wheel handler exists now, so scrolling stays fast; a handler added
+      // later still fires, but cannot block scrolling.
+      const passive = !declared && eventType === "wheel" && !findGlobalHandler(islandRoot, "wheel");
+      entries.push(addDelegatedListener(islandRoot, islandID, eventType, passive));
     }
 
     for (const config of GLOBAL_DELEGATED_EVENTS) {
