@@ -13,6 +13,7 @@
   var selector = 'script[type="application/json"][data-gosx-scene-commands]';
   var poseFields = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "animation", "animationTime", "animationLoop"];
   var poseQueues = new Map();
+  const commandQueues = new WeakMap<object, Promise<any>>();
 
   function key(target, options) {
     if (options && typeof options.engineID === "string" && options.engineID.trim()) return options.engineID.trim();
@@ -128,25 +129,94 @@
     if (mount && typeof mount.setAttribute === "function") mount.setAttribute(name, String(value));
   }
 
-  function apply(rec, commands, rev) {
-    setAttr(rec.mount, "data-gosx-scene3d-command-revision", rev);
-    return Promise.resolve(rec.handle.applyCommands(commands)).then(function() {
+  function aborted(opts: any) {
+    if (opts?.signal?.aborted) throw new DOMException("Scene3D operation canceled", "AbortError");
+  }
+
+  function apply(rec, commands, rev, opts) {
+    // Asset fetch latency must not reorder mutations. A failed transaction
+    // rejects its caller while leaving the mounted scene and queue healthy.
+    const previous = commandQueues.get(rec.handle);
+    const run = async () => {
+      aborted(opts);
+      const assets = window.__gosx_scene3d_assets;
+      if (!assets && commands.some((command: any) => command?.data?.props?.verticesURL && !command.data.props.vertices)) {
+        throw new Error("Scene3D geometry resolver is unavailable");
+      }
+      const referenced = commands.some(command => command?.data?.props?.verticesURL && !command.data.props.vertices);
+      const resolved = assets && referenced ? await assets.resolveCommands(commands) : commands;
+      aborted(opts);
+      if (rec.mount && !ready(rec.mount.__gosxScene3DHandle)) throw new Error("Scene3D mount disposed");
+      if (rec.mount && rec.mount.__gosxScene3DHandle !== rec.handle) throw new Error("Scene3D mount replaced");
+      setAttr(rec.mount, "data-gosx-scene3d-command-revision", rev);
+      await rec.handle.applyCommands(resolved);
       setAttr(rec.mount, "data-gosx-scene3d-command-applied-revision", rev);
       return { revision: rev, applied: true };
+    };
+    const operation = previous ? previous.catch(() => {}).then(run) : run();
+    commandQueues.set(rec.handle, operation);
+    operation.then(() => { if (commandQueues.get(rec.handle) === operation) commandQueues.delete(rec.handle); }, () => { if (commandQueues.get(rec.handle) === operation) commandQueues.delete(rec.handle); });
+    return operation;
+  }
+
+  // Commands, frames and presentation share readiness and cancellation.
+  function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void) => unknown) {
+    var id = key(target, opts);
+    var deadline = opts.timeoutMS === 0 ? Infinity : Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
+    return new Promise<any>(function(resolve, reject) {
+      let timer: any = null, settled = false;
+      const finish = (handler: any, value: any) => {
+        if (settled) return;
+        settled = true;
+        if (timer !== null) clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", cancel);
+        handler(value);
+      };
+      const cancel = () => finish(reject, new DOMException("Scene3D operation canceled", "AbortError"));
+      opts.signal?.addEventListener("abort", cancel, { once: true });
+      function poll() {
+        if (opts.signal?.aborted) return cancel();
+        var rec = record(target, opts);
+        const mount = typeof target === "object" && target ? target : (id ? document.getElementById(id) : null);
+        if (mount?.getAttribute?.("data-gosx-scene3d-renderer") === "unsupported" || mount?.querySelector?.("[data-gosx-engine-unsupported]")) {
+          return finish(reject, new Error("Scene3D renderer is unavailable"));
+        }
+        if (rec) {
+          try { return apply(rec, value => finish(resolve, value), error => finish(reject, error)); }
+          catch (error) { return finish(reject, error); }
+        }
+        if (!id) return finish(reject, new Error("Scene3D " + format + " target is not ready and has no stable id"));
+        if (Date.now() >= deadline) return finish(reject, new Error("Scene3D " + format + " target did not become ready: " + id));
+        timer = setTimeout(poll, 16);
+      }
+      poll();
     });
   }
 
-  // Commands, binary frames and presentation share readiness and timeout handling.
-  // Validation and fallback remain in their format-specific callers.
-  function waitForCommandMount(target: any, opts: any, format: string, apply: (rec: any, resolve: (value: any) => void, reject: (error: unknown) => void) => unknown) {
-    var id = key(target, opts);
-    var deadline = Date.now() + Math.max(0, Math.floor(Number(opts.timeoutMS) || 10000));
-    return new Promise<any>(function poll(resolve, reject) {
-      var rec = record(target, opts);
-      if (rec) return apply(rec, resolve, reject);
-      if (!id) return reject(new Error("Scene3D " + format + " target is not ready and has no stable id"));
-      if (Date.now() >= deadline) return reject(new Error("Scene3D " + format + " target did not become ready: " + id));
-      setTimeout(function() { poll(resolve, reject); }, 16);
+  function getCamera(target: any) {
+    const rec = record(target, {});
+    return rec && typeof rec.handle.getCamera === "function" ? rec.handle.getCamera() : null;
+  }
+
+  function whenReady(target: any, opts: any = {}) {
+    return waitForCommandMount(target, { timeoutMS: 0, ...opts }, "readiness", (_rec, resolve) => resolve(true));
+  }
+
+  function setCamera(target: any, camera: any, opts: any = {}) {
+    return waitForCommandMount(target, opts, "camera", (rec, resolve, reject) => {
+      aborted(opts);
+      if (typeof rec.handle.setCamera !== "function") return reject(new Error("Scene3D camera is unavailable"));
+      rec.handle.setCamera(camera);
+      resolve(true);
+    });
+  }
+
+  function setAnimationClock(target: any, clock: any, opts: any = {}) {
+    return waitForCommandMount(target, opts, "animation clock", (rec, resolve, reject) => {
+      aborted(opts);
+      if (typeof rec.handle.setAnimationClock !== "function") return reject(new Error("Scene3D animation clock is unavailable"));
+      rec.handle.setAnimationClock(clock);
+      resolve(true);
     });
   }
 
@@ -155,7 +225,7 @@
     var opts = options || {};
     var rev = ++revision;
     return waitForCommandMount(target, opts, "command", function(rec, resolve, reject) {
-      return apply(rec, commands, rev).then(resolve, reject);
+      return apply(rec, commands, rev, opts).then(resolve, reject);
     });
   }
 
@@ -579,6 +649,7 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
+    getCamera, setCamera, whenReady, setAnimationClock,
     playTimeline: playTimeline,
     burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,

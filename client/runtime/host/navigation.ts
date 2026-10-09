@@ -7,6 +7,24 @@
     return;
   }
 
+  // A cross-document transition can be skipped by redirect, a newer
+  // navigation, differing CSS opt-in, or reduced motion. Its ready promise
+  // rejects even though navigation succeeded; own those lifecycle promises
+  // here so an ordinary browser cancellation is not an unhandled page error.
+  function observeNativeViewTransition(event) {
+    const transition = event && event.viewTransition;
+    if (!transition) return;
+    const settled = function(error) {
+      if (error && (error.name === "AbortError" || error.name === "InvalidStateError")) return;
+      if (typeof console !== "undefined" && typeof console.warn === "function") console.warn("[gosx] native view transition failed", error);
+    };
+    for (const promise of [transition.ready, transition.finished]) {
+      if (promise && typeof promise.catch === "function") promise.catch(settled);
+    }
+  }
+  window.addEventListener("pageswap", observeNativeViewTransition);
+  window.addEventListener("pagereveal", observeNativeViewTransition);
+
   const HEAD_START = "gosx-head-start";
   const HEAD_END = "gosx-head-end";
   const SCRIPT_ROLE = "data-gosx-script";

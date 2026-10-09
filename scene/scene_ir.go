@@ -188,6 +188,8 @@ type MeshInstanceIR struct {
 
 // ObjectIR is the typed compatibility record for one lowered scene object.
 type ObjectIR struct {
+	// VerticesURL references immutable MeshVertices JSON served by GeometryAssets.
+	VerticesURL        string      `json:"verticesURL,omitempty"`
 	Detail             *Detail     `json:"detail,omitempty"`
 	ID                 string      `json:"id"`
 	Kind               string      `json:"kind"`

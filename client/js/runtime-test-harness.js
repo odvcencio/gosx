@@ -3378,7 +3378,7 @@ function loadSceneFramePacingAPI() {
   const start = source.indexOf("function sceneFramePacingMedianOf3");
   assert.notEqual(start, -1, "frame pacing helpers start anchor missing");
   const context = {};
-  vm.runInNewContext(source.slice(start) + `
+  vm.runInNewContext(runtimeTypescript.transpileModule(source.slice(start), { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText + `
     globalThis.framePacingAPI = {
       sceneFramePacingMedianOf3, sceneFramePacingBlendVsync, sceneFramePacingBlendCost,
       sceneFramePacingCandidateK, sceneFramePacingMinKForInterval,
@@ -4416,7 +4416,7 @@ function readBootstrapSrc(...names) {
 
 // readSceneMountSrc joins the Scene3D mount authorities in build order. The
 // old single 20-scene-mount.js was 10_127 lines and 43 percent of the base
-// Scene3D chunk; its mount path plus lazy initial-hydrate boundary is now ten
+// Scene3D chunk; its mount path plus lazy initial-hydrate boundary is split into
 // governed sources. A source assertion about that path must read them all.
 function readSceneMountSrc() {
   return readBootstrapSrc(
@@ -4429,6 +4429,7 @@ function readSceneMountSrc() {
     "../runtime/scene3d/mount-controls.ts",
     "../runtime/scene3d/mount-telemetry.ts",
     "../runtime/scene3d/hydrate-input.ts",
+    "../runtime/scene3d/mount-lifecycle.ts",
     "../runtime/scene3d/mount.ts",
   );
 }

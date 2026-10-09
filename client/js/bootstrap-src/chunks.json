@@ -65,6 +65,7 @@
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/webgpu-selena-textures.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
@@ -92,6 +93,8 @@
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount-input.ts",
+        "../runtime/scene3d/geometry-assets.ts",
+        "../runtime/scene3d/mount-lifecycle.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
@@ -257,6 +260,8 @@
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount-input.ts",
+        "../runtime/scene3d/geometry-assets.ts",
+        "../runtime/scene3d/mount-lifecycle.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"
       ]
@@ -312,6 +317,7 @@
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/webgpu-selena-textures.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",

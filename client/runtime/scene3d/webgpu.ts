@@ -447,7 +447,12 @@
     "    out.uv = in.uv;",
     "    let rawT = (material.modelMatrix * vec4f(in.tangent.xyz, 0.0)).xyz;",
     "    let N = out.normal;",
-    "    let T = normalize(rawT - N * dot(N, rawT));",
+    "    var tangentFrame = rawT - N * dot(N, rawT);",
+    "    if (dot(tangentFrame, tangentFrame) < 1e-12) {",
+    "        let axis = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(N.x) < 0.8);",
+    "        tangentFrame = axis - N * dot(N, axis);",
+    "    }",
+    "    let T = normalize(tangentFrame);",
     "    out.tangent = T;",
     "    out.bitangent = cross(N, T) * in.tangent.w * an.w;",
     "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
@@ -1688,7 +1693,12 @@
     "    out.uv = in.uv;",
     "    let rawT = (model * vec4f(in.tangent.xyz, 0.0)).xyz;",
     "    let N = out.normal;",
-    "    let T = normalize(rawT - N * dot(N, rawT));",
+    "    var tangentFrame = rawT - N * dot(N, rawT);",
+    "    if (dot(tangentFrame, tangentFrame) < 1e-12) {",
+    "        let axis = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(N.x) < 0.8);",
+    "        tangentFrame = axis - N * dot(N, axis);",
+    "    }",
+    "    let T = normalize(tangentFrame);",
     "    out.tangent = T;",
     "    out.bitangent = cross(N, T) * in.tangent.w * an.w;",
     "    out.instanceColor = in.instanceColor;",
@@ -7632,7 +7642,7 @@
     // clock (seconds) fed to selena materials that declare `param time : float`;
     // it is set once per frame before any selena draw, and an explicit
     // customUniforms.time still overrides it.
-    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0 };
+    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: [0, 0, 0, 0] };
 
     // Hoisted uniform staging buffers — reused every frame to eliminate per-frame allocations.
     // Each scratch is consumed synchronously (filled → writeBuffer → done) before any reuse.
@@ -8290,6 +8300,11 @@
       }
     })();
 
+    const selenaTextureContext = {
+      device, textureCache, iblResources, placeholderCubeView, placeholderView,
+      envMapSampler, linearSampler, liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL,
+    };
+
     // Ensure main depth texture matches canvas size.
     function ensureMainDepth(width, height, sampleCount) {
       sampleCount = Math.max(1, Math.floor(sampleCount || 1));
@@ -8449,6 +8464,7 @@
       return record && record.system ? { system: record.system, slot: parsed.slot } : null;
     }
 
+
     function sceneSelenaLiveTextureView(material, texture) {
       var resolved = sceneSelenaWaterSystem(sceneSelenaResourceRef(material, texture));
       if (!resolved || !resolved.system) return null;
@@ -8502,7 +8518,7 @@
     function sceneSelenaTextureURL(material, texture, index) {
       var name = texture && texture.name;
       var value = sceneSelenaMaterialValue(material, name);
-      if (typeof value === "string" && value.trim() && !sceneSelenaParseResourceRef(value)) {
+      if (typeof value === "string" && value.trim() && !value.trim().startsWith("gosx:") && !sceneSelenaParseResourceRef(value)) {
         return value.trim();
       }
       if (material && name && typeof material[name] === "string" && material[name].trim()) {
@@ -8964,23 +8980,7 @@
       }];
       var textures = sceneSelenaTextureDescriptors(resource.layout);
       var cacheViews = [];
-      for (var i = 0; i < textures.length; i++) {
-        var tex = textures[i] || {};
-        var isCube = tex.dimension === "cube";
-        var liveView = sceneSelenaLiveTextureView(material, tex);
-        var url = liveView ? "" : sceneSelenaTextureURL(material, tex, i);
-        // dimension:"cube" (the water surface/surface-below "sky" environment
-        // map) loads through wgpuLoadCubeTexture/placeholderCubeView instead
-        // of the plain-2d wgpuLoadTexture/placeholderView path every other
-        // Selena texture uses; this mirrors the hand-written
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // createWaterRenderBindGroup's cubeMap handling.
-        var record = url ? (isCube ? wgpuLoadCubeTexture(device, url, textureCache) : wgpuLoadTexture(device, url, textureCache)) : null;
-        var view = liveView || (record && record.view ? record.view : (isCube ? placeholderCubeView : placeholderView));
-        var wgsl = tex.wgsl || {};
-        entries.push({ binding: sceneNumber(wgsl.textureBinding, 1 + i * 2), resource: view });
-        entries.push({ binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2), resource: linearSampler });
-        cacheViews.push(view);
-      }
+      sceneWebGPUAppendSelenaTextures(selenaTextureContext, material, textures, entries, cacheViews);
       var storageBuffers = sceneSelenaStorageBufferDescriptors(resource.layout);
       var cacheStorages = [];
       for (var b = 0; b < storageBuffers.length; b++) {
@@ -14510,6 +14510,7 @@
       var env = environment || {};
       var ibl = syncEnvironmentIBL(env);
       var envMap = syncEnvironmentMap(env, ibl.active);
+      selenaFrame.environmentInfo = sceneWebGPUSelenaEnvironmentInfo(ibl, env);
       var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
       var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
