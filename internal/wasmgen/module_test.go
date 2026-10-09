@@ -255,3 +255,94 @@ func TestModuleFramingCountsTowardByteLimit(t *testing.T) {
 		t.Fatal("ignored section framing at module limit")
 	}
 }
+
+func TestSharedSignaturesDoNotConsumeByteLimit(t *testing.T) {
+	for _, tc := range []struct {
+		name               string
+		imports, functions int
+	}{
+		{"functions", 0, 252},
+		{"imports", 252, 0},
+		{"imports and functions", 126, 126},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sharedSignatureModule(tc.imports, tc.functions, 256)
+			binary, err := Encode(m)
+			if err != nil {
+				t.Fatalf("shared signature rejected: %v", err)
+			}
+			_, sections := testSections(t, binary)
+			want := append([]byte{1, 0x60, 0x80, 0x02}, bytes.Repeat([]byte{byte(I32)}, 256)...)
+			want = append(want, 0)
+			if !bytes.Equal(sections[1], want) {
+				t.Fatal("shared signature was not encoded exactly once")
+			}
+			if tc.name == "functions" && len(binary) != 1337 {
+				t.Fatalf("function module size = %d, want 1337", len(binary))
+			}
+		})
+	}
+}
+
+func TestSharedSignatureEncodedSizeBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name                       string
+		imports, functions, params int
+	}{
+		{"functions", 0, 252, 256},
+		{"imports", 252, 0, 256},
+		{"imports and functions", 126, 126, 256},
+		{"many functions", 0, 500, 256},
+		{"small signature", 0, 252, 1},
+		{"empty signature", 0, 252, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := sharedSignatureModule(tc.imports, tc.functions, tc.params)
+			base, err := Encode(m)
+			if err != nil {
+				t.Fatal(err)
+			}
+			// The custom section's length prefix grows from one to three LEB bytes.
+			padding := MaxModuleBytes - len(base) - 2
+			for _, delta := range []int{-1, 0, 1} {
+				m.Metadata = make([]byte, padding+delta)
+				if err := m.check(); err != nil {
+					t.Fatalf("preflight rejected bounded payload at delta %d: %v", delta, err)
+				}
+				binary, err := Encode(m)
+				if delta > 0 {
+					if err == nil || binary != nil {
+						t.Fatalf("accepted oversized encoded module: %d bytes, %v", len(binary), err)
+					}
+				} else if err != nil || len(binary) != MaxModuleBytes+delta {
+					t.Fatalf("encoded size boundary %d: %d bytes, %v", delta, len(binary), err)
+				}
+			}
+		})
+	}
+}
+
+func TestSignatureBytesCountTowardEncodedLimit(t *testing.T) {
+	m := sharedSignatureModule(0, 1, 65536)
+	if err := m.check(); err != nil {
+		t.Fatalf("preflight rejected bounded declarations: %v", err)
+	}
+	if binary, err := Encode(m); err == nil || binary != nil {
+		t.Fatalf("accepted signature exceeding encoded limit: %d bytes, %v", len(binary), err)
+	}
+}
+
+func sharedSignatureModule(imports, functions, params int) Module {
+	sig := Signature{Params: make([]ValueType, params)}
+	for i := range sig.Params {
+		sig.Params[i] = I32
+	}
+	m := Module{}
+	for i := 0; i < imports; i++ {
+		m.Imports = append(m.Imports, Import{Module: "host", Name: "call", Signature: sig})
+	}
+	for i := 0; i < functions; i++ {
+		m.Functions = append(m.Functions, Function{Signature: sig, Body: []byte{0x0b}})
+	}
+	return m
+}

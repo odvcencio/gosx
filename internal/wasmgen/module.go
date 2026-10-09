@@ -82,6 +82,7 @@ func (m Module) check() error {
 		return fmt.Errorf("module table or data limit")
 	}
 	// This lower bound prevents copying oversized instruction/name buffers.
+	// Shared signature bytes are accounted for by the final encoded-size check.
 	size := uint64(len(m.Data)) + uint64(len(m.Metadata))
 	for i, imp := range m.Imports {
 		if !utf8.ValidString(imp.Module) || !utf8.ValidString(imp.Name) {
@@ -90,7 +91,7 @@ func (m Module) check() error {
 		if err := checkSignature(imp.Signature); err != nil {
 			return fmt.Errorf("import %d: %w", i, err)
 		}
-		size += uint64(len(imp.Module)) + uint64(len(imp.Name)) + uint64(len(imp.Signature.Params)) + 4
+		size += uint64(len(imp.Module)) + uint64(len(imp.Name)) + 4
 		if size > MaxModuleBytes {
 			return fmt.Errorf("module byte limit")
 		}
@@ -105,7 +106,8 @@ func (m Module) check() error {
 		if len(fn.Body) == 0 || fn.Body[len(fn.Body)-1] != 0x0b {
 			return fmt.Errorf("function %d: missing final end", i)
 		}
-		size += uint64(len(fn.Body)) + uint64(len(fn.Signature.Params)) + 4
+		// At least one byte each for type index, body size and local-group count.
+		size += uint64(len(fn.Body)) + 3
 		if size > MaxModuleBytes {
 			return fmt.Errorf("module byte limit")
 		}
