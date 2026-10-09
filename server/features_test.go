@@ -78,3 +78,30 @@ func TestPageRuntimeSummaryStaysComparable(t *testing.T) {
 		t.Fatal("PageRuntimeSummary must stay comparable with ==")
 	}
 }
+
+func TestRequireFeatureCollisionNeverReachesTheContract(t *testing.T) {
+	app := New()
+	app.Page("GET /collide", func(ctx *Context) gosx.Node {
+		rt := ctx.Runtime()
+		if err := rt.RequireFeature("a1"); err != nil {
+			t.Error(err)
+		}
+		if err := rt.RequireFeature("a-1"); err == nil {
+			t.Error("a-1 collides with a1 and must be rejected")
+		}
+		if err := rt.RequireFeature("text-layout"); err == nil {
+			t.Error("text-layout collides with the legacy textlayout key and must be rejected")
+		}
+		return ctx.Engine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text("x"))
+	})
+	contract := renderDocumentContract(t, app.Build(), "/collide")
+	if n := strings.Count(contract, `"bootstrapFeatureA1Path"`); n != 1 {
+		t.Fatalf("bootstrapFeatureA1Path appears %d times: %s", n, contract)
+	}
+	if n := strings.Count(contract, `"bootstrapFeatureTextLayoutPath"`); n != 1 {
+		t.Fatalf("bootstrapFeatureTextLayoutPath appears %d times: %s", n, contract)
+	}
+	if !strings.Contains(contract, `"bootstrapFeatureTextLayoutPath":"/gosx/bootstrap-feature-textlayout`) {
+		t.Fatalf("the legacy key must keep the textlayout chunk URL: %s", contract)
+	}
+}

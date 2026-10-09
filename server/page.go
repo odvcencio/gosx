@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/internal/basepath"
 )
 
@@ -270,7 +271,7 @@ func (a documentContractAssets) MarshalJSON() ([]byte, error) {
 	extra := map[string]string{}
 	for name, path := range a.FeaturePaths {
 		if !legacyContractFeatures[name] && strings.TrimSpace(path) != "" {
-			extra[documentFeatureKey(name)] = path
+			extra[hydrate.FeatureContractKey(name)] = path
 		}
 	}
 	if len(extra) == 0 {
@@ -285,28 +286,6 @@ func (a documentContractAssets) MarshalJSON() ([]byte, error) {
 		fields[key] = path
 	}
 	return json.Marshal(fields)
-}
-
-// documentFeatureKey converts a feature name to its contract key. It must
-// match bootstrapFeatureKey in client/js/bootstrap-src/26-runtime-tail.ts.
-func documentFeatureKey(name string) string {
-	var b strings.Builder
-	b.WriteString("bootstrapFeature")
-	upper := true
-	for _, ch := range name {
-		if ch == '-' {
-			upper = true
-			continue
-		}
-		if upper {
-			b.WriteString(strings.ToUpper(string(ch)))
-			upper = false
-			continue
-		}
-		b.WriteRune(ch)
-	}
-	b.WriteString("Path")
-	return b.String()
 }
 
 func documentContractNode(doc *DocumentContext) gosx.Node {

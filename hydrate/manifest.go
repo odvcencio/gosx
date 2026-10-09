@@ -15,8 +15,49 @@ import (
 
 var featureNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
 
+// legacyFeatureKeys are the document-contract keys of the chunks that predate
+// manifest.features. textlayout keeps a capital L in its key.
+var legacyFeatureKeys = map[string]string{
+	"islands":     "bootstrapFeatureIslandsPath",
+	"engines":     "bootstrapFeatureEnginesPath",
+	"hubs":        "bootstrapFeatureHubsPath",
+	"controllers": "bootstrapFeatureControllersPath",
+	"scene3d":     "bootstrapFeatureScene3dPath",
+	"textlayout":  "bootstrapFeatureTextLayoutPath",
+}
+
+// FeatureContractKey returns the flat document-contract key that publishes a
+// feature chunk URL: engine-bridge becomes bootstrapFeatureEngineBridgePath.
+// The legacy chunks keep their original keys. The browser loader derives the
+// same key from the name (bootstrapFeatureKey in 26-runtime-tail.ts).
+func FeatureContractKey(name string) string {
+	if key, ok := legacyFeatureKeys[name]; ok {
+		return key
+	}
+	var b strings.Builder
+	b.WriteString("bootstrapFeature")
+	upper := true
+	for _, ch := range name {
+		if ch == '-' {
+			upper = true
+			continue
+		}
+		if upper && ch >= 'a' && ch <= 'z' {
+			ch -= 'a' - 'A'
+		}
+		upper = false
+		b.WriteRune(ch)
+	}
+	b.WriteString("Path")
+	return b.String()
+}
+
 // RequireFeature records an opt-in runtime chunk by name. Names are trimmed,
-// validated as lowercase dash-separated words, and deduplicated.
+// validated as lowercase dash-separated words, and deduplicated. Dashes are
+// dropped when a name becomes a contract key, so two names can map to one key
+// (a1 and a-1) or a name can map onto a legacy chunk's key (text-layout and
+// textlayout). RequireFeature rejects such a name, naming both features,
+// because the second URL would overwrite the first in the document contract.
 func (m *Manifest) RequireFeature(name string) error {
 	name = strings.TrimSpace(name)
 	if !featureNamePattern.MatchString(name) {
@@ -25,6 +66,19 @@ func (m *Manifest) RequireFeature(name string) error {
 	for _, have := range m.Features {
 		if have == name {
 			return nil
+		}
+	}
+	key := FeatureContractKey(name)
+	if _, legacy := legacyFeatureKeys[name]; !legacy {
+		for other, reserved := range legacyFeatureKeys {
+			if reserved == key {
+				return fmt.Errorf("runtime feature %q collides with legacy feature %q: both publish contract key %s", name, other, key)
+			}
+		}
+	}
+	for _, have := range m.Features {
+		if FeatureContractKey(have) == key {
+			return fmt.Errorf("runtime feature %q collides with feature %q: both publish contract key %s", name, have, key)
 		}
 	}
 	m.Features = append(m.Features, name)
