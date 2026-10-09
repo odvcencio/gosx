@@ -258,11 +258,22 @@ func (p *Participant[P]) sessionMutation(ref SessionRef, reason string, join boo
 		projected.Joins = incrementParticipant(projected.Joins)
 		state = participantPresence{ref: SessionRef{owner: t, token: ref.token}, active: true, entered: now.Monotonic, total: state.total}
 		if projected.Human && ref.permitted && t.opts.Sessions.Enabled {
-			if len(projected.Sessions) == 16 {
-				projected.Sessions = append(projected.Sessions[:0], projected.Sessions[1:]...)
-				projected.LinksTruncated = true
+			link := schema.SessionLink{ID: ref.id, VisitID: ref.visit}
+			found := false
+			for i := range projected.Sessions {
+				if projected.Sessions[i].ID == ref.id {
+					projected.Sessions[i] = link
+					found = true
+					break
+				}
 			}
-			projected.Sessions = append(projected.Sessions, schema.SessionLink{ID: ref.id, VisitID: ref.visit})
+			if !found {
+				if len(projected.Sessions) == 16 {
+					projected.Sessions = append(projected.Sessions[:0], projected.Sessions[1:]...)
+					projected.LinksTruncated = true
+				}
+				projected.Sessions = append(projected.Sessions, link)
+			}
 			client := ref.client
 			projected.Client = &client
 		}

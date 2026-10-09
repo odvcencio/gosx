@@ -115,6 +115,122 @@ func TestParticipantDuplicateSupersededAndStaleRefs(t *testing.T) {
 		t.Fatal("zero ref admitted")
 	}
 }
+
+func TestParticipantConsentedSessionRejoin(t *testing.T) {
+	a, tel := participantFixture(t)
+	tel.opts.Sessions.Enabled = true
+	clock := tel.opts.Clock.(interface{ Advance(time.Duration) error })
+	p, err := a.Participant(ParticipantStart[int]{Seat: 0, Role: "player", Human: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref := participantRef(tel, 1, true)
+	if err = p.Joined(ref); err != nil {
+		t.Fatal(err)
+	}
+	if err = clock.Advance(2 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err = p.Left(ref, "left"); err != nil {
+		t.Fatal(err)
+	}
+	if err = clock.Advance(5 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	ref.client = schema.Client{Platform: "android", Browser: "chrome", Device: "phone"}
+	if err = p.Joined(ref); err != nil {
+		t.Fatal("consented session could not rejoin", err)
+	}
+	if err = clock.Advance(3 * time.Second); err != nil {
+		t.Fatal(err)
+	}
+	if err = p.Left(ref, "left"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := a.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	seat := v.Participants[0]
+	if seat.Joins != 2 || seat.Leaves != 2 || seat.Reconnects != 1 || seat.SeatPresenceMS != 5000 || len(seat.Reasons) != 1 || seat.Reasons[0].Count != 2 {
+		t.Fatal(seat)
+	}
+	if len(seat.Sessions) != 1 || seat.Sessions[0] != (schema.SessionLink{ID: ref.id, VisitID: ref.visit}) || seat.LinksTruncated || seat.Client == nil || *seat.Client != ref.client {
+		t.Fatal("rejoin changed link history or lost the client projection", seat)
+	}
+}
+
+func TestParticipantConsentedSameSessionReplacement(t *testing.T) {
+	for _, history := range []int{1, 16} {
+		t.Run(fmt.Sprintf("history_%d", history), func(t *testing.T) {
+			a, tel := participantFixture(t)
+			tel.opts.Sessions.Enabled = true
+			clock := tel.opts.Clock.(interface{ Advance(time.Duration) error })
+			p, err := a.Participant(ParticipantStart[int]{Seat: 0, Role: "player", Human: true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var one SessionRef
+			for i := 1; i <= history; i++ {
+				one = participantRef(tel, byte(i), true)
+				one.id = fmt.Sprintf("%032x", i)
+				if err = p.Joined(one); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err = clock.Advance(2 * time.Second); err != nil {
+				t.Fatal(err)
+			}
+			two := one
+			two.token[0]++
+			two.visit = fmt.Sprintf("%032x", 100)
+			two.client = schema.Client{Platform: "android", Browser: "chrome", Device: "phone"}
+			if err = p.Joined(two); err != nil {
+				t.Fatal("same-session replacement rejected", err)
+			}
+			revision := a.entity.record.Envelope().Revision
+			if err = p.Joined(two); err != nil {
+				t.Fatal(err)
+			}
+			if err = p.Left(one, "left"); err != nil {
+				t.Fatal(err)
+			}
+			if a.entity.record.Envelope().Revision != revision {
+				t.Fatal("duplicate join or stale leave changed the revision")
+			}
+			if err = clock.Advance(time.Second); err != nil {
+				t.Fatal(err)
+			}
+			v, err := a.Snapshot()
+			if err != nil {
+				t.Fatal(err)
+			}
+			seat := v.Participants[0]
+			if seat.Joins != uint64(history+1) || seat.Leaves != 0 || seat.Reconnects != uint64(history) || seat.SeatPresenceMS != 3000 {
+				t.Fatal(seat)
+			}
+			if len(seat.Sessions) != history || seat.LinksTruncated || seat.Client == nil || *seat.Client != two.client {
+				t.Fatal("replacement evicted history or lost the client projection", seat)
+			}
+			for i, link := range seat.Sessions {
+				if link.ID != fmt.Sprintf("%032x", i+1) {
+					t.Fatal("replacement reordered or duplicated history", seat.Sessions)
+				}
+			}
+			if seat.Sessions[history-1].VisitID != two.visit {
+				t.Fatal("replacement did not update the session link", seat.Sessions)
+			}
+			if err = p.Left(two, "left"); err != nil {
+				t.Fatal(err)
+			}
+			v, err = a.Snapshot()
+			if err != nil || v.Participants[0].Leaves != 1 || v.Participants[0].SeatPresenceMS != 3000 {
+				t.Fatal("replacement did not become the active connection", v, err)
+			}
+		})
+	}
+}
+
 func TestParticipantConsentLinksAndHistoryBound(t *testing.T) {
 	a, tel := participantFixture(t)
 	tel.opts.Sessions.Enabled = true
