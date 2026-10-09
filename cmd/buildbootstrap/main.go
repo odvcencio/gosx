@@ -1388,6 +1388,7 @@ func run() error {
 	dirFlag := flag.String("dir", "", "path to client/js (default: auto-detect from working directory)")
 	check := flag.Bool("check", false, "verify committed bundles are up to date; exit 1 when stale")
 	closureOnly := flag.Bool("closure", false, "run only the chunk closure check and exit")
+	perfGraphOut := flag.String("perf-graph", "", "write a private whole-asset performance graph")
 	minifier := flag.String("minifier", "esbuild", "JS minifier backend: esbuild (default, byte-stable) or tdewolff (A/B comparison)")
 	flag.Parse()
 
@@ -1403,6 +1404,9 @@ func run() error {
 		return err
 	}
 	if *closureOnly {
+		if *perfGraphOut != "" {
+			return perfGraphError("invalid-input")
+		}
 		return nil
 	}
 	debugSourcemaps := os.Getenv("GOSX_BUNDLE_DEBUG") == "1"
@@ -1452,7 +1456,7 @@ func run() error {
 		if len(stale) > 0 {
 			return fmt.Errorf("bootstrap runtime assets are out of date (%s). Run `go run ./cmd/buildbootstrap`", strings.Join(stale, ", "))
 		}
-		return nil
+		return writePerfGraph(dir, *perfGraphOut)
 	}
 
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
@@ -1487,7 +1491,7 @@ func run() error {
 			return err
 		}
 	}
-	return nil
+	return writePerfGraph(dir, *perfGraphOut)
 }
 
 func main() {

@@ -12,33 +12,46 @@ import (
 
 func decodeInput(data []byte, definition string, out any) (resultErr error) {
 	defer func() { resultErr = inputReference(resultErr, referenceLabel(definition), "") }()
+	value, err := decodeInputValue(data, definition)
+	if err != nil {
+		return err
+	}
+	return decodeValidatedInput(value, out)
+}
+
+// decodeInputValue preserves JSON numbers for domain checks before conversion.
+func decodeInputValue(data []byte, definition string) (any, error) {
 	if len(data) > maxInputBytes || !utf8.Valid(data) {
-		return invalidInput("")
+		return nil, invalidInput("")
 	}
 	d := json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	if err := scanJSON(d, 0, inputDefinitions[definition], ""); err != nil {
-		return err
+		return nil, err
 	}
 	if _, err := d.Token(); err != io.EOF {
-		return invalidInput("")
+		return nil, invalidInput("")
 	}
 	d = json.NewDecoder(bytes.NewReader(data))
 	d.UseNumber()
 	var value any
 	if err := d.Decode(&value); err != nil {
-		return invalidInput("")
+		return nil, invalidInput("")
 	}
 	if err := validateInput(value, inputDefinitions[definition]); err != nil {
-		return err
+		return nil, err
 	}
+	return value, nil
+}
+
+func decodeValidatedInput(value any, out any) error {
 	// Typed decoding consumes the validated value, never a second object merge
 	// from the original input. The token scan also rejects duplicate keys.
 	validated, err := json.Marshal(value)
 	if err != nil {
 		return invalidInput("")
 	}
-	d = json.NewDecoder(bytes.NewReader(validated))
+	d := json.NewDecoder(bytes.NewReader(validated))
 	d.DisallowUnknownFields()
 	if err := d.Decode(out); err != nil {
 		return invalidInput("")
@@ -113,7 +126,9 @@ func validateNumber(value json.Number, s map[string]any) error {
 	fail := invalidInput("")
 	if s["type"] == "integer" {
 		if _, err := value.Int64(); err != nil {
-			return fail
+			if _, err := strconv.ParseUint(string(value), 10, 64); err != nil {
+				return fail
+			}
 		}
 	}
 	n, err := value.Float64()

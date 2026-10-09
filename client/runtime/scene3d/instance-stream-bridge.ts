@@ -66,7 +66,7 @@
   // immutable long-lived cache a hashed URL gets.
   function instanceStreamURL() {
     try {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]');
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]') || document.querySelector('script[data-gosx-script="bootstrap"]');
       if (tag && tag.dataset && tag.dataset.gosxScene3dInstanceStreamUrl) return tag.dataset.gosxScene3dInstanceStreamUrl;
     } catch (_e) {}
     return "/gosx/bootstrap-feature-scene3d-instance-stream.js";

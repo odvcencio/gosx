@@ -218,7 +218,7 @@ func TestRewriteStaticExportHTMLRewritesRootAssetsAndImageOptimizerURLs(t *testi
 	}
 }
 
-func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing.T) {
+func TestExportHTMLCapabilitiesReadRuntimeManifestAndEnhancements(t *testing.T) {
 	input := `<!DOCTYPE html><html><head>
 <script data-gosx-navigation="true"></script>
 <script defer data-gosx-script="wasm-exec" src="/gosx/wasm_exec.js"></script>
@@ -240,7 +240,10 @@ func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing
 <div data-gosx-engine="GoSXVideo" data-gosx-engine-kind="video"></div>
 </body></html>`
 
-	caps := routeCapabilitiesFromHTML(input)
+	caps, err := routeCapabilitiesFromHTML(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !caps.Navigation || !caps.Bootstrap || caps.BootstrapMode != "full" || !caps.WASM {
 		t.Fatalf("unexpected runtime capabilities: %#v", caps)
 	}
@@ -252,8 +255,11 @@ func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing
 	}
 }
 
-func TestRouteCapabilitiesFromStaticHTMLStayZeroCost(t *testing.T) {
-	caps := routeCapabilitiesFromHTML(`<!DOCTYPE html><html><body><main>Static</main></body></html>`)
+func TestExportStaticCapabilitiesStayZeroCost(t *testing.T) {
+	caps, err := routeCapabilitiesFromHTML(`<!DOCTYPE html><html><body><main>Static</main></body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if caps.Navigation || caps.Bootstrap || caps.WASM || caps.Islands != 0 || caps.Engines != 0 || caps.Hubs != 0 || caps.Scene3D || caps.Video || caps.Motion {
 		t.Fatalf("expected zero-cost static capabilities, got %#v", caps)
 	}
@@ -397,5 +403,22 @@ func tidyModule(t *testing.T, dir string) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("go mod tidy: %v", err)
+	}
+}
+
+func TestExportComputeCapabilitiesRetainRuntime(t *testing.T) {
+	input := "<script id=\"gosx-manifest\" type=\"application/json\">{\"computeIslands\":[{}],\"controllers\":[{}],\"runtime\":{\"path\":\"core.wasm\"}}</script>"
+	caps, err := routeCapabilitiesFromHTML(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps.ComputeIslands != 1 || caps.Controllers != 1 || caps.Engines != 0 || !caps.WASM || caps.Runtime != "shared" {
+		t.Fatal("export dropped compute requirements", caps)
+	}
+}
+
+func TestExportCapabilitiesRejectMalformedManifest(t *testing.T) {
+	if _, err := routeCapabilitiesFromHTML("<script id=gosx-manifest type=application/json>{</script>"); err == nil {
+		t.Fatal("invalid manifest became a static export")
 	}
 }

@@ -180,6 +180,12 @@ func validateInputAt(value, raw any, pointer string) error {
 				return fail()
 			}
 		}
+		if ref == "#/$defs/AssetURL" {
+			path, ok := value.(string)
+			if !ok || len(path) > 240 || !strings.HasPrefix(path, "/") || path != "/" && !safePath(strings.TrimSuffix(strings.TrimPrefix(path, "/"), "/")) {
+				return fail()
+			}
+		}
 		return validateInputAt(value, inputDefinitions[strings.TrimPrefix(ref, "#/$defs/")], pointer)
 	}
 	if choices, ok := s["oneOf"].([]any); ok {
@@ -216,6 +222,10 @@ func validateInputAt(value, raw any, pointer string) error {
 		kind = "integer"
 		if _, err := value.(json.Number).Int64(); err != nil {
 			kind = "number"
+			// Public sampling seeds use the full uint64 domain.
+			if _, err := strconv.ParseUint(string(value.(json.Number)), 10, 64); err == nil {
+				kind = "integer"
+			}
 		}
 	case []any:
 		kind = "array"

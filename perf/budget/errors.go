@@ -28,10 +28,20 @@ func referenceLabel(definition string) string {
 		return "coefficients"
 	case "Toolchain":
 		return "toolchain"
-	case "FixtureCatalog":
+	case "FixtureCatalog", "FixtureManifest", "AssetUse":
 		return "fixtures"
 	case "Budget":
 		return "budget"
+	case "Report":
+		return "report"
+	case "SeriesPoint":
+		return "series"
+	case "PairReport":
+		return "pair"
+	case "FieldSnapshot":
+		return "field"
+	case "RunStatus":
+		return "run-status"
 	default:
 		return "input"
 	}

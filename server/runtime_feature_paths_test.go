@@ -71,7 +71,7 @@ func TestDocumentContractNamesEveryFeatureTheLoaderReads(t *testing.T) {
 		body = body[:end]
 	}
 	// The normalizer copies keys by pattern; each key must match it.
-	copyPattern := regexp.MustCompile(`/\^bootstrapFeature/`)
+	copyPattern := regexp.MustCompile(`/\^bootstrap\(\?:Feature\|Controller\)/`)
 	var dropped []string
 	for key := range read {
 		if !strings.Contains(body, key+":") && !(copyPattern.MatchString(body) && strings.HasPrefix(key, "bootstrapFeature")) {

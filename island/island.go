@@ -104,6 +104,8 @@ type Renderer struct {
 	islandRuntime                  hydrate.RuntimeRef
 	runtimeVariants                map[string]hydrate.RuntimeRef
 	runtimeAssets                  buildmanifest.RuntimeAssets
+	perfAssets                     *buildmanifest.PerfAssetUses
+	perfAssetBaseURL               string
 	// featureChunkPaths maps an opt-in feature name (hydrate.Manifest.Features)
 	// to its hashed public chunk URL, filled by ApplyBuildManifest.
 	featureChunkPaths map[string]string
@@ -907,6 +909,11 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	if err := manifest.ValidateIslandAssets(); err != nil {
 		return fmt.Errorf("apply build manifest: %w", err)
 	}
+	if err := manifest.ValidatePerfAssetUses(); err != nil {
+		return err
+	}
+	r.perfAssets = clonePerfAssetUses(manifest.PerfAssetUses)
+	r.perfAssetBaseURL = assetBaseURL
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
 	r.bootstrapRuntimeConfigured = runtime.BootstrapRuntime != ""
@@ -1323,7 +1330,11 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		b.WriteByte('\n')
 	}
 	bootstrapPath := r.selectedBootstrapPath()
-	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
+	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s"`, plan.Mode))
+	if r.hasSceneEngines() && bootstrapPath == r.bootstrapPath {
+		r.writeScene3DChunkURLs(&b)
+	}
+	b.WriteString(fmt.Sprintf(` src="%s"%s></script>`, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
 		// The strict hydrate decoder is not part of the initial Scene3D route.
 		// Emit it only for a shared-runtime Scene3D program, ordered before the
@@ -1334,93 +1345,7 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		}
 		b.WriteByte('\n')
 		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)
-		// Embed hashed URLs for lazy sub-feature chunks as data-* attributes
-		// so the main scene3d bundle can use immutable hashed URLs at first
-		// dynamic-load time instead of the unhashed compat URL. Lets the
-		// browser cache the sub-feature forever, keyed on its content hash.
-		if gltfPath := r.bootstrapFeatureScene3dGLTFPath; gltfPath != "" {
-			b.WriteString(` data-gosx-scene3d-gltf-url="`)
-			b.WriteString(html.EscapeString(gltfPath))
-			b.WriteByte('"')
-		}
-		if commandPath := r.bootstrapFeatureScene3dCommandPath; commandPath != "" {
-			b.WriteString(` data-gosx-scene3d-command-url="`)
-			b.WriteString(html.EscapeString(commandPath))
-			b.WriteByte('"')
-		}
-		// Unconditional, exactly like the command URL above: no scene-content
-		// signal exists to gate this on (unlike compute/decompress below),
-		// since handle.applyInstanceStream is a page-authored/engine call the
-		// renderer cannot see coming. instance-stream-bridge.ts (base scene3d
-		// bundle) reads this attribute to lazy-load the chunk on first use.
-		if instanceStreamPath := r.bootstrapFeatureScene3dInstanceStreamPath; instanceStreamPath != "" {
-			b.WriteString(` data-gosx-scene3d-instance-stream-url="`)
-			b.WriteString(html.EscapeString(instanceStreamPath))
-			b.WriteByte('"')
-		}
-		if burstPath := r.bootstrapFeatureScene3dParticleBurstPath; burstPath != "" && r.scene3DNeedsParticleBurstChunk() {
-			b.WriteString(` data-gosx-scene3d-particle-burst-url="`)
-			b.WriteString(html.EscapeString(burstPath))
-			b.WriteByte('"')
-		}
-		if timelinePath := r.bootstrapFeatureScene3dTimelinePath; timelinePath != "" && r.scene3DNeedsTimelineChunk() {
-			b.WriteString(` data-gosx-scene3d-timeline-url="`)
-			b.WriteString(html.EscapeString(timelinePath))
-			b.WriteByte('"')
-		}
-		if animPath := r.bootstrapFeatureScene3dAnimationPath; animPath != "" {
-			b.WriteString(` data-gosx-scene3d-animation-url="`)
-			b.WriteString(html.EscapeString(animPath))
-			b.WriteByte('"')
-		}
-		if webgpuPath := r.bootstrapFeatureScene3dWebGPUPath; webgpuPath != "" {
-			b.WriteString(` data-gosx-scene3d-webgpu-url="`)
-			b.WriteString(html.EscapeString(webgpuPath))
-			b.WriteByte('"')
-		}
-		if webglPath := r.bootstrapFeatureScene3dWebGLPath; webglPath != "" {
-			b.WriteString(` data-gosx-scene3d-webgl-url="`)
-			b.WriteString(html.EscapeString(webglPath))
-			b.WriteByte('"')
-		}
-		// The compute and decompress chunks are gated on the scene itself, not
-		// on the browser. Advertise a URL only when a scene on this page reaches
-		// the chunk. The runtime refuses to guess a path, so a scene with one
-		// cube and one directional light cannot fetch either chunk, and the
-		// bytes stay on the server.
-		needsCompute, needsDecompress := r.scene3DChunkNeeds()
-		if walkPath := r.bootstrapFeatureScene3dWalkPath; r.scene3DNeedsWalkChunk() && walkPath != "" {
-			b.WriteString(` data-gosx-scene3d-walk-url="`)
-			b.WriteString(html.EscapeString(walkPath))
-			b.WriteByte('"')
-		}
-		if zoomPath := r.bootstrapFeatureScene3dZoomPath; r.scene3DNeedsZoomChunk() && zoomPath != "" {
-			b.WriteString(` data-gosx-scene3d-zoom-url="`)
-			b.WriteString(html.EscapeString(zoomPath))
-			b.WriteByte('"')
-		}
-		if r.scene3DNeedsVesselChunk() {
-			for _, optional := range []struct{ name, path string }{
-				{"vessel", r.bootstrapFeatureScene3dVesselPath},
-				{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath},
-			} {
-				if optional.path != "" {
-					b.WriteString(` data-gosx-scene3d-` + optional.name + `-url="`)
-					b.WriteString(html.EscapeString(optional.path))
-					b.WriteByte('"')
-				}
-			}
-		}
-		if computePath := r.bootstrapFeatureScene3dComputePath; needsCompute && computePath != "" {
-			b.WriteString(` data-gosx-scene3d-compute-url="`)
-			b.WriteString(html.EscapeString(computePath))
-			b.WriteByte('"')
-		}
-		if decompressPath := r.bootstrapFeatureScene3dDecompressPath; needsDecompress && decompressPath != "" {
-			b.WriteString(` data-gosx-scene3d-decompress-url="`)
-			b.WriteString(html.EscapeString(decompressPath))
-			b.WriteByte('"')
-		}
+		r.writeScene3DChunkURLs(&b)
 		b.WriteString(` src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString(`"`)
@@ -2198,6 +2123,38 @@ func (r *Renderer) PreloadHints() gosx.Node {
 	return gosx.RawHTML(b.String())
 }
 
+// writeScene3DChunkURLs advertises the same lazy URLs for split and embedded scenes.
+func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
+	needsCompute, needsDecompress := r.scene3DChunkNeeds()
+	// Command, streaming and animation are demand-loaded by public calls.
+	// Content-gated chunks receive a URL only when a scene opts into them.
+	for _, chunk := range []struct {
+		name, path string
+		enabled    bool
+	}{
+		{"gltf", r.bootstrapFeatureScene3dGLTFPath, true},
+		{"command", r.bootstrapFeatureScene3dCommandPath, true},
+		{"instance-stream", r.bootstrapFeatureScene3dInstanceStreamPath, true},
+		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
+		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
+		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
+		{"webgpu", r.bootstrapFeatureScene3dWebGPUPath, true},
+		{"webgl", r.bootstrapFeatureScene3dWebGLPath, true},
+		{"walk", r.bootstrapFeatureScene3dWalkPath, r.scene3DNeedsWalkChunk()},
+		{"zoom", r.bootstrapFeatureScene3dZoomPath, r.scene3DNeedsZoomChunk()},
+		{"vessel", r.bootstrapFeatureScene3dVesselPath, r.scene3DNeedsVesselChunk()},
+		{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath, r.scene3DNeedsVesselChunk()},
+		{"compute", r.bootstrapFeatureScene3dComputePath, needsCompute},
+		{"decompress", r.bootstrapFeatureScene3dDecompressPath, needsDecompress},
+	} {
+		if chunk.enabled && chunk.path != "" {
+			b.WriteString(` data-gosx-scene3d-` + chunk.name + `-url="`)
+			b.WriteString(html.EscapeString(chunk.path))
+			b.WriteByte('"')
+		}
+	}
+}
+
 // bootstrapScriptSrcs returns the set of URLs BootstrapScript() emits as
 // same-document <script src="..."> tags. Used by PreloadHints() to avoid
 // preloading a script the initial HTML already declares — see the comment
@@ -2313,13 +2270,16 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		// Older asset configurations can keep using the compatibility bootstrap.
 		selective = selective && r.bootstrapRuntimeConfigured && strings.TrimSpace(r.bootstrapRuntimePath) != ""
 	}
+	// The legacy monolith's hub and video factories require its WASM bridge.
+	monolithBridge := r.bootstrapRuntimePath == "" && mode == "full" && (hubs > 0 || r.hasVideoEngines())
+
 	return clientRuntimePlan{
 		Bootstrap:          bootstrap,
 		Mode:               mode,
 		Manifest:           bootstrap && mode != "lite",
 		Selective:          selective,
-		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
-		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
+		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
+		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
 		StandardGoWASMExec: r.hasGoWASMEngines(),
 		Patch:              islands > 0,
 		PreviewRelay:       previewRelay,
@@ -2529,7 +2489,10 @@ func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {
 			required |= runtimewasm.FeatureScene3D
 		}
 	}
-	if len(r.manifest.Hubs) > 0 && required != 0 {
+	if r.bootstrapRuntimePath == "" && r.hasVideoEngines() {
+		required |= runtimewasm.FeatureEngine
+	}
+	if len(r.manifest.Hubs) > 0 {
 		required |= runtimewasm.FeatureCollab
 	}
 	if required == 0 {

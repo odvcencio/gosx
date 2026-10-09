@@ -108,6 +108,10 @@ test-unit:
 test-budget-contract:
 	GOWORK=off $(GO) test ./perf/budget
 
+.PHONY: test-budget-public
+test-budget-public:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Public|ReportSchema)'
+
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 
@@ -504,3 +508,16 @@ ci: fmt-check verify-danmuji test test-telemetry test-race test-fuzz-smoke test-
 .PHONY: test-assetmeasure
 test-assetmeasure:
 	GOWORK=off go test ./internal/assetmeasure ./cmd/gosx -run 'Test(AssetMeasure|Sidecar|Size)'
+
+.PHONY: test-pagecaps
+test-pagecaps:
+	GOWORK=off go test ./internal/pagecaps ./cmd/gosx -run 'Test(PageCaps|Classify|Export.*Capabilities)'
+
+.PHONY: test-perf-manifest
+test-perf-manifest:
+	GOWORK=off go test ./buildmanifest -run TestPerfAsset
+
+.PHONY: test-perf-graph
+test-perf-graph:
+	GOWORK=off go test ./cmd/gosx ./buildmanifest ./island -run 'TestPerf(Graph|Asset)'
+	cd cmd/buildbootstrap && GOWORK=off go test -run TestPerfGraph

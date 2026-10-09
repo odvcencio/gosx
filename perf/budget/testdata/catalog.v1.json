@@ -31,12 +31,41 @@
         "engines": 0,
         "wasmModules": 1
       },
-      "criticalAssetIDs": [],
+      "criticalAssetIDs": [
+        "app/fixture/html"
+      ],
       "inputSequenceID": "counter-input",
       "gpuEstimate": null
     }
   ],
-  "assetRules": [],
+  "assetRules": [
+    {
+      "id": "app/fixture/html",
+      "owner": "app",
+      "kind": "html",
+      "phase": "critical",
+      "condition": "always",
+      "dependencies": []
+    },
+    {
+      "id": "framework/island-core",
+      "owner": "framework",
+      "kind": "wasm",
+      "phase": "startup",
+      "condition": "always",
+      "dependencies": []
+    },
+    {
+      "id": "app/fixture/counter",
+      "owner": "app",
+      "kind": "program",
+      "phase": "startup",
+      "condition": "always",
+      "dependencies": [
+        "framework/island-core"
+      ]
+    }
+  ],
   "interactionContract": {
     "file": "perf/budget/testdata/interaction.v1.json",
     "sha256": "7bf7bc4b7c103d1a5ac8b83ab18b18afc48f2f20321cc82148422b2e380bbc49"

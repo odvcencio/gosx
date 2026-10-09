@@ -18,10 +18,10 @@ import (
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
-	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/internal/bundlepolicy"
 	"m31labs.dev/gosx/internal/localapp"
+	"m31labs.dev/gosx/internal/pagecaps"
 	"m31labs.dev/gosx/route"
 )
 
@@ -41,16 +41,19 @@ type exportRoute struct {
 }
 
 type routeCapabilities struct {
-	Navigation    bool   `json:"navigation"`
-	Bootstrap     bool   `json:"bootstrap"`
-	BootstrapMode string `json:"bootstrapMode,omitempty"`
-	WASM          bool   `json:"wasm"`
-	Islands       int    `json:"islands,omitempty"`
-	Engines       int    `json:"engines,omitempty"`
-	Hubs          int    `json:"hubs,omitempty"`
-	Scene3D       bool   `json:"scene3d,omitempty"`
-	Video         bool   `json:"video,omitempty"`
-	Motion        bool   `json:"motion,omitempty"`
+	ComputeIslands int    `json:"computeIslands,omitempty"`
+	Controllers    int    `json:"controllers,omitempty"`
+	Runtime        string `json:"runtime,omitempty"`
+	Navigation     bool   `json:"navigation"`
+	Bootstrap      bool   `json:"bootstrap"`
+	BootstrapMode  string `json:"bootstrapMode,omitempty"`
+	WASM           bool   `json:"wasm"`
+	Islands        int    `json:"islands,omitempty"`
+	Engines        int    `json:"engines,omitempty"`
+	Hubs           int    `json:"hubs,omitempty"`
+	Scene3D        bool   `json:"scene3d,omitempty"`
+	Video          bool   `json:"video,omitempty"`
+	Motion         bool   `json:"motion,omitempty"`
 }
 
 type staticExportOptions struct {
@@ -198,7 +201,10 @@ func prerenderStaticBundle(opts staticExportOptions) (exportManifest, error) {
 		if headers.Get("X-GoSX-Prerender") == "load" && entry.RevalidateSeconds == 0 {
 			fmt.Fprintln(os.Stderr, prerenderLoadWarning(entry.Path))
 		}
-		entry.Capabilities = routeCapabilitiesFromHTML(pageHTML)
+		entry.Capabilities, err = routeCapabilitiesFromHTML(pageHTML)
+		if err != nil {
+			return exportManifest{}, fmt.Errorf("export capabilities: %w", err)
+		}
 		if err := stageExportFileCSS(client, baseURL, outputDir, pageHTML, fileCSSAssets, mount); err != nil {
 			return exportManifest{}, fmt.Errorf("export %s stylesheets: %w", entry.Path, err)
 		}
@@ -344,108 +350,24 @@ func sortedExportRuntimeAssetRefs(refs map[string]struct{}) []string {
 	return out
 }
 
-func routeCapabilitiesFromHTML(input string) routeCapabilities {
-	root, err := html.Parse(strings.NewReader(input))
+func routeCapabilitiesFromHTML(input string) (routeCapabilities, error) {
+	c, err := pagecaps.FromHTML([]byte(input))
 	if err != nil {
-		return routeCapabilities{}
+		return routeCapabilities{}, err
 	}
-	caps := routeCapabilities{}
-	var walk func(*html.Node)
-	walk = func(node *html.Node) {
-		if node.Type == html.ElementNode {
-			applyRouteCapabilityElement(&caps, node)
-		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
-		}
+	mode := c.BootstrapMode
+	if mode == "none" {
+		mode = ""
 	}
-	walk(root)
-	return caps
-}
-
-func applyRouteCapabilityElement(caps *routeCapabilities, node *html.Node) {
-	attrs := nodeAttrMap(node.Attr)
-	if _, ok := attrs["data-gosx-navigation"]; ok {
-		caps.Navigation = true
+	runtime := c.Runtime
+	if runtime == "none" {
+		runtime = ""
 	}
-	if _, ok := attrs["data-gosx-motion"]; ok {
-		caps.Motion = true
-	}
-	if value := attrs["data-gosx-enhance"]; strings.EqualFold(value, "motion") {
-		caps.Motion = true
-	}
-	if engineName := strings.TrimSpace(attrs["data-gosx-engine"]); engineName != "" {
-		if strings.EqualFold(engineName, "GoSXScene3D") {
-			caps.Scene3D = true
-		}
-	}
-	if _, ok := attrs["data-gosx-scene3d"]; ok {
-		caps.Scene3D = true
-	}
-	if strings.EqualFold(strings.TrimSpace(attrs["data-gosx-engine-kind"]), "video") {
-		caps.Video = true
-	}
-	if script := strings.TrimSpace(attrs["data-gosx-script"]); script != "" {
-		caps.Bootstrap = caps.Bootstrap || script == "bootstrap"
-		switch script {
-		case "bootstrap":
-			caps.BootstrapMode = strings.TrimSpace(attrs["data-gosx-bootstrap-mode"])
-		case "wasm-exec":
-			caps.WASM = true
-		case "feature-scene3d":
-			caps.Scene3D = true
-		}
-	}
-	if node.Data == "script" && attrs["id"] == "gosx-manifest" {
-		applyRouteCapabilityManifest(caps, nodeText(node))
-	}
-}
-
-func applyRouteCapabilityManifest(caps *routeCapabilities, raw string) {
-	var manifest hydrate.Manifest
-	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
-		return
-	}
-	caps.Islands = len(manifest.Islands)
-	caps.Engines = max(caps.Engines, len(manifest.Engines))
-	caps.Hubs = len(manifest.Hubs)
-	if strings.TrimSpace(manifest.Runtime.Path) != "" {
-		caps.WASM = true
-	}
-	if len(manifest.Islands) > 0 || len(manifest.Engines) > 0 || len(manifest.Hubs) > 0 {
-		caps.Bootstrap = true
-	}
-	for _, entry := range manifest.Engines {
-		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
-			caps.Scene3D = true
-		}
-		if strings.EqualFold(strings.TrimSpace(entry.Kind), "video") {
-			caps.Video = true
-		}
-	}
-}
-
-func nodeAttrMap(attrs []html.Attribute) map[string]string {
-	out := make(map[string]string, len(attrs))
-	for _, attr := range attrs {
-		out[strings.ToLower(strings.TrimSpace(attr.Key))] = attr.Val
-	}
-	return out
-}
-
-func nodeText(node *html.Node) string {
-	var b strings.Builder
-	var walk func(*html.Node)
-	walk = func(n *html.Node) {
-		if n.Type == html.TextNode {
-			b.WriteString(n.Data)
-		}
-		for child := n.FirstChild; child != nil; child = child.NextSibling {
-			walk(child)
-		}
-	}
-	walk(node)
-	return b.String()
+	return routeCapabilities{
+		Navigation: c.Navigation, Bootstrap: c.Bootstrap, BootstrapMode: mode, WASM: c.WASM,
+		Islands: c.Islands, ComputeIslands: c.ComputeIslands, Engines: c.Engines, Hubs: c.Hubs,
+		Controllers: c.Controllers, Scene3D: c.Scene3D, Video: c.Video, Motion: c.Motion, Runtime: runtime,
+	}, nil
 }
 
 func writeExportManifest(path string, manifest exportManifest) error {

@@ -321,6 +321,9 @@ jobs:
       - name: JavaScript runtime contract tests
         run: make test-js
 
+      - name: Performance asset graph tests
+        run: make test-perf-graph
+
   # wasm-tests: Go + TinyGo. Also needs Node, because `go test -exec
   # go_js_wasm_exec` (used by test-wasm / test-wasm-islands) shells out to
   # `node` under the hood (see $(go env GOROOT)/lib/wasm/go_js_wasm_exec).

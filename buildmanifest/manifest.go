@@ -14,10 +14,11 @@ import (
 
 // Manifest describes all build outputs for deployment.
 type Manifest struct {
-	Runtime     RuntimeAssets       `json:"runtime"`
-	Islands     []IslandAsset       `json:"islands"`
-	CSS         []CSSAsset          `json:"css"`
-	SceneAssets *SceneAssetManifest `json:"sceneAssets,omitempty"`
+	Runtime       RuntimeAssets       `json:"runtime"`
+	Islands       []IslandAsset       `json:"islands"`
+	CSS           []CSSAsset          `json:"css"`
+	SceneAssets   *SceneAssetManifest `json:"sceneAssets,omitempty"`
+	PerfAssetUses *PerfAssetUses      `json:"perfAssetUses,omitempty"`
 	// Images holds the build-time responsive/format variants gosx build's
 	// imagepipe stage generated for every source image under a project's
 	// public/ directory (issue #200). It is additive: a manifest written
@@ -38,8 +39,11 @@ type Manifest struct {
 }
 
 type RuntimeAssets struct {
-	WASM        HashedAsset `json:"wasm"`
-	WASMIslands HashedAsset `json:"wasmIslands,omitempty"`
+	// WASMOptimization records successful producer operations bound to their
+	// exact input/output bodies. Absence means optimizer evidence is unknown.
+	WASMOptimization map[string]WASMOptimization `json:"wasmOptimization,omitempty"`
+	WASM             HashedAsset                 `json:"wasm"`
+	WASMIslands      HashedAsset                 `json:"wasmIslands,omitempty"`
 	// WASMVariants contains the capability-linked artifacts. WASM remains the
 	// full-runtime compatibility field so older servers and source builds keep
 	// working while new renderers select the smallest compatible entry.
@@ -243,6 +247,9 @@ func Load(path string) (*Manifest, error) {
 	}
 	if err := manifest.ValidateIslandAssets(); err != nil {
 		return nil, fmt.Errorf("validate build manifest %s: %w", path, err)
+	}
+	if err := manifest.ValidatePerfAssetUses(); err != nil {
+		return nil, err
 	}
 	return &manifest, nil
 }
