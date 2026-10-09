@@ -113,11 +113,12 @@
       // fader's inner track must not change the coordinate space. A missing
       // clientX/clientY gives NaN, which copyNumberField drops.
       const rect = handlerElement.getBoundingClientRect();
-      copyNumberFields(data, {
+      const fields = {
         offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
         elementWidth: rect.width, elementHeight: rect.height,
         deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
-      });
+      };
+      for (const name in fields) copyNumberField(data, fields, name, name);
     }
     if (e.type === "resize") {
       if (typeof window.innerWidth === "number" && window.innerWidth !== 0) data.width = window.innerWidth;
@@ -139,11 +140,6 @@
     }
 
     return data;
-  }
-
-  // Copies every finite, non-zero numeric property of source under its own name.
-  function copyNumberFields(data, source) {
-    for (const name of Object.keys(source)) copyNumberField(data, source, name, name);
   }
 
   function copyNumberField(data, event, sourceName, targetName, preserveZero) {
@@ -236,7 +232,7 @@
       // Legacy manifests declare nothing, so a non-passive wheel listener
       // would slow scrolling on every island. Attach it only where a handler
       // exists.
-      if (declared ? !declared.has(eventType) : eventType === "wheel" && !islandRoot.querySelector("[data-gosx-on-wheel]")) continue;
+      if (declared ? !declared.has(eventType) : eventType === "wheel" && !findGlobalHandler(islandRoot, "wheel")) continue;
       const listener = createDelegatedListener(islandRoot, islandID, eventType);
       const useCapture = delegatedEventCapture(eventType);
       // passive: false lets a wheel handler call browser.PreventDefault(); it
