@@ -499,12 +499,13 @@ func TestPerfAssetRendererStaticAndLite(t *testing.T) {
 }
 
 func TestPerfAssetRendererMonolithFallbacks(t *testing.T) {
-	for _, shape := range []string{"preview", "lite-missing", "selective-missing", "unconfigured-full"} {
+	for _, shape := range []string{"preview-unconfigured", "lite-missing", "selective-missing", "unconfigured-full"} {
 		t.Run(shape, func(t *testing.T) {
 			r, _ := perfAssetRendererFixture(t)
 			switch shape {
-			case "preview":
+			case "preview-unconfigured":
 				EnablePreviewBootstrap()
+				r.bootstrapRuntimeConfigured = false
 			case "lite-missing":
 				r.EnableBootstrap()
 				r.bootstrapLitePath = ""
@@ -523,11 +524,47 @@ func TestPerfAssetRendererMonolithFallbacks(t *testing.T) {
 			if a := perfAssetByID(t, uses, "framework/runtime/bootstrap.js"); a.Phase != "startup" {
 				t.Fatalf("fallback dropped monolith: %+v", a)
 			}
-			if shape == "preview" && perfAssetByID(t, uses, "framework/runtime/relay.js").Phase != "startup" {
+			if shape == "preview-unconfigured" && perfAssetByID(t, uses, "framework/runtime/relay.js").Phase != "startup" {
 				t.Fatal("preview omitted relay")
 			}
 			if shape == "unconfigured-full" && perfAssetByID(t, uses, "framework/runtime/full.wasm").Phase != "startup" {
 				t.Fatal("explicit full fallback was dropped")
+			}
+		})
+	}
+}
+
+// Preview pages follow clientRuntimePlan: they use the selective runtime only
+// when a bootstrap runtime is configured, and the monolith otherwise.
+func TestPerfAssetRendererPreviewFollowsPlan(t *testing.T) {
+	for _, configured := range []bool{true, false} {
+		name := "unconfigured"
+		if configured {
+			name = "configured"
+		}
+		t.Run(name, func(t *testing.T) {
+			r, _ := perfAssetRendererFixture(t)
+			EnablePreviewBootstrap()
+			r.bootstrapRuntimeConfigured = configured
+			plan := r.clientRuntimePlan()
+			if plan.Mode != "preview" || plan.Selective != configured {
+				t.Fatalf("plan: %+v", plan)
+			}
+			uses, err := r.PerfAssetUses(PerfAssetOptions{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			monolith := perfAssetByID(t, uses, "framework/runtime/bootstrap.js").Phase
+			selective := perfAssetByID(t, uses, "framework/runtime/bootstrap-runtime.js").Phase
+			wantMonolith, wantSelective := "startup", "dormant"
+			if plan.Selective {
+				wantMonolith, wantSelective = "dormant", "startup"
+			}
+			if monolith != wantMonolith || selective != wantSelective {
+				t.Fatalf("graph disagrees with plan %+v: monolith=%s selective=%s", plan, monolith, selective)
+			}
+			if perfAssetByID(t, uses, "framework/runtime/relay.js").Phase != "startup" {
+				t.Fatal("preview omitted relay")
 			}
 		})
 	}
