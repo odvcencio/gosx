@@ -314,3 +314,45 @@ func TestClockCallbackPanicIsFixedAndIsolated(t *testing.T) {
 		})
 	}
 }
+
+func TestShutdownSignalLeavesCloseDeadlineForFlush(t *testing.T) {
+	o := aggregateCoreOptions(t)
+	tick := &controlledTicker{ch: make(chan time.Time), entered: make(chan struct{}), release: make(chan struct{})}
+	o.Clock = controlledClock{tick}
+	tel, err := Enable(server.New(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(tick.release) }) }
+	defer func() {
+		release()
+		if err := tel.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	}()
+	expired, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Minute))
+	defer cancel()
+	tel.prepareShutdown(expired)
+	tel.mu.Lock()
+	shared := tel.closeContext
+	tel.mu.Unlock()
+	if shared != nil {
+		t.Fatal("Signal started the shared close deadline before source drain")
+	}
+	if tel.Enabled() {
+		t.Fatal("Signal did not stop admission")
+	}
+	// Source work may wake the collector while the HTTP/scheduler/hub drain is
+	// still running. That wake must not detach sources or stop the worker.
+	tel.wake <- struct{}{}
+	select {
+	case <-tick.entered:
+		t.Fatal("source wake closed the worker before Flush")
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	if err := tel.Close(context.Background()); err != nil {
+		t.Fatal("Flush inherited the expired Signal deadline", err)
+	}
+}

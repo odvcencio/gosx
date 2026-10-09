@@ -84,3 +84,26 @@ func TestHistogramConcurrentConsistency(t *testing.T) {
 		}
 	}
 }
+
+func TestHistogramCountedObservationsAreAtomic(t *testing.T) {
+	v, _ := (&Registry{}).NewHistogram(HistogramOptions{Name: "counted", Bounds: []float64{1, 2}})
+	h, _ := v.Bind()
+	if err := h.ObserveN(2, 256); err != nil {
+		t.Fatal(err)
+	}
+	if h.count != 256 || h.sum != 512 || !slices.Equal(h.counts, []uint64{0, 256, 0}) {
+		t.Fatal("counted samples lost multiplicity")
+	}
+	if err := h.ObserveN(math.MaxFloat64, 2); !errors.Is(err, ErrCapacity) || h.count != 256 || h.sum != 512 {
+		t.Fatal("overflow partially changed histogram", err)
+	}
+	if err := h.ObserveN(0, ^uint64(0)); !errors.Is(err, ErrCapacity) || h.count != 256 {
+		t.Fatal("count overflow partially changed histogram", err)
+	}
+	if err := h.ObserveN(math.NaN(), 0); !errors.Is(err, ErrInvalidOptions) {
+		t.Fatal(err)
+	}
+	if err := h.ObserveN(1, 0); err != nil || h.count != 256 {
+		t.Fatal("zero multiplicity was not inert", err)
+	}
+}

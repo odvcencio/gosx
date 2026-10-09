@@ -33,6 +33,16 @@ type Telemetry struct {
 	start               Instant
 	boot, limiterSalt   [16]byte
 	core                coreMetrics
+	adapters            adapterVectors
+	operations          map[Operation]operationMeters
+	auth                map[authLabels]*metric.Counter
+	degraded            map[string]*metric.Gauge
+	requests            *requestState
+	adapterBytes        atomic.Int64
+	miscBytes           atomic.Int64
+	hubs                *hubState
+	loops               *loopState
+	activities          *activityState
 	ownerBytes          int64
 	faultOnce           sync.Once
 }
@@ -82,7 +92,7 @@ func Enable(app *server.App, opts Options) (*Telemetry, error) {
 		return nil, err
 	}
 	t := &Telemetry{opts: o, wake: make(chan struct{}, 1), done: make(chan struct{})}
-	remove, err := app.UseShutdownHook("telemetry", server.ShutdownHooks{Signal: t.signal, Flush: t.Close})
+	remove, err := app.UseShutdownHook("telemetry", server.ShutdownHooks{Signal: t.prepareShutdown, Flush: t.Close})
 	if err != nil {
 		var config *ConfigError
 		if errors.As(err, &config) && config.Code == "duplicate_name" {
@@ -123,6 +133,12 @@ func Enable(app *server.App, opts Options) (*Telemetry, error) {
 	if err = app.UseObservationCatalogObserver(observationCatalogAdapter{owner: t}); err != nil {
 		return nil, err
 	}
+	if !o.Metrics.DisableOperations {
+		app.UseOperationObserver(t)
+	}
+	if !o.Metrics.DisableRequests {
+		app.UseObserver(requestObserver{owner: t})
+	}
 	t.active.Store(true)
 	attached = true
 	go t.run()
@@ -137,10 +153,8 @@ func availableFeatures(o Options) error {
 		return invalid("desktop", "unsupported")
 	case o.Listen.Addr != "off" || o.Listen.Metrics != (Credential{}) || o.Listen.Admin != (Credential{}) || o.Listen.DangerouslyAllowUnauthenticatedMetricsOnNonLoopback:
 		return invalid("listener", "unsupported")
-	case !o.Metrics.DisableRequests || !o.Metrics.DisableOperations || !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
+	case !o.Metrics.DisableClientEvents || !o.Metrics.DisableRuntime || !o.Metrics.DisableReadiness || !o.Metrics.DisableScheduled:
 		return invalid("metric_adapters", "unsupported")
-	case !o.Activities.Disabled:
-		return invalid("activities", "unsupported")
 	case o.Sessions.Enabled:
 		return invalid("sessions", "unsupported")
 	case o.Persistence.Enabled:
@@ -234,7 +248,10 @@ func (o observationCatalogAdapter) ObserveCatalog(rows []server.ObservationPatte
 }
 
 // Seal registries retained after Close or a worker failure as well.
-func (t *Telemetry) observeCatalog([]server.ObservationPattern) {
+func (t *Telemetry) observeCatalog(rows []server.ObservationPattern) {
+	if t.Enabled() {
+		t.admitRequestCatalog(rows)
+	}
 	if t != nil && t.registry != nil {
 		t.registry.Seal()
 	}

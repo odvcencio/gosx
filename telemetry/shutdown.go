@@ -2,12 +2,25 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 )
 
 func (t *Telemetry) run() {
 	defer func() {
+		t.active.Store(false)
+		if t.activities != nil {
+			t.activities.stopping.Store(true)
+			// Accepted finals need no clock or application callbacks to acknowledge.
+			t.collectActivityReceipts()
+			t.releaseUnfinishedActivities()
+		}
+		t.drainActivityEvents()
+		t.releaseLoops()
+		t.releaseHubs()
+		t.releaseRequests()
+		t.updateCoreUsage()
 		if err := stopTicker(t.ticker); err != nil {
 			t.clockFailed(err)
 		}
@@ -20,6 +33,10 @@ func (t *Telemetry) run() {
 			cancel = t.closeCancel
 		}
 		t.active.Store(false)
+		// All notification publishers hold mu, so none can enqueue after done.
+		for len(t.wake) != 0 {
+			<-t.wake
+		}
 		close(t.done)
 		t.mu.Unlock()
 		if cancel != nil {
@@ -51,15 +68,19 @@ func (t *Telemetry) run() {
 					return
 				}
 				t.updateCore(now)
+				t.maintainActivities(now)
 			}
 		case <-t.wake:
+			t.drainActivityEvents()
+			t.collectActivityReceipts()
 			t.mu.Lock()
 			ctx := t.closeContext
 			t.mu.Unlock()
 			if ctx != nil {
+				activityError := t.stopActivities(ctx)
 				t.mu.Lock()
 				if t.closeResult == nil {
-					t.closeResult = t.closeContextError()
+					t.closeResult = errors.Join(activityError, t.closeContextError())
 				}
 				t.mu.Unlock()
 				return
@@ -139,7 +160,25 @@ func stampTicker(t Ticker, stamp time.Time) (now Instant, err error) {
 	return now, nil
 }
 
+// Signal closes admission. Existing hub callbacks stay subscribed through
+// source drain. Only Flush/Close starts the shared deadline and source cleanup;
+// a collector wake during source drain must not close the worker.
+func (t *Telemetry) prepareShutdown(_ context.Context) {
+	if t == nil || t.done == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	select {
+	case <-t.done:
+		return
+	default:
+	}
+	t.active.Store(false)
+}
+
 func (t *Telemetry) signal(ctx context.Context) {
+	t.prepareShutdown(ctx)
 	if t == nil || t.done == nil {
 		return
 	}
@@ -159,11 +198,10 @@ func (t *Telemetry) signal(ctx context.Context) {
 			deadline = callerDeadline
 		}
 		t.closeContext, t.closeCancel = context.WithDeadline(context.WithoutCancel(ctx), deadline)
-		t.active.Store(false)
-		select {
-		case t.wake <- struct{}{}:
-		default:
-		}
+	}
+	select {
+	case t.wake <- struct{}{}:
+	default:
 	}
 	t.mu.Unlock()
 }

@@ -13,6 +13,7 @@ import (
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
 	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/server"
 )
 
 // FilePage describes a discovered file-based page route.
@@ -679,7 +680,9 @@ func filePageActionPattern(pattern string) string {
 
 func buildFileActionHandler(page FilePage, handlers FileActions, maxActionBodyBytes int64) http.Handler {
 	handlers = cloneFileActions(handlers)
+	pattern := filePageActionPattern(page.Pattern)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		server.MarkObservedRequest(r, "action", pattern)
 		name := r.PathValue("__gosx_action")
 		if name == "" {
 			http.Error(w, "action name required", http.StatusBadRequest)
