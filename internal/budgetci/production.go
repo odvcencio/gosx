@@ -96,6 +96,16 @@ func BuildCompiler(ctx context.Context, sourceRoot, sha, scratch string) (*Compi
 	if !productionSupported() {
 		return nil, failure("environment", "/production/platform")
 	}
+	// Resolve caller-relative roots once, before commands change directories
+	// or any build, fixture, log, or executable path is derived from them.
+	sourceRoot, err := productionPath(sourceRoot)
+	if err != nil {
+		return nil, failure("invalid-input", "/production/source")
+	}
+	scratch, err = productionScratch(scratch)
+	if err != nil {
+		return nil, failure("environment", "/production/scratch")
+	}
 	if err := cleanSource(ctx, sourceRoot, sha); err != nil {
 		return nil, err
 	}
@@ -144,11 +154,14 @@ func (c *Compiler) BuildApplication(ctx context.Context, app, scratch string) (*
 	if c == nil || c.Path == "" {
 		return nil, failure("invalid-input", "/production/compiler")
 	}
+	scratch, err := productionScratch(scratch)
+	if err != nil {
+		return nil, failure("environment", "/production/scratch")
+	}
 	if err := cleanSource(ctx, c.SourceRoot, c.SourceSHA); err != nil {
 		return nil, err
 	}
 	a := &Application{App: app, SourceSHA: c.SourceSHA}
-	var err error
 	switch app {
 	case "docs":
 		a.Root = filepath.Join(c.SourceRoot, "examples/gosx-docs")
@@ -233,6 +246,21 @@ func (a *Application) Close() error {
 		return failure("cleanup", "/production/app")
 	}
 	return nil
+}
+
+func productionPath(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Clean(absolute), nil
+}
+
+func productionScratch(path string) (string, error) {
+	if path == "" { // Preserve MkdirTemp's default temporary directory.
+		path = os.TempDir()
+	}
+	return productionPath(path)
 }
 
 func productionEnvironment(values map[string]string) []string {
@@ -378,6 +406,14 @@ func (a *Application) Serve(ctx context.Context, log string) (*Server, error) {
 	if !productionSupported() {
 		return nil, failure("environment", "/production/platform")
 	}
+	distDir, err := productionPath(a.DistDir)
+	if err != nil {
+		return nil, failure("invalid-input", "/production/server")
+	}
+	log, err = productionPath(log)
+	if err != nil {
+		return nil, failure("environment", "/production/log")
+	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		return nil, failure("environment", "/production/listener")
@@ -398,14 +434,14 @@ func (a *Application) Serve(ctx context.Context, log string) (*Server, error) {
 	transport := &http.Transport{ForceAttemptHTTP2: false}
 	s := &Server{BaseURL: "http://" + address, done: make(chan error, 1), log: f, transport: transport}
 	s.Client = &http.Client{Transport: transport, Timeout: 30 * time.Second}
-	executable := filepath.Join(a.DistDir, "server/app")
+	executable := filepath.Join(distDir, "server/app")
 	if runtime.GOOS == "windows" {
 		executable += ".exe"
 	}
 	s.cmd = exec.CommandContext(ctx, executable)
 	prepareProduction(s.cmd)
-	s.cmd.Dir = a.DistDir
-	s.cmd.Env = productionEnvironment(map[string]string{"PORT": address, "GOSX_LISTEN_ADDR": address, "PUBLIC_URL": s.BaseURL, "GOSX_APP_ROOT": a.DistDir, "SESSION_SECRET": hex.EncodeToString(secret[:])})
+	s.cmd.Dir = distDir
+	s.cmd.Env = productionEnvironment(map[string]string{"PORT": address, "GOSX_LISTEN_ADDR": address, "PUBLIC_URL": s.BaseURL, "GOSX_APP_ROOT": distDir, "SESSION_SECRET": hex.EncodeToString(secret[:])})
 	s.cmd.Stdout, s.cmd.Stderr = f, f
 	if err := s.cmd.Start(); err != nil {
 		s.Close()
