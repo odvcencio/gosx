@@ -12,6 +12,7 @@ func (t *Telemetry) run() {
 		if t.activities != nil {
 			t.activities.stopping.Store(true)
 		}
+		t.drainActivityEvents()
 		t.releaseLoops()
 		t.releaseHubs()
 		if err := stopTicker(t.ticker); err != nil {

@@ -73,14 +73,19 @@ func (q *recordQueue) release(r schema.Record) {
 	q.mu.Unlock()
 }
 func (t *Telemetry) drainActivityEvents() {
-	if t.activities == nil {
+	s := t.activities
+	if s == nil {
 		return
 	}
+	// A publisher may have passed the admission check before cleanup stopped
+	// activities. Wait for its commit before draining the last accepted record.
+	s.eventPublish.Lock()
+	defer s.eventPublish.Unlock()
 	for {
-		record, ok := t.activities.events.take()
+		record, ok := s.events.take()
 		if !ok {
 			return
 		}
-		t.activities.events.release(record)
+		s.events.release(record)
 	}
 }
