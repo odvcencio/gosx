@@ -274,6 +274,53 @@ func TestProducerRejectsSymlinkDestinationAlias(t *testing.T) {
 	}
 }
 
+func TestProducerRejectsSymlinkSourceAlias(t *testing.T) {
+	opts, _ := fixtureProducer(t)
+	use := opts.Build.PerfAssetUses.Assets[0]
+	name := filepath.Base(use.URL)
+	if err := os.Rename(filepath.Join(opts.DistDir, "assets/runtime"), filepath.Join(opts.DistDir, "shared")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../shared", filepath.Join(opts.DistDir, "assets/runtime")); err != nil {
+		t.Skip("symlinks unavailable")
+	}
+	producerTestPublic(t, opts, "shared/"+name, "js", []byte("replacement"))
+	producerTestAliasRejection(t, opts, "shared/"+name)
+}
+
+func TestProducerRejectsHardLinkSourceAlias(t *testing.T) {
+	opts, _ := fixtureProducer(t)
+	use := opts.Build.PerfAssetUses.Assets[0]
+	source := "assets/runtime/" + filepath.Base(use.URL)
+	target := "shared/runtime.js"
+	if err := os.MkdirAll(filepath.Join(opts.DistDir, "shared"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(opts.DistDir, source), filepath.Join(opts.DistDir, target)); err != nil {
+		t.Skip("hard links unavailable")
+	}
+	producerTestPublic(t, opts, target, "js", []byte("replacement"))
+	producerTestAliasRejection(t, opts, target)
+}
+
+func producerTestAliasRejection(t *testing.T, opts ProducerOptions, name string) {
+	t.Helper()
+	file := filepath.Join(opts.DistDir, filepath.FromSlash(name))
+	original, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest, err := ProduceFixture(context.Background(), opts)
+	var typed *InputError
+	if digest != "" || !errors.As(err, &typed) || typed.Code != "wrong-fixture" {
+		t.Error("source alias reached the writer", err)
+	}
+	saved, err := os.ReadFile(file)
+	if err != nil || !bytes.Equal(saved, original) {
+		t.Error("source alias changed an existing file", err)
+	}
+}
+
 func TestProducerFullFixtureSetRoundTrip(t *testing.T) {
 	opts, document := fixtureProducer(t)
 	runtime := opts.Build.PerfAssetUses.Assets[0]

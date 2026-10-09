@@ -282,7 +282,7 @@ func TestProducerPublicBodiesAndOutputConfinement(t *testing.T) {
 	}
 	defer root.Close()
 	for _, name := range []string{"../escape", "/escape", `C:\private\escape`} {
-		if err := writeProducerFile(root, name, []byte("private-value")); err == nil {
+		if err := writeProducerFile(root, &producerPathProtection{}, name, []byte("private-value")); err == nil {
 			t.Fatal("output escaped root")
 		}
 	}

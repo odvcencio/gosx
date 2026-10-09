@@ -149,7 +149,8 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		public = append(public, producerPublicFile{rule.ID, rule.Kind, relative, urlPath, target})
 		seen[rule.ID] = true
 	}
-	if err := preflightProducerPaths(root, opts, routes, public); err != nil {
+	protection, err := preflightProducerPaths(root, opts, routes, public)
+	if err != nil {
 		return "", err
 	}
 	for _, entry := range public {
@@ -159,10 +160,10 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		}
 		// Measurement paths are rooted in the fixture directory. Copy public bodies
 		// there while leaving the production server's own public tree intact.
-		if err := writeProducerFile(root, entry.target, body); err != nil {
+		if err := writeProducerFile(root, protection, entry.target, body); err != nil {
 			return "", err
 		}
-		if err := copyProducerSidecars(root, entry.source, entry.target, body); err != nil {
+		if err := copyProducerSidecars(root, protection, entry.source, entry.target, body); err != nil {
 			return "", err
 		}
 		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: entry.id, SHA256: producerHash(body), URL: entry.url, Owner: "app", Kind: entry.kind, Phase: "dormant", Condition: "always", Dependencies: []string{}})
@@ -212,7 +213,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if err != nil {
 			return "", fail("/routes/document")
 		}
-		if err := writeProducerFile(root, file, body); err != nil {
+		if err := writeProducerFile(root, protection, file, body); err != nil {
 			return "", err
 		}
 		// Prerendered release encodings differ from live HTML compression. Retain
@@ -224,7 +225,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 				return "", fail("/routes/document")
 			}
 			if bytes.Equal(built, body) {
-				if err := copyProducerSidecars(root, static, file, body); err != nil {
+				if err := copyProducerSidecars(root, protection, static, file, body); err != nil {
 					return "", err
 				}
 			}
@@ -247,7 +248,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	if _, err := DecodeFixtureManifest(bytes.NewReader(data)); err != nil {
 		return "", inputReference(err, "producer", "/manifest")
 	}
-	if err := writeProducerFile(root, fixtureManifestFile, append(data, '\n')); err != nil {
+	if err := writeProducerFile(root, protection, fixtureManifestFile, append(data, '\n')); err != nil {
 		return "", err
 	}
 	return digest, nil
@@ -255,7 +256,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 
 func producerHash(body []byte) string { sum := sha256.Sum256(body); return hex.EncodeToString(sum[:]) }
 
-func copyProducerSidecars(root *os.Root, source, target string, body []byte) error {
+func copyProducerSidecars(root *os.Root, protection *producerPathProtection, source, target string, body []byte) error {
 	for _, encoding := range fixtureSidecars {
 		_, err := root.Stat(source + encoding.suffix)
 		if os.IsNotExist(err) {
@@ -265,19 +266,28 @@ func copyProducerSidecars(root *os.Root, source, target string, body []byte) err
 		if err != nil || readErr != nil || assetmeasure.VerifySidecar(body, encoded, encoding.encoding) != nil {
 			return &InputError{Code: "stale-sidecar", Reference: "producer", Pointer: "/encoding"}
 		}
-		if err := writeProducerBytes(root, target+encoding.suffix, encoded); err != nil {
+		if err := writeProducerBytes(root, protection, target+encoding.suffix, encoded); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func writeProducerFile(root *os.Root, name string, data []byte) error {
-	if err := writeProducerBytes(root, name, data); err != nil {
+func writeProducerFile(root *os.Root, protection *producerPathProtection, name string, data []byte) error {
+	// Preflight cleanup too, so a colliding sidecar cannot cause a partial write.
+	for _, sidecar := range fixtureSidecars {
+		if err := protection.check(root, name+sidecar.suffix); err != nil {
+			return err
+		}
+	}
+	if err := writeProducerBytes(root, protection, name, data); err != nil {
 		return err
 	}
 	// A fresh snapshot cannot retain encodings from a different body.
 	for _, sidecar := range fixtureSidecars {
+		if err := protection.check(root, name+sidecar.suffix); err != nil {
+			return err
+		}
 		if err := root.Remove(name + sidecar.suffix); err != nil && !os.IsNotExist(err) {
 			return &InputError{Code: "write-failed", Reference: "producer", Pointer: "/output"}
 		}
@@ -285,10 +295,15 @@ func writeProducerFile(root *os.Root, name string, data []byte) error {
 	return nil
 }
 
-func writeProducerBytes(root *os.Root, name string, data []byte) error {
+func writeProducerBytes(root *os.Root, protection *producerPathProtection, name string, data []byte) error {
 	fail := func() error { return &InputError{Code: "write-failed", Reference: "producer", Pointer: "/output"} }
 	if !safePath(name) {
 		return fail()
+	}
+	for _, file := range []string{name, name + ".new"} {
+		if err := protection.check(root, file); err != nil {
+			return err
+		}
 	}
 	if err := root.MkdirAll(path.Dir(name), 0700); err != nil {
 		return fail()
@@ -303,6 +318,9 @@ func writeProducerBytes(root *os.Root, name string, data []byte) error {
 	closeErr := f.Close()
 	if writeErr != nil || closeErr != nil || n != len(data) {
 		return fail()
+	}
+	if err := protection.check(root, name); err != nil {
+		return err
 	}
 	if err := root.Rename(pending, name); err != nil {
 		return fail()
