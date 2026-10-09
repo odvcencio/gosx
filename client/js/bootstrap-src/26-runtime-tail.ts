@@ -276,11 +276,10 @@
       return Promise.resolve([]);
     }
     return Promise.all(names.map(function(name) {
-      const load = ensureBootstrapFeature(name);
-      // textlayout and opt-in manifest.features are optional: a missing chunk
-      // is logged and skipped, never allowed to block the mounts.
-      return /^(islands|engines|hubs|controllers|scene3d)$/.test(name) ? load : load.catch(function(error) {
-        console.warn("[gosx] " + name + ":", error);
+      // Each feature fails alone: a chunk that is missing or throws is logged
+      // with its URL and dropped, so the other features still mount.
+      return ensureBootstrapFeature(name).catch(function(error) {
+        console.error("[gosx] feature " + name + " unavailable (" + bootstrapFeatureURL(name) + "):", error);
         return null;
       });
     })).then(function(features) {

@@ -59,7 +59,7 @@ test("a missing feature chunk is logged once and the page still mounts", async (
   await flushAsyncWork();
   assert.ok(env.context.__gosx.engines.get("js-engine"), "the engine must mount despite the missing chunk");
   assert.equal(env.context.__gosx.ready, true);
-  assert.equal(env.consoleLogs.warn.filter((line) => line.includes("nope")).length, 1);
+  assert.equal(env.consoleLogs.error.filter((line) => line.includes("nope") && line.includes("/gosx/bootstrap-feature-nope.js")).length, 1);
 });
 
 test("the preload fallback matches the whole feature name, not a prefix", async () => {

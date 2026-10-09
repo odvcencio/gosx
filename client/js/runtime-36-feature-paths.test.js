@@ -111,7 +111,7 @@ test("a text-layout chunk that fails to load does not stop the scene from mounti
   assert.ok(fetchedURLs(env).includes(TEXTLAYOUT_URL));
   assert.equal(mount.getAttribute("data-mounted"), "true", "the scene must mount without text layout");
   assert.ok(
-    env.consoleLogs.warn.some((entry) => String(entry).includes("[gosx] textlayout:")),
-    "expected a warning, got " + JSON.stringify(env.consoleLogs.warn),
+    env.consoleLogs.error.some((entry) => String(entry).includes("[gosx] feature textlayout unavailable")),
+    "expected an error naming the feature, got " + JSON.stringify(env.consoleLogs.error),
   );
 });

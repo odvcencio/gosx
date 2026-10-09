@@ -44,8 +44,9 @@
   `GoSXScene3D` engine, and the loader would wait for a script the renderer does
   not emit. The other legacy names (`islands`, `engines`, `hubs`, `controllers`,
   `textlayout`) stay accepted and load by fetch.
-- A manifest-declared feature chunk that fails to load is logged and skipped
-  instead of stopping the page from mounting. Queued form submits count as in
+- A failed or missing feature chunk now disables only that feature instead of
+  blocking every mount; the loader logs one error naming the feature and its URL.
+  Queued form submits count as in
   flight, so refresh ticks do not swap the DOM under them. The Go-WASM boot token
   is cleared even when `go.run` throws.
 
