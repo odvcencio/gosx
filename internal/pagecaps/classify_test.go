@@ -1,8 +1,13 @@
 package pagecaps
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
+
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/island"
 )
 
 func TestClassifyExperiences(t *testing.T) {
@@ -19,15 +24,15 @@ func TestClassifyExperiences(t *testing.T) {
 		{Capabilities{Engines: 1, Runtime: "js"}, false, []string{"engine/js"}},
 		{Capabilities{Engines: 1, WASM: true, Runtime: "shared"}, false, []string{"engine/shared"}},
 		{Capabilities{Engines: 1, WASM: true, Runtime: "go-wasm"}, false, []string{"go-wasm"}},
-		{Capabilities{Engines: 1, Scene3D: true, Runtime: "js"}, false, []string{"scene3d/js"}},
-		{Capabilities{Engines: 1, Scene3D: true, WASM: true, Runtime: "shared"}, false, []string{"scene3d/shared"}},
-		{Capabilities{Engines: 1, Video: true, Runtime: "js"}, false, []string{"video"}},
+		{Capabilities{Engines: 1, Scene3D: true, Runtime: "js"}, false, []string{"engine/js", "scene3d/js"}},
+		{Capabilities{Engines: 1, Scene3D: true, WASM: true, Runtime: "shared"}, false, []string{"engine/shared", "scene3d/shared"}},
+		{Capabilities{Engines: 1, Video: true, Runtime: "js"}, false, []string{"engine/js", "video"}},
 		{Capabilities{Bootstrap: true, BootstrapMode: "preview"}, false, []string{"preview"}},
 		{Capabilities{Hubs: 1}, false, []string{"enhanced"}},
 		{Capabilities{Controllers: 1}, false, []string{"enhanced"}},
 		{Capabilities{Engines: 1, Runtime: "js"}, true, []string{"engine/js", "game/js"}},
-		{Capabilities{Islands: 1, Engines: 1, Scene3D: true, WASM: true, Runtime: "shared"}, true, []string{"game/shared", "island", "scene3d/shared"}},
-		{Capabilities{Islands: 1, Engines: 1, Scene3D: true, WASM: true, Runtime: "mixed"}, false, []string{"go-wasm", "island", "scene3d/js", "scene3d/shared"}},
+		{Capabilities{Islands: 1, Engines: 1, Scene3D: true, WASM: true, Runtime: "shared"}, true, []string{"engine/shared", "game/shared", "island", "scene3d/shared"}},
+		{Capabilities{Islands: 1, Engines: 1, Scene3D: true, WASM: true, Runtime: "mixed"}, false, []string{"engine/js", "engine/shared", "go-wasm", "island", "scene3d/js", "scene3d/shared"}},
 	} {
 		got, err := Classify(test.c, test.game)
 		if err != nil {
@@ -98,5 +103,84 @@ func TestClassifyDecodedEngineEvidence(t *testing.T) {
 		if !reflect.DeepEqual(got, test.want) {
 			t.Fatalf("classified %v, want %v", got, test.want)
 		}
+	}
+}
+
+func TestClassifyRenderedVideoGame(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runtime engine.Runtime
+		want    []string
+	}{
+		{"javascript", "", []string{"game/js", "video"}},
+		{"shared", engine.RuntimeShared, []string{"game/shared", "video"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			island.ResetPreviewBootstrap()
+			t.Cleanup(island.ResetPreviewBootstrap)
+			r := island.NewRenderer("main")
+			r.RenderEngine(engine.Config{Name: "Video", Kind: engine.KindVideo, Runtime: tc.runtime}, gosx.Text(""))
+			c, err := FromHTML([]byte(gosx.RenderHTML(r.PageHead())))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if c.Engines != 1 || !c.Video || tc.runtime == engine.RuntimeShared && (!c.WASM || c.Runtime != "shared") {
+				t.Fatalf("renderer video evidence missing: %+v", c)
+			}
+			got, err := Classify(c, true)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("classified %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestClassifyJSONRoundTripPreservesGenericEngine(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		runtime engine.Runtime
+		want    []string
+	}{
+		{"javascript", "", []string{"engine/js", "scene3d/js", "video"}},
+		{"shared", engine.RuntimeShared, []string{"engine/shared", "scene3d/shared", "video"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			island.ResetPreviewBootstrap()
+			t.Cleanup(island.ResetPreviewBootstrap)
+			r := island.NewRenderer("main")
+			r.RenderEngine(engine.Config{Name: "Video", Kind: engine.KindVideo, Runtime: tc.runtime}, gosx.Text(""))
+			r.RenderEngine(engine.Config{Name: "Generic", Kind: engine.KindWorker, Runtime: tc.runtime}, gosx.Text(""))
+			// This scene marker is independent of the two registered engines.
+			html := `<div data-gosx-scene3d></div>` + gosx.RenderHTML(r.PageHead())
+			c, err := FromHTML([]byte(html))
+			if err != nil {
+				t.Fatal(err)
+			}
+			before, err := Classify(c, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(before, tc.want) {
+				t.Fatalf("rendered obligations %v, want %v", before, tc.want)
+			}
+			data, err := json.Marshal(c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var restored Capabilities
+			if err := json.Unmarshal(data, &restored); err != nil {
+				t.Fatal(err)
+			}
+			after, err := Classify(restored, false)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Fatalf("round trip changed obligations: %v to %v", before, after)
+			}
+		})
 	}
 }

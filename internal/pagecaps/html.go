@@ -131,14 +131,17 @@ func FromHTML(data []byte) (Capabilities, error) {
 			switch entry.Runtime {
 			case "":
 				modes["js"] = true
+				c.engineRuntimes |= runtimeJS
 			case "shared":
 				modes["shared"] = true
+				c.engineRuntimes |= runtimeShared
 				c.WASM = true
 			case "go-wasm":
 				if strings.TrimSpace(entry.ProgramRef) == "" {
 					return Capabilities{}, errors.New("Go-WASM requires a program reference")
 				}
 				modes["go-wasm"] = true
+				c.engineRuntimes |= runtimeGoWASM
 				c.WASM = true
 			default:
 				return Capabilities{}, errors.New("invalid engine runtime")
