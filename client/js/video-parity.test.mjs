@@ -39,6 +39,7 @@ function loadBench() {
     setInterval,
     clearInterval,
     URL,
+    AbortController,
     Map,
     Set,
     ArrayBuffer,
