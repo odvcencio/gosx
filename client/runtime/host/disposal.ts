@@ -24,10 +24,8 @@
 
     // Release pointers a handler captured with browser.CapturePointer. A pointer
     // the element no longer holds is a no-op; an ended pointer throws.
-    if (record.pointerCaptures) {
-      for (const [pointerId, element] of record.pointerCaptures) {
-        try { element.releasePointerCapture(pointerId); } catch (e) { /* already gone */ }
-      }
+    for (const [pointerId, element] of record.captures || []) {
+      try { element.releasePointerCapture(pointerId); } catch (e) { /* already gone */ }
     }
 
     // Notify WASM side if dispose function is available.

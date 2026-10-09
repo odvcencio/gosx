@@ -116,9 +116,9 @@
       copyNumberFields(data, {
         offsetX: e.clientX - rect.left, offsetY: e.clientY - rect.top,
         elementWidth: rect.width, elementHeight: rect.height,
-      }, ["offsetX", "offsetY", "elementWidth", "elementHeight"]);
+        deltaX: e.deltaX, deltaY: e.deltaY, deltaMode: e.deltaMode,
+      });
     }
-    if (e.type === "wheel") copyNumberFields(data, e, ["deltaX", "deltaY", "deltaMode"]);
     if (e.type === "resize") {
       if (typeof window.innerWidth === "number" && window.innerWidth !== 0) data.width = window.innerWidth;
       if (typeof window.innerHeight === "number" && window.innerHeight !== 0) data.height = window.innerHeight;
@@ -141,8 +141,9 @@
     return data;
   }
 
-  function copyNumberFields(data, source, names) {
-    for (const name of names) copyNumberField(data, source, name, name);
+  // Copies every finite, non-zero numeric property of source under its own name.
+  function copyNumberFields(data, source) {
+    for (const name of Object.keys(source)) copyNumberField(data, source, name, name);
   }
 
   function copyNumberField(data, event, sourceName, targetName, preserveZero) {
@@ -232,11 +233,10 @@
     const declared = delegatedEventSet(eventSlots);
 
     for (const eventType of DELEGATED_EVENTS) {
-      if (declared && !declared.has(eventType)) continue;
       // Legacy manifests declare nothing, so a non-passive wheel listener
       // would slow scrolling on every island. Attach it only where a handler
       // exists.
-      if (!declared && eventType === "wheel" && !islandRoot.querySelector("[data-gosx-on-wheel]")) continue;
+      if (declared ? !declared.has(eventType) : eventType === "wheel" && !islandRoot.querySelector("[data-gosx-on-wheel]")) continue;
       const listener = createDelegatedListener(islandRoot, islandID, eventType);
       const useCapture = delegatedEventCapture(eventType);
       // passive: false lets a wheel handler call browser.PreventDefault(); it
@@ -317,7 +317,7 @@
         // Disposal releases these. Releasing a pointer the element no longer
         // holds is a no-op, so no capture check is needed here.
         const record = window.__gosx.islands.get(islandID);
-        if (record) (record.pointerCaptures || (record.pointerCaptures = new Map())).set(e.pointerId, match.element);
+        if (record) (record.captures || (record.captures = new Map())).set(e.pointerId, match.element);
       }
     };
   }
