@@ -9,6 +9,7 @@ package main
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -138,15 +139,18 @@ func main() {
 
 func run(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: citest verify | cli <0|1> | list <unit|cli|race|full-race> | test <unit|race|full-race|ouroboros-race>")
+		return errors.New("usage: citest verify | cli <0|1|2> | browser <0|1|2> | list <unit|cli|race|full-race> | test <unit|race|full-race|ouroboros-race>")
 	}
 
 	goBinary := os.Getenv("GOSX_CI_GO")
 	if goBinary == "" {
 		goBinary = "go"
 	}
-	if args[0] == "cli" {
+	switch args[0] {
+	case "cli":
 		return runCLIShard(args[1:], goBinary, stdout, stderr)
+	case "browser":
+		return runBrowserShard(args[1:], goBinary, stdout, stderr)
 	}
 	plan, err := buildTestPlan(goBinary)
 	if err != nil {
@@ -159,7 +163,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 			return errors.New("verify takes no arguments")
 		}
 		printPlan(stdout, plan)
-		return nil
+		return verifyBrowserShards(stdout)
 	case "list":
 		if len(args) != 2 {
 			return errors.New("usage: citest list <unit|cli|race|full-race>")
@@ -568,59 +572,220 @@ func printPlan(w io.Writer, plan testPlan) {
 	}
 }
 
-// Discover runnable tests with the same Go tool and build tags used to execute
-// them, including examples and fuzz seed corpora. Hashing names keeps a test's
-// assignment stable when other tests are added; both jobs run all its subtests.
-func runCLIShard(args []string, goBinary string, stdout, stderr io.Writer) error {
-	if len(args) != 1 || (args[0] != "0" && args[0] != "1") {
-		return errors.New("usage: citest cli <0|1>")
+// A test's shard comes from a hash of its name, so adding a test never moves
+// another one. Hashing the name picks a bucket in [0, 100); the cutoffs turn
+// buckets into shards. Cutoffs are uneven on purpose: a lane that carries other
+// steps (documentation checks, perf gates) takes a smaller share of tests.
+// Pins override the hash for tests whose measured cost the hash cannot spread.
+type shardLayout struct {
+	name    string
+	cutoffs []int          // len = shard count - 1, ascending, each in (0, 100)
+	pins    map[string]int // test name -> shard, takes precedence over the hash
+}
+
+func (l shardLayout) count() int { return len(l.cutoffs) + 1 }
+
+func (l shardLayout) shardOf(name string) int {
+	if shard, ok := l.pins[name]; ok {
+		return shard
 	}
-	index, _ := strconv.Atoi(args[0])
-	list := exec.Command(goBinary, "test", "-list", ".", "./cmd/gosx")
+	sum := sha256.Sum256([]byte(name))
+	bucket := int(binary.BigEndian.Uint16(sum[:2])) % 100
+	for shard, cutoff := range l.cutoffs {
+		if bucket < cutoff {
+			return shard
+		}
+	}
+	return len(l.cutoffs)
+}
+
+// split assigns every name to exactly one shard. It fails on a duplicate or
+// malformed name, a pin that names no current test or an out-of-range shard,
+// and an empty shard, so a layout that drifts from the source stops the build.
+func (l shardLayout) split(names []string) ([][]string, error) {
+	for i, cutoff := range l.cutoffs {
+		if cutoff <= 0 || cutoff >= 100 || (i > 0 && cutoff <= l.cutoffs[i-1]) {
+			return nil, fmt.Errorf("%s shard cutoffs %v must ascend within (0, 100)", l.name, l.cutoffs)
+		}
+	}
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if strings.ContainsAny(name, " \t/") || seen[name] {
+			return nil, fmt.Errorf("invalid or duplicate %s test name %q", l.name, name)
+		}
+		seen[name] = true
+	}
+	for name, shard := range l.pins {
+		if !seen[name] {
+			return nil, fmt.Errorf("%s shard pin %q names no current test", l.name, name)
+		}
+		if shard < 0 || shard >= l.count() {
+			return nil, fmt.Errorf("%s shard pin %q targets shard %d, want 0..%d", l.name, name, shard, l.count()-1)
+		}
+	}
+	shards := make([][]string, l.count())
+	for _, name := range names {
+		shard := l.shardOf(name)
+		shards[shard] = append(shards[shard], name)
+	}
+	for i := range shards {
+		if len(shards[i]) == 0 {
+			return nil, fmt.Errorf("%s shard %d contains no tests", l.name, i)
+		}
+		sort.Strings(shards[i])
+	}
+	return shards, nil
+}
+
+// cliLayout: lane 0 also runs the documentation example tests, the tutorial
+// build and the docs-site compile (about 160s), so it takes the smaller share.
+var cliLayout = shardLayout{name: "CLI", cutoffs: []int{28, 64}}
+
+// browserLayout: shard 0 also runs the Ouroboros media smoke, the perf driver
+// tests and the perf budget gate (about 270s), so it takes the smaller share.
+var browserLayout = shardLayout{name: "browser", cutoffs: []int{21, 61}}
+
+const (
+	browserRelativePath = "e2e"
+	browserBuildTag     = "e2e"
+)
+
+func shardIndex(args []string, layout shardLayout) (int, error) {
+	usage := fmt.Errorf("usage: citest %s <0..%d>", strings.ToLower(layout.name), layout.count()-1)
+	if len(args) != 1 {
+		return 0, usage
+	}
+	index, err := strconv.Atoi(args[0])
+	if err != nil || index < 0 || index >= layout.count() {
+		return 0, usage
+	}
+	return index, nil
+}
+
+func runShard(layout shardLayout, index int, goBinary string, flags []string, pkg string, stdout, stderr io.Writer) error {
+	listArgs := append(append([]string{"test"}, tagFlags(flags)...), "-list", ".", pkg)
+	list := exec.Command(goBinary, listArgs...)
 	list.Stderr = stderr
 	output, err := list.Output()
 	if err != nil {
-		return fmt.Errorf("discover CLI tests: %w", err)
+		return fmt.Errorf("discover %s tests: %w", layout.name, err)
 	}
-	shards, err := splitCLITests(string(output))
+	shards, err := layout.split(discoveredTests(string(output)))
 	if err != nil {
 		return err
+	}
+	total := 0
+	for _, shard := range shards {
+		total += len(shard)
 	}
 	names := make([]string, len(shards[index]))
 	for i, name := range shards[index] {
 		names[i] = regexp.QuoteMeta(name)
 	}
 	pattern := "^(" + strings.Join(names, "|") + ")$"
-	fmt.Fprintf(stderr, "citest: CLI shard %d runs %d of %d tests/seed corpora with timeout 25m\n", index, len(names), len(shards[0])+len(shards[1]))
-	command := exec.Command(goBinary, "test", "-timeout", "25m", "-run", pattern, "./cmd/gosx")
+	fmt.Fprintf(stderr, "citest: %s shard %d runs %d of %d tests/seed corpora\n", layout.name, index, len(names), total)
+	runArgs := append(append([]string{"test"}, flags...), "-run", pattern, pkg)
+	command := exec.Command(goBinary, runArgs...)
 	command.Stdout, command.Stderr, command.Stdin = stdout, stderr, os.Stdin
 	if err := command.Run(); err != nil {
-		return fmt.Errorf("CLI shard %d: %w", index, err)
+		return fmt.Errorf("%s shard %d: %w", layout.name, index, err)
 	}
 	return nil
 }
 
-func splitCLITests(output string) ([2][]string, error) {
-	var shards [2][]string
-	seen := make(map[string]bool)
+// Discover runnable tests with the same Go tool and build tags used to execute
+// them, including examples and fuzz seed corpora. Both jobs run all subtests.
+func runCLIShard(args []string, goBinary string, stdout, stderr io.Writer) error {
+	index, err := shardIndex(args, cliLayout)
+	if err != nil {
+		return err
+	}
+	return runShard(cliLayout, index, goBinary, []string{"-timeout", "25m"}, "./cmd/gosx", stdout, stderr)
+}
+
+// runBrowserShard runs one share of the e2e browser suite. -v prints each
+// test's duration so the layout can be rebalanced from a CI log.
+func runBrowserShard(args []string, goBinary string, stdout, stderr io.Writer) error {
+	index, err := shardIndex(args, browserLayout)
+	if err != nil {
+		return err
+	}
+	return runShard(browserLayout, index, goBinary,
+		[]string{"-tags", browserBuildTag, "-v", "-timeout", "30m"}, "./"+browserRelativePath, stdout, stderr)
+}
+
+// tagFlags keeps only the build-tag flag pair: listing needs the tag but not
+// the timeout or -v.
+func tagFlags(flags []string) []string {
+	for i := 0; i+1 < len(flags); i++ {
+		if flags[i] == "-tags" {
+			return flags[i : i+2]
+		}
+	}
+	return nil
+}
+
+// discoveredTests keeps the runnable test names from `go test -list` output,
+// dropping the trailing "ok" line.
+func discoveredTests(output string) []string {
+	var names []string
 	for _, name := range strings.Split(output, "\n") {
 		name = strings.TrimSpace(name)
-		if !strings.HasPrefix(name, "Test") && !strings.HasPrefix(name, "Example") && !strings.HasPrefix(name, "Fuzz") {
-			continue
+		if strings.HasPrefix(name, "Test") || strings.HasPrefix(name, "Example") || strings.HasPrefix(name, "Fuzz") {
+			names = append(names, name)
 		}
-		if strings.ContainsAny(name, " \t/") || seen[name] {
-			return shards, fmt.Errorf("invalid or duplicate CLI test name %q", name)
-		}
-		seen[name] = true
-		sum := sha256.Sum256([]byte(name))
-		index := int(sum[0] & 1)
-		shards[index] = append(shards[index], name)
 	}
-	for i := range shards {
-		if len(shards[i]) == 0 {
-			return shards, fmt.Errorf("CLI shard %d contains no tests", i)
-		}
-		sort.Strings(shards[i])
+	return names
+}
+
+func splitCLITests(output string) ([][]string, error) {
+	return cliLayout.split(discoveredTests(output))
+}
+
+func splitBrowserTests(names []string) ([][]string, error) {
+	return browserLayout.split(names)
+}
+
+// verifyBrowserShards checks the browser layout against the e2e test source:
+// every Test function lands in exactly one shard and every pin is current.
+func verifyBrowserShards(w io.Writer) error {
+	names, err := browserTestNames(browserRelativePath)
+	if err != nil {
+		return err
 	}
-	return shards, nil
+	shards, err := splitBrowserTests(names)
+	if err != nil {
+		return err
+	}
+	sizes := make([]string, len(shards))
+	for i, shard := range shards {
+		sizes[i] = strconv.Itoa(len(shard))
+	}
+	fmt.Fprintf(w, "citest: browser shards verified tests=%d shards=%s\n", len(names), strings.Join(sizes, "/"))
+	return nil
+}
+
+// browserTestNames reads Test functions from the e2e package source. Every
+// file there carries the e2e build tag, so parsing all of them matches what
+// `go test -tags e2e -list` reports, without compiling the package.
+func browserTestNames(dir string) ([]string, error) {
+	files, err := filepath.Glob(filepath.Join(dir, "*_test.go"))
+	if err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, path := range files {
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			return nil, fmt.Errorf("parse %s: %w", path, err)
+		}
+		for _, decl := range file.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if ok && fn.Recv == nil && strings.HasPrefix(fn.Name.Name, "Test") && fn.Name.Name != "TestMain" {
+				names = append(names, fn.Name.Name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names, nil
 }
