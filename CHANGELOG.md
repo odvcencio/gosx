@@ -38,6 +38,18 @@
   compiled WASM. Missing tools warn once per build; failed passes include
   optimizer output in one complete warning and remove temporary output.
 
+- Add transactional aggregate telemetry setup with one maintenance worker and
+  one named application shutdown hook. Disabled handles own no resources;
+  failed setup removes its reservation. Shared close deadlines retain unfinished
+  owners, and clock or logger panics expose fixed error classes. The shared close
+  work keeps the earlier of the first caller's deadline and a 20-second limit;
+  caller cancellation ends only that caller's wait. Catalog admission is private
+  to the server callback, which also seals inactive registries at Build. Process
+  start time is captured once during initialization, independently of Enable;
+  clock failures have their own fixed drop reason.
+  Native features remain unavailable on WebAssembly. Listener, subsystem and record adapters
+  follow in their own slices; selecting them returns a fixed unsupported class.
+
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
   to replace its code-configured token or file source. Two environment sources
