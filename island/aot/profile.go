@@ -291,6 +291,9 @@ func NewJSONUnit(component string, data []byte, contract ScalarContract) (Unit, 
 	if len(trimmed) == 0 || trimmed[0] != '{' || !utf8.Valid(data) {
 		return Unit{}, fmt.Errorf("invalid program JSON framing")
 	}
+	if err := validateJSONSurrogates(data); err != nil {
+		return Unit{}, err
+	}
 	shape := json.NewDecoder(bytes.NewReader(data))
 	shape.UseNumber()
 	if err := programJSONShape(shape, reflect.TypeOf(program.Program{}), 0); err != nil {
@@ -307,6 +310,66 @@ func NewJSONUnit(component string, data []byte, contract ScalarContract) (Unit, 
 	}
 	p.Surface = program.SurfaceDOM
 	return admittedUnit(component, &p, contract)
+}
+
+// encoding/json replaces unpaired surrogate escapes with U+FFFD. Check raw
+// string escapes before either decoder can erase that distinction.
+func validateJSONSurrogates(data []byte) error {
+	inString := false
+	for i := 0; i < len(data); i++ {
+		if data[i] == '"' {
+			inString = !inString
+			continue
+		}
+		if !inString || data[i] != '\\' {
+			continue
+		}
+		if len(data)-i < 2 {
+			return fmt.Errorf("truncated program JSON escape")
+		}
+		if data[i+1] != 'u' {
+			// Escaped quotes and backslashes are string content, so neither
+			// changes the scan state nor starts a Unicode escape.
+			i++
+			continue
+		}
+		code, ok := jsonCodeUnit(data[i:])
+		if !ok {
+			return fmt.Errorf("invalid program JSON Unicode escape")
+		}
+		i += 5
+		if code >= 0xd800 && code <= 0xdbff {
+			low, ok := jsonCodeUnit(data[i+1:])
+			if !ok || low < 0xdc00 || low > 0xdfff {
+				return fmt.Errorf("unpaired high surrogate in program JSON string")
+			}
+			i += 6
+		} else if code >= 0xdc00 && code <= 0xdfff {
+			return fmt.Errorf("unpaired low surrogate in program JSON string")
+		}
+	}
+	return nil
+}
+
+func jsonCodeUnit(data []byte) (uint16, bool) {
+	if len(data) < 6 || data[0] != '\\' || data[1] != 'u' {
+		return 0, false
+	}
+	var code uint16
+	for _, digit := range data[2:6] {
+		code <<= 4
+		switch {
+		case digit >= '0' && digit <= '9':
+			code |= uint16(digit - '0')
+		case digit >= 'a' && digit <= 'f':
+			code |= uint16(digit-'a') + 10
+		case digit >= 'A' && digit <= 'F':
+			code |= uint16(digit-'A') + 10
+		default:
+			return 0, false
+		}
+	}
+	return code, true
 }
 
 func programJSONShape(decoder *json.Decoder, typ reflect.Type, depth int) error {
