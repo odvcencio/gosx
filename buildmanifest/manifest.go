@@ -175,10 +175,12 @@ type ImageVariantAsset struct {
 }
 
 type HashedAsset struct {
-	File      string `json:"file"`
-	Hash      string `json:"hash"`
-	Size      int64  `json:"size"`
-	Integrity string `json:"integrity,omitempty"`
+	File       string `json:"file"`
+	Hash       string `json:"hash"`
+	Size       int64  `json:"size"`
+	GzipSize   int64  `json:"gzipSize,omitempty"`
+	BrotliSize int64  `json:"brotliSize,omitempty"`
+	Integrity  string `json:"integrity,omitempty"`
 }
 
 // SceneAssetManifest points at the build-time Scene3D asset optimization report.
