@@ -312,7 +312,9 @@ func (a *Activity[A, P, E]) Set(fields A) error {
 	}
 	e.record = r
 	e.dirty = true
-	e.lastTouch = now.Monotonic
+	if now.Monotonic > e.lastTouch {
+		e.lastTouch = now.Monotonic
+	}
 	return nil
 }
 func (a *Activity[A, P, E]) Touch() {
