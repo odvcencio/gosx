@@ -899,6 +899,11 @@ function fakeElementQuerySelectorAll(root, selector, includeSelf = false) {
   return matches;
 }
 
+// DOM semantics: an options object contributes only its capture flag.
+function listenerCaptureFlag(options) {
+  return options !== null && typeof options === "object" ? Boolean(options.capture) : Boolean(options);
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -1150,14 +1155,14 @@ class FakeElement {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, []);
     }
-    this.listeners.get(type).push({ listener, capture: Boolean(capture) });
+    this.listeners.get(type).push({ listener, capture: listenerCaptureFlag(capture) });
   }
 
   removeEventListener(type, listener, capture) {
     const current = this.listeners.get(type) || [];
     this.listeners.set(
       type,
-      current.filter((entry) => entry.listener !== listener || entry.capture !== Boolean(capture)),
+      current.filter((entry) => entry.listener !== listener || entry.capture !== listenerCaptureFlag(capture)),
     );
   }
 
