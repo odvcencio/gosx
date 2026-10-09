@@ -14,6 +14,12 @@ const (
 	videoEngine
 )
 
+const (
+	runtimeJS uint8 = 1 << iota
+	runtimeShared
+	runtimeGoWASM
+)
+
 // Classify returns every applicable obligation in stable order. Declaring a
 // game adds a requirement; it cannot suppress islands or other experiences.
 func Classify(c Capabilities, declaredGame bool) ([]string, error) {
@@ -70,14 +76,9 @@ func Classify(c Capabilities, declaredGame bool) ([]string, error) {
 		if runtime == "go-wasm" || runtime == "mixed" {
 			bits |= standardGo
 		}
-		special := 0
-		if c.Scene3D {
-			special++
-		}
-		if c.Video {
-			special++
-		}
-		if c.Engines > special && runtime != "go-wasm" {
+		// Experience flags can come from independent markup, so they cannot
+		// establish how many registered engines have a specialized kind.
+		if c.Engines > 0 && runtime != "go-wasm" {
 			for _, variant := range variants {
 				if variant == "shared" {
 					bits |= engineShared
@@ -107,10 +108,10 @@ func Classify(c Capabilities, declaredGame bool) ([]string, error) {
 	if declaredGame {
 		if c.decoded {
 			variants = nil
-			if bits&(engineJS|sceneJS|videoEngine|standardGo) != 0 {
+			if c.engineRuntimes&(runtimeJS|runtimeGoWASM) != 0 {
 				variants = append(variants, "js")
 			}
-			if bits&(engineShared|sceneShared) != 0 {
+			if c.engineRuntimes&runtimeShared != 0 {
 				variants = append(variants, "shared")
 			}
 		}
