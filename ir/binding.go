@@ -30,6 +30,16 @@ import (
 	"strings"
 )
 
+// AOT uses a conservative declaration set for the whole compilation unit.
+// A name declared in any nested scope is excluded rather than guessing which
+// binding an expression uses. Missing evidence must keep execution on the VM.
+type aotSourceBindings struct {
+	declared          map[string]bool
+	imports           *ImportTable
+	unresolvedImports bool
+	packageNames      func([]byte) (string, map[string]bool, error)
+}
+
 // ImportTable is one source file's import table: every import spec's
 // resolved local identifier, keyed by that identifier, plus the set of
 // dot-imported paths (which contribute no keyed identifier — a dot

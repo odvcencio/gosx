@@ -24,6 +24,11 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 	if src.PackagePath == "" {
 		return aot.Unit{}, aotSourceError(comp, "component_identity", "an import path is required")
 	}
+	resolved, err := aotPackageSource(src)
+	if err != nil {
+		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
+	}
+	src = resolved
 	// Source graphs are bounded before calling the ordinary tree lowerer.
 	active := make(map[NodeID]bool)
 	var visit func(NodeID, int) error
@@ -39,7 +44,7 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 					continue
 				}
 				for _, typ := range callee.PropsFields {
-					if aotSourceKind(typ) == "" {
+					if aotSourceKind(src, typ) == "" {
 						return fmt.Errorf("composed prop has an unproved scalar type")
 					}
 				}
@@ -49,13 +54,13 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			}
 		}
 		if n.Kind == NodeExpr {
-			if err := aotSourceTokens(n.Text); err != nil {
+			if err := aotSourceTokens(src, comp, n.Text); err != nil {
 				return err
 			}
 		}
 		for _, attr := range n.Attrs {
 			if attr.Expr != "" {
-				if err := aotSourceTokens(attr.Expr); err != nil {
+				if err := aotSourceTokens(src, comp, attr.Expr); err != nil {
 					return err
 				}
 			}
@@ -83,22 +88,27 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 	stateKinds := make(map[string]aot.ScalarKind)
 	if comp.Scope != nil {
 		for slot, sig := range comp.Scope.Signals {
-			kind := aotSourceKind(sig.SourceType)
-			if kind == "" {
+			kind := aotSourceKind(src, sig.SourceType)
+			if kind == "" || sig.aotConstructor == "" || src.aotBindings.declared[sig.aotConstructor] {
 				return aot.Unit{}, aotSourceError(comp, "source_type", "signal "+sig.Name+" has an unproved source type")
 			}
-			if err := aotSourceTokens(sig.InitExpr); err != nil {
+			if err := aotSourceTokens(src, comp, sig.InitExpr); err != nil {
 				return aot.Unit{}, aotSourceError(comp, "source_literal", err.Error())
+			}
+			// The VM may preserve an unparsed initializer as a string. Admission
+			// requires successful parsing, including generic calls and indexing.
+			if _, _, err := ParseExpr(sig.InitExpr, mergedIslandScope(src, comp)); err != nil {
+				return aot.Unit{}, aotSourceError(comp, "source_literal", "signal initializer has no proved expression lowering")
 			}
 			stateKinds[sig.Name] = kind
 			c.Signals = append(c.Signals, aot.StateContract{Slot: uint32(slot), Name: sig.Name, Kind: kind})
 		}
 		for slot, computed := range comp.Scope.Computeds {
-			kind := aotSourceKind(computed.ReturnType)
-			if kind == "" {
+			kind := aotSourceKind(src, computed.ReturnType)
+			if kind == "" || computed.aotConstructor == "" || src.aotBindings.declared[computed.aotConstructor] {
 				return aot.Unit{}, aotSourceError(comp, "source_type", "computed "+computed.Name+" has an unproved source type")
 			}
-			if err := aotSourceTokens(computed.BodyExpr); err != nil {
+			if err := aotSourceTokens(src, comp, computed.BodyExpr); err != nil {
 				return aot.Unit{}, aotSourceError(comp, "source_literal", err.Error())
 			}
 			stateKinds[computed.Name] = kind
@@ -106,7 +116,7 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		}
 		for _, handler := range comp.Scope.Handlers {
 			for _, stmt := range handler.Statements {
-				if err := aotSourceTokens(stmt); err != nil {
+				if err := aotSourceTokens(src, comp, stmt); err != nil {
 					return aot.Unit{}, aotSourceError(comp, "source_literal", err.Error())
 				}
 			}
@@ -140,6 +150,9 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			}
 			args[i], isPure = k, isPure && pure[operand]
 		}
+		if err := aotScalarOperands(e, args); err != nil {
+			return "", fmt.Errorf("expression %d: %w", id, err)
+		}
 		var kind aot.ScalarKind
 		switch e.Op {
 		case program.OpLitString:
@@ -155,9 +168,11 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		case program.OpSignalGet:
 			kind = stateKinds[e.Value]
 		case program.OpSignalSet:
-			kind, isPure = aot.AnyZero, false
+			if len(args) == 1 && aotValueFits(args[0], constants[e.Operands[0]], stateKinds[e.Value]) {
+				kind, isPure = aot.AnyZero, false
+			}
 		case program.OpPropGet, program.OpIndex, program.OpEventGet:
-			input, prefix := aotSourceInput(p, id, comp)
+			input, prefix := aotSourceInput(src, p, id, comp)
 			kind = input.Kind
 			if prefix {
 				kind = aot.SelectorPath
@@ -216,12 +231,26 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 			if len(args) == 0 {
 				kind = aot.AnyZero
 			}
-		case program.OpEq, program.OpNeq, program.OpLt, program.OpGt, program.OpLte, program.OpGte, program.OpAnd, program.OpOr, program.OpNot:
-			kind = aot.Bool
+		case program.OpEq, program.OpNeq, program.OpLt, program.OpGt, program.OpLte, program.OpGte:
+			if len(args) == 2 && (aotValueFits(args[0], constants[e.Operands[0]], args[1]) || aotValueFits(args[1], constants[e.Operands[1]], args[0])) {
+				if e.Op == program.OpEq || e.Op == program.OpNeq || args[0] != aot.Bool {
+					kind = aot.Bool
+				}
+			}
+		case program.OpAnd, program.OpOr:
+			if len(args) == 2 && args[0] == aot.Bool && args[1] == aot.Bool {
+				kind = aot.Bool
+			}
+		case program.OpNot:
+			if len(args) == 1 && args[0] == aot.Bool {
+				kind = aot.Bool
+			}
 		case program.OpConcat, program.OpFormat, program.OpToString:
 			kind = aot.String
 		case program.OpLen:
-			kind = aot.Int
+			if len(args) == 1 && args[0] == aot.String {
+				kind = aot.Int
+			}
 		}
 		if kind == "" {
 			return "", fmt.Errorf("expression %d has no supported scalar source evidence", id)
@@ -242,6 +271,9 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		}
 		c.Expressions = append(c.Expressions, aot.ExpressionContract{Expr: program.ExprID(id), Kind: kind, Pure: pure[id]})
 	}
+	if err := aotScalarRoots(p, kinds, constants, stateKinds); err != nil {
+		return aot.Unit{}, aotSourceError(comp, "source_type", err.Error())
+	}
 	c.Inputs = aotInternInputs(c.Inputs)
 	c.Bindings, err = aot.ContractBindings(p)
 	if err != nil {
@@ -260,8 +292,12 @@ func aotConstantFits(value constant.Value, kind aot.ScalarKind) bool {
 	return exact && n >= -1<<31 && n <= 1<<31-1
 }
 
-func aotSourceKind(name string) aot.ScalarKind {
-	switch strings.TrimSpace(name) {
+func aotSourceKind(src *Program, name string) aot.ScalarKind {
+	name = strings.TrimSpace(name)
+	if !src.aotBindings.universe(name) {
+		return ""
+	}
+	switch name {
 	case "int":
 		return aot.Int
 	case "int32":
@@ -275,14 +311,53 @@ func aotSourceKind(name string) aot.ScalarKind {
 	}
 }
 
-func aotSourceTokens(source string) error {
+func aotSourceTokens(src *Program, comp Component, source string) error {
 	tokens, err := lexExpr(source)
 	if err != nil {
 		return err
 	}
-	for _, tok := range tokens {
+	for i, tok := range tokens {
 		if tok.kind == tokenString && strings.HasPrefix(tok.text, "'") {
 			return fmt.Errorf("rune literal is outside the scalar profile")
+		}
+		if tok.kind != tokenIdent {
+			continue
+		}
+		member := i > 0 && tokens[i-1].kind == tokenDot
+		call := i+1 < len(tokens) && tokens[i+1].kind == tokenLParen
+		if !member && (tok.text == "true" || tok.text == "false") && !src.aotBindings.universe(tok.text) {
+			return fmt.Errorf("boolean constant %s has no universe binding", tok.text)
+		}
+		if member && (strings.EqualFold(tok.text, "len") || strings.EqualFold(tok.text, "length")) {
+			return fmt.Errorf("length alias has no proved Go binding")
+		}
+		if !call {
+			continue
+		}
+		if !member {
+			// Conversions and other calls are outside this profile. Do not let
+			// the VM's initializer fallback turn them into certified strings.
+			if tok.text != "len" || !src.aotBindings.universe(tok.text) {
+				return fmt.Errorf("call %s has no supported universe binding", tok.text)
+			}
+			continue
+		}
+		proved := false
+		if i >= 2 && tokens[i-2].kind == tokenIdent && (i < 3 || tokens[i-3].kind != tokenDot) && comp.Scope != nil {
+			receiver := tokens[i-2].text
+			for _, sig := range comp.Scope.Signals {
+				if sig.aotConstructor != "" && (receiver == sig.Local || receiver == sig.Name) && (tok.text == "Get" || tok.text == "Set") {
+					proved = true
+				}
+			}
+			for _, computed := range comp.Scope.Computeds {
+				if computed.aotConstructor != "" && receiver == computed.Name && tok.text == "Get" {
+					proved = true
+				}
+			}
+		}
+		if !proved {
+			return fmt.Errorf("method %s has no proved scalar receiver", tok.text)
 		}
 	}
 	return nil
@@ -292,10 +367,11 @@ func aotSourceError(comp Component, code, message string) error {
 	return NewDiagnosticsError("island-aot", []Diagnostic{{Span: comp.Span, Code: "aot_" + code, Message: message}})
 }
 
-func aotSourceInput(p *program.Program, id program.ExprID, comp Component) (aot.InputContract, bool) {
+func aotSourceInput(src *Program, p *program.Program, id program.ExprID, comp Component) (aot.InputContract, bool) {
 	e := p.Exprs[id]
 	if e.Op == program.OpEventGet {
-		kind := aotSourceKind(map[program.ExprType]string{program.TypeString: "string", program.TypeInt: "int", program.TypeBool: "bool"}[eventFieldType(e.Value)])
+		// Event codec types are compiler-owned, not names in Go source scope.
+		kind := map[program.ExprType]aot.ScalarKind{program.TypeString: aot.String, program.TypeInt: aot.Int, program.TypeBool: aot.Bool}[eventFieldType(e.Value)]
 		return aot.InputContract{Source: "event", Root: e.Value, Path: []string{}, Kind: kind}, false
 	}
 	keys := []string{}
@@ -322,7 +398,7 @@ func aotSourceInput(p *program.Program, id program.ExprID, comp Component) (aot.
 	if len(keys) > 0 {
 		typ = comp.PropsPaths[path]
 	}
-	if kind := aotSourceKind(typ); kind != "" {
+	if kind := aotSourceKind(src, typ); kind != "" {
 		return aot.InputContract{Source: "prop", Root: root, Path: keys, Kind: kind}, false
 	}
 	for leaf := range comp.PropsPaths {

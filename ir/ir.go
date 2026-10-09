@@ -47,6 +47,9 @@ type Program struct {
 
 	// Nodes is the flat array of all IR nodes (elements, text, expressions, etc).
 	Nodes []Node
+
+	// Source binding evidence is private and never changes the VM artifact.
+	aotBindings *aotSourceBindings
 }
 
 // Import represents a Go import.
@@ -302,7 +305,8 @@ type SignalInfo struct {
 	TypeHint string // inferred type from init value (e.g., "int", "string")
 	// SourceType retains scalar source evidence separately from VM type hints.
 	// Empty means the source kind was not proved.
-	SourceType string
+	SourceType     string
+	aotConstructor string
 }
 
 // ComputedInfo describes a computed/derived signal declaration.
@@ -311,7 +315,8 @@ type ComputedInfo struct {
 	Name     string // variable name
 	BodyExpr string // source text of the return expression
 	// ReturnType is the declared Go result type, without alias resolution.
-	ReturnType string
+	ReturnType     string
+	aotConstructor string
 }
 
 // HandlerInfo describes a handler function declaration.

@@ -675,11 +675,12 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 	case signalCallNew:
 		initExpr := l.extractArg(argsNode, 0)
 		return SignalInfo{
-			Name:       varName,
-			Local:      varName,
-			InitExpr:   initExpr,
-			TypeHint:   l.inferTypeHint(initExpr),
-			SourceType: l.signalSourceType(rightExpr, initExpr),
+			Name:           varName,
+			Local:          varName,
+			InitExpr:       initExpr,
+			TypeHint:       l.inferTypeHint(initExpr),
+			SourceType:     l.signalSourceType(rightExpr, initExpr),
+			aotConstructor: l.aotSignalConstructor(rightExpr),
 		}, true
 	case signalCallNewShared, signalCallShared:
 		sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
@@ -688,11 +689,12 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			return SignalInfo{}, false
 		}
 		return SignalInfo{
-			Name:       sharedName,
-			Local:      varName,
-			InitExpr:   initExpr,
-			TypeHint:   l.inferTypeHint(initExpr),
-			SourceType: l.signalSourceType(rightExpr, initExpr),
+			Name:           sharedName,
+			Local:          varName,
+			InitExpr:       initExpr,
+			TypeHint:       l.inferTypeHint(initExpr),
+			SourceType:     l.signalSourceType(rightExpr, initExpr),
+			aotConstructor: l.aotSignalConstructor(rightExpr),
 		}, true
 	default:
 		return SignalInfo{}, false
@@ -709,9 +711,10 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 		l.errorf(rightExpr, "computed %q: %v", varName, err)
 	}
 	return ComputedInfo{
-		Name:       varName,
-		BodyExpr:   bodyExpr,
-		ReturnType: l.computedSourceType(argsNode),
+		Name:           varName,
+		BodyExpr:       bodyExpr,
+		ReturnType:     l.computedSourceType(argsNode),
+		aotConstructor: l.aotSignalConstructor(rightExpr),
 	}, true
 }
 
@@ -1151,6 +1154,7 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 			l.lowerImportDecl(child)
 		}
 	}
+	l.collectAOTBindings(root)
 	l.collectStrictSchemas(root)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
