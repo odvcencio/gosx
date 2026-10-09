@@ -75,7 +75,7 @@ func treeOracleDeclaredValue(body []byte, opts HTMLMeasureOptions, marker string
 }
 
 func TestInlineHTMLTreeNormalizationCorpus(t *testing.T) {
-	corpus := htmlSemanticCorpus(t)
+	corpus := append(htmlSemanticCorpus(t), mergedRootNormalizationCorpus()...)
 	opts := normalizationCorpusOptions()
 	// This only finds candidate byte spans. Tree construction, independently
 	// of the production source association, determines whether each is ignored.
@@ -148,4 +148,16 @@ func TestInlineHTMLTreeNormalizationCorpus(t *testing.T) {
 		})
 	}
 	t.Logf("seed=53405 documents=%d accepted=%d rejected=%d declared changes=%d literal changes=%d undeclared mutations=%d disagreements=%d", len(corpus), accepted, rejected, ignored, retained, mutations, disagreements)
+}
+
+func mergedRootNormalizationCorpus() []htmlNormalizationCase {
+	return []htmlNormalizationCase{
+		{name: "merged-body", body: []byte(`<html><body><body data-gosx-session="first"><p>ok</p></body></html>`)},
+		{name: "merged-html", body: []byte(`<html><body><html data-gosx-session="first"><p>ok</p></body></html>`)},
+		{name: "merged-body-multiple", body: []byte(`<html><body><body data-gosx-session="first"><body data-gosx-build-timestamp='second'><p>ok</p></body></html>`)},
+		{name: "merged-html-multiple", body: []byte(`<html><html data-gosx-session="first"><body><html data-gosx-build-timestamp='second'><p>ok</p></body></html>`)},
+		{name: "merged-body-first-wins", body: []byte(`<html><body data-gosx-session="first"><body data-gosx-session="ignored" data-gosx-build-timestamp="second"><p>ok</p></body></html>`)},
+		{name: "merged-html-first-wins", body: []byte(`<html data-gosx-session="first"><body><html data-gosx-session="ignored" data-gosx-build-timestamp="second"><p>ok</p></body></html>`)},
+		{name: "inert-merged-roots", body: []byte(`<html><body><template><html data-gosx-session="literal"><body data-gosx-build-timestamp="literal"></template><p>ok</p></body></html>`)},
+	}
 }

@@ -59,6 +59,10 @@ func TestInlineCSP3GeneratedCorpus(t *testing.T) {
 		{"nonce-case-sensitive", script, "script-src 'nonce-aBcDeF'", false},
 		{"external-unsafe", `<script nonce="AbCdEf" src="/app.js"></script>`, "script-src 'unsafe-inline'", false},
 		{"external-nonce", `<script nonce="AbCdEf" src="/app.js"></script>`, "script-src 'nonce-AbCdEf'", true},
+		{"opaque-padded-nonce", `<script nonce="YWJjZA==">app()</script>`, "script-src 'nonce-YWJjZA=='", true},
+		{"opaque-unpadded-nonce", `<script nonce="YWJjZA==">app()</script>`, "script-src 'nonce-YWJjZA'", false},
+		{"opaque-url-nonce", `<script nonce="AA+/">app()</script>`, "script-src 'nonce-AA-_'", false},
+		{"opaque-standard-nonce", `<script nonce="AA+/">app()</script>`, "script-src 'nonce-AA+/'", true},
 	}
 	for _, algorithm := range []string{"sha256", "sha384", "sha512"} {
 		var digest []byte
@@ -74,8 +78,12 @@ func TestInlineCSP3GeneratedCorpus(t *testing.T) {
 			digest = value[:]
 		}
 		payload := base64.StdEncoding.EncodeToString(digest)
-		for _, encoded := range []string{payload, strings.NewReplacer("+", "-", "/", "_").Replace(payload)} {
-			seeds = append(seeds, seed{algorithm + "-hash", script, "script-src '" + algorithm + "-" + encoded + "'", true})
+		// CSP3 §2.3.1 permits either alphabet and optional padding. Exercise
+		// equivalent digests while nonce sources remain opaque strings.
+		encodings := []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding}
+		for variant, encoding := range encodings {
+			encoded := encoding.EncodeToString(digest)
+			seeds = append(seeds, seed{fmt.Sprintf("%s-hash-%d", algorithm, variant), script, "script-src '" + algorithm + "-" + encoded + "'", true})
 		}
 		wrong := swapFirstLetter(payload)
 		seeds = append(seeds,
@@ -94,10 +102,12 @@ func TestInlineCSP3GeneratedCorpus(t *testing.T) {
 			value := sha512.Sum512([]byte(text))
 			digest = value[:]
 		}
-		payload = base64.StdEncoding.EncodeToString(digest)
-		seeds = append(seeds,
-			seed{algorithm + "-style-hash", `<style nonce="AbCdEf">p{` + "\r\ncolor:red}\r" + `</style>`, "style-src '" + algorithm + "-" + payload + "'", true},
-			seed{algorithm + "-style-case-sensitive", `<style nonce="AbCdEf">p{` + "\r\ncolor:red}\r" + `</style>`, "style-src '" + algorithm + "-" + swapFirstLetter(payload) + "'", false})
+		for variant, encoding := range encodings {
+			payload = encoding.EncodeToString(digest)
+			seeds = append(seeds,
+				seed{fmt.Sprintf("%s-style-hash-%d", algorithm, variant), `<style nonce="AbCdEf">p{` + "\r\ncolor:red}\r" + `</style>`, "style-src '" + algorithm + "-" + payload + "'", true},
+				seed{fmt.Sprintf("%s-style-case-sensitive-%d", algorithm, variant), `<style nonce="AbCdEf">p{` + "\r\ncolor:red}\r" + `</style>`, "style-src '" + algorithm + "-" + swapFirstLetter(payload) + "'", false})
+		}
 	}
 	rng := rand.New(rand.NewSource(53403))
 	insensitive := regexp.MustCompile(`(?i)(?:\b(?:default|script|style|img)-src(?:-elem)?\b|'(?:nonce-|sha256-|sha384-|sha512-|self'|none'|unsafe-inline'|strict-dynamic'))`)

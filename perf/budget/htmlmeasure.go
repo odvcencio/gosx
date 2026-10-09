@@ -329,7 +329,11 @@ func cspAllowsElement(sources []string, element, nonce, text string, external bo
 		// External scripts need their fetched content and integrity metadata;
 		// an inline text hash or unsafe-inline cannot authorize that fetch.
 		payload = strings.NewReplacer("-", "+", "_", "/").Replace(payload)
-		matches = matches || !external && base64.StdEncoding.EncodeToString(digest) == payload
+		decoded, err := base64.StdEncoding.DecodeString(payload)
+		if err != nil {
+			decoded, err = base64.RawStdEncoding.DecodeString(payload)
+		}
+		matches = matches || !external && err == nil && bytes.Equal(digest, decoded)
 	}
 	return matches || !external && unsafe && !restricted
 }

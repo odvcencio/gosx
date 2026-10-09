@@ -110,7 +110,10 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 		if item.kind == html.SelfClosingTagToken {
 			stop--
 		}
-		insertion := " " + marker + "=" + strconv.Itoa(i) + " "
+		// Distinct keys survive html/body attribute merging. A shared key
+		// would retain only the first root tag's source position.
+		position := strconv.Itoa(i)
+		insertion := " " + marker + "-" + position + "=" + position + " "
 		annotated.Write(body[i:stop])
 		annotated.WriteString(insertion)
 		annotated.Write(body[stop:item.end])
@@ -136,14 +139,16 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 		inert = inert || node.Type == html.ElementNode && node.Namespace == "" && node.DataAtom == atom.Template
 		if node.Type == html.ElementNode && htmlNormalizedElement(node.DataAtom) {
 			attrs := map[string]string{}
-			source, found := htmlSourceToken{}, false
+			var sources []htmlSourceToken
 			for _, attr := range node.Attr {
-				if attr.Namespace == "" && attr.Key == marker {
+				if attr.Namespace == "" && strings.HasPrefix(attr.Key, marker+"-") {
 					start, e := strconv.Atoi(attr.Val)
 					if e != nil {
 						return measureFailure("wrong-fixture", "/html")
 					}
-					source, found = starts[start]
+					if source, found := starts[start]; found {
+						sources = append(sources, source)
+					}
 					continue
 				}
 				key := attr.Key
@@ -154,7 +159,9 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 					attrs[key] = strip(attr.Val)
 				}
 			}
-			if found && !associated[source.start] {
+			sort.Slice(sources, func(i, j int) bool { return sources[i].start < sources[j].start })
+			contributed := map[string]bool{}
+			for _, source := range sources {
 				if source.token.DataAtom != node.DataAtom {
 					return measureFailure("wrong-fixture", "/html")
 				}
@@ -165,8 +172,26 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 					}
 					seen[attr.Key] = true
 				}
-				result.starts = append(result.starts, source)
-				associated[source.start] = true
+				if node.Namespace == "" && (node.DataAtom == atom.Html || node.DataAtom == atom.Body) {
+					// Root attributes merge only when their name is absent. Keep
+					// ignored later values literal, even on an accepted root tag.
+					var merged []html.Attribute
+					for _, attr := range source.token.Attr {
+						if !contributed[attr.Key] {
+							merged = append(merged, attr)
+							contributed[attr.Key] = true
+						}
+					}
+					source.token.Attr = merged
+				}
+				if !associated[source.start] {
+					result.starts = append(result.starts, source)
+					associated[source.start] = true
+				}
+			}
+			source, found := htmlSourceToken{}, len(sources) > 0
+			if found {
+				source = sources[0]
 			}
 			var text strings.Builder
 			for child := node.FirstChild; child != nil; child = child.NextSibling {
