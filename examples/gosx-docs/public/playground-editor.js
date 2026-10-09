@@ -218,7 +218,8 @@
         "blur", "change", "click", "document-keydown", "document-keyup",
         "dragend", "dragleave", "dragover", "dragstart", "drop", "focus",
         "input", "keydown", "keyup", "pointercancel", "pointerdown",
-        "pointermove", "pointerup", "submit", "window-resize"
+        "pointermove", "pointerup", "submit", "window-resize", "wheel", "dblclick",
+        "contextmenu", "lostpointercapture"
       ]);
       var active = new Set();
 

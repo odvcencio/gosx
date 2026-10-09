@@ -104,9 +104,12 @@ test:
 test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
-.PHONY: test-budget-contract
+.PHONY: test-budget-contract test-budget-derive
 test-budget-contract:
 	GOWORK=off $(GO) test ./perf/budget
+
+test-budget-derive:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 
 # CI runs the two exhaustive name partitions separately. An ordinary test-cli
 # invocation still runs the full package with the same 25-minute timeout.
@@ -140,7 +143,7 @@ test-race-pr:
 # Native telemetry checks stay non-short so cap and ownership tests execute.
 .PHONY: test-telemetry test-telemetry-metric-race test-telemetry-helpers-race
 test-telemetry:
-	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/...
+	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/... ./server ./route ./scheduled ./hub ./sim
 
 test-telemetry-metric-race:
 	GOWORK=off $(GO) test -race ./telemetry/metric
@@ -150,7 +153,7 @@ test-telemetry-helpers-race:
 
 .PHONY: test-telemetry-wasm bench-telemetry
 test-telemetry-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry/metric ./internal/clock ./telemetry/telemetrytest
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry ./telemetry/metric ./internal/clock ./telemetry/telemetrytest
 
 bench-telemetry:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim
@@ -479,3 +482,7 @@ release-gate:
 	@echo "release-gate: all gates passed"
 
 ci: fmt-check verify-danmuji test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+
+.PHONY: test-assetmeasure
+test-assetmeasure:
+	GOWORK=off go test ./internal/assetmeasure ./cmd/gosx -run 'Test(AssetMeasure|Sidecar|Size)'

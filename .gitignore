@@ -13,6 +13,7 @@ build/
 !/docs/embedded-apps.md
 !/docs/ui-recipes.md
 !/docs/controllers.md
+!/docs/island-events.md
 !/docs/desktop-code-signing.md
 !/docs/expression-support-matrix.md
 !/docs/immutable-asset-caching.md

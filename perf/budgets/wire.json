@@ -106,7 +106,7 @@
           "htmlWireBytes": 17708,
           "imageWireBytes": 8404,
           "inlineScriptBytes": 1551,
-          "jsWireBytes": 258118,
+          "jsWireBytes": 260973,
           "lazyJsWireBytes": 198737,
           "requests": 8,
           "totalWireBytes": 959647,
@@ -126,7 +126,7 @@
           "frameworkJsWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3310 bytes measured.",
           "htmlWireBytes": "The open ocean adds its capability row and scene props to this page: +106 bytes measured.",
           "imageWireBytes": "The accessible Scene3D poster adds one compressed image of 7725 wire bytes; the limit includes the standard 256-byte margin.",
-          "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014). Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 230415 to 258118 B; htmlWireBytes drops from 45498 to 17708 B. Runtime source bytes are unchanged.",
+          "jsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail and bloom runtime chunks. Production jsWireBytes measured 228134 bytes against the previous 221825-byte limit; the new 230415-byte limit uses the existing wire tolerance (decision 0014). Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 230415 to 258118 B; htmlWireBytes drops from 45498 to 17708 B. Runtime source bytes are unchanged. M0 feature loader: owner-approved one-time M0 core change (Cicada Studio spec section 4, 2026-10-08). The shared runtime and navigation bundles grow by 381 B and 260 B raw (jsWireBytes measured 258340 against the 258118 limit; 258390 after review fixes). The new 260973-byte limit uses the existing wire tolerance (decision 0014).",
           "lazyJsWireBytes": "Blackglass integrates governed ocean, reflections, atmosphere, detail, bloom, volume transmission, depth AO, contact shadows and temporal antialiasing runtime chunks. Production lazyJsWireBytes measured 194773 bytes against the previous 193692-byte limit; the new 196720-byte limit uses the existing wire tolerance (decision 0014). The post branch measures 1540 additional Brotli bytes for its TAA history resolve and FXAA fallback aliases; the integrated measurement above includes them. Particle bursts and demand-loaded timeline playback measured 196770 bytes against the previous 196635-byte limit; the new 198737-byte limit uses the existing wire tolerance (decision 0014).",
           "requests": "Cached file-route stylesheets replace inline CSS with immutable gzip assets. Production requests measures 10 against the previous 6 limit. The new 10 limit uses the existing wire tolerance; HTML and total byte limits ratchet down to the measured load. The accessible Scene3D poster adds one image request to the initial page load (6 to 7). Navigation re-baseline: The external navigation runtime adds one deferred, content-hashed script request. requests changes from 7 to 8 requests; htmlWireBytes drops from 45498 to 17708 B. Runtime source bytes are unchanged.",
           "totalWireBytes": "Environment.Ocean ships two governed renderer passes (webgl-ocean.ts, webgpu-ocean.ts) and the shared wave packing in the Scene3D chunks: +3416 bytes measured."
@@ -293,7 +293,7 @@
           "htmlWireBytes": 1514,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 87617,
+          "jsWireBytes": 87942,
           "lazyJsWireBytes": 256,
           "requests": 9,
           "totalWireBytes": 304319,
@@ -310,7 +310,7 @@
         ],
         "raise": {
           "frameworkJsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
-          "jsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap. Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 59914 to 87617 B; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged.",
+          "jsWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap. Navigation re-baseline: The same navigation runtime moves from inline HTML to one 27,703-byte Brotli asset. jsWireBytes changes from 59914 to 87617 B; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged. M0 feature loader: owner-approved one-time M0 core change (Cicada Studio spec section 4, 2026-10-08). The shared runtime and navigation bundles grow, so jsWireBytes measured 87668, then 87878 after merging main's own runtime growth, against the 87617 limit; the new 87942-byte limit is the latest measurement plus 64 bytes.",
           "totalWireBytes": "Environment.Ocean normalization in the shared scene runtime adds 12 bytes to every bootstrap.",
           "requests": "Navigation re-baseline: The external navigation runtime adds one deferred, content-hashed script request. requests changes from 8 to 9 requests; htmlWireBytes drops from 29171 to 1514 B. Runtime source bytes are unchanged."
         }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -90,6 +91,10 @@ type RuntimeAssets struct {
 	VideoHLS                              HashedAsset `json:"videoHLS,omitzero"`
 	StripeBridge                          HashedAsset `json:"stripeBridge,omitzero"`
 	Relay                                 HashedAsset `json:"relay,omitzero"`
+	// Features holds opt-in runtime chunks keyed by feature name (for example
+	// "engine-bridge" for bootstrap-feature-engine-bridge.js). The loader
+	// fetches them by name; no per-chunk field is needed.
+	Features map[string]HashedAsset `json:"features,omitempty"`
 }
 
 // RuntimeVariantAsset identifies one runtime artifact independently of its
@@ -169,10 +174,12 @@ type ImageVariantAsset struct {
 }
 
 type HashedAsset struct {
-	File      string `json:"file"`
-	Hash      string `json:"hash"`
-	Size      int64  `json:"size"`
-	Integrity string `json:"integrity,omitempty"`
+	File       string `json:"file"`
+	Hash       string `json:"hash"`
+	Size       int64  `json:"size"`
+	GzipSize   int64  `json:"gzipSize,omitempty"`
+	BrotliSize int64  `json:"brotliSize,omitempty"`
+	Integrity  string `json:"integrity,omitempty"`
 }
 
 // SceneAssetManifest points at the build-time Scene3D asset optimization report.
@@ -219,6 +226,8 @@ type RuntimePaths struct {
 	VideoHLS                              string
 	StripeBridge                          string
 	Relay                                 string
+	// Features maps feature name to public chunk URL.
+	Features map[string]string
 }
 
 // Load reads a build manifest from disk.
@@ -240,6 +249,13 @@ func Load(path string) (*Manifest, error) {
 
 // RuntimeURLs returns the public URLs for the shared runtime assets.
 func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
+	var features map[string]string
+	if len(m.Runtime.Features) > 0 {
+		features = make(map[string]string, len(m.Runtime.Features))
+		for name, asset := range m.Runtime.Features {
+			features[name] = AssetURL(assetBaseURL, "runtime", asset.File)
+		}
+	}
 	variants := make(map[string]string, len(m.Runtime.WASMVariants))
 	for id, asset := range m.Runtime.WASMVariants {
 		variants[id] = AssetURL(assetBaseURL, "runtime", asset.File)
@@ -279,7 +295,26 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		VideoHLS:                              AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
 		StripeBridge:                          AssetURL(assetBaseURL, "runtime", m.Runtime.StripeBridge.File),
 		Relay:                                 AssetURL(assetBaseURL, "runtime", m.Runtime.Relay.File),
+		Features:                              features,
 	}
+}
+
+var featureNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// FeatureChunkName extracts the feature name from a runtime chunk file name of
+// the form bootstrap-feature-<name>.js. It reports false when the name is not
+// a valid lowercase dash-separated feature name, so callers can use it to
+// resolve any chunk generically without opening a path-traversal door.
+func FeatureChunkName(file string) (string, bool) {
+	name, ok := strings.CutPrefix(file, "bootstrap-feature-")
+	if !ok {
+		return "", false
+	}
+	name, ok = strings.CutSuffix(name, ".js")
+	if !ok || !featureNamePattern.MatchString(name) {
+		return "", false
+	}
+	return name, true
 }
 
 // ValidateIslandAssets rejects ambiguous unqualified runtime names. Island
