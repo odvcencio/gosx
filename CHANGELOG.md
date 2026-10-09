@@ -71,6 +71,91 @@
   for `bootstrap-feature-islands.js` and +539 raw for the legacy `bootstrap.js`
   monolith): the gesture events grow the islands chunk by 390 raw bytes (18,766
   to 19,156) and the monolith by 390 (1,910,682 to 1,911,072).
+- Cache bounded readiness snapshots without rerunning checks or retaining request
+  IDs and errors. LastReadiness reports unknown before a probe, UTC completion
+  time, and completeness when more than 64 checks exist. Panicking checks fail
+  readiness and are disabled with a fixed log class.
+
+- Attach built-in request aggregates once at the App observer owner. Route
+  labels use the admitted catalog, response bytes come from its writer, and
+  the in-flight gauge covers application middleware. RequestStartObserver
+  adds an optional bounded entry callback without another request context.
+
+- Request observers report accepted response body bytes and successful hijacks.
+  The first final status wins; interim responses, ReaderFrom and response
+  controller operations retain their HTTP behavior. Nested observers share
+  route metadata, and file actions mark their registered dispatch pattern.
+
+- Expose typed activity kind registration and Begin after the lifecycle,
+  participant and event owners are complete. Enable accepts memory activities,
+  and receipts explicitly distinguish memory acknowledgement from durability.
+  A bounded catalog retains 256 acknowledged parent IDs without final records.
+
+- Queue copied activity events through one fixed count and byte budget on the
+  existing telemetry worker. In-flight records keep their reservations, event
+  caps and rejected writes preserve truthful terminal totals, and accepted
+  sequence order follows queue admission. No event history or sink is implicit.
+
+- Add bounded activity seats with revision-checked field replacement, one
+  active connection reference, idempotent joins and leaves, monotonic presence
+  time and frozen final totals. Consented human links are copied and trimmed
+  to preserve final capacity; bots and unconsented refs persist no client data.
+
+- Add the activity lifecycle owner with copied revision-checked projections,
+  reserved immutable finals, monotonic duration, frozen loop health and shared
+  memory receipts. Source drain preserves admitted work; idle and shutdown
+  finals run on the existing worker without application encoders. Public
+  construction follows the participant and event owners.
+
+- Reserve finite activity kind and codec declarations before route admission.
+  Dimensions share fixed metric labels, complete-kind admission is atomic,
+  and metadata/staging capacity shares one bounded arena with hub attachments
+  and route tables. Public activity lifecycles follow in the next slice.
+
+- Add a portable, bounded MemorySink test helper with synchronized record and
+  byte admission, copied readers and one injected failure per operation.
+  Its zero value uses 128 records and 1 MiB. Memory acceptance makes no local
+  durability promise. The sink contract precedes the bounded worker slice.
+
+- Add immutable typed telemetry records with a schema-1 JSONL envelope,
+  deterministic field order, UTC observations, CRC-32C and copied payload
+  views. Framework-only constructors reject invalid identities and finite
+  field, record and retained-memory cap violations. Unknown optional tick
+  health is omitted. Record writers preserve wrapped error identities while
+  exposing fixed error text.
+
+- Reserve default telemetry aggregate families before route admission, with
+  whole page/error reservations and shared page duration histograms. Operation
+  and explicitly attached auth observers use finite startup labels; degradation
+  accepts declared components. Request writer, runtime, readiness, scheduler
+  and client ingress attachment follow their owner seams.
+
+- Add typed telemetry domain codecs and copied field views with finite enum,
+  array, nesting and byte limits. Eight staging leases isolate synchronous
+  encoders; invalid fields and encoder failures discard the whole projection.
+  Domain JSON sorts keys, preserves finite numbers and uses milliseconds for
+  duration values. Activity registration and records follow separately.
+
+- Add optional whole-tick simulation and visible-frame observers at the existing
+  ticker and animation owners. Simulation lag uses elapsed scheduled deadlines;
+  timing includes the existing single snapshot and state broadcast. Nil observers
+  skip timing reads. Frame observers are fixed before Start and run outside locks.
+
+- Add finite loop kinds and a shared arena for 256 lifetime health meters.
+  Observe records whole ticks with zero warm allocations. Health copies bins
+  under the instance lock and scans outside it; scoped tokens end once.
+  Closing a meter leaves the application's runtime owner in control.
+
+- Start the telemetry close deadline at Flush or Close, after source drain.
+  Shutdown Signal stops admission; collector wakes keep source subscriptions
+  alive until the flush phase starts.
+
+- Register bounded hub telemetry groups with finite event and disconnect labels,
+  exact logical payload counts, sampled queue depths, control RTT, and slow-client
+  counters. Attachments release automatically when pumps finish, and telemetry
+  shutdown preserves source-drain callbacks before removing its subscriptions.
+  Counted histogram observations preserve coalesced broadcast samples atomically.
+
 - Keep observed hub control pings on a fixed 54-second schedule, using the
   existing writer timer with a cadence that divides the ping period. Ping
   sequences start from cryptographic per-connection randomness. Invalid
@@ -122,6 +207,8 @@
 - Report skipped optional `wasm-opt` passes instead of silently keeping the
   compiled WASM. Missing tools warn once per build; failed passes include
   optimizer output in one complete warning and remove temporary output.
+- Clean up the unused, unreleased Scene3D recovery asset, setter, and
+  `buildmanifest.RuntimeAssets` and `RuntimePaths` fields.
 
 
 - Add transactional aggregate telemetry setup with one maintenance worker and

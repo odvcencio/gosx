@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"testing"
@@ -74,7 +75,7 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name:   "timeout prefix",
-			mutate: replace("    timeout-minutes: 45", "    timeout-minutes: 300"),
+			mutate: replaceBrowserOnce("    timeout-minutes: 45", "    timeout-minutes: 300"),
 			want:   "browser-tests job.timeout-minutes",
 		},
 		{
@@ -87,7 +88,7 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name:   "latest action prefix",
-			mutate: replace("        uses: browser-actions/setup-chrome@v1", "        uses: browser-actions/setup-chrome@v10"),
+			mutate: replaceBrowserOnce("        uses: browser-actions/setup-chrome@v1", "        uses: browser-actions/setup-chrome@v10"),
 			want:   "latest browser setup.uses",
 		},
 		{
@@ -258,7 +259,7 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name: "browser docs skipped",
-			mutate: insertAfter(
+			mutate: insertAfterBrowser(
 				"      - name: Browser docs E2E gate\n",
 				"        if: false\n",
 			),
@@ -307,7 +308,7 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 		},
 		{
 			name: "duplicate governed step name",
-			mutate: replace(
+			mutate: replaceBrowserOnce(
 				"      - name: Browser docs E2E gate",
 				"      - name: Set up Chrome",
 			),
@@ -900,14 +901,10 @@ func shadowLatestSetup(t *testing.T, source string) string {
 		"        id: chrome\n" +
 		"        uses: browser-actions/setup-chrome@v1\n\n"
 	source = replaceOnce(t, source, "  browser-tests:\n", shadow+"  browser-tests:\n")
-	browserStart := strings.Index(source, "  browser-tests:\n")
-	if browserStart < 0 {
-		t.Fatal("browser-tests job missing after shadow insertion")
-	}
-	return source[:browserStart] + replaceOnce(t, source[browserStart:],
+	return replaceBrowserOnce(
 		"        uses: browser-actions/setup-chrome@v1",
 		"        uses: browser-actions/setup-chrome@v10",
-	)
+	)(t, source)
 }
 
 func displaceArtifactReceipt(t *testing.T, source string) string {
@@ -937,23 +934,17 @@ func removeBrowserAggregateContract(t *testing.T, source string) string {
 		"          BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}\n",
 		"",
 	)
-	previous := "            \"wasm-tests=$WASM_TESTS_RESULT\" \\\n"
-	if strings.Contains(source, "            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n") {
-		previous = "            \"scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT\" \\\n"
-	}
-	if strings.Contains(source, "            \"scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT\" \\\n") {
-		previous = "            \"scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT\" \\\n"
-	}
 	source = replaceOnce(t, source,
-		previous+"            \"browser-tests=$BROWSER_TESTS_RESULT\"\n",
-		strings.TrimSuffix(previous, " \\\n")+"\n",
+		"            \"browser-tests=$BROWSER_TESTS_RESULT\" \\\n",
+		"",
 	)
-	return replaceOnce(t, source, ", and browser-tests all passed\"\n", " all passed\"\n")
+	return replaceOnce(t, source, ", browser-tests, browser-tests-b, and", ", browser-tests-b, and")
 }
 
 func insertAggregateBypassStep(t *testing.T, source string) string {
 	t.Helper()
-	anchor := "          echo \"" + strings.Join(aggregateNeeds(strings.Contains(source, "  "+stableJobName+":\n"))[:len(aggregateNeeds(strings.Contains(source, "  "+stableJobName+":\n")))-1], ", ") + ", and browser-tests all passed\"\n"
+	needs := aggregateNeeds(strings.Contains(source, "  "+stableJobName+":\n"))
+	anchor := "          echo \"" + strings.Join(needs[:len(needs)-1], ", ") + ", and " + needs[len(needs)-1] + " all passed\"\n"
 	return replaceOnce(t, source, anchor, anchor+"\n      - name: Mask aggregate result\n        run: echo masked\n")
 }
 
@@ -969,8 +960,8 @@ func removeStableAggregateContract(t *testing.T, source string) string {
 		"",
 	)
 	return replaceOnce(t, source,
-		"wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed\"\n",
-		"wasm-tests, scene3d-v1-adapter-proof, and browser-tests all passed\"\n",
+		"wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, browser-tests,",
+		"wasm-tests, scene3d-v1-adapter-proof, browser-tests,",
 	)
 }
 
@@ -986,8 +977,8 @@ func removeAdapterAggregateContract(t *testing.T, source string) string {
 		"",
 	)
 	return replaceOnce(t, source,
-		"wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed\"\n",
-		"wasm-tests, scene3d-v1-browser-renderer-proof, and browser-tests all passed\"\n",
+		"wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, browser-tests,",
+		"wasm-tests, scene3d-v1-browser-renderer-proof, browser-tests,",
 	)
 }
 
@@ -1088,4 +1079,224 @@ func ensureStableProof(t *testing.T, source string) string {
           fi
           rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
 `
+}
+
+// TestShardLaneMutationsFailClosed proves each pin on the sharded lanes. A
+// shard that loses its draft gate, its timeout, its shard number, or its slot
+// in the aggregate would drop tests from CI without a failing check.
+func TestShardLaneMutationsFailClosed(t *testing.T) {
+	const draftGate = "    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}\n"
+	tests := []struct {
+		name   string
+		mutate func(*testing.T, string) string
+		want   string
+	}{
+		{
+			name:   "browser-tests-b draft gate removed",
+			mutate: replaceJobOnce("browser-tests-b", draftGate, ""),
+			want:   "browser-tests-b job: missing field \"if\"",
+		},
+		{
+			name:   "browser-tests-c draft gate weakened",
+			mutate: replaceJobOnce("browser-tests-c", "!github.event.pull_request.draft }}", "github.event.pull_request.draft }}"),
+			want:   "browser-tests-c job.if",
+		},
+		{
+			name:   "browser-tests-b timeout raised",
+			mutate: replaceJobOnce("browser-tests-b", "timeout-minutes: 45", "timeout-minutes: 300"),
+			want:   "browser-tests-b job.timeout-minutes",
+		},
+		{
+			name:   "browser-tests-c timeout shortened",
+			mutate: replaceJobOnce("browser-tests-c", "timeout-minutes: 45", "timeout-minutes: 4"),
+			want:   "browser-tests-c job.timeout-minutes",
+		},
+		{
+			name:   "browser-tests-b repeats shard 0",
+			mutate: replaceJobOnce("browser-tests-b", "E2E_SHARD=1", "E2E_SHARD=0"),
+			want:   "browser docs E2E gate.run",
+		},
+		{
+			name:   "browser-tests-c runs the whole suite",
+			mutate: replaceJobOnce("browser-tests-c", "make test-e2e E2E_SHARD=2", "make test-e2e"),
+			want:   "browser docs E2E gate.run",
+		},
+		{
+			name:   "browser-tests moves to shard 1",
+			mutate: replaceJobOnce("browser-tests", "E2E_SHARD=0", "E2E_SHARD=1"),
+			want:   "browser docs E2E gate.run",
+		},
+		{
+			name:   "browser-tests-b drops the TinyGo step",
+			mutate: replaceJobOnce("browser-tests-b", "      - name: Install TinyGo\n        env:\n          TINYGO_VERSION: 0.41.1\n        run: scripts/install-ci-tinygo.sh\n\n", ""),
+			want:   "browser-tests-b job.steps: got 4 steps",
+		},
+		{
+			name:   "browser-tests-c extra step",
+			mutate: replaceJobOnce("browser-tests-c", "        run: make test-e2e E2E_SHARD=2", "        run: make test-e2e E2E_SHARD=2\n\n      - name: Extra\n        run: echo extra"),
+			want:   "browser-tests-c job.steps: got 6 steps",
+		},
+		{
+			name:   "browser-tests-b binds the browser path to the wrong output",
+			mutate: replaceJobOnce("browser-tests-b", "          GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}", "          GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-version }}"),
+			want:   "browser docs E2E gate.env.GOSX_E2E_CHROME",
+		},
+		{
+			name:   "browser-tests-c continue on error",
+			mutate: replaceJobOnce("browser-tests-c", "      - name: Browser docs E2E gate\n", "      - name: Browser docs E2E gate\n        continue-on-error: true\n"),
+			want:   "browser docs E2E gate: unexpected field \"continue-on-error\"",
+		},
+		{
+			name:   "browser-tests-b job removed",
+			mutate: removeJobAndSlot("browser-tests-b", "BROWSER_TESTS_B_RESULT"),
+			want:   "browser-tests-b job is missing",
+		},
+		{
+			name:   "browser-tests-c job removed",
+			mutate: removeJobAndSlot("browser-tests-c", "BROWSER_TESTS_C_RESULT"),
+			want:   "browser-tests-c job is missing",
+		},
+		{
+			name:   "go-cli-tests-c draft gate removed",
+			mutate: replaceJobOnce("go-cli-tests-c", draftGate, ""),
+			want:   "go-cli-tests-c job: missing field \"if\"",
+		},
+		{
+			name:   "go-cli-tests-b draft gate weakened",
+			mutate: replaceJobOnce("go-cli-tests-b", "!github.event.pull_request.draft }}", "github.event.pull_request.draft }}"),
+			want:   "go-cli-tests-b job.if",
+		},
+		{
+			name:   "go-cli-tests-c repeats shard 1",
+			mutate: replaceJobOnce("go-cli-tests-c", "CLI_SHARD=2", "CLI_SHARD=1"),
+			want:   "go-cli-tests-c job shard step.run",
+		},
+		{
+			name:   "go-cli-tests runs the whole package",
+			mutate: replaceJobOnce("go-cli-tests", "make test-cli CLI_SHARD=0", "make test-cli"),
+			want:   "go-cli-tests job shard step.run",
+		},
+		{
+			name:   "go-cli-tests-c shard step ignores failure",
+			mutate: replaceJobOnce("go-cli-tests-c", "make test-cli CLI_SHARD=2", "make test-cli CLI_SHARD=2 || true"),
+			want:   "go-cli-tests-c job shard step.run",
+		},
+		{
+			name:   "go-cli-tests-c job removed",
+			mutate: removeJobAndSlot("go-cli-tests-c", "GO_CLI_TESTS_C_RESULT"),
+			want:   "go-cli-tests-c job is missing",
+		},
+		{
+			name:   "aggregate drops browser-tests-b",
+			mutate: removeAggregateSlot("browser-tests-b", "BROWSER_TESTS_B_RESULT"),
+			want:   "aggregate test job.needs",
+		},
+		{
+			name:   "aggregate drops browser-tests-c",
+			mutate: removeAggregateSlot("browser-tests-c", "BROWSER_TESTS_C_RESULT"),
+			want:   "aggregate test job.needs",
+		},
+		{
+			name:   "aggregate drops go-cli-tests-c",
+			mutate: removeAggregateSlot("go-cli-tests-c", "GO_CLI_TESTS_C_RESULT"),
+			want:   "aggregate test job.needs",
+		},
+		{
+			name: "aggregate needs reordered",
+			mutate: replace(
+				"      - browser-tests-b\n      - browser-tests-c\n",
+				"      - browser-tests-c\n      - browser-tests-b\n",
+			),
+			want: "aggregate test job.needs",
+		},
+		{
+			name: "aggregate env binds the wrong result",
+			mutate: replace(
+				"BROWSER_TESTS_C_RESULT: ${{ needs.browser-tests-c.result }}",
+				"BROWSER_TESTS_C_RESULT: ${{ needs.browser-tests-b.result }}",
+			),
+			want: "aggregate dependency assertion.env.BROWSER_TESTS_C_RESULT",
+		},
+		{
+			name: "aggregate run skips browser-tests-c",
+			mutate: replace(
+				"            \"browser-tests-b=$BROWSER_TESTS_B_RESULT\" \\\n            \"browser-tests-c=$BROWSER_TESTS_C_RESULT\"\n",
+				"            \"browser-tests-b=$BROWSER_TESTS_B_RESULT\"\n",
+			),
+			want: "aggregate dependency assertion.run",
+		},
+		{
+			name: "aggregate run skips go-cli-tests-c",
+			mutate: replace(
+				"            \"go-cli-tests-c=$GO_CLI_TESTS_C_RESULT\" \\\n",
+				"",
+			),
+			want: "aggregate dependency assertion.run",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertCausalRejection(t, test.mutate(t, string(repositoryWorkflow(t))), test.want)
+		})
+	}
+}
+
+// removeAggregateSlot drops a job's need, env binding and run entry from the
+// aggregate together, the way a careless edit would when deleting a lane.
+func removeAggregateSlot(job, envName string) func(*testing.T, string) string {
+	return func(t *testing.T, source string) string {
+		t.Helper()
+		source = replaceOnce(t, source, "      - "+job+"\n", "")
+		source = replaceOnce(t, source, "          "+envName+": ${{ needs."+job+".result }}\n", "")
+		start := strings.Index(source, "\"required test job did not succeed")
+		if start < 0 {
+			t.Fatal("aggregate failure message is missing")
+		}
+		line := "\"" + job + "=$" + envName + "\""
+		if got := strings.Count(source, line); got != 1 {
+			t.Fatalf("aggregate run entry %s occurs %d times, want 1", line, got)
+		}
+		source = strings.Replace(source, "            "+line+" \\\n", "", 1)
+		source = strings.Replace(source, " \\\n            "+line+"\n", "\n", 1)
+		return source
+	}
+}
+
+// jobWindow returns the byte range of a top-level job: from its key to the
+// blank line that precedes the next job or comment.
+func jobWindow(t *testing.T, source, job string) (int, int) {
+	t.Helper()
+	start := strings.Index(source, "\n  "+job+":\n")
+	if start < 0 {
+		t.Fatalf("job %s is missing", job)
+	}
+	start++
+	end := len(source)
+	if loc := regexp.MustCompile(`\n\n  \S`).FindStringIndex(source[start:]); loc != nil {
+		end = start + loc[0]
+	}
+	return start, end
+}
+
+func replaceJobOnce(job, old, replacement string) func(*testing.T, string) string {
+	return func(t *testing.T, source string) string {
+		t.Helper()
+		start, end := jobWindow(t, source, job)
+		return source[:start] + replaceOnce(t, source[start:end], old, replacement) + source[end:]
+	}
+}
+
+func removeJob(job string) func(*testing.T, string) string {
+	return func(t *testing.T, source string) string {
+		t.Helper()
+		start, end := jobWindow(t, source, job)
+		return source[:start] + strings.TrimPrefix(source[end:], "\n\n")
+	}
+}
+
+func removeJobAndSlot(job, envName string) func(*testing.T, string) string {
+	return func(t *testing.T, source string) string {
+		t.Helper()
+		return removeAggregateSlot(job, envName)(t, removeJob(job)(t, source))
+	}
 }

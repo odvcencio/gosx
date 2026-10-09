@@ -65,6 +65,7 @@
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/pipeline-recovery.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
@@ -300,18 +301,13 @@
       ]
     },
     {
-      "name": "bootstrap-feature-scene3d-pipeline-recovery.js",
-      "sources": [
-        "../runtime/scene3d/pipeline-recovery.ts"
-      ]
-    },
-    {
       "name": "bootstrap-feature-scene3d-webgpu.js",
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/pipeline-recovery.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",

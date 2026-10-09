@@ -20,6 +20,9 @@ type coreMetrics struct {
 }
 
 func (t *Telemetry) initializeRegistry() (err error) {
+	if !t.reserveMisc(t.ownerBytes) {
+		return ErrCapacity
+	}
 	t.registry, err = metric.NewRegistry(metric.RegistryOptions{MaxSeries: t.opts.Metrics.MaxSeries, MaxBytes: 8 << 20})
 	if err != nil {
 		return err
@@ -82,6 +85,15 @@ func (t *Telemetry) initializeRegistry() (err error) {
 		}
 		t.core.dropped[reason] = c
 	}
+	if err := t.initializeHubs(); err != nil {
+		return err
+	}
+	if err := t.initializeLoops(); err != nil {
+		return err
+	}
+	if err := t.initializeDefaultAdapters(); err != nil {
+		return err
+	}
 	t.updateCore(t.start)
 	return nil
 }
@@ -95,10 +107,29 @@ func (t *Telemetry) updateCore(now Instant) {
 	if elapsed < 0 {
 		elapsed = 0
 	}
+	t.updateCoreUsage()
+	// Publish the collection time after refreshing its usage gauges.
+	t.core.uptime.Set(elapsed.Seconds())
+}
+
+// updateCoreUsage also publishes released charges when the clock has failed.
+func (t *Telemetry) updateCoreUsage() {
 	usage := t.registry.Usage()
 	t.core.series.Set(float64(usage.Samples))
 	// Fixed owner/channel/clock state is reserved independently of the registry.
-	t.core.memory.Set(float64(usage.Bytes + t.ownerBytes))
-	// Publish the collection time after refreshing its usage gauges.
-	t.core.uptime.Set(elapsed.Seconds())
+	bytes := t.ownerBytes
+	bytes += t.adapterBytes.Load()
+	if t.hubs != nil {
+		bytes += t.hubs.bytes.Load()
+	}
+	if t.loops != nil {
+		bytes += t.loops.bytes.Load()
+	}
+	if t.activities != nil {
+		bytes += t.activities.bytes.Load()
+		if t.activities.events != nil {
+			bytes += t.activities.events.used.Load()
+		}
+	}
+	t.core.memory.Set(float64(usage.Bytes + bytes))
 }

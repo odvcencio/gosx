@@ -261,6 +261,29 @@ jobs:
       - name: CLI production-build integration tests
         run: make test-cli CLI_SHARD=1
 
+  go-cli-tests-c:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: CLI production-build integration tests
+        run: make test-cli CLI_SHARD=2
+
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
   # staleness gate), and both need a Go toolchain. The unit tests matter here
@@ -622,7 +645,7 @@ jobs:
       - name: Browser docs E2E gate
         env:
           GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: make test-e2e
+        run: make test-e2e E2E_SHARD=0
 
       # This fixture test validates that the committed MP4 has browser-readable
       # metadata. It deliberately requires an explicit browser so a Chrome
@@ -704,12 +727,15 @@ jobs:
       - go-race-tests
       - go-cli-tests
       - go-cli-tests-b
+      - go-cli-tests-c
       - js-tests
       - wire-gates
       - wasm-tests
       - scene3d-v1-browser-renderer-proof
       - scene3d-v1-adapter-proof
       - browser-tests
+      - browser-tests-b
+      - browser-tests-c
     timeout-minutes: 5
 
     steps:
@@ -721,12 +747,15 @@ jobs:
           GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
           GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
           GO_CLI_TESTS_B_RESULT: ${{ needs.go-cli-tests-b.result }}
+          GO_CLI_TESTS_C_RESULT: ${{ needs.go-cli-tests-c.result }}
           JS_TESTS_RESULT: ${{ needs.js-tests.result }}
           WIRE_GATES_RESULT: ${{ needs.wire-gates.result }}
           WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
           SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}
           SCENE3D_V1_ADAPTER_PROOF_RESULT: ${{ needs.scene3d-v1-adapter-proof.result }}
           BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}
+          BROWSER_TESTS_B_RESULT: ${{ needs.browser-tests-b.result }}
+          BROWSER_TESTS_C_RESULT: ${{ needs.browser-tests-c.result }}
         run: |
           set -eu
           if [ "$DRAFT_PULL_REQUEST" = true ]; then
@@ -752,12 +781,15 @@ jobs:
             "go-race-tests=$GO_RACE_TESTS_RESULT" \
             "go-cli-tests=$GO_CLI_TESTS_RESULT" \
             "go-cli-tests-b=$GO_CLI_TESTS_B_RESULT" \
+            "go-cli-tests-c=$GO_CLI_TESTS_C_RESULT" \
             "js-tests=$JS_TESTS_RESULT" \
             "wire-gates=$WIRE_GATES_RESULT" \
             "wasm-tests=$WASM_TESTS_RESULT" \
             "scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT" \
             "scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT" \
-            "browser-tests=$BROWSER_TESTS_RESULT"
+            "browser-tests=$BROWSER_TESTS_RESULT" \
+            "browser-tests-b=$BROWSER_TESTS_B_RESULT" \
+            "browser-tests-c=$BROWSER_TESTS_C_RESULT"
           do
             case "$result" in
               *=success) ;;
@@ -767,7 +799,69 @@ jobs:
                 ;;
             esac
           done
-          echo "release-gate, go-tests, go-race-tests, go-cli-tests, go-cli-tests-b, js-tests, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, and browser-tests all passed"
+          echo "release-gate, go-tests, go-race-tests, go-cli-tests, go-cli-tests-b, go-cli-tests-c, js-tests, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, browser-tests, browser-tests-b, and browser-tests-c all passed"
+
+  # browser-tests-b and browser-tests-c: the other two shares of the e2e browser
+  # suite (`citest browser 1` and `citest browser 2`). browser-tests runs share 0
+  # plus the perf and media steps. Each share installs its own tools, so the
+  # three run in parallel on separate runners.
+  browser-tests-b:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Browser docs E2E gate
+        env:
+          GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: make test-e2e E2E_SHARD=1
+
+  browser-tests-c:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Browser docs E2E gate
+        env:
+          GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: make test-e2e E2E_SHARD=2
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame

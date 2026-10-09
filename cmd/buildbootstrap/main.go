@@ -199,6 +199,7 @@ var outputs = []output{
 			// right after 16a because that placement compresses best.
 			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
+			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -553,10 +554,6 @@ var outputs = []output{
 		},
 	},
 	{
-		name:    "bootstrap-feature-scene3d-pipeline-recovery.js",
-		sources: []source{sourceFile("../runtime/scene3d/pipeline-recovery.ts")},
-	},
-	{
 		name: "bootstrap-feature-scene3d-webgpu.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts"),
@@ -568,6 +565,7 @@ var outputs = []output{
 			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
 			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
+			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),

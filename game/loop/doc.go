@@ -12,4 +12,10 @@
 // it notices when the tab becomes visible again) but skips Step and the
 // render callback, so game time does not advance and no stale delta is fed
 // in once the tab returns.
+//
+// SetObserver accepts an optional observer before the first Start. It measures
+// the existing Step/error/render work and reports the host frame interval.
+// Hidden frames are omitted; first visibility and restart have zero interval.
+// Observers run synchronously outside Driver locks, and may call Stop. No
+// additional animation loop is installed, and nil observers skip timing reads.
 package loop
