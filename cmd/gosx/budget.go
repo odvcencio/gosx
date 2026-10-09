@@ -3,8 +3,6 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -50,6 +48,10 @@ Explain --json encodes the complete explanation text as a JSON string.
 `)
 }
 func budgetDiagnostic(w io.Writer, err error, status int, code, reference, pointer string) int {
+	if errors.Is(err, errBudgetChanged) {
+		fmt.Fprintln(w, errBudgetChanged.Error())
+		return status
+	}
 	var input *budget.InputError
 	if errors.As(err, &input) {
 		code, reference, pointer = input.Code, input.Reference, input.Pointer
@@ -107,29 +109,26 @@ func runBudgetDerive(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return budgetDiagnostic(stderr, nil, 2, "environment", "output", "")
 		}
-		file, err := r.Open(relative)
-		if err != nil {
-			r.Close()
-			return budgetDiagnostic(stderr, nil, 2, "environment", "output", "")
-		}
-		current, readErr := io.ReadAll(io.LimitReader(file, 2<<20+1))
-		closeErr := file.Close()
 		defer r.Close()
-		if readErr != nil || closeErr != nil || len(current) > 2<<20 {
-			return budgetDiagnostic(stderr, nil, 2, "environment", "output", "")
-		}
-		sum := sha256.Sum256(current)
-		if hex.EncodeToString(sum[:]) != inputs.BudgetSHA256 {
-			return budgetDiagnostic(stderr, nil, 2, "invalid-input", "budget", "")
-		}
-		if err := writeBudgetAt(r, relative, data); err != nil {
-			return budgetDiagnostic(stderr, nil, 2, "environment", "output", "")
+		if err := writeBudgetAt(r, relative, data, inputs); err != nil {
+			return budgetDiagnostic(stderr, err, 2, "environment", "output", "")
 		}
 		return 0
 	}
 	if *out != "" {
-		if err := writeBudgetAtomically(*out, data); err != nil {
+		output, err := filepath.Abs(*out)
+		if err != nil {
 			return budgetDiagnostic(stderr, nil, 2, "environment", "output", "")
+		}
+		if resolved, err := filepath.EvalSymlinks(output); err == nil {
+			output = resolved
+		}
+		var source *budget.Inputs
+		if output == inputs.BudgetPath() {
+			source = inputs
+		}
+		if err := writeBudgetAtomically(output, data, source); err != nil {
+			return budgetDiagnostic(stderr, err, 2, "environment", "output", "")
 		}
 		return 0
 	}
@@ -184,7 +183,7 @@ func runBudgetExplain(args []string, stdout, stderr io.Writer) int {
 
 // Write and sync a sibling file before rename. A failed write never truncates
 // the destination; all owned temporary files are removed on failure.
-func writeBudgetAtomically(path string, data []byte) error {
+func writeBudgetAtomically(path string, data []byte, source ...*budget.Inputs) error {
 	parent, err := filepath.Abs(filepath.Dir(path))
 	if err != nil {
 		return errors.New("output unavailable")
@@ -194,42 +193,143 @@ func writeBudgetAtomically(path string, data []byte) error {
 		return errors.New("output unavailable")
 	}
 	defer root.Close()
-	return writeBudgetAt(root, filepath.Base(path), data)
+	return writeBudgetAt(root, filepath.Base(path), data, source...)
 }
-func writeBudgetAt(root *os.Root, path string, data []byte) error {
+func writeBudgetAt(root *os.Root, path string, data []byte, expected ...*budget.Inputs) error {
+	temp, err := stageBudgetAt(root, path, data)
+	if err != nil {
+		return err
+	}
+	defer root.Remove(temp)
+	var source *budget.Inputs
+	if len(expected) > 0 {
+		source = expected[0]
+	}
+	return replaceBudgetAt(root, path, temp, source)
+}
+
+func stageBudgetAt(root *os.Root, path string, data []byte) (temp string, resultErr error) {
 	info, err := root.Stat(path)
 	mode := os.FileMode(0644)
 	if err == nil {
 		if !info.Mode().IsRegular() {
-			return errors.New("invalid output")
+			return "", errors.New("invalid output")
 		}
 		mode = info.Mode().Perm()
 	} else if !os.IsNotExist(err) {
-		return errors.New("invalid output")
+		return "", errors.New("invalid output")
 	}
-	temp := filepath.Join(filepath.Dir(path), ".gosx-budget-"+rand.Text())
+	temp = filepath.Join(filepath.Dir(path), ".gosx-budget-"+rand.Text())
 	file, err := root.OpenFile(temp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, mode)
 	if err != nil {
-		return errors.New("output unavailable")
+		return "", errors.New("output unavailable")
 	}
-	defer root.Remove(temp)
+	defer func() {
+		if resultErr != nil {
+			root.Remove(temp)
+		}
+	}()
 	if err := file.Chmod(mode); err != nil {
 		file.Close()
-		return errors.New("output unavailable")
+		return temp, errors.New("output unavailable")
 	}
 	if _, err := file.Write(data); err != nil {
 		file.Close()
-		return errors.New("output unavailable")
+		return temp, errors.New("output unavailable")
 	}
 	if err := file.Sync(); err != nil {
 		file.Close()
-		return errors.New("output unavailable")
+		return temp, errors.New("output unavailable")
 	}
 	if err := file.Close(); err != nil {
+		return temp, errors.New("output unavailable")
+	}
+	return temp, nil
+}
+
+func replaceBudgetAt(root *os.Root, path, temp string, source *budget.Inputs) error {
+	defer root.Remove(temp)
+	lock, err := openBudgetLock(root, path+".lock")
+	if err != nil {
 		return errors.New("output unavailable")
+	}
+	defer lock.Close() // Keep this inode: unlinking a lock permits two writers.
+	if err := acquireBudgetLock(lock); err != nil {
+		return errors.New("output unavailable")
+	}
+	lockedInfo, err := lock.Stat()
+	currentLock, statErr := root.Lstat(path + ".lock")
+	if err != nil || statErr != nil || !os.SameFile(lockedInfo, currentLock) {
+		return errors.New("output unavailable")
+	}
+	directory, err := openBudgetDirectory(root, filepath.Dir(path))
+	if err != nil {
+		return errors.New("output unavailable")
+	}
+	defer directory.Close()
+	// Detect unsupported directory durability before modifying the source.
+	if err := directory.Sync(); err != nil {
+		return errors.New("output unavailable")
+	}
+	if source != nil {
+		if err := compareBudgetSource(root, path, source); err != nil {
+			return err
+		}
 	}
 	if err := root.Rename(temp, path); err != nil {
 		return errors.New("output unavailable")
 	}
+	if err := directory.Sync(); err != nil {
+		return errors.New("output unavailable")
+	}
 	return nil
+}
+
+var errBudgetChanged = errors.New("budget file changed since it was read; re-run derive")
+
+func compareBudgetSource(root *os.Root, path string, source *budget.Inputs) error {
+	before, err := root.Lstat(path)
+	if err != nil || !before.Mode().IsRegular() {
+		return errBudgetChanged
+	}
+	file, err := root.OpenFile(path, os.O_RDONLY|budgetOpenFlags, 0)
+	if err != nil {
+		return errors.New("output unavailable")
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() || !os.SameFile(before, info) {
+		return errBudgetChanged
+	}
+	data, err := io.ReadAll(io.LimitReader(file, 2<<20+1))
+	if err != nil || len(data) > 2<<20 {
+		return errBudgetChanged
+	}
+	after, err := file.Stat()
+	current, pathErr := root.Lstat(path)
+	if err != nil || pathErr != nil || !os.SameFile(after, current) || !source.BudgetFileMatches(after, data) {
+		return errBudgetChanged
+	}
+	return nil
+}
+
+func openBudgetLock(root *os.Root, path string) (*os.File, error) {
+	if info, err := root.Lstat(path); err == nil {
+		if !info.Mode().IsRegular() {
+			return nil, errors.New("invalid lock")
+		}
+	} else if !os.IsNotExist(err) {
+		return nil, errors.New("invalid lock")
+	}
+	file, err := root.OpenFile(path, os.O_CREATE|os.O_RDWR|budgetOpenFlags, 0600)
+	if err != nil {
+		return nil, errors.New("invalid lock")
+	}
+	info, err := file.Stat()
+	current, statErr := root.Lstat(path)
+	if err != nil || statErr != nil || !info.Mode().IsRegular() || !current.Mode().IsRegular() || !os.SameFile(info, current) {
+		file.Close()
+		return nil, errors.New("invalid lock")
+	}
+	return file, nil
 }

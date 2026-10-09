@@ -151,6 +151,8 @@ type loadedInputs struct {
 	coefficients          Coefficients
 	toolchain             Toolchain
 	rootDir, budgetSHA256 string
+	budgetPath            string
+	budgetInfo            os.FileInfo
 }
 
 // Inputs is a native snapshot of hash-verified files. It has no JSON surface;
@@ -162,6 +164,8 @@ type Inputs struct {
 	Toolchain    Toolchain    `json:"-"`
 	BudgetSHA256 string       `json:"-"`
 	rootDir      string
+	budgetPath   string
+	budgetInfo   os.FileInfo
 }
 
 func LoadInputs(path string, opts LoadOptions) (*Inputs, error) {
@@ -180,10 +184,23 @@ func loadSnapshot(path string, opts LoadOptions, checkAllocations bool) (*Inputs
 	if err != nil {
 		return nil, err
 	}
-	return &Inputs{File: loaded.file, Profile: loaded.profile, Coefficients: loaded.coefficients, Toolchain: loaded.toolchain, BudgetSHA256: loaded.budgetSHA256, rootDir: loaded.rootDir}, nil
+	return &Inputs{File: loaded.file, Profile: loaded.profile, Coefficients: loaded.coefficients, Toolchain: loaded.toolchain, BudgetSHA256: loaded.budgetSHA256, rootDir: loaded.rootDir, budgetPath: loaded.budgetPath, budgetInfo: loaded.budgetInfo}, nil
 }
 
 func (inputs *Inputs) RootDir() string { return inputs.rootDir }
+
+// BudgetPath and BudgetFileMatches expose only native snapshot state. File
+// identity includes device/inode (or the platform's equivalent), size and mtime.
+func (inputs *Inputs) BudgetPath() string { return inputs.budgetPath }
+func (inputs *Inputs) BudgetFileMatches(info os.FileInfo, data []byte) bool {
+	if info == nil || inputs.budgetInfo == nil || !info.Mode().IsRegular() ||
+		!os.SameFile(inputs.budgetInfo, info) || inputs.budgetInfo.Size() != info.Size() ||
+		!inputs.budgetInfo.ModTime().Equal(info.ModTime()) {
+		return false
+	}
+	digest := sha256.Sum256(data)
+	return hex.EncodeToString(digest[:]) == inputs.BudgetSHA256
+}
 func (inputs *Inputs) PublicValidator() (*PublicValidator, error) {
 	return NewPublicValidator(filepath.Join(inputs.rootDir, inputs.File.Fixtures.File), LoadOptions{RootDir: inputs.rootDir}, inputs.File.HubBudgets)
 }
@@ -199,7 +216,14 @@ func loadInputFiles(path string, opts LoadOptions, checkAllocations bool) (resul
 	if err != nil {
 		return nil, err
 	}
-	data, err := readWithin(root, path, maxInputBytes)
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		abs, err = filepath.EvalSymlinks(abs)
+	}
+	if err != nil {
+		return nil, invalidInput("")
+	}
+	data, info, err := readWithinSnapshot(root, abs, maxInputBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +312,7 @@ func loadInputFiles(path string, opts LoadOptions, checkAllocations bool) (resul
 			return nil, err
 		}
 	}
-	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:])}, nil
+	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:]), budgetPath: abs, budgetInfo: info}, nil
 }
 
 func (f File) validate(p Profile, c Coefficients) error {
