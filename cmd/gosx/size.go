@@ -230,6 +230,27 @@ func buildSizeReport(target string) (sizeReport, error) {
 			report.ColdStartBrotli += entry.BrotliBytes
 		}
 	}
+	names := make([]string, 0, len(manifest.GoWASM))
+	for name := range manifest.GoWASM {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		asset := manifest.GoWASM[name]
+		entry, err := sizeReportEntry(filepath.Join(distDir, "assets", "go-wasm"), runtimeSizeAsset{
+			name: "go-wasm:" + name, file: asset.File, role: "application Go WASM",
+		})
+		if err != nil {
+			return sizeReport{}, err
+		}
+		// Read within the module asset root; only the reported path is relative
+		// to RuntimeDir, preserving the reader's confinement checks.
+		entry.File = "../go-wasm/" + asset.File
+		report.Assets = append(report.Assets, entry)
+		report.TotalBytes += entry.Bytes
+		report.TotalGzip += entry.GzipBytes
+		report.TotalBrotli += entry.BrotliBytes
+	}
 	report.Profiles = sizeProfiles(report.Assets)
 	return report, nil
 }

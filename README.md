@@ -463,6 +463,29 @@ ctx.Engine(engine.Config{
 }, fallbackNode)
 ```
 
+Declare the module's package in `gosx.config.json` to build it together with the
+server and shared runtime:
+
+```json
+{"build":{"goWASM":{"visualizer":"./cmd/visualizer"}}}
+```
+
+`gosx build` compiles these explicit entries with the standard Go toolchain,
+even when TinyGo builds the shared runtime. It inherits the project's Go
+toolchain selection and emits the matching standard-Go loader. Entry names
+start with a lowercase letter and contain lowercase letters, digits, `_` or
+`-`; package paths must be `.` or a single `./` directory inside the project.
+Wildcards, flags, external paths and non-`main` packages are rejected.
+
+Each entry becomes `assets/go-wasm/<name>.<hash>.wasm` with compressed sidecars
+and a `goWASM` entry in `build.json`. Use `app.GoWASMURL("visualizer")` for
+`WASMPath`; it resolves the configured runtime root, including a relocated
+deployment bundle. `manifest.GoWASMURL(assetBaseURL, name)` also supports a
+custom asset prefix. Both return an empty string for unknown entries.
+`gosx size` includes the named modules in its inventory and totals, without
+assuming every page loads every module. Existing explicit `WASMPath` URLs
+remain supported and projects without `build.goWASM` keep their output.
+
 The module is an ordinary `GOOS=js GOARCH=wasm` Go program. It may register one
 or more reusable components during synchronous startup:
 
@@ -848,6 +871,12 @@ snapshots and the edge export. The default is `true`; `gosx export` remains an
 explicit export command. Export harnesses supply a numeric `PORT` and a loopback
 `GOSX_LISTEN_ADDR`. Use `server.App.ListenAndServe` to honor both, including when
 your app's default address comes from another environment variable.
+
+Set `build.server.strip` to `true` to build the native server with
+`-ldflags='-s -w'`, omitting its symbol table and debug information. The default
+is `false`, preserving the normal Go debug information. This setting applies
+to the native server produced by `gosx build`, not the shared runtime or
+configured `build.goWASM` browser modules.
 
 Install the CLI at the version required by your project's `go.mod`, using
 `go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the
