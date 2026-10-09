@@ -3,8 +3,10 @@ package budgetci
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -12,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -29,9 +32,60 @@ func cleanSource(ctx context.Context, root, sha string) error {
 	if ctx == nil || ctx.Err() != nil || !commitPattern.MatchString(sha) {
 		return failure("invalid-input", "/production/source")
 	}
-	actual, err := commandOutput(ctx, "git", "-C", root, "rev-parse", "HEAD")
-	if err != nil || strings.TrimSpace(string(actual)) != sha || exec.CommandContext(ctx, "git", "-C", root, "diff", "--quiet", "HEAD", "--").Run() != nil {
+	actual, err := productionOutput(ctx, root, "git", "rev-parse", "HEAD")
+	if err != nil || strings.TrimSpace(string(actual)) != sha {
 		return failure("wrong-fixture", "/production/source")
+	}
+	// Include ignored files: module discovery and Go embeds can still read them.
+	extra, err := productionOutput(ctx, root, "git", "ls-files", "--others", "-z")
+	if err != nil || len(extra) != 0 {
+		return failure("wrong-fixture", "/production/source")
+	}
+	tree, err := productionOutput(ctx, root, "git", "ls-tree", "-rz", "--full-tree", sha)
+	if err != nil {
+		return failure("wrong-fixture", "/production/source")
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return failure("wrong-fixture", "/production/source")
+	}
+	defer r.Close()
+	paths := map[string]bool{}
+	for _, entry := range strings.Split(string(tree), "\x00") {
+		if entry == "" {
+			continue
+		}
+		metadata, name, ok := strings.Cut(entry, "\t")
+		fields := strings.Fields(metadata)
+		if !ok || len(fields) != 3 || fields[1] != "blob" || fields[0] != "100644" && fields[0] != "100755" {
+			return failure("wrong-fixture", "/production/source")
+		}
+		info, err := r.Lstat(name)
+		if err != nil || !info.Mode().IsRegular() {
+			return failure("wrong-fixture", "/production/source")
+		}
+		f, err := r.Open(name)
+		if err != nil {
+			return failure("wrong-fixture", "/production/source")
+		}
+		// Compare raw Git blobs, independent of index flags and clean filters.
+		hash := sha1.New()
+		fmt.Fprintf(hash, "blob %d\x00", info.Size())
+		n, readErr := io.Copy(hash, f)
+		closeErr := f.Close()
+		if readErr != nil || closeErr != nil || n != info.Size() || hex.EncodeToString(hash.Sum(nil)) != fields[2] {
+			return failure("wrong-fixture", "/production/source")
+		}
+		paths[name] = true
+	}
+	cached, err := productionOutput(ctx, root, "git", "ls-files", "-z")
+	if err != nil {
+		return failure("wrong-fixture", "/production/source")
+	}
+	for _, name := range strings.Split(string(cached), "\x00") {
+		if name != "" && !paths[name] {
+			return failure("wrong-fixture", "/production/source")
+		}
 	}
 	return nil
 }
@@ -43,6 +97,9 @@ func BuildCompiler(ctx context.Context, sourceRoot, sha, scratch string) (*Compi
 		return nil, failure("environment", "/production/platform")
 	}
 	if err := cleanSource(ctx, sourceRoot, sha); err != nil {
+		return nil, err
+	}
+	if err := productionModule(ctx, sourceRoot, sourceRoot); err != nil {
 		return nil, err
 	}
 	owned, err := os.MkdirTemp(scratch, "budget-compiler-")
@@ -129,6 +186,10 @@ func (c *Compiler) BuildApplication(ctx context.Context, app, scratch string) (*
 		return nil, failure("wrong-fixture", "/production/app")
 	}
 	a.DistDir = filepath.Join(a.Root, "dist")
+	if err := productionModule(ctx, c.SourceRoot, a.Root); err != nil {
+		a.Close()
+		return nil, err
+	}
 	log := filepath.Join(c.owned, app+"-build.log")
 	if err := productionCommand(ctx, c.SourceRoot, log, c.Path, "build", "--prod", "--perf-app", app, a.Root); err != nil {
 		a.Close()
@@ -175,18 +236,111 @@ func (a *Application) Close() error {
 }
 
 func productionEnvironment(values map[string]string) []string {
-	values["GOWORK"] = "off"
-	env := []string{}
-	for _, item := range os.Environ() {
-		key, _, _ := strings.Cut(item, "=")
-		if _, replaced := values[key]; !replaced {
-			env = append(env, item)
+	settings := map[string]string{}
+	// Keep tool lookup and cache locations, not inherited build or app modes.
+	for _, key := range []string{"PATH", "HOME", "GOPATH", "GOCACHE", "GOMODCACHE", "GOTMPDIR", "TMPDIR", "XDG_CACHE_HOME"} {
+		if value, ok := os.LookupEnv(key); ok {
+			settings[key] = value
 		}
 	}
 	for key, value := range values {
-		env = append(env, key+"="+value)
+		settings[key] = value
+	}
+	for key, value := range map[string]string{
+		"GOWORK": "off", "GOENV": "off", "GOTOOLCHAIN": "local", "GOFLAGS": "-mod=readonly",
+		"GOOS": runtime.GOOS, "GOARCH": runtime.GOARCH, "CGO_ENABLED": "0",
+		"GOSX_DEV": "", "GOSX_ENV": "production", "GO_ENV": "production", "NODE_ENV": "production",
+		"GOSX_RUNTIME_MODE": "tinygo", "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.DevNull,
+		"GIT_CONFIG_COUNT": "2", "GIT_CONFIG_KEY_0": "core.fsmonitor", "GIT_CONFIG_VALUE_0": "false",
+		"GIT_CONFIG_KEY_1": "core.untrackedCache", "GIT_CONFIG_VALUE_1": "false",
+		"GIT_ATTR_NOSYSTEM": "1", "TZ": "UTC", "LANG": "C", "LC_ALL": "C",
+	} {
+		settings[key] = value
+	}
+	keys := make([]string, 0, len(settings))
+	for key := range settings {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, key+"="+settings[key])
 	}
 	return env
+}
+
+func productionOutput(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+	var out boundedOutput
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Dir, cmd.Env, cmd.Stdout, cmd.Stderr = dir, productionEnvironment(nil), &out, io.Discard
+	if err := runProduction(cmd); err != nil || out.overflow {
+		return nil, failure("environment", "/production/input")
+	}
+	return out.Bytes(), nil
+}
+
+// Local replacements must resolve inside verified source or the generated app.
+// Published modules keep the versions and sums declared by the source revision.
+func productionModule(ctx context.Context, sourceRoot, dir string) error {
+	sourceRoot, err := filepath.Abs(sourceRoot)
+	if err != nil {
+		return failure("wrong-fixture", "/production/module")
+	}
+	dir, err = filepath.Abs(dir)
+	if err != nil {
+		return failure("wrong-fixture", "/production/module")
+	}
+	// Locate the containing module for docs projects without their own go.mod.
+	moduleDir := dir
+	for {
+		if _, err := os.Lstat(filepath.Join(moduleDir, "go.mod")); err == nil {
+			break
+		}
+		parent := filepath.Dir(moduleDir)
+		rel, err := filepath.Rel(sourceRoot, parent)
+		if moduleDir == sourceRoot || parent == moduleDir || err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return failure("wrong-fixture", "/production/module")
+		}
+		moduleDir = parent
+	}
+	if _, err := os.Lstat(filepath.Join(moduleDir, "vendor")); !os.IsNotExist(err) {
+		return failure("wrong-fixture", "/production/module")
+	}
+	data, err := productionOutput(ctx, moduleDir, "go", "mod", "edit", "-json")
+	var module struct {
+		Replace []struct {
+			New struct{ Path, Version string }
+		}
+	}
+	if err != nil || json.Unmarshal(data, &module) != nil {
+		return failure("wrong-fixture", "/production/module")
+	}
+	for _, replacement := range module.Replace {
+		if replacement.New.Version != "" {
+			continue
+		}
+		target := replacement.New.Path
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(moduleDir, target)
+		}
+		target, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			return failure("wrong-fixture", "/production/module")
+		}
+		confined := false
+		for _, root := range []string{sourceRoot, dir} {
+			root, err := filepath.EvalSymlinks(root)
+			if err != nil {
+				continue
+			}
+			rel, err := filepath.Rel(root, target)
+			confined = confined || err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
+		}
+		if !confined {
+			return failure("wrong-fixture", "/production/module")
+		}
+	}
+	return nil
 }
 
 func productionCommand(ctx context.Context, dir, log, name string, args ...string) error {
