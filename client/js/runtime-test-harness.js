@@ -899,6 +899,11 @@ function fakeElementQuerySelectorAll(root, selector, includeSelf = false) {
   return matches;
 }
 
+// DOM semantics: an options object contributes only its capture flag.
+function listenerCaptureFlag(options) {
+  return options !== null && typeof options === "object" ? Boolean(options.capture) : Boolean(options);
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -1150,14 +1155,18 @@ class FakeElement {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, []);
     }
-    this.listeners.get(type).push({ listener, capture: Boolean(capture) });
+    this.listeners.get(type).push({
+      listener,
+      capture: listenerCaptureFlag(capture),
+      once: Boolean(capture !== null && typeof capture === "object" && capture.once),
+    });
   }
 
   removeEventListener(type, listener, capture) {
     const current = this.listeners.get(type) || [];
     this.listeners.set(
       type,
-      current.filter((entry) => entry.listener !== listener || entry.capture !== Boolean(capture)),
+      current.filter((entry) => entry.listener !== listener || entry.capture !== listenerCaptureFlag(capture)),
     );
   }
 
@@ -1238,6 +1247,10 @@ class FakeElement {
     this._capturedPointerID = pointerID;
   }
 
+  hasPointerCapture(pointerID) {
+    return this._capturedPointerID === pointerID;
+  }
+
   releasePointerCapture(pointerID) {
     if (this._capturedPointerID === pointerID) {
       this._capturedPointerID = null;
@@ -1245,8 +1258,9 @@ class FakeElement {
   }
 
   dispatchEvent(event) {
-    const listeners = this.listeners.get(event.type) || [];
+    const listeners = (this.listeners.get(event.type) || []).slice();
     for (const entry of listeners) {
+      if (entry.once) this.removeEventListener(event.type, entry.listener, entry.capture);
       entry.listener(event);
     }
     return true;

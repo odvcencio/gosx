@@ -769,3 +769,39 @@ func TestBrowserHostRejectsInvalidTypesWithoutPanicking(t *testing.T) {
 		t.Fatal("unknown browser method was accepted")
 	}
 }
+
+func TestBrowserHostPointerCaptureUsesCurrentHandler(t *testing.T) {
+	var captured, released []int
+	handler := js.Global().Get("Object").New()
+	handler.Set("setPointerCapture", browserTestFunc(t, func(_ js.Value, args []js.Value) any {
+		captured = append(captured, args[0].Int())
+		return nil
+	}))
+	handler.Set("releasePointerCapture", browserTestFunc(t, func(_ js.Value, args []js.Value) any {
+		released = append(released, args[0].Int())
+		return nil
+	}))
+	browserTestGlobal(t, "__gosx_current_handler", handler)
+
+	receiver := newBrowserHostReceiver("island-0")
+	if result, err := receiver.Call("CapturePointer", []vm.Value{vm.IntVal(7)}); err != nil || !result.Truth() {
+		t.Fatalf("CapturePointer result/error = %v/%v", result, err)
+	}
+	if result, err := receiver.Call("ReleasePointer", []vm.Value{vm.IntVal(7)}); err != nil || !result.Truth() {
+		t.Fatalf("ReleasePointer result/error = %v/%v", result, err)
+	}
+	if len(captured) != 1 || captured[0] != 7 || len(released) != 1 || released[0] != 7 {
+		t.Fatalf("captured/released = %v/%v, want [7]/[7]", captured, released)
+	}
+	if result, err := receiver.Call("CapturePointer", []vm.Value{vm.BoolVal(false), vm.IntVal(7)}); err != nil || result.Truth() {
+		t.Fatalf("guarded CapturePointer result/error = %v/%v", result, err)
+	}
+	if len(captured) != 1 {
+		t.Fatalf("guarded call reached the handler: %v", captured)
+	}
+
+	js.Global().Set("__gosx_current_handler", js.Undefined())
+	if result, err := receiver.Call("CapturePointer", []vm.Value{vm.IntVal(7)}); err != nil || result.Truth() {
+		t.Fatalf("CapturePointer outside a dispatch = %v/%v, want false/nil", result, err)
+	}
+}

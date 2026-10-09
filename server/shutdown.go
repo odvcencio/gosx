@@ -92,6 +92,16 @@ func (a *App) UseShutdownHook(name string, hooks ShutdownHooks) (func(), error) 
 		if a.ConfigurationOpen() {
 			hook.active = false
 			hook.hooks = ShutdownHooks{}
+			// Startup rollback must not retain a slot for every failed attempt.
+			// Compact in place so later registrations keep their original order.
+			for i, registered := range a.shutdown.hooks {
+				if registered == hook {
+					copy(a.shutdown.hooks[i:], a.shutdown.hooks[i+1:])
+					a.shutdown.hooks[len(a.shutdown.hooks)-1] = nil
+					a.shutdown.hooks = a.shutdown.hooks[:len(a.shutdown.hooks)-1]
+					break
+				}
+			}
 		}
 	}, nil
 }

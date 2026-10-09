@@ -47,6 +47,17 @@
     return window.__gosx.relay;
   }
 
+  // Keep preview context across soft navigation and reloads in the same tab.
+  function isPreview() {
+    const state = ensureRelayState();
+    state.preview = state.preview || /[?&]gosx-preview=1(&|$)/.test(location.search) || window.parent !== window;
+    try {
+      state.preview = state.preview || sessionStorage.getItem("gosx-preview") === "1";
+      if (state.preview) sessionStorage.setItem("gosx-preview", "1");
+    } catch (_) {}
+    return Boolean(state.preview);
+  }
+
   // configure pushes the relay configurations from the WASM-side. Idempotent
   // per (prefix, allowedOrigin) pair. Emits a console warning for any
   // dev-mode "*" origin so production deployments can audit.
@@ -290,6 +301,7 @@
   }
 
   const state = ensureRelayState();
+  state.isPreview = isPreview;
   state.configure = configure;
   state.registerPeer = registerPeer;
   state.send = send;
@@ -297,6 +309,7 @@
 
   gosxHost.relay = Object.assign(gosxHost.relay || {}, {
     send,
+    isPreview,
     configure,
     registerPeer,
     flushInbound: flushInboundBuffer,

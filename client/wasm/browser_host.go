@@ -192,6 +192,24 @@ func (r *browserHostReceiver) Call(method string, args []vm.Value) (result vm.Va
 		// Resolve after reconciliation so a signal may reveal, create, or move
 		// the target before the browser computes its scroll position.
 		return vm.BoolVal(browserDefer(func() { r.scrollIntoView(selector, behavior) })), nil
+	case "CapturePointer", "ReleasePointer":
+		if err := requireBrowserArity(method, callArgs, 1, 1); err != nil {
+			return vm.BoolVal(false), err
+		}
+		if !enabled {
+			return vm.BoolVal(false), nil
+		}
+		pointerID, err := browserIntArg(method, callArgs, 0)
+		if err != nil {
+			return vm.BoolVal(false), err
+		}
+		// Synchronous on purpose: browsers honour setPointerCapture only while
+		// the pointerdown event dispatches. A DOMException becomes false.
+		name := "releasePointerCapture"
+		if method == "CapturePointer" {
+			name = "setPointerCapture"
+		}
+		return vm.BoolVal(browserSafeCall("__gosx_current_handler", name, pointerID)), nil
 	default:
 		return vm.ZeroValue(program.TypeAny), fmt.Errorf("unknown browser method %q", method)
 	}
@@ -477,15 +495,33 @@ func (r *browserHostReceiver) scrollIntoView(selector, behavior string) bool {
 }
 
 func browserCurrentEventCall(method string) bool {
-	event := js.Global().Get("__gosx_current_event")
-	if event.IsUndefined() || event.IsNull() || event.Get(method).Type() != js.TypeFunction {
+	if !browserCurrentCall("__gosx_current_event", method) {
 		return false
 	}
-	event.Call(method)
 	if method == "stopPropagation" {
-		event.Set("__gosx_stop_island_fanout", true)
+		js.Global().Get("__gosx_current_event").Set("__gosx_stop_island_fanout", true)
 	}
 	return true
+}
+
+func browserCurrentCall(global, method string, args ...any) bool {
+	target := js.Global().Get(global)
+	if target.IsUndefined() || target.IsNull() || target.Get(method).Type() != js.TypeFunction {
+		return false
+	}
+	target.Call(method, args...)
+	return true
+}
+
+// browserSafeCall calls a method on a current-dispatch global and reports
+// whether it ran; a thrown DOMException counts as false.
+func browserSafeCall(global, method string, args ...any) (ok bool) {
+	defer func() {
+		if recover() != nil {
+			ok = false
+		}
+	}()
+	return browserCurrentCall(global, method, args...)
 }
 
 func browserClipboardWrite(text string) bool {
