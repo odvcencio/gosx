@@ -65,6 +65,34 @@ func TestIslandAOTAutoReadComponentProp(t *testing.T) {
 	}
 }
 
+func TestIslandAOTScaffoldPropSpreads(t *testing.T) {
+	for _, tc := range []struct{ name, param, view string }{
+		{"data", "", `<Counter {...data.Counter}/>`},
+		{"props", "props CounterProps", `<Counter {...props}/>`},
+		{"field", "props PageProps", `<Counter {...props.Counter}/>`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			source := "package example\ntype CounterProps struct{Initial int}\ntype PageProps struct{Counter CounterProps}\nvar data struct{Counter CounterProps}\n//gosx:island\ncomponent Counter(props: CounterProps){\n count:=signal.New(props.Initial);change:=func(){count.Set(count.Get()+1)}\n return <button onClick={change}>{count.Get()}</button>\n}\nfunc Page(" + tc.param + ") Node {\n return " + tc.view + "\n}\n"
+			p := pairingSource(t, source)
+			if hard := ir.AOTCheckingHardErrorsForTest(p); len(hard) != 0 {
+				t.Fatal(hard)
+			}
+			before, err := ir.LowerIsland(p, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			u, err := ir.LowerIslandAOT(p, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			encoded, _ := program.EncodeBinary(before)
+			if !bytes.Equal(encoded, u.ProgramBytes) {
+				t.Fatal("server prop spread changed the island VM artifact")
+			}
+		})
+	}
+}
+
 func TestIslandAOTGoSXPairingRejections(t *testing.T) {
 	for _, tc := range []struct{ name, decl, body, reason string }{
 		{"mixed ternary", "", `return <div>{true ? 1 : "x"}</div>`, "conditional_type_mismatch"},

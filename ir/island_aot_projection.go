@@ -101,11 +101,26 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 			}
 		}
 		if props != nil {
+			for _, attr := range attributes {
+				if l.nodeType(attr) != "jsx_spread_attribute" {
+					continue
+				}
+				out.WriteString("var _ ")
+				copySpan(int(props.StartByte()), int(props.EndByte()))
+				out.WriteString(" = (")
+				if err := expr(l.childByField(attr, "expression"), l.span(attr)); err != nil {
+					return err
+				}
+				out.WriteString(");\n")
+			}
 			out.WriteString("_ = ")
 			copySpan(int(props.StartByte()), int(props.EndByte()))
 			out.WriteString("{\n")
 		}
 		for _, attr := range attributes {
+			if props != nil && l.nodeType(attr) == "jsx_spread_attribute" {
+				continue
+			}
 			name := text(l.childByField(attr, "name"))
 			value := l.childByField(attr, "value")
 			if name == "slot" && value != nil && l.nodeType(value) == "jsx_string_literal" {

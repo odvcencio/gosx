@@ -61,6 +61,35 @@ func TestInitStarterIslandAdmission(t *testing.T) {
 	t.Logf("starter island count: %d", islands)
 }
 
+func TestDocsIslandAdmission(t *testing.T) {
+	for _, directory := range []string{"islands", "signals"} {
+		t.Run(directory, func(t *testing.T) {
+			filename := filepath.Join("..", "..", "examples", "gosx-docs", "app", "docs", directory, "page.gsx")
+			source, err := os.ReadFile(filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := gosx.Compile(source)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.Dir, p.PackagePath = filepath.Dir(filename), "example.test/docs/"+directory
+			islands := 0
+			for i, component := range p.Components {
+				if component.IsIsland {
+					islands++
+					if _, err := ir.LowerIslandAOT(p, i); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+			if islands != 1 {
+				t.Fatalf("want one docs island, got %d", islands)
+			}
+		})
+	}
+}
+
 func TestBuildIslandBackendConfig(t *testing.T) {
 	dir := t.TempDir()
 	for _, backend := range []string{"vm", "auto", "unknown"} {
