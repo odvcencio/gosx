@@ -68,10 +68,10 @@ func TestReferencesDocumentBaseAndInlineContexts(t *testing.T) {
 	}
 }
 
-func TestReferencesActiveSrcdocIsIncomplete(t *testing.T) {
+func TestReferencesUnscannedSrcdocIsIncomplete(t *testing.T) {
 	const frame = `<iframe srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"%s></iframe>`
-	// HTML's iframe sandbox tokens are ASCII case-insensitive. Attribute
-	// presence matters: sandbox="" disables scripts, absence permits them.
+	// Sandbox restrictions disable scripts, but not declarative resource loads.
+	// Every live srcdoc needs nested scanning before coverage can be complete.
 	// https://html.spec.whatwg.org/multipage/iframe-embed-object.html#attr-iframe-sandbox
 	for _, tc := range []struct {
 		name, body string
@@ -81,10 +81,12 @@ func TestReferencesActiveSrcdocIsIncomplete(t *testing.T) {
 		{"scripts-allowed", fmt.Sprintf(frame, ` sandbox="allow-scripts"`), false},
 		{"scripts-token-list", fmt.Sprintf(frame, " sandbox=\"allow-forms\tALLOW-SCRIPTS\nallow-same-origin\""), false},
 		{"empty-srcdoc", `<iframe srcdoc=""></iframe>`, false},
-		{"sandbox-present", fmt.Sprintf(frame, ` sandbox`), true},
-		{"sandbox-empty", fmt.Sprintf(frame, ` sandbox=""`), true},
-		{"sandbox-other-tokens", fmt.Sprintf(frame, ` sandbox="allow-forms allow-same-origin"`), true},
-		{"sandbox-token-substring", fmt.Sprintf(frame, ` sandbox="disallow-scripts allow-scripts-extra"`), true},
+		{"sandbox-present", fmt.Sprintf(frame, ` sandbox`), false},
+		{"sandbox-empty", fmt.Sprintf(frame, ` sandbox=""`), false},
+		{"sandbox-other-tokens", fmt.Sprintf(frame, ` sandbox="allow-forms allow-same-origin"`), false},
+		{"sandbox-token-substring", fmt.Sprintf(frame, ` sandbox="disallow-scripts allow-scripts-extra"`), false},
+		{"sandbox-image", `<iframe sandbox srcdoc="&lt;img src='/pixel.png'&gt;"></iframe>`, false},
+		{"sandbox-stylesheet", `<iframe sandbox srcdoc="&lt;link rel='stylesheet' href='/style.css'&gt;"></iframe>`, false},
 		{"html-template", "<template>" + fmt.Sprintf(frame, "") + "</template>", true},
 		{"noscript", "<noscript>" + fmt.Sprintf(frame, "") + "</noscript>", true},
 		{"other-element", `<div srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"></div>`, true},

@@ -636,17 +636,16 @@ func TestMeasureUnknownCriticalityRetainsPotentialBodies(t *testing.T) {
 	}
 }
 
-func TestMeasureActiveSrcdocRetainsDeclaredRuntime(t *testing.T) {
+func TestMeasureUnscannedSrcdocRetainsDeclaredRuntime(t *testing.T) {
 	for _, tc := range []struct {
 		name, sandbox string
-		active        bool
 	}{
-		{"unsandboxed", "", true},
-		{"scripts-allowed", ` sandbox="allow-scripts"`, true},
-		{"scripts-token-list", " sandbox=\"allow-forms\tALLOW-SCRIPTS\nallow-same-origin\"", true},
-		{"sandbox-present", ` sandbox`, false},
-		{"sandbox-empty", ` sandbox=""`, false},
-		{"sandbox-other-tokens", ` sandbox="allow-same-origin allow-forms"`, false},
+		{"unsandboxed", ""},
+		{"scripts-allowed", ` sandbox="allow-scripts"`},
+		{"scripts-token-list", " sandbox=\"allow-forms\tALLOW-SCRIPTS\nallow-same-origin\""},
+		{"sandbox-present", ` sandbox`},
+		{"sandbox-empty", ` sandbox=""`},
+		{"sandbox-other-tokens", ` sandbox="allow-same-origin allow-forms"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			document := []byte(`<iframe srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"` + tc.sandbox + `></iframe>`)
@@ -666,12 +665,8 @@ func TestMeasureActiveSrcdocRetainsDeclaredRuntime(t *testing.T) {
 			}
 			docSizes, _ := testBodyNormalizer(document)
 			runtimeSizes, _ := testBodyNormalizer(runtime)
-			wantReachability, wantPhase := "known", "dormant"
-			wantStartup, wantDormant, wantFramework, wantFetches := int64(0), runtimeSizes.Brotli, int64(0), int64(0)
-			if tc.active {
-				wantReachability, wantPhase = "unknown", "startup"
-				wantStartup, wantDormant, wantFramework, wantFetches = runtimeSizes.Brotli, 0, runtimeSizes.Brotli, 1
-			}
+			wantReachability, wantPhase := "unknown", "startup"
+			wantStartup, wantDormant, wantFramework, wantFetches := runtimeSizes.Brotli, int64(0), runtimeSizes.Brotli, int64(1)
 			if len(report.Rows) != 1 || len(report.Assets) != 2 {
 				t.Fatal("route or runtime inventory missing", report)
 			}
@@ -682,10 +677,48 @@ func TestMeasureActiveSrcdocRetainsDeclaredRuntime(t *testing.T) {
 			if report.Assets[1].Phase != wantPhase {
 				t.Fatalf("runtime phase=%s want %s", report.Assets[1].Phase, wantPhase)
 			}
-			if tc.active && row.ReasonCode != "unknown-reachability" {
+			if row.ReasonCode != "unknown-reachability" {
 				t.Fatal("uncertain closure was not reported", row.ReasonCode)
 			}
 		})
+	}
+}
+
+func TestMeasureSandboxedSrcdocRetainsDeclaredResources(t *testing.T) {
+	for _, resource := range []struct {
+		name, id, url, kind, srcdoc string
+		body                        []byte
+	}{
+		{"image", "app/fixture/pixel", "/pixel.png", "image", `&lt;img src='/pixel.png'&gt;`, []byte("fixture pixel image!!!")},
+		{"stylesheet", "app/fixture/style", "/style.css", "css", `&lt;link rel='stylesheet' href='/style.css'&gt;`, []byte(".fixture{color:blue}")},
+	} {
+		for _, sandbox := range []string{` sandbox`, ` sandbox=""`, ` sandbox="allow-forms allow-same-origin"`} {
+			t.Run(resource.name+sandbox, func(t *testing.T) {
+				document := []byte(`<iframe` + sandbox + ` srcdoc="` + resource.srcdoc + `"></iframe>`)
+				graph := ReachabilityOptions{
+					Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: []buildmanifest.PerfAssetUse{
+						graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", document),
+						graphAsset(resource.id, resource.url, resource.kind, "dormant", "always", resource.body),
+					}},
+					Bodies: map[string][]byte{"app/fixture/html": document, resource.id: resource.body},
+					Route:  FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}},
+				}
+				opts, requests := testMeasuredResourceGraph(t, graph, nil)
+				report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+				if err != nil {
+					t.Fatal(err)
+				}
+				docSizes, _ := testBodyNormalizer(document)
+				resourceSizes, _ := testBodyNormalizer(resource.body)
+				if len(report.Rows) != 1 || len(report.Assets) != 2 {
+					t.Fatal("route or resource inventory missing", report)
+				}
+				row := report.Rows[0]
+				if report.Coverage.Reachability != "unknown" || row.ReasonCode != "unknown-reachability" || row.PhaseBytes.Critical != docSizes.Brotli || row.PhaseBytes.Startup != resourceSizes.Brotli || row.PhaseBytes.Dormant != 0 || row.NormalizedBytes != docSizes.Brotli+resourceSizes.Brotli || row.AppBytes != row.NormalizedBytes || row.FrameworkBytes != 0 || row.Requests != 2 || row.WireBytes != int64(len(document)+len(resource.body)) || requests[resource.url].Load() != 1 || report.Assets[1].Phase != "startup" {
+					t.Fatalf("sandboxed srcdoc lost declarative load: coverage=%s row=%+v asset=%+v fetches=%d", report.Coverage.Reachability, row, report.Assets[1], requests[resource.url].Load())
+				}
+			})
+		}
 	}
 }
 

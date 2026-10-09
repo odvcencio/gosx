@@ -209,15 +209,10 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 				}
 			}
 			if n.Namespace == "" && n.Data == "iframe" && seen["srcdoc"] {
-				scriptsAllowed := !seen["sandbox"]
-				for _, token := range strings.Fields(attr(n, "sandbox")) {
-					scriptsAllowed = scriptsAllowed || strings.EqualFold(token, "allow-scripts")
-				}
-				if scriptsAllowed {
-					// Nested document resources are not scanned here. Unknown
-					// coverage retains declared runtime costs conservatively.
-					out.Complete = false
-				}
+				// Nested document resources are not scanned here. Sandbox script
+				// restrictions still allow images and stylesheets to load, so
+				// every live srcdoc retains declared costs conservatively.
+				out.Complete = false
 			}
 			switch n.Data {
 			case "base":
