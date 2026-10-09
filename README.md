@@ -795,6 +795,7 @@ gosx build --offline <app>             # Stage a versioned offline asset bundle
 gosx build --msix <app>                # Stage and package Windows MSIX output
 gosx build --sign --msix <app>         # Sign MSIX via signtool
 gosx build --appinstaller <uri> <app>  # Emit AppInstaller update feed XML
+gosx deploy check [--json] dist        # Validate a production bundle before upload
 gosx assets plan [path...]            # Inspect 3D/game assets and planned build optimizations
 gosx scene render --out image.png <scene-file>
                                       # Render a typed scene natively to PNG (no browser or GPU)
@@ -1030,9 +1031,26 @@ the player follows the returned download page and reinstalls Setup. Both paths
 are separate from the optional `CrashReporterOptions`, which captures Go
 panics plus Windows minidumps with optional user-consented upload.
 
-`gosx build --prod` emits a deployable `dist/` bundle with a server binary,
-hashed assets, prerendered static pages, an ISR manifest, and edge worker
-support. Add `--offline` to stage `dist/offline/` with a versioned asset
+`gosx build --prod` emits a deployable `dist/` bundle with a server binary and
+hashed assets. With prerendering enabled it also emits static pages, an ISR
+manifest, and edge worker support. Validate the server bundle before upload:
+
+```sh
+gosx deploy check dist
+gosx deploy check --json dist # JSON for check failures and invalid arguments
+```
+
+The check verifies the existing bundle policy, declared asset sizes, content
+hashes and script integrity, compressed sidecars, executable launch files, and
+exported route files. It reads only the bundle and works without starting the
+application, connecting to a database, or supplying production secrets.
+Exit codes are 0 for success, 1 for failed checks and 2 for invalid arguments.
+With `--json`, invalid arguments also produce a JSON report. This command is
+an offline artifact check; host compatibility, runtime configuration, migrations,
+and live health still need validation on the destination. It currently accepts
+server bundles from `gosx build`, not static-only `gosx export` output.
+
+Add `--offline` to stage `dist/offline/` with a versioned asset
 manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `dist/app.msix` through MakeAppx, `--sign` to run signtool with
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit

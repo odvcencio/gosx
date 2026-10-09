@@ -74,6 +74,8 @@ func main() {
 		cmdBuildRuntime()
 	case "dev":
 		cmdDev()
+	case "deploy":
+		cmdDeploy()
 	case "desktop":
 		cmdDesktop()
 	case "export":
@@ -129,6 +131,8 @@ func isHelpArg(arg string) bool {
 
 func commandUsage(cmd string, w io.Writer) bool {
 	switch cmd {
+	case "deploy":
+		deployUsage(w)
 	case "assets":
 		assetsUsage(w)
 	case "build":
@@ -268,6 +272,8 @@ Commands:
                        Build TinyGo production WASM runtimes
   dev [--scene-inspector] <dir>
                        Start development server with hot reload
+  deploy check [--json] <dist>
+                       Validate a built server bundle before deployment
   desktop [dev] <dir>  Start dev server in a native desktop host
   export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site

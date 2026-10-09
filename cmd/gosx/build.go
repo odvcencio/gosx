@@ -48,6 +48,12 @@ type BuildOptions struct {
 	PerfAppID string
 }
 
+// runtimeFeatureChunks lists opt-in feature chunks that ship as
+// client/js/bootstrap-feature-<name>.js and load by name at runtime
+// (hydrate.Manifest.Features). Each row's role is a runtimeExcludableAssetRoles
+// key. The change that adds a chunk file appends its row here.
+var runtimeFeatureChunks = []struct{ name, role string }{}
+
 type wasmCompiler string
 
 const (
@@ -720,6 +726,41 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 
+	// Opt-in feature chunks (see runtimeFeatureChunks) are staged like the
+	// fixed entries above and recorded under manifest.Runtime.Features so the
+	// document contract can publish one flat bootstrapFeature<Name>Path key
+	// per chunk.
+	for _, chunk := range runtimeFeatureChunks {
+		if cfg.Build.Runtime.excludesRole(chunk.role) {
+			fmt.Printf("    (skipped: bootstrap-feature-%s, excluded by build.runtime.exclude %q)\n", chunk.name, chunk.role)
+			continue
+		}
+		srcPath := filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-"+chunk.name+".js")
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", srcPath, err)
+		}
+		assetName := "bootstrap-feature-" + chunk.name
+		data = runtimeJSAssetData(assetName, data)
+		asset, err := writeHashed(runtimeDir, assetName, ".js", data)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", assetName, err)
+		}
+		asset = withRuntimeIntegrity(asset, data)
+		if manifest.Runtime.Features == nil {
+			manifest.Runtime.Features = map[string]HashedAsset{}
+		}
+		manifest.Runtime.Features[chunk.name] = asset
+		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+		if cfg.Build.Runtime.sourceMapsEnabled() {
+			if mapData, err := os.ReadFile(srcPath + ".map"); err == nil {
+				if err := os.WriteFile(filepath.Join(runtimeDir, assetName+".js.map"), mapData, 0644); err != nil {
+					return fmt.Errorf("write %s source map: %w", assetName, err)
+				}
+			}
+		}
+	}
+
 	if assetReport, err := writeBuildSceneAssetPlan(dir, distDir); err != nil {
 		return fmt.Errorf("scene asset plan: %w", err)
 	} else if assetReport != nil {
@@ -1372,6 +1413,11 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return "", false
 	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
+	if name, ok := buildmanifest.FeatureChunkName(strings.TrimPrefix(ref, "/gosx/")); ok && strings.HasPrefix(ref, "/gosx/") {
+		if asset, found := manifest.Runtime.Features[name]; found {
+			return manifestRuntimeFilePath(runtimeDir, asset.File)
+		}
+	}
 	switch ref {
 	case "/gosx/runtime.wasm":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASM.File)
@@ -1577,13 +1623,19 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"- `content/` contains collection documents loaded by server-rendered and prerendered routes.",
 		"- `public/` contains root-served static assets when present.",
 		"- `build.json` maps hashed asset names for runtime/island loading.",
-		"- `edge/worker.js` can serve prerendered routes at the edge and proxy misses/actions to origin.",
-		"- `platform/` contains deployment metadata for hosted/static-edge setups.",
+		"- When prerendering is enabled, `edge/worker.js` serves static routes and proxies misses/actions to origin.",
+		"- When prerendering is enabled, `platform/` contains metadata for hosted/static-edge setups.",
 	}
 	if builtServer {
 		lines = append(lines,
 			"- `server/app` is the compiled Go server binary.",
 			"- `run.sh` launches the bundle with `GOSX_APP_ROOT` pointing at this directory.",
+			"",
+			"Validate this bundle before uploading it:",
+			"```sh",
+			"gosx deploy check .",
+			"```",
+			"This checks artifact integrity only. Supply runtime secrets through the host environment and verify destination health before routing traffic.",
 			"",
 			"Run locally:",
 			"```sh",
