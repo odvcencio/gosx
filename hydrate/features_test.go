@@ -83,3 +83,32 @@ func TestFeatureContractKey(t *testing.T) {
 		}
 	}
 }
+
+// Class audit of explicit legacy requirements. islands, engines, hubs,
+// controllers and textlayout load by fetch and finish without any trigger
+// entry (client/js/49-explicit-features.test.mjs), so RequireFeature accepts
+// them. scene3d waits on a load signal from a script only a GoSXScene3D engine
+// makes the renderer emit, so RequireFeature rejects it.
+func TestRequireFeatureLegacyNames(t *testing.T) {
+	for _, name := range []string{"islands", "engines", "hubs", "controllers", "textlayout"} {
+		t.Run(name, func(t *testing.T) {
+			m := NewManifest()
+			if err := m.RequireFeature(name); err != nil {
+				t.Fatalf("RequireFeature(%q): %v", name, err)
+			}
+			if len(m.Features) != 1 || m.Features[0] != name {
+				t.Fatalf("features = %v", m.Features)
+			}
+		})
+	}
+	t.Run("scene3d", func(t *testing.T) {
+		m := NewManifest()
+		err := m.RequireFeature("scene3d")
+		if err == nil || !strings.Contains(err.Error(), "GoSXScene3D") {
+			t.Fatalf("scene3d must be rejected with a message naming the GoSXScene3D engine, got %v", err)
+		}
+		if len(m.Features) != 0 {
+			t.Fatalf("features = %v", m.Features)
+		}
+	})
+}

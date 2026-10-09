@@ -36,6 +36,10 @@
   required feature or a legacy chunk's key (`a1` and `a-1`, or `text-layout`
   and `textlayout`), and the error names both. `hydrate.FeatureContractKey`
   returns the key for a name.
+- `RequireFeature("scene3d")` is rejected: the Scene3D chunk loads only for a
+  `GoSXScene3D` engine, and the loader would wait for a script the renderer does
+  not emit. The other legacy names (`islands`, `engines`, `hubs`, `controllers`,
+  `textlayout`) stay accepted and load by fetch.
 - A manifest-declared feature chunk that fails to load is logged and skipped
   instead of stopping the page from mounting. Queued form submits count as in
   flight, so refresh ticks do not swap the DOM under them. The Go-WASM boot token

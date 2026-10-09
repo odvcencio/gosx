@@ -63,6 +63,9 @@ func (m *Manifest) RequireFeature(name string) error {
 	if !featureNamePattern.MatchString(name) {
 		return fmt.Errorf("invalid runtime feature name %q", name)
 	}
+	if name == "scene3d" {
+		return fmt.Errorf("runtime feature %q loads only for a GoSXScene3D engine: add the engine instead of requiring the feature", name)
+	}
 	for _, have := range m.Features {
 		if have == name {
 			return nil

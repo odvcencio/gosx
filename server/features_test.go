@@ -105,3 +105,18 @@ func TestRequireFeatureCollisionNeverReachesTheContract(t *testing.T) {
 		t.Fatalf("the legacy key must keep the textlayout chunk URL: %s", contract)
 	}
 }
+
+func TestRequireSceneFeatureOnPlainEnginePageIsRejected(t *testing.T) {
+	app := New()
+	app.Page("GET /plain", func(ctx *Context) gosx.Node {
+		if err := ctx.Runtime().RequireFeature("scene3d"); err == nil {
+			t.Error("scene3d needs a GoSXScene3D engine and must be rejected")
+		}
+		return ctx.Engine(engine.Config{Name: "Plain", Kind: engine.KindSurface}, gosx.Text("x"))
+	})
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/plain", nil))
+	if strings.Contains(w.Body.String(), `"features"`) {
+		t.Fatalf("a rejected feature must not reach the manifest: %s", w.Body.String())
+	}
+}

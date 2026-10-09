@@ -76,3 +76,21 @@ func TestSummaryFeaturePathsOmitsUnusedLegacyChunks(t *testing.T) {
 		t.Fatalf("a page with no engines or features must have no FeaturePaths, got %+v", got)
 	}
 }
+
+func TestClientManifestDropsScene3DFeature(t *testing.T) {
+	r := NewRenderer("page")
+	r.RenderEngine(engine.Config{Name: "Fixture", Kind: engine.KindSurface}, gosx.Node{})
+	// A caller can bypass RequireFeature by assigning the exported field.
+	r.Manifest().Features = []string{"scene3d", "painter"}
+	got := r.clientManifest().Features
+	if len(got) != 1 || got[0] != "painter" {
+		t.Fatalf("client manifest features = %v, want only painter", got)
+	}
+	json, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(json, "scene3d") {
+		t.Fatalf("the page manifest must not name scene3d as a feature: %s", json)
+	}
+}

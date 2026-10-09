@@ -1078,6 +1078,15 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 		return nil
 	}
 	manifest := *r.manifest
+	// scene3d is entry-driven: the loader waits on a signal from a script the
+	// renderer emits only for a GoSXScene3D engine, so an explicit requirement
+	// (a caller can assign the exported field) must never reach the page.
+	manifest.Features = nil
+	for _, name := range r.manifest.Features {
+		if name != "scene3d" {
+			manifest.Features = append(manifest.Features, name)
+		}
+	}
 	if len(r.manifest.Bundles) > 0 {
 		manifest.Bundles = make(map[string]hydrate.BundleRef, len(r.manifest.Bundles))
 		for id, bundle := range r.manifest.Bundles {
