@@ -27,8 +27,8 @@ func scaffoldOracleCorpus() []scaffoldOracleCase {
 	for _, group := range []struct{ names, typ, zero, literal string }{
 		{"value key code targetID currentTargetID pointerType eventData", "string", `""`, `"authored"`},
 		{"checked ctrlKey metaKey altKey shiftKey repeat editable isPrimary", "bool", "false", "true"},
-		{"selectedIndex pointerID button buttons", "int", "0", "42"},
-		{"timeStamp clientX clientY pressure width height", "float64", "0.0", "1.5"},
+		{"selectedIndex pointerID button buttons deltaMode", "int", "0", "42"},
+		{"timeStamp clientX clientY pressure width height offsetX offsetY elementWidth elementHeight deltaX deltaY", "float64", "0.0", "1.5"},
 		{"data", "interface{}", "nil", "nil"},
 	} {
 		for _, name := range strings.Fields(group.names) {

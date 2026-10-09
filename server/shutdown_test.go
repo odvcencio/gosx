@@ -100,6 +100,38 @@ func TestShutdownSourceUsesExistingPipeline(t *testing.T) {
 	}
 }
 
+func TestShutdownHookRollbackPreservesRegistrationOrder(t *testing.T) {
+	a := New()
+	var calls []string
+	add := func(name string) func() {
+		remove, err := a.UseShutdownHook(name, ShutdownHooks{Drain: func(context.Context) error { calls = append(calls, name); return nil }})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return remove
+	}
+	stale := add("removed")
+	add("first")
+	stale()
+	for range 1000 {
+		remove := add("retry")
+		remove()
+		remove()
+	}
+	add("last")
+	stale()
+	if len(a.shutdown.hooks) != 2 {
+		t.Fatal("rollback retained hook slots")
+	}
+	a.Build()
+	if err := a.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(calls, []string{"first", "last"}) {
+		t.Fatal(calls)
+	}
+}
+
 func TestShutdownHookOrderAndClassifiedErrors(t *testing.T) {
 	a := New()
 	var order []string

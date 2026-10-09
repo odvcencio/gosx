@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"log"
+	"m31labs.dev/gosx/internal/telemetryauthority"
+	"m31labs.dev/gosx/internal/telemetryerr"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -410,5 +412,175 @@ func TestHubRateLimitIsNotConnectionRejection(t *testing.T) {
 	}
 	if err := h.Close(context.Background()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type queueObserver struct {
+	NoopObserver
+	text, binary, drops atomic.Uint64
+	depth               atomic.Int64
+}
+
+func (o *queueObserver) Message(h *Hub, c *Client, e TrafficEvent) {
+	// Both transport critical sections must be released before dispatch.
+	if c != nil {
+		c.mu.Lock()
+		c.mu.Unlock()
+	}
+	h.mu.Lock()
+	h.mu.Unlock()
+	count := e.Count
+	if count == 0 {
+		count = 1
+	}
+	if e.Dropped {
+		o.drops.Add(count)
+	}
+	if e.QueueDepth >= 0 {
+		if e.Binary {
+			o.binary.Add(count)
+		} else {
+			o.text.Add(count)
+		}
+		o.depth.Store(int64(e.QueueDepth))
+	}
+}
+
+func queueFixture(h *Hub) *Client {
+	return &Client{ID: "fixture", Hub: h, send: make(chan []byte, 256), binarySend: make(chan []byte, 256), transport: &transportState{}}
+}
+
+func TestQueueSamplesAreIndependentAndDropsAlwaysFire(t *testing.T) {
+	h := New("queue-fixture")
+	o := &queueObserver{}
+	if _, err := h.UseTelemetryObserver(o, 0, telemetryauthority.New()); err != nil {
+		t.Fatal(err)
+	}
+	c := queueFixture(h)
+	for range 63 {
+		c.trySend(nil)
+		c.tryBinarySend(nil)
+	}
+	if o.text.Load() != 0 || o.binary.Load() != 0 {
+		t.Fatal("default queue sample fired before its 64th attempt")
+	}
+	c.trySend(nil)
+	if o.text.Load() != 1 || o.binary.Load() != 0 || o.depth.Load() != 63 {
+		t.Fatal("text sampling changed the binary cadence")
+	}
+	c.tryBinarySend(nil)
+	if o.binary.Load() != 1 || o.depth.Load() != 63 {
+		t.Fatal("binary queue was not sampled independently")
+	}
+	for range 192 {
+		c.trySend(nil)
+	}
+	if c.trySend(nil) || c.trySend(nil) || o.drops.Load() != 2 || c.DropStats().Text != 2 {
+		t.Fatal("full queues did not report each loss once")
+	}
+	h.removeClient(c)
+	if c.trySend(nil) || c.tryBinarySend(nil) || o.drops.Load() != 2 {
+		t.Fatal("departed client was counted as a drop")
+	}
+}
+
+func TestTelemetryObserverSlotReservationAndRemoval(t *testing.T) {
+	h := New("queue-fixture")
+	app := &queueObserver{}
+	appDetach, err := h.UseObserver(app)
+	if err != nil {
+		t.Fatal(err)
+	}
+	o := &queueObserver{}
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.Key{}); !errors.Is(err, telemetryerr.ErrInvalidOptions) {
+		t.Fatal("unauthorized code claimed the telemetry slot", err)
+	}
+	if h.telemetryObserver != nil || h.queueSampleEvery.Load() != 0 {
+		t.Fatal("invalid authority mutated the hub")
+	}
+	detach, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.UseTelemetryObserver(NoopObserver{}, 1, telemetryauthority.New()); !errors.Is(err, ErrObserverConflict) || !errors.Is(err, telemetryerr.ErrConflict) {
+		t.Fatal("duplicate telemetry slot was accepted", err)
+	}
+	c := queueFixture(h)
+	c.trySend(nil)
+	c.tryBinarySend(nil)
+	if o.text.Load() != 1 || o.binary.Load() != 1 || app.text.Load() != 1 || o.depth.Load() != 0 {
+		t.Fatal("diagnostic queue override or additive observer failed")
+	}
+	detach()
+	detach()
+	if h.queueSampleEvery.Load() != 0 || h.telemetryObserver != nil {
+		t.Fatal("detaching retained the reservation or override")
+	}
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New()); err != nil {
+		t.Fatal("pre-serve slot could not be reused", err)
+	}
+	if !h.reserveClientSlot() {
+		t.Fatal("fixture admission failed")
+	}
+	h.releaseClientSlot()
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New()); !errors.Is(err, ErrObserverConflict) {
+		t.Fatal("duplicate slot lost its error after serving", err)
+	}
+	appDetach()
+}
+
+func TestQueueObservationWarmAllocations(t *testing.T) {
+	for _, every := range []uint32{0, 1} {
+		h := New("queue-fixture")
+		if _, err := h.UseTelemetryObserver(&queueObserver{}, every, telemetryauthority.New()); err != nil {
+			t.Fatal(err)
+		}
+		c := queueFixture(h)
+		if got := testing.AllocsPerRun(1000, func() {
+			c.trySend(nil)
+			<-c.send
+			c.tryBinarySend(nil)
+			<-c.binarySend
+		}); got != 0 {
+			t.Fatal("queue observer allocated", every, got)
+		}
+	}
+}
+
+func TestBroadcastQueueSamplesReleaseLocksAndPreserveMultiplicity(t *testing.T) {
+	h := New("queue-fixture")
+	o := &queueObserver{}
+	if _, err := h.UseTelemetryObserver(o, 1, telemetryauthority.New()); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"first", "second"} {
+		c := queueFixture(h)
+		c.ID = id
+		h.clients[id] = c
+	}
+	if h.BroadcastBinary([]byte{0}) != 2 || o.binary.Load() != 2 {
+		t.Fatal("coalesced samples lost multiplicity")
+	}
+	for _, c := range h.clients {
+		for len(c.binarySend) < cap(c.binarySend) {
+			c.binarySend <- nil
+		}
+	}
+	if h.BroadcastBinary([]byte{0}) != 0 || o.binary.Load() != 4 || o.drops.Load() != 2 {
+		t.Fatal("full queues did not report samples and drops independently")
+	}
+	for _, c := range h.clients {
+		for len(c.binarySend) != 0 {
+			<-c.binarySend
+		}
+	}
+	payload := []byte{0}
+	if got := testing.AllocsPerRun(1000, func() {
+		h.BroadcastBinary(payload)
+		for _, c := range h.clients {
+			<-c.binarySend
+		}
+	}); got != 0 {
+		t.Fatal("observed broadcast allocated", got)
 	}
 }

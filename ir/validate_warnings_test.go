@@ -1,6 +1,7 @@
 package ir_test
 
 import (
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/ir"
@@ -275,5 +276,53 @@ func Page() Node {
 	}
 	if diags := ir.Validate(prog); len(diags) != 0 {
 		t.Fatalf("expected no diagnostics for valid link attributes, got %+v", diags)
+	}
+}
+
+func TestValidateWarningsFlagsUnsupportedIslandEventHandlers(t *testing.T) {
+	source := []byte(`package main
+
+import "m31labs.dev/gosx/signal"
+
+//gosx:island
+func Form() Node {
+	n := signal.New(0)
+	bump := func() { n.Set(n.Get() + 1) }
+	return <div>
+		<input onKey={bump} />
+		<div onMouseDown={bump} onScroll={bump} onKeydown={bump} onPointerdown={bump} onClick={bump}></div>
+	</div>
+}
+`)
+	prog, err := parse(t, source)
+	if err != nil {
+		t.Fatalf("Lower failed: %v", err)
+	}
+	var messages []string
+	for _, w := range ir.ValidateWarnings(prog) {
+		if w.Severity != ir.SeverityWarning {
+			t.Fatalf("diagnostic must be a warning: %+v", w)
+		}
+		if w.Span.StartLine == 0 {
+			t.Fatalf("warning must carry a source position: %+v", w)
+		}
+		messages = append(messages, w.Message)
+	}
+	joined := strings.Join(messages, "\n")
+	for _, want := range []string{`"onKey"`, `did you mean "onKeyDown"?`, `"onMouseDown"`, `"onScroll"`} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("warnings lack %s:\n%s", want, joined)
+		}
+	}
+	for _, bad := range []string{`"onKeydown"`, `"onPointerdown"`, `"onClick"`} {
+		if strings.Contains(joined, bad) {
+			t.Errorf("supported alias %s must not warn:\n%s", bad, joined)
+		}
+	}
+	if len(messages) != 3 {
+		t.Errorf("want 3 warnings, got %d:\n%s", len(messages), joined)
+	}
+	if _, err := ir.LowerIsland(prog, 0); err != nil {
+		t.Fatalf("warned handlers must still compile: %v", err)
 	}
 }
