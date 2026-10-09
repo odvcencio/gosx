@@ -1085,15 +1085,7 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 		return nil
 	}
 	manifest := *r.manifest
-	// scene3d is entry-driven: the loader waits on a signal from a script the
-	// renderer emits only for a GoSXScene3D engine, so an explicit requirement
-	// (a caller can assign the exported field) must never reach the page.
-	manifest.Features = nil
-	for _, name := range r.manifest.Features {
-		if name != "scene3d" {
-			manifest.Features = append(manifest.Features, name)
-		}
-	}
+	manifest.Features = r.explicitFeatures()
 	if len(r.manifest.Bundles) > 0 {
 		manifest.Bundles = make(map[string]hydrate.BundleRef, len(r.manifest.Bundles))
 		for id, bundle := range r.manifest.Bundles {
@@ -1177,11 +1169,55 @@ func (r *Renderer) requiredFeaturePath(name string) string {
 	return "/gosx/bootstrap-feature-" + name + ".js"
 }
 
-// requiredFeatureNames returns the sorted non-legacy feature names the page
-// requires.
-func (r *Renderer) requiredFeatureNames() []string {
+// explicitFeatures returns the features the page named with RequireFeature,
+// without scene3d. scene3d is entry-driven: the loader waits on a signal from a
+// script the renderer emits only for a GoSXScene3D engine, so an explicit
+// requirement (a caller can assign the exported field) must never reach the
+// page.
+func (r *Renderer) explicitFeatures() []string {
 	var names []string
 	for _, name := range r.manifest.Features {
+		if name != "scene3d" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// pageFeatures is the one place that decides which runtime feature chunks a
+// page loads: the chunks its manifest entries imply, plus the explicit
+// requirements, minus the rejected scene3d. The client contract fields,
+// preload links, summary and FeaturePaths all read it, and static export finds
+// chunks through the URLs those publish.
+func (r *Renderer) pageFeatures() map[string]bool {
+	set := map[string]bool{}
+	if len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0 {
+		set["islands"] = true
+	}
+	if len(r.manifest.Engines) > 0 {
+		set["engines"] = true
+	}
+	if len(r.manifest.Hubs) > 0 {
+		set["hubs"] = true
+	}
+	if len(r.manifest.Controllers) > 0 {
+		set["controllers"] = true
+	}
+	if r.hasSceneEngines() {
+		set["scene3d"] = true
+		set["textlayout"] = true
+	}
+	for _, name := range r.explicitFeatures() {
+		set[name] = true
+	}
+	return set
+}
+
+// requiredFeatureNames returns the sorted non-legacy feature names the page
+// loads.
+func (r *Renderer) requiredFeatureNames() []string {
+	var names []string
+	for name := range r.pageFeatures() {
 		if !legacyFeatureNames[name] {
 			names = append(names, name)
 		}
@@ -2315,7 +2351,7 @@ func (r *Renderer) Summary() Summary {
 	if r.hasVideoEngines() {
 		summary.HLSPath = r.videoHLSPath
 	}
-	if plan.Bootstrap && r.hasSceneEngines() {
+	if plan.Bootstrap && r.pageFeatures()["textlayout"] {
 		// A Scene3D label lays out through the text-layout chunk, and the
 		// client decides whether a scene needs it, so a scene page names the
 		// hashed URL. No preload: that would fetch the chunk on every page.
@@ -2362,27 +2398,27 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 	}
 	switch name {
 	case "islands":
-		if len(r.manifest.Islands) == 0 && len(r.manifest.ComputeIslands) == 0 {
+		if !r.pageFeatures()["islands"] {
 			return ""
 		}
 		return r.bootstrapFeatureIslandsPath
 	case "engines":
-		if len(r.manifest.Engines) == 0 {
+		if !r.pageFeatures()["engines"] {
 			return ""
 		}
 		return r.bootstrapFeatureEnginesPath
 	case "hubs":
-		if len(r.manifest.Hubs) == 0 {
+		if !r.pageFeatures()["hubs"] {
 			return ""
 		}
 		return r.bootstrapFeatureHubsPath
 	case "controllers":
-		if len(r.manifest.Controllers) == 0 {
+		if !r.pageFeatures()["controllers"] {
 			return ""
 		}
 		return r.bootstrapFeatureControllersPath
 	case "scene3d":
-		if !r.hasSceneEngines() {
+		if !r.pageFeatures()["scene3d"] {
 			return ""
 		}
 		return r.bootstrapFeatureScene3dPath

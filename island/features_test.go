@@ -94,3 +94,35 @@ func TestClientManifestDropsScene3DFeature(t *testing.T) {
 		t.Fatalf("the page manifest must not name scene3d as a feature: %s", json)
 	}
 }
+
+func TestExplicitLegacyRequirementsAreAdvertised(t *testing.T) {
+	r := NewRenderer("page")
+	r.RenderEngine(engine.Config{Name: "Plain", Kind: engine.KindSurface}, gosx.Node{})
+	for _, name := range []string{"hubs", "controllers", "islands"} {
+		if err := r.RequireFeature(name); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s := r.Summary()
+	for name, path := range map[string]string{"hubs": s.BootstrapFeatureHubsPath, "controllers": s.BootstrapFeatureControllersPath, "islands": s.BootstrapFeatureIslandsPath} {
+		if !strings.Contains(path, "bootstrap-feature-"+name) {
+			t.Errorf("Summary lacks the %s chunk URL: %q", name, path)
+		}
+		if got := r.FeaturePaths()[name]; got != path {
+			t.Errorf("FeaturePaths[%s] = %q, want %q", name, got, path)
+		}
+	}
+	hints := gosx.RenderHTML(r.PreloadHints())
+	for _, name := range []string{"hubs", "controllers", "islands"} {
+		if !strings.Contains(hints, "bootstrap-feature-"+name) {
+			t.Errorf("preload hints lack %s: %s", name, hints)
+		}
+	}
+	// No entries of that kind: the explicit name alone selects the chunk, and
+	// a page without the requirement does not.
+	plain := NewRenderer("page")
+	plain.RenderEngine(engine.Config{Name: "Plain", Kind: engine.KindSurface}, gosx.Node{})
+	if got := plain.Summary().BootstrapFeatureHubsPath; got != "" {
+		t.Errorf("hubs chunk advertised without a requirement: %q", got)
+	}
+}

@@ -36,6 +36,10 @@
   required feature or a legacy chunk's key (`a1` and `a-1`, or `text-layout`
   and `textlayout`), and the error names both. `hydrate.FeatureContractKey`
   returns the key for a name.
+- A page that names `islands`, `engines`, `hubs`, `controllers` or `textlayout`
+  with `RequireFeature` now publishes that chunk's contract field and preload
+  link even when it has no matching entry, so static export copies the chunk.
+  One renderer function decides each page's chunk set for every consumer.
 - `RequireFeature("scene3d")` is rejected: the Scene3D chunk loads only for a
   `GoSXScene3D` engine, and the loader would wait for a script the renderer does
   not emit. The other legacy names (`islands`, `engines`, `hubs`, `controllers`,
