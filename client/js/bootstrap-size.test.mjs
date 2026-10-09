@@ -734,13 +734,11 @@ const budgets = [
     // 430293). Raise only this exceeded target; governed allowances stay fixed.
     // Pending-pose and CPU playback retention adds 551 more Brotli bytes
     // (430293 -> 430844); only the exceeded target moves, by 500 bytes.
-    // Wave 1 M1 (#557): island gesture events, offsets, element size, wheel
-    // deltas, pointer-capture release (decision 0014 exception, owner-approved
-    // 2026-10-08 at +539 raw for the gesture events; review fixes add the rest).
-    // Measured 1912620 / 524835 / 432245 (delta +1108 / +301 / +37 from 1911512 / 524534 / 432208).
-    file: "bootstrap.js", raw: 1862900, gzip: 524300,
+    // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
+    // owner-approved 2026-10-08 at +539 raw). Measured 1910572 / 524438 / 432390,
+    // +531 raw over the 1910041 merge base.
+    file: "bootstrap.js", raw: 1862400, gzip: 524100,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    // Wave 1 M1 stays under this target, so it does not move.
     brotli: 432800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -1629,11 +1627,10 @@ const budgets = [
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
   // measurement: 12_963 / 3_560 / 3_184.
-  // Wave 1 M1 (#557): island gesture events, offsets, element size, wheel
-  // deltas, pointer-capture release (decision 0014 exception, owner-approved
-  // 2026-10-08 at +536 raw for the gesture events; review fixes add the rest).
-  // Measured 19867 / 4707 / 4311 (delta +1101 / +315 / +306 from 18766 / 4392 / 4005).
-  { file: "bootstrap-feature-islands.js", raw: 19900, gzip: 4800, brotli: 4400 },
+  // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
+  // owner-approved 2026-10-08 at +536 raw). Measured 19299 / 4626 / 4222,
+  // +533 / +234 / +217 over the merge base 18766 / 4392 / 4005.
+  { file: "bootstrap-feature-islands.js", raw: 19302, gzip: 4600, brotli: 4400 },
 ];
 
 const routeBudgets = [

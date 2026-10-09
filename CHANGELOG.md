@@ -15,11 +15,10 @@
   position and a "did you mean" suggestion. It does not fail the build, and the
   spellings that already resolved (`onKeydown`, `onPointerdown`, `onDragstart`)
   stay accepted. Nothing breaks, so there is no migration step.
-- Size budgets (decision 0014 exception, owner-approved 2026-10-08):
-  `bootstrap-feature-islands.js` grows 1,101 raw bytes (18,766 to 19,867) and
-  the legacy `bootstrap.js` monolith 1,108 (1,911,512 to 1,912,620). The owner
-  approved +536 and +539 for the gesture events; the review fixes (element size,
-  pointer-capture release, legacy wheel gate) account for the rest.
+- Size budgets (decision 0014 exception, owner-approved 2026-10-08): the
+  gesture events grow `bootstrap-feature-islands.js` by 533 raw bytes (18,766 to
+  19,299; approved +536) and the legacy `bootstrap.js` monolith by 531
+  (1,910,041 to 1,910,572; approved +539).
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
