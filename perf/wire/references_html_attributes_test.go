@@ -224,6 +224,8 @@ func TestReferencesUnknownHTMLConstructsAreIncomplete(t *testing.T) {
 		`<iframe src="data:text/html,&lt;script src='/nested.js'&gt;&lt;/script&gt;"></iframe>`,
 		`<iframe src="javascript:fetch('/nested')"></iframe>`,
 		`<svg><template><image href="/foreign.png"/></template></svg>`,
+		`<div><template shadowrootmode="open"><img src="/shadow.png"></template></div>`,
+		`<div><template shadowrootmode="closed"><script src="/shadow.js"></script></template></div>`,
 		`<div style="background:image('/future.png')"></div>`,
 	} {
 		set, err := ScanReferences([]byte(body), KindDocument)

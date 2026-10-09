@@ -152,6 +152,11 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 		}
 		if n.Type == html.ElementNode {
 			if n.Namespace == "" && n.Data == "template" {
+				// Declarative shadow roots can activate template contents. Check
+				// attributes before treating an ordinary HTML template as inert.
+				for _, a := range n.Attr {
+					out.Complete = out.Complete && understoodHTMLReferenceAttribute(n, a)
+				}
 				continue
 			}
 			out.Complete = out.Complete && n.Namespace == "" && htmlReferenceElements[n.Data]
