@@ -819,7 +819,10 @@ const budgets = [
   // Native document liveness adds 961 raw / 292 gzip / 260 Brotli bytes.
   // Move only the exceeded reviewed raw/Brotli targets by those exact deltas;
   // preserve the governed allowance and the existing gzip headroom.
-  { file: "bootstrap-runtime.js", raw: 184950, gzip: 52300, brotli: 45955 },
+  // Dormant gamepad lifecycle adds 524 raw / 220 gzip / 151 Brotli bytes.
+  // Measured 194,549 raw / 53,987 gzip / 48,304 Brotli. Raise only the
+  // breached targets to their minimum passing values; the size policy stays fixed.
+  { file: "bootstrap-runtime.js", raw: 185284, gzip: 52300, brotli: 46003 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1778,7 +1781,10 @@ const routeBudgets = [
     // the 5% allowance, existing gzip target, and all other route budgets.
     // Document liveness + engine mount guards add 1,155 raw / 327 gzip /
     // 355 Brotli bytes. Preserve both independently measured additions.
-    raw: 291083,
+    // Dormant gamepad input adds the same 524 raw bytes to this route.
+    // Measured 305,783 raw. Move only the breached raw target to its minimum
+    // passing value; compressed targets and the governed allowance stay fixed.
+    raw: 291221,
     gzip: 83400,
     brotli: 73971,
     maxMonolithFraction: 0.25,
