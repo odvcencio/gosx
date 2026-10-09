@@ -13,6 +13,7 @@ import (
 	"github.com/odvcencio/gotreesitter/grammars"
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 // Reference is a private dependency hint. Potential references advertise a
@@ -51,8 +52,15 @@ func ScanReferences(body []byte, kind string) (ReferenceSet, error) {
 	}
 	switch kind {
 	case KindDocument:
-		if err := scanDocumentReferences(body, &out); err != nil {
-			return out, err
+		tree, err := pagecaps.ParseDocumentTree(body, "", nil)
+		if err != nil {
+			return out, referenceFailure()
+		}
+		out.Complete = tree.Complete
+		for _, doc := range tree.Documents {
+			if err := scanDocumentReferences(doc, &out); err != nil {
+				return out, err
+			}
 		}
 	case KindStyle, KindScript:
 		if err := scanSyntaxReferences(body, kind, &out); err != nil {
@@ -61,6 +69,24 @@ func ScanReferences(body []byte, kind string) (ReferenceSet, error) {
 	default:
 		return out, referenceFailure()
 	}
+	return finishReferences(out), nil
+}
+
+// ScanDocumentReferences scans one node of the shared document tree. The
+// planner supplies its inherited permission; decoded srcdoc nodes use this
+// same scan, without copying their resources into a different document context.
+func ScanDocumentReferences(doc *pagecaps.Document) (ReferenceSet, error) {
+	out := ReferenceSet{Resources: []Reference{}, Complete: true}
+	if doc == nil || doc.Root == nil {
+		return out, referenceFailure()
+	}
+	if err := scanDocumentReferences(doc, &out); err != nil {
+		return out, err
+	}
+	return finishReferences(out), nil
+}
+
+func finishReferences(out ReferenceSet) ReferenceSet {
 	sort.Slice(out.Resources, func(i, j int) bool {
 		a, b := out.Resources[i], out.Resources[j]
 		if a.URL != b.URL {
@@ -80,7 +106,7 @@ func ScanReferences(body []byte, kind string) (ReferenceSet, error) {
 		dedup = append(dedup, ref)
 	}
 	out.Resources = dedup
-	return out, nil
+	return out
 }
 
 func addReference(out *ReferenceSet, raw, kind string, potential bool) {
@@ -115,44 +141,20 @@ func referenceKind(raw string) string {
 	}
 }
 
-func executableType(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "", "module", "text/javascript", "application/javascript", "text/ecmascript", "application/ecmascript", "application/x-javascript", "text/jscript", "text/livescript":
-		return true
-	default:
-		return false
-	}
-}
-
-func scanDocumentReferences(body []byte, out *ReferenceSet) error {
-	root, err := html.Parse(bytes.NewReader(body))
-	if err != nil {
-		return referenceFailure()
-	}
-	type pending struct {
-		node  *html.Node
-		depth int
-	}
-	stack := []pending{{root, 0}}
+func scanDocumentReferences(doc *pagecaps.Document, out *ReferenceSet) error {
 	manifestSeen := false
-	for len(stack) > 0 {
-		entry := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		n := entry.node
-		if entry.depth > 256 {
+	return doc.Walk(func(n *html.Node, _ map[string]string, depth int) error {
+		if depth > 256 {
 			return referenceFailure()
 		}
 		if n.Type == html.ElementNode {
-			if n.Data == "template" {
-				continue
-			}
 			seen := map[string]bool{}
 			for _, a := range n.Attr {
 				if seen[a.Key] {
 					out.Complete = false
 				}
 				seen[a.Key] = true
-				if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
+				if doc.ScriptsAllowed && strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
 					addReference(out, a.Val, "", true)
 				}
 				if a.Key == "style" {
@@ -167,6 +169,9 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					out.Complete = false
 				}
 			case "script":
+				if !doc.ScriptsAllowed {
+					return nil
+				}
 				if attr(n, "id") == "gosx-manifest" {
 					if manifestSeen {
 						return referenceFailure()
@@ -175,7 +180,7 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					if err := scanHydrationReferences(textOf(n), out); err != nil {
 						return err
 					}
-				} else if executableType(attr(n, "type")) {
+				} else if pagecaps.ExecutableScriptType(attr(n, "type")) {
 					if src := attr(n, "src"); src != "" {
 						addReference(out, src, KindScript, false)
 					} else if err := scanSyntaxReferences([]byte(textOf(n)), KindScript, out); err != nil {
@@ -210,7 +215,11 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 						addReference(out, attr(n, "href"), kind, false)
 					}
 				}
-			case "img", "source", "video", "audio", "track", "iframe", "embed":
+			case "iframe", "frame":
+				if frame := doc.Embedding(n); frame != nil {
+					addReference(out, frame.Source, KindDocument, false)
+				}
+			case "img", "source", "video", "audio", "track", "embed":
 				addReference(out, attr(n, "src"), "", false)
 				addReference(out, attr(n, "poster"), KindImage, false)
 				// Candidate selection depends on viewport and MIME support.
@@ -222,11 +231,8 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 				addReference(out, attr(n, "data"), "", false)
 			}
 		}
-		for c := n.LastChild; c != nil; c = c.PrevSibling {
-			stack = append(stack, pending{c, entry.depth + 1})
-		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func scanHydrationReferences(raw string, out *ReferenceSet) error {

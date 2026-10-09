@@ -1,15 +1,14 @@
 package pagecaps
 
 import (
-	"errors"
 	"strings"
 
 	"golang.org/x/net/html"
 )
 
 // MaxSrcdocDepth bounds active embedded documents to 32 srcdoc crossings from
-// the root (depth zero). Inert templates and sandboxes are not traversed. An
-// active document beyond this bound is an input error, never partial evidence.
+// the root (depth zero). Templates are inert; sandboxes disable execution but
+// retain live resource edges. Active inline evidence beyond this bound fails.
 const MaxSrcdocDepth = 32
 
 // ExecutableSource describes active execution without running it. Body retains
@@ -21,70 +20,41 @@ type ExecutableSource struct {
 	ExactBody                   bool
 }
 
-func walkActiveDocuments(root *html.Node, sources *scriptSources, visit func(*html.Node, map[string]string, int) error, observe func(ExecutableSource)) error {
-	type pending struct {
-		node    *html.Node
-		depth   int
-		sources *scriptSources
-	}
-	queue := []pending{{node: root, sources: sources}}
-	for len(queue) > 0 {
-		item := queue[len(queue)-1]
-		queue = queue[:len(queue)-1]
-		node := item.node
-		attrs := map[string]string{}
-		if node.Type == html.ElementNode {
-			if node.Namespace == "" && node.Data == "template" {
-				continue
-			}
-			for _, attr := range node.Attr {
-				key := strings.ToLower(attr.Key)
-				// HTML keeps the first occurrence of a duplicated attribute.
-				if _, exists := attrs[key]; !exists {
-					attrs[key] = attr.Val
-				}
-			}
-			for key, value := range attrs {
-				url := key != "srcdoc" && javascriptURL(value)
-				if node.Namespace == "" && node.Data == "iframe" && key == "src" {
-					// srcdoc replaces src. Sandbox script restrictions also
-					// apply to a javascript: navigation of this child frame.
-					_, embedded := attrs["srcdoc"]
-					url = url && !embedded && scriptsAllowed(attrs)
-				}
-				if strings.HasPrefix(key, "on") && len(key) > 2 || url {
-					observe(ExecutableSource{Body: []byte(value)})
-				}
-			}
-			if node.Data == "script" && ExecutableScriptType(attrs["type"]) {
-				body := item.sources.lookup(node, attrs, scriptText(node))
-				_, async := attrs["async"]
-				_, deferred := attrs["defer"]
-				inline := attrs["src"] == ""
-				module := strings.EqualFold(strings.TrimSpace(attrs["type"]), "module")
-				observe(ExecutableSource{Script: true, Inline: inline, Synchronous: !module && (inline || !async && !deferred), Body: body.body, ExactBody: body.exact})
-			}
-			if node.Data == "meta" && strings.EqualFold(strings.TrimSpace(attrs["http-equiv"]), "refresh") && refreshJavascriptURL(attrs["content"]) {
-				observe(ExecutableSource{Body: []byte(attrs["content"])})
-			}
-			if node.Namespace == "" && node.Data == "iframe" && scriptsAllowed(attrs) {
-				if content, ok := attrs["srcdoc"]; ok {
-					if item.depth >= MaxSrcdocDepth {
-						return errors.New("invalid capability HTML")
-					}
-					child, err := html.Parse(strings.NewReader(content))
-					if err != nil {
-						return errors.New("invalid capability HTML")
-					}
-					queue = append(queue, pending{child, item.depth + 1, readScriptSources([]byte(content))})
-				}
-			}
+func walkActiveDocuments(tree *DocumentTree, visit func(*html.Node, map[string]string, int) error, observe func(*Document, ExecutableSource)) error {
+	seen := map[string]bool{}
+	for _, doc := range tree.Documents {
+		if !doc.ScriptsAllowed || seen[doc.Key] {
+			continue
 		}
-		if err := visit(node, attrs, item.depth); err != nil {
+		seen[doc.Key] = true
+		if err := doc.Walk(func(node *html.Node, attrs map[string]string, _ int) error {
+			if node.Type == html.ElementNode {
+				for key, value := range attrs {
+					url := key != "srcdoc" && javascriptURL(value)
+					if node.Namespace == "" && node.Data == "iframe" && key == "src" {
+						_, embedded := attrs["srcdoc"]
+						url = url && !embedded && scriptsAllowed(attrs)
+					}
+					if strings.HasPrefix(key, "on") && len(key) > 2 || url {
+						observe(doc, ExecutableSource{Body: []byte(value)})
+					}
+				}
+				if node.Data == "script" && ExecutableScriptType(attrs["type"]) {
+					body := doc.sources.lookup(node, attrs, scriptText(node))
+					_, async := attrs["async"]
+					_, deferred := attrs["defer"]
+					inline := attrs["src"] == ""
+					module := strings.EqualFold(strings.TrimSpace(attrs["type"]), "module")
+					observe(doc, ExecutableSource{Script: true, Inline: inline, Synchronous: !module && (inline || !async && !deferred), Body: body.body, ExactBody: body.exact})
+				}
+				if node.Data == "meta" && strings.EqualFold(strings.TrimSpace(attrs["http-equiv"]), "refresh") && refreshJavascriptURL(attrs["content"]) {
+					observe(doc, ExecutableSource{Body: []byte(attrs["content"])})
+				}
+			}
+			depth := doc.Depth - tree.Root.Depth
+			return visit(node, attrs, depth)
+		}); err != nil {
 			return err
-		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			queue = append(queue, pending{child, item.depth, item.sources})
 		}
 	}
 	return nil

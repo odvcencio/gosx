@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/pagecaps"
 	"m31labs.dev/gosx/perf/wire"
 )
 
@@ -25,15 +26,17 @@ type ReachabilityOptions struct {
 }
 type PlannedAsset struct{ ID, Phase string }
 type ResourcePlan struct {
-	Reachability string
-	Assets       []PlannedAsset
+	Reachability    string
+	Assets          []PlannedAsset
+	documents       *pagecaps.DocumentTree
+	executingAssets map[string]bool
 }
 
 // ResolveReachability binds extracted references to producer dependencies.
 // "known" describes declared closure, not a certified browser observation.
 // An old graph or unresolved syntax retains all potential startup bytes.
 func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
-	result := ResourcePlan{Reachability: "unknown", Assets: []PlannedAsset{}}
+	result := ResourcePlan{Reachability: "unknown", Assets: []PlannedAsset{}, executingAssets: map[string]bool{}}
 	assets := opts.Inventory
 	if opts.Graph != nil {
 		assets = opts.Graph.Assets
@@ -90,10 +93,48 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			return true
 		}
 	}
-	mark := func(id, phase string) error {
+	// Document edges are resolved before resource phases. Each embedding keeps
+	// its inherited permission, including multiple uses of the same fetched body.
+	tree, err := pagecaps.ParseDocumentTree(opts.Bodies[docIDs[0]], opts.Route.RouteTemplate, func(base, reference string) ([]byte, string, bool, error) {
+		resolved, ok := resolveReference(base, reference)
+		if !ok {
+			return nil, "", false, nil
+		}
+		ids := byURL[resolved]
+		if len(ids) == 0 {
+			return nil, "", false, measureFailure("undeclared-fetch", "/graph/documents")
+		}
+		for _, id := range ids {
+			for _, i := range byID[id] {
+				if enabled(assets[i]) && assets[i].Kind == "html" {
+					return opts.Bodies[id], resolved, true, nil
+				}
+			}
+		}
+		return nil, resolved, false, nil
+	})
+	if err != nil {
+		if _, ok := err.(*InputError); ok {
+			return result, err
+		}
+		return result, measureFailure("capability", "/html")
+	}
+	result.documents = tree
+	known = known && tree.Complete
+	documentContexts := map[string][]*pagecaps.Document{}
+	for _, doc := range tree.Documents {
+		documentContexts[doc.URL] = append(documentContexts[doc.URL], doc)
+	}
+	mark := func(id, phase string, executing bool) error {
 		indexes, ok := byID[id]
 		if !ok {
 			return measureFailure("undeclared-fetch", "/graph/dependencies")
+		}
+		if assets[indexes[0]].Kind == "html" {
+			executing = false
+			for _, doc := range documentContexts[assets[indexes[0]].URL] {
+				executing = executing || doc.ScriptsAllowed
+			}
 		}
 		available := false
 		for _, i := range indexes {
@@ -107,26 +148,33 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			for _, i := range byID[alias] {
 				active = active || enabled(assets[i])
 			}
-			if active && phaseRank(phase) < phaseRank(phases[alias]) {
-				phases[alias] = phase
-				queue = append(queue, pending{alias, phase})
+			if active {
+				promoted := phaseRank(phase) < phaseRank(phases[alias])
+				executionChanged := executing && !result.executingAssets[alias]
+				result.executingAssets[alias] = result.executingAssets[alias] || executing
+				if promoted {
+					phases[alias] = phase
+				}
+				if promoted || executionChanged {
+					queue = append(queue, pending{alias, phases[alias]})
+				}
 			}
 		}
 		return nil
 	}
 	for _, id := range docIDs {
-		if err := mark(id, "critical"); err != nil {
+		if err := mark(id, "critical", true); err != nil {
 			return result, err
 		}
 	}
 	for _, id := range opts.Route.CriticalAssetIDs {
-		if err := mark(id, "critical"); err != nil {
+		if err := mark(id, "critical", true); err != nil {
 			return result, err
 		}
 	}
 	for _, asset := range assets {
 		if asset.Phase != "dormant" && asset.Kind != "html" && enabled(asset) {
-			if err := mark(asset.ID, asset.Phase); err != nil {
+			if err := mark(asset.ID, asset.Phase, true); err != nil {
 				return result, err
 			}
 		}
@@ -146,6 +194,14 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 				continue
 			}
 			for _, dep := range asset.Dependencies {
+				// A sandbox blocks script-driven dependency edges. Explicit benign
+				// references such as preloads are still scanned and charged below.
+				if use.Kind == "html" && !result.executingAssets[current.id] && len(documentContexts[use.URL]) > 0 && len(byID[dep]) > 0 {
+					kind := assets[byID[dep][0]].Kind
+					if kind == "js" || kind == "wasm" || kind == "program" {
+						continue
+					}
+				}
 				dependencies[dep] = true
 				childPhase := current.phase
 				for _, j := range byID[dep] {
@@ -153,7 +209,7 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 						childPhase = earlierPhase(childPhase, assets[j].Phase)
 					}
 				}
-				if err := mark(dep, childPhase); err != nil {
+				if err := mark(dep, childPhase, result.executingAssets[current.id]); err != nil {
 					return result, err
 				}
 			}
@@ -161,43 +217,67 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		if use.Kind != "html" && use.Kind != "css" && use.Kind != "js" {
 			continue
 		}
-		refs, err := wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
-		if err != nil {
-			return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+		type contextReferences struct {
+			refs      wire.ReferenceSet
+			base      string
+			executing bool
 		}
-		known = known && refs.Complete
-		for _, ref := range refs.Resources {
-			resolved, ok := resolveReference(use.URL, ref.URL)
-			if !ok {
-				known = false
-				continue
-			}
-			targets := byURL[resolved]
-			if len(targets) == 0 {
-				return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/references")
-			}
-			if ref.Potential {
-				continue
-			}
-			if use.Kind != "html" {
-				declared := false
-				for _, id := range targets {
-					declared = declared || dependencies[id]
+		scans := []contextReferences{}
+		if use.Kind == "html" && len(documentContexts[use.URL]) > 0 {
+			for _, doc := range documentContexts[use.URL] {
+				refs, err := wire.ScanDocumentReferences(doc)
+				if err != nil {
+					return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
 				}
-				if !declared {
-					return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/dependencies")
-				}
+				scans = append(scans, contextReferences{refs, doc.URL, doc.ScriptsAllowed})
 			}
-			phase := current.phase
+		} else {
 			if use.Kind == "html" {
-				phase = "startup"
+				known = false
 			}
-			for _, id := range targets {
-				if err := mark(id, phase); err != nil {
-					return result, err
+			refs, err := wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
+			if err != nil {
+				return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+			}
+			scans = append(scans, contextReferences{refs, use.URL, result.executingAssets[current.id]})
+		}
+		for _, scan := range scans {
+			refs := scan.refs
+			known = known && refs.Complete
+			for _, ref := range refs.Resources {
+				resolved, ok := resolveReference(scan.base, ref.URL)
+				if !ok {
+					known = false
+					continue
+				}
+				targets := byURL[resolved]
+				if len(targets) == 0 {
+					return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+				}
+				if ref.Potential {
+					continue
+				}
+				if use.Kind != "html" {
+					declared := false
+					for _, id := range targets {
+						declared = declared || dependencies[id]
+					}
+					if !declared {
+						return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/dependencies")
+					}
+				}
+				phase := current.phase
+				if use.Kind == "html" {
+					phase = laterPhase("startup", current.phase)
+				}
+				for _, id := range targets {
+					if err := mark(id, phase, scan.executing); err != nil {
+						return result, err
+					}
 				}
 			}
 		}
+
 	}
 	if !known {
 		// Missing producer evidence and computed references cannot defer or
@@ -205,6 +285,7 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		for _, asset := range assets {
 			if asset.Kind != "html" {
 				phases[asset.ID] = earlierPhase(phases[asset.ID], "startup")
+				result.executingAssets[asset.ID] = true
 			}
 		}
 	} else {
@@ -259,6 +340,13 @@ func phaseRank(phase string) int {
 }
 func earlierPhase(a, b string) string {
 	if phaseRank(a) < phaseRank(b) {
+		return a
+	}
+	return b
+}
+
+func laterPhase(a, b string) string {
+	if phaseRank(a) > phaseRank(b) {
 		return a
 	}
 	return b

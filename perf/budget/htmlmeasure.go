@@ -57,6 +57,33 @@ func (total *HTMLExecution) include(other HTMLExecution) {
 	total.InlineAppScriptMax = max(total.InlineAppScriptMax, other.InlineAppScriptMax)
 }
 
+// union retains the permitted observation when verified aliases share one
+// physical document. The same body is counted once even if both uses permit it.
+func (total *HTMLExecution) union(other HTMLExecution) {
+	total.ExecutableSources = max(total.ExecutableSources, other.ExecutableSources)
+	total.ExecutableScripts = max(total.ExecutableScripts, other.ExecutableScripts)
+	total.SyncExecutableScripts = max(total.SyncExecutableScripts, other.SyncExecutableScripts)
+	total.InlineAppScriptBytes = max(total.InlineAppScriptBytes, other.InlineAppScriptBytes)
+	total.InlineAppScriptMax = max(total.InlineAppScriptMax, other.InlineAppScriptMax)
+}
+
+func (total *HTMLExecution) observe(source pagecaps.ExecutableSource, owned map[string]bool) {
+	total.ExecutableSources++
+	if !source.Script {
+		return
+	}
+	total.ExecutableScripts++
+	if source.Synchronous {
+		total.SyncExecutableScripts++
+	}
+	hash := sha256.Sum256(source.Body)
+	if source.Inline && (!source.ExactBody || !owned[hex.EncodeToString(hash[:])]) {
+		size := int64(len(source.Body))
+		total.InlineAppScriptMax = max(total.InlineAppScriptMax, size)
+		total.InlineAppScriptBytes += size
+	}
+}
+
 // MeasureHTML uses complete recompressed documents for inline ownership; it
 // never assigns a script a proportional share of document compression.
 func MeasureHTML(body []byte, opts HTMLMeasureOptions) (HTMLMeasurement, error) {
@@ -84,22 +111,13 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		}
 		owned[hash] = true
 	}
-	caps, err := pagecaps.InspectHTML(body, func(source pagecaps.ExecutableSource) {
-		result.ExecutableSources++
-		if !source.Script {
-			return
-		}
-		result.ExecutableScripts++
-		if source.Synchronous {
-			result.SyncExecutableScripts++
-		}
-		hash := sha256.Sum256(source.Body)
-		if source.Inline && (!source.ExactBody || !owned[hex.EncodeToString(hash[:])]) {
-			size := int64(len(source.Body))
-			result.InlineAppScriptMax = max(result.InlineAppScriptMax, size)
-			result.InlineAppScriptBytes += size
-		}
-	})
+	var execution HTMLExecution
+	caps, err := pagecaps.InspectHTML(body, func(source pagecaps.ExecutableSource) { execution.observe(source, owned) })
+	result.ExecutableSources = execution.ExecutableSources
+	result.ExecutableScripts = execution.ExecutableScripts
+	result.SyncExecutableScripts = execution.SyncExecutableScripts
+	result.InlineAppScriptMax = execution.InlineAppScriptMax
+	result.InlineAppScriptBytes = execution.InlineAppScriptBytes
 	if err != nil {
 		return HTMLMeasurement{}, measureFailure("capability", "/html")
 	}

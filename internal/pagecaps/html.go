@@ -1,11 +1,9 @@
 package pagecaps
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
-	"unicode/utf8"
 
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/hydrate"
@@ -20,11 +18,22 @@ func FromHTML(data []byte) (Capabilities, error) {
 // InspectHTML reads capabilities and emits execution evidence during the same
 // traversal of active markup, including entity-decoded srcdoc documents.
 func InspectHTML(data []byte, observe func(ExecutableSource)) (Capabilities, error) {
-	if len(data) > 16<<20 || !utf8.Valid(data) {
-		return Capabilities{}, errors.New("invalid capability HTML")
-	}
-	root, err := html.Parse(bytes.NewReader(data))
+	tree, err := ParseDocumentTree(data, "", nil)
 	if err != nil {
+		return Capabilities{}, err
+	}
+	return InspectDocumentTree(tree, func(_ *Document, source ExecutableSource) {
+		if observe != nil {
+			observe(source)
+		}
+	})
+}
+
+// InspectDocumentTree classifies execution from the same explicit tree used
+// for planning. Hydration metadata belongs to the root document; execution
+// evidence includes every permitted document, deduplicated by document key.
+func InspectDocumentTree(tree *DocumentTree, observe func(*Document, ExecutableSource)) (Capabilities, error) {
+	if tree == nil || tree.Root == nil {
 		return Capabilities{}, errors.New("invalid capability HTML")
 	}
 	executable := false
@@ -95,10 +104,10 @@ func InspectHTML(data []byte, observe func(ExecutableSource)) (Capabilities, err
 		}
 		return nil
 	}
-	if err := walkActiveDocuments(root, readScriptSources(data), visit, func(source ExecutableSource) {
+	if err := walkActiveDocuments(tree, visit, func(doc *Document, source ExecutableSource) {
 		executable = true
 		if observe != nil {
-			observe(source)
+			observe(doc, source)
 		}
 	}); err != nil {
 		return Capabilities{}, err

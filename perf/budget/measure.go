@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"sort"
@@ -207,18 +208,36 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		inline := map[string]int64{first.finalURL: measuredHTML.Framework.Brotli}
 		coldInline := map[string]bool{first.finalURL: true}
 		noExecutableAssets := true
-		noExecutableDocuments := documentZeroJS(caps)
+		noExecutableDocuments := true
+		treeExecution := map[string]HTMLExecution{}
+		counted := map[string]bool{}
+		// Detection and measurement read the planner's document nodes. Byte
+		// accounting stays on fetched bodies; inline documents add execution only.
+		for _, node := range plan.documents.Documents {
+			if !node.ScriptsAllowed || counted[node.Key] {
+				continue
+			}
+			counted[node.Key] = true
+			var execution HTMLExecution
+			caps, err := pagecaps.InspectDocumentTree(&pagecaps.DocumentTree{Root: node, Documents: []*pagecaps.Document{node}}, func(_ *pagecaps.Document, source pagecaps.ExecutableSource) { execution.observe(source, inlineHashes) })
+			if err != nil {
+				return result, measureFailure("capability", "/html")
+			}
+			noExecutableDocuments = noExecutableDocuments && documentZeroJS(caps)
+			sum := treeExecution[node.URL]
+			sum.include(execution)
+			treeExecution[node.URL] = sum
+		}
 		type documentExecution struct {
 			HTMLExecution
 			phase string
 		}
-		// Count each verified physical document once, including its active
-		// embedded documents. Dormant HTML never enters this observed closure.
-		documents := map[string]documentExecution{first.finalURL: {measuredHTML.executionCounts(), "critical"}}
+		documents := map[string]documentExecution{first.finalURL: {treeExecution[document.url], "critical"}}
+		unresolvedDocuments := !documentURLMatches(first.finalURL, document.url)
 		runtimeHashed := measuredHTML.Framework.Raw == 0
 		for _, fixture := range fixtures {
 			phase := phases[fixture.id]
-			if phase != "dormant" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
+			if phase != "dormant" && plan.executingAssets[fixture.id] && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
 				noExecutableAssets = false
 			}
 			if fixture.url == document.url {
@@ -238,6 +257,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				return result, err
 			}
 			if fixture.kind == "html" {
+				unresolvedDocuments = unresolvedDocuments || !documentURLMatches(observed.finalURL, fixture.url)
 				repeat, err := measureHTTP(ctx, options, normalize)
 				if err != nil {
 					return result, err
@@ -253,11 +273,10 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				if err := VerifyHTMLRenders(html, again); err != nil {
 					return result, err
 				}
-				// Static enforcement covers every reachable document, at any phase.
-				noExecutableDocuments = noExecutableDocuments && documentZeroJS(html.capabilities)
-				entry := documentExecution{html.executionCounts(), phase}
+				entry := documentExecution{treeExecution[fixture.url], phase}
 				if old, exists := documents[observed.finalURL]; exists {
 					entry.phase = earlierPhase(old.phase, phase)
+					entry.HTMLExecution.union(old.HTMLExecution)
 				}
 				documents[observed.finalURL] = entry
 				if fixture.owner == "app" {
@@ -275,6 +294,26 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 					if policy.Name == "immutable-hashed" {
 						runtimeHashed = runtimeHashed && policy.Passed
 					}
+				}
+			}
+		}
+		if unresolvedDocuments {
+			// A declaration-based tree cannot certify dependencies under a changed
+			// document base. Keep potential costs and fail the coverage policy closed.
+			result.Coverage.Reachability = "unknown"
+			row.ReasonCode = "unknown-reachability"
+			row.Policies = mergeMeasurePolicies(row.Policies, []PolicyResult{{Name: "declared-fetches", Passed: false}})
+			for i := range costs {
+				if index, ok := byURL[costs[i].RequestIdentity]; ok && costs[i].Phase == "dormant" && fixtures[index].kind != "html" {
+					costs[i].Phase = "startup"
+				}
+			}
+			for i := range result.Assets {
+				if result.Assets[i].Kind != "html" {
+					result.Assets[i].Phase = earlierPhase(result.Assets[i].Phase, "startup")
+				}
+				if result.Assets[i].Kind == "js" || result.Assets[i].Kind == "wasm" || result.Assets[i].Kind == "program" {
+					noExecutableAssets = false
 				}
 			}
 		}
@@ -327,6 +366,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	result.Coverage.AssetsMeasured = int64(len(fixtures))
 	sort.Slice(result.Assets, func(i, j int) bool { return result.Assets[i].ID < result.Assets[j].ID })
 	return result, nil
+}
+
+func documentURLMatches(responseURL, declaredURL string) bool {
+	parsed, err := url.Parse(responseURL)
+	return err == nil && parsed.Path == declaredURL
 }
 
 func documentZeroJS(caps pagecaps.Capabilities) bool {
