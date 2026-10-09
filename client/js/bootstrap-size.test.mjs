@@ -734,7 +734,10 @@ const budgets = [
     // 430293). Raise only this exceeded target; governed allowances stay fixed.
     // Pending-pose and CPU playback retention adds 551 more Brotli bytes
     // (430293 -> 430844); only the exceeded target moves, by 500 bytes.
-    file: "bootstrap.js", raw: 1861800, gzip: 524000,
+    // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
+    // owner-approved 2026-10-08 at +539 raw). Measured 1911072 / 524570 / 432280,
+    // +390 raw over main's 1910682. Targets stay at the approved figures.
+    file: "bootstrap.js", raw: 1862400, gzip: 524100,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 432800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
@@ -1260,8 +1263,9 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
     file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600,
-    // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 153653.
-    brotli: 153700 },
+    // Moving model controls and validating the lazy API reduces core Brotli bytes
+    // from 153692 to 153112. Lock in the saving; allowances stay fixed.
+    brotli: 153200 },
   // The compute chunk: the WGSL particle simulation, the CPU particle
   // fallback, the particle force registry and the GPU instanced-cull system.
   // The mount fetches it when the scene declares a compute particle system or
@@ -1623,7 +1627,11 @@ const budgets = [
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
   // measurement: 12_963 / 3_560 / 3_184.
-  { file: "bootstrap-feature-islands.js", raw: 18730, gzip: 4428, brotli: 3969 },
+  // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
+  // owner-approved 2026-10-08 at +536 raw). Measured 19156 / 4577 / 4182,
+  // +390 / +185 / +177 over main's 18766 / 4392 / 4005; targets are the
+  // measurement rounded up to 100 bytes.
+  { file: "bootstrap-feature-islands.js", raw: 19200, gzip: 4600, brotli: 4200 },
 ];
 
 const routeBudgets = [
@@ -1754,9 +1762,16 @@ const routeBudgets = [
     // Reviewed hard-limit headroom is 2,003 / 1,142 / 1,054 bytes.
     // CSS compilation (cssCompiled bindings skipped when scroll timelines are
     // supported) adds about 840 raw bytes to the shared motion core.
-    raw: 288689,
+    // Native ESM interop adds 639 raw / 199 gzip / 177 Brotli bytes to the
+    // engines chunk for normalized HTTP(S) imports, shared loads, and retry
+    // after rejection. Before this addition the route measured 302,968 raw,
+    // only 156 below its hard limit; it now measures 303,607. Move only the
+    // raw reviewed target by the measured delta. Brotli likewise moves by
+    // 177: its prior 76,688 was only 108 below the hard limit. Retain the 5%
+    // allowance, existing gzip target, and all other route budgets.
+    raw: 289328,
     gzip: 83400,
-    brotli: 73139,
+    brotli: 73316,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface

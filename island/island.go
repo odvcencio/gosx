@@ -826,15 +826,11 @@ func runtimeScriptAssetPathMatches(target, canonical, resolved string, asset bui
 	if target == canonical {
 		return true
 	}
-	resolvedPath := compatRuntimePath(resolved)
-	if target == "" || target != resolvedPath {
-		return false
-	}
 	file := strings.TrimLeft(strings.TrimSpace(asset.File), "/")
-	if file == "" {
+	if target == "" || file == "" || (target != "/"+file && !strings.HasSuffix(target, "/"+file)) {
 		return false
 	}
-	return target == "/"+file || strings.HasSuffix(target, "/"+file)
+	return target == compatRuntimePath(resolved)
 }
 
 func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
@@ -842,12 +838,16 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 	if hash == "" {
 		return path
 	}
-	parsed, err := neturl.Parse(path)
-	if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
-		return path
-	}
-	switch compatRuntimePath(path) {
+	target := compatRuntimePath(path)
+	switch target {
 	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+		if path == target {
+			return path + "?v=" + neturl.QueryEscape(hash)
+		}
+		parsed, err := neturl.Parse(path)
+		if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
+			return path
+		}
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -860,6 +860,13 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 }
 
 func compatRuntimePath(path string) string {
+	// Manifest asset URLs are normally plain absolute paths. Their URL path
+	// is already available, so avoid allocating a URL for every candidate in
+	// runtimeScriptAsset. Keep parsing authority, escaped path, query, and
+	// fragment forms so their matching semantics stay the same.
+	if path == "" || (strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.ContainsAny(path, "%?#")) {
+		return strings.TrimSpace(path)
+	}
 	parsed, err := neturl.Parse(path)
 	if err != nil || parsed == nil {
 		return strings.TrimSpace(path)
@@ -911,10 +918,16 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.runtimeAssets = manifest.Runtime
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
+		r.manifest.Runtime.GzipSize = manifest.Runtime.WASM.GzipSize
+		r.manifest.Runtime.BrotliSize = manifest.Runtime.WASM.BrotliSize
+		r.setRuntimeVariant(r.manifest.Runtime)
 		r.SetBundle(r.bundleID, runtime.WASM)
 	}
 	if runtime.WASMIslands != "" {
 		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
+		r.islandRuntime.GzipSize = manifest.Runtime.WASMIslands.GzipSize
+		r.islandRuntime.BrotliSize = manifest.Runtime.WASMIslands.BrotliSize
+		r.setRuntimeVariant(r.islandRuntime)
 	}
 	for id, asset := range manifest.Runtime.WASMVariants {
 		path := runtime.WASMVariants[id]
@@ -934,6 +947,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 			Hash:         asset.Hash,
 			ManifestHash: firstNonEmptyRuntimeManifestHash(asset.ManifestHash),
 			Size:         asset.Size,
+			GzipSize:     asset.GzipSize,
+			BrotliSize:   asset.BrotliSize,
 			Variant:      variant,
 			FeatureMask:  mask,
 		})
@@ -2334,16 +2349,39 @@ func (r *Renderer) smallestCompatibleRuntimeRef(required runtimewasm.FeatureMask
 }
 
 func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
+	candidateCost, currentCost := runtimeRefTransferCost(candidate), runtimeRefTransferCost(current)
+	if candidateCost > 0 && currentCost <= 0 {
+		return true
+	}
+	if candidateCost <= 0 {
+		return currentCost <= 0 && candidate.Path < current.Path
+	}
+	if candidateCost != currentCost {
+		return candidateCost < currentCost
+	}
 	if candidate.Size > 0 && current.Size <= 0 {
 		return true
 	}
 	if candidate.Size <= 0 {
-		return false
+		return current.Size <= 0 && candidate.Path < current.Path
 	}
 	if candidate.Size != current.Size {
 		return candidate.Size < current.Size
 	}
 	return candidate.Path < current.Path
+}
+
+// runtimeRefTransferCost uses the best recorded representation for each asset.
+// Mixed metadata can compare one ref's Brotli size with another's raw size,
+// favoring refs with compressed sidecars rather than estimating missing sizes.
+func runtimeRefTransferCost(ref hydrate.RuntimeRef) int64 {
+	if ref.BrotliSize > 0 {
+		return ref.BrotliSize
+	}
+	if ref.GzipSize > 0 {
+		return ref.GzipSize
+	}
+	return ref.Size
 }
 
 func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {
