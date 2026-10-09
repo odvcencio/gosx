@@ -165,7 +165,18 @@ type Inputs struct {
 }
 
 func LoadInputs(path string, opts LoadOptions) (*Inputs, error) {
-	loaded, err := loadInputs(path, opts)
+	return loadSnapshot(path, opts, true)
+}
+
+// LoadDerivationInputs validates hash-bound inputs while allowing stale recorded
+// allocations. Their schema is still checked; Derive validates the replacements.
+// Other commands must use Load or LoadInputs to check recorded allocations too.
+func LoadDerivationInputs(path string, opts LoadOptions) (*Inputs, error) {
+	return loadSnapshot(path, opts, false)
+}
+
+func loadSnapshot(path string, opts LoadOptions, checkAllocations bool) (*Inputs, error) {
+	loaded, err := loadInputFiles(path, opts, checkAllocations)
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +188,11 @@ func (inputs *Inputs) PublicValidator() (*PublicValidator, error) {
 	return NewPublicValidator(filepath.Join(inputs.rootDir, inputs.File.Fixtures.File), LoadOptions{RootDir: inputs.rootDir}, inputs.File.HubBudgets)
 }
 
-func loadInputs(path string, opts LoadOptions) (result *loadedInputs, resultErr error) {
+func loadInputs(path string, opts LoadOptions) (*loadedInputs, error) {
+	return loadInputFiles(path, opts, true)
+}
+
+func loadInputFiles(path string, opts LoadOptions, checkAllocations bool) (result *loadedInputs, resultErr error) {
 	defer func() { resultErr = inputReference(resultErr, "budget", "") }()
 	var f File
 	root, err := inputRoot(path, opts)
@@ -265,25 +280,41 @@ func loadInputs(path string, opts LoadOptions) (result *loadedInputs, resultErr 
 			return nil, invalidInput("/routes")
 		}
 	}
-	if err := f.validate(p, c); err != nil {
+	if err := f.validateInputs(c); err != nil {
 		return nil, err
+	}
+	if checkAllocations {
+		if err := f.validateAllocations(p, c); err != nil {
+			return nil, err
+		}
 	}
 	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:])}, nil
 }
 
 func (f File) validate(p Profile, c Coefficients) error {
-	sets := make(map[string]CoefficientSet)
-	for _, s := range c.Sets {
-		sets[s.ID] = s
+	if err := f.validateInputs(c); err != nil {
+		return err
 	}
+	return f.validateAllocations(p, c)
+}
+
+func (f File) pageTypeNames() []string {
 	keys := make([]string, 0, len(f.PageTypes))
 	for name := range f.PageTypes {
 		keys = append(keys, name)
 	}
 	sort.Strings(keys)
-	for _, name := range keys {
+	return keys
+}
+
+func (f File) validateInputs(c Coefficients) error {
+	sets := make(map[string]CoefficientSet)
+	for _, s := range c.Sets {
+		sets[s.ID] = s
+	}
+	for _, name := range f.pageTypeNames() {
 		page := f.PageTypes[name]
-		family, backend, known := pageTypeVariant(name)
+		_, backend, known := pageTypeVariant(name)
 		location := "/pageTypes"
 		if !known {
 			return invalidInput(location)
@@ -316,42 +347,9 @@ func (f File) validate(p Profile, c Coefficients) error {
 		if !goals[page.PrimaryMetric] {
 			return invalidInput(location + "/primaryMetric")
 		}
-		if page.Allocation.AppCriticalReserveBytes != page.AppReserveBytes {
-			return invalidInput(location + "/appReserveBytes")
-		}
-		if page.AfterReadyAllocation.AppCriticalReserveBytes != 0 {
-			return invalidInput(location + "/afterReadyAllocation/appCriticalReserveBytes")
-		}
 		for _, entry := range set.Entries {
 			if entry.Status == "unused" && (coefficientUsed(entry.Name, page.Mix, page.Workload) || coefficientUsed(entry.Name, page.Mix, page.AfterReadyWorkload)) {
 				return invalidInput(location + "/workload")
-			}
-		}
-		for _, d := range []Derivation{page.Allocation, page.AfterReadyAllocation} {
-			if d.FrameworkBytes+d.MinAppBytes+d.AppCriticalReserveBytes != d.TotalBytes {
-				return invalidInput(location + "/allocation")
-			}
-			if family == "static" && d.FrameworkBytes != 0 {
-				return invalidInput(location + "/allocation/frameworkBytes")
-			}
-			pool := d.TotalBytes - d.AppCriticalReserveBytes
-			minimum := pool/1000000*page.MinAppPPM + (pool%1000000*page.MinAppPPM+999999)/1000000
-			minimum = (minimum + p.QuantumBytes - 1) / p.QuantumBytes * p.QuantumBytes
-			if d.MinAppBytes < minimum {
-				return invalidInput(location + "/allocation/minAppBytes")
-			}
-			if d.Status != "illustrative" {
-				if d.Status == "phone-measured" {
-					return invalidInput(location + "/allocation/status")
-				}
-				if d.Status == "proxy-measured" && p.Reference != "desktop-cpu-proxy" {
-					return invalidInput(location + "/allocation/status")
-				}
-				for _, e := range set.Entries {
-					if e.Status != "measured" && e.Status != "unused" {
-						return invalidInput(location + "/allocation/status")
-					}
-				}
 			}
 		}
 	}
@@ -412,6 +410,52 @@ func (f File) validate(p Profile, c Coefficients) error {
 			return invalidInput("/guardrails")
 		}
 		seen[g.Key] = true
+	}
+	return nil
+}
+
+func (f File) validateAllocations(p Profile, c Coefficients) error {
+	sets := make(map[string]CoefficientSet)
+	for _, set := range c.Sets {
+		sets[set.ID] = set
+	}
+	for _, name := range f.pageTypeNames() {
+		page := f.PageTypes[name]
+		family, _, _ := pageTypeVariant(name)
+		location := pointerChild("/pageTypes", name)
+		if page.Allocation.AppCriticalReserveBytes != page.AppReserveBytes {
+			return invalidInput(location + "/appReserveBytes")
+		}
+		if page.AfterReadyAllocation.AppCriticalReserveBytes != 0 {
+			return invalidInput(location + "/afterReadyAllocation/appCriticalReserveBytes")
+		}
+		for _, d := range []Derivation{page.Allocation, page.AfterReadyAllocation} {
+			if d.FrameworkBytes+d.MinAppBytes+d.AppCriticalReserveBytes != d.TotalBytes {
+				return invalidInput(location + "/allocation")
+			}
+			if family == "static" && d.FrameworkBytes != 0 {
+				return invalidInput(location + "/allocation/frameworkBytes")
+			}
+			pool := d.TotalBytes - d.AppCriticalReserveBytes
+			minimum := pool/1000000*page.MinAppPPM + (pool%1000000*page.MinAppPPM+999999)/1000000
+			minimum = (minimum + p.QuantumBytes - 1) / p.QuantumBytes * p.QuantumBytes
+			if d.MinAppBytes < minimum {
+				return invalidInput(location + "/allocation/minAppBytes")
+			}
+			if d.Status != "illustrative" {
+				if d.Status == "phone-measured" {
+					return invalidInput(location + "/allocation/status")
+				}
+				if d.Status == "proxy-measured" && p.Reference != "desktop-cpu-proxy" {
+					return invalidInput(location + "/allocation/status")
+				}
+				for _, e := range sets[page.CoefficientSet].Entries {
+					if e.Status != "measured" && e.Status != "unused" {
+						return invalidInput(location + "/allocation/status")
+					}
+				}
+			}
+		}
 	}
 	return nil
 }

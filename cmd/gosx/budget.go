@@ -68,7 +68,7 @@ func runBudgetDerive(args []string, stdout, stderr io.Writer) int {
 	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *path == "" || *check && *write || *out != "" && (*check || *write) {
 		return budgetDiagnostic(stderr, nil, 2, "invalid-input", "cli", "/flags")
 	}
-	inputs, err := budget.LoadInputs(*path, budget.LoadOptions{RootDir: *root})
+	inputs, err := budget.LoadDerivationInputs(*path, budget.LoadOptions{RootDir: *root})
 	if err != nil {
 		return budgetDiagnostic(stderr, err, 2, "invalid-input", "budget", "")
 	}

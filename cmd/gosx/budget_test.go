@@ -133,6 +133,78 @@ func TestBudgetDeriveProposalCheckAndAtomicWrite(t *testing.T) {
 		t.Fatal("atomic write left scratch")
 	}
 }
+
+func TestBudgetDeriveEditedReserve(t *testing.T) {
+	for _, mode := range []string{"preview", "check", "write", "out"} {
+		t.Run(mode, func(t *testing.T) {
+			root, path := budgetCommandFixture(t)
+			file, err := budget.Load(path, budget.LoadOptions{RootDir: root})
+			if err != nil {
+				t.Fatal(err)
+			}
+			page := file.PageTypes["island"]
+			page.AppReserveBytes += 1024
+			file.PageTypes["island"] = page
+			edited, err := json.Marshal(file)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(path, edited, 0600); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := budget.Load(path, budget.LoadOptions{RootDir: root}); err == nil {
+				t.Fatal("strict loading accepted stale allocations")
+			}
+			if code, _, _ := runBudgetTest("explain", "--budget", path, "--root", root, "--page-type", "island"); code != 2 {
+				t.Fatal("explain accepted stale allocations", code)
+			}
+			args := []string{"derive", "--budget", path, "--root", root}
+			dest := filepath.Join(root, "derived.json")
+			switch mode {
+			case "check", "write":
+				args = append(args, "--"+mode)
+			case "out":
+				args = append(args, "--out", dest)
+			}
+			code, out, diagnostics := runBudgetTest(args...)
+			if mode == "check" {
+				if code != 1 || out != "" || diagnostics != "derivation: budget#/pageTypes\n" {
+					t.Fatal("stale check did not reach derivation", code, diagnostics)
+				}
+			} else if code != 0 || diagnostics != "" || mode != "preview" && out != "" {
+				t.Fatal("edited reserve could not be derived", code, diagnostics)
+			}
+			if mode != "write" {
+				current, err := os.ReadFile(path)
+				if err != nil || !bytes.Equal(current, edited) {
+					t.Fatal("derive changed the source without --write", err)
+				}
+			}
+			if mode == "check" {
+				return
+			}
+			if mode == "preview" {
+				if err := os.WriteFile(dest, []byte(out), 0600); err != nil {
+					t.Fatal(err)
+				}
+			} else if mode == "write" {
+				dest = path
+			}
+			regenerated, err := budget.Load(dest, budget.LoadOptions{RootDir: root})
+			if err != nil {
+				t.Fatal("regenerated file failed strict loading", err)
+			}
+			got := regenerated.PageTypes["island"]
+			if got.AppReserveBytes != page.AppReserveBytes || got.Allocation.AppCriticalReserveBytes != page.AppReserveBytes {
+				t.Fatal("derivation did not adopt the edited reserve")
+			}
+			if code, _, diagnostics := runBudgetTest("derive", "--budget", dest, "--root", root, "--check"); code != 0 {
+				t.Fatal("regenerated arithmetic did not verify", code, diagnostics)
+			}
+		})
+	}
+}
+
 func TestBudgetDeriveOutAndInvalidFlagMatrix(t *testing.T) {
 	root, path := budgetCommandFixture(t)
 	dest := filepath.Join(root, "proposed.json")

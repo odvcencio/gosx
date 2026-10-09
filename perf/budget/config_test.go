@@ -86,6 +86,70 @@ func TestConfigLoad(t *testing.T) {
 	}
 }
 
+func TestConfigDerivationInputsPreserveValidation(t *testing.T) {
+	for name, edit := range map[string]func(*File){
+		"reference-hash": func(f *File) { f.Profile.SHA256 = strings.Repeat("a", 64) },
+		"allocation-schema": func(f *File) {
+			page := f.PageTypes["island"]
+			page.Allocation.FrameworkBytes = -1
+			f.PageTypes["island"] = page
+		},
+		"mix": func(f *File) {
+			page := f.PageTypes["island"]
+			page.Mix.OtherPPM++
+			f.PageTypes["island"] = page
+		},
+		"goal-unit": func(f *File) {
+			page := f.PageTypes["island"]
+			page.Goals[0].Unit = "B"
+			f.PageTypes["island"] = page
+		},
+		"registered-route": func(f *File) { f.Routes[0].RouteTemplate = "/other/" },
+		"guardrail":        func(f *File) { f.Guardrails[0].Limit++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+				page := f.PageTypes["island"]
+				page.AppReserveBytes += 1024
+				f.PageTypes["island"] = page
+			})
+			root := filepath.Dir(path)
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var file File
+			if err := json.Unmarshal(body, &file); err != nil {
+				t.Fatal(err)
+			}
+			edit(&file)
+			putConfigInput(t, root, "budget.json", file)
+			if _, err := LoadDerivationInputs(path, LoadOptions{RootDir: root}); err == nil {
+				t.Fatal("derivation loading accepted invalid inputs")
+			}
+		})
+	}
+	path := configFixture(t, nil)
+	root := filepath.Dir(path)
+	body, err := os.ReadFile(filepath.Join(root, "profile.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "profile.json")
+	if err := os.WriteFile(outside, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "profile.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "profile.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadDerivationInputs(path, LoadOptions{RootDir: root}); err == nil {
+		t.Fatal("derivation loading accepted a reference outside its root")
+	}
+}
+
 func TestConfigRejectSemanticErrors(t *testing.T) {
 	for name, edit := range map[string]func(*PageType, *CoefficientSet){
 		"mix-total":      func(p *PageType, _ *CoefficientSet) { p.Mix.OtherPPM++ },
