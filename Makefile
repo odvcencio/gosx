@@ -482,3 +482,7 @@ release-gate:
 	@echo "release-gate: all gates passed"
 
 ci: fmt-check verify-danmuji test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+
+.PHONY: test-assetmeasure
+test-assetmeasure:
+	GOWORK=off go test ./internal/assetmeasure ./cmd/gosx -run 'Test(AssetMeasure|Sidecar|Size)'
