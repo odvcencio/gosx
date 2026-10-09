@@ -2,12 +2,10 @@ package island
 
 import (
 	"encoding/json"
-	"io"
 	"sort"
 	"strconv"
 	"strings"
 
-	xhtml "golang.org/x/net/html"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
@@ -21,6 +19,21 @@ type PerfRuntimeFetch struct {
 	Phase string
 }
 
+// PerfHeadRef is one script or link start tag in the rendered page head. URL is
+// src for script tags and href for link tags.
+type PerfHeadRef struct {
+	Tag string
+	URL string
+	Rel string
+	As  string
+}
+
+// DefaultPerfHeadScanner is used when PerfAssetOptions.HeadScanner is nil.
+// Package island cannot parse HTML itself: that needs golang.org/x/net, which
+// would become a required module of every app that imports island. Tooling
+// supplies a scanner (see island/perfscan).
+var DefaultPerfHeadScanner func(head string) ([]PerfHeadRef, error)
+
 // PerfAssetOptions declares resolved browser/document gates and observed calls.
 // A nil NavigatorGPU conservatively includes the inline loader's download.
 // Model contents and video source/browser state require a non-nil
@@ -31,6 +44,9 @@ type PerfAssetOptions struct {
 	NavigatorGPU   *bool
 	TextLayout     bool
 	RuntimeFetches []PerfRuntimeFetch
+	// HeadScanner lists the script and link tags in the rendered head. It
+	// defaults to DefaultPerfHeadScanner.
+	HeadScanner func(head string) ([]PerfHeadRef, error)
 }
 
 // PerfAssetUses produces private page-use evidence without adding HTML bytes.
@@ -154,40 +170,23 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 	if len(head) > 16<<20 {
 		return fail("invalid-input", "/pageHead")
 	}
-	tokens := xhtml.NewTokenizer(strings.NewReader(head))
-	for {
-		kind := tokens.Next()
-		if kind == xhtml.ErrorToken {
-			if tokens.Err() != io.EOF {
-				return fail("invalid-input", "/pageHead")
-			}
-			break
-		}
-		if kind != xhtml.StartTagToken && kind != xhtml.SelfClosingTagToken {
-			continue
-		}
-		token := tokens.Token()
-		var url, rel, as string
-		for _, attr := range token.Attr {
-			switch attr.Key {
-			case "src":
-				if token.Data == "script" {
-					url = attr.Val
-				}
-			case "href":
-				if token.Data == "link" {
-					url = attr.Val
-				}
-			case "rel":
-				rel = attr.Val
-			case "as":
-				as = attr.Val
-			}
-		}
-		if token.Data == "script" && url != "" || token.Data == "link" && (rel == "preload" || rel == "prefetch") && (as == "script" || as == "" || as == "fetch") {
+	scan := opts.HeadScanner
+	if scan == nil {
+		scan = DefaultPerfHeadScanner
+	}
+	if scan == nil {
+		return fail("unknown-reachability", "/pageHead")
+	}
+	refs, err := scan(head)
+	if err != nil {
+		return fail("invalid-input", "/pageHead")
+	}
+	for _, ref := range refs {
+		tag, url, rel, as := ref.Tag, ref.URL, ref.Rel, ref.As
+		if tag == "script" && url != "" || tag == "link" && (rel == "preload" || rel == "prefetch") && (as == "script" || as == "" || as == "fetch") {
 			// Model/texture preloads are app resources measured by the page
 			// resource graph. Runtime and program fetches must have bodies here.
-			if token.Data == "link" && as == "fetch" {
+			if tag == "link" && as == "fetch" {
 				if i, ok := byURL[url]; !ok || uses.Assets[i].Kind == "model" || uses.Assets[i].Kind == "image" {
 					continue
 				}

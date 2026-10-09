@@ -1,6 +1,7 @@
 package island
 
 import (
+	"encoding/json"
 	"math/rand"
 	"reflect"
 	"slices"
@@ -11,7 +12,6 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
-	"m31labs.dev/gosx/game"
 	"m31labs.dev/gosx/scene"
 )
 
@@ -103,9 +103,7 @@ func perfTracePage(t *testing.T, shape, assetBase string) (*Renderer, PerfAssetO
 	case "scene-js", "scene-shared", "webgl-js", "webgl-shared", "game-js", "game-shared":
 		cfg := (scene.Props{}).EngineConfig()
 		if strings.HasPrefix(shape, "game-") {
-			cfg = game.New(game.Config{Profile: game.InteractiveProfile(), Scene: func(*game.Context) scene.Props {
-				return scene.Props{}
-			}}).EngineConfig()
+			cfg = perfGameShapedConfig(cfg)
 		}
 		if shared {
 			cfg.Runtime = engine.Runtime("shared")
@@ -280,4 +278,38 @@ func assertPerfTraceClosure(t *testing.T, baseline, got *buildmanifest.PerfAsset
 			t.Fatalf("dependencies for %s: got %v, want %v", a.ID, a.Dependencies, w.Dependencies)
 		}
 	}
+}
+
+// perfGameShapedConfig adds what game.Runtime.EngineConfig adds to a scene
+// engine: the interactive profile's capabilities, its props and its mount
+// attributes. This test cannot import package game. game imports hub, hub
+// imports gorilla/websocket, and a test import counts toward the module
+// requirements `go mod tidy` keeps for every app that imports island, so the
+// import changed which apps need gorilla/websocket in go.mod.
+func perfGameShapedConfig(cfg engine.Config) engine.Config {
+	for _, capability := range []engine.Capability{engine.CapCanvas, engine.CapWebGL, engine.CapAnimation, engine.CapWASM,
+		engine.CapKeyboard, engine.CapPointer, engine.CapGamepad, engine.CapAudio} {
+		if !slices.Contains(cfg.Capabilities, capability) {
+			cfg.Capabilities = append(cfg.Capabilities, capability)
+		}
+	}
+	for _, capability := range []engine.Capability{engine.CapCanvas, engine.CapAnimation} {
+		if !slices.Contains(cfg.RequiredCapabilities, capability) {
+			cfg.RequiredCapabilities = append(cfg.RequiredCapabilities, capability)
+		}
+	}
+	props := map[string]any{}
+	if len(cfg.Props) > 0 {
+		_ = json.Unmarshal(cfg.Props, &props)
+	}
+	props["gameProfile"] = "interactive"
+	props["fixedStepSeconds"] = 1.0 / 60
+	cfg.Props, _ = json.Marshal(props)
+	if cfg.MountAttrs == nil {
+		cfg.MountAttrs = map[string]any{}
+	}
+	cfg.MountAttrs["data-gosx-game"] = true
+	cfg.MountAttrs["data-gosx-game-profile"] = "interactive"
+	cfg.MountAttrs["data-gosx-game-fixed-step"] = "16.666666ms"
+	return cfg
 }
