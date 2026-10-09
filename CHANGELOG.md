@@ -2,6 +2,54 @@
 
 ## Unreleased
 
+- Add manifest-driven runtime feature chunks. A page names an opt-in chunk with
+  `hydrate.Manifest.RequireFeature`, `island.Renderer.RequireFeature` or
+  `server.PageRuntime.RequireFeature`; the manifest carries it in `features`,
+  `build.json` records it under `runtime.features`, and the document contract
+  publishes a flat `bootstrapFeature<Name>Path` key for it (`engine-bridge`
+  becomes `bootstrapFeatureEngineBridgePath`; the six existing chunk keys are
+  unchanged). The browser loader derives the key from the name, fetches the
+  chunk once, and hands it the feature API, which now includes
+  `ensureBootstrapFeature`. `gosx build`, `gosx export`, `gosx dev` and the
+  runtime asset server serve any `bootstrap-feature-<name>.js` listed in
+  `runtime.features`. `island.Renderer.FeaturePaths()`,
+  `server.PageRuntime.FeaturePaths()` and `server.DocumentContext.FeaturePaths`
+  expose the chunk URLs; `island.Summary` and `server.PageRuntimeSummary` are
+  unchanged and stay comparable with `==`.
+- Add `api.registerCapabilityProbe(name, fn)` to the feature API. A feature chunk
+  can answer a `requiredCapabilities` name the runtime does not know. An unknown
+  name with no probe stays unsupported and is not cached, so a probe that
+  registers later takes effect.
+- Add inert core seams that later chunks switch on: `window.__gosx.editQueue`
+  (used for `data-gosx-queue` forms and actions, and the `queue` option of
+  `submitAction`), `window.__gosx.editConflict` (a hook for 409 responses to
+  managed forms), `window.__gosx.goWASMBootToken` (set only while a Go-WASM
+  module runs its registration phase), and an engine `toolchain` pick of
+  `window.__gosx.tinyGoWASMCtor`. Without those hooks, behavior does not change.
+- Owner-approved one-time M0 core change: `bootstrap-runtime.js` grows by 403 B
+  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 318 B.
+  The video selective runtime route budget rises from 288,689 to 289,289 raw and
+  from 73,139 to 73,439 brotli, and the `/demos/scene3d/` `jsWireBytes` wire
+  budget rises from 258,118 to 260,973 and the scaffold `/counter/` `jsWireBytes`
+  wire budget from 87,617 to 87,942; no other size budget changes.
+- `RequireFeature` rejects a name whose contract key collides with another
+  required feature or a legacy chunk's key (`a1` and `a-1`, or `text-layout`
+  and `textlayout`), and the error names both. `hydrate.FeatureContractKey`
+  returns the key for a name.
+- A page that names `islands`, `engines`, `hubs`, `controllers` or `textlayout`
+  with `RequireFeature` now publishes that chunk's contract field and preload
+  link even when it has no matching entry, so static export copies the chunk.
+  One renderer function decides each page's chunk set for every consumer.
+- `RequireFeature("scene3d")` is rejected: the Scene3D chunk loads only for a
+  `GoSXScene3D` engine, and the loader would wait for a script the renderer does
+  not emit. The other legacy names (`islands`, `engines`, `hubs`, `controllers`,
+  `textlayout`) stay accepted and load by fetch.
+- A failed or missing feature chunk now disables only that feature instead of
+  blocking every mount; the loader logs one error naming the feature and its URL.
+  Queued form submits count as in
+  flight, so refresh ticks do not swap the DOM under them. The Go-WASM boot token
+  is cleared even when `go.run` throws.
+
 - Islands: `onWheel` (non-passive), `onDblClick`, `onContextMenu` and
   `onLostPointerCapture`; event fields `offsetX`, `offsetY` (viewport position
   minus the handler element's bounding box, borders included, transforms not
@@ -48,6 +96,18 @@
   One optional telemetry subscriber has its own reservation and sampling policy.
   Opt-in slow-client eviction uses interval drop deltas and the existing pump
   timer; it does not increase the 54-second ping frequency or add a scanner.
+- Stage `gosx init` before publishing files with no-clobber writes. Existing
+  files and symlinks below the destination cause a conflict; root symlinks work.
+  Late failures roll back files still owned by the invocation on a best-effort
+  basis. The app template uses component syntax for `Page`, `NotFoundPage` and
+  `ErrorPage`. Dependency resolution runs in staging; offline failures and
+  destinations containing any existing Go files prompt a final `go mod tidy`,
+  because existing packages outside `app/` are not staged.
+- Add `gosx deploy check [--json] dist` to validate server launch files, bundle
+  policy, asset checksums and compressed sidecars, and exported pages before
+  uploading a production bundle. Accept `server/app.exe` for Windows bundles.
+  Exit codes are 0 for success, 1 for failed checks and 2 for usage errors.
+  The check never starts the application.
 
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
