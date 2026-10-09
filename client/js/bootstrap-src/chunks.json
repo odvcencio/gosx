@@ -94,6 +94,7 @@
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
+        "../runtime/host/modules.ts",
         "bootstrap-src/30b-tail-engine-mounting.ts",
         "../runtime/host/hubs.ts",
         "bootstrap-src/30c1-tail-hub-fight-input.ts",
@@ -173,6 +174,7 @@
         "bootstrap-src/26b2-canvas-board-labels.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "bootstrap-src/30h-tail-capability-probe.ts",
+        "../runtime/host/modules.ts",
         "bootstrap-src/30b-tail-engine-mounting.ts",
         "../runtime/host/engine-disposal.ts",
         "bootstrap-src/26b-feature-engines-suffix.ts"
