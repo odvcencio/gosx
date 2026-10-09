@@ -1155,7 +1155,11 @@ class FakeElement {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, []);
     }
-    this.listeners.get(type).push({ listener, capture: listenerCaptureFlag(capture) });
+    this.listeners.get(type).push({
+      listener,
+      capture: listenerCaptureFlag(capture),
+      once: Boolean(capture !== null && typeof capture === "object" && capture.once),
+    });
   }
 
   removeEventListener(type, listener, capture) {
@@ -1243,6 +1247,10 @@ class FakeElement {
     this._capturedPointerID = pointerID;
   }
 
+  hasPointerCapture(pointerID) {
+    return this._capturedPointerID === pointerID;
+  }
+
   releasePointerCapture(pointerID) {
     if (this._capturedPointerID === pointerID) {
       this._capturedPointerID = null;
@@ -1250,8 +1258,9 @@ class FakeElement {
   }
 
   dispatchEvent(event) {
-    const listeners = this.listeners.get(event.type) || [];
+    const listeners = (this.listeners.get(event.type) || []).slice();
     for (const entry of listeners) {
+      if (entry.once) this.removeEventListener(event.type, entry.listener, entry.capture);
       entry.listener(event);
     }
     return true;

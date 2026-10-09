@@ -309,11 +309,16 @@
       }
       e.__gosx_handled = true;
       dispatchIslandAction(islandID, match.name, extractEventData(e, match.element), e, match.element);
-      if (eventType === "pointerdown") {
-        // Disposal releases these. Releasing a pointer the element no longer
-        // holds is a no-op, so no capture check is needed here.
-        const record = window.__gosx.islands.get(islandID);
-        if (record) (record.captures || (record.captures = new Map())).set(e.pointerId, match.element);
+      const record = eventType === "pointerdown" && match.element.hasPointerCapture(e.pointerId) && window.__gosx.islands.get(islandID);
+      if (record) {
+        // Track only real captures, so disposal can release them. The one-shot
+        // lostpointercapture listener drops the record when the capture ends
+        // (pointerup, pointercancel or release), whether or not the island
+        // handles those events.
+        const captures = record.captures || (record.captures = new Map());
+        const { element } = match, { pointerId } = e;
+        captures.set(pointerId, element);
+        element.addEventListener("lostpointercapture", () => captures.delete(pointerId), { once: true });
       }
     };
   }
