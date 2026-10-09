@@ -45,6 +45,13 @@ type HTTPMeasurement struct {
 	header         http.Header
 	finalURL       string
 	finalWireBytes int64
+	redirects      []httpRedirectResponse
+}
+
+type httpRedirectResponse struct {
+	url       string
+	sizes     assetmeasure.Sizes
+	wireBytes int64
 }
 
 type bodyNormalizer func([]byte) (assetmeasure.Sizes, error)
@@ -118,6 +125,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		out.Requests++
 		if response.StatusCode >= 300 && response.StatusCode <= 399 && response.StatusCode != http.StatusNotModified {
 			out.RedirectSizes = append(out.RedirectSizes, sizes)
+			out.redirects = append(out.redirects, httpRedirectResponse{url: current.String(), sizes: sizes, wireBytes: int64(len(wire))})
 			location, err := response.Location()
 			if err != nil || hop == 10 || location.Scheme != base.Scheme || location.Host != base.Host || location.User != nil || location.RawQuery != "" || location.Fragment != "" {
 				return out, measureFailure("wrong-fixture", "/redirect")

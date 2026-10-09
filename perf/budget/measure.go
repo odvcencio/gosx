@@ -102,10 +102,17 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			if fixtures[previous].sha != use.SHA256 || fixtures[previous].kind != use.Kind {
 				return result, measureFailure("wrong-fixture", "/manifest/assets")
 			}
-			// One physical identity gets framework ownership only when declared as such.
-			if use.Owner == "framework" {
-				fixtures[previous].owner = "framework"
+			fixtures[previous].ids = append(fixtures[previous].ids, use.ID)
+			if use.Phase == "critical" {
+				fixtures[previous].phase = "critical"
+			}
+			// Keep every role for critical membership; choose a stable public
+			// identity, giving framework ownership precedence when declared.
+			if use.Owner == "framework" && fixtures[previous].owner == "app" || use.Owner == fixtures[previous].owner && use.ID < fixtures[previous].id {
+				fixtures[previous].owner = use.Owner
 				fixtures[previous].id = use.ID
+				fixtures[previous].condition = use.Condition
+				fixtures[previous].dependencies = append([]string{}, use.Dependencies...)
 			}
 			continue
 		}
@@ -114,7 +121,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			return result, measureFailure("wrong-fixture", "/manifest/assets/body")
 		}
 		byURL[use.URL] = len(fixtures)
-		fixtures = append(fixtures, fixtureBody{id: use.ID, sha: use.SHA256, url: use.URL, owner: use.Owner, kind: use.Kind, condition: use.Condition, dependencies: append([]string{}, use.Dependencies...), body: body, representations: representations, sizes: sizes})
+		phase := "startup"
+		if use.Phase == "critical" || use.Kind == "html" {
+			phase = "critical"
+		}
+		fixtures = append(fixtures, fixtureBody{id: use.ID, ids: []string{use.ID}, sha: use.SHA256, url: use.URL, owner: use.Owner, kind: use.Kind, phase: phase, condition: use.Condition, dependencies: append([]string{}, use.Dependencies...), body: body, representations: representations, sizes: sizes})
 	}
 	inlineHashes := map[string]bool{}
 	for _, fixture := range fixtures {
@@ -129,11 +140,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	sort.Strings(inlineFramework)
 	result.Coverage.AssetsExpected = int64(len(fixtures))
 	for _, fixture := range fixtures {
-		phase := "startup"
-		if fixture.kind == "html" {
-			phase = "critical"
-		}
-		result.Assets = append(result.Assets, AssetReport{ID: fixture.id, SHA256: fixture.sha, Owner: fixture.owner, Phase: phase, Raw: fixture.sizes.Raw, Gzip: fixture.sizes.Gzip, Brotli: fixture.sizes.Brotli,
+		result.Assets = append(result.Assets, AssetReport{ID: fixture.id, SHA256: fixture.sha, Owner: fixture.owner, Phase: fixture.phase, Raw: fixture.sizes.Raw, Gzip: fixture.sizes.Gzip, Brotli: fixture.sizes.Brotli,
 			ChangedSources: []string{}, App: opts.App, Kind: fixture.kind, Condition: fixture.condition, Dependencies: fixture.dependencies})
 	}
 	for _, route := range routes {
@@ -176,64 +183,78 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if row.Backend == "" {
 			row.Backend = "none"
 		}
-		row.NormalizedBytes = measuredHTML.Sizes.Brotli
-		row.FrameworkBytes = measuredHTML.Framework.Brotli
-		row.AppBytes = measuredHTML.App.Brotli
-		row.WireBytes = first.WireBytes
-		row.Requests = first.Requests
-		row.PhaseBytes.Critical = measuredHTML.Sizes.Brotli
-		for _, redirect := range first.RedirectSizes {
-			row.NormalizedBytes += redirect.Brotli
-			row.AppBytes += redirect.Brotli
-			row.PhaseBytes.Critical += redirect.Brotli
-		}
 		type physicalBody struct {
-			owner string
-			cost  int64
+			owner, phase          string
+			cost, wire, framework int64
 		}
-		physical := map[string]physicalBody{first.finalURL + "|" + document.sha: {owner: document.owner, cost: measuredHTML.App.Brotli}}
-		for _, fixture := range fixtures {
+		physical := map[string]physicalBody{}
+		record := func(key string, body physicalBody) {
+			if previous, seen := physical[key]; seen {
+				if body.phase == "critical" {
+					previous.phase = "critical"
+				}
+				if body.owner == "framework" {
+					previous.owner = "framework"
+				}
+				body = previous
+			}
+			physical[key] = body
+		}
+		recordRedirects := func(observed HTTPMeasurement, owner, phase string) {
+			for _, redirect := range observed.redirects {
+				record(redirect.url+"|"+redirect.sizes.SHA256, physicalBody{owner: owner, phase: phase, cost: redirect.sizes.Brotli, wire: redirect.wireBytes})
+			}
+		}
+		resolved := make([]string, len(fixtures))
+		resolved[index] = first.finalURL + "|" + document.sha
+		record(resolved[index], physicalBody{owner: document.owner, phase: "critical", cost: measuredHTML.Sizes.Brotli, wire: first.finalWireBytes, framework: measuredHTML.Framework.Brotli})
+		recordRedirects(first, document.owner, "critical")
+		criticalIDs := map[string]bool{}
+		for _, id := range route.CriticalAssetIDs {
+			criticalIDs[id] = true
+		}
+		for i, fixture := range fixtures {
 			if fixture.kind == "html" {
 				continue
+			}
+			phase := fixture.phase
+			for _, id := range fixture.ids {
+				if criticalIDs[id] {
+					phase = "critical"
+				}
 			}
 			observed, err := measureHTTP(ctx, HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}, normalize)
 			if err != nil {
 				return result, err
 			}
 			key := observed.finalURL + "|" + fixture.sha
-			row.WireBytes += observed.WireBytes
-			row.Requests += observed.Requests
-			if body, seen := physical[key]; seen {
-				row.WireBytes -= observed.finalWireBytes
-				row.Requests--
-				// Framework declarations own a shared final body regardless of
-				// which alias was measured first. Redirect ownership stays separate.
-				if fixture.owner == "framework" && body.owner != "framework" {
-					row.FrameworkBytes += body.cost
-					row.AppBytes -= body.cost
-					body.owner = "framework"
-					physical[key] = body
-				}
-			} else {
-				physical[key] = physicalBody{owner: fixture.owner, cost: observed.Sizes.Brotli}
-				row.NormalizedBytes += observed.Sizes.Brotli
-				row.PhaseBytes.Startup += observed.Sizes.Brotli
-				if fixture.owner == "framework" {
-					row.FrameworkBytes += observed.Sizes.Brotli
-				} else {
-					row.AppBytes += observed.Sizes.Brotli
-				}
-			}
-			for _, redirect := range observed.RedirectSizes {
-				row.NormalizedBytes += redirect.Brotli
-				row.PhaseBytes.Startup += redirect.Brotli
-				if fixture.owner == "framework" {
-					row.FrameworkBytes += redirect.Brotli
-				} else {
-					row.AppBytes += redirect.Brotli
-				}
-			}
+			resolved[i] = key
+			record(key, physicalBody{owner: fixture.owner, phase: phase, cost: observed.Sizes.Brotli, wire: observed.finalWireBytes})
+			recordRedirects(observed, fixture.owner, phase)
 			row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
+		}
+		// Resolve phase and owner before summing: aliases and shared redirect
+		// hops cannot change totals when declaration order changes.
+		for _, body := range physical {
+			row.NormalizedBytes += body.cost
+			row.WireBytes += body.wire
+			row.Requests++
+			if body.phase == "critical" {
+				row.PhaseBytes.Critical += body.cost
+			} else {
+				row.PhaseBytes.Startup += body.cost
+			}
+			framework := body.framework
+			if body.owner == "framework" {
+				framework = body.cost
+			}
+			row.FrameworkBytes += framework
+			row.AppBytes += body.cost - framework
+		}
+		for i, key := range resolved {
+			if key != "" && physical[key].phase == "critical" {
+				result.Assets[i].Phase = "critical"
+			}
 		}
 		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: measuredHTML.ExecutableScripts == 0 && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
 		row.HeadroomBytes = -row.NormalizedBytes
@@ -260,11 +281,12 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 }
 
 type fixtureBody struct {
-	id, sha, url, owner, kind, condition string
-	dependencies                         []string
-	body                                 []byte
-	representations                      map[string][]byte
-	sizes                                assetmeasure.Sizes
+	id, sha, url, owner, kind, phase, condition string
+	ids                                         []string
+	dependencies                                []string
+	body                                        []byte
+	representations                             map[string][]byte
+	sizes                                       assetmeasure.Sizes
 }
 
 func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][]byte, error) {
