@@ -190,11 +190,30 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 					constants[id] = constant.UnaryOp(token.SUB, value, 0)
 				}
 			}
-		case program.OpCond, program.OpSeq:
+		case program.OpCond:
+			if len(args) != 3 || args[0] != aot.Bool {
+				break
+			}
+			left, right := constants[e.Operands[1]], constants[e.Operands[2]]
+			if left != nil && right == nil {
+				if aotConstantFits(left, args[2]) {
+					kind = args[2]
+				}
+			} else if right != nil && left == nil {
+				if aotConstantFits(right, args[1]) {
+					kind = args[1]
+				}
+			} else if args[1] == args[2] {
+				switch args[1] {
+				case aot.Int, aot.Int32, aot.Bool, aot.String:
+					kind = args[1]
+				}
+			}
+		case program.OpSeq:
 			if len(args) > 0 {
 				kind = args[len(args)-1]
 			}
-			if e.Op == program.OpSeq && len(args) == 0 {
+			if len(args) == 0 {
 				kind = aot.AnyZero
 			}
 		case program.OpEq, program.OpNeq, program.OpLt, program.OpGt, program.OpLte, program.OpGte, program.OpAnd, program.OpOr, program.OpNot:

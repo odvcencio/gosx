@@ -679,7 +679,7 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			Local:      varName,
 			InitExpr:   initExpr,
 			TypeHint:   l.inferTypeHint(initExpr),
-			SourceType: l.signalSourceType(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	case signalCallNewShared, signalCallShared:
 		sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
@@ -692,7 +692,7 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			Local:      varName,
 			InitExpr:   initExpr,
 			TypeHint:   l.inferTypeHint(initExpr),
-			SourceType: l.signalSourceType(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	default:
 		return SignalInfo{}, false
@@ -715,7 +715,16 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 	}, true
 }
 
-func (l *lowerer) signalSourceType(source string) string {
+func (l *lowerer) signalSourceType(call *gotreesitter.Node, source string) string {
+	if types := l.childByField(call, "type_arguments"); types != nil {
+		// An explicit type controls the signal's Go type. Preserve its spelling
+		// so AOT admission can reject named, unresolved and unsupported types.
+		// Never replace an unproved explicit type with the initializer's hint.
+		if types.NamedChildCount() != 1 {
+			return ""
+		}
+		return strings.TrimSpace(l.text(types.NamedChild(0)))
+	}
 	source = strings.TrimSpace(source)
 	if strings.HasPrefix(source, "'") {
 		return "rune"
