@@ -84,7 +84,7 @@ wcdp_start_bridge() {
 # headless, debugging-port, and profile flags.
 wcdp_start_chrome() {
   local port=$1 profile=$2 flags=$3 argsfile="$WCDP_DIR_WSL/args-$2.txt"
-  rm -rf "$WCDP_DIR_WSL/$profile"
+  rm -rf "$WCDP_DIR_WSL/$profile" || return 1
   {
     echo "--headless=new"
     echo "--mute-audio"
@@ -94,7 +94,7 @@ wcdp_start_chrome() {
     echo "--no-default-browser-check"
     cat "$flags"
     echo "about:blank"
-  } > "$argsfile"
+  } > "$argsfile" || return 1
   "$WCDP_POWERSHELL" -NoProfile -ExecutionPolicy Bypass -File "$WCDP_DIR_WIN\\start-chrome.ps1" \
     -ChromePath "$WCDP_CHROME" -ArgsFile "$WCDP_DIR_WIN\\args-$profile.txt" | tr -d '\r' | tail -1
 }
@@ -102,6 +102,15 @@ wcdp_start_chrome() {
 wcdp_stop_pid() {
   [[ -n "${1:-}" ]] || return 0
   "$WCDP_TASKKILL" /PID "$1" /T /F >/dev/null 2>&1 || true
+}
+
+# Measurement loops need proof that the old browser exited before starting
+# another cold profile. The best-effort helper above remains suitable for traps.
+wcdp_stop_pid_checked() {
+  [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  "$WCDP_TASKKILL" /PID "$1" /T /F >/dev/null 2>&1 || true
+  "$WCDP_POWERSHELL" -NoProfile -Command \
+    "if (Get-Process -Id $1 -ErrorAction SilentlyContinue) { exit 1 }; exit 0" >/dev/null
 }
 
 wcdp_remove_profile() {
