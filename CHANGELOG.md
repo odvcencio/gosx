@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## v0.57.7
+
+- Add dependency-light `game/host` browser frame and gamepad adapters for
+  presentation-only WASM engines. Existing `game/loop` and `game/gamepad`
+  adapters remain compatible aliases; using the host adapters directly avoids
+  importing the server game runtime and compiler into browser modules.
+
 - Add manifest-driven runtime feature chunks. A page names an opt-in chunk with
   `hydrate.Manifest.RequireFeature`, `island.Renderer.RequireFeature` or
   `server.PageRuntime.RequireFeature`; the manifest carries it in `features`,

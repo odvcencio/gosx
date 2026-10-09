@@ -5,23 +5,11 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/game"
+	"m31labs.dev/gosx/game/host"
 )
 
-// FrameSource is the host clock a Driver rides. FrameSourceJS (built only
-// under GOOS=js/GOARCH=wasm) wraps window.requestAnimationFrame and
-// document.hidden; ManualFrameSource is a native, test-driven fake.
-type FrameSource interface {
-	// RequestFrame schedules cb to run exactly once, at the next animation
-	// frame, with the host timestamp in milliseconds. It returns a handle
-	// CancelFrame can use to cancel the request before it fires.
-	RequestFrame(cb func(timestampMS float64)) int
-	// CancelFrame cancels a pending RequestFrame call. Canceling a handle
-	// that already fired, or was never issued, is a no-op.
-	CancelFrame(handle int)
-	// Hidden reports whether the host surface is currently hidden, for
-	// example a backgrounded browser tab.
-	Hidden() bool
-}
+// FrameSource is the host clock a Driver rides.
+type FrameSource = host.FrameSource
 
 // RenderFunc is called once per advanced frame, after the fixed-step
 // accumulator inside game.Runtime.Step has run, with that frame's
