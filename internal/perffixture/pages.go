@@ -10,6 +10,7 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/game"
 	"m31labs.dev/gosx/island"
 	"m31labs.dev/gosx/scene"
 )
@@ -47,7 +48,7 @@ func Page(r *island.Renderer, shape string, assets Assets) ([]byte, error) {
 	addIsland := func() gosx.Node {
 		return r.RenderIsland("Counter", map[string]any{"Initial": 0}, gosx.Text("Count: 0"))
 	}
-	addScene := func(shared bool) (gosx.Node, error) {
+	addScene := func(shared, declaredGame bool) (gosx.Node, error) {
 		props := scene.Props{Width: 360, Height: 240, Background: "#18212b", Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 1, 4), FOV: 55, Near: .1, Far: 100}, Graph: scene.NewGraph(scene.Mesh{ID: "box", Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1}, Material: scene.FlatMaterial{Color: "#8de1ff"}})}
 		if shared {
 			if !assetURL(assets.EngineSharedURL) {
@@ -55,7 +56,17 @@ func Page(r *island.Renderer, shape string, assets Assets) ([]byte, error) {
 			}
 			props.ProgramRef = assets.EngineSharedURL
 		}
-		return r.RenderEngine(props.EngineConfig(), gosx.Text("Scene loading")), nil
+		var config engine.Config
+		if declaredGame {
+			runtime := game.New(game.Config{
+				Profile: game.InteractiveProfile(),
+				Scene:   func(*game.Context) scene.Props { return props },
+			})
+			config = runtime.EngineConfig()
+		} else {
+			config = props.EngineConfig()
+		}
+		return r.RenderEngine(config, gosx.Text("Scene loading")), nil
 	}
 	var err error
 	switch shape {
@@ -87,13 +98,17 @@ func Page(r *island.Renderer, shape string, assets Assets) ([]byte, error) {
 			return nil, fixtureError("/assets/engine")
 		}
 		body = r.RenderEngine(config, gosx.Text("Engine loading"))
-	case "scene-js", "game-js":
-		body, err = addScene(false)
-	case "scene-shared", "game-shared":
-		body, err = addScene(true)
+	case "scene-js":
+		body, err = addScene(false, false)
+	case "scene-shared":
+		body, err = addScene(true, false)
+	case "game-js":
+		body, err = addScene(false, true)
+	case "game-shared":
+		body, err = addScene(true, true)
 	case "mixed":
 		var mounted gosx.Node
-		mounted, err = addScene(false)
+		mounted, err = addScene(false, false)
 		body = gosx.Fragment(addIsland(), mounted)
 	case "video":
 		if !assetURL(assets.VideoURL) {

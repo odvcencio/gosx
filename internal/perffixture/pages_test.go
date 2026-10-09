@@ -1,17 +1,24 @@
 package perffixture
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
+	"time"
+
+	"golang.org/x/net/html"
 
 	"m31labs.dev/gosx/buildmanifest"
 	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/game"
+	"m31labs.dev/gosx/hydrate"
 	"m31labs.dev/gosx/internal/pagecaps"
 	"m31labs.dev/gosx/island"
 )
@@ -73,6 +80,81 @@ func pageAssets() Assets {
 	return Assets{EngineJSURL: "/assets/engine.js", EngineSharedURL: "/assets/engine.gxi", GoWASMURL: "/assets/engine.wasm", VideoURL: "/assets/video.mp4"}
 }
 
+type renderedPage struct {
+	manifest hydrate.Manifest
+	islands  map[string]map[string]string
+	engines  map[string]map[string]string
+	scripts  []map[string]string
+}
+
+func readRenderedPage(t *testing.T, data []byte) renderedPage {
+	t.Helper()
+	root, err := html.Parse(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	page := renderedPage{islands: map[string]map[string]string{}, engines: map[string]map[string]string{}}
+	manifestSeen := false
+	var visit func(*html.Node)
+	visit = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			if node.Data == "template" {
+				return
+			}
+			attrs := map[string]string{}
+			for _, attr := range node.Attr {
+				attrs[attr.Key] = attr.Val
+			}
+			if _, ok := attrs["data-gosx-island"]; ok {
+				page.islands[attrs["id"]] = attrs
+			}
+			if _, ok := attrs["data-gosx-engine"]; ok {
+				page.engines[attrs["id"]] = attrs
+			}
+			if node.Data == "script" {
+				page.scripts = append(page.scripts, attrs)
+				if attrs["id"] == "gosx-manifest" {
+					if manifestSeen || attrs["type"] != "application/json" {
+						t.Fatal("invalid rendered hydration manifest")
+					}
+					manifestSeen = true
+					var raw strings.Builder
+					for child := node.FirstChild; child != nil; child = child.NextSibling {
+						raw.WriteString(child.Data)
+					}
+					if err := json.Unmarshal([]byte(raw.String()), &page.manifest); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(root)
+	return page
+}
+
+func (p renderedPage) declaresGame() bool {
+	for _, attrs := range p.engines {
+		if attrs["data-gosx-game"] == "true" {
+			return true
+		}
+	}
+	return false
+}
+
+func (p renderedPage) hasDeferredScript(src string) bool {
+	for _, script := range p.scripts {
+		if script["src"] == src {
+			_, ok := script["defer"]
+			return ok
+		}
+	}
+	return false
+}
+
 func TestPerfFixturePagesCoverActualRenderedTypes(t *testing.T) {
 	for _, tc := range []struct {
 		shape, mode, runtime, bootstrap string
@@ -110,12 +192,73 @@ func TestPerfFixturePagesCoverActualRenderedTypes(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			classes, err := pagecaps.Classify(caps, strings.HasPrefix(tc.shape, "game-"))
+			page := readRenderedPage(t, html)
+			classes, err := pagecaps.Classify(caps, page.declaresGame())
 			if err != nil || !reflect.DeepEqual(classes, tc.classes) {
 				t.Fatalf("classes %v, want %v: %v", classes, tc.classes, err)
 			}
 			if caps.Runtime != tc.runtime || caps.BootstrapMode != tc.bootstrap || caps.Islands != tc.islands || caps.ComputeIslands != tc.compute || caps.Engines != tc.engines {
 				t.Fatalf("rendered capabilities: %+v", caps)
+			}
+			if len(page.islands) != tc.islands || len(page.engines) != tc.engines {
+				t.Fatal("rendered DOM mounts differ from the hydration contract")
+			}
+			wantProgram := buildmanifest.AssetURL("/gosx/assets", "islands", manifest.Islands[0].File)
+			for _, entry := range page.manifest.Islands {
+				if page.islands[entry.ID]["data-gosx-island"] != "Counter" || entry.Component != "Counter" || entry.ProgramRef != wantProgram || entry.ProgramFormat != "bin" {
+					t.Fatal("rendered island declaration lost its mount or program")
+				}
+			}
+			for _, entry := range page.manifest.ComputeIslands {
+				if entry.Component != "Counter" || entry.ProgramRef != wantProgram || entry.ProgramFormat != "bin" || len(page.islands) != 0 {
+					t.Fatal("rendered compute declaration lost its headless program")
+				}
+			}
+			for _, entry := range page.manifest.Engines {
+				attrs := page.engines[entry.MountID]
+				if attrs["data-gosx-engine"] != entry.Component || attrs["data-gosx-engine-id"] != entry.ID || attrs["data-gosx-engine-kind"] != entry.Kind {
+					t.Fatal("rendered engine mount differs from its declaration")
+				}
+			}
+			if tc.mode == "full-unconfigured" {
+				full := manifest.Runtime.WASM
+				if page.manifest.Runtime.Variant != "full" || page.manifest.Runtime.Path != buildmanifest.AssetURL("/gosx/assets", "runtime", full.File) || page.manifest.Runtime.Hash != full.Hash {
+					t.Fatal("rendered compatibility declaration lost the full WASM fallback")
+				}
+			}
+			bootstrap, navigation, relay := 0, 0, 0
+			for _, script := range page.scripts {
+				if script["src"] == runtimehost.NavigationRuntimePath {
+					navigation++
+					if _, ok := script["defer"]; !ok {
+						t.Fatal("navigation is not deferred")
+					}
+				}
+				if script["data-gosx-script"] == "relay" {
+					relay++
+					if script["src"] != "/gosx/relay.js" || !page.hasDeferredScript(script["src"]) {
+						t.Fatal("rendered preview relay lost its compatibility declaration")
+					}
+				}
+				if script["data-gosx-script"] == "bootstrap" {
+					bootstrap++
+					want := manifest.Runtime.BootstrapRuntime
+					if tc.bootstrap == "lite" {
+						want = manifest.Runtime.BootstrapLite
+					}
+					if tc.mode != "configured" {
+						want = manifest.Runtime.Bootstrap
+					}
+					if script["data-gosx-bootstrap-mode"] != tc.bootstrap || script["src"] != buildmanifest.AssetURL("/gosx/assets", "runtime", want.File) {
+						t.Fatal("rendered bootstrap selection differs from its declared mode")
+					}
+					if _, ok := script["defer"]; !ok {
+						t.Fatal("bootstrap is not deferred")
+					}
+				}
+			}
+			if (bootstrap == 1) != (tc.bootstrap != "none") || bootstrap > 1 || (navigation == 1) != (tc.shape != "static") || navigation > 1 || (relay == 1) != (tc.mode == "preview") || relay > 1 {
+				t.Fatal("rendered bootstrap, navigation, or preview declaration missing")
 			}
 			text := string(html)
 			if !strings.HasPrefix(text, "<!doctype html>") || !strings.Contains(text, "width=device-width, initial-scale=1") {
@@ -125,8 +268,6 @@ func TestPerfFixturePagesCoverActualRenderedTypes(t *testing.T) {
 				if strings.Contains(text, "<script") || caps.Bootstrap || caps.WASM {
 					t.Fatal("static page acquired framework execution")
 				}
-			} else if !strings.Contains(text, `src="`+runtimehost.NavigationRuntimePath+`"`) || !strings.Contains(text, "defer") {
-				t.Fatal("external deferred navigation is missing")
 			}
 			after, _ := json.Marshal(manifest)
 			if string(before) != string(after) {
@@ -143,24 +284,30 @@ func TestPerfFixturePagesCoverActualRenderedTypes(t *testing.T) {
 
 func TestPerfFixturePagesKeepRealProgramsScenesAndMutedMedia(t *testing.T) {
 	manifest := pageManifest(t)
-	for _, shape := range []string{"engine-js", "engine-shared", "go-wasm", "scene-js", "scene-shared", "video"} {
+	for _, shape := range []string{"engine-js", "engine-shared", "go-wasm", "scene-js", "scene-shared", "game-js", "game-shared", "mixed", "video"} {
 		t.Run(shape, func(t *testing.T) {
 			r := pageRenderer(t, manifest, "configured")
 			html, err := Page(r, shape, pageAssets())
 			if err != nil {
 				t.Fatal(err)
 			}
-			engines := r.Manifest().Engines
+			page := readRenderedPage(t, html)
+			engines := page.manifest.Engines
 			if len(engines) != 1 {
 				t.Fatal("actual engine declaration missing")
 			}
 			entry := engines[0]
+			if shape == "engine-js" || shape == "engine-shared" || shape == "go-wasm" {
+				if entry.Component != "BudgetEngine" || entry.Kind != "surface" {
+					t.Fatal("rendered app engine lost its surface declaration")
+				}
+			}
 			switch shape {
 			case "engine-js":
-				if !strings.Contains(string(html), `src="/assets/engine.js"`) || entry.Component != "BudgetEngine" {
+				if !page.hasDeferredScript(pageAssets().EngineJSURL) || entry.Runtime != "" || entry.ProgramRef != "" {
 					t.Fatal("external app factory missing")
 				}
-			case "engine-shared", "go-wasm", "scene-shared":
+			case "engine-shared", "go-wasm", "scene-shared", "game-shared":
 				want := pageAssets().EngineSharedURL
 				if shape == "go-wasm" {
 					want = pageAssets().GoWASMURL
@@ -168,14 +315,20 @@ func TestPerfFixturePagesKeepRealProgramsScenesAndMutedMedia(t *testing.T) {
 				if entry.ProgramRef != want {
 					t.Fatal("app-owned program reference missing")
 				}
-				if shape == "engine-shared" && !strings.Contains(string(html), `src="/assets/engine.js"`) {
+				wantRuntime := "shared"
+				if shape == "go-wasm" {
+					wantRuntime = "go-wasm"
+				}
+				if entry.Runtime != wantRuntime {
+					t.Fatal("rendered program lost its runtime")
+				}
+				if shape == "engine-shared" && !page.hasDeferredScript(pageAssets().EngineJSURL) {
 					t.Fatal("shared engine app factory missing")
 				}
-			case "scene-js":
-				if entry.Component != "GoSXScene3D" || len(entry.Props) == 0 || !strings.Contains(string(entry.Props), "box") {
-					t.Fatal("real scene graph missing")
-				}
 			case "video":
+				if entry.Component != "GoSXVideo" || entry.Kind != "video" || !slices.Contains(entry.Capabilities, "video") {
+					t.Fatal("rendered media lost its managed-video declaration")
+				}
 				var props struct {
 					Src      string  `json:"src"`
 					Muted    bool    `json:"muted"`
@@ -184,6 +337,39 @@ func TestPerfFixturePagesKeepRealProgramsScenesAndMutedMedia(t *testing.T) {
 				}
 				if err := json.Unmarshal(entry.Props, &props); err != nil || !props.Muted || props.Volume != 0 || props.Autoplay || props.Src != pageAssets().VideoURL {
 					t.Fatal("video fixture can start audible playback", err)
+				}
+			}
+			if strings.HasPrefix(shape, "scene-") || strings.HasPrefix(shape, "game-") || shape == "mixed" {
+				attrs := page.engines[entry.MountID]
+				var props struct {
+					Scene            json.RawMessage `json:"scene"`
+					GameProfile      string          `json:"gameProfile"`
+					FixedStepSeconds float64         `json:"fixedStepSeconds"`
+				}
+				if err := json.Unmarshal(entry.Props, &props); err != nil || entry.Component != "GoSXScene3D" || attrs["data-gosx-scene3d"] != "true" || !strings.Contains(string(props.Scene), `"box"`) {
+					t.Fatal("rendered Scene3D declaration lost its graph", err)
+				}
+				if strings.HasSuffix(shape, "-js") && (entry.Runtime != "" || entry.ProgramRef != "") {
+					t.Fatal("JavaScript scene acquired a shared program")
+				}
+				if strings.HasPrefix(shape, "game-") {
+					profile := game.InteractiveProfile()
+					step := time.Second / 60
+					if attrs["data-gosx-game"] != "true" || attrs["data-gosx-game-profile"] != "interactive" || attrs["data-gosx-game-fixed-step"] != step.String() || props.GameProfile != "interactive" || props.FixedStepSeconds != step.Seconds() {
+						t.Fatal("rendered game profile or fixed-step contract missing")
+					}
+					for _, capability := range profile.Capabilities {
+						if !slices.Contains(entry.Capabilities, string(capability)) || !slices.Contains(strings.Fields(attrs["data-gosx-engine-capabilities"]), string(capability)) {
+							t.Fatalf("rendered game capability %s missing", capability)
+						}
+					}
+					for _, capability := range profile.RequiredCapabilities {
+						if !slices.Contains(entry.RequiredCapabilities, string(capability)) || !slices.Contains(strings.Fields(attrs["data-gosx-engine-required-capabilities"]), string(capability)) {
+							t.Fatalf("rendered game requirement %s missing", capability)
+						}
+					}
+				} else if page.declaresGame() || props.GameProfile != "" || props.FixedStepSeconds != 0 {
+					t.Fatal("ordinary scene was declared as a game")
 				}
 			}
 		})
@@ -201,14 +387,14 @@ func TestPerfFixturePagesRejectMissingAndUnsafeInputs(t *testing.T) {
 	if _, err := Page(pageRenderer(t, manifest, "configured"), "engine-shared", assets); err == nil {
 		t.Fatal("shared engine accepted without its app factory")
 	}
-	for _, shape := range []string{"engine-js", "engine-shared", "go-wasm", "scene-shared", "video"} {
+	for _, shape := range []string{"engine-js", "engine-shared", "go-wasm", "scene-shared", "game-shared", "video"} {
 		if _, err := Page(pageRenderer(t, manifest, "configured"), shape, Assets{}); err == nil {
 			t.Fatalf("missing program/media accepted for %s", shape)
 		}
 	}
 	for _, value := range []string{"//private.example/file", "private/file", "/a/../secret", "/a//file", "/a?secret=1", "/a#secret", "/a\\secret", "/a\x00secret"} {
 		assets := Assets{EngineJSURL: value, EngineSharedURL: value, GoWASMURL: value, VideoURL: value}
-		for _, shape := range []string{"engine-js", "engine-shared", "go-wasm", "scene-shared", "video"} {
+		for _, shape := range []string{"engine-js", "engine-shared", "go-wasm", "scene-shared", "game-shared", "video"} {
 			_, err := Page(pageRenderer(t, manifest, "configured"), shape, assets)
 			var typed *buildmanifest.PerfAssetError
 			if !errors.As(err, &typed) || typed.Code != "invalid-input" || !strings.HasPrefix(typed.Pointer, "/fixture/assets/") || strings.Contains(err.Error(), value) {
