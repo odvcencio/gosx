@@ -1,6 +1,7 @@
 package ir
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -639,5 +640,78 @@ func TestLowerIslandEmitsComponentScopeDefs(t *testing.T) {
 	}
 	if !foundEventGet {
 		t.Fatalf("expected handler lowering to expose event value in expr table, got %+v", island.Exprs)
+	}
+}
+
+func TestIslandEventTypeAliasesAndUnknownNames(t *testing.T) {
+	// Spellings both runtime name mappers resolved on main keep working.
+	for name, want := range map[string]string{
+		"onClick": "click", "onKeyDown": "keydown", "onWheel": "wheel",
+		"onKeydown": "keydown", "onKeyup": "keyup", "onPointerdown": "pointerdown",
+		"onPointermove": "pointermove", "onPointerup": "pointerup",
+		"onPointercancel": "pointercancel", "onDragstart": "dragstart",
+		"onDragend": "dragend", "onDragover": "dragover", "onDragleave": "dragleave",
+		"onclick": "click", "onDblclick": "dblclick",
+	} {
+		if got, ok := islandEventType(name); !ok || got != want {
+			t.Errorf("islandEventType(%q) = %q, %v; want %q", name, got, ok, want)
+		}
+	}
+	for _, name := range []string{"onMouseDown", "onScroll", "onKey", "onLaserPointer", "on", "x"} {
+		if got, ok := islandEventType(name); ok {
+			t.Errorf("islandEventType(%q) = %q, want unresolved", name, got)
+		}
+	}
+}
+
+func TestLowerIslandKeepsUnknownEventAttrBuilding(t *testing.T) {
+	prog := &Program{}
+	prog.Nodes = append(prog.Nodes, Node{
+		Kind: NodeElement, Tag: "div",
+		Attrs: []Attr{{Kind: AttrExpr, Name: "onKey", Expr: "zap", IsEvent: true}},
+	})
+	prog.Components = append(prog.Components, Component{Name: "Legacy", Root: 0, IsIsland: true})
+	if _, err := LowerIsland(prog, 0); err != nil {
+		t.Fatalf("an unresolved handler name must not break the build: %v", err)
+	}
+}
+
+func TestLowerIslandAcceptsGestureEvents(t *testing.T) {
+	for _, name := range []string{"onWheel", "onDblClick", "onContextMenu", "onLostPointerCapture"} {
+		prog := &Program{}
+		prog.Nodes = append(prog.Nodes, Node{
+			Kind: NodeElement, Tag: "div",
+			Attrs: []Attr{{Kind: AttrExpr, Name: name, Expr: "h", IsEvent: true}},
+		})
+		prog.Components = append(prog.Components, Component{Name: "Ok", Root: 0, IsIsland: true})
+		island, err := LowerIsland(prog, 0)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		got := island.Nodes[0].Attrs[0]
+		if got.Kind != program.AttrEvent || got.Name != name || got.Event != "h" {
+			t.Fatalf("%s: attr = %#v", name, got)
+		}
+	}
+	for _, legacy := range []string{"wheel", "dblclick", "contextmenu", "lostpointercapture"} {
+		if !legacyInlineEventSupported(legacy) {
+			t.Fatalf("legacy data-on-%s must be supported", legacy)
+		}
+	}
+}
+
+func TestEventFieldTypeCoversGestureFields(t *testing.T) {
+	for name, want := range map[string]program.ExprType{
+		"offsetX": program.TypeFloat, "offsetY": program.TypeFloat,
+		"elementWidth": program.TypeFloat, "elementHeight": program.TypeFloat,
+		"deltaX": program.TypeFloat, "deltaY": program.TypeFloat,
+		"deltaMode": program.TypeInt,
+	} {
+		if got := eventFieldType(name); got != want {
+			t.Errorf("eventFieldType(%s) = %v, want %v", name, got, want)
+		}
+		if !slices.Contains(islandEventFields, name) {
+			t.Errorf("islandEventFields lacks %s", name)
+		}
 	}
 }

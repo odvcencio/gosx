@@ -51,6 +51,7 @@ type Renderer struct {
 	bootstrapPath                      string
 	bootstrapLitePath                  string
 	bootstrapRuntimePath               string
+	bootstrapRuntimeConfigured         bool
 	bootstrapFeatureIslandsPath        string
 	bootstrapFeatureEnginesPath        string
 	bootstrapFeatureHubsPath           string
@@ -223,6 +224,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
 	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
+	renderer.bootstrapRuntimeConfigured = true
 	renderer.bootstrapRuntimePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-runtime.js", strings.TrimSpace(runtimeAssets.BootstrapRuntime.Hash))
 	renderer.bootstrapFeatureIslandsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-islands.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureIslands.Hash))
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
@@ -502,6 +504,7 @@ func (r *Renderer) SetBootstrapRuntimePath(path string) {
 		return
 	}
 	r.bootstrapRuntimePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+	r.bootstrapRuntimeConfigured = true
 }
 
 // SetBootstrapFeaturePaths overrides the selective runtime feature chunk URLs.
@@ -911,13 +914,20 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
+	r.bootstrapRuntimeConfigured = runtime.BootstrapRuntime != ""
 	r.runtimeAssets = manifest.Runtime
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
+		r.manifest.Runtime.GzipSize = manifest.Runtime.WASM.GzipSize
+		r.manifest.Runtime.BrotliSize = manifest.Runtime.WASM.BrotliSize
+		r.setRuntimeVariant(r.manifest.Runtime)
 		r.SetBundle(r.bundleID, runtime.WASM)
 	}
 	if runtime.WASMIslands != "" {
 		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
+		r.islandRuntime.GzipSize = manifest.Runtime.WASMIslands.GzipSize
+		r.islandRuntime.BrotliSize = manifest.Runtime.WASMIslands.BrotliSize
+		r.setRuntimeVariant(r.islandRuntime)
 	}
 	for id, asset := range manifest.Runtime.WASMVariants {
 		path := runtime.WASMVariants[id]
@@ -937,6 +947,8 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 			Hash:         asset.Hash,
 			ManifestHash: firstNonEmptyRuntimeManifestHash(asset.ManifestHash),
 			Size:         asset.Size,
+			GzipSize:     asset.GzipSize,
+			BrotliSize:   asset.BrotliSize,
 			Variant:      variant,
 			FeatureMask:  mask,
 		})
@@ -1070,6 +1082,7 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 		return nil
 	}
 	manifest := *r.manifest
+	manifest.Preview = r.clientRuntimePlan().Mode == "preview"
 	if len(r.manifest.Bundles) > 0 {
 		manifest.Bundles = make(map[string]hydrate.BundleRef, len(r.manifest.Bundles))
 		for id, bundle := range r.manifest.Bundles {
@@ -1982,8 +1995,9 @@ func (r *Renderer) PreloadHints() gosx.Node {
 	var b strings.Builder
 
 	// Preload the shared WASM runtime only when the page declares islands or a
-	// shared-runtime engine bridge.
-	if r.needsSharedRuntime() {
+	// shared-runtime engine bridge. Preview-only pages wait for the browser to
+	// confirm preview context before downloading WASM.
+	if r.needsSharedRuntime() && r.clientRuntimePlan().Mode != "preview" {
 		runtime := r.selectedRuntimeRef()
 		if runtime.Path != "" {
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, runtime.Path))
@@ -2155,11 +2169,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
 		mode = "lite"
 	}
-	// Preview-relay-only pages (no islands, no engines, no hubs, just the
-	// cross-frame relay) get a dedicated "preview" mode. They emit
-	// wasm_exec + the tiny islands runtime + relay.js, but no manifest
-	// (no islands to hydrate yet — the storefront subscriber island is
-	// added by a later consumer).
+	// Preview-only pages need the shared signal bridge without island programs.
 	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
 		mode = "preview"
 	}
@@ -2167,11 +2177,16 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	// In preview mode, the bridge is required even without islands —
 	// otherwise the iframe has no Bridge.DispatchInboundSignal target.
 	previewNeedsRuntime := previewRelay && mode == "preview"
+	selective := bootstrap && mode != "lite"
+	if previewNeedsRuntime {
+		// Older asset configurations can keep using the compatibility bootstrap.
+		selective = selective && r.bootstrapRuntimeConfigured && strings.TrimSpace(r.bootstrapRuntimePath) != ""
+	}
 	return clientRuntimePlan{
 		Bootstrap:          bootstrap,
 		Mode:               mode,
-		Manifest:           bootstrap && mode != "lite" && mode != "preview",
-		Selective:          bootstrap && mode != "lite" && mode != "preview",
+		Manifest:           bootstrap && mode != "lite",
+		Selective:          selective,
 		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
 		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
 		StandardGoWASMExec: r.hasGoWASMEngines(),
@@ -2334,16 +2349,39 @@ func (r *Renderer) smallestCompatibleRuntimeRef(required runtimewasm.FeatureMask
 }
 
 func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
+	candidateCost, currentCost := runtimeRefTransferCost(candidate), runtimeRefTransferCost(current)
+	if candidateCost > 0 && currentCost <= 0 {
+		return true
+	}
+	if candidateCost <= 0 {
+		return currentCost <= 0 && candidate.Path < current.Path
+	}
+	if candidateCost != currentCost {
+		return candidateCost < currentCost
+	}
 	if candidate.Size > 0 && current.Size <= 0 {
 		return true
 	}
 	if candidate.Size <= 0 {
-		return false
+		return current.Size <= 0 && candidate.Path < current.Path
 	}
 	if candidate.Size != current.Size {
 		return candidate.Size < current.Size
 	}
 	return candidate.Path < current.Path
+}
+
+// runtimeRefTransferCost uses the best recorded representation for each asset.
+// Mixed metadata can compare one ref's Brotli size with another's raw size,
+// favoring refs with compressed sidecars rather than estimating missing sizes.
+func runtimeRefTransferCost(ref hydrate.RuntimeRef) int64 {
+	if ref.BrotliSize > 0 {
+		return ref.BrotliSize
+	}
+	if ref.GzipSize > 0 {
+		return ref.GzipSize
+	}
+	return ref.Size
 }
 
 func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {

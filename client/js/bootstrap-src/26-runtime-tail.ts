@@ -240,7 +240,7 @@
     if (manifestHasEntries(manifest, "controllers")) {
       names.push("controllers");
     }
-    if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
+    if (manifestNeedsIslandsFeature(manifest)) {
       names.push("islands");
     }
     return names;
@@ -250,17 +250,14 @@
     return Boolean(manifest && manifest[key] && manifest[key].length > 0);
   }
 
-  function manifestNeedsWASMRuntime(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
+  function manifestNeedsIslandsFeature(manifest) {
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands");
   }
 
-  function manifestNeedsSharedEngineRuntime(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      return entry && entry.runtime === "shared";
-    });
+  function manifestNeedsWASMRuntime(manifest) {
+    return (manifest?.preview && gosxHost.relay?.isPreview?.())
+      || manifestNeedsIslandsFeature(manifest)
+      || manifest?.engines?.some(entry => entry && entry.runtime === "shared");
   }
 
   function ensureManifestFeatures(manifest) {

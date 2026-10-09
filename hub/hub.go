@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"m31labs.dev/gosx/internal/clock"
 )
 
 const (
@@ -68,6 +69,10 @@ type Hub struct {
 	observers          atomic.Pointer[observerList]
 	observerWarningMu  sync.Mutex
 	observerWarningAt  time.Time
+	policyWarningAt    time.Time     // protected by observerWarningMu
+	telemetryObserver  *observerSlot // protected by mu
+	queueSampleEvery   atomic.Uint32
+	transportClock     clock.Clock // configured before serving; initialized under mu
 
 	// Event handlers registered via On()
 	handlers map[string]HandlerFunc
@@ -112,6 +117,10 @@ type Hub struct {
 	// Configure these fields before accepting the first connection.
 	MaxMessagesPerSecond int
 	MaxMessageBurst      int
+
+	// SlowClient evicts connections based on recent queue drops. Zero disables
+	// eviction; configure before the first upgrade. Invalid policies refuse it.
+	SlowClient SlowClientPolicy
 
 	// MaxSyncMessageSize is the inbound frame allowance, in bytes, for a
 	// connection that may push CRDT sync. Zero selects
@@ -167,6 +176,7 @@ type Client struct {
 	// send can never race with the close of the same channel — see trySend.
 	closed     bool
 	disconnect DisconnectEvent
+	transport  *transportState
 
 	// textDropped and binaryDropped count the messages this client lost
 	// because its send buffer was full. They only grow. Read them with
@@ -278,18 +288,34 @@ func (c *Client) trySend(msg []byte) bool {
 }
 
 func (c *Client) trySendResult(msg []byte) (sent, dropped bool) {
+	return c.enqueue(msg, false, nil)
+}
+
+func (c *Client) enqueue(msg []byte, binary bool, batch *enqueueBatch) (sent, dropped bool) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
 		return false, false
 	}
+	queue := c.send
+	if binary {
+		queue = c.binarySend
+	}
 	select {
-	case c.send <- msg:
+	case queue <- msg:
+		event, sample := c.queueEventLocked(binary, len(msg), false)
 		c.mu.Unlock()
+		if sample {
+			c.publishEnqueue(event, batch)
+		}
 		return true, false
 	default:
+		event, publish := c.queueEventLocked(binary, len(msg), true)
 		c.mu.Unlock()
-		c.recordDrop(false)
+		c.recordDrop(binary)
+		if publish {
+			c.publishEnqueue(event, batch)
+		}
 		return false, true
 	}
 }
@@ -301,20 +327,7 @@ func (c *Client) tryBinarySend(msg []byte) bool {
 }
 
 func (c *Client) tryBinarySendResult(msg []byte) (sent, dropped bool) {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return false, false
-	}
-	select {
-	case c.binarySend <- msg:
-		c.mu.Unlock()
-		return true, false
-	default:
-		c.mu.Unlock()
-		c.recordDrop(true)
-		return false, true
-	}
+	return c.enqueue(msg, true, nil)
 }
 
 // HandlerFunc handles an event from a client.
@@ -519,18 +532,7 @@ func (h *Hub) Broadcast(event string, data any) {
 	}
 	h.latchedMu.Unlock()
 
-	h.mu.RLock()
-	sent, dropped := 0, 0
-	for _, client := range h.clients {
-		accepted, full := client.trySendResult(msg)
-		if accepted {
-			sent++
-		}
-		if full {
-			dropped++
-		}
-	}
-	h.mu.RUnlock()
+	sent, dropped := h.fanout(msg, false, nil)
 	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 }
 
@@ -547,20 +549,7 @@ func (h *Hub) BroadcastWhere(event string, data any, predicate func(*Client) boo
 	if err != nil {
 		return
 	}
-	h.mu.RLock()
-	sent, dropped := 0, 0
-	for _, client := range h.clients {
-		if predicate(client) {
-			accepted, full := client.trySendResult(msg)
-			if accepted {
-				sent++
-			}
-			if full {
-				dropped++
-			}
-		}
-	}
-	h.mu.RUnlock()
+	sent, dropped := h.fanout(msg, false, predicate)
 	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 }
 
@@ -578,18 +567,7 @@ func (h *Hub) BroadcastBinary(payload []byte) int {
 	if len(payload) == 0 {
 		return 0
 	}
-	h.mu.RLock()
-	sent, dropped := 0, 0
-	for _, client := range h.clients {
-		accepted, full := client.tryBinarySendResult(payload)
-		if accepted {
-			sent++
-		}
-		if full {
-			dropped++
-		}
-	}
-	h.mu.RUnlock()
+	sent, dropped := h.fanout(payload, true, nil)
 	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 	return sent
 }
@@ -754,6 +732,13 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //		hub.ServeHTTPWithMetadata(w, r, metadata)
 //	}))
 func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, metadata ConnectionMetadata) {
+	policy, err := h.SlowClient.normalized()
+	if err != nil {
+		h.warnInvalidSlowClient(time.Now())
+		h.observeConcurrent(func(o Observer) { o.Rejected(h, RejectedOther) })
+		http.Error(w, "invalid hub policy", http.StatusServiceUnavailable)
+		return
+	}
 	if !h.reserveClientSlot() {
 		h.mu.RLock()
 		reason := RejectedCapacity
@@ -813,11 +798,14 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		conn.Close()
 		return
 	}
-	conn.SetPongHandler(func(string) error {
-		return conn.SetReadDeadline(time.Now().Add(readWait))
-	})
-
 	clientID := generateClientID(h.name)
+	transport, err := h.transport(policy)
+	if err != nil {
+		h.observe(func(o Observer) { o.Rejected(h, RejectedOther) })
+		log.Print("[gosx hub] connection refused; class=entropy_unavailable")
+		_ = conn.Close()
+		return
+	}
 	client := &Client{
 		ID:         clientID,
 		Hub:        h,
@@ -826,7 +814,13 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 		send:       make(chan []byte, 256),
 		binarySend: make(chan []byte, 256),
 		syncStates: newPeerSyncState(),
+		transport:  transport,
 	}
+	conn.SetPongHandler(func(payload string) error {
+		client.observePong(payload)
+		// Any valid pong retains the existing connection liveness behavior.
+		return conn.SetReadDeadline(time.Now().Add(readWait))
+	})
 
 	// The read limit is per connection, so a client that may not push CRDT
 	// sync keeps the small frame allowance. See readLimitFor.
@@ -985,9 +979,12 @@ func (c *Client) readPump() {
 		}
 		msgType, data, err := c.conn.ReadMessage()
 		if err != nil {
-			c.setDisconnectReason(readDisconnectReason(err), "")
-			if !websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
-				log.Printf("[hub/%s] read error: %v", c.Hub.name, err)
+			reason := readDisconnectReason(err)
+			c.setDisconnectReason(reason, "")
+			if reason != "peer_closed" {
+				// A CloseError includes peer-controlled close text. Diagnostics
+				// keep only the fixed transport class, never the raw error.
+				log.Printf("[gosx hub] read failed (%s)", reason)
 			}
 			break
 		}
@@ -1036,9 +1033,20 @@ func (c *Client) writePump() {
 			log.Printf("[hub/%s] recovered panic in writePump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
 		}
 	}()
-	ticker := time.NewTicker(pingPeriod)
+	var ticks <-chan time.Time
+	var stop func()
+	if c.transport == nil {
+		ticker := time.NewTicker(pingPeriod)
+		ticks, stop = ticker.C, ticker.Stop
+	} else {
+		s := c.transport
+		now := s.clock.Now().Monotonic
+		s.nextPing, s.lastCheck = after(now, pingPeriod), now
+		ticker := s.clock.NewTicker(s.interval())
+		ticks, stop = ticker.C(), ticker.Stop
+	}
 	defer func() {
-		ticker.Stop()
+		stop()
 		c.conn.Close()
 	}()
 
@@ -1071,10 +1079,28 @@ func (c *Client) writePump() {
 				return
 			}
 			c.Hub.observeMessage(c, TrafficEvent{Direction: Outbound, Binary: true, Bytes: len(msg), QueueDepth: -1, Written: true})
-		case <-ticker.C:
+		case <-ticks:
+			var payload []byte
+			if c.transport != nil {
+				now := c.transport.clock.Now().Monotonic
+				if c.slowClient(now) {
+					c.setDisconnectReason("slow_client", "")
+					return
+				}
+				if !c.transport.pingDue(now) {
+					continue
+				}
+				if c.Hub.observers.Load() != nil {
+					ping := c.startPing(now)
+					payload = ping[:]
+				} else {
+					c.abandonPing(false)
+				}
+			}
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			err := c.conn.WriteMessage(websocket.PingMessage, nil)
+			err := c.conn.WriteMessage(websocket.PingMessage, payload)
 			if err != nil {
+				c.abandonPing(false)
 				c.setDisconnectReason("write_error", "")
 				return
 			}
@@ -1097,6 +1123,7 @@ func (h *Hub) removeClient(c *Client) {
 	close(c.send)
 	close(c.binarySend)
 	c.mu.Unlock()
+	c.abandonPing(disconnect.Reason == "read_timeout")
 	h.mu.Lock()
 	delete(h.clients, c.ID)
 	handler, ok := h.handlers["leave"]
