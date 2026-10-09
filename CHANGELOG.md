@@ -152,6 +152,13 @@
 - Define controller-local pick ray and hit types, preserving the scene JSON
   shape without linking scene rendering dependencies into ordinary servers.
 
+- Use the selective bootstrap and relay for preview pages without loading the
+  islands feature chunk. Island-free previews now start the WASM signal bridge
+  inside an iframe or with `gosx-preview=1`; preview context persists for the
+  tab session across navigation. Public visitors do not start the preview bridge
+  or preload its WASM. Older assets without the selective bootstrap retain the
+  compatibility path.
+
 ## v0.57.6
 
 - Apply Scene3D `SetTransformCommand` to a `Model` root ID. Retained rigid
