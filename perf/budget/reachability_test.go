@@ -43,9 +43,58 @@ func testResourceGraph() ReachabilityOptions {
 func planPhases(plan ResourcePlan) map[string]string {
 	out := map[string]string{}
 	for _, asset := range plan.Assets {
-		out[asset.ID] = asset.Phase
+		out[asset.ID] = earlierPhase(out[asset.ID], asset.Phase)
 	}
 	return out
+}
+
+func testAlternateURLGraph() ReachabilityOptions {
+	bodies := map[string][]byte{
+		"app/fixture/html":  []byte(`<link rel="stylesheet" href="/alternate/site.css">`),
+		"app/fixture/css":   []byte(`@import "./child.css";`),
+		"app/fixture/child": []byte(`.fixture { color: blue }`),
+	}
+	assets := []buildmanifest.PerfAssetUse{
+		graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", bodies["app/fixture/html"]),
+		graphAsset("app/fixture/css", "/original/site.css", "css", "dormant", "always", bodies["app/fixture/css"], "app/fixture/child"),
+		graphAsset("app/fixture/css", "/alternate/site.css", "css", "dormant", "always", bodies["app/fixture/css"], "app/fixture/child"),
+		graphAsset("app/fixture/child", "/alternate/child.css", "css", "dormant", "always", bodies["app/fixture/child"]),
+	}
+	return ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: assets}, Bodies: bodies, Route: FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}}, Backend: "none"}
+}
+
+func TestMeasureReachabilityAlternateURLUsesOwnBaseAndCondition(t *testing.T) {
+	for _, condition := range []string{"always", "webgpu"} {
+		t.Run(condition, func(t *testing.T) {
+			opts := testAlternateURLGraph()
+			opts.Graph.Assets[2].Condition = condition
+			plan, err := ResolveReachability(opts)
+			if condition == "webgpu" {
+				var input *InputError
+				if !errors.As(err, &input) || input.Code != "wrong-backend" {
+					t.Fatal("disabled alternate URL used an enabled declaration at another URL", err)
+				}
+				return
+			}
+			if err != nil || plan.Reachability != "known" || planPhases(plan)["app/fixture/css"] != "startup" || planPhases(plan)["app/fixture/child"] != "startup" {
+				t.Fatal("alternate URL was dropped or resolved against the first URL", plan, err)
+			}
+		})
+	}
+}
+
+func TestMeasureReachabilityAlternateURLThroughDeclaredDependency(t *testing.T) {
+	opts := testAlternateURLGraph()
+	document := []byte(`<link rel="stylesheet" href="/entry.css">`)
+	opts.Bodies["app/fixture/html"] = document
+	opts.Graph.Assets[0].SHA256 = testMeasureHash(document)
+	entry := []byte(`@import "./alternate/site.css";`)
+	opts.Bodies["app/fixture/entry"] = entry
+	opts.Graph.Assets = append(opts.Graph.Assets, graphAsset("app/fixture/entry", "/entry.css", "css", "dormant", "always", entry, "app/fixture/css"))
+	plan, err := ResolveReachability(opts)
+	if err != nil || plan.Reachability != "known" || planPhases(plan)["app/fixture/css"] != "startup" || planPhases(plan)["app/fixture/child"] != "startup" {
+		t.Fatal("typed dependency traversed an unreferenced alternate URL", plan, err)
+	}
 }
 
 func TestMeasureReachabilityTraversesDeclaredCSSAndModuleGraph(t *testing.T) {

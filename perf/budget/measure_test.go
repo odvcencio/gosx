@@ -157,6 +157,148 @@ func TestMeasureAppReturnsReconciledDeclaredClosure(t *testing.T) {
 	}
 }
 
+func testMeasuredResourceGraph(t *testing.T, graph ReachabilityOptions, redirects map[string]string) (MeasureOptions, map[string]*atomic.Int64) {
+	t.Helper()
+	opts, _, _, _ := testRouteMeasurement(t)
+	route := graph.Route
+	route.App, route.SourcePath, route.InputSequenceID = "fixture", "fixture/page.gsx", "counter-input"
+	var err error
+	route.Capabilities, err = pagecaps.FromHTML(graph.Bodies["app/fixture/html"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	route.PageTypes, err = pagecaps.Classify(route.Capabilities, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := &FixtureManifest{Schema: "gosx.perf-fixtures/v1", Version: 1, SourceSHA: opts.Public.SHA, CatalogSHA256: opts.Public.FixtureSHA256, Routes: []FixtureRoute{route}, Assets: graph.Graph.Assets}
+	byURL := map[string]buildmanifest.PerfAssetUse{}
+	requests := map[string]*atomic.Int64{}
+	for _, asset := range manifest.Assets {
+		file := strings.TrimPrefix(asset.URL, "/")
+		if asset.Kind == "html" {
+			file = strings.Trim(file, "/") + "/index.html"
+		}
+		file = filepath.Join(opts.DistDir, file)
+		if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(file, graph.Bodies[asset.ID], 0600); err != nil {
+			t.Fatal(err)
+		}
+		byURL[asset.URL], requests[asset.URL] = asset, &atomic.Int64{}
+	}
+	writeTestFixtureManifest(t, opts.DistDir, manifest)
+	opts.Public.ArtifactSHA256 = &manifest.FixturesSHA256
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asset, ok := byURL[r.URL.Path]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		requests[r.URL.Path].Add(1)
+		if target, ok := redirects[r.URL.Path]; ok {
+			w.Header().Set("Location", target)
+			w.WriteHeader(http.StatusFound)
+			w.Write([]byte("redirect fixture"))
+			return
+		}
+		media := map[string]string{"html": "text/html", "js": "text/javascript", "css": "text/css", "image": "image/png"}
+		w.Header().Set("Content-Type", media[asset.Kind])
+		w.Write(graph.Bodies[asset.ID])
+	}))
+	t.Cleanup(server.Close)
+	opts.BaseURL, opts.Client = server.URL, server.Client()
+	return opts, requests
+}
+
+func TestMeasureDeferredHTMLKeepsResourcesAfterReady(t *testing.T) {
+	bodies := map[string][]byte{
+		"app/fixture/html":   []byte(`<p>Fixture document</p>`),
+		"app/fixture/script": []byte(`fetch("./later/")`),
+		"app/fixture/later":  []byte(`<img src="./image.png">`),
+		"app/fixture/image":  []byte("fixture image"),
+	}
+	assets := []buildmanifest.PerfAssetUse{
+		graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", bodies["app/fixture/html"]),
+		graphAsset("app/fixture/script", "/entry.js", "js", "after-ready", "interaction", bodies["app/fixture/script"], "app/fixture/later"),
+		graphAsset("app/fixture/later", "/later/", "html", "dormant", "always", bodies["app/fixture/later"]),
+		graphAsset("app/fixture/image", "/later/image.png", "image", "dormant", "always", bodies["app/fixture/image"]),
+	}
+	graph := ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: assets}, Bodies: bodies, Route: FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}}}
+	opts, _ := testMeasuredResourceGraph(t, graph, nil)
+	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, _ := testBodyNormalizer(bodies["app/fixture/html"])
+	var afterReady int64
+	for _, id := range []string{"app/fixture/script", "app/fixture/later", "app/fixture/image"} {
+		sizes, _ := testBodyNormalizer(bodies[id])
+		afterReady += sizes.Brotli
+	}
+	row := report.Rows[0]
+	if row.NormalizedBytes != doc.Brotli || row.PhaseBytes.Startup != 0 || row.PhaseBytes.AfterReady != afterReady || row.WireBytes != int64(len(bodies["app/fixture/html"])) || row.Requests != 1 {
+		t.Fatal("deferred HTML promoted a descendant into cold totals", row)
+	}
+}
+
+func TestMeasureDormantRedirectTargetRetainsPhysicalOwnership(t *testing.T) {
+	for _, frameworkFirst := range []bool{false, true} {
+		t.Run(map[bool]string{false: "app-first", true: "framework-first"}[frameworkFirst], func(t *testing.T) {
+			bodies := map[string][]byte{
+				"app/fixture/html":         []byte(`<p>Fixture document</p>`),
+				"app/fixture/alias":        []byte(`const framework = 1`),
+				"framework/runtime/target": []byte(`const framework = 1`),
+				"framework/runtime/other":  []byte(`const framework = 1`),
+			}
+			assets := []buildmanifest.PerfAssetUse{
+				graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", bodies["app/fixture/html"]),
+				graphAsset("app/fixture/alias", "/alias.js", "js", "startup", "always", bodies["app/fixture/alias"]),
+				graphAsset("framework/runtime/target", "/target.js", "js", "dormant", "always", bodies["framework/runtime/target"]),
+				graphAsset("framework/runtime/other", "/other.js", "js", "dormant", "always", bodies["framework/runtime/other"]),
+			}
+			if frameworkFirst {
+				assets[1], assets[2] = assets[2], assets[1]
+			}
+			graph := ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: assets}, Bodies: bodies, Route: FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}}}
+			opts, requests := testMeasuredResourceGraph(t, graph, map[string]string{"/alias.js": "/target.js"})
+			report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			doc, _ := testBodyNormalizer(bodies["app/fixture/html"])
+			program, _ := testBodyNormalizer(bodies["app/fixture/alias"])
+			redirect, _ := testBodyNormalizer([]byte("redirect fixture"))
+			row := report.Rows[0]
+			if row.FrameworkBytes != program.Brotli || row.AppBytes != doc.Brotli+redirect.Brotli || row.NormalizedBytes != row.FrameworkBytes+row.AppBytes || row.PhaseBytes.Startup != program.Brotli+redirect.Brotli || row.PhaseBytes.Dormant != program.Brotli || row.Requests != 3 || row.WireBytes != int64(len(bodies["app/fixture/html"])+len(bodies["app/fixture/alias"])+len("redirect fixture")) || requests["/target.js"].Load() != 1 || requests["/other.js"].Load() != 0 {
+				t.Fatal("redirect target duplicated, lost ownership or changed transfer costs", row)
+			}
+			for _, asset := range report.Assets {
+				if asset.ID == "framework/runtime/target" && asset.Phase != "startup" {
+					t.Fatal("reached framework inventory still reported dormant", asset)
+				}
+			}
+		})
+	}
+}
+
+func TestMeasureAlternateDeclaredURLKeepsIndependentPhase(t *testing.T) {
+	graph := testAlternateURLGraph()
+	opts, requests := testMeasuredResourceGraph(t, graph, nil)
+	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+	if err != nil {
+		t.Fatal("declared alternate URL rejected:", err)
+	}
+	doc, _ := testBodyNormalizer(graph.Bodies["app/fixture/html"])
+	css, _ := testBodyNormalizer(graph.Bodies["app/fixture/css"])
+	child, _ := testBodyNormalizer(graph.Bodies["app/fixture/child"])
+	row := report.Rows[0]
+	if report.Coverage.Reachability != "known" || row.NormalizedBytes != doc.Brotli+css.Brotli+child.Brotli || row.PhaseBytes.Dormant != css.Brotli || row.Requests != 3 || requests["/original/site.css"].Load() != 0 || requests["/alternate/site.css"].Load() != 1 || requests["/alternate/child.css"].Load() != 1 {
+		t.Fatal("alternate URL used another declaration's phase or reference base", row)
+	}
+}
+
 func TestMeasureFixtureContractsAndProvenance(t *testing.T) {
 	for _, name := range []string{"source", "fixtures", "unknown-field", "route-duplicate", "missing-critical", "type", "asset-hash", "sidecar", "route-not-registered", "route-duplicate-input", "app", "capability", "capability-fields"} {
 		t.Run(name, func(t *testing.T) {

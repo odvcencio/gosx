@@ -23,7 +23,10 @@ type ReachabilityOptions struct {
 	Route     FixtureRoute
 	Backend   string
 }
-type PlannedAsset struct{ ID, Phase string }
+
+// PlannedAsset retains its private declaration URL for traversal and accounting.
+type PlannedAsset struct{ ID, URL, Phase string }
+type assetUseIdentity struct{ id, url string }
 type ResourcePlan struct {
 	Reachability string
 	Assets       []PlannedAsset
@@ -49,8 +52,9 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		return result, measureFailure("invalid-input", "/route")
 	}
 	byID := map[string][]int{}
-	byURL := map[string][]string{}
-	phases := map[string]string{}
+	byURL := map[string][]int{}
+	byUse := map[assetUseIdentity][]int{}
+	phases := map[assetUseIdentity]string{}
 	for i, asset := range assets {
 		body, ok := opts.Bodies[asset.ID]
 		sum := sha256.Sum256(body)
@@ -58,23 +62,26 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(i)+"/body")
 		}
 		if prior := byURL[asset.URL]; len(prior) > 0 {
-			other := assets[byID[prior[0]][0]]
+			other := assets[prior[0]]
 			if other.SHA256 != asset.SHA256 || other.Kind != asset.Kind {
 				return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(i))
 			}
 		}
-		if len(byID[asset.ID]) == 0 {
-			byURL[asset.URL] = append(byURL[asset.URL], asset.ID)
-		}
+		key := assetUseIdentity{asset.ID, asset.URL}
+		byURL[asset.URL] = append(byURL[asset.URL], i)
 		byID[asset.ID] = append(byID[asset.ID], i)
-		phases[asset.ID] = "dormant"
+		byUse[key] = append(byUse[key], i)
+		phases[key] = "dormant"
 	}
 	docIDs := byURL[opts.Route.RouteTemplate]
-	if len(docIDs) == 0 || assets[byID[docIDs[0]][0]].Kind != "html" {
+	if len(docIDs) == 0 || assets[docIDs[0]].Kind != "html" {
 		return result, measureFailure("wrong-fixture", "/route/document")
 	}
 	known := opts.Graph != nil && !(opts.Route.Capabilities.Scene3D && opts.Backend == "none")
-	type pending struct{ id, phase string }
+	type pending struct {
+		key   assetUseIdentity
+		phase string
+	}
 	queue := []pending{}
 	enabled := func(asset buildmanifest.PerfAssetUse) bool {
 		switch asset.Condition {
@@ -90,8 +97,8 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			return true
 		}
 	}
-	mark := func(id, phase string) error {
-		indexes, ok := byID[id]
+	mark := func(key assetUseIdentity, phase string) error {
+		indexes, ok := byUse[key]
 		if !ok {
 			return measureFailure("undeclared-fetch", "/graph/dependencies")
 		}
@@ -102,31 +109,65 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		if !available {
 			return measureFailure("wrong-backend", "/graph/condition")
 		}
-		for _, alias := range byURL[assets[indexes[0]].URL] {
-			active := false
-			for _, i := range byID[alias] {
-				active = active || enabled(assets[i])
-			}
-			if active && phaseRank(phase) < phaseRank(phases[alias]) {
-				phases[alias] = phase
-				queue = append(queue, pending{alias, phase})
+		for _, i := range byURL[key.url] {
+			alias := assets[i]
+			aliasKey := assetUseIdentity{alias.ID, alias.URL}
+			if enabled(alias) && phaseRank(phase) < phaseRank(phases[aliasKey]) {
+				phases[aliasKey] = phase
+				queue = append(queue, pending{aliasKey, phase})
 			}
 		}
 		return nil
 	}
-	for _, id := range docIDs {
-		if err := mark(id, "critical"); err != nil {
-			return result, err
+	markID := func(id, phase string) error {
+		indexes, ok := byID[id]
+		if !ok {
+			return measureFailure("undeclared-fetch", "/graph/dependencies")
 		}
+		available := false
+		for _, i := range indexes {
+			asset := assets[i]
+			if !enabled(asset) {
+				continue
+			}
+			available = true
+			if err := mark(assetUseIdentity{asset.ID, asset.URL}, phase); err != nil {
+				return err
+			}
+		}
+		if !available {
+			return measureFailure("wrong-backend", "/graph/condition")
+		}
+		return nil
+	}
+	markURL := func(assetURL, phase string) error {
+		available := false
+		for _, i := range byURL[assetURL] {
+			asset := assets[i]
+			if !enabled(asset) {
+				continue
+			}
+			available = true
+			if err := mark(assetUseIdentity{asset.ID, asset.URL}, phase); err != nil {
+				return err
+			}
+		}
+		if !available {
+			return measureFailure("wrong-backend", "/graph/condition")
+		}
+		return nil
+	}
+	if err := markURL(opts.Route.RouteTemplate, "critical"); err != nil {
+		return result, err
 	}
 	for _, id := range opts.Route.CriticalAssetIDs {
-		if err := mark(id, "critical"); err != nil {
+		if err := markID(id, "critical"); err != nil {
 			return result, err
 		}
 	}
 	for _, asset := range assets {
 		if asset.Phase != "dormant" && asset.Kind != "html" && enabled(asset) {
-			if err := mark(asset.ID, asset.Phase); err != nil {
+			if err := mark(assetUseIdentity{asset.ID, asset.URL}, asset.Phase); err != nil {
 				return result, err
 			}
 		}
@@ -134,10 +175,10 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 	for len(queue) > 0 {
 		current := queue[0]
 		queue = queue[1:]
-		if phases[current.id] != current.phase {
+		if phases[current.key] != current.phase {
 			continue
 		}
-		indexes := byID[current.id]
+		indexes := byUse[current.key]
 		use := assets[indexes[0]]
 		dependencies := map[string]bool{}
 		for _, i := range indexes {
@@ -147,25 +188,18 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			}
 			for _, dep := range asset.Dependencies {
 				dependencies[dep] = true
-				childPhase := current.phase
-				for _, j := range byID[dep] {
-					if enabled(assets[j]) {
-						childPhase = earlierPhase(childPhase, assets[j].Phase)
-					}
-				}
-				if err := mark(dep, childPhase); err != nil {
-					return result, err
-				}
 			}
 		}
-		if use.Kind != "html" && use.Kind != "css" && use.Kind != "js" {
-			continue
-		}
-		refs, err := wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
-		if err != nil {
-			return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+		refs := wire.ReferenceSet{Complete: true}
+		if use.Kind == "html" || use.Kind == "css" || use.Kind == "js" {
+			var err error
+			refs, err = wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
+			if err != nil {
+				return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+			}
 		}
 		known = known && refs.Complete
+		referenced := map[string]bool{}
 		for _, ref := range refs.Resources {
 			resolved, ok := resolveReference(use.URL, ref.URL)
 			if !ok {
@@ -181,21 +215,44 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 			}
 			if use.Kind != "html" {
 				declared := false
-				for _, id := range targets {
-					declared = declared || dependencies[id]
+				for _, i := range targets {
+					declared = declared || enabled(assets[i]) && dependencies[assets[i].ID]
 				}
 				if !declared {
 					return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/dependencies")
 				}
 			}
 			phase := current.phase
-			if use.Kind == "html" {
+			if use.Kind == "html" && phase == "critical" {
 				phase = "startup"
 			}
-			for _, id := range targets {
-				if err := mark(id, phase); err != nil {
-					return result, err
+			for _, i := range targets {
+				asset := assets[i]
+				if enabled(asset) {
+					referenced[asset.ID] = true
+					if dependencies[asset.ID] {
+						phase = earlierPhase(phase, earlierPhase(current.phase, asset.Phase))
+					}
 				}
+			}
+			if err := markURL(resolved, phase); err != nil {
+				return result, err
+			}
+		}
+		// Literal references select a dependency's declaration URL. Edges
+		// without a literal retain every enabled declaration conservatively.
+		for _, dep := range slices.Sorted(maps.Keys(dependencies)) {
+			if referenced[dep] {
+				continue
+			}
+			childPhase := current.phase
+			for _, i := range byID[dep] {
+				if enabled(assets[i]) {
+					childPhase = earlierPhase(childPhase, assets[i].Phase)
+				}
+			}
+			if err := markID(dep, childPhase); err != nil {
+				return result, err
 			}
 		}
 	}
@@ -204,24 +261,32 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 		// exclude any potential body, even one labeled dormant.
 		for _, asset := range assets {
 			if asset.Kind != "html" {
-				phases[asset.ID] = earlierPhase(phases[asset.ID], "startup")
+				key := assetUseIdentity{asset.ID, asset.URL}
+				phases[key] = earlierPhase(phases[key], "startup")
 			}
 		}
 	} else {
 		result.Reachability = "known"
 	}
 	// Aliases share a physical response and therefore one earliest phase.
-	for _, ids := range byURL {
+	for _, indexes := range byURL {
 		phase := "dormant"
-		for _, id := range ids {
-			phase = earlierPhase(phase, phases[id])
+		for _, i := range indexes {
+			asset := assets[i]
+			phase = earlierPhase(phase, phases[assetUseIdentity{asset.ID, asset.URL}])
 		}
-		for _, id := range ids {
-			phases[id] = phase
+		for _, i := range indexes {
+			asset := assets[i]
+			phases[assetUseIdentity{asset.ID, asset.URL}] = phase
 		}
 	}
-	for _, id := range slices.Sorted(maps.Keys(phases)) {
-		result.Assets = append(result.Assets, PlannedAsset{ID: id, Phase: phases[id]})
+	for _, key := range slices.SortedFunc(maps.Keys(phases), func(a, b assetUseIdentity) int {
+		if a.id != b.id {
+			return strings.Compare(a.id, b.id)
+		}
+		return strings.Compare(a.url, b.url)
+	}) {
+		result.Assets = append(result.Assets, PlannedAsset{ID: key.id, URL: key.url, Phase: phases[key]})
 	}
 	return result, nil
 }

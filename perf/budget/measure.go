@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"sort"
@@ -196,12 +197,16 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		}
 		phases := map[string]string{}
 		for _, asset := range plan.Assets {
-			phases[asset.ID] = asset.Phase
-		}
-		for i := range result.Assets {
-			result.Assets[i].Phase = earlierPhase(result.Assets[i].Phase, phases[result.Assets[i].ID])
+			phases[asset.URL] = earlierPhase(phases[asset.URL], asset.Phase)
 		}
 		costs := []PhaseCost{{RequestIdentity: first.finalURL, Phase: "critical", Owner: "app", Sizes: measuredHTML.Sizes, WireBytes: first.finalWireBytes, Requests: 1}}
+		type bodyIdentity struct{ url, sha string }
+		verified := map[bodyIdentity]PhaseCost{{first.finalURL, document.sha}: costs[0]}
+		base, err := url.Parse(opts.BaseURL)
+		if err != nil {
+			return result, measureFailure("invalid-input", "/base")
+		}
+		requestURLs := map[string]string{}
 		for i, redirect := range first.RedirectSizes {
 			costs = append(costs, PhaseCost{RequestIdentity: "document-redirect:" + strconv.Itoa(i), Phase: "critical", Owner: "app", Sizes: redirect, WireBytes: first.redirectWireBytes[i], Requests: 1})
 		}
@@ -209,7 +214,12 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		coldInline := map[string]bool{first.finalURL: true}
 		noExecutableAssets := true
 		for _, fixture := range fixtures {
-			phase := phases[fixture.id]
+			requestURL, err := base.Parse(fixture.url)
+			if err != nil {
+				return result, measureFailure("invalid-input", "/url")
+			}
+			requestURLs[fixture.url] = requestURL.String()
+			phase := phases[fixture.url]
 			if phase != "dormant" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
 				noExecutableAssets = false
 			}
@@ -217,7 +227,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				continue
 			}
 			if phase == "dormant" {
-				costs = append(costs, PhaseCost{RequestIdentity: fixture.url, Phase: phase, Owner: fixture.owner, Sizes: fixture.sizes})
+				costs = append(costs, PhaseCost{RequestIdentity: requestURL.String(), Phase: phase, Owner: fixture.owner, Sizes: fixture.sizes})
 				continue
 			}
 			options := HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}
@@ -250,11 +260,36 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 					coldInline[observed.finalURL] = coldInline[observed.finalURL] || phaseRank(phase) <= 1
 				}
 			}
-			costs = append(costs, PhaseCost{RequestIdentity: observed.finalURL, Phase: phase, Owner: fixture.owner, Sizes: observed.Sizes, WireBytes: observed.finalWireBytes, Requests: 1})
+			cost := PhaseCost{RequestIdentity: observed.finalURL, Phase: phase, Owner: fixture.owner, Sizes: observed.Sizes, WireBytes: observed.finalWireBytes, Requests: 1}
+			costs = append(costs, cost)
+			key := bodyIdentity{observed.finalURL, fixture.sha}
+			if prior, ok := verified[key]; ok {
+				cost.Phase = earlierPhase(cost.Phase, prior.Phase)
+				if prior.Owner == "framework" {
+					cost.Owner = "framework"
+				}
+			}
+			verified[key] = cost
 			for i, redirect := range observed.RedirectSizes {
-				costs = append(costs, PhaseCost{RequestIdentity: "asset-redirect:" + fixture.id + ":" + strconv.Itoa(i), Phase: phase, Owner: fixture.owner, Sizes: redirect, WireBytes: observed.redirectWireBytes[i], Requests: 1})
+				costs = append(costs, PhaseCost{RequestIdentity: "asset-redirect:" + fixture.url + ":" + strconv.Itoa(i), Phase: phase, Owner: fixture.owner, Sizes: redirect, WireBytes: observed.redirectWireBytes[i], Requests: 1})
 			}
 			row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
+		}
+		// Unfetched inventory may name a verified redirect target. Bind it to
+		// that body's actual representation before phase and owner reconciliation.
+		for i, cost := range costs {
+			if cost.Phase == "dormant" {
+				if observed, ok := verified[bodyIdentity{cost.RequestIdentity, cost.Sizes.SHA256}]; ok {
+					cost.Sizes, cost.WireBytes, cost.Requests = observed.Sizes, observed.WireBytes, observed.Requests
+					costs[i] = cost
+				}
+			}
+		}
+		for i, fixture := range fixtures {
+			if observed, ok := verified[bodyIdentity{requestURLs[fixture.url], fixture.sha}]; ok {
+				phases[fixture.url] = earlierPhase(phases[fixture.url], observed.Phase)
+			}
+			result.Assets[i].Phase = earlierPhase(result.Assets[i].Phase, phases[fixture.url])
 		}
 		totals, err := SumPhases(costs)
 		if err != nil {
