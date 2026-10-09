@@ -20,6 +20,7 @@ func TestActivityWorkerExitReleasesOwnedState(t *testing.T) {
 	for _, mode := range []string{"normal", "worker-clock", "close-clock", "expired-deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			tel, clock := lifecycleOwner(t)
+			// Session-link checks cover a configuration Enable does not allow yet.
 			tel.opts.Sessions.Enabled = true
 			tel.opts.Metrics.DisableRequests = false
 			if err := tel.initializeRequests(); err != nil {
@@ -103,6 +104,12 @@ func TestActivityWorkerExitReleasesOwnedState(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			if err := clock.Advance(10 * time.Second); err != nil {
+				t.Fatal(err)
+			}
+			if err := participants[0].Left(participantRef(tel, 1, true), "complete"); err != nil {
+				t.Fatal(err)
+			}
 			observer := requestObserver{owner: tel}
 			for range 3 {
 				observer.ObserveRequestStart()
@@ -156,6 +163,12 @@ func TestActivityWorkerExitReleasesOwnedState(t *testing.T) {
 			final, err := activities[2].End(ActivityEnd[int]{Outcome: "won", Reason: "complete", Fields: 9})
 			if err != nil {
 				t.Fatal(err)
+			}
+			activities[0].entity.mu.Lock()
+			unfinished, _ := activities[0].entity.record.Activity()
+			activities[0].entity.mu.Unlock()
+			if unfinished.Participants[0].SeatPresenceMS != 10000 {
+				t.Fatal("fixture did not accumulate seat presence")
 			}
 			tel.updateCore(clock.Now()) // Publish live charges before exit.
 			forbidden.Store(true)
@@ -289,6 +302,28 @@ func TestActivityWorkerExitReleasesOwnedState(t *testing.T) {
 				t.Error("worker exit left the hub subscription reserved", err)
 			} else {
 				detachProbe()
+			}
+			if mode != "normal" {
+				activities[0].entity.mu.Lock()
+				isFinal := activities[0].entity.final
+				last, _ := activities[0].entity.record.Activity()
+				activities[0].entity.mu.Unlock()
+				if isFinal {
+					t.Fatal("fixture did not leave an unfinished activity")
+				}
+				if err := clock.Advance(10 * time.Second); err != nil {
+					t.Fatal(err)
+				}
+				view, err := activities[0].Snapshot()
+				if err != nil {
+					t.Fatal("unfinished snapshot became unreadable after exit", err)
+				}
+				if len(view.Participants) != 1 || view.Participants[0].SeatPresenceMS != 10000 {
+					t.Error("cleanup changed accumulated seat presence", view.Participants)
+				}
+				if view.ElapsedMS != last.ElapsedMS || !view.UpdatedAt.Equal(last.UpdatedAt) {
+					t.Error("unfinished snapshot advanced after exit", view.ElapsedMS, last.ElapsedMS)
+				}
 			}
 			view, err := activities[2].Snapshot()
 			if err != nil || view.Outcome != "won" || len(view.Fields) != 1 || view.Fields[0].Int != 9 {

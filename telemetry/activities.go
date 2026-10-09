@@ -267,18 +267,22 @@ func (a *Activity[A, P, E]) Snapshot() (schema.Activity, error) {
 	v, _ := e.record.Activity()
 	v.EventsAccepted, v.EventsDropped = e.eventsAccepted, e.eventsDropped
 	final := e.final
+	stopping := e.kind.owner.activities.stopping.Load()
+	hasPresence := e.presence != nil
 	var presence [33]participantPresence
 	for i := range v.Participants {
 		presence[i] = e.presence[v.Participants[i].ID]
 	}
 	e.mu.Unlock()
-	if !final {
+	if !final && !stopping {
 		now, err := e.kind.owner.activityNow()
 		if err != nil {
 			return schema.Activity{}, err
 		}
-		for i := range v.Participants {
-			sessionPresence(&v.Participants[i], presence[i], now.Monotonic)
+		if hasPresence {
+			for i := range v.Participants {
+				sessionPresence(&v.Participants[i], presence[i], now.Monotonic)
+			}
 		}
 		activityTiming(&v, e, now, false)
 	}
