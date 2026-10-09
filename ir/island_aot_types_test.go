@@ -197,3 +197,87 @@ func TestIslandAOTConditionalRequiresCompatibleEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestIslandAOTConstantDomainBoundaries(t *testing.T) {
+	for _, boundary := range []struct {
+		name, literal, arithmetic string
+		allowed                   bool
+	}{
+		{"maximum", "2147483647", "2147483646 + 1", true},
+		{"maximum_plus_one", "2147483648", "2147483647 + 1", false},
+		{"minimum", "-2147483648", "-2147483647 - 1", true},
+		{"minimum_minus_one", "-2147483649", "-2147483648 - 1", false},
+	} {
+		for _, shape := range []struct{ name, expr string }{
+			{"literal", boundary.literal},
+			{"arithmetic", boundary.arithmetic},
+			{"conditional_true", "true ? " + boundary.literal + " : 0"},
+			{"conditional_false", "false ? 0 : " + boundary.literal},
+			{"conditional_unselected_true", "true ? 0 : " + boundary.arithmetic},
+			{"conditional_unselected_false", "false ? " + boundary.arithmetic + " : 0"},
+		} {
+			t.Run(shape.name+"/"+boundary.name, func(t *testing.T) {
+				p := parseAOTArithmetic(t, "int", shape.expr)
+				u, err := ir.LowerIslandAOT(p, 0)
+				if !boundary.allowed {
+					var diagnostic *ir.DiagnosticsError
+					if !errors.As(err, &diagnostic) || diagnostic.Diagnostics[0].Code != "aot_source_type" {
+						t.Fatalf("accepted out-of-domain constant: %v", err)
+					}
+					return
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				binding := u.Program.Nodes[u.Program.Nodes[u.Program.Root].Children[0]].Expr
+				if got := u.Contract.Expressions[binding].Kind; got != aot.Int {
+					t.Fatalf("boundary kind = %s, want int", got)
+				}
+				want := boundary.literal
+				if shape.name == "conditional_unselected_true" || shape.name == "conditional_unselected_false" {
+					want = "0"
+				}
+				if got := vm.NewVM(u.Program, nil).Eval(binding).String(); got != want {
+					t.Fatalf("boundary value = %s, want %s", got, want)
+				}
+				fallback, err := ir.LowerIsland(p, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				before, err := program.EncodeBinary(fallback)
+				if err != nil || !bytes.Equal(before, u.ProgramBytes) {
+					t.Fatalf("changed boundary fallback bytes: %v", err)
+				}
+			})
+		}
+	}
+}
+
+func TestIslandAOTRejectsOutOfDomainStateAndOperands(t *testing.T) {
+	for _, body := range []string{
+		`return <div title={2147483648} />`,
+		`count := signal.New(2147483648); return <div>{count}</div>`,
+		`count := signal.NewShared("count", -2147483649); return <div>{count}</div>`,
+		`count := signal.Derive(func() int { return 2147483647 + 1 }); return <div>{count}</div>`,
+		`count := signal.New(0); change := func() { count.Set(-2147483648 - 1) }; return <button onClick={change}>{count}</button>`,
+		`return <div>{2147483648 == 0}</div>`,
+		`return <div>{-(-2147483648)}</div>`,
+		`return <div>{(2147483647 + 1) - 1}</div>`,
+	} {
+		t.Run(body, func(t *testing.T) {
+			p, err := parse(t, []byte("package example\n//gosx:island\nfunc Counter() Node {\n"+body+"\n}\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			p.PackagePath = "example/components"
+			if _, err := ir.LowerIsland(p, 0); err != nil {
+				t.Fatalf("VM lowering rejected the constant: %v", err)
+			}
+			_, err = ir.LowerIslandAOT(p, 0)
+			var diagnostic *ir.DiagnosticsError
+			if !errors.As(err, &diagnostic) || diagnostic.Diagnostics[0].Code != "aot_source_type" {
+				t.Fatalf("accepted out-of-domain state or operand: %v", err)
+			}
+		})
+	}
+}

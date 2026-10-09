@@ -226,6 +226,12 @@ func LowerIslandAOT(src *Program, index int) (aot.Unit, error) {
 		if kind == "" {
 			return "", fmt.Errorf("expression %d has no supported scalar source evidence", id)
 		}
+		// Check exact literals and constant arithmetic before recording their
+		// scalar kinds. Operand inference also validates both conditional arms
+		// and every constant intermediate, even when a later result fits.
+		if value := constants[id]; value != nil && !aotConstantFits(value, kind) {
+			return "", fmt.Errorf("expression %d has an integer constant outside the signed int32 domain", id)
+		}
 		kinds[id], pure[id], visiting[id] = kind, isPure, false
 		return kind, nil
 	}
