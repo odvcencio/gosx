@@ -18,7 +18,7 @@ const aotConditionalHelper = "__gosx_aot_choose"
 
 // Insert scaffold statements without changing any authored byte. Update all
 // source maps, splitting copy ranges when a declaration is inserted inside one.
-func aotScaffoldLocals(p *Program, projection aotCheckingFile) (aotCheckingFile, error) {
+func aotScaffoldLocals(p *Program, projection aotCheckingFile, scopeNames map[string]bool) (aotCheckingFile, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "scaffold.go", projection.bytes, 0)
 	if err != nil {
@@ -33,7 +33,14 @@ func aotScaffoldLocals(p *Program, projection aotCheckingFile) (aotCheckingFile,
 	uses := map[*ast.BlockStmt]map[string]bool{}
 	handlers := map[*ast.FuncLit]bool{}
 	handlerNames := map[string]bool{}
+	boundaryNames := map[string][]string{}
 	for _, comp := range p.Components {
+		if comp.AcceptsChildren {
+			boundaryNames[comp.Name] = append(boundaryNames[comp.Name], "children")
+		}
+		for _, slot := range comp.AcceptsSlots {
+			boundaryNames[comp.Name] = append(boundaryNames[comp.Name], "slot"+slot)
+		}
 		if comp.Scope != nil {
 			for _, h := range comp.Scope.Handlers {
 				handlerNames[h.Name] = true
@@ -115,11 +122,17 @@ func aotScaffoldLocals(p *Program, projection aotCheckingFile) (aotCheckingFile,
 		}
 		return true
 	})
+	// Source order also makes collision diagnostics deterministic.
+	var orderedHandlers []*ast.FuncLit
 	for fn := range handlers {
+		orderedHandlers = append(orderedHandlers, fn)
+	}
+	slices.SortFunc(orderedHandlers, func(a, b *ast.FuncLit) int { return int(a.Pos() - b.Pos()) })
+	for _, fn := range orderedHandlers {
 		needed := map[string]bool{}
 		ast.Inspect(fn.Body, func(node ast.Node) bool {
 			id, ok := node.(*ast.Ident)
-			if ok && id.Obj == nil && file.Scope.Lookup(id.Name) == nil && slices.Contains(islandEventFields, id.Name) && !token.Lookup(id.Name).IsKeyword() {
+			if ok && (id.Obj == nil || id.Obj == file.Scope.Lookup(id.Name)) && slices.Contains(islandEventFields, id.Name) && !token.Lookup(id.Name).IsKeyword() {
 				needed[id.Name] = true
 			}
 			return true
@@ -131,6 +144,9 @@ func aotScaffoldLocals(p *Program, projection aotCheckingFile) (aotCheckingFile,
 		slices.Sort(names)
 		edit := insertion{offset: fset.Position(fn.Body.Lbrace).Offset + 1, events: map[int]string{}}
 		for _, name := range names {
+			if scopeNames[name] {
+				return projection, fmt.Errorf("implicit_identifier_shadowed: %s", name)
+			}
 			typ := "interface{}"
 			switch eventFieldType(name) {
 			case program.TypeString:
@@ -144,6 +160,23 @@ func aotScaffoldLocals(p *Program, projection aotCheckingFile) (aotCheckingFile,
 			}
 			edit.events[len(edit.text)+len("\nvar ")] = name
 			edit.text += "\nvar " + name + " " + typ + ";\n"
+			addUse(fn.Body, name)
+		}
+		if edit.text != "" {
+			edits = append(edits, edit)
+		}
+	}
+	for _, decl := range file.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Body == nil {
+			continue
+		}
+		edit := insertion{offset: fset.Position(fn.Body.Lbrace).Offset + 1}
+		for _, name := range boundaryNames[fn.Name.Name] {
+			if scopeNames[name] {
+				return projection, fmt.Errorf("implicit_identifier_shadowed: %s", name)
+			}
+			edit.text += "\nvar " + name + " Node;\n"
 			addUse(fn.Body, name)
 		}
 		if edit.text != "" {

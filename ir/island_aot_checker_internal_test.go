@@ -249,3 +249,32 @@ func AOTResetCheckCacheForTest() {
 	clear(aotCheckCache.entries)
 	aotCheckCache.order = nil
 }
+
+// Names from the actual event contract and embedded stub keep the collision
+// corpus complete when either surface grows. "type" is a Go keyword and is
+// never inserted as an implicit local.
+func AOTScaffoldNamesForTest() []string {
+	names := []string{"signal", "Node", aotConditionalHelper, "props", "count", "_", "children", "slotTitle", "T", "c", "a", "b"}
+	for _, name := range islandEventFields {
+		if !token.Lookup(name).IsKeyword() {
+			names = append(names, name)
+		}
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), "signal.stub", aotSignalStub, 0)
+	if err != nil {
+		panic(err)
+	}
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *ast.FuncDecl:
+			names = append(names, "stub/"+d.Name.Name)
+		case *ast.GenDecl:
+			for _, spec := range d.Specs {
+				if typ, ok := spec.(*ast.TypeSpec); ok {
+					names = append(names, "stub/"+typ.Name.Name)
+				}
+			}
+		}
+	}
+	return names
+}

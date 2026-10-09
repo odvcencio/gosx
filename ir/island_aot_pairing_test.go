@@ -98,7 +98,7 @@ func TestIslandAOTGoSXPairingRejections(t *testing.T) {
 		{"mixed ternary", "", `return <div>{true ? 1 : "x"}</div>`, "conditional_type_mismatch"},
 		{"wrong Set type", "", `count := signal.New(0); change := func(){count.Set("x")}; return <button onClick={change}>{count}</button>`, "type_error"},
 		{"foreign Get", `type Other struct{}; func (Other) Get() int { return 0 }`, `count := Other{}; return <div>{count.Get()}</div>`, "unknown method"},
-		{"shadowed value", `const value = "shadow"`, `text := signal.New(""); change := func(){text.Set(value)}; return <input onInput={change} value={text}/>`, "evidence_binding_mismatch"},
+		{"shadowed value", `const value = "shadow"`, `text := signal.New(""); change := func(){text.Set(value)}; return <input onInput={change} value={text}/>`, "implicit_identifier_shadowed"},
 		{"event type shadow", `type string = int`, `text:=signal.New(0);change:=func(){text.Set(value)};return <input onInput={change} value={text}/>`, "evidence_binding_mismatch"},
 		{"scaffold helper shadow", `func __gosx_aot_choose(c bool,a,b int32) int32 {return b}`, `return <div>{true ? 1 : 2}</div>`, "evidence_shape_mismatch"},
 	} {

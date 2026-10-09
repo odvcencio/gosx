@@ -109,11 +109,19 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 	views := map[[32]byte]*aotCheckedSource{}
 	functions := map[string]*ast.FuncDecl{}
 	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Instances: map[*ast.Ident]types.Instance{}}
+	type projectedMember struct {
+		member
+		program    *Program
+		projection aotCheckingFile
+		file       *ast.File
+	}
+	var projected []projectedMember
+	packageNames := map[string]bool{}
 	for _, m := range members {
 		data := m.data
+		memberProgram := p
 		var projection aotCheckingFile
 		if filepath.Ext(m.name) == ".gsx" {
-			memberProgram := p
 			if !m.candidate {
 				memberProgram, err = p.aotBindings.lower(data)
 				if err != nil {
@@ -132,6 +140,41 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 		}
 		if file.Name.Name != p.Package {
 			return nil, fmt.Errorf("package_scope_unknown: sibling package differs")
+		}
+		// The first projection contains only authored package declarations.
+		// Imports have file scope and methods have receiver scope.
+		for _, decl := range file.Decls {
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv == nil {
+					packageNames[d.Name.Name] = true
+				}
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					switch s := spec.(type) {
+					case *ast.TypeSpec:
+						packageNames[s.Name.Name] = true
+					case *ast.ValueSpec:
+						for _, name := range s.Names {
+							packageNames[name.Name] = true
+						}
+					}
+				}
+			}
+		}
+		projected = append(projected, projectedMember{m, memberProgram, projection, file})
+	}
+	for _, m := range projected {
+		file, projection := m.file, m.projection
+		if filepath.Ext(m.name) == ".gsx" {
+			projection, err = aotFinishProjection(m.program, projection, packageNames)
+			if err != nil {
+				return nil, err
+			}
+			file, err = parser.ParseFile(fset, m.name, projection.bytes, parser.AllErrors)
+			if err != nil {
+				return nil, fmt.Errorf("evidence_shape_mismatch: %w", err)
+			}
 		}
 		files = append(files, file)
 		for _, decl := range file.Decls {

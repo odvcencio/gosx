@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/parser"
-	"go/token"
+	"maps"
 	"path"
 	"strconv"
 
@@ -262,16 +262,6 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 				}
 			}
 			out.WriteString(") Node {")
-			for _, comp := range p.Components {
-				if comp.Name == name {
-					if comp.AcceptsChildren {
-						out.WriteString("var children Node; _=children;\n")
-					}
-					for _, slot := range comp.AcceptsSlots {
-						out.WriteString("var slot" + slot + " Node; _=slot" + slot + ";\n")
-					}
-				}
-			}
 			body := l.childByField(n, "body")
 			if body == nil {
 				return result, fmt.Errorf("evidence_shape_mismatch: component body")
@@ -298,18 +288,33 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 		start = int(n.EndByte())
 	}
 	copySpan(start, len(source))
+	result.bytes = append([]byte(nil), out.Bytes()...)
+	return result, nil
+}
+
+// Finish only after collecting authored declarations from every selected
+// package file. No synthetic binding may hide one of those declarations.
+func aotFinishProjection(p *Program, result aotCheckingFile, packageNames map[string]bool) (aotCheckingFile, error) {
+	scopeNames := maps.Clone(packageNames)
+	for _, imp := range p.Imports {
+		name := imp.Alias
+		if name == "" {
+			name = path.Base(imp.Path)
+		}
+		if name != "_" && name != "." {
+			scopeNames[name] = true
+		}
+	}
+	var out bytes.Buffer
+	out.Write(result.bytes)
 	// These are the compiler's implicit Node and signal bindings. Explicit
 	// declarations/imports retain their original scope and are never replaced.
-	file, err := parser.ParseFile(token.NewFileSet(), "projection.go", out.Bytes(), 0)
-	if err != nil {
-		return result, fmt.Errorf("evidence_shape_mismatch: %w", err)
-	}
-	if file.Scope.Lookup("Node") == nil {
+	if !scopeNames["Node"] {
 		begin := out.Len()
 		out.WriteString("\ntype Node = struct{}\n")
 		result.synthetic["Node"] = aotCheckRegion{begin, out.Len()}
 	}
-	if bytes.Contains(out.Bytes(), []byte(aotConditionalHelper+"(")) {
+	if !scopeNames[aotConditionalHelper] && bytes.Contains(out.Bytes(), []byte(aotConditionalHelper+"(")) {
 		begin := out.Len()
 		out.WriteString("\nfunc " + aotConditionalHelper + "[T any](c bool,a,b T) T {if c {return a};return b}\n")
 		result.synthetic[aotConditionalHelper] = aotCheckRegion{begin, out.Len()}
@@ -320,7 +325,7 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 			signalImported = true
 		}
 	}
-	if !signalImported && file.Scope.Lookup("signal") == nil && bytes.Contains(source, []byte("signal.")) {
+	if !signalImported && !scopeNames["signal"] && bytes.Contains(p.aotBindings.source, []byte("signal.")) {
 		data := append([]byte(nil), out.Bytes()...)
 		line := bytes.IndexByte(data, '\n') + 1
 		insertion := []byte("import signal " + strconv.Quote(signalImportPath) + "\n")
@@ -356,7 +361,7 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 		}
 	}
 	result.bytes = append([]byte(nil), out.Bytes()...)
-	return aotScaffoldLocals(p, result)
+	return aotScaffoldLocals(p, result, scopeNames)
 }
 
 func aotEmitExpression(l *lowerer, n *gotreesitter.Node, out *bytes.Buffer, copySpan func(int, int)) error {
