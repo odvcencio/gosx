@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -140,6 +141,25 @@ func validateRecordDomains(record any) error {
 			if err := cell(row.Cell, p+"/cell"); err != nil {
 				return err
 			}
+			if (row.PNumerator == nil) != (row.PDenominator == nil) {
+				if row.PNumerator == nil {
+					return invalidInput(p + "/pNumerator")
+				}
+				return invalidInput(p + "/pDenominator")
+			}
+			if row.PNumerator != nil {
+				numerator, ok := new(big.Int).SetString(*row.PNumerator, 10)
+				if !ok || numerator.Sign() < 0 {
+					return invalidInput(p + "/pNumerator")
+				}
+				denominator, ok := new(big.Int).SetString(*row.PDenominator, 10)
+				if !ok || denominator.Sign() <= 0 {
+					return invalidInput(p + "/pDenominator")
+				}
+				if numerator.Cmp(denominator) > 0 {
+					return invalidInput(p + "/pNumerator")
+				}
+			}
 			if len(row.BaseSamples) != len(row.HeadSamples) || int64(len(row.BaseSamples)) != row.Pairs {
 				return invalidInput(p + "/pairs")
 			}
@@ -167,9 +187,22 @@ func validateRecordDomains(record any) error {
 			}
 		}
 		for i, hub := range r.Hubs {
-			for _, histogram := range []*NumericHistogram{hub.QueueDepth, hub.RTT} {
-				if histogram != nil && !validPublicHistogram(histogram.Bounds, histogram.CumulativeCounts, histogram.Count) {
-					return invalidInput("/hubs/" + strconv.Itoa(i))
+			p := "/hubs/" + strconv.Itoa(i)
+			for _, entry := range []struct {
+				field, unit string
+				histogram   *NumericHistogram
+			}{
+				{"queueDepth", "count", hub.QueueDepth}, {"rtt", "ms", hub.RTT},
+			} {
+				histogram := entry.histogram
+				if histogram == nil {
+					continue
+				}
+				if histogram.Unit != entry.unit {
+					return invalidInput(p + "/" + entry.field + "/unit")
+				}
+				if !validPublicHistogram(histogram.Bounds, histogram.CumulativeCounts, histogram.Count) {
+					return invalidInput(p + "/" + entry.field)
 				}
 			}
 		}

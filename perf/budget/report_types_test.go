@@ -179,3 +179,91 @@ func TestReportSchemaLimitsAndPrivateRoots(t *testing.T) {
 		}
 	}
 }
+
+func TestReportSchemaPValueFractions(t *testing.T) {
+	ptr := func(value string) *string { return &value }
+	for _, tc := range []struct {
+		name                   string
+		numerator, denominator *string
+		valid                  bool
+	}{
+		{"unknown", nil, nil, true},
+		{"greater-than-one", ptr("2"), ptr("1"), false},
+		{"numerator-only", ptr("1"), nil, false},
+		{"denominator-only", nil, ptr("1"), false},
+		{"equal", ptr("1"), ptr("1"), true},
+		{"zero", ptr("0"), ptr("1"), true},
+		{"leading-zero-over-one", ptr("0002"), ptr("1"), false},
+		{"large-over-one", ptr("18446744073709551617"), ptr("18446744073709551616"), false},
+		{"large-equal", ptr("18446744073709551617"), ptr("18446744073709551617"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := publicTestRecords(t)[2].(*PairReport)
+			record.Cells[0].PNumerator = tc.numerator
+			record.Cells[0].PDenominator = tc.denominator
+			data, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, decodeErr := DecodeRecord(bytes.NewReader(data))
+			for label, err := range map[string]error{"domain": validateRecordDomains(record), "decode": decodeErr} {
+				if tc.valid {
+					if err != nil {
+						t.Fatalf("%s rejected valid p-value: %v", label, err)
+					}
+				} else {
+					var input *InputError
+					if !errors.As(err, &input) || input.Code != "invalid-input" || !strings.HasPrefix(input.Pointer, "/cells/0/p") {
+						t.Errorf("%s accepted invalid p-value or returned wrong error: %v", label, err)
+					}
+				}
+			}
+			if tc.valid && !reflect.DeepEqual(decoded, record) {
+				t.Fatal("round trip changed p-value components")
+			}
+		})
+	}
+}
+
+func TestReportSchemaHubHistogramUnits(t *testing.T) {
+	for _, tc := range []struct {
+		name, queueUnit, rttUnit, invalidField string
+	}{
+		{"valid", "count", "ms", ""},
+		{"queue-depth-time", "ms", "ms", "queueDepth"},
+		{"rtt-bytes", "count", "B", "rtt"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			record := publicTestRecords(t)[3].(*FieldSnapshot)
+			record.Hubs = []FieldHub{{
+				App: "fixture", Hub: "room", Direction: "out", Kind: "binary",
+				Messages: 2, PayloadBytes: 1024, ClientSeconds: 1, ReferenceClients: 1, ReasonCode: "ok",
+				QueueDepth: &NumericHistogram{Unit: tc.queueUnit, Bounds: []float64{1}, CumulativeCounts: []int64{1, 2}, Count: 2},
+				RTT:        &NumericHistogram{Unit: tc.rttUnit, Bounds: []float64{100}, CumulativeCounts: []int64{1, 2}, Count: 2},
+			}}
+			data, err := json.Marshal(record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, decodeErr := DecodeRecord(bytes.NewReader(data))
+			for label, err := range map[string]error{
+				"schema": validateTyped("FieldSnapshot", record),
+				"domain": validateRecordDomains(record), "decode": decodeErr,
+			} {
+				if tc.invalidField == "" {
+					if err != nil {
+						t.Fatalf("%s rejected valid histogram units: %v", label, err)
+					}
+				} else {
+					var input *InputError
+					if !errors.As(err, &input) || input.Code != "invalid-input" || !strings.HasPrefix(input.Pointer, "/hubs/0/"+tc.invalidField) {
+						t.Errorf("%s accepted incorrect histogram unit or returned wrong error: %v", label, err)
+					}
+				}
+			}
+			if tc.invalidField == "" && !reflect.DeepEqual(decoded, record) {
+				t.Fatal("round trip changed histograms")
+			}
+		})
+	}
+}
