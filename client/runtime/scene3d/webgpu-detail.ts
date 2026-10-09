@@ -22,6 +22,11 @@ function sceneWebGPUCreateDetailResources(device: any, frameLayout: any, materia
   };
 }
 
+function sceneWebGPUEnsureDetailResources(device: any, resources: any, materials: any[], frameLayout: any, materialLayout: any, source: string) {
+  if (resources || !materials.some(function(material: any) { return material && material.detail; })) return resources;
+  return sceneWebGPUCreateDetailResources(device, frameLayout, materialLayout, source);
+}
+
 function sceneWebGPUDetailBakeResources(device: any, resources: any, placeholderView: any) {
   if (resources.bake) return resources.bake;
   const code = `
