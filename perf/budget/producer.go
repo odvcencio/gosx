@@ -128,33 +128,44 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	// Public files are whole app-owned bodies. Their catalog IDs bind their native
 	// file locations without accepting an arbitrary filesystem walk.
 	prefix := "app/" + opts.App + "/public/"
+	public := []producerPublicFile{}
 	for _, rule := range catalog.AssetRules {
 		if !strings.HasPrefix(rule.ID, prefix) {
 			continue
 		}
 		relative := strings.TrimPrefix(rule.ID, "app/"+opts.App+"/")
-		_, err := root.Stat(relative)
+		info, err := root.Stat(relative)
 		if os.IsNotExist(err) {
 			continue
 		}
-		body, err := readMeasureFile(root, relative, maxMeasureBody)
-		if err != nil {
+		if err != nil || !info.Mode().IsRegular() || seen[rule.ID] || rule.Owner != "app" {
 			return "", fail("/public/body")
 		}
 		urlPath := "/" + strings.TrimPrefix(relative, "public/")
+		target, err := fixtureFilePath(urlPath, rule.Kind)
+		if err != nil {
+			return "", fail("/public/destination")
+		}
+		public = append(public, producerPublicFile{rule.ID, rule.Kind, relative, urlPath, target})
+		seen[rule.ID] = true
+	}
+	if err := preflightProducerPaths(root, opts, routes, public); err != nil {
+		return "", err
+	}
+	for _, entry := range public {
+		body, err := readMeasureFile(root, entry.source, maxMeasureBody)
+		if err != nil {
+			return "", fail("/public/body")
+		}
 		// Measurement paths are rooted in the fixture directory. Copy public bodies
 		// there while leaving the production server's own public tree intact.
-		if err := writeProducerFile(root, strings.TrimPrefix(urlPath, "/"), body); err != nil {
+		if err := writeProducerFile(root, entry.target, body); err != nil {
 			return "", err
 		}
-		if err := copyProducerSidecars(root, relative, strings.TrimPrefix(urlPath, "/"), body); err != nil {
+		if err := copyProducerSidecars(root, entry.source, entry.target, body); err != nil {
 			return "", err
 		}
-		if seen[rule.ID] {
-			return "", fail("/public/id")
-		}
-		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: rule.ID, SHA256: producerHash(body), URL: urlPath, Owner: "app", Kind: rule.Kind, Phase: "dormant", Condition: "always", Dependencies: []string{}})
-		seen[rule.ID] = true
+		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: entry.id, SHA256: producerHash(body), URL: entry.url, Owner: "app", Kind: entry.kind, Phase: "dormant", Condition: "always", Dependencies: []string{}})
 	}
 	for _, route := range routes {
 		if !validRoute(route.RouteTemplate) || strings.ContainsAny(route.RouteTemplate, "[]") {
@@ -197,11 +208,10 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if id == "" || seen[id] {
 			return "", fail("/routes/document")
 		}
-		file := strings.Trim(route.RouteTemplate, "/")
-		if file != "" {
-			file += "/"
+		file, err := fixtureFilePath(route.RouteTemplate, "html")
+		if err != nil {
+			return "", fail("/routes/document")
 		}
-		file += "index.html"
 		if err := writeProducerFile(root, file, body); err != nil {
 			return "", err
 		}
@@ -237,7 +247,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	if _, err := DecodeFixtureManifest(bytes.NewReader(data)); err != nil {
 		return "", inputReference(err, "producer", "/manifest")
 	}
-	if err := writeProducerFile(root, "perf-fixtures.v1.json", append(data, '\n')); err != nil {
+	if err := writeProducerFile(root, fixtureManifestFile, append(data, '\n')); err != nil {
 		return "", err
 	}
 	return digest, nil
@@ -246,16 +256,16 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 func producerHash(body []byte) string { sum := sha256.Sum256(body); return hex.EncodeToString(sum[:]) }
 
 func copyProducerSidecars(root *os.Root, source, target string, body []byte) error {
-	for _, encoding := range []struct{ suffix, name string }{{".gz", "gzip"}, {".br", "br"}} {
+	for _, encoding := range fixtureSidecars {
 		_, err := root.Stat(source + encoding.suffix)
 		if os.IsNotExist(err) {
 			continue
 		}
 		encoded, readErr := readMeasureFile(root, source+encoding.suffix, maxMeasureBody)
-		if err != nil || readErr != nil || assetmeasure.VerifySidecar(body, encoded, encoding.name) != nil {
+		if err != nil || readErr != nil || assetmeasure.VerifySidecar(body, encoded, encoding.encoding) != nil {
 			return &InputError{Code: "stale-sidecar", Reference: "producer", Pointer: "/encoding"}
 		}
-		if err := writeProducerFile(root, target+encoding.suffix, encoded); err != nil {
+		if err := writeProducerBytes(root, target+encoding.suffix, encoded); err != nil {
 			return err
 		}
 	}
@@ -263,6 +273,19 @@ func copyProducerSidecars(root *os.Root, source, target string, body []byte) err
 }
 
 func writeProducerFile(root *os.Root, name string, data []byte) error {
+	if err := writeProducerBytes(root, name, data); err != nil {
+		return err
+	}
+	// A fresh snapshot cannot retain encodings from a different body.
+	for _, sidecar := range fixtureSidecars {
+		if err := root.Remove(name + sidecar.suffix); err != nil && !os.IsNotExist(err) {
+			return &InputError{Code: "write-failed", Reference: "producer", Pointer: "/output"}
+		}
+	}
+	return nil
+}
+
+func writeProducerBytes(root *os.Root, name string, data []byte) error {
 	fail := func() error { return &InputError{Code: "write-failed", Reference: "producer", Pointer: "/output"} }
 	if !safePath(name) {
 		return fail()
@@ -283,12 +306,6 @@ func writeProducerFile(root *os.Root, name string, data []byte) error {
 	}
 	if err := root.Rename(pending, name); err != nil {
 		return fail()
-	}
-	// A fresh snapshot cannot retain encodings from a different body.
-	for _, suffix := range []string{".gz", ".br"} {
-		if err := root.Remove(name + suffix); err != nil && !os.IsNotExist(err) {
-			return fail()
-		}
 	}
 	return nil
 }

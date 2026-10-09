@@ -125,7 +125,7 @@ func collect(ctx context.Context, opts CollectOptions, pin assetmeasure.Compress
 		if err != nil {
 			return nil, collectionFailure("wrong-fixture", "/bindings/"+strconv.Itoa(i)+"/dist")
 		}
-		data, readErr := readMeasureFile(root, "perf-fixtures.v1.json", maxInputBytes)
+		data, readErr := readMeasureFile(root, fixtureManifestFile, maxInputBytes)
 		if readErr != nil {
 			root.Close()
 			return nil, readErr

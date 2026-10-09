@@ -54,7 +54,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		return result, measureFailure("wrong-fixture", "/dist")
 	}
 	defer root.Close()
-	data, err := readMeasureFile(root, "perf-fixtures.v1.json", maxInputBytes)
+	data, err := readMeasureFile(root, fixtureManifestFile, maxInputBytes)
 	if err != nil {
 		return result, err
 	}
@@ -330,15 +330,9 @@ func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][
 			return body, map[string][]byte{"gzip": host.NavigationRuntimeGzip, "br": host.NavigationRuntimeBrotli}, nil
 		}
 	}
-	file := strings.TrimPrefix(assetURL, "/")
-	if kind == "html" {
-		file = strings.Trim(file, "/")
-		if file != "" {
-			file += "/"
-		}
-		file += "index.html"
-	} else if i := strings.Index(assetURL, "/gosx/assets/"); i >= 0 {
-		file = "assets/" + assetURL[i+len("/gosx/assets/"):]
+	file, err := fixtureFilePath(assetURL, kind)
+	if err != nil {
+		return nil, nil, err
 	}
 	body, err := readMeasureFile(root, file, maxMeasureBody)
 	if err != nil {
@@ -351,7 +345,7 @@ func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][
 		}
 	}
 	representations := map[string][]byte{}
-	for _, sidecar := range []struct{ suffix, encoding string }{{".gz", "gzip"}, {".br", "br"}} {
+	for _, sidecar := range fixtureSidecars {
 		info, err := root.Stat(file + sidecar.suffix)
 		if os.IsNotExist(err) {
 			continue
