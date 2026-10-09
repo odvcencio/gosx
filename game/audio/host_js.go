@@ -12,7 +12,11 @@ import (
 
 // HostJS is the real browser Host, backed by a WebAudio AudioContext.
 type HostJS struct {
-	ctx js.Value
+	ctx      js.Value
+	closed   bool
+	closing  chan struct{}
+	worklets map[*WorkletNodeJS]struct{}
+	sources  map[*sourceNodeJS]struct{}
 }
 
 // NewHostJS creates an AudioContext-backed Host. It fails if neither
@@ -20,6 +24,16 @@ type HostJS struct {
 // The context starts suspended, per browser autoplay policy — call
 // Player.Unlock from a user gesture handler to start it running.
 func NewHostJS() (*HostJS, error) {
+	return NewHostJSWithOptions(HostOptions{})
+}
+
+// NewHostJSWithOptions creates a context with the requested device settings.
+// Unsupported rates and browser construction errors are returned to the caller.
+func NewHostJSWithOptions(options HostOptions) (host *HostJS, err error) {
+	defer recoverAudio("create context", &err)
+	if !nonnegative(options.SampleRate) {
+		return nil, errors.New("audio: invalid sample rate")
+	}
 	ctor := js.Global().Get("AudioContext")
 	if ctor.Type() != js.TypeFunction {
 		ctor = js.Global().Get("webkitAudioContext")
@@ -27,7 +41,14 @@ func NewHostJS() (*HostJS, error) {
 	if ctor.Type() != js.TypeFunction {
 		return nil, errors.New("audio: AudioContext is not available")
 	}
-	return &HostJS{ctx: ctor.New()}, nil
+	settings := map[string]any{}
+	if options.SampleRate > 0 {
+		settings["sampleRate"] = options.SampleRate
+	}
+	if options.LatencyHint != "" {
+		settings["latencyHint"] = options.LatencyHint
+	}
+	return &HostJS{ctx: ctor.New(settings), closing: make(chan struct{}), worklets: make(map[*WorkletNodeJS]struct{}), sources: make(map[*sourceNodeJS]struct{})}, nil
 }
 
 func (h *HostJS) CurrentTime() float64 { return h.ctx.Get("currentTime").Float() }
@@ -39,6 +60,9 @@ func (h *HostJS) Resume() (err error) {
 			err = fmt.Errorf("audio: resume: %v", r)
 		}
 	}()
+	if h.closed {
+		return ErrClosed
+	}
 	h.ctx.Call("resume")
 	return nil
 }
@@ -56,18 +80,27 @@ func (h *HostJS) CreateSource(buffer Buffer) SourceNode {
 	if jsBuffer, ok := buffer.(js.Value); ok {
 		node.Set("buffer", jsBuffer)
 	}
-	return &sourceNodeJS{value: node}
+	source := &sourceNodeJS{value: node, host: h}
+	h.sources[source] = struct{}{}
+	return source
 }
 
 func (h *HostJS) Destination() Node {
 	return &rawNodeJS{value: h.ctx.Get("destination")}
 }
 
-func (h *HostJS) DecodeAudioData(data []byte) (Buffer, error) {
+func (h *HostJS) DecodeAudioData(data []byte) (buffer Buffer, err error) {
+	defer recoverAudio("decode", &err)
+	if h.closed {
+		return nil, ErrClosed
+	}
 	array := jsutil.NewUint8ArrayFromBytes(data)
-	value, err := jsutil.AwaitPromise(h.ctx.Call("decodeAudioData", array.Get("buffer")))
+	value, err := h.await(h.ctx.Call("decodeAudioData", array.Get("buffer")))
 	if err != nil {
 		return nil, err
+	}
+	if h.closed {
+		return nil, ErrClosed
 	}
 	return value, nil
 }
@@ -81,6 +114,8 @@ func jsValueOf(n Node) js.Value {
 	case *compressorNodeJS:
 		return v.value
 	case *sourceNodeJS:
+		return v.value
+	case *WorkletNodeJS:
 		return v.value
 	default:
 		return js.Undefined()
@@ -110,8 +145,10 @@ func (n *compressorNodeJS) Configure(threshold, ratio, attack, release float64) 
 }
 
 type sourceNodeJS struct {
-	value js.Value
-	ended js.Func
+	value    js.Value
+	host     *HostJS
+	ended    js.Func
+	hasEnded bool
 }
 
 func (n *sourceNodeJS) Connect(dst Node)             { n.value.Call("connect", jsValueOf(dst)) }
@@ -121,10 +158,24 @@ func (n *sourceNodeJS) SetPlaybackRate(rate float64) { n.value.Get("playbackRate
 func (n *sourceNodeJS) Start(at float64)             { n.value.Call("start", at) }
 func (n *sourceNodeJS) Stop(at float64)              { n.value.Call("stop", at) }
 func (n *sourceNodeJS) OnEnded(fn func()) {
+	n.clearEnded()
+	if fn == nil || n.host.closed {
+		return
+	}
 	n.ended = js.FuncOf(func(js.Value, []js.Value) any {
+		n.clearEnded()
+		delete(n.host.sources, n)
 		fn()
-		n.ended.Release()
 		return nil
 	})
+	n.hasEnded = true
 	n.value.Set("onended", n.ended)
+}
+
+func (n *sourceNodeJS) clearEnded() {
+	n.value.Set("onended", js.Null())
+	if n.hasEnded {
+		n.ended.Release()
+		n.hasEnded = false
+	}
 }
