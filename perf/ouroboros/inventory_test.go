@@ -475,7 +475,9 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	// __gosx_scene3d_walk_api: the first-person walk controller published by
 	// the lazily loaded bootstrap-feature-scene3d-walk.js chunk
 	// (client/runtime/scene3d/mount-walk.ts); only walk scenes fetch it.
-	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_apply_instance_stream_frame", "__gosx_scene3d_html", "__gosx_scene3d_instance_stream_apply", "__gosx_scene3d_instance_stream_bridge", "__gosx_scene3d_walk_api", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
+	// __gosx_scene3d_assets is the scene-owned immutable geometry resolver;
+	// commands reuse this authority after the scene mount feature has loaded.
+	wantFullOnly := []string{"__gosx_bench_exports", "__gosx_current_event", "__gosx_current_handler", "__gosx_loaded_scripts", "__gosx_manifest", "__gosx_mount_late_engine_factory", "__gosx_page_cache", "__gosx_relay_enabled", "__gosx_relay_register_peer", "__gosx_scene3d_apply_instance_stream_frame", "__gosx_scene3d_assets", "__gosx_scene3d_html", "__gosx_scene3d_instance_stream_apply", "__gosx_scene3d_instance_stream_bridge", "__gosx_scene3d_walk_api", "__gosx_stop_island_fanout", "__gosx_stripe", "__gosx_submit_action", "__gosx_surface_discover"}
 	// The shared wave packer and optional query, vessel and walk-surface
 	// authorities extend the full source inventory. Keep the pinned historical
 	// receipt unchanged and explicitly reconcile every added authority name.
