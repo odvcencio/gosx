@@ -76,7 +76,8 @@ func (r Record) ClientHealthSummary() (ClientHealthSummary, bool) {
 	return *r.health, true
 }
 
-// RetainedBytes includes copied payloads, encoded bytes and record metadata.
+// RetainedBytes conservatively charges copied payloads, encoded bytes and
+// record metadata, including allocation rounding and slice capacity.
 // It is internal accounting, not an additional public schema API.
 func RetainedBytes(r Record) int64 { return r.charge }
 func Valid(r Record) bool          { return r.line != "" }
@@ -168,6 +169,7 @@ func newRecord(e Envelope, typ RecordType, payload any) (Record, error) {
 	e.At = e.At.UTC().Round(0)
 	e.Stream = strings.Clone(e.Stream)
 	e.Boot = strings.Clone(e.Boot)
+	e.State = RecordState(strings.Clone(string(e.State)))
 	// The checksum excludes only crc32c and the final newline.
 	input, err := canonicalEnvelope(payload, false, e)
 	if err != nil {
@@ -183,7 +185,7 @@ func newRecord(e Envelope, typ RecordType, payload any) (Record, error) {
 		return Record{}, telemetryerr.ErrFieldBudget
 	}
 	line = append(line, '\n')
-	charge := int64(reflect.TypeFor[Record]().Size()) + int64(len(line)) + 80 + retained(reflect.ValueOf(payload))
+	charge := allocationBytes(int64(reflect.TypeFor[Record]().Size())) + allocationBytes(int64(len(line))) + retainedStorage(reflect.ValueOf(e)) + retained(reflect.ValueOf(payload))
 	if charge > 32<<10 {
 		return Record{}, telemetryerr.ErrFieldBudget
 	}
@@ -283,27 +285,59 @@ func cloneValue(v reflect.Value) reflect.Value {
 	}
 }
 func retained(v reflect.Value) int64 {
-	n := int64(v.Type().Size())
+	return allocationBytes(int64(v.Type().Size())) + retainedStorage(v)
+}
+
+// Only separately allocated storage is added for embedded fields: their
+// headers and scalar values are already covered by the containing object.
+func retainedStorage(v reflect.Value) int64 {
+	var n int64
 	if v.Type() == reflect.TypeFor[time.Time]() {
 		return n
 	}
 	switch v.Kind() {
 	case reflect.String:
-		n += int64((v.Len() + 15) &^ 15)
+		n += allocationBytes(int64(v.Len()))
 	case reflect.Pointer:
 		if !v.IsNil() {
 			n += retained(v.Elem())
 		}
 	case reflect.Struct:
 		for i := 0; i < v.NumField(); i++ {
-			n += retained(v.Field(i)) - int64(v.Field(i).Type().Size())
+			n += retainedStorage(v.Field(i))
 		}
 	case reflect.Slice:
+		n += allocationBytes(int64(v.Cap()) * int64(v.Type().Elem().Size()))
 		for i := 0; i < v.Len(); i++ {
-			n += retained(v.Index(i))
+			n += retainedStorage(v.Index(i))
 		}
 	}
 	return n
+}
+
+// Reserve allocator metadata above the smallest allocation classes, then
+// round conservatively across size classes and large-object pages. This is
+// a portable upper bound; it does not depend on private runtime APIs.
+func allocationBytes(n int64) int64 {
+	if n > 256 {
+		n += 16
+	}
+	switch {
+	case n <= 256:
+		return (n + 15) / 16 * 16
+	case n <= 512:
+		return (n + 31) / 32 * 32
+	case n <= 1024:
+		return (n + 127) / 128 * 128
+	case n <= 32768:
+		size := int64(1024)
+		for size < n {
+			size *= 2
+		}
+		return size
+	default:
+		return (n + 8191) / 8192 * 8192
+	}
 }
 
 func entityState(state RecordState, end time.Time) bool {
