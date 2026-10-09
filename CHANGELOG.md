@@ -21,6 +21,17 @@
   approved +536 and +539 for the gesture events; the review fixes (element size,
   pointer-capture release, legacy wheel gate) account for the rest.
 
+- Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
+  for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
+  extensions or `GLSceneSizeUniform`; post shaders use the quad and bottom-left
+  texture origin. Hosts supplying these fields to WebGL1 must switch to WebGL2
+  or supply separately compiled ES 1.00 shaders and their own binding layout.
+- Add `SelenaMaterialOptions.Targets`, `SelenaTargetRequirements` and the
+  `ShaderProgram(target)` accessors on `CustomMaterial`, `IRMaterial` and
+  `engine.RenderMaterial`. Requested artifacts travel through both browser scene
+  payloads and native bundles. `FrameStats.MaterialFallbacks` and native preview
+  diagnostics report custom mesh programs replaced by the standard shader.
+
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
   to replace its code-configured token or file source. Two environment sources

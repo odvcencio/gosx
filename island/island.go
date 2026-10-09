@@ -823,15 +823,11 @@ func runtimeScriptAssetPathMatches(target, canonical, resolved string, asset bui
 	if target == canonical {
 		return true
 	}
-	resolvedPath := compatRuntimePath(resolved)
-	if target == "" || target != resolvedPath {
-		return false
-	}
 	file := strings.TrimLeft(strings.TrimSpace(asset.File), "/")
-	if file == "" {
+	if target == "" || file == "" || (target != "/"+file && !strings.HasSuffix(target, "/"+file)) {
 		return false
 	}
-	return target == "/"+file || strings.HasSuffix(target, "/"+file)
+	return target == compatRuntimePath(resolved)
 }
 
 func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
@@ -839,12 +835,16 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 	if hash == "" {
 		return path
 	}
-	parsed, err := neturl.Parse(path)
-	if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
-		return path
-	}
-	switch compatRuntimePath(path) {
+	target := compatRuntimePath(path)
+	switch target {
 	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+		if path == target {
+			return path + "?v=" + neturl.QueryEscape(hash)
+		}
+		parsed, err := neturl.Parse(path)
+		if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
+			return path
+		}
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -857,6 +857,13 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 }
 
 func compatRuntimePath(path string) string {
+	// Manifest asset URLs are normally plain absolute paths. Their URL path
+	// is already available, so avoid allocating a URL for every candidate in
+	// runtimeScriptAsset. Keep parsing authority, escaped path, query, and
+	// fragment forms so their matching semantics stay the same.
+	if path == "" || (strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.ContainsAny(path, "%?#")) {
+		return strings.TrimSpace(path)
+	}
 	parsed, err := neturl.Parse(path)
 	if err != nil || parsed == nil {
 		return strings.TrimSpace(path)
