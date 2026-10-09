@@ -240,6 +240,7 @@ var outputs = []output{
 			// The 30a..30k set replaces the former single 30-tail.js. The
 			// monolith ships every part, in the original order.
 			sourceFile(tailEventDelegationFile),
+			sourceFile("../runtime/host/modules.ts"),
 			sourceFile(tailEngineMountingFile),
 			sourceFile(tailHubConnectionsFile),
 			sourceFile(tailHubFightInputFile),
@@ -335,6 +336,7 @@ var outputs = []output{
 			// fallback engine too.
 			sourceFile(videoSyncFallbackFile),
 			sourceFile(tailCapabilityProbeFile),
+			sourceFile("../runtime/host/modules.ts"),
 			sourceFile(tailEngineMountingFile),
 			sourceFile(tailEngineDisposeFile),
 			sourceFile("bootstrap-src/26b-feature-engines-suffix.ts"),

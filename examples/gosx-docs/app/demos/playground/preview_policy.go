@@ -74,6 +74,7 @@ var playgroundAllowedEvents = map[string]struct{}{
 	"input": {}, "keydown": {}, "keyup": {},
 	"pointercancel": {}, "pointerdown": {}, "pointermove": {},
 	"pointerup": {}, "submit": {}, "window-resize": {},
+	"wheel": {}, "dblclick": {}, "contextmenu": {}, "lostpointercapture": {},
 }
 
 // validatePlaygroundProgram is the authority for every DOM mutation the VM can
@@ -182,6 +183,14 @@ func playgroundEventType(name string) string {
 		return "document-keyup"
 	case "onWindowResize":
 		return "window-resize"
+	case "onWheel":
+		return "wheel"
+	case "onDblClick":
+		return "dblclick"
+	case "onContextMenu":
+		return "contextmenu"
+	case "onLostPointerCapture":
+		return "lostpointercapture"
 	default:
 		return strings.ToLower(strings.TrimSpace(name))
 	}

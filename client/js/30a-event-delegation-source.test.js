@@ -33,6 +33,9 @@ test("delegation source carries typed pointer/dataset context and clears current
     contextDuringAction = [env.context.__gosx_current_event, env.context.__gosx_current_handler];
     return 0;
   };
+  // The core runtime always provides the island registry before events fire.
+  env.context.__gosx = env.context.__gosx || {};
+  env.context.__gosx.islands = new Map();
   runScript(source, env.context, "30a-tail-event-delegation.js");
   env.context.__gosx_test_setup_event_delegation(root, root.id);
 
@@ -64,6 +67,8 @@ test("delegation source carries typed pointer/dataset context and clears current
     pointerID: 4,
     clientX: 10,
     clientY: 20,
+    offsetX: 10,
+    offsetY: 20,
     buttons: 1,
     data: { recordId: "r-7" },
   });
@@ -307,9 +312,51 @@ test("delegation source attaches only declared de-duplicated events with legacy 
   assert.deepEqual(Array.from(documentEntries, (entry) => entry.type), ["keydown"]);
 
   const legacyEntries = env.context.__gosx_test_setup_event_delegation(legacy, legacy.id);
-  assert.equal(legacyEntries.filter((entry) => entry.target === legacy).length, 17);
+  assert.equal(legacyEntries.filter((entry) => entry.target === legacy).length, 21);
   const modernEntry = JSON.parse('{"events":[]}');
   const oldNullEntry = JSON.parse('{"events":null}');
   assert.equal(env.context.__gosx_test_setup_event_delegation(explicitNone, explicitNone.id, modernEntry.events).length, 0);
-  assert.equal(env.context.__gosx_test_setup_event_delegation(legacyNull, legacyNull.id, oldNullEntry.events).length, 17);
+  assert.equal(env.context.__gosx_test_setup_event_delegation(legacyNull, legacyNull.id, oldNullEntry.events).length, 21);
+});
+
+test("wheel, dblclick, contextmenu and lostpointercapture delegate with offsets and deltas", () => {
+  const root = new FakeElement("div", null);
+  const handle = new FakeElement("div", null);
+  root.id = "island-gesture";
+  handle.id = "fader";
+  handle.setAttribute("data-gosx-on-wheel", "zoom");
+  handle.setAttribute("data-gosx-on-dblclick", "reset");
+  handle.setAttribute("data-gosx-on-contextmenu", "menu");
+  handle.setAttribute("data-gosx-on-lostpointercapture", "lost");
+  handle.getBoundingClientRect = () => ({ left: 100, top: 50, width: 40, height: 200 });
+  root.appendChild(handle);
+  const calls = [];
+  const options = [];
+  const env = createContext({ elements: [root] });
+  env.context.__gosx_action = (...args) => { calls.push(args); return 0; };
+  const add = root.addEventListener.bind(root);
+  root.addEventListener = (type, listener, opts) => { options.push([type, opts]); add(type, listener, opts); };
+  runScript(source, env.context, "30a-tail-event-delegation.js");
+  env.context.__gosx_test_setup_event_delegation(root, root.id);
+
+  root.dispatchEvent({ type: "wheel", target: handle, clientX: 110, clientY: 70, deltaX: 0, deltaY: -120, deltaMode: 1, preventDefault() {} });
+  root.dispatchEvent({ type: "dblclick", target: handle, clientX: 120, clientY: 150, button: 0 });
+  root.dispatchEvent({ type: "contextmenu", target: handle, clientX: 100, clientY: 50, button: 2 });
+  root.dispatchEvent({ type: "lostpointercapture", target: handle, pointerId: 3 });
+
+  assert.deepEqual(calls.map((c) => c[1]), ["zoom", "reset", "menu", "lost"]);
+  assert.deepEqual(JSON.parse(calls[0][2]), {
+    type: "wheel", targetID: "fader", currentTargetID: "fader",
+    clientX: 110, clientY: 70, offsetX: 10, offsetY: 20, elementWidth: 40, elementHeight: 200, deltaY: -120, deltaMode: 1,
+  });
+  assert.deepEqual(JSON.parse(calls[1][2]), {
+    type: "dblclick", targetID: "fader", currentTargetID: "fader",
+    clientX: 120, clientY: 150, offsetX: 20, offsetY: 100, elementWidth: 40, elementHeight: 200,
+  });
+  assert.equal(JSON.parse(calls[2][2]).button, 2);
+  assert.equal(JSON.parse(calls[3][2]).pointerID, 3);
+  const wheel = options.find((o) => o[0] === "wheel");
+  // The options object is created in the vm realm; compare properties, not identity.
+  assert.equal(wheel[1] && wheel[1].capture, false, "wheel listens in the bubble phase");
+  assert.equal(wheel[1] && wheel[1].passive, false, "wheel must be a non-passive listener");
 });
