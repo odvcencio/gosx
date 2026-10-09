@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"go/ast"
 	"go/constant"
-	"go/parser"
 	"go/token"
 	"go/types"
 	"slices"
@@ -36,6 +35,7 @@ type aotEvidence struct {
 	handlerObjects map[string]types.Object
 	proofs         map[program.ExprID]aotExpressionProof
 	shared         bool
+	lower          func([]byte) (*Program, error)
 }
 
 func aotGoKind(typ types.Type) aot.ScalarKind {
@@ -62,6 +62,12 @@ func aotGoKind(typ types.Type) aot.ScalarKind {
 
 func newAOTEvidence(c *aotCheckedSource, src *Program, comp Component) (*aotEvidence, error) {
 	e := &aotEvidence{checked: c, component: comp, states: map[types.Object]string{}, stateKinds: map[string]aot.ScalarKind{}, declarations: map[string]ast.Expr{}, handlers: map[string]*ast.FuncLit{}, handlerObjects: map[string]types.Object{}, proofs: map[program.ExprID]aotExpressionProof{}, propsObjects: map[types.Object]bool{}, events: map[types.Object]string{}}
+	e.lower = src.aotBindings.lower
+	for ident, obj := range c.info.Defs {
+		if name := c.projection.implicit[c.fset.Position(ident.Pos()).Offset]; name != "" {
+			e.events[obj] = name
+		}
+	}
 	fn := c.functions[comp.Name]
 	if fn == nil {
 		return nil, fmt.Errorf("evidence_shape_mismatch: candidate function missing")
@@ -170,10 +176,11 @@ func newAOTEvidence(c *aotCheckedSource, src *Program, comp Component) (*aotEvid
 		if !ok {
 			return nil, fmt.Errorf("evidence_shape_mismatch: computed constructor")
 		}
-		if len(body.Body.List) != 1 {
+		statements := aotAuthoredStatements(body.Body)
+		if len(statements) != 1 {
 			return nil, fmt.Errorf("evidence_shape_mismatch: computed body")
 		}
-		ret, ok := body.Body.List[0].(*ast.ReturnStmt)
+		ret, ok := statements[0].(*ast.ReturnStmt)
 		if !ok || len(ret.Results) != 1 {
 			return nil, fmt.Errorf("evidence_shape_mismatch: computed result")
 		}
@@ -225,8 +232,8 @@ func (e *aotEvidence) sourceNode(origin islandExprOrigin) (ast.Expr, error) {
 	}
 	if strings.HasPrefix(origin.declaration, "handler/") {
 		fn := e.handlers[strings.TrimPrefix(origin.declaration, "handler/")]
-		if fn != nil && origin.statement < len(fn.Body.List) {
-			if stmt, ok := fn.Body.List[origin.statement].(*ast.ExprStmt); ok {
+		if fn != nil && origin.statement < len(aotAuthoredStatements(fn.Body)) {
+			if stmt, ok := aotAuthoredStatements(fn.Body)[origin.statement].(*ast.ExprStmt); ok {
 				return stmt.X, nil
 			}
 		}
@@ -258,11 +265,25 @@ func (e *aotEvidence) pair(source string, origin islandExprOrigin, exprs []progr
 	if err != nil {
 		return nil, err
 	}
-	parsed, err := parser.ParseExprFrom(token.NewFileSet(), "expression.go", source, 0)
+	parsed, err := e.parseExpression(source)
+
 	if err != nil {
 		return nil, fmt.Errorf("evidence_shape_mismatch: %w", err)
 	}
+	if fn, ok := node.(*ast.FuncLit); ok {
+		statements := aotAuthoredStatements(fn.Body)
+		if origin.statement >= len(statements) {
+			return nil, fmt.Errorf("evidence_shape_mismatch: inline statement missing")
+		}
+		stmt, ok := statements[origin.statement].(*ast.ExprStmt)
+		if !ok {
+			return nil, fmt.Errorf("evidence_shape_mismatch: inline statement is not an expression")
+		}
+		node = stmt.X
+	}
+
 	proofs := map[program.ExprID]aotExpressionProof{}
+	structural := map[string]aot.ScalarKind{}
 	var visit func(program.ExprID, ast.Expr, ast.Expr) error
 	visit = func(id program.ExprID, native, checked ast.Expr) error {
 		for {
@@ -333,6 +354,9 @@ func (e *aotEvidence) pair(source string, origin islandExprOrigin, exprs []progr
 			if !ok || !ok2 || nativeName.Name != op.Value || e.events[e.checked.info.Uses[checkedName]] != op.Value {
 				return fmt.Errorf("evidence_binding_mismatch: event parameter")
 			}
+			if proof.kind != aotEventKind(op.Value) {
+				return fmt.Errorf("evidence_binding_mismatch: event type")
+			}
 			proof.input = &aot.InputContract{Source: "event", Root: op.Value, Kind: proof.kind}
 		case program.OpPropGet:
 			name, ok := native.(*ast.Ident)
@@ -371,7 +395,67 @@ func (e *aotEvidence) pair(source string, origin islandExprOrigin, exprs []progr
 				input.Kind = proof.kind
 				proof.input = &input
 			}
+		case program.OpCond:
+			call, ok := native.(*ast.CallExpr)
+			bound, ok2 := checked.(*ast.CallExpr)
+			if !ok || !ok2 || len(call.Args) != 3 || len(bound.Args) != 3 || len(op.Operands) != 3 {
+				return mismatch()
+			}
+			name, ok := bound.Fun.(*ast.Ident)
+			nativeName, ok2 := call.Fun.(*ast.Ident)
+			object := e.checked.info.Uses[name]
+			helper := e.checked.functions[aotConditionalHelper]
+			if !ok || !ok2 || nativeName.Name != aotConditionalHelper || helper == nil || object != e.checked.info.Defs[helper.Name] {
+				return mismatch()
+			}
+			for i := range call.Args {
+				if err := child(i, call.Args[i], bound.Args[i]); err != nil {
+					return err
+				}
+			}
+			condition, a, b := proofs[op.Operands[0]], proofs[op.Operands[1]], proofs[op.Operands[2]]
+			if condition.kind != aot.Bool || !aotScalar(a.kind) || a.kind != b.kind {
+				return fmt.Errorf("conditional_type_mismatch: boolean condition and matching scalar arms required")
+			}
+			proof.kind = a.kind
+			if condition.value != nil && condition.value.Kind() == constant.Bool {
+				if constant.BoolVal(condition.value) {
+					proof.value = a.value
+				} else {
+					proof.value = b.value
+				}
+			}
 		case program.OpSignalGet, program.OpSignalSet, program.OpLen:
+			if op.Op == program.OpSignalGet {
+				if name, ok := native.(*ast.Ident); ok {
+					bound, ok := checked.(*ast.Ident)
+					receiverType := value.Type
+					if call, isCall := checked.(*ast.CallExpr); isCall {
+						selector, isSelector := call.Fun.(*ast.SelectorExpr)
+						if !isSelector || len(call.Args) != 0 {
+							return mismatch()
+						}
+						selection := e.checked.info.Selections[selector]
+						if selection == nil || selection.Obj().Pkg() == nil || selection.Obj().Pkg().Path() != signalImportPath || selection.Obj().Name() != "Get" {
+							return mismatch()
+						}
+						bound, ok = selector.X.(*ast.Ident)
+						receiverType = e.checked.info.Types[selector.X].Type
+					}
+					if !ok || name.Name != bound.Name || e.states[e.checked.info.Uses[bound]] != op.Value {
+						return fmt.Errorf("evidence_binding_mismatch: auto-read receiver")
+					}
+					kind, _, ok := aotSignalKind(receiverType)
+					if !ok {
+						return fmt.Errorf("evidence_binding_mismatch: auto-read type")
+					}
+
+					proof.kind = kind
+					proof.value = nil
+					proofs[id] = proof
+					return nil
+				}
+			}
 			call, ok := native.(*ast.CallExpr)
 			bound, ok2 := checked.(*ast.CallExpr)
 			if !ok || !ok2 {
@@ -396,6 +480,11 @@ func (e *aotEvidence) pair(source string, origin islandExprOrigin, exprs []progr
 				if selection == nil || selection.Obj().Pkg() == nil || selection.Obj().Pkg().Path() != signalImportPath {
 					return fmt.Errorf("evidence_binding_mismatch: signal method")
 				}
+				kind, mutable, allowed := aotSignalKind(e.checked.info.Types[selector.X].Type)
+				if !allowed || !aotScalar(kind) || op.Op == program.OpSignalSet && !mutable {
+					return fmt.Errorf("evidence_binding_mismatch: signal type")
+				}
+				structural[op.Value] = kind
 				method := selection.Obj().Name()
 				if op.Op == program.OpSignalGet && method != "Get" || op.Op == program.OpSignalSet && method != "Set" {
 					return mismatch()
@@ -462,6 +551,11 @@ func (e *aotEvidence) pair(source string, origin islandExprOrigin, exprs []progr
 	}
 	if err := visit(root, parsed, node); err != nil {
 		return nil, err
+	}
+	for id, op := range exprs {
+		if _, ok := proofs[program.ExprID(id)]; !ok && op.Op == program.OpSignalGet && structural[op.Value] != "" {
+			proofs[program.ExprID(id)] = aotExpressionProof{kind: structural[op.Value], pure: true}
+		}
 	}
 	return func(local, destination program.ExprID) {
 		if proof, ok := proofs[local]; ok {
@@ -548,7 +642,19 @@ func (e *aotEvidence) validateSourceRoots(src *Program, names map[string]bool) e
 		for _, attr := range n.Attrs {
 			if attr.Kind == AttrStatic {
 				if _, inline := legacyInlineEventType(attr.Name); inline {
-					return fmt.Errorf("evidence_shape_mismatch: inline string handler has no Go expression span")
+					source := attr.Value
+					if decoded, err := strconv.Unquote(`"` + source + `"`); err == nil {
+						source = decoded
+					}
+					for statement, source := range islandInlineStatements(source) {
+						exprs, root, err := ParseExpr(source, handlerExprScope(mergedIslandScope(src, owner)))
+						if err != nil {
+							return fmt.Errorf("evidence_shape_mismatch: %w", err)
+						}
+						if _, err := e.pair(source, islandExprOrigin{span: attr.Span, statement: statement}, exprs, root); err != nil {
+							return err
+						}
+					}
 				}
 				continue
 			}

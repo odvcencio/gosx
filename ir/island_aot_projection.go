@@ -5,10 +5,13 @@ package ir
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"path"
 	"strconv"
+
+	"m31labs.dev/gosx/internal/gsxparse"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 )
@@ -17,13 +20,13 @@ import (
 // Scaffold tokens introduce node placeholders and typed prop assignments;
 // they never print or normalize an authored expression.
 func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (aotCheckingFile, error) {
-	tree, err := gotreesitter.NewParser(lang).Parse(source)
+	tree, err := gsxparse.Parse(lang, source)
 	if err != nil {
 		return aotCheckingFile{}, err
 	}
 	defer tree.Release()
 	l := &lowerer{src: source, srcStr: string(source), lang: lang}
-	result := aotCheckingFile{regions: map[Span]aotCheckRegion{}, components: map[string]aotCheckRegion{}}
+	result := aotCheckingFile{regions: map[Span]aotCheckRegion{}, components: map[string]aotCheckRegion{}, implicit: map[int]string{}, synthetic: map[string]aotCheckRegion{}}
 	var out bytes.Buffer
 	text := func(n *gotreesitter.Node) string {
 		if n == nil {
@@ -35,13 +38,16 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 		result.copies = append(result.copies, aotCheckCopy{start, end, out.Len()})
 		out.Write(source[start:end])
 	}
-	var expr func(*gotreesitter.Node, Span) error
-	expr = func(n *gotreesitter.Node, span Span) error {
-		if n == nil {
-			return fmt.Errorf("evidence_shape_mismatch: missing source expression")
-		}
+	expression := func(n *gotreesitter.Node) error { return aotEmitExpression(l, n, &out, copySpan) }
+	activeStates := map[string]bool{}
+	expr := func(n *gotreesitter.Node, span Span) error {
 		start := out.Len()
-		copySpan(int(n.StartByte()), int(n.EndByte()))
+		if err := expression(n); err != nil {
+			return err
+		}
+		if l.nodeType(n) == "identifier" && activeStates[l.text(n)] {
+			out.WriteString(".Get()")
+		}
 		result.regions[span] = aotCheckRegion{start, out.Len()}
 		return nil
 	}
@@ -105,6 +111,18 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 			if name == "slot" && value != nil && l.nodeType(value) == "jsx_string_literal" {
 				continue
 			}
+			if _, inline := legacyInlineEventType(name); inline && props == nil && value != nil && l.nodeType(value) == "jsx_string_literal" {
+				code, err := strconv.Unquote(text(value))
+				if err != nil {
+					return fmt.Errorf("evidence_shape_mismatch: inline handler: %w", err)
+				}
+				out.WriteString("_ = ")
+				fnStart := out.Len()
+				out.WriteString("func(){" + code + "}")
+				result.regions[l.span(attr)] = aotCheckRegion{fnStart, out.Len()}
+				out.WriteString(";\n")
+				continue
+			}
 			if props != nil {
 				out.WriteString(name + ": ")
 			} else {
@@ -119,7 +137,14 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 				} else {
 					start, end := int(value.StartByte())+1, int(value.EndByte())-1
 					begin := out.Len()
-					copySpan(start, end)
+					if err := aotEmitOpaqueExpression(lang, source[start:end], &out, func(a, b int) { copySpan(start+a, start+b) }); err != nil {
+						return err
+					}
+					if native, err := parser.ParseExpr(string(source[start:end])); err == nil {
+						if ident, ok := native.(*ast.Ident); ok && activeStates[ident.Name] {
+							out.WriteString(".Get()")
+						}
+					}
 					result.regions[l.span(attr)] = aotCheckRegion{begin, out.Len()}
 					if props != nil {
 						out.WriteString(",\n")
@@ -162,6 +187,9 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 	var goRegion func(*gotreesitter.Node) error
 	goRegion = func(n *gotreesitter.Node) error {
 		typ := l.nodeType(n)
+		if typ == "gsx_ternary_expression" {
+			return expression(n)
+		}
 		if typ == "jsx_element" || typ == "jsx_self_closing_element" || typ == "jsx_fragment" || typ == "jsx_raw_text_element" {
 			out.WriteString("func() Node {\n")
 			if err := jsx(n); err != nil {
@@ -188,6 +216,17 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 		copySpan(start, int(n.StartByte()))
 		typ := l.nodeType(n)
 		name := text(l.childByField(n, "name"))
+		clear(activeStates)
+		for _, comp := range p.Components {
+			if comp.Name == name && comp.Scope != nil {
+				for _, sig := range comp.Scope.Signals {
+					activeStates[sig.Local] = true
+				}
+				for _, computed := range comp.Scope.Computeds {
+					activeStates[computed.Name] = true
+				}
+			}
+		}
 		begin := out.Len()
 		if typ == "gosx_component_declaration" {
 			out.WriteString("func " + name + "(")
@@ -251,7 +290,14 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 		return result, fmt.Errorf("evidence_shape_mismatch: %w", err)
 	}
 	if file.Scope.Lookup("Node") == nil {
+		begin := out.Len()
 		out.WriteString("\ntype Node = struct{}\n")
+		result.synthetic["Node"] = aotCheckRegion{begin, out.Len()}
+	}
+	if bytes.Contains(out.Bytes(), []byte(aotConditionalHelper+"(")) {
+		begin := out.Len()
+		out.WriteString("\nfunc " + aotConditionalHelper + "[T any](c bool,a,b T) T {if c {return a};return b}\n")
+		result.synthetic[aotConditionalHelper] = aotCheckRegion{begin, out.Len()}
 	}
 	signalImported := false
 	for _, imp := range p.Imports {
@@ -274,6 +320,13 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 				result.regions[k] = r
 			}
 		}
+		for k, r := range result.synthetic {
+			if r.start >= line {
+				r.start += len(insertion)
+				r.end += len(insertion)
+				result.synthetic[k] = r
+			}
+		}
 		for k, r := range result.components {
 			if r.start >= line {
 				r.start += len(insertion)
@@ -288,5 +341,73 @@ func aotProjectSource(p *Program, source []byte, lang *gotreesitter.Language) (a
 		}
 	}
 	result.bytes = append([]byte(nil), out.Bytes()...)
-	return result, nil
+	return aotScaffoldLocals(p, result)
+}
+
+func aotEmitExpression(l *lowerer, n *gotreesitter.Node, out *bytes.Buffer, copySpan func(int, int)) error {
+	if n == nil {
+		return fmt.Errorf("evidence_shape_mismatch: missing source expression")
+	}
+	if l.nodeType(n) == "gsx_ternary_expression" {
+		out.WriteString(aotConditionalHelper + "(")
+		for i, field := range []string{"condition", "consequence", "alternative"} {
+			if i > 0 {
+				out.WriteByte(',')
+			}
+			if err := aotEmitExpression(l, l.childByField(n, field), out, copySpan); err != nil {
+				return err
+			}
+		}
+		out.WriteByte(')')
+		return nil
+	}
+	start := int(n.StartByte())
+	for i := 0; i < int(n.NamedChildCount()); i++ {
+		child := n.NamedChild(i)
+		copySpan(start, int(child.StartByte()))
+		if err := aotEmitExpression(l, child, out, copySpan); err != nil {
+			return err
+		}
+		start = int(child.EndByte())
+	}
+	copySpan(start, int(n.EndByte()))
+	return nil
+}
+
+// Attribute expressions are opaque external tokens in the GoSX grammar.
+// Reparse their exact payload with the same grammar, never an admission lexer.
+func aotEmitOpaqueExpression(lang *gotreesitter.Language, source []byte, out *bytes.Buffer, copySpan func(int, int)) error {
+	prefix := []byte("package example\nfunc expression(){_ = (")
+	wrapped := append(append(append([]byte(nil), prefix...), source...), []byte(") }\n")...)
+	tree, err := gsxparse.Parse(lang, wrapped)
+	if err != nil {
+		return err
+	}
+	defer tree.Release()
+	l := &lowerer{src: wrapped, srcStr: string(wrapped), lang: lang}
+	lo := len(prefix)
+	hi := lo + len(source)
+	var expr *gotreesitter.Node
+	var find func(*gotreesitter.Node)
+	find = func(n *gotreesitter.Node) {
+		if int(n.StartByte()) >= lo && int(n.EndByte()) <= hi {
+			expr = n
+			return
+		}
+		for i := 0; i < int(n.NamedChildCount()); i++ {
+			if expr == nil {
+				find(n.NamedChild(i))
+			}
+		}
+	}
+	find(tree.RootNode())
+	if expr == nil || tree.RootNode().HasError() {
+		return fmt.Errorf("evidence_shape_mismatch: opaque expression does not parse")
+	}
+	copySpan(0, int(expr.StartByte())-lo)
+	if err := aotEmitExpression(l, expr, out, func(a, b int) { copySpan(a-lo, b-lo) }); err != nil {
+		return err
+	}
+	copySpan(int(expr.EndByte())-lo, len(source))
+	return nil
 }

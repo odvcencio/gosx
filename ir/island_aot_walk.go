@@ -12,12 +12,27 @@ import (
 func aotWalkSource(src *Program, root Component) (map[string]bool, error) {
 	names := map[string]bool{root.Name: true}
 	active := map[NodeID]bool{}
+	heights := map[NodeID]int{}
 	var visit func(NodeID, int) error
 	visit = func(id NodeID, depth int) error {
 		if int(id) >= len(src.Nodes) || depth > 64 || active[id] {
 			return fmt.Errorf("invalid source node graph at %d", id)
 		}
+		if height := heights[id]; height != 0 {
+			if depth+height-1 > 64 {
+				return fmt.Errorf("invalid source node graph at %d", id)
+			}
+			return nil
+		}
 		active[id] = true
+		height := 1
+		edge := func(child NodeID) error {
+			if err := visit(child, depth+1); err != nil {
+				return err
+			}
+			height = max(height, 1+heights[child])
+			return nil
+		}
 		defer delete(active, id)
 		n := src.Nodes[id]
 		switch n.Kind {
@@ -36,12 +51,12 @@ func aotWalkSource(src *Program, root Component) (map[string]bool, error) {
 			}
 		}
 		for _, child := range n.Children {
-			if err := visit(child, depth+1); err != nil {
+			if err := edge(child); err != nil {
 				return err
 			}
 		}
 		for _, name := range sortedNodeSlotNames(n.Slots) {
-			if err := visit(n.Slots[name], depth+1); err != nil {
+			if err := edge(n.Slots[name]); err != nil {
 				return err
 			}
 		}
@@ -49,12 +64,13 @@ func aotWalkSource(src *Program, root Component) (map[string]bool, error) {
 			for _, callee := range src.Components {
 				if callee.Name == n.Tag {
 					names[callee.Name] = true
-					if err := visit(callee.Root, depth+1); err != nil {
+					if err := edge(callee.Root); err != nil {
 						return err
 					}
 				}
 			}
 		}
+		heights[id] = height
 		return nil
 	}
 	if err := visit(root.Root, 1); err != nil {

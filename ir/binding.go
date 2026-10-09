@@ -42,6 +42,8 @@ type aotCheckingFile struct {
 	regions    map[Span]aotCheckRegion
 	components map[string]aotCheckRegion
 	copies     []aotCheckCopy
+	implicit   map[int]string
+	synthetic  map[string]aotCheckRegion
 }
 
 type aotCheckRegion struct{ start, end int }

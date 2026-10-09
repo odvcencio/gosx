@@ -1149,17 +1149,23 @@ func (l *islandLowerer) lowerInlineEvent(eventType, source string) (program.Attr
 	}
 
 	handlerName := l.nextInlineHandlerName()
-	exprs, rootID, err := ParseExpr(expression, handlerExprScope(l.scope))
-	if err != nil {
-		return program.Attr{}, fmt.Errorf("parse data-on-%s expression %q: %w", eventType, expression, err)
-	}
-	bodyID, err := l.appendExprs(exprs, rootID, expression)
-	if err != nil {
-		return program.Attr{}, fmt.Errorf("emit data-on-%s expression: %w", eventType, err)
+	var body []program.ExprID
+	for statement, source := range islandInlineStatements(expression) {
+		l.origin.declaration = "inline/"
+		l.origin.statement = statement
+		exprs, rootID, err := ParseExpr(source, handlerExprScope(l.scope))
+		if err != nil {
+			return program.Attr{}, fmt.Errorf("parse data-on-%s expression %q: %w", eventType, expression, err)
+		}
+		bodyID, err := l.appendExprs(exprs, rootID, source)
+		if err != nil {
+			return program.Attr{}, fmt.Errorf("emit data-on-%s expression: %w", eventType, err)
+		}
+		body = append(body, bodyID)
 	}
 	l.dst.Handlers = append(l.dst.Handlers, program.Handler{
 		Name: handlerName,
-		Body: []program.ExprID{bodyID},
+		Body: body,
 	})
 
 	return program.Attr{

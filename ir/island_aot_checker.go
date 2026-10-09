@@ -37,13 +37,13 @@ type aotCheckedSource struct {
 
 var aotCheckCache = struct {
 	sync.Mutex
-	entries map[[32]byte]*aotCheckedSource
+	entries map[[32]byte]map[[32]byte]*aotCheckedSource
 	order   [][32]byte
-}{entries: map[[32]byte]*aotCheckedSource{}}
+}{entries: map[[32]byte]map[[32]byte]*aotCheckedSource{}}
 
-// Cache both successful and rejected checks, bounded independently of the
-// number of components. Sibling bytes and target selection participate in the
-// key so changing a package declaration cannot reuse stale object identities.
+// Read and hash authored bytes before projecting or parsing. A package check
+// shares object identities across candidates, but each file retains its own
+// source maps. Even edits erased by projection invalidate both kinds of data.
 func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 	if p.Dir == "" {
 		return nil, fmt.Errorf("package_scope_unknown: source directory is required")
@@ -51,30 +51,27 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 	if p.aotBindings == nil || p.aotBindings.project == nil {
 		return nil, fmt.Errorf("evidence_shape_mismatch: exact source is missing")
 	}
-	projection, err := p.aotBindings.project(p)
-	if err != nil {
-		return nil, err
+	type member struct {
+		name      string
+		data      []byte
+		candidate bool
 	}
-	fset := token.NewFileSet()
-	file, err := parser.ParseFile(fset, "candidate.go", projection.bytes, parser.AllErrors)
-	if err != nil {
-		return nil, fmt.Errorf("evidence_shape_mismatch: %w", err)
-	}
-	files := []*ast.File{file}
+	var members []member
+	candidateKey := sha256.Sum256(p.aotBindings.source)
 	digest := sha256.New()
-	digest.Write([]byte(p.PackagePath))
-	digest.Write([]byte(aotStubRevision))
-	digest.Write([]byte(aotSignalStub))
-	digest.Write(projection.bytes)
-	digest.Write([]byte(fmt.Sprintf("%s/%s/%t/%q/%q", build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled, build.Default.BuildTags, build.Default.ReleaseTags)))
+	add := func(data []byte) { fmt.Fprintf(digest, "%d:", len(data)); digest.Write(data) }
+	add([]byte(p.PackagePath))
+	add([]byte(p.Dir))
+	add([]byte(aotStubRevision))
+	add([]byte(fmt.Sprintf("%s/%s/%t/%q/%q", build.Default.GOOS, build.Default.GOARCH, build.Default.CgoEnabled, build.Default.BuildTags, build.Default.ReleaseTags)))
 	entries, err := os.ReadDir(p.Dir)
 	if err != nil {
 		return nil, fmt.Errorf("package_scope_unknown: %w", err)
 	}
-	sourceSkipped := false
+	found := false
 	for _, entry := range entries {
 		name := entry.Name()
-		if entry.IsDir() || (strings.HasSuffix(name, "_test.go") || strings.HasSuffix(name, "_test.gsx")) || (filepath.Ext(name) != ".go" && filepath.Ext(name) != ".gsx") {
+		if entry.IsDir() || strings.HasSuffix(name, "_test.go") || strings.HasSuffix(name, "_test.gsx") || (filepath.Ext(name) != ".go" && filepath.Ext(name) != ".gsx") {
 			continue
 		}
 		selected, err := aotMatchFile(p.Dir, name)
@@ -88,60 +85,130 @@ func aotCheckSource(p *Program) (*aotCheckedSource, error) {
 		if err != nil {
 			return nil, err
 		}
-		if !sourceSkipped && bytes.Equal(data, p.aotBindings.source) {
-			sourceSkipped = true
-			continue
-		}
-		digest.Write([]byte(name))
-		digest.Write(data)
-		if filepath.Ext(name) == ".gsx" {
-			member, err := p.aotBindings.lower(data)
-			if err != nil {
-				return nil, fmt.Errorf("package_scope_unknown: %w", err)
-			}
-			projected, err := member.aotBindings.project(member)
-			if err != nil {
-				return nil, err
-			}
-			data = projected.bytes
-		}
-		sibling, parseErr := parser.ParseFile(fset, name, data, parser.AllErrors)
-		if parseErr != nil {
-			return nil, fmt.Errorf("package_scope_unknown: %w", parseErr)
-		}
-		if sibling.Name.Name != p.Package {
-			return nil, fmt.Errorf("package_scope_unknown: sibling package differs")
-		}
-		files = append(files, sibling)
+		isCandidate := !found && bytes.Equal(data, p.aotBindings.source)
+		found = found || isCandidate
+		members = append(members, member{name, data, isCandidate})
+		add([]byte(name))
+		add(data)
+	}
+	if !found {
+		members = append(members, member{"candidate.gsx", p.aotBindings.source, true})
+		add([]byte("candidate.gsx"))
+		add(p.aotBindings.source)
 	}
 	var key [32]byte
 	copy(key[:], digest.Sum(nil))
 	aotCheckCache.Lock()
 	defer aotCheckCache.Unlock()
 	if cached := aotCheckCache.entries[key]; cached != nil {
-		return cached, nil
+		return cached[candidateKey], nil
 	}
-	result := &aotCheckedSource{fset: fset, file: file, projection: projection, functions: map[string]*ast.FuncDecl{}, info: &types.Info{
-		Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Instances: map[*ast.Ident]types.Instance{},
-	}}
-	cfg := types.Config{Importer: &aotStubImporter{packages: map[string]*types.Package{}}, Sizes: &types.StdSizes{WordSize: 4, MaxAlign: 4}, DisableUnusedImportCheck: true, Error: func(err error) {
-		if e, ok := err.(types.Error); ok {
-			result.errors = append(result.errors, e)
+	fset := token.NewFileSet()
+	var files []*ast.File
+	views := map[[32]byte]*aotCheckedSource{}
+	functions := map[string]*ast.FuncDecl{}
+	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}, Uses: map[*ast.Ident]types.Object{}, Selections: map[*ast.SelectorExpr]*types.Selection{}, Instances: map[*ast.Ident]types.Instance{}}
+	for _, m := range members {
+		data := m.data
+		var projection aotCheckingFile
+		if filepath.Ext(m.name) == ".gsx" {
+			memberProgram := p
+			if !m.candidate {
+				memberProgram, err = p.aotBindings.lower(data)
+				if err != nil {
+					return nil, fmt.Errorf("package_scope_unknown: %w", err)
+				}
+			}
+			projection, err = memberProgram.aotBindings.project(memberProgram)
+			if err != nil {
+				return nil, err
+			}
+			data = projection.bytes
 		}
-	}}
-	_, _ = cfg.Check(p.PackagePath, fset, files, result.info)
-	for _, decl := range file.Decls {
+		file, err := parser.ParseFile(fset, m.name, data, parser.AllErrors)
+		if err != nil {
+			return nil, fmt.Errorf("evidence_shape_mismatch: %w", err)
+		}
+		if file.Name.Name != p.Package {
+			return nil, fmt.Errorf("package_scope_unknown: sibling package differs")
+		}
+		files = append(files, file)
+		for _, decl := range file.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				functions[fn.Name.Name] = fn
+			}
+		}
+		if filepath.Ext(m.name) == ".gsx" {
+			views[sha256.Sum256(m.data)] = &aotCheckedSource{fset: fset, file: file, info: info, projection: projection, functions: functions}
+		}
+	}
+	// Compiler-owned declarations are emitted once per package. Authored
+	// declarations always keep precedence and their original scope.
+	authored := map[string]bool{}
+	synthesized := map[ast.Decl]string{}
+	for _, view := range views {
+		for _, decl := range view.file.Decls {
+			for name, region := range view.projection.synthetic {
+				offset := fset.Position(decl.Pos()).Offset
+				if offset >= region.start && offset < region.end {
+					synthesized[decl] = name
+				}
+			}
+		}
+	}
+	declarationName := func(decl ast.Decl) string {
 		if fn, ok := decl.(*ast.FuncDecl); ok {
-			result.functions[fn.Name.Name] = fn
+			return fn.Name.Name
 		}
+		if gen, ok := decl.(*ast.GenDecl); ok && len(gen.Specs) == 1 {
+			if typ, ok := gen.Specs[0].(*ast.TypeSpec); ok {
+				return typ.Name.Name
+			}
+		}
+		return ""
+	}
+	for _, file := range files {
+		for _, decl := range file.Decls {
+			if synthesized[decl] == "" {
+				authored[declarationName(decl)] = true
+			}
+		}
+	}
+	seen := map[string]bool{}
+	clear(functions)
+	for _, file := range files {
+		var declarations []ast.Decl
+		for _, decl := range file.Decls {
+			if name := synthesized[decl]; name != "" {
+				if seen[name] || authored[name] {
+					continue
+				}
+				seen[name] = true
+			}
+			declarations = append(declarations, decl)
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				functions[fn.Name.Name] = fn
+			}
+		}
+		file.Decls = declarations
+	}
+	var hardErrors []types.Error
+	cfg := types.Config{Importer: &aotStubImporter{packages: map[string]*types.Package{}}, Sizes: &types.StdSizes{WordSize: 4, MaxAlign: 4}, DisableUnusedImportCheck: true, Error: func(err error) {
+		if e, ok := err.(types.Error); ok && !e.Soft {
+			hardErrors = append(hardErrors, e)
+		}
+	}}
+	_, _ = cfg.Check(p.PackagePath, fset, files, info)
+	for _, view := range views {
+		view.errors = hardErrors
 	}
 	if len(aotCheckCache.order) == 64 {
 		delete(aotCheckCache.entries, aotCheckCache.order[0])
 		aotCheckCache.order = aotCheckCache.order[1:]
 	}
-	aotCheckCache.entries[key] = result
+	aotCheckCache.entries[key] = views
 	aotCheckCache.order = append(aotCheckCache.order, key)
-	return result, nil
+	return views[candidateKey], nil
 }
 
 type aotStubImporter struct{ packages map[string]*types.Package }
@@ -206,9 +273,32 @@ func (c *aotCheckedSource) candidateError(names map[string]bool) error {
 			failures = append(failures, failure{expr.Pos(), "type_error: expression has an invalid type"})
 		}
 	}
+	// Binding errors at a declaration can invalidate an otherwise well-typed
+	// use. Follow used objects to their declarations, including conflicting
+	// package declarations of a referenced import alias.
+	dependencies := map[token.Pos]bool{}
+	usedNames := map[string]bool{}
+	for ident, obj := range c.info.Uses {
+		if inCandidate(ident.Pos()) && obj != nil {
+			dependencies[obj.Pos()] = true
+			usedNames[obj.Name()] = true
+		}
+	}
+	for ident, obj := range c.info.Defs {
+		if obj == nil || !usedNames[obj.Name()] {
+			continue
+		}
+		_, imported := obj.(*types.PkgName)
+		if imported || obj.Pkg() != nil && obj.Parent() == obj.Pkg().Scope() {
+			dependencies[ident.Pos()] = true
+		}
+	}
 	var relevant []types.Error
 	for _, err := range c.errors {
-		if inCandidate(err.Pos) {
+		if strings.Contains(err.Msg, aotConditionalHelper) && inCandidate(err.Pos) {
+			return fmt.Errorf("conditional_type_mismatch: %s", err.Msg)
+		}
+		if inCandidate(err.Pos) || dependencies[err.Pos] {
 			relevant = append(relevant, err)
 		}
 	}
