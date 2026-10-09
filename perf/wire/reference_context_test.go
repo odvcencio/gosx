@@ -1,6 +1,9 @@
 package wire
 
-import "testing"
+import (
+	"fmt"
+	"testing"
+)
 
 func TestReferencesPreserveURLBaseAndWorkerContext(t *testing.T) {
 	for _, tc := range []struct {
@@ -62,5 +65,41 @@ func TestReferencesDocumentBaseAndInlineContexts(t *testing.T) {
 		if ref.Base != ReferenceBaseSource {
 			t.Fatal("stylesheet resource lost its source base", ref)
 		}
+	}
+}
+
+func TestReferencesActiveSrcdocIsIncomplete(t *testing.T) {
+	const frame = `<iframe srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"%s></iframe>`
+	// HTML's iframe sandbox tokens are ASCII case-insensitive. Attribute
+	// presence matters: sandbox="" disables scripts, absence permits them.
+	// https://html.spec.whatwg.org/multipage/iframe-embed-object.html#attr-iframe-sandbox
+	for _, tc := range []struct {
+		name, body string
+		complete   bool
+	}{
+		{"unsandboxed", fmt.Sprintf(frame, ""), false},
+		{"scripts-allowed", fmt.Sprintf(frame, ` sandbox="allow-scripts"`), false},
+		{"scripts-token-list", fmt.Sprintf(frame, " sandbox=\"allow-forms\tALLOW-SCRIPTS\nallow-same-origin\""), false},
+		{"empty-srcdoc", `<iframe srcdoc=""></iframe>`, false},
+		{"sandbox-present", fmt.Sprintf(frame, ` sandbox`), true},
+		{"sandbox-empty", fmt.Sprintf(frame, ` sandbox=""`), true},
+		{"sandbox-other-tokens", fmt.Sprintf(frame, ` sandbox="allow-forms allow-same-origin"`), true},
+		{"sandbox-token-substring", fmt.Sprintf(frame, ` sandbox="disallow-scripts allow-scripts-extra"`), true},
+		{"html-template", "<template>" + fmt.Sprintf(frame, "") + "</template>", true},
+		{"noscript", "<noscript>" + fmt.Sprintf(frame, "") + "</noscript>", true},
+		{"other-element", `<div srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"></div>`, true},
+		{"foreign-iframe", "<svg>" + fmt.Sprintf(frame, "") + "</svg>", true},
+		{"integration-point", "<svg><foreignObject>" + fmt.Sprintf(frame, "") + "</foreignObject></svg>", false},
+		{"foreign-template", "<svg><template><foreignObject>" + fmt.Sprintf(frame, "") + "</foreignObject></template></svg>", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			set, err := ScanReferences([]byte(tc.body), KindDocument)
+			if err != nil || set.Complete != tc.complete {
+				t.Fatalf("completeness=%v want %v: %v", set.Complete, tc.complete, err)
+			}
+			if len(set.Resources) != 0 {
+				t.Fatal("srcdoc was traversed as an outer-document reference", set.Resources)
+			}
+		})
 	}
 }

@@ -185,7 +185,7 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 			return referenceFailure()
 		}
 		if n.Type == html.ElementNode {
-			if n.Data == "template" {
+			if n.Namespace == "" && n.Data == "template" {
 				continue
 			}
 			seen := map[string]bool{}
@@ -206,6 +206,17 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 					if err := scanInlineReferences([]byte(".inline{"+a.Val+"}"), KindStyle, out); err != nil {
 						return err
 					}
+				}
+			}
+			if n.Namespace == "" && n.Data == "iframe" && seen["srcdoc"] {
+				scriptsAllowed := !seen["sandbox"]
+				for _, token := range strings.Fields(attr(n, "sandbox")) {
+					scriptsAllowed = scriptsAllowed || strings.EqualFold(token, "allow-scripts")
+				}
+				if scriptsAllowed {
+					// Nested document resources are not scanned here. Unknown
+					// coverage retains declared runtime costs conservatively.
+					out.Complete = false
 				}
 			}
 			switch n.Data {

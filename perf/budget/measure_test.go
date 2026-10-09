@@ -636,6 +636,59 @@ func TestMeasureUnknownCriticalityRetainsPotentialBodies(t *testing.T) {
 	}
 }
 
+func TestMeasureActiveSrcdocRetainsDeclaredRuntime(t *testing.T) {
+	for _, tc := range []struct {
+		name, sandbox string
+		active        bool
+	}{
+		{"unsandboxed", "", true},
+		{"scripts-allowed", ` sandbox="allow-scripts"`, true},
+		{"scripts-token-list", " sandbox=\"allow-forms\tALLOW-SCRIPTS\nallow-same-origin\"", true},
+		{"sandbox-present", ` sandbox`, false},
+		{"sandbox-empty", ` sandbox=""`, false},
+		{"sandbox-other-tokens", ` sandbox="allow-same-origin allow-forms"`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := []byte(`<iframe srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"` + tc.sandbox + `></iframe>`)
+			runtime := []byte(`const fixtureRuntime = true;`)
+			graph := ReachabilityOptions{
+				Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: []buildmanifest.PerfAssetUse{
+					graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", document),
+					graphAsset("framework/runtime/fixture", "/runtime.js", "js", "dormant", "always", runtime),
+				}},
+				Bodies: map[string][]byte{"app/fixture/html": document, "framework/runtime/fixture": runtime},
+				Route:  FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}},
+			}
+			opts, requests := testMeasuredResourceGraph(t, graph, nil)
+			report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+			if err != nil {
+				t.Fatal(err)
+			}
+			docSizes, _ := testBodyNormalizer(document)
+			runtimeSizes, _ := testBodyNormalizer(runtime)
+			wantReachability, wantPhase := "known", "dormant"
+			wantStartup, wantDormant, wantFramework, wantFetches := int64(0), runtimeSizes.Brotli, int64(0), int64(0)
+			if tc.active {
+				wantReachability, wantPhase = "unknown", "startup"
+				wantStartup, wantDormant, wantFramework, wantFetches = runtimeSizes.Brotli, 0, runtimeSizes.Brotli, 1
+			}
+			if len(report.Rows) != 1 || len(report.Assets) != 2 {
+				t.Fatal("route or runtime inventory missing", report)
+			}
+			row := report.Rows[0]
+			if report.Coverage.Reachability != wantReachability || row.PhaseBytes.Critical != docSizes.Brotli || row.PhaseBytes.Startup != wantStartup || row.PhaseBytes.Dormant != wantDormant || row.NormalizedBytes != docSizes.Brotli+wantStartup || row.AppBytes != docSizes.Brotli || row.FrameworkBytes != wantFramework || row.Requests != 1+wantFetches || row.WireBytes != int64(len(document))+wantFetches*int64(len(runtime)) || requests["/runtime.js"].Load() != wantFetches {
+				t.Fatalf("srcdoc runtime accounting differs: coverage=%s row=%+v fetches=%d", report.Coverage.Reachability, row, requests["/runtime.js"].Load())
+			}
+			if report.Assets[1].Phase != wantPhase {
+				t.Fatalf("runtime phase=%s want %s", report.Assets[1].Phase, wantPhase)
+			}
+			if tc.active && row.ReasonCode != "unknown-reachability" {
+				t.Fatal("uncertain closure was not reported", row.ReasonCode)
+			}
+		})
+	}
+}
+
 func TestMeasureExpandsOnlyRequestedBackendAndKeepsCommonGoals(t *testing.T) {
 	for _, requested := range []string{"webgpu", "webgl2", "none"} {
 		t.Run(requested, func(t *testing.T) {
