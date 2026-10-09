@@ -1,6 +1,7 @@
 package budget
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -172,6 +173,83 @@ func TestCheckPairCompleteFamilyAndDeclaredStoppingLook(t *testing.T) {
 		mutate(opts.Pair)
 		if out, err := Check(opts); out != nil || err == nil {
 			t.Fatal("incomplete family or undeclared stopping look accepted")
+		}
+	}
+}
+
+func setGatePairSamples(row *PairCell, pairs int) {
+	row.Pairs = int64(pairs)
+	row.BaseSamples, row.HeadSamples = make([]float64, pairs), make([]float64, pairs)
+	for i := range row.BaseSamples {
+		row.BaseSamples[i], row.HeadSamples[i] = 1000, 1001.1
+	}
+}
+
+func TestCheckPairCollectedCountMustMatchStoppingLook(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		pairs, invalid int
+	}{{"one-pair", 1, 0}, {"before-look", 9, 0}, {"past-look", 11, 0}, {"invalid-pair-gap", 9, 1}} {
+		for _, mode := range []struct {
+			name       string
+			reportOnly bool
+		}{{"enforce", false}, {"report-only", true}} {
+			t.Run(tc.name+"/"+mode.name, func(t *testing.T) {
+				opts := gatePair(t)
+				opts.ReportOnly = mode.reportOnly
+				setGatePairSamples(&opts.Pair.Cells[0], tc.pairs)
+				opts.Pair.Cells[0].InvalidPairs = int64(tc.invalid)
+				var err error
+				opts.Trailers, err = ParseTrailers("Change\n\nPerf-Timing: cell=fixture|/counter/|island|hard-cold|none|lcp delta=+2ms issue=#7; because=Added interaction behavior\n")
+				if err != nil {
+					t.Fatal(err)
+				}
+				// The arrays and declared pair count agree; the stopping look does not.
+				data, err := json.Marshal(opts.Pair)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := DecodeRecord(bytes.NewReader(data)); err != nil {
+					t.Fatal("pair count fixture failed shape validation", err)
+				}
+				out, err := Check(opts)
+				var input *InputError
+				if out != nil || !errors.As(err, &input) || input.Code != "wrong-fixture" || input.Reference != "pair" || input.Pointer != "/cells/0/pairs" || CheckExitCode(out, err) != 2 {
+					t.Fatal("unreached stopping look became a budget result", out, err)
+				}
+			})
+		}
+	}
+}
+
+func TestCheckPairSupportedSchedulesAndExactStoppingCount(t *testing.T) {
+	for _, looks := range [][]int64{{10, 20, 30, 40}, {10, 20, 30, 40, 60, 80}} {
+		for _, look := range looks {
+			for _, reportOnly := range []bool{false, true} {
+				opts := gatePair(t)
+				opts.ReportOnly = reportOnly
+				opts.Pair.Looks = looks
+				opts.Pair.Cells[0].StoppingLook = look
+				setGatePairSamples(&opts.Pair.Cells[0], int(look))
+				var err error
+				opts.Trailers, err = ParseTrailers("Change\n\nPerf-Timing: cell=fixture|/counter/|island|hard-cold|none|lcp delta=+2ms issue=#7; because=Added interaction behavior\n")
+				if err != nil {
+					t.Fatal(err)
+				}
+				out, err := Check(opts)
+				if err != nil || !out.Passed || CheckExitCode(out, err) != 0 {
+					t.Fatalf("exact stopping count %d failed: %v", look, err)
+				}
+			}
+		}
+	}
+	for _, looks := range [][]int64{{10, 20, 20, 40}, {20, 10, 30, 40}, {10, 20, 30, 50}, {20, 40, 60, 80}} {
+		opts := gatePair(t)
+		opts.Pair.Looks = looks
+		out, err := Check(opts)
+		var input *InputError
+		if out != nil || !errors.As(err, &input) || input.Reference != "pair" || input.Pointer != "/looks" || CheckExitCode(out, err) != 2 {
+			t.Fatal("unsupported sequential look schedule accepted", out, err)
 		}
 	}
 }

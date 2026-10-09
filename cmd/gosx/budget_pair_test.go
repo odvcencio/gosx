@@ -103,3 +103,45 @@ func TestBudgetCheckPairRejectsPrivateDataWrongRootAndBinding(t *testing.T) {
 		t.Fatal("offline inventory consumed timing evidence")
 	}
 }
+
+func TestBudgetCheckPairInsufficientSamplesExitTwo(t *testing.T) {
+	for _, mode := range []struct {
+		name       string
+		reportOnly bool
+	}{{"enforce", false}, {"report-only", true}} {
+		t.Run(mode.name, func(t *testing.T) {
+			args, base := budgetCheckCommandFixture(t)
+			pairPath := budgetPairCommandFixture(t, base)
+			data, err := os.ReadFile(pairPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var pair budget.PairReport
+			if err := json.Unmarshal(data, &pair); err != nil {
+				t.Fatal(err)
+			}
+			pair.Cells[0].Pairs = 1
+			pair.Cells[0].BaseSamples = pair.Cells[0].BaseSamples[:1]
+			pair.Cells[0].HeadSamples = pair.Cells[0].HeadSamples[:1]
+			data, err = json.Marshal(pair)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(pairPath, data, 0600); err != nil {
+				t.Fatal(err)
+			}
+			footer := filepath.Join(t.TempDir(), "change.txt")
+			if err := os.WriteFile(footer, []byte("Change\n\nPerf-Timing: cell=fixture|/counter/|island|hard-cold|none|lcp delta=+2ms issue=#7; because=Added interaction behavior\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			flags := append(args, "--pair-report", pairPath, "--trailers", footer)
+			if mode.reportOnly {
+				flags = append(flags, "--report-only")
+			}
+			var stdout, stderr bytes.Buffer
+			if code := runBudgetCheckWith(flags, &stdout, &stderr, budgetCheckFakeCollector(base)); code != 2 || stdout.Len() != 0 || stderr.String() != "wrong-fixture: pair#/cells/0/pairs\n" {
+				t.Fatal("insufficient samples became a budget result", code, stderr.String())
+			}
+		})
+	}
+}

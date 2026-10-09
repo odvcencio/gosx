@@ -35,6 +35,10 @@ func requiredPairTiming(file File, head, base *Report, pair *PairReport) ([]Grow
 	if checked.Status == "complete" && int64(len(checked.Cells)) != checked.FamilySize {
 		return nil, fail("/cells")
 	}
+	// Section 13 predeclares the 40-pair schedule or its 80-pair extension.
+	if !reflect.DeepEqual(checked.Looks, []int64{10, 20, 30, 40}) && !reflect.DeepEqual(checked.Looks, []int64{10, 20, 30, 40, 60, 80}) {
+		return nil, fail("/looks")
+	}
 	if !i.Canonical || !i.Headless || !i.Muted || i.SHA != h.SHA || i.BaseSHA != b.SHA || i.ProfileSHA256 != h.ProfileSHA256 || i.CoefficientSHA256 != h.CoefficientSHA256 || i.ToolchainSHA256 != h.ToolchainSHA256 || i.FixtureSHA256 != h.FixtureSHA256 || !reflect.DeepEqual(i.EpochSHA256, h.EpochSHA256) || i.Transport != h.Transport || !reflect.DeepEqual(i.ArtifactSHA256, h.ArtifactSHA256) || i.BaseArtifactSHA256 != h.BaseArtifactSHA256 {
 		return nil, fail("/info")
 	}
@@ -57,6 +61,10 @@ func requiredPairTiming(file File, head, base *Report, pair *PairReport) ([]Grow
 		}
 		if !declaredLook {
 			return nil, fail(pointer + "/stoppingLook")
+		}
+		// Looks count accepted pairs. Invalid attempts cannot fill a sample gap.
+		if row.Pairs != row.StoppingLook {
+			return nil, fail(pointer + "/pairs")
 		}
 		if checked.Status != "complete" || row.Pairs == 0 || row.HL == nil || *row.HL <= row.Threshold || !row.AdjustedInterval.Bounded || row.AdjustedInterval.Lower == nil || row.AdjustedInterval.Upper == nil || *row.AdjustedInterval.Lower <= row.Threshold || row.PNumerator == nil || row.PDenominator == nil {
 			return nil, fail(pointer)
