@@ -700,7 +700,7 @@ func runCLIShard(args []string, goBinary string, stdout, stderr io.Writer) error
 	if err != nil {
 		return err
 	}
-	return runShard(cliLayout, index, goBinary, []string{"-timeout", "25m"}, "./cmd/gosx", stdout, stderr)
+	return runShard(cliLayout, index, goBinary, []string{"-v", "-timeout", "25m"}, "./cmd/gosx", stdout, stderr)
 }
 
 // runBrowserShard runs one share of the e2e browser suite. -v prints each
