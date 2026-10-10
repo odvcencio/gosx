@@ -4,6 +4,7 @@ package hubclient
 
 import (
 	"context"
+	"runtime"
 	"syscall/js"
 	"testing"
 )
@@ -24,7 +25,9 @@ func TestBrowserCloseReleasesCallbacksWithFullQueue(t *testing.T) {
 	closed := false
 	closeSocket := js.FuncOf(func(_ js.Value, _ []js.Value) any {
 		closed = true
-		listeners["close"].Invoke(js.ValueOf(map[string]any{"code": 1000, "reason": ""}))
+		if callback, ok := listeners["close"]; ok {
+			callback.Invoke(js.ValueOf(map[string]any{"code": 1000, "reason": ""}))
+		}
 		return nil
 	})
 	constructor := js.FuncOf(func(_ js.Value, _ []js.Value) any {
@@ -67,5 +70,34 @@ func TestBrowserCloseReleasesCallbacksWithFullQueue(t *testing.T) {
 		t.Fatalf("pending socket closed=%v, remaining callbacks=%d", closed, len(listeners))
 	}
 	for range c.events {
+	}
+}
+
+// A message callback can be suspended on a full queue when an unrelated Go
+// goroutine retires the client. Closing the event channel before that producer
+// returns would race a send on the closed channel.
+func TestBrowserCloseWaitsForSuspendedEventProducer(t *testing.T) {
+	for range 100 {
+		c := &browserConn{eventStream: newEventStream(1)}
+		c.emit(frameEvent{Kind: frameOpen})
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if c.emit(frameEvent{Kind: frameMessage}) {
+				t.Error("retired producer delivered a message")
+			}
+		}()
+		for c.active == 0 {
+			runtime.Gosched()
+		}
+		if err := c.Close(); err != nil {
+			t.Fatal(err)
+		}
+		awaitLifecycle(t, done, "suspended browser producer")
+		for range c.events {
+		}
+		if !c.eventsClosed {
+			t.Fatal("retired event channel remained open")
+		}
 	}
 }

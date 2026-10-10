@@ -136,6 +136,7 @@ var outputs = []output{
 			sourceFile(runtimeLoaderFile),
 			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/request.ts"),
+			sourceFile("../runtime/host/request-guard.ts"),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile("../runtime/scene3d/script-loader.ts"),
 			sourceFile(scene3DCommandBridgeFile),
@@ -304,6 +305,14 @@ var outputs = []output{
 			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile("bootstrap-src/26-runtime-tail.ts"),
+		},
+	},
+	{
+		name: "bootstrap-feature-browser-services.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26d-feature-browser-services-prefix.ts"),
+			sourceFile("../runtime/host/request-guard.ts"),
+			sourceFile("bootstrap-src/26d-feature-browser-services-suffix.ts"),
 		},
 	},
 	{

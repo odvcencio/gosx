@@ -1,61 +1,48 @@
 package audio
 
-// Buffer is an opaque decoded audio buffer handle. Only Host implementations
-// interpret it; BusGraph and Player pass it through unchanged.
-type Buffer any
+import audiohost "m31labs.dev/gosx/game/audio/host"
 
-// Node is anything that can be wired into the graph and torn back out of it.
-type Node interface {
-	Connect(dst Node)
-	Disconnect()
+// The low-level contracts live in game/audio/host so browser clients can use
+// them without importing the manifest player or the server game runtime.
+type Buffer = audiohost.Buffer
+type Node = audiohost.Node
+type GainNode = audiohost.GainNode
+type CompressorNode = audiohost.CompressorNode
+type SourceNode = audiohost.SourceNode
+type ScheduledSource = audiohost.ScheduledSource
+type Host = audiohost.Host
+type HostOptions = audiohost.HostOptions
+type WorkletOptions = audiohost.WorkletOptions
+type RegionSourceNode = audiohost.RegionSourceNode
+type TargetGainNode = audiohost.TargetGainNode
+type Parameter = audiohost.Parameter
+type AutomatedGainNode = audiohost.AutomatedGainNode
+type Waveform = audiohost.Waveform
+type OscillatorNode = audiohost.OscillatorNode
+type StereoPannerNode = audiohost.StereoPannerNode
+type DelayNode = audiohost.DelayNode
+type Voice = audiohost.Voice
+
+func NewVoice(source ScheduledSource, onEnded func(), nodes ...Node) *Voice {
+	return audiohost.NewVoice(source, onEnded, nodes...)
 }
 
-// GainNode is a single scalar volume control — a WebAudio GainNode.
-type GainNode interface {
-	Node
-	SetGain(value float64)
-}
+const (
+	Sine     = audiohost.Sine
+	Square   = audiohost.Square
+	Sawtooth = audiohost.Sawtooth
+	Triangle = audiohost.Triangle
+)
 
-// CompressorNode is a WebAudio DynamicsCompressorNode with the handful of
-// parameters a game bus needs.
-type CompressorNode interface {
-	Node
-	Configure(threshold, ratio, attack, release float64)
-}
+var ErrClosed = audiohost.ErrClosed
+var ErrUnsupported = audiohost.ErrUnsupported
 
-// SourceNode is one playback of one Buffer — a WebAudio
-// AudioBufferSourceNode. A SourceNode is single-use: once started and
-// stopped, or once it reaches its natural end, it cannot be restarted.
-type SourceNode interface {
-	Node
-	SetLoop(loop bool)
-	SetPlaybackRate(rate float64)
-	// Start schedules playback to begin at host audio-clock time at, in the
-	// same units as Host.CurrentTime.
-	Start(at float64)
-	// Stop schedules playback to end at host audio-clock time at.
-	Stop(at float64)
-	// OnEnded registers fn to run once, at the node's natural or
-	// Stop-scheduled end.
-	OnEnded(fn func())
+func StartRegion(source SourceNode, at, offset, duration float64) error {
+	return audiohost.StartRegion(source, at, offset, duration)
 }
-
-// Host is the WebAudio surface BusGraph and Player need. HostJS is the real
-// browser implementation; tests use a fake.
-type Host interface {
-	// CurrentTime returns the audio clock, in seconds.
-	CurrentTime() float64
-	// State returns "suspended", "running", or "closed".
-	State() string
-	// Resume asks a suspended context to start running. Call it from inside
-	// a user gesture handler (Player.Unlock does this).
-	Resume() error
-	CreateGain() GainNode
-	CreateCompressor() CompressorNode
-	// CreateSource creates a one-use playback node for buffer.
-	CreateSource(buffer Buffer) SourceNode
-	// Destination returns the context's final output node.
-	Destination() Node
-	// DecodeAudioData decodes an encoded audio file's bytes into a Buffer.
-	DecodeAudioData(data []byte) (Buffer, error)
+func SetLoopRegion(source SourceNode, start, end float64) error {
+	return audiohost.SetLoopRegion(source, start, end)
+}
+func SetGainTarget(gain GainNode, value, at, timeConstant float64) error {
+	return audiohost.SetGainTarget(gain, value, at, timeConstant)
 }

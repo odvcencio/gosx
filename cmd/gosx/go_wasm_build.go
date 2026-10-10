@@ -33,6 +33,10 @@ func validateGoWASMEntries(entries map[string]string) error {
 // The current go executable/toolchain supplies both the module and the standard
 // wasm_exec loader emitted by the surrounding build; TinyGo is not used here.
 func buildGoWASMAssets(projectDir, distDir string, entries map[string]string) (map[string]HashedAsset, error) {
+	return buildGoWASMAssetsWithOptions(projectDir, distDir, entries, false)
+}
+
+func buildGoWASMAssetsWithOptions(projectDir, distDir string, entries map[string]string, production bool) (map[string]HashedAsset, error) {
 	if err := validateGoWASMEntries(entries); err != nil {
 		return nil, err
 	}
@@ -97,7 +101,7 @@ func buildGoWASMAssets(projectDir, distDir string, entries map[string]string) (m
 	assets := make(map[string]HashedAsset, len(entries))
 	for _, name := range names {
 		target := filepath.Join(tempDir, name+".wasm")
-		cmd := exec.Command("go", "build", "-trimpath", "-o", target, entries[name])
+		cmd := exec.Command("go", goWASMModuleBuildArgs(target, entries[name], production)...)
 		cmd.Dir, cmd.Env = root, env
 		if output, err := cmd.CombinedOutput(); err != nil {
 			return nil, fmt.Errorf("build.goWASM %q: %w: %s", name, err, strings.TrimSpace(string(output)))
@@ -135,4 +139,63 @@ func readProjectStandardGoWASMExec(projectDir string) ([]byte, error) {
 		return nil, fmt.Errorf("resolve application Go WASM toolchain: %w", err)
 	}
 	return readGoWASMExec(strings.TrimSpace(string(output)))
+}
+
+func goWASMModuleBuildArgs(output, pkg string, production bool) []string {
+	args := []string{"build", "-trimpath"}
+	if production {
+		args = append(args, "-ldflags=-s -w")
+	}
+	return append(args, "-o", output, pkg)
+}
+
+// runGoWASMOnlyBuild emits configured modules and their matching standard-Go
+// loader without discovering components, running hooks, copying content or
+// building any server/shared runtime. Its default output is isolated from a
+// full application's dist/build.json and existing deployment assets.
+func runGoWASMOnlyBuild(projectDir string, opts BuildOptions) error {
+	if opts.Offline || opts.MSIX || opts.Sign || opts.AppInstallerURI != "" || opts.IslandsBackend != "" || opts.SceneBudgetPath != "" || opts.SceneBudgetStrict || opts.PerfAppID != "" {
+		return fmt.Errorf("--go-wasm-only cannot be combined with server, runtime or packaging options")
+	}
+	if err := checkVersionSkew(projectDir); err != nil {
+		return err
+	}
+	cfg, err := loadProjectConfig(projectDir)
+	if err != nil {
+		return err
+	}
+	if len(cfg.Build.GoWASM) == 0 {
+		return fmt.Errorf("--go-wasm-only requires build.goWASM entries")
+	}
+	output := opts.OutputDir
+	if output == "" {
+		output = filepath.Join(projectDir, "dist", "go-wasm")
+	} else if !filepath.IsAbs(output) {
+		output = filepath.Join(projectDir, output)
+	}
+	// Resolve the loader before compiling any module. Both resolve the Go
+	// toolchain from the application's directory, including its toolchain pin.
+	loader, err := readProjectStandardGoWASMExec(projectDir)
+	if err != nil {
+		return err
+	}
+	assets, err := buildGoWASMAssetsWithOptions(projectDir, output, cfg.Build.GoWASM, !opts.Dev)
+	if err != nil {
+		return err
+	}
+	runtimeDir := filepath.Join(output, "assets", "runtime")
+	if err := os.MkdirAll(runtimeDir, 0755); err != nil {
+		return err
+	}
+	shim, err := writeHashed(runtimeDir, "standard-go-wasm_exec", ".js", wrapStandardGoWASMExec(loader))
+	if err != nil {
+		return err
+	}
+	manifest := &BuildManifest{SourceRoot: projectDir, GoWASM: assets, Runtime: RuntimeAssets{StandardGoWASMExec: shim}}
+	manifestPath, err := writeBuildManifest(output, manifest)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("  Go WASM manifest: %s\n", manifestPath)
+	return nil
 }

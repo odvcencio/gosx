@@ -1,6 +1,6 @@
 //go:build js && wasm
 
-package audio
+package audiohost
 
 import (
 	"errors"
@@ -11,6 +11,7 @@ import (
 
 type browserAudioFixture struct {
 	ctx, contextOptions, workletOptions, worklet, port, source, gain js.Value
+	panner, delay, oscillator, frequency                             js.Value
 	modulePromise, moduleURL, posted                                 js.Value
 	functions                                                        []js.Func
 	starts, automation                                               [][]float64
@@ -68,12 +69,41 @@ func newBrowserAudioFixture(t *testing.T) *browserAudioFixture {
 		f.starts = append(f.starts, x)
 		return nil
 	})
-	f.method(f.source, "disconnect", func([]js.Value) any { return nil })
+	f.method(f.source, "disconnect", func([]js.Value) any { f.disconnects++; return nil })
+	f.method(f.source, "connect", func([]js.Value) any { return nil })
+	f.method(f.source, "stop", func([]js.Value) any { return nil })
+	f.method(f.source, "playbackRate", func([]js.Value) any { return nil })
+	f.source.Set("playbackRate", object())
 	f.method(f.ctx, "createGain", func([]js.Value) any { return f.gain })
 	param := object()
 	f.gain.Set("gain", param)
-	for _, method := range []string{"cancelScheduledValues", "setValueAtTime", "setTargetAtTime"} {
+	f.method(f.gain, "connect", func([]js.Value) any { return nil })
+	f.method(f.gain, "disconnect", func([]js.Value) any { f.disconnects++; return nil })
+	for _, method := range []string{"cancelScheduledValues", "setValueAtTime", "setTargetAtTime", "linearRampToValueAtTime", "exponentialRampToValueAtTime", "cancelAndHoldAtTime"} {
 		f.method(param, method, func(args []js.Value) any {
+			values := make([]float64, len(args))
+			for i, arg := range args {
+				values[i] = arg.Float()
+			}
+			f.automation = append(f.automation, values)
+			return nil
+		})
+	}
+	f.panner, f.delay, f.oscillator, f.frequency = object(), object(), object(), object()
+	f.panner.Set("pan", object())
+	f.delay.Set("delayTime", object())
+	f.oscillator.Set("frequency", f.frequency)
+	f.method(f.ctx, "createStereoPanner", func([]js.Value) any { return f.panner })
+	f.method(f.ctx, "createDelay", func([]js.Value) any { return f.delay })
+	f.method(f.ctx, "createOscillator", func([]js.Value) any { return f.oscillator })
+	for _, node := range []js.Value{f.panner, f.delay, f.oscillator} {
+		f.method(node, "connect", func([]js.Value) any { return nil })
+		f.method(node, "disconnect", func([]js.Value) any { f.disconnects++; return nil })
+	}
+	f.method(f.oscillator, "start", func([]js.Value) any { return nil })
+	f.method(f.oscillator, "stop", func([]js.Value) any { return nil })
+	for _, method := range []string{"setValueAtTime", "exponentialRampToValueAtTime"} {
+		f.method(f.frequency, method, func(args []js.Value) any {
 			values := make([]float64, len(args))
 			for i, arg := range args {
 				values[i] = arg.Float()

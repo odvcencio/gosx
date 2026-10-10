@@ -2,6 +2,35 @@
 
 ## Unreleased
 
+## v0.57.8
+
+- Add typed browser DOM, lazy event access, timers, attribute observers,
+  cancellable fetch, navigation, clipboard, fullscreen, telemetry consent and
+  desktop services in `client/browser`. `engine/wasm.Context.MountElement`
+  exposes a typed engine mount. Owned listeners and timers have explicit
+  disposal; native request guards do not call Go on every network request.
+- Add explicit local/session storage with denied-access and bounded-key
+  snapshot handling, plus a dependency-light `hub/socket` browser transport
+  shared by `hub/client`. Binary message bytes are borrowed during callbacks
+  and reuse receive storage; callers must copy before retaining them.
+- Add dependency-light `game/audio/host` with typed gain/filter/panner/delay
+  automation and offset playback. Existing `game/audio` constructors remain
+  compatible. Closing a host cancels asynchronous waits and releases owned
+  voices without changing scheduled loop boundaries.
+- Add typed server telemetry preloads and desktop host startup/recovery
+  bootstraps. Applications supply consent, message names and presentation as
+  data. GoSX owns origin checks, single-flight polling, retry/navigation,
+  safe script encoding and unload cleanup.
+- Add `scene.Surface` and `scene.StreamWriter` for retained browser mounts.
+  Instance streams reuse Go and JavaScript buffers, reject reentrant writes,
+  refresh mount handles after recovery, and preload the shared codec without
+  fabricated geometry. `InstanceStreamFrame.EncodeInto` preserves the existing
+  wire format with zero steady-state allocations.
+- Build configured standard-Go application WASM modules with production
+  stripping, hashed artifacts, compression sidecars and a matching loader.
+  `gosx build --prod --go-wasm-only --output <dir>` runs this module pipeline
+  without rebuilding the framework runtime, server or unrelated assets.
+
 ## v0.57.7
 
 - Stop the shared gamepad provider's idle polling when controllers are absent
