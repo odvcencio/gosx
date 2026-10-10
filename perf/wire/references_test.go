@@ -180,9 +180,9 @@ func TestReferencesUnresolvedSyntaxDoesNotProveClosure(t *testing.T) {
 		{"base", KindDocument, `<base href="/other/"><script src="main.js"></script>`},
 		{"import-map", KindDocument, `<script type="importmap">{"imports":{}}</script>`},
 		{"duplicate-attribute", KindDocument, `<script src="/first.js" src="/second.js"></script>`},
-		{"missing-runtime", KindDocument, `<script id="gosx-manifest">{"version":"0.1.0","islands":[{"programRef":"/a.bin"}]}</script>`},
-		{"missing-bundle", KindDocument, `<script id="gosx-manifest">{"version":"0.1.0","islands":[{"bundleId":"absent"}],"runtime":{"path":"/core.wasm"}}</script>`},
-		{"unknown-manifest", KindDocument, `<script id="gosx-manifest">{"version":"future","bundles":{}}</script>`},
+		{"missing-runtime", KindDocument, `<script type="application/json" id="gosx-manifest">{"version":"0.1.0","islands":[{"programRef":"/a.bin"}]}</script>`},
+		{"missing-bundle", KindDocument, `<script type="application/json" id="gosx-manifest">{"version":"0.1.0","islands":[{"bundleId":"absent"}],"runtime":{"path":"/core.wasm"}}</script>`},
+		{"unknown-manifest", KindDocument, `<script type="application/json" id="gosx-manifest">{"version":"future","bundles":{}}</script>`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -306,7 +306,7 @@ func TestReferencesUnsupportedLoaderFormsAreIncomplete(t *testing.T) {
 		{"html-media", KindDocument, `<source src="/a.webp" srcset="/a.webp 1x,/b.webp 2x">`},
 		{"html-object", KindDocument, `<object data="/a" data="/b"></object>`},
 		{"html-hint", KindDocument, `<div data-gosx-scene3d-url="/invalid path"></div>`},
-		{"html-manifest", KindDocument, `<script id="gosx-manifest">{"version":"0.1.0","islands":[{"bundleId":"unknown"}]}</script>`},
+		{"html-manifest", KindDocument, `<script type="application/json" id="gosx-manifest">{"version":"0.1.0","islands":[{"bundleId":"unknown"}]}</script>`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			set, err := ScanReferences([]byte(tc.body), tc.kind)
@@ -324,8 +324,8 @@ func TestReferencesInvalidInputsReturnFixedError(t *testing.T) {
 	}{
 		{KindScript, []byte("import './unterminated")},
 		{KindStyle, []byte(".a{background:url('unfinished)")},
-		{KindDocument, []byte(`<script id="gosx-manifest">{invalid}</script>`)},
-		{KindDocument, []byte(`<script id="gosx-manifest">{}</script><script id="gosx-manifest">{}</script>`)},
+		{KindDocument, []byte(`<script type="application/json" id="gosx-manifest">{invalid}</script>`)},
+		{KindDocument, []byte(`<script type="application/json" id="gosx-manifest">{}</script><script type="application/json" id="gosx-manifest">{}</script>`)},
 		{KindDocument, []byte{0xff}},
 		{KindScript, bytes.Repeat([]byte(" "), 16<<20+1)},
 		{KindFont, []byte("unused")},
@@ -370,7 +370,7 @@ func TestReferencesDoNotChangeCompatibilityCrawlerContract(t *testing.T) {
 	if len(old) != 2 {
 		t.Fatal("legacy manifest accounting changed", old)
 	}
-	body := []byte(`<script id="gosx-manifest">{"version":"0.1.0","runtime":{"path":"/gosx/core.wasm"},"bundles":{"dormant":{"path":"/gosx/full.wasm"}}}</script>`)
+	body := []byte(`<script type="application/json" id="gosx-manifest">{"version":"0.1.0","runtime":{"path":"/gosx/core.wasm"},"bundles":{"dormant":{"path":"/gosx/full.wasm"}}}</script>`)
 	set, err := ScanReferences(body, KindDocument)
 	if err != nil || !set.Complete || len(set.Resources) != 0 {
 		t.Fatal("new scanner did not distinguish inventory from selected runtime", set, err)

@@ -67,80 +67,145 @@ func htmlReferenceWords(words string) map[string]bool {
 	return set
 }
 
-func understoodHTMLReferenceAttribute(n *html.Node, a html.Attribute) bool {
+// Every present attribute reaches this dispatcher. An allowlisted metadata
+// attribute is explicitly inert; a new or unsupported field fails closed.
+func scanHTMLReferenceAttribute(n *html.Node, a html.Attribute, out *ReferenceSet) error {
 	if n.Namespace != "" || a.Namespace != "" {
-		return false
+		out.drop(dropUnresolved)
+		return nil
 	}
 	if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
-		return htmlReferenceURL(a.Val, "")
+		addFetchReference(out, a.Val, "", true)
+		return nil
 	}
 	switch a.Key {
 	case "style":
-		// The syntax scanner checks URL literals, substitutions and functions.
-		return true
+		if n.Data == "template" {
+			out.drop(dropTemplateContent)
+			return nil
+		}
+		if strings.TrimSpace(a.Val) == "" {
+			out.drop(dropEmptySyntax)
+			return nil
+		}
+		return scanSyntaxReferences([]byte(".inline{"+a.Val+"}"), KindStyle, out)
 	case "src":
+		kind := ""
 		switch n.Data {
 		case "script":
 			if !executableType(attr(n, "type")) {
-				return knownHTMLDataScript(attr(n, "type"))
+				if knownHTMLDataScript(attr(n, "type")) {
+					out.drop(dropInertDataScript)
+				} else {
+					out.drop(dropUnresolved)
+				}
+				return nil
 			}
+			kind = KindScript
 		case "img":
-			return htmlReferenceURL(a.Val, KindImage)
+			kind = KindImage
 		case "input":
-			return strings.EqualFold(attr(n, "type"), "image") && htmlReferenceURL(a.Val, KindImage)
-		case "audio", "iframe", "source", "track", "video":
+			if !strings.EqualFold(attr(n, "type"), "image") {
+				out.drop(dropUnresolved)
+				return nil
+			}
+			kind = KindImage
+		case "iframe":
+			kind = KindDocument
+		case "audio", "source", "track", "video", "embed":
+			kind = KindOther
+			if n.Data == "embed" {
+				out.drop(dropUnresolved)
+			}
 		default:
-			return false
+			out.drop(dropUnresolved)
+			return nil
 		}
-		return htmlReferenceURL(a.Val, "")
+		addFetchReference(out, a.Val, kind, false)
 	case "href":
-		kind := ""
-		if strings.EqualFold(attr(n, "rel"), "preload") || strings.EqualFold(attr(n, "rel"), "prefetch") {
-			switch strings.ToLower(attr(n, "as")) {
-			case "image":
-				kind = KindImage
-			case "font":
-				kind = KindFont
+		if n.Data != "link" {
+			out.drop(dropUnresolved)
+			return nil
+		}
+		if !understoodHTMLLink(n) {
+			out.drop(dropUnresolved)
+		}
+		for _, rel := range strings.Fields(strings.ToLower(attr(n, "rel"))) {
+			kind := ""
+			switch rel {
+			case "stylesheet":
+				kind = KindStyle
+			case "modulepreload":
+				kind = KindScript
+			case "preload", "prefetch":
+				switch strings.ToLower(attr(n, "as")) {
+				case "script":
+					kind = KindScript
+				case "style":
+					kind = KindStyle
+				case "font":
+					kind = KindFont
+				case "image":
+					kind = KindImage
+				}
+			default:
+				out.drop(dropUnresolved)
+				continue
+			}
+			addFetchReference(out, a.Val, kind, false)
+		}
+	case "poster":
+		if n.Data == "video" {
+			addFetchReference(out, a.Val, KindImage, false)
+		} else {
+			out.drop(dropUnresolved)
+		}
+	case "data":
+		out.drop(dropUnresolved)
+		if n.Data == "object" {
+			addFetchReference(out, a.Val, "", false)
+		}
+	case "srcset", "imagesrcset":
+		if strings.TrimSpace(a.Val) == "" && (a.Key == "srcset" && (n.Data == "img" || n.Data == "source") || a.Key == "imagesrcset" && n.Data == "link") {
+			out.drop(dropInertHTML)
+		} else {
+			out.drop(dropUnresolved)
+		}
+	case "content":
+		if n.Data == "meta" {
+			switch strings.ToLower(strings.TrimSpace(attr(n, "http-equiv"))) {
+			case "", "content-type", "default-style", "x-ua-compatible":
+				out.drop(dropInertHTML)
+				return nil
 			}
 		}
-		return n.Data == "link" && htmlReferenceURL(a.Val, kind)
-	case "poster":
-		return n.Data == "video" && htmlReferenceURL(a.Val, KindImage)
-	case "srcset":
-		return (n.Data == "img" || n.Data == "source") && strings.TrimSpace(a.Val) == ""
-	case "imagesrcset":
-		return n.Data == "link" && strings.TrimSpace(a.Val) == ""
-	case "content":
-		if n.Data != "meta" {
-			return false
-		}
-		switch strings.ToLower(strings.TrimSpace(attr(n, "http-equiv"))) {
-		case "", "content-type", "default-style", "x-ua-compatible":
-			return true
-		default:
-			// Refresh and embedded CSP can initiate or change network activity.
-			return false
-		}
+		out.drop(dropUnresolved)
 	case "http-equiv":
-		if n.Data != "meta" {
-			return false
+		if n.Data == "meta" {
+			switch strings.ToLower(strings.TrimSpace(a.Val)) {
+			case "content-type", "default-style", "x-ua-compatible":
+				out.drop(dropInertHTML)
+				return nil
+			}
 		}
-		switch strings.ToLower(strings.TrimSpace(a.Val)) {
-		case "content-type", "default-style", "x-ua-compatible":
-			return true
-		default:
-			return false
+		out.drop(dropUnresolved)
+	default:
+		if htmlReferenceGlobalAttributes[a.Key] || htmlReferenceElementAttributes[n.Data][a.Key] {
+			out.drop(dropInertHTML)
+		} else {
+			out.drop(dropUnresolved)
 		}
 	}
-	return htmlReferenceGlobalAttributes[a.Key] || htmlReferenceElementAttributes[n.Data][a.Key]
+	return nil
 }
 
-func htmlReferenceURL(raw, kind string) bool {
-	value := strings.TrimSpace(raw)
-	if value == "" || strings.HasPrefix(value, "#") {
-		return false
+func hasHTMLReferenceAttribute(n *html.Node, key string) bool {
+	for _, a := range n.Attr {
+		if a.Key == key {
+			return true
+		}
 	}
-	return understoodReferenceURL(value, kind)
+	return false
 }
 
 func knownHTMLDataScript(typ string) bool {
