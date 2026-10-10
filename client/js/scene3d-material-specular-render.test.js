@@ -639,8 +639,8 @@ test("WebGL texture-unit allocator reserves the specular material slots", () => 
     "sceneAllocateTextureUnits({ shadowCount: 2, ibl: true, maxUnits: 16 })");
   assert.equal(layout.material.specularIntensity, 6);
   assert.equal(layout.material.specularColor, 7);
-  assert.deepEqual(Array.from(layout.shadows), [8, 9]);
-  assert.deepEqual({ ...layout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
+  assert.deepEqual(Array.from(layout.shadows), [9, 10]);
+  assert.deepEqual({ ...layout.ibl }, { irradiance: 11, radiance: 12, brdfLUT: 13 });
   // Every returned slot is distinct: no material map collides with another
   // material map, a shadow cascade or an IBL unit.
   const materialUnits = Object.values(layout.material);
@@ -664,8 +664,8 @@ test("WebGL frame layout fits both shadow arrays and IBL at 16 units", () => {
   const { context } = setupWebGLRenderer();
   for (const max of [16, 32]) {
     const layout = callIn(context, `scenePBRTextureLayoutForFrame([], [], { ibl: {} }, ${max})`);
-    assert.deepEqual(Array.from(layout.shadows), [8, 9]);
-    assert.deepEqual({ ...layout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
+    assert.deepEqual(Array.from(layout.shadows), [9, 10]);
+    assert.deepEqual({ ...layout.ibl }, { irradiance: 11, radiance: 12, brdfLUT: 13 });
     assert.equal(layout.warnings.length, 0);
   }
 });
@@ -1376,7 +1376,7 @@ test("WebGPU specular-intensity loaded map binds the real view and reuses the bi
   // entries is a VM-created array; Array.from copies it into a host array so
   // deepStrictEqual compares primitive numbers rather than foreign prototypes.
   const bindings = Array.from(calls.bindGroups[0].entries, (entry) => entry.binding);
-  assert.deepStrictEqual(bindings, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+  assert.deepStrictEqual(bindings, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
 });
 
 test("WebGPU specular-intensity late load and new view invalidate the cached bind group", () => {
@@ -1420,7 +1420,7 @@ test("WebGPU material bind group layout declares specular-intensity texture and 
     "webgpu-layout-extract.js");
   context.device = { createBindGroupLayout: (desc) => desc };
   const desc = callIn(context, "wgpuCreateMaterialBindGroupLayout(device)");
-  assert.strictEqual(desc.entries.length, 17);
+  assert.strictEqual(desc.entries.length, 19);
   // The found entry objects were created inside the VM with foreign Object
   // prototypes; compare JSON roundtrips so only the values matter.
   assert.deepStrictEqual(JSON.parse(JSON.stringify(
@@ -1683,4 +1683,28 @@ test("KTX2 material uploads restore the declared wrap modes after decoder defaul
     assert.equal(parameters.get(10242), wrapS);
     assert.equal(parameters.get(10243), wrapT);
   }
+});
+
+
+test("glTF volume thickness texture keeps linear green data and authored wrapping", () => {
+  const context = createSceneCoreContext();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  context.volumeDocument = {
+    asset: { version: "2.0" }, images: [{ uri: "thickness.png" }],
+    textures: [{ source: 0, sampler: 0 }],
+    samplers: [{ wrapS: 33071, wrapT: 33648, minFilter: 9729, magFilter: 9728 }],
+    materials: [{ extensions: { KHR_materials_volume: {
+      thicknessFactor: 2.5, thicknessTexture: { index: 0 },
+      attenuationColor: [0.25, 0.5, 1], attenuationDistance: 3,
+    } } }],
+  };
+  const profile = callIn(context, `sceneObjectMaterialProfile(normalizeSceneObject({ kind: "mesh", material: gltfExtractMaterial(volumeDocument, 0, null) }, 0, null))`);
+  assert.equal(profile.thickness, 2.5);
+  assert.equal(profile.thicknessMap, "thickness.png");
+  const descriptor = profile.textureDescriptors.thickness;
+  assert.equal(descriptor.role, "data");
+  assert.equal(descriptor.colorSpace, "linear");
+  assert.equal(descriptor.channels, "g");
+  assert.equal(descriptor.wrapS, 33071);
+  assert.equal(descriptor.wrapT, 33648);
 });

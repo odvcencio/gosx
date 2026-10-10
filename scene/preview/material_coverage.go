@@ -36,7 +36,7 @@ import (
 // material was ignored when it was not, which is the more expensive direction
 // of a wrong diagnostic: it invites deleting work that functions.
 //
-// Three remain, for different reasons.
+// Five remain, for different reasons.
 //
 // materialKind: render/bundle drops it before the GPU. materialFromRender reads
 // colour, opacity, the physical scalars and the map slots, and never reads Kind.
@@ -52,6 +52,10 @@ import (
 // cutoff promises a pixel effect it cannot produce. An omitted cutoff and an
 // explicit null disable promise nothing and are not counted.
 //
+// thicknessMap and specularAA: browser fragment stages sample spatial volume
+// thickness and filter geometric normal variance. Native headless currently
+// consumes neither control; scalar volume behavior remains unchanged.
+//
 // Note on metalnessMap and emissiveMap: both are MODULATING maps. They scale a
 // factor, so they change nothing when that factor is zero. They are sampled, and
 // therefore not ignored — but an author who sees no change should check the
@@ -60,6 +64,8 @@ var ignoredMaterialFields = []string{
 	"materialKind",
 	"wireframe",
 	"alphaCutoff",
+	"thicknessMap",
+	"specularAA",
 }
 
 // cpuBaselineMaterialKind is the one authored material kind that describes what
@@ -101,11 +107,15 @@ func materialCoverageDiagnostic(ir scene.SceneIR) (engine.RenderDiagnostic, bool
 		countIgnoredMaterialFields(count, boolValue(object.Wireframe))
 		count("materialKind", materialKindIgnored(object.MaterialKind))
 		count("alphaCutoff", alphaCutoffIgnored(object.AlphaCutoff))
+		count("thicknessMap", object.ThicknessMap != "")
+		count("specularAA", object.SpecularAA != nil && object.SpecularAA.Variance > 0 && object.SpecularAA.Threshold > 0)
 	}
 	for _, mesh := range ir.InstancedMeshes {
 		countIgnoredMaterialFields(count, boolValue(mesh.Wireframe))
 		count("materialKind", materialKindIgnored(mesh.MaterialKind))
 		count("alphaCutoff", alphaCutoffIgnored(mesh.AlphaCutoff))
+		count("thicknessMap", mesh.ThicknessMap != "")
+		count("specularAA", mesh.SpecularAA != nil && mesh.SpecularAA.Variance > 0 && mesh.SpecularAA.Threshold > 0)
 	}
 	if len(used) == 0 {
 		return engine.RenderDiagnostic{}, false

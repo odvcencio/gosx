@@ -36,9 +36,11 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import rendererSourceSet from "./scene3d-renderer-source-set.js";
 
 const { readSceneRendererBackendSrc } = rendererSourceSet;
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -49,7 +51,9 @@ function readSrc(name) {
 
 const computeSource = readSrc("../runtime/scene3d/compute.ts");
 const webgpuSource = readSceneRendererBackendSrc("webgpu");
-const sharedSource = readSrc("15a-scene-postfx-shared.ts");
+const sharedSource = ts.transpileModule(readSrc("15a-scene-postfx-shared.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 const GOOD_KERNEL = "@compute @workgroup_size(64) fn simulate() {}";
 const BAD_KERNEL = "@compute @workgroup_size(64) fn simulate() { let x = 10u * 3812015801u; }";

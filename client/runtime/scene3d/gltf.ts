@@ -1860,6 +1860,8 @@
     var emissiveURL = gltfResolveTexture(gltf, mat.emissiveTexture, binaryBuffer);
     var specular = gltfExtension(mat, "KHR_materials_specular");
     var specularIntensityURL = specular ? gltfResolveTexture(gltf, specular.specularTexture, binaryBuffer) : "";
+    var volume = gltfExtension(mat, "KHR_materials_volume");
+    var thicknessURL = volume ? gltfResolveTexture(gltf, volume.thicknessTexture, binaryBuffer) : "";
     var specularColorURL = specular ? gltfResolveTexture(gltf, specular.specularColorTexture, binaryBuffer) : "";
 
     // emissiveFactor is a linear RGB colour, not a scalar — a red-only
@@ -1910,8 +1912,10 @@
       specularIntensityURL,
       specularColorURL
     );
+    if (thicknessURL) Reflect.set(textureDescriptors, "thickness", gltfTextureDescriptor(thicknessURL, "data", "linear", "g"));
     // glTF samplers default to REPEAT on both axes, including transformed UVs.
     var textureInfos = {
+      thickness: volume && volume.thicknessTexture,
       baseColor: pbr.baseColorTexture, normal: mat.normalTexture,
       roughness: pbr.metallicRoughnessTexture, metalness: pbr.metallicRoughnessTexture,
       occlusion: mat.occlusionTexture, emissive: mat.emissiveTexture,
@@ -1982,11 +1986,11 @@
       record.transmission = gltfExtensionFactor(transmission, "transmissionFactor", 0, 0, 1);
     }
 
-    // Scalar KHR_materials_volume controls. Thickness textures are not sampled.
-    var volume = gltfExtension(mat, "KHR_materials_volume");
+    // KHR_materials_volume: thicknessFactor times linear texture green.
     if (volume) {
       Object.assign(record, {
         thickness: Math.max(0, Number.isFinite(volume.thicknessFactor) ? volume.thicknessFactor : 0),
+        thicknessMap: thicknessURL,
         attenuationDistance: Math.max(0, Number.isFinite(volume.attenuationDistance) ? volume.attenuationDistance : 0),
         attenuationColor: Array.isArray(volume.attenuationColor) ? volume.attenuationColor.slice(0, 3) : [1, 1, 1],
       });

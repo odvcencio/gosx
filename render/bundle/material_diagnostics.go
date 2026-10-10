@@ -35,6 +35,7 @@ var diagnosticTargets = [...]string{"wgsl", "glsl", "metal", "gles"}
 
 func (c *materialDiagnosticsCache) update(b engine.RenderBundle) []engine.RenderDiagnostic {
 	c.out = c.out[:0]
+	c.out = appendPostEffectDiagnostics(c.out, b)
 	hasCustom := false
 	for i := range b.Materials {
 		if isCustomMaterial(&b.Materials[i]) {

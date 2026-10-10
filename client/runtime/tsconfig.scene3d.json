@@ -54,6 +54,8 @@
     "scene3d/webgl-contact-shadows.ts",
     "scene3d/webgl-taa.ts",
     "scene3d/webgpu-contact-shadows.ts",
-    "scene3d/mount-input.ts"
+    "scene3d/mount-input.ts",
+    "scene3d/webgl-specular-bloom.ts",
+    "scene3d/webgpu-specular-bloom.ts"
   ]
 }

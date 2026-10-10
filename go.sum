@@ -124,5 +124,7 @@ m31labs.dev/selena v0.5.2 h1:KgVkH9ngpNKRP7xHl96N46iE8+gSyQ9nfqIrWiStQBI=
 m31labs.dev/selena v0.5.2/go.mod h1:gWixT9H7Gbfs+SBKJj12/01lEXu5YpBuabrQUiH0TD0=
 m31labs.dev/selena v0.5.3-0.20261009230029-91a4a8c05027 h1:oX9IRmHYwgoEV3ff8r1XEUuCiBoUzZTaYLOqTFrFEQA=
 m31labs.dev/selena v0.5.3-0.20261009230029-91a4a8c05027/go.mod h1:gWixT9H7Gbfs+SBKJj12/01lEXu5YpBuabrQUiH0TD0=
+m31labs.dev/selena v0.5.3-0.20261010191520-994398415643 h1:PWhkodgU/8FoCRfvT6S4RJZ+iWqOURBw7KV+e3VWleM=
+m31labs.dev/selena v0.5.3-0.20261010191520-994398415643/go.mod h1:gWixT9H7Gbfs+SBKJj12/01lEXu5YpBuabrQUiH0TD0=
 m31labs.dev/turboquant v0.2.1 h1:J6jY43qeZZkqjBcV0qASX9KA640uf5pAqbdfHWv+Hbo=
 m31labs.dev/turboquant v0.2.1/go.mod h1:7nkx3Sf/xgz/6V992ePuUpXTN6HyWL+2ueOGCEdlg84=

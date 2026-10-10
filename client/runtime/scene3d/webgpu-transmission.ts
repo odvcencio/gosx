@@ -15,12 +15,16 @@ fn transmissionEnvironment(ray: vec3f, roughness: f32) -> vec3f {
     let hemi = clamp(ray.y * 0.5 + 0.5, 0.0, 1.0);
     return env.ambientColor * env.ambientIntensity + env.skyColor * env.skyIntensity * hemi + env.groundColor * env.groundIntensity * (1.0 - hemi);
 }
-fn volumeTransmission(P: vec3f, N: vec3f, V: vec3f, roughness: f32) -> vec3f {
+fn volumeThickness(uv: vec2f) -> f32 {
+    var thickness = material.volume.x;
+    if (material.hasThicknessMap != 0u) { thickness *= clamp(textureSample(thicknessTex, thicknessSamp, uv).g, 0.0, 1.0); }
+    return thickness;
+}
+fn volumeTransmission(P: vec3f, N: vec3f, V: vec3f, roughness: f32, pathLength: f32) -> vec3f {
     let ior = material.volume.y;
     if (ior == 0.0) { return vec3f(0.0); }
     let ray = refract(-V, N, 1.0 / ior);
     if (dot(ray, ray) < 0.0001) { return vec3f(0.0); }
-    let pathLength = material.volume.x;
     var light = transmissionEnvironment(ray, roughness);
     if (transmissionCapture.y > 0.5) {
         let exit = frame.projMatrix * frame.viewMatrix * vec4f(P + ray * pathLength, 1.0);

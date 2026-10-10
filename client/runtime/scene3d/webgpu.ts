@@ -369,9 +369,10 @@
     "    emissiveColor: vec3f,",
     "    rimStrength: f32,",
     "    rimColor: vec3f,",
-    "    _pad4: f32,",
+    "    specularAAVariance: f32,",
     "    volume: vec4f,",
     "    attenuationColor: vec3f,",
+    "    hasThicknessMap: u32,",
     "};",
   ].join("\n");
 
@@ -1691,6 +1692,7 @@
   // -----------------------------------------------------------------------
 
   var WGSL_PBR_FRAGMENT = [
+    "var<private> gosxSpecularRadiance: vec3f;",
     WGSL_COMMON_CONSTANTS,
     "",
     WGSL_FRAME_STRUCTS,
@@ -1750,6 +1752,8 @@
     // neutral via the hasSpecularColorMap gate in the fragment body.
       "@group(1) @binding(15) var specularColorTex: texture_2d<f32>;",
       "@group(1) @binding(16) var specularColorSamp: sampler;",
+      "@group(1) @binding(17) var thicknessTex: texture_2d<f32>;",
+      "@group(1) @binding(18) var thicknessSamp: sampler;",
       "",
     "fn shadowProjectedCoords(worldPos: vec3f, lightSpaceMatrix: mat4x4f) -> vec3f {",
     "    let lightSpacePos = lightSpaceMatrix * vec4f(worldPos, 1.0);",
@@ -1995,12 +1999,19 @@
     "        let F = fresnelSchlick(max(dot(H, V), 0.0), F0, F90);",
     "        let brdf = (D * G * F) / (4.0 * NoV * NdotL + 0.0001);",
     "        out = out + radiance * brdf * formFactor;",
+    "        gosxSpecularRadiance += radiance * brdf * formFactor;",
     "    }",
     "    return out;",
     "}",
     "",
+    "fn gsxSpecularRoughness(n: vec3f, r: f32, aa: vec2f) -> f32 {",
+    "    let dx = dpdx(n); let dy = dpdy(n);",
+    "    let kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
+    "    if (kernel > 0.0) { return sqrt(sqrt(min(r*r*r*r + kernel, 1.0))); }",
+    "    return r;",
+    "}",
     WGSL_TRANSMISSION,
-    "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f {",
+    "fn gosxPBRColor(in: VertexOutput) -> vec4f {",
     // Resolve material properties, sampling textures when available.
     "    var albedo = material.albedo;",
     "    var texAlpha = 1.0;",
@@ -2021,6 +2032,8 @@
     "    }",
     "    roughness = clamp(roughness, 0.04, 1.0);",
     "    roughness = clamp(roughness * (1.0 - abs(material.anisotropy) * 0.28), 0.04, 1.0);",
+    "    roughness = gsxSpecularRoughness(normalize(in.normal), roughness, vec2f(material.specularAAVariance, material.volume.w));",
+    "    let volumePathLength = volumeThickness(in.uv);",
     "",
     "    var metalness = material.metalness;",
     "    if (material.hasMetalnessMap != 0u) {",
@@ -2211,10 +2224,12 @@
     "",
     "        let radiance = lightColor * intensity * attenuation;",
     "        Lo = Lo + (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadowAtten;",
+    "        gosxSpecularRadiance += specular * radiance * NdotL * shadowAtten;",
     "    }",
     "",
     "    // Assetpipe split-sum IBL, with hemisphere fallback while products load.",
     "    var ambient: vec3f;",
+    "    var specularEnvironment = vec3f(0.0);",
     "    if (env.hasIBL != 0u) {",
     "        let Nr = rotateEnvY(N, env.envRotation);",
     "        let Rr = rotateEnvY(reflect(-V, N), env.envRotation);",
@@ -2227,6 +2242,7 @@
     "        let diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
     "        let specularIBL = prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * env.envIntensity;",
+    "        specularEnvironment = specularIBL * env.envIntensity;",
     "    } else if (env.hasEnvMap != 0u) {",
     // NOTE: unlike the WebGL2 renderer, the WebGPU equirect environment
     // texture is currently uploaded with a single mip level (WebGPU has no
@@ -2244,6 +2260,7 @@
     "        let FdielEnv = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
     "        let kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * env.envIntensity;",
+    "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * env.envIntensity;",
     "    } else {",
     "        let hemi = N.y * 0.5 + 0.5;",
     "        let envDiffuse = env.ambientColor * env.ambientIntensity",
@@ -2252,9 +2269,12 @@
     "        ambient = envDiffuse * albedo * (1.0 - transmission);",
     "    }",
     "    if (env.hasIBL == 0u && env.hasEnvMap == 0u) {",
-    "        ambient = ambient + transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        let reflectedTransmission = transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        ambient += reflectedTransmission;",
+    "        specularEnvironment += reflectedTransmission;",
     "    }",
     "    ambient = ambient * ambientOcclusion;",
+    "    gosxSpecularRadiance += specularEnvironment * ambientOcclusion;",
     "",
     // Emissive contribution.
     "    let emission = emissiveColor * emissiveStrength;",
@@ -2289,7 +2309,7 @@
     "",
     "    if (transmission > 0.0001) {",
     "        let Ft = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
+    "        color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness, volumePathLength);",
     "    }",
     "",
     // Exponential fog.
@@ -2297,6 +2317,7 @@
     "        let fogDist = length(in.worldPos - frame.cameraPos);",
     "        let fogFactor = exp(-fog.fogDensity * fog.fogDensity * fogDist * fogDist);",
     "        color = mix(fog.fogColor, color, clamp(fogFactor, 0.0, 1.0));",
+    "        gosxSpecularRadiance *= clamp(fogFactor, 0.0, 1.0);",
     "    }",
     "",
     // Mode 4 hands linear scene-referred values to the post chain. Every
@@ -2318,6 +2339,11 @@
     "",
     "    if (alphaEnabled && coverage < cutoff) { discard; }",
     "    return vec4f(color, select(finalOpacity, 1.0, alphaEnabled));",
+    "}",
+    "@fragment fn fragmentMain(in: VertexOutput) -> @location(0) vec4f { return gosxPBRColor(in); }",
+    "struct GosxSpecularOutput { @location(0) color: vec4f, @location(1) specular: vec4f };",
+    "@fragment fn fragmentMainSpecular(in: VertexOutput) -> GosxSpecularOutput {",
+    "  let color = gosxPBRColor(in); return GosxSpecularOutput(color, vec4f(max(gosxSpecularRadiance, vec3f(0)), color.a));",
     "}",
   ].join("\n");
 
@@ -3797,6 +3823,8 @@
         { binding: 14, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
         { binding: 15, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
         { binding: 16, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+        { binding: 17, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
+        { binding: 18, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
       ],
     });
   }
@@ -3999,14 +4027,7 @@
         entryPoint: "vertexMain",
         buffers: WGPU_PBR_VERTEX_LAYOUT,
       },
-      fragment: {
-        module: fragmentModule,
-        entryPoint: "fragmentMain",
-        targets: [{
-          format: targetFormat,
-          blend: wgpuBlendState(blendMode),
-        }],
-      },
+      fragment: sceneWebGPUColorFragment(fragmentModule, targetFormat, wgpuBlendState(blendMode)),
       primitive: { topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 ? "cw" : "ccw" },
       multisample: { count: Math.max(1, Math.floor(Math.abs(signedSampleCount) || 1)) },
       depthStencil: {
@@ -4026,14 +4047,7 @@
         entryPoint: "vertexMain",
         buffers: WGPU_PBR_INSTANCED_VERTEX_LAYOUT,
       },
-      fragment: {
-        module: fragmentModule,
-        entryPoint: "fragmentMain",
-        targets: [{
-          format: targetFormat,
-          blend: wgpuBlendState(blendMode),
-        }],
-      },
+      fragment: sceneWebGPUColorFragment(fragmentModule, targetFormat, wgpuBlendState(blendMode)),
       primitive: { topology: "triangle-list", cullMode: "none" },
       multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
@@ -4057,14 +4071,7 @@
         entryPoint: "vertexMain",
         buffers: WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT,
       },
-      fragment: {
-        module: fragmentModule,
-        entryPoint: "fragmentMain",
-        targets: [{
-          format: targetFormat,
-          blend: wgpuBlendState(blendMode),
-        }],
-      },
+      fragment: sceneWebGPUColorFragment(fragmentModule, targetFormat, wgpuBlendState(blendMode)),
       primitive: { topology: "triangle-list", cullMode: "none" },
       multisample: { count: Math.max(1, Math.floor(sampleCount || 1)) },
       depthStencil: {
@@ -4365,6 +4372,7 @@
   function sceneWebGPUPostFrameContext(frame) { return Array.isArray(frame) ? { lights: frame } : frame || {}; }
   function wgpuCreatePostProcessor(device, presentationFormat, onAllocationError, packSelenaUniforms) {
     var targetFormat = "rgba16float";
+    let specularSource: any = null;
     // Resolve the precision variant once per post processor, not per frame.
     var postPrecisionMode = sceneWebGPUPostPrecisionMode(device);
     var postUsesF16 = postPrecisionMode === "f16";
@@ -4743,6 +4751,7 @@
       pass.setPipeline(wgpuRequirePipeline(depthResolvePipeline)); pass.setBindGroup(0, group); pass.draw(4); pass.end();
     }
     return {
+      setSpecularSource: function(view: any) { specularSource = view; },
       getSceneTarget: function(width, height) {
         ensureFBOs(width, height);
         return { colorView: sceneTexView, depthView: depthTexView, colorFormat: targetFormat };
@@ -4807,7 +4816,9 @@
               break;
             }
             case SCENE_POST_BLOOM: {
-              if (effect.mode === "mip") { currentTexView = mipBloom.apply({ encoder: encoder, input: currentTexView, effect: effect, output: outputView, width: scaledW, height: scaledH, index: i }); break; }
+              const bloomSource = effect.source === "specular" ? specularSource : currentTexView;
+              if (!bloomSource) break;
+              if (effect.mode === "mip") { currentTexView = mipBloom.apply({ encoder: encoder, input: currentTexView, source: bloomSource, effect: effect, output: outputView, width: scaledW, height: scaledH, index: i }); break; }
               // Bloom ping-pong resolution is scaledW/H * Bloom.Scale.
               // Zero / out-of-range scale falls back to 0.5 (v0.14.0 default),
               // matching the WebGL helper in applyBloom.
@@ -4826,7 +4837,7 @@
               var brightBG = device.createBindGroup({
                 layout: getPostParamsLayout(),
                 entries: [
-                  { binding: 0, resource: currentTexView },
+                  { binding: 0, resource: bloomSource },
                   { binding: 1, resource: linearSampler },
                   { binding: 2, resource: { buffer: brightBuf } },
                 ],
@@ -6579,7 +6590,7 @@
     "  var p = array<vec2f, 3>(vec2f(-1,-1), vec2f(3,-1), vec2f(-1,3));",
     "  var out: SkyVertex; out.position = vec4f(p[i], 1, 1); out.ndc = p[i]; return out;",
     "}",
-    "@fragment fn fragmentMain(in: SkyVertex) -> @location(0) vec4f {",
+    "fn gosxSkyColor(in: SkyVertex) -> vec4f {",
     "  let ray = normalize(sky.forward.xyz + sky.right.xyz * in.ndc.x * sky.right.w + sky.up.xyz * in.ndc.y * sky.up.w);",
     "  var color = mix(sky.horizon.xyz, select(sky.bottom.xyz, sky.top.xyz, ray.y >= 0), abs(ray.y));",
     "  let c = cos(sky.forward.w); let s = sin(sky.forward.w);",
@@ -6593,6 +6604,9 @@
     "  if (sky.output.x == 0) { color = select(1.055*pow(color,vec3f(1.0/2.4))-0.055, color*12.92, color <= vec3f(0.0031308)); }",
     "  return vec4f(color, 1);",
     "}",
+    "@fragment fn fragmentMain(in: SkyVertex) -> @location(0) vec4f { return gosxSkyColor(in); }",
+    "struct GosxSkyOutput { @location(0) color: vec4f, @location(1) specular: vec4f };",
+    "@fragment fn fragmentMainSpecular(in: SkyVertex) -> GosxSkyOutput { return GosxSkyOutput(gosxSkyColor(in), vec4f(0)); }",
   ].join("\n");
 
   // @ts-ignore TS7006 -- shared renderer resources are passed by the backend factory.
@@ -6630,12 +6644,12 @@
           data[19] = Math.max(0, sceneNumber(record && record.levels, 1) - 1) * Math.max(0, Math.min(1, sceneNumber(sky.blur, 0)));
         }
         device.queue.writeBuffer(uniform, 0, data);
-        var key = opts.format + ":" + opts.samples;
+        var key = opts.format + ":" + opts.samples + ":" + !!opts.specular;
         var pipeline = pipelines.get(key);
         if (!pipeline) {
           pipeline = wgpuCreateValidatedPipeline(device, "render", { label: "gosx-sky", layout: pipelineLayout,
             vertex: { module: module, entryPoint: "vertexMain" },
-            fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: opts.format }] },
+            fragment: sceneWebGPUColorFragment(module, sceneWebGPUColorTarget(opts.format, !!opts.specular), undefined),
             primitive: { topology: "triangle-list" }, multisample: { count: opts.samples },
             depthStencil: { format: "depth24plus", depthWriteEnabled: false, depthCompare: "always" } });
           pipelines.set(key, pipeline);
@@ -6743,6 +6757,8 @@
     var initError = "";
     var presentationFormat = navigator.gpu.getPreferredCanvasFormat();
     var targetFormat = presentationFormat;
+    let selectiveBloom = false;
+    const specularTarget = sceneWebGPUSpecularTarget(device);
     var presentationOptions = rendererOptions.presentation && typeof rendererOptions.presentation === "object" ? rendererOptions.presentation : {};
     var probeOptions = probe.probeOptions && typeof probe.probeOptions === "object" ? probe.probeOptions : {};
     var activePowerPreference = sceneWebGPUCanvasPowerPreference(probeOptions.powerPreference);
@@ -8319,9 +8335,9 @@
     // Get or create a PBR pipeline for the given blend mode.
     function getPBRPipeline(blendMode, depthWrite, frontFace, detail = false) {
       var reflected = frontFace === "cw";
-      var key = wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? sceneDetailVariantKey(sceneWebGPUPipelineKind(reflected, "pbr"), true) : sceneWebGPUPipelineKind(reflected, "pbr"), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, reflected ? -activeSampleCount : activeSampleCount);
+      var pipeline = wgpuCreatePBRPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), reflected ? -activeSampleCount : activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8340,17 +8356,17 @@
     }
 
     function getPBRInstancedPipeline(blendMode, depthWrite, detail = false) {
-      var key = wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? "pbr-instanced-detail" : "pbr-instanced", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
 
     function getPBRInstancedCullPipeline(blendMode, depthWrite, detail = false) {
-      var key = wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
+      var key = (selectiveBloom ? "specular|" : "") + wgpuPipelineKey(detail ? "pbr-instanced-cull-detail" : "pbr-instanced-cull", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount);
       if (pipelineCache[key]) return pipelineCache[key];
-      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, targetFormat, activeSampleCount);
+      var pipeline = wgpuCreatePBRInstancedCullPipeline(device, detail ? detailResources.pipelineLayout : pbrPipelineLayout, pbrInstancedCullVertexModule, detail ? detailResources.fragment : pbrFragmentModule, blendMode, depthWrite, sceneWebGPUColorTarget(targetFormat, selectiveBloom), activeSampleCount);
       pipelineCache[key] = pipeline;
       return pipeline;
     }
@@ -8677,6 +8693,7 @@
     function getSelenaPipeline(material, blendMode, depthWrite, options) {
       if (!sceneSelenaIsMaterial(material)) return null;
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
+      const selective = selectiveBloom && !(options && options.targetFormat);
       var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(
         options && options.sampleCount != null ? options.sampleCount : activeSampleCount,
         activeSampleCount || 1
@@ -8719,7 +8736,7 @@
       // correctly; only when they differ do we fall through to the key build.
       var memo = material._gosxWGPUSelenaResource;
       if (
-        memo &&
+        memo && memo.specular === selective &&
         memo.blendMode === blendMode &&
         memo.depthWrite === depthWrite &&
         memo.targetFormat === pipelineTargetFormat &&
@@ -8731,7 +8748,7 @@
         return memo.failed ? null : memo.resource;
       }
       var layout = sceneSelenaMaterialLayout(material);
-      var shader = sceneSelenaWGSLSource(material);
+      var shader = selective ? material.specularFragmentWGSL : sceneSelenaWGSLSource(material);
       // Cache key = the pipeline's actual inputs (shader source + binding
       // layout + blend/depth/format/samples) — NOT the material identity.
       // Uniform VALUES live in per-object bind groups (createSelenaBindGroup),
@@ -8754,7 +8771,7 @@
         material._gosxWGPUSelenaResource = {
           blendMode: blendMode,
           depthWrite: depthWrite,
-          targetFormat: pipelineTargetFormat,
+          specular: selective, targetFormat: pipelineTargetFormat,
           sampleCount: pipelineSampleCount,
           cullMode: pipelineCullMode,
           frontFace: pipelineFrontFace,
@@ -8787,7 +8804,7 @@
           label: "gosx-selena-" + pipelineLabelSuffix + (layout.material || "material") + "-" + blendMode,
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: buffers },
-          fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: pipelineTargetFormat, blend: wgpuBlendState(blendMode) }] },
+          fragment: sceneWebGPUColorFragment(module, sceneWebGPUColorTarget(pipelineTargetFormat, selective), wgpuBlendState(blendMode)),
           primitive: { topology: "triangle-list", cullMode: pipelineCullMode, frontFace: pipelineFrontFace },
           multisample: { count: pipelineSampleCount },
         };
@@ -8816,6 +8833,7 @@
     // webGPUBindElioSkinnedBuffers rather than iterating attrs, so this resource
     // deliberately does NOT expose an attrs field (avoids double-binding).
     function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
+      const selective = selectiveBloom;
       if (!sceneSelenaIsMaterial(material)) return null;
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
       var pipelineFrontFace = selenaPipelineFrontFace(options);
@@ -8825,7 +8843,7 @@
       // "selena-skinned" prefix + WGPU_PBR_VERTEX_LAYOUT, a different pipeline.
       var memo = material._gosxWGPUSelenaSkinnedResource;
       if (
-        memo &&
+        memo && memo.specular === selective &&
         memo.blendMode === blendMode &&
         memo.depthWrite === depthWrite &&
         memo.targetFormat === targetFormat &&
@@ -8836,7 +8854,7 @@
         return memo.failed ? null : memo.resource;
       }
       var layout = sceneSelenaMaterialLayout(material);
-      var shader = sceneSelenaWGSLSource(material);
+      var shader = selective ? material.specularFragmentWGSL : sceneSelenaWGSLSource(material);
       // Content-based key, mirroring getSelenaPipeline (see note there).
       var key = [
         "selena-skinned",
@@ -8853,7 +8871,7 @@
         material._gosxWGPUSelenaSkinnedResource = {
           blendMode: blendMode,
           depthWrite: depthWrite,
-          targetFormat: targetFormat,
+          specular: selective, targetFormat: targetFormat,
           sampleCount: activeSampleCount,
           cullMode: pipelineCullMode,
           frontFace: pipelineFrontFace,
@@ -8875,7 +8893,7 @@
           label: "gosx-selena-skinned-" + (layout.material || "material") + "-" + blendMode,
           layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain", buffers: WGPU_PBR_VERTEX_LAYOUT },
-          fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: targetFormat, blend: wgpuBlendState(blendMode) }] },
+          fragment: sceneWebGPUColorFragment(module, sceneWebGPUColorTarget(targetFormat, selective), wgpuBlendState(blendMode)),
           primitive: { topology: "triangle-list", cullMode: pipelineCullMode, frontFace: pipelineFrontFace },
           multisample: { count: Math.max(1, Math.floor(activeSampleCount || 1)) },
           depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
@@ -14767,8 +14785,11 @@
       f[60] = rimColor[0];
       f[61] = rimColor[1];
       f[62] = rimColor[2];
-      f[63] = 0;
+      var aa = mat.specularAA || {};
+      f[63] = clamp01(sceneNumber(aa.variance, 0));
       f.set(sceneTransmissionVolume(mat), 64);
+      f[67] = clamp01(sceneNumber(aa.threshold, 0));
+      u[71] = 0; // thickness texture ready flag; existing padding, no buffer growth
       return { data: f, u: u };
     }
 
@@ -14814,6 +14835,7 @@
         { prop: "occlusionMap", descriptor: "occlusion", role: "ambient-occlusion", colorSpace: "linear", index: 19 },
         { prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 },
         { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 },
+        { prop: "thicknessMap", descriptor: "thickness", role: "data", colorSpace: "linear", index: 71 },
       ];
 
       var texViews = [];
@@ -14878,6 +14900,8 @@
           { binding: 14, resource: texSamplers[6] },
           { binding: 15, resource: texViews[7] },
           { binding: 16, resource: texSamplers[7] },
+          { binding: 17, resource: texViews[8] },
+          { binding: 18, resource: texSamplers[8] },
         ],
       });
       owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews, texSamplers: texSamplers, bg: matBG };
@@ -18476,6 +18500,7 @@
       // forever with a poisoned post-FX target.
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
       var postEffects = (Array.isArray(bundle.postEffects) ? bundle.postEffects : []).filter(function(effect) { return !pipelineGuard.disabled.has(effect.kind); });
+      postEffects = sceneSpecularBloomEffects(bundle, postEffects, "webgpu", hasWorldLines || hasScreenLines || hasSurfaces || hasPointsData || hasWaterData || !!(bundle.environment && (bundle.environment.ocean || bundle.environment.clouds)), canvas.parentNode);
       var authoredPostEffects = postEffects.length > 0;
       var hasTransmission = sceneTransmissionPresent(bundle);
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
@@ -18483,6 +18508,7 @@
       if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
       var usePostProcessing = postEffects.length > 0 && !postFXForceDisabled && !pipelineGuard.disabled.has("post");
       targetFormat = usePostProcessing ? "rgba16float" : presentationFormat;
+      selectiveBloom = usePostProcessing && sceneSpecularBloomRequested(postEffects);
 
       // Compute scaled render-target dimensions (PostFX memory cap).
       var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
@@ -18569,7 +18595,7 @@
         ? buildInstancedDrawList(bundle, materials)
         : { opaque: [], alpha: [], additive: [] };
       var gpuDriven = webGPUGPUDrivenHost();
-      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, opaque: detailResources ? instancedDrawList.opaque.filter(function(mesh = Object.create(null)) {
+      gpuDriven.beginFrame(bundle, encoder, { viewProjection: scratchSelenaViewProjection, camera: cam, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom, opaque: detailResources ? instancedDrawList.opaque.filter(function(mesh = Object.create(null)) {
         var material = instancedMeshMaterial(mesh, bundle.materials);
         return !material || !material.detail;
       }) : instancedDrawList.opaque });
@@ -18714,8 +18740,10 @@
         mainColorAttachment.resolveTarget = mainResolveView;
       }
 
+      const specularAttachment = specularTarget.prepare(scaledW, scaledH, sampleCount, selectiveBloom);
+      if (postProcessor) postProcessor.setSpecularSource(specularTarget.view());
       var mainPassDescriptor = {
-        colorAttachments: [mainColorAttachment],
+        colorAttachments: specularAttachment ? [mainColorAttachment, specularAttachment] : [mainColorAttachment],
         depthStencilAttachment: {
           view: mainDepthTargetView,
           depthLoadOp: "clear",
@@ -18730,7 +18758,7 @@
       var skyState = "none";
       if (bundle.environment && bundle.environment.sky) {
         if (!skyResources.renderer) skyResources.renderer = wgpuCreateSkyRenderer(device, textureCache, placeholderView, placeholderCubeView);
-        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix, camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount });
+        skyState = skyResources.renderer.draw(mainPass, { environment: bundle.environment, view: scratchViewMatrix, camera: cam, aspect: scaledW / scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount, specular: selectiveBloom });
       }
       sceneCloudWebGPUDraw(skyResources, device, mainPass, { environment: bundle.environment, meta: frameMeta, view: scratchViewMatrix, camera: cam, aspect: scaledW/scaledH, linear: usePostProcessing, format: targetFormat, samples: sampleCount, timeSeconds: frameTimeSeconds });
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
@@ -18916,7 +18944,7 @@
       var bundleReason = sceneWebGPUBundleIneligibleReason({
         // Both halves must exist. An implementation that can build a bundle but
         // not replay one would leave the frame blank.
-        disabled: hasTransmission || !webGPURenderBundlesEnabled() ||
+        disabled: selectiveBloom || hasTransmission || !webGPURenderBundlesEnabled() ||
           typeof device.createRenderBundleEncoder !== "function" ||
           typeof mainPass.executeBundles !== "function",
         gpuDrivenSplit: gpuDriven.splitsMainPass(),
@@ -19022,7 +19050,9 @@
         if (transmissionView && postTarget) {
           mainPass.end();
           transmissionResources.capture(encoder, postTarget.colorView);
+          gpuDriven.resumeMainPass(mainPassDescriptor);
           mainColorAttachment.loadOp = "load";
+          if (specularAttachment) specularAttachment.loadOp = "load";
           mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
           delete mainPassDescriptor["timestampWrites"];
           mainPass = encoder.beginRenderPass(mainPassDescriptor);
@@ -19292,7 +19322,7 @@
       activeWaterShaderSourcesByID = null;
 
       if (postProcessor) {
-        try { postProcessor.dispose(); } catch (_err) {}
+        try { postProcessor.dispose(); specularTarget.dispose(); } catch (_err) {}
         postProcessor = null;
       }
 
@@ -19314,7 +19344,7 @@
       if (postFXForceDisabled) return false;
       postFXForceDisabled = true;
       if (postProcessor) {
-        try { postProcessor.dispose(); } catch (_err) {}
+        try { postProcessor.dispose(); specularTarget.dispose(); } catch (_err) {}
         postProcessor = null;
       }
       // Give raw rendering a fresh error-streak window: if post-FX really

@@ -1564,8 +1564,11 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   const webgl = readSceneRendererBackendSrc("webgl");
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(webgl, /function createSceneSelenaProgram\(gl, material, skinned\)/);
+  assert.match(webgl, /function createSceneSelenaProgram\(gl, material, skinned, selective = false\)/);
   assert.match(webgl, /ensureSelenaProgram\(mat, isSkinned\)/);
+  assert.match(webgl, /selective \? material\.specularFragmentGLSL : material\.customFragment/);
+  assert.match(webgpu, /selective \? material\.specularFragmentWGSL : sceneSelenaWGSLSource\(material\)/);
+  assert.match(webgpu, /fragment: sceneWebGPUColorFragment\(module, sceneWebGPUColorTarget\(pipelineTargetFormat, selective\), wgpuBlendState\(blendMode\)\)/);
   assert.match(webgl, /uploadSelenaUniforms\(gl, selenaProgram, mat, obj\)/);
   assert.match(webgl, /sceneWebGLBindSelenaTextures\(gl, selenaProgram, mat, textureCache, selenaPlaceholderTexture\)/);
   assert.match(webgl, /bindSelenaMeshAttribute\(gl, selenaProgram, "position"/);

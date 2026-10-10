@@ -5,9 +5,11 @@ package scene
 // still omit fields without resetting them.
 type instancedMeshReplacement struct {
 	InstancedMeshIR
-	Thickness           float64    `json:"thickness"`
-	AttenuationDistance float64    `json:"attenuationDistance"`
-	AttenuationColor    [3]float64 `json:"attenuationColor"`
+	ThicknessMap        string               `json:"thicknessMap"`
+	SpecularAA          *GeometricSpecularAA `json:"specularAA"`
+	Thickness           float64              `json:"thickness"`
+	AttenuationDistance float64              `json:"attenuationDistance"`
+	AttenuationColor    [3]float64           `json:"attenuationColor"`
 }
 
 func instancedMeshReplacements(meshes []InstancedMeshIR) []instancedMeshReplacement {
@@ -20,7 +22,7 @@ func instancedMeshReplacements(meshes []InstancedMeshIR) []instancedMeshReplacem
 		if mesh.AttenuationColor != nil {
 			tint = *mesh.AttenuationColor
 		}
-		out[i] = instancedMeshReplacement{mesh, mesh.Thickness, mesh.AttenuationDistance, tint}
+		out[i] = instancedMeshReplacement{InstancedMeshIR: mesh, ThicknessMap: mesh.ThicknessMap, SpecularAA: copySpecularAA(mesh.SpecularAA), Thickness: mesh.Thickness, AttenuationDistance: mesh.AttenuationDistance, AttenuationColor: tint}
 	}
 	return out
 }

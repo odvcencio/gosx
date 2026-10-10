@@ -107,36 +107,11 @@
     { collection: "waterSystems",     field: "objectShadowWGSL" },
     { collection: "waterSystems",     field: "objectMeshShadowVertexWGSL" },
     { collection: "waterSystems",     field: "objectMeshShadowFragmentWGSL" },
-    { collection: "objects",          field: "customVertex" },
-    { collection: "objects",          field: "customFragment" },
-    { collection: "objects",          field: "customVertexWGSL" },
-    { collection: "objects",          field: "customFragmentWGSL" },
-    { collection: "models",           field: "customVertex" },
-    { collection: "models",           field: "customFragment" },
-    { collection: "models",           field: "customVertexWGSL" },
-    { collection: "models",           field: "customFragmentWGSL" },
-    // Instanced GLB authored-material fields.
-    { collection: "instancedGLBMeshes", field: "customVertex" },
-    { collection: "instancedGLBMeshes", field: "customFragment" },
-    { collection: "instancedGLBMeshes", field: "customVertexWGSL" },
-    { collection: "instancedGLBMeshes", field: "customFragmentWGSL" },
-    // Points authored-material fields (S2).
-    { collection: "points",           field: "customVertex" },
-    { collection: "points",           field: "customFragment" },
-    { collection: "points",           field: "customVertexWGSL" },
-    { collection: "points",           field: "customFragmentWGSL" },
     // ComputeParticles render-pass authored-material fields (S3).
     { collection: "computeParticles", field: "renderVertex" },
     { collection: "computeParticles", field: "renderFragment" },
     { collection: "computeParticles", field: "renderVertexWGSL" },
     { collection: "computeParticles", field: "renderFragmentWGSL" },
-    // Named material profile authored shader fields (S4 — composable <Material>
-    // elements; same envelope as objects/points so one .sel shader can deduplicate
-    // across all ~21 galaxy profiles via a single shaderLib entry after dedup).
-    { collection: "materials",        field: "customVertex" },
-    { collection: "materials",        field: "customFragment" },
-    { collection: "materials",        field: "customVertexWGSL" },
-    { collection: "materials",        field: "customFragmentWGSL" },
     // InstancedMesh Elio GPU cull kernel — hoisted when ≥2 meshes share the
     // same kernel source. Mirror entry exists in Go shaderLibFields (scene/shader_lib.go).
     { collection: "instancedMeshes",  field: "cullKernelWGSL" },
@@ -145,6 +120,13 @@
     { collection: "postEffects",      field: "fragmentGLSL" },
     { collection: "postEffects",      field: "vertexGLSL" },
   ];
+  // These collections share the authored material envelope. Keep one field
+  // vocabulary so additive compiler outputs do not duplicate loader payload.
+  for (const collection of ["objects", "models", "instancedGLBMeshes", "points", "materials"]) {
+    for (const field of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "specularFragmentGLSL", "specularFragmentWGSL"]) {
+      SHADER_LIB_FIELDS.push({ collection, field });
+    }
+  }
 
   // inflateSceneShaderLib walks a parsed scene object (props.scene), replaces
   // every *Ref field whose id exists in scene.shaderLib with the source string,

@@ -1476,7 +1476,10 @@ type CustomMaterial struct {
 	FragmentGLSL      string
 	VertexWGSL        string
 	FragmentWGSL      string
-	Uniforms          map[string]any
+	// SpecularFragment variants preserve coverage while writing color0/specular1.
+	SpecularFragmentGLSL string
+	SpecularFragmentWGSL string
+	Uniforms             map[string]any
 }
 
 type CubeGeometry struct {
@@ -1557,6 +1560,10 @@ type StandardMaterial struct {
 	Transmission float64
 	// Thickness is the refraction path length in world units. Zero is a thin sheet.
 	Thickness float64
+	// ThicknessMap multiplies Thickness by its linear green channel (KHR volume).
+	ThicknessMap string
+	// SpecularAA filters geometric normal variance into GGX roughness. Nil disables it.
+	SpecularAA *GeometricSpecularAA
 	// AttenuationDistance is the Beer-Lambert reference distance; zero means no absorption.
 	AttenuationDistance float64
 	// AttenuationColor is linear RGB transmittance at AttenuationDistance; nil is white.
@@ -3109,6 +3116,8 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		record.Sheen = mapFloat64(materialProps["sheen"])
 		record.Transmission = mapFloat64(materialProps["transmission"])
 		record.Thickness = mapFloat64(materialProps["thickness"])
+		record.ThicknessMap, _ = mapStringValue(materialProps["thicknessMap"])
+		record.SpecularAA = specularAAFromValue(materialProps["specularAA"])
 		record.AttenuationDistance = mapFloat64(materialProps["attenuationDistance"])
 		if color, ok := specularColorFromAny(materialProps["attenuationColor"]); ok {
 			record.AttenuationColor = &color
@@ -3159,6 +3168,12 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		}
 		if customFragmentWGSL, ok := mapStringValue(materialProps["customFragmentWGSL"]); ok {
 			record.CustomFragmentWGSL = customFragmentWGSL
+		}
+		if specularFragmentGLSL, ok := mapStringValue(materialProps["specularFragmentGLSL"]); ok {
+			record.SpecularFragmentGLSL = specularFragmentGLSL
+		}
+		if specularFragmentWGSL, ok := mapStringValue(materialProps["specularFragmentWGSL"]); ok {
+			record.SpecularFragmentWGSL = specularFragmentWGSL
 		}
 		if uniforms, ok := materialProps["customUniforms"].(map[string]any); ok {
 			record.CustomUniforms = cloneSceneAnyMap(uniforms)
@@ -3692,6 +3707,8 @@ func applyMaterialToInstancedGLBIR(record *InstancedGLBMeshIR, material Material
 	record.CustomFragment = object.CustomFragment
 	record.CustomVertexWGSL = object.CustomVertexWGSL
 	record.CustomFragmentWGSL = object.CustomFragmentWGSL
+	record.SpecularFragmentGLSL = object.SpecularFragmentGLSL
+	record.SpecularFragmentWGSL = object.SpecularFragmentWGSL
 	record.CustomUniforms = object.CustomUniforms
 	record.ShaderBackend = object.ShaderBackend
 	record.ShaderLayout = object.ShaderLayout
@@ -4202,6 +4219,12 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if customFragmentWGSL, ok := mapStringValue(props["customFragmentWGSL"]); ok {
 		record.CustomFragmentWGSL = customFragmentWGSL
 	}
+	if specularFragmentGLSL, ok := mapStringValue(props["specularFragmentGLSL"]); ok {
+		record.SpecularFragmentGLSL = specularFragmentGLSL
+	}
+	if specularFragmentWGSL, ok := mapStringValue(props["specularFragmentWGSL"]); ok {
+		record.SpecularFragmentWGSL = specularFragmentWGSL
+	}
 	if uniforms, ok := props["customUniforms"].(map[string]any); ok {
 		record.CustomUniforms = cloneSceneAnyMap(uniforms)
 	}
@@ -4223,6 +4246,8 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	record.Sheen = mapFloat64(props["sheen"])
 	record.Transmission = mapFloat64(props["transmission"])
 	record.Thickness = mapFloat64(props["thickness"])
+	record.ThicknessMap, _ = mapStringValue(props["thicknessMap"])
+	record.SpecularAA = specularAAFromValue(props["specularAA"])
 	record.AttenuationDistance = mapFloat64(props["attenuationDistance"])
 	if color, ok := specularColorFromAny(props["attenuationColor"]); ok {
 		record.AttenuationColor = &color
@@ -4564,6 +4589,16 @@ func standardMaterialWireframe(value *bool) *bool {
 	return Bool(false)
 }
 
+// Compiled Selena materials describe filled surfaces. Preserve that contract
+// even when the caller replaces the embedded StandardMaterial fallback after
+// compilation. Raw custom shaders retain their historical wireframe default.
+func customMaterialWireframe(material CustomMaterial) *bool {
+	if strings.TrimSpace(material.ShaderBackend) == "selena" {
+		return standardMaterialWireframe(material.Wireframe)
+	}
+	return material.Wireframe
+}
+
 // applyMaterialToObjectIR writes typed material fields directly onto
 // the given ObjectIR record. Parallel to applyGeometryToObjectIR —
 // replaces the legacyMaterial → applyMaterialProps map round-trip
@@ -4612,6 +4647,8 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.Sheen = m.Sheen
 		record.Transmission = m.Transmission
 		record.Thickness = m.Thickness
+		record.ThicknessMap = m.ThicknessMap
+		record.SpecularAA = copySpecularAA(m.SpecularAA)
 		record.AttenuationDistance = m.AttenuationDistance
 		record.AttenuationColor = copySpecularColor(m.AttenuationColor)
 		record.Iridescence = m.Iridescence
@@ -4635,14 +4672,14 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		if m.BlendMode != "" {
 			record.BlendMode = string(m.BlendMode)
 		}
-		if m.Wireframe != nil {
-			record.Wireframe = m.Wireframe
-		}
+		record.Wireframe = customMaterialWireframe(m)
 		record.AlphaCutoff = m.AlphaCutoff
 		record.CustomVertex = strings.TrimSpace(m.VertexGLSL)
 		record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
 		record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
 		record.CustomFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
+		record.SpecularFragmentGLSL = strings.TrimSpace(m.SpecularFragmentGLSL)
+		record.SpecularFragmentWGSL = strings.TrimSpace(m.SpecularFragmentWGSL)
 		record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
 		record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
 		record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
@@ -4666,6 +4703,8 @@ func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial
 	record.Sheen = material.Sheen
 	record.Transmission = material.Transmission
 	record.Thickness = material.Thickness
+	record.ThicknessMap = material.ThicknessMap
+	record.SpecularAA = copySpecularAA(material.SpecularAA)
 	record.AttenuationDistance = material.AttenuationDistance
 	record.AttenuationColor = copySpecularColor(material.AttenuationColor)
 	record.Iridescence = material.Iridescence
@@ -4741,6 +4780,8 @@ func applyMaterialToPointsIR(record *PointsIR, m CustomMaterial) {
 	record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
 	record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
 	record.CustomFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
+	record.SpecularFragmentGLSL = strings.TrimSpace(m.SpecularFragmentGLSL)
+	record.SpecularFragmentWGSL = strings.TrimSpace(m.SpecularFragmentWGSL)
 	record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
 	record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
 	record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
@@ -4797,6 +4838,10 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumeric(out, "sheen", m.Sheen)
 	setNumeric(out, "transmission", m.Transmission)
 	setNumeric(out, "thickness", m.Thickness)
+	setString(out, "thicknessMap", m.ThicknessMap)
+	if m.SpecularAA != nil {
+		out["specularAA"] = copySpecularAA(m.SpecularAA)
+	}
 	setNumeric(out, "attenuationDistance", m.AttenuationDistance)
 	if m.AttenuationColor != nil {
 		out["attenuationColor"] = *m.AttenuationColor
@@ -4855,10 +4900,13 @@ func (m CustomMaterial) legacyMaterial() map[string]any {
 		out = map[string]any{}
 	}
 	out["materialKind"] = "custom"
+	setBool(out, "wireframe", customMaterialWireframe(m))
 	setString(out, "customVertex", m.VertexGLSL)
 	setString(out, "customFragment", m.FragmentGLSL)
 	setString(out, "customVertexWGSL", m.VertexWGSL)
 	setString(out, "customFragmentWGSL", m.FragmentWGSL)
+	setString(out, "specularFragmentGLSL", m.SpecularFragmentGLSL)
+	setString(out, "specularFragmentWGSL", m.SpecularFragmentWGSL)
 	if len(m.Uniforms) > 0 {
 		out["customUniforms"] = cloneSceneAnyMap(m.Uniforms)
 	}

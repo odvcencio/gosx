@@ -290,6 +290,7 @@ type RenderAnimationChannel struct {
 type RenderPostEffect struct {
 	Kind      string             `json:"kind"`
 	Mode      string             `json:"mode,omitempty"`
+	Source    string             `json:"source,omitempty"`
 	Intensity float64            `json:"intensity,omitempty"`
 	Threshold float64            `json:"threshold,omitempty"`
 	Radius    float64            `json:"radius,omitempty"`

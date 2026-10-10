@@ -306,3 +306,6 @@ declare function sceneTransmissionPublish(mount: any, state: string): void;
 declare var scenePickTargetAtEvent: any;
 
 declare var sceneScreenToRay: any;
+
+declare function sceneSpecularBloomRequested(effects: any[]): boolean;
+declare function sceneSpecularBloomEffects(bundle: any, effects: any[], backend: string, unsupported: boolean, mount: any): any[];

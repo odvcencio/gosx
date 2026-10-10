@@ -45,20 +45,28 @@ var shaderLibFields = []shaderLibFieldDesc{
 	{collection: "objects", field: "customFragment"},
 	{collection: "objects", field: "customVertexWGSL"},
 	{collection: "objects", field: "customFragmentWGSL"},
+	{collection: "objects", field: "specularFragmentGLSL"},
+	{collection: "objects", field: "specularFragmentWGSL"},
 	{collection: "models", field: "customVertex"},
 	{collection: "models", field: "customFragment"},
 	{collection: "models", field: "customVertexWGSL"},
 	{collection: "models", field: "customFragmentWGSL"},
+	{collection: "models", field: "specularFragmentGLSL"},
+	{collection: "models", field: "specularFragmentWGSL"},
 	// Instanced GLB authored-material fields.
 	{collection: "instancedGLBMeshes", field: "customVertex"},
 	{collection: "instancedGLBMeshes", field: "customFragment"},
 	{collection: "instancedGLBMeshes", field: "customVertexWGSL"},
 	{collection: "instancedGLBMeshes", field: "customFragmentWGSL"},
+	{collection: "instancedGLBMeshes", field: "specularFragmentGLSL"},
+	{collection: "instancedGLBMeshes", field: "specularFragmentWGSL"},
 	// Points authored-material fields.
 	{collection: "points", field: "customVertex"},
 	{collection: "points", field: "customFragment"},
 	{collection: "points", field: "customVertexWGSL"},
 	{collection: "points", field: "customFragmentWGSL"},
+	{collection: "points", field: "specularFragmentGLSL"},
+	{collection: "points", field: "specularFragmentWGSL"},
 	// ComputeParticles render-pass authored material fields.
 	{collection: "computeParticles", field: "renderVertex"},
 	{collection: "computeParticles", field: "renderFragment"},
@@ -76,6 +84,8 @@ var shaderLibFields = []shaderLibFieldDesc{
 	{collection: "materials", field: "customFragment"},
 	{collection: "materials", field: "customVertexWGSL"},
 	{collection: "materials", field: "customFragmentWGSL"},
+	{collection: "materials", field: "specularFragmentGLSL"},
+	{collection: "materials", field: "specularFragmentWGSL"},
 	// InstancedMesh Elio GPU cull kernel — hoisted when ≥2 meshes share the
 	// same kernel source. Mirror entry exists in JS SHADER_LIB_FIELDS (10-runtime-scene-core.js).
 	{collection: "instancedMeshes", field: "cullKernelWGSL"},

@@ -17,9 +17,12 @@ import (
 // CustomMaterial. Material selects a named material from the source; empty uses
 // Selena's default of the last material in the program.
 type SelenaMaterialOptions struct {
-	Material string
-	Standard StandardMaterial
-	Uniforms map[string]any
+	// SpecularMRT retains coverage-preserving color/specular fragment variants
+	// for selective browser bloom. Missing companions emit zero specular.
+	SpecularMRT bool
+	Material    string
+	Standard    StandardMaterial
+	Uniforms    map[string]any
 	// Targets adds artifacts to transport alongside the browser programs.
 	// Use selena.AllTargets() to retain all programs for native adapters.
 	Targets []selena.Target
@@ -97,8 +100,9 @@ func SelenaUniforms(values any) (map[string]any, error) {
 // plus the binding layout the runtime uses to wire uniforms and textures.
 func CompileSelenaMaterial(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
-		Material: opts.Material,
-		Targets:  selenaMaterialTargets(opts),
+		Material:    opts.Material,
+		SpecularMRT: opts.SpecularMRT,
+		Targets:     selenaMaterialTargets(opts),
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -128,8 +132,9 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 	out := make([]SelenaCompiledMaterial, 0, len(materials))
 	for _, opts := range materials {
 		result, err := selena.CompileProgram(program, selena.CompileOptions{
-			Material: opts.Material,
-			Targets:  selenaMaterialTargets(opts),
+			Material:    opts.Material,
+			SpecularMRT: opts.SpecularMRT,
+			Targets:     selenaMaterialTargets(opts),
 		})
 		if err != nil {
 			label := opts.Material
@@ -159,8 +164,9 @@ func CompileSelenaBundle(source []byte, materials ...SelenaMaterialOptions) ([]S
 // surface-kind metadata.
 func CompileSelenaPoints(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
-		Material: opts.Material,
-		Targets:  selenaMaterialTargets(opts),
+		Material:    opts.Material,
+		SpecularMRT: opts.SpecularMRT,
+		Targets:     selenaMaterialTargets(opts),
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -208,8 +214,9 @@ func CompileSelenaParticleRender(source []byte, opts SelenaMaterialOptions) (Cus
 // linked Selena bindings are too old to expose surface-kind metadata.
 func CompileSelenaPost(source []byte, opts SelenaMaterialOptions) (CustomMaterial, bindings.Layout, error) {
 	result, err := selena.Compile(source, selena.CompileOptions{
-		Material: opts.Material,
-		Targets:  selenaMaterialTargets(opts),
+		Material:    opts.Material,
+		SpecularMRT: opts.SpecularMRT,
+		Targets:     selenaMaterialTargets(opts),
 	})
 	if err != nil {
 		return CustomMaterial{}, bindings.Layout{}, err
@@ -276,6 +283,12 @@ func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (Cus
 		VertexWGSL:       wgsl.Source,
 		FragmentWGSL:     wgsl.Source,
 		Uniforms:         selenaUniforms(result.Layout, opts.Uniforms),
+	}
+	if glsl.SpecularMRT != nil {
+		material.SpecularFragmentGLSL = glsl.SpecularMRT.Fragment
+	}
+	if wgsl.SpecularMRT != nil {
+		material.SpecularFragmentWGSL = wgsl.SpecularMRT.Source
 	}
 	if kind, ok := selenaSurfaceKind(result.Layout); ok && kind == "post" {
 		// GoSX's WebGL post pass binds a_position and draws a four-vertex quad.
