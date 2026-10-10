@@ -26,7 +26,7 @@ func TestEmbeddedCatalogIsCanonicalAndDeterministic(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wantNames := []string{"button", "card", "input", "tokens"}
+	wantNames := []string{"button", "card", "collapsible", "dock", "input", "splitpane", "tabs", "tokens"}
 	var names []string
 	for _, item := range first.List() {
 		names = append(names, item.Name)
@@ -567,3 +567,74 @@ func TestInstalledManifestRejectsTraversal(t *testing.T) {
 }
 
 var _ fs.FS = fstest.MapFS{}
+
+func TestWorkbenchRecipesRenderServerFallbacks(t *testing.T) {
+	catalog := mustCatalog(t)
+	type splitProps struct{ ID, Orientation, Signal, Initial string }
+	type handleProps struct{ Signal, Label, Min, Max, Value string }
+	type dockProps struct{ ID, LeftSignal, RightSignal, BottomSignal, Left, Right, Bottom string }
+	type tabProps struct {
+		ID, Href, Panel string
+		Selected        bool
+	}
+	type panelProps struct {
+		ID     string
+		Hidden bool
+	}
+	type collapsibleProps struct {
+		Signal, Summary string
+		Open            bool
+	}
+	cases := []struct {
+		recipe, component string
+		props             any
+		want              []string
+		absent            []string
+	}{
+		{"splitpane", "SplitPane", splitProps{"split", "vertical", "$layout.sidebar", "280"}, []string{`--gsx-split-a: 280px`, `data-gosx-bind-style="--gsx-split-a:$layout.sidebar:px"`, `Content`}, nil},
+		{"splitpane", "SplitHandleX", handleProps{"$layout.sidebar", "Sidebar size", "160", "640", "280"}, []string{`role="separator"`, `aria-orientation="vertical"`, `data-gosx-drag-axis="x"`, `data-gosx-drag-step="8"`, `aria-valuenow="280"`}, nil},
+		{"splitpane", "SplitHandleY", handleProps{"$layout.bottom", "Bottom size", "80", "480", "240"}, []string{`aria-orientation="horizontal"`, `data-gosx-drag-axis="y"`}, nil},
+		{"dock", "Dock", dockProps{"dock", "$layout.left", "$layout.right", "$layout.bottom", "280", "240", "240"}, []string{`class="gsx-dock"`, `--gsx-dock-left: 280px`, `--gsx-dock-bottom:$layout.bottom:px`, `Content`}, nil},
+		{"tabs", "Tab", tabProps{"arrange", "?tab=arrange", "panel-arrange", true}, []string{`<a`, `href="?tab=arrange"`, `aria-current="page"`, `data-gosx-tab-panel="panel-arrange"`, `Content`}, []string{`role=`, `tabindex=`, `aria-selected=`}},
+		{"tabs", "Tab", tabProps{"session", "?tab=session", "panel-session", false}, []string{`href="?tab=session"`}, []string{`aria-current=`, `role=`}},
+		{"tabs", "TabPanel", panelProps{"panel-session", true}, []string{`<section`, `id="panel-session"`, `hidden`, `Content`}, []string{`role=`}},
+		{"collapsible", "Collapsible", collapsibleProps{"$layout.browserOpen", "Browser", true}, []string{`<details`, `open`, `<summary>Browser</summary>`, `data-gosx-collapsible="$layout.browserOpen"`, `Content`}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.component+"/"+tc.recipe, func(t *testing.T) {
+			program, err := gosx.Compile(recipeContent(t, catalog, tc.recipe, ".gsx"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			html, err := route.RenderProgramComponent(program, tc.component, route.ProgramRenderEnv{Props: tc.props}, gosx.Text("Content"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(html, want) {
+					t.Errorf("HTML %q lacks %q", html, want)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(html, absent) {
+					t.Errorf("HTML %q includes %q", html, absent)
+				}
+			}
+		})
+	}
+	program, err := gosx.Compile(recipeContent(t, catalog, "tabs", ".gsx"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	type tabsProps struct{ ID, Signal, Label string }
+	html, err := route.RenderProgramComponent(program, "Tabs", route.ProgramRenderEnv{
+		Props: tabsProps{"views", "$view", "Views"},
+		Slots: map[string]gosx.Node{"Panels": gosx.El("section", gosx.Attrs(gosx.Attr("id", "panel-arrange")), gosx.Text("Panel"))},
+	}, gosx.El("a", gosx.Attrs(gosx.Attr("href", "?tab=arrange")), gosx.Text("Arrange")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(html, `<section id="panel-arrange">Panel</section>`) || strings.Index(html, `</nav>`) > strings.Index(html, `<section`) || strings.Contains(html, `role=`) {
+		t.Fatalf("Tabs must render panels after its plain nav: %s", html)
+	}
+}

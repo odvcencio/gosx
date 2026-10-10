@@ -26,6 +26,26 @@
       ]
     },
     {
+      "name": "collapsible",
+      "version": "1.0.0",
+      "description": "Native details panel whose open state persists through a signal.",
+      "dependencies": ["tokens"],
+      "files": [
+        {"source": "collapsible/collapsible.gsx", "target": "app/ui/collapsible.gsx"},
+        {"source": "collapsible/collapsible.css", "target": "public/ui/collapsible.css"}
+      ]
+    },
+    {
+      "name": "dock",
+      "version": "1.0.0",
+      "description": "Top, left, center, right and bottom regions with resizable edges.",
+      "dependencies": ["tokens"],
+      "files": [
+        {"source": "dock/dock.gsx", "target": "app/ui/dock.gsx"},
+        {"source": "dock/dock.css", "target": "public/ui/dock.css"}
+      ]
+    },
+    {
       "name": "input",
       "version": "1.0.0",
       "description": "Accessible labeled input with help, invalid, required, and disabled states.",
@@ -33,6 +53,26 @@
       "files": [
         {"source": "input/input.gsx", "target": "app/ui/input.gsx"},
         {"source": "input/input.css", "target": "public/ui/input.css"}
+      ]
+    },
+    {
+      "name": "splitpane",
+      "version": "1.0.0",
+      "description": "Two panes with a keyboard-resizable separator; sizes persist through a signal.",
+      "dependencies": ["tokens"],
+      "files": [
+        {"source": "splitpane/splitpane.gsx", "target": "app/ui/splitpane.gsx"},
+        {"source": "splitpane/splitpane.css", "target": "public/ui/splitpane.css"}
+      ]
+    },
+    {
+      "name": "tabs",
+      "version": "1.0.0",
+      "description": "Plain tab links that the workbench chunk upgrades to roving tabindex.",
+      "dependencies": ["tokens"],
+      "files": [
+        {"source": "tabs/tabs.gsx", "target": "app/ui/tabs.gsx"},
+        {"source": "tabs/tabs.css", "target": "public/ui/tabs.css"}
       ]
     },
     {

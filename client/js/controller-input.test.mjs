@@ -206,3 +206,28 @@ test("nested focus owners restore the previous modal and cancelled opens never s
   h.context.setSharedSignalValue("$inner", true); h.context.setSharedSignalValue("$inner", false); await Promise.resolve(); assert.equal(h.document.activeElement, open);
   h.dispose();
 });
+
+
+test("shared pointerGesture captures, reports threshold, ends and cancels once", async () => {
+  const h = harness(), el = h.element("[data-fader]");
+  await h.mount({ drags: [{ source: "[data-fader]", output: "$drop" }] });
+  const gesture = h.context.window.__gosx.host.controllers.pointerGesture;
+  assert.equal(typeof gesture, "function");
+  const moves = [], ends = [], cancels = [];
+  const hooks = { thresholdPx: 4, escape: true,
+    onMove: (_e, dx, dy, moved) => moves.push([dx, dy, moved]),
+    onEnd: (_e, moved) => ends.push(moved), onCancel: reason => cancels.push(reason) };
+  gesture(el, { pointerId: 9, clientX: 10, clientY: 10 }, hooks);
+  assert.equal(el.capture, 9);
+  h.emit(h.document, "pointermove", { pointerId: 8, clientX: 90, clientY: 10 });
+  h.emit(h.document, "pointermove", { pointerId: 9, clientX: 12, clientY: 10 });
+  h.emit(h.document, "pointermove", { pointerId: 9, clientX: 20, clientY: 10 });
+  assert.deepEqual(moves, [[2, 0, false], [10, 0, true]]);
+  h.emit(h.document, "pointerup", { pointerId: 9, clientX: 20, clientY: 10 });
+  assert.equal(el.capture, null); assert.deepEqual(ends, [true]);
+  const second = gesture(el, { pointerId: 10, clientX: 0, clientY: 0 }, hooks);
+  h.emit(h.document, "keydown", { key: "Escape" });
+  second.cancel("again");
+  assert.deepEqual(cancels, ["escape"]); assert.equal(el.capture, null);
+  h.dispose();
+});

@@ -2,8 +2,9 @@
 
 GoSX UI recipes are a small, offline catalog of readable component source. The
 CLI copies only the recipes an application chooses into that application's
-`app/ui` and `public/ui` directories. There is no runtime registry, generated
-JavaScript, package dependency, or remote service behind the feature.
+`app/ui` and `public/ui` directories. The catalog needs no remote service.
+Applications opt into client behavior for the layout recipes through the
+workbench feature chunk.
 
 ## Visual System
 
@@ -181,9 +182,16 @@ variants are documented in the installed source comments:
 - Input: native text-like input types, with native disabled/required semantics
   and an explicit boolean invalid state plus visible error message.
 
-These are server components. They render semantic HTML and ship no client
-runtime. If a future recipe genuinely owns client behavior, it must declare an
-island explicitly and carry its own runtime and size evidence.
+- SplitPane: grid panes with `SplitHandleX` / `SplitHandleY` separators and signal sizes.
+- Dock: top, left, center, right and bottom regions with resizable edges.
+- Tabs: plain navigation links upgraded to roving tabindex; panels use the `Panels` slot.
+- Collapsible: native details with an optional shared open-state signal.
+
+These are server components. The layout recipes mark elements for the opt-in
+`bootstrap-feature-workbench.js` chunk (measured size in
+`client/js/bootstrap-size.test.mjs`); without it they stay usable as links,
+native details and server-rendered sizes. [Workbench controls](workbench.md)
+describes loading, keyboard controls and persistence through controller storage.
 
 ## Portability and size
 

@@ -1,5 +1,5 @@
 // @ts-check
-// GoSX browser host: page commands in an opt-in feature chunk.
+// GoSX browser host: commands and layout controls in an opt-in feature chunk.
 (function() {
   "use strict";
   const registerFeature = window.__gosx_register_bootstrap_feature;
@@ -7,13 +7,26 @@
   registerFeature("workbench", function(api) {
     const readSignal = api.gosxReadSharedSignal;
     const setSignal = api.setSharedSignalValue;
-    const listeners = [];
-    function listen(type, fn) {
-      document.addEventListener(type, fn);
-      listeners.push([type, fn]);
+    const subscribeSignal = api.gosxSubscribeSharedSignal;
+    const listeners = [], unsubscribers = [], observers = [];
+    const activeHandles = new Map();
+    let handleBindings = new WeakSet(), styleBindings = new WeakMap();
+    let tabBindings = new WeakSet(), collapsibleBindings = new WeakSet();
+    let manifest = null, inputPromise = null, generation = 0, tabID = 0;
+    function setAttr(element, name, value) { element.setAttribute(name, value); }
+    function listen(type, fn, target = document, options = false) {
+      target.addEventListener(type, fn, options);
+      listeners.push([target, type, fn, options]);
     }
     function disposeAll() {
-      for (const [type, fn] of listeners.splice(0)) document.removeEventListener(type, fn);
+      generation++;
+      for (const gesture of activeHandles.values()) gesture.cancel("dispose");
+      activeHandles.clear();
+      for (const [target, type, fn, options] of listeners.splice(0)) target.removeEventListener(type, fn, options);
+      for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();
+      for (const observer of observers.splice(0)) observer.disconnect();
+      handleBindings = new WeakSet(); styleBindings = new WeakMap();
+      tabBindings = new WeakSet(); collapsibleBindings = new WeakSet();
     }
     function createCommandRegistry() {
       let entries = [];
@@ -120,9 +133,9 @@
           const entry = entries.find(entry => entry.command.id === element.getAttribute("data-gosx-command"));
           if (!entry) continue;
           const shortcuts = entry.chords.map(aria).join(" ");
-          if (shortcuts) element.setAttribute("aria-keyshortcuts", shortcuts);
+          if (shortcuts) setAttr(element, "aria-keyshortcuts", shortcuts);
           else element.removeAttribute("aria-keyshortcuts");
-          if (entry.command.reserved) element.setAttribute("aria-disabled", "true");
+          if (entry.command.reserved) setAttr(element, "aria-disabled", "true");
           else element.removeAttribute("aria-disabled");
         }
       }
@@ -136,7 +149,6 @@
       return {
         api: publicAPI, parseChord, decorateCommandElements,
         bind(list) {
-          disposeAll();
           entries = list.map(command => ({ command, chords: (command.keys || []).map(parseChord).filter(Boolean) }));
           listen("keydown", onKeydown);
           listen("click", event => {
@@ -150,15 +162,265 @@
         unbind() { entries = []; },
       };
     }
+    function subscribe(name, fn, options) {
+      unsubscribers.push(subscribeSignal(name, fn, options));
+    }
+    // Defaults: y axis, unbounded range, step = range/100 (else 1),
+    // scale = range/axis size (else 1), Alt fine = 0.1, no reset.
+    function parseDragHandle(el) {
+      function number(name, fallback) {
+        const value = el.getAttribute("data-gosx-drag-" + name);
+        return value != null && value.trim() !== "" && Number.isFinite(Number(value)) ? Number(value) : fallback;
+      }
+      const axis = el.getAttribute("data-gosx-drag-axis") || "y";
+      const min = number("min", -Infinity), max = number("max", Infinity);
+      const bounded = Number.isFinite(min) && Number.isFinite(max);
+      const size = axis === "x" ? el.clientWidth : axis === "xy" ? Math.max(el.clientWidth, el.clientHeight) : el.clientHeight;
+      return { el, signal: el.getAttribute("data-gosx-drag"), axis, min, max,
+        step: number("step", bounded && max > min ? (max - min) / 100 : 1),
+        scale: number("scale", bounded && size > 0 ? (max - min) / size : 1),
+        fine: number("fine", 0.1), reset: number("reset", undefined),
+        end: el.getAttribute("data-gosx-drag-end") };
+    }
+    function cleanNumber(value) { return Number(value.toPrecision(14)); }
+    function roundStep(value, step, origin) {
+      return cleanNumber(step > 0 ? origin + Math.round((value - origin) / step) * step : value);
+    }
+    function clamp(h, value) { return cleanNumber(Math.min(h.max, Math.max(h.min, value))); }
+    function applyDelta(h, start, px, fine) {
+      return clamp(h, roundStep(start + px * h.scale * (fine ? h.fine : 1), h.step, Number.isFinite(h.min) ? h.min : 0));
+    }
+    function currentValue(h) {
+      const value = readSignal(h.signal, undefined);
+      if (value != null && Number.isFinite(Number(value))) return Number(value);
+      const aria = h.el.getAttribute("aria-valuenow");
+      return aria != null && Number.isFinite(Number(aria)) ? Number(aria) : Number.isFinite(h.min) ? h.min : 0;
+    }
+    function handleARIA(el, value) {
+      if (value == null || !Number.isFinite(Number(value))) return;
+      for (const suffix of ["now", "text"]) setAttr(el, "aria-value" + suffix, value);
+    }
+    function writeHandle(h, value) { setSignal(h.signal, value); handleARIA(h.el, value); }
+    function endHandle(h, value, commit) {
+      const detail = { signal: h.signal, value, commit };
+      if (h.end) setSignal(h.end, detail);
+      h.el.dispatchEvent(new CustomEvent("gosx:drag:end", { bubbles: true, detail }));
+    }
+    function dragElement(event) { return event.target?.closest?.("[data-gosx-drag]"); }
+    function ensureInputChunk() {
+      const controllers = window.__gosx.host.controllers;
+      if (controllers?.pointerGesture) return Promise.resolve(controllers.pointerGesture);
+      if (!inputPromise) inputPromise = (async () => {
+        if (manifest?.controllers?.length) await api.ensureBootstrapFeature("controllers");
+        if (!window.__gosx.host.controllers?.pointerGesture) {
+          const path = window.__gosx.document?.get()?.assets?.runtime?.bootstrapControllerInputPath;
+          const base = document.querySelector('meta[name="gosx-base-path"]')?.getAttribute("content") || "";
+          await api.loadScriptTag(path || base.replace(/\/$/, "") + "/gosx/bootstrap-controller-input.js", "controller-input");
+        }
+        const gesture = window.__gosx.host.controllers?.pointerGesture;
+        if (!gesture) throw new Error("workbench pointer input unavailable");
+        return gesture;
+      })().finally(() => { inputPromise = null; });
+      return inputPromise;
+    }
+    function onHandleKeydown(event) {
+      const el = dragElement(event);
+      if (!el || activeHandles.has(el) || event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+      const h = parseDragHandle(el), key = event.key;
+      let value = currentValue(h), delta = 0;
+      if ((key === "ArrowRight" || key === "ArrowLeft") && h.axis !== "y") delta = key === "ArrowRight" ? 1 : -1;
+      else if ((key === "ArrowUp" || key === "ArrowDown") && h.axis !== "x") delta = key === "ArrowUp" ? 1 : -1;
+      else if (key === "PageUp" || key === "PageDown") delta = key === "PageUp" ? 10 : -10;
+      else if (key === "Home" && Number.isFinite(h.min)) value = h.min;
+      else if (key === "End" && Number.isFinite(h.max)) value = h.max;
+      else if ((key === "Backspace" || key === "Delete") && h.reset !== undefined) value = h.reset;
+      else return;
+      if (delta) {
+        const arrow = key.startsWith("Arrow");
+        value += delta * h.step * (arrow && event.shiftKey ? 10 : 1) * (arrow && event.altKey ? h.fine : 1);
+      }
+      event.preventDefault(); value = clamp(h, value); writeHandle(h, value); endHandle(h, value, true);
+    }
+    function bindHandles() {
+      listen("keydown", onHandleKeydown);
+      listen("pointerdown", event => {
+        if (event.button != null && event.button !== 0 || event.isPrimary === false || event.defaultPrevented) return;
+        const el = dragElement(event);
+        if (!el) return;
+        event.preventDefault();
+        if (activeHandles.has(el)) activeHandles.get(el).cancel("replaced");
+        const h = parseDragHandle(el), start = currentValue(h), owner = generation;
+        const pending = { pointerId: event.pointerId, pending: true, cancel() { activeHandles.delete(el); } };
+        activeHandles.set(el, pending);
+        ensureInputChunk().then(pointerGesture => {
+          if (owner !== generation || activeHandles.get(el) !== pending || el.isConnected === false) return;
+          const gesture = pointerGesture(el, event, { escape: true,
+            onMove(move, dx, dy) { writeHandle(h, applyDelta(h, start, h.axis === "x" ? dx : h.axis === "xy" ? dx - dy : -dy, move.altKey)); },
+            onEnd() { activeHandles.delete(el); endHandle(h, currentValue(h), true); },
+            onCancel() { activeHandles.delete(el); writeHandle(h, start); endHandle(h, start, false); },
+          });
+          activeHandles.set(el, gesture);
+        }).catch(error => { pending.cancel(); console.error("[gosx] workbench drag:", error); });
+      });
+      // A release before an asynchronous input load must not start a stale drag.
+      function cancelPending(event) {
+        for (const gesture of activeHandles.values()) {
+          if (gesture.pending && (event.type === "blur" || gesture.pointerId === event.pointerId)) gesture.cancel();
+        }
+      }
+      for (const type of ["pointerup", "pointercancel", "blur"]) listen(type, cancelPending, type === "blur" ? window : document);
+      listen("dblclick", event => {
+        const el = dragElement(event);
+        if (!el || activeHandles.has(el)) return;
+        const h = parseDragHandle(el);
+        if (h.reset === undefined) return;
+        event.preventDefault(); const value = clamp(h, h.reset); writeHandle(h, value); endHandle(h, value, true);
+      });
+    }
+    function parseStyleBinds(spec) {
+      return String(spec || "").split(",").map(pair => {
+        const [prop, source, unit = ""] = pair.split(":").map(value => value.trim());
+        return { prop, source, unit };
+      }).filter(b => b.prop.startsWith("--") && (b.source?.startsWith("$") || b.source?.startsWith("@data-")));
+    }
+    function applyStyleBind(el, bind, value) {
+      if (value == null) el.style.removeProperty(bind.prop);
+      else el.style.setProperty(bind.prop, String(value) + bind.unit);
+    }
+    function bindStyleElement(el, force) {
+      const existing = styleBindings.get(el);
+      if (existing) { if (force) existing(); return; }
+      const binds = parseStyleBinds(el.getAttribute("data-gosx-bind-style"));
+      const attributes = binds.filter(b => b.source.startsWith("@"));
+      const refresh = () => { for (const b of attributes) applyStyleBind(el, b, el.getAttribute(b.source.slice(1))); };
+      styleBindings.set(el, refresh); refresh();
+      for (const b of binds.filter(b => b.source.startsWith("$"))) {
+        // Dotted signal names are independent signals. Also resolve object paths
+        // from a parent signal, for bindings such as $layout.sidebar.
+        const parts = b.source.split(".");
+        for (let i = 1; i <= parts.length; i++) {
+          const name = parts.slice(0, i).join("."), path = parts.slice(i);
+          const update = value => {
+            for (const key of path) value = value != null && Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined;
+            if (value !== undefined) applyStyleBind(el, b, value);
+          };
+          subscribe(name, update, { immediate: false });
+          const initial = readSignal(name, undefined);
+          if (initial !== undefined) update(initial);
+        }
+      }
+      if (attributes.length) {
+        const observer = new MutationObserver(refresh);
+        observer.observe(el, { attributes: true, attributeFilter: attributes.map(b => b.source.slice(1)) }); observers.push(observer);
+      }
+    }
+    function bindStyleBinds(root, force = false) {
+      for (const el of root.querySelectorAll("[data-gosx-bind-style]")) bindStyleElement(el, force);
+    }
+    function tabLinks(container) {
+      return Array.from(container.querySelectorAll("[data-gosx-tab]")).filter(tab => tab.closest("[data-gosx-tabs]") === container);
+    }
+    function selectTab(container, tab, focus, publish = true) {
+      for (const item of tabLinks(container)) {
+        const selected = item === tab;
+        setAttr(item, "aria-selected", String(selected)); setAttr(item, "tabindex", selected ? "0" : "-1");
+        if (selected) setAttr(item, "aria-current", "page"); else item.removeAttribute("aria-current");
+        const panel = document.getElementById(item.getAttribute("data-gosx-tab-panel"));
+        if (panel) { panel.hidden = !selected; if (selected) panel.removeAttribute("hidden"); else setAttr(panel, "hidden", ""); }
+      }
+      if (focus) tab.focus();
+      const signal = container.getAttribute("data-gosx-tabs-signal");
+      if (publish && signal) setSignal(signal, tab.getAttribute("data-gosx-tab"));
+    }
+    function upgradeTabs(container) {
+      if (tabBindings.has(container)) return;
+      tabBindings.add(container);
+      const links = tabLinks(container), nav = container.querySelector("nav");
+      if (!links.length || !nav) return;
+      setAttr(nav, "role", "tablist");
+      for (const tab of links) {
+        if (!tab.id) tab.id = "gosx-tab-" + (++tabID);
+        setAttr(tab, "role", "tab");
+        const id = tab.getAttribute("data-gosx-tab-panel");
+        if (id) setAttr(tab, "aria-controls", id);
+        const panel = document.getElementById(id);
+        if (panel) { setAttr(panel, "role", "tabpanel"); setAttr(panel, "aria-labelledby", tab.id); }
+      }
+      selectTab(container, links.find(tab => tab.getAttribute("aria-current") === "page") || links[0], false, false);
+      const signal = container.getAttribute("data-gosx-tabs-signal");
+      if (signal) subscribe(signal, value => {
+        const tab = links.find(item => item.getAttribute("data-gosx-tab") === value);
+        if (tab) selectTab(container, tab, false, false);
+      });
+    }
+    function bindTabs() {
+      listen("click", event => {
+        const tab = event.target?.closest?.("[data-gosx-tab]"), container = tab?.closest("[data-gosx-tabs]");
+        if (!container || event.defaultPrevented || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        event.preventDefault(); selectTab(container, tab, false);
+      });
+      listen("keydown", event => {
+        const tab = event.target?.closest?.("[data-gosx-tab]"), container = tab?.closest("[data-gosx-tabs]");
+        if (!container || event.defaultPrevented) return;
+        const links = tabLinks(container), index = links.indexOf(tab);
+        const vertical = container.querySelector("nav")?.getAttribute("aria-orientation") === "vertical";
+        let next;
+        const arrows = vertical ? ["ArrowUp", "ArrowDown"] : ["ArrowLeft", "ArrowRight"];
+        if (arrows.includes(event.key)) next = links[(index + (event.key === arrows[0] ? links.length - 1 : 1)) % links.length];
+        else if (event.key === "Home") next = links[0];
+        else if (event.key === "End") next = links[links.length - 1];
+        else if (event.key === "Enter" || event.key === " ") next = tab;
+        else return;
+        event.preventDefault(); selectTab(container, next, true);
+      });
+    }
+    function bindCollapsible(el) {
+      if (collapsibleBindings.has(el)) return;
+      collapsibleBindings.add(el);
+      subscribe(el.getAttribute("data-gosx-collapsible"), value => {
+        if (typeof value !== "boolean") return;
+        el.open = value;
+        if (value) setAttr(el, "open", ""); else el.removeAttribute("open");
+      });
+    }
+    function refreshLayout() {
+      bindStyleBinds(document);
+      for (const el of document.querySelectorAll("[data-gosx-drag]")) if (!handleBindings.has(el)) {
+        handleBindings.add(el);
+        subscribe(el.getAttribute("data-gosx-drag"), value => handleARIA(el, value));
+      }
+      for (const el of document.querySelectorAll("[data-gosx-tabs]")) upgradeTabs(el);
+      for (const el of document.querySelectorAll("[data-gosx-collapsible]")) bindCollapsible(el);
+      commands.decorateCommandElements();
+      if (document.querySelector("[data-gosx-drag]")) ensureInputChunk().catch(error => console.error("[gosx] workbench input:", error));
+    }
     const commands = createCommandRegistry();
     const workbench = { version: 1, commands: commands.api, debug: {
       setSignal, parseChord: commands.parseChord, refreshCommands: commands.decorateCommandElements,
+      parseDragHandle, applyDelta, refreshStyleBinds: () => bindStyleBinds(document, true),
     } };
     window.__gosx.commands = commands.api;
     window.__gosx.workbench = workbench;
     if (window.__gosx.host) window.__gosx.host.workbench = workbench;
     return {
-      runtimeReady(manifest) { commands.bind(manifest && manifest.commands || []); },
+      runtimeReady(nextManifest) {
+        disposeAll(); manifest = nextManifest;
+        bindHandles(); bindTabs(); commands.bind(manifest && manifest.commands || []);
+        listen("toggle", event => {
+          const el = event.target;
+          const signal = el?.getAttribute?.("data-gosx-collapsible");
+          if (signal && readSignal(signal, undefined) !== el.open) setSignal(signal, el.open);
+        }, document, true);
+        refreshLayout();
+        let queued = false;
+        const owner = generation;
+        const observer = new MutationObserver(() => {
+          if (queued) return;
+          queued = true;
+          queueMicrotask(() => { queued = false; if (owner === generation) refreshLayout(); });
+        });
+        observer.observe(document.body, { childList: true, subtree: true }); observers.push(observer);
+      },
       disposePage() { commands.unbind(); disposeAll(); },
     };
   });

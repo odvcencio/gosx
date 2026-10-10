@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add opt-in workbench drag handles with pointer capture, cancellation, fine
+  adjustment, reset, keyboard controls and synchronized ARIA values. Share the
+  input chunk's pointer gesture helper with controller drag-and-drop.
+- Bind CSS custom properties to shared signals and data attributes, upgrade plain
+  tab links to accessible tabs, and mirror native details to shared open state.
+  Bind new elements after region swaps and publish the hashed input URL on
+  workbench pages without controllers.
+- Add splitpane, dock, tabs and collapsible UI recipes. Layout signals can persist
+  through controller storage; document the controls in `docs/workbench.md`.
+
 - Match controller key chords exactly by default: Ctrl+Shift+Z no longer fires a
   Ctrl+Z binding. Add a second binding or set `AnyModifiers: true` to retain
   subset matching. Unlisted Shift remains allowed for single symbol keys such

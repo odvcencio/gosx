@@ -1,0 +1,15 @@
+.gsx-collapsible {
+  color: var(--gsx-color-text);
+  font-family: var(--gsx-font-body);
+  border-block: 1px solid var(--gsx-color-border);
+}
+
+.gsx-collapsible > summary {
+  padding: var(--gsx-space-xs) var(--gsx-space-sm);
+  cursor: pointer;
+}
+
+.gsx-collapsible > summary:focus-visible {
+  outline: 2px solid var(--gsx-color-focus);
+  outline-offset: -2px;
+}
