@@ -10,7 +10,9 @@ import (
 	"sync"
 	"syscall/js"
 
+	"m31labs.dev/gosx/client/browser"
 	"m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/internal/browserdom"
 )
 
 const registrationTokenEnv = "GOSX_GO_WASM_REGISTRATION_TOKEN"
@@ -32,6 +34,9 @@ func (c Context) Value() js.Value { return c.value }
 
 // Mount returns the engine's DOM mount, or js.Null for worker engines.
 func (c Context) Mount() js.Value { return c.value.Get("mount") }
+
+// MountElement returns the typed DOM mount, or a missing element for worker engines.
+func (c Context) MountElement() browser.Element { return browserdom.FromJS(c.Mount()) }
 
 // Props returns the manifest-decoded props object.
 func (c Context) Props() js.Value { return c.value.Get("props") }

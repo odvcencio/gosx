@@ -141,7 +141,7 @@ func commandUsage(cmd string, w io.Writer) bool {
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>
+  gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>
 
 `)
 	case "build-runtime":
@@ -316,7 +316,7 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] [--perf-app ID] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>")
 		os.Exit(1)
 	}
 	opts := BuildOptions{Dev: true}
@@ -328,6 +328,15 @@ func cmdBuild() {
 			opts.Dev = true
 		case "--prod":
 			opts.Dev = false
+		case "--go-wasm-only":
+			opts.GoWASMOnly = true
+		case "--output":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --output requires a directory")
+				os.Exit(1)
+			}
+			opts.OutputDir = os.Args[i]
 		case "--offline":
 			opts.Offline = true
 		case "--msix":
@@ -370,6 +379,10 @@ func cmdBuild() {
 			}
 			opts.PerfAppID = os.Args[i]
 		default:
+			if strings.HasPrefix(arg, "--output=") {
+				opts.OutputDir = strings.TrimPrefix(arg, "--output=")
+				continue
+			}
 			if strings.HasPrefix(arg, "--islands-backend=") {
 				opts.IslandsBackend = strings.TrimPrefix(arg, "--islands-backend=")
 				continue

@@ -139,15 +139,26 @@ func TestSkinnedNormalsAndTangentsReachTheDraw(t *testing.T) {
 
 	// Link 3: WebGL2 remains the coverage reference — it composes skinning with
 	// the object model, inverse-transposes normals, orthogonalizes tangents, and
-	// carries determinant sign into tangent handedness.
+	// carries determinant sign into tangent handedness. Degenerate or absent
+	// tangents must use a stable orthogonal axis instead of normalizing zero.
 	webgl := readRenderer(t, webglRendererPath)
+	_, skinned, found := strings.Cut(webgl, "const SCENE_PBR_SKINNED_VERTEX_SOURCE = [")
+	if !found {
+		t.Fatal("the WebGL2 skinned vertex shader moved; re-read its tangent-frame contract")
+	}
+	skinned, _, found = strings.Cut(skinned, `].join("\n");`)
+	if !found {
+		t.Fatal("the WebGL2 skinned vertex shader literal is unterminated")
+	}
 	for _, symbol := range []string{
 		`"mat4 model=u_modelMatrix*skinMatrix;vec4 worldPos=model*vec4(a_position,1.0);",`,
 		`"mat3 m=mat3(model);vec4 q=gosxAffineNormal(m,a_normal);",`,
-		`"vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",`,
+		`vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);`,
+		`vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);`,
+		`vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));`,
 		`"vec3 B=cross(N,T)*a_tangent.w*q.w;",`,
 	} {
-		if !strings.Contains(webgl, symbol) {
+		if !strings.Contains(skinned, symbol) {
 			t.Errorf("expected %q in %s: WebGL2 skinning normals and tangents "+
 				"is half of this coverage contract", symbol, webglRendererPath)
 		}

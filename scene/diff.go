@@ -528,6 +528,26 @@ func SetAnimationsCommand(animations []AnimationClipIR) Command {
 
 // SetCameraCommand replaces the active camera state.
 func SetCameraCommand(camera any) Command {
+	switch c := camera.(type) {
+	case PerspectiveCamera:
+		camera = completeCamera(CameraIR(c))
+	case *PerspectiveCamera:
+		if c != nil {
+			camera = completeCamera(CameraIR(*c))
+		}
+	case OrthographicCamera:
+		camera = completeCamera((Props{OrthographicCamera: &c}).cameraToIR())
+	case *OrthographicCamera:
+		if c != nil {
+			camera = completeCamera((Props{OrthographicCamera: c}).cameraToIR())
+		}
+	case IRCamera:
+		camera = completeCamera(c)
+	case *IRCamera:
+		if c != nil {
+			camera = completeCamera(*c)
+		}
+	}
 	return Command{
 		Kind: CommandSetCamera,
 		Data: camera,

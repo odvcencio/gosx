@@ -72,6 +72,17 @@ func (a *App) SetRuntimeRoot(root string) {
 	island.SetManifestRoot(a.runtimeRoot)
 }
 
+// GoWASMURL returns the immutable URL of a named build.goWASM application
+// module. It uses the configured runtime root and cached build manifest.
+// Missing manifests or names return an empty string, as in an unbuilt app.
+func (a *App) GoWASMURL(name string) string {
+	manifest, ok := a.runtimeBuildManifest(a.effectiveRuntimeRoot())
+	if !ok {
+		return ""
+	}
+	return manifest.GoWASMURL("/gosx/assets", name)
+}
+
 func (a *App) effectiveRuntimeRoot() string {
 	if a == nil {
 		return ""

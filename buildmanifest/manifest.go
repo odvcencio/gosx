@@ -14,11 +14,14 @@ import (
 
 // Manifest describes all build outputs for deployment.
 type Manifest struct {
-	Runtime       RuntimeAssets       `json:"runtime"`
-	Islands       []IslandAsset       `json:"islands"`
-	CSS           []CSSAsset          `json:"css"`
-	SceneAssets   *SceneAssetManifest `json:"sceneAssets,omitempty"`
-	PerfAssetUses *PerfAssetUses      `json:"perfAssetUses,omitempty"`
+	// GoWASM holds explicitly configured standard-Go engine modules, separate
+	// from the shared framework runtime. Files live in assets/go-wasm.
+	GoWASM        map[string]HashedAsset `json:"goWASM,omitempty"`
+	Runtime       RuntimeAssets          `json:"runtime"`
+	Islands       []IslandAsset          `json:"islands"`
+	CSS           []CSSAsset             `json:"css"`
+	SceneAssets   *SceneAssetManifest    `json:"sceneAssets,omitempty"`
+	PerfAssetUses *PerfAssetUses         `json:"perfAssetUses,omitempty"`
 	// Images holds the build-time responsive/format variants gosx build's
 	// imagepipe stage generated for every source image under a project's
 	// public/ directory (issue #200). It is additive: a manifest written
@@ -246,6 +249,9 @@ func Load(path string) (*Manifest, error) {
 		return nil, fmt.Errorf("decode build manifest %s: %w", path, err)
 	}
 	if err := manifest.ValidateIslandAssets(); err != nil {
+		return nil, fmt.Errorf("validate build manifest %s: %w", path, err)
+	}
+	if err := manifest.ValidateGoWASMAssets(); err != nil {
 		return nil, fmt.Errorf("validate build manifest %s: %w", path, err)
 	}
 	if err := manifest.ValidatePerfAssetUses(); err != nil {

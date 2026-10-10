@@ -37,6 +37,8 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
+	GoWASMOnly        bool
+	OutputDir         string
 	IslandsBackend    string
 	CPUProfile        string
 	Dev               bool
@@ -55,7 +57,9 @@ type BuildOptions struct {
 // client/js/bootstrap-feature-<name>.js and load by name at runtime
 // (hydrate.Manifest.Features). Each row's role is a runtimeExcludableAssetRoles
 // key. The change that adds a chunk file appends its row here.
-var runtimeFeatureChunks = []struct{ name, role string }{}
+var runtimeFeatureChunks = []struct{ name, role string }{
+	{"browser-services", "engines"},
+}
 
 type wasmCompiler string
 
@@ -301,6 +305,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	dir = absDir
+	if opts.GoWASMOnly {
+		return runGoWASMOnlyBuild(dir, opts)
+	}
+	if opts.OutputDir != "" {
+		return fmt.Errorf("--output requires --go-wasm-only")
+	}
 	// The initial discovery is a side-effect barrier: invalid source must fail
 	// before module sync, dependency resolution, or a user hook can run.
 	if _, err := collectProjectIslandDiscovery(dir); err != nil {
@@ -434,6 +444,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		})
 
 		fmt.Printf("    CSS: %s → %s (%d bytes)\n", component, asset.File, asset.Size)
+	}
+
+	// Explicit app modules use standard Go, independently of the compiler
+	// selected below for the shared framework runtime.
+	manifest.GoWASM, err = buildGoWASMAssetsWithOptions(dir, distDir, cfg.Build.GoWASM, !opts.Dev)
+	if err != nil {
+		return err
 	}
 
 	// ── Tier 2: Shared runtime (content-hashed) ─────────────────────────
@@ -668,7 +685,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("unable to locate wasm_exec.js")
 	}
 
-	standardGoWASMExec, err := readStandardGoWASMExec()
+	var standardGoWASMExec []byte
+	if len(cfg.Build.GoWASM) > 0 {
+		standardGoWASMExec, err = readProjectStandardGoWASMExec(dir)
+	} else {
+		standardGoWASMExec, err = readStandardGoWASMExec()
+	}
 	if err != nil {
 		return err
 	}
@@ -806,7 +828,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Build the application binary when the target directory is a runnable app.
 	serverBinaryPath := filepath.Join(distDir, "server", "app"+targetExecutableExt())
-	builtServer, err := buildServerBinaryIfPresent(dir, serverBinaryPath)
+	builtServer, err := buildServerBinaryWithOptions(dir, serverBinaryPath, cfg.Build.Server)
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
 	}
@@ -1230,6 +1252,10 @@ func getGOROOT() string {
 }
 
 func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
+	return buildServerBinaryWithOptions(dir, outputPath, projectBuildServer{})
+}
+
+func buildServerBinaryWithOptions(dir, outputPath string, options projectBuildServer) (bool, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
 	cmd.Dir = dir
 	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
@@ -1248,7 +1274,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 		return false, err
 	}
 
-	buildCmd := exec.Command("go", goServerBuildArgs(outputPath)...)
+	buildCmd := exec.Command("go", goServerBuildArgsWithOptions(outputPath, options)...)
 	buildCmd.Dir = dir
 	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	buildCmd.Stderr = os.Stderr
@@ -1259,7 +1285,15 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 }
 
 func goServerBuildArgs(outputPath string) []string {
-	return []string{"build", "-trimpath", "-o", outputPath, "."}
+	return goServerBuildArgsWithOptions(outputPath, projectBuildServer{})
+}
+
+func goServerBuildArgsWithOptions(outputPath string, options projectBuildServer) []string {
+	args := []string{"build", "-trimpath"}
+	if options.Strip {
+		args = append(args, "-ldflags=-s -w")
+	}
+	return append(args, "-o", outputPath, ".")
 }
 
 func stageDeploymentBundleWithPolicy(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string, policy bundlepolicy.Config) error {
@@ -1352,7 +1386,10 @@ func runtimeJSAssetData(name string, data []byte) []byte {
 }
 
 func readStandardGoWASMExec() ([]byte, error) {
-	goroot := getGOROOT()
+	return readGoWASMExec(getGOROOT())
+}
+
+func readGoWASMExec(goroot string) ([]byte, error) {
 	for _, candidate := range []string{
 		filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"),
 		filepath.Join(goroot, "misc", "wasm", "wasm_exec.js"),

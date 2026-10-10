@@ -11,8 +11,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ts = createRequire(import.meta.url)("../runtime/node_modules/typescript");
+const sharedLoaderSource = ts.transpileModule(fs.readFileSync(
+  path.join(__dirname, "..", "runtime", "scene3d", "script-loader.ts"), "utf8",
+), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
 const source = fs.readFileSync(
   path.join(__dirname, "..", "runtime", "scene3d", "instance-stream-bridge.ts"),
   "utf8",
@@ -61,7 +66,7 @@ function loadInstanceStreamBridge(dataAttrs) {
     assert.equal(tag, "script");
     return makeFakeScriptElement();
   };
-  const factory = new Function("window", "document", source + "\nreturn window;");
+  const factory = new Function("window", "document", sharedLoaderSource + "\n" + source + "\nreturn window;");
   factory(window, document);
   return { window, scripts };
 }
@@ -109,6 +114,25 @@ function revisionOf(bytes) {
   const dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   return dv.getUint32(8, true);
 }
+
+test("explicit residency shares the lazy load without a dummy frame or mount", async () => {
+  const { window, scripts } = loadInstanceStreamBridge({
+    gosxScene3dInstanceStreamUrl: "/gosx/assets/runtime/instance-stream.hashed.js",
+  });
+  const first = window.__gosx.host.scene3d.preloadInstanceStream();
+  const second = window.__gosx.host.scene3d.preloadInstanceStream();
+  assert.equal(first, second);
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].src, "/gosx/assets/runtime/instance-stream.hashed.js");
+  let applied = 0;
+  const apply = () => { applied++; return { applied: true }; };
+  window.__gosx_scene3d_instance_stream_apply = apply;
+  scripts[0].onload();
+  assert.equal(await first, apply);
+  assert.equal(applied, 0, "preloading must not mutate or fabricate a scene");
+  assert.equal(await window.__gosx.host.scene3d.preloadInstanceStream(), apply);
+  assert.equal(scripts.length, 1);
+});
 
 test("applyInstanceStreamFrame calls the already-loaded apply function directly, with no script fetch", () => {
   const { window, scripts } = loadInstanceStreamBridge();
@@ -363,4 +387,56 @@ test("a chunk that loads without publishing its apply function clears the cache 
   } finally {
     console.error = originalError;
   }
+});
+
+
+test("queued offset views preserve 16-bit batch IDs and own their copied bytes", async () => {
+  const { window, scripts } = loadInstanceStreamBridge();
+  const mount = makeMount();
+  const pending = [];
+  for (const [suffix, revision] of [["x", 11], ["y", 22]]) {
+    const frame = buildFrameBytes("a".repeat(256) + suffix, revision);
+    const reusable = new Uint8Array(frame.length + 17);
+    reusable.fill(255);
+    reusable.set(frame, 13);
+    const view = suffix === "x"
+      ? new DataView(reusable.buffer, 13, frame.length)
+      : new Uint8Array(reusable.buffer, 13, frame.length);
+    pending.push(window.__gosx_scene3d_apply_instance_stream_frame(makeSceneState(), view, () => {}, mount));
+    reusable.fill(0);
+  }
+  const applied = [];
+  window.__gosx_scene3d_instance_stream_apply = (_state, bytes) => {
+    applied.push(revisionOf(bytes));
+    return { applied: true };
+  };
+  scripts[0].onload();
+  assert.equal((await Promise.all(pending)).filter((result) => result.applied).length, 2);
+  assert.deepEqual(applied, [11, 22]);
+});
+
+test("empty and literal sentinel batch IDs stay distinct from truncated headers", async () => {
+  const { window, scripts } = loadInstanceStreamBridge();
+  const mount = makeMount();
+  const frames = [buildFrameBytes("", 1), buildFrameBytes("unparsed", 2), buildFrameBytes("missing", 3).slice(0, 24)];
+  const pending = frames.map((bytes) => window.__gosx_scene3d_apply_instance_stream_frame(makeSceneState(), bytes, () => {}, mount));
+  const applied = [];
+  window.__gosx_scene3d_instance_stream_apply = (_state, bytes) => {
+    applied.push(revisionOf(bytes));
+    return { applied: true };
+  };
+  scripts[0].onload();
+  assert.equal((await Promise.all(pending)).filter((result) => result.applied).length, 3);
+  assert.deepEqual(applied, [1, 2, 3]);
+});
+
+
+test("shared URL resolution retains the compat fallback when advertised data is denied", () => {
+  const advertised = Object.defineProperty({}, "gosxScene3dInstanceStreamUrl", {
+    get() { throw new Error("host denied script metadata"); },
+  });
+  const { window, scripts } = loadInstanceStreamBridge(advertised);
+  window.__gosx.host.scene3d.preloadInstanceStream();
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].src, "/gosx/bootstrap-feature-scene3d-instance-stream.js");
 });

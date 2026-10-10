@@ -72,3 +72,49 @@ func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (di
 		once.Do(func() { defer callback.Release(); unsubscribe.Invoke() })
 	}, nil
 }
+
+// SignalJSON returns a snapshot of the current shared signal.
+func (c Context) SignalJSON(name string) (data json.RawMessage, err error) {
+	defer func() {
+		if failure := recover(); failure != nil {
+			err = fmt.Errorf("read shared signal: %v", failure)
+		}
+	}()
+	if c.value.Get("getSignal").Type() != js.TypeFunction {
+		return nil, fmt.Errorf("shared signal reader is unavailable")
+	}
+	value := c.value.Call("getSignal", name)
+	if value.IsUndefined() {
+		return nil, ErrSignalNotFound
+	}
+	encoded := js.Global().Get("JSON").Call("stringify", value)
+	if encoded.Type() != js.TypeString {
+		return nil, fmt.Errorf("shared signal is not JSON serializable")
+	}
+	return json.RawMessage(encoded.String()), nil
+}
+
+// SetSignals publishes all values as one cross-island update. Serialization
+// completes before any write, and subscribers observe the complete batch.
+func (c Context) SetSignals(values map[string]any) (err error) {
+	defer func() {
+		if failure := recover(); failure != nil {
+			err = fmt.Errorf("set shared signals: %v", failure)
+		}
+	}()
+	if values == nil {
+		values = map[string]any{}
+	}
+	encoded, err := encodeEventDetail(values)
+	if err != nil {
+		return err
+	}
+	if c.value.Get("setSignals").Type() != js.TypeFunction {
+		return fmt.Errorf("shared signal batch bridge is unavailable")
+	}
+	result := c.value.Call("setSignals", encoded)
+	if result.Type() == js.TypeString && result.String() != "" {
+		return fmt.Errorf("set shared signals: %s", result.String())
+	}
+	return nil
+}

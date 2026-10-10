@@ -113,6 +113,9 @@
     if (name === "cameraProximity") {
       return Math.max(0, Math.min(1, sceneNumber(frame && frame.cameraProximity, 0)));
     }
+    if (field && field.class === "context" && name === "environmentInfo") {
+      return (frame && frame.environmentInfo) || [0, 0, 0, 0];
+    }
     var value = sceneSelenaMaterialValue(material, name);
     if (value !== undefined) return value;
     var def = sceneSelenaUniformDefault(layout, name);

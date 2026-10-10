@@ -340,11 +340,23 @@ test("a synchronous go.run throw clears the boot token", async () => {
   const { bootstrapRuntimeSource, bootstrapFeatureEnginesSource } = require("./runtime-test-harness.js");
   const env = createContext({
     elements: [contract, mount],
-    fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource }, "/engines/a.wasm": { text: "a" } },
-    manifest: { engines: [{ id: "a", component: "A", kind: "surface", runtime: "go-wasm", programRef: "/engines/a.wasm", mountId: "a-root" }] },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      "/gosx/bootstrap-feature-browser-services.js": { text: read("bootstrap-feature-browser-services.js") },
+      "/engines/a.wasm": { text: "a" },
+    },
+    manifest: { features: ["browser-services"], engines: [{ id: "a", component: "A", kind: "surface", runtime: "go-wasm", programRef: "/engines/a.wasm", mountId: "a-root" }] },
   });
   const ctx = env.context;
-  ctx.__gosx_standard_go_wasm_ctor = function FakeGo() { this.env = {}; this.importObject = {}; this.run = () => { throw new Error("sync trap"); }; };
+  let servicesReadyAtRun = false;
+  ctx.__gosx_standard_go_wasm_ctor = function FakeGo() {
+    this.env = {};
+    this.importObject = {};
+    this.run = () => {
+      servicesReadyAtRun = typeof ctx.__gosx.host.requests.guard === "function";
+      throw new Error("sync trap");
+    };
+  };
   // The engine boot failure rejects the page bootstrap, which is the expected
   // outcome of a trapping module; keep the test runner from counting it.
   const listeners = process.listeners("unhandledRejection");
@@ -361,5 +373,6 @@ test("a synchronous go.run throw clears the boot token", async () => {
     for (const fn of listeners) process.on("unhandledRejection", fn);
   }
   assert.ok(rejections.length >= 1, "the trapping module must fail the boot");
+  assert.equal(servicesReadyAtRun, true, "the optional browser service installs before Go-WASM starts");
   assert.equal(ctx.__gosx.goWASMBootToken, "");
 });

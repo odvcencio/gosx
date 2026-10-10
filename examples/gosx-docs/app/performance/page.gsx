@@ -8,7 +8,7 @@ func Page() Node {
 			</If>
 			<h1 id="performance-title">Performance receipts</h1>
 			<p class="performance-lede">
-				Page scores, renderer timings, asset sizes, and the install quickstart, measured on a local production build.
+				Page scores, renderer timings, asset sizes, and install times from a local production build.
 			</p>
 			<If cond={!data.hasMeasurements}>
 				<p class="performance-pending" role="status">
@@ -104,9 +104,7 @@ func Page() Node {
 					</table>
 				</div>
 				<p class="performance-note">
-					Each cell is the median of three cold Lighthouse runs. The individual run scores are included in the
-					<a					href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/performance/receipts.json">receipt JSON</a>
-					.
+					Medians of three cold Lighthouse runs. Individual scores are in the receipt JSON linked below.
 				</p>
 			</section>
 			<section class="performance-section" aria-labelledby="performance-gpu-title">
@@ -225,7 +223,7 @@ func Page() Node {
 				</p>
 				<p>{data.machineDescription}</p>
 				<p>
-					Receipts were measured on this source commit before the receipt data was recorded.
+					Source commit measured before recording these receipts.
 				</p>
 				<p>
 					<code>{data.receipts.Commit}</code>

@@ -136,6 +136,7 @@ var outputs = []output{
 			sourceFile(runtimeLoaderFile),
 			sourceFile(disclosureFile),
 			sourceFile("../runtime/host/request.ts"),
+			sourceFile("../runtime/host/request-guard.ts"),
 			sourceFile("../runtime/host/actions.ts"),
 			sourceFile("../runtime/scene3d/script-loader.ts"),
 			sourceFile(scene3DCommandBridgeFile),
@@ -200,6 +201,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
 			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
+			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
@@ -234,6 +236,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 			sourceFile("../runtime/scene3d/mount-input.ts"),
+			sourceFile("../runtime/scene3d/geometry-assets.ts"),
+			sourceFile("../runtime/scene3d/mount-lifecycle.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			// 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
 			// engine the video factory (in 30b) uses on the brain-absent path. It
@@ -301,6 +305,14 @@ var outputs = []output{
 			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile("bootstrap-src/26-runtime-tail.ts"),
+		},
+	},
+	{
+		name: "bootstrap-feature-browser-services.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26d-feature-browser-services-prefix.ts"),
+			sourceFile("../runtime/host/request-guard.ts"),
+			sourceFile("bootstrap-src/26d-feature-browser-services-suffix.ts"),
 		},
 	},
 	{
@@ -486,6 +498,8 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
 			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
 			sourceFile("../runtime/scene3d/mount-input.ts"),
+			sourceFile("../runtime/scene3d/geometry-assets.ts"),
+			sourceFile("../runtime/scene3d/mount-lifecycle.ts"),
 			sourceFile("../runtime/scene3d/mount.ts"),
 			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.ts"),
 		},
@@ -566,6 +580,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
 			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
 			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
+			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
 			sourceFile("../runtime/scene3d/webgpu.ts"),
 			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
 			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
