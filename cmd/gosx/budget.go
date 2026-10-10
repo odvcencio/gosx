@@ -49,7 +49,7 @@ Usage:
   gosx budget derive --budget FILE [--root DIR] [--check | --write | --out FILE]
   gosx budget explain --budget FILE --page-type TYPE [--root DIR] [--json]
   gosx budget check --budget FILE --app ID=URL --dist ID=DIR --base-report FILE
-    [--trailers FILE] [--report FILE] [--markdown FILE] [--report-only]
+    [--trailers FILE] [--pair-report FILE] [--report FILE] [--markdown FILE] [--report-only]
     [--chunks-only] [--now YYYY-MM-DD] [--root DIR]
   gosx budget report --report FILE --out FILE [--root DIR]
   gosx budget public-check [--format auto|json|jsonl|markdown] [--root DIR] FILE...

@@ -37,6 +37,7 @@ func runBudgetCheckWith(args []string, stdout, stderr io.Writer, collect func(co
 	path := fs.String("budget", "", "configuration file")
 	root := fs.String("root", "", "project root")
 	basePath := fs.String("base-report", "", "canonical base report")
+	pairPath := fs.String("pair-report", "", "validated paired timing evidence")
 	trailersPath := fs.String("trailers", "", "change description")
 	reportPath := fs.String("report", "", "public JSON output")
 	markdownPath := fs.String("markdown", "", "public Markdown output")
@@ -46,7 +47,7 @@ func runBudgetCheckWith(args []string, stdout, stderr io.Writer, collect func(co
 	apps, dists := budgetBindings{}, budgetBindings{}
 	fs.Var(apps, "app", "registered app and endpoint")
 	fs.Var(dists, "dist", "registered app and directory")
-	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *path == "" || !*chunks && *basePath == "" || *chunks && *trailersPath != "" || *reportPath != "" && *reportPath == *markdownPath {
+	if err := fs.Parse(args); err != nil || fs.NArg() != 0 || *path == "" || !*chunks && *basePath == "" || *chunks && (*trailersPath != "" || *pairPath != "") || *reportPath != "" && *reportPath == *markdownPath {
 		return budgetDiagnostic(stderr, nil, 2, "invalid-input", "cli", "/flags")
 	}
 	if *reportPath != "" && *markdownPath != "" {
@@ -105,6 +106,25 @@ func runBudgetCheckWith(args []string, stdout, stderr io.Writer, collect func(co
 		}
 	}
 	configured := map[string]bool{}
+	var pair *budget.PairReport
+	if *pairPath != "" {
+		data, err := readBudgetNativeFile(*pairPath)
+		if err != nil {
+			return budgetDiagnostic(stderr, err, 2, "invalid-input", "pair", "")
+		}
+		if err := v.Validate(bytes.NewReader(data), "json"); err != nil {
+			return budgetDiagnostic(stderr, err, 2, "invalid-input", "pair", "")
+		}
+		record, err := budget.DecodeRecord(bytes.NewReader(data))
+		if err != nil {
+			return budgetDiagnostic(stderr, err, 2, "invalid-input", "pair", "")
+		}
+		var ok bool
+		pair, ok = record.(*budget.PairReport)
+		if !ok {
+			return budgetDiagnostic(stderr, nil, 2, "invalid-input", "pair", "/schema")
+		}
+	}
 	for _, route := range inputs.File.Routes {
 		configured[route.App] = true
 	}
@@ -136,7 +156,7 @@ func runBudgetCheckWith(args []string, stdout, stderr io.Writer, collect func(co
 		return budgetDiagnostic(stderr, err, 2, "environment", "collection", "")
 	}
 	if !*chunks {
-		report, err = budget.Check(budget.CheckOptions{File: inputs.File, Profile: inputs.Profile, Coefficients: inputs.Coefficients, Head: report, Base: base, Trailers: trailers, Now: now, ReportOnly: *reportOnly})
+		report, err = budget.Check(budget.CheckOptions{File: inputs.File, Profile: inputs.Profile, Coefficients: inputs.Coefficients, Head: report, Base: base, Pair: pair, Trailers: trailers, Now: now, ReportOnly: *reportOnly})
 		if err != nil {
 			return budgetDiagnostic(stderr, err, 2, "invalid-input", "check", "")
 		}
