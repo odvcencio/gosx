@@ -152,7 +152,9 @@ func Check(opts CheckOptions) (*Report, error) {
 	sort.Slice(out.Rows, func(i, j int) bool { return growthRowKey(out.Rows[i]) < growthRowKey(out.Rows[j]) })
 	expectedRoutes := map[string]bool{}
 	for _, rule := range opts.File.Routes {
-		expectedRoutes[rule.App+"|"+rule.RouteTemplate] = true
+		if len(eligibleRoutePageTypes(rule.PageTypes, head.Info.Backend)) != 0 {
+			expectedRoutes[rule.App+"|"+rule.RouteTemplate] = true
+		}
 	}
 	if head.Coverage.RoutesExpected != int64(len(expectedRoutes)) || head.Coverage.RoutesMeasured != int64(len(routes)) || head.Coverage.AssetsExpected != head.Coverage.AssetsMeasured || head.Coverage.AssetsMeasured != int64(len(head.Assets)) {
 		fail("capability")
@@ -263,11 +265,8 @@ func checkProvenance(file File, head, base PublicInfo) error {
 func expectedCheckRows(file File, backend string) map[string]bool {
 	expected := map[string]bool{}
 	for _, rule := range file.Routes {
-		for _, name := range rule.PageTypes {
+		for _, name := range eligibleRoutePageTypes(rule.PageTypes, backend) {
 			page := file.PageTypes[name]
-			if backend != "" && backend != "none" && page.Backend != "none" && page.Backend != backend {
-				continue
-			}
 			row := Row{App: rule.App, RouteTemplate: rule.RouteTemplate, PageType: name, Scenario: rule.Scenario, Backend: page.Backend}
 			expected[growthRowKey(row)] = true
 		}

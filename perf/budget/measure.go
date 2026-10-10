@@ -91,6 +91,13 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	if len(selected) != 0 || len(routes) == 0 {
 		return result, measureFailure("wrong-fixture", "/routes")
 	}
+	eligibleRoutes := make([]FixtureRoute, 0, len(routes))
+	for _, route := range routes {
+		if len(eligibleRoutePageTypes(route.PageTypes, opts.Public.Backend)) != 0 {
+			eligibleRoutes = append(eligibleRoutes, route)
+		}
+	}
+	routes = eligibleRoutes
 	sort.Slice(routes, func(i, j int) bool { return routes[i].RouteTemplate < routes[j].RouteTemplate })
 	result.Coverage.RoutesExpected = int64(len(routes))
 	var fixtures []fixtureBody
@@ -350,18 +357,10 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		noInlineRuntime := !allExecution.inlineFramework
 		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && noExecutableDocuments}, PolicyResult{Name: "no-inline-runtime", Passed: noInlineRuntime}, PolicyResult{Name: "runtime-hashed", Passed: runtimeHashed && noInlineRuntime})
 		row.HeadroomBytes = -row.NormalizedBytes
-		for _, name := range route.PageTypes {
-			family, backend, _ := pageTypeVariant(name)
-			if backend != "none" && row.Backend != "none" && backend != row.Backend {
-				continue
-			}
+		for _, name := range eligibleRoutePageTypes(route.PageTypes, opts.Public.Backend) {
+			_, backend, _ := pageTypeVariant(name)
 			copy := row
-			copy.PageType = name
-			if !strings.HasPrefix(family, "scene3d/") && !strings.HasPrefix(family, "game/") {
-				copy.Backend = "none"
-			} else if backend != "none" {
-				copy.Backend = backend
-			}
+			copy.PageType, copy.Backend = name, backend
 			copy.Policies = append([]PolicyResult{}, row.Policies...)
 			result.Rows = append(result.Rows, copy)
 		}

@@ -394,6 +394,21 @@ func metricUnit(metric string) string {
 }
 
 func knownPageType(name string) bool { _, _, ok := pageTypeVariant(name); return ok }
+
+// eligibleRoutePageTypes defines both row selection and route coverage. A route
+// is eligible when at least one declared page type applies to the report backend.
+// Common page types always apply; an unspecified backend includes all variants.
+func eligibleRoutePageTypes(pageTypes []string, backend string) []string {
+	eligible := make([]string, 0, len(pageTypes))
+	for _, name := range pageTypes {
+		_, pageBackend, _ := pageTypeVariant(name)
+		if backend == "" || backend == "none" || pageBackend == "none" || pageBackend == backend {
+			eligible = append(eligible, name)
+		}
+	}
+	return eligible
+}
+
 func pageTypeVariant(name string) (family, backend string, known bool) {
 	family, backend = name, "none"
 	for _, suffix := range []string{"webgpu", "webgl2"} {
