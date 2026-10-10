@@ -11,7 +11,6 @@ import (
 	"runtime"
 	"sort"
 	"strconv"
-	"strings"
 	"time"
 
 	"m31labs.dev/gosx/internal/assetmeasure"
@@ -217,11 +216,11 @@ func equalStrings(a, b []string) bool {
 
 func collectChunks(root *os.Root, app string, manifest *FixtureManifest, normalize bodyNormalizer) (AppReport, error) {
 	out := AppReport{App: app, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "unknown"}}
-	physical := map[string]int{}
-	for _, use := range manifest.Assets {
-		if use.Owner == "app" && !strings.HasPrefix(use.ID, "app/"+app+"/") {
-			continue
-		}
+	physical, err := fixturePhysicalAssets(fixtureAppAssets(manifest.Assets, app))
+	if err != nil {
+		return out, err
+	}
+	for _, use := range physical {
 		body, _, err := readFixtureBody(root, use.URL, use.Kind)
 		if err != nil {
 			return out, err
@@ -230,15 +229,6 @@ func collectChunks(root *os.Root, app string, manifest *FixtureManifest, normali
 		if err != nil || sizes.SHA256 != use.SHA256 {
 			return out, collectionFailure("wrong-fixture", "/assets/body")
 		}
-		if previous, ok := physical[use.URL]; ok {
-			if use.Owner == "framework" {
-				out.Assets[previous].ID = use.ID
-				out.Assets[previous].Owner = use.Owner
-				out.Assets[previous].Dependencies = append([]string{}, use.Dependencies...)
-			}
-			continue
-		}
-		physical[use.URL] = len(out.Assets)
 		out.Assets = append(out.Assets, AssetReport{ID: use.ID, SHA256: use.SHA256, Owner: use.Owner, Phase: "startup", Raw: sizes.Raw, Gzip: sizes.Gzip, Brotli: sizes.Brotli, ChangedSources: []string{}, App: app, Kind: use.Kind, Condition: use.Condition, Dependencies: append([]string{}, use.Dependencies...)})
 	}
 	out.Coverage.AssetsExpected = int64(len(out.Assets))

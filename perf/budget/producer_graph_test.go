@@ -293,6 +293,7 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 	// shuffled catalog/build order and independently hashed source bodies.
 	categories := []string{"document", "compiled", "chunk", "runtime", "public"}
 	coverage := map[string]bool{}
+	ownershipCoverage := map[string]bool{}
 	// Twelve permutations per phase/condition combination make 336 catalogs.
 	// Sidecars are gzip/Brotli representations of these nodes, not graph IDs.
 	for seed := 0; seed < 12*len(enum("phase"))*len(enum("condition")); seed++ {
@@ -304,9 +305,9 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			kinds := map[string]string{}
 			sidecars := map[string]map[string][]byte{}
 			expected := map[string]buildmanifest.PerfAssetUse{}
-			catalogRules := map[string]producerAssetRule{}
+			expectedRules := map[string]producerAssetRule{}
 			rules := []any{}
-			add := func(use buildmanifest.PerfAssetUse, body []byte, source string) buildmanifest.PerfAssetUse {
+			add := func(use buildmanifest.PerfAssetUse, body []byte, source string, registered bool) buildmanifest.PerfAssetUse {
 				use.SHA256 = testMeasureHash(body)
 				fields := producerSchemaObject(t, "AssetUse", producerJSONFields(t, use))
 				rule := producerAssetRule{}
@@ -320,12 +321,15 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 					}
 					ruleFields[name] = value
 				}
-				rules = append(rules, producerSchemaObject(t, "AssetRule", ruleFields))
+				producerSchemaObject(t, "AssetRule", ruleFields)
+				if registered {
+					rules = append(rules, ruleFields)
+				}
 				raw, err := json.Marshal(ruleFields)
 				if err != nil || json.Unmarshal(raw, &rule) != nil {
 					t.Fatal("cannot decode generated catalog rule", err)
 				}
-				catalogRules[use.ID], expected[use.ID] = rule, use
+				expectedRules[use.ID], expected[use.ID] = rule, use
 				bodies[use.URL] = body
 				kinds[use.URL] = use.Kind
 				producerTestFile(t, opts.DistDir, source, body)
@@ -353,7 +357,7 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			}
 			runtime.Dependencies = dependencies[runtime.ID]
 			// Framework edges can also point outside the partial build inventory.
-			runtime = add(runtime, runtimeBody, "assets/runtime/"+filepath.Base(runtime.URL))
+			runtime = add(runtime, runtimeBody, "assets/runtime/"+filepath.Base(runtime.URL), true)
 			build := []buildmanifest.PerfAssetUse{runtime}
 			for _, category := range []string{"compiled", "chunk"} {
 				kind, body := "css", []byte("body{color:green}")
@@ -370,19 +374,29 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 				}
 				use := buildmanifest.PerfAssetUse{ID: ids[category], URL: urls[ids[category]], Owner: "app", Kind: kind,
 					Phase: enum("phase")[seed%len(enum("phase"))].(string), Condition: "always", Dependencies: deps}
-				use = add(use, body, "generated/"+filepath.Base(use.URL))
+				use = add(use, body, "generated/"+filepath.Base(use.URL), true)
 				// CLI staging supplies dormant inventory without registered edges.
 				use.Phase = "dormant"
 				use.Dependencies = []string{}
 				build = append(build, use)
 			}
-			// An unreferenced compiled entry varies every registered scheduling
-			// field while CLI staging still supplies dormant/always defaults.
-			conditional := buildmanifest.PerfAssetUse{ID: "app/fixture/registered.js", URL: "/generated/registered.js", Owner: "app", Kind: "js",
+			// Cross ownership and registration with every schema phase/condition.
+			// Only registered entries replace the CLI's default scheduling/edges.
+			combination := seed / (len(enum("phase")) * len(enum("condition")))
+			owner := enum("owner")[combination%len(enum("owner"))].(string)
+			registered := (combination/len(enum("owner")))%2 == 0
+			ownershipCoverage[fmt.Sprintf("%s/registered=%v", owner, registered)] = true
+			id := "app/fixture/scheduled.js"
+			if owner == "framework" {
+				id = "framework/runtime/scheduled.js"
+			}
+			conditional := buildmanifest.PerfAssetUse{ID: id, URL: "/generated/registered.js", Owner: owner, Kind: "js",
 				Phase:     enum("phase")[seed%len(enum("phase"))].(string),
-				Condition: enum("condition")[(seed/len(enum("phase")))%len(enum("condition"))].(string), Dependencies: []string{}}
-			conditional = add(conditional, []byte("const registered=1;"), "generated/registered.js")
-			conditional.Phase, conditional.Condition = "dormant", "always"
+				Condition: enum("condition")[(seed/len(enum("phase")))%len(enum("condition"))].(string), Dependencies: []string{ids["public"]}}
+			conditional = add(conditional, []byte("const registered=1;"), "generated/registered.js", registered)
+			if registered {
+				conditional.Phase, conditional.Condition, conditional.Dependencies = "dormant", "always", []string{}
+			}
 			build = append(build, conditional)
 			for i, choice := range enum("kind") {
 				kind := choice.(string)
@@ -414,10 +428,10 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 					deps = dependencies[ids["public"]]
 				}
 				use := buildmanifest.PerfAssetUse{ID: "app/fixture/public/generated/" + kind + ".body", URL: "/generated/" + kind + ".body", Owner: "app", Kind: kind, Phase: phase, Condition: condition, Dependencies: deps}
-				add(use, body, "public/generated/"+kind+".body")
+				add(use, body, "public/generated/"+kind+".body", true)
 			}
 			doc := buildmanifest.PerfAssetUse{ID: "app/fixture/html", URL: "/counter/", Owner: "app", Kind: "html", Phase: "critical", Condition: "always", Dependencies: dependencies[ids["document"]]}
-			add(doc, document, "static/counter/index.html")
+			add(doc, document, "static/counter/index.html", true)
 			rng.Shuffle(len(build), func(i, j int) { build[i], build[j] = build[j], build[i] })
 			opts.Build.PerfAssetUses.Assets = build
 			rng.Shuffle(len(rules), func(i, j int) { rules[i], rules[j] = rules[j], rules[i] })
@@ -452,7 +466,7 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 				t.Fatal("generated routes changed during publication")
 			}
 			for _, asset := range manifest.Assets {
-				if err := producerCompareCatalogFields(catalogRules[asset.ID], asset); err != nil {
+				if err := producerCompareCatalogFields(expectedRules[asset.ID], asset); err != nil {
 					t.Errorf("emitted %s differs from catalog: %v", asset.ID, err)
 				}
 				// Check the explicit producer-owned fields independently too.
@@ -487,7 +501,7 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 					t.Fatal("collector lost generated assets")
 				}
 				for _, asset := range report.Assets {
-					rule, ok := catalogRules[asset.ID]
+					rule, ok := expectedRules[asset.ID]
 					if !ok {
 						t.Fatalf("collector returned an unregistered ID %s", asset.ID)
 					}
@@ -514,6 +528,14 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			}
 		}
 	}
+	for _, owner := range enum("owner") {
+		for _, registered := range []bool{false, true} {
+			if !ownershipCoverage[fmt.Sprintf("%s/registered=%v", owner, registered)] {
+				t.Errorf("missing owner/registration case: %s/%v", owner, registered)
+			}
+		}
+	}
+	t.Logf("owner/registration combinations=%v", ownershipCoverage)
 	t.Logf("generated catalogs=%d; body categories=%v; accepted dependency pairs=%d; representations=identity,gzip,brotli",
 		12*len(enum("phase"))*len(enum("condition")), categories, len(coverage))
 }
