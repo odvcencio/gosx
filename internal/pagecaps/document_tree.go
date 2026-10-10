@@ -42,6 +42,7 @@ type DocumentTree struct {
 	Root      *Document
 	Documents []*Document
 	Complete  bool
+	Limits    []AnalysisLimit
 }
 
 // DocumentLoader resolves a fetched frame against its containing document.
@@ -60,14 +61,24 @@ func ParseDocumentTree(body []byte, documentURL string, load DocumentLoader) (*D
 	tree := &DocumentTree{Complete: true}
 	var parse func([]byte, string, string, string, bool, bool, int, map[string]bool) (*Document, error)
 	parse = func(data []byte, u, key, inheritedBase string, allowed, inline bool, depth int, path map[string]bool) (*Document, error) {
-		if depth > MaxSrcdocDepth || len(tree.Documents) >= 4096 {
+		var limit *AnalysisLimit
+		if depth > MaxSrcdocDepth {
+			limit = &AnalysisLimit{Bound: "srcdoc-depth", Limit: MaxSrcdocDepth}
+		} else if len(tree.Documents) >= MaxDocumentCount {
+			limit = &AnalysisLimit{Bound: "document-count", Limit: MaxDocumentCount}
+		}
+		if limit != nil {
+			tree.Limits = append(tree.Limits, *limit)
 			if load == nil && allowed {
-				return nil, errors.New("invalid capability HTML")
+				return nil, limit
 			}
 			tree.Complete = false
 			return nil, nil
 		}
-		if len(data) > 16<<20 || !utf8.Valid(data) {
+		if len(data) > MaxDocumentBytes {
+			return nil, &AnalysisLimit{Bound: "input-bytes", Limit: MaxDocumentBytes}
+		}
+		if !utf8.Valid(data) {
 			return nil, errors.New("invalid capability HTML")
 		}
 		root, err := html.Parse(bytes.NewReader(data))

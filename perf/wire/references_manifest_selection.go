@@ -20,8 +20,8 @@ func documentManifestElement(root *html.Node) (*html.Node, error) {
 	for len(stack) > 0 {
 		entry := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if entry.depth > 256 {
-			return nil, referenceFailure()
+		if entry.depth > maxReferenceDepth {
+			return nil, referenceLimit("html-depth", maxReferenceDepth)
 		}
 		n := entry.node
 		if n.Type == html.ElementNode && attr(n, "id") == "gosx-manifest" {
@@ -49,8 +49,8 @@ func manifestElementTextContent(root *html.Node) (string, error) {
 	for len(stack) > 0 {
 		entry := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
-		if entry.depth > 256 {
-			return "", referenceFailure()
+		if entry.depth > maxReferenceDepth {
+			return "", referenceLimit("html-depth", maxReferenceDepth)
 		}
 		n := entry.node
 		if n.Type == html.TextNode {

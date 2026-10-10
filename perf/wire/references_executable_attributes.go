@@ -132,17 +132,26 @@ func scanSrcdocReferences(n *html.Node, body string, out *referenceScanner) erro
 		return nil
 	}
 	// Constructed DOM fixtures use the same tree for their inline children.
-	if out.srcdocDepth >= pagecaps.MaxSrcdocDepth || out.srcdocCount >= 4096 || out.srcdocBytes+len(body) > 16<<20 {
-		out.drop(dropUnresolved)
-		return referenceFailure()
+	if out.srcdocDepth >= pagecaps.MaxSrcdocDepth {
+		return referenceLimit("srcdoc-depth", pagecaps.MaxSrcdocDepth)
+	}
+	if out.srcdocCount >= pagecaps.MaxDocumentCount {
+		return referenceLimit("srcdoc-count", pagecaps.MaxDocumentCount)
+	}
+	if out.srcdocBytes+len(body) > pagecaps.MaxDocumentBytes {
+		return referenceLimit("srcdoc-bytes", pagecaps.MaxDocumentBytes)
 	}
 	out.srcdocCount++
 	out.srcdocBytes += len(body)
 	tree, err := pagecaps.ParseDocumentTree([]byte(body), "", nil)
 	if err != nil {
+		if out.acceptLimit(err) {
+			return nil
+		}
 		out.drop(dropUnresolved)
 		return referenceFailure()
 	}
+	out.documentLimits(tree)
 	if !tree.Complete {
 		out.drop(dropUnresolved)
 	}

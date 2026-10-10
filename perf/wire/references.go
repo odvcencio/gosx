@@ -41,6 +41,7 @@ type ReferenceSet struct {
 	Complete    bool
 	BaseHref    string
 	HasBaseHref bool
+	Drops       []ReferenceDrop
 }
 
 // ReferenceError identifies a failed scan without copying source text or URLs.
@@ -74,12 +75,12 @@ func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error
 func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) (out ReferenceSet, resultErr error) {
 	state := referenceScanner{ReferenceSet: ReferenceSet{Resources: []Reference{}, Complete: true}, onDrop: onDrop}
 	defer func() {
-		if resultErr != nil {
-			state.drop(dropUnresolved)
-		}
-		out = state.ReferenceSet
+		out, resultErr = referenceResult(&state, resultErr)
 	}()
-	if len(body) > 16<<20 || !utf8.Valid(body) {
+	if len(body) > pagecaps.MaxDocumentBytes {
+		return state.ReferenceSet, referenceLimit("input-bytes", pagecaps.MaxDocumentBytes)
+	}
+	if !utf8.Valid(body) {
 		return state.ReferenceSet, referenceFailure()
 	}
 	switch kind {
@@ -94,7 +95,7 @@ func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) 
 	default:
 		return state.ReferenceSet, referenceFailure()
 	}
-	return finishReferences(&state), nil
+	return state.ReferenceSet, nil
 }
 
 // ScanDocumentReferences scans one node of the shared document tree, retaining
@@ -104,11 +105,7 @@ func ScanDocumentReferences(doc *pagecaps.Document) (ReferenceSet, error) {
 	if doc == nil || doc.Root == nil {
 		return state.ReferenceSet, referenceFailure()
 	}
-	if err := scanDocumentReferences(doc, &state); err != nil {
-		state.drop(dropUnresolved)
-		return state.ReferenceSet, err
-	}
-	return finishReferences(&state), nil
+	return referenceResult(&state, scanDocumentReferences(doc, &state))
 }
 
 func finishReferences(out *referenceScanner) ReferenceSet {
@@ -172,7 +169,9 @@ func addContextReference(out *referenceScanner, raw, kind string, potential bool
 func scanInlineReferences(body []byte, kind string, out *referenceScanner) error {
 	start := len(out.Resources)
 	if err := scanSyntaxReferences(body, kind, out); err != nil {
-		return err
+		if !out.acceptLimit(err) {
+			return err
+		}
 	}
 	for i := start; i < len(out.Resources); i++ {
 		if out.Resources[i].Base == ReferenceBaseSource {
@@ -236,8 +235,12 @@ func referenceKind(raw string) string {
 func scanDocumentBody(body []byte, out *referenceScanner) error {
 	tree, err := pagecaps.ParseDocumentTree(body, "", nil)
 	if err != nil {
+		if out.acceptLimit(err) {
+			return nil
+		}
 		return referenceFailure()
 	}
+	out.documentLimits(tree)
 	if !tree.Complete {
 		out.drop(dropUnresolved)
 	}
@@ -280,8 +283,8 @@ func scanDocumentTree(root *html.Node, out *referenceScanner) error {
 		entry := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		n := entry.node
-		if entry.depth > 256 {
-			return referenceFailure()
+		if entry.depth > maxReferenceDepth {
+			return referenceLimit("html-depth", maxReferenceDepth)
 		}
 		if n.Type == html.ElementNode {
 			if n.Namespace != "" || !htmlReferenceElements[n.Data] {
@@ -440,6 +443,9 @@ func hydrationRuntimeConsumers(manifest hydrate.Manifest) (common, bridge bool) 
 }
 
 func scanSyntaxReferences(body []byte, kind string, out *referenceScanner) error {
+	if len(body) > pagecaps.MaxDocumentBytes {
+		return referenceLimit("input-bytes", pagecaps.MaxDocumentBytes)
+	}
 	if len(bytes.TrimSpace(body)) == 0 {
 		out.drop(dropEmptySyntax)
 		return nil
@@ -453,9 +459,9 @@ func scanSyntaxReferences(body []byte, kind string, out *referenceScanner) error
 	if lang == nil {
 		return referenceFailure()
 	}
-	tree, err := ts.NewParser(lang).Parse(body)
-	if err != nil || tree == nil {
-		return referenceFailure()
+	tree, err := parseReferenceSyntax(ts.NewParser(lang), body)
+	if err != nil {
+		return err
 	}
 	if kind == KindScript && tree.RootNode().HasErrorOrMissing() {
 		// Retry valid minified statement boundaries through the bundle producer's
@@ -466,13 +472,13 @@ func scanSyntaxReferences(body []byte, kind string, out *referenceScanner) error
 			Loader: api.LoaderJS, Target: api.ESNext, Charset: api.CharsetUTF8,
 			TreeShaking: api.TreeShakingFalse, LogLevel: api.LogLevelSilent,
 		})
-		if len(formatted.Errors) != 0 || len(formatted.Code) > 32<<20 {
-			return referenceFailure()
+		if err := validateFormattedReferences(formatted); err != nil {
+			return err
 		}
 		body = formatted.Code
-		tree, err = ts.NewParser(lang).Parse(body)
-		if err != nil || tree == nil {
-			return referenceFailure()
+		tree, err = parseReferenceSyntax(ts.NewParser(lang), body)
+		if err != nil {
+			return err
 		}
 	}
 	defer tree.Release()
@@ -490,8 +496,11 @@ func scanSyntaxReferences(body []byte, kind string, out *referenceScanner) error
 		stack = stack[:len(stack)-1]
 		n := entry.node
 		nodes++
-		if entry.depth > 256 || nodes > 250000 {
-			return referenceFailure()
+		if entry.depth > maxReferenceDepth {
+			return referenceLimit("ast-depth", maxReferenceDepth)
+		}
+		if nodes > maxReferenceASTNodes {
+			return referenceLimit("ast-nodes", maxReferenceASTNodes)
 		}
 		if kind == KindStyle {
 			cssReference(n, lang, body, out)

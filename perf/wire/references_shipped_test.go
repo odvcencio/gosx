@@ -187,10 +187,16 @@ func TestReferencesShippedJavaScript(t *testing.T) {
 			set, err := ScanReferences(body, KindScript)
 			witness := "none"
 			if !set.Complete {
-				witness = shippedIncompleteWitness(t, body, err != nil)
+				witness = shippedIncompleteWitness(t, body, len(set.Drops) != 0)
 			}
-			if err != nil && (path != "client/js/bootstrap.js" || err.Error() != "invalid-input at references/body" || !strings.HasPrefix(witness, "AST node limit (250000)")) {
+			if err != nil {
 				t.Fatalf("new shipped JavaScript scan failure: %v; %s", err, witness)
+			}
+			if path == "client/js/bootstrap.js" {
+				assertAnalysisLimit(t, set, err, "ast-nodes", 250000)
+				if !strings.HasPrefix(witness, "AST node limit (250000)") {
+					t.Fatal("monolith limit lost its independent witness", witness)
+				}
 			}
 			if !set.Complete && witness == "none" {
 				t.Fatal("incomplete shipped code has no mandatory policy witness")

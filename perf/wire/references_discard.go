@@ -23,9 +23,11 @@ const (
 	dropOverriddenFrameSource                     // a present srcdoc replaces iframe src, including empty srcdoc
 	dropInvalidManifest                           // the loader catches invalid JSON on its first ID candidate
 	dropEmptySyntax                               // no CSS/JavaScript instructions to scan
+	dropAnalysisLimit                             // bounded analysis cannot establish complete coverage
 )
 
-// ReferenceSet keeps its public shape; omission tracing is scanner state only.
+// Ordinary omission tracing stays private. Only fixed analysis bounds are
+// retained in ReferenceSet so callers can explain incomplete coverage.
 type referenceScanner struct {
 	ReferenceSet
 	onDrop                                func(referenceDropReason)

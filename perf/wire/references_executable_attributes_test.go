@@ -201,8 +201,8 @@ func TestReferencesSrcdocBounds(t *testing.T) {
 			if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), []Reference{{URL: "/literal.json", Kind: KindOther, Potential: false}}) {
 				t.Fatalf("permitted srcdoc depth %d: %+v %v", depth, set, err)
 			}
-		} else if err == nil || set.Complete {
-			t.Fatalf("srcdoc beyond bound certified: %+v %v", set, err)
+		} else {
+			assertAnalysisLimit(t, set, err, "srcdoc-depth", 32)
 		}
 	}
 }

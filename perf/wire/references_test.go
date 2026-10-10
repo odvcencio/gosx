@@ -322,9 +322,7 @@ func TestReferencesInvalidInputsReturnFixedError(t *testing.T) {
 		{KindScript, []byte("import './unterminated")},
 		{KindStyle, []byte(".a{background:url('unfinished)")},
 		{KindDocument, []byte{0xff}},
-		{KindScript, bytes.Repeat([]byte(" "), 16<<20+1)},
 		{KindFont, []byte("unused")},
-		{KindDocument, []byte(strings.Repeat("<div>", 258) + strings.Repeat("</div>", 258))},
 	}
 	for i, test := range cases {
 		set, err := ScanReferences(test.body, test.kind)
