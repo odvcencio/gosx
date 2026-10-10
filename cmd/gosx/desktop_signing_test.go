@@ -268,20 +268,40 @@ func TestDesktopSignMetadataPermissionsAndCleanup(t *testing.T) {
 		t.Fatal("dlib metadata contains unexpected settings")
 	}
 	if runtime.GOOS != "windows" {
-		info, err := os.Stat(path)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0600 {
-			t.Fatalf("metadata mode = %o", info.Mode().Perm())
-		}
-		info, err = os.Stat(signer.metadataDir)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if info.Mode().Perm() != 0700 {
-			t.Fatalf("metadata directory mode = %o", info.Mode().Perm())
-		}
+		t.Run("permissions", func(t *testing.T) {
+			// A filesystem that ignores Unix modes cannot exercise these checks.
+			probeDir := filepath.Join(t.TempDir(), "permission-probe")
+			if err := os.Mkdir(probeDir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			probePath := filepath.Join(probeDir, "file")
+			if err := os.WriteFile(probePath, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			for name, mode := range map[string]os.FileMode{probeDir: 0700, probePath: 0600} {
+				info, err := os.Stat(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if info.Mode().Perm() != mode {
+					t.Skip("temporary filesystem does not implement permission bits")
+				}
+			}
+			info, err := os.Stat(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0600 {
+				t.Fatalf("metadata mode = %o", info.Mode().Perm())
+			}
+			info, err = os.Stat(signer.metadataDir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if info.Mode().Perm() != 0700 {
+				t.Fatalf("metadata directory mode = %o", info.Mode().Perm())
+			}
+		})
 	}
 	signer.close()
 	if _, err := os.Stat(path); !os.IsNotExist(err) {
