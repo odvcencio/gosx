@@ -70,10 +70,20 @@ func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error
 	return scanReferences(body, kind, nil)
 }
 
+// ScanAssetReferences attaches a logical asset label to private parse diagnostics.
+// The label should be a registered asset ID, rather than a native file path.
+func ScanAssetReferences(body []byte, kind, assetID string) (ReferenceSet, error) {
+	return scanNamedReferences(body, kind, assetID, nil)
+}
+
 // The optional observer audits omissions without retaining source or allocating
 // a discard log in production. The observer stays in the private scanner state.
-func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) (out ReferenceSet, resultErr error) {
-	state := referenceScanner{ReferenceSet: ReferenceSet{Resources: []Reference{}, Complete: true}, onDrop: onDrop}
+func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) (ReferenceSet, error) {
+	return scanNamedReferences(body, kind, "", onDrop)
+}
+
+func scanNamedReferences(body []byte, kind, label string, onDrop func(referenceDropReason)) (out ReferenceSet, resultErr error) {
+	state := referenceScanner{ReferenceSet: ReferenceSet{Resources: []Reference{}, Complete: true}, onDrop: onDrop, sourceLabel: label}
 	defer func() {
 		out, resultErr = referenceResult(&state, resultErr)
 	}()
@@ -81,6 +91,10 @@ func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) 
 		return state.ReferenceSet, referenceLimit("input-bytes", pagecaps.MaxDocumentBytes)
 	}
 	if !utf8.Valid(body) {
+		if kind == KindStyle {
+			state.cssParse(firstInvalidCSSByte(body))
+			return state.ReferenceSet, nil
+		}
 		return state.ReferenceSet, referenceFailure()
 	}
 	switch kind {
@@ -461,7 +475,19 @@ func scanSyntaxReferences(body []byte, kind string, out *referenceScanner) error
 	}
 	tree, err := parseReferenceSyntax(ts.NewParser(lang), body)
 	if err != nil {
+		if kind == KindStyle {
+			if !out.acceptLimit(err) {
+				out.cssParse(0)
+			}
+			return nil
+		}
 		return err
+	}
+	if kind == KindStyle && tree.RootNode().HasErrorOrMissing() {
+		tree, err = recoverCSSReferences(tree, lang, body, out)
+		if err != nil || tree == nil {
+			return err
+		}
 	}
 	if kind == KindScript && tree.RootNode().HasErrorOrMissing() {
 		// Retry valid minified statement boundaries through the bundle producer's

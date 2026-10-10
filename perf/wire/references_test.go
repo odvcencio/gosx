@@ -320,7 +320,6 @@ func TestReferencesInvalidInputsReturnFixedError(t *testing.T) {
 		body []byte
 	}{
 		{KindScript, []byte("import './unterminated")},
-		{KindStyle, []byte(".a{background:url('unfinished)")},
 		{KindDocument, []byte{0xff}},
 		{KindFont, []byte("unused")},
 	}

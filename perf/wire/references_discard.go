@@ -24,13 +24,15 @@ const (
 	dropInvalidManifest                           // the loader catches invalid JSON on its first ID candidate
 	dropEmptySyntax                               // no CSS/JavaScript instructions to scan
 	dropAnalysisLimit                             // bounded analysis cannot establish complete coverage
+	dropCSSParse                                  // unsupported or invalid stylesheet syntax
 )
 
-// Ordinary omission tracing stays private. Only fixed analysis bounds are
+// Ordinary omission tracing stays private. Only analysis bounds and CSS parse locations are
 // retained in ReferenceSet so callers can explain incomplete coverage.
 type referenceScanner struct {
 	ReferenceSet
 	onDrop                                func(referenceDropReason)
+	sourceLabel                           string
 	document                              *pagecaps.Document
 	scriptsBlocked                        bool
 	srcdocDepth, srcdocCount, srcdocBytes int

@@ -25,12 +25,15 @@ const (
 	maxFormattedReferenceBytes = 32 << 20
 )
 
-// ReferenceDrop records a fixed analysis bound without retaining input values.
-// Analysis-limit drops always mean Complete=false, never a certification.
+// ReferenceDrop explains incomplete private analysis. File is a caller-supplied
+// logical asset label, never an inferred native path; Offset is a body byte index.
+// None of these diagnostics are copied into public performance reports.
 type ReferenceDrop struct {
 	Reason string
 	Bound  string
 	Limit  int64
+	File   string
+	Offset int64
 }
 
 func referenceLimit(bound string, limit int) error {

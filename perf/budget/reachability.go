@@ -429,7 +429,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 				refs, found = scanned[use.ID]
 				if !found {
 					var err error
-					refs, err = wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
+					refs, err = wire.ScanAssetReferences(opts.Bodies[use.ID], use.Kind, use.ID)
 					if err != nil {
 						return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
 					}
