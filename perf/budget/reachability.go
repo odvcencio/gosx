@@ -376,9 +376,10 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 
 		if use.Kind == "html" {
 			if len(documentContexts[referenceBase]) == 0 {
-				if err := addDocuments(use, referenceBase, current.environment.restricted); err != nil {
-					return result, err
-				}
+				// Fetching or prefetching HTML does not embed a browsing document.
+				// Without an embedding context its execution and closure cannot
+				// be certified; retain the conservative resource inventory.
+				known = false
 			}
 			permitted := false
 			for _, doc := range documentContexts[referenceBase] {

@@ -28,6 +28,7 @@ type closureNode struct {
 	refs        []string
 	contextRefs []closureReference
 	baseHref    *string
+	embeddings  []string
 }
 type closureReference struct {
 	url, base string
@@ -77,6 +78,23 @@ func TestMeasureRedirectMissingFinalDeclarationRetainsPotentialClosure(t *testin
 	assertClosureModel(t, report, want)
 }
 
+func TestMeasurePrefetchedHTMLDoesNotExecute(t *testing.T) {
+	g := closureGraph{}
+	g.add("html", "/counter/", "html", "critical", `<link rel=prefetch href=/other/>`, []string{"/other/"})
+	g.add("other", "/other/", "html", "dormant", `<script type="module">app()</script>`, nil)
+	report, _ := measureClosureGraph(t, t.TempDir(), g)
+	want := referenceClosure(g)
+	assertClosureModel(t, report, want)
+	if want.reachability != "unknown" {
+		t.Fatal("prefetched HTML acquired a document context in the reference model")
+	}
+	for _, execution := range report.execution {
+		if execution.ExecutableSources != 0 {
+			t.Fatal("prefetched scripts contributed executable observations", execution)
+		}
+	}
+}
+
 func TestMeasureFinalURLClosureCorpus(t *testing.T) {
 	const cases = 256
 	rng := rand.New(rand.NewSource(54202))
@@ -118,6 +136,16 @@ func (g *closureGraph) referenceContext(id string, href *string, refs ...closure
 	panic("missing model node")
 }
 
+func (g *closureGraph) embeds(id string, urls ...string) {
+	for i := range g.nodes {
+		if strings.HasSuffix(g.nodes[i].use.ID, "/"+id) {
+			g.nodes[i].embeddings = urls
+			return
+		}
+	}
+	panic("missing model document")
+}
+
 func generatedClosureGraph(i int, rng *rand.Rand) closureGraph {
 	g := closureGraph{redirects: map[string]string{}}
 	root := `<p>Fixture</p>`
@@ -131,9 +159,15 @@ func generatedClosureGraph(i int, rng *rand.Rand) closureGraph {
 		rootRefs = append(rootRefs, "/panel/")
 	}
 	g.add("html", "/counter/", "html", "critical", root, rootRefs)
+	if i%3 == 0 {
+		g.embeds("html", "/panel/")
+	}
 	if i%4 == 0 {
 		g.redirects["/counter/"] = "/landing/"
 		g.add("root-final", "/landing/", "html", "dormant", root, rootRefs)
+		if i%3 == 0 {
+			g.embeds("root-final", "/panel/")
+		}
 	}
 	main := `@import "./child.css";`
 	mainRefs := []string{"./child.css"}
@@ -170,10 +204,16 @@ func generatedClosureGraph(i int, rng *rand.Rand) closureGraph {
 		panelRefs = append(panelRefs, "/counter/") // HTML cycles need no cyclic typed edges.
 	}
 	g.add("panel", "/panel/", "html", "dormant", panel, panelRefs)
+	if i%5 == 0 {
+		g.embeds("panel", "/counter/")
+	}
 	g.add("panel-pixel", "/panel/pixel.png", "image", "dormant", "panel pixels", nil)
 	if i%3 == 1 {
 		g.redirects["/panel/"] = "/nested/panel/"
 		g.add("panel-final", "/nested/panel/", "html", "dormant", panel, panelRefs)
+		if i%5 == 0 {
+			g.embeds("panel-final", "/counter/")
+		}
 		g.add("final-pixel", "/nested/panel/pixel.png", "image", "dormant", "final panel pixels", nil)
 	}
 	g.add("entry", "/entry.js", "js", "after-ready", `fetch("/panel/")`, []string{"/panel/"}, "panel")
@@ -244,10 +284,43 @@ func referenceClosure(g closureGraph) closureExpected {
 	redirectCount := map[string]int{}
 	fetched := map[string]bool{}
 	known := true
+	// Build only the browsing-document closure. An HTML fetch/prefetch is a
+	// body observation, not a new execution context, and fails closed below.
+	embedded := map[string]bool{}
+	documents := []string{"/counter/"}
+	for len(documents) > 0 {
+		address := documents[0]
+		documents = documents[1:]
+		base, _ := url.Parse("https://example.invalid" + address)
+		for g.redirects[base.Path] != "" {
+			target, _ := url.Parse(g.redirects[base.Path])
+			base = base.ResolveReference(target)
+		}
+		if embedded[base.Path] {
+			continue
+		}
+		embedded[base.Path] = true
+		n := nodes[base.Path]
+		if n.baseHref != nil {
+			href, _ := url.Parse(*n.baseHref)
+			base = base.ResolveReference(href)
+		}
+		for _, raw := range n.embeddings {
+			target, _ := url.Parse(raw)
+			documents = append(documents, base.ResolveReference(target).Path)
+		}
+	}
 	rootBase := ""
 	type location struct{ path, document, worker string }
 	seen := map[location]int{}
 	contexts := map[string][]location{}
+	type declaredEdges struct {
+		source       string
+		phase        int
+		dependencies []string
+	}
+	edges := []declaredEdges{}
+	literalTargets := map[string]map[string]bool{}
 	drain := func() {
 		for len(queue) > 0 {
 			next := 0
@@ -294,6 +367,10 @@ func referenceClosure(g closureGraph) closureExpected {
 				queue = append(queue, pending{base.Path, p.phase, p.document, p.worker})
 			}
 			if n.use.Kind == "html" {
+				if !embedded[base.Path] {
+					known = false
+					continue
+				}
 				if referenceEmbeddingCycle(g, nodes, base.Path, map[string]bool{}) {
 					known = false
 				}
@@ -306,6 +383,10 @@ func referenceClosure(g closureGraph) closureExpected {
 				if p.path == "/counter/" {
 					rootBase = p.document
 				}
+			}
+			edges = append(edges, declaredEdges{base.Path, p.phase, n.use.Dependencies})
+			if literalTargets[base.Path] == nil {
+				literalTargets[base.Path] = map[string]bool{}
 			}
 			references := n.contextRefs
 			if references == nil {
@@ -356,6 +437,7 @@ func referenceClosure(g closureGraph) closureExpected {
 					continue
 				}
 				target := targetURL.Path
+				literalTargets[base.Path][nodes[target].use.ID] = true
 				if !declared && n.use.Kind != "html" {
 					edge := false
 					for _, dep := range n.use.Dependencies {
@@ -379,6 +461,31 @@ func referenceClosure(g closureGraph) closureExpected {
 		}
 	}
 	drain()
+	// Typed edges without a corresponding literal are opaque producer evidence.
+	// Preserve their costs even when no execution context explains the edge.
+	for {
+		before := len(seen)
+		for _, edge := range edges {
+			for _, dependency := range edge.dependencies {
+				if literalTargets[edge.source][dependency] {
+					continue
+				}
+				for _, n := range g.nodes {
+					if n.use.ID == dependency {
+						p := edge.phase
+						if declared := rank(n.use.Phase); declared < p {
+							p = declared
+						}
+						queue = append(queue, pending{path: n.use.URL, phase: p})
+					}
+				}
+			}
+		}
+		drain()
+		if len(seen) == before {
+			break
+		}
+	}
 	if !known {
 		for _, n := range g.nodes {
 			if n.use.Kind != "html" {
@@ -549,7 +656,7 @@ func referenceEmbeddingCycle(g closureGraph, nodes map[string]closureNode, addre
 		target, _ := url.Parse(*node.baseHref)
 		parent = parent.ResolveReference(target)
 	}
-	for _, raw := range node.refs {
+	for _, raw := range node.embeddings {
 		target, err := url.Parse(raw)
 		if err != nil {
 			continue

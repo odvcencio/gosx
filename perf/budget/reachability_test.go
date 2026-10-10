@@ -71,6 +71,34 @@ func TestReachabilityRestrictedPreloadKeepsStartupDependencies(t *testing.T) {
 	}
 }
 
+func TestReachabilityNonEmbeddedHTMLFailsClosed(t *testing.T) {
+	for _, root := range []string{
+		`<link rel=prefetch href=/other/>`,
+		`<script>fetch("/other/")</script>`,
+	} {
+		bodies := map[string][]byte{
+			"app/fixture/html":  []byte(root),
+			"app/fixture/other": []byte(`<script type="module">app()</script>`),
+		}
+		opts := ReachabilityOptions{
+			Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: []buildmanifest.PerfAssetUse{
+				graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", bodies["app/fixture/html"]),
+				graphAsset("app/fixture/other", "/other/", "html", "dormant", "always", bodies["app/fixture/other"]),
+			}},
+			Bodies:  bodies,
+			Route:   FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}},
+			Backend: "none",
+		}
+		plan, err := ResolveReachability(opts)
+		if err != nil || plan.Reachability != "unknown" || planPhases(plan)["app/fixture/other"] != "startup" {
+			t.Fatal("non-embedded HTML certified as a document", plan, err)
+		}
+		if len(plan.documents.Documents) != 1 || plan.executingAssets["app/fixture/other"] {
+			t.Fatal("non-embedded HTML acquired an execution context", plan.documents, plan.executingAssets)
+		}
+	}
+}
+
 func testAlternateURLGraph() ReachabilityOptions {
 	bodies := map[string][]byte{
 		"app/fixture/html":  []byte(`<link rel="stylesheet" href="/alternate/site.css">`),

@@ -66,7 +66,8 @@ func generatedReferenceBaseGraph(i int, rng *rand.Rand) closureGraph {
 	code := `fetch("./data.js");import("./data.js");new Worker("./worker.js");new SharedWorker(new URL("./worker.js",import.meta.url));`
 	deps := []string{"document-data", "module-data", "document-worker", "module-worker"}
 	if i%4 == 1 {
-		// A later document executes the same script with a different API base.
+		// Fetching HTML does not embed it or execute its script. This branch
+		// requires unknown reachability and conservative resource costs.
 		g.add("late-loader", "/late/loader.js", "js", "after-ready", `fetch("/frames/view/");`, nil, "frame")
 		g.referenceContext("late-loader", nil, closureReference{"/frames/view/", "environment", false})
 		frame := `<base href="/frame-data/"><script type="module" src="` + entryURL + `"></script>`
