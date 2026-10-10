@@ -47,8 +47,9 @@ func (m HTMLMeasurement) executionCounts() HTMLExecution {
 }
 
 // HTMLExecution records active document execution, including srcdoc. Sources
-// include script elements, event handlers and executable URLs. Script bytes
-// exclude verified framework bodies; Max is per script, Bytes is their sum.
+// include script elements, event handlers and executable URLs. The legacy Script
+// byte fields include all inline code except verified framework script bodies;
+// Max is per executable source, Bytes is their sum.
 type HTMLExecution struct {
 	ExecutableSources, ExecutableScripts, SyncExecutableScripts int64
 	InlineAppScriptMax, InlineAppScriptBytes                    int64
@@ -78,21 +79,23 @@ func (total *HTMLExecution) union(other HTMLExecution) {
 
 func (total *HTMLExecution) observe(source pagecaps.ExecutableSource, owned map[string]bool) {
 	total.ExecutableSources++
-	if !source.Script {
-		return
+	if source.Script {
+		total.ExecutableScripts++
+		if source.Synchronous {
+			total.SyncExecutableScripts++
+		}
+		if !source.Inline {
+			return
+		}
+		hash := sha256.Sum256(source.Body)
+		if source.ExactBody && owned[hex.EncodeToString(hash[:])] {
+			total.inlineFramework = true
+			return
+		}
 	}
-	total.ExecutableScripts++
-	if source.Synchronous {
-		total.SyncExecutableScripts++
-	}
-	hash := sha256.Sum256(source.Body)
-	if source.Inline && source.ExactBody && owned[hex.EncodeToString(hash[:])] {
-		total.inlineFramework = true
-	} else if source.Inline {
-		size := int64(len(source.Body))
-		total.InlineAppScriptMax = max(total.InlineAppScriptMax, size)
-		total.InlineAppScriptBytes += size
-	}
+	size := int64(len(source.Body))
+	total.InlineAppScriptMax = max(total.InlineAppScriptMax, size)
+	total.InlineAppScriptBytes += size
 }
 
 // MeasureHTML uses complete recompressed documents for inline ownership; it

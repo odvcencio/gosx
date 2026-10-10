@@ -10,7 +10,7 @@ import (
 // https://html.spec.whatwg.org/multipage/indices.html#attributes-3
 // URL fields outside the implemented subset remain unresolved, including
 // obsolete attributes, microdata URLs, navigation and nested documents.
-var htmlReferenceElements = htmlReferenceWords("frame a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option output p picture pre progress q rp rt ruby s samp script search section select selectedcontent slot small source span strong style sub summary sup table tbody td template textarea tfoot th thead time title tr track u ul var video wbr")
+var htmlReferenceElements = htmlReferenceWords("frameset frame a abbr address area article aside audio b base bdi bdo blockquote body br button canvas caption cite code col colgroup data datalist dd del details dfn dialog div dl dt em embed fieldset figcaption figure footer form h1 h2 h3 h4 h5 h6 head header hgroup hr html i iframe img input ins kbd label legend li link main map mark menu meta meter nav noscript object ol optgroup option output p picture pre progress q rp rt ruby s samp script search section select selectedcontent slot small source span strong style sub summary sup table tbody td template textarea tfoot th thead time title tr track u ul var video wbr")
 
 var htmlReferenceGlobalAttributes = htmlReferenceWords("id class title lang dir hidden inert tabindex accesskey translate draggable spellcheck contenteditable autocapitalize autocorrect autofocus inputmode enterkeyhint popover slot nonce part exportparts itemscope itemref role aria-label aria-labelledby aria-describedby aria-hidden aria-live aria-atomic aria-busy aria-controls aria-current aria-disabled aria-expanded aria-haspopup aria-pressed aria-selected aria-checked aria-required aria-invalid aria-valuemin aria-valuemax aria-valuenow aria-valuetext")
 
@@ -30,6 +30,7 @@ var htmlReferenceElementAttributes = map[string]map[string]bool{
 	"embed":    htmlReferenceWords("type width height"),
 	"fieldset": htmlReferenceWords("disabled form name"),
 	"form":     htmlReferenceWords("accept-charset autocomplete enctype method name novalidate rel target"),
+	"frameset": htmlReferenceWords("rows cols"),
 	"frame":    htmlReferenceWords("name sandbox noresize scrolling frameborder marginheight marginwidth"),
 	"iframe":   htmlReferenceWords("name sandbox allowfullscreen width height referrerpolicy loading"),
 	"img":      htmlReferenceWords("alt sizes crossorigin ismap width height referrerpolicy decoding loading fetchpriority"),
@@ -88,6 +89,12 @@ func scanHTMLReferenceAttribute(n *html.Node, a html.Attribute, out *referenceSc
 	}
 	switch a.Key {
 	case "srcdoc":
+		if n.Data == "frame" {
+			// HTML 16.3.2: frame has src processing, without srcdoc or sandbox.
+			// Its unsupported srcdoc does not override the live src URL.
+			out.drop(dropInertHTML)
+			return nil
+		}
 		if n.Data != "iframe" {
 			out.drop(dropUnresolved)
 			return nil

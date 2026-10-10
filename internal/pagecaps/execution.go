@@ -11,10 +11,32 @@ import (
 // retain live resource edges. Active inline evidence beyond this bound fails.
 const MaxSrcdocDepth = 32
 
+type ExecutableSourceKind uint8
+
+const (
+	unknownExecutableSource ExecutableSourceKind = iota
+	ScriptSource
+	EventHandlerSource
+	JavascriptURLSource
+	RefreshURLSource
+	executableSourceKindCount
+)
+
+// ExecutableSourceKinds enumerates the kinds emitted by the classifier. New
+// kinds belong before executableSourceKindCount and need accounting witnesses.
+func ExecutableSourceKinds() []ExecutableSourceKind {
+	kinds := make([]ExecutableSourceKind, 0, executableSourceKindCount-1)
+	for kind := ScriptSource; kind < executableSourceKindCount; kind++ {
+		kinds = append(kinds, kind)
+	}
+	return kinds
+}
+
 // ExecutableSource describes active execution without running it. Body retains
-// raw script bytes after srcdoc entity decoding. ExactBody permits matching a
-// trusted signature; ambiguous spellings use a conservative byte bound.
+// raw script bytes after srcdoc decoding, or decoded attribute code without URL
+// scheme and refresh syntax. Only exact script bodies can match trusted signatures.
 type ExecutableSource struct {
+	Kind                        ExecutableSourceKind
 	Script, Inline, Synchronous bool
 	Body                        []byte
 	ExactBody                   bool
@@ -35,8 +57,11 @@ func walkActiveDocuments(tree *DocumentTree, visit func(*html.Node, map[string]s
 						_, embedded := attrs["srcdoc"]
 						url = url && !embedded && scriptsAllowed(attrs)
 					}
-					if strings.HasPrefix(key, "on") && len(key) > 2 || url {
-						observe(doc, ExecutableSource{Body: []byte(value)})
+					if strings.HasPrefix(key, "on") && len(key) > 2 {
+						observe(doc, ExecutableSource{Kind: EventHandlerSource, Body: []byte(value)})
+					} else if url {
+						code, _ := javascriptURLCode(value)
+						observe(doc, ExecutableSource{Kind: JavascriptURLSource, Body: []byte(code)})
 					}
 				}
 				if node.Data == "script" && ScriptExecutes(node.Namespace, attrs) {
@@ -51,10 +76,11 @@ func walkActiveDocuments(tree *DocumentTree, visit func(*html.Node, map[string]s
 					}
 					inline := !external
 					module := scriptASCIILower(attrs["type"]) == "module"
-					observe(doc, ExecutableSource{Script: true, Inline: inline, Synchronous: !module && (inline || !async && !deferred), Body: body.body, ExactBody: body.exact})
+					observe(doc, ExecutableSource{Kind: ScriptSource, Script: true, Inline: inline, Synchronous: !module && (inline || !async && !deferred), Body: body.body, ExactBody: body.exact})
 				}
 				if node.Data == "meta" && strings.EqualFold(strings.TrimSpace(attrs["http-equiv"]), "refresh") && refreshJavascriptURL(attrs["content"]) {
-					observe(doc, ExecutableSource{Body: []byte(attrs["content"])})
+					code, _ := refreshJavascriptURLCode(attrs["content"])
+					observe(doc, ExecutableSource{Kind: RefreshURLSource, Body: []byte(code)})
 				}
 			}
 			depth := doc.Depth - tree.Root.Depth
