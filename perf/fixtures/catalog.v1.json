@@ -152,7 +152,21 @@
     {"id":"app/docs/public/playground-editor.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/scene3d-bench-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/water-diag.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
-    {"id":"app/docs/public/water/zpos.jpg","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]}
+    {"id":"app/docs/public/water/zpos.jpg","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/checkers-native-telemetry.json","owner":"app","kind":"other","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/blue-hour.brdf-lut.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/blue-hour.ibl.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/blue-hour.irradiance.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/golden-hour.brdf-lut.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/golden-hour.ibl.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/golden-hour.irradiance.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/noon.brdf-lut.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/noon.ibl.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/env/blackglass-beach/noon.irradiance.ktx2","owner":"app","kind":"image","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/models/blackglass/detail/PROVENANCE.md","owner":"app","kind":"other","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/models/runner.gosx3d.json","owner":"app","kind":"model","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/site.webmanifest","owner":"app","kind":"other","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/scaffold/public/styles.css","owner":"app","kind":"css","phase":"dormant","condition":"always","dependencies":[]}
   ],
   "interactionContract": {"file":"perf/fixtures/interaction.v1.json","sha256":"e455f9568007db01e5a168dbe60749e825f5ee516682593a938f96fcb2143335"}
 }
