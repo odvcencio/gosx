@@ -3,6 +3,7 @@ module m31labs.dev/gosx
 go 1.26
 
 require (
+	github.com/evanw/esbuild v0.28.1
 	github.com/gorilla/websocket v1.5.3
 	github.com/odvcencio/gotreesitter v0.50.1
 	github.com/rivo/uniseg v0.4.7

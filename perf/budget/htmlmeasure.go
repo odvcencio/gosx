@@ -6,13 +6,14 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"mime"
+	"golang.org/x/net/html"
 	"regexp"
 	"sort"
 	"strings"
 	"unicode/utf8"
 
 	"m31labs.dev/gosx/internal/assetmeasure"
+	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 // HTMLField declares a transient attribute whose value is normalized. Every
@@ -24,13 +25,76 @@ type HTMLMeasureOptions struct {
 	Pin                   assetmeasure.CompressorPin
 }
 type HTMLMeasurement struct {
-	Sizes              assetmeasure.Sizes
-	Framework          SizeTriple
-	App                SizeTriple
-	InlineAppScriptMax int64
-	ExecutableScripts  int64
-	full               []byte
-	withoutFramework   []byte
+	Sizes                 assetmeasure.Sizes
+	Framework             SizeTriple
+	App                   SizeTriple
+	InlineAppScriptMax    int64
+	ExecutableScripts     int64
+	full                  []byte
+	withoutFramework      []byte
+	SyncExecutableScripts int64
+	ExecutableSources     int64
+	InlineAppScriptBytes  int64
+	capabilities          pagecaps.Capabilities
+	inlineFramework       bool
+}
+
+func (m HTMLMeasurement) executionCounts() HTMLExecution {
+	return HTMLExecution{ExecutableSources: m.ExecutableSources, ExecutableScripts: m.ExecutableScripts,
+		SyncExecutableScripts: m.SyncExecutableScripts, InlineAppScriptMax: m.InlineAppScriptMax,
+		InlineAppScriptBytes: m.InlineAppScriptBytes, inlineFramework: m.inlineFramework}
+}
+
+// HTMLExecution records active document execution, including srcdoc. Sources
+// include script elements, event handlers and executable URLs. The legacy Script
+// byte fields include all inline code except verified framework script bodies;
+// Max is per executable source, Bytes is their sum.
+type HTMLExecution struct {
+	ExecutableSources, ExecutableScripts, SyncExecutableScripts int64
+	InlineAppScriptMax, InlineAppScriptBytes                    int64
+	// Verified framework presence is independent of compressed marginal bytes.
+	inlineFramework bool
+}
+
+func (total *HTMLExecution) include(other HTMLExecution) {
+	total.ExecutableSources += other.ExecutableSources
+	total.ExecutableScripts += other.ExecutableScripts
+	total.SyncExecutableScripts += other.SyncExecutableScripts
+	total.InlineAppScriptBytes += other.InlineAppScriptBytes
+	total.InlineAppScriptMax = max(total.InlineAppScriptMax, other.InlineAppScriptMax)
+	total.inlineFramework = total.inlineFramework || other.inlineFramework
+}
+
+// union retains the permitted observation when verified aliases share one
+// physical document. The same body is counted once even if both uses permit it.
+func (total *HTMLExecution) union(other HTMLExecution) {
+	total.ExecutableSources = max(total.ExecutableSources, other.ExecutableSources)
+	total.ExecutableScripts = max(total.ExecutableScripts, other.ExecutableScripts)
+	total.SyncExecutableScripts = max(total.SyncExecutableScripts, other.SyncExecutableScripts)
+	total.InlineAppScriptBytes = max(total.InlineAppScriptBytes, other.InlineAppScriptBytes)
+	total.InlineAppScriptMax = max(total.InlineAppScriptMax, other.InlineAppScriptMax)
+	total.inlineFramework = total.inlineFramework || other.inlineFramework
+}
+
+func (total *HTMLExecution) observe(source pagecaps.ExecutableSource, owned map[string]bool) {
+	total.ExecutableSources++
+	if source.Script {
+		total.ExecutableScripts++
+		if source.Synchronous {
+			total.SyncExecutableScripts++
+		}
+		if !source.Inline {
+			return
+		}
+		hash := sha256.Sum256(source.Body)
+		if source.ExactBody && owned[hex.EncodeToString(hash[:])] {
+			total.inlineFramework = true
+			return
+		}
+	}
+	size := int64(len(source.Body))
+	total.InlineAppScriptMax = max(total.InlineAppScriptMax, size)
+	total.InlineAppScriptBytes += size
 }
 
 // MeasureHTML uses complete recompressed documents for inline ownership; it
@@ -64,6 +128,22 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 	if err != nil {
 		return result, err
 	}
+	tree, err := pagecaps.ParseDocumentTree(body, "", nil)
+	if err != nil {
+		return result, measureFailure("capability", "/html")
+	}
+	var execution HTMLExecution
+	caps, err := inspectExecutionTree(tree, func(_ *pagecaps.Document, source pagecaps.ExecutableSource) { execution.observe(source, owned) })
+	if err != nil {
+		return result, err
+	}
+	result.capabilities = caps
+	result.ExecutableSources = execution.ExecutableSources
+	result.ExecutableScripts = execution.ExecutableScripts
+	result.SyncExecutableScripts = execution.SyncExecutableScripts
+	result.InlineAppScriptMax = execution.InlineAppScriptMax
+	result.InlineAppScriptBytes = execution.InlineAppScriptBytes
+	result.inlineFramework = execution.inlineFramework
 	var edits []htmlSourceEdit
 	for _, item := range classified.starts {
 		raw := body[item.start:item.end]
@@ -83,7 +163,6 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		if !element.executable {
 			continue
 		}
-		result.ExecutableScripts++
 		if element.external {
 			continue
 		}
@@ -91,8 +170,7 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 		hash := sha256.Sum256(source)
 		if owned[hex.EncodeToString(hash[:])] {
 			framework = append(framework, htmlSourceEdit{element.bodyStart, element.bodyEnd, nil})
-		} else if int64(len(source)) > result.InlineAppScriptMax {
-			result.InlineAppScriptMax = int64(len(source))
+
 		}
 	}
 	// Both documents apply tree-associated start-tag edits to original source
@@ -209,22 +287,6 @@ func VerifyHTMLRenders(first, second HTMLMeasurement) error {
 		return measureFailure("wrong-fixture", "/html/renders")
 	}
 	return nil
-}
-
-func executableScriptType(typ string) bool {
-	typ = strings.ToLower(strings.TrimSpace(typ))
-	if typ != "" && typ != "module" {
-		mediaType, _, err := mime.ParseMediaType(typ)
-		if err != nil {
-			return false
-		}
-		typ = mediaType
-	}
-	switch typ {
-	case "", "module", "application/javascript", "application/ecmascript", "application/x-javascript", "application/x-ecmascript", "text/javascript", "text/ecmascript", "text/jscript", "text/livescript", "text/x-javascript", "text/x-ecmascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5":
-		return true
-	}
-	return false
 }
 
 // VerifyHTMLNonces verifies that nonce-bearing elements are allowed by each
@@ -346,4 +408,55 @@ func cspLower(s string) string {
 		}
 		return r
 	}, s)
+}
+
+// Execution selection belongs to pagecaps; raw spans belong to the structural
+// classifier so byte counts and signature checks retain exact served source.
+func inspectExecutionTree(tree *pagecaps.DocumentTree, observe func(*pagecaps.Document, pagecaps.ExecutableSource)) (pagecaps.Capabilities, error) {
+	scripts := map[*pagecaps.Document][]htmlElement{}
+	for _, doc := range tree.Documents {
+		if !doc.ScriptsAllowed {
+			continue
+		}
+		hasScripts := false
+		_ = pagecaps.WalkHTML(doc.Root, func(_ *html.Node, state pagecaps.HTMLState) error {
+			hasScripts = hasScripts || state.Script
+			return nil
+		})
+		if !hasScripts {
+			continue
+		}
+		classified, err := classifyHTML(doc.Body)
+		if err != nil {
+			return pagecaps.Capabilities{}, err
+		}
+		for _, element := range classified.elements {
+			if element.executable {
+				scripts[doc] = append(scripts[doc], element)
+			}
+		}
+	}
+	offsets := map[*pagecaps.Document]int{}
+	invalid := false
+	caps, err := pagecaps.InspectDocumentTree(tree, func(doc *pagecaps.Document, source pagecaps.ExecutableSource) {
+		if source.Script {
+			offset := offsets[doc]
+			if offset >= len(scripts[doc]) {
+				invalid = true
+				return
+			}
+			element := scripts[doc][offset]
+			offsets[doc]++
+			source.Inline = !element.external
+			source.Body = doc.Body[element.bodyStart:element.bodyEnd]
+			source.ExactBody = true
+		}
+		if observe != nil {
+			observe(doc, source)
+		}
+	})
+	if err != nil || invalid {
+		return pagecaps.Capabilities{}, measureFailure("capability", "/html")
+	}
+	return caps, nil
 }

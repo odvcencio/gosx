@@ -1,0 +1,14 @@
+[
+  {"name":"asset","text":"Improve loading\n\nPerf-Budget: scope=asset:framework/js/core.js metric=brotli delta=+2000B disposition=permanent issue=#7; because=Support the selected feature","entries":1,"error":false},
+  {"name":"temporary","text":"Improve loading\n\nPerf-Budget: scope=route:fixture:/counter/ metric=totalBytes delta=+2048B disposition=temporary issue=#7 expires=2026-10-30; because=Track the bounded follow-up work","entries":1,"error":false},
+  {"name":"type","text":"Improve loading\n\nPerf-Budget: scope=type:island metric=frameworkBytes delta=+2048B disposition=permanent issue=#7; because=Explain the shared runtime growth","entries":1,"error":false},
+  {"name":"timing","text":"Improve loading\n\nPerf-Timing: cell=fixture|/counter/|island|hard-cold|none|island_interactive delta=+12ms issue=#7; because=Explain the interaction change","entries":1,"error":false},
+  {"name":"nonterminal","text":"Improve loading\n\nPerf-Budget: scope=asset:framework/js/core.js metric=raw delta=+2000B disposition=permanent issue=#7; because=Support the selected feature\n\nMore ordinary prose.","entries":0,"error":false},
+  {"name":"missing-blank","text":"Improve loading\nPerf-Budget: scope=type:island metric=totalBytes delta=+2048B disposition=permanent issue=#7; because=Support the selected feature","entries":0,"error":false},
+  {"name":"indented-example","text":"Example\n\n    Perf-Budget: scope=type:island metric=totalBytes delta=+2048B disposition=permanent issue=#7; because=Support the selected feature","entries":0,"error":false},
+  {"name":"lowercase-header","text":"Improve loading\n\nperf-budget: scope=type:island metric=totalBytes delta=+2048B disposition=permanent issue=#7; because=Support the selected feature","entries":0,"error":true},
+  {"name":"wrong-unit","text":"Improve loading\n\nPerf-Budget: scope=type:island metric=totalBytes delta=+2KB disposition=permanent issue=#7; because=Support the selected feature","entries":0,"error":true},
+  {"name":"reordered","text":"Improve loading\n\nPerf-Budget: metric=totalBytes scope=type:island delta=+2048B disposition=permanent issue=#7; because=Support the selected feature","entries":0,"error":true},
+  {"name":"multiline","text":"Improve loading\n\nPerf-Budget: scope=type:island metric=totalBytes delta=+2048B disposition=permanent issue=#7; because=Support the selected feature\n continuation","entries":0,"error":true},
+  {"name":"invalid-leap-date","text":"Improve loading\n\nPerf-Budget: scope=type:island metric=totalBytes delta=+2048B disposition=temporary issue=#7 expires=2026-02-29; because=Support the selected feature","entries":0,"error":true}
+]

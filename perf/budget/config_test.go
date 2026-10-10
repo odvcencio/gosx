@@ -86,6 +86,70 @@ func TestConfigLoad(t *testing.T) {
 	}
 }
 
+func TestConfigDerivationInputsPreserveValidation(t *testing.T) {
+	for name, edit := range map[string]func(*File){
+		"reference-hash": func(f *File) { f.Profile.SHA256 = strings.Repeat("a", 64) },
+		"allocation-schema": func(f *File) {
+			page := f.PageTypes["island"]
+			page.Allocation.FrameworkBytes = -1
+			f.PageTypes["island"] = page
+		},
+		"mix": func(f *File) {
+			page := f.PageTypes["island"]
+			page.Mix.OtherPPM++
+			f.PageTypes["island"] = page
+		},
+		"goal-unit": func(f *File) {
+			page := f.PageTypes["island"]
+			page.Goals[0].Unit = "B"
+			f.PageTypes["island"] = page
+		},
+		"registered-route": func(f *File) { f.Routes[0].RouteTemplate = "/other/" },
+		"guardrail":        func(f *File) { f.Guardrails[0].Limit++ },
+	} {
+		t.Run(name, func(t *testing.T) {
+			path := configFixture(t, func(f *File, _ *Profile, _ *Coefficients, _ *Toolchain, _ map[string]any) {
+				page := f.PageTypes["island"]
+				page.AppReserveBytes += 1024
+				f.PageTypes["island"] = page
+			})
+			root := filepath.Dir(path)
+			body, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var file File
+			if err := json.Unmarshal(body, &file); err != nil {
+				t.Fatal(err)
+			}
+			edit(&file)
+			putConfigInput(t, root, "budget.json", file)
+			if _, err := LoadDerivationInputs(path, LoadOptions{RootDir: root}); err == nil {
+				t.Fatal("derivation loading accepted invalid inputs")
+			}
+		})
+	}
+	path := configFixture(t, nil)
+	root := filepath.Dir(path)
+	body, err := os.ReadFile(filepath.Join(root, "profile.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outside := filepath.Join(t.TempDir(), "profile.json")
+	if err := os.WriteFile(outside, body, 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(root, "profile.json")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "profile.json")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadDerivationInputs(path, LoadOptions{RootDir: root}); err == nil {
+		t.Fatal("derivation loading accepted a reference outside its root")
+	}
+}
+
 func TestConfigRejectSemanticErrors(t *testing.T) {
 	for name, edit := range map[string]func(*PageType, *CoefficientSet){
 		"mix-total":      func(p *PageType, _ *CoefficientSet) { p.Mix.OtherPPM++ },
@@ -423,6 +487,90 @@ func TestConfigErrorOrderAndIntegralLimits(t *testing.T) {
 		})
 		if _, err := Load(path, LoadOptions{RootDir: filepath.Dir(path)}); err == nil {
 			t.Fatal("fractional discrete limit accepted")
+		}
+	}
+}
+
+func TestConfigNativeInputsReuseVerifiedSnapshots(t *testing.T) {
+	path := configFixture(t, nil)
+	inputs, err := LoadInputs(path, LoadOptions{RootDir: filepath.Dir(path)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	original, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.BudgetSHA256 != inputDigest(original) {
+		t.Fatal("budget snapshot hash is not its exact bytes")
+	}
+	data, err := json.Marshal(inputs)
+	if err != nil || string(data) != "{}" {
+		t.Fatal("native input snapshot gained a JSON surface", err)
+	}
+	coefficientPath := filepath.Join(inputs.RootDir(), inputs.File.Coefficients.File)
+	if err := os.WriteFile(coefficientPath, []byte("changed"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Derive(inputs.File, inputs.Profile, inputs.Coefficients); err != nil {
+		t.Fatal("derivation reread snapshot sources", err)
+	}
+	if _, err := LoadInputs(path, LoadOptions{RootDir: inputs.RootDir()}); err == nil {
+		t.Fatal("fresh loader accepted changed referenced bytes")
+	}
+}
+
+func TestConfigSnapshotRejectsPermissionChange(t *testing.T) {
+	path := configFixture(t, nil)
+	if err := os.Chmod(path, 0644); err != nil {
+		t.Fatal(err)
+	}
+	inputs, err := LoadDerivationInputs(path, LoadOptions{RootDir: filepath.Dir(path)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.budgetInfo.Mode().Perm() != 0644 {
+		t.Skip("temporary filesystem does not implement permission bits")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inputs.BudgetFileMatches(inputs.budgetInfo, data) {
+		t.Fatal("unchanged snapshot rejected")
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inputs.BudgetFileMatches(info, data) {
+		t.Fatal("permission restriction accepted as unchanged")
+	}
+}
+
+// Exercise each permission bit independently of the filesystem and ctime guard.
+type budgetAccessModeInfo struct {
+	os.FileInfo
+	mode os.FileMode
+}
+
+func (info budgetAccessModeInfo) Mode() os.FileMode { return info.mode }
+
+func TestConfigAccessModeComparison(t *testing.T) {
+	info, err := os.Stat("testdata/budget.v2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !sameBudgetFileAccess(info, info) {
+		t.Fatal("unchanged access rejected")
+	}
+	for _, bit := range []os.FileMode{0040, os.ModeSetuid, os.ModeSetgid, os.ModeSticky} {
+		changed := budgetAccessModeInfo{info, info.Mode() ^ bit}
+		if sameBudgetFileAccess(info, changed) {
+			t.Errorf("changed access bit %v accepted", bit)
 		}
 	}
 }

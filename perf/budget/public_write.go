@@ -3,7 +3,6 @@ package budget
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 )
 
@@ -63,23 +62,6 @@ func (v *PublicValidator) WriteMarkdown(w io.Writer, report Report) error {
 		return err
 	}
 	return writePublicBytes(w, data)
-}
-func renderPublicMarkdown(report Report) ([]byte, error) {
-	data, err := canonicalPublicJSON(report)
-	if err != nil {
-		return nil, err
-	}
-	var out bytes.Buffer
-	out.WriteString("# Performance budget report\n\n")
-	fmt.Fprintf(&out, "Mode: `%s`.\n\n", report.Mode)
-	out.WriteString("| App | Route | Type | Scenario | Normalized B | Wire B | Framework B | App B | Status |\n| --- | --- | --- | --- | ---: | ---: | ---: | ---: | --- |\n")
-	for _, row := range report.Rows {
-		fmt.Fprintf(&out, "| %s | %s | %s | %s | %d | %d | %d | %d | %s |\n", row.App, row.RouteTemplate, row.PageType, row.Scenario, row.NormalizedBytes, row.WireBytes, row.FrameworkBytes, row.AppBytes, row.Status)
-	}
-	out.WriteString("\n```json\n")
-	out.Write(data)
-	out.WriteString("```\n")
-	return out.Bytes(), nil
 }
 
 // ReadField accepts the public histogram format and registered identifiers only.

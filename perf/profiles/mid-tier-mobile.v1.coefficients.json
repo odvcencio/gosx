@@ -1,0 +1,56 @@
+{
+  "schema": "gosx.budget-coefficients/v1",
+  "profileSHA256": "9b0a475dcf760674ed2bbd9a104bcf07c0303918f2c95b99ce1931729b202343",
+  "reference": "desktop-cpu-proxy",
+  "measuredAt": "2026-10-08T00:00:00Z",
+  "sets": [
+    {
+      "id": "illustrative-cold", "backend": "none", "scenario": "hard-cold",
+      "entries": [
+        {"name":"serverMicros","value":200000,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"renderMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"jsMicrosPerKB","value":4000,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmCompileMicrosPerRawKB","value":125,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmOverlapPPM","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmInstantiateMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"programDecodeMicrosPerKB","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"engineStartMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"pipelineCreateMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"shaderCompileMicrosPerKB","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"hydrationMicrosPerIsland","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"}
+      ], "predictionErrorPPM": null
+    },
+    {
+      "id": "illustrative-cold-webgl2", "backend": "webgl2", "scenario": "hard-cold",
+      "entries": [
+        {"name":"serverMicros","value":200000,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"renderMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"jsMicrosPerKB","value":4000,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmCompileMicrosPerRawKB","value":125,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmOverlapPPM","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmInstantiateMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"programDecodeMicrosPerKB","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"engineStartMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"pipelineCreateMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"shaderCompileMicrosPerKB","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"hydrationMicrosPerIsland","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"}
+      ], "predictionErrorPPM": null
+    },
+    {
+      "id": "illustrative-cold-webgpu", "backend": "webgpu", "scenario": "hard-cold",
+      "entries": [
+        {"name":"serverMicros","value":200000,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"renderMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"jsMicrosPerKB","value":4000,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmCompileMicrosPerRawKB","value":125,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmOverlapPPM","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"wasmInstantiateMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"programDecodeMicrosPerKB","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"engineStartMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"pipelineCreateMicros","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"shaderCompileMicrosPerKB","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"},
+        {"name":"hydrationMicrosPerIsland","value":0,"ci95":[null,null],"status":"provisional","nVisits":0,"nBlocks":0,"method":"prior"}
+      ], "predictionErrorPPM": null
+    }
+  ]
+}

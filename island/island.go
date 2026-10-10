@@ -37,6 +37,7 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
+	fixturePreview                     bool
 	basePath                           string
 	manifest                           *hydrate.Manifest
 	counter                            int
@@ -2248,7 +2249,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	engines := len(r.manifest.Engines)
 	hubs := len(r.manifest.Hubs)
 	controllers := len(r.manifest.Controllers)
-	previewRelay := PreviewBootstrapEnabled()
+	previewRelay := PreviewBootstrapEnabled() || r.fixturePreview
 	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0 || controllers > 0
 	mode := "none"
 	if bootstrap {

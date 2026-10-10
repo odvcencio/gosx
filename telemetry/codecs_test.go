@@ -126,7 +126,9 @@ var _ telemetry.DomainCodec[Match] = telemetry.DomainCodec[Seat]{}
 	if err := os.WriteFile(file, []byte(source), 0600); err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
+	// The child compiles telemetry's dependencies itself; with a cold build
+	// cache (a new go.sum cache key in CI) that alone can exceed a minute.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "go", "test", file)
 	cmd.Env = append(os.Environ(), "GOWORK=off")

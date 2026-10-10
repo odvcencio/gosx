@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"m31labs.dev/gosx/internal/regularfile"
 )
 
 const maxInputBytes = 2 << 20
@@ -24,7 +26,63 @@ var pathPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // LoadOptions sets the private project root for every file reference.
-type LoadOptions struct{ RootDir string }
+type LoadOptions struct {
+	RootDir string `input:"directory"`
+}
+
+// Keep the loader arguments together: file-valued strings are protected by
+// default, while directory locators must be explicitly tagged. Signature tests
+// tie this binding to LoadInputs so an added argument cannot escape protection.
+type loadInputArguments struct {
+	Path    string
+	Options LoadOptions
+}
+
+func loadArgumentPaths(arguments any) ([]string, error) {
+	files := []string{}
+	var walk func(reflect.Value) error
+	walk = func(value reflect.Value) error {
+		switch value.Kind() {
+		case reflect.Struct:
+			for i := 0; i < value.NumField(); i++ {
+				field := value.Type().Field(i)
+				if role := field.Tag.Get("input"); role != "" {
+					if role != "directory" || field.Type.Kind() != reflect.String {
+						return errors.New("invalid input path role")
+					}
+					continue
+				}
+				if err := walk(value.Field(i)); err != nil {
+					return err
+				}
+			}
+		case reflect.String:
+			if value.String() == "" {
+				return nil
+			}
+			file, err := filepath.Abs(value.String())
+			if err != nil {
+				return errors.New("invalid input path")
+			}
+			file, err = filepath.EvalSymlinks(file)
+			if err != nil {
+				return errors.New("cannot resolve input path")
+			}
+			files = append(files, file)
+		case reflect.Pointer:
+			if !value.IsNil() {
+				return walk(value.Elem())
+			}
+		case reflect.Slice, reflect.Array, reflect.Map:
+			return errors.New("input path containers require explicit traversal")
+		}
+		return nil
+	}
+	if err := walk(reflect.ValueOf(arguments)); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
 
 // Ref binds a root-relative input to its exact file bytes.
 type Ref struct {
@@ -95,38 +153,47 @@ func safePath(path string) bool {
 }
 
 func readWithin(root, path string, limit int64) ([]byte, error) {
+	data, _, err := readWithinSnapshot(root, path, limit)
+	return data, err
+}
+
+func readWithinSnapshot(root, path string, limit int64) ([]byte, os.FileInfo, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, errors.New("invalid input path")
+		return nil, nil, errors.New("invalid input path")
 	}
 	abs, err = filepath.EvalSymlinks(abs)
 	if err != nil {
-		return nil, errors.New("cannot resolve input path")
+		return nil, nil, errors.New("cannot resolve input path")
 	}
 	// Root confines symlink resolution as well as the final file open.
 	r, err := os.OpenRoot(root)
 	if err != nil {
-		return nil, errors.New("cannot open project root")
+		return nil, nil, errors.New("cannot open project root")
 	}
 	defer r.Close()
 	rel, err := filepath.Rel(root, abs)
 	if err != nil {
-		return nil, errors.New("input escapes project root")
+		return nil, nil, errors.New("input escapes project root")
 	}
-	f, err := openInput(r, rel)
+	f, err := regularfile.Open(r, rel)
 	if err != nil {
-		return nil, errors.New("cannot open confined input")
+		return nil, nil, errors.New("cannot open confined input")
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return nil, errors.New("input must be a regular file")
+		return nil, nil, errors.New("input must be a regular file")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(data)) > limit {
-		return nil, errors.New("input exceeds read limit")
+		return nil, nil, errors.New("input exceeds read limit")
 	}
-	return data, nil
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) || int64(len(data)) != after.Size() || !sameBudgetFileAccess(info, after) {
+		return nil, nil, errors.New("input changed while it was read")
+	}
+	return data, after, nil
 }
 
 func readReference(root string, ref Ref, limit int64) ([]byte, error) {

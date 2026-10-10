@@ -68,6 +68,8 @@ func main() {
 	switch cmd {
 	case "assets":
 		cmdAssets()
+	case "budget":
+		cmdBudget()
 	case "build":
 		cmdBuild()
 	case "build-runtime":
@@ -139,7 +141,7 @@ func commandUsage(cmd string, w io.Writer) bool {
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] <dir>
+  gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>
 
 `)
 	case "build-runtime":
@@ -217,6 +219,8 @@ Usage:
   gosx lsp
 
 `)
+	case "budget":
+		budgetUsage(w)
 	case "perf":
 		fmt.Fprintf(w, `gosx perf - Profile browser runtime performance
 
@@ -282,6 +286,8 @@ Commands:
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
+  budget derive        Derive performance allocations
+  budget explain       Explain performance allocations
   perf [--budget file] <url>
                        Profile browser runtime performance
   ouroboros inventory  Collect O0.2 runtime baseline inventory
@@ -310,7 +316,7 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>")
 		os.Exit(1)
 	}
 	opts := BuildOptions{Dev: true}
@@ -365,6 +371,13 @@ func cmdBuild() {
 			opts.SceneBudgetPath = os.Args[i]
 		case "--scene-budget-strict":
 			opts.SceneBudgetStrict = true
+		case "--perf-app":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --perf-app requires an app ID")
+				os.Exit(1)
+			}
+			opts.PerfAppID = os.Args[i]
 		default:
 			if strings.HasPrefix(arg, "--output=") {
 				opts.OutputDir = strings.TrimPrefix(arg, "--output=")

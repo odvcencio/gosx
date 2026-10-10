@@ -205,9 +205,7 @@ func (v *PublicValidator) validateMembership(record any) error {
 				return err
 			}
 			for j, policy := range row.Policies {
-				props := inputDefinitions["PageType"].(map[string]any)["properties"].(map[string]any)
-				item := props["requiredPolicies"].(map[string]any)["items"]
-				if validateInput(policy.Name, item) != nil {
+				if !knownPolicyResult(policy.Name) {
 					return fail(p + "/policies/" + strconv.Itoa(j) + "/name")
 				}
 			}

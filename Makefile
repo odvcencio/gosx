@@ -116,6 +116,19 @@ test-budget-public:
 test-budget-measure:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Measure|HTTPMeasure|Inline)'
 
+.PHONY: test-budget-trailers
+test-budget-trailers:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Trailer|Acknowledge)'
+
+.PHONY: test-budget-gate
+test-budget-gate:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Check|Policy|Exception|Approval)'
+
+.PHONY: test-budget-cli
+test-budget-cli:
+	GOWORK=off $(GO) test ./cmd/gosx -run TestBudget
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Markdown|Collect)'
+
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 

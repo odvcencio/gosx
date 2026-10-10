@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -18,31 +19,43 @@ import (
 	"m31labs.dev/gosx/internal/assetmeasure"
 	"m31labs.dev/gosx/internal/httpcache"
 	"m31labs.dev/gosx/internal/httpcompress"
+	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 const maxMeasureBody = 64 << 20
 
-// HTTPMeasureOptions are private fixture inputs. Representations contain the
-// selected release sidecars or outputs of the declared serving compressor.
+// HTTPMeasureOptions are private fixture inputs. Representations contain exact
+// release sidecars. ServingCompressors declares live HTML profiles only for
+// encodings without a sidecar; it does not prescribe the compressed bytes.
 type HTTPMeasureOptions struct {
 	Client                             *http.Client
 	BaseURL, URL, Kind, ExpectedSHA256 string
 	ExpectedBody                       []byte
 	Representations                    map[string][]byte
+	HTMLFields                         []HTMLField
+	ServingCompressors                 map[string]string
 	Pin                                assetmeasure.CompressorPin
 }
 
 // HTTPMeasurement keeps served bytes separate from canonical normalization.
 // Body, response headers and resolved URLs remain private intermediate data.
 type HTTPMeasurement struct {
-	Sizes         assetmeasure.Sizes
-	RedirectSizes []assetmeasure.Sizes
-	WireBytes     int64
-	Requests      int64
-	Policies      []PolicyResult
-	body          []byte
-	header        http.Header
-	finalURL      string
+	Sizes          assetmeasure.Sizes
+	RedirectSizes  []assetmeasure.Sizes
+	WireBytes      int64
+	Requests       int64
+	Policies       []PolicyResult
+	body           []byte
+	header         http.Header
+	finalURL       string
+	finalWireBytes int64
+	redirects      []httpRedirectResponse
+}
+
+type httpRedirectResponse struct {
+	url       string
+	sizes     assetmeasure.Sizes
+	wireBytes int64
 }
 
 type bodyNormalizer func([]byte) (assetmeasure.Sizes, error)
@@ -121,6 +134,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			if len(response.Header.Values("Location")) != 1 {
 				return out, measureFailure("wrong-fixture", "/redirect")
 			}
+			out.redirects = append(out.redirects, httpRedirectResponse{url: current.String(), sizes: sizes, wireBytes: int64(len(wire))})
 			location, err := response.Location()
 			if err != nil || hop == 10 || location.Scheme != base.Scheme || location.Host != base.Host || location.User != nil || location.RawQuery != "" || location.Fragment != "" {
 				return out, measureFailure("wrong-fixture", "/redirect")
@@ -128,14 +142,29 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 			current = location
 			continue
 		}
-		if response.StatusCode != http.StatusOK || !bytes.Equal(raw, opts.ExpectedBody) || sizes.SHA256 != opts.ExpectedSHA256 {
+		matched := bytes.Equal(raw, opts.ExpectedBody) && sizes.SHA256 == opts.ExpectedSHA256
+		if opts.Kind == "html" && len(opts.HTMLFields) != 0 {
+			expected, expectedErr := measureHTML(opts.ExpectedBody, HTMLMeasureOptions{Fields: opts.HTMLFields}, normalize)
+			served, servedErr := measureHTML(raw, HTMLMeasureOptions{Fields: opts.HTMLFields}, normalize)
+			matched = expectedErr == nil && servedErr == nil && VerifyHTMLRenders(expected, served) == nil
+			sizes = served.Sizes
+		}
+		if response.StatusCode != http.StatusOK || !matched {
 			return out, measureFailure("wrong-fixture", "/body")
 		}
 		if encoding != "" && encoding != "identity" {
 			representation, declared := opts.Representations[encoding]
-			if !declared || !bytes.Equal(wire, representation) || assetmeasure.VerifySidecar(raw, wire, encoding) != nil {
+			if declared {
+				// A release sidecar must match exactly, even when a live profile
+				// is also declared. A reconstruction cannot replace that artifact.
+				if !bytes.Equal(wire, representation) || assetmeasure.VerifySidecar(raw, wire, encoding) != nil {
+					return out, measureFailure("stale-sidecar", "/encoding")
+				}
+			} else if opts.Kind != "html" || !knownServingHTMLCompressor(encoding, opts.ServingCompressors[encoding]) {
 				return out, measureFailure("stale-sidecar", "/encoding")
 			}
+			// Live streams have already passed bounded decoding and content
+			// checks. Flush boundaries can change their encoded bytes and size.
 		}
 		// Content-Type is a singleton, not a list of alternative media types.
 		contentTypes := response.Header.Values("Content-Type")
@@ -158,6 +187,7 @@ func measureHTTP(ctx context.Context, opts HTTPMeasureOptions, normalize bodyNor
 		out.body = raw
 		out.header = response.Header.Clone()
 		out.finalURL = current.String()
+		out.finalWireBytes = int64(len(wire))
 		out.Policies = []PolicyResult{{Name: "served-matches-build", Passed: true}, {Name: "no-cookie", Passed: noCookie},
 			{Name: "assets-compressed", Passed: len(raw) == 0 || encoding == "gzip" || encoding == "br"}, {Name: "immutable-hashed", Passed: immutable && measureHashedPath(current.Path, opts.ExpectedSHA256)}}
 		if opts.Kind == "wasm" {
@@ -232,6 +262,11 @@ func measureContentType(value string) (string, error) {
 		start = i + 1
 	}
 	mediaType, _, err := mime.ParseMediaType(strings.Join(parts, ";"))
+	// ParseMediaType also accepts standalone tokens such as disposition
+	// names. Content-Type requires type "/" subtype (RFC 9110 §8.3.1).
+	if err == nil && (!strings.Contains(mediaType, "/") || strings.HasPrefix(mediaType, "/") || strings.HasSuffix(mediaType, "/")) {
+		err = errors.New("invalid media type")
+	}
 	return mediaType, err
 }
 
@@ -247,8 +282,13 @@ func measureMIME(kind, mediaType string) bool {
 		return mediaType == "text/css"
 	case "model":
 		return mediaType == "model/gltf-binary" || mediaType == "model/gltf+json" || mediaType == "application/octet-stream" || mediaType == "application/json"
-	case "program", "other":
+	case "program":
 		return mediaType == "application/octet-stream" || mediaType == "application/json"
+	case "other":
+		// MIME Sniffing §4.6 supplies the shared JavaScript essence rule.
+		// Executable and parsed documents cannot bypass their scanners by
+		// declaring an opaque kind, even with otherwise valid MIME syntax.
+		return mediaType != "text/html" && mediaType != "text/css" && mediaType != "application/wasm" && !pagecaps.ExecutableScriptType(mediaType)
 	case "font":
 		return mediaType == "font/woff2" || mediaType == "font/woff" || mediaType == "application/font-woff"
 	case "image":

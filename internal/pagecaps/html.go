@@ -1,11 +1,10 @@
 package pagecaps
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"strings"
-	"unicode/utf8"
+	"unicode"
 
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/hydrate"
@@ -14,32 +13,42 @@ import (
 // FromHTML reads capabilities from active markup and hydration contracts.
 // A dormant bundle reference alone never establishes a WASM requirement.
 func FromHTML(data []byte) (Capabilities, error) {
-	if len(data) > 16<<20 || !utf8.Valid(data) {
-		return Capabilities{}, errors.New("invalid capability HTML")
-	}
-	root, err := html.Parse(bytes.NewReader(data))
+	return InspectHTML(data, nil)
+}
+
+// InspectHTML reads capabilities and emits execution evidence during the same
+// traversal of active markup, including entity-decoded srcdoc documents.
+func InspectHTML(data []byte, observe func(ExecutableSource)) (Capabilities, error) {
+	tree, err := ParseDocumentTree(data, "", nil)
 	if err != nil {
+		return Capabilities{}, err
+	}
+	return InspectDocumentTree(tree, func(_ *Document, source ExecutableSource) {
+		if observe != nil {
+			observe(source)
+		}
+	})
+}
+
+// InspectDocumentTree classifies execution from the same explicit tree used
+// for planning. Hydration metadata belongs to the root document; execution
+// evidence includes every permitted document, deduplicated by document key.
+func InspectDocumentTree(tree *DocumentTree, observe func(*Document, ExecutableSource)) (Capabilities, error) {
+	if tree == nil || tree.Root == nil {
 		return Capabilities{}, errors.New("invalid capability HTML")
 	}
+	executable := false
 	c := Capabilities{BootstrapMode: "none", Runtime: "none", decoded: true}
 	modes := map[string]bool{}
 	bootstrapModes := map[string]bool{}
 	var manifest *hydrate.Manifest
-	executable := false
-	var visit func(*html.Node) error
-	visit = func(node *html.Node) error {
+	visit := func(node *html.Node, attrs map[string]string, depth int) error {
+		// Hydration contracts belong to this document. Embedded documents
+		// contribute execution evidence, not another root hydration manifest.
+		if depth != 0 {
+			return nil
+		}
 		if node.Type == html.ElementNode {
-			if node.Data == "template" {
-				return nil
-			}
-			attrs := map[string]string{}
-			for _, attr := range node.Attr {
-				key := strings.ToLower(attr.Key)
-				attrs[key] = attr.Val
-				if strings.HasPrefix(key, "on") && len(key) > 2 || strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Val)), "javascript:") {
-					executable = true
-				}
-			}
 			if _, ok := attrs["data-gosx-navigation"]; ok {
 				c.Navigation = true
 			}
@@ -59,10 +68,6 @@ func FromHTML(data []byte) (Capabilities, error) {
 				c.Video = true
 			}
 			if node.Data == "script" {
-				switch strings.ToLower(strings.TrimSpace(attrs["type"])) {
-				case "", "module", "text/javascript", "application/javascript":
-					executable = true
-				}
 				switch attrs["data-gosx-script"] {
 				case "bootstrap":
 					c.Bootstrap = true
@@ -98,14 +103,14 @@ func FromHTML(data []byte) (Capabilities, error) {
 				}
 			}
 		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			if err := visit(child); err != nil {
-				return err
-			}
-		}
 		return nil
 	}
-	if err := visit(root); err != nil {
+	if err := walkActiveDocuments(tree, visit, func(doc *Document, source ExecutableSource) {
+		executable = true
+		if observe != nil {
+			observe(doc, source)
+		}
+	}); err != nil {
 		return Capabilities{}, err
 	}
 	// Preview and island contracts require the shared VM even if a compatibility
@@ -183,4 +188,45 @@ func FromHTML(data []byte) (Capabilities, error) {
 		return Capabilities{}, err
 	}
 	return c, nil
+}
+
+func javascriptURL(value string) bool {
+	_, executable := javascriptURLCode(value)
+	return executable
+}
+
+func javascriptURLCode(value string) (string, bool) {
+	value = strings.TrimLeftFunc(value, unicode.IsSpace)
+	const scheme = "javascript:"
+	if len(value) < len(scheme) || !strings.EqualFold(value[:len(scheme)], scheme) {
+		return "", false
+	}
+	return value[len(scheme):], true
+}
+
+func refreshJavascriptURL(value string) bool {
+	_, executable := refreshJavascriptURLCode(value)
+	return executable
+}
+
+func refreshJavascriptURLCode(value string) (string, bool) {
+	if separator := strings.IndexAny(value, ";,"); separator >= 0 {
+		value = value[separator+1:]
+	}
+	value = strings.TrimSpace(value)
+	if len(value) >= 3 && strings.EqualFold(value[:3], "url") {
+		value = strings.TrimSpace(value[3:])
+		if !strings.HasPrefix(value, "=") {
+			return "", false
+		}
+		value = strings.TrimSpace(value[1:])
+	}
+	if len(value) > 0 && (value[0] == '\'' || value[0] == '"') {
+		quote := value[0]
+		value = strings.TrimLeft(value, "'\"")
+		if len(value) > 0 && value[len(value)-1] == quote {
+			value = value[:len(value)-1]
+		}
+	}
+	return javascriptURLCode(value)
 }
