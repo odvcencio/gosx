@@ -186,7 +186,9 @@ func TestMeasureReferenceAccountingCorpus(t *testing.T) {
 							name := fmt.Sprintf("%s/%s/%s/owners-%d/%s/reverse-%v", shape, p1, p2, owners, encoding, reverse)
 							t.Run(name, func(t *testing.T) {
 								corpus++
-								document := []byte("<!doctype html><html><head><title>Fixture</title></head><body><p>Stable content</p></body></html>")
+								// A substituted CSS URL keeps this conservative-accounting oracle
+								// independent of the known-closure model.
+								document := []byte("<!doctype html><html><head><title>Fixture</title><style>body{background:var(--asset)}</style></head><body><p>Stable content</p></body></html>")
 								first, second := []byte("body{color:red}"), []byte("body{color:blue}")
 								if shape != "distinct" || criticalMask%2 == 0 {
 									second = first

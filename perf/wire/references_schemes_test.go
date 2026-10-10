@@ -146,7 +146,7 @@ func TestReferencesSchemeEncodingCorpus(t *testing.T) {
 					if kind == "" {
 						kind = generatedReferenceKind(scheme.target)
 					}
-					valid = valid && len(set.Resources) == 1 && set.Resources[0] == (Reference{scheme.target, kind, position.potential})
+					valid = valid && len(set.Resources) == 1 && referenceValues(set.Resources)[0] == (Reference{URL: scheme.target, Kind: kind, Potential: position.potential})
 				}
 				if !valid {
 					category := scheme.name + "/" + position.name
@@ -206,13 +206,15 @@ func TestReferencesHTMLURLAttributeSchemeCorpus(t *testing.T) {
 					valid := err == nil
 					if element == "template" {
 						valid = valid && len(set.Resources) == 0
+					} else if element == "base" && row.attribute == "href" {
+						valid = valid && scheme.network && len(set.Resources) == 0 && set.HasBaseHref && set.BaseHref == scheme.target
 					} else if isOpaque {
 						opaque++
 						valid = valid && len(set.Resources) == 0
 					} else if !scheme.network || row.incomplete {
 						valid = false
 					} else {
-						valid = valid && len(set.Resources) == 1 && set.Resources[0] == (Reference{scheme.target, row.kind, false})
+						valid = valid && len(set.Resources) == 1 && referenceValues(set.Resources)[0] == (Reference{URL: scheme.target, Kind: row.kind, Potential: false})
 					}
 					if !valid {
 						failures++

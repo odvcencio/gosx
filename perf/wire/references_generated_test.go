@@ -102,7 +102,7 @@ func generatedReferencePositions() []referencePosition {
 		{"js-shared-worker", `new SharedWorker(TARGET);`, KindScript, false},
 		{"js-worker-url", `new Worker(new URL(TARGET,import.meta.url));`, KindScript, false},
 		{"js-shared-worker-url", `new SharedWorker(new URL(TARGET,import.meta.url));`, KindScript, false},
-		{"js-import-scripts", `importScripts(TARGET);`, "", false},
+		{"js-import-scripts", `importScripts(TARGET);`, KindScript, false},
 		{"js-service-worker", `navigator.serviceWorker.register(TARGET);`, "", false},
 		{"js-event-source", `new EventSource(TARGET);`, "", false},
 		{"js-web-socket", `new WebSocket(TARGET);`, "", false},
@@ -346,7 +346,8 @@ func TestReferencesGeneratedEncodingCorpus(t *testing.T) {
 					kind = generatedReferenceKind(target)
 				}
 				want := Reference{URL: target, Kind: kind, Potential: position.potential}
-				if err != nil || len(set.Resources) != 1 || set.Resources[0] != want {
+				got := referenceValues(set.Resources)
+				if err != nil || len(got) != 1 || got[0] != want {
 					category := position.name + "/" + encoding.name
 					if failures[category] == 0 {
 						t.Logf("wrong complete result: %s target=%q source=%q got=%+v err=%v", category, target, body, set, err)

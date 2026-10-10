@@ -103,7 +103,7 @@ func understoodHTMLReferenceAttribute(n *html.Node, a html.Attribute) bool {
 				kind = KindFont
 			}
 		}
-		return n.Data == "link" && htmlReferenceURL(a.Val, kind)
+		return n.Data == "base" && (strings.TrimSpace(a.Val) == "" || htmlReferenceURL(a.Val, "")) || n.Data == "link" && htmlReferenceURL(a.Val, kind)
 	case "poster":
 		return n.Data == "video" && htmlReferenceURL(a.Val, KindImage)
 	case "srcset":

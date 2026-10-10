@@ -14,6 +14,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"m31labs.dev/gosx/internal/pagecaps"
 	"m31labs.dev/gosx/server"
 )
 
@@ -51,6 +52,11 @@ func TestMeasureFlushedHTMLMiddleware(t *testing.T) {
 			manifest.Assets = manifest.Assets[:1]
 			manifest.Assets[0].SHA256 = testMeasureHash(build)
 			manifest.Routes[0].PageTypes = []string{"enhanced"}
+			caps, err := pagecaps.FromHTML(build)
+			if err != nil {
+				t.Fatal(err)
+			}
+			manifest.Routes[0].Capabilities = caps
 			if err := os.WriteFile(filepath.Join(opts.DistDir, "counter/index.html"), build, 0600); err != nil {
 				t.Fatal(err)
 			}

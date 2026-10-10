@@ -27,16 +27,16 @@ func TestReferencesUnderstoodHTMLAttributesStayComplete(t *testing.T) {
 		want []Reference
 	}{
 		{`<p id="message" class="text" title="A URL /is/text">Plain content</p>`, []Reference{}},
-		{`<img src="/opaque">`, []Reference{{"/opaque", KindImage, false}}},
-		{`<input type="image" src="/opaque">`, []Reference{{"/opaque", KindImage, false}}},
-		{`<iframe src="/child/"></iframe>`, []Reference{{"/child/", KindDocument, false}}},
-		{`<video src="/opaque.png" poster="/opaque"></video>`, []Reference{{"/opaque", KindImage, false}, {"/opaque.png", KindOther, false}}},
-		{`<link rel="preload" as="image" imagesrcset="" href="/opaque">`, []Reference{{"/opaque", KindImage, false}}},
-		{`<img src="/opaque" srcset="">`, []Reference{{"/opaque", KindImage, false}}},
-		{`<div style="background:url('/image.png');width:calc(100% - 1px)"></div>`, []Reference{{"/image.png", KindImage, false}}},
+		{`<img src="/opaque">`, []Reference{{URL: "/opaque", Kind: KindImage, Potential: false}}},
+		{`<input type="image" src="/opaque">`, []Reference{{URL: "/opaque", Kind: KindImage, Potential: false}}},
+		{`<iframe src="/child/"></iframe>`, []Reference{{URL: "/child/", Kind: KindDocument, Potential: false}}},
+		{`<video src="/opaque.png" poster="/opaque"></video>`, []Reference{{URL: "/opaque", Kind: KindImage, Potential: false}, {URL: "/opaque.png", Kind: KindOther, Potential: false}}},
+		{`<link rel="preload" as="image" imagesrcset="" href="/opaque">`, []Reference{{URL: "/opaque", Kind: KindImage, Potential: false}}},
+		{`<img src="/opaque" srcset="">`, []Reference{{URL: "/opaque", Kind: KindImage, Potential: false}}},
+		{`<div style="background:url('/image.png');width:calc(100% - 1px)"></div>`, []Reference{{URL: "/image.png", Kind: KindImage, Potential: false}}},
 	} {
 		set, err := ScanReferences([]byte(tc.body), KindDocument)
-		if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, tc.want) {
+		if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), tc.want) {
 			t.Errorf("understood syntax lost coverage or kind: %+v %v", set, err)
 		}
 	}
@@ -59,7 +59,8 @@ var htmlURLAttributeCases = []htmlURLAttributeCase{
 	{"src", "audio source track video", KindOther, false, false},
 	{"src", "embed frame bgsound", KindOther, false, true},
 	{"href", "link", KindStyle, false, false},
-	{"href", "a area base", KindDocument, false, true},
+	{"href", "a area", KindDocument, false, true},
+	{"href", "base", KindDocument, false, false},
 	{"srcset", "img source", KindImage, true, true},
 	{"imagesrcset", "link", KindImage, true, true},
 	{"poster", "video", KindImage, false, false},
@@ -194,13 +195,17 @@ func TestReferencesHTMLURLAttributeCorpus(t *testing.T) {
 					}
 					complete++
 					var want []Reference
-					if element != "template" {
+					isBase := element == "base" && row.attribute == "href"
+					if isBase && (!set.HasBaseHref || set.BaseHref != value) {
+						t.Error("base metadata lost its decoded URL")
+					}
+					if element != "template" && !isBase {
 						for _, u := range urls {
-							want = append(want, Reference{u, row.kind, false})
+							want = append(want, Reference{URL: u, Kind: row.kind, Potential: false})
 						}
 					}
 					sort.Slice(want, func(i, j int) bool { return want[i].URL < want[j].URL })
-					if row.incomplete && element != "template" || !reflect.DeepEqual(set.Resources, append([]Reference{}, want...)) {
+					if row.incomplete && element != "template" || !reflect.DeepEqual(referenceValues(set.Resources), append([]Reference{}, want...)) {
 						disagreements++
 						t.Errorf("unhandled or wrong complete URL set: %+v want %+v", set.Resources, want)
 					}

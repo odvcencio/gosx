@@ -5,12 +5,15 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"sort"
 	"strings"
 
+	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/client/runtime/host"
 	"m31labs.dev/gosx/internal/assetmeasure"
 	"m31labs.dev/gosx/internal/pagecaps"
@@ -31,9 +34,9 @@ type MeasureOptions struct {
 	Public                PublicInfo
 }
 
-// Measure verifies production fixture bodies and fresh documents. Until resource
-// reachability is proved, the inventory cost is conservative and explicitly
-// unknown; dormant declarations alone never exclude a potential body.
+// Measure verifies production fixture bodies, fresh documents and declared
+// resource closure. Unresolved reachability retains potential startup bytes;
+// browser reconciliation and model checks remain separate.
 func Measure(ctx context.Context, opts MeasureOptions) (AppReport, error) {
 	if _, err := assetmeasure.Measure(nil, opts.Pin); err != nil {
 		return AppReport{}, measureFailure("noncanonical", "/pin")
@@ -42,7 +45,7 @@ func Measure(ctx context.Context, opts MeasureOptions) (AppReport, error) {
 }
 
 func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormalizer) (AppReport, error) {
-	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "unknown"}}
+	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "known"}}
 	if validateInput(opts.App, inputDefinitions["ID"]) != nil {
 		return result, measureFailure("invalid-input", "/app")
 	}
@@ -90,6 +93,8 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	result.Coverage.RoutesExpected = int64(len(routes))
 	var fixtures []fixtureBody
 	byURL := map[string]int{}
+	uses := []buildmanifest.PerfAssetUse{}
+	bodies := map[string][]byte{}
 	for _, use := range manifest.Assets {
 		if use.Owner == "app" && !strings.HasPrefix(use.ID, "app/"+opts.App+"/") {
 			continue
@@ -98,6 +103,8 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if err != nil {
 			return result, err
 		}
+		uses = append(uses, use)
+		bodies[use.ID] = body
 		if previous, ok := byURL[use.URL]; ok {
 			if fixtures[previous].sha != use.SHA256 || fixtures[previous].kind != use.Kind {
 				return result, measureFailure("wrong-fixture", "/manifest/assets")
@@ -140,7 +147,8 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	sort.Strings(inlineFramework)
 	result.Coverage.AssetsExpected = int64(len(fixtures))
 	for _, fixture := range fixtures {
-		result.Assets = append(result.Assets, AssetReport{ID: fixture.id, SHA256: fixture.sha, Owner: fixture.owner, Phase: fixture.phase, Raw: fixture.sizes.Raw, Gzip: fixture.sizes.Gzip, Brotli: fixture.sizes.Brotli,
+		phase := "dormant"
+		result.Assets = append(result.Assets, AssetReport{ID: fixture.id, SHA256: fixture.sha, Owner: fixture.owner, Phase: phase, Raw: fixture.sizes.Raw, Gzip: fixture.sizes.Gzip, Brotli: fixture.sizes.Brotli,
 			ChangedSources: []string{}, App: opts.App, Kind: fixture.kind, Condition: fixture.condition, Dependencies: fixture.dependencies})
 	}
 	for _, route := range routes {
@@ -175,6 +183,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if err != nil {
 			return result, measureFailure("capability", "/routes/capabilities")
 		}
+		observedCaps, _ := json.Marshal(caps)
+		declaredCaps, _ := json.Marshal(route.Capabilities)
+		if !bytes.Equal(observedCaps, declaredCaps) {
+			return result, measureFailure("capability", "/routes/capabilities")
+		}
 		detected, err := pagecaps.Classify(caps, false)
 		if err != nil || !fixtureCoversTypes(route.PageTypes, detected) {
 			return result, measureFailure("capability", "/routes/pageTypes")
@@ -183,80 +196,168 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if row.Backend == "" {
 			row.Backend = "none"
 		}
-		type physicalBody struct {
-			owner, phase          string
-			cost, wire, framework int64
+		base, err := url.Parse(opts.BaseURL)
+		if err != nil {
+			return result, measureFailure("invalid-input", "/base")
 		}
-		physical := map[string]physicalBody{}
-		record := func(key string, body physicalBody) {
-			if previous, seen := physical[key]; seen {
-				if body.phase == "critical" {
-					previous.phase = "critical"
-				}
-				if body.owner == "framework" {
-					previous.owner = "framework"
-				}
-				body = previous
-			}
-			physical[key] = body
-		}
-		recordRedirects := func(observed HTTPMeasurement, owner, phase string) {
-			for _, redirect := range observed.redirects {
-				record(redirect.url+"|"+redirect.sizes.SHA256, physicalBody{owner: owner, phase: phase, cost: redirect.sizes.Brotli, wire: redirect.wireBytes})
-			}
-		}
-		resolved := make([]string, len(fixtures))
-		resolved[index] = first.finalURL + "|" + document.sha
-		record(resolved[index], physicalBody{owner: document.owner, phase: "critical", cost: measuredHTML.Sizes.Brotli, wire: first.finalWireBytes, framework: measuredHTML.Framework.Brotli})
-		recordRedirects(first, document.owner, "critical")
-		criticalIDs := map[string]bool{}
-		for _, id := range route.CriticalAssetIDs {
-			criticalIDs[id] = true
-		}
-		for i, fixture := range fixtures {
+		type bodyIdentity struct{ url, sha string }
+		observations := map[string]HTTPMeasurement{document.url: first}
+		responses := map[bodyIdentity]HTTPMeasurement{{first.finalURL, document.sha}: first}
+		optionsFor := func(fixture fixtureBody) HTTPMeasureOptions {
+			options := HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}
 			if fixture.kind == "html" {
+				options.HTMLFields = fields
+				options.ServingCompressors = map[string]string{"br": "go-brotli-4", "gzip": "go-gzip-default"}
+			}
+			return options
+		}
+		observe := func(assetURL string) (HTTPMeasurement, error) {
+			if observed, ok := observations[assetURL]; ok {
+				return observed, nil
+			}
+			fixture := fixtures[byURL[assetURL]]
+			requestURL, err := base.Parse(assetURL)
+			if err != nil {
+				return HTTPMeasurement{}, measureFailure("invalid-input", "/url")
+			}
+			if observed, ok := responses[bodyIdentity{requestURL.String(), fixture.sha}]; ok {
+				// Reuse the verified final body without replaying its alias's
+				// redirects or adding another verification request.
+				observed.RedirectSizes, observed.redirects = nil, nil
+				observed.WireBytes, observed.Requests = observed.finalWireBytes, 1
+				observations[assetURL] = observed
+				return observed, nil
+			}
+			observed, err := measureHTTP(ctx, optionsFor(fixture), normalize)
+			if err == nil {
+				observations[assetURL] = observed
+				responses[bodyIdentity{observed.finalURL, fixture.sha}] = observed
+			}
+			return observed, err
+		}
+		plan, err := resolveReachability(ReachabilityOptions{Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: uses}, Bodies: bodies, Route: route, Backend: row.Backend}, func(asset PlannedAsset) (string, error) {
+			observed, err := observe(asset.URL)
+			return observed.finalURL, err
+		})
+		if err != nil {
+			return result, err
+		}
+		if plan.Reachability == "unknown" {
+			result.Coverage.Reachability = "unknown"
+		} else {
+			row.ReasonCode = "insufficient-data"
+		}
+		phases := map[string]string{}
+		for _, asset := range plan.Assets {
+			phases[asset.URL] = earlierPhase(phases[asset.URL], asset.Phase)
+		}
+		costs := []PhaseCost{{RequestIdentity: first.finalURL, Phase: "critical", Owner: "app", Sizes: measuredHTML.Sizes, WireBytes: first.finalWireBytes, Requests: 1}}
+		verified := map[bodyIdentity]PhaseCost{{first.finalURL, document.sha}: costs[0]}
+		requestURLs := map[string]string{}
+		for _, redirect := range first.redirects {
+			costs = append(costs, PhaseCost{RequestIdentity: redirect.url, Phase: "critical", Owner: document.owner, Sizes: redirect.sizes, WireBytes: redirect.wireBytes, Requests: 1})
+		}
+		inline := map[string]int64{first.finalURL: measuredHTML.Framework.Brotli}
+		coldInline := map[string]bool{first.finalURL: true}
+		noExecutableAssets := true
+		for _, fixture := range fixtures {
+			requestURL, err := base.Parse(fixture.url)
+			if err != nil {
+				return result, measureFailure("invalid-input", "/url")
+			}
+			requestURLs[fixture.url] = requestURL.String()
+			phase := phases[fixture.url]
+			if phase != "dormant" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
+				noExecutableAssets = false
+			}
+			if fixture.url == document.url {
 				continue
 			}
-			phase := fixture.phase
-			for _, id := range fixture.ids {
-				if criticalIDs[id] {
-					phase = "critical"
-				}
+			if phase == "dormant" {
+				costs = append(costs, PhaseCost{RequestIdentity: requestURL.String(), Phase: phase, Owner: fixture.owner, Sizes: fixture.sizes})
+				continue
 			}
-			observed, err := measureHTTP(ctx, HTTPMeasureOptions{Client: opts.Client, BaseURL: opts.BaseURL, URL: fixture.url, Kind: fixture.kind, ExpectedSHA256: fixture.sha, ExpectedBody: fixture.body, Representations: fixture.representations, Pin: opts.Pin}, normalize)
+			observed, err := observe(fixture.url)
 			if err != nil {
 				return result, err
 			}
-			key := observed.finalURL + "|" + fixture.sha
-			resolved[i] = key
-			record(key, physicalBody{owner: fixture.owner, phase: phase, cost: observed.Sizes.Brotli, wire: observed.finalWireBytes})
-			recordRedirects(observed, fixture.owner, phase)
+			if fixture.kind == "html" {
+				repeat, err := measureHTTP(ctx, optionsFor(fixture), normalize)
+				if err != nil {
+					return result, err
+				}
+				html, err := measureHTML(observed.body, htmlOpts, normalize)
+				if err != nil {
+					return result, err
+				}
+				again, err := measureHTML(repeat.body, htmlOpts, normalize)
+				if err != nil {
+					return result, err
+				}
+				if err := VerifyHTMLRenders(html, again); err != nil {
+					return result, err
+				}
+				if fixture.owner == "app" {
+					inline[observed.finalURL] = html.Framework.Brotli
+					coldInline[observed.finalURL] = coldInline[observed.finalURL] || phaseRank(phase) <= 1
+				}
+			}
+			cost := PhaseCost{RequestIdentity: observed.finalURL, Phase: phase, Owner: fixture.owner, Sizes: observed.Sizes, WireBytes: observed.finalWireBytes, Requests: 1}
+			costs = append(costs, cost)
+			key := bodyIdentity{observed.finalURL, fixture.sha}
+			if prior, ok := verified[key]; ok {
+				cost.Phase = earlierPhase(cost.Phase, prior.Phase)
+				if prior.Owner == "framework" {
+					cost.Owner = "framework"
+				}
+			}
+			verified[key] = cost
+			for _, redirect := range observed.redirects {
+				costs = append(costs, PhaseCost{RequestIdentity: redirect.url, Phase: phase, Owner: fixture.owner, Sizes: redirect.sizes, WireBytes: redirect.wireBytes, Requests: 1})
+			}
 			row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
 		}
-		// Resolve phase and owner before summing: aliases and shared redirect
-		// hops cannot change totals when declaration order changes.
-		for _, body := range physical {
-			row.NormalizedBytes += body.cost
-			row.WireBytes += body.wire
-			row.Requests++
-			if body.phase == "critical" {
-				row.PhaseBytes.Critical += body.cost
-			} else {
-				row.PhaseBytes.Startup += body.cost
-			}
-			framework := body.framework
-			if body.owner == "framework" {
-				framework = body.cost
-			}
-			row.FrameworkBytes += framework
-			row.AppBytes += body.cost - framework
-		}
-		for i, key := range resolved {
-			if key != "" && physical[key].phase == "critical" {
-				result.Assets[i].Phase = "critical"
+		// Unfetched inventory may name a verified redirect target. Bind it to
+		// that body's actual representation before phase and owner reconciliation.
+		for i, cost := range costs {
+			if cost.Phase == "dormant" {
+				if observed, ok := verified[bodyIdentity{cost.RequestIdentity, cost.Sizes.SHA256}]; ok {
+					cost.Sizes, cost.WireBytes, cost.Requests = observed.Sizes, observed.WireBytes, observed.Requests
+					costs[i] = cost
+				}
 			}
 		}
-		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: !measuredHTML.executable && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
+		for i, fixture := range fixtures {
+			identity := requestURLs[fixture.url]
+			if observed, ok := observations[fixture.url]; ok {
+				identity = observed.finalURL
+			}
+			// Report the physical body's earliest phase; a redirect's transfer
+			// remains charged at the phase of its own request above.
+			if observed, ok := verified[bodyIdentity{identity, fixture.sha}]; ok {
+				phases[fixture.url] = earlierPhase(phases[fixture.url], observed.Phase)
+			}
+			result.Assets[i].Phase = earlierPhase(result.Assets[i].Phase, phases[fixture.url])
+		}
+		totals, err := SumPhases(costs)
+		if err != nil {
+			return result, err
+		}
+		row.NormalizedBytes, row.FrameworkBytes, row.AppBytes = totals.NormalizedBytes, totals.FrameworkBytes, totals.AppBytes
+		row.WireBytes, row.Requests, row.PhaseBytes = totals.WireBytes, totals.Requests, totals.Phases
+		frameworkBodies := map[string]bool{}
+		for _, cost := range costs {
+			if cost.Owner == "framework" {
+				frameworkBodies[cost.RequestIdentity] = true
+			}
+		}
+		for identity, n := range inline {
+			if coldInline[identity] && !frameworkBodies[identity] {
+				row.FrameworkBytes += n
+				row.AppBytes -= n
+			}
+		}
+		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && !measuredHTML.executable && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
 		row.HeadroomBytes = -row.NormalizedBytes
 		for _, name := range route.PageTypes {
 			family, backend, _ := pageTypeVariant(name)

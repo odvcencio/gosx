@@ -26,7 +26,7 @@ func TestReferencesProductionEngineChunk(t *testing.T) {
 func TestReferencesFormattedMinifiedStatementBoundaries(t *testing.T) {
 	body := []byte(`(function(){if(ready)try{mount()}catch{ready=false}if(ready){let a=true;a&&(ready=false)}import("./ready.js")})();`)
 	set, err := ScanReferences(body, KindScript)
-	if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, []Reference{{"./ready.js", KindScript, false}}) {
+	if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), []Reference{{URL: "./ready.js", Kind: KindScript, Potential: false}}) {
 		t.Fatal("minified statements changed module extraction", set, err)
 	}
 }
@@ -48,14 +48,14 @@ func TestReferencesHTMLActiveRootsAndPotentialChunks(t *testing.T) {
 		t.Fatal("active markup did not resolve", err)
 	}
 	want := []Reference{
-		{"/alternate.mp4", KindOther, false}, {"/banner.webp", KindImage, false},
-		{"/compat.js", KindScript, false}, {"/cover.avif", KindImage, false},
-		{"/first.mp4", KindOther, false}, {"/font.woff2", KindFont, false},
-		{"/gpu.js", KindScript, true}, {"/inline.js", KindScript, false},
-		{"/later.png", KindImage, false}, {"/main.js", KindScript, false},
-		{"/poster.jpg", KindImage, false}, {"/prefetched.js", KindScript, false}, {"/style.css", KindStyle, false}, {"/thumb.png", KindImage, false},
+		{URL: "/alternate.mp4", Kind: KindOther, Potential: false}, {URL: "/banner.webp", Kind: KindImage, Potential: false},
+		{URL: "/compat.js", Kind: KindScript, Potential: false}, {URL: "/cover.avif", Kind: KindImage, Potential: false},
+		{URL: "/first.mp4", Kind: KindOther, Potential: false}, {URL: "/font.woff2", Kind: KindFont, Potential: false},
+		{URL: "/gpu.js", Kind: KindScript, Potential: true}, {URL: "/inline.js", Kind: KindScript, Potential: false},
+		{URL: "/later.png", Kind: KindImage, Potential: false}, {URL: "/main.js", Kind: KindScript, Potential: false},
+		{URL: "/poster.jpg", Kind: KindImage, Potential: false}, {URL: "/prefetched.js", Kind: KindScript, Potential: false}, {URL: "/style.css", Kind: KindStyle, Potential: false}, {URL: "/thumb.png", Kind: KindImage, Potential: false},
 	}
-	if !reflect.DeepEqual(set.Resources, want) {
+	if !reflect.DeepEqual(referenceValues(set.Resources), want) {
 		t.Fatalf("active roots or conditional hints differ: %#v", set.Resources)
 	}
 }
@@ -69,14 +69,14 @@ func TestReferencesHydrationSelectionExcludesDormantBundles(t *testing.T) {
 "bundles":{"unused":{"path":"/full.wasm"},"dormant":{"path":"/other.wasm"}}
 }</script>`)
 	set, err := ScanReferences(body, KindDocument)
-	want := []Reference{{"/compute.bin", KindProgram, false}, {"/counter.bin", KindProgram, false}, {"/custom.wasm", KindWASM, false}, {"/selected.wasm", KindWASM, false}}
-	if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, want) {
+	want := []Reference{{URL: "/compute.bin", Kind: KindProgram, Potential: false}, {URL: "/counter.bin", Kind: KindProgram, Potential: false}, {URL: "/custom.wasm", Kind: KindWASM, Potential: false}, {URL: "/selected.wasm", Kind: KindWASM, Potential: false}}
+	if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want) {
 		t.Fatalf("wrong selected runtime: %#v %v", set, err)
 	}
 	legacy := []byte(`<script id="gosx-manifest" type="application/json">{"version":"0.1.0","islands":[{"bundleId":"active"}],"runtime":{"path":"/core.wasm"},"bundles":{"active":{"path":"/app.wasm"},"other":{"path":"/full.wasm"}}}</script>`)
 	set, err = ScanReferences(legacy, KindDocument)
-	want = []Reference{{"/app.wasm", KindWASM, false}, {"/core.wasm", KindWASM, false}}
-	if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, want) {
+	want = []Reference{{URL: "/app.wasm", Kind: KindWASM, Potential: false}, {URL: "/core.wasm", Kind: KindWASM, Potential: false}}
+	if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want) {
 		t.Fatal("active legacy bundle was omitted or inventory was charged", set, err)
 	}
 }
@@ -90,8 +90,8 @@ func TestReferencesCSSImportsFontsImagesAndImageSets(t *testing.T) {
 .inline{background:url(data:image/png;base64,AAAA)}
 `)
 	set, err := ScanReferences(body, KindStyle)
-	want := []Reference{{"../fonts/a.woff2", KindFont, false}, {"./base.css", KindStyle, false}, {"./large.webp", KindImage, false}, {"./print.css", KindStyle, false}, {"./small.webp", KindImage, false}, {"/cover.png", KindImage, false}}
-	if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, want) {
+	want := []Reference{{URL: "../fonts/a.woff2", Kind: KindFont, Potential: false}, {URL: "./base.css", Kind: KindStyle, Potential: false}, {URL: "./large.webp", Kind: KindImage, Potential: false}, {URL: "./print.css", Kind: KindStyle, Potential: false}, {URL: "./small.webp", Kind: KindImage, Potential: false}, {URL: "/cover.png", Kind: KindImage, Potential: false}}
+	if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want) {
 		t.Fatalf("CSS dependency closure differs: %#v %v", set, err)
 	}
 }
@@ -108,8 +108,8 @@ const text="import('/string.js')"; const regex=/import("regex.js")/;
 /* fetch("/comment.glb") */
 `)
 	set, err := ScanReferences(body, KindScript)
-	want := []Reference{{"./all.js", KindScript, false}, {"./entry.js", KindScript, false}, {"./export.js", KindScript, false}, {"./font.woff2", KindFont, false}, {"./lazy.js", KindScript, false}, {"./mesh.glb", KindOther, false}, {"./shared.js", KindScript, false}, {"./side-effect.js", KindScript, false}, {"./worker.js", KindScript, false}}
-	if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, want) {
+	want := []Reference{{URL: "./all.js", Kind: KindScript, Potential: false}, {URL: "./entry.js", Kind: KindScript, Potential: false}, {URL: "./export.js", Kind: KindScript, Potential: false}, {URL: "./font.woff2", Kind: KindFont, Potential: false}, {URL: "./lazy.js", Kind: KindScript, Potential: false}, {URL: "./mesh.glb", Kind: KindOther, Potential: false}, {URL: "./shared.js", Kind: KindScript, Potential: false}, {URL: "./side-effect.js", Kind: KindScript, Potential: false}, {URL: "./worker.js", Kind: KindScript, Potential: false}}
+	if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want) {
 		t.Fatalf("module references differ: %#v %v", set, err)
 	}
 }
@@ -124,10 +124,10 @@ func TestReferencesWrappedURLsPreserveContextKinds(t *testing.T) {
 	} {
 		for _, target := range []string{"./dependency", "./dependency#x", "./dependency" + tc.extension + "#x"} {
 			t.Run(tc.name+"/"+target, func(t *testing.T) {
-				want := ReferenceSet{Resources: []Reference{{target, tc.kind, false}}, Complete: true}
+				want := ReferenceSet{Resources: []Reference{{URL: target, Kind: tc.kind, Potential: false}}, Complete: true}
 				for _, template := range []string{tc.direct, tc.wrapped} {
 					set, err := ScanReferences([]byte(strings.ReplaceAll(template, "TARGET", target)), tc.kind)
-					if err != nil || !reflect.DeepEqual(set, want) {
+					if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want.Resources) {
 						t.Errorf("direct and wrapped references must preserve context kind: %#v %v", set, err)
 					}
 				}
@@ -141,13 +141,13 @@ func TestReferencesURLKindsStayWithinLoadContext(t *testing.T) {
 		name, kind, body string
 		want             []Reference
 	}{
-		{"background", KindStyle, `.a { background: url("./resource"); }`, []Reference{{"./resource", KindOther, false}}},
-		{"standalone", KindScript, `new URL("./resource", import.meta.url);`, []Reference{{"./resource", KindOther, false}}},
-		{"worker-options", KindScript, `new Worker("./worker", {resource: new URL("./resource", import.meta.url)});`, []Reference{{"./resource", KindOther, false}, {"./worker", KindScript, false}}},
+		{"background", KindStyle, `.a { background: url("./resource"); }`, []Reference{{URL: "./resource", Kind: KindOther, Potential: false}}},
+		{"standalone", KindScript, `new URL("./resource", import.meta.url);`, []Reference{{URL: "./resource", Kind: KindOther, Potential: false}}},
+		{"worker-options", KindScript, `new Worker("./worker", {resource: new URL("./resource", import.meta.url)});`, []Reference{{URL: "./resource", Kind: KindOther, Potential: false}, {URL: "./worker", Kind: KindScript, Potential: false}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			set, err := ScanReferences([]byte(tc.body), tc.kind)
-			if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, tc.want) {
+			if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), tc.want) {
 				t.Fatal("URL outside a typed load context gained a kind", set, err)
 			}
 		})
@@ -177,7 +177,6 @@ func TestReferencesUnresolvedSyntaxDoesNotProveClosure(t *testing.T) {
 		{"css-escaped-import", KindStyle, `@\69mport "/sheet.css";`},
 		{"css-escaped-image-set", KindStyle, `.a{background:\69mage-set("/image.png" 1x)}`},
 		{"responsive-image", KindDocument, `<img src="/a.png" srcset="/a.png 1x,/b.png 2x">`},
-		{"base", KindDocument, `<base href="/other/"><script src="main.js"></script>`},
 		{"import-map", KindDocument, `<script type="importmap">{"imports":{}}</script>`},
 		{"duplicate-attribute", KindDocument, `<script src="/first.js" src="/second.js"></script>`},
 		{"missing-runtime", KindDocument, `<script id="gosx-manifest">{"version":"0.1.0","islands":[{"programRef":"/a.bin"}]}</script>`},
@@ -250,8 +249,8 @@ func TestReferencesGlobalLoaderCalls(t *testing.T) {
 			t.Run(receiver+tc.loader, func(t *testing.T) {
 				body := strings.ReplaceAll(tc.body, "RECEIVER", receiver)
 				set, err := ScanReferences([]byte(body), KindScript)
-				want := ReferenceSet{Resources: []Reference{{"./resource", tc.kind, false}}, Complete: true}
-				if err != nil || !reflect.DeepEqual(set, want) {
+				want := ReferenceSet{Resources: []Reference{{URL: "./resource", Kind: tc.kind, Potential: false}}, Complete: true}
+				if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want.Resources) {
 					t.Fatal("direct global loader lost its reference", set, err)
 				}
 			})
@@ -261,8 +260,6 @@ func TestReferencesGlobalLoaderCalls(t *testing.T) {
 
 func TestReferencesUnsupportedLoaderFormsAreIncomplete(t *testing.T) {
 	for _, body := range []string{
-		`importScripts("/a.js","/b.js")`, `globalThis.importScripts("/a.js")`,
-		`new globalThis.EventSource("/events")`, `new window.WebSocket("wss://fixture.invalid/socket")`,
 		`new self.XMLHttpRequest()`, `xhr.open("GET","/resource")`,
 		`const request=xhr.open; request("GET","/resource")`, `const {open: request}=xhr`,
 		`navigator.serviceWorker.register("/worker.js")`, `window.navigator.serviceWorker.register("/worker.js")`,
@@ -440,4 +437,14 @@ func TestReferencesHydrationRuntimeConsumerSelection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Existing URL/kind assertions remain independent of the context contract.
+func referenceValues(refs []Reference) []Reference {
+	out := append([]Reference{}, refs...)
+	for i := range out {
+		out[i].Base = ""
+		out[i].Worker = false
+	}
+	return out
 }
