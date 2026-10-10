@@ -16,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"m31labs.dev/gosx/internal/regularfile"
 )
 
 const maxInputBytes = 2 << 20
@@ -118,7 +120,7 @@ func readWithinSnapshot(root, path string, limit int64) ([]byte, os.FileInfo, er
 	if err != nil {
 		return nil, nil, errors.New("input escapes project root")
 	}
-	f, err := openInput(r, rel)
+	f, err := regularfile.Open(r, rel)
 	if err != nil {
 		return nil, nil, errors.New("cannot open confined input")
 	}
