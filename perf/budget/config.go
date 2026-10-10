@@ -332,7 +332,7 @@ func (f File) validate(p Profile, c Coefficients) error {
 			}
 		}
 	}
-	// Expiry admission, overlapping caps and trusted approval are checked in S12.
+	// EvaluateExceptions checks expiry, overlapping caps and trusted approval.
 	registeredRoutes := seen
 	seen = make(map[string]bool)
 	for i, e := range f.Exceptions {
