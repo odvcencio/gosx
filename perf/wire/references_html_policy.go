@@ -70,15 +70,28 @@ func htmlReferenceWords(words string) map[string]bool {
 // Every present attribute reaches this dispatcher. An allowlisted metadata
 // attribute is explicitly inert; a new or unsupported field fails closed.
 func scanHTMLReferenceAttribute(n *html.Node, a html.Attribute, out *referenceScanner) error {
+	if handled, err := scanExecutableReferenceAttribute(n, a, out); handled {
+		return err
+	}
 	if n.Namespace != "" || a.Namespace != "" {
 		out.drop(dropUnresolved)
 		return nil
 	}
 	if strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
+		if out.scriptsBlocked {
+			out.drop(dropSandboxedExecutable)
+			return nil
+		}
 		addFetchReference(out, a.Val, "", true)
 		return nil
 	}
 	switch a.Key {
+	case "srcdoc":
+		if n.Data != "iframe" {
+			out.drop(dropUnresolved)
+			return nil
+		}
+		return scanSrcdocReferences(n, a.Val, out)
 	case "style":
 		if n.Data == "template" {
 			out.drop(dropTemplateContent)
@@ -93,6 +106,10 @@ func scanHTMLReferenceAttribute(n *html.Node, a html.Attribute, out *referenceSc
 		kind := ""
 		switch n.Data {
 		case "script":
+			if out.scriptsBlocked {
+				out.drop(dropSandboxedExecutable)
+				return nil
+			}
 			if !executableType(attr(n, "type")) {
 				if knownHTMLDataScript(attr(n, "type")) {
 					out.drop(dropInertDataScript)

@@ -72,7 +72,7 @@ var htmlURLAttributeCases = []htmlURLAttributeCase{
 	{"itemprop", "*", KindOther, true, true},
 	{"itemtype", "*", KindOther, true, true},
 	{"usemap", "img input object", KindOther, false, true},
-	{"srcdoc", "iframe", KindDocument, false, true},
+	{"srcdoc", "iframe", KindDocument, false, false},
 	{"style", "*", KindImage, false, false},
 	{"content", "meta", KindDocument, false, true},
 	{"background", "body table thead tbody tfoot tr td th", KindImage, false, true},
@@ -215,7 +215,7 @@ func TestReferencesUnknownHTMLConstructsAreIncomplete(t *testing.T) {
 	for _, body := range []string{
 		`<img data-future-source="/image.png">`, `<div future-url="/image.png"></div>`,
 		`<resource-fixture></resource-fixture>`, `<img is="resource-fixture" src="/image.png">`,
-		`<button onclick="fetch('/data')"></button>`, `<div onpointerenter=""></div>`,
+		`<button onclick="fetch(window.fixtureURL)"></button>`, `<div onpointerenter="document.createElement('script')"></div>`,
 		`<link rel="icon" href="/icon.png">`, `<link rel="future-loader" href="/target">`,
 		`<link rel="preload" as="fetch" href="/data.png">`, `<link rel="preload" as="document" href="/child.png">`,
 		`<link rel="preload" as="future-destination" href="/target">`,

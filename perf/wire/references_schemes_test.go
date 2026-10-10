@@ -212,7 +212,12 @@ func TestReferencesHTMLURLAttributeSchemeCorpus(t *testing.T) {
 					} else if !scheme.network || row.incomplete {
 						valid = false
 					} else {
-						valid = valid && len(set.Resources) == 1 && set.Resources[0] == (Reference{scheme.target, row.kind, false})
+						kind := row.kind
+						if row.attribute == "srcdoc" {
+							// This scheme fixture embeds a script element.
+							kind = KindScript
+						}
+						valid = valid && len(set.Resources) == 1 && set.Resources[0] == (Reference{scheme.target, kind, false})
 					}
 					if !valid {
 						failures++

@@ -48,12 +48,12 @@ func TestReferencesJavaScriptLoaderCapabilityCorpus(t *testing.T) {
 	for _, capability := range capabilities {
 		for i, pattern := range patterns {
 			body := strings.ReplaceAll(pattern, "NAME", capability) + `import("/visible.js");`
-			for _, kind := range []string{KindScript, KindDocument} {
+			for _, kind := range []string{KindScript, KindDocument, "event-handler", "javascript-url"} {
 				source := body
 				if kind == KindDocument {
 					source = "<script>" + source + "</script>"
 				}
-				set, err := ScanReferences([]byte(source), kind)
+				set, err := scanExecutableAttributeCorpusSource(source, kind)
 				if err != nil || set.Complete || !reflect.DeepEqual(set.Resources, []Reference{{"/visible.js", KindScript, false}}) {
 					t.Errorf("unmodelled loader capability %s/%d/%s: source=%q set=%+v err=%v", capability, i, kind, source, set, err)
 				}
@@ -68,12 +68,12 @@ func TestReferencesJavaScriptLoaderCapabilityCorpus(t *testing.T) {
 			`const alias = window.` + loader + `; alias("/hidden.js");`,
 			`const {"` + loader + `": alias} = self; consume(alias);`,
 		} {
-			for _, kind := range []string{KindScript, KindDocument} {
+			for _, kind := range []string{KindScript, KindDocument, "event-handler", "javascript-url"} {
 				body := source
 				if kind == KindDocument {
 					body = "<script>" + body + "</script>"
 				}
-				set, err := ScanReferences([]byte(body), kind)
+				set, err := scanExecutableAttributeCorpusSource(body, kind)
 				if err != nil || set.Complete {
 					t.Errorf("loader escaped its call model: source=%q set=%+v err=%v", body, set, err)
 				}
@@ -83,12 +83,12 @@ func TestReferencesJavaScriptLoaderCapabilityCorpus(t *testing.T) {
 	}
 	for _, global := range []string{"window", "globalThis", "self", "document"} {
 		for _, property := range []string{`"Image"`, `"create" + "Element"`, `selected`} {
-			for _, kind := range []string{KindScript, KindDocument} {
+			for _, kind := range []string{KindScript, KindDocument, "event-handler", "javascript-url"} {
 				body := fmt.Sprintf("const alias = %s[%s]; consume(alias);", global, property)
 				if kind == KindDocument {
 					body = "<script>" + body + "</script>"
 				}
-				set, err := ScanReferences([]byte(body), kind)
+				set, err := scanExecutableAttributeCorpusSource(body, kind)
 				if err != nil || set.Complete {
 					t.Errorf("computed global access claimed complete coverage: %q %+v %v", body, set, err)
 				}
@@ -97,8 +97,19 @@ func TestReferencesJavaScriptLoaderCapabilityCorpus(t *testing.T) {
 		}
 	}
 	t.Logf("loader capability corpus: %d snippets", count)
-	if count != 2600 {
+	if count != 5200 {
 		t.Fatalf("loader capability corpus size changed: %d", count)
+	}
+}
+
+func scanExecutableAttributeCorpusSource(source, kind string) (ReferenceSet, error) {
+	switch kind {
+	case "event-handler":
+		return ScanReferences([]byte(executableAttributeDocument("handler", source)), KindDocument)
+	case "javascript-url":
+		return ScanReferences([]byte(executableAttributeDocument("javascript-url", source)), KindDocument)
+	default:
+		return ScanReferences([]byte(source), kind)
 	}
 }
 

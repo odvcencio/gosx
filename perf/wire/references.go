@@ -209,12 +209,14 @@ func scanDocumentTree(root *html.Node, out *referenceScanner) error {
 			}
 			seen := map[string]bool{}
 			for _, a := range n.Attr {
-				if seen[a.Key] || strings.Contains(a.Val, "&#") {
+				if seen[a.Key] || a.Key != "srcdoc" && strings.Contains(a.Val, "&#") {
 					// Duplicate fields and retained entity text cannot prove coverage.
+					// Srcdoc retains inner entities for its next bounded HTML parse.
 					out.drop(dropUnresolved)
 				}
 				seen[a.Key] = true
 				if err := scanHTMLReferenceAttribute(n, a, out); err != nil {
+					out.drop(dropUnresolved)
 					return err
 				}
 			}
@@ -226,11 +228,16 @@ func scanDocumentTree(root *html.Node, out *referenceScanner) error {
 			}
 			switch n.Data {
 			case "script":
+				if out.scriptsBlocked {
+					out.drop(dropSandboxedExecutable)
+					break
+				}
 				if executableType(attr(n, "type")) {
 					if hasHTMLReferenceAttribute(n, "src") {
 						// The attribute dispatcher handles src even with a manifest ID.
 						out.drop(dropExternalScriptBody)
 					} else if err := scanSyntaxReferences([]byte(textOf(n)), KindScript, out); err != nil {
+						out.drop(dropUnresolved)
 						return err
 					}
 				} else if knownHTMLDataScript(attr(n, "type")) {
@@ -250,6 +257,7 @@ func scanDocumentTree(root *html.Node, out *referenceScanner) error {
 				}
 			case "style":
 				if err := scanSyntaxReferences([]byte(textOf(n)), KindStyle, out); err != nil {
+					out.drop(dropUnresolved)
 					return err
 				}
 			default:

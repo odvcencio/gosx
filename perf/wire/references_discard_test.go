@@ -47,7 +47,7 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 		}
 	}
 	attributes = append(attributes, "data-gosx-future-url", "future-url", "onclick", "is")
-	contexts := []string{"live", "manifest-id", "module", "data-script", "unknown-type", "empty", "fragment", "opaque-data", "template", "shadow-template", "sandboxed-frame"}
+	contexts := []string{"live", "manifest-id", "module", "data-script", "unknown-type", "empty", "fragment", "opaque-data", "template", "shadow-template", "sandboxed-frame", "event-handler", "javascript-url"}
 	count, references, incomplete, inert := 0, 0, 0, 0
 	for _, element := range elements {
 		for _, attribute := range attributes {
@@ -82,6 +82,25 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 					typ := map[string]string{"module": "module", "data-script": "application/json", "unknown-type": "future-loader"}[context]
 					n.Attr = append(n.Attr, html.Attribute{Key: "type", Val: typ})
 				}
+				subject := 0
+				if context == "event-handler" || context == "javascript-url" {
+					key, code := "onload", `fetch("/candidate.png")`
+					if context == "javascript-url" {
+						key, code = "href", "javascript:"+code
+					}
+					subject = -1
+					for i := range n.Attr {
+						if n.Attr[i].Key == key {
+							n.Attr[i].Val = code
+							subject = i
+							break
+						}
+					}
+					if subject < 0 {
+						subject = len(n.Attr)
+						n.Attr = append(n.Attr, html.Attribute{Key: key, Val: code})
+					}
+				}
 				root := n
 				if context == "template" || context == "shadow-template" {
 					root = &html.Node{Type: html.ElementNode, Data: "template"}
@@ -99,7 +118,28 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 				switch {
 				case context == "template":
 					wantReason = dropTemplateContent
-				case context == "sandboxed-frame" || context == "shadow-template":
+				case context == "shadow-template":
+				case context == "sandboxed-frame":
+					switch {
+					case element == "template":
+						wantReason = dropTemplateContent
+					case attribute == "onclick" || attribute == "data-gosx-future-url" || element == "script" && attribute == "src":
+						wantReason = dropSandboxedExecutable
+					case attribute == "content" && element == "meta":
+						wantReason = dropInertHTML
+					case attribute == "srcdoc" && element == "iframe":
+						wantReason = dropNestedScan
+					case attribute == "value" && strings.Contains(" button data input li meter option progress ", " "+element+" "):
+						wantReason = dropInertHTML
+					}
+				case attribute == "onclick" && element == "template":
+					wantReason = dropTemplateContent
+				case attribute == "srcdoc" && element == "iframe":
+					wantReason = dropNestedScan
+				case attribute == "onclick" && context == "empty":
+					wantReason = dropEmptySyntax
+				case attribute == "onclick" && context == "opaque-data":
+					wantReason = dropNonLoadingSyntax
 				case element == "script" && attribute == "src" && context == "data-script":
 					wantReason = dropInertDataScript
 				case attribute == "style" && element == "template":
@@ -120,14 +160,26 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 					// type/id must not provide a witness for a silently dropped value.
 					isolatedDrops := []referenceDropReason{}
 					isolated := referenceScanner{ReferenceSet: ReferenceSet{Complete: true}, onDrop: func(reason referenceDropReason) { isolatedDrops = append(isolatedDrops, reason) }}
-					isolatedErr := scanHTMLReferenceAttribute(n, n.Attr[0], &isolated)
+					isolatedErr := scanHTMLReferenceAttribute(n, n.Attr[subject], &isolated)
 					assertReferenceDisposition(t, element+"/"+attribute+"/"+context+"/attribute", isolated.ReferenceSet, isolatedErr, isolatedDrops, wantReason, "/candidate.png")
+					if context == "event-handler" || context == "javascript-url" {
+						found := false
+						for _, ref := range isolated.Resources {
+							found = found || ref.URL == "/candidate.png"
+						}
+						if !found {
+							t.Errorf("isolated executable subject lost literal reference: %s/%s/%s %+v", element, attribute, context, isolated.ReferenceSet)
+						}
+					}
 				}
 				// These are disjoint outcomes: prefer the subject's reference,
 				// otherwise require incompleteness, otherwise an expected safe drop.
 				found := false
 				for _, ref := range set.Resources {
 					found = found || ref.URL == "/candidate.png"
+				}
+				if (context == "event-handler" || context == "javascript-url") && !found {
+					t.Errorf("literal executable source lost its reference: %s/%s/%s set=%+v drops=%v err=%v", element, attribute, context, set.Resources, drops, err)
 				}
 				if found {
 					references++
@@ -147,7 +199,7 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 		}
 	}
 	t.Logf("elements=%d attributes=%d contexts=%d cases=%d reference=%d incomplete=%d justified=%d", len(elements), len(attributes), len(contexts), count, references, incomplete, inert)
-	if count != 46585 {
+	if count != 55055 {
 		t.Fatalf("discard matrix changed: %d cases; audit any inventory change", count)
 	}
 }
@@ -186,7 +238,7 @@ func TestReferencesGeneratedManifestDispositions(t *testing.T) {
 		// not select them as a manifest; syntax errors may still fail closed.
 		{"executable-inline", `id="gosx-manifest"`, dropNonLoadingSyntax},
 		{"template", `type="application/json" id="gosx-manifest"`, dropTemplateContent},
-		{"sandboxed-frame", `type="application/json" id="gosx-manifest"`, dropUnresolved},
+		{"sandboxed-frame", `type="application/json" id="gosx-manifest"`, dropSandboxedExecutable},
 	}
 	count := 0
 	for _, slot := range manifestFetchCases() {
