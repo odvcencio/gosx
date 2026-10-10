@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"unicode"
 
 	"golang.org/x/net/html"
 	"m31labs.dev/gosx/hydrate"
@@ -187,10 +188,25 @@ func InspectDocumentTree(tree *DocumentTree, observe func(*Document, ExecutableS
 }
 
 func javascriptURL(value string) bool {
-	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "javascript:")
+	_, executable := javascriptURLCode(value)
+	return executable
+}
+
+func javascriptURLCode(value string) (string, bool) {
+	value = strings.TrimLeftFunc(value, unicode.IsSpace)
+	const scheme = "javascript:"
+	if len(value) < len(scheme) || !strings.EqualFold(value[:len(scheme)], scheme) {
+		return "", false
+	}
+	return value[len(scheme):], true
 }
 
 func refreshJavascriptURL(value string) bool {
+	_, executable := refreshJavascriptURLCode(value)
+	return executable
+}
+
+func refreshJavascriptURLCode(value string) (string, bool) {
 	if separator := strings.IndexAny(value, ";,"); separator >= 0 {
 		value = value[separator+1:]
 	}
@@ -198,9 +214,16 @@ func refreshJavascriptURL(value string) bool {
 	if len(value) >= 3 && strings.EqualFold(value[:3], "url") {
 		value = strings.TrimSpace(value[3:])
 		if !strings.HasPrefix(value, "=") {
-			return false
+			return "", false
 		}
 		value = strings.TrimSpace(value[1:])
 	}
-	return javascriptURL(strings.TrimLeft(value, "'\""))
+	if len(value) > 0 && (value[0] == '\'' || value[0] == '"') {
+		quote := value[0]
+		value = strings.TrimLeft(value, "'\"")
+		if len(value) > 0 && value[len(value)-1] == quote {
+			value = value[:len(value)-1]
+		}
+	}
+	return javascriptURLCode(value)
 }

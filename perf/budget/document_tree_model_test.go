@@ -95,6 +95,8 @@ func referenceDocumentTree(docs map[string]*modelDocument) modelTreeResult {
 			}
 			if doc.event {
 				out.execution.ExecutableSources++
+				out.execution.InlineAppScriptBytes += int64(len("run()"))
+				out.execution.InlineAppScriptMax = max(out.execution.InlineAppScriptMax, int64(len("run()")))
 			}
 		}
 		for i, f := range doc.frames {
