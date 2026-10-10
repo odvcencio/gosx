@@ -17,6 +17,10 @@
   automation and offset playback. Existing `game/audio` constructors remain
   compatible. Closing a host cancels asynchronous waits and releases owned
   voices without changing scheduled loop boundaries.
+- Add typed server telemetry preloads and desktop host startup/recovery
+  bootstraps. Applications supply consent, message names and presentation as
+  data. GoSX owns origin checks, single-flight polling, retry/navigation,
+  safe script encoding and unload cleanup.
 - Add `scene.Surface` and `scene.StreamWriter` for retained browser mounts.
   Instance streams reuse Go and JavaScript buffers, reject reentrant writes,
   refresh mount handles after recovery, and preload the shared codec without
