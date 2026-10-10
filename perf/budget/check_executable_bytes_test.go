@@ -62,14 +62,22 @@ func TestCheckInlineExecutableByteBoundaries(t *testing.T) {
 						t.Errorf("executing code bytes: max=%d total=%d want=%d", counts.InlineAppScriptMax, counts.InlineAppScriptBytes, want)
 					}
 					installPolicyMeasurement(t, &gate, report, gate.Head.Info)
-					wantPass := want <= 1024
+					// Byte limits and coverage are independent gates. JavaScript URL
+					// completion can replace a document, and refresh navigation is
+					// unmodelled; the reference scanner must remain conservative.
+					wantPolicyFailure := want > 1024
+					wantUnknown := !placement.template && (kind == "refresh" || kind == "url" && !placement.restricted)
+					if (report.Coverage.Reachability == "unknown") != wantUnknown {
+						t.Fatal("unexpected reference coverage", report.Coverage, "want unknown", wantUnknown)
+					}
+					wantPass := !wantPolicyFailure && !wantUnknown
 					for _, reportOnly := range []bool{false, true} {
 						gate.ReportOnly = reportOnly
 						out, err := Check(gate)
 						if err != nil {
 							t.Fatal(err)
 						}
-						if out.Passed != wantPass || hasGateViolation(out, "policy") == wantPass {
+						if out.Passed != wantPass || hasGateViolation(out, "policy") != wantPolicyFailure || hasGateViolation(out, "unknown-reachability") != wantUnknown {
 							t.Errorf("inline guardrail verdict: pass=%t want=%t violations=%v", out.Passed, wantPass, out.Violations)
 						}
 						wantExit := 0

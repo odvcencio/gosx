@@ -55,9 +55,9 @@ type htmlURLAttributeCase struct {
 var htmlURLAttributeCases = []htmlURLAttributeCase{
 	{"src", "img input", KindImage, false, false},
 	{"src", "script", KindScript, false, false},
-	{"src", "iframe", KindDocument, false, false},
+	{"src", "iframe frame", KindDocument, false, false},
 	{"src", "audio source track video", KindOther, false, false},
-	{"src", "embed frame bgsound", KindOther, false, true},
+	{"src", "embed bgsound", KindOther, false, true},
 	{"href", "link", KindStyle, false, false},
 	{"href", "a area", KindDocument, false, true},
 	{"href", "base", KindDocument, false, false},

@@ -121,6 +121,8 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 				case context == "shadow-template":
 				case context == "sandboxed-frame":
 					switch {
+					case element == "frame" && attribute == "srcdoc":
+						wantReason = dropInertHTML
 					case element == "base" && attribute == "href":
 						wantReason = dropInertHTML
 					case element == "template":
@@ -134,6 +136,9 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 					case attribute == "value" && strings.Contains(" button data input li meter option progress ", " "+element+" "):
 						wantReason = dropInertHTML
 					}
+				case element == "frame" && attribute == "srcdoc":
+					// HTML 16.3.2: frame only loads src; srcdoc is inert.
+					wantReason = dropInertHTML
 				case element == "base" && attribute == "href" && (context == "live" || context == "manifest-id" || context == "module" || context == "data-script" || context == "unknown-type" || context == "empty" || context == "fragment"):
 					// A supported base changes URL resolution, not the fetch set.
 					wantReason = dropInertHTML

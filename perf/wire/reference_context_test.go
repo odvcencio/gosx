@@ -13,6 +13,7 @@ func TestReferencesPreserveURLBaseAndWorkerContext(t *testing.T) {
 		{`import "./x.js";`, ReferenceBaseSource, false},
 		{`import("./x.js");`, ReferenceBaseSource, false},
 		{`new URL("./x.js", import.meta.url);`, ReferenceBaseSource, false},
+		{`fetch(new URL("./x.js", import.meta.url));`, ReferenceBaseSource, false},
 		{`fetch("./x.js");`, ReferenceBaseEnvironment, false},
 		{`globalThis.fetch("./x.js");`, ReferenceBaseEnvironment, false},
 		{`new Worker("./x.js");`, ReferenceBaseEnvironment, true},

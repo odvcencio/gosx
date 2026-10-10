@@ -746,9 +746,10 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 			return
 		}
 		raw, ok := javascriptReferenceLiteral(args.NamedChild(first), lang, body)
-		// Worker(new URL(...)) is covered by the nested URL expression.
-		if !ok && (value == "Worker" || value == "SharedWorker") && args.NamedChild(0).Type(lang) == "new_expression" {
-			constructor := args.NamedChild(0).ChildByFieldName("constructor", lang)
+		// A resolved URL object retains its explicit module base. The nested
+		// expression verifies its arguments and records the target once.
+		if !ok && value != "URL" && args.NamedChild(first).Type(lang) == "new_expression" {
+			constructor := args.NamedChild(first).ChildByFieldName("constructor", lang)
 			if moduleLoaderName(constructor, lang, body) == "URL" {
 				out.drop(dropNestedScan)
 				return
