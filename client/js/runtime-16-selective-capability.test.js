@@ -453,12 +453,15 @@ window.Hls.Events = {};`,
   );
 });
 
-test("bootstrap blocks engines when required browser capabilities are missing", async () => {
+for (const fallbackKind of ["text", "svg", "empty", "hidden", "metadata"]) {
+test(`bootstrap missing capability preserves ${fallbackKind} fallback semantics`, async () => {
   const mount = new FakeElement("div", null);
   mount.id = "strict-engine-root";
-  const authored = new FakeElement("p", null);
-  authored.textContent = "Playable server fallback";
+  const authored = new FakeElement(fallbackKind === "svg" ? "svg" : fallbackKind === "metadata" ? "script" : "p", null);
+  if (fallbackKind !== "empty" && fallbackKind !== "svg") authored.textContent = "Playable server fallback";
+  if (fallbackKind === "hidden") authored.setAttribute("hidden", "");
   mount.appendChild(authored);
+  const usefulFallback = fallbackKind === "text" || fallbackKind === "svg";
   let factoryCalls = 0;
 
   const env = createContext({
@@ -493,15 +496,23 @@ test("bootstrap blocks engines when required browser capabilities are missing", 
   assert.equal(mount.getAttribute("data-gosx-engine-required-capabilities"), "webgl");
   assert.equal(mount.getAttribute("data-gosx-engine-missing-capabilities"), "webgl");
   assert.equal(mount.getAttribute("data-gosx-runtime-issue"), "capability");
-  assert.equal(mount.getAttribute("data-gosx-fallback-active"), "unsupported");
+  assert.equal(mount.getAttribute("data-gosx-fallback-active"), usefulFallback ? "authored" : "unsupported");
   assert.equal(mount.children.length, 2);
   assert.equal(mount.children[0], authored);
   assert.equal(mount.children[1].getAttribute("data-gosx-engine-unsupported"), "true");
-  assert.ok(mount.children[1].textContent.includes("current browser"));
+  assert.equal(mount.children[1].hasAttribute("hidden"), usefulFallback);
+  assert.equal(mount.children[1].textContent.includes("current browser"), !usefulFallback);
+  assert.equal(mount.children[1].getAttribute("role"), usefulFallback ? null : "alert");
+  assert.equal(env.consoleLogs.error.length, usefulFallback ? 0 : 1);
+  if (usefulFallback) assert.ok(env.consoleLogs.warn.some(message => message.includes("missing required engine capabilities")));
 
   const issues = env.context.__gosx.listIssues();
-  assert.equal(issues.some((issue) => issue.scope === "engine" && issue.type === "capability" && issue.source === "gosx-engine-strict"), true);
+  const issue = issues.find(issue => issue.scope === "engine" && issue.type === "capability" && issue.source === "gosx-engine-strict");
+  assert.ok(issue);
+  assert.equal(issue.severity, usefulFallback ? "warning" : "error");
 });
+}
+
 
 test("bootstrap exposes required capability status to mounted engines", async () => {
   const mount = new FakeElement("div", null);

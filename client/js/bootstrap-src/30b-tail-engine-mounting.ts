@@ -4380,6 +4380,16 @@
     return `This experience requires ${missing} support. Use a current browser with hardware acceleration enabled.`;
   }
 
+  function isEngineFallbackContent(node) {
+    if (!node) return false;
+    if (node.nodeType === 3) return String(node.textContent || "").trim() !== "";
+    const tag = String(node.tagName || "").toUpperCase();
+    if (node.nodeType !== 1 || node.hidden || node.hasAttribute("hidden") ||
+        /^(SCRIPT|STYLE|TEMPLATE|LINK|META)$/.test(tag)) return false;
+    if (/^(SVG|IMG|CANVAS|VIDEO|AUDIO|IFRAME|INPUT|SELECT|TEXTAREA|PROGRESS|METER)$/.test(tag)) return true;
+    return Array.from(node.childNodes || []).some(isEngineFallbackContent);
+  }
+
   function showEngineCapabilityUnsupported(mount, entry, status) {
     if (!mount || !document || typeof document.createElement !== "function") {
       return;
@@ -4388,20 +4398,29 @@
     // cannot mount. Replace only our previous capability notice on retries.
     const previous = mount.querySelector && mount.querySelector("[data-gosx-engine-unsupported]");
     if (previous && previous.parentNode) previous.parentNode.removeChild(previous);
+    const authoredFallback = Array.from(mount.childNodes || []).some(isEngineFallbackContent);
     const wrapper = document.createElement("div");
     wrapper.setAttribute("class", "gosx-engine-unsupported");
     wrapper.setAttribute("data-gosx-engine-unsupported", "true");
     wrapper.setAttribute("data-gosx-engine-unsupported-reason", "missing-capability");
-    wrapper.setAttribute("role", "alert");
-    wrapper.textContent = engineCapabilityUnsupportedMessage(entry, status);
+    if (authoredFallback) {
+      // Keep a terminal marker for readiness consumers without covering the
+      // useful server-rendered alternative with an unsupported-experience alert.
+      wrapper.setAttribute("hidden", "");
+    } else {
+      wrapper.setAttribute("role", "alert");
+      wrapper.textContent = engineCapabilityUnsupportedMessage(entry, status);
+    }
     mount.appendChild(wrapper);
+    return authoredFallback;
   }
 
-  function reportMissingEngineCapabilities(entry, mount, status) {
+  function reportMissingEngineCapabilities(entry, mount, status, authoredFallback) {
     const missing = status.missing.join(", ");
-    console.error(`[gosx] missing required engine capabilities for ${entry.id}: ${missing}`);
+    const level = authoredFallback ? "warn" : "error";
+    console[level](`[gosx] missing required engine capabilities for ${entry.id}: ${missing}`);
     if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
-      window.__gosx_emit("error", "engine", "missing required engine capabilities", {
+      window.__gosx_emit(level, "engine", "missing required engine capabilities", {
         component: String(entry.component || ""),
         engineID: String(entry.id || ""),
         missingCapabilities: status.missing.slice(),
@@ -4412,12 +4431,13 @@
       window.__gosx.reportIssue({
         scope: "engine",
         type: "capability",
+        severity: authoredFallback ? "warning" : "error",
         component: entry.component,
         source: entry.id,
         ref: status.missing.join(" "),
         element: mount,
         message: `missing required engine capabilities: ${missing}`,
-        fallback: "unsupported",
+        fallback: authoredFallback ? "authored" : "unsupported",
       });
     }
   }
@@ -4551,8 +4571,8 @@
     applyRuntimeCapabilityState(mount, "engine", capabilityStatus);
     if (!capabilityStatus.ok) {
       disposePendingEngine(pending, true);
-      showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
-      reportMissingEngineCapabilities(entry, mount, capabilityStatus);
+      const authoredFallback = showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
+      reportMissingEngineCapabilities(entry, mount, capabilityStatus, authoredFallback);
       return;
     }
     const runtime = createEngineRuntime(entry, mount, pending);
