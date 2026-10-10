@@ -585,7 +585,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		raw, ok := javascriptReferenceLiteral(source, lang, body)
 		out.Complete = out.Complete && ok
 		if ok {
-			addReference(out, raw, KindScript, false)
+			addModuleReference(out, raw, KindScript)
 		}
 	case "call_expression", "new_expression":
 		name := n.ChildByFieldName("function", lang)
@@ -622,7 +622,7 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			if value == "import" || value == "Worker" || value == "SharedWorker" || value == "URL" && workerURLArgument(n, lang, body) {
 				kind = KindScript
 			}
-			addReference(out, raw, kind, false)
+			addModuleReference(out, raw, kind)
 		}
 	case "identifier", "property_identifier", "shorthand_property_identifier", "shorthand_property_identifier_pattern", "string":
 		moduleLoaderUse(n, lang, body, out)
@@ -631,6 +631,17 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		// No property evaluation or alias analysis establishes coverage here.
 		out.Complete = false
 	}
+}
+
+func addModuleReference(out *ReferenceSet, raw, kind string) {
+	value := strings.TrimSpace(raw)
+	if value == "" || strings.HasPrefix(value, "#") {
+		// Unlike an inert CSS fragment, a fetch/import/worker target can resolve
+		// to the current document or module. The scanner has no loading base.
+		out.Complete = false
+		return
+	}
+	addReference(out, raw, kind, false)
 }
 
 func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
@@ -660,7 +671,7 @@ func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 	name := n.Text(body)
 	if n.Type(lang) == "string" {
 		parent := n.Parent()
-		if parent == nil || parent.Type(lang) != "pair_pattern" || parent.ChildByFieldName("key", lang) != n {
+		if parent == nil || (parent.Type(lang) != "pair_pattern" && parent.Type(lang) != "pair") || parent.ChildByFieldName("key", lang) != n {
 			return
 		}
 		var ok bool
@@ -675,32 +686,45 @@ func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 		if parent == nil {
 			return
 		}
-		switch parent.Type(lang) {
-		case "member_expression":
+		if parent.Type(lang) == "member_expression" {
 			if parent.ChildByFieldName("property", lang) != n {
 				return
 			}
 			callee = parent
-		case "pair_pattern":
-			// A destructured loader escapes the direct call analysis.
-		default:
-			return
 		}
 	}
 	if strings.Contains(name, "\\") {
 		out.Complete = false
 		return
 	}
-	switch name {
-	case "eval", "Function", "XMLHttpRequest", "WebSocket", "EventSource", "importScripts", "serviceWorker", "register", "open",
-		"Reflect", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors":
-		// These loading, reflection or dynamic-code APIs have no resolved call model.
-		// Recognize accesses and bindings as well as direct invocations.
+	if unmodeledJavaScriptLoader(name) {
 		out.Complete = false
+		return
+	}
+	switch name {
 	case "fetch", "Worker", "SharedWorker", "URL":
 		parent := callee.Parent()
 		if parent == nil || (parent.Type(lang) != "call_expression" && parent.Type(lang) != "new_expression") ||
 			(parent.ChildByFieldName("function", lang) != callee && parent.ChildByFieldName("constructor", lang) != callee) {
+			out.Complete = false
+		}
+	case "setTimeout", "setInterval":
+		// Timers coerce non-function handlers to source text. An inline function
+		// avoids that construction; its body is scanned for loaders too.
+		// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#timers
+		parent := callee.Parent()
+		if parent == nil || parent.Type(lang) != "call_expression" || parent.ChildByFieldName("function", lang) != callee {
+			out.Complete = false
+			return
+		}
+		args := parent.ChildByFieldName("arguments", lang)
+		if args == nil || args.NamedChildCount() == 0 {
+			out.Complete = false
+			return
+		}
+		switch args.NamedChild(0).Type(lang) {
+		case "arrow_function", "function_expression":
+		default:
 			out.Complete = false
 		}
 	}
