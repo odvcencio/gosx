@@ -16,6 +16,7 @@ type loaderInventoryEntry struct {
 	Classification                                 loaderClassification
 	Fetches                                        bool // May load a resource/document or start an application transport, including gates.
 	DeniedTokens, EnumerationTokens, GlobalAliases string
+	LiteralCalls                                   string // Fetching JavaScript callees with a modelled literal argument form.
 	Model                                          string // Implemented form, or why a capability is conservatively denied.
 }
 
@@ -24,8 +25,8 @@ type loaderInventoryEntry struct {
 // mutations and other receiver/argument forms retain their denied tokens.
 // "not a fetch" distinguishes value construction/metadata from loading; some
 // such capabilities are still denied because they can escape into a loader.
-// This table is the sole source of the three token policies, so a token cannot
-// be added without a specification row. Tests require witnesses for every row
+// This table is the sole source of the token and literal-call policies: adding
+// a token requires a specification row. Tests require witnesses for every row
 // and exercise every fetching row in every permitted executable context.
 var loaderInventory = []loaderInventoryEntry{
 	{ID: "classic-script", API: "HTML classic script",
@@ -47,20 +48,23 @@ var loaderInventory = []loaderInventoryEntry{
 		Model: "moduleReference literal import/export/dynamic import; import-map resolution is unmodelled"},
 	{ID: "imported-module", API: "Imported module / dynamic import",
 		Spec: "https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-single-imported-module-script", Classification: loaderLiteral, Fetches: true,
-		Model: "moduleReference literal import/export/dynamic import; import-map resolution is unmodelled"},
+		LiteralCalls: "import",
+		Model:        "moduleReference literal import/export/dynamic import; import-map resolution is unmodelled"},
 	{ID: "modulepreload", API: "HTML modulepreload graph",
 		Spec: "https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-modulepreload-module-script-graph", Classification: loaderLiteral, Fetches: true,
 		DeniedTokens: "href",
 		Model:        "scanHTMLReferenceAttribute(link href modulepreload); DOM mutation denied"},
 	{ID: "classic-worker", API: "Dedicated classic worker",
 		Spec: "https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-worker-script", Classification: loaderLiteral, Fetches: true,
-		Model: "moduleReference literal Worker/SharedWorker and nested new URL"},
+		LiteralCalls: "Worker",
+		Model:        "moduleReference literal Worker/SharedWorker and nested new URL"},
 	{ID: "module-worker", API: "Dedicated module worker graph",
 		Spec: "https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-module-worker-script-tree", Classification: loaderLiteral, Fetches: true,
 		Model: "moduleReference literal Worker/SharedWorker and nested new URL"},
 	{ID: "shared-classic-worker", API: "Shared classic worker",
 		Spec: "https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-classic-worker-script", Classification: loaderLiteral, Fetches: true,
-		Model: "moduleReference literal Worker/SharedWorker and nested new URL"},
+		LiteralCalls: "SharedWorker",
+		Model:        "moduleReference literal Worker/SharedWorker and nested new URL"},
 	{ID: "shared-module-worker", API: "Shared module worker graph",
 		Spec: "https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-module-worker-script-tree", Classification: loaderLiteral, Fetches: true,
 		Model: "moduleReference literal Worker/SharedWorker and nested new URL"},
@@ -249,7 +253,8 @@ var loaderInventory = []loaderInventoryEntry{
 		Model:        "Option creates an option node without fetching; Video is not an HTML global constructor; conservative legacy tokens retained"},
 	{ID: "fetch", API: "Fetch API literal fetch",
 		Spec: "https://fetch.spec.whatwg.org/#fetch-method", Classification: loaderLiteral, Fetches: true,
-		Model: "moduleReference literal fetch; aliases/nonliteral URLs unresolved"},
+		LiteralCalls: "fetch",
+		Model:        "moduleReference literal fetch; aliases/nonliteral URLs unresolved"},
 	{ID: "fetch-later", API: "Fetch API deferred fetchLater",
 		Spec: "https://fetch.spec.whatwg.org/#dom-window-fetchlater", Classification: loaderDenied, Fetches: true,
 		DeniedTokens: "fetchLater",
@@ -393,3 +398,5 @@ func inventoryTokens(field func(loaderInventoryEntry) string) map[string]bool {
 var deniedLoaderTokens = inventoryTokens(func(row loaderInventoryEntry) string { return row.DeniedTokens })
 var enumerationLoaderTokens = inventoryTokens(func(row loaderInventoryEntry) string { return row.EnumerationTokens })
 var globalObjectAliases = inventoryTokens(func(row loaderInventoryEntry) string { return row.GlobalAliases })
+
+var literalLoaderCalls = inventoryTokens(func(row loaderInventoryEntry) string { return row.LiteralCalls })

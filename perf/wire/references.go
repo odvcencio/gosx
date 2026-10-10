@@ -720,7 +720,7 @@ func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 	if n == nil {
 		return ""
 	}
-	if n.Type(lang) == "import" {
+	if n.Type(lang) == "import" && literalLoaderCalls["import"] {
 		return "import"
 	}
 	if n.Type(lang) == "member_expression" {
@@ -731,8 +731,17 @@ func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 	} else if n.Type(lang) != "identifier" {
 		return ""
 	}
-	switch name := n.Text(body); name {
-	case "fetch", "Worker", "SharedWorker", "URL":
+	name := n.Text(body)
+	// A static global member is not necessarily a loader. Only fetching call
+	// models in the inventory may turn arguments into references. Other calls
+	// (events, animation, application callbacks, etc.) still traverse the
+	// completeness policy, but their string arguments are ordinary syntax.
+	if name != "import" && literalLoaderCalls[name] {
+		return name
+	}
+	if name == "URL" {
+		// URL construction does not fetch; its separate import.meta.url hint
+		// model is retained, including nested Worker(new URL(...)) handling.
 		return name
 	}
 	return ""
