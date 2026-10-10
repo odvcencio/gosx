@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.57.10
+
+- Preserve rendered text, authored whitespace, adjacent children, multiline
+  expressions and preformatted content when running `gosx fmt`. Attribute
+  normalization and wrapping remain available without changing child content.
+- Add `browser.Document.InstantiateTemplate` for detached deep copies of a
+  server-authored HTML template's single element root. Engines can retain child
+  handles and update text or attributes without rebuilding markup. Missing IDs,
+  unsupported templates and native builds return an invalid element.
+
 ## v0.57.9
 
 - Keep presentation-only browser engines dependency-light: finite scene
