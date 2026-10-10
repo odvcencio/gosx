@@ -39,6 +39,14 @@ type producerAssetRule struct {
 	Dependencies []string `json:"dependencies"`
 }
 
+type producerCatalog struct {
+	Schema              string              `json:"schema"`
+	Version             int64               `json:"version"`
+	Routes              []FixtureRoute      `json:"routes"`
+	AssetRules          []producerAssetRule `json:"assetRules"`
+	InteractionContract Ref                 `json:"interactionContract"`
+}
+
 func (rule producerAssetRule) assetUse(url string) buildmanifest.PerfAssetUse {
 	// Only graph metadata is validated at preflight. Body verification replaces
 	// this provisional hash before the manifest can be serialized or published.
@@ -59,17 +67,16 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	if ctx.Err() != nil {
 		return "", fail("/context")
 	}
-	if err := opts.Build.ValidatePerfAssetUses(); err != nil {
+	// The build inventory is only part of the emitted graph. Check its shape
+	// now; validate edges after catalog assets and registered app edges join it.
+	if opts.Build.PerfAssetUses.Version != 1 || opts.Build.PerfAssetUses.Assets == nil || len(opts.Build.PerfAssetUses.Assets) > 4096 {
 		return "", fail("/build")
 	}
 	data, err := readReference(opts.Inputs.RootDir(), opts.Inputs.File.Fixtures, maxInputBytes)
 	if err != nil {
 		return "", inputReference(err, "producer", "/catalog")
 	}
-	var catalog struct {
-		Routes     []FixtureRoute      `json:"routes"`
-		AssetRules []producerAssetRule `json:"assetRules"`
-	}
+	var catalog producerCatalog
 	var checked json.RawMessage
 	if err := decodeInput(data, "FixtureCatalog", &checked); err != nil {
 		return "", inputReference(err, "producer", "/catalog")
@@ -120,6 +127,11 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	manifest := FixtureManifest{Schema: "gosx.perf-fixtures/v1", Version: 1, SourceSHA: opts.SourceSHA, CatalogSHA256: opts.Inputs.File.Fixtures.SHA256, Routes: routes, Assets: []buildmanifest.PerfAssetUse{}}
 	seen := map[string]bool{}
 	for _, use := range opts.Build.PerfAssetUses.Assets {
+		raw, marshalErr := json.Marshal(use)
+		var checkedUse buildmanifest.PerfAssetUse
+		if marshalErr != nil || json.Unmarshal(raw, &checkedUse) != nil {
+			return "", fail("/build/assets")
+		}
 		if ctx.Err() != nil {
 			return "", fail("/context")
 		}
@@ -140,7 +152,11 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 				return "", fail("/build/optimizer")
 			}
 		}
-		use.Dependencies = append([]string{}, use.Dependencies...)
+		dependencies := use.Dependencies
+		if use.Owner == "app" {
+			dependencies = rules[use.ID].Dependencies
+		}
+		use.Dependencies = append([]string{}, dependencies...)
 		manifest.Assets = append(manifest.Assets, use)
 		seen[use.ID] = true
 	}
@@ -203,7 +219,11 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 			}
 		}
 	}
-	protection, err := preflightProducerPaths(root, opts, routes, public)
+	boundInputs, err := producerBoundInputPaths(opts, checked)
+	if err != nil {
+		return "", err
+	}
+	protection, err := preflightProducerPaths(root, opts, routes, public, boundInputs)
 	if err != nil {
 		return "", err
 	}

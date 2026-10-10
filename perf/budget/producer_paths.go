@@ -16,7 +16,7 @@ type producerPublicFile struct {
 // preflightProducerPaths runs before the first snapshot write. It reserves
 // production inputs and every destination, including encoding cleanup and
 // temporary writes, so later copies cannot change previously verified bodies.
-func preflightProducerPaths(root *os.Root, opts ProducerOptions, routes []FixtureRoute, public []producerPublicFile) (*producerPathProtection, error) {
+func preflightProducerPaths(root *os.Root, opts ProducerOptions, routes []FixtureRoute, public []producerPublicFile, boundInputs []string) (*producerPathProtection, error) {
 	fail := func() error { return &InputError{Code: "wrong-fixture", Reference: "producer", Pointer: "/outputs"} }
 	reserved := []string{
 		"app", "content", "public", "static", "server", "edge", "platform", "offline", "msix",
@@ -51,13 +51,8 @@ func preflightProducerPaths(root *os.Root, opts ProducerOptions, routes []Fixtur
 		return nil, fail()
 	}
 	identities := []os.FileInfo{}
-	refs := []Ref{opts.Inputs.File.Profile, opts.Inputs.File.Coefficients, opts.Inputs.File.Toolchain, opts.Inputs.File.Fixtures}
-	refs = append(refs, opts.Inputs.Toolchain.Fonts...)
-	for _, route := range routes {
-		refs = append(refs, Ref{File: route.SourcePath})
-	}
-	for _, ref := range refs {
-		input, err := filepath.Abs(filepath.Join(opts.Inputs.RootDir(), filepath.FromSlash(ref.File)))
+	for _, input := range boundInputs {
+		input, err := filepath.Abs(input)
 		if err != nil {
 			return nil, fail()
 		}
@@ -86,12 +81,6 @@ func preflightProducerPaths(root *os.Root, opts ProducerOptions, routes []Fixtur
 		if relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			reserved = append(reserved, filepath.ToSlash(relative))
 		}
-	}
-	if opts.Build.SceneAssets != nil && opts.Build.SceneAssets.File != "" {
-		if !safePath(opts.Build.SceneAssets.File) {
-			return nil, fail()
-		}
-		reserved = append(reserved, opts.Build.SceneAssets.File)
 	}
 	for _, entry := range public {
 		reserved = append(reserved, entry.source)
