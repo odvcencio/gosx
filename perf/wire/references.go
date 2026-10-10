@@ -719,6 +719,13 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 			out.drop(dropNestedScan)
 			return
 		}
+		// BackgroundFetchManager.fetch takes a job ID and a request list, not
+		// the Fetch API's URL/RequestInit pair. Only the direct global member
+		// form has that literal URL model; an unknown receiver is unresolved.
+		if value == "fetch" && name.Type(lang) == "member_expression" && !staticJavaScriptGlobalObject(name.ChildByFieldName("object", lang), lang, body) {
+			out.drop(dropUnresolved)
+			return
+		}
 		args := n.ChildByFieldName("arguments", lang)
 		if args == nil || args.NamedChildCount() == 0 {
 			out.drop(dropUnresolved)
@@ -793,6 +800,26 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 	default:
 		out.drop(dropNonLoadingSyntax)
 	}
+}
+
+// Static global members do not require alias/type inference. Other receivers
+// may expose a different fetch signature, notably BackgroundFetchManager.
+func staticJavaScriptGlobalObject(n *ts.Node, lang *ts.Language, body []byte) bool {
+	if n == nil {
+		return false
+	}
+	if n.Type(lang) == "identifier" {
+		return javaScriptGlobalObjectAlias(n.Text(body))
+	}
+	if n.Type(lang) != "member_expression" {
+		return false
+	}
+	property := n.ChildByFieldName("property", lang)
+	object := n.ChildByFieldName("object", lang)
+	if property == nil || object == nil || property.Type(lang) != "property_identifier" || !javaScriptGlobalObjectAlias(property.Text(body)) {
+		return false
+	}
+	return property.Text(body) == "defaultView" && object.Text(body) == "document" || staticJavaScriptGlobalObject(object, lang, body)
 }
 
 func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
@@ -953,11 +980,7 @@ func loaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 		return ""
 	}
 	if name.Type(lang) != "member_expression" {
-		switch name.Text(body) {
-		case "import", "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "XMLHttpRequest", "importScripts":
-			return name.Text(body)
-		}
-		return ""
+		return literalLoaderToken(name.Text(body))
 	}
 	object, property := name.ChildByFieldName("object", lang), name.ChildByFieldName("property", lang)
 	if object == nil || property == nil {
@@ -968,10 +991,20 @@ func loaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 	}
 	switch object.Text(body) {
 	case "globalThis", "window", "self":
-		return property.Text(body)
+		return literalLoaderToken(property.Text(body))
 	default:
 		return ""
 	}
+}
+
+func literalLoaderToken(name string) string {
+	// Global membership alone does not give a call a URL argument model.
+	// Other APIs still traverse the conservative capability policy.
+	switch name {
+	case "import", "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "XMLHttpRequest", "importScripts":
+		return name
+	}
+	return ""
 }
 
 func directXHROpen(n *ts.Node, lang *ts.Language, body []byte) bool {

@@ -131,3 +131,59 @@ func TestReferencesStaticGlobalMembersStayComplete(t *testing.T) {
 		t.Fatalf("for-of confused with enumeration: %+v err=%v", set, err)
 	}
 }
+
+func TestReferencesWorkletModuleLoadsAreIncomplete(t *testing.T) {
+	for _, source := range []string{
+		`CSS.paintWorklet.addModule("/hidden.js");`,
+		`audio.audioWorklet.addModule("/hidden.js");`,
+		`const add = CSS.paintWorklet.addModule; add.call(CSS.paintWorklet, "/hidden.js");`,
+		`const {addModule: add} = audio.audioWorklet; add("/hidden.js");`,
+	} {
+		for _, context := range loaderExecutableContexts {
+			set, err := scanLoaderInventoryContext(t, `fetch("/before.json");`+source+`import("/after.js");`, context)
+			want := []Reference{{URL: "/after.js", Kind: KindScript, Potential: false}, {URL: "/before.json", Kind: KindOther, Potential: false}}
+			if err != nil || set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want) {
+				t.Errorf("worklet lost uncertainty/references: context=%s source=%s set=%+v err=%v", context, source, set, err)
+			}
+		}
+	}
+}
+
+func TestReferencesWorkletInertPlacements(t *testing.T) {
+	for _, kind := range []string{"script", "handler", "javascript-url"} {
+		active := executableAttributeDocument(kind, `CSS.paintWorklet.addModule("/hidden.js");`)
+		for _, body := range []string{
+			`<template>` + active + `</template>`,
+			`<iframe sandbox srcdoc="` + html.EscapeString(active) + `"></iframe>`,
+		} {
+			drops := []referenceDropReason{}
+			set, err := scanReferences([]byte(body), KindDocument, func(reason referenceDropReason) { drops = append(drops, reason) })
+			want := dropSandboxedExecutable
+			if strings.HasPrefix(body, "<template>") {
+				want = dropTemplateContent
+			}
+			found := false
+			for _, reason := range drops {
+				found = found || reason == want
+			}
+			if err != nil || !set.Complete || len(set.Resources) != 0 || !found {
+				t.Errorf("inert worklet body lost typed drop: %+v err=%v drops=%v want=%v", set, err, drops, want)
+			}
+		}
+	}
+}
+
+func TestReferencesAuditedNavigationAndSVGLoads(t *testing.T) {
+	for _, source := range []string{
+		`history.go(-1);`, `controller.traverseTo(entryKey);`,
+		`target.pathname="/hidden.html";`, `declaration.fill="url(/hidden.svg#paint)";`,
+		`resource.baseVal="/hidden.svg";`,
+	} {
+		for _, context := range loaderExecutableContexts {
+			set, err := scanLoaderInventoryContext(t, source+`import("/visible.js");`, context)
+			if err != nil || set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), []Reference{{URL: "/visible.js", Kind: KindScript, Potential: false}}) {
+				t.Errorf("audited loading API bypass: context=%s source=%s set=%+v err=%v", context, source, set, err)
+			}
+		}
+	}
+}

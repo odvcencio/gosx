@@ -437,6 +437,19 @@ func TestReferencesHydrationRuntimeConsumerSelection(t *testing.T) {
 	}
 }
 
+func TestReferencesGlobalNonLoadingCalls(t *testing.T) {
+	for _, global := range []string{"window", "self", "globalThis"} {
+		t.Run(global, func(t *testing.T) {
+			body := global + `.addEventListener("focus", () => fetch("/visible.json"));`
+			set, err := ScanReferences([]byte(body), KindScript)
+			want := []Reference{{URL: "/visible.json", Kind: KindOther}}
+			if err != nil || !set.Complete || !reflect.DeepEqual(referenceValues(set.Resources), want) {
+				t.Fatalf("non-loading call became a resource: %+v err=%v", set, err)
+			}
+		})
+	}
+}
+
 // Existing URL/kind assertions remain independent of the context contract.
 func referenceValues(refs []Reference) []Reference {
 	out := append([]Reference{}, refs...)
