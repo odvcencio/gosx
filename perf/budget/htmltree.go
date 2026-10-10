@@ -27,8 +27,9 @@ type htmlElement struct {
 	bodyStart, bodyEnd                          int
 }
 type htmlClassification struct {
-	starts   []htmlSourceToken
-	elements []htmlElement
+	starts     []htmlSourceToken
+	elements   []htmlElement
+	executable bool
 }
 
 // Tree construction owns element semantics. Source markers only associate
@@ -132,12 +133,11 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 	strip := replacer.Replace
 	consumed := false
 	associated := map[int]bool{}
-	var walk func(*html.Node, bool) error
-	walk = func(node *html.Node, inert bool) error {
+	err = pagecaps.WalkHTML(root, func(node *html.Node, state pagecaps.HTMLState) error {
 		if node.Type == html.CommentNode && node.Data == tail || node.Type == html.TextNode && strings.Contains(node.Data, sentinel) {
 			consumed = true
 		}
-		inert = inert || node.Type == html.ElementNode && node.Namespace == "" && node.DataAtom == atom.Template
+		result.executable = result.executable || state.Executable
 		if node.Type == html.ElementNode && htmlNormalizedElement(node.DataAtom) {
 			attrs := map[string]string{}
 			var sources []htmlSourceToken
@@ -208,7 +208,7 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 					break
 				}
 				element.directive, element.fallback = "script-src-elem", "script-src"
-				element.executable = pagecaps.ScriptExecutes(node.Namespace, attrs)
+				element.executable = state.Script
 				_, element.external = attrs["src"]
 				if node.Namespace == "svg" {
 					_, href := attrs["href"]
@@ -239,18 +239,13 @@ func classifyHTML(body []byte) (htmlClassification, error) {
 				}
 				element.external = true
 			}
-			if !inert && element.directive != "" && (node.Namespace == "" || node.Namespace == "svg") {
+			if !state.Inert && element.directive != "" && (node.Namespace == "" || node.Namespace == "svg") {
 				result.elements = append(result.elements, element)
 			}
 		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			if err := walk(child, inert); err != nil {
-				return err
-			}
-		}
 		return nil
-	}
-	if err := walk(root, false); err != nil {
+	})
+	if err != nil {
 		return result, err
 	}
 	// The pinned tree builder explicitly ignores remaining tokens in some

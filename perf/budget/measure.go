@@ -256,7 +256,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				result.Assets[i].Phase = "critical"
 			}
 		}
-		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: measuredHTML.ExecutableScripts == 0 && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
+		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: !measuredHTML.executable && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
 		row.HeadroomBytes = -row.NormalizedBytes
 		for _, name := range route.PageTypes {
 			family, backend, _ := pageTypeVariant(name)

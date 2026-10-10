@@ -26,20 +26,10 @@ func FromHTML(data []byte) (Capabilities, error) {
 	bootstrapModes := map[string]bool{}
 	var manifest *hydrate.Manifest
 	executable := false
-	var visit func(*html.Node) error
-	visit = func(node *html.Node) error {
-		if node.Type == html.ElementNode {
-			if node.Data == "template" {
-				return nil
-			}
-			attrs := map[string]string{}
-			for _, attr := range node.Attr {
-				key := strings.ToLower(attr.Key)
-				attrs[key] = attr.Val
-				if strings.HasPrefix(key, "on") && len(key) > 2 || strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Val)), "javascript:") {
-					executable = true
-				}
-			}
+	err = WalkHTML(root, func(node *html.Node, state HTMLState) error {
+		if node.Type == html.ElementNode && !state.Inert {
+			attrs := state.Attributes
+			executable = executable || state.Executable
 			if _, ok := attrs["data-gosx-navigation"]; ok {
 				c.Navigation = true
 			}
@@ -59,7 +49,6 @@ func FromHTML(data []byte) (Capabilities, error) {
 				c.Video = true
 			}
 			if node.Data == "script" {
-				executable = executable || ScriptExecutes(node.Namespace, attrs)
 				switch attrs["data-gosx-script"] {
 				case "bootstrap":
 					c.Bootstrap = true
@@ -95,14 +84,9 @@ func FromHTML(data []byte) (Capabilities, error) {
 				}
 			}
 		}
-		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			if err := visit(child); err != nil {
-				return err
-			}
-		}
 		return nil
-	}
-	if err := visit(root); err != nil {
+	})
+	if err != nil {
 		return Capabilities{}, err
 	}
 	// Preview and island contracts require the shared VM even if a compatibility

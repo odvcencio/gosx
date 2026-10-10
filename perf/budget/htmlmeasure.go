@@ -30,6 +30,7 @@ type HTMLMeasurement struct {
 	ExecutableScripts  int64
 	full               []byte
 	withoutFramework   []byte
+	executable         bool
 }
 
 // MeasureHTML uses complete recompressed documents for inline ownership; it
@@ -63,6 +64,7 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 	if err != nil {
 		return result, err
 	}
+	result.executable = classified.executable
 	var edits []htmlSourceEdit
 	for _, item := range classified.starts {
 		raw := body[item.start:item.end]
