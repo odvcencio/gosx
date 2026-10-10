@@ -13,7 +13,7 @@ const (
 	dropOpaqueData                             // matching image/font MIME in a non-executable context
 	dropCSSFragment                            // empty/fragment CSS URL, never a fetch/module target
 	dropDormantManifest                        // a runtime, program or bundle not selected by its gate
-	dropManifestMetadata                       // known schema data outside the modelled fetch selectors
+	dropManifestMetadata                       // explicitly classified schema metadata, never opaque loader config
 	dropNonLoadingSyntax                       // syntax with no loader of its own; children still scanned
 	dropNestedScan                             // the same source is handled by a descendant scan
 	dropDuplicateReference                     // another reference already preserves this URL and kind

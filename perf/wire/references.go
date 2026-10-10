@@ -326,9 +326,9 @@ func scanHydrationReferences(raw string, out *referenceScanner) error {
 	} else {
 		out.drop(dropDormantManifest)
 	}
-	// Remaining typed manifest metadata is not an independently selected fetch
-	// target. Selection predicates above still consume its gates/capabilities.
-	out.drop(dropManifestMetadata)
+	// Classify every remaining field against the producer schema. Free-form
+	// values and unsupported loader declarations cannot inherit metadata safety.
+	scanManifestFields(raw, out)
 	return nil
 }
 
