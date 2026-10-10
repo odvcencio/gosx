@@ -210,7 +210,19 @@ func producerBoundInputPaths(opts ProducerOptions, catalog json.RawMessage) ([]s
 				base := opts.DistDir
 				switch producerBuildPathFields[value.Type().Name()+"."+field.Name] {
 				case "source":
-					base = sourceRoot
+					// Imported sources can live outside the project. Resolve them
+					// before reserving their path and identity; only distribution
+					// paths require the confined spelling checked below.
+					file := filepath.FromSlash(name)
+					if !filepath.IsAbs(file) {
+						file = filepath.Join(sourceRoot, file)
+					}
+					file, err := filepath.Abs(file)
+					if err != nil {
+						return producerOutputFailure()
+					}
+					files = append(files, file)
+					continue
 				case "asset":
 					if bucket == "" {
 						return producerOutputFailure()

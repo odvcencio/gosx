@@ -130,11 +130,16 @@ func TestProducerInputSchemaStructFields(t *testing.T) {
 
 func TestProducerDerivedInputPaths(t *testing.T) {
 	opts, _ := fixtureProducer(t)
-	opts.Build.SourceRoot = opts.Inputs.RootDir()
+	opts.Build.SourceRoot = filepath.Join(t.TempDir(), "app")
+	leaf := filepath.Join(filepath.Dir(opts.Build.SourceRoot), "leaf")
 	opts.Build.Runtime.Bootstrap = buildmanifest.HashedAsset{File: "bootstrap.js"}
 	opts.Build.Runtime.WASMVariants = map[string]buildmanifest.RuntimeVariantAsset{"variant": {HashedAsset: buildmanifest.HashedAsset{File: "variant.wasm"}}}
-	opts.Build.Islands = []buildmanifest.IslandAsset{{SourceFile: "source/island.gsx", HashedAsset: buildmanifest.HashedAsset{File: "island.bin"}}}
-	opts.Build.CSS = []buildmanifest.CSSAsset{{Source: "source/component.css", HashedAsset: buildmanifest.HashedAsset{File: "component.css"}}}
+	opts.Build.Islands = []buildmanifest.IslandAsset{
+		{SourceFile: "source/island.gsx", HashedAsset: buildmanifest.HashedAsset{File: "island.bin"}},
+		{SourceFile: "../leaf/imported.gsx", HashedAsset: buildmanifest.HashedAsset{File: "imported.bin"}},
+		{SourceFile: filepath.Join(leaf, "absolute.gsx"), HashedAsset: buildmanifest.HashedAsset{File: "absolute.bin"}},
+	}
+	opts.Build.CSS = []buildmanifest.CSSAsset{{Source: "../leaf/component.css", HashedAsset: buildmanifest.HashedAsset{File: "component.css"}}}
 	opts.Build.Images = []buildmanifest.ImageAsset{{Source: "/source.png", Variants: []buildmanifest.ImageVariantAsset{{HashedAsset: buildmanifest.HashedAsset{File: "image.png"}}}}}
 	opts.Build.SceneAssets = &buildmanifest.SceneAssetManifest{File: "reports/scene.json"}
 	opts.Inputs.Toolchain.Fonts = []Ref{{File: "inputs/font.woff2"}}
@@ -156,14 +161,17 @@ func TestProducerDerivedInputPaths(t *testing.T) {
 		t.Fatal(err)
 	}
 	inputFiles := []string{opts.Inputs.File.Profile.File, opts.Inputs.File.Coefficients.File, opts.Inputs.File.Toolchain.File,
-		opts.Inputs.File.Fixtures.File, "inputs/font.woff2", "inputs/interaction.json", "source/island.gsx", "source/component.css",
+		opts.Inputs.File.Fixtures.File, "inputs/font.woff2", "inputs/interaction.json",
 		catalog["routes"].([]any)[0].(map[string]any)["sourcePath"].(string)}
 	want := append([]string{}, opts.Inputs.inputFiles...)
 	for _, name := range inputFiles {
 		want = append(want, filepath.Join(opts.Inputs.RootDir(), name))
 	}
+	sourceFiles := []string{filepath.Join(opts.Build.SourceRoot, "source/island.gsx"),
+		filepath.Join(leaf, "imported.gsx"), filepath.Join(leaf, "absolute.gsx"), filepath.Join(leaf, "component.css")}
+	want = append(want, sourceFiles...)
 	distFiles := []string{"assets/runtime/bootstrap.js", "assets/runtime/variant.wasm", "assets/islands/island.bin",
-		"assets/css/component.css", "public/source.png", "assets/images/image.png", "reports/scene.json"}
+		"assets/islands/imported.bin", "assets/islands/absolute.bin", "assets/css/component.css", "public/source.png", "assets/images/image.png", "reports/scene.json"}
 	for _, use := range opts.Build.PerfAssetUses.Assets {
 		name, err := fixtureFilePath(use.URL, use.Kind)
 		if err != nil {
@@ -202,5 +210,5 @@ func TestProducerDerivedInputPaths(t *testing.T) {
 			}
 		})
 	}
-	t.Logf("derived project inputs=%v; distribution inputs=%v", inputFiles, distFiles)
+	t.Logf("derived project inputs=%v; source inputs=%v; distribution inputs=%v", inputFiles, sourceFiles, distFiles)
 }

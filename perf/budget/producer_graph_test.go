@@ -294,13 +294,43 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 	categories := []string{"document", "compiled", "chunk", "runtime", "public"}
 	coverage := map[string]bool{}
 	ownershipCoverage := map[string]bool{}
+	sourceLayouts := []string{"local", "imported-relative", "imported-absolute", "input-root-fallback"}
+	sourceCoverage := map[string]int{}
 	// Twelve permutations per phase/condition combination make 336 catalogs.
 	// Sidecars are gzip/Brotli representations of these nodes, not graph IDs.
 	for seed := 0; seed < 12*len(enum("phase"))*len(enum("condition")); seed++ {
 		t.Run(fmt.Sprintf("seed-%02d", seed), func(t *testing.T) {
 			rng := rand.New(rand.NewSource(int64(seed)))
 			opts, baseDocument := fixtureProducer(t)
-			document := bytes.Replace(baseDocument, []byte("</head>"), []byte(`<link rel="stylesheet" href="/generated/css.body"><link rel="stylesheet" href="/generated/compiled.css"></head>`), 1)
+			// Source inputs use a distinct project root and can cross its boundary;
+			// catalog inputs stay under Inputs.RootDir and outputs under DistDir.
+			layout := sourceLayouts[seed%len(sourceLayouts)]
+			sourceCoverage[layout]++
+			sourceRoot := filepath.Join(t.TempDir(), "app")
+			opts.Build.SourceRoot = sourceRoot
+			if layout == "input-root-fallback" {
+				sourceRoot, opts.Build.SourceRoot = opts.Inputs.RootDir(), ""
+			}
+			if err := os.MkdirAll(sourceRoot, 0700); err != nil {
+				t.Fatal(err)
+			}
+			sourceNames := map[string]string{}
+			sourceHashes := map[string]string{}
+			for category, filename := range map[string]string{"chunk": "island.gsx", "compiled": "component.css"} {
+				name := "source/" + filename
+				file := filepath.Join(sourceRoot, name)
+				if layout == "imported-relative" || layout == "imported-absolute" {
+					name = "../leaf/" + filename
+					file = filepath.Join(filepath.Dir(sourceRoot), "leaf", filename)
+					if layout == "imported-absolute" {
+						name = file
+					}
+				}
+				body := []byte(fmt.Sprintf("source %s %d", category, seed))
+				producerTestFile(t, filepath.Dir(file), filepath.Base(file), body)
+				sourceNames[category], sourceHashes[category] = name, testMeasureHash(body)
+			}
+			document := bytes.Replace(baseDocument, []byte("</head>"), []byte(`<link rel="stylesheet" href="/generated/css.body"><link rel="stylesheet" href="/gosx/assets/css/compiled.css"></head>`), 1)
 			bodies := map[string][]byte{"/counter/": document}
 			kinds := map[string]string{}
 			sidecars := map[string]map[string][]byte{}
@@ -339,8 +369,8 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			runtime := opts.Build.PerfAssetUses.Assets[0]
 			ids := map[string]string{"document": "app/fixture/html", "compiled": "app/fixture/compiled.css",
 				"chunk": "app/fixture/chunk.js", "runtime": runtime.ID, "public": "app/fixture/public/generated/image.body"}
-			urls := map[string]string{ids["document"]: "/counter/", ids["compiled"]: "/generated/compiled.css",
-				ids["chunk"]: "/generated/chunk.js", runtime.ID: runtime.URL, ids["public"]: "/generated/image.body"}
+			urls := map[string]string{ids["document"]: "/counter/", ids["compiled"]: "/gosx/assets/css/compiled.css",
+				ids["chunk"]: "/gosx/assets/islands/chunk.js", runtime.ID: runtime.URL, ids["public"]: "/generated/image.body"}
 			order := slices.Clone(categories)
 			rng.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
 			dependencies := map[string][]string{}
@@ -360,9 +390,9 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			runtime = add(runtime, runtimeBody, "assets/runtime/"+filepath.Base(runtime.URL), true)
 			build := []buildmanifest.PerfAssetUse{runtime}
 			for _, category := range []string{"compiled", "chunk"} {
-				kind, body := "css", []byte("body{color:green}")
+				kind, bucket, body := "css", "css", []byte("body{color:green}")
 				if category == "chunk" {
-					kind, body = "js", []byte(fmt.Sprintf("const chunk=%d;", seed))
+					kind, bucket, body = "js", "islands", []byte(fmt.Sprintf("const chunk=%d;", seed))
 				}
 				deps := dependencies[ids[category]]
 				if len(deps) > 0 {
@@ -374,7 +404,14 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 				}
 				use := buildmanifest.PerfAssetUse{ID: ids[category], URL: urls[ids[category]], Owner: "app", Kind: kind,
 					Phase: enum("phase")[seed%len(enum("phase"))].(string), Condition: "always", Dependencies: deps}
-				use = add(use, body, "generated/"+filepath.Base(use.URL), true)
+				use = add(use, body, "assets/"+bucket+"/"+filepath.Base(use.URL), true)
+				hashed := buildmanifest.HashedAsset{File: filepath.Base(use.URL), Hash: use.SHA256, Size: int64(len(body))}
+				if category == "chunk" {
+					opts.Build.Islands = []buildmanifest.IslandAsset{{Name: "Chunk", Format: "js", SourceFile: sourceNames[category],
+						SourceHash: sourceHashes[category], HashedAsset: hashed}}
+				} else {
+					opts.Build.CSS = []buildmanifest.CSSAsset{{Component: "Compiled", Source: sourceNames[category], HashedAsset: hashed}}
+				}
 				// CLI staging supplies dormant inventory without registered edges.
 				use.Phase = "dormant"
 				use.Dependencies = []string{}
@@ -535,6 +572,12 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			}
 		}
 	}
+	for _, layout := range sourceLayouts {
+		if sourceCoverage[layout] == 0 {
+			t.Errorf("missing source layout %s", layout)
+		}
+	}
+	t.Logf("source layouts=%v", sourceCoverage)
 	t.Logf("owner/registration combinations=%v", ownershipCoverage)
 	t.Logf("generated catalogs=%d; body categories=%v; accepted dependency pairs=%d; representations=identity,gzip,brotli",
 		12*len(enum("phase"))*len(enum("condition")), categories, len(coverage))
