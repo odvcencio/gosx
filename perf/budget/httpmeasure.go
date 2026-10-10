@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"io"
 	"mime"
 	"net/http"
@@ -260,6 +261,11 @@ func measureContentType(value string) (string, error) {
 		start = i + 1
 	}
 	mediaType, _, err := mime.ParseMediaType(strings.Join(parts, ";"))
+	// ParseMediaType also accepts standalone tokens such as disposition
+	// names. Content-Type requires type "/" subtype (RFC 9110 §8.3.1).
+	if err == nil && (!strings.Contains(mediaType, "/") || strings.HasPrefix(mediaType, "/") || strings.HasSuffix(mediaType, "/")) {
+		err = errors.New("invalid media type")
+	}
 	return mediaType, err
 }
 
@@ -275,8 +281,12 @@ func measureMIME(kind, mediaType string) bool {
 		return mediaType == "text/css"
 	case "model":
 		return mediaType == "model/gltf-binary" || mediaType == "model/gltf+json" || mediaType == "application/octet-stream" || mediaType == "application/json"
-	case "program", "other":
+	case "program":
 		return mediaType == "application/octet-stream" || mediaType == "application/json"
+	case "other":
+		// Opaque bytes have no execution or parsing contract. Content-Type
+		// syntax is checked above; semantic kinds retain their allowlists.
+		return true
 	case "font":
 		return mediaType == "font/woff2" || mediaType == "font/woff" || mediaType == "application/font-woff"
 	case "image":
