@@ -246,7 +246,9 @@ func TestPerfFixturePagesCoverActualRenderedTypes(t *testing.T) {
 					if tc.bootstrap == "lite" {
 						want = manifest.Runtime.BootstrapLite
 					}
-					if tc.mode != "configured" {
+					// Preview retains the supplied selective build assets. Only
+					// missing-configuration modes exercise monolith fallback.
+					if tc.mode != "configured" && tc.mode != "preview" {
 						want = manifest.Runtime.Bootstrap
 					}
 					if script["data-gosx-bootstrap-mode"] != tc.bootstrap || script["src"] != buildmanifest.AssetURL("/gosx/assets", "runtime", want.File) {
