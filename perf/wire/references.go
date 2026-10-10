@@ -58,52 +58,52 @@ func referenceFailure() error {
 // changing the compatibility crawler or its accounting rules. It does not
 // resolve URLs, fetch resources or copy native values into a public report.
 func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error) {
-	out = ReferenceSet{Resources: []Reference{}, Complete: true}
+	return scanReferences(body, kind, nil)
+}
+
+// The optional observer audits omissions without retaining source or allocating
+// a discard log in production. The observer stays in the private scanner state.
+func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) (out ReferenceSet, resultErr error) {
+	state := referenceScanner{ReferenceSet: ReferenceSet{Resources: []Reference{}, Complete: true}, onDrop: onDrop}
 	defer func() {
 		if resultErr != nil {
-			out.Complete = false
+			state.drop(dropUnresolved)
 		}
+		out = state.ReferenceSet
 	}()
 	if len(body) > 16<<20 || !utf8.Valid(body) {
-		return out, referenceFailure()
+		return state.ReferenceSet, referenceFailure()
 	}
 	switch kind {
 	case KindDocument:
-		tree, err := pagecaps.ParseDocumentTree(body, "", nil)
-		if err != nil {
-			return out, referenceFailure()
-		}
-		out.Complete = tree.Complete
-		for _, doc := range tree.Documents {
-			if err := scanDocumentReferences(doc, &out); err != nil {
-				return out, err
-			}
+		if err := scanDocumentBody(body, &state); err != nil {
+			return state.ReferenceSet, err
 		}
 	case KindStyle, KindScript:
-		if err := scanSyntaxReferences(body, kind, &out); err != nil {
-			return out, err
+		if err := scanSyntaxReferences(body, kind, &state); err != nil {
+			return state.ReferenceSet, err
 		}
 	default:
-		return out, referenceFailure()
+		return state.ReferenceSet, referenceFailure()
 	}
-	return finishReferences(out), nil
+	return finishReferences(&state), nil
 }
 
-// ScanDocumentReferences scans one node of the shared document tree. The
-// planner supplies its inherited permission; decoded srcdoc nodes use this
-// same scan, without copying their resources into a different document context.
+// ScanDocumentReferences scans one node of the shared document tree, retaining
+// its inherited execution permission and its own URL resolution context.
 func ScanDocumentReferences(doc *pagecaps.Document) (ReferenceSet, error) {
-	out := ReferenceSet{Resources: []Reference{}, Complete: true}
+	state := referenceScanner{ReferenceSet: ReferenceSet{Resources: []Reference{}, Complete: true}}
 	if doc == nil || doc.Root == nil {
-		return out, referenceFailure()
+		return state.ReferenceSet, referenceFailure()
 	}
-	if err := scanDocumentReferences(doc, &out); err != nil {
-		return out, err
+	if err := scanDocumentReferences(doc, &state); err != nil {
+		state.drop(dropUnresolved)
+		return state.ReferenceSet, err
 	}
-	return finishReferences(out), nil
+	return finishReferences(&state), nil
 }
 
-func finishReferences(out ReferenceSet) ReferenceSet {
+func finishReferences(out *referenceScanner) ReferenceSet {
 	sort.Slice(out.Resources, func(i, j int) bool {
 		a, b := out.Resources[i], out.Resources[j]
 		if a.URL != b.URL {
@@ -124,30 +124,35 @@ func finishReferences(out ReferenceSet) ReferenceSet {
 	for _, ref := range out.Resources {
 		if len(dedup) > 0 && dedup[len(dedup)-1].URL == ref.URL && dedup[len(dedup)-1].Kind == ref.Kind && dedup[len(dedup)-1].Base == ref.Base && dedup[len(dedup)-1].Worker == ref.Worker {
 			dedup[len(dedup)-1].Potential = dedup[len(dedup)-1].Potential && ref.Potential
+			out.drop(dropDuplicateReference)
 			continue
 		}
 		dedup = append(dedup, ref)
 	}
 	out.Resources = dedup
-	return out
+	return out.ReferenceSet
 }
 
-func addReference(out *ReferenceSet, raw, kind string, potential bool) {
+func addFetchReference(out *referenceScanner, raw, kind string, potential bool) {
 	addContextReference(out, raw, kind, potential, ReferenceBaseDocument, false)
 }
 
-func addContextReference(out *ReferenceSet, raw, kind string, potential bool, base string, worker bool) {
+func addContextReference(out *referenceScanner, raw, kind string, potential bool, base string, worker bool) {
 	value := strings.TrimSpace(raw)
 	if value == "" || strings.HasPrefix(value, "#") {
+		// Empty/fragment fetches can target the current document. Without a
+		// loading base they are unresolved, regardless of the resource kind.
+		out.drop(dropUnresolved)
 		return
 	}
 	if !understoodReferenceURL(value, kind) {
-		out.Complete = false
+		out.drop(dropUnresolved)
 		return
 	}
 	if strings.HasPrefix(strings.ToLower(value), "data:") {
 		// Image/font data is opaque only in an understood non-executable
 		// context. Never infer that context from a data payload's suffix.
+		out.drop(dropOpaqueData)
 		return
 	}
 	if kind == "" {
@@ -156,7 +161,7 @@ func addContextReference(out *ReferenceSet, raw, kind string, potential bool, ba
 	out.Resources = append(out.Resources, Reference{URL: value, Kind: kind, Potential: potential, Base: base, Worker: worker})
 }
 
-func scanInlineReferences(body []byte, kind string, out *ReferenceSet) error {
+func scanInlineReferences(body []byte, kind string, out *referenceScanner) error {
 	start := len(out.Resources)
 	if err := scanSyntaxReferences(body, kind, out); err != nil {
 		return err
@@ -220,191 +225,187 @@ func referenceKind(raw string) string {
 	}
 }
 
-func scanDocumentReferences(doc *pagecaps.Document, out *ReferenceSet) error {
-	manifestSeen := false
-	_ = pagecaps.WalkHTML(doc.Root, func(n *html.Node, state pagecaps.HTMLState) error {
-		if n.Namespace == "" && n.Data == "template" {
-			for _, a := range n.Attr {
-				out.Complete = out.Complete && understoodHTMLReferenceAttribute(n, a)
-			}
+func scanDocumentBody(body []byte, out *referenceScanner) error {
+	tree, err := pagecaps.ParseDocumentTree(body, "", nil)
+	if err != nil {
+		return referenceFailure()
+	}
+	if !tree.Complete {
+		out.drop(dropUnresolved)
+	}
+	for _, doc := range tree.Documents {
+		if err := scanDocumentReferences(doc, out); err != nil {
+			return err
 		}
-		return nil
-	})
-	return doc.Walk(func(n *html.Node, attrs map[string]string, depth int) error {
-		if depth > 256 {
+	}
+	return nil
+}
+
+func scanDocumentReferences(doc *pagecaps.Document, out *referenceScanner) error {
+	previous, blocked := out.document, out.scriptsBlocked
+	out.document, out.scriptsBlocked = doc, !doc.ScriptsAllowed
+	defer func() { out.document, out.scriptsBlocked = previous, blocked }()
+	return scanDocumentTree(doc.Root, out)
+}
+
+func referenceScriptExecutes(n *html.Node) bool {
+	attrs := map[string]string{}
+	for _, a := range n.Attr {
+		if _, ok := attrs[a.Key]; !ok {
+			attrs[a.Key] = a.Val
+		}
+	}
+	return pagecaps.ScriptExecutes(n.Namespace, attrs)
+}
+
+func scanDocumentTree(root *html.Node, out *referenceScanner) error {
+	type pending struct {
+		node  *html.Node
+		depth int
+	}
+	stack := []pending{{root, 0}}
+	manifestSeen := false
+	for len(stack) > 0 {
+		entry := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		n := entry.node
+		if entry.depth > 256 {
 			return referenceFailure()
 		}
 		if n.Type == html.ElementNode {
-			if n.Namespace == "" && n.Data == "template" {
-				// Declarative shadow roots can activate template contents. Check
-				// attributes before treating an ordinary HTML template as inert.
-				for _, a := range n.Attr {
-					out.Complete = out.Complete && understoodHTMLReferenceAttribute(n, a)
-				}
-				return nil
+			if n.Namespace != "" || !htmlReferenceElements[n.Data] {
+				out.drop(dropUnresolved)
 			}
-			out.Complete = out.Complete && n.Namespace == "" && htmlReferenceElements[n.Data]
 			seen := map[string]bool{}
 			for _, a := range n.Attr {
-				if strings.HasPrefix(a.Key, "on") && len(a.Key) > 2 {
-					// A disabled document cannot execute a handler. Active
-					// handlers with unresolved or resource-loading syntax remain
-					// conservative until their callback environment is modeled.
-					if doc.ScriptsAllowed {
-						refs, err := ScanReferences([]byte(a.Val), KindScript)
-						if err != nil {
-							return err
-						}
-						out.Complete = out.Complete && strings.TrimSpace(a.Val) != "" && refs.Complete && len(refs.Resources) == 0
-						for _, ref := range refs.Resources {
-							ref.Base = ReferenceBaseDocument
-							out.Resources = append(out.Resources, ref)
-						}
-					}
-					continue
-				}
-				out.Complete = out.Complete && understoodHTMLReferenceAttribute(n, a)
-				if seen[a.Key] {
-					out.Complete = false
+				if seen[a.Key] || a.Key != "srcdoc" && strings.Contains(a.Val, "&#") {
+					// Duplicate fields and retained entity text cannot prove coverage.
+					// Srcdoc retains inner entities for its next bounded HTML parse.
+					out.drop(dropUnresolved)
 				}
 				seen[a.Key] = true
-				if a.Key != "srcdoc" && strings.Contains(a.Val, "&#") {
-					// The HTML tokenizer can retain unterminated numeric character
-					// references. Remaining entity text cannot prove URL coverage.
-					out.Complete = false
-				}
-				if doc.ScriptsAllowed && strings.HasPrefix(a.Key, "data-gosx-") && strings.HasSuffix(a.Key, "-url") {
-					addReference(out, a.Val, "", true)
-				}
-				if a.Key == "style" {
-					if err := scanInlineReferences([]byte(".inline{"+a.Val+"}"), KindStyle, out); err != nil {
-						return err
-					}
+				if err := scanHTMLReferenceAttribute(n, a, out); err != nil {
+					out.drop(dropUnresolved)
+					return err
 				}
 			}
+			if n.Namespace == "" && n.Data == "template" {
+				// Attributes (including unsupported shadow-root declarations) have
+				// already been classified. Ordinary template contents are inert.
+				out.drop(dropTemplateContent)
+				continue
+			}
 			switch n.Data {
-			case "base":
-				if n.Namespace == "" && !out.HasBaseHref {
-					for _, a := range n.Attr {
-						if a.Key == "href" {
-							out.BaseHref, out.HasBaseHref = a.Val, true
-							break
-						}
-					}
-				}
 			case "script":
-				if !doc.ScriptsAllowed {
-					return nil
+				if out.scriptsBlocked {
+					out.drop(dropSandboxedExecutable)
+					break
 				}
-				if attr(n, "id") == "gosx-manifest" {
-					if manifestSeen {
-						return referenceFailure()
-					}
-					manifestSeen = true
-					if err := scanHydrationReferences(textOf(n), out); err != nil {
-						return err
-					}
-				} else if pagecaps.ScriptExecutes(n.Namespace, attrs) {
-					if src := attr(n, "src"); src != "" {
-						addReference(out, src, KindScript, false)
+				if referenceScriptExecutes(n) {
+					if hasHTMLReferenceAttribute(n, "src") {
+						// The attribute dispatcher handles src even with a manifest ID.
+						out.drop(dropExternalScriptBody)
 					} else if err := scanInlineReferences([]byte(textOf(n)), KindScript, out); err != nil {
+						out.drop(dropUnresolved)
 						return err
 					}
-				} else if !knownHTMLDataScript(attr(n, "type")) {
-					out.Complete = false
+				} else if knownHTMLDataScript(attr(n, "type")) {
+					if attr(n, "id") == "gosx-manifest" && !hasHTMLReferenceAttribute(n, "src") {
+						if manifestSeen {
+							return referenceFailure()
+						}
+						manifestSeen = true
+						if err := scanHydrationReferences(textOf(n), out); err != nil {
+							return err
+						}
+					} else {
+						out.drop(dropInertDataScript)
+					}
+				} else {
+					out.drop(dropUnresolved)
 				}
 			case "style":
 				if err := scanInlineReferences([]byte(textOf(n)), KindStyle, out); err != nil {
+					out.drop(dropUnresolved)
 					return err
 				}
-			case "link":
-				out.Complete = out.Complete && understoodHTMLLink(n)
-				for _, rel := range strings.Fields(strings.ToLower(attr(n, "rel"))) {
-					switch rel {
-					case "stylesheet":
-						addReference(out, attr(n, "href"), KindStyle, false)
-					case "modulepreload":
-						addReference(out, attr(n, "href"), KindScript, false)
-					case "preload", "prefetch":
-						kind := ""
-						switch strings.ToLower(attr(n, "as")) {
-						case "script":
-							kind = KindScript
-						case "style":
-							kind = KindStyle
-						case "font":
-							kind = KindFont
-						case "image":
-							kind = KindImage
-						}
-						addReference(out, attr(n, "href"), kind, false)
-					}
-				}
-			case "img":
-				addReference(out, attr(n, "src"), KindImage, false)
-			case "input":
-				if strings.EqualFold(attr(n, "type"), "image") {
-					addReference(out, attr(n, "src"), KindImage, false)
-				}
-			case "iframe", "frame":
-				if frame := doc.Embedding(n); frame != nil {
-					addReference(out, frame.Source, KindDocument, false)
-				}
-			case "source", "video", "audio", "track", "embed":
-				addReference(out, attr(n, "src"), KindOther, false)
-				addReference(out, attr(n, "poster"), KindImage, false)
-			case "object":
-				addReference(out, attr(n, "data"), "", false)
+			default:
+				// All reference-bearing attributes were dispatched above; these
+				// elements have no additional modelled loading body.
+				out.drop(dropInertHTML)
 			}
+		} else {
+			// Text in scripts/styles is scanned with its owning element. Other
+			// text, comments and document nodes do not initiate loads.
+			out.drop(dropInertHTML)
 		}
-		return nil
-	})
+		for c := n.LastChild; c != nil; c = c.PrevSibling {
+			stack = append(stack, pending{c, entry.depth + 1})
+		}
+	}
+	return nil
 }
 
-func scanHydrationReferences(raw string, out *ReferenceSet) error {
+func scanHydrationReferences(raw string, out *referenceScanner) error {
 	var manifest hydrate.Manifest
 	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
 		return referenceFailure()
 	}
-	if manifest.Version != "0.1.0" {
-		out.Complete = false
+	// Unknown producer fields cannot silently acquire an unmodelled loader.
+	// Preserve known references from otherwise valid JSON while failing closed.
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&manifest); err != nil {
+		out.drop(dropUnresolved)
 	}
+	if manifest.Version != "0.1.0" {
+		out.drop(dropUnresolved)
+	}
+	selectedBundles := map[string]bool{}
 	for _, entry := range manifest.Islands {
 		if entry.Static {
+			out.drop(dropDormantManifest)
 			continue
 		}
 		if entry.ProgramRef != "" {
-			addReference(out, entry.ProgramRef, KindProgram, false)
+			addFetchReference(out, entry.ProgramRef, KindProgram, false)
 		} else {
+			selectedBundles[entry.BundleID] = true
 			bundle, ok := manifest.Bundles[entry.BundleID]
-			if !ok || bundle.Path == "" {
-				out.Complete = false
+			if !ok {
+				out.drop(dropUnresolved)
 			} else {
-				addReference(out, bundle.Path, KindWASM, false)
+				addFetchReference(out, bundle.Path, KindWASM, false)
 			}
 		}
 	}
-	for _, entry := range manifest.ComputeIslands {
-		if entry.ProgramRef == "" {
-			out.Complete = false
+	for id := range manifest.Bundles {
+		if !selectedBundles[id] {
+			out.drop(dropDormantManifest)
 		}
-		addReference(out, entry.ProgramRef, KindProgram, false)
+	}
+	for _, entry := range manifest.ComputeIslands {
+		addFetchReference(out, entry.ProgramRef, KindProgram, false)
 	}
 	for _, entry := range manifest.Engines {
-		addReference(out, entry.ProgramRef, "", false)
-		if entry.Runtime == "go-wasm" && entry.ProgramRef == "" {
-			out.Complete = false
+		if entry.ProgramRef != "" || entry.Runtime == "go-wasm" {
+			addFetchReference(out, entry.ProgramRef, "", false)
+		} else {
+			out.drop(dropDormantManifest)
 		}
 	}
 	common, bridge := hydrationRuntimeConsumers(manifest)
 	if common || bridge {
-		if manifest.Runtime.Path != "" {
-			addReference(out, manifest.Runtime.Path, KindWASM, !common)
+		addFetchReference(out, manifest.Runtime.Path, KindWASM, !common)
+		if !common {
+			out.drop(dropUnresolved)
 		}
-		if manifest.Runtime.Path == "" || !common {
-			out.Complete = false
-		}
+	} else {
+		out.drop(dropDormantManifest)
 	}
+	// Classify every remaining field against the producer schema. Free-form
+	// values and unsupported loader declarations cannot inherit metadata safety.
+	scanManifestFields(raw, out)
 	return nil
 }
 
@@ -422,7 +423,7 @@ func scanHydrationReferences(raw string, out *ReferenceSet) error {
 // certifying a WASM request that the selective loader does not make.
 func hydrationRuntimeConsumers(manifest hydrate.Manifest) (common, bridge bool) {
 	common = len(manifest.Islands) > 0 || len(manifest.ComputeIslands) > 0
-	bridge = len(manifest.Hubs) > 0 || manifest.ClientIdentity != nil
+	bridge = len(manifest.Hubs) > 0 || manifest.ClientIdentity != nil || manifest.Preview
 	for _, entry := range manifest.Engines {
 		common = common || entry.Runtime == "shared"
 		bridge = bridge || entry.Kind == "video"
@@ -436,8 +437,9 @@ func hydrationRuntimeConsumers(manifest hydrate.Manifest) (common, bridge bool) 
 	return common, bridge
 }
 
-func scanSyntaxReferences(body []byte, kind string, out *ReferenceSet) error {
+func scanSyntaxReferences(body []byte, kind string, out *referenceScanner) error {
 	if len(bytes.TrimSpace(body)) == 0 {
+		out.drop(dropEmptySyntax)
 		return nil
 	}
 	var lang *ts.Language
@@ -547,10 +549,10 @@ func cssReferenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bo
 	return "", false
 }
 
-func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceScanner) {
 	if (n.Type(lang) == "plain_value" || n.Type(lang) == "function_name") && strings.Contains(n.Text(body), "\\") {
 		// Escaped names may conceal a loader that is not decoded here.
-		out.Complete = false
+		out.drop(dropUnresolved)
 		return
 	}
 	if n.Type(lang) == "import_statement" {
@@ -560,26 +562,38 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			if c.Type(lang) == "string_value" {
 				sourceSeen = true
 				raw, ok := cssReferenceLiteral(c, lang, body)
-				out.Complete = out.Complete && ok
+				if !ok {
+					out.drop(dropUnresolved)
+				}
 				if ok {
-					addContextReference(out, raw, KindStyle, false, ReferenceBaseSource, false)
+					addCSSReference(out, raw, KindStyle)
 				}
 			} else if c.Type(lang) == "call_expression" && c.NamedChildCount() > 0 && strings.EqualFold(c.NamedChild(0).Text(body), "url") {
 				// The nested URL call checks its own argument.
 				sourceSeen = true
+				out.drop(dropNestedScan)
+			} else {
+				out.drop(dropNonLoadingSyntax)
 			}
 		}
-		out.Complete = out.Complete && sourceSeen
+		if !sourceSeen {
+			out.drop(dropUnresolved)
+		}
 		return
 	}
-	if n.Type(lang) != "call_expression" || n.NamedChildCount() < 2 {
+	if n.Type(lang) != "call_expression" {
+		out.drop(dropNonLoadingSyntax)
+		return
+	}
+	if n.NamedChildCount() < 2 {
+		out.drop(dropUnresolved)
 		return
 	}
 	name := strings.ToLower(n.NamedChild(0).Text(body))
 	args := n.NamedChild(1)
 	if name == "var" {
 		// A substituted value can contain a URL; bindings are not resolved here.
-		out.Complete = false
+		out.drop(dropUnresolved)
 	} else if name == "url" {
 		kind := ""
 		if parent := n.Parent(); parent != nil && parent.Type(lang) == "import_statement" {
@@ -594,36 +608,43 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 			return
 		}
 		if args.NamedChildCount() != 1 {
-			out.Complete = false
+			out.drop(dropUnresolved)
 			return
 		}
 		raw, ok := cssReferenceLiteral(args.NamedChild(0), lang, body)
-		out.Complete = out.Complete && ok
+		if !ok {
+			out.drop(dropUnresolved)
+		}
 		if ok {
 			addCSSReference(out, raw, kind)
 		}
 	} else if name == "image-set" || name == "-webkit-image-set" {
 		if args.NamedChildCount() == 0 {
-			out.Complete = false
+			out.drop(dropUnresolved)
 		}
 		for i := 0; i < args.NamedChildCount(); i++ {
 			c := args.NamedChild(i)
 			switch c.Type(lang) {
 			case "string_value":
 				raw, ok := cssReferenceLiteral(c, lang, body)
-				out.Complete = out.Complete && ok
+				if !ok {
+					out.drop(dropUnresolved)
+				}
 				if ok {
-					addContextReference(out, raw, KindImage, false, ReferenceBaseSource, false)
+					addCSSReference(out, raw, KindImage)
 				}
 			case "integer_value", "float_value":
 				// Resolution descriptors do not load a resource.
+				out.drop(dropNonLoadingSyntax)
 			case "call_expression":
 				// URL calls are scanned separately; type() is a MIME descriptor.
 				if c.NamedChildCount() == 0 || (strings.ToLower(c.NamedChild(0).Text(body)) != "url" && strings.ToLower(c.NamedChild(0).Text(body)) != "type") {
-					out.Complete = false
+					out.drop(dropUnresolved)
+				} else {
+					out.drop(dropNestedScan)
 				}
 			default:
-				out.Complete = false
+				out.drop(dropUnresolved)
 			}
 		}
 	} else {
@@ -631,13 +652,19 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 		// may interpret strings as resources or synthesize substituted URLs.
 		switch name {
 		case "local", "format", "tech", "type", "rgb", "rgba", "hsl", "hsla", "hwb", "lab", "lch", "oklab", "oklch", "color", "color-mix", "calc", "min", "max", "clamp", "linear-gradient", "radial-gradient", "conic-gradient", "repeating-linear-gradient", "repeating-radial-gradient", "repeating-conic-gradient", "cubic-bezier", "steps", "counter", "counters":
+			out.drop(dropNonLoadingSyntax)
 		default:
-			out.Complete = false
+			out.drop(dropUnresolved)
 		}
 	}
 }
 
-func addCSSReference(out *ReferenceSet, raw, kind string) {
+func addCSSReference(out *referenceScanner, raw, kind string) {
+	value := strings.TrimSpace(raw)
+	if value == "" || strings.HasPrefix(value, "#") {
+		out.drop(dropCSSFragment)
+		return
+	}
 	if kind == "" {
 		// CSS url() image/font data cannot create a nested document or script.
 		// An @import retains KindStyle and must never take this opaque path.
@@ -646,46 +673,68 @@ func addCSSReference(out *ReferenceSet, raw, kind string) {
 	addContextReference(out, raw, kind, false, ReferenceBaseSource, false)
 }
 
-func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceScanner) {
 	switch n.Type(lang) {
 	case "import_statement", "export_statement":
 		source := n.ChildByFieldName("source", lang)
 		if source == nil {
+			if n.Type(lang) == "export_statement" {
+				out.drop(dropNonLoadingSyntax)
+			} else {
+				out.drop(dropUnresolved)
+			}
 			return
 		}
 		raw, ok := javascriptReferenceLiteral(source, lang, body)
-		out.Complete = out.Complete && ok
+		if !ok {
+			out.drop(dropUnresolved)
+		}
 		if ok {
 			addContextReference(out, raw, KindScript, false, ReferenceBaseSource, false)
 		}
 	case "call_expression", "new_expression":
-		value := loaderName(n, lang, body)
-		if value == "XMLHttpRequest" {
-			out.Complete = out.Complete && directXHROpen(n, lang, body)
+		name := n.ChildByFieldName("function", lang)
+		if name == nil {
+			name = n.ChildByFieldName("constructor", lang)
+		}
+		if name == nil {
+			out.drop(dropUnresolved)
 			return
 		}
-		switch value {
-		case "import", "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "xhr-open", "importScripts":
-		default:
+		value := loaderName(n, lang, body)
+		if modeled := moduleLoaderName(name, lang, body); modeled != "" {
+			value = modeled
+		}
+		if value == "XMLHttpRequest" {
+			if !directXHROpen(n, lang, body) {
+				out.drop(dropUnresolved)
+			}
+			return
+		}
+		if value == "" {
+			// The callee and arguments still traverse the loader-capability
+			// policy, including unsupported tokens and computed accesses.
+			out.drop(dropNestedScan)
 			return
 		}
 		args := n.ChildByFieldName("arguments", lang)
 		if args == nil || args.NamedChildCount() == 0 {
-			out.Complete = false
+			out.drop(dropUnresolved)
 			return
 		}
 		if value == "importScripts" {
 			for i := 0; i < args.NamedChildCount(); i++ {
 				raw, ok := javascriptReferenceLiteral(args.NamedChild(i), lang, body)
-				out.Complete = out.Complete && ok
-				if ok {
+				if !ok {
+					out.drop(dropUnresolved)
+				} else {
 					addContextReference(out, raw, KindScript, false, ReferenceBaseWorker, false)
 				}
 			}
 			return
 		}
 		if value == "URL" && (args.NamedChildCount() != 2 || args.NamedChild(1).Text(body) != "import.meta.url") {
-			out.Complete = false
+			out.drop(dropUnresolved)
 			return
 		}
 		first := 0
@@ -693,89 +742,154 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceS
 			first = 1
 		}
 		if args.NamedChildCount() <= first {
-			out.Complete = false
+			out.drop(dropUnresolved)
 			return
 		}
 		raw, ok := javascriptReferenceLiteral(args.NamedChild(first), lang, body)
-		if !ok && value != "URL" && loaderName(args.NamedChild(first), lang, body) == "URL" {
-			// The nested URL expression records its explicit module base.
-			return
+		// Worker(new URL(...)) is covered by the nested URL expression.
+		if !ok && (value == "Worker" || value == "SharedWorker") && args.NamedChild(0).Type(lang) == "new_expression" {
+			constructor := args.NamedChild(0).ChildByFieldName("constructor", lang)
+			if moduleLoaderName(constructor, lang, body) == "URL" {
+				out.drop(dropNestedScan)
+				return
+			}
 		}
-		out.Complete = out.Complete && ok
 		if !ok {
-			return
+			out.drop(dropUnresolved)
 		}
-		base, kind := ReferenceBaseEnvironment, ""
-		worker := value == "Worker" || value == "SharedWorker"
-		if value == "import" || value == "URL" {
-			base = ReferenceBaseSource
+		if ok {
+			kind := ""
+			if value == "import" || value == "Worker" || value == "SharedWorker" || value == "URL" && workerURLArgument(n, lang, body) {
+				kind = KindScript
+			}
+			base := ReferenceBaseEnvironment
+			worker := value == "Worker" || value == "SharedWorker"
+			if value == "import" || value == "URL" {
+				base = ReferenceBaseSource
+			}
+			if value == "URL" && workerURLArgument(n, lang, body) {
+				worker = true
+			}
+			addContextReference(out, raw, kind, false, base, worker)
 		}
-		if value == "import" || worker {
-			kind = KindScript
-		}
-		if value == "URL" && workerURLArgument(n, lang, body) {
-			worker, kind = true, KindScript
-		}
-		addContextReference(out, raw, kind, false, base, worker)
 	case "identifier", "property_identifier", "shorthand_property_identifier", "shorthand_property_identifier_pattern", "string":
 		moduleLoaderUse(n, lang, body, out)
 	case "subscript_expression", "computed_property_name":
 		// Computed access can conceal any loader, including on an aliased global.
 		// No property evaluation or alias analysis establishes coverage here.
-		out.Complete = false
+		out.drop(dropUnresolved)
+	default:
+		out.drop(dropNonLoadingSyntax)
 	}
 }
 
-func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
+	if n == nil {
+		return ""
+	}
+	if n.Type(lang) == "import" {
+		return "import"
+	}
+	if n.Type(lang) == "member_expression" {
+		n = n.ChildByFieldName("property", lang)
+		if n == nil || n.Type(lang) != "property_identifier" {
+			return ""
+		}
+	} else if n.Type(lang) != "identifier" {
+		return ""
+	}
+	switch name := n.Text(body); name {
+	case "fetch", "Worker", "SharedWorker", "URL":
+		return name
+	}
+	return ""
+}
+
+func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *referenceScanner) {
 	callee := n
 	name := n.Text(body)
 	if n.Type(lang) == "string" {
 		parent := n.Parent()
-		if parent == nil || parent.Type(lang) != "pair_pattern" || parent.ChildByFieldName("key", lang) != n {
+		if parent == nil || (parent.Type(lang) != "pair_pattern" && parent.Type(lang) != "pair") || parent.ChildByFieldName("key", lang) != n {
+			out.drop(dropNonLoadingSyntax)
 			return
 		}
 		var ok bool
 		name, ok = javascriptReferenceLiteral(n, lang, body)
 		if !ok {
-			out.Complete = false
+			out.drop(dropUnresolved)
 			return
 		}
 	}
 	if n.Type(lang) == "property_identifier" {
 		parent := n.Parent()
 		if parent == nil {
+			out.drop(dropUnresolved)
 			return
 		}
-		switch parent.Type(lang) {
-		case "member_expression":
+		if parent.Type(lang) == "member_expression" {
 			if parent.ChildByFieldName("property", lang) != n {
+				out.drop(dropNonLoadingSyntax)
 				return
 			}
 			callee = parent
-		case "pair_pattern":
-			// A destructured loader escapes the direct call analysis.
-		default:
-			return
 		}
 	}
 	if strings.Contains(name, "\\") {
-		out.Complete = false
+		out.drop(dropUnresolved)
+		return
+	}
+	if unmodeledJavaScriptLoader(name) && !understoodExtendedLoaderUse(callee, name, lang, body) {
+		out.drop(dropUnresolved)
 		return
 	}
 	switch name {
-	case "eval", "Function", "serviceWorker", "register", "Reflect", "getOwnPropertyDescriptor", "getOwnPropertyDescriptors":
-		// Loading, reflection and dynamic-code APIs without a resolved model
-		// remain incomplete through accesses, bindings and direct calls.
-		out.Complete = false
-	case "XMLHttpRequest":
-		out.Complete = out.Complete && directXHROpen(callee.Parent(), lang, body)
-	case "open":
-		out.Complete = out.Complete && loaderName(callee.Parent(), lang, body) == "xhr-open"
-	case "fetch", "Worker", "SharedWorker", "URL", "WebSocket", "EventSource", "importScripts":
-		if loaderName(callee.Parent(), lang, body) != name {
-			out.Complete = false
+	case "fetch", "Worker", "SharedWorker", "URL":
+		parent := callee.Parent()
+		if parent == nil || (parent.Type(lang) != "call_expression" && parent.Type(lang) != "new_expression") ||
+			(parent.ChildByFieldName("function", lang) != callee && parent.ChildByFieldName("constructor", lang) != callee) {
+			out.drop(dropUnresolved)
 		}
+	case "setTimeout", "setInterval":
+		// Timers coerce non-function handlers to source text. An inline function
+		// avoids that construction; its body is scanned for loaders too.
+		// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#timers
+		parent := callee.Parent()
+		if parent == nil || parent.Type(lang) != "call_expression" || parent.ChildByFieldName("function", lang) != callee {
+			out.drop(dropUnresolved)
+			return
+		}
+		args := parent.ChildByFieldName("arguments", lang)
+		if args == nil || args.NamedChildCount() == 0 {
+			out.drop(dropUnresolved)
+			return
+		}
+		switch args.NamedChild(0).Type(lang) {
+		case "arrow_function", "function_expression":
+			out.drop(dropNestedScan)
+		default:
+			out.drop(dropUnresolved)
+		}
+	default:
+		out.drop(dropNonLoadingSyntax)
 	}
+}
+
+func workerURLArgument(n *ts.Node, lang *ts.Language, body []byte) bool {
+	args := n.Parent()
+	if args == nil || args.Type(lang) != "arguments" || args.NamedChildCount() == 0 || args.NamedChild(0) != n {
+		return false
+	}
+	call := args.Parent()
+	if call == nil {
+		return false
+	}
+	name := call.ChildByFieldName("constructor", lang)
+	if name == nil {
+		name = call.ChildByFieldName("function", lang)
+	}
+	loader := moduleLoaderName(name, lang, body)
+	return loader == "Worker" || loader == "SharedWorker"
 }
 
 func loaderName(n *ts.Node, lang *ts.Language, body []byte) string {
@@ -790,7 +904,11 @@ func loaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 		return ""
 	}
 	if name.Type(lang) != "member_expression" {
-		return name.Text(body)
+		switch name.Text(body) {
+		case "import", "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "XMLHttpRequest", "importScripts":
+			return name.Text(body)
+		}
+		return ""
 	}
 	object, property := name.ChildByFieldName("object", lang), name.ChildByFieldName("property", lang)
 	if object == nil || property == nil {
@@ -815,11 +933,14 @@ func directXHROpen(n *ts.Node, lang *ts.Language, body []byte) bool {
 	return parent != nil && parent.Type(lang) == "member_expression" && loaderName(parent.Parent(), lang, body) == "xhr-open"
 }
 
-func workerURLArgument(n *ts.Node, lang *ts.Language, body []byte) bool {
-	args := n.Parent()
-	if args == nil || args.Type(lang) != "arguments" || args.NamedChildCount() == 0 || args.NamedChild(0) != n {
-		return false
+func understoodExtendedLoaderUse(callee *ts.Node, name string, lang *ts.Language, body []byte) bool {
+	switch name {
+	case "XMLHttpRequest":
+		return directXHROpen(callee.Parent(), lang, body)
+	case "open":
+		return loaderName(callee.Parent(), lang, body) == "xhr-open"
+	case "importScripts", "EventSource", "WebSocket":
+		return loaderName(callee.Parent(), lang, body) == name
 	}
-	loader := loaderName(args.Parent(), lang, body)
-	return loader == "Worker" || loader == "SharedWorker"
+	return false
 }
