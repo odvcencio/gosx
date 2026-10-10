@@ -48,6 +48,29 @@ func planPhases(plan ResourcePlan) map[string]string {
 	return out
 }
 
+func TestReachabilityRestrictedPreloadKeepsStartupDependencies(t *testing.T) {
+
+	bodies := map[string][]byte{
+		"app/fixture/html":       []byte(`<iframe sandbox srcdoc="&lt;link rel=modulepreload href=/js/x.js&gt;"></iframe>`),
+		"app/fixture/entry":      []byte(`import "/js/dep.js";`),
+		"app/fixture/dependency": []byte(`export const value = 1;`),
+	}
+	opts := ReachabilityOptions{
+		Graph: &buildmanifest.PerfAssetUses{Version: 1, Assets: []buildmanifest.PerfAssetUse{
+			graphAsset("app/fixture/html", "/counter/", "html", "critical", "always", bodies["app/fixture/html"]),
+			graphAsset("app/fixture/entry", "/js/x.js", "js", "startup", "always", bodies["app/fixture/entry"], "app/fixture/dependency"),
+			graphAsset("app/fixture/dependency", "/js/dep.js", "js", "dormant", "always", bodies["app/fixture/dependency"]),
+		}},
+		Bodies:  bodies,
+		Route:   FixtureRoute{RouteTemplate: "/counter/", CriticalAssetIDs: []string{"app/fixture/html"}},
+		Backend: "none",
+	}
+	plan, err := ResolveReachability(opts)
+	if err != nil || plan.Reachability != "known" || planPhases(plan)["app/fixture/dependency"] != "startup" {
+		t.Fatal("restricted preload hid independently declared startup dependencies", plan, err)
+	}
+}
+
 func testAlternateURLGraph() ReachabilityOptions {
 	bodies := map[string][]byte{
 		"app/fixture/html":  []byte(`<link rel="stylesheet" href="/alternate/site.css">`),

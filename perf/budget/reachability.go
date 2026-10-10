@@ -211,7 +211,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 			aliasKey := assetUseIdentity{alias.ID, alias.URL}
 			state := contextualUse{aliasKey, environment}
 			if enabled(alias) && phaseRank(phase) < phaseRank(visits[state]) {
-				if visits[state] == "" && environment != (referenceEnvironment{}) {
+				if visits[state] == "" && environment != (referenceEnvironment{}) && !environment.restricted {
 					environments[aliasKey] = append(environments[aliasKey], environment)
 				}
 				phases[aliasKey] = earlierPhase(phases[aliasKey], phase)
