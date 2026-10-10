@@ -200,10 +200,13 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			add := func(use buildmanifest.PerfAssetUse, body []byte, source string) {
 				use.SHA256 = testMeasureHash(body)
 				fields := producerSchemaObject(t, "AssetUse", producerJSONFields(t, use))
-				expected[use.ID] = fields
 				rule := map[string]any{"id": fields["id"], "owner": fields["owner"], "kind": fields["kind"],
 					"phase": fields["phase"], "condition": fields["condition"], "dependencies": fields["dependencies"]}
 				rules = append(rules, producerSchemaObject(t, "AssetRule", rule))
+				// Expectations come from the complete catalog rule, so adding a
+				// generator for a new field cannot bypass its output assertion.
+				expected[use.ID] = producerJSONFields(t, rule)
+				expected[use.ID]["sha256"], expected[use.ID]["url"] = fields["sha256"], fields["url"]
 				bodies[use.URL] = body
 				kinds[use.URL] = use.Kind
 				producerTestFile(t, opts.DistDir, source, body)
