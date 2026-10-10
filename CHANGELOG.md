@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## v0.57.9
+
+- Keep presentation-only browser engines dependency-light: finite scene
+  playback uses `game/host` directly, and geometry asset HTTP serving compiles
+  only for native targets. This removes unintended game-driver and HTTP/TLS
+  dependencies from authored browser WASM modules. Native geometry handler
+  behavior is unchanged; browser code should use the geometry asset data APIs.
+- Add a transitive browser import-graph test that prevents game-driver and
+  server dependencies from returning through engine adapters.
+
 ## v0.57.8
 
 - Add typed browser DOM, lazy event access, timers, attribute observers,
