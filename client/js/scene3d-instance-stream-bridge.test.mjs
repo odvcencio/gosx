@@ -11,8 +11,13 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const ts = createRequire(import.meta.url)("../runtime/node_modules/typescript");
+const sharedLoaderSource = ts.transpileModule(fs.readFileSync(
+  path.join(__dirname, "..", "runtime", "scene3d", "script-loader.ts"), "utf8",
+), { compilerOptions: { target: ts.ScriptTarget.ES2020 } }).outputText;
 const source = fs.readFileSync(
   path.join(__dirname, "..", "runtime", "scene3d", "instance-stream-bridge.ts"),
   "utf8",
@@ -61,7 +66,7 @@ function loadInstanceStreamBridge(dataAttrs) {
     assert.equal(tag, "script");
     return makeFakeScriptElement();
   };
-  const factory = new Function("window", "document", source + "\nreturn window;");
+  const factory = new Function("window", "document", sharedLoaderSource + "\n" + source + "\nreturn window;");
   factory(window, document);
   return { window, scripts };
 }
@@ -423,4 +428,15 @@ test("empty and literal sentinel batch IDs stay distinct from truncated headers"
   scripts[0].onload();
   assert.equal((await Promise.all(pending)).filter((result) => result.applied).length, 3);
   assert.deepEqual(applied, [1, 2, 3]);
+});
+
+
+test("shared URL resolution retains the compat fallback when advertised data is denied", () => {
+  const advertised = Object.defineProperty({}, "gosxScene3dInstanceStreamUrl", {
+    get() { throw new Error("host denied script metadata"); },
+  });
+  const { window, scripts } = loadInstanceStreamBridge(advertised);
+  window.__gosx.host.scene3d.preloadInstanceStream();
+  assert.equal(scripts.length, 1);
+  assert.equal(scripts[0].src, "/gosx/bootstrap-feature-scene3d-instance-stream.js");
 });

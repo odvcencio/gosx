@@ -298,6 +298,63 @@ func selenaCustomMaterial(result selena.Result, opts SelenaMaterialOptions) (Cus
 	return material, nil
 }
 
+// MaterialFromSelena adapts precompiled Selena artifacts to Scene3D using the
+// same WebGL2, WebGPU, post-processing and native-program contracts as
+// CompileSelenaMaterial. Layout and Artifacts are required; the parsed program
+// and intermediate representation need not be retained in a shipped bundle.
+// This avoids compiling shader source at startup or reimplementing backend
+// selection and host binding layout in applications.
+func MaterialFromSelena(result selena.Result, opts SelenaMaterialOptions) (CustomMaterial, error) {
+	if result.Layout.Material == "" {
+		return CustomMaterial{}, fmt.Errorf("Selena artifact layout has no material name")
+	}
+	if result.Material.Name == "" {
+		result.Material.Name = result.Layout.Material
+	}
+	for _, texture := range result.Layout.Textures {
+		ref, _ := opts.Uniforms[texture.Name].(string)
+		if !strings.HasPrefix(ref, "gosx:environment:") {
+			continue
+		}
+		want := "cube"
+		switch ref {
+		case SelenaEnvironmentRadiance, SelenaEnvironmentIrradiance:
+		case SelenaEnvironmentBRDFLUT:
+			want = "2d"
+		default:
+			return CustomMaterial{}, fmt.Errorf("unknown Selena environment resource %q", ref)
+		}
+		if texture.Dimension != want {
+			return CustomMaterial{}, fmt.Errorf("Selena texture %s: %s requires %s, got %s", texture.Name, ref, want, texture.Dimension)
+		}
+	}
+	m, err := selenaCustomMaterial(result, opts)
+	if err != nil {
+		return CustomMaterial{}, err
+	}
+	// Reserved transforms are supplied per draw and may not have authored
+	// defaults. Validate every authored value without publishing placeholders
+	// that could shadow the renderer's transforms.
+	validation := make(map[string]any, len(m.Uniforms)+3)
+	for name, value := range m.Uniforms {
+		validation[name] = value
+	}
+	validation["mvp"] = []float64{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1}
+	validation["modelMatrix"] = validation["mvp"]
+	validation["normalMatrix"] = []float64{1, 0, 0, 0, 1, 0, 0, 0, 1}
+	for _, field := range result.Layout.UniformBlock.Fields {
+		if field.Name == "environmentInfo" && field.Class == "context" {
+			validation[field.Name] = []float64{0, 0, 0, 0}
+		}
+	}
+	if _, err := bindings.PackUniformsWithDefaults(result.Layout, validation); err != nil {
+		return CustomMaterial{}, fmt.Errorf("Selena material %s: %w", result.Layout.Material, err)
+	}
+	m.VertexWGSL = selenaPointsWGSLRuntimeFrameLayout(m.VertexWGSL)
+	m.FragmentWGSL = selenaPointsWGSLRuntimeFrameLayout(m.FragmentWGSL)
+	return m, nil
+}
+
 func selenaPointsWGSLRuntimeFrameLayout(source string) string {
 	const runtimeFrame = `struct FrameUniforms {
   viewMatrix     : mat4x4<f32>,

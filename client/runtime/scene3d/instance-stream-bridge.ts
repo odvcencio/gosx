@@ -48,21 +48,6 @@
   // frames arrived during the stall.
   var pendingFrames = new Map();
 
-  // instanceStreamURL reads the versioned, content-hashed URL island.go
-  // embeds as a data-* attribute on the main scene3d script tag (see
-  // island.go's emitScene3DScriptTags and commandURL in command-bridge.ts,
-  // which this mirrors exactly). Falls back to the unversioned compat path
-  // only when the attribute is absent — a dev server or an older manifest
-  // without the entry — so the loader still works, just without the
-  // immutable long-lived cache a hashed URL gets.
-  function instanceStreamURL() {
-    try {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var tag = document.querySelector('script[data-gosx-script="feature-scene3d"]') || document.querySelector('script[data-gosx-script="bootstrap"]');
-      if (tag && tag.dataset && tag.dataset.gosxScene3dInstanceStreamUrl) return tag.dataset.gosxScene3dInstanceStreamUrl;
-    } catch (_e) {}
-    return "/gosx/bootstrap-feature-scene3d-instance-stream.js";
-  }
-
   // View caller bytes once for both the header scan and the deferred copy.
   // An already-loaded codec still receives the original buffer directly.
   function asUint8Array(bytes) {
@@ -150,7 +135,7 @@
     if (loadPromise) return loadPromise;
     loadPromise = new Promise(function(resolve, reject) {
       var script = document.createElement("script");
-      script.src = instanceStreamURL();
+      script.src = resolveSceneSubFeatureURL("gosxScene3dInstanceStreamUrl", "/gosx/bootstrap-feature-scene3d-instance-stream.js");
       script.async = true;
       script.type = "text/javascript";
       script.crossOrigin = "anonymous";

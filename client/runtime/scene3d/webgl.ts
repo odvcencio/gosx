@@ -167,7 +167,7 @@
     "v_normal=q.xyz;",
     "    v_uv = gosxUV;",
     "",
-    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "vec3 B=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
@@ -1015,7 +1015,7 @@
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(a_instanceMatrix);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
     "    v_uv = a_uv;",
-    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
     "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
@@ -1128,7 +1128,7 @@
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(crowdModel);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
     "    v_uv = a_uv;",
-    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
     "    v_instanceColor = vec4(1.0);",
@@ -1188,7 +1188,7 @@
 	    "v_normal=q.xyz;",
 	    "    v_uv = a_uv;",
 	    "",
-	    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 T=normalize(t-N*dot(N,t));",
+	    "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "vec3 B=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
     "    v_bitangent = B;",
@@ -5950,7 +5950,7 @@
     var name = texture && texture.name;
     var values = material && material.customUniforms;
     if (values && typeof values === "object" && name && typeof values[name] === "string" && values[name].trim()) {
-      return values[name].trim();
+      return values[name].trim().startsWith("gosx:") ? "" : values[name].trim();
     }
     if (material && name && typeof material[name] === "string" && material[name].trim()) {
       return material[name].trim();
@@ -7242,6 +7242,16 @@
     return true;
   }
 
+  function sceneWebGLSelenaEnvironmentSlot(material, texture) {
+    const values = material && material.customUniforms;
+    let ref = values && texture && values[texture.name];
+    if (ref && typeof ref === "object") ref = ref.resource || ref.ref || ref.sceneResource;
+    const slot = typeof ref === "string" && ref.trim().startsWith("gosx:environment:") ? ref.trim().slice(17) : "";
+    if (slot === "brdf-lut" && texture.dimension !== "cube") return slot;
+    if ((slot === "radiance" || slot === "irradiance") && texture.dimension === "cube") return slot;
+    return "";
+  }
+
   function scenePBRPlaceholderCube(gl, textureCache) {
     var key = "\u0000gosx-ibl-placeholder-cube";
     if (textureCache.has(key)) return textureCache.get(key);
@@ -7255,6 +7265,16 @@
     var record = { texture: texture, target: gl.TEXTURE_CUBE_MAP, loaded: true, placeholder: true };
     textureCache.set(key, record);
     return record;
+  }
+
+  function scenePBRPublishEnvironmentIBL(textureCache, env, radiance, irradiance, brdf, mipLevels, status) {
+    status.active = true;
+    status.state = "active";
+    status.radianceMipLevels = mipLevels;
+    textureCache._gosxSelenaEnvironment = {
+      radiance, irradiance, "brdf-lut": brdf,
+      info: [1, Math.max(0, sceneNumber(env.envIntensity, 1)), sceneNumber(env.envRotation, 0), mipLevels - 1],
+    };
   }
 
   function scenePBRUploadEnvironmentMap(gl, uniforms, environment, textureCache, shadowSlots, shadowLightIndices) {
@@ -7278,6 +7298,7 @@
         gl.uniform1i(uniforms.iblRadiance, safeLayout.ibl.radiance);
       }
     }
+    textureCache._gosxSelenaEnvironment = null;
     var hasIBLDescriptor = Boolean(ibl);
     var iblStatus = {
       requested: hasIBLDescriptor,
@@ -7332,9 +7353,7 @@
           var mipLevels = Math.max(1, radianceRecord.levels || radianceDescriptor.mipLevels || 1);
           gl.uniform1f(uniforms.iblRadianceMaxLod, mipLevels - 1);
           gl.uniform1i(uniforms.hasIBL, 1);
-          iblStatus.active = true;
-          iblStatus.state = "active";
-          iblStatus.radianceMipLevels = mipLevels;
+          scenePBRPublishEnvironmentIBL(textureCache, env, radianceRecord, irradianceRecord, brdfRecord, mipLevels, iblStatus);
         } else {
           var allLoaded = [radianceRecord, irradianceRecord, brdfRecord].every(function(record) {
             return record && record.loaded;
@@ -7496,6 +7515,37 @@
         gl.deleteProgram(program.program); gl.deleteShader(program.vertexShader); gl.deleteShader(program.fragmentShader);
       },
     };
+  }
+
+  function sceneWebGLBindSelenaTextures(gl, info, material, textureCache, selenaPlaceholderTexture) {
+    var textures = sceneSelenaTextureDescriptors(info && info.layout);
+    // Selena descriptors own their texture units. A subsequent PBR draw
+    // must rebind its maps even if that material was already uploaded.
+    if (textures.length) textureCache._sceneTextureEpoch++;
+    for (var i = 0; i < textures.length; i++) {
+      var tex = textures[i] || {};
+      var glBinding = tex.gl || {};
+      var loc = gl.getUniformLocation(info.program, glBinding.uniform || tex.name);
+      if (!loc) continue;
+      var unit = Math.max(0, Math.floor(sceneNumber(glBinding.unit, i)));
+      const environmentSlot = sceneWebGLSelenaEnvironmentSlot(material, tex);
+      if (environmentSlot) {
+        const environment = textureCache._gosxSelenaEnvironment;
+        const record = environment && environment[environmentSlot];
+        const cube = environmentSlot !== "brdf-lut";
+        // A samplerCube must never receive a sampler2D placeholder or unit.
+        const placeholder = cube ? scenePBRPlaceholderCube(gl, textureCache).texture : selenaPlaceholderTexture;
+        scenePBRBindTexture(gl, unit, record ? record.texture : placeholder, cube ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D);
+        gl.uniform1i(loc, unit);
+        continue;
+      }
+      var url = sceneSelenaTextureURL(material, tex, i);
+      var record = url ? scenePBRLoadTexture(gl, url, textureCache, null, undefined, undefined) : null;
+      const cube = tex.dimension === "cube";
+      const placeholder = cube ? scenePBRPlaceholderCube(gl, textureCache).texture : selenaPlaceholderTexture;
+      scenePBRBindTexture(gl, unit, record && record.texture ? record.texture : placeholder, cube ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D);
+      gl.uniform1i(loc, unit);
+    }
   }
 
   function createScenePBRRenderer(gl, canvas) {
@@ -8304,7 +8354,7 @@
     var instancedGeometryCache = {};
 
     // Local texture cache for this renderer instance.
-    const textureCache = Object.assign(new Map(), { _sceneTextureEpoch: 0, _gosxGeneration: {
+    const textureCache = Object.assign(new Map(), { _gosxSelenaEnvironment: null as { info: number[]; [slot: string]: any } | null, _sceneTextureEpoch: 0, _gosxGeneration: {
       disposed: false,
       onResourceReady: function() {
         if (canvas && typeof canvas.dispatchEvent === "function") {
@@ -9139,6 +9189,10 @@
         if (name === "sunColor") return sceneSelenaFrameContext.sunColor;
         if (name === "ambient") return sceneSelenaFrameContext.ambient;
       }
+      if (field && field.class === "context" && name === "environmentInfo") {
+        const environment = textureCache._gosxSelenaEnvironment;
+        return environment ? environment.info : [0, 0, 0, 0];
+      }
       var values = material && material.customUniforms;
       if (values && typeof values === "object" && Object.prototype.hasOwnProperty.call(values, name)) {
         return values[name];
@@ -9165,20 +9219,6 @@
       }
     }
 
-    function bindSelenaTextures(gl, info, material) {
-      var textures = sceneSelenaTextureDescriptors(info && info.layout);
-      for (var i = 0; i < textures.length; i++) {
-        var tex = textures[i] || {};
-        var glBinding = tex.gl || {};
-        var loc = gl.getUniformLocation(info.program, glBinding.uniform || tex.name);
-        if (!loc) continue;
-        var unit = Math.max(0, Math.floor(sceneNumber(glBinding.unit, i)));
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var url = sceneSelenaTextureURL(material, tex, i);
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ var record = url ? scenePBRLoadTexture(gl, url, textureCache) : null;
-        scenePBRBindTexture(gl, unit, record && record.texture ? record.texture : selenaPlaceholderTexture);
-        gl.uniform1i(loc, unit);
-      }
-    }
 
     function bindMeshStream(buffer, location, size, data) {
       gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -9831,7 +9871,7 @@
           }
 
           uploadSelenaUniforms(gl, selenaProgram, mat, obj);
-          bindSelenaTextures(gl, selenaProgram, mat);
+          sceneWebGLBindSelenaTextures(gl, selenaProgram, mat, textureCache, selenaPlaceholderTexture);
 
           if (selenaProgram.skinned && obj.skin) {
             uploadSelenaSkinUniforms(gl, selenaProgram, obj);
