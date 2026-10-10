@@ -21,6 +21,7 @@ const (
 	dropDuplicateReference                        // another reference already preserves this URL and kind
 	dropSandboxedExecutable                       // inherited sandbox permission blocks executable sources
 	dropOverriddenFrameSource                     // a present srcdoc replaces iframe src, including empty srcdoc
+	dropInvalidManifest                           // the loader catches invalid JSON on its first ID candidate
 	dropEmptySyntax                               // no CSS/JavaScript instructions to scan
 )
 
@@ -37,7 +38,7 @@ func (out *referenceScanner) drop(reason referenceDropReason) {
 	switch reason {
 	case dropInertHTML, dropInertDataScript, dropExternalScriptBody,
 		dropTemplateContent, dropOpaqueData, dropCSSFragment, dropDormantManifest, dropManifestMetadata,
-		dropNonLoadingSyntax, dropNestedScan, dropDuplicateReference, dropSandboxedExecutable, dropOverriddenFrameSource, dropEmptySyntax:
+		dropNonLoadingSyntax, dropNestedScan, dropDuplicateReference, dropSandboxedExecutable, dropOverriddenFrameSource, dropInvalidManifest, dropEmptySyntax:
 	default:
 		out.Complete = false
 	}

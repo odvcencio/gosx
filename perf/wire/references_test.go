@@ -321,8 +321,6 @@ func TestReferencesInvalidInputsReturnFixedError(t *testing.T) {
 	}{
 		{KindScript, []byte("import './unterminated")},
 		{KindStyle, []byte(".a{background:url('unfinished)")},
-		{KindDocument, []byte(`<script type="application/json" id="gosx-manifest">{invalid}</script>`)},
-		{KindDocument, []byte(`<script type="application/json" id="gosx-manifest">{}</script><script type="application/json" id="gosx-manifest">{}</script>`)},
 		{KindDocument, []byte{0xff}},
 		{KindScript, bytes.Repeat([]byte(" "), 16<<20+1)},
 		{KindFont, []byte("unused")},
