@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"m31labs.dev/gosx/internal/pagecaps"
+	"m31labs.dev/gosx/internal/pagecaps/embeddingtest"
 )
 
 // The reference works on the generated browser declarations, without calling
@@ -23,6 +24,7 @@ import (
 // belong to the embedding occurrence, so different srcdoc copies stay distinct.
 type modelDocument struct {
 	script, event, classic bool
+	element                string
 	frames                 []modelFrame
 }
 type modelFrame struct {
@@ -38,8 +40,29 @@ type modelTreeResult struct {
 }
 
 func renderModelDocument(doc *modelDocument) string {
+	element := modelEmbeddingElement(doc)
 	var body bytes.Buffer
-	body.WriteString("<!doctype html><html><body>")
+	body.WriteString("<!doctype html><html><head>")
+	markup := func(f modelFrame) string {
+		attrs := ""
+		if f.sandbox != nil {
+			attrs += ` sandbox="` + html.EscapeString(*f.sandbox) + `"`
+		}
+		if f.src != "" {
+			attrs += ` src="` + html.EscapeString(f.src) + `"`
+		}
+		if f.inline != nil {
+			attrs += ` srcdoc="` + html.EscapeString(renderModelDocument(f.inline)) + `"`
+		}
+		return element.Markup(attrs)
+	}
+	// Templates live in the head so frameset parsing cannot ignore their opening
+	// tag and accidentally turn an intended inert frame into a live embedding.
+	for _, f := range doc.frames {
+		if f.template {
+			body.WriteString("<template>" + markup(f) + "</template>")
+		}
+	}
 	if doc.script {
 		if doc.classic {
 			body.WriteString(`<script>run()</script>`)
@@ -47,30 +70,40 @@ func renderModelDocument(doc *modelDocument) string {
 			body.WriteString(`<script type="module">run()</script>`)
 		}
 	}
-	if doc.event {
+	body.WriteString("</head>")
+	if element.Frameset {
+		body.WriteString("<frameset")
+		if doc.event {
+			body.WriteString(` onload="run()"`)
+		}
+		body.WriteString(">")
+	} else {
+		body.WriteString("<body>")
+	}
+	if doc.event && !element.Frameset {
 		body.WriteString(`<button onclick="run()">Run</button>`)
 	}
 	for _, f := range doc.frames {
 		if f.template {
-			body.WriteString("<template>")
+			continue
 		}
-		body.WriteString("<iframe")
-		if f.sandbox != nil {
-			fmt.Fprintf(&body, ` sandbox="%s"`, html.EscapeString(*f.sandbox))
-		}
-		if f.src != "" {
-			fmt.Fprintf(&body, ` src="%s"`, html.EscapeString(f.src))
-		}
-		if f.inline != nil {
-			fmt.Fprintf(&body, ` srcdoc="%s"`, html.EscapeString(renderModelDocument(f.inline)))
-		}
-		body.WriteString("></iframe>")
-		if f.template {
-			body.WriteString("</template>")
-		}
+		body.WriteString(markup(f))
 	}
-	body.WriteString("</body></html>")
+	if element.Frameset {
+		body.WriteString("</frameset>")
+	} else {
+		body.WriteString("</body>")
+	}
+	body.WriteString("</html>")
 	return body.String()
+}
+
+func modelEmbeddingElement(doc *modelDocument) embeddingtest.Element {
+	name := doc.element
+	if name == "" {
+		name = "iframe"
+	}
+	return embeddingtest.Lookup(name)
 }
 
 func referenceDocumentTree(docs map[string]*modelDocument) modelTreeResult {
@@ -99,14 +132,15 @@ func referenceDocumentTree(docs map[string]*modelDocument) modelTreeResult {
 				out.execution.InlineAppScriptMax = max(out.execution.InlineAppScriptMax, int64(len("run()")))
 			}
 		}
+		element := modelEmbeddingElement(doc)
 		for i, f := range doc.frames {
 			if f.template {
 				continue
 			}
-			permitted := allowed && (f.sandbox == nil || *f.sandbox == "allow-scripts")
-			if f.inline != nil {
+			permitted := allowed && (!element.Sandbox || f.sandbox == nil || *f.sandbox == "allow-scripts")
+			if element.Srcdoc && f.inline != nil {
 				visit(f.inline, fmt.Sprintf("inline:%s/frame%d", key, i), permitted, depth+1, path)
-			} else if f.src != "" {
+			} else if element.Src && f.src != "" {
 				out.fetched[f.src] = true
 				child, ok := docs[f.src]
 				if !ok || path[f.src] {
@@ -198,7 +232,8 @@ func TestCheckDocumentTreeReferenceCorpus(t *testing.T) {
 		docs := map[string]*modelDocument{"/leaf/": leaf, "/unused/": {script: true}}
 		var branch func(int) *modelDocument
 		branch = func(depth int) *modelDocument {
-			doc := &modelDocument{script: rng.Intn(5) == 0, event: rng.Intn(5) == 0, classic: rng.Intn(2) == 0}
+			doc := &modelDocument{script: rng.Intn(5) == 0, event: rng.Intn(5) == 0, classic: rng.Intn(2) == 0,
+				element: embeddingtest.Elements[rng.Intn(len(embeddingtest.Elements))].Name}
 			if depth == 0 {
 				doc.frames = []modelFrame{{src: "/leaf/"}}
 				return doc
@@ -227,26 +262,29 @@ func TestCheckDocumentTreeReferenceCorpus(t *testing.T) {
 		corpus = append(corpus, docs)
 	}
 	// Fetched and mixed inline/fetched chains reach the documented boundary.
-	for variant := 0; variant < 4; variant++ {
-		docs := map[string]*modelDocument{"/counter/": {}, "/unused/": {script: true}}
-		current := docs["/counter/"]
-		for depth := 1; depth <= pagecaps.MaxSrcdocDepth; depth++ {
-			next := &modelDocument{}
-			frame := modelFrame{}
-			if variant >= 2 && depth%2 == 0 {
-				frame.inline = next
-			} else {
-				frame.src = fmt.Sprintf("/d%02d/", depth)
-				docs[frame.src] = next
+	for _, element := range embeddingtest.Elements {
+		for variant := 0; variant < 4; variant++ {
+			docs := map[string]*modelDocument{"/counter/": {}, "/unused/": {script: true}}
+			current := docs["/counter/"]
+			for depth := 1; depth <= pagecaps.MaxSrcdocDepth; depth++ {
+				next := &modelDocument{}
+				current.element = element.Name
+				frame := modelFrame{}
+				if variant >= 2 && depth%2 == 0 && element.Srcdoc {
+					frame.inline = next
+				} else {
+					frame.src = fmt.Sprintf("/d%02d/", depth)
+					docs[frame.src] = next
+				}
+				if variant%2 == 1 && depth == 1 {
+					frame.sandbox = &blocked
+				}
+				current.frames = []modelFrame{frame}
+				current = next
 			}
-			if variant%2 == 1 && depth == 1 {
-				frame.sandbox = &blocked
-			}
-			current.frames = []modelFrame{frame}
-			current = next
+			current.script, current.event = true, true
+			corpus = append(corpus, docs)
 		}
-		current.script, current.event = true, true
-		corpus = append(corpus, docs)
 	}
 	// Inline occurrence identities must not collide with fetched URL identities.
 	corpus = append(corpus, map[string]*modelDocument{

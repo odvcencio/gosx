@@ -146,7 +146,14 @@ func measureCorpusReport(t *testing.T, dir string, info PublicInfo, snippet stri
 
 func measureCorpusDocuments(t *testing.T, dir string, info PublicInfo, rootSnippet, childSnippet string, normalize bodyNormalizer) AppReport {
 	t.Helper()
-	wrap := func(content string) []byte { return []byte("<!doctype html><html><body>" + content + "</body></html>") }
+	wrap := func(content string) []byte {
+		// Frameset fixtures are complete documents: putting them inside an
+		// existing body makes the HTML tree builder discard their frames.
+		if strings.HasPrefix(content, "<!doctype html>") {
+			return []byte(content)
+		}
+		return []byte("<!doctype html><html><body>" + content + "</body></html>")
+	}
 	root, child := wrap(rootSnippet), wrap(childSnippet)
 	caps, err := pagecaps.FromHTML(root)
 	if err != nil {

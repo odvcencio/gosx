@@ -46,6 +46,10 @@ type DocumentTree struct {
 // A false found result keeps the tree incomplete. It never grants execution.
 type DocumentLoader func(base, reference string) (body []byte, resolved string, found bool, err error)
 
+// Keep walker membership explicit so the independent spec-backed embedding
+// test table must cover every supported element.
+var documentEmbeddingElements = map[string]bool{"iframe": true, "frame": true}
+
 // ParseDocumentTree models live documents with a maximum of 32 embedding
 // crossings and 4096 occurrences. An unresolved fetched tree is incomplete;
 // an over-depth executable inline tree without a loader remains an input error.
@@ -71,10 +75,10 @@ func ParseDocumentTree(body []byte, documentURL string, load DocumentLoader) (*D
 		doc := &Document{Root: root, Body: data, URL: u, Key: key, Depth: depth, ScriptsAllowed: allowed, Inline: inline, sources: readScriptSources(data), embeddings: map[*html.Node]*DocumentFrame{}}
 		tree.Documents = append(tree.Documents, doc)
 		if err := doc.Walk(func(n *html.Node, attrs map[string]string, _ int) error {
-			if n.Type != html.ElementNode || n.Namespace != "" || n.Data != "iframe" && n.Data != "frame" {
+			if n.Type != html.ElementNode || n.Namespace != "" || !documentEmbeddingElements[n.Data] {
 				return nil
 			}
-			frame := &DocumentFrame{Element: n, ScriptsAllowed: allowed && scriptsAllowed(attrs)}
+			frame := &DocumentFrame{Element: n, ScriptsAllowed: allowed && (n.Data != "iframe" || scriptsAllowed(attrs))}
 			ordinal := len(doc.Frames)
 			doc.Frames = append(doc.Frames, frame)
 			doc.embeddings[n] = frame
