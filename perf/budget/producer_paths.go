@@ -9,7 +9,8 @@ import (
 )
 
 type producerPublicFile struct {
-	id, kind, source, url, target string
+	source, target string
+	assetIndex     int
 }
 
 // preflightProducerPaths runs before the first snapshot write. It reserves

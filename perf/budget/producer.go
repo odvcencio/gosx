@@ -30,6 +30,23 @@ type ProducerOptions struct {
 	Client                           *http.Client            `json:"-"`
 }
 
+type producerAssetRule struct {
+	ID           string   `json:"id"`
+	Owner        string   `json:"owner"`
+	Kind         string   `json:"kind"`
+	Phase        string   `json:"phase"`
+	Condition    string   `json:"condition"`
+	Dependencies []string `json:"dependencies"`
+}
+
+func (rule producerAssetRule) assetUse(url string) buildmanifest.PerfAssetUse {
+	// Only graph metadata is validated at preflight. Body verification replaces
+	// this provisional hash before the manifest can be serialized or published.
+	return buildmanifest.PerfAssetUse{ID: rule.ID, SHA256: strings.Repeat("0", 64), URL: url,
+		Owner: rule.Owner, Kind: rule.Kind, Phase: rule.Phase, Condition: rule.Condition,
+		Dependencies: append([]string{}, rule.Dependencies...)}
+}
+
 // ProduceFixture writes the private fixture contract and returns its independent
 // producer proof. Callers retain that proof outside the manifest when collecting.
 func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
@@ -50,8 +67,8 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		return "", inputReference(err, "producer", "/catalog")
 	}
 	var catalog struct {
-		Routes     []FixtureRoute                     `json:"routes"`
-		AssetRules []struct{ ID, Owner, Kind string } `json:"assetRules"`
+		Routes     []FixtureRoute      `json:"routes"`
+		AssetRules []producerAssetRule `json:"assetRules"`
 	}
 	var checked json.RawMessage
 	if err := decodeInput(data, "FixtureCatalog", &checked); err != nil {
@@ -77,8 +94,10 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	}
 	sort.Slice(routes, func(i, j int) bool { return routes[i].RouteTemplate < routes[j].RouteTemplate })
 	allowed := map[string]string{}
+	rules := map[string]producerAssetRule{}
 	for _, r := range catalog.AssetRules {
 		allowed[r.ID] = r.Owner + "|" + r.Kind
+		rules[r.ID] = r
 	}
 	base, err := url.Parse(opts.BaseURL)
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" || base.User != nil || base.RawQuery != "" || base.Fragment != "" {
@@ -146,12 +165,14 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if err != nil {
 			return "", fail("/public/destination")
 		}
-		public = append(public, producerPublicFile{rule.ID, rule.Kind, relative, urlPath, target})
+		// Plan the complete graph before publishing bodies.
+		public = append(public, producerPublicFile{source: relative, target: target, assetIndex: len(manifest.Assets)})
+		manifest.Assets = append(manifest.Assets, rule.assetUse(urlPath))
 		seen[rule.ID] = true
 	}
 	// Validate all document identities before writing any snapshot, including
 	// public files. A document is app-owned just like a build or public body.
-	documents := map[string]string{}
+	documents := map[string]int{}
 	for _, route := range routes {
 		id := ""
 		for _, critical := range route.CriticalAssetIDs {
@@ -165,8 +186,22 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if !strings.HasPrefix(id, "app/"+opts.App+"/") || seen[id] {
 			return "", fail("/routes/document")
 		}
-		documents[route.RouteTemplate] = id
+		documents[route.RouteTemplate] = len(manifest.Assets)
+		manifest.Assets = append(manifest.Assets, rules[id].assetUse(route.RouteTemplate))
 		seen[id] = true
+	}
+	// Every edge must name an emitted identity already checked against the app
+	// and ownership rules above. Validate missing edges, cycles and conditions
+	// on the combined build/public/document graph before the first output write.
+	if err := (&buildmanifest.Manifest{PerfAssetUses: &buildmanifest.PerfAssetUses{Version: 1, Assets: manifest.Assets}}).ValidatePerfAssetUses(); err != nil {
+		return "", fail("/assets/dependencies")
+	}
+	for _, route := range routes {
+		for _, id := range route.CriticalAssetIDs {
+			if !seen[id] {
+				return "", fail("/routes/criticalAssetIDs")
+			}
+		}
 	}
 	protection, err := preflightProducerPaths(root, opts, routes, public)
 	if err != nil {
@@ -177,6 +212,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if err != nil {
 			return "", fail("/public/body")
 		}
+		manifest.Assets[entry.assetIndex].SHA256 = producerHash(body)
 		// Measurement paths are rooted in the fixture directory. Copy public bodies
 		// there while leaving the production server's own public tree intact.
 		if err := writeProducerFile(root, protection, entry.target, body); err != nil {
@@ -185,7 +221,6 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if err := copyProducerSidecars(root, protection, entry.source, entry.target, body); err != nil {
 			return "", err
 		}
-		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: entry.id, SHA256: producerHash(body), URL: entry.url, Owner: "app", Kind: entry.kind, Phase: "dormant", Condition: "always", Dependencies: []string{}})
 	}
 	for _, route := range routes {
 		if !validRoute(route.RouteTemplate) || strings.ContainsAny(route.RouteTemplate, "[]") {
@@ -216,7 +251,7 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if !bytes.Equal(observed, declared) || classErr != nil || !fixtureCoversTypes(route.PageTypes, families) {
 			return "", fail("/routes/capabilities")
 		}
-		id := documents[route.RouteTemplate]
+		manifest.Assets[documents[route.RouteTemplate]].SHA256 = producerHash(body)
 		file, err := fixtureFilePath(route.RouteTemplate, "html")
 		if err != nil {
 			return "", fail("/routes/document")
@@ -240,7 +275,6 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		} else if !os.IsNotExist(err) {
 			return "", fail("/routes/document")
 		}
-		manifest.Assets = append(manifest.Assets, buildmanifest.PerfAssetUse{ID: id, SHA256: producerHash(body), URL: route.RouteTemplate, Owner: "app", Kind: "html", Phase: "critical", Condition: "always", Dependencies: []string{}})
 	}
 	sort.Slice(manifest.Assets, func(i, j int) bool { return manifest.Assets[i].ID < manifest.Assets[j].ID })
 	digest, err := FixtureManifestSHA256(manifest)
