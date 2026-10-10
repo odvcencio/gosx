@@ -523,23 +523,6 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 	return result, nil
 }
 
-// HTML's first base href sets the document API base, including inline scripts
-// and styles. Modules and external stylesheets retain their own final URL.
-func documentReferenceBase(final string, refs wire.ReferenceSet) string {
-	if !refs.HasBaseHref {
-		return final
-	}
-	parent, err := url.Parse(final)
-	if err != nil {
-		return ""
-	}
-	href, err := url.Parse(strings.Trim(refs.BaseHref, " \t\r\n\f"))
-	if err != nil {
-		return ""
-	}
-	return parent.ResolveReference(href).String()
-}
-
 func referenceURLBase(ref wire.Reference, source, root string, environment referenceEnvironment, finals map[string]string) string {
 	switch ref.Base {
 	case wire.ReferenceBaseSource:

@@ -32,7 +32,6 @@ type HTMLMeasurement struct {
 	ExecutableScripts     int64
 	full                  []byte
 	withoutFramework      []byte
-	executable            bool
 	SyncExecutableScripts int64
 	ExecutableSources     int64
 	InlineAppScriptBytes  int64
@@ -145,7 +144,6 @@ func measureHTML(body []byte, opts HTMLMeasureOptions, normalize bodyNormalizer)
 	result.InlineAppScriptMax = execution.InlineAppScriptMax
 	result.InlineAppScriptBytes = execution.InlineAppScriptBytes
 	result.inlineFramework = execution.inlineFramework
-	result.executable = execution.ExecutableSources > 0
 	var edits []htmlSourceEdit
 	for _, item := range classified.starts {
 		raw := body[item.start:item.end]

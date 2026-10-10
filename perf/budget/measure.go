@@ -116,18 +116,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			return result, measureFailure("wrong-fixture", "/manifest/assets/body")
 		}
 		byURL[use.URL] = len(fixtures)
-		phase := "startup"
-		if use.Phase == "critical" || use.Kind == "html" {
-			phase = "critical"
-		}
-		fixtures = append(fixtures, fixtureBody{id: use.ID, ids: []string{}, sha: use.SHA256, url: use.URL, owner: use.Owner, kind: use.Kind, phase: phase, condition: use.Condition, dependencies: append([]string{}, use.Dependencies...), body: body, representations: representations, sizes: sizes})
+		fixtures = append(fixtures, fixtureBody{id: use.ID, ids: []string{}, sha: use.SHA256, url: use.URL, owner: use.Owner, kind: use.Kind, condition: use.Condition, dependencies: append([]string{}, use.Dependencies...), body: body, representations: representations, sizes: sizes})
 	}
 	for _, use := range uses {
 		fixture := &fixtures[byURL[use.URL]]
 		fixture.ids = append(fixture.ids, use.ID)
-		if use.Phase == "critical" {
-			fixture.phase = "critical"
-		}
 		bodies[use.ID] = fixture.body
 	}
 
@@ -418,22 +411,17 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	return result, nil
 }
 
-func documentURLMatches(responseURL, declaredURL string) bool {
-	parsed, err := url.Parse(responseURL)
-	return err == nil && parsed.Path == declaredURL
-}
-
 func documentZeroJS(caps pagecaps.Capabilities) bool {
 	return !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion
 }
 
 type fixtureBody struct {
-	id, sha, url, owner, kind, phase, condition string
-	ids                                         []string
-	dependencies                                []string
-	body                                        []byte
-	representations                             map[string][]byte
-	sizes                                       assetmeasure.Sizes
+	id, sha, url, owner, kind, condition string
+	ids                                  []string
+	dependencies                         []string
+	body                                 []byte
+	representations                      map[string][]byte
+	sizes                                assetmeasure.Sizes
 }
 
 func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][]byte, error) {

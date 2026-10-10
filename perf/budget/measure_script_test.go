@@ -176,9 +176,9 @@ func TestMeasureExecutableTreeAgreementCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if (caps.Runtime != "none") != measured.executable {
+			if (caps.Runtime != "none") != (measured.ExecutableSources > 0) {
 				disagreements++
-				t.Errorf("executable verdict differs: capabilities=%s measured=%t scripts=%d", caps.Runtime, measured.executable, measured.ExecutableScripts)
+				t.Errorf("executable verdict differs: capabilities=%s sources=%d scripts=%d", caps.Runtime, measured.ExecutableSources, measured.ExecutableScripts)
 			}
 		})
 	}
