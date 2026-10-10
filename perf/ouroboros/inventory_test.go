@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -302,6 +303,11 @@ func TestOverlayArtifactsPreserveUntrackedModes(t *testing.T) {
 	if err := os.Chmod(filepath.Join(root, "scripts/probe-tool.sh"), 0o755); err != nil {
 		t.Fatalf("chmod probe tool: %v", err)
 	}
+	sourceInfo, err := os.Stat(filepath.Join(root, "scripts/probe-tool.sh"))
+	if err != nil {
+		t.Fatalf("stat source tool: %v", err)
+	}
+	wantMode := fmt.Sprintf("%04o", sourceInfo.Mode().Perm())
 	inv, err := Collect(context.Background(), CollectOptions{RepoRoot: root, Git: true, Canopy: false})
 	if err != nil {
 		t.Fatalf("Collect: %v", err)
@@ -310,8 +316,8 @@ func TestOverlayArtifactsPreserveUntrackedModes(t *testing.T) {
 		t.Fatalf("untracked sources = %+v", inv.Overlay.UntrackedSources)
 	}
 	src := inv.Overlay.UntrackedSources[0]
-	if src.Mode != "0755" || src.Type != "file" {
-		t.Fatalf("mode/type = %s/%s, want 0755/file", src.Mode, src.Type)
+	if src.Mode != wantMode || src.Type != "file" {
+		t.Fatalf("mode/type = %s/%s, want %s/file", src.Mode, src.Type, wantMode)
 	}
 	artifactDir := filepath.Join(root, "build", "o02")
 	if err := WriteOverlayArtifacts(context.Background(), root, artifactDir, inv.Overlay); err != nil {
@@ -321,8 +327,8 @@ func TestOverlayArtifactsPreserveUntrackedModes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat archived tool: %v", err)
 	}
-	if info.Mode().Perm() != 0o755 {
-		t.Fatalf("archived mode = %v, want 0755", info.Mode().Perm())
+	if info.Mode().Perm() != sourceInfo.Mode().Perm() {
+		t.Fatalf("archived mode = %v, want %v", info.Mode().Perm(), sourceInfo.Mode().Perm())
 	}
 }
 

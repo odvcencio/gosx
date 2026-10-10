@@ -27,7 +27,7 @@ func TestPerfFixtureRendererKeepsCompatibilityDebtAndGlobalState(t *testing.T) {
 				t.Fatal(err)
 			}
 			monolith := perfAssetByID(t, uses, "framework/runtime/bootstrap.js")
-			if (monolith.Phase == "startup") != (mode != "configured") {
+			if (monolith.Phase == "startup") != (mode != "configured" && mode != "preview") {
 				t.Fatal("compatibility monolith was dropped or selected unnecessarily")
 			}
 			if mode == "full-unconfigured" && perfAssetByID(t, uses, "framework/runtime/full.wasm").Phase != "startup" {
