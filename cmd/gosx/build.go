@@ -59,6 +59,7 @@ type BuildOptions struct {
 // key. The change that adds a chunk file appends its row here.
 var runtimeFeatureChunks = []struct{ name, role string }{
 	{"browser-services", "engines"},
+	{"workbench", "workbench"},
 }
 
 type wasmCompiler string

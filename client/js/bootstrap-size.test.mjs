@@ -746,6 +746,8 @@ const budgets = [
     // Wave 1 M1 (#557): island gesture events (decision 0014 exception,
     // owner-approved 2026-10-08 at +539 raw). Measured 1911072 / 524570 / 432280,
     // +390 raw over main's 1910682. Targets stay at the approved figures.
+    // Wave 1 M2: exact controller chords. Measured 1924165 / 529134 / 435804;
+    // delta +199 / +81 / +178. Existing hard limits cover the change.
     file: "bootstrap.js", raw: 1862400, gzip: 524100,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 432800 },
@@ -1630,6 +1632,8 @@ const budgets = [
   // chunk. Measured: 103_662 / 31_450 / 27_897.
   { file: "bootstrap-feature-engines.js", raw: 109773, gzip: 32481, brotli: 28771 },
   // New split controller host chunk. Measured: 9_390 / 3_103 / 2_759.
+  // Wave 1 M2: exact chords and anyModifiers. Measured: 14481 / 4002 / 3663;
+  // delta +199 / +86 / +100. Existing hard limits cover the change.
   { file: "bootstrap-feature-controllers.js", raw: 15220, gzip: 3989, brotli: 3572 },
   // Optional projected intents, drag/drop, and modal focus. Loaded only for
   // configured input contracts: storage: measured 7_630 / 2_928 / 2_655.
@@ -1648,6 +1652,9 @@ const budgets = [
   // +390 / +185 / +177 over main's 18766 / 4392 / 4005; targets are the
   // measurement rounded up to 100 bytes.
   { file: "bootstrap-feature-islands.js", raw: 19200, gzip: 4600, brotli: 4200 },
+  // Wave 1 M2: opt-in commands. Measured: 4437 / 1976 / 1777.
+  // Targets are measured bytes plus 10 percent, rounded up to 100 bytes.
+  { file: "bootstrap-feature-workbench.js", raw: 4900, gzip: 2200, brotli: 2000 },
 ];
 
 const routeBudgets = [

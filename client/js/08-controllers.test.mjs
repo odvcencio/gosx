@@ -157,6 +157,41 @@ export function createContext(options = {}) {
   return { context, writes, timers, document, button, storage, aborts, sharedValues, subscribers };
 }
 
+test("keys match exact chords, with symbol Shift and anyModifiers exceptions", async () => {
+  const env = createContext();
+  await env.context.window.__test_mountAllControllers({ controllers: [{ id: "keys", config: { keys: [
+    { key: "z", modifiers: ["ctrl"], output: "$undo" },
+    { key: "z", modifiers: ["ctrl"], anyModifiers: true, output: "$undoAny" },
+    { key: "?", output: "$help" },
+    { key: "+", modifiers: ["shift"], output: "$plus" },
+    { key: " ", output: "$space" },
+    { code: "KeyK", modifiers: ["command"], output: "$code" },
+  ] } }] });
+  const press = fields => env.document.dispatchEvent({ type: "keydown", preventDefault() {}, ...fields });
+  press({ key: "z", ctrlKey: true, shiftKey: true });
+  assert.equal(env.sharedValues.has("$undo"), false, "Ctrl+Shift+Z must not fire Ctrl+Z");
+  assert.equal(env.sharedValues.get("$undoAny").kind, "key");
+  press({ key: "z", ctrlKey: true });
+  assert.equal(env.sharedValues.get("$undo").kind, "key");
+  for (const modifier of ["altKey", "metaKey"]) {
+    env.sharedValues.delete("$undo");
+    press({ key: "z", ctrlKey: true, [modifier]: true });
+    assert.equal(env.sharedValues.has("$undo"), false, modifier);
+  }
+  press({ key: "?", shiftKey: true });
+  assert.equal(env.sharedValues.get("$help").kind, "key");
+  press({ key: "+" });
+  assert.equal(env.sharedValues.has("$plus"), false, "explicit Shift is required");
+  press({ key: "+", shiftKey: true });
+  assert.equal(env.sharedValues.get("$plus").kind, "key");
+  press({ key: " ", shiftKey: true });
+  assert.equal(env.sharedValues.has("$space"), false, "Space is not a symbol");
+  press({ code: "KeyK", metaKey: true, shiftKey: true });
+  assert.equal(env.sharedValues.has("$code"), false, "code-only bindings are exact");
+  press({ code: "KeyK", metaKey: true });
+  assert.equal(env.sharedValues.get("$code").kind, "key");
+});
+
 for (const nextPage of [false, true]) {
   test(`page disposal cancels a delayed controller mount (next page: ${nextPage})`, async () => {
     const env = createContext({ inputPath: "/gosx/bootstrap-controller-input.js" });

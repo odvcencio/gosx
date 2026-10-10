@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Match controller key chords exactly by default: Ctrl+Shift+Z no longer fires a
+  Ctrl+Z binding. Add a second binding or set `AnyModifiers: true` to retain
+  subset matching. Unlisted Shift remains allowed for single symbol keys such
+  as `?` and `+`; letters, digits and Space retain exact matching.
+- Add the `command` package, `hydrate.Manifest.Commands` and
+  `server.PageRuntime.Commands`. The opt-in workbench chunk dispatches exact
+  platform-aware chords, checks shared signal conditions, handles reserved
+  commands, and connects command buttons to actions and `aria-keyshortcuts`.
+- Bootstrap pages that require feature chunks even without islands, engines,
+  hubs or controllers, using the selective core loader and required chunks.
+- Add `desktop.MenuItem.Accelerator` as a menu shortcut display label. Page
+  commands handle keystrokes; the label installs no native accelerator table.
+
 ## v0.57.9
 
 - Keep presentation-only browser engines dependency-light: finite scene
