@@ -73,6 +73,8 @@ type lowerer struct {
 	structTypes  map[string]map[string]string
 	strictServer bool
 
+	scalarTypeShadows map[string]bool
+
 	// legacyProps records every legacy (func-spelled) renderer's declared
 	// props type text, and typedLegacyProps the subset whose base type is a
 	// struct declared in this same .gsx file (gosx#240). A name in
@@ -513,7 +515,37 @@ func (l *lowerer) analyzeBody(funcDecl, bodyNode *gotreesitter.Node) *ComponentS
 		}
 	}
 
-	// Only return scope if we found anything
+	propsName, propsType := l.extractProps(funcDecl)
+	if propsName == "props" {
+		scope.SourcePropsPaths = make(map[string]string)
+		sources := []string{}
+		for _, s := range scope.Signals {
+			sources = append(sources, s.InitExpr)
+		}
+		for _, c := range scope.Computeds {
+			sources = append(sources, c.BodyExpr)
+		}
+		for _, h := range scope.Handlers {
+			sources = append(sources, h.Statements...)
+		}
+		for _, source := range sources {
+			for _, path := range strictcomponent.ServerExpressionPropPaths(source) {
+				result := l.walkStrictHops("props", propsBaseType(propsType), path)
+				if result.failKind == strictHopOK && !l.scalarTypeShadows[result.leafType] {
+					scope.SourcePropsPaths[strings.Join(path, ".")] = result.leafType
+				}
+			}
+		}
+		for i := range scope.Signals {
+			if scope.Signals[i].SourceType != "" {
+				continue
+			}
+			if path, ok := strictcomponent.ServerPropPath(scope.Signals[i].InitExpr); ok {
+				scope.Signals[i].SourceType = scope.SourcePropsPaths[strings.Join(path, ".")]
+			}
+		}
+	}
+	// Only return scope if we found anything.
 	if len(scope.Signals) == 0 && len(scope.Computeds) == 0 && len(scope.Handlers) == 0 {
 		return nil
 	}
@@ -675,10 +707,11 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 	case signalCallNew:
 		initExpr := l.extractArg(argsNode, 0)
 		return SignalInfo{
-			Name:     varName,
-			Local:    varName,
-			InitExpr: initExpr,
-			TypeHint: l.inferTypeHint(initExpr),
+			Name:       varName,
+			Local:      varName,
+			InitExpr:   initExpr,
+			TypeHint:   l.inferTypeHint(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	case signalCallNewShared, signalCallShared:
 		sharedName := l.normalizeSharedSignalName(l.extractArg(argsNode, 0))
@@ -687,10 +720,11 @@ func (l *lowerer) signalInfoForAssignedExpr(varName string, rightExpr *gotreesit
 			return SignalInfo{}, false
 		}
 		return SignalInfo{
-			Name:     sharedName,
-			Local:    varName,
-			InitExpr: initExpr,
-			TypeHint: l.inferTypeHint(initExpr),
+			Name:       sharedName,
+			Local:      varName,
+			InitExpr:   initExpr,
+			TypeHint:   l.inferTypeHint(initExpr),
+			SourceType: l.signalSourceType(rightExpr, initExpr),
 		}, true
 	default:
 		return SignalInfo{}, false
@@ -707,9 +741,42 @@ func (l *lowerer) computedInfoForAssignedExpr(varName string, rightExpr *gotrees
 		l.errorf(rightExpr, "computed %q: %v", varName, err)
 	}
 	return ComputedInfo{
-		Name:     varName,
-		BodyExpr: bodyExpr,
+		Name:       varName,
+		BodyExpr:   bodyExpr,
+		ReturnType: l.computedSourceType(argsNode),
 	}, true
+}
+
+func (l *lowerer) signalSourceType(call *gotreesitter.Node, source string) string {
+	if types := l.childByField(call, "type_arguments"); types != nil {
+		// An explicit type controls the signal's Go type. Preserve its spelling
+		// for diagnostics. The host checker resolves the actual type.
+		if types.NamedChildCount() != 1 {
+			return ""
+		}
+		return strings.TrimSpace(l.text(types.NamedChild(0)))
+	}
+	source = strings.TrimSpace(source)
+	if strings.HasPrefix(source, "'") {
+		return "rune"
+	}
+	return l.inferTypeHint(source)
+}
+
+func (l *lowerer) computedSourceType(args *gotreesitter.Node) string {
+	for i := 0; i < int(args.NamedChildCount()); i++ {
+		fn := args.NamedChild(i)
+		if l.nodeType(fn) == "func_literal" {
+			if result := l.childByField(fn, "result"); result != nil {
+				name := l.text(result)
+				if l.scalarTypeShadows[name] {
+					return ""
+				}
+				return name
+			}
+		}
+	}
+	return ""
 }
 
 func (l *lowerer) handlerInfoForAssignedExpr(varName string, rightExpr *gotreesitter.Node) (HandlerInfo, bool) {
@@ -1119,6 +1186,7 @@ func (l *lowerer) lowerSourceFile(root *gotreesitter.Node) {
 			l.lowerImportDecl(child)
 		}
 	}
+	l.collectAOTBindings(root)
 	l.collectStrictSchemas(root)
 	for i := 0; i < int(root.NamedChildCount()); i++ {
 		child := root.NamedChild(i)
@@ -1533,6 +1601,13 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 		if l.nodeType(node) == "type_spec" {
 			nameNode := l.childByField(node, "name")
 			typeNode := l.childByField(node, "type")
+			if nameNode != nil && strictRendererScalarType(l.text(nameNode)) {
+				if l.scalarTypeShadows == nil {
+					l.scalarTypeShadows = make(map[string]bool)
+				}
+				l.scalarTypeShadows[l.text(nameNode)] = true
+				l.prog.aotScalarShadows = l.scalarTypeShadows
+			}
 			if nameNode == nil || typeNode == nil || l.nodeType(typeNode) != "struct_type" {
 				return
 			}

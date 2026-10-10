@@ -17,6 +17,7 @@
  * @typedef {object} GoSXHostNamespace
  * @property {object} [compatibility]
  * @property {object} [patch]
+ * @property {object} [requests] - Scoped request policies.
  *
  * @typedef {object} GoSXBrowserNamespace
  * @property {GoSXHostNamespace} [host]

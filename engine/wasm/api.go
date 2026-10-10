@@ -5,6 +5,12 @@
 // Each module is booted once per exact URL, while its registered factories may
 // create any number of independent engine instances. Register every component
 // during synchronous startup and keep main alive while its instances are in use.
+//
+// Context exposes shared signals, navigation, and mounted Scene3D commands.
+// Reads and writes are scoped to the exact live engine instance. Cancel the
+// context supplied to asynchronous scene/navigation operations and dispose
+// subscriptions from the engine Handle; PlayFrames and TransitionCamera then
+// release their frame callbacks and pause naturally while the page is hidden.
 package wasm
 
 import (
@@ -54,3 +60,25 @@ func SubscribeSignal[T any](ctx Context, name string, handler func(T)) (HandleFu
 		}
 	})
 }
+
+// ReadSignal decodes the current shared signal. A missing signal returns
+// ErrSignalNotFound; malformed values are reported rather than silently coerced.
+func ReadSignal[T any](ctx Context, name string) (T, error) {
+	var value T
+	data, err := ctx.SignalJSON(name)
+	if err == nil {
+		err = json.Unmarshal(data, &value)
+	}
+	return value, err
+}
+
+// NavigationOptions selects enhanced navigation behavior. The framework uses
+// a full document navigation when enhancement is unavailable.
+type NavigationOptions struct {
+	Replace    bool `json:"replace,omitempty"`
+	Force      bool `json:"force,omitempty"`
+	Revalidate bool `json:"revalidate,omitempty"`
+}
+
+// ErrSignalNotFound reports an unavailable shared signal.
+var ErrSignalNotFound = errors.New("shared signal is unavailable")

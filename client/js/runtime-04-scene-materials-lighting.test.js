@@ -2737,3 +2737,12 @@ test("bootstrap prepares Scene3D pass plans and cached buffers through shared pl
   assert.equal(largeHandle.id, "large");
   assert.equal(owner.gpuBuffer, largeHandle);
 });
+
+test("standard material commands use the SceneIR solid default", async () => {
+  const env = createContext({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+  assert.equal(api.normalizeSceneObject({id:"bone",kind:"gltf-mesh",materialKind:"standard"},0).wireframe,false);
+  assert.equal(api.normalizeSceneObject({id:"outline",kind:"cube",materialKind:"standard",wireframe:true},0).wireframe,true);
+});

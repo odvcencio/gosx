@@ -2,6 +2,252 @@
 
 ## Unreleased
 
+## v0.57.9
+
+- Keep presentation-only browser engines dependency-light: finite scene
+  playback uses `game/host` directly, and geometry asset HTTP serving compiles
+  only for native targets. This removes unintended game-driver and HTTP/TLS
+  dependencies from authored browser WASM modules. Native geometry handler
+  behavior is unchanged; browser code should use the geometry asset data APIs.
+- Add a transitive browser import-graph test that prevents game-driver and
+  server dependencies from returning through engine adapters.
+
+## v0.57.8
+
+- Add typed browser DOM, lazy event access, timers, attribute observers,
+  cancellable fetch, navigation, clipboard, fullscreen, telemetry consent and
+  desktop services in `client/browser`. `engine/wasm.Context.MountElement`
+  exposes a typed engine mount. Owned listeners and timers have explicit
+  disposal; native request guards do not call Go on every network request.
+- Add explicit local/session storage with denied-access and bounded-key
+  snapshot handling, plus a dependency-light `hub/socket` browser transport
+  shared by `hub/client`. Binary message bytes are borrowed during callbacks
+  and reuse receive storage; callers must copy before retaining them.
+- Add dependency-light `game/audio/host` with typed gain/filter/panner/delay
+  automation and offset playback. Existing `game/audio` constructors remain
+  compatible. Closing a host cancels asynchronous waits and releases owned
+  voices without changing scheduled loop boundaries.
+- Add typed server telemetry preloads and desktop host startup/recovery
+  bootstraps. Applications supply consent, message names and presentation as
+  data. GoSX owns origin checks, single-flight polling, retry/navigation,
+  safe script encoding and unload cleanup.
+- Add `scene.Surface` and `scene.StreamWriter` for retained browser mounts.
+  Instance streams reuse Go and JavaScript buffers, reject reentrant writes,
+  refresh mount handles after recovery, and preload the shared codec without
+  fabricated geometry. `InstanceStreamFrame.EncodeInto` preserves the existing
+  wire format with zero steady-state allocations.
+- Build configured standard-Go application WASM modules with production
+  stripping, hashed artifacts, compression sidecars and a matching loader.
+  `gosx build --prod --go-wasm-only --output <dir>` runs this module pipeline
+  without rebuilding the framework runtime, server or unrelated assets.
+
+## v0.57.7
+
+- Stop the shared gamepad provider's idle polling when controllers are absent
+  or the document is hidden. Clear stale button and axis signals on disconnect,
+  visibility loss, and disposal; connection and visibility events wake polling.
+
+- Retain WebGPU detail resources while atlas pipelines validate. Scenes with
+  detailed materials now resume rendering after validation instead of allocating
+  a new atlas and pipeline on every frame without presenting to the canvas.
+
+- Add dependency-light `game/host` browser frame and gamepad adapters for
+  presentation-only WASM engines. Existing `game/loop` and `game/gamepad`
+  adapters remain compatible aliases; using the host adapters directly avoids
+  importing the server game runtime and compiler into browser modules.
+
+- Add manifest-driven runtime feature chunks. A page names an opt-in chunk with
+  `hydrate.Manifest.RequireFeature`, `island.Renderer.RequireFeature` or
+  `server.PageRuntime.RequireFeature`; the manifest carries it in `features`,
+  `build.json` records it under `runtime.features`, and the document contract
+  publishes a flat `bootstrapFeature<Name>Path` key for it (`engine-bridge`
+  becomes `bootstrapFeatureEngineBridgePath`; the six existing chunk keys are
+  unchanged). The browser loader derives the key from the name, fetches the
+  chunk once, and hands it the feature API, which now includes
+  `ensureBootstrapFeature`. `gosx build`, `gosx export`, `gosx dev` and the
+  runtime asset server serve any `bootstrap-feature-<name>.js` listed in
+  `runtime.features`. `island.Renderer.FeaturePaths()`,
+  `server.PageRuntime.FeaturePaths()` and `server.DocumentContext.FeaturePaths`
+  expose the chunk URLs; `island.Summary` and `server.PageRuntimeSummary` are
+  unchanged and stay comparable with `==`.
+- Add `api.registerCapabilityProbe(name, fn)` to the feature API. A feature chunk
+  can answer a `requiredCapabilities` name the runtime does not know. An unknown
+  name with no probe stays unsupported and is not cached, so a probe that
+  registers later takes effect.
+- Add inert core seams that later chunks switch on: `window.__gosx.editQueue`
+  (used for `data-gosx-queue` forms and actions, and the `queue` option of
+  `submitAction`), `window.__gosx.editConflict` (a hook for 409 responses to
+  managed forms), `window.__gosx.goWASMBootToken` (set only while a Go-WASM
+  module runs its registration phase), and an engine `toolchain` pick of
+  `window.__gosx.tinyGoWASMCtor`. Without those hooks, behavior does not change.
+- Owner-approved one-time M0 core change: `bootstrap-runtime.js` grows by 403 B
+  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 318 B.
+  The video selective runtime route budget rises from 288,689 to 289,289 raw and
+  from 73,139 to 73,439 brotli, and the `/demos/scene3d/` `jsWireBytes` wire
+  budget rises from 258,118 to 260,973 and the scaffold `/counter/` `jsWireBytes`
+  wire budget from 87,617 to 87,942; no other size budget changes.
+- `RequireFeature` rejects a name whose contract key collides with another
+  required feature or a legacy chunk's key (`a1` and `a-1`, or `text-layout`
+  and `textlayout`), and the error names both. `hydrate.FeatureContractKey`
+  returns the key for a name.
+- A page that names `islands`, `engines`, `hubs`, `controllers` or `textlayout`
+  with `RequireFeature` now publishes that chunk's contract field and preload
+  link even when it has no matching entry, so static export copies the chunk.
+  One renderer function decides each page's chunk set for every consumer.
+- `RequireFeature("scene3d")` is rejected: the Scene3D chunk loads only for a
+  `GoSXScene3D` engine, and the loader would wait for a script the renderer does
+  not emit. The other legacy names (`islands`, `engines`, `hubs`, `controllers`,
+  `textlayout`) stay accepted and load by fetch.
+- A failed or missing feature chunk now disables only that feature instead of
+  blocking every mount; the loader logs one error naming the feature and its URL.
+  Queued form submits count as in
+  flight, so refresh ticks do not swap the DOM under them. The Go-WASM boot token
+  is cleared even when `go.run` throws.
+
+- Islands: `onWheel` (non-passive), `onDblClick`, `onContextMenu` and
+  `onLostPointerCapture`; event fields `offsetX`, `offsetY` (viewport position
+  minus the handler element's bounding box, borders included, transforms not
+  undone), `elementWidth`, `elementHeight`, `deltaX`, `deltaY` and `deltaMode`;
+  and `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. A capture ends
+  as the Pointer Events specification defines (after `pointerup` or
+  `pointercancel`, on `ReleasePointer`, or when the element leaves the
+  document); disposing an island does not release it early. On islands built without event metadata, a
+  wheel handler present at hydration is non-passive; one added later still
+  fires, but `browser.PreventDefault()` cannot block scrolling. Rebuilding with
+  the current `gosx` gives full wheel support. See
+  `docs/island-events.md`.
+- Diagnostics: an island handler attribute that no runtime name mapper resolves
+  (`onMouseDown`, `onScroll`, `onKey`) now produces a warning with a source
+  position and a "did you mean" suggestion. It does not fail the build, and the
+  spellings that already resolved (`onKeydown`, `onPointerdown`, `onDragstart`)
+  stay accepted. Nothing breaks, so there is no migration step.
+- Size budgets (decision 0014 exception, owner-approved 2026-10-08 at +536 raw
+  for `bootstrap-feature-islands.js` and +539 raw for the legacy `bootstrap.js`
+  monolith): the gesture events grow the islands chunk by 390 raw bytes (18,766
+  to 19,156) and the monolith by 390 (1,910,682 to 1,911,072).
+- Cache bounded readiness snapshots without rerunning checks or retaining request
+  IDs and errors. LastReadiness reports unknown before a probe, UTC completion
+  time, and completeness when more than 64 checks exist. Panicking checks fail
+  readiness and are disabled with a fixed log class.
+
+- Attach built-in request aggregates once at the App observer owner. Route
+  labels use the admitted catalog, response bytes come from its writer, and
+  the in-flight gauge covers application middleware. RequestStartObserver
+  adds an optional bounded entry callback without another request context.
+
+- Request observers report accepted response body bytes and successful hijacks.
+  The first final status wins; interim responses, ReaderFrom and response
+  controller operations retain their HTTP behavior. Nested observers share
+  route metadata, and file actions mark their registered dispatch pattern.
+
+- Expose typed activity kind registration and Begin after the lifecycle,
+  participant and event owners are complete. Enable accepts memory activities,
+  and receipts explicitly distinguish memory acknowledgement from durability.
+  A bounded catalog retains 256 acknowledged parent IDs without final records.
+
+- Queue copied activity events through one fixed count and byte budget on the
+  existing telemetry worker. In-flight records keep their reservations, event
+  caps and rejected writes preserve truthful terminal totals, and accepted
+  sequence order follows queue admission. No event history or sink is implicit.
+
+- Add bounded activity seats with revision-checked field replacement, one
+  active connection reference, idempotent joins and leaves, monotonic presence
+  time and frozen final totals. Consented human links are copied and trimmed
+  to preserve final capacity; bots and unconsented refs persist no client data.
+
+- Add the activity lifecycle owner with copied revision-checked projections,
+  reserved immutable finals, monotonic duration, frozen loop health and shared
+  memory receipts. Source drain preserves admitted work; idle and shutdown
+  finals run on the existing worker without application encoders. Public
+  construction follows the participant and event owners.
+
+- Reserve finite activity kind and codec declarations before route admission.
+  Dimensions share fixed metric labels, complete-kind admission is atomic,
+  and metadata/staging capacity shares one bounded arena with hub attachments
+  and route tables. Public activity lifecycles follow in the next slice.
+
+- Add a portable, bounded MemorySink test helper with synchronized record and
+  byte admission, copied readers and one injected failure per operation.
+  Its zero value uses 128 records and 1 MiB. Memory acceptance makes no local
+  durability promise. The sink contract precedes the bounded worker slice.
+
+- Add immutable typed telemetry records with a schema-1 JSONL envelope,
+  deterministic field order, UTC observations, CRC-32C and copied payload
+  views. Framework-only constructors reject invalid identities and finite
+  field, record and retained-memory cap violations. Unknown optional tick
+  health is omitted. Record writers preserve wrapped error identities while
+  exposing fixed error text.
+
+- Reserve default telemetry aggregate families before route admission, with
+  whole page/error reservations and shared page duration histograms. Operation
+  and explicitly attached auth observers use finite startup labels; degradation
+  accepts declared components. Request writer, runtime, readiness, scheduler
+  and client ingress attachment follow their owner seams.
+
+- Add typed telemetry domain codecs and copied field views with finite enum,
+  array, nesting and byte limits. Eight staging leases isolate synchronous
+  encoders; invalid fields and encoder failures discard the whole projection.
+  Domain JSON sorts keys, preserves finite numbers and uses milliseconds for
+  duration values. Activity registration and records follow separately.
+
+- Add optional whole-tick simulation and visible-frame observers at the existing
+  ticker and animation owners. Simulation lag uses elapsed scheduled deadlines;
+  timing includes the existing single snapshot and state broadcast. Nil observers
+  skip timing reads. Frame observers are fixed before Start and run outside locks.
+
+- Add finite loop kinds and a shared arena for 256 lifetime health meters.
+  Observe records whole ticks with zero warm allocations. Health copies bins
+  under the instance lock and scans outside it; scoped tokens end once.
+  Closing a meter leaves the application's runtime owner in control.
+
+- Start the telemetry close deadline at Flush or Close, after source drain.
+  Shutdown Signal stops admission; collector wakes keep source subscriptions
+  alive until the flush phase starts.
+
+- Register bounded hub telemetry groups with finite event and disconnect labels,
+  exact logical payload counts, sampled queue depths, control RTT, and slow-client
+  counters. Attachments release automatically when pumps finish, and telemetry
+  shutdown preserves source-drain callbacks before removing its subscriptions.
+  Counted histogram observations preserve coalesced broadcast samples atomically.
+
+- Keep observed hub control pings on a fixed 54-second schedule, using the
+  existing writer timer with a cadence that divides the ping period. Ping
+  sequences start from cryptographic per-connection randomness. Invalid
+  slow-client policy logs a fixed class at most once per minute.
+- Slow-client checks follow the shared hub tick and scale the drop threshold to
+  the elapsed window.
+- Hub Close waits for application enqueue callbacks as well as pumps. Release
+  locks that callbacks may acquire before Close. The framework-only telemetry
+  observer slot requires an internal authority key; observer conflicts match
+  the telemetry conflict class. Queue samples describe depth before an accepted
+  enqueue, including zero. TrafficEvent.Dropped/Count and nil-client Message
+  callbacks extend the observer contract: Message accounts for all drops, so
+  Broadcast's drop summary must not be added again. SlowClientPolicy.Validate
+  and ErrInvalidSlowClient are explicit policy-validation API extensions.
+
+- Keep peer-controlled WebSocket close text out of hub read diagnostics. Normal
+  peer closes are quiet; other failures report only a fixed transport class.
+
+- Add measured WebSocket control-ping RTT with matching sequence payloads and
+  once-only timeouts. Queue sampling reports text and binary depth independently,
+  and all full-buffer drops remain visible. Broadcast samples coalesce by depth
+  and preserve counts outside fanout locks, with no additional recipient scan.
+  One optional telemetry subscriber has its own reservation and sampling policy.
+  Opt-in slow-client eviction uses interval drop deltas and the existing pump
+  timer; it does not increase the 54-second ping frequency or add a scanner.
+- Stage `gosx init` before publishing files with no-clobber writes. Existing
+  files and symlinks below the destination cause a conflict; root symlinks work.
+  Late failures roll back files still owned by the invocation on a best-effort
+  basis. The app template uses component syntax for `Page`, `NotFoundPage` and
+  `ErrorPage`. Dependency resolution runs in staging; offline failures and
+  destinations containing any existing Go files prompt a final `go mod tidy`,
+  because existing packages outside `app/` are not staged.
+- Add `gosx deploy check [--json] dist` to validate server launch files, bundle
+  policy, asset checksums and compressed sidecars, and exported pages before
+  uploading a production bundle. Accept `server/app.exe` for Windows bundles.
+  Exit codes are 0 for success, 1 for failed checks and 2 for usage errors.
+  The check never starts the application.
+
 - Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
   for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
   extensions or `GLSceneSizeUniform`; post shaders use the quad and bottom-left
@@ -12,6 +258,24 @@
   `engine.RenderMaterial`. Requested artifacts travel through both browser scene
   payloads and native bundles. `FrameStats.MaterialFallbacks` and native preview
   diagnostics report custom mesh programs replaced by the standard shader.
+- Report skipped optional `wasm-opt` passes instead of silently keeping the
+  compiled WASM. Missing tools warn once per build; failed passes include
+  optimizer output in one complete warning and remove temporary output.
+- Clean up the unused, unreleased Scene3D recovery asset, setter, and
+  `buildmanifest.RuntimeAssets` and `RuntimePaths` fields.
+
+
+- Add transactional aggregate telemetry setup with one maintenance worker and
+  one named application shutdown hook. Disabled handles own no resources;
+  failed setup removes its reservation. Shared close deadlines retain unfinished
+  owners, and clock or logger panics expose fixed error classes. The shared close
+  work keeps the earlier of the first caller's deadline and a 20-second limit;
+  caller cancellation ends only that caller's wait. Catalog admission is private
+  to the server callback, which also seals inactive registries at Build. Process
+  start time is captured once during initialization, independently of Enable;
+  clock failures have their own fixed drop reason.
+  Native features remain unavailable on WebAssembly. Listener, subsystem and record adapters
+  follow in their own slices; selecting them returns a fixed unsupported class.
 
 - Accept telemetry listener `off` case-insensitively, reject Unix paths that
   exceed the platform address limit, and allow a nonempty environment credential
@@ -94,6 +358,10 @@
   before `Closed` and drains admitted callbacks before completion.
   `Hub.Close(ctx)` rejects upgrades and waits for connection
   pumps within each caller's deadline; unfinished owners retain subscriptions.
+- Record `gzipSize` and `brotliSize` for compressed assets in `build.json`.
+  Choose compatible WASM runtimes by Brotli size, then gzip or raw size when
+  metadata is absent, with raw size and path as deterministic tie-breaks.
+
 - Serve page navigation as a content-hashed, immutable runtime asset with
   precompressed gzip and Brotli representations, reducing HTML bytes and
   request-time compression. Static exports include the asset. Defer execution
@@ -122,6 +390,13 @@
 
 - Define controller-local pick ray and hit types, preserving the scene JSON
   shape without linking scene rendering dependencies into ordinary servers.
+
+- Use the selective bootstrap and relay for preview pages without loading the
+  islands feature chunk. Island-free previews now start the WASM signal bridge
+  inside an iframe or with `gosx-preview=1`; preview context persists for the
+  tab session across navigation. Public visitors do not start the preview bridge
+  or preload its WASM. Older assets without the selective bootstrap retain the
+  compatibility path.
 
 ## v0.57.6
 

@@ -23,7 +23,7 @@ func TestLoadAndURLs(t *testing.T) {
     "wasm": {"file": "gosx-runtime.11111111.wasm", "hash": "11111111", "size": 10},
     "wasmIslands": {"file": "gosx-runtime-islands.99999999.wasm", "hash": "99999999", "size": 9},
 	"wasmVariants": {
-	  "core": {"file": "gosx-runtime-core.aaaaaaa1.wasm", "hash": "aaaaaaa1", "size": 8, "variant": "core", "featureMask": 17},
+	  "core": {"file": "gosx-runtime-core.aaaaaaa1.wasm", "hash": "aaaaaaa1", "size": 8, "gzipSize": 6, "brotliSize": 5, "variant": "core", "featureMask": 17},
 	  "engine": {"file": "gosx-runtime-engine.bbbbbbb2.wasm", "hash": "bbbbbbb2", "size": 12, "variant": "engine", "featureMask": 11}
 	},
 	    "wasmExec": {"file": "wasm_exec.22222222.js", "hash": "22222222", "size": 20},
@@ -31,7 +31,6 @@ func TestLoadAndURLs(t *testing.T) {
     "bootstrap": {"file": "bootstrap.33333333.js", "hash": "33333333", "size": 30},
     "bootstrapFeatureScene3dCommand": {"file": "bootstrap-feature-scene3d-command.3d3d3d3d.js", "hash": "3d3d3d3d", "size": 33},
     "bootstrapFeatureScene3dHydrate": {"file": "bootstrap-feature-scene3d-hydrate.3e3e3e3e.js", "hash": "3e3e3e3e", "size": 34},
-    "bootstrapFeatureScene3dPipelineRecovery": {"file": "bootstrap-feature-scene3d-pipeline-recovery.3f3f3f3f.js", "hash": "3f3f3f3f", "size": 34},
     "patch": {"file": "patch.44444444.js", "hash": "44444444", "size": 40},
     "videoHLS": {"file": "hls.min.77777777.js", "hash": "77777777", "size": 70}
   },
@@ -51,6 +50,10 @@ func TestLoadAndURLs(t *testing.T) {
 		t.Fatalf("load: %v", err)
 	}
 
+	core := manifest.Runtime.WASMVariants["core"]
+	if core.Size != 8 || core.GzipSize != 6 || core.BrotliSize != 5 {
+		t.Fatalf("runtime compressed sizes were not loaded: %+v", core)
+	}
 	runtime := manifest.RuntimeURLs("/gosx/assets")
 	if runtime.WASM != "/gosx/assets/runtime/gosx-runtime.11111111.wasm" {
 		t.Fatalf("unexpected wasm url: %s", runtime.WASM)
@@ -72,9 +75,6 @@ func TestLoadAndURLs(t *testing.T) {
 	}
 	if runtime.BootstrapFeatureScene3DHydrate != "/gosx/assets/runtime/bootstrap-feature-scene3d-hydrate.3e3e3e3e.js" {
 		t.Fatalf("unexpected scene3d hydrate url: %s", runtime.BootstrapFeatureScene3DHydrate)
-	}
-	if runtime.BootstrapFeatureScene3DPipelineRecovery != "/gosx/assets/runtime/bootstrap-feature-scene3d-pipeline-recovery.3f3f3f3f.js" {
-		t.Fatalf("unexpected scene3d pipeline recovery url: %s", runtime.BootstrapFeatureScene3DPipelineRecovery)
 	}
 	if runtime.VideoHLS != "/gosx/assets/runtime/hls.min.77777777.js" {
 		t.Fatalf("unexpected video hls url: %s", runtime.VideoHLS)

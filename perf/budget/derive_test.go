@@ -238,6 +238,73 @@ func TestDeriveMeasuredEndpoints(t *testing.T) {
 	}
 }
 
+func TestDeriveMixedCoefficientStatus(t *testing.T) {
+	for _, tc := range []struct {
+		name, coefficient string
+		coldUsed          bool
+	}{
+		{"cold-only-provisional", "hydrationMicrosPerIsland", true},
+		{"inactive-provisional", "engineStartMicros", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f, p, c := deriveInputs(t)
+			zero := int64(0)
+			c.Sets[0].PredictionErrorPPM = &zero
+			var provisional *Coefficient
+			for i := range c.Sets[0].Entries {
+				e := &c.Sets[0].Entries[i]
+				if e.Name == tc.coefficient {
+					value := int64(100000)
+					e.Value = &value
+					provisional = e
+				}
+				e.Status = "measured"
+				e.Method = "isolated-fit"
+				e.CI95 = [2]*int64{e.Value, e.Value}
+				e.NVisits = 30
+				e.NBlocks = 2
+			}
+			if provisional == nil {
+				t.Fatal("coefficient missing from selected set")
+			}
+			page := f.PageTypes["island"]
+			if coefficientUsed(tc.coefficient, page.Mix, page.Workload) != tc.coldUsed || coefficientUsed(tc.coefficient, page.Mix, page.AfterReadyWorkload) {
+				t.Fatal("fixture does not cover the intended inactive costs")
+			}
+			measured, err := Derive(f, p, c)
+			if err != nil {
+				t.Fatal("all-measured control:", err)
+			}
+			provisional.Status = "provisional"
+			provisional.Method = "prior"
+			provisional.CI95 = [2]*int64{}
+			provisional.NVisits = 0
+			provisional.NBlocks = 0
+			derived, err := Derive(f, p, c)
+			if err != nil {
+				t.Fatal("mixed selected set:", err)
+			}
+			for _, phase := range []struct {
+				name       string
+				got, prior Derivation
+			}{
+				{"cold", derived.PageTypes["island"].Allocation, measured.PageTypes["island"].Allocation},
+				{"after-ready", derived.PageTypes["island"].AfterReadyAllocation, measured.PageTypes["island"].AfterReadyAllocation},
+			} {
+				if phase.prior.Status != "proxy-measured" || phase.got.Status != "illustrative" {
+					t.Fatalf("%s: measured status %q, mixed status %q", phase.name, phase.prior.Status, phase.got.Status)
+				}
+				if phase.got.TotalBytes != phase.prior.TotalBytes || phase.got.FrameworkBytes != phase.prior.FrameworkBytes || phase.got.MinAppBytes != phase.prior.MinAppBytes || phase.got.AppCriticalReserveBytes != phase.prior.AppCriticalReserveBytes {
+					t.Fatalf("%s: status change altered allocation: got %+v, prior %+v", phase.name, phase.got, phase.prior)
+				}
+			}
+			if err := VerifyDerivation(derived, p, c); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestDeriveUsesLoadedInputs(t *testing.T) {
 	path := configFixture(t, nil)
 	inputs, err := loadInputs(path, LoadOptions{RootDir: filepath.Dir(path)})

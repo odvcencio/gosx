@@ -74,6 +74,8 @@ func main() {
 		cmdBuildRuntime()
 	case "dev":
 		cmdDev()
+	case "deploy":
+		cmdDeploy()
 	case "desktop":
 		cmdDesktop()
 	case "export":
@@ -129,13 +131,15 @@ func isHelpArg(arg string) bool {
 
 func commandUsage(cmd string, w io.Writer) bool {
 	switch cmd {
+	case "deploy":
+		deployUsage(w)
 	case "assets":
 		assetsUsage(w)
 	case "build":
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>
+  gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] <dir>
 
 `)
 	case "build-runtime":
@@ -268,6 +272,8 @@ Commands:
                        Build TinyGo production WASM runtimes
   dev [--scene-inspector] <dir>
                        Start development server with hot reload
+  deploy check [--json] <dist>
+                       Validate a built server bundle before deployment
   desktop [dev] <dir>  Start dev server in a native desktop host
   export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site
@@ -304,7 +310,7 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] <dir>")
 		os.Exit(1)
 	}
 	opts := BuildOptions{Dev: true}
@@ -316,6 +322,15 @@ func cmdBuild() {
 			opts.Dev = true
 		case "--prod":
 			opts.Dev = false
+		case "--go-wasm-only":
+			opts.GoWASMOnly = true
+		case "--output":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --output requires a directory")
+				os.Exit(1)
+			}
+			opts.OutputDir = os.Args[i]
 		case "--offline":
 			opts.Offline = true
 		case "--msix":
@@ -330,6 +345,17 @@ func cmdBuild() {
 				os.Exit(1)
 			}
 			opts.AppInstallerURI = os.Args[i]
+		case "--islands-backend", "--cpu-profile":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintf(os.Stderr, "build error: %s requires a value\n", arg)
+				os.Exit(1)
+			}
+			if arg == "--islands-backend" {
+				opts.IslandsBackend = os.Args[i]
+			} else {
+				opts.CPUProfile = os.Args[i]
+			}
 		case "--scene-budget":
 			i++
 			if i >= len(os.Args) {
@@ -340,6 +366,18 @@ func cmdBuild() {
 		case "--scene-budget-strict":
 			opts.SceneBudgetStrict = true
 		default:
+			if strings.HasPrefix(arg, "--output=") {
+				opts.OutputDir = strings.TrimPrefix(arg, "--output=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--islands-backend=") {
+				opts.IslandsBackend = strings.TrimPrefix(arg, "--islands-backend=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--cpu-profile=") {
+				opts.CPUProfile = strings.TrimPrefix(arg, "--cpu-profile=")
+				continue
+			}
 			if strings.HasPrefix(arg, "--appinstaller=") {
 				opts.AppInstallerURI = strings.TrimPrefix(arg, "--appinstaller=")
 				continue

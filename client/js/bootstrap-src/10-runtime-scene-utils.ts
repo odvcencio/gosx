@@ -930,6 +930,17 @@
     return runtimeCapabilityStatus(entry);
   }
 
+  // Probes registered by feature chunks through api.registerCapabilityProbe
+  // answer for capability names the switch below does not know.
+  const capabilityProbes = Object.create(null);
+
+  function registerCapabilityProbe(name, probe) {
+    const key = normalizeCapabilityName(name);
+    if (!key || typeof probe !== "function") return;
+    capabilityProbes[key] = probe;
+    delete browserCapabilityCache[key];
+  }
+
   function browserCapabilitySupported(capability) {
     const name = normalizeCapabilityName(capability);
     if (!name) {
@@ -947,6 +958,11 @@
     }
     if (dynamicWebGPUFeature) {
       return Boolean(supported);
+    }
+    // Unknown to every probe and switch case: do not cache, a feature chunk
+    // may register its probe later.
+    if (supported === undefined) {
+      return false;
     }
     browserCapabilityCache[name] = Boolean(supported);
     return browserCapabilityCache[name];
@@ -993,7 +1009,11 @@
       case "fetch":
         return typeof fetch === "function";
       case "gamepad":
-        return Boolean(typeof navigator !== "undefined" && navigator && typeof navigator.getGamepads === "function");
+        try {
+          return Boolean(typeof navigator !== "undefined" && navigator && typeof navigator.getGamepads === "function");
+        } catch (_error) {
+          return false;
+        }
       case "keyboard":
       case "pointer":
         return Boolean(document && typeof document.addEventListener === "function");
@@ -1023,8 +1043,10 @@
         return Boolean(typeof navigator !== "undefined" && navigator && navigator.gpu);
       case "worker":
         return typeof Worker === "function";
-      default:
-        return false;
+      default: {
+        const probe = capabilityProbes[name];
+        return typeof probe === "function" ? Boolean(probe()) : undefined;
+      }
     }
   }
 
@@ -1301,36 +1323,98 @@
   function createGamepadInputProvider() {
     let active = true;
     let frameHandle = 0;
+    const slots = [null, null];
+    let publishedCount = -1;
 
-    function pollGamepad() {
-      if (!active) return;
-      const navigatorRef = window.navigator;
-      if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
-        const pads = navigatorRef.getGamepads() || [];
-        let connected = 0;
-        for (let i = 0; i < 2; i++) {
-          const pad = pads[i];
-          if (pad && pad.connected !== false) {
-            connected += 1;
-            publishGamepadSignals(pad, i);
-          } else {
-            queueInputSignal("$input.gamepad" + i + ".connected", false);
-          }
-        }
-        queueInputSignal("$input.gamepad.count", connected);
-      }
+    function publishCount(count) {
+      if (count === publishedCount) return;
+      publishedCount = count;
+      queueInputSignal("$input.gamepad.count", count);
+    }
+
+    function clearSlot(slot) {
+      if (slots[slot] === false) return;
+      const wasConnected = slots[slot];
+      slots[slot] = false;
+      if (wasConnected) publishGamepadSignals(null, slot);
+      else queueInputSignal("$input.gamepad" + slot + ".connected", false);
+    }
+
+    function clearGamepads() {
+      for (let i = 0; i < slots.length; i++) clearSlot(i);
+      publishCount(0);
+    }
+
+    function cancelPoll() {
+      if (!frameHandle) return;
+      cancelEngineFrame(frameHandle);
+      frameHandle = 0;
+    }
+
+    function requestPoll() {
+      if (!active || document.hidden || frameHandle) return;
       frameHandle = engineFrame(pollGamepad);
     }
 
-    frameHandle = engineFrame(pollGamepad);
+    function pollGamepad() {
+      frameHandle = 0;
+      if (!active) return;
+      if (document.hidden) {
+        clearGamepads();
+        return;
+      }
+      let pads = [];
+      try {
+        const navigatorRef = window.navigator;
+        if (navigatorRef && typeof navigatorRef.getGamepads === "function") {
+          pads = navigatorRef.getGamepads() || [];
+        }
+      } catch (_error) {
+        // Permissions policies and embedded browsers may reject this API.
+        // Sleep until a connection/visibility wake instead of retrying at rAF.
+      }
+      let connected = 0;
+      for (let i = 0; i < slots.length; i++) {
+        const pad = pads[i];
+        if (pad && pad.connected !== false) {
+          connected += 1;
+          slots[i] = true;
+          publishGamepadSignals(pad, i);
+        } else {
+          clearSlot(i);
+        }
+      }
+      publishCount(connected);
+      // Signal delivery has its own one-shot flush, queued before this poll.
+      // Cancelling polling must never cancel that shared provider flush.
+      if (connected > 0) requestPoll();
+    }
+
+    function onVisibility() {
+      if (document.hidden) {
+        cancelPoll();
+        clearGamepads();
+      } else {
+        requestPoll();
+      }
+    }
+
+    const listeners = bindInputProviderListeners([
+      [window, "gamepadconnected", requestPoll],
+      [window, "gamepaddisconnected", requestPoll],
+      [document, "visibilitychange", onVisibility],
+    ]);
+    // A controller may already be connected when the first engine mounts.
+    // Publish its current held buttons on the first scan, without priming them.
+    pollGamepad();
 
     return {
       dispose() {
+        if (!active) return;
         active = false;
-        if (frameHandle) {
-          cancelEngineFrame(frameHandle);
-          frameHandle = 0;
-        }
+        listeners.dispose();
+        cancelPoll();
+        clearGamepads();
       },
     };
   }
@@ -1573,8 +1657,8 @@
 
   function publishGamepadSignals(pad, slot) {
     const prefix = "$input.gamepad" + Math.max(0, Math.floor(sceneNumber(slot, 0)));
-    const axes = Array.isArray(pad.axes) ? pad.axes : [];
-    queueInputSignal(prefix + ".connected", true);
+    const axes = pad && Array.isArray(pad.axes) ? pad.axes : [];
+    queueInputSignal(prefix + ".connected", Boolean(pad && pad.connected !== false));
     queueInputSignal(prefix + ".leftX", sceneNumber(axes[0], 0));
     queueInputSignal(prefix + ".leftY", sceneNumber(axes[1], 0));
     queueInputSignal(prefix + ".rightX", sceneNumber(axes[2], 0));

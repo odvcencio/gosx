@@ -931,7 +931,19 @@
         return href;
       }
     }
-    return "/gosx/bootstrap-feature-textlayout.js";
+    return gosxBasePathURL("/gosx/bootstrap-feature-textlayout.js");
+  }
+
+  // Resolve only GoSX-owned loads. The configured prefix is emitted by the
+  // server, so no proxy headers or parent-frame messages can change it.
+  function gosxBasePathURL(value) {
+    const meta = document.querySelector?.('meta[name="gosx-base-path"]');
+    const prefix = meta ? String(meta.getAttribute("content") || "") : "";
+    const path = String(value || "");
+    if (!prefix || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")) {
+      return path;
+    }
+    return prefix + path;
   }
 
   function loadTextLayoutEngine() {

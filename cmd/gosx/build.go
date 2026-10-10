@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 
@@ -36,6 +37,10 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
+	GoWASMOnly        bool
+	OutputDir         string
+	IslandsBackend    string
+	CPUProfile        string
 	Dev               bool
 	Offline           bool
 	MSIX              bool
@@ -46,6 +51,14 @@ type BuildOptions struct {
 	// PerfAppID enables private performance asset metadata for a production
 	// build. The stable app identity must be provided explicitly.
 	PerfAppID string
+}
+
+// runtimeFeatureChunks lists opt-in feature chunks that ship as
+// client/js/bootstrap-feature-<name>.js and load by name at runtime
+// (hydrate.Manifest.Features). Each row's role is a runtimeExcludableAssetRoles
+// key. The change that adds a chunk file appends its row here.
+var runtimeFeatureChunks = []struct{ name, role string }{
+	{"browser-services", "engines"},
 }
 
 type wasmCompiler string
@@ -93,11 +106,21 @@ func writeHashedWithOptions(dir, name, ext string, data []byte, opts hashedWrite
 			return HashedAsset{}, err
 		}
 	}
-	return HashedAsset{
-		File: filename,
-		Hash: hash,
-		Size: int64(len(data)),
-	}, nil
+	asset := HashedAsset{File: filename, Hash: hash, Size: int64(len(data))}
+	if opts.CompressedSidecars {
+		for _, sidecar := range []struct {
+			ext  string
+			size *int64
+		}{{".gz", &asset.GzipSize}, {".br", &asset.BrotliSize}} {
+			info, err := os.Stat(path + sidecar.ext)
+			if err == nil {
+				*sidecar.size = info.Size()
+			} else if !os.IsNotExist(err) {
+				return HashedAsset{}, err
+			}
+		}
+	}
+	return asset, nil
 }
 
 func writeHashedWithoutCompressedSidecars(dir, name, ext string, data []byte) (HashedAsset, error) {
@@ -265,11 +288,29 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err := validatePerfBuildOptions(opts); err != nil {
 		return err
 	}
+	if opts.CPUProfile != "" {
+		profile, err := os.Create(opts.CPUProfile)
+		if err != nil {
+			return err
+		}
+		if err := pprof.StartCPUProfile(profile); err != nil {
+			profile.Close()
+			return err
+		}
+		defer func() { pprof.StopCPUProfile(); profile.Close() }()
+	}
+
 	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	dir = absDir
+	if opts.GoWASMOnly {
+		return runGoWASMOnlyBuild(dir, opts)
+	}
+	if opts.OutputDir != "" {
+		return fmt.Errorf("--output requires --go-wasm-only")
+	}
 	// The initial discovery is a side-effect barrier: invalid source must fail
 	// before module sync, dependency resolution, or a user hook can run.
 	if _, err := collectProjectIslandDiscovery(dir); err != nil {
@@ -294,6 +335,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return err
 	}
 	islandProgs, gsxFiles := discovery.Programs, discovery.GSXFiles
+	backend := opts.IslandsBackend
+	if backend == "" {
+		backend = cfg.Build.Islands.Backend
+	}
+	if err := admitBuildIslands(islandProgs, backend, ir.LowerIslandAOT); err != nil {
+		return err
+	}
 	printBundlePolicyWarnings(cfg.Build.Bundle)
 	if diagnostics := bundlepolicy.ValidateProject(dir, cfg.Build.Bundle); !diagnostics.Empty() {
 		return errors.New(diagnostics.Error())
@@ -398,6 +446,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		fmt.Printf("    CSS: %s → %s (%d bytes)\n", component, asset.File, asset.Size)
 	}
 
+	// Explicit app modules use standard Go, independently of the compiler
+	// selected below for the shared framework runtime.
+	manifest.GoWASM, err = buildGoWASMAssetsWithOptions(dir, distDir, cfg.Build.GoWASM, !opts.Dev)
+	if err != nil {
+		return err
+	}
+
 	// ── Tier 2: Shared runtime (content-hashed) ─────────────────────────
 
 	fmt.Println("\n  Runtime:")
@@ -436,6 +491,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	// Build both WASM binaries in parallel. The islands-only runtime is a
 	// route-selected Go WASM variant that drops shared engine, CRDT, syntax
 	// highlighting, and text-layout exports for pages that only hydrate islands.
+	optimizer := newOptionalWASMOptimizer(os.Stderr)
 	var wg sync.WaitGroup
 	coreResult := wasmResult{label: "core"}
 	engineResult := wasmResult{label: "engine"}
@@ -454,7 +510,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				return
 			}
 			result.compiler = string(wasmCompilerTinyGo)
-			if optimized, err := optimizeOptionalBuildWASM(tmpPath, opts.PerfAppID == ""); err != nil {
+			if optimized, err := optimizeOptionalBuildWASM(optimizer, tmpPath, opts.PerfAppID == ""); err != nil {
 				result.err = err
 				return
 			} else if optimized {
@@ -491,7 +547,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 			}
 			result.compiler = string(wasmCompilerGo)
 			if opts.PerfAppID == "" && standardGoWASMOptEnabled() {
-				if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
+				if optimized, err := optimizer.optimize(tmpPath); err != nil {
 					result.err = err
 					return
 				} else if optimized {
@@ -629,7 +685,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("unable to locate wasm_exec.js")
 	}
 
-	standardGoWASMExec, err := readStandardGoWASMExec()
+	var standardGoWASMExec []byte
+	if len(cfg.Build.GoWASM) > 0 {
+		standardGoWASMExec, err = readProjectStandardGoWASMExec(dir)
+	} else {
+		standardGoWASMExec, err = readStandardGoWASMExec()
+	}
 	if err != nil {
 		return err
 	}
@@ -665,7 +726,6 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D, "scene3d"},
 		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand, "scene3d"},
 		{"bootstrap-feature-scene3d-hydrate", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hydrate.js"), &manifest.Runtime.BootstrapFeatureScene3DHydrate, "scene3d"},
-		{"bootstrap-feature-scene3d-pipeline-recovery", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-pipeline-recovery.js"), &manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery, "scene3d"},
 		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU, "scene3d"},
 		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL, "scene3d"},
 		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF, "scene3d"},
@@ -709,6 +769,41 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 
+	// Opt-in feature chunks (see runtimeFeatureChunks) are staged like the
+	// fixed entries above and recorded under manifest.Runtime.Features so the
+	// document contract can publish one flat bootstrapFeature<Name>Path key
+	// per chunk.
+	for _, chunk := range runtimeFeatureChunks {
+		if cfg.Build.Runtime.excludesRole(chunk.role) {
+			fmt.Printf("    (skipped: bootstrap-feature-%s, excluded by build.runtime.exclude %q)\n", chunk.name, chunk.role)
+			continue
+		}
+		srcPath := filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-"+chunk.name+".js")
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", srcPath, err)
+		}
+		assetName := "bootstrap-feature-" + chunk.name
+		data = runtimeJSAssetData(assetName, data)
+		asset, err := writeHashed(runtimeDir, assetName, ".js", data)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", assetName, err)
+		}
+		asset = withRuntimeIntegrity(asset, data)
+		if manifest.Runtime.Features == nil {
+			manifest.Runtime.Features = map[string]HashedAsset{}
+		}
+		manifest.Runtime.Features[chunk.name] = asset
+		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+		if cfg.Build.Runtime.sourceMapsEnabled() {
+			if mapData, err := os.ReadFile(srcPath + ".map"); err == nil {
+				if err := os.WriteFile(filepath.Join(runtimeDir, assetName+".js.map"), mapData, 0644); err != nil {
+					return fmt.Errorf("write %s source map: %w", assetName, err)
+				}
+			}
+		}
+	}
+
 	if assetReport, err := writeBuildSceneAssetPlan(dir, distDir); err != nil {
 		return fmt.Errorf("scene asset plan: %w", err)
 	} else if assetReport != nil {
@@ -733,7 +828,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// Build the application binary when the target directory is a runnable app.
 	serverBinaryPath := filepath.Join(distDir, "server", "app"+targetExecutableExt())
-	builtServer, err := buildServerBinaryIfPresent(dir, serverBinaryPath)
+	builtServer, err := buildServerBinaryWithOptions(dir, serverBinaryPath, cfg.Build.Server)
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
 	}
@@ -1006,25 +1101,61 @@ func standardGoWASMOptEnabled() bool {
 	}
 }
 
-func optimizeWASMWithWasmOpt(path string) (bool, error) {
-	woptPath, woptErr := exec.LookPath("wasm-opt")
-	if woptErr != nil {
-		return false, nil
-	}
-	return optimizeWASMUsing(path, woptPath)
+type optionalWASMOptimizer struct {
+	tool        string
+	diagnostics io.Writer
+	missing     sync.Once
+	mu          sync.Mutex
 }
 
-func optimizeWASMUsing(path, woptPath string) (bool, error) {
+func newOptionalWASMOptimizer(diagnostics io.Writer) *optionalWASMOptimizer {
+	tool, err := exec.LookPath("wasm-opt")
+	if err != nil {
+		tool = ""
+	}
+	return &optionalWASMOptimizer{tool: tool, diagnostics: diagnostics}
+}
+
+func optimizeWASMWithWasmOptDiagnostics(path string, diagnostics io.Writer) (bool, error) {
+	return newOptionalWASMOptimizer(diagnostics).optimize(path)
+}
+
+// Each build shares an optimizer. Missing-tool warnings appear once, and each
+// complete warning (including subprocess output) is emitted with one write.
+func (optimizer *optionalWASMOptimizer) warn(message string) {
+	optimizer.mu.Lock()
+	defer optimizer.mu.Unlock()
+	_, _ = io.WriteString(optimizer.diagnostics, message)
+}
+
+func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
+	if optimizer.tool == "" {
+		optimizer.missing.Do(func() {
+			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH; keeping compiled WASM. Install Binaryen matching your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
+		})
+		return false, nil
+	}
 	optTmp := path + ".opt"
 	defer os.Remove(optTmp)
-	optCmd := exec.Command(woptPath, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
-	if optCmd.Run() != nil {
+	optCmd := exec.Command(optimizer.tool, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
+	if output, err := optCmd.CombinedOutput(); err != nil {
+		message := fmt.Sprintf("warning: optional wasm-opt optimization skipped for %s: %s failed: %v; keeping compiled WASM. Check this optimizer's version against your CI toolchain.\n", filepath.Base(path), optimizer.tool, err)
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			message += detail + "\n"
+		}
+		optimizer.warn(message)
 		return false, nil
 	}
 	if err := os.Rename(optTmp, path); err != nil {
 		return false, fmt.Errorf("rename optimized wasm: %w", err)
 	}
 	return true, nil
+}
+
+// optimizeWASMUsing runs one pinned wasm-opt binary. Perf builds record that
+// tool and require it to succeed; a failure warns on stderr and returns false.
+func optimizeWASMUsing(path, tool string) (bool, error) {
+	return (&optionalWASMOptimizer{tool: tool, diagnostics: os.Stderr}).optimize(path)
 }
 
 func countNonEmpty(strs ...string) int {
@@ -1121,6 +1252,10 @@ func getGOROOT() string {
 }
 
 func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
+	return buildServerBinaryWithOptions(dir, outputPath, projectBuildServer{})
+}
+
+func buildServerBinaryWithOptions(dir, outputPath string, options projectBuildServer) (bool, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
 	cmd.Dir = dir
 	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
@@ -1139,7 +1274,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 		return false, err
 	}
 
-	buildCmd := exec.Command("go", goServerBuildArgs(outputPath)...)
+	buildCmd := exec.Command("go", goServerBuildArgsWithOptions(outputPath, options)...)
 	buildCmd.Dir = dir
 	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	buildCmd.Stderr = os.Stderr
@@ -1150,7 +1285,15 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 }
 
 func goServerBuildArgs(outputPath string) []string {
-	return []string{"build", "-trimpath", "-o", outputPath, "."}
+	return goServerBuildArgsWithOptions(outputPath, projectBuildServer{})
+}
+
+func goServerBuildArgsWithOptions(outputPath string, options projectBuildServer) []string {
+	args := []string{"build", "-trimpath"}
+	if options.Strip {
+		args = append(args, "-ldflags=-s -w")
+	}
+	return append(args, "-o", outputPath, ".")
 }
 
 func stageDeploymentBundleWithPolicy(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string, policy bundlepolicy.Config) error {
@@ -1243,7 +1386,10 @@ func runtimeJSAssetData(name string, data []byte) []byte {
 }
 
 func readStandardGoWASMExec() ([]byte, error) {
-	goroot := getGOROOT()
+	return readGoWASMExec(getGOROOT())
+}
+
+func readGoWASMExec(goroot string) ([]byte, error) {
 	for _, candidate := range []string{
 		filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"),
 		filepath.Join(goroot, "misc", "wasm", "wasm_exec.js"),
@@ -1325,6 +1471,11 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return "", false
 	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
+	if name, ok := buildmanifest.FeatureChunkName(strings.TrimPrefix(ref, "/gosx/")); ok && strings.HasPrefix(ref, "/gosx/") {
+		if asset, found := manifest.Runtime.Features[name]; found {
+			return manifestRuntimeFilePath(runtimeDir, asset.File)
+		}
+	}
 	switch ref {
 	case "/gosx/runtime.wasm":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASM.File)
@@ -1364,8 +1515,6 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCommand.File)
 	case "/gosx/bootstrap-feature-scene3d-hydrate.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
-	case "/gosx/bootstrap-feature-scene3d-pipeline-recovery.js":
-		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DPipelineRecovery.File)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
 	case "/gosx/bootstrap-feature-scene3d-webgl.js":
@@ -1530,13 +1679,19 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"- `content/` contains collection documents loaded by server-rendered and prerendered routes.",
 		"- `public/` contains root-served static assets when present.",
 		"- `build.json` maps hashed asset names for runtime/island loading.",
-		"- `edge/worker.js` can serve prerendered routes at the edge and proxy misses/actions to origin.",
-		"- `platform/` contains deployment metadata for hosted/static-edge setups.",
+		"- When prerendering is enabled, `edge/worker.js` serves static routes and proxies misses/actions to origin.",
+		"- When prerendering is enabled, `platform/` contains metadata for hosted/static-edge setups.",
 	}
 	if builtServer {
 		lines = append(lines,
 			"- `server/app` is the compiled Go server binary.",
 			"- `run.sh` launches the bundle with `GOSX_APP_ROOT` pointing at this directory.",
+			"",
+			"Validate this bundle before uploading it:",
+			"```sh",
+			"gosx deploy check .",
+			"```",
+			"This checks artifact integrity only. Supply runtime secrets through the host environment and verify destination health before routing traffic.",
 			"",
 			"Run locally:",
 			"```sh",

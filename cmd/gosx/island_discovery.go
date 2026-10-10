@@ -16,6 +16,7 @@ import (
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/ir"
+	"m31labs.dev/gosx/island/aot"
 	islandprogram "m31labs.dev/gosx/island/program"
 )
 
@@ -35,6 +36,9 @@ type IslandProgramSource struct {
 	PackageDir     string
 	PackagePath    string
 	ProjectPackage bool
+	Candidate      *ir.Program
+	ComponentIndex int
+	Contract       *aot.ScalarContract
 }
 
 type islandPackageSource struct {
@@ -439,6 +443,8 @@ func collectIslandProgramsFromPackage(pkg islandPackageSource) ([]*IslandProgram
 			}
 			programs = append(programs, &IslandProgramSource{
 				Program:        island,
+				Candidate:      irProg,
+				ComponentIndex: i,
 				SourceFile:     file,
 				SourceHash:     buildmanifest.ContentHash(source),
 				PackageDir:     pkg.Dir,

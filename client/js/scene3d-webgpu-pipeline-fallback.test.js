@@ -106,6 +106,41 @@ test("WebGPU never binds pending pipelines and resumes after validation", async 
   h.renderer.dispose();
 });
 
+test("WebGPU retains detail resources across pipeline validation and presents the resumed frame", async t => {
+  const h = await failureHarness(/does-not-match/);
+  t.after(() => h.renderer.dispose());
+  const create = h.fake.device.createRenderPipeline;
+  h.fake.device.createRenderPipeline = descriptor => {
+    const pipeline = create(descriptor);
+    if (descriptor.label === "detail-atlas-bake") pipeline.getBindGroupLayout = () => ({});
+    return pipeline;
+  };
+  const context = h.canvas.getContext("webgpu"), currentTexture = context.getCurrentTexture;
+  let presented = 0;
+  context.getCurrentTexture = () => { presented++; return currentTexture(); };
+  h.scene.materials[0].detail = { ground: { scale: 3 }, fadeStart: 5, fadeEnd: 12 };
+  await frames(h, 12);
+  assert.equal(h.fake.state.renderPipelines.filter(p => p.desc.label === "detail-atlas-bake").length, 1,
+    "a suspended bake must retain its pipeline instead of allocating again on every retry");
+  assert.equal(h.fake.state.textures.filter(texture => texture.desc.label === "detail-atlas").length, 1);
+  assert.ok(presented > 0, "validated detail materials must allow a frame to reach the canvas");
+  assert.equal(h.renderer.getFailureReason(), "");
+  assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
+});
+
+test("WebGPU disposes detail atlases even when their first bake is still pending", async () => {
+  const h = await failureHarness(/does-not-match/);
+  h.scene.materials[0].detail = { ground: { scale: 3 } };
+  h.renderer.render(h.scene, { width: 64, height: 64 });
+  const atlases = h.fake.state.textures.filter(texture => texture.desc.label === "detail-atlas");
+  assert.equal(atlases.length, 1);
+  assert.equal(atlases[0].destroyed, undefined);
+  h.renderer.dispose();
+  assert.equal(atlases[0].destroyed, true, "disposing a suspended frame must release its retained atlas");
+  await flushAsyncWork();
+  assert.equal(h.events.filter(event => event.message === "pipeline-failed").length, 0);
+});
+
 test("a newly enabled post pass preserves water simulation commands while its pipelines validate", async () => {
   const h = await failureHarness(/does-not-match/);
   const api = h.env.context.__gosx_scene3d_api;

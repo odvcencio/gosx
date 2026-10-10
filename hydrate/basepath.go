@@ -53,6 +53,7 @@ func (m *Manifest) WithBasePath(prefix string) *Manifest {
 			out.Bundles[key] = ref
 		}
 	}
+	out.Features = append([]string(nil), m.Features...)
 	out.Controllers = append([]ControllerEntry(nil), m.Controllers...)
 	for i := range out.Controllers {
 		out.Controllers[i].Config.Resources = append([]controller.FetchResource(nil), m.Controllers[i].Config.Resources...)

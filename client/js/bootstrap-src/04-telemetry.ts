@@ -17,9 +17,8 @@
     const cfg = (typeof window !== "undefined" && window.__gosx_telemetry_config) || {};
     const rawFlushInterval = Number(cfg.flushInterval);
     const endpoint = cfg.endpoint;
-    const prefix = (document.querySelector?.('meta[name="gosx-base-path"]') as HTMLMetaElement)?.content || "";
     return {
-      endpoint: typeof endpoint === "string" && endpoint || prefix + GOSX_TELEMETRY_ENDPOINT,
+      endpoint: typeof endpoint === "string" && endpoint || gosxBasePathURL(GOSX_TELEMETRY_ENDPOINT),
       flushInterval: Math.max(0, Number.isFinite(rawFlushInterval) ? rawFlushInterval : GOSX_TELEMETRY_FLUSH_MS_DEFAULT),
       maxBatch: gosxTelemetryPositiveInteger(cfg.maxBatch, GOSX_TELEMETRY_BATCH_MAX_DEFAULT),
       maxQueue: gosxTelemetryPositiveInteger(cfg.maxQueue, GOSX_TELEMETRY_QUEUE_MAX_DEFAULT),
@@ -28,10 +27,9 @@
   }
 
   function gosxTelemetrySessionID() {
-    const alphabet = "abcdefghijklmnopqrstuvwxyz0123456789";
     let out = "s_";
     for (let i = 0; i < 10; i += 1) {
-      out += alphabet[Math.floor(Math.random() * alphabet.length)];
+      out += Math.floor(Math.random() * 36).toString(36);
     }
     return out;
   }
@@ -43,7 +41,7 @@
 
   function gosxTelemetryCurrentURL() {
     try {
-      return window.location && window.location.pathname ? String(window.location.pathname) : "";
+      return String(window.location?.pathname || "");
     } catch (_err) {
       return "";
     }
@@ -51,9 +49,8 @@
 
   function gosxTelemetryUserAgent() {
     try {
-      return window.navigator && typeof window.navigator.userAgent === "string"
-        ? String(window.navigator.userAgent)
-        : "";
+      const userAgent = window.navigator?.userAgent;
+      return typeof userAgent === "string" ? userAgent : "";
     } catch (_err) {
       return "";
     }
@@ -64,7 +61,7 @@
     window.__gosx_telemetry_installed = true;
 
     const cfg = gosxTelemetryConfig();
-    const sid = cfg.enabled ? gosxTelemetrySessionID() : "";
+    let sid = cfg.enabled ? gosxTelemetrySessionID() : "";
     const queue = [];
     const snapshotFields = (
       "enabled,session,queueDepth,queueCapacity,batchCapacity,emittedEvents," +
@@ -94,7 +91,22 @@
     const T_LAST_FAILURE_AT = 23;
     const T_LAST_FAILURE_REASON = 24;
 
+    function enabled() {
+      telemetryState[0] = (window.__gosx_telemetry_config || {}).enabled !== false;
+      if (!telemetryState[0]) {
+        clearFlushTimer();
+        queue.length = 0;
+      }
+      return telemetryState[0];
+    }
+
+    function session() {
+      if (!enabled()) return "";
+      return telemetryState[1] = sid || (sid = gosxTelemetrySessionID());
+    }
+
     function snapshot() {
+      enabled();
       telemetryState[T_QUEUE_DEPTH] = queue.length;
       const result = {};
       for (let i = 0; i < snapshotFields.length; i += 1) result[snapshotFields[i]] = telemetryState[i];
@@ -102,13 +114,7 @@
     }
 
     window.__gosx_telemetry_snapshot = snapshot;
-    window.__gosx_telemetry_session = function () { return sid; };
-
-    if (!cfg.enabled) {
-      window.__gosx_emit = function () {};
-      window.__gosx_telemetry_flush = function () {};
-      return;
-    }
+    window.__gosx_telemetry_session = session;
 
     let flushTimer = null;
     let uaSent = false;
@@ -140,11 +146,10 @@
     }
 
     function emit(level, category, message, fields) {
+      if (!session()) return;
       telemetryState[T_EMITTED] += 1;
       if (queue.length >= cfg.maxQueue) {
-        telemetryState[T_DROPPED_OVERFLOW] += 1;
-        telemetryState[T_LAST_FAILURE_AT] = Date.now();
-        telemetryState[T_LAST_FAILURE_REASON] = "queue-overflow";
+        recordFailure(T_DROPPED_OVERFLOW, "queue-overflow", 0, false);
         return;
       }
       try {
@@ -163,10 +168,8 @@
         queue.push(event);
         scheduleFlush();
       } catch (_err) {
-        telemetryState[T_DROPPED_SERIALIZATION] += 1;
+        recordFailure(T_DROPPED_SERIALIZATION, "event-normalization-error", 0, false);
         telemetryState[T_FAILED] += 1;
-        telemetryState[T_LAST_FAILURE_AT] = Date.now();
-        telemetryState[T_LAST_FAILURE_REASON] = "event-normalization-error";
       }
     }
 
@@ -242,6 +245,7 @@
     }
 
     function flush(preferBeacon, reason, drain) {
+      if (!enabled()) return;
       clearFlushTimer();
       telemetryState[T_LAST_FLUSH_AT] = Date.now();
       telemetryState[T_LAST_FLUSH_REASON] = reason;
@@ -284,10 +288,10 @@
     try {
       window.addEventListener("error", function (event) {
         emit("error", "runtime", (event && event.message) || "uncaught error", {
-          filename: (event && event.filename) || "",
-          lineno: (event && event.lineno) || 0,
-          colno: (event && event.colno) || 0,
-          stack: (event && event.error && event.error.stack) || "",
+          filename: event?.filename || "",
+          lineno: event?.lineno || 0,
+          colno: event?.colno || 0,
+          stack: event?.error?.stack || "",
         });
       });
       window.addEventListener("unhandledrejection", function (event) {
@@ -321,25 +325,16 @@
       const beacon = Boolean(options && options.beacon);
       flush(beacon, beacon ? "manual-beacon" : (options && options.drain ? "manual-drain" : "manual"), beacon || Boolean(options && options.drain));
     };
-  }
-
-  function gosxPublishTelemetryAPI() {
-    if (typeof window === "undefined") return;
     window.__gosx = window.__gosx || {};
     const telemetry = window.__gosx.telemetry && typeof window.__gosx.telemetry === "object"
       ? window.__gosx.telemetry
       : {};
-    telemetry.emit = function (level, category, message, fields) {
-      return window.__gosx_emit(level, category, message, fields);
-    };
-    telemetry.flush = function (options) {
-      return window.__gosx_telemetry_flush(options);
-    };
+    telemetry.enabled = cfg.enabled;
+    telemetry.emit = function (level, category, message, fields) { return window.__gosx_emit(level, category, message, fields); };
+    telemetry.flush = function (options) { return window.__gosx_telemetry_flush(options); };
     telemetry.session = window.__gosx_telemetry_session;
     telemetry.snapshot = window.__gosx_telemetry_snapshot;
-    telemetry.enabled = !((window.__gosx_telemetry_config || {}).enabled === false);
     window.__gosx.telemetry = telemetry;
   }
 
   gosxInstallTelemetry();
-  gosxPublishTelemetryAPI();

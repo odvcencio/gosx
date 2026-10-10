@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.57.6**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.9**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -216,6 +216,11 @@ GoSX provides five execution primitives. A form submission is not a canvas game 
 Use what you need. A static marketing page uses only Server. A dashboard adds Islands. A game adds an Engine. A collaborative editor adds a Hub. You never pay for what you don't use.
 
 Scene3D is the built-in 3D engine primitive: prop-based scenes and composable `<Scene3D><Mesh /><Points /></Scene3D>` authoring both lower toward the same versioned SceneIR contract. The `game` package layers deterministic fixed-step simulation, input actions, ECS-style state, assets, physics, and Scene3D mounting on top of Engine + Hub when an app needs an interactive simulation/game runtime.
+
+Standard Go/WASM engines can keep browser interop inside GoSX with typed DOM,
+events, fetch, storage, audio, sockets, desktop services and retained Scene3D
+streams. See [browser services and lifetimes](docs/browser-services.md) for the
+small-package boundaries and buffer ownership contracts.
 
 ## Quick Start
 
@@ -462,6 +467,39 @@ ctx.Engine(engine.Config{
     WASMPath:             "/engines/visualizer.wasm",
 }, fallbackNode)
 ```
+
+Declare the module's package in `gosx.config.json` to build it together with the
+server and shared runtime:
+
+```json
+{"build":{"goWASM":{"visualizer":"./cmd/visualizer"}}}
+```
+
+`gosx build` compiles these explicit entries with the standard Go toolchain,
+even when TinyGo builds the shared runtime. It inherits the project's Go
+toolchain selection and emits the matching standard-Go loader. Entry names
+start with a lowercase letter and contain lowercase letters, digits, `_` or
+`-`; package paths must be `.` or a single `./` directory inside the project.
+Wildcards, flags, external paths and non-`main` packages are rejected.
+
+`gosx build --prod --go-wasm-only .` builds just these modules and their
+matching standard-Go loader. It skips components, build hooks, public assets,
+the server and the shared runtime. Output defaults to `dist/go-wasm`; use
+`--output <directory>` to select an isolated staging directory. The output's
+`build.json` resolves the hashed modules and loader using the same manifest
+contract as a full build. This mode requires configured `build.goWASM` entries
+and cannot be combined with server, runtime or packaging options. Production
+module builds use `-trimpath -ldflags='-s -w'`; development builds retain debug
+information. Compiler diagnostics and compressed sidecars are preserved.
+
+Each entry becomes `assets/go-wasm/<name>.<hash>.wasm` with compressed sidecars
+and a `goWASM` entry in `build.json`. Use `app.GoWASMURL("visualizer")` for
+`WASMPath`; it resolves the configured runtime root, including a relocated
+deployment bundle. `manifest.GoWASMURL(assetBaseURL, name)` also supports a
+custom asset prefix. Both return an empty string for unknown entries.
+`gosx size` includes the named modules in its inventory and totals, without
+assuming every page loads every module. Existing explicit `WASMPath` URLs
+remain supported and projects without `build.goWASM` keep their output.
 
 The module is an ordinary `GOOS=js GOARCH=wasm` Go program. It may register one
 or more reusable components during synchronous startup:
@@ -795,6 +833,7 @@ gosx build --offline <app>             # Stage a versioned offline asset bundle
 gosx build --msix <app>                # Stage and package Windows MSIX output
 gosx build --sign --msix <app>         # Sign MSIX via signtool
 gosx build --appinstaller <uri> <app>  # Emit AppInstaller update feed XML
+gosx deploy check [--json] dist        # Validate a production bundle before upload
 gosx assets plan [path...]            # Inspect 3D/game assets and planned build optimizations
 gosx scene render --out image.png <scene-file>
                                       # Render a typed scene natively to PNG (no browser or GPU)
@@ -828,6 +867,12 @@ compatibility artifact), and write `.gz` sidecars for immutable runtime assets
 when compression wins. Dev builds still use standard-Go WASM so local
 iteration does not depend on the production compiler.
 
+When Binaryen's `wasm-opt` is on `PATH`, the builder applies an optional `-Oz`
+pass before hashing and compressing WASM. A missing or failing optimizer emits
+a warning and keeps the compiled output. For comparable production sizes, use
+the same Go, TinyGo, and Binaryen versions as CI; the wire gate's optimizer is
+pinned in [`scripts/install-ci-binaryen.sh`](scripts/install-ci-binaryen.sh).
+
 Production builds start the server for prerendering only when static routes
 exist. Apps that need request-time authentication or a database can also disable
 build-time prerendering in `gosx.config.json`:
@@ -841,6 +886,12 @@ snapshots and the edge export. The default is `true`; `gosx export` remains an
 explicit export command. Export harnesses supply a numeric `PORT` and a loopback
 `GOSX_LISTEN_ADDR`. Use `server.App.ListenAndServe` to honor both, including when
 your app's default address comes from another environment variable.
+
+Set `build.server.strip` to `true` to build the native server with
+`-ldflags='-s -w'`, omitting its symbol table and debug information. The default
+is `false`, preserving the normal Go debug information. This setting applies
+to the native server produced by `gosx build`, not the shared runtime or
+configured `build.goWASM` browser modules.
 
 Install the CLI at the version required by your project's `go.mod`, using
 `go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the
@@ -1024,9 +1075,26 @@ the player follows the returned download page and reinstalls Setup. Both paths
 are separate from the optional `CrashReporterOptions`, which captures Go
 panics plus Windows minidumps with optional user-consented upload.
 
-`gosx build --prod` emits a deployable `dist/` bundle with a server binary,
-hashed assets, prerendered static pages, an ISR manifest, and edge worker
-support. Add `--offline` to stage `dist/offline/` with a versioned asset
+`gosx build --prod` emits a deployable `dist/` bundle with a server binary and
+hashed assets. With prerendering enabled it also emits static pages, an ISR
+manifest, and edge worker support. Validate the server bundle before upload:
+
+```sh
+gosx deploy check dist
+gosx deploy check --json dist # JSON for check failures and invalid arguments
+```
+
+The check verifies the existing bundle policy, declared asset sizes, content
+hashes and script integrity, compressed sidecars, executable launch files, and
+exported route files. It reads only the bundle and works without starting the
+application, connecting to a database, or supplying production secrets.
+Exit codes are 0 for success, 1 for failed checks and 2 for invalid arguments.
+With `--json`, invalid arguments also produce a JSON report. This command is
+an offline artifact check; host compatibility, runtime configuration, migrations,
+and live health still need validation on the destination. It currently accepts
+server bundles from `gosx build`, not static-only `gosx export` output.
+
+Add `--offline` to stage `dist/offline/` with a versioned asset
 manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `dist/app.msix` through MakeAppx, `--sign` to run signtool with
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
@@ -1287,7 +1355,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.57.6**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.9**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

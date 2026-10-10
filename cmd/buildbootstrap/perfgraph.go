@@ -19,6 +19,11 @@ import (
 // chunks.json remains source provenance; minification/compression prevent
 // additive byte attribution to individual source files.
 func perfGraph(dir string) (*buildmanifest.PerfAssetUses, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return nil, perfGraphError("asset-unavailable")
+	}
+	dir = filepath.Clean(dir)
 	root, err := os.OpenRoot(filepath.Dir(dir))
 	if err != nil {
 		return nil, perfGraphError("asset-unavailable")
@@ -63,8 +68,6 @@ func perfGraph(dir string) (*buildmanifest.PerfAssetUses, error) {
 			condition, deps = "webgpu", []string{"framework/runtime/bootstrap-feature-scene3d.js"}
 		case "bootstrap-feature-scene3d-webgl.js":
 			condition, deps = "webgl", []string{"framework/runtime/bootstrap-feature-scene3d.js"}
-		case "bootstrap-feature-scene3d-pipeline-recovery.js":
-			condition = "pipeline-recovery"
 		case "hls.min.js":
 			condition = "hls-required"
 		}

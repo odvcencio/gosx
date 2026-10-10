@@ -132,6 +132,14 @@ type InstanceStreamFrame struct {
 // The id is padded so the float32 payload always starts 4-byte aligned,
 // which lets the browser runtime view it as a Float32Array with zero copy.
 func (f InstanceStreamFrame) Encode() ([]byte, error) {
+	return f.EncodeInto(nil)
+}
+
+// EncodeInto writes the wire frame into reusable storage. The returned bytes
+// alias dst when its capacity is sufficient and remain valid until the caller
+// reuses that storage. It makes no allocation after the buffer reaches the
+// largest frame size. Encode retains its independently owned-buffer contract.
+func (f InstanceStreamFrame) EncodeInto(dst []byte) ([]byte, error) {
 	if f.Revision == 0 {
 		return nil, errors.New("scene: instance stream revision must be positive")
 	}
@@ -148,16 +156,26 @@ func (f InstanceStreamFrame) Encode() ([]byte, error) {
 	if f.Count < 0 {
 		return nil, fmt.Errorf("scene: instance stream count must not be negative: %d", f.Count)
 	}
+	idLen := len(f.BatchID)
+	idPadded := align4(idLen)
+	payloadOffset := instanceStreamHeaderBytes + idPadded
+	if uint64(f.Count) > uint64((int(^uint(0)>>1)-payloadOffset)/(stride*4)) || uint64(f.Count) > math.MaxUint32 {
+		return nil, errors.New("scene: instance stream count exceeds the wire or host limit")
+	}
 	if len(f.Data) != f.Count*stride {
 		return nil, fmt.Errorf("scene: instance stream data length %d does not match count %d * stride %d", len(f.Data), f.Count, stride)
 	}
 
-	idLen := len(f.BatchID)
-	idPadded := align4(idLen)
 	payloadBytes := len(f.Data) * 4
-	total := instanceStreamHeaderBytes + idPadded + payloadBytes
+	total := payloadOffset + payloadBytes
 
-	buf := make([]byte, total)
+	var buf []byte
+	if cap(dst) >= total {
+		buf = dst[:total]
+		clear(buf[:instanceStreamHeaderBytes+idPadded])
+	} else {
+		buf = make([]byte, total)
+	}
 	copy(buf[0:4], instanceStreamMagic)
 	buf[4] = instanceStreamVersion
 	buf[5] = byte(f.Kind)
@@ -169,7 +187,6 @@ func (f InstanceStreamFrame) Encode() ([]byte, error) {
 	copy(buf[24:24+idLen], f.BatchID)
 	// buf[24+idLen : instanceStreamHeaderBytes+idPadded] is the zero pad.
 
-	payloadOffset := instanceStreamHeaderBytes + idPadded
 	for i, v := range f.Data {
 		binary.LittleEndian.PutUint32(buf[payloadOffset+i*4:payloadOffset+i*4+4], math.Float32bits(v))
 	}

@@ -899,6 +899,11 @@ function fakeElementQuerySelectorAll(root, selector, includeSelf = false) {
   return matches;
 }
 
+// DOM semantics: an options object contributes only its capture flag.
+function listenerCaptureFlag(options) {
+  return options !== null && typeof options === "object" ? Boolean(options.capture) : Boolean(options);
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -1150,14 +1155,18 @@ class FakeElement {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, []);
     }
-    this.listeners.get(type).push({ listener, capture: Boolean(capture) });
+    this.listeners.get(type).push({
+      listener,
+      capture: listenerCaptureFlag(capture),
+      once: Boolean(capture !== null && typeof capture === "object" && capture.once),
+    });
   }
 
   removeEventListener(type, listener, capture) {
     const current = this.listeners.get(type) || [];
     this.listeners.set(
       type,
-      current.filter((entry) => entry.listener !== listener || entry.capture !== Boolean(capture)),
+      current.filter((entry) => entry.listener !== listener || entry.capture !== listenerCaptureFlag(capture)),
     );
   }
 
@@ -1238,6 +1247,10 @@ class FakeElement {
     this._capturedPointerID = pointerID;
   }
 
+  hasPointerCapture(pointerID) {
+    return this._capturedPointerID === pointerID;
+  }
+
   releasePointerCapture(pointerID) {
     if (this._capturedPointerID === pointerID) {
       this._capturedPointerID = null;
@@ -1245,8 +1258,9 @@ class FakeElement {
   }
 
   dispatchEvent(event) {
-    const listeners = this.listeners.get(event.type) || [];
+    const listeners = (this.listeners.get(event.type) || []).slice();
     for (const entry of listeners) {
+      if (entry.once) this.removeEventListener(event.type, entry.listener, entry.capture);
       entry.listener(event);
     }
     return true;
@@ -2212,9 +2226,6 @@ function createContext(options) {
   // does a WebGPU page whose device is lost. A test can still override the
   // route through options.fetchRoutes, or drop it to prove the chunk is absent.
   routes.set("/gosx/bootstrap-feature-scene3d-webgl.js", { text: bootstrapFeatureScene3DWebGLSource });
-  routes.set("/gosx/bootstrap-feature-scene3d-pipeline-recovery.js", {
-    text: fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-pipeline-recovery.js"), "utf8"),
-  });
   for (const [url, response] of Object.entries(options.fetchRoutes || {})) {
     routes.set(url, response);
   }
@@ -3378,7 +3389,7 @@ function loadSceneFramePacingAPI() {
   const start = source.indexOf("function sceneFramePacingMedianOf3");
   assert.notEqual(start, -1, "frame pacing helpers start anchor missing");
   const context = {};
-  vm.runInNewContext(source.slice(start) + `
+  vm.runInNewContext(runtimeTypescript.transpileModule(source.slice(start), { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText + `
     globalThis.framePacingAPI = {
       sceneFramePacingMedianOf3, sceneFramePacingBlendVsync, sceneFramePacingBlendCost,
       sceneFramePacingCandidateK, sceneFramePacingMinKForInterval,
@@ -4416,7 +4427,7 @@ function readBootstrapSrc(...names) {
 
 // readSceneMountSrc joins the Scene3D mount authorities in build order. The
 // old single 20-scene-mount.js was 10_127 lines and 43 percent of the base
-// Scene3D chunk; its mount path plus lazy initial-hydrate boundary is now ten
+// Scene3D chunk; its mount path plus lazy initial-hydrate boundary is split into
 // governed sources. A source assertion about that path must read them all.
 function readSceneMountSrc() {
   return readBootstrapSrc(
@@ -4429,6 +4440,7 @@ function readSceneMountSrc() {
     "../runtime/scene3d/mount-controls.ts",
     "../runtime/scene3d/mount-telemetry.ts",
     "../runtime/scene3d/hydrate-input.ts",
+    "../runtime/scene3d/mount-lifecycle.ts",
     "../runtime/scene3d/mount.ts",
   );
 }

@@ -30,6 +30,25 @@ import (
 	"strings"
 )
 
+// Exact source and the host checking projection are kept outside VM artifacts.
+type aotSourceBindings struct {
+	source  []byte
+	project func(*Program) (aotCheckingFile, error)
+	lower   func([]byte) (*Program, error)
+}
+
+type aotCheckingFile struct {
+	bytes      []byte
+	regions    map[Span]aotCheckRegion
+	components map[string]aotCheckRegion
+	copies     []aotCheckCopy
+	implicit   map[int]string
+	synthetic  map[string]aotCheckRegion
+}
+
+type aotCheckRegion struct{ start, end int }
+type aotCheckCopy struct{ sourceStart, sourceEnd, checkStart int }
+
 // ImportTable is one source file's import table: every import spec's
 // resolved local identifier, keyed by that identifier, plus the set of
 // dot-imported paths (which contribute no keyed identifier — a dot

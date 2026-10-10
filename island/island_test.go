@@ -1474,17 +1474,16 @@ func TestLoadDefaultBuildManifestOverrideMissingManifestReturnsNil(t *testing.T)
 func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
-		Bootstrap:                               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
-		BootstrapRuntime:                        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
-		BootstrapFeatureEngines:                 buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
-		BootstrapFeatureScene3D:                 buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
-		BootstrapFeatureScene3DCommand:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
-		BootstrapFeatureScene3DHydrate:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-hydrate.js", Hash: "hydrate"},
-		BootstrapFeatureScene3DPipelineRecovery: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-pipeline-recovery.js", Hash: "recovery"},
-		BootstrapFeatureScene3DWebGPU:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
-		BootstrapFeatureScene3DWebGL:            buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgl.js", Hash: "webgl"},
-		BootstrapFeatureScene3DGLTF:             buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-gltf.js", Hash: "gltf"},
-		BootstrapFeatureScene3DAnimation:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-animation.js", Hash: "anim"},
+		Bootstrap:                        buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                 buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:          buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:   buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DHydrate:   buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-hydrate.js", Hash: "hydrate"},
+		BootstrapFeatureScene3DWebGPU:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		BootstrapFeatureScene3DWebGL:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgl.js", Hash: "webgl"},
+		BootstrapFeatureScene3DGLTF:      buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-gltf.js", Hash: "gltf"},
+		BootstrapFeatureScene3DAnimation: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-animation.js", Hash: "anim"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)

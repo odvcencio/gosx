@@ -205,11 +205,12 @@
 
   async function bootGoWASMEngineModule(record) {
     const programRef = record.programRef;
-    const StandardGo = window.__gosx_standard_go_wasm_ctor;
+    const tinyGo = record.toolchain === "tinygo";
+    const StandardGo = tinyGo ? window.__gosx.tinyGoWASMCtor : window.__gosx_standard_go_wasm_ctor;
     if (typeof StandardGo !== "function") {
       throw goWASMEngineError(
         "go-wasm-runtime-missing",
-        "the isolated standard-Go wasm_exec asset must be loaded before a Go-WASM engine",
+        "the isolated " + (tinyGo ? "TinyGo" : "standard-Go") + " wasm_exec asset must be loaded before a Go-WASM engine",
         { programRef: programRef },
       );
     }
@@ -269,7 +270,13 @@
     goWASMEngineRegistrationTokens.set(record.token, record);
     let runResult;
     try {
+      // TinyGo's js target reads the environment only at link time; the
+      // synchronous registration phase inside go.run() reads this instead, so
+      // clear it as soon as run returns. Nothing awaits between the set and
+      // the clear, so concurrent module boots cannot see each other's token.
+      window.__gosx.goWASMBootToken = record.token;
       runResult = go.run(result.instance);
+      window.__gosx.goWASMBootToken = "";
       const exited = runResult && typeof runResult.then === "function"
         ? Promise.resolve(runResult).then(function() {
             return goWASMEngineError(
@@ -320,17 +327,19 @@
       );
     } finally {
       clearTimeout(record.timeout);
+      window.__gosx.goWASMBootToken = "";
       goWASMEngineRegistrationTokens.delete(record.token);
     }
     return record;
   }
 
-  function loadGoWASMEngineModule(programRef, pending) {
+  function loadGoWASMEngineModule(programRef, pending, toolchain) {
     let record = goWASMEngineModules.get(programRef);
     if (!record) {
       let rejectCancellation;
       record = {
         programRef,
+        toolchain,
         token: goWASMEngineRegistrationToken(),
         state: "booting",
         error: null,
@@ -367,7 +376,7 @@
         entry,
       );
     }
-    const record = loadGoWASMEngineModule(programRef, pending);
+    const record = loadGoWASMEngineModule(programRef, pending, entry && entry.toolchain);
     try {
       await record.boot;
     } finally {
@@ -4380,25 +4389,47 @@
     return `This experience requires ${missing} support. Use a current browser with hardware acceleration enabled.`;
   }
 
+  function isEngineFallbackContent(node) {
+    if (!node) return false;
+    if (node.nodeType === 3) return String(node.textContent || "").trim() !== "";
+    const tag = String(node.tagName || "").toUpperCase();
+    if (node.nodeType !== 1 || node.hidden || node.hasAttribute("hidden") ||
+        /^(SCRIPT|STYLE|TEMPLATE|LINK|META)$/.test(tag)) return false;
+    if (/^(SVG|IMG|CANVAS|VIDEO|AUDIO|IFRAME|INPUT|SELECT|TEXTAREA|PROGRESS|METER)$/.test(tag)) return true;
+    return Array.from(node.childNodes || []).some(isEngineFallbackContent);
+  }
+
   function showEngineCapabilityUnsupported(mount, entry, status) {
     if (!mount || !document || typeof document.createElement !== "function") {
       return;
     }
-    clearChildren(mount);
+    // The server authored fallback remains usable when the enhanced engine
+    // cannot mount. Replace only our previous capability notice on retries.
+    const previous = mount.querySelector && mount.querySelector("[data-gosx-engine-unsupported]");
+    if (previous && previous.parentNode) previous.parentNode.removeChild(previous);
+    const authoredFallback = Array.from(mount.childNodes || []).some(isEngineFallbackContent);
     const wrapper = document.createElement("div");
     wrapper.setAttribute("class", "gosx-engine-unsupported");
     wrapper.setAttribute("data-gosx-engine-unsupported", "true");
     wrapper.setAttribute("data-gosx-engine-unsupported-reason", "missing-capability");
-    wrapper.setAttribute("role", "alert");
-    wrapper.textContent = engineCapabilityUnsupportedMessage(entry, status);
+    if (authoredFallback) {
+      // Keep a terminal marker for readiness consumers without covering the
+      // useful server-rendered alternative with an unsupported-experience alert.
+      wrapper.setAttribute("hidden", "");
+    } else {
+      wrapper.setAttribute("role", "alert");
+      wrapper.textContent = engineCapabilityUnsupportedMessage(entry, status);
+    }
     mount.appendChild(wrapper);
+    return authoredFallback;
   }
 
-  function reportMissingEngineCapabilities(entry, mount, status) {
+  function reportMissingEngineCapabilities(entry, mount, status, authoredFallback) {
     const missing = status.missing.join(", ");
-    console.error(`[gosx] missing required engine capabilities for ${entry.id}: ${missing}`);
+    const level = authoredFallback ? "warn" : "error";
+    console[level](`[gosx] missing required engine capabilities for ${entry.id}: ${missing}`);
     if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
-      window.__gosx_emit("error", "engine", "missing required engine capabilities", {
+      window.__gosx_emit(level, "engine", "missing required engine capabilities", {
         component: String(entry.component || ""),
         engineID: String(entry.id || ""),
         missingCapabilities: status.missing.slice(),
@@ -4409,18 +4440,24 @@
       window.__gosx.reportIssue({
         scope: "engine",
         type: "capability",
+        severity: authoredFallback ? "warning" : "error",
         component: entry.component,
         source: entry.id,
         ref: status.missing.join(" "),
         element: mount,
         message: `missing required engine capabilities: ${missing}`,
-        fallback: "unsupported",
+        fallback: authoredFallback ? "authored" : "unsupported",
       });
     }
   }
 
   function createEngineContext(entry, mount, runtime, capabilityStatus, pending) {
-    return {
+    const isCurrent = () => {
+      if (pendingEngineOwned(pending)) return true;
+      const record = window.__gosx && window.__gosx.engines && window.__gosx.engines.get(entry.id);
+      return !!(pending && pending.generation === goWASMEnginePageGeneration && record && !record.disposed && record.context === context);
+    };
+    const context = {
       id: entry.id,
       kind: entry.kind,
       component: entry.component,
@@ -4432,15 +4469,70 @@
       programRef: entry.programRef || "",
       runtimeMode: entry.runtime || "",
       runtime: runtime,
-      setSignal: setSharedSignalValue,
-      subscribeSignal: gosxSubscribeSharedSignal,
-      isCurrent() { return pendingEngineOwned(pending); },
+      getSignal(name) {
+        if (!isCurrent()) return undefined;
+        return gosxReadSharedSignal(name, undefined);
+      },
+      setSignal(name, value) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        return setSharedSignalValue(name, value);
+      },
+      setSignals(values) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        if (!values || typeof values !== "object" || Array.isArray(values)) throw new TypeError("signal batch must be an object");
+        const names = Object.keys(values);
+        if (names.some(name => !name.trim())) throw new TypeError("signal name is required");
+        const encoded = JSON.stringify(values);
+        if (!names.length) return null;
+        gosxReadSharedSignal(names[0], undefined);
+        const store = window.__gosx.sharedSignals;
+        const before = names.map(name => [name, store.values.has(name), store.values.get(name)]);
+        // Prime all browser reads before the VM notifies any batch subscriber.
+        for (const name of names) store.values.set(name, values[name]);
+        const batch = window.__gosx_set_input_batch;
+        try {
+          if (typeof batch === "function") {
+            const error = batch(encoded);
+            if (error) throw new Error(String(error));
+          } else {
+            for (const name of names) gosxNotifySharedSignal(name, JSON.stringify(values[name]));
+          }
+        } catch (error) {
+          for (const [name, existed, value] of before) {
+            if (existed) store.values.set(name, value); else store.values.delete(name);
+          }
+          throw error;
+        }
+        return null;
+      },
+      subscribeSignal(name, handler, options) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        return gosxSubscribeSharedSignal(name, function(value, signalName) {
+          if (isCurrent()) handler(value, signalName);
+        }, options);
+      },
+      navigate(target, options) {
+        if (!isCurrent()) return Promise.reject(new Error("engine context is disposed"));
+        const navigation = window.__gosx && window.__gosx.navigation;
+        if (navigation && typeof navigation.navigate === "function") return navigation.navigate(target, options);
+        if (options && options.replace) window.location.replace(target);
+        else window.location.assign(target);
+        return Promise.resolve(false);
+      },
+      scene3D(method, target, ...args) {
+        if (!isCurrent()) throw new Error("engine context is disposed");
+        const scene = window.__gosx && window.__gosx.scene3d;
+        if (!scene || typeof scene[method] !== "function") throw new Error("Scene3D command bridge is unavailable");
+        return scene[method](target, ...args);
+      },
+      isCurrent,
       emit: function(name, detail) {
         document.dispatchEvent(new CustomEvent("gosx:engine:" + name, {
           detail: { engineID: entry.id, component: entry.component, detail: detail },
         }));
       },
     };
+    return context;
   }
 
   async function mountEngine(entry, preflightError) {
@@ -4477,6 +4569,9 @@
     };
     pendingEngineRuntimes.set(entry.id, pending);
     await prepareRuntimeCapabilityProbe(entry);
+    while (!gosxHost.lifecycle.documentActive() && pendingEngineOwned(pending)) {
+      await gosxHost.lifecycle.whenDocumentActive();
+    }
     if (!pendingEngineOwned(pending)) {
       disposePendingEngine(pending, true);
       return;
@@ -4485,8 +4580,8 @@
     applyRuntimeCapabilityState(mount, "engine", capabilityStatus);
     if (!capabilityStatus.ok) {
       disposePendingEngine(pending, true);
-      showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
-      reportMissingEngineCapabilities(entry, mount, capabilityStatus);
+      const authoredFallback = showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
+      reportMissingEngineCapabilities(entry, mount, capabilityStatus, authoredFallback);
       return;
     }
     const runtime = createEngineRuntime(entry, mount, pending);
@@ -4537,6 +4632,15 @@
     }
 
     try {
+      // A native navigation may have begun during the module download. Keep
+      // factories dormant until that navigation is canceled or BFCache resumes.
+      while (!gosxHost.lifecycle.documentActive() && pendingEngineOwned(pending)) {
+        await gosxHost.lifecycle.whenDocumentActive();
+      }
+      if (!pendingEngineOwned(pending)) {
+        disposePendingEngine(pending, true);
+        return;
+      }
       const mounted = await runEngineFactory(factory, ctx);
       if (!pendingEngineOwned(pending)) {
         if (mounted.handle && typeof mounted.handle.dispose === "function") {
@@ -4642,6 +4746,7 @@
     }
     activateInputProviders(entry);
     const record = {
+      context,
       component: entry.component,
       kind: entry.kind,
       capabilities: capabilityList(entry),

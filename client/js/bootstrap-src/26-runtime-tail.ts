@@ -26,6 +26,8 @@
 
   function bootstrapFeatureAPI() {
     return {
+      ensureBootstrapFeature,
+      registerCapabilityProbe,
       engineFactories,
       fetchProgram,
       inferProgramFormat,
@@ -71,37 +73,23 @@
       const rel = String((node.getAttribute && node.getAttribute("rel")) || node.rel || "").toLowerCase();
       const as = String((node.getAttribute && node.getAttribute("as")) || node.as || "").toLowerCase();
       const href = String((node.getAttribute && node.getAttribute("href")) || node.href || "");
-      if (rel === "preload" && as === "script" && href.includes(fileName)) {
+      if (rel === "preload" && as === "script" && href.includes(fileName + ".")) {
         return href;
       }
     }
     return "";
   }
 
-  // Resolve only GoSX-owned loads. The configured prefix is emitted by the
-  // server, so no proxy headers or parent-frame messages can change it.
-  function gosxBasePathURL(value) {
-    const meta = document.querySelector('meta[name="gosx-base-path"]');
-    const prefix = meta ? String(meta.getAttribute("content") || "") : "";
-    const path = String(value || "");
-    if (!prefix || !path.startsWith("/") || path.startsWith("//") || path.startsWith("/\\")) {
-      return path;
-    }
-    return prefix + path;
+  function bootstrapFeatureKey(name) {
+    return "bootstrapFeature" + name.replace(/(?:^|-)(\w)/g, function(_m, ch) { return ch.toUpperCase(); }) + "Path";
   }
 
   function bootstrapFeatureURL(name) {
     const assets = runtimeFeatureAssets();
-    const key = {
-      islands: "bootstrapFeatureIslandsPath",
-      engines: "bootstrapFeatureEnginesPath",
-      hubs: "bootstrapFeatureHubsPath",
-      controllers: "bootstrapFeatureControllersPath",
-      textlayout: "bootstrapFeatureTextLayoutPath",
-      scene3d: "bootstrapFeatureScene3dPath",
-    }[name];
-    if (!key) return "";
-    const publicPath = assets[key] || runtimeFeaturePreloadPath("bootstrap-feature-" + name);
+    // textlayout predates the derived-key rule; its contract key keeps a capital L.
+    const publicPath = assets[bootstrapFeatureKey(name)]
+      || (name === "textlayout" ? assets.bootstrapFeatureTextLayoutPath : "")
+      || runtimeFeaturePreloadPath("bootstrap-feature-" + name);
     return publicPath ? String(publicPath).trim() : gosxBasePathURL("/gosx/bootstrap-feature-" + name + ".js");
   }
 
@@ -240,8 +228,12 @@
     if (manifestHasEntries(manifest, "controllers")) {
       names.push("controllers");
     }
-    if (manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands")) {
+    if (manifestNeedsIslandsFeature(manifest)) {
       names.push("islands");
+    }
+    for (const name of (manifest && manifest.features) || []) {
+      const key = String(name || "").trim();
+      if (key && names.indexOf(key) < 0) names.push(key);
     }
     return names;
   }
@@ -250,17 +242,14 @@
     return Boolean(manifest && manifest[key] && manifest[key].length > 0);
   }
 
-  function manifestNeedsWASMRuntime(manifest) {
-    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands") || manifestNeedsSharedEngineRuntime(manifest);
+  function manifestNeedsIslandsFeature(manifest) {
+    return manifestHasEntries(manifest, "islands") || manifestHasEntries(manifest, "computeIslands");
   }
 
-  function manifestNeedsSharedEngineRuntime(manifest) {
-    if (!manifestHasEntries(manifest, "engines")) {
-      return false;
-    }
-    return manifest.engines.some(function(entry) {
-      return entry && entry.runtime === "shared";
-    });
+  function manifestNeedsWASMRuntime(manifest) {
+    return (manifest?.preview && gosxHost.relay?.isPreview?.())
+      || manifestNeedsIslandsFeature(manifest)
+      || manifest?.engines?.some(entry => entry && entry.runtime === "shared");
   }
 
   function ensureManifestFeatures(manifest) {
@@ -272,10 +261,10 @@
       return Promise.resolve([]);
     }
     return Promise.all(names.map(function(name) {
-      const load = ensureBootstrapFeature(name);
-      // Optional: without it the browser wraps label text. Never block mounts.
-      return name !== "textlayout" ? load : load.catch(function(error) {
-        console.warn("[gosx] textlayout:", error);
+      // Each feature fails alone: a chunk that is missing or throws is logged
+      // with its URL and dropped, so the other features still mount.
+      return ensureBootstrapFeature(name).catch(function(error) {
+        console.error("[gosx] feature " + name + " unavailable (" + bootstrapFeatureURL(name) + "):", error);
         return null;
       });
     })).then(function(features) {

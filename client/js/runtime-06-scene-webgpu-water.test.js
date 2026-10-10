@@ -1567,7 +1567,7 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   assert.match(webgl, /function createSceneSelenaProgram\(gl, material, skinned\)/);
   assert.match(webgl, /ensureSelenaProgram\(mat, isSkinned\)/);
   assert.match(webgl, /uploadSelenaUniforms\(gl, selenaProgram, mat, obj\)/);
-  assert.match(webgl, /bindSelenaTextures\(gl, selenaProgram, mat\)/);
+  assert.match(webgl, /sceneWebGLBindSelenaTextures\(gl, selenaProgram, mat, textureCache, selenaPlaceholderTexture\)/);
   assert.match(webgl, /bindSelenaMeshAttribute\(gl, selenaProgram, "position"/);
   assert.match(webgl, /function webGLSelenaObjectModelMatrix\(obj\)/);
   assert.match(webgl, /obj && obj\.directVertices === true[\s\S]{0,120}return obj\.modelMatrix \|\| identityModelMatrix/);
@@ -1593,12 +1593,12 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   // same value on selenaFrame, the object it hands to the module-scope uniform
   // packer in 16a1-scene-webgpu-selena-uniforms.ts.
   assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
-  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0 \};/);
+  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: \[0, 0, 0, 0\] \};/);
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
   // name === "time" before user values can shadow it.
   assert.match(webgl, /function sceneSelenaAutoUniformValue\(name, time, proximity\)/);
-  assert.match(webgl, /var autoUniform = sceneSelenaAutoUniformValue\(name, sceneSelenaFrameTime, sceneSelenaFrameProximity\);[\s\S]{0,900}hasOwnProperty\.call\(values, name\)/);
+  assert.match(webgl, /var autoUniform = sceneSelenaAutoUniformValue\(name, sceneSelenaFrameTime, sceneSelenaFrameProximity\);[\s\S]*?hasOwnProperty\.call\(values, name\)/);
   assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,500}sceneSelenaMaterialValue\(material, name\)/);
 
   // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
@@ -1619,8 +1619,8 @@ test("Scene3D selena camera proximity auto-uniform is renderer-owned on both bac
   assert.match(webgl, /sceneSelenaFrameProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
   assert.match(webgpu, /selenaFrame\.cameraProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
 
-  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,2400}/)[0];
-  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,1600}/)[0];
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]*?\n    }/)[0];
+  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]*?\n  }/)[0];
   const webglCustomIdx = webglResolver.indexOf('return values[name]');
   const webgpuProximityIdx = webgpuResolver.indexOf('if (name === "cameraProximity")');
   const webgpuCustomIdx = webgpuResolver.indexOf('sceneSelenaMaterialValue(material, name)');
@@ -1639,8 +1639,8 @@ test("Scene3D selena time auto-uniform: time is forced before customUniforms (re
   // The time branch must appear BEFORE the customUniforms early-return in both
   // resolvers (mirrors mvp/normalMatrix), so a compiled `param time` default
   // shipped in customUniforms cannot shadow the per-frame clock.
-  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,2200}/)[0];
-  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,1400}/)[0];
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]*?\n    }/)[0];
+  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]*?\n  }/)[0];
 
   const webglCustomIdx = webglResolver.indexOf('return values[name]');
   const webglTimeIdx = webglResolver.indexOf('sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity)');
@@ -1966,7 +1966,9 @@ test("Scene3D WebGPU Selena materials can bind live water resources", () => {
   assert.match(webgpu, /case "heightfield":[\s\S]{0,180}resolved\.system\.activeIndex === 0 \? resolved\.system\.bufferA : resolved\.system\.bufferB/);
   assert.match(webgpu, /function sceneSelenaStorageBufferDescriptors\(layout\)/);
   assert.match(webgpu, /buffer: \{ type: "read-only-storage" \}/);
-  assert.match(webgpu, /var liveView = sceneSelenaLiveTextureView\(material, tex\)/);
+  assert.match(webgpu, /liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL/);
+  assert.match(webgpu, /var liveView = environmentSlot \? \(environmentRecord && environmentRecord\.view\) : context\.liveView\(material, tex\)/);
+  assert.match(webgpu, /sceneWebGPUAppendSelenaTextures\(selenaTextureContext, material, textures, entries, cacheViews\)/);
   assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
 });
 

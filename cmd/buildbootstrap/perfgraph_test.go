@@ -65,8 +65,9 @@ func TestPerfGraphWholeOutputInventory(t *testing.T) {
 			t.Fatalf("backend closure: %+v", a)
 		}
 	}
-	if a := seen["framework/runtime/bootstrap-feature-scene3d-pipeline-recovery.js"]; a.Phase != "dormant" || a.Condition != "pipeline-recovery" {
-		t.Fatalf("dormant recovery: %+v", a)
+	// Recovery ships inside the WebGPU renderers, not as its own output.
+	if a, ok := seen["framework/runtime/bootstrap-feature-scene3d-pipeline-recovery.js"]; ok {
+		t.Fatalf("removed recovery chunk is still in the inventory: %+v", a)
 	}
 	if a := seen["framework/runtime/navigation.js"]; !strings.Contains(a.URL, a.SHA256) {
 		t.Fatal("navigation URL not bound to output")
@@ -85,6 +86,31 @@ func TestPerfGraphWholeOutputInventory(t *testing.T) {
 	}
 	if strings.Contains(string(data), "sources") || strings.Contains(string(data), dir) {
 		t.Fatal("output includes source byte attribution or a local root")
+	}
+}
+
+func TestPerfGraphEquivalentDirectorySpellings(t *testing.T) {
+	dir := perfGraphFixture(t)
+	plain, err := perfGraph(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	withSlash, err := perfGraph(dir + string(filepath.Separator))
+	if err != nil {
+		t.Fatal("directory with trailing slash:", err)
+	}
+	if !reflect.DeepEqual(plain, withSlash) {
+		t.Fatal("equivalent directory spellings changed the graph")
+	}
+	t.Chdir(dir)
+	if err := os.Mkdir("js", 0755); err != nil {
+		t.Fatal(err)
+	}
+	for _, spelling := range []string{".", "./", "./js/..", "./js/../"} {
+		got, err := perfGraph(spelling)
+		if err != nil || !reflect.DeepEqual(plain, got) {
+			t.Errorf("directory %q changed the graph: %v", spelling, err)
+		}
 	}
 }
 

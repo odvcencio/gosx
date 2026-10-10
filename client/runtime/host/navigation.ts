@@ -7,6 +7,29 @@
     return;
   }
 
+  // Enhanced navigation stays in this document. Its native fallback must also
+  // work through redirects and destinations without matching CSS opt-in. Some
+  // browsers reject an inbound native transition before exposing it on
+  // pagereveal, so catching that event's promises cannot make the path safe.
+  // Own the outbound promises, then synchronously skip the native animation;
+  // document navigation itself proceeds normally. Never filter global errors.
+  function observeNativeViewTransition(event) {
+    const transition = event && event.viewTransition;
+    if (!transition) return;
+    const settled = function(error) {
+      if (error && (error.name === "AbortError" || error.name === "InvalidStateError")) return;
+      if (typeof console !== "undefined" && typeof console.warn === "function") console.warn("[gosx] native view transition failed", error);
+    };
+    for (const promise of [transition.ready, transition.finished, transition.updateCallbackDone]) {
+      if (promise && typeof promise.catch === "function") promise.catch(settled);
+    }
+    if (event.type === "pageswap" && typeof transition.skipTransition === "function") {
+      transition.skipTransition();
+    }
+  }
+  window.addEventListener("pageswap", observeNativeViewTransition);
+  window.addEventListener("pagereveal", observeNativeViewTransition);
+
   const HEAD_START = "gosx-head-start";
   const HEAD_END = "gosx-head-end";
   const SCRIPT_ROLE = "data-gosx-script";
@@ -38,6 +61,7 @@
   const FORM_MANAGED_SHORTHAND_ATTR = "data-gosx-managed";
   const FORM_MODE_ATTR = "data-gosx-form-mode";
   const FORM_STATE_ATTR = "data-gosx-form-state";
+  const FORM_QUEUE_ATTR = "data-gosx-queue";
   const FORM_PENDING_ATTR = "data-gosx-pending";
   const FORM_PROJECT_ATTR = "data-gosx-form-project";
   const FORM_ERROR_DESCRIPTION_ATTR = "data-gosx-form-error-describedby";
@@ -248,7 +272,8 @@
   // submission is in flight" signal periodic revalidation reads — see
   // navigationOrFormSubmissionInFlight below. submitForm's try/finally keeps
   // every entry reliably removed once its submission settles.
-  const pendingManagedForms = new Set();
+  // form -> outstanding submissions (more than one only for queued forms).
+  const pendingManagedForms = new Map();
   const sentNavigationBeacons = new Set();
   let revalidateTimerHandle = null;
   let revalidateSrc = "";
@@ -1384,6 +1409,7 @@
     form.setAttribute(FORM_STATE_ATTR, "idle");
     form.setAttribute("hidden", "");
     form.hidden = true;
+    if (opts.queue) form.setAttribute(FORM_QUEUE_ATTR, "serial");
 
     const entries = actionFieldEntries(fields);
     for (const entry of entries) {
@@ -2769,7 +2795,7 @@
     });
   }
 
-  async function submitManagedActionForm(url, method, formData) {
+  async function submitManagedActionForm(url, method, formData, form) {
     const csrfToken = formCSRFToken(formData);
     const response = await gosxRuntimeRequest(url.href, {
       method: method,
@@ -2781,6 +2807,8 @@
       body: formData,
       redirect: "follow",
     });
+    const conflict = window.__gosx && window.__gosx.editConflict;
+    if (form && conflict && response.status === 409) return conflict(form, response, url.href, method);
     let result = null;
     try {
       result = await parseJSONResponse(response);
@@ -2836,21 +2864,30 @@
   }
 
   async function submitForm(form, submitter) {
-    if (!form || pendingManagedForms.has(form)) return;
-    pendingManagedForms.add(form);
+    if (!form) return;
+    const queue = window.__gosx && window.__gosx.editQueue;
+    const queued = queue && form.hasAttribute(FORM_QUEUE_ATTR);
+    if (!queued && pendingManagedForms.has(form)) return;
+    // Serialize at enqueue: the queue sends this snapshot, not later edits.
+    const snapshot = serializeForm(form, submitter);
+    // Hold the form from enqueue until this submission settles, so refresh
+    // ticks and live regions cannot swap it while a queued edit waits. Holds
+    // are counted per form: one settling submission must not release another.
+    pendingManagedForms.set(form, (pendingManagedForms.get(form) || 0) + 1);
     try {
-      return await submitFormOnce(form, submitter);
+      return await (queued ? queue.submit(form, submitter, snapshot, submitFormWith) : submitFormWith(form, submitter, snapshot));
     } finally {
-      pendingManagedForms.delete(form);
+      const holds = pendingManagedForms.get(form) - 1;
+      if (holds) pendingManagedForms.set(form, holds);
+      else pendingManagedForms.delete(form);
     }
   }
 
-  async function submitFormOnce(form, submitter) {
+  async function submitFormWith(form, submitter, formData) {
 
     const method = formSubmissionMethod(form, submitter);
     const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
-    const formData = serializeForm(form, submitter);
     const previous = captureManagedFormState(form);
     let outcome = null;
 
@@ -2861,7 +2898,7 @@
         await submitManagedGetForm(url, method, formData);
         return;
       }
-      outcome = await submitManagedActionForm(url, method, formData);
+      outcome = await submitManagedActionForm(url, method, formData, form);
       return outcome;
     } catch (err) {
       console.error("[gosx] form action failed:", err);

@@ -1,0 +1,32 @@
+package signal
+
+type Subscriber func()
+type Subscribable interface { subscribe(fn Subscriber) func() }
+type Signal[T any] struct{}
+func New[T any](initial T) *Signal[T] { return nil }
+func NewShared[T any](name string, initial T) *Signal[T] { return nil }
+func Shared[T any](name string, initial T) *Signal[T] { return nil }
+func NewWithEqual[T any](initial T, eq func(a, b T) bool) *Signal[T] { return nil }
+func (s *Signal[T]) Get() T { var v T; return v }
+func (s *Signal[T]) Revision() uint64 { return 0 }
+func (s *Signal[T]) Set(value T) {}
+func (s *Signal[T]) Update(fn func(T) T) {}
+func (s *Signal[T]) Subscribe(fn Subscriber) func() { return nil }
+func (s *Signal[T]) subscribe(fn Subscriber) func() { return nil }
+type Computed[T any] struct{}
+func Derive[T any](fn func() T) *Computed[T] { return nil }
+func (c *Computed[T]) Get() T { var v T; return v }
+func (c *Computed[T]) Subscribe(fn Subscriber) func() { return nil }
+func (c *Computed[T]) subscribe(fn Subscriber) func() { return nil }
+func (c *Computed[T]) Stop() {}
+type Effect struct{}
+func Watch(fn func()) *Effect { return nil }
+func (e *Effect) Dispose() {}
+func Batch(fn func()) {}
+func ResolveAlias(name string) string { return "" }
+func IsAlias(name string) bool { return false }
+func AliasesOf(target string) []string { return nil }
+func LegacySceneEventNames() []string { return nil }
+func SurfaceEventNames() []string { return nil }
+func IsSurfaceEventName(name string) bool { return false }
+func IsSceneEventName(name string) bool { return false }

@@ -319,22 +319,23 @@ func (v *PublicValidator) Validate(r io.Reader, format string) error {
 		}
 		return record(data)
 	case "jsonl":
-		scanner := bufio.NewScanner(io.LimitReader(r, 32*maxInputBytes+1))
+		limited := &io.LimitedReader{R: r, N: 32*maxInputBytes + 1}
+		scanner := bufio.NewScanner(limited)
 		scanner.Buffer(make([]byte, 4096), maxInputBytes+1)
 		n := 0
-		total := 0
 		for scanner.Scan() {
 			data := scanner.Bytes()
-			total += len(data) + 1
 			n++
-			if len(data) == 0 || n > 4096 || total > 32*maxInputBytes {
+			if len(data) == 0 || n > 4096 {
 				return inputReference(invalidInput(""), "public-record", "")
 			}
 			if err := record(data); err != nil {
 				return err
 			}
 		}
-		if scanner.Err() != nil || n == 0 {
+		// Exhausting the raw-byte allowance can hide an unvalidated suffix
+		// behind the limited reader's EOF, even when scanning succeeds.
+		if scanner.Err() != nil || limited.N == 0 || n == 0 {
 			return inputReference(invalidInput(""), "public-record", "")
 		}
 		return nil

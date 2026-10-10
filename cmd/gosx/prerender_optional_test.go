@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"m31labs.dev/gosx/buildmanifest"
 )
 
 func TestProjectPrerenderConfig(t *testing.T) {
@@ -80,7 +82,8 @@ func TestRunBuildProdPrerenderDisabledKeepsServerAndAssets(t *testing.T) {
 	}
 	addLocalGoSXReplace(t, dir)
 	mustWriteFile(t, filepath.Join(dir, "app", "route.config.json"), `{"prerender":true}`)
-	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{"build":{"prerender":{"enabled":false}}}`)
+	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{"build":{"prerender":{"enabled":false},"goWASM":{"controls":"./cmd/browser"},"server":{"strip":true}}}`)
+	mustWriteFile(t, filepath.Join(dir, "cmd", "browser", "main_js.go"), "//go:build js && wasm\n\npackage main\nfunc main() { select {} }\n")
 	marker := filepath.Join(dir, "started")
 	t.Setenv("TEST_BUILD_STARTED", marker)
 	mustWriteFile(t, filepath.Join(dir, "main.go"), `package main
@@ -94,6 +97,9 @@ func main() {
 	if err := RunBuild(dir, false); err != nil {
 		t.Fatal(err)
 	}
+	if report, err := checkDeploymentBundle(filepath.Join(dir, "dist")); err != nil || !report.OK {
+		t.Fatalf("production bundle failed deployment checks: %+v, %v", report, err)
+	}
 	for _, rel := range []string{"dist/build.json", "dist/server/app", "dist/run.sh", "dist/assets/runtime"} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
 			t.Fatalf("missing production artifact %s: %v", rel, err)
@@ -103,5 +109,15 @@ func main() {
 		if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
 			t.Fatalf("unexpected startup or prerender artifact %s: %v", rel, err)
 		}
+	}
+	manifest, err := buildmanifest.Load(filepath.Join(dir, "dist", "build.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifest.GoWASMURL("/gosx/assets", "controls") == "" {
+		t.Fatal("production build omitted configured Go WASM module")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dist", "assets", "go-wasm", manifest.GoWASM["controls"].File)); err != nil {
+		t.Fatal(err)
 	}
 }

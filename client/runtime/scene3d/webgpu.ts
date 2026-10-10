@@ -1,35 +1,3 @@
-  // Keep rejection handling with its renderer; loading Scene3D alone cannot run it.
-  function wgpuOptionalPipelinePass(label: string): string {
-    if (/^gosx-post-/.test(label)) {
-      var name = label.slice("gosx-post-".length);
-      if (/^bloom|^blur$/.test(name)) return "bloom";
-      if (/^atmosphere:/.test(name)) return "atmosphere";
-      if (["toneMapping", "colorGrade", "contactShadows", "ssao", "dof", "fxaa", "vignette"].includes(name)) return name;
-    }
-    if (/^(gosx-post|post-|gosx-transmission)/.test(label)) return "post";
-    if (/^gosx-(?:planar-)?reflection/.test(label)) return "reflections";
-    return "";
-  }
-  function wgpuRecoverPipeline(guard: any, canvas: any, truth: any, label: string, message: string) {
-    if (!label) {
-      var match = message.match(/(?:RenderPipeline|ComputePipeline|ShaderModule) with ['"]([^'"]+)['"] label|['"](gosx-(?:post|reflection|transmission)[^'"]*)['"]/);
-      label = match && (match[1] || match[2]) || "uncaptured";
-    }
-    if (guard.disposed || guard.coreError) return;
-    var pass = wgpuOptionalPipelinePass(label);
-    if (pass && guard.disabled.has(pass)) return;
-    if (pass) guard.disabled.add(pass);
-    else guard.coreError = message;
-    guard.failures.push({ label: label, pass: pass || "core", message: message });
-    guard.changed();
-    truth.pipelineFailure(pass || "core", label, message);
-    var detail = { pipeline: label, pass: pass || "core", error: message, action: pass ? "disabled" : "webgl2-fallback" };
-    try { if (typeof window.__gosx_emit === "function") window.__gosx_emit("warn", "scene3d-webgpu", "pipeline-failed", detail); } catch (_err) {}
-    console.warn("[gosx] WebGPU " + (pass ? pass + " disabled" : "core pipeline failed; falling back to WebGL2") + ": " + message);
-    if (canvas.parentNode && typeof canvas.parentNode.setAttribute === "function") {
-      canvas.parentNode.setAttribute("data-gosx-scene3d-webgpu-pipeline-failed", JSON.stringify(guard.failures));
-    }
-  }
   function wgpuCreatePipelineGuard(canvas: any): any {
     var guard = { pending: 0, disposed: false, frameEncoder: null, framePass: null, frameCleanup: null, coreError: "", failures: [], disabled: new Set(), fail: fail, uncaptured: uncaptured, wrapFrame: wrapFrame, release: release, snapshot: snapshot, changed: changed };
     var notificationPending = false;
@@ -447,7 +415,12 @@
     "    out.uv = in.uv;",
     "    let rawT = (material.modelMatrix * vec4f(in.tangent.xyz, 0.0)).xyz;",
     "    let N = out.normal;",
-    "    let T = normalize(rawT - N * dot(N, rawT));",
+    "    var tangentFrame = rawT - N * dot(N, rawT);",
+    "    if (dot(tangentFrame, tangentFrame) < 1e-12) {",
+    "        let axis = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(N.x) < 0.8);",
+    "        tangentFrame = axis - N * dot(N, axis);",
+    "    }",
+    "    let T = normalize(tangentFrame);",
     "    out.tangent = T;",
     "    out.bitangent = cross(N, T) * in.tangent.w * an.w;",
     "    out.instanceColor = vec4f(1.0, 1.0, 1.0, 1.0);",
@@ -1688,7 +1661,12 @@
     "    out.uv = in.uv;",
     "    let rawT = (model * vec4f(in.tangent.xyz, 0.0)).xyz;",
     "    let N = out.normal;",
-    "    let T = normalize(rawT - N * dot(N, rawT));",
+    "    var tangentFrame = rawT - N * dot(N, rawT);",
+    "    if (dot(tangentFrame, tangentFrame) < 1e-12) {",
+    "        let axis = select(vec3f(0.0, 1.0, 0.0), vec3f(1.0, 0.0, 0.0), abs(N.x) < 0.8);",
+    "        tangentFrame = axis - N * dot(N, axis);",
+    "    }",
+    "    let T = normalize(tangentFrame);",
     "    out.tangent = T;",
     "    out.bitangent = cross(N, T) * in.tangent.w * an.w;",
     "    out.instanceColor = in.instanceColor;",
@@ -7632,7 +7610,7 @@
     // clock (seconds) fed to selena materials that declare `param time : float`;
     // it is set once per frame before any selena draw, and an explicit
     // customUniforms.time still overrides it.
-    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0 };
+    var selenaFrame = { viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: [0, 0, 0, 0] };
 
     // Hoisted uniform staging buffers — reused every frame to eliminate per-frame allocations.
     // Each scratch is consumed synchronously (filled → writeBuffer → done) before any reuse.
@@ -8290,6 +8268,11 @@
       }
     })();
 
+    const selenaTextureContext = {
+      device, textureCache, iblResources, placeholderCubeView, placeholderView,
+      envMapSampler, linearSampler, liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL,
+    };
+
     // Ensure main depth texture matches canvas size.
     function ensureMainDepth(width, height, sampleCount) {
       sampleCount = Math.max(1, Math.floor(sampleCount || 1));
@@ -8502,7 +8485,7 @@
     function sceneSelenaTextureURL(material, texture, index) {
       var name = texture && texture.name;
       var value = sceneSelenaMaterialValue(material, name);
-      if (typeof value === "string" && value.trim() && !sceneSelenaParseResourceRef(value)) {
+      if (typeof value === "string" && value.trim() && !value.trim().startsWith("gosx:") && !sceneSelenaParseResourceRef(value)) {
         return value.trim();
       }
       if (material && name && typeof material[name] === "string" && material[name].trim()) {
@@ -8964,23 +8947,7 @@
       }];
       var textures = sceneSelenaTextureDescriptors(resource.layout);
       var cacheViews = [];
-      for (var i = 0; i < textures.length; i++) {
-        var tex = textures[i] || {};
-        var isCube = tex.dimension === "cube";
-        var liveView = sceneSelenaLiveTextureView(material, tex);
-        var url = liveView ? "" : sceneSelenaTextureURL(material, tex, i);
-        // dimension:"cube" (the water surface/surface-below "sky" environment
-        // map) loads through wgpuLoadCubeTexture/placeholderCubeView instead
-        // of the plain-2d wgpuLoadTexture/placeholderView path every other
-        // Selena texture uses; this mirrors the hand-written
-        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // createWaterRenderBindGroup's cubeMap handling.
-        var record = url ? (isCube ? wgpuLoadCubeTexture(device, url, textureCache) : wgpuLoadTexture(device, url, textureCache)) : null;
-        var view = liveView || (record && record.view ? record.view : (isCube ? placeholderCubeView : placeholderView));
-        var wgsl = tex.wgsl || {};
-        entries.push({ binding: sceneNumber(wgsl.textureBinding, 1 + i * 2), resource: view });
-        entries.push({ binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2), resource: linearSampler });
-        cacheViews.push(view);
-      }
+      sceneWebGPUAppendSelenaTextures(selenaTextureContext, material, textures, entries, cacheViews);
       var storageBuffers = sceneSelenaStorageBufferDescriptors(resource.layout);
       var cacheStorages = [];
       for (var b = 0; b < storageBuffers.length; b++) {
@@ -14510,6 +14477,7 @@
       var env = environment || {};
       var ibl = syncEnvironmentIBL(env);
       var envMap = syncEnvironmentMap(env, ibl.active);
+      selenaFrame.environmentInfo = sceneWebGPUSelenaEnvironmentInfo(ibl, env);
       var ambientColorRGBA = sceneColorRGBA(env.ambientColor, [1, 1, 1, 1]);
       var skyColorRGBA = sceneColorRGBA(env.skyColor, [0.88, 0.94, 1, 1]);
       var groundColorRGBA = sceneColorRGBA(env.groundColor, [0.12, 0.16, 0.22, 1]);
@@ -18553,10 +18521,10 @@
       beginGPUPassTimingFrame(); pipelineGuard.frameCleanup = function() { endGPUFrameTiming(encoder, gpuTimingToken); endGPUPassTimingFrame(encoder); wgpuFinishGPUDrivenEncoding(gpuDriven, encoder); };
       var scopedFrameErrors = beginWebGPUErrorScope();
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
-      // Prepare the full detail draw set before retiring resources from earlier frames.
+      // Retain ownership before an atlas bake can suspend this frame for pipeline validation.
+      detailResources = sceneWebGPUEnsureDetailResources(device, detailResources, bundle.materials, frameBindGroupLayout, materialBindGroupLayout, WGSL_PBR_FRAGMENT);
       detailResources = sceneWebGPUPrepareDetailFrame(device, detailResources, bundle.materials, textureCache, {
-        frameLayout: frameBindGroupLayout, materialLayout: materialBindGroupLayout,
-        source: WGSL_PBR_FRAGMENT, placeholderView: placeholderView, enabled: detailEnabled,
+        placeholderView: placeholderView, enabled: detailEnabled,
       });
       // Reuse uniforms when color or detail controls change; retire buffers and
       // atlases that no longer belong to the active draw set.

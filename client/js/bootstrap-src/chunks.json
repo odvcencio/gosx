@@ -12,12 +12,14 @@
         "bootstrap-src/05-document-env.ts",
         "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
+        "../runtime/host/document-lifecycle.ts",
         "../runtime/generated/runtime-abi.ts",
         "../runtime/wasm/abi.ts",
         "../runtime/wasm/mailbox.ts",
         "../runtime/wasm/loader.ts",
         "../runtime/host/disclosure.ts",
         "../runtime/host/request.ts",
+        "../runtime/host/request-guard.ts",
         "../runtime/host/actions.ts",
         "../runtime/scene3d/script-loader.ts",
         "../runtime/scene3d/command-bridge.ts",
@@ -64,6 +66,8 @@
         "bootstrap-src/16z-scene-webgpu-probe.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/pipeline-recovery.ts",
+        "../runtime/scene3d/webgpu-selena-textures.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
@@ -91,9 +95,12 @@
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/hydrate-input.ts",
         "../runtime/scene3d/mount-input.ts",
+        "../runtime/scene3d/geometry-assets.ts",
+        "../runtime/scene3d/mount-lifecycle.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
+        "../runtime/host/modules.ts",
         "bootstrap-src/30b-tail-engine-mounting.ts",
         "../runtime/host/hubs.ts",
         "bootstrap-src/30c1-tail-hub-fight-input.ts",
@@ -116,6 +123,7 @@
         "bootstrap-src/05-document-env.ts",
         "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
+        "../runtime/host/document-lifecycle.ts",
         "../runtime/host/disclosure.ts",
         "../runtime/host/request.ts",
         "../runtime/host/actions.ts",
@@ -135,6 +143,7 @@
         "bootstrap-src/05-document-env.ts",
         "bootstrap-src/06-motion-core.ts",
         "../runtime/host/compatibility.ts",
+        "../runtime/host/document-lifecycle.ts",
         "../runtime/generated/runtime-abi.ts",
         "../runtime/wasm/abi.ts",
         "../runtime/wasm/mailbox.ts",
@@ -150,6 +159,14 @@
         "bootstrap-src/10-runtime-scene-utils.ts",
         "bootstrap-src/10-runtime-primitives.ts",
         "bootstrap-src/26-runtime-tail.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-browser-services.js",
+      "sources": [
+        "bootstrap-src/26d-feature-browser-services-prefix.ts",
+        "../runtime/host/request-guard.ts",
+        "bootstrap-src/26d-feature-browser-services-suffix.ts"
       ]
     },
     {
@@ -173,6 +190,7 @@
         "bootstrap-src/26b2-canvas-board-labels.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "bootstrap-src/30h-tail-capability-probe.ts",
+        "../runtime/host/modules.ts",
         "bootstrap-src/30b-tail-engine-mounting.ts",
         "../runtime/host/engine-disposal.ts",
         "bootstrap-src/26b-feature-engines-suffix.ts"
@@ -252,6 +270,8 @@
         "../runtime/scene3d/mount-scene-focus.ts",
         "../runtime/scene3d/mount-telemetry.ts",
         "../runtime/scene3d/mount-input.ts",
+        "../runtime/scene3d/geometry-assets.ts",
+        "../runtime/scene3d/mount-lifecycle.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/26d-feature-scene3d-suffix.ts"
       ]
@@ -295,18 +315,14 @@
       ]
     },
     {
-      "name": "bootstrap-feature-scene3d-pipeline-recovery.js",
-      "sources": [
-        "../runtime/scene3d/pipeline-recovery.ts"
-      ]
-    },
-    {
       "name": "bootstrap-feature-scene3d-webgpu.js",
       "sources": [
         "bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts",
         "bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts",
         "../runtime/scene3d/webgpu-transmission.ts",
         "../runtime/scene3d/webgpu-detail.ts",
+        "../runtime/scene3d/pipeline-recovery.ts",
+        "../runtime/scene3d/webgpu-selena-textures.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
