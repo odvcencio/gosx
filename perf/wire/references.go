@@ -641,6 +641,13 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 			out.drop(dropNestedScan)
 			return
 		}
+		// BackgroundFetchManager.fetch takes a job ID and a request list, not
+		// the Fetch API's URL/RequestInit pair. Only the direct global member
+		// form has that literal URL model; an unknown receiver is unresolved.
+		if value == "fetch" && name.Type(lang) == "member_expression" && !staticJavaScriptGlobalObject(name.ChildByFieldName("object", lang), lang, body) {
+			out.drop(dropUnresolved)
+			return
+		}
 		args := n.ChildByFieldName("arguments", lang)
 		if args == nil || args.NamedChildCount() == 0 {
 			out.drop(dropUnresolved)
@@ -687,6 +694,26 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 	default:
 		out.drop(dropNonLoadingSyntax)
 	}
+}
+
+// Static global members do not require alias/type inference. Other receivers
+// may expose a different fetch signature, notably BackgroundFetchManager.
+func staticJavaScriptGlobalObject(n *ts.Node, lang *ts.Language, body []byte) bool {
+	if n == nil {
+		return false
+	}
+	if n.Type(lang) == "identifier" {
+		return javaScriptGlobalObjectAlias(n.Text(body))
+	}
+	if n.Type(lang) != "member_expression" {
+		return false
+	}
+	property := n.ChildByFieldName("property", lang)
+	object := n.ChildByFieldName("object", lang)
+	if property == nil || object == nil || property.Type(lang) != "property_identifier" || !javaScriptGlobalObjectAlias(property.Text(body)) {
+		return false
+	}
+	return property.Text(body) == "defaultView" && object.Text(body) == "document" || staticJavaScriptGlobalObject(object, lang, body)
 }
 
 func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
