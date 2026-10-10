@@ -45,6 +45,14 @@ func referenceFailure() error {
 // ScanReferences extracts active HTML, CSS and module references without
 // changing the compatibility crawler or its accounting rules. It does not
 // resolve URLs, fetch resources or copy native values into a public report.
+//
+// Complete targets accidental performance regressions in our own app. True
+// means the modelled forms found no unaccounted loader in code a developer
+// would plausibly write, including common esbuild and Terser output. Deliberate
+// attempts to hide loads from static analysis are outside this threat model.
+// Computed access, code construction, enumeration/reflection, global-object
+// aliasing outside static alias.name accesses, and the loader denylist always
+// make coverage incomplete. Complete is not a runtime-behavior certificate.
 func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error) {
 	return scanReferences(body, kind, nil)
 }
@@ -667,6 +675,15 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 		// Computed access can conceal any loader, including on an aliased global.
 		// No property evaluation or alias analysis establishes coverage here.
 		out.drop(dropUnresolved)
+	case "for_in_statement":
+		// The grammar shares this node with for-of. Only for-in enumerates
+		// property names that can expose a loader on an otherwise opaque value.
+		operator := n.ChildByFieldName("operator", lang)
+		if operator == nil || operator.Text(body) != "of" {
+			out.drop(dropUnresolved)
+		} else {
+			out.drop(dropNonLoadingSyntax)
+		}
 	default:
 		out.drop(dropNonLoadingSyntax)
 	}
@@ -725,6 +742,43 @@ func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 		}
 	}
 	if strings.Contains(name, "\\") {
+		out.drop(dropUnresolved)
+		return
+	}
+	if javaScriptGlobalObjectAlias(name) {
+		if n.Type(lang) == "string" {
+			if n.Parent().Type(lang) == "pair" {
+				out.drop(dropNonLoadingSyntax) // ordinary quoted metadata key
+			} else {
+				out.drop(dropUnresolved) // quoted destructuring can expose a global
+			}
+			return
+		}
+		alias := n
+		if n.Type(lang) == "property_identifier" {
+			parent := n.Parent()
+			if parent != nil && parent.Type(lang) == "member_expression" && parent.ChildByFieldName("property", lang) == n {
+				alias = parent // document.defaultView, window.parent, etc.
+			} else if parent != nil && parent.Type(lang) == "pair" {
+				// An ordinary metadata key is not a global-object value.
+				out.drop(dropNonLoadingSyntax)
+				return
+			}
+		}
+		parent := alias.Parent()
+		if parent == nil || parent.Type(lang) != "member_expression" || parent.ChildByFieldName("object", lang) != alias {
+			out.drop(dropUnresolved)
+			return
+		}
+		property := parent.ChildByFieldName("property", lang)
+		if property == nil || property.Type(lang) != "property_identifier" {
+			out.drop(dropUnresolved)
+			return
+		}
+	}
+	if unmodeledJavaScriptEnumeration(name) && n.Type(lang) != "identifier" {
+		// Accesses and destructuring keys expose enumeration APIs, while an
+		// ordinary local variable named values/keys is not that capability.
 		out.drop(dropUnresolved)
 		return
 	}

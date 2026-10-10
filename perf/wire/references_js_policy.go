@@ -1,5 +1,31 @@
 package wire
 
+// Completeness models accidental regressions in our own app: code a developer
+// would plausibly write, including common esbuild/Terser output, using modelled
+// forms. Code deliberately hiding loads is outside the threat model. Computed
+// access, code construction, enumeration/reflection, global-object aliasing
+// except static alias.name, and the loader denylist always mean incomplete.
+// Known literal references are retained alongside that uncertainty.
+func javaScriptGlobalObjectAlias(name string) bool {
+	switch name {
+	case "globalThis", "window", "self", "top", "parent", "frames", "opener", "defaultView":
+		return true
+	}
+	return false
+}
+
+// Enumeration accesses/keys can expose capabilities without naming a loader.
+// The AST policy distinguishes these from ordinary local variables named keys
+// or values. Existing reflection/assign tokens also stay on the loader denylist.
+func unmodeledJavaScriptEnumeration(name string) bool {
+	switch name {
+	case "values", "entries", "keys", "getOwnPropertyNames", "getOwnPropertySymbols",
+		"getOwnPropertyDescriptor", "getOwnPropertyDescriptors", "getPrototypeOf", "fromEntries", "assign":
+		return true
+	}
+	return false
+}
+
 // unmodeledJavaScriptLoader is a capability policy, not receiver/type analysis.
 // These tokens can create, activate or redirect resources, or conceal a loader.
 // Their appearance in accesses, bindings and property keys prevents a complete
