@@ -1,0 +1,46 @@
+{
+  "schema": "gosx.perf-toolchain/v1",
+  "go": "1.26.0",
+  "tinygo": "0.41.1",
+  "llvm": "20.1.1",
+  "binaryen": "108",
+  "binaryenSHA256": "7bb8a2d97214f40bf34abc31d49b34aa5deab10b25d6d13c5f72cb395cf142fb",
+  "brotli": "v1.2.1",
+  "brotliQuality": 11,
+  "brotliWindow": 0,
+  "gzipLevel": 9,
+  "zopfli": "v0.0.0-20260611111302-2b73a4c8c2e9",
+  "zopfliIterations": 5,
+  "builderBrotli": "v1.2.2",
+  "esbuild": "v0.28.1",
+  "chromeSnapshot": "1688711",
+  "chromeProduct": "154.0.8034.0",
+  "platformArchives": {
+    "linux-x64": "29926d981f345ddbb33239da141736ebf19ca2daadf9e2237514c3be94af1691"
+  },
+  "fonts": [
+    {
+      "file": "examples/gosx-docs/public/fonts/Inter-400.woff2",
+      "sha256": "8909904ab6c872eb994093482a88a28eca2cd95912d7b6fecd72103b0dc07edc"
+    },
+    {
+      "file": "examples/gosx-docs/public/fonts/Inter-500.woff2",
+      "sha256": "f3779f1efccc4bdcdf9c0a02ab95bf6bd092ed09c48c08cedc725889edd1d19f"
+    },
+    {
+      "file": "examples/gosx-docs/public/fonts/Inter-600.woff2",
+      "sha256": "f9a06e79cd3a2a20951c0f0e28f66dd0e6d3fda73911d640a2125c8fcb78f21a"
+    },
+    {
+      "file": "examples/gosx-docs/public/fonts/JetBrainsMono-Regular.woff2",
+      "sha256": "14425ba9c695763c1547f48a206b7aa60350a33ae23de09f0407877f3fcd89eb"
+    },
+    {
+      "file": "examples/gosx-docs/public/fonts/SpaceGrotesk-Bold.woff2",
+      "sha256": "35f8aec56cfd5cbfdb03cc68733a54a0b05bb3617ffcd5fd332badc0b045ca55"
+    }
+  ],
+  "cdproto": "v0.0.0-20260321001828-e3e3800016bc",
+  "chromedp": "v0.15.1",
+  "node": "26.8.1"
+}
