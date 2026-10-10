@@ -32,6 +32,8 @@ func RunBudget(args []string, stdout, stderr io.Writer) int {
 		return runBudgetDerive(args[1:], stdout, stderr)
 	case "explain":
 		return runBudgetExplain(args[1:], stdout, stderr)
+	case "check":
+		return runBudgetCheck(args[1:], stdout, stderr)
 	case "report":
 		return runBudgetReport(args[1:], stdout, stderr)
 	case "public-check":
@@ -46,11 +48,16 @@ func budgetUsage(w io.Writer) {
 Usage:
   gosx budget derive --budget FILE [--root DIR] [--check | --write | --out FILE]
   gosx budget explain --budget FILE --page-type TYPE [--root DIR] [--json]
+  gosx budget check --budget FILE --app ID=URL --dist ID=DIR --base-report FILE
+    [--trailers FILE] [--report FILE] [--markdown FILE] [--report-only]
+    [--chunks-only] [--now YYYY-MM-DD] [--root DIR]
   gosx budget report --report FILE --out FILE [--root DIR]
   gosx budget public-check [--format auto|json|jsonl|markdown] [--root DIR] FILE...
 
 Derive prints proposed JSON unless --check, --write or --out is supplied.
 Explain --json encodes the complete explanation text as a JSON string.
+Check uses producer-supplied fixture digest proofs from its native environment.
+Chunks-only reports potential bytes and cannot certify routes or policies.
 `)
 }
 func budgetDiagnostic(w io.Writer, err error, status int, code, reference, pointer string) int {
