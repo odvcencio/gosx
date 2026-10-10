@@ -127,6 +127,7 @@ test-budget-gate:
 .PHONY: test-budget-cli
 test-budget-cli:
 	GOWORK=off $(GO) test ./cmd/gosx -run TestBudget
+	GOWORK=off $(GO) test ./perf/budget -run TestMarkdown
 
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
