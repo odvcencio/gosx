@@ -215,7 +215,7 @@ func testMeasuredResourceGraph(t *testing.T, graph ReachabilityOptions, redirect
 	return opts, requests
 }
 
-func TestMeasureDeferredHTMLKeepsResourcesAfterReady(t *testing.T) {
+func TestMeasureFetchedHTMLKeepsConservativeResourceCosts(t *testing.T) {
 	bodies := map[string][]byte{
 		"app/fixture/html":   []byte(`<p>Fixture document</p>`),
 		"app/fixture/script": []byte(`fetch("/counter/later/")`),
@@ -235,14 +235,19 @@ func TestMeasureDeferredHTMLKeepsResourcesAfterReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	doc, _ := testBodyNormalizer(bodies["app/fixture/html"])
-	var afterReady int64
+	var startup, wire int64
+	wire = int64(len(bodies["app/fixture/html"]))
 	for _, id := range []string{"app/fixture/script", "app/fixture/later", "app/fixture/image"} {
 		sizes, _ := testBodyNormalizer(bodies[id])
-		afterReady += sizes.Brotli
+		startup += sizes.Brotli
+		wire += int64(len(bodies[id]))
 	}
 	row := report.Rows[0]
-	if row.NormalizedBytes != doc.Brotli || row.PhaseBytes.Startup != 0 || row.PhaseBytes.AfterReady != afterReady || row.WireBytes != int64(len(bodies["app/fixture/html"])) || row.Requests != 1 {
-		t.Fatal("deferred HTML promoted a descendant into cold totals", row)
+	// Fetching HTML does not embed it. Its unresolved closure retains inventory
+	// costs at startup rather than certifying deferred document execution.
+	declared, present := observedPolicy(row, "declared-fetches")
+	if report.Coverage.Reachability != "unknown" || row.NormalizedBytes != doc.Brotli+startup || row.PhaseBytes.Startup != startup || row.PhaseBytes.AfterReady != 0 || row.WireBytes != wire || row.Requests != 4 || !present || declared {
+		t.Fatal("fetched HTML lost conservative costs or certified its closure", row)
 	}
 }
 
