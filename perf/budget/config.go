@@ -138,7 +138,7 @@ type File struct {
 // Load validates configuration and its hash-bound inputs under one project root.
 // It does not certify the recorded allocation arithmetic.
 func Load(path string, opts LoadOptions) (*File, error) {
-	inputs, err := loadInputs(path, opts)
+	inputs, err := loadInputs(loadInputArguments{path, opts})
 	if err != nil {
 		return nil, err
 	}
@@ -151,6 +151,7 @@ type loadedInputs struct {
 	coefficients          Coefficients
 	toolchain             Toolchain
 	rootDir, budgetSHA256 string
+	inputFiles            []string
 }
 
 // Inputs is a native snapshot of hash-verified files. It has no JSON surface;
@@ -162,14 +163,15 @@ type Inputs struct {
 	Toolchain    Toolchain    `json:"-"`
 	BudgetSHA256 string       `json:"-"`
 	rootDir      string
+	inputFiles   []string // Resolved file arguments, including the budget itself.
 }
 
 func LoadInputs(path string, opts LoadOptions) (*Inputs, error) {
-	loaded, err := loadInputs(path, opts)
+	loaded, err := loadInputs(loadInputArguments{path, opts})
 	if err != nil {
 		return nil, err
 	}
-	return &Inputs{File: loaded.file, Profile: loaded.profile, Coefficients: loaded.coefficients, Toolchain: loaded.toolchain, BudgetSHA256: loaded.budgetSHA256, rootDir: loaded.rootDir}, nil
+	return &Inputs{File: loaded.file, Profile: loaded.profile, Coefficients: loaded.coefficients, Toolchain: loaded.toolchain, BudgetSHA256: loaded.budgetSHA256, rootDir: loaded.rootDir, inputFiles: loaded.inputFiles}, nil
 }
 
 func (inputs *Inputs) RootDir() string { return inputs.rootDir }
@@ -177,14 +179,18 @@ func (inputs *Inputs) PublicValidator() (*PublicValidator, error) {
 	return NewPublicValidator(filepath.Join(inputs.rootDir, inputs.File.Fixtures.File), LoadOptions{RootDir: inputs.rootDir}, inputs.File.HubBudgets)
 }
 
-func loadInputs(path string, opts LoadOptions) (result *loadedInputs, resultErr error) {
+func loadInputs(arguments loadInputArguments) (result *loadedInputs, resultErr error) {
 	defer func() { resultErr = inputReference(resultErr, "budget", "") }()
 	var f File
-	root, err := inputRoot(path, opts)
+	root, err := inputRoot(arguments.Path, arguments.Options)
 	if err != nil {
 		return nil, err
 	}
-	data, err := readWithin(root, path, maxInputBytes)
+	data, err := readWithin(root, arguments.Path, maxInputBytes)
+	if err != nil {
+		return nil, err
+	}
+	inputFiles, err := loadArgumentPaths(arguments)
 	if err != nil {
 		return nil, err
 	}
@@ -268,7 +274,7 @@ func loadInputs(path string, opts LoadOptions) (result *loadedInputs, resultErr 
 	if err := f.validate(p, c); err != nil {
 		return nil, err
 	}
-	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:])}, nil
+	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:]), inputFiles: inputFiles}, nil
 }
 
 func (f File) validate(p Profile, c Coefficients) error {

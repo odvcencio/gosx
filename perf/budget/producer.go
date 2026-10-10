@@ -155,6 +155,8 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		dependencies := use.Dependencies
 		if use.Owner == "app" {
 			dependencies = rules[use.ID].Dependencies
+			use.Phase = rules[use.ID].Phase
+			use.Condition = rules[use.ID].Condition
 		}
 		use.Dependencies = append([]string{}, dependencies...)
 		manifest.Assets = append(manifest.Assets, use)

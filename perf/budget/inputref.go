@@ -24,7 +24,63 @@ var pathPattern = regexp.MustCompile(`^[A-Za-z0-9_.-]+(/[A-Za-z0-9_.-]+)*$`)
 var shaPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 // LoadOptions sets the private project root for every file reference.
-type LoadOptions struct{ RootDir string }
+type LoadOptions struct {
+	RootDir string `input:"directory"`
+}
+
+// Keep the loader arguments together: file-valued strings are protected by
+// default, while directory locators must be explicitly tagged. Signature tests
+// tie this binding to LoadInputs so an added argument cannot escape protection.
+type loadInputArguments struct {
+	Path    string
+	Options LoadOptions
+}
+
+func loadArgumentPaths(arguments any) ([]string, error) {
+	files := []string{}
+	var walk func(reflect.Value) error
+	walk = func(value reflect.Value) error {
+		switch value.Kind() {
+		case reflect.Struct:
+			for i := 0; i < value.NumField(); i++ {
+				field := value.Type().Field(i)
+				if role := field.Tag.Get("input"); role != "" {
+					if role != "directory" || field.Type.Kind() != reflect.String {
+						return errors.New("invalid input path role")
+					}
+					continue
+				}
+				if err := walk(value.Field(i)); err != nil {
+					return err
+				}
+			}
+		case reflect.String:
+			if value.String() == "" {
+				return nil
+			}
+			file, err := filepath.Abs(value.String())
+			if err != nil {
+				return errors.New("invalid input path")
+			}
+			file, err = filepath.EvalSymlinks(file)
+			if err != nil {
+				return errors.New("cannot resolve input path")
+			}
+			files = append(files, file)
+		case reflect.Pointer:
+			if !value.IsNil() {
+				return walk(value.Elem())
+			}
+		case reflect.Slice, reflect.Array, reflect.Map:
+			return errors.New("input path containers require explicit traversal")
+		}
+		return nil
+	}
+	if err := walk(reflect.ValueOf(arguments)); err != nil {
+		return nil, err
+	}
+	return files, nil
+}
 
 // Ref binds a root-relative input to its exact file bytes.
 type Ref struct {

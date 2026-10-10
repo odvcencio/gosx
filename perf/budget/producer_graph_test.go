@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 
 	"m31labs.dev/gosx/buildmanifest"
@@ -218,6 +219,73 @@ func producerJSONFields(t *testing.T, value any) map[string]any {
 	return fields
 }
 
+// Only these AssetUse fields are absent from AssetRule. Their independently
+// generated values are still checked after reflection compares the catalog.
+var producerRoundTripExemptions = map[string]string{
+	"sha256": "The producer hashes the verified whole body; the catalog has no body hash.",
+	"url":    "The producer binds native build/public/route locations; the catalog has no URL.",
+}
+
+func producerReflectedFields(value any) map[string]any {
+	fields := map[string]any{}
+	var walk func(reflect.Value)
+	walk = func(v reflect.Value) {
+		for i := 0; i < v.NumField(); i++ {
+			field := v.Type().Field(i)
+			if field.Anonymous {
+				walk(v.Field(i))
+				continue
+			}
+			name := strings.Split(field.Tag.Get("json"), ",")[0]
+			if name != "-" && field.IsExported() {
+				fields[name] = v.Field(i).Interface()
+			}
+		}
+	}
+	walk(reflect.ValueOf(value))
+	return fields
+}
+
+func producerCompareCatalogFields(catalog, record any) error {
+	got := producerReflectedFields(record)
+	for field, want := range producerReflectedFields(catalog) {
+		if value, ok := got[field]; !ok || !reflect.DeepEqual(value, want) {
+			return fmt.Errorf("%s: got %v want %v", field, value, want)
+		}
+	}
+	return nil
+}
+
+func TestProducerRoundTripReflectionGuard(t *testing.T) {
+	catalog := producerAssetRule{ID: "app/fixture/test.js", Phase: "startup", Dependencies: []string{}}
+	use := catalog.assetUse("/test.js")
+	type futureRule struct {
+		producerAssetRule
+		FutureField string `json:"futureField"`
+	}
+	future := futureRule{catalog, "must survive"}
+	if err := producerCompareCatalogFields(future, use); err == nil {
+		t.Fatal("new catalog field disappeared without failing comparison")
+	}
+	type futureUse struct {
+		buildmanifest.PerfAssetUse
+		FutureField string `json:"futureField"`
+	}
+	if err := producerCompareCatalogFields(future, futureUse{use, future.FutureField}); err != nil {
+		t.Fatal("round-tripped future field rejected", err)
+	}
+	for field := range producerReflectedFields(use) {
+		if _, ok := producerReflectedFields(catalog)[field]; !ok && producerRoundTripExemptions[field] == "" {
+			t.Errorf("new emitted field %s needs an explicit exemption and independent assertion", field)
+		}
+	}
+	for field, reason := range producerRoundTripExemptions {
+		if reason == "" || producerReflectedFields(use)[field] == nil || producerReflectedFields(catalog)[field] != nil {
+			t.Errorf("invalid exemption %s: %s", field, reason)
+		}
+	}
+}
+
 func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 	properties := inputDefinitions["AssetRule"].(map[string]any)["properties"].(map[string]any)
 	enum := func(field string) []any { return properties[field].(map[string]any)["enum"].([]any) }
@@ -235,18 +303,29 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			bodies := map[string][]byte{"/counter/": document}
 			kinds := map[string]string{}
 			sidecars := map[string]map[string][]byte{}
-			expected := map[string]map[string]any{}
+			expected := map[string]buildmanifest.PerfAssetUse{}
+			catalogRules := map[string]producerAssetRule{}
 			rules := []any{}
 			add := func(use buildmanifest.PerfAssetUse, body []byte, source string) buildmanifest.PerfAssetUse {
 				use.SHA256 = testMeasureHash(body)
 				fields := producerSchemaObject(t, "AssetUse", producerJSONFields(t, use))
-				rule := map[string]any{"id": fields["id"], "owner": fields["owner"], "kind": fields["kind"],
-					"phase": fields["phase"], "condition": fields["condition"], "dependencies": fields["dependencies"]}
-				rules = append(rules, producerSchemaObject(t, "AssetRule", rule))
-				// Expectations come from the complete catalog rule, so adding a
-				// generator for a new field cannot bypass its output assertion.
-				expected[use.ID] = producerJSONFields(t, rule)
-				expected[use.ID]["sha256"], expected[use.ID]["url"] = fields["sha256"], fields["url"]
+				rule := producerAssetRule{}
+				// Derive every catalog property from the source asset by its JSON
+				// name. Schema/struct guards reject any field omitted by decoding.
+				ruleFields := map[string]any{}
+				for name := range properties {
+					value, ok := fields[name]
+					if !ok {
+						t.Fatalf("catalog field %s has no emitted counterpart", name)
+					}
+					ruleFields[name] = value
+				}
+				rules = append(rules, producerSchemaObject(t, "AssetRule", ruleFields))
+				raw, err := json.Marshal(ruleFields)
+				if err != nil || json.Unmarshal(raw, &rule) != nil {
+					t.Fatal("cannot decode generated catalog rule", err)
+				}
+				catalogRules[use.ID], expected[use.ID] = rule, use
 				bodies[use.URL] = body
 				kinds[use.URL] = use.Kind
 				producerTestFile(t, opts.DistDir, source, body)
@@ -290,12 +369,21 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 					}
 				}
 				use := buildmanifest.PerfAssetUse{ID: ids[category], URL: urls[ids[category]], Owner: "app", Kind: kind,
-					Phase: "dormant", Condition: "always", Dependencies: deps}
+					Phase: enum("phase")[seed%len(enum("phase"))].(string), Condition: "always", Dependencies: deps}
 				use = add(use, body, "generated/"+filepath.Base(use.URL))
-				// The CLI supplies no registered edges. The catalog must win.
+				// CLI staging supplies dormant inventory without registered edges.
+				use.Phase = "dormant"
 				use.Dependencies = []string{}
 				build = append(build, use)
 			}
+			// An unreferenced compiled entry varies every registered scheduling
+			// field while CLI staging still supplies dormant/always defaults.
+			conditional := buildmanifest.PerfAssetUse{ID: "app/fixture/registered.js", URL: "/generated/registered.js", Owner: "app", Kind: "js",
+				Phase:     enum("phase")[seed%len(enum("phase"))].(string),
+				Condition: enum("condition")[(seed/len(enum("phase")))%len(enum("condition"))].(string), Dependencies: []string{}}
+			conditional = add(conditional, []byte("const registered=1;"), "generated/registered.js")
+			conditional.Phase, conditional.Condition = "dormant", "always"
+			build = append(build, conditional)
 			for i, choice := range enum("kind") {
 				kind := choice.(string)
 				body := []byte(fmt.Sprintf("generated %s body %d", kind, seed))
@@ -364,13 +452,34 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 				t.Fatal("generated routes changed during publication")
 			}
 			for _, asset := range manifest.Assets {
-				if got := producerJSONFields(t, asset); !reflect.DeepEqual(got, expected[asset.ID]) {
-					t.Errorf("emitted asset %s differs from catalog: got %v want %v", asset.ID, got, expected[asset.ID])
+				if err := producerCompareCatalogFields(catalogRules[asset.ID], asset); err != nil {
+					t.Errorf("emitted %s differs from catalog: %v", asset.ID, err)
+				}
+				// Check the explicit producer-owned fields independently too.
+				want := expected[asset.ID]
+				if asset.SHA256 != want.SHA256 || asset.URL != want.URL {
+					t.Errorf("producer-owned fields changed for %s", asset.ID)
 				}
 				body, encodings, err := readFixtureBody(root, asset.URL, asset.Kind)
 				if err != nil || !bytes.Equal(body, bodies[asset.URL]) || !reflect.DeepEqual(encodings, sidecars[asset.ID]) {
 					t.Errorf("generated body/sidecars %s changed: %v", asset.ID, err)
 				}
+			}
+			// Collection reports observed phase. Derive its expected plan from
+			// catalog records and original bodies, never from the emitted graph.
+			catalogGraph := &buildmanifest.PerfAssetUses{Version: 1, Assets: []buildmanifest.PerfAssetUse{}}
+			catalogBodies := map[string][]byte{}
+			for id, asset := range expected {
+				catalogGraph.Assets = append(catalogGraph.Assets, asset)
+				catalogBodies[id] = bodies[asset.URL]
+			}
+			plan, err := ResolveReachability(ReachabilityOptions{Graph: catalogGraph, Bodies: catalogBodies, Route: manifest.Routes[0], Backend: "none"})
+			if err != nil || plan.Reachability != "known" {
+				t.Fatal("generated catalog plan is not known", plan, err)
+			}
+			observedPhases := map[string]string{}
+			for _, asset := range plan.Assets {
+				observedPhases[asset.ID] = asset.Phase
 			}
 			for _, chunks := range []bool{false, true} {
 				report := producerTestCollect(t, opts, digest, chunks)
@@ -378,15 +487,21 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 					t.Fatal("collector lost generated assets")
 				}
 				for _, asset := range report.Assets {
-					if expected[asset.ID] == nil {
+					rule, ok := catalogRules[asset.ID]
+					if !ok {
 						t.Fatalf("collector returned an unregistered ID %s", asset.ID)
 					}
-					got := producerJSONFields(t, asset)
-					for field, want := range expected[asset.ID] {
-						// Collection computes observed phase and keeps native URLs private.
-						if field != "url" && field != "phase" && !reflect.DeepEqual(got[field], want) {
-							t.Errorf("collected %s.%s differs: got %v want %v", asset.ID, field, got[field], want)
-						}
+					rule.Phase = observedPhases[asset.ID]
+					if chunks {
+						// Advisory inventory has no route observation and charges every
+						// physical asset to startup, regardless of declared reachability.
+						rule.Phase = "startup"
+					}
+					if err := producerCompareCatalogFields(rule, asset); err != nil {
+						t.Errorf("collected %s differs from catalog plan: %v", asset.ID, err)
+					}
+					if asset.SHA256 != expected[asset.ID].SHA256 {
+						t.Errorf("collected hash changed for %s", asset.ID)
 					}
 				}
 			}
