@@ -48,15 +48,6 @@
   // frames arrived during the stall.
   var pendingFrames = new Map();
 
-  function pendingBucketFor(mount) {
-    var bucket = pendingFrames.get(mount);
-    if (!bucket) {
-      bucket = new Map();
-      pendingFrames.set(mount, bucket);
-    }
-    return bucket;
-  }
-
   // instanceStreamURL reads the versioned, content-hashed URL island.go
   // embeds as a data-* attribute on the main scene3d script tag (see
   // island.go's emitScene3DScriptTags and commandURL in command-bridge.ts,
@@ -72,11 +63,8 @@
     return "/gosx/bootstrap-feature-scene3d-instance-stream.js";
   }
 
-  // asUint8Array returns a read-only Uint8Array VIEW onto bytes (never a
-  // copy), or null when bytes is not one of the three shapes
-  // scene.InstanceStreamFrame.Encode's caller can pass. Shared by
-  // pendingBatchInfo (reads the header only) and copyFrameBytes (copies
-  // the whole payload).
+  // View caller bytes once for both the header scan and the deferred copy.
+  // An already-loaded codec still receives the original buffer directly.
   function asUint8Array(bytes) {
     try {
       if (bytes instanceof Uint8Array) return bytes;
@@ -107,26 +95,24 @@
     return out;
   }
 
-  // pendingBatchInfo returns { key, batchId } for bytes: key is the
-  // pendingFrames coalescing key (namespaced so a batch literally named
-  // "unparsed" can never collide with the malformed-frame sentinel);
-  // batchId is the plain id text, used only for the error event a load
-  // failure reports (see reportChunkLoadFailure).
-  function pendingBatchInfo(bytes) {
-    var view = asUint8Array(bytes);
+  // Return the plain batch ID for coalescing and load-failure reports.
+  // Null marks malformed bytes; an empty or literal "unparsed" batch ID
+  // remains distinct once the caller adds the valid-ID namespace.
+  function pendingBatchID(view) {
     if (view && view.byteLength >= GSXI_HEADER_BYTES &&
         view[0] === 0x47 && view[1] === 0x53 && view[2] === 0x58 && view[3] === 0x49) {
       try {
-        var dv = new DataView(view.buffer, view.byteOffset, view.byteLength);
-        var idLen = dv.getUint16(20, true);
+        // The complete header is present, so read its little-endian length
+        // without allocating a second view over the same bytes.
+        var idLen = view[20] | (view[21] << 8);
         var idEnd = GSXI_HEADER_BYTES + idLen;
         if (idEnd <= view.byteLength) {
           var batchId = decodeBatchIDBytes(view, GSXI_HEADER_BYTES, idEnd);
-          return { key: "id:" + batchId, batchId: batchId };
+          return batchId;
         }
       } catch (_e) {}
     }
-    return { key: "unparsed", batchId: "" };
+    return null;
   }
 
   // reportChunkLoadFailure is the load-time counterpart to instance-stream.ts's
@@ -202,9 +188,8 @@
     return loadPromise;
   }
 
-  // copyFrameBytes gives a caller's buffer a safe, independent copy before
-  // this loader defers applying it to a later microtask (the queued path
-  // below). decodeInstanceStreamFrame's own doc comment already documents
+  // The queued path gives a caller's buffer an independent copy before
+  // this loader defers applying it to a later microtask. decodeInstanceStreamFrame's own doc comment already documents
   // the zero-copy contract applyInstanceStreamFrame's caller relies on: the
   // source buffer is only guaranteed valid until that SYNCHRONOUS call
   // returns, because a per-frame encoder is free to reuse or free it right
@@ -212,11 +197,6 @@
   // synchronously and needs no copy; only a frame queued behind the
   // one-time chunk load needs its own copy, since the encoder's buffer may
   // already be gone by the time the queued .then() runs.
-  function copyFrameBytes(bytes) {
-    var view = asUint8Array(bytes);
-    return view ? view.slice() : bytes;
-  }
-
   // Explicit residency for typed Go-WASM producers. This loads the shared
   // codec without creating an invisible instance or queueing a dummy frame.
   // The same promise and CSP-aware script loader serve every caller.
@@ -244,10 +224,15 @@
     var apply = window.__gosx_scene3d_instance_stream_apply;
     if (typeof apply === "function") return apply(sceneState, bytes, scheduleRender, mount);
 
-    var info = pendingBatchInfo(bytes);
-    var key = info.key;
-    var bucket = pendingBucketFor(mount);
-    bucket.set(key, { sceneState: sceneState, bytes: copyFrameBytes(bytes), scheduleRender: scheduleRender });
+    var view = asUint8Array(bytes);
+    var batchId = pendingBatchID(view);
+    var key = batchId === null ? "unparsed" : "id:" + batchId;
+    var bucket = pendingFrames.get(mount);
+    if (!bucket) {
+      bucket = new Map();
+      pendingFrames.set(mount, bucket);
+    }
+    bucket.set(key, { sceneState: sceneState, bytes: view ? view.slice() : bytes, scheduleRender: scheduleRender });
 
     return loadInstanceStreamBridge().then(function(loadedApply) {
       var fn = loadedApply || window.__gosx_scene3d_instance_stream_apply;
@@ -257,7 +242,7 @@
       }
       bucket.delete(key);
       if (bucket.size === 0) pendingFrames.delete(mount);
-      if (typeof fn !== "function") return reportChunkLoadFailure(mount, info.batchId);
+      if (typeof fn !== "function") return reportChunkLoadFailure(mount, batchId);
       return fn(current.sceneState, current.bytes, current.scheduleRender, mount);
     }, function(_err) {
       var current = bucket.get(key);
@@ -266,7 +251,7 @@
       }
       bucket.delete(key);
       if (bucket.size === 0) pendingFrames.delete(mount);
-      return reportChunkLoadFailure(mount, info.batchId);
+      return reportChunkLoadFailure(mount, batchId);
     });
   };
 })();

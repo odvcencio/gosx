@@ -383,3 +383,44 @@ test("a chunk that loads without publishing its apply function clears the cache 
     console.error = originalError;
   }
 });
+
+
+test("queued offset views preserve 16-bit batch IDs and own their copied bytes", async () => {
+  const { window, scripts } = loadInstanceStreamBridge();
+  const mount = makeMount();
+  const pending = [];
+  for (const [suffix, revision] of [["x", 11], ["y", 22]]) {
+    const frame = buildFrameBytes("a".repeat(256) + suffix, revision);
+    const reusable = new Uint8Array(frame.length + 17);
+    reusable.fill(255);
+    reusable.set(frame, 13);
+    const view = suffix === "x"
+      ? new DataView(reusable.buffer, 13, frame.length)
+      : new Uint8Array(reusable.buffer, 13, frame.length);
+    pending.push(window.__gosx_scene3d_apply_instance_stream_frame(makeSceneState(), view, () => {}, mount));
+    reusable.fill(0);
+  }
+  const applied = [];
+  window.__gosx_scene3d_instance_stream_apply = (_state, bytes) => {
+    applied.push(revisionOf(bytes));
+    return { applied: true };
+  };
+  scripts[0].onload();
+  assert.equal((await Promise.all(pending)).filter((result) => result.applied).length, 2);
+  assert.deepEqual(applied, [11, 22]);
+});
+
+test("empty and literal sentinel batch IDs stay distinct from truncated headers", async () => {
+  const { window, scripts } = loadInstanceStreamBridge();
+  const mount = makeMount();
+  const frames = [buildFrameBytes("", 1), buildFrameBytes("unparsed", 2), buildFrameBytes("missing", 3).slice(0, 24)];
+  const pending = frames.map((bytes) => window.__gosx_scene3d_apply_instance_stream_frame(makeSceneState(), bytes, () => {}, mount));
+  const applied = [];
+  window.__gosx_scene3d_instance_stream_apply = (_state, bytes) => {
+    applied.push(revisionOf(bytes));
+    return { applied: true };
+  };
+  scripts[0].onload();
+  assert.equal((await Promise.all(pending)).filter((result) => result.applied).length, 3);
+  assert.deepEqual(applied, [1, 2, 3]);
+});
