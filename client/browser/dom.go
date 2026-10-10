@@ -1,4 +1,9 @@
 // Package browser provides typed browser services for Go-WASM engines.
+//
+// Author repeatable DOM structure in server-rendered HTML templates, then use
+// Document.InstantiateTemplate to obtain a detached element without parsing
+// markup in the engine. Retain its child handles for subsequent text and
+// attribute updates, and append the element when a new item is inserted.
 package browser
 
 import "m31labs.dev/gosx/internal/browserdom"
