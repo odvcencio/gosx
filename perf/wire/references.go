@@ -190,12 +190,15 @@ func scanDocumentReferences(body []byte, out *referenceScanner) error {
 }
 
 func scanDocumentTree(root *html.Node, out *referenceScanner) error {
+	if err := scanDocumentManifestReferences(root, out); err != nil {
+		out.drop(dropUnresolved)
+		return err
+	}
 	type pending struct {
 		node  *html.Node
 		depth int
 	}
 	stack := []pending{{root, 0}}
-	manifestSeen := false
 	for len(stack) > 0 {
 		entry := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
@@ -241,17 +244,8 @@ func scanDocumentTree(root *html.Node, out *referenceScanner) error {
 						return err
 					}
 				} else if knownHTMLDataScript(attr(n, "type")) {
-					if attr(n, "id") == "gosx-manifest" && !hasHTMLReferenceAttribute(n, "src") {
-						if manifestSeen {
-							return referenceFailure()
-						}
-						manifestSeen = true
-						if err := scanHydrationReferences(textOf(n), out); err != nil {
-							return err
-						}
-					} else {
-						out.drop(dropInertDataScript)
-					}
+					// Manifest text was selected independently at document scope.
+					out.drop(dropInertDataScript)
 				} else {
 					out.drop(dropUnresolved)
 				}

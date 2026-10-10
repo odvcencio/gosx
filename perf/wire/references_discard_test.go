@@ -19,15 +19,10 @@ func TestReferencesManifestIDDoesNotSuppressScript(t *testing.T) {
 			}
 		}
 	}
-	// An ID does not turn executable inline source into manifest data either.
+	// Invalid JSON is no manifest, while its executable body is still scanned.
 	set, err := ScanReferences([]byte(`<script id="gosx-manifest">fetch("/active.js")</script>`), KindDocument)
 	if err != nil || !set.Complete || !reflect.DeepEqual(set.Resources, []Reference{{"/active.js", KindScript, false}}) {
 		t.Fatalf("inline executable manifest ID: %+v %v", set, err)
-	}
-	// Data scripts with src do not execute or supply an inline manifest.
-	set, err = ScanReferences([]byte(`<script type="application/json" id="gosx-manifest" src="/ignored.js">{"version":"0.1.0","islands":[{"programRef":"/ignored.bin"}],"runtime":{"path":"/ignored.wasm"}}</script>`), KindDocument)
-	if err != nil || !set.Complete || len(set.Resources) != 0 {
-		t.Fatalf("external data script selected a manifest: %+v %v", set, err)
 	}
 }
 
@@ -231,12 +226,11 @@ func TestReferencesGeneratedManifestDispositions(t *testing.T) {
 		{"selected-other-data-type", `type="text/plain" id="gosx-manifest"`, dropUnresolved},
 		{"no-id", `type="application/json"`, dropInertDataScript},
 		{"other-id", `type="application/json" id="other"`, dropInertDataScript},
-		{"data-src", `type="application/json" id="gosx-manifest" src="/external.js"`, dropInertDataScript},
-		{"executable-src", `id="gosx-manifest" src="/external.js"`, dropExternalScriptBody},
-		{"executable-module-src", `type="module" id="gosx-manifest" src="/external.js"`, dropExternalScriptBody},
-		// Plain JSON strings are not JavaScript fetch expressions. The ID does
-		// not select them as a manifest; syntax errors may still fail closed.
-		{"executable-inline", `id="gosx-manifest"`, dropNonLoadingSyntax},
+		// Every first ID selects textContent independently of source/type.
+		{"data-src", `type="application/json" id="gosx-manifest" src="/external.js"`, dropUnresolved},
+		{"executable-src", `id="gosx-manifest" src="/external.js"`, dropUnresolved},
+		{"executable-module-src", `type="module" id="gosx-manifest" src="/external.js"`, dropUnresolved},
+		{"executable-inline", `id="gosx-manifest"`, dropUnresolved},
 		{"template", `type="application/json" id="gosx-manifest"`, dropTemplateContent},
 		{"sandboxed-frame", `type="application/json" id="gosx-manifest"`, dropSandboxedExecutable},
 	}
