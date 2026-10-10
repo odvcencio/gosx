@@ -69,7 +69,7 @@ func htmlReferenceWords(words string) map[string]bool {
 
 // Every present attribute reaches this dispatcher. An allowlisted metadata
 // attribute is explicitly inert; a new or unsupported field fails closed.
-func scanHTMLReferenceAttribute(n *html.Node, a html.Attribute, out *ReferenceSet) error {
+func scanHTMLReferenceAttribute(n *html.Node, a html.Attribute, out *referenceScanner) error {
 	if n.Namespace != "" || a.Namespace != "" {
 		out.drop(dropUnresolved)
 		return nil

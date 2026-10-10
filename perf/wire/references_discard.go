@@ -20,7 +20,13 @@ const (
 	dropEmptySyntax                            // no CSS/JavaScript instructions to scan
 )
 
-func (out *ReferenceSet) drop(reason referenceDropReason) {
+// ReferenceSet keeps its public shape; omission tracing is scanner state only.
+type referenceScanner struct {
+	ReferenceSet
+	onDrop func(referenceDropReason)
+}
+
+func (out *referenceScanner) drop(reason referenceDropReason) {
 	switch reason {
 	case dropInertHTML, dropInertDataScript, dropExternalScriptBody,
 		dropTemplateContent, dropOpaqueData, dropCSSFragment, dropDormantManifest, dropManifestMetadata,

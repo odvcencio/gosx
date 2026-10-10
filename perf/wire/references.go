@@ -29,7 +29,6 @@ type Reference struct {
 type ReferenceSet struct {
 	Resources []Reference
 	Complete  bool
-	onDrop    func(referenceDropReason)
 }
 
 // ReferenceError identifies a failed scan without copying source text or URLs.
@@ -51,32 +50,32 @@ func ScanReferences(body []byte, kind string) (out ReferenceSet, resultErr error
 }
 
 // The optional observer audits omissions without retaining source or allocating
-// a discard log in production. It is cleared before returning the reference set.
+// a discard log in production. The observer stays in the private scanner state.
 func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) (out ReferenceSet, resultErr error) {
-	out = ReferenceSet{Resources: []Reference{}, Complete: true, onDrop: onDrop}
+	state := referenceScanner{ReferenceSet: ReferenceSet{Resources: []Reference{}, Complete: true}, onDrop: onDrop}
 	defer func() {
 		if resultErr != nil {
-			out.drop(dropUnresolved)
+			state.drop(dropUnresolved)
 		}
-		out.onDrop = nil
+		out = state.ReferenceSet
 	}()
 	if len(body) > 16<<20 || !utf8.Valid(body) {
-		return out, referenceFailure()
+		return state.ReferenceSet, referenceFailure()
 	}
 	switch kind {
 	case KindDocument:
-		if err := scanDocumentReferences(body, &out); err != nil {
-			return out, err
+		if err := scanDocumentReferences(body, &state); err != nil {
+			return state.ReferenceSet, err
 		}
 	case KindStyle, KindScript:
-		if err := scanSyntaxReferences(body, kind, &out); err != nil {
-			return out, err
+		if err := scanSyntaxReferences(body, kind, &state); err != nil {
+			return state.ReferenceSet, err
 		}
 	default:
-		return out, referenceFailure()
+		return state.ReferenceSet, referenceFailure()
 	}
-	sort.Slice(out.Resources, func(i, j int) bool {
-		a, b := out.Resources[i], out.Resources[j]
+	sort.Slice(state.Resources, func(i, j int) bool {
+		a, b := state.Resources[i], state.Resources[j]
 		if a.URL != b.URL {
 			return a.URL < b.URL
 		}
@@ -85,20 +84,20 @@ func scanReferences(body []byte, kind string, onDrop func(referenceDropReason)) 
 		}
 		return !a.Potential && b.Potential
 	})
-	dedup := out.Resources[:0]
-	for _, ref := range out.Resources {
+	dedup := state.Resources[:0]
+	for _, ref := range state.Resources {
 		if len(dedup) > 0 && dedup[len(dedup)-1].URL == ref.URL && dedup[len(dedup)-1].Kind == ref.Kind {
 			dedup[len(dedup)-1].Potential = dedup[len(dedup)-1].Potential && ref.Potential
-			out.drop(dropDuplicateReference)
+			state.drop(dropDuplicateReference)
 			continue
 		}
 		dedup = append(dedup, ref)
 	}
-	out.Resources = dedup
-	return out, nil
+	state.Resources = dedup
+	return state.ReferenceSet, nil
 }
 
-func addFetchReference(out *ReferenceSet, raw, kind string, potential bool) {
+func addFetchReference(out *referenceScanner, raw, kind string, potential bool) {
 	value := strings.TrimSpace(raw)
 	if value == "" || strings.HasPrefix(value, "#") {
 		// Empty/fragment fetches can target the current document. Without a
@@ -182,7 +181,7 @@ func executableType(value string) bool {
 	}
 }
 
-func scanDocumentReferences(body []byte, out *ReferenceSet) error {
+func scanDocumentReferences(body []byte, out *referenceScanner) error {
 	root, err := html.Parse(bytes.NewReader(body))
 	if err != nil {
 		return referenceFailure()
@@ -190,7 +189,7 @@ func scanDocumentReferences(body []byte, out *ReferenceSet) error {
 	return scanDocumentTree(root, out)
 }
 
-func scanDocumentTree(root *html.Node, out *ReferenceSet) error {
+func scanDocumentTree(root *html.Node, out *referenceScanner) error {
 	type pending struct {
 		node  *html.Node
 		depth int
@@ -270,7 +269,7 @@ func scanDocumentTree(root *html.Node, out *ReferenceSet) error {
 	return nil
 }
 
-func scanHydrationReferences(raw string, out *ReferenceSet) error {
+func scanHydrationReferences(raw string, out *referenceScanner) error {
 	var manifest hydrate.Manifest
 	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
 		return referenceFailure()
@@ -361,7 +360,7 @@ func hydrationRuntimeConsumers(manifest hydrate.Manifest) (common, bridge bool) 
 	return common, bridge
 }
 
-func scanSyntaxReferences(body []byte, kind string, out *ReferenceSet) error {
+func scanSyntaxReferences(body []byte, kind string, out *referenceScanner) error {
 	if len(bytes.TrimSpace(body)) == 0 {
 		out.drop(dropEmptySyntax)
 		return nil
@@ -473,7 +472,7 @@ func cssReferenceLiteral(n *ts.Node, lang *ts.Language, body []byte) (string, bo
 	return "", false
 }
 
-func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceScanner) {
 	if (n.Type(lang) == "plain_value" || n.Type(lang) == "function_name") && strings.Contains(n.Text(body), "\\") {
 		// Escaped names may conceal a loader that is not decoded here.
 		out.drop(dropUnresolved)
@@ -583,7 +582,7 @@ func cssReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet)
 	}
 }
 
-func addCSSReference(out *ReferenceSet, raw, kind string) {
+func addCSSReference(out *referenceScanner, raw, kind string) {
 	value := strings.TrimSpace(raw)
 	if value == "" || strings.HasPrefix(value, "#") {
 		out.drop(dropCSSFragment)
@@ -597,7 +596,7 @@ func addCSSReference(out *ReferenceSet, raw, kind string) {
 	addFetchReference(out, raw, kind, false)
 }
 
-func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceScanner) {
 	switch n.Type(lang) {
 	case "import_statement", "export_statement":
 		source := n.ChildByFieldName("source", lang)
@@ -693,7 +692,7 @@ func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 	return ""
 }
 
-func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *ReferenceSet) {
+func moduleLoaderUse(n *ts.Node, lang *ts.Language, body []byte, out *referenceScanner) {
 	callee := n
 	name := n.Text(body)
 	if n.Type(lang) == "string" {

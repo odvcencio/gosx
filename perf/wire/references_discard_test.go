@@ -93,7 +93,7 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 					root = &html.Node{Type: html.ElementNode, Data: "iframe", Attr: []html.Attribute{{Key: "sandbox"}, {Key: "srcdoc", Val: htmlAttributeDocument(element, attribute+`="`+value+`"`)}}}
 				}
 				drops := []referenceDropReason{}
-				set := ReferenceSet{Resources: []Reference{}, Complete: true, onDrop: func(reason referenceDropReason) { drops = append(drops, reason) }}
+				set := referenceScanner{ReferenceSet: ReferenceSet{Resources: []Reference{}, Complete: true}, onDrop: func(reason referenceDropReason) { drops = append(drops, reason) }}
 				err := scanDocumentTree(root, &set)
 				wantReason := dropUnresolved
 				switch {
@@ -119,9 +119,9 @@ func TestReferencesGeneratedDiscardMatrix(t *testing.T) {
 					// Isolate the subject attribute as well: an inert sibling such as
 					// type/id must not provide a witness for a silently dropped value.
 					isolatedDrops := []referenceDropReason{}
-					isolated := ReferenceSet{Complete: true, onDrop: func(reason referenceDropReason) { isolatedDrops = append(isolatedDrops, reason) }}
+					isolated := referenceScanner{ReferenceSet: ReferenceSet{Complete: true}, onDrop: func(reason referenceDropReason) { isolatedDrops = append(isolatedDrops, reason) }}
 					isolatedErr := scanHTMLReferenceAttribute(n, n.Attr[0], &isolated)
-					assertReferenceDisposition(t, element+"/"+attribute+"/"+context+"/attribute", isolated, isolatedErr, isolatedDrops, wantReason, "/candidate.png")
+					assertReferenceDisposition(t, element+"/"+attribute+"/"+context+"/attribute", isolated.ReferenceSet, isolatedErr, isolatedDrops, wantReason, "/candidate.png")
 				}
 				// These are disjoint outcomes: prefer the subject's reference,
 				// otherwise require incompleteness, otherwise an expected safe drop.
@@ -229,7 +229,7 @@ func TestReferencesGeneratedManifestDispositions(t *testing.T) {
 
 func TestReferencesDropPolicyFailsClosed(t *testing.T) {
 	for _, reason := range []referenceDropReason{dropUnresolved, 255, dropEmptySyntax + 1} {
-		set := ReferenceSet{Complete: true}
+		set := referenceScanner{ReferenceSet: ReferenceSet{Complete: true}}
 		set.drop(reason)
 		if set.Complete {
 			t.Fatalf("unknown/unresolved reason preserved coverage: %v", reason)
