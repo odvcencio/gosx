@@ -76,13 +76,17 @@ type Menu struct {
 // MenuItem is one native menu entry. Separator entries ignore Label, ID, and
 // Submenu. Submenu entries ignore OnClick.
 type MenuItem struct {
-	ID        string
-	Label     string
-	Disabled  bool
-	Checked   bool
-	Separator bool
-	Submenu   *Menu
-	OnClick   func()
+	// Accelerator is a display label in the shortcut column (after a tab on
+	// Windows). It installs no native accelerator table; the page command
+	// registry handles keystrokes, so its chord and this label must agree.
+	Accelerator string
+	ID          string
+	Label       string
+	Disabled    bool
+	Checked     bool
+	Separator   bool
+	Submenu     *Menu
+	OnClick     func()
 }
 
 // MenuPlan is the platform-neutral menu payload produced for tests and native
@@ -94,13 +98,14 @@ type MenuPlan struct {
 
 // MenuPlanItem is one validated menu entry in a MenuPlan.
 type MenuPlanItem struct {
-	ID        string
-	Label     string
-	CommandID uint16
-	Disabled  bool
-	Checked   bool
-	Separator bool
-	Items     []MenuPlanItem
+	Accelerator string
+	ID          string
+	Label       string
+	CommandID   uint16
+	Disabled    bool
+	Checked     bool
+	Separator   bool
+	Items       []MenuPlanItem
 }
 
 // TrayOptions configures a shell tray icon. Icon is an optional path to a
@@ -195,12 +200,16 @@ func buildMenuPlanItems(items []MenuItem, next *uint16, depth int) ([]MenuPlanIt
 		if strings.ContainsRune(item.Label, '\x00') {
 			return nil, fmt.Errorf("%w: menu item %d label contains NUL", ErrInvalidOptions, i)
 		}
+		if strings.ContainsAny(item.Accelerator, "\x00\t") {
+			return nil, fmt.Errorf("%w: menu item %d accelerator contains NUL or tab", ErrInvalidOptions, i)
+		}
 		planItem := MenuPlanItem{
-			ID:        strings.TrimSpace(item.ID),
-			Label:     strings.TrimSpace(item.Label),
-			Disabled:  item.Disabled,
-			Checked:   item.Checked,
-			Separator: item.Separator,
+			Accelerator: strings.TrimSpace(item.Accelerator),
+			ID:          strings.TrimSpace(item.ID),
+			Label:       strings.TrimSpace(item.Label),
+			Disabled:    item.Disabled,
+			Checked:     item.Checked,
+			Separator:   item.Separator,
 		}
 		switch {
 		case item.Separator:
@@ -218,6 +227,9 @@ func buildMenuPlanItems(items []MenuItem, next *uint16, depth int) ([]MenuPlanIt
 			}
 			planItem.Items = children
 		default:
+			if planItem.Accelerator != "" {
+				planItem.Label += "\t" + planItem.Accelerator
+			}
 			if *next == 0 || *next > maxNativeCommandID {
 				return nil, fmt.Errorf("%w: menu command id space exhausted", ErrInvalidOptions)
 			}

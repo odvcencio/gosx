@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/assetpipe"
+	"m31labs.dev/gosx/command"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 )
@@ -110,6 +111,9 @@ type Manifest struct {
 
 	// Controllers lists headless declarative browser controllers for the page.
 	Controllers []ControllerEntry `json:"controllers,omitempty"`
+
+	// Commands lists named page actions dispatched by the workbench chunk.
+	Commands []command.Command `json:"commands,omitempty"`
 
 	// Features names opt-in runtime chunks the page needs beyond those inferred
 	// from entries; the loader fetches bootstrap-feature-<name>.js for each.
@@ -631,6 +635,16 @@ func (m *Manifest) AddController(config controller.Config) string {
 		Config: config,
 	})
 	return id
+}
+
+// AddCommands validates the complete registry before appending page commands.
+func (m *Manifest) AddCommands(cmds ...command.Command) error {
+	all := append(append([]command.Command(nil), m.Commands...), cmds...)
+	if err := command.Validate(all); err != nil {
+		return err
+	}
+	m.Commands = all
+	return nil
 }
 
 // SetClientIdentity configures bootstrap-owned client identity state.

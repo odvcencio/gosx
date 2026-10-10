@@ -137,25 +137,36 @@
     if (key && key !== String(event.key || "").toLowerCase()) return false;
     if (code && code !== String(event.code || "")) return false;
     const modifiers = Array.isArray(binding.modifiers) ? binding.modifiers : [];
+    const wanted = {};
     for (const mod of modifiers) {
       switch (String(mod || "").toLowerCase()) {
         case "alt":
+          wanted.alt = true;
           if (!event.altKey) return false;
           break;
         case "ctrl":
         case "control":
+          wanted.ctrl = true;
           if (!event.ctrlKey) return false;
           break;
         case "meta":
         case "cmd":
         case "command":
+          wanted.meta = true;
           if (!event.metaKey) return false;
           break;
         case "shift":
+          wanted.shift = true;
           if (!event.shiftKey) return false;
           break;
       }
     }
+    // Extra modifiers are a different chord. Layouts may use Shift to type
+    // single symbol keys such as ? or +; Space keeps exact Shift matching.
+    const symbolKey = key.length === 1 && !/[a-z0-9 ]/i.test(key);
+    if (binding.anyModifiers !== true && (
+      (!wanted.alt && event.altKey) || (!wanted.ctrl && event.ctrlKey) ||
+      (!wanted.meta && event.metaKey) || (!wanted.shift && !symbolKey && event.shiftKey))) return false;
     return Boolean(key || code);
   }
 

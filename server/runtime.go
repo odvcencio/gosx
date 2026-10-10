@@ -6,6 +6,7 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/assetpipe"
+	"m31labs.dev/gosx/command"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
@@ -211,6 +212,19 @@ func (r *PageRuntime) Controller(config controller.Config) string {
 		r.active = true
 	}
 	return id
+}
+
+// Commands registers page commands and requires the workbench runtime chunk.
+// The browser dispatches keystrokes; desktop menu accelerators are labels only.
+func (r *PageRuntime) Commands(cmds ...command.Command) error {
+	if r == nil {
+		return nil
+	}
+	if err := r.renderer.AddCommands(cmds...); err != nil {
+		return err
+	}
+	r.active = true
+	return r.renderer.RequireFeature("workbench")
 }
 
 // ClientIdentity asks the GoSX bootstrap to maintain a stable anonymous client
