@@ -11,7 +11,7 @@ import (
 
 func deriveInputs(t *testing.T) (File, Profile, Coefficients) {
 	t.Helper()
-	inputs, err := loadInputs("testdata/budget.v2.json", LoadOptions{})
+	inputs, err := loadInputs(loadInputArguments{"testdata/budget.v2.json", LoadOptions{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -307,7 +307,7 @@ func TestDeriveMixedCoefficientStatus(t *testing.T) {
 
 func TestDeriveUsesLoadedInputs(t *testing.T) {
 	path := configFixture(t, nil)
-	inputs, err := loadInputs(path, LoadOptions{RootDir: filepath.Dir(path)})
+	inputs, err := loadInputs(loadInputArguments{path, LoadOptions{RootDir: filepath.Dir(path)}})
 	if err != nil {
 		t.Fatal(err)
 	}

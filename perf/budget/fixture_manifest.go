@@ -53,8 +53,16 @@ func DecodeFixtureManifest(r io.Reader) (*FixtureManifest, error) {
 	if err := decodeInput(data, "FixtureManifest", &manifest); err != nil {
 		return nil, err
 	}
+	if err := validateFixtureManifest(manifest); err != nil {
+		return nil, err
+	}
+	return &manifest, nil
+}
+
+// Both decoding and production use the same complete manifest contract checks.
+func validateFixtureManifest(manifest FixtureManifest) error {
 	if err := (&buildmanifest.Manifest{PerfAssetUses: &buildmanifest.PerfAssetUses{Version: 1, Assets: manifest.Assets}}).ValidatePerfAssetUses(); err != nil {
-		return nil, measureFailure("wrong-fixture", "/manifest/assets")
+		return measureFailure("wrong-fixture", "/manifest/assets")
 	}
 	seen := map[string]bool{}
 	assets := map[string]bool{}
@@ -64,30 +72,46 @@ func DecodeFixtureManifest(r io.Reader) (*FixtureManifest, error) {
 	for _, route := range manifest.Routes {
 		key := route.App + "|" + route.RouteTemplate
 		if seen[key] || !validRoute(route.RouteTemplate) {
-			return nil, measureFailure("wrong-fixture", "/manifest/routes")
+			return measureFailure("wrong-fixture", "/manifest/routes")
 		}
 		seen[key] = true
 		types := map[string]bool{}
 		for _, name := range route.PageTypes {
 			if !knownPageType(name) || types[name] {
-				return nil, measureFailure("wrong-fixture", "/manifest/routes/pageTypes")
+				return measureFailure("wrong-fixture", "/manifest/routes/pageTypes")
 			}
 			types[name] = true
 		}
 		for _, id := range route.CriticalAssetIDs {
 			if !assets[id] {
-				return nil, measureFailure("wrong-fixture", "/manifest/routes/criticalAssetIDs")
+				return measureFailure("wrong-fixture", "/manifest/routes/criticalAssetIDs")
 			}
 		}
 		if _, err := pagecaps.Classify(route.Capabilities, false); err != nil {
-			return nil, measureFailure("wrong-fixture", "/manifest/routes/capabilities")
+			return measureFailure("wrong-fixture", "/manifest/routes/capabilities")
 		}
 	}
+	for _, route := range manifest.Routes {
+		physical, err := fixturePhysicalAssets(fixtureAppAssets(manifest.Assets, route.App))
+		if err != nil {
+			return err
+		}
+		found := false
+		for _, use := range physical {
+			if use.URL == route.RouteTemplate {
+				found = use.Owner == "app" && use.Kind == "html"
+			}
+		}
+		if !found {
+			return measureFailure("wrong-fixture", "/routes/document")
+		}
+	}
+
 	digest, err := FixtureManifestSHA256(manifest)
 	if err != nil || digest != manifest.FixturesSHA256 {
-		return nil, measureFailure("wrong-fixture", "/manifest/fixturesSHA256")
+		return measureFailure("wrong-fixture", "/manifest/fixturesSHA256")
 	}
-	return &manifest, nil
+	return nil
 }
 
 func readMeasureFile(root *os.Root, name string, limit int64) ([]byte, error) {

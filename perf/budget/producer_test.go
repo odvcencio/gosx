@@ -29,6 +29,17 @@ func fixtureProducer(t *testing.T) (ProducerOptions, []byte) {
 	}, "interactionContract": inputs.File.Profile}
 	raw, _ := json.Marshal(catalog)
 	root := t.TempDir()
+	budget, err := os.ReadFile("testdata/budget.v2.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	budgetPath := filepath.Join(root, "budget-input.json")
+	if err := os.WriteFile(budgetPath, budget, 0600); err != nil {
+		t.Fatal(err)
+	}
+	// This helper constructs a synthetic native input tree. Keep its private
+	// argument binding in that tree too, so collision tests never alter testdata.
+	inputs.inputFiles = []string{budgetPath}
 	if err := os.WriteFile(filepath.Join(root, "catalog.json"), raw, 0600); err != nil {
 		t.Fatal(err)
 	}

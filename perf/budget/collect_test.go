@@ -12,7 +12,6 @@ import (
 	"strings"
 	"testing"
 
-	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/internal/assetmeasure"
 )
 
@@ -210,7 +209,9 @@ func TestCollectSharedFrameworkIdentityAndStableAggregate(t *testing.T) {
 	for i := range manifest.Routes {
 		manifest.Routes[i].App = "extra"
 	}
-	manifest.Assets = []buildmanifest.PerfAssetUse{manifest.Assets[1]}
+	// The measurement stub isolates aggregation, but its fixture still needs
+	// the app-owned document required by the shared manifest validator.
+	manifest.Assets[0].ID = "app/extra/html"
 	manifest.Routes[0].CriticalAssetIDs = []string{manifest.Assets[0].ID}
 	extra.DistDir = t.TempDir()
 	writeTestFixtureManifest(t, extra.DistDir, manifest)

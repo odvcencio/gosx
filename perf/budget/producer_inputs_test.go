@@ -158,7 +158,7 @@ func TestProducerDerivedInputPaths(t *testing.T) {
 	inputFiles := []string{opts.Inputs.File.Profile.File, opts.Inputs.File.Coefficients.File, opts.Inputs.File.Toolchain.File,
 		opts.Inputs.File.Fixtures.File, "inputs/font.woff2", "inputs/interaction.json", "source/island.gsx", "source/component.css",
 		catalog["routes"].([]any)[0].(map[string]any)["sourcePath"].(string)}
-	want := []string{}
+	want := append([]string{}, opts.Inputs.inputFiles...)
 	for _, name := range inputFiles {
 		want = append(want, filepath.Join(opts.Inputs.RootDir(), name))
 	}

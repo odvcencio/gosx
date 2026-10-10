@@ -16,8 +16,6 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
-	"m31labs.dev/gosx/internal/assetmeasure"
-	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 // ProducerOptions are private bindings for a completed production build.
@@ -126,6 +124,8 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	}
 	manifest := FixtureManifest{Schema: "gosx.perf-fixtures/v1", Version: 1, SourceSHA: opts.SourceSHA, CatalogSHA256: opts.Inputs.File.Fixtures.SHA256, Routes: routes, Assets: []buildmanifest.PerfAssetUse{}}
 	seen := map[string]bool{}
+	bodies := map[string][]byte{}
+	snapshots := []producerSnapshot{}
 	for _, use := range opts.Build.PerfAssetUses.Assets {
 		raw, marshalErr := json.Marshal(use)
 		var checkedUse buildmanifest.PerfAssetUse
@@ -138,13 +138,14 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if seen[use.ID] || use.Owner == "app" && !strings.HasPrefix(use.ID, "app/"+opts.App+"/") {
 			return "", fail("/build/assets")
 		}
-		if use.Owner == "app" && allowed[use.ID] != use.Owner+"|"+use.Kind {
+		if rule, registered := rules[use.ID]; registered && (rule.Owner != use.Owner || rule.Kind != use.Kind) {
 			return "", fail("/build/assets")
 		}
 		body, _, err := readFixtureBody(root, use.URL, use.Kind)
 		if err != nil || producerHash(body) != use.SHA256 {
 			return "", fail("/build/assets/body")
 		}
+		bodies[use.ID] = body
 		if use.Kind == "wasm" {
 			name := strings.TrimSuffix(strings.TrimPrefix(use.ID, "framework/runtime/"), ".wasm")
 			proof, ok := opts.Build.Runtime.WASMOptimization[name]
@@ -152,11 +153,12 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 				return "", fail("/build/optimizer")
 			}
 		}
-		dependencies := use.Dependencies
-		if use.Owner == "app" {
-			dependencies = rules[use.ID].Dependencies
+		if rule, registered := rules[use.ID]; registered {
+			hash := use.SHA256
+			use = rule.assetUse(use.URL)
+			use.SHA256 = hash
 		}
-		use.Dependencies = append([]string{}, dependencies...)
+		use.Dependencies = append([]string{}, use.Dependencies...)
 		manifest.Assets = append(manifest.Assets, use)
 		seen[use.ID] = true
 	}
@@ -228,19 +230,13 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		return "", err
 	}
 	for _, entry := range public {
-		body, err := readMeasureFile(root, entry.source, maxMeasureBody)
+		body, representations, err := readFixtureFile(root, entry.source)
 		if err != nil {
 			return "", fail("/public/body")
 		}
 		manifest.Assets[entry.assetIndex].SHA256 = producerHash(body)
-		// Measurement paths are rooted in the fixture directory. Copy public bodies
-		// there while leaving the production server's own public tree intact.
-		if err := writeProducerFile(root, protection, entry.target, body); err != nil {
-			return "", err
-		}
-		if err := copyProducerSidecars(root, protection, entry.source, entry.target, body); err != nil {
-			return "", err
-		}
+		bodies[manifest.Assets[entry.assetIndex].ID] = body
+		snapshots = append(snapshots, producerSnapshot{target: entry.target, body: body, representations: representations})
 	}
 	for _, route := range routes {
 		if !validRoute(route.RouteTemplate) || strings.ContainsAny(route.RouteTemplate, "[]") {
@@ -261,24 +257,13 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 		if readErr != nil || closeErr != nil || len(body) > maxMeasureBody || response.StatusCode != http.StatusOK || response.Uncompressed || response.Header.Get("Content-Encoding") != "" && response.Header.Get("Content-Encoding") != "identity" || !strings.HasPrefix(response.Header.Get("Content-Type"), "text/html") {
 			return "", fail("/routes/response")
 		}
-		caps, err := pagecaps.FromHTML(body)
-		if err != nil {
-			return "", fail("/routes/capabilities")
-		}
-		observed, _ := json.Marshal(caps)
-		declared, _ := json.Marshal(route.Capabilities)
-		families, classErr := pagecaps.Classify(caps, false)
-		if !bytes.Equal(observed, declared) || classErr != nil || !fixtureCoversTypes(route.PageTypes, families) {
-			return "", fail("/routes/capabilities")
-		}
 		manifest.Assets[documents[route.RouteTemplate]].SHA256 = producerHash(body)
 		file, err := fixtureFilePath(route.RouteTemplate, "html")
 		if err != nil {
 			return "", fail("/routes/document")
 		}
-		if err := writeProducerFile(root, protection, file, body); err != nil {
-			return "", err
-		}
+		bodies[manifest.Assets[documents[route.RouteTemplate]].ID] = body
+		snapshot := producerSnapshot{target: file, body: body}
 		// Prerendered release encodings differ from live HTML compression. Retain
 		// them only when the static document is exactly the fetched snapshot.
 		static := "static/" + file
@@ -288,13 +273,20 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 				return "", fail("/routes/document")
 			}
 			if bytes.Equal(built, body) {
-				if err := copyProducerSidecars(root, protection, static, file, body); err != nil {
+				_, representations, err := readFixtureFile(root, static)
+				if err != nil {
 					return "", err
 				}
+				snapshot.representations = representations
 			}
 		} else if !os.IsNotExist(err) {
 			return "", fail("/routes/document")
 		}
+		snapshots = append(snapshots, snapshot)
+	}
+	documentsByRoute := map[string][]byte{}
+	for _, route := range routes {
+		documentsByRoute[route.RouteTemplate] = bodies[manifest.Assets[documents[route.RouteTemplate]].ID]
 	}
 	sort.Slice(manifest.Assets, func(i, j int) bool { return manifest.Assets[i].ID < manifest.Assets[j].ID })
 	digest, err := FixtureManifestSHA256(manifest)
@@ -309,6 +301,25 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 	if _, err := DecodeFixtureManifest(bytes.NewReader(data)); err != nil {
 		return "", inputReference(err, "producer", "/manifest")
 	}
+	// Validate the exact prospective contract and staged graph through the
+	// collector's own functions. No destination has been opened yet.
+	for _, route := range routes {
+		if _, _, err := validateFixtureRoute(route, manifest.Assets, bodies, documentsByRoute[route.RouteTemplate], "none"); err != nil {
+			return "", inputReference(err, "producer", "/graph")
+		}
+	}
+	for _, snapshot := range snapshots {
+		if err := writeProducerFile(root, protection, snapshot.target, snapshot.body); err != nil {
+			return "", err
+		}
+		for _, encoding := range fixtureSidecars {
+			if encoded, ok := snapshot.representations[encoding.encoding]; ok {
+				if err := writeProducerBytes(root, protection, snapshot.target+encoding.suffix, encoded); err != nil {
+					return "", err
+				}
+			}
+		}
+	}
 	if err := writeProducerFile(root, protection, fixtureManifestFile, append(data, '\n')); err != nil {
 		return "", err
 	}
@@ -317,21 +328,10 @@ func ProduceFixture(ctx context.Context, opts ProducerOptions) (string, error) {
 
 func producerHash(body []byte) string { sum := sha256.Sum256(body); return hex.EncodeToString(sum[:]) }
 
-func copyProducerSidecars(root *os.Root, protection *producerPathProtection, source, target string, body []byte) error {
-	for _, encoding := range fixtureSidecars {
-		_, err := root.Stat(source + encoding.suffix)
-		if os.IsNotExist(err) {
-			continue
-		}
-		encoded, readErr := readMeasureFile(root, source+encoding.suffix, maxMeasureBody)
-		if err != nil || readErr != nil || assetmeasure.VerifySidecar(body, encoded, encoding.encoding) != nil {
-			return &InputError{Code: "stale-sidecar", Reference: "producer", Pointer: "/encoding"}
-		}
-		if err := writeProducerBytes(root, protection, target+encoding.suffix, encoded); err != nil {
-			return err
-		}
-	}
-	return nil
+type producerSnapshot struct {
+	target          string
+	body            []byte
+	representations map[string][]byte
 }
 
 func writeProducerFile(root *os.Root, protection *producerPathProtection, name string, data []byte) error {

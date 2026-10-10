@@ -5,13 +5,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"net/http"
 	"net/url"
 	"os"
 	"path"
 	"sort"
-	"strings"
 
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/client/runtime/host"
@@ -101,35 +99,17 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	result.Coverage.RoutesExpected = int64(len(routes))
 	var fixtures []fixtureBody
 	byURL := map[string]int{}
-	uses := []buildmanifest.PerfAssetUse{}
+	uses := fixtureAppAssets(manifest.Assets, opts.App)
 	bodies := map[string][]byte{}
-	for _, use := range manifest.Assets {
-		if use.Owner == "app" && !strings.HasPrefix(use.ID, "app/"+opts.App+"/") {
-			continue
-		}
+	physical, err := fixturePhysicalAssets(uses)
+	if err != nil {
+		return result, err
+	}
+
+	for _, use := range physical {
 		body, representations, err := readFixtureBody(root, use.URL, use.Kind)
 		if err != nil {
 			return result, err
-		}
-		uses = append(uses, use)
-		bodies[use.ID] = body
-		if previous, ok := byURL[use.URL]; ok {
-			if fixtures[previous].sha != use.SHA256 || fixtures[previous].kind != use.Kind {
-				return result, measureFailure("wrong-fixture", "/manifest/assets")
-			}
-			fixtures[previous].ids = append(fixtures[previous].ids, use.ID)
-			if use.Phase == "critical" {
-				fixtures[previous].phase = "critical"
-			}
-			// Keep every role for critical membership; choose a stable public
-			// identity, giving framework ownership precedence when declared.
-			if use.Owner == "framework" && fixtures[previous].owner == "app" || use.Owner == fixtures[previous].owner && use.ID < fixtures[previous].id {
-				fixtures[previous].owner = use.Owner
-				fixtures[previous].id = use.ID
-				fixtures[previous].condition = use.Condition
-				fixtures[previous].dependencies = append([]string{}, use.Dependencies...)
-			}
-			continue
 		}
 		sizes, err := normalize(body)
 		if err != nil || sizes.SHA256 != use.SHA256 {
@@ -140,8 +120,17 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if use.Phase == "critical" || use.Kind == "html" {
 			phase = "critical"
 		}
-		fixtures = append(fixtures, fixtureBody{id: use.ID, ids: []string{use.ID}, sha: use.SHA256, url: use.URL, owner: use.Owner, kind: use.Kind, phase: phase, condition: use.Condition, dependencies: append([]string{}, use.Dependencies...), body: body, representations: representations, sizes: sizes})
+		fixtures = append(fixtures, fixtureBody{id: use.ID, ids: []string{}, sha: use.SHA256, url: use.URL, owner: use.Owner, kind: use.Kind, phase: phase, condition: use.Condition, dependencies: append([]string{}, use.Dependencies...), body: body, representations: representations, sizes: sizes})
 	}
+	for _, use := range uses {
+		fixture := &fixtures[byURL[use.URL]]
+		fixture.ids = append(fixture.ids, use.ID)
+		if use.Phase == "critical" {
+			fixture.phase = "critical"
+		}
+		bodies[use.ID] = fixture.body
+	}
+
 	inlineHashes := map[string]bool{}
 	for _, fixture := range fixtures {
 		if fixture.owner == "framework" && fixture.kind == "js" {
@@ -188,14 +177,8 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			return result, err
 		}
 		caps := measuredHTML.capabilities
-		observedCaps, _ := json.Marshal(caps)
-		declaredCaps, _ := json.Marshal(route.Capabilities)
-		if !bytes.Equal(observedCaps, declaredCaps) {
-			return result, measureFailure("capability", "/routes/capabilities")
-		}
-		detected, err := pagecaps.Classify(caps, false)
-		if err != nil || !fixtureCoversTypes(route.PageTypes, detected) {
-			return result, measureFailure("capability", "/routes/pageTypes")
+		if err := validateFixtureCapabilities(route, caps); err != nil {
+			return result, err
 		}
 		row := Row{App: opts.App, RouteTemplate: route.RouteTemplate, Scenario: "hard-cold", Status: "unavailable", ReasonCode: "unknown-reachability", Backend: opts.Public.Backend, ModelStatus: "unknown", Policies: append([]PolicyResult{}, first.Policies...)}
 		if row.Backend == "" {
@@ -466,7 +449,7 @@ func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][
 	if err != nil {
 		return nil, nil, err
 	}
-	body, err := readMeasureFile(root, file, maxMeasureBody)
+	body, representations, err := readFixtureFile(root, file)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -475,6 +458,15 @@ func readFixtureBody(root *os.Root, assetURL, kind string) ([]byte, map[string][
 		if hash != hex.EncodeToString(digest[:]) {
 			return nil, nil, measureFailure("wrong-fixture", "/file")
 		}
+	}
+	return body, representations, nil
+}
+
+// Source staging and collection verify the exact same file and sidecar bytes.
+func readFixtureFile(root *os.Root, file string) ([]byte, map[string][]byte, error) {
+	body, err := readMeasureFile(root, file, maxMeasureBody)
+	if err != nil {
+		return nil, nil, err
 	}
 	representations := map[string][]byte{}
 	for _, sidecar := range fixtureSidecars {

@@ -138,7 +138,7 @@ type File struct {
 // Load validates configuration and its hash-bound inputs under one project root.
 // It does not certify the recorded allocation arithmetic.
 func Load(path string, opts LoadOptions) (*File, error) {
-	inputs, err := loadInputs(path, opts)
+	inputs, err := loadInputs(loadInputArguments{path, opts})
 	if err != nil {
 		return nil, err
 	}
@@ -153,6 +153,7 @@ type loadedInputs struct {
 	rootDir, budgetSHA256 string
 	budgetPath            string
 	budgetInfo            os.FileInfo
+	inputFiles            []string
 }
 
 // Inputs is a native snapshot of hash-verified files. It has no JSON surface;
@@ -166,6 +167,7 @@ type Inputs struct {
 	rootDir      string
 	budgetPath   string
 	budgetInfo   os.FileInfo
+	inputFiles   []string // Resolved file arguments, including the budget itself.
 }
 
 func LoadInputs(path string, opts LoadOptions) (*Inputs, error) {
@@ -180,11 +182,11 @@ func LoadDerivationInputs(path string, opts LoadOptions) (*Inputs, error) {
 }
 
 func loadSnapshot(path string, opts LoadOptions, checkAllocations bool) (*Inputs, error) {
-	loaded, err := loadInputFiles(path, opts, checkAllocations)
+	loaded, err := loadInputFiles(loadInputArguments{path, opts}, checkAllocations)
 	if err != nil {
 		return nil, err
 	}
-	return &Inputs{File: loaded.file, Profile: loaded.profile, Coefficients: loaded.coefficients, Toolchain: loaded.toolchain, BudgetSHA256: loaded.budgetSHA256, rootDir: loaded.rootDir, budgetPath: loaded.budgetPath, budgetInfo: loaded.budgetInfo}, nil
+	return &Inputs{File: loaded.file, Profile: loaded.profile, Coefficients: loaded.coefficients, Toolchain: loaded.toolchain, BudgetSHA256: loaded.budgetSHA256, rootDir: loaded.rootDir, budgetPath: loaded.budgetPath, budgetInfo: loaded.budgetInfo, inputFiles: loaded.inputFiles}, nil
 }
 
 func (inputs *Inputs) RootDir() string { return inputs.rootDir }
@@ -213,18 +215,18 @@ func (inputs *Inputs) PublicValidator() (*PublicValidator, error) {
 	return NewPublicValidator(filepath.Join(inputs.rootDir, inputs.File.Fixtures.File), LoadOptions{RootDir: inputs.rootDir}, inputs.File.HubBudgets)
 }
 
-func loadInputs(path string, opts LoadOptions) (*loadedInputs, error) {
-	return loadInputFiles(path, opts, true)
+func loadInputs(arguments loadInputArguments) (*loadedInputs, error) {
+	return loadInputFiles(arguments, true)
 }
 
-func loadInputFiles(path string, opts LoadOptions, checkAllocations bool) (result *loadedInputs, resultErr error) {
+func loadInputFiles(arguments loadInputArguments, checkAllocations bool) (result *loadedInputs, resultErr error) {
 	defer func() { resultErr = inputReference(resultErr, "budget", "") }()
 	var f File
-	root, err := inputRoot(path, opts)
+	root, err := inputRoot(arguments.Path, arguments.Options)
 	if err != nil {
 		return nil, err
 	}
-	abs, err := filepath.Abs(path)
+	abs, err := filepath.Abs(arguments.Path)
 	if err == nil {
 		abs, err = filepath.EvalSymlinks(abs)
 	}
@@ -232,6 +234,11 @@ func loadInputFiles(path string, opts LoadOptions, checkAllocations bool) (resul
 		return nil, invalidInput("")
 	}
 	data, info, err := readWithinSnapshot(root, abs, maxInputBytes)
+	if err != nil {
+		return nil, err
+	}
+	arguments.Path = abs
+	inputFiles, err := loadArgumentPaths(arguments)
 	if err != nil {
 		return nil, err
 	}
@@ -320,7 +327,7 @@ func loadInputFiles(path string, opts LoadOptions, checkAllocations bool) (resul
 			return nil, err
 		}
 	}
-	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:]), budgetPath: abs, budgetInfo: info}, nil
+	return &loadedInputs{file: f, profile: p, coefficients: c, toolchain: tc, rootDir: root, budgetSHA256: hex.EncodeToString(digest[:]), budgetPath: abs, budgetInfo: info, inputFiles: inputFiles}, nil
 }
 
 func (f File) validate(p Profile, c Coefficients) error {

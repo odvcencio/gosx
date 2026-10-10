@@ -131,7 +131,7 @@ func producerCheckBuildPathFields(typ reflect.Type, roles map[string]string) err
 }
 
 func producerBoundInputPaths(opts ProducerOptions, catalog json.RawMessage) ([]string, error) {
-	files := []string{}
+	files := append([]string{}, opts.Inputs.inputFiles...)
 	for _, input := range []struct {
 		definition string
 		value      any
