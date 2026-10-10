@@ -68,6 +68,8 @@ func main() {
 	switch cmd {
 	case "assets":
 		cmdAssets()
+	case "budget":
+		cmdBudget()
 	case "build":
 		cmdBuild()
 	case "build-runtime":
@@ -217,6 +219,8 @@ Usage:
   gosx lsp
 
 `)
+	case "budget":
+		budgetUsage(w)
 	case "perf":
 		fmt.Fprintf(w, `gosx perf - Profile browser runtime performance
 
@@ -282,6 +286,8 @@ Commands:
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
+  budget derive        Derive performance allocations
+  budget explain       Explain performance allocations
   perf [--budget file] <url>
                        Profile browser runtime performance
   ouroboros inventory  Collect O0.2 runtime baseline inventory

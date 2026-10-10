@@ -95,38 +95,47 @@ func safePath(path string) bool {
 }
 
 func readWithin(root, path string, limit int64) ([]byte, error) {
+	data, _, err := readWithinSnapshot(root, path, limit)
+	return data, err
+}
+
+func readWithinSnapshot(root, path string, limit int64) ([]byte, os.FileInfo, error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
-		return nil, errors.New("invalid input path")
+		return nil, nil, errors.New("invalid input path")
 	}
 	abs, err = filepath.EvalSymlinks(abs)
 	if err != nil {
-		return nil, errors.New("cannot resolve input path")
+		return nil, nil, errors.New("cannot resolve input path")
 	}
 	// Root confines symlink resolution as well as the final file open.
 	r, err := os.OpenRoot(root)
 	if err != nil {
-		return nil, errors.New("cannot open project root")
+		return nil, nil, errors.New("cannot open project root")
 	}
 	defer r.Close()
 	rel, err := filepath.Rel(root, abs)
 	if err != nil {
-		return nil, errors.New("input escapes project root")
+		return nil, nil, errors.New("input escapes project root")
 	}
 	f, err := openInput(r, rel)
 	if err != nil {
-		return nil, errors.New("cannot open confined input")
+		return nil, nil, errors.New("cannot open confined input")
 	}
 	defer f.Close()
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
-		return nil, errors.New("input must be a regular file")
+		return nil, nil, errors.New("input must be a regular file")
 	}
 	data, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil || int64(len(data)) > limit {
-		return nil, errors.New("input exceeds read limit")
+		return nil, nil, errors.New("input exceeds read limit")
 	}
-	return data, nil
+	after, err := f.Stat()
+	if err != nil || !os.SameFile(info, after) || info.Size() != after.Size() || !info.ModTime().Equal(after.ModTime()) || int64(len(data)) != after.Size() || !sameBudgetFileAccess(info, after) {
+		return nil, nil, errors.New("input changed while it was read")
+	}
+	return data, after, nil
 }
 
 func readReference(root string, ref Ref, limit int64) ([]byte, error) {
