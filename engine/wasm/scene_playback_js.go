@@ -9,21 +9,21 @@ import (
 	"syscall/js"
 	"time"
 
-	"m31labs.dev/gosx/game/loop"
+	"m31labs.dev/gosx/game/host"
 	"m31labs.dev/gosx/scene"
 )
 
 // sceneFrameWaiter owns one visibility subscription for a finite playback.
 // Hidden documents retain no queued RAF; cancellation prevents late writes.
 type sceneFrameWaiter struct {
-	source   *loop.FrameSourceJS
+	source   *host.FrameSourceJS
 	doc      js.Value
 	changed  chan struct{}
 	listener js.Func
 }
 
 func newSceneFrameWaiter() *sceneFrameWaiter {
-	w := &sceneFrameWaiter{source: loop.NewFrameSourceJS(), doc: js.Global().Get("document"), changed: make(chan struct{}, 1)}
+	w := &sceneFrameWaiter{source: host.NewFrameSourceJS(), doc: js.Global().Get("document"), changed: make(chan struct{}, 1)}
 	w.listener = js.FuncOf(func(js.Value, []js.Value) any {
 		select {
 		case w.changed <- struct{}{}:
