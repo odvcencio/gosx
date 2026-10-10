@@ -237,7 +237,11 @@ func TestInlineHTMLTreeDifferentialCorpus(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if measured.ExecutableScripts != wantCount || !bytes.Equal(measured.full, item.body) {
+			wantClosure, err := treeClosureOracleScripts(item.body, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if measured.ExecutableScripts != wantClosure || !bytes.Equal(measured.full, item.body) {
 				t.Fatal("measurement differs from tree or raw bytes")
 			}
 		})
@@ -278,4 +282,51 @@ func TestInlineRejectsDiscardedForeignTemplateTail(t *testing.T) {
 	if err := VerifyHTMLNonces(body, "script-src 'nonce-fixture'"); err == nil {
 		t.Fatal("nonce verification accepted a discarded tail")
 	}
+}
+
+// This independent parsed-tree recursion follows inline document permissions;
+// it does not call the production document tree, execution walk or planner.
+func treeClosureOracleScripts(body []byte, depth int) (int64, error) {
+	count, _, err := treeOracle(body)
+	if err != nil {
+		return 0, err
+	}
+	root, err := html.Parse(bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	var walk func(*html.Node, bool) error
+	walk = func(n *html.Node, inert bool) error {
+		inert = inert || n.Type == html.ElementNode && n.Namespace == "" && n.DataAtom == atom.Template
+		if !inert && n.Type == html.ElementNode && n.Namespace == "" && n.DataAtom == atom.Iframe {
+			attrs := map[string]string{}
+			for _, a := range n.Attr {
+				if _, ok := attrs[a.Key]; !ok {
+					attrs[a.Key] = a.Val
+				}
+			}
+			allowed := true
+			if sandbox, ok := attrs["sandbox"]; ok {
+				allowed = false
+				for _, token := range strings.Fields(sandbox) {
+					allowed = allowed || strings.EqualFold(token, "allow-scripts")
+				}
+			}
+			if source, ok := attrs["srcdoc"]; ok && allowed && depth < 32 {
+				nested, err := treeClosureOracleScripts([]byte(source), depth+1)
+				if err != nil {
+					return err
+				}
+				count += nested
+			}
+		}
+		for c := n.FirstChild; c != nil; c = c.NextSibling {
+			if err := walk(c, inert); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	err = walk(root, false)
+	return count, err
 }

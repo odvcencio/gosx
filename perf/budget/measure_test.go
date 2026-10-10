@@ -758,7 +758,7 @@ func TestMeasureUnknownCriticalityRetainsPotentialBodies(t *testing.T) {
 	}
 }
 
-func TestMeasureUnscannedSrcdocRetainsDeclaredRuntime(t *testing.T) {
+func TestMeasureSrcdocRuntimeRespectsDocumentPermission(t *testing.T) {
 	for _, tc := range []struct {
 		name, sandbox string
 	}{
@@ -787,8 +787,12 @@ func TestMeasureUnscannedSrcdocRetainsDeclaredRuntime(t *testing.T) {
 			}
 			docSizes, _ := testBodyNormalizer(document)
 			runtimeSizes, _ := testBodyNormalizer(runtime)
-			wantReachability, wantPhase := "unknown", "startup"
+			wantReachability, wantPhase := "known", "startup"
 			wantStartup, wantDormant, wantFramework, wantFetches := runtimeSizes.Brotli, int64(0), runtimeSizes.Brotli, int64(1)
+			if tc.name == "sandbox-present" || tc.name == "sandbox-empty" || tc.name == "sandbox-other-tokens" {
+				wantPhase = "dormant"
+				wantStartup, wantDormant, wantFramework, wantFetches = 0, runtimeSizes.Brotli, 0, 0
+			}
 			if len(report.Rows) != 1 || len(report.Assets) != 2 {
 				t.Fatal("route or runtime inventory missing", report)
 			}
@@ -799,8 +803,8 @@ func TestMeasureUnscannedSrcdocRetainsDeclaredRuntime(t *testing.T) {
 			if report.Assets[1].Phase != wantPhase {
 				t.Fatalf("runtime phase=%s want %s", report.Assets[1].Phase, wantPhase)
 			}
-			if row.ReasonCode != "unknown-reachability" {
-				t.Fatal("uncertain closure was not reported", row.ReasonCode)
+			if row.ReasonCode != "insufficient-data" {
+				t.Fatal("resolved closure lacks timing data", row.ReasonCode)
 			}
 		})
 	}
@@ -836,7 +840,7 @@ func TestMeasureSandboxedSrcdocRetainsDeclaredResources(t *testing.T) {
 					t.Fatal("route or resource inventory missing", report)
 				}
 				row := report.Rows[0]
-				if report.Coverage.Reachability != "unknown" || row.ReasonCode != "unknown-reachability" || row.PhaseBytes.Critical != docSizes.Brotli || row.PhaseBytes.Startup != resourceSizes.Brotli || row.PhaseBytes.Dormant != 0 || row.NormalizedBytes != docSizes.Brotli+resourceSizes.Brotli || row.AppBytes != row.NormalizedBytes || row.FrameworkBytes != 0 || row.Requests != 2 || row.WireBytes != int64(len(document)+len(resource.body)) || requests[resource.url].Load() != 1 || report.Assets[1].Phase != "startup" {
+				if report.Coverage.Reachability != "known" || row.ReasonCode != "insufficient-data" || row.PhaseBytes.Critical != docSizes.Brotli || row.PhaseBytes.Startup != resourceSizes.Brotli || row.PhaseBytes.Dormant != 0 || row.NormalizedBytes != docSizes.Brotli+resourceSizes.Brotli || row.AppBytes != row.NormalizedBytes || row.FrameworkBytes != 0 || row.Requests != 2 || row.WireBytes != int64(len(document)+len(resource.body)) || requests[resource.url].Load() != 1 || report.Assets[1].Phase != "startup" {
 					t.Fatalf("sandboxed srcdoc lost declarative load: coverage=%s row=%+v asset=%+v fetches=%d", report.Coverage.Reachability, row, report.Assets[1], requests[resource.url].Load())
 				}
 			})
@@ -871,5 +875,22 @@ func TestMeasureExpandsOnlyRequestedBackendAndKeepsCommonGoals(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMeasurePolicyObservationsReachGate(t *testing.T) {
+	opts, _, _, _ := testRouteMeasurement(t)
+	report, err := measureApp(context.Background(), opts, testBodyNormalizer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := map[string]bool{}
+	for _, policy := range report.Rows[0].Policies {
+		policies[policy.Name] = policy.Passed
+	}
+	for _, name := range []string{inlineExecutablePolicy, "no-sync-script", "runtime-hashed", "declared-fetches", "canonical-build", "zero-js"} {
+		if !policies[name] {
+			t.Fatal("verified policy missing from measurement", name)
+		}
 	}
 }

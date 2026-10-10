@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/pagecaps"
 	"m31labs.dev/gosx/perf/wire"
 )
 
@@ -27,14 +28,19 @@ type ReachabilityOptions struct {
 // PlannedAsset retains its private declaration URL for traversal and accounting.
 type PlannedAsset struct{ ID, URL, Phase string }
 type assetUseIdentity struct{ id, url string }
-type referenceEnvironment struct{ document, worker string }
+type referenceEnvironment struct {
+	document, worker string
+	restricted       bool
+}
 type contextualUse struct {
 	key         assetUseIdentity
 	environment referenceEnvironment
 }
 type ResourcePlan struct {
-	Reachability string
-	Assets       []PlannedAsset
+	Reachability    string
+	Assets          []PlannedAsset
+	documents       *pagecaps.DocumentTree
+	executingAssets map[string]bool
 }
 
 // ResolveReachability binds extracted references to producer dependencies.
@@ -48,7 +54,7 @@ func ResolveReachability(opts ReachabilityOptions) (ResourcePlan, error) {
 // Offline callers retain declaration URLs; live collection verifies each use
 // before scanning it, so redirects cannot leave a stale dependency closure.
 func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (string, error)) (ResourcePlan, error) {
-	result := ResourcePlan{Reachability: "unknown", Assets: []PlannedAsset{}}
+	result := ResourcePlan{Reachability: "unknown", Assets: []PlannedAsset{}, executingAssets: map[string]bool{}}
 	assets := opts.Inventory
 	if opts.Graph != nil {
 		assets = opts.Graph.Assets
@@ -104,6 +110,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 	type opaqueEdges struct {
 		source, phase string
 		dependencies  []string
+		restricted    bool
 	}
 	edges := []opaqueEdges{}
 	literalTargets := map[string]map[string]bool{}
@@ -124,6 +131,68 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 		default:
 			return true
 		}
+	}
+
+	// Document construction resolves embeddings against the same verified final
+	// response URLs as the resource closure. Permissions remain per embedding.
+	result.documents = &pagecaps.DocumentTree{Complete: true}
+	documentContexts := map[string][]*pagecaps.Document{}
+	addDocuments := func(use buildmanifest.PerfAssetUse, final string, restricted bool) error {
+		tree, err := pagecaps.ParseDocumentTree(opts.Bodies[use.ID], final, func(base, reference string) ([]byte, string, bool, error) {
+			resolved, ok := resolveReferenceFrom(base, reference, final)
+			if !ok {
+				return nil, "", false, nil
+			}
+			targets := byURL[resolved]
+			if len(targets) == 0 {
+				return nil, "", false, measureFailure("undeclared-fetch", "/graph/documents")
+			}
+			for _, i := range targets {
+				asset := assets[i]
+				if !enabled(asset) || asset.Kind != "html" {
+					continue
+				}
+				target := asset.URL
+				if verify != nil {
+					var err error
+					target, err = verify(PlannedAsset{ID: asset.ID, URL: asset.URL, Phase: "startup"})
+					if err != nil {
+						return nil, "", false, err
+					}
+				}
+				return opts.Bodies[asset.ID], target, true, nil
+			}
+			return nil, resolved, false, nil
+		})
+		if err != nil {
+			if _, ok := err.(*InputError); ok {
+				return err
+			}
+			return measureFailure("capability", "/html")
+		}
+		if result.documents.Root == nil {
+			result.documents.Root = tree.Root
+		}
+		result.documents.Complete = result.documents.Complete && tree.Complete
+		known = known && tree.Complete
+		for _, doc := range tree.Documents {
+			doc.ScriptsAllowed = doc.ScriptsAllowed && !restricted
+			result.documents.Documents = append(result.documents.Documents, doc)
+			documentContexts[doc.URL] = append(documentContexts[doc.URL], doc)
+		}
+		return nil
+	}
+	rootUse := assets[docIDs[0]]
+	rootURL := rootUse.URL
+	if verify != nil {
+		var err error
+		rootURL, err = verify(PlannedAsset{ID: rootUse.ID, URL: rootUse.URL, Phase: "critical"})
+		if err != nil {
+			return result, err
+		}
+	}
+	if err := addDocuments(rootUse, rootURL, false); err != nil {
+		return result, err
 	}
 	mark := func(key assetUseIdentity, phase string, environment referenceEnvironment) error {
 		indexes, ok := byUse[key]
@@ -146,6 +215,9 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 					environments[aliasKey] = append(environments[aliasKey], environment)
 				}
 				phases[aliasKey] = earlierPhase(phases[aliasKey], phase)
+				if !environment.restricted {
+					result.executingAssets[alias.ID] = true
+				}
 				visits[state] = phase
 				queue = append(queue, pending{aliasKey, phase, environment})
 			}
@@ -225,7 +297,7 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 					}
 					// A typed edge without a loader literal does not establish a
 					// window/worker realm. Relative environment APIs remain unknown.
-					if err := markID(dep, phase, referenceEnvironment{}); err != nil {
+					if err := markID(dep, phase, referenceEnvironment{restricted: edge.restricted}); err != nil {
 						return result, err
 					}
 				}
@@ -301,6 +373,20 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 			}
 		}
 		finalURLs[use.URL] = referenceBase
+
+		if use.Kind == "html" {
+			if len(documentContexts[referenceBase]) == 0 {
+				if err := addDocuments(use, referenceBase, current.environment.restricted); err != nil {
+					return result, err
+				}
+			}
+			permitted := false
+			for _, doc := range documentContexts[referenceBase] {
+				permitted = permitted || doc.ScriptsAllowed
+			}
+			current.environment.restricted = !permitted
+			result.executingAssets[use.ID] = permitted
+		}
 		dependencies := map[string]bool{}
 		for _, i := range indexes {
 			asset := assets[i]
@@ -308,82 +394,107 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 				continue
 			}
 			for _, dep := range asset.Dependencies {
+				if current.environment.restricted && len(byID[dep]) > 0 {
+					kind := assets[byID[dep][0]].Kind
+					if kind == "js" || kind == "wasm" || kind == "program" {
+						continue
+					}
+				}
 				dependencies[dep] = true
 			}
 		}
-		refs := wire.ReferenceSet{Complete: true}
-		if use.Kind == "html" || use.Kind == "css" || use.Kind == "js" {
-			var found bool
-			refs, found = scanned[use.ID]
-			if !found {
-				var err error
-				refs, err = wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
+
+		type contextReferences struct {
+			refs        wire.ReferenceSet
+			environment referenceEnvironment
+		}
+		scans := []contextReferences{}
+		if use.Kind == "html" {
+			for _, doc := range documentContexts[referenceBase] {
+				refs, err := wire.ScanDocumentReferences(doc)
 				if err != nil {
 					return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
 				}
-				scanned[use.ID] = refs
-			}
-		}
-		if use.Kind == "html" {
-			current.environment = referenceEnvironment{document: documentReferenceBase(referenceBase, refs)}
-			if use.URL == opts.Route.RouteTemplate {
-				rootBase = current.environment.document
-			}
-		}
-		known = known && refs.Complete
-		if literalTargets[referenceBase] == nil {
-			literalTargets[referenceBase] = map[string]bool{}
-		}
-		for _, ref := range refs.Resources {
-			base := referenceURLBase(ref, referenceBase, rootBase, current.environment, finalURLs)
-			resolved, ok := resolveReferenceFrom(base, ref.URL, referenceBase)
-			if !ok {
-				known = false
-				continue
-			}
-			targets := byURL[resolved]
-			if len(targets) == 0 {
-				return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/references")
-			}
-			if ref.Potential {
-				continue
-			}
-			if use.Kind != "html" {
-				declared := false
-				for _, i := range targets {
-					declared = declared || enabled(assets[i]) && dependencies[assets[i].ID]
+				environment := referenceEnvironment{document: doc.BaseURL, restricted: !doc.ScriptsAllowed}
+				scans = append(scans, contextReferences{refs, environment})
+				if use.URL == opts.Route.RouteTemplate && doc == result.documents.Root {
+					rootBase = doc.BaseURL
 				}
-				if !declared {
-					if !missingFinalContract {
-						return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/dependencies")
+			}
+		} else {
+			refs := wire.ReferenceSet{Complete: true}
+			if use.Kind == "css" || use.Kind == "js" && !current.environment.restricted {
+				var found bool
+				refs, found = scanned[use.ID]
+				if !found {
+					var err error
+					refs, err = wire.ScanReferences(opts.Bodies[use.ID], use.Kind)
+					if err != nil {
+						return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(indexes[0])+"/references")
 					}
-					// The original URL's edge list cannot certify a new
-					// relative target without the final declaration.
+					scanned[use.ID] = refs
+				}
+			}
+			scans = append(scans, contextReferences{refs, current.environment})
+		}
+		for _, scan := range scans {
+			refs := scan.refs
+			current.environment = scan.environment
+			known = known && refs.Complete
+			if literalTargets[referenceBase] == nil {
+				literalTargets[referenceBase] = map[string]bool{}
+			}
+			for _, ref := range refs.Resources {
+				base := referenceURLBase(ref, referenceBase, rootBase, current.environment, finalURLs)
+				resolved, ok := resolveReferenceFrom(base, ref.URL, referenceBase)
+				if !ok {
 					known = false
+					continue
 				}
-			}
-			phase := current.phase
-			if use.Kind == "html" && phase == "critical" {
-				phase = "startup"
-			}
-			for _, i := range targets {
-				asset := assets[i]
-				if enabled(asset) {
-					literalTargets[referenceBase][asset.ID] = true
-					if dependencies[asset.ID] {
-						phase = earlierPhase(phase, earlierPhase(current.phase, asset.Phase))
+				targets := byURL[resolved]
+				if len(targets) == 0 {
+					return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+				}
+				if ref.Potential {
+					continue
+				}
+				if use.Kind != "html" {
+					declared := false
+					for _, i := range targets {
+						declared = declared || enabled(assets[i]) && dependencies[assets[i].ID]
+					}
+					if !declared {
+						if !missingFinalContract {
+							return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/dependencies")
+						}
+						// The original URL's edge list cannot certify a new
+						// relative target without the final declaration.
+						known = false
 					}
 				}
+				phase := current.phase
+				if use.Kind == "html" && phase == "critical" {
+					phase = "startup"
+				}
+				for _, i := range targets {
+					asset := assets[i]
+					if enabled(asset) {
+						literalTargets[referenceBase][asset.ID] = true
+						if dependencies[asset.ID] {
+							phase = earlierPhase(phase, earlierPhase(current.phase, asset.Phase))
+						}
+					}
+				}
+				environment := current.environment
+				if ref.Worker {
+					environment = referenceEnvironment{worker: resolved, restricted: current.environment.restricted}
+				}
+				if err := markURL(resolved, phase, environment); err != nil {
+					return result, err
+				}
 			}
-			environment := current.environment
-			if ref.Worker {
-				environment = referenceEnvironment{worker: resolved}
-			}
-			if err := markURL(resolved, phase, environment); err != nil {
-				return result, err
-			}
+			edges = append(edges, opaqueEdges{referenceBase, current.phase, slices.Sorted(maps.Keys(dependencies)), current.environment.restricted})
 		}
-		edges = append(edges, opaqueEdges{referenceBase, current.phase, slices.Sorted(maps.Keys(dependencies))})
 	}
 	if known {
 		result.Reachability = "known"

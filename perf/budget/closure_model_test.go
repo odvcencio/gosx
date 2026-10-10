@@ -294,6 +294,9 @@ func referenceClosure(g closureGraph) closureExpected {
 				queue = append(queue, pending{base.Path, p.phase, p.document, p.worker})
 			}
 			if n.use.Kind == "html" {
+				if referenceEmbeddingCycle(g, nodes, base.Path, map[string]bool{}) {
+					known = false
+				}
 				document := *base
 				if n.baseHref != nil {
 					href, _ := url.Parse(*n.baseHref)
@@ -520,4 +523,41 @@ func assertClosureModel(t *testing.T, report AppReport, want closureExpected) {
 	if report.Coverage.Reachability != want.reachability {
 		t.Errorf("reachability=%s want=%s", report.Coverage.Reachability, want.reachability)
 	}
+}
+
+// Unlike resource cycles, cyclic browsing-document embeddings cannot produce
+// a finite document tree. Detect that independently from the production tree.
+func referenceEmbeddingCycle(g closureGraph, nodes map[string]closureNode, address string, path map[string]bool) bool {
+	parent, _ := url.Parse("https://example.invalid" + address)
+	for g.redirects[parent.Path] != "" {
+		target, _ := url.Parse(g.redirects[parent.Path])
+		parent = parent.ResolveReference(target)
+	}
+	if path[parent.Path] {
+		return true
+	}
+	path[parent.Path] = true
+	defer delete(path, parent.Path)
+	node, ok := nodes[parent.Path]
+	if !ok {
+		node = g.responses[parent.Path]
+	}
+	if node.use.Kind != "html" {
+		return false
+	}
+	if node.baseHref != nil {
+		target, _ := url.Parse(*node.baseHref)
+		parent = parent.ResolveReference(target)
+	}
+	for _, raw := range node.refs {
+		target, err := url.Parse(raw)
+		if err != nil {
+			continue
+		}
+		resolved := parent.ResolveReference(target)
+		if nodes[resolved.Path].use.Kind == "html" && referenceEmbeddingCycle(g, nodes, resolved.Path, path) {
+			return true
+		}
+	}
+	return false
 }

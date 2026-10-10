@@ -214,7 +214,7 @@ func TestReferencesHTMLURLAttributeSchemeCorpus(t *testing.T) {
 					} else if !scheme.network || row.incomplete {
 						valid = false
 					} else {
-						valid = valid && len(set.Resources) == 1 && referenceValues(set.Resources)[0] == (Reference{URL: scheme.target, Kind: row.kind, Potential: false})
+						valid = valid && len(set.Resources) == 1 && referenceValues(set.Resources)[0] == (Reference{URL: scheme.target, Kind: schemeAttributeKind(row), Potential: false})
 					}
 					if !valid {
 						failures++
@@ -230,4 +230,13 @@ func TestReferencesHTMLURLAttributeSchemeCorpus(t *testing.T) {
 	if count != 17578 || failures > 0 || complete == 0 || opaque == 0 {
 		t.Fatal("HTML scheme corpus disagrees")
 	}
+}
+
+// The scheme corpus embeds a script in srcdoc; the URL-attribute corpus embeds
+// an iframe. Both assert the nested load's actual kind after document traversal.
+func schemeAttributeKind(row htmlURLAttributeCase) string {
+	if row.attribute == "srcdoc" {
+		return KindScript
+	}
+	return row.kind
 }

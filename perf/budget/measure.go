@@ -21,10 +21,11 @@ import (
 
 // AppReport is a native measurement result, not an additional JSON root.
 type AppReport struct {
-	App      string
-	Rows     []Row
-	Assets   []AssetReport
-	Coverage ByteCoverage
+	App       string
+	Rows      []Row
+	Assets    []AssetReport
+	Coverage  ByteCoverage
+	execution map[string]HTMLExecution
 }
 type MeasureOptions struct {
 	App, DistDir, BaseURL string
@@ -45,7 +46,7 @@ func Measure(ctx context.Context, opts MeasureOptions) (AppReport, error) {
 }
 
 func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormalizer) (AppReport, error) {
-	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "known"}}
+	result := AppReport{App: opts.App, Rows: []Row{}, Assets: []AssetReport{}, Coverage: ByteCoverage{Reachability: "known"}, execution: map[string]HTMLExecution{}}
 	if validateInput(opts.App, inputDefinitions["ID"]) != nil {
 		return result, measureFailure("invalid-input", "/app")
 	}
@@ -89,6 +90,13 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	if len(selected) != 0 || len(routes) == 0 {
 		return result, measureFailure("wrong-fixture", "/routes")
 	}
+	eligibleRoutes := make([]FixtureRoute, 0, len(routes))
+	for _, route := range routes {
+		if len(eligibleRoutePageTypes(route.PageTypes, opts.Public.Backend)) != 0 {
+			eligibleRoutes = append(eligibleRoutes, route)
+		}
+	}
+	routes = eligibleRoutes
 	sort.Slice(routes, func(i, j int) bool { return routes[i].RouteTemplate < routes[j].RouteTemplate })
 	result.Coverage.RoutesExpected = int64(len(routes))
 	var fixtures []fixtureBody
@@ -179,10 +187,7 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		if err := VerifyHTMLRenders(measuredHTML, repeatedHTML); err != nil {
 			return result, err
 		}
-		caps, err := pagecaps.FromHTML(first.body)
-		if err != nil {
-			return result, measureFailure("capability", "/routes/capabilities")
-		}
+		caps := measuredHTML.capabilities
 		observedCaps, _ := json.Marshal(caps)
 		declaredCaps, _ := json.Marshal(route.Capabilities)
 		if !bytes.Equal(observedCaps, declaredCaps) {
@@ -247,6 +252,10 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		} else {
 			row.ReasonCode = "insufficient-data"
 		}
+		row.Policies = mergeMeasurePolicies(row.Policies, []PolicyResult{{Name: "declared-fetches", Passed: plan.Reachability == "known"}, {Name: "canonical-build", Passed: opts.Public.Canonical}})
+		// Resource policies are conjunctions over applicable fetched bodies.
+		// An empty set passes; any observed failure still wins during merging.
+		row.Policies = mergeMeasurePolicies(row.Policies, []PolicyResult{{Name: "assets-compressed", Passed: true}, {Name: "immutable-hashed", Passed: true}, {Name: "wasm-streaming", Passed: true}})
 		phases := map[string]string{}
 		for _, asset := range plan.Assets {
 			phases[asset.URL] = earlierPhase(phases[asset.URL], asset.Phase)
@@ -260,6 +269,32 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 		inline := map[string]int64{first.finalURL: measuredHTML.Framework.Brotli}
 		coldInline := map[string]bool{first.finalURL: true}
 		noExecutableAssets := true
+		noExecutableDocuments := true
+		treeExecution := map[string]HTMLExecution{}
+		counted := map[string]bool{}
+		// Detection and measurement read the planner's document nodes. Byte
+		// accounting stays on fetched bodies; inline documents add execution only.
+		for _, node := range plan.documents.Documents {
+			if !node.ScriptsAllowed || counted[node.Key] {
+				continue
+			}
+			counted[node.Key] = true
+			var execution HTMLExecution
+			caps, err := inspectExecutionTree(&pagecaps.DocumentTree{Root: node, Documents: []*pagecaps.Document{node}}, func(_ *pagecaps.Document, source pagecaps.ExecutableSource) { execution.observe(source, inlineHashes) })
+			if err != nil {
+				return result, measureFailure("capability", "/html")
+			}
+			noExecutableDocuments = noExecutableDocuments && documentZeroJS(caps)
+			sum := treeExecution[node.URL]
+			sum.include(execution)
+			treeExecution[node.URL] = sum
+		}
+		type documentExecution struct {
+			HTMLExecution
+			phase string
+		}
+		documents := map[string]documentExecution{first.finalURL: {treeExecution[first.finalURL], "critical"}}
+		runtimeHashed := true
 		for _, fixture := range fixtures {
 			requestURL, err := base.Parse(fixture.url)
 			if err != nil {
@@ -267,7 +302,11 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			}
 			requestURLs[fixture.url] = requestURL.String()
 			phase := phases[fixture.url]
-			if phase != "dormant" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
+			executing := false
+			for _, id := range fixture.ids {
+				executing = executing || plan.executingAssets[id]
+			}
+			if phase != "dormant" && executing && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
 				noExecutableAssets = false
 			}
 			if fixture.url == document.url {
@@ -297,6 +336,12 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				if err := VerifyHTMLRenders(html, again); err != nil {
 					return result, err
 				}
+				entry := documentExecution{treeExecution[observed.finalURL], phase}
+				if old, exists := documents[observed.finalURL]; exists {
+					entry.phase = earlierPhase(old.phase, phase)
+					entry.HTMLExecution.union(old.HTMLExecution)
+				}
+				documents[observed.finalURL] = entry
 				if fixture.owner == "app" {
 					inline[observed.finalURL] = html.Framework.Brotli
 					coldInline[observed.finalURL] = coldInline[observed.finalURL] || phaseRank(phase) <= 1
@@ -316,6 +361,13 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				costs = append(costs, PhaseCost{RequestIdentity: redirect.url, Phase: phase, Owner: fixture.owner, Sizes: redirect.sizes, WireBytes: redirect.wireBytes, Requests: 1})
 			}
 			row.Policies = mergeMeasurePolicies(row.Policies, observed.Policies)
+			if fixture.owner == "framework" && (fixture.kind == "js" || fixture.kind == "wasm" || fixture.kind == "program") {
+				for _, policy := range observed.Policies {
+					if policy.Name == "immutable-hashed" {
+						runtimeHashed = runtimeHashed && policy.Passed
+					}
+				}
+			}
 		}
 		// Unfetched inventory may name a verified redirect target. Bind it to
 		// that body's actual representation before phase and owner reconciliation.
@@ -339,6 +391,15 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 			}
 			result.Assets[i].Phase = earlierPhase(result.Assets[i].Phase, phases[fixture.url])
 		}
+		var allExecution, coldExecution HTMLExecution
+		for _, document := range documents {
+			allExecution.include(document.HTMLExecution)
+			if phaseRank(document.phase) <= 1 {
+				coldExecution.include(document.HTMLExecution)
+			}
+		}
+		result.execution[route.RouteTemplate] = allExecution
+		row.Policies = mergeMeasurePolicies(row.Policies, htmlGuardrailPolicies(HTMLMeasurement{InlineAppScriptMax: coldExecution.InlineAppScriptMax, SyncExecutableScripts: coldExecution.SyncExecutableScripts}))
 		totals, err := SumPhases(costs)
 		if err != nil {
 			return result, err
@@ -357,20 +418,13 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 				row.AppBytes -= n
 			}
 		}
-		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && !measuredHTML.executable && !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion}, PolicyResult{Name: "no-inline-runtime", Passed: measuredHTML.Framework.Raw == 0})
+		noInlineRuntime := !allExecution.inlineFramework
+		row.Policies = append(row.Policies, PolicyResult{Name: "zero-js", Passed: noExecutableAssets && noExecutableDocuments}, PolicyResult{Name: "no-inline-runtime", Passed: noInlineRuntime}, PolicyResult{Name: "runtime-hashed", Passed: runtimeHashed && noInlineRuntime})
 		row.HeadroomBytes = -row.NormalizedBytes
-		for _, name := range route.PageTypes {
-			family, backend, _ := pageTypeVariant(name)
-			if backend != "none" && row.Backend != "none" && backend != row.Backend {
-				continue
-			}
+		for _, name := range eligibleRoutePageTypes(route.PageTypes, opts.Public.Backend) {
+			_, backend, _ := pageTypeVariant(name)
 			copy := row
-			copy.PageType = name
-			if !strings.HasPrefix(family, "scene3d/") && !strings.HasPrefix(family, "game/") {
-				copy.Backend = "none"
-			} else if backend != "none" {
-				copy.Backend = backend
-			}
+			copy.PageType, copy.Backend = name, backend
 			copy.Policies = append([]PolicyResult{}, row.Policies...)
 			result.Rows = append(result.Rows, copy)
 		}
@@ -379,6 +433,15 @@ func measureApp(ctx context.Context, opts MeasureOptions, normalize bodyNormaliz
 	result.Coverage.AssetsMeasured = int64(len(fixtures))
 	sort.Slice(result.Assets, func(i, j int) bool { return result.Assets[i].ID < result.Assets[j].ID })
 	return result, nil
+}
+
+func documentURLMatches(responseURL, declaredURL string) bool {
+	parsed, err := url.Parse(responseURL)
+	return err == nil && parsed.Path == declaredURL
+}
+
+func documentZeroJS(caps pagecaps.Capabilities) bool {
+	return !caps.WASM && caps.Runtime == "none" && !caps.Navigation && !caps.Motion
 }
 
 type fixtureBody struct {

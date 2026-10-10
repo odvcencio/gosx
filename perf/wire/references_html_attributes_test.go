@@ -73,7 +73,7 @@ var htmlURLAttributeCases = []htmlURLAttributeCase{
 	{"itemprop", "*", KindOther, true, true},
 	{"itemtype", "*", KindOther, true, true},
 	{"usemap", "img input object", KindOther, false, true},
-	{"srcdoc", "iframe", KindDocument, false, true},
+	{"srcdoc", "iframe", KindDocument, false, false},
 	{"style", "*", KindImage, false, false},
 	{"content", "meta", KindDocument, false, true},
 	{"background", "body table thead tbody tfoot tr td th", KindImage, false, true},
@@ -225,7 +225,6 @@ func TestReferencesUnknownHTMLConstructsAreIncomplete(t *testing.T) {
 		`<link rel="preload" as="fetch" href="/data.png">`, `<link rel="preload" as="document" href="/child.png">`,
 		`<link rel="preload" as="future-destination" href="/target">`,
 		`<script type="speculationrules">{"prerender":[{"source":"list","urls":["/next/"]}]}</script>`,
-		`<script type="text/javascript1.5" src="/legacy.js"></script>`,
 		`<iframe src="data:text/html,&lt;script src='/nested.js'&gt;&lt;/script&gt;"></iframe>`,
 		`<iframe src="javascript:fetch('/nested')"></iframe>`,
 		`<svg><template><image href="/foreign.png"/></template></svg>`,
@@ -237,5 +236,12 @@ func TestReferencesUnknownHTMLConstructsAreIncomplete(t *testing.T) {
 		if err == nil && set.Complete {
 			t.Errorf("unknown loading behavior claimed complete coverage: %s", body)
 		}
+	}
+}
+
+func TestReferencesLegacyScriptTypeUsesSharedSelection(t *testing.T) {
+	set, err := ScanReferences([]byte(`<script type="text/javascript1.5" src="/legacy.js"></script>`), KindDocument)
+	if err != nil || !set.Complete || len(set.Resources) != 1 || set.Resources[0].URL != "/legacy.js" || set.Resources[0].Kind != KindScript {
+		t.Fatal(set, err)
 	}
 }

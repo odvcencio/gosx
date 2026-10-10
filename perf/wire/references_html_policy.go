@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"golang.org/x/net/html"
+	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 // HTML completeness is a positive allowlist, derived from the attribute index:
@@ -75,13 +76,15 @@ func understoodHTMLReferenceAttribute(n *html.Node, a html.Attribute) bool {
 		return htmlReferenceURL(a.Val, "")
 	}
 	switch a.Key {
+	case "srcdoc":
+		return n.Data == "iframe"
 	case "style":
 		// The syntax scanner checks URL literals, substitutions and functions.
 		return true
 	case "src":
 		switch n.Data {
 		case "script":
-			if !executableType(attr(n, "type")) {
+			if !pagecaps.ExecutableScriptType(attr(n, "type")) {
 				return knownHTMLDataScript(attr(n, "type"))
 			}
 		case "img":

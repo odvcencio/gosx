@@ -14,6 +14,7 @@ type HTMLState struct {
 	Inert      bool
 	Script     bool
 	Executable bool
+	Depth      int
 }
 
 // WalkHTML is the common execution walk for capabilities and measurement.
@@ -22,9 +23,9 @@ type HTMLState struct {
 // is an attribute, not a child tree; document consumers parse it separately and
 // use this same walk for that document with its embedding restrictions.
 func WalkHTML(root *html.Node, visit func(*html.Node, HTMLState) error) error {
-	var walk func(*html.Node, bool) error
-	walk = func(node *html.Node, inert bool) error {
-		state := HTMLState{Inert: inert}
+	var walk func(*html.Node, bool, int) error
+	walk = func(node *html.Node, inert bool, depth int) error {
+		state := HTMLState{Inert: inert, Depth: depth}
 		if node.Type == html.ElementNode {
 			state.Inert = inert || node.Namespace == "" && node.DataAtom == atom.Template
 			state.Attributes = map[string]string{}
@@ -51,11 +52,11 @@ func WalkHTML(root *html.Node, visit func(*html.Node, HTMLState) error) error {
 			return err
 		}
 		for child := node.FirstChild; child != nil; child = child.NextSibling {
-			if err := walk(child, state.Inert); err != nil {
+			if err := walk(child, state.Inert, depth+1); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	return walk(root, false)
+	return walk(root, false, 0)
 }

@@ -68,25 +68,25 @@ func TestReferencesDocumentBaseAndInlineContexts(t *testing.T) {
 	}
 }
 
-func TestReferencesUnscannedSrcdocIsIncomplete(t *testing.T) {
+func TestReferencesSrcdocTraversalAndPermissions(t *testing.T) {
 	const frame = `<iframe srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"%s></iframe>`
 	// Sandbox restrictions disable scripts, but not declarative resource loads.
-	// Every live srcdoc needs nested scanning before coverage can be complete.
+	// Nested scanning now covers live srcdoc resources under inherited permissions.
 	// https://html.spec.whatwg.org/multipage/iframe-embed-object.html#attr-iframe-sandbox
 	for _, tc := range []struct {
 		name, body string
 		complete   bool
 	}{
-		{"unsandboxed", fmt.Sprintf(frame, ""), false},
-		{"scripts-allowed", fmt.Sprintf(frame, ` sandbox="allow-scripts"`), false},
-		{"scripts-token-list", fmt.Sprintf(frame, " sandbox=\"allow-forms\tALLOW-SCRIPTS\nallow-same-origin\""), false},
-		{"empty-srcdoc", `<iframe srcdoc=""></iframe>`, false},
-		{"sandbox-present", fmt.Sprintf(frame, ` sandbox`), false},
-		{"sandbox-empty", fmt.Sprintf(frame, ` sandbox=""`), false},
-		{"sandbox-other-tokens", fmt.Sprintf(frame, ` sandbox="allow-forms allow-same-origin"`), false},
-		{"sandbox-token-substring", fmt.Sprintf(frame, ` sandbox="disallow-scripts allow-scripts-extra"`), false},
-		{"sandbox-image", `<iframe sandbox srcdoc="&lt;img src='/pixel.png'&gt;"></iframe>`, false},
-		{"sandbox-stylesheet", `<iframe sandbox srcdoc="&lt;link rel='stylesheet' href='/style.css'&gt;"></iframe>`, false},
+		{"unsandboxed", fmt.Sprintf(frame, ""), true},
+		{"scripts-allowed", fmt.Sprintf(frame, ` sandbox="allow-scripts"`), true},
+		{"scripts-token-list", fmt.Sprintf(frame, " sandbox=\"allow-forms\tALLOW-SCRIPTS\nallow-same-origin\""), true},
+		{"empty-srcdoc", `<iframe srcdoc=""></iframe>`, true},
+		{"sandbox-present", fmt.Sprintf(frame, ` sandbox`), true},
+		{"sandbox-empty", fmt.Sprintf(frame, ` sandbox=""`), true},
+		{"sandbox-other-tokens", fmt.Sprintf(frame, ` sandbox="allow-forms allow-same-origin"`), true},
+		{"sandbox-token-substring", fmt.Sprintf(frame, ` sandbox="disallow-scripts allow-scripts-extra"`), true},
+		{"sandbox-image", `<iframe sandbox srcdoc="&lt;img src='/pixel.png'&gt;"></iframe>`, true},
+		{"sandbox-stylesheet", `<iframe sandbox srcdoc="&lt;link rel='stylesheet' href='/style.css'&gt;"></iframe>`, true},
 		{"html-template", "<template>" + fmt.Sprintf(frame, "") + "</template>", true},
 		{"noscript", "<noscript>" + fmt.Sprintf(frame, "") + "</noscript>", true},
 		{"other-element", `<div srcdoc="&lt;script src='/runtime.js'&gt;&lt;/script&gt;"></div>`, false},
@@ -99,8 +99,17 @@ func TestReferencesUnscannedSrcdocIsIncomplete(t *testing.T) {
 			if err != nil || set.Complete != tc.complete {
 				t.Fatalf("completeness=%v want %v: %v", set.Complete, tc.complete, err)
 			}
-			if len(set.Resources) != 0 {
-				t.Fatal("srcdoc was traversed as an outer-document reference", set.Resources)
+			want := ""
+			switch tc.name {
+			case "unsandboxed", "scripts-allowed", "scripts-token-list", "integration-point", "foreign-template":
+				want = "/runtime.js"
+			case "sandbox-image":
+				want = "/pixel.png"
+			case "sandbox-stylesheet":
+				want = "/style.css"
+			}
+			if want == "" && len(set.Resources) != 0 || want != "" && (len(set.Resources) != 1 || set.Resources[0].URL != want) {
+				t.Fatal("nested-document resource coverage differs", set.Resources, want)
 			}
 		})
 	}
