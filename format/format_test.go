@@ -1,6 +1,7 @@
 package format
 
 import (
+	"bytes"
 	"strings"
 	"testing"
 
@@ -11,7 +12,7 @@ func TestSourceFormatsNestedElements(t *testing.T) {
 	formatted, err := Source([]byte(`package main
 
 func Page() Node {
-	return <main><section><h1>Hi</h1></section></main>
+	return <main  class="page"><section  class="card"><h1>Hi</h1></section></main>
 }
 `))
 	if err != nil {
@@ -19,10 +20,7 @@ func Page() Node {
 	}
 
 	output := string(formatted)
-	if strings.Contains(output, "<main><section>") {
-		t.Fatalf("expected nested elements to expand, got:\n%s", output)
-	}
-	for _, snippet := range []string{"<main>", "<section>", "<h1>Hi</h1>"} {
+	for _, snippet := range []string{`<main class="page"><section class="card">`, "<h1>Hi</h1>"} {
 		if !strings.Contains(output, snippet) {
 			t.Fatalf("expected %q in formatted output:\n%s", snippet, output)
 		}
@@ -56,8 +54,8 @@ func NavLink(props any) Node {
 	}
 }
 
-func TestSourceNormalizesWrappedTextWithoutDrift(t *testing.T) {
-	formatted, err := Source([]byte(`package main
+func TestSourcePreservesWrappedTextWithoutDrift(t *testing.T) {
+	source := []byte(`package main
 
 func Page() Node {
 	return <article>
@@ -68,17 +66,14 @@ func Page() Node {
 		</p>
 	</article>
 }
-`))
+`)
+	formatted, err := Source(source)
 	if err != nil {
 		t.Fatalf("Source: %v", err)
 	}
 
-	output := string(formatted)
-	if strings.Contains(output, "\n\t\t\t\t\t\t") {
-		t.Fatalf("expected wrapped text indentation drift to be removed, got:\n%s", output)
-	}
-	if !strings.Contains(output, "Routes, server actions, auth, client navigation, and Scene3D all live in the same codebase.") {
-		t.Fatalf("expected wrapped text to normalize to one logical line, got:\n%s", output)
+	if !bytes.Equal(source, formatted) {
+		t.Fatalf("expected authored multiline text to remain exact, got:\n%s", formatted)
 	}
 }
 
@@ -93,13 +88,8 @@ func TestSourceKeepsRawStringCodeExamplesStable(t *testing.T) {
 	if strings.Count(output, `    return <Scene3D ariaLabel={title}>`) != 1 {
 		t.Fatalf("expected raw string example indentation to stay stable, got:\n%s", output)
 	}
-	if !strings.Contains(output, "title := \"Scene\"\n\n\n") {
-		t.Fatalf("expected empty and whitespace-only raw-string lines to normalize to zero width, got:\n%s", output)
-	}
-	for lineNumber, line := range strings.Split(output, "\n") {
-		if line != "" && strings.Trim(line, " \t\r") == "" {
-			t.Fatalf("line %d contains whitespace-only blank content %q:\n%s", lineNumber+1, line, output)
-		}
+	if !bytes.Equal(source, formatted) {
+		t.Fatalf("expected raw-string literal whitespace to remain exact, got:\n%s", output)
 	}
 
 	reformatted, err := Source(formatted)
