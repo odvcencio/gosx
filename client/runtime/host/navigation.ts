@@ -7,10 +7,12 @@
     return;
   }
 
-  // A cross-document transition can be skipped by redirect, a newer
-  // navigation, differing CSS opt-in, or reduced motion. Its ready promise
-  // rejects even though navigation succeeded; own those lifecycle promises
-  // here so an ordinary browser cancellation is not an unhandled page error.
+  // Enhanced navigation stays in this document. Its native fallback must also
+  // work through redirects and destinations without matching CSS opt-in. Some
+  // browsers reject an inbound native transition before exposing it on
+  // pagereveal, so catching that event's promises cannot make the path safe.
+  // Own the outbound promises, then synchronously skip the native animation;
+  // document navigation itself proceeds normally. Never filter global errors.
   function observeNativeViewTransition(event) {
     const transition = event && event.viewTransition;
     if (!transition) return;
@@ -18,8 +20,11 @@
       if (error && (error.name === "AbortError" || error.name === "InvalidStateError")) return;
       if (typeof console !== "undefined" && typeof console.warn === "function") console.warn("[gosx] native view transition failed", error);
     };
-    for (const promise of [transition.ready, transition.finished]) {
+    for (const promise of [transition.ready, transition.finished, transition.updateCallbackDone]) {
       if (promise && typeof promise.catch === "function") promise.catch(settled);
+    }
+    if (event.type === "pageswap" && typeof transition.skipTransition === "function") {
+      transition.skipTransition();
     }
   }
   window.addEventListener("pageswap", observeNativeViewTransition);
