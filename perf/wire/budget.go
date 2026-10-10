@@ -6,6 +6,8 @@ import (
 	"os"
 	"sort"
 	"strings"
+
+	"m31labs.dev/gosx/internal/httpcache"
 )
 
 // BudgetSchema names the budget file format.
@@ -228,8 +230,8 @@ func (r Route) EvaluatePolicies() map[string]PolicyResult {
 		out[PolicyNoInlineRuntime] = PolicyResult{Pass: true}
 	}
 
-	cc := strings.ToLower(r.Document.CacheControl)
-	if strings.Contains(cc, "private") || strings.Contains(cc, "no-store") {
+	cache, validCache := httpcache.ParseDirectives(r.Document.CacheControl)
+	if !validCache || cache.Has("private") || cache.Has("no-store") {
 		out[PolicyHTMLShareable] = PolicyResult{Reason: fmt.Sprintf("document Cache-Control %q", r.Document.CacheControl)}
 	} else {
 		out[PolicyHTMLShareable] = PolicyResult{Pass: true}

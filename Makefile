@@ -112,6 +112,10 @@ test-budget-contract:
 test-budget-public:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Public|ReportSchema)'
 
+.PHONY: test-budget-measure
+test-budget-measure:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Measure|HTTPMeasure|Inline)'
+
 test-budget-derive:
 	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
 

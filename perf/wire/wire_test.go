@@ -81,7 +81,7 @@ func testServer(t *testing.T) *httptest.Server {
 	})
 	mux.HandleFunc("/gosx/boot.js", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		if strings.Contains(r.Header.Get("Accept-Encoding"), "br") {
+		if strings.Contains(strings.Join(r.Header.Values("Accept-Encoding"), ", "), "br") {
 			w.Header().Set("Content-Encoding", "br")
 			w.Write(brotliBytes(t, runtimeJS))
 			return
