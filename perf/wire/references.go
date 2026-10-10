@@ -704,8 +704,12 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 			return
 		}
 		value := loaderName(n, lang, body)
-		if modeled := moduleLoaderName(name, lang, body); modeled != "" {
-			value = modeled
+		// Only static globals identify a modelled browser callee. An arbitrary
+		// receiver may have another signature (for example backgroundFetch.fetch).
+		// The direct XHR.open model identifies its receiver separately below.
+		if value != "" && value != "xhr-open" && name.Type(lang) == "member_expression" && !staticJavaScriptGlobalObject(name.ChildByFieldName("object", lang), lang, body) {
+			out.drop(dropUnresolved)
+			return
 		}
 		if value == "XMLHttpRequest" {
 			if !directXHROpen(n, lang, body) {
@@ -717,13 +721,6 @@ func moduleReference(n *ts.Node, lang *ts.Language, body []byte, out *referenceS
 			// The callee and arguments still traverse the loader-capability
 			// policy, including unsupported tokens and computed accesses.
 			out.drop(dropNestedScan)
-			return
-		}
-		// BackgroundFetchManager.fetch takes a job ID and a request list, not
-		// the Fetch API's URL/RequestInit pair. Only the direct global member
-		// form has that literal URL model; an unknown receiver is unresolved.
-		if value == "fetch" && name.Type(lang) == "member_expression" && !staticJavaScriptGlobalObject(name.ChildByFieldName("object", lang), lang, body) {
-			out.drop(dropUnresolved)
 			return
 		}
 		args := n.ChildByFieldName("arguments", lang)
@@ -826,7 +823,7 @@ func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 	if n == nil {
 		return ""
 	}
-	if n.Type(lang) == "import" {
+	if n.Type(lang) == "import" && literalLoaderCalls["import"] {
 		return "import"
 	}
 	if n.Type(lang) == "member_expression" {
@@ -837,8 +834,17 @@ func moduleLoaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 	} else if n.Type(lang) != "identifier" {
 		return ""
 	}
-	switch name := n.Text(body); name {
-	case "fetch", "Worker", "SharedWorker", "URL":
+	name := n.Text(body)
+	// A static global member is not necessarily a loader. Only fetching call
+	// models in the inventory may turn arguments into references. Other calls
+	// (events, animation, application callbacks, etc.) still traverse the
+	// completeness policy, but their string arguments are ordinary syntax.
+	if name != "import" && literalLoaderCalls[name] {
+		return name
+	}
+	if name == "URL" {
+		// URL construction does not fetch; its separate import.meta.url hint
+		// model is retained, including nested Worker(new URL(...)) handling.
 		return name
 	}
 	return ""
@@ -979,32 +985,17 @@ func loaderName(n *ts.Node, lang *ts.Language, body []byte) string {
 	if name == nil {
 		return ""
 	}
-	if name.Type(lang) != "member_expression" {
-		return literalLoaderToken(name.Text(body))
+	if name.Type(lang) == "member_expression" {
+		object, property := name.ChildByFieldName("object", lang), name.ChildByFieldName("property", lang)
+		if object != nil && property != nil && property.Text(body) == "open" && loaderName(object, lang, body) == "XMLHttpRequest" {
+			constructor := object.ChildByFieldName("constructor", lang)
+			if constructor == nil || constructor.Type(lang) == "member_expression" && !staticJavaScriptGlobalObject(constructor.ChildByFieldName("object", lang), lang, body) {
+				return ""
+			}
+			return "xhr-open"
+		}
 	}
-	object, property := name.ChildByFieldName("object", lang), name.ChildByFieldName("property", lang)
-	if object == nil || property == nil {
-		return ""
-	}
-	if property.Text(body) == "open" && loaderName(object, lang, body) == "XMLHttpRequest" {
-		return "xhr-open"
-	}
-	switch object.Text(body) {
-	case "globalThis", "window", "self":
-		return literalLoaderToken(property.Text(body))
-	default:
-		return ""
-	}
-}
-
-func literalLoaderToken(name string) string {
-	// Global membership alone does not give a call a URL argument model.
-	// Other APIs still traverse the conservative capability policy.
-	switch name {
-	case "import", "fetch", "Worker", "SharedWorker", "URL", "EventSource", "WebSocket", "XMLHttpRequest", "importScripts":
-		return name
-	}
-	return ""
+	return moduleLoaderName(name, lang, body)
 }
 
 func directXHROpen(n *ts.Node, lang *ts.Language, body []byte) bool {

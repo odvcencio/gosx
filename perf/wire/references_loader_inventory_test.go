@@ -463,6 +463,7 @@ var loaderInventoryWitnesses = map[string][]loaderInventoryWitness{
 		{Source: "new Request(\"/hidden.bin\");", Kind: "js", Complete: false},
 	},
 	"xhr": {
+		{Source: "new XMLHttpRequest().open(\"GET\",\"/hidden.bin\");", Kind: KindScript, Complete: true, References: []Reference{{URL: "/hidden.bin", Kind: KindOther}}},
 		{Source: "const xhr=new XMLHttpRequest(); xhr.open(\"GET\",\"/hidden.bin\"); xhr.send();", Kind: "js", Complete: false},
 	},
 	"beacon": {
@@ -473,6 +474,7 @@ var loaderInventoryWitnesses = map[string][]loaderInventoryWitness{
 		{Source: "new EventSource(streamURL);", Kind: "js", Complete: false},
 	},
 	"websocket": {
+		{Source: "new WebSocket(\"/hidden.bin\");", Kind: KindScript, Complete: true, References: []Reference{{URL: "/hidden.bin", Kind: KindOther}}},
 		{Source: "new WebSocket(\"wss://example.test/socket\");", Kind: "js", Complete: false},
 	},
 	"service-worker": {
