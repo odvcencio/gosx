@@ -3,12 +3,13 @@ package budget
 import (
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 )
 
 func TestHTTPMeasureOpaqueContentTypes(t *testing.T) {
 	// RFC 9110 §8.3.1: opaque assets still require a media type with both
-	// type and subtype. Their registered kind imposes no subtype allowlist.
+	// type and subtype. Semantic media types cannot hide in the opaque kind.
 	for _, tc := range []struct {
 		name, kind string
 		values     []string
@@ -49,5 +50,28 @@ func TestHTTPMeasureOpaqueContentTypes(t *testing.T) {
 				t.Fatalf("want Content-Type policy error, got %v", err)
 			}
 		})
+	}
+}
+
+func TestHTTPMeasureOtherRejectsSemanticContentTypes(t *testing.T) {
+	// MIME Sniffing §4.6: every JavaScript MIME essence, including legacy
+	// names, denotes executable content. HTTP parameters do not change that.
+	for _, media := range []string{
+		"text/html", "text/css", "application/wasm",
+		"text/javascript", "application/javascript", "application/ecmascript",
+		"application/x-ecmascript", "application/x-javascript", "text/ecmascript",
+		"text/javascript1.0", "text/javascript1.1", "text/javascript1.2",
+		"text/javascript1.3", "text/javascript1.4", "text/javascript1.5",
+		"text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript",
+	} {
+		for _, value := range []string{media, strings.ToUpper(media) + "; charset=utf-8"} {
+			t.Run(value, func(t *testing.T) {
+				_, err := generatedMeasure(t, []byte("fixture bytes"), "other", "identity", http.Header{"Content-Type": {value}})
+				var input *InputError
+				if !errors.As(err, &input) || input.Code != "policy" || input.Pointer != "/contentType" {
+					t.Fatalf("semantic body admitted as opaque: %v", err)
+				}
+			})
+		}
 	}
 }

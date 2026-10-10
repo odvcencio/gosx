@@ -19,6 +19,7 @@ import (
 	"m31labs.dev/gosx/internal/assetmeasure"
 	"m31labs.dev/gosx/internal/httpcache"
 	"m31labs.dev/gosx/internal/httpcompress"
+	"m31labs.dev/gosx/internal/pagecaps"
 )
 
 const maxMeasureBody = 64 << 20
@@ -284,9 +285,10 @@ func measureMIME(kind, mediaType string) bool {
 	case "program":
 		return mediaType == "application/octet-stream" || mediaType == "application/json"
 	case "other":
-		// Opaque bytes have no execution or parsing contract. Content-Type
-		// syntax is checked above; semantic kinds retain their allowlists.
-		return true
+		// MIME Sniffing §4.6 supplies the shared JavaScript essence rule.
+		// Executable and parsed documents cannot bypass their scanners by
+		// declaring an opaque kind, even with otherwise valid MIME syntax.
+		return mediaType != "text/html" && mediaType != "text/css" && mediaType != "application/wasm" && !pagecaps.ExecutableScriptType(mediaType)
 	case "font":
 		return mediaType == "font/woff2" || mediaType == "font/woff" || mediaType == "application/font-woff"
 	case "image":

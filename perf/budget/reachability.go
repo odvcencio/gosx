@@ -149,7 +149,13 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 			}
 			for _, i := range targets {
 				asset := assets[i]
-				if !enabled(asset) || asset.Kind != "html" {
+				if !enabled(asset) {
+					continue
+				}
+				if asset.Kind == "other" {
+					return nil, "", false, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(i)+"/kind")
+				}
+				if asset.Kind != "html" {
 					continue
 				}
 				target := asset.URL
@@ -455,6 +461,16 @@ func resolveReachability(opts ReachabilityOptions, verify func(PlannedAsset) (st
 				targets := byURL[resolved]
 				if len(targets) == 0 {
 					return result, measureFailure("undeclared-fetch", "/assets/"+strconv.Itoa(indexes[0])+"/references")
+				}
+				switch ref.Kind {
+				case wire.KindScript, wire.KindLazyScript, wire.KindStyle, wire.KindDocument, wire.KindWASM:
+					// Loader context is independent of the served MIME type. An
+					// opaque declaration cannot certify an unscanned dependency.
+					for _, i := range targets {
+						if enabled(assets[i]) && assets[i].Kind == "other" {
+							return result, measureFailure("wrong-fixture", "/assets/"+strconv.Itoa(i)+"/kind")
+						}
+					}
 				}
 				if ref.Potential {
 					continue
