@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"testing"
 
 	"m31labs.dev/gosx/buildmanifest"
@@ -94,6 +95,41 @@ func TestProducerPublicDependencyRoundTrip(t *testing.T) {
 				t.Fatal("collector lost the registered CSS-to-image edge")
 			}
 		}
+	}
+}
+
+func TestProducerCompiledDependencyRoundTrip(t *testing.T) {
+	opts, document := fixtureProducer(t)
+	css := []byte(`body{background:url("/images/bg.png")}`)
+	image := []byte("registered image")
+	producerTestPublic(t, opts, "images/bg.png", "image", image)
+	use := buildmanifest.PerfAssetUse{ID: "app/fixture/compiled.css", URL: "/compiled.css", SHA256: testMeasureHash(css),
+		Owner: "app", Kind: "css", Phase: "critical", Condition: "always", Dependencies: []string{}}
+	producerTestFile(t, opts.DistDir, "compiled.css", css)
+	opts.Build.PerfAssetUses.Assets = append(opts.Build.PerfAssetUses.Assets, use)
+	producerTestCatalog(t, opts, func(catalog map[string]any) {
+		catalog["assetRules"] = append(catalog["assetRules"].([]any), map[string]any{
+			"id": use.ID, "owner": use.Owner, "kind": use.Kind, "phase": use.Phase, "condition": use.Condition,
+			"dependencies": []string{"app/fixture/public/images/bg.png"},
+		})
+	})
+	document = bytes.Replace(document, []byte("</head>"), []byte(`<link rel="stylesheet" href="/compiled.css"></head>`), 1)
+	producerTestServe(&opts, map[string][]byte{"/counter/": document, "/compiled.css": css, "/images/bg.png": image},
+		map[string]string{"/counter/": "html", "/compiled.css": "css", "/images/bg.png": "image"})
+	digest, err := ProduceFixture(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, chunks := range []bool{false, true} {
+		report := producerTestCollect(t, opts, digest, chunks)
+		for _, asset := range report.Assets {
+			if asset.ID == use.ID && !reflect.DeepEqual(asset.Dependencies, []string{"app/fixture/public/images/bg.png"}) {
+				t.Fatal("collector lost the compiled CSS-to-public-image edge")
+			}
+		}
+	}
+	if len(use.Dependencies) != 0 || len(opts.Build.PerfAssetUses.Assets[1].Dependencies) != 0 {
+		t.Fatal("production mutated the caller's build inventory")
 	}
 }
 
@@ -187,17 +223,21 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 	enum := func(field string) []any { return properties[field].(map[string]any)["enum"].([]any) }
 	// Cover every schema kind, phase and condition, with seeded acyclic edges,
 	// shuffled catalog/build order and independently hashed source bodies.
-	for seed := 0; seed < len(enum("phase"))*len(enum("condition")); seed++ {
+	categories := []string{"document", "compiled", "chunk", "runtime", "public"}
+	coverage := map[string]bool{}
+	// Twelve permutations per phase/condition combination make 336 catalogs.
+	// Sidecars are gzip/Brotli representations of these nodes, not graph IDs.
+	for seed := 0; seed < 12*len(enum("phase"))*len(enum("condition")); seed++ {
 		t.Run(fmt.Sprintf("seed-%02d", seed), func(t *testing.T) {
 			rng := rand.New(rand.NewSource(int64(seed)))
 			opts, baseDocument := fixtureProducer(t)
-			document := bytes.Replace(baseDocument, []byte("</head>"), []byte(`<link rel="stylesheet" href="/generated/css.body"></head>`), 1)
+			document := bytes.Replace(baseDocument, []byte("</head>"), []byte(`<link rel="stylesheet" href="/generated/css.body"><link rel="stylesheet" href="/generated/compiled.css"></head>`), 1)
 			bodies := map[string][]byte{"/counter/": document}
 			kinds := map[string]string{}
 			sidecars := map[string]map[string][]byte{}
 			expected := map[string]map[string]any{}
 			rules := []any{}
-			add := func(use buildmanifest.PerfAssetUse, body []byte, source string) {
+			add := func(use buildmanifest.PerfAssetUse, body []byte, source string) buildmanifest.PerfAssetUse {
 				use.SHA256 = testMeasureHash(body)
 				fields := producerSchemaObject(t, "AssetUse", producerJSONFields(t, use))
 				rule := map[string]any{"id": fields["id"], "owner": fields["owner"], "kind": fields["kind"],
@@ -211,22 +251,50 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 				kinds[use.URL] = use.Kind
 				producerTestFile(t, opts.DistDir, source, body)
 				sidecars[use.ID] = producerTestEncodings(t, opts.DistDir, source, body)
+				return use
 			}
 			runtime := opts.Build.PerfAssetUses.Assets[0]
+			ids := map[string]string{"document": "app/fixture/html", "compiled": "app/fixture/compiled.css",
+				"chunk": "app/fixture/chunk.js", "runtime": runtime.ID, "public": "app/fixture/public/generated/image.body"}
+			urls := map[string]string{ids["document"]: "/counter/", ids["compiled"]: "/generated/compiled.css",
+				ids["chunk"]: "/generated/chunk.js", runtime.ID: runtime.URL, ids["public"]: "/generated/image.body"}
+			order := slices.Clone(categories)
+			rng.Shuffle(len(order), func(i, j int) { order[i], order[j] = order[j], order[i] })
+			dependencies := map[string][]string{}
+			for i, from := range order {
+				dependencies[ids[from]] = []string{}
+				for _, to := range order[i+1:] {
+					dependencies[ids[from]] = append(dependencies[ids[from]], ids[to])
+					coverage[from+"->"+to] = true
+				}
+			}
 			runtimeBody, err := os.ReadFile(filepath.Join(opts.DistDir, "assets/runtime", filepath.Base(runtime.URL)))
 			if err != nil {
 				t.Fatal(err)
 			}
-			add(runtime, runtimeBody, "assets/runtime/"+filepath.Base(runtime.URL))
+			runtime.Dependencies = dependencies[runtime.ID]
+			// Framework edges can also point outside the partial build inventory.
+			runtime = add(runtime, runtimeBody, "assets/runtime/"+filepath.Base(runtime.URL))
 			build := []buildmanifest.PerfAssetUse{runtime}
-			previous := runtime.ID
-			for i, count := 0, 1+rng.Intn(4); i < count; i++ {
-				chunk := buildmanifest.PerfAssetUse{ID: fmt.Sprintf("app/fixture/chunk-%d.js", i), URL: fmt.Sprintf("/generated/chunk-%d.js", i), Owner: "app", Kind: "js", Phase: "dormant", Condition: "always", Dependencies: []string{previous}}
-				body := []byte(fmt.Sprintf("const chunk%d=%d;", i, seed))
-				chunk.SHA256 = testMeasureHash(body)
-				add(chunk, body, "generated/"+filepath.Base(chunk.URL))
-				build = append(build, chunk)
-				previous = chunk.ID
+			for _, category := range []string{"compiled", "chunk"} {
+				kind, body := "css", []byte("body{color:green}")
+				if category == "chunk" {
+					kind, body = "js", []byte(fmt.Sprintf("const chunk=%d;", seed))
+				}
+				deps := dependencies[ids[category]]
+				if len(deps) > 0 {
+					if kind == "css" {
+						body = []byte(fmt.Sprintf(`body{background:url(%q)}`, urls[deps[0]]))
+					} else {
+						body = []byte(fmt.Sprintf("fetch(%q);", urls[deps[0]]))
+					}
+				}
+				use := buildmanifest.PerfAssetUse{ID: ids[category], URL: urls[ids[category]], Owner: "app", Kind: kind,
+					Phase: "dormant", Condition: "always", Dependencies: deps}
+				use = add(use, body, "generated/"+filepath.Base(use.URL))
+				// The CLI supplies no registered edges. The catalog must win.
+				use.Dependencies = []string{}
+				build = append(build, use)
 			}
 			for i, choice := range enum("kind") {
 				kind := choice.(string)
@@ -246,18 +314,21 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 				condition := enum("condition")[(seed/len(enum("phase"))+i)%len(enum("condition"))].(string)
 				deps := []string{}
 				if rng.Intn(2) == 0 {
-					deps = append(deps, previous)
+					deps = append(deps, ids[order[rng.Intn(len(order))]])
 				}
 				if kind == "css" || kind == "image" {
 					condition = "always"
 				}
 				if kind == "css" {
-					deps = append(deps, "app/fixture/public/generated/image.body")
+					deps = []string{ids["public"]}
+				}
+				if kind == "image" {
+					deps = dependencies[ids["public"]]
 				}
 				use := buildmanifest.PerfAssetUse{ID: "app/fixture/public/generated/" + kind + ".body", URL: "/generated/" + kind + ".body", Owner: "app", Kind: kind, Phase: phase, Condition: condition, Dependencies: deps}
 				add(use, body, "public/generated/"+kind+".body")
 			}
-			doc := buildmanifest.PerfAssetUse{ID: "app/fixture/html", URL: "/counter/", Owner: "app", Kind: "html", Phase: "critical", Condition: "always", Dependencies: []string{previous, "app/fixture/public/generated/css.body"}}
+			doc := buildmanifest.PerfAssetUse{ID: "app/fixture/html", URL: "/counter/", Owner: "app", Kind: "html", Phase: "critical", Condition: "always", Dependencies: dependencies[ids["document"]]}
 			add(doc, document, "static/counter/index.html")
 			rng.Shuffle(len(build), func(i, j int) { build[i], build[j] = build[j], build[i] })
 			opts.Build.PerfAssetUses.Assets = build
@@ -321,4 +392,13 @@ func TestProducerGeneratedCatalogRoundTrip(t *testing.T) {
 			}
 		})
 	}
+	for _, from := range categories {
+		for _, to := range categories {
+			if from != to && !coverage[from+"->"+to] {
+				t.Errorf("missing accepted dependency pair %s->%s", from, to)
+			}
+		}
+	}
+	t.Logf("generated catalogs=%d; body categories=%v; accepted dependency pairs=%d; representations=identity,gzip,brotli",
+		12*len(enum("phase"))*len(enum("condition")), categories, len(coverage))
 }
