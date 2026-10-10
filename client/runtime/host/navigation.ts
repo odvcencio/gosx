@@ -7,6 +7,29 @@
     return;
   }
 
+  // Enhanced navigation stays in this document. Its native fallback must also
+  // work through redirects and destinations without matching CSS opt-in. Some
+  // browsers reject an inbound native transition before exposing it on
+  // pagereveal, so catching that event's promises cannot make the path safe.
+  // Own the outbound promises, then synchronously skip the native animation;
+  // document navigation itself proceeds normally. Never filter global errors.
+  function observeNativeViewTransition(event) {
+    const transition = event && event.viewTransition;
+    if (!transition) return;
+    const settled = function(error) {
+      if (error && (error.name === "AbortError" || error.name === "InvalidStateError")) return;
+      if (typeof console !== "undefined" && typeof console.warn === "function") console.warn("[gosx] native view transition failed", error);
+    };
+    for (const promise of [transition.ready, transition.finished, transition.updateCallbackDone]) {
+      if (promise && typeof promise.catch === "function") promise.catch(settled);
+    }
+    if (event.type === "pageswap" && typeof transition.skipTransition === "function") {
+      transition.skipTransition();
+    }
+  }
+  window.addEventListener("pageswap", observeNativeViewTransition);
+  window.addEventListener("pagereveal", observeNativeViewTransition);
+
   const HEAD_START = "gosx-head-start";
   const HEAD_END = "gosx-head-end";
   const SCRIPT_ROLE = "data-gosx-script";

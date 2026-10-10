@@ -19,6 +19,16 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Merge retains the existing public-clock allocations from main and the
 // branch allocations; shared allowances are unchanged.
 // Merge retains main's existing asynchronous shader startup allocations.
+// Public engine state/lifetime and Scene3D camera/readiness/geometry commands add
+// measured bytes. Geometry resolution ships once with scene mounts, not again
+// in commands; actual scene+commands+one renderer grows 2.45–2.52KB Brotli. Only
+// eight breached targets increase to the exact minimum; allowance policy is fixed.
+// Useful authored capability fallbacks keep a terminal marker without an alert
+// overlay. Its generic detection adds 516 raw bytes to selective routes; only
+// five affected aggregate targets move to their measured minimum, with the same
+// allowances (280 Brotli bytes on the pin; 255 on current main).
+// Current-main integration measures these same surfaces after its newer loader
+// changes; targets below use that merged output rather than the minimal pin.
 const budgets = [
   // Finite choreography remains demand-loaded; existing route limits are unchanged.
   { file: "bootstrap-feature-scene3d-timeline.js", raw: 5_400, gzip: 2_400, brotli: 2_200 },
@@ -1305,7 +1315,7 @@ const budgets = [
   // copy of the same shape. Measured: 13_839 / 3_606 / 3_158; all three caps
   // raised with narrow rounding headroom. The merged build measures
   // 13_888 / 3_631 / 3_181.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 14000, gzip: 3700, brotli: 3250 },
+  { file: "bootstrap-feature-scene3d-command.js", raw: 14000, gzip: 4121, brotli: 3642 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
@@ -1784,9 +1794,9 @@ const routeBudgets = [
     // Dormant gamepad input adds the same 524 raw bytes to this route.
     // Measured 305,783 raw. Move only the breached raw target to its minimum
     // passing value; compressed targets and the governed allowance stay fixed.
-    raw: 291221,
+    raw: 293339,
     gzip: 83400,
-    brotli: 73971,
+    brotli: 74495,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -1968,7 +1978,7 @@ const routeBudgets = [
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
     // Detail resource reuse and retirement adds 1,086 raw, 314 gzip and 280
     // Brotli bytes to this route. Keep the shared allowances unchanged.
-    raw: 1384500,
+    raw: 1388682,
     gzip: 383800,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
@@ -2174,7 +2184,7 @@ const routeBudgets = [
     raw: 1241400,
     gzip: 357200,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
-    brotli: 299600,
+    brotli: 300080,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2370,7 +2380,7 @@ const routeBudgets = [
     raw: 1696300,
     gzip: 473600,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
-    brotli: 394900,
+    brotli: 397131,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2536,7 +2546,7 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1235900,
+    raw: 1236419,
     gzip: 340400,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.

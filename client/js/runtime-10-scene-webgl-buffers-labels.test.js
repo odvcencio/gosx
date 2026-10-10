@@ -971,7 +971,8 @@ test("bootstrap honors engine-side Scene3D view-cull metadata", async () => {
 test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-root";
-  mount.appendChild(new FakeElement("p", null));
+  const fallback = new FakeElement("p", null);
+  mount.appendChild(fallback);
 
   const env = createContext({
     elements: [mount],
@@ -999,21 +1000,31 @@ test("bootstrap mounts native Scene3D engines without extra scripts", async () =
     },
   });
 
+  env.context.__gosx_scene3d_assets = {
+    resolveObjects() { throw new Error("inline geometry must not enter the async asset path"); },
+    resolveCommands() { throw new Error("inline commands must not enter the async asset path"); },
+  };
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
   assert.equal(env.context.__gosx.ready, true);
   assert.equal(env.context.__gosx.engines.size, 1);
-  assert.equal(mount.children.length, 2);
+  assert.equal(mount.children.length, 3);
   assert.equal(mount.firstElementChild.tagName, "CANVAS");
   assert.equal(mount.firstElementChild.getAttribute("width"), "640");
   assert.equal(mount.firstElementChild.getAttribute("height"), "360");
   assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
   assert.equal(mount.children[1].children.length, 0);
 
+  const fallbackHolder = mount.children[2];
+  assert.equal(fallbackHolder.getAttribute("data-gosx-scene3d-fallback"), "");
+  assert.equal(fallbackHolder.hidden, true);
+  assert.strictEqual(fallbackHolder.firstElementChild, fallback);
+
   env.context.__gosx_dispose_engine("gosx-engine-2");
   assert.equal(env.context.__gosx.engines.size, 0);
-  assert.equal(mount.children.length, 0);
+  assert.equal(mount.children.length, 1);
+  assert.strictEqual(mount.firstElementChild, fallback);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });

@@ -22,7 +22,7 @@ require (
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.43.0
-	m31labs.dev/selena v0.5.2
+	m31labs.dev/selena v0.5.3-0.20261009230029-91a4a8c05027
 	m31labs.dev/turboquant v0.2.1
 )
 
