@@ -42,6 +42,7 @@ component SplitHandleX(props: SplitHandleProps) {
 		data-gosx-drag-min={props.Min}
 		data-gosx-drag-max={props.Max}
 		data-gosx-drag-step="8"
+		data-gosx-drag-scale="1"
 	></div>
 }
 
@@ -60,5 +61,6 @@ component SplitHandleY(props: SplitHandleProps) {
 		data-gosx-drag-min={props.Min}
 		data-gosx-drag-max={props.Max}
 		data-gosx-drag-step="8"
+		data-gosx-drag-scale="1"
 	></div>
 }

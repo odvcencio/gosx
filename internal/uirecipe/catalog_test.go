@@ -592,8 +592,8 @@ func TestWorkbenchRecipesRenderServerFallbacks(t *testing.T) {
 		absent            []string
 	}{
 		{"splitpane", "SplitPane", splitProps{"split", "vertical", "$layout.sidebar", "280"}, []string{`--gsx-split-a: 280px`, `data-gosx-bind-style="--gsx-split-a:$layout.sidebar:px"`, `Content`}, nil},
-		{"splitpane", "SplitHandleX", handleProps{"$layout.sidebar", "Sidebar size", "160", "640", "280"}, []string{`role="separator"`, `aria-orientation="vertical"`, `data-gosx-drag-axis="x"`, `data-gosx-drag-step="8"`, `aria-valuenow="280"`}, nil},
-		{"splitpane", "SplitHandleY", handleProps{"$layout.bottom", "Bottom size", "80", "480", "240"}, []string{`aria-orientation="horizontal"`, `data-gosx-drag-axis="y"`}, nil},
+		{"splitpane", "SplitHandleX", handleProps{"$layout.sidebar", "Sidebar size", "160", "640", "280"}, []string{`role="separator"`, `aria-orientation="vertical"`, `data-gosx-drag-axis="x"`, `data-gosx-drag-step="8"`, `data-gosx-drag-scale="1"`, `aria-valuenow="280"`}, nil},
+		{"splitpane", "SplitHandleY", handleProps{"$layout.bottom", "Bottom size", "80", "480", "240"}, []string{`aria-orientation="horizontal"`, `data-gosx-drag-axis="y"`, `data-gosx-drag-scale="1"`}, nil},
 		{"dock", "Dock", dockProps{"dock", "$layout.left", "$layout.right", "$layout.bottom", "280", "240", "240"}, []string{`class="gsx-dock"`, `--gsx-dock-left: 280px`, `--gsx-dock-bottom:$layout.bottom:px`, `Content`}, nil},
 		{"tabs", "Tab", tabProps{"arrange", "?tab=arrange", "panel-arrange", true}, []string{`<a`, `href="?tab=arrange"`, `aria-current="page"`, `data-gosx-tab-panel="panel-arrange"`, `Content`}, []string{`role=`, `tabindex=`, `aria-selected=`}},
 		{"tabs", "Tab", tabProps{"session", "?tab=session", "panel-session", false}, []string{`href="?tab=session"`}, []string{`aria-current=`, `role=`}},

@@ -8,25 +8,29 @@
     const readSignal = api.gosxReadSharedSignal;
     const setSignal = api.setSharedSignalValue;
     const subscribeSignal = api.gosxSubscribeSharedSignal;
-    const listeners = [], unsubscribers = [], observers = [];
-    const activeHandles = new Map();
-    let handleBindings = new WeakSet(), styleBindings = new WeakMap();
-    let tabBindings = new WeakSet(), collapsibleBindings = new WeakSet();
+    const listeners = [], observers = [];
+    const activeHandles = new Map(), bindings = new Map();
     let manifest = null, inputPromise = null, generation = 0, tabID = 0;
     function setAttr(element, name, value) { element.setAttribute(name, value); }
+    function connected(el) { return document.documentElement.contains(el); }
+    function binding(el) {
+      if (!bindings.has(el)) bindings.set(el, { cleanup: [] });
+      return bindings.get(el);
+    }
     function listen(type, fn, target = document, options = false) {
       target.addEventListener(type, fn, options);
       listeners.push([target, type, fn, options]);
     }
+    function releaseBinding(el, state) {
+      activeHandles.get(el)?.cancel("dispose");
+      for (const cleanup of state.cleanup) cleanup();
+      bindings.delete(el);
+    }
     function disposeAll() {
       generation++;
-      for (const gesture of activeHandles.values()) gesture.cancel("dispose");
-      activeHandles.clear();
+      for (const [el, state] of bindings) releaseBinding(el, state);
       for (const [target, type, fn, options] of listeners.splice(0)) target.removeEventListener(type, fn, options);
-      for (const unsubscribe of unsubscribers.splice(0)) unsubscribe();
       for (const observer of observers.splice(0)) observer.disconnect();
-      handleBindings = new WeakSet(); styleBindings = new WeakMap();
-      tabBindings = new WeakSet(); collapsibleBindings = new WeakSet();
     }
     function createCommandRegistry() {
       let entries = [];
@@ -162,8 +166,8 @@
         unbind() { entries = []; },
       };
     }
-    function subscribe(name, fn, options) {
-      unsubscribers.push(subscribeSignal(name, fn, options));
+    function subscribe(el, name, fn, options) {
+      binding(el).cleanup.push(subscribeSignal(name, value => { if (connected(el)) fn(value); }, options));
     }
     // Defaults: y axis, unbounded range, step = range/100 (else 1),
     // scale = range/axis size (else 1), Alt fine = 0.1, no reset.
@@ -197,14 +201,14 @@
       return aria != null && Number.isFinite(Number(aria)) ? Number(aria) : Number.isFinite(h.min) ? h.min : 0;
     }
     function handleARIA(el, value) {
-      if (value == null || !Number.isFinite(Number(value))) return;
+      if (!connected(el) || value == null || !Number.isFinite(Number(value))) return;
       for (const suffix of ["now", "text"]) setAttr(el, "aria-value" + suffix, value);
     }
     function writeHandle(h, value) { setSignal(h.signal, value); handleARIA(h.el, value); }
     function endHandle(h, value, commit) {
       const detail = { signal: h.signal, value, commit };
       if (h.end) setSignal(h.end, detail);
-      h.el.dispatchEvent(new CustomEvent("gosx:drag:end", { bubbles: true, detail }));
+      if (connected(h.el)) h.el.dispatchEvent(new CustomEvent("gosx:drag:end", { bubbles: true, detail }));
     }
     function dragElement(event) { return event.target?.closest?.("[data-gosx-drag]"); }
     function ensureInputChunk() {
@@ -247,6 +251,7 @@
         if (event.button != null && event.button !== 0 || event.isPrimary === false || event.defaultPrevented) return;
         const el = dragElement(event);
         if (!el) return;
+        binding(el);
         event.preventDefault();
         if (activeHandles.has(el)) activeHandles.get(el).cancel("replaced");
         const h = parseDragHandle(el), start = currentValue(h), owner = generation;
@@ -288,12 +293,12 @@
       else el.style.setProperty(bind.prop, String(value) + bind.unit);
     }
     function bindStyleElement(el, force) {
-      const existing = styleBindings.get(el);
-      if (existing) { if (force) existing(); return; }
+      const state = binding(el);
+      if (state.style) { if (force) state.style(); return; }
       const binds = parseStyleBinds(el.getAttribute("data-gosx-bind-style"));
       const attributes = binds.filter(b => b.source.startsWith("@"));
-      const refresh = () => { for (const b of attributes) applyStyleBind(el, b, el.getAttribute(b.source.slice(1))); };
-      styleBindings.set(el, refresh); refresh();
+      const refresh = () => { if (connected(el)) for (const b of attributes) applyStyleBind(el, b, el.getAttribute(b.source.slice(1))); };
+      state.style = refresh; refresh();
       for (const b of binds.filter(b => b.source.startsWith("$"))) {
         // Dotted signal names are independent signals. Also resolve object paths
         // from a parent signal, for bindings such as $layout.sidebar.
@@ -301,17 +306,17 @@
         for (let i = 1; i <= parts.length; i++) {
           const name = parts.slice(0, i).join("."), path = parts.slice(i);
           const update = value => {
-            for (const key of path) value = value != null && Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined;
+            for (const key of path) if (value != null) value = Object.prototype.hasOwnProperty.call(value, key) ? value[key] : undefined;
             if (value !== undefined) applyStyleBind(el, b, value);
           };
-          subscribe(name, update, { immediate: false });
+          subscribe(el, name, update, { immediate: false });
           const initial = readSignal(name, undefined);
           if (initial !== undefined) update(initial);
         }
       }
       if (attributes.length) {
         const observer = new MutationObserver(refresh);
-        observer.observe(el, { attributes: true, attributeFilter: attributes.map(b => b.source.slice(1)) }); observers.push(observer);
+        observer.observe(el, { attributes: true, attributeFilter: attributes.map(b => b.source.slice(1)) }); state.cleanup.push(() => observer.disconnect());
       }
     }
     function bindStyleBinds(root, force = false) {
@@ -321,6 +326,7 @@
       return Array.from(container.querySelectorAll("[data-gosx-tab]")).filter(tab => tab.closest("[data-gosx-tabs]") === container);
     }
     function selectTab(container, tab, focus, publish = true) {
+      if (!connected(container)) return;
       for (const item of tabLinks(container)) {
         const selected = item === tab;
         setAttr(item, "aria-selected", String(selected)); setAttr(item, "tabindex", selected ? "0" : "-1");
@@ -333,8 +339,9 @@
       if (publish && signal) setSignal(signal, tab.getAttribute("data-gosx-tab"));
     }
     function upgradeTabs(container) {
-      if (tabBindings.has(container)) return;
-      tabBindings.add(container);
+      const state = binding(container);
+      if (state.tabs) return;
+      state.tabs = true;
       const links = tabLinks(container), nav = container.querySelector("nav");
       if (!links.length || !nav) return;
       setAttr(nav, "role", "tablist");
@@ -348,7 +355,7 @@
       }
       selectTab(container, links.find(tab => tab.getAttribute("aria-current") === "page") || links[0], false, false);
       const signal = container.getAttribute("data-gosx-tabs-signal");
-      if (signal) subscribe(signal, value => {
+      if (signal) subscribe(container, signal, value => {
         const tab = links.find(item => item.getAttribute("data-gosx-tab") === value);
         if (tab) selectTab(container, tab, false, false);
       });
@@ -375,19 +382,21 @@
       });
     }
     function bindCollapsible(el) {
-      if (collapsibleBindings.has(el)) return;
-      collapsibleBindings.add(el);
-      subscribe(el.getAttribute("data-gosx-collapsible"), value => {
+      const state = binding(el);
+      if (state.collapsible) return;
+      state.collapsible = true;
+      subscribe(el, el.getAttribute("data-gosx-collapsible"), value => {
         if (typeof value !== "boolean") return;
         el.open = value;
         if (value) setAttr(el, "open", ""); else el.removeAttribute("open");
       });
     }
     function refreshLayout() {
+      for (const [el, state] of bindings) if (!connected(el)) releaseBinding(el, state);
       bindStyleBinds(document);
-      for (const el of document.querySelectorAll("[data-gosx-drag]")) if (!handleBindings.has(el)) {
-        handleBindings.add(el);
-        subscribe(el.getAttribute("data-gosx-drag"), value => handleARIA(el, value));
+      for (const el of document.querySelectorAll("[data-gosx-drag]")) if (!binding(el).handle) {
+        binding(el).handle = true;
+        subscribe(el, el.getAttribute("data-gosx-drag"), value => handleARIA(el, value));
       }
       for (const el of document.querySelectorAll("[data-gosx-tabs]")) upgradeTabs(el);
       for (const el of document.querySelectorAll("[data-gosx-collapsible]")) bindCollapsible(el);

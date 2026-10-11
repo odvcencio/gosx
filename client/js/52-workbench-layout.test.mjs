@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import { bootWorkbench, FakeElement, flushAsyncWork, keydown, subscribe } from "./50-workbench-commands.test.mjs";
-import { bootHandles, handle, INPUT_URL } from "./51-workbench-drag.test.mjs";
+import { bootHandles, handle, pointer, INPUT_URL } from "./51-workbench-drag.test.mjs";
 
 export function styled(tag = "div") {
   const el = new FakeElement(tag, null); el.properties = new Map();
@@ -13,6 +13,94 @@ function refreshDOM(env) {
   const observer = env.mutationObservers.findLast(o => o.options.some(({ target, options }) => target === env.document.body && options.childList));
   assert.ok(observer, "page observer"); observer.trigger([{ type: "childList", target: env.document.body }]);
 }
+
+test("clearing a parent style signal removes CSS while an absent signal preserves fallback", async () => {
+  const el = styled(); el.setAttribute("data-gosx-bind-style", "--width:$layout.sidebar.width:px");
+  el.properties.set("--width", "240px");
+  const env = bootWorkbench({ elements: [el] }); await flushAsyncWork();
+  const set = env.context.__gosx.workbench.debug.setSignal;
+  assert.equal(el.properties.get("--width"), "240px");
+  for (const cleared of [null, { sidebar: null }, { sidebar: { width: null } }]) {
+    set("$layout", { sidebar: { width: 280 } });
+    assert.equal(el.properties.get("--width"), "280px");
+    set("$layout", cleared); assert.equal(el.properties.has("--width"), false);
+  }
+});
+
+test("removed tabs cannot select replacement panels before or after mutation refresh", async () => {
+  const old = tabs(); old.root.setAttribute("data-gosx-tabs-signal", "$retiredView");
+  const env = bootWorkbench({ elements: [old.root] }); await flushAsyncWork();
+  const next = tabs(); old.root.remove(); env.document.body.appendChild(next.root);
+  env.context.__gosx.workbench.debug.setSignal("$retiredView", "session");
+  assert.equal(next.panels[0].hidden, false);
+  refreshDOM(env); await flushAsyncWork();
+  env.context.__gosx.workbench.debug.setSignal("$view", "session");
+  env.context.__gosx.workbench.debug.setSignal("$retiredView", "arrange");
+  assert.equal(next.panels[0].hidden, true); assert.equal(next.panels[1].hidden, false);
+});
+
+test("fifty region replacements keep every workbench binding bounded and leave detached controls untouched", async () => {
+  function region(index) {
+    const root = new FakeElement("div", null), drag = handle({ axis: "x", min: 160, max: 640, step: 8, scale: 1 });
+    const style = styled(); style.setAttribute("data-gosx-bind-style", "--width:$layout.width:px,--peak:@data-peak"); style.setAttribute("data-peak", "0.5");
+    const t = tabs(); t.root.setAttribute("data-gosx-tabs-signal", "$tabs." + index);
+    const details = new FakeElement("details", null); details.setAttribute("data-gosx-collapsible", "$open"); details.open = false;
+    const button = new FakeElement("button", null); button.setAttribute("data-gosx-command", "layout.save");
+    for (const el of [drag, style, t.root, details, button]) root.appendChild(el);
+    return { root, drag, style, t, details, button, elements: [drag, style, t.root, t.nav, ...t.links, ...t.panels, details, button] };
+  }
+  let live = region(0), detachedWrites = 0;
+  const env = bootHandles([live.root], { manifest: { commands: [{ id: "layout.save", keys: ["Mod+S"], action: { signal: "$saved", value: true } }] } });
+  await flushAsyncWork();
+  const set = env.context.__gosx.workbench.debug.setSignal;
+  function watch(r) {
+    for (const el of r.elements) {
+      Object.defineProperty(el, "isConnected", { get: () => env.document.body.contains(el) });
+      const touch = () => { if (!el.isConnected) detachedWrites++; };
+      for (const name of ["setAttribute", "removeAttribute"]) {
+        const original = el[name].bind(el); el[name] = (...args) => { touch(); return original(...args); };
+      }
+      if (el === r.style) for (const name of ["setProperty", "removeProperty"]) {
+        const original = el.style[name]; el.style[name] = (...args) => { touch(); return original(...args); };
+      }
+      if (el === r.details) {
+        let open = el.open;
+        Object.defineProperty(el, "open", { get: () => open, set: value => { touch(); open = value; } });
+      }
+    }
+  }
+  const subscriptions = () => [...env.context.__gosx.sharedSignals.subscribers.values()].reduce((n, callbacks) => n + callbacks.size, 0);
+  const observers = () => env.mutationObservers.filter(o => o.targets.size).length;
+  const listeners = () => [env.document.eventListeners, env.windowListeners].reduce((n, map) => n + [...map.values()].reduce((m, entries) => m + entries.length, 0), 0);
+  const baseline = [subscriptions(), observers(), listeners()]; watch(live);
+  for (let i = 1; i <= 50; i++) {
+    const retired = live; live = region(i);
+    // Exercise cancellation of an active gesture as well as its subscription.
+    pointer(env, "pointerdown", retired.drag); await flushAsyncWork();
+    pointer(env, "pointermove", retired.drag, { clientX: 28 });
+    retired.root.remove(); env.document.body.appendChild(live.root); watch(live);
+    // A signal may arrive before the MutationObserver delivers its records.
+    set("$tabs." + (i - 1), "session"); set("$layout", { width: 280 }); set("$mix.vol", 280); set("$open", true);
+    refreshDOM(env); await flushAsyncWork();
+    assert.equal(retired.drag.capture, null);
+    assert.equal([...retired.drag.listeners.values()].reduce((n, entries) => n + entries.length, 0), 0);
+    assert.equal(env.mutationObservers.some(o => retired.elements.some(el => o.targets.has(el))), false);
+    set("$tabs." + (i - 1), "arrange"); set("$tabs." + i, "session");
+    set("$layout", { width: 288 }); set("$mix.vol", 288); set("$open", false);
+    assert.equal(live.drag.getAttribute("aria-valuenow"), "288");
+    assert.equal(live.style.properties.get("--width"), "288px"); assert.equal(live.details.open, false);
+    assert.equal(live.t.panels[0].hidden, true); assert.equal(live.t.panels[1].hidden, false);
+    assert.deepEqual([subscriptions(), observers(), listeners()], baseline, "replacement " + i);
+    assert.equal(detachedWrites, 0, "callbacks never write to a removed element");
+    env.document.dispatchEvent({ type: "click", target: live.button, preventDefault() {} });
+    assert.equal(env.context.__gosx.sharedSignals.values.get("$saved"), true);
+  }
+  await env.context.__gosx_dispose_page();
+  assert.equal(subscriptions(), 0);
+  // The core's head observer has a document lifetime; workbench observers stop.
+  assert.equal(env.mutationObservers.filter(o => o.targets.has(env.document.body) || live.elements.some(el => o.targets.has(el))).length, 0);
+  assert.equal(env.fetchCalls.filter(c => String(c.url) === INPUT_URL).length, 1);
+});
 
 test("style bindings follow signal paths, attributes and region replacements", async () => {
   const el = styled(); el.setAttribute("data-gosx-bind-style", "--gsx-split-a:$layout.sidebar:px,--peak:@data-peak"); el.setAttribute("data-peak", "0.2");

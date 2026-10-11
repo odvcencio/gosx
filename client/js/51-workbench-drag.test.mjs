@@ -30,6 +30,22 @@ function ends(env, el) {
   return seen;
 }
 
+test("recipe pixel handles move eight units across their eight pixel thickness", async () => {
+  const recipe = fs.readFileSync(new URL("../../internal/uirecipe/recipes/v1/splitpane/splitpane.gsx", import.meta.url), "utf8");
+  for (const axis of ["x", "y"]) {
+    const component = recipe.split(`component SplitHandle${axis.toUpperCase()}`)[1].split("component ")[0];
+    const scale = component.match(/data-gosx-drag-scale="([^"]+)"/)?.[1];
+    const el = handle({ axis, min: 160, max: 640, step: 8, ...(scale == null ? {} : { scale }) });
+    el.clientWidth = el.clientHeight = 8;
+    const env = bootHandles([el]); await flushAsyncWork();
+    env.context.__gosx.workbench.debug.setSignal("$mix.vol", 280);
+    pointer(env, "pointerdown", el); await flushAsyncWork();
+    const move = axis === "x" ? { clientX: 28 } : { clientY: 92 };
+    pointer(env, "pointermove", el, move); pointer(env, "pointerup", el, move);
+    assert.equal(el.getAttribute("aria-valuenow"), "288", axis);
+  }
+});
+
 test("handle defaults and bounded value math", async () => {
   const env = bootWorkbench(); await flushAsyncWork();
   const { parseDragHandle, applyDelta } = env.context.__gosx.workbench.debug;

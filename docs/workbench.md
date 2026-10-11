@@ -39,6 +39,11 @@ are unsupported; keep them in server-rendered markup.
 | `reset` | Absent; when supplied, double-click, Backspace or Delete restores this value |
 | `end` | Absent; when supplied, write the end-event detail to this signal |
 
+Pixel-sized pane handles should set `data-gosx-drag-scale="1"` so each pixel of
+pointer movement changes the size by one pixel. The bounded default divides the
+value range by the handle's own thickness: an 8 px separator with bounds 160–640
+would otherwise multiply movement by 60. Use `-1` to reverse the direction.
+
 Pointer values snap to `step`, measured from `min` when finite, otherwise zero.
 The handle captures the primary pointer. Release commits; Escape, pointer cancel,
 lost capture, blur and page disposal restore the value from pointer-down.
@@ -101,14 +106,14 @@ split puts the sized pane first, then the separator, then the flexible pane. A
 horizontal split puts the flexible pane first, then the separator, then the
 sized bottom pane. `SplitHandleX` uses a vertical separator; `SplitHandleY` uses a
 horizontal one. Both take `Signal`, `Label`, `Min`, `Max` and `Value` strings,
-with an 8 px keyboard step. The strict server compiler does not accept an
-attribute ternary, so the two handle components provide explicit axes.
+with an 8 px keyboard step and pointer scale 1. The strict server compiler does
+not accept an attribute ternary, so the two handle components provide explicit axes.
 
 `Dock` takes `ID`, `LeftSignal`, `RightSignal`, `BottomSignal`, `Left`, `Right` and
 `Bottom` strings. Give its children the `gsx-dock__top`, `gsx-dock__left`,
 `gsx-dock__center`, `gsx-dock__right` and `gsx-dock__bottom` classes. Put
-`SplitHandleX` last in the left region and first in the right region. For pixel
-sizing, add `data-gosx-drag-scale="1"` to the copied handles. Use
+`SplitHandleX` last in the left region and first in the right region. The copied
+handles already use pixel scale 1. Use
 `data-gosx-drag-scale="-1"` on a right-edge handle so motion to the left grows the
 right pane; adapt the copied component for that override. Put `SplitHandleY`
 first in the bottom region. The children own their content and overflow policy.
