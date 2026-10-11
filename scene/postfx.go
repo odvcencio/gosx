@@ -91,6 +91,23 @@ type Tonemap struct {
 
 func (Tonemap) isPostEffect() {}
 
+// BloomSource selects the lighting contribution extracted by Bloom.
+type BloomSource string
+
+const (
+	// BloomSourceColor extracts the final scene color (the default).
+	BloomSourceColor BloomSource = "color"
+	// BloomSourceSpecular extracts reflected specular radiance only. Diffuse
+	// and emissive surfaces do not glow. Requires a browser MRT backend and
+	// compatible material outputs; unsupported backends report a diagnostic
+	// and skip this effect instead of falling back to color bloom.
+	// Standard PBR uses direct and environment reflection. Custom Selena
+	// meshes must retain SpecularMRT artifacts (undeclared signals emit zero).
+	// Specialized water, cloud, point and line draw paths currently disable
+	// selective bloom for their scene so they cannot expose stale radiance.
+	BloomSourceSpecular BloomSource = "specular"
+)
+
 // Bloom adds an HDR-driven glow around bright pixels.
 //
 // By default, bright-pass extracts pixels above the luminance Threshold
@@ -98,6 +115,10 @@ func (Tonemap) isPostEffect() {}
 // vertically, and the result is additively composited back onto the scene at
 // Strength.
 type Bloom struct {
+	// Source defaults to scene color. Specular allocates an additional HDR
+	// attachment at the existing PostFX pixel cap only while requested.
+	Source BloomSource
+
 	// Mode selects soft-knee mip-chain bloom when set to "mip".
 	// Empty and unknown values preserve the legacy bright-pass blur.
 	Mode string

@@ -796,7 +796,7 @@
     if (model.materialOverride && typeof model.materialOverride === "object") {
       return model.materialOverride;
     }
-    const keys = ["material", "materialKind", "detail", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "thickness", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    const keys = ["material", "materialKind", "detail", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "thickness", "thicknessMap", "specularAA", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
     for (let index = 0; index < keys.length; index += 1) {
       if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
         return model;
@@ -891,6 +891,8 @@
     sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
     sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
     sceneAssignMaterialOverride(next, material, "thickness", "thickness", override);
+    sceneAssignMaterialOverride(next, material, "thicknessMap", "thicknessMap", override);
+    sceneAssignMaterialOverride(next, material, "specularAA", "specularAA", override);
     sceneAssignMaterialOverride(next, material, "attenuationDistance", "attenuationDistance", override);
     sceneAssignMaterialOverride(next, material, "attenuationColor", "attenuationColor", override);
     sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
@@ -1870,7 +1872,7 @@
     for (const list of [scene.objects, scene.models, scene.instancedMeshes, scene.points, scene.sprites]) {
       for (const node of Array.isArray(list) ? list : []) {
         if (!node) continue;
-        for (const key of ["texture", "normalMap", "roughnessMap", "metalnessMap", "occlusionMap", "emissiveMap", "specularIntensityMap", "specularColorMap"]) {
+        for (const key of ["texture", "normalMap", "roughnessMap", "metalnessMap", "occlusionMap", "emissiveMap", "specularIntensityMap", "specularColorMap", "thicknessMap"]) {
           if (isKTX2(node[key])) return true;
         }
         const descriptors: any[] = Object.values(node.textureDescriptors || {});

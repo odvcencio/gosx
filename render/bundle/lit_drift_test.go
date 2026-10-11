@@ -482,7 +482,12 @@ func TestLitAmbientIntensityReachesTheShaderOnce(t *testing.T) {
 	if fragmentStart < 0 {
 		t.Fatal("browser fragment entry point missing")
 	}
-	jsFragment := jsSrc[fragmentStart:]
+	// Both ordinary and MRT entry points share the same shading function.
+	colorStart := strings.Index(jsSrc, "fn gosxPBRColor(")
+	if colorStart < 0 || colorStart >= fragmentStart || !strings.Contains(jsSrc[fragmentStart:], "return gosxPBRColor(in);") {
+		t.Fatal("browser entry point no longer delegates to shared PBR color")
+	}
+	jsFragment := jsSrc[colorStart:fragmentStart]
 	jsTransmission := jsShaderSource(t, readJSWebGPURenderer(t), "WGSL_TRANSMISSION")
 	for _, once := range []struct {
 		where  string
@@ -791,10 +796,10 @@ type divergentTerm struct {
 var litDivergentTerms = []divergentTerm{
 	{
 		id:      "volume-transmission",
-		effect:  "Browser glass refracts the captured opaque scene with Fresnel and absorption; native glass still mixes a surface tint.",
+		effect:  "Browser glass refracts the captured opaque scene with Fresnel and spatial thickness absorption; native glass still mixes a surface tint.",
 		verdict: "Keep browser screen-space volume transmission. Native rendering has no opaque-scene capture or volume material carrier yet; it needs a separate implementation before this gap can close.",
 		goLine:  "color = mix(color, ambient + baseColor * 0.1, transmission * 0.55);",
-		jsLine:  "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
+		jsLine:  "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness, volumePathLength);",
 	},
 	{
 		// This row stayed open on purpose. The audit of 2026-07-26 moved the
@@ -1284,7 +1289,7 @@ var litDivergentGuardMutations = []litGuardMutation{
 	{
 		name:    "browser reverts volume transmission to a colour mix",
 		side:    "js",
-		from:    "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness);",
+		from:    "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness, volumePathLength);",
 		to:      "color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
 		wantRow: "volume-transmission",
 	},

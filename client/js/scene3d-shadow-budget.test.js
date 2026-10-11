@@ -53,17 +53,17 @@ test("eight cascades share two depth arrays and fit IBL on the minimum WebGL2 de
   assert.deepEqual(attachments.map(v => v[5]), [0, 1, 2, 3, 0, 1, 2, 3]);
   assert.equal(new Set(attachments.map(v => v[3])).size, 2);
   const layout = api.scenePBRTextureLayoutForFrame(slots, [0, 1], { ibl: {} }, 16);
-  assert.deepEqual(Array.from(layout.shadows), [8, 9]);
-  assert.deepEqual({ ...layout.ibl }, { irradiance: 10, radiance: 11, brdfLUT: 12 });
+  assert.deepEqual(Array.from(layout.shadows), [9, 10]);
+  assert.deepEqual({ ...layout.ibl }, { irradiance: 11, radiance: 12, brdfLUT: 13 });
   assert.equal(layout.warnings.length, 0);
   for (const max of [16, 32]) for (const env of [null, { envMap: "sky.hdr" }, { ibl: {} }]) {
     assert.deepEqual(Array.from(api.scenePBRNegotiateShadowCascades([4, 4], env, max)), [4, 4]);
   }
   api.scenePBRUploadShadowUniforms(gl, uniforms(gl), slots, [0, 1], [{}, {}], { ibl: {} }, new Map());
-  assert.equal(gl.units.get(`8:${gl.TEXTURE_2D_ARRAY}`), slots[0].depthTexture);
-  assert.equal(gl.units.get(`9:${gl.TEXTURE_2D_ARRAY}`), slots[1].depthTexture);
-  assert.equal(last(gl, "uniform1i", "u_shadowMap0")[2], 8);
-  assert.equal(last(gl, "uniform1i", "u_shadowMap1")[2], 9);
+  assert.equal(gl.units.get(`9:${gl.TEXTURE_2D_ARRAY}`), slots[0].depthTexture);
+  assert.equal(gl.units.get(`10:${gl.TEXTURE_2D_ARRAY}`), slots[1].depthTexture);
+  assert.equal(last(gl, "uniform1i", "u_shadowMap0")[2], 9);
+  assert.equal(last(gl, "uniform1i", "u_shadowMap1")[2], 10);
   assert.equal(last(gl, "uniform1i", "u_shadowCascades0")[2], 4);
   assert.equal(last(gl, "uniform1i", "u_shadowCascades1")[2], 4);
 });
@@ -71,9 +71,9 @@ test("eight cascades share two depth arrays and fit IBL on the minimum WebGL2 de
 test("unshadowed scenes bind complete array placeholders away from 2D and cube samplers", () => {
   const api = setup(), gl = new ArrayGL(), cache = new Map(), u = uniforms(gl);
   api.scenePBRUploadShadowUniforms(gl, u, [null, null], [-1, -1], [], {}, cache);
-  const placeholder = gl.units.get(`8:${gl.TEXTURE_2D_ARRAY}`);
+  const placeholder = gl.units.get(`9:${gl.TEXTURE_2D_ARRAY}`);
   assert.ok(placeholder);
-  assert.equal(gl.units.get(`9:${gl.TEXTURE_2D_ARRAY}`), placeholder);
+  assert.equal(gl.units.get(`10:${gl.TEXTURE_2D_ARRAY}`), placeholder);
   assert.equal(cache.size, 1);
   assert.equal(last(gl, "uniform1i", "u_hasShadow0")[2], 0);
   assert.equal(last(gl, "uniform1i", "u_shadowLightIndex1")[2], -1);
@@ -89,7 +89,7 @@ test("removed lights cannot retain enabled shadows or overwrite the other light"
   assert.equal(last(gl, "uniform1i", "u_hasShadow0")[2], 1);
   assert.equal(last(gl, "uniform1i", "u_hasShadow1")[2], 0);
   assert.equal(last(gl, "uniform1i", "u_shadowCascades1")[2], 0);
-  assert.equal(gl.units.get(`8:${gl.TEXTURE_2D_ARRAY}`), slots[0].depthTexture);
+  assert.equal(gl.units.get(`9:${gl.TEXTURE_2D_ARRAY}`), slots[0].depthTexture);
 });
 
 test("a depth array is freed once when its cascade count or size changes", () => {
@@ -338,9 +338,9 @@ for (const units of [16, 32]) test(units + "-unit WebGL renders all eight cascad
   assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
   assert.equal(gl.ops.filter(op => op[0] === "framebufferTextureLayer").length, 8);
   assert.equal(gl.ops.filter(op => op[0] === "texImage3D").length, 3, "two shadow arrays and one placeholder");
-  assert.equal(last(gl, "uniform1i", "u_shadowMap0")[2], 8);
-  assert.equal(last(gl, "uniform1i", "u_shadowMap1")[2], 9);
-  assert.equal(last(gl, "uniform1i", "u_envMap")[2], 12);
+  assert.equal(last(gl, "uniform1i", "u_shadowMap0")[2], 9);
+  assert.equal(last(gl, "uniform1i", "u_shadowMap1")[2], 10);
+  assert.equal(last(gl, "uniform1i", "u_envMap")[2], 13);
   const snap = assertDrawTimeShadowEvidence(gl, 8);
   assert.deepEqual(snap.cascades, [4, 4]);
   assert.deepEqual(snap.hasShadow, [1, 1]);

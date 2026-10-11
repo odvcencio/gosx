@@ -562,10 +562,10 @@
     var reason = "idle";
     var config = null;
     var cameraSlot = 0;
-    var target = { width: 1, height: 1, sampleCount: 1, format: "" };
+    var target = { width: 1, height: 1, sampleCount: 1, format: "", specular: false };
     var lightDispatched = [0, 0];
     var hiz = { width: 0, height: 0, levels: [], total: 0 };
-    var occlusion = { thisFrame: false, lastFrame: false, prepared: false, split: false, resolveTarget: null, timestamps: null };
+    var occlusion = { thisFrame: false, lastFrame: false, prepared: false, split: false, resolveTargets: [], timestamps: null };
     var readback = { busy: false, pending: false, meshes: 0, camera: 0, late: 0, shadow: 0 };
     var counters = { dispatches: 0, uploads: 0, uploadedBytes: 0, draws: 0, shadowDraws: 0 };
     var published = "";
@@ -662,7 +662,7 @@
     }
 
     function pbrKey(depthWrite) {
-      return "pbr|" + target.format + "|" + target.sampleCount + "|" + (depthWrite ? 1 : 0);
+      return "pbr|" + target.format + "|" + target.sampleCount + "|" + (depthWrite ? 1 : 0) + "|" + (target.specular ? 1 : 0);
     }
 
     // ensurePBRPipeline starts the vertex-pulling PBR pipeline for the current
@@ -679,7 +679,7 @@
         label: "gosx-gpu-driven-pbr",
         layout: device.createPipelineLayout({ bindGroupLayouts: [l.frame, l.material, l.instances] }),
         vertex: { module: shaderModules.pbrVertex, entryPoint: "vertexMain", buffers: hooks.pbrVertexLayout.concat([SCENE_GPU_DRIVEN_SLOT_LAYOUT]) },
-        fragment: { module: shaderModules.pbrFragment, entryPoint: "fragmentMain", targets: [{ format: target.format, blend: hooks.blendState("opaque") }] },
+        fragment: { module: shaderModules.pbrFragment, entryPoint: target.specular ? "fragmentMainSpecular" : "fragmentMain", targets: target.specular ? [{ format: target.format }, { format: "rgba16float" }] : [{ format: target.format }] },
         primitive: { topology: "triangle-list", cullMode: "none" },
         multisample: { count: target.sampleCount },
         depthStencil: { format: "depth24plus", depthWriteEnabled: depthWrite, depthCompare: "less-equal" },
@@ -999,7 +999,7 @@
         cameraSlot = 0;
         occlusion.prepared = false;
         occlusion.split = false;
-        occlusion.resolveTarget = null;
+        occlusion.resolveTargets = [];
         occlusion.timestamps = null;
         config = sceneGPUDrivenConfig(bundle && bundle.gpuDriven);
         if (disposed) return deactivate("disposed");
@@ -1012,6 +1012,7 @@
         target.height = Math.max(1, Math.floor(frame.height || 1));
         target.sampleCount = Math.max(1, Math.floor(frame.sampleCount || 1));
         target.format = String(frame.targetFormat || "");
+        target.specular = !!frame.specular;
         var selection = selectOwned(Array.isArray(frame.opaque) ? frame.opaque : [], sceneGPUDrivenMaxInstances(limits));
         if (selection.list.length === 0) return deactivate("no-eligible-meshes");
         var l = ensureLayouts();
@@ -1146,11 +1147,11 @@
       // resolves once and times the whole main pass.
       prepareMainPass: function(descriptor) {
         if (!active || !occlusion.thisFrame || !descriptor) return false;
-        var color = descriptor.colorAttachments && descriptor.colorAttachments[0];
-        if (color && color.resolveTarget) {
-          occlusion.resolveTarget = color.resolveTarget;
-          delete color.resolveTarget;
-        }
+        occlusion.resolveTargets = (descriptor.colorAttachments || []).map((color: any) => {
+          const target = color && color.resolveTarget;
+          if (color) delete color.resolveTarget;
+          return target;
+        });
         var stamps = descriptor.timestampWrites;
         if (stamps && stamps.endOfPassWriteIndex !== undefined) {
           occlusion.timestamps = { querySet: stamps.querySet, endOfPassWriteIndex: stamps.endOfPassWriteIndex };
@@ -1168,16 +1169,16 @@
       splitMainPass: function(encoder, pass, descriptor, frameBindGroup, materials, opaque) {
         if (!occlusion.prepared || occlusion.split) return pass;
         occlusion.split = true;
-        var color = descriptor.colorAttachments[0];
         var depthView = descriptor.depthStencilAttachment.view;
         pass.end();
         buildHiZ(encoder, depthView);
         dispatchCull(encoder, 1);
-        var colorAttachment = { view: color.view, loadOp: "load", storeOp: "store" };
-        if (occlusion.resolveTarget) colorAttachment.resolveTarget = occlusion.resolveTarget;
+        var colorAttachments = descriptor.colorAttachments.map((color: any, index: number) => ({
+          ...color, loadOp: "load", storeOp: "store", resolveTarget: occlusion.resolveTargets[index],
+        }));
         var late = {
           label: "gosx-gpu-driven-late",
-          colorAttachments: [colorAttachment],
+          colorAttachments: colorAttachments,
           depthStencilAttachment: { view: depthView, depthLoadOp: "load", depthStoreOp: "store" },
         };
         if (occlusion.timestamps) late.timestampWrites = occlusion.timestamps;
@@ -1192,6 +1193,15 @@
           hooks.drawInstancedMeshes(latePass, lateMeshes, materials, "opaque", true);
         }
         return latePass;
+      },
+
+      // A later color capture (for transmission) can open a third pass. Restore
+      // every MSAA resolve removed from its descriptor by prepareMainPass.
+      resumeMainPass: function(descriptor) {
+        if (!occlusion.prepared) return;
+        descriptor.colorAttachments.forEach((color: any, index: number) => {
+          color.resolveTarget = occlusion.resolveTargets[index];
+        });
       },
 
       // finishEncoding copies the indirect args to the readback buffer once

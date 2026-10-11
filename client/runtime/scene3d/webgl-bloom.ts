@@ -86,7 +86,7 @@ function createSceneWebGLMipBloom(host) {
       var scale = effect.scale > 0 && effect.scale <= 1 ? effect.scale : 0.5;
       ensureLevels(Math.max(1, Math.floor(args.width * scale)), Math.max(1, Math.floor(args.height * scale)));
       var radius = Math.min(2, Math.max(0.25, (effect.radius > 0 ? number(effect.radius, 5) : 5) / 5));
-      draw(prefilter, args.input, levels[0].base);
+      draw(prefilter, args.source || args.input, levels[0].base);
       gl.uniform1f(gl.getUniformLocation(prefilter.program, "u_threshold"), Math.max(0, number(effect.threshold, 0.8)));
       drawSceneFullscreenQuad(gl, host.quad.vao);
       for (var i = 1; i < levels.length; i++) {

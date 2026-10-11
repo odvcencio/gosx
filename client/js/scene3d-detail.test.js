@@ -57,8 +57,9 @@ test("missing, failed and pending detail textures stay neutral through existing 
 test("WebGL detail is a cached compile variant with nil source unchanged", () => {
   const c = detailContext("webgl"); const base = vm.runInContext("SCENE_PBR_FRAGMENT_SOURCE", c);
   assert.equal(c.sceneWebGLDetailFragment(base, null), base);
-  // Main preserves signed normal-map scales in the base shader; nil detail stays neutral.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "ee9ad3c6e7b48e3c0f5444afba4fc5a907bc3008674df15b02b1e3d41cd4008b");
+  // Reviewed optics/MRT base: thickness, geometric AA and reflected-radiance output.
+  // The browser optics oracle covers behavior; nil detail must keep this base exact.
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "84eebd140305d8f6246935ec8d3a8187bacfa8dcae8258f2351f3b7a8c4e5165");
   const shader = c.sceneWebGLDetailFragment(base, true);
   assert.match(shader, /textureGrad\(u_detailAtlas/);
   assert.ok(shader.indexOf("dFdx(v_worldPosition)") < shader.indexOf("detailApply(v_worldPosition"));
@@ -77,8 +78,9 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
 test("WebGPU detail preserves the nil shader and uses a separate array binding", () => {
   const c = detailContext("webgpu"); const base = vm.runInContext("WGSL_PBR_FRAGMENT", c);
   assert.equal(c.sceneWebGPUDetailFragment(base, null), base);
-  // Main preserves signed normal-map scales in the base shader; nil detail stays neutral.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "cc6d9fe99146bc918d8bf0ccff896100ef1edfcf6c743ebf355a6fd9abea5533");
+  // Reviewed optics/MRT base: thickness, geometric AA and reflected-radiance output.
+  // The browser optics oracle covers behavior; nil detail must keep this base exact.
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "e3659667c185579625abbcf4cb04b16edc2950711fadf344cbb0352abf07e65f");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);

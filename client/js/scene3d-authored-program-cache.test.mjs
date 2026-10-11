@@ -18,7 +18,7 @@ function extract(name) {
 
 function harness() {
   let compilations=0;
-  const context={gl:{},
+  const context={gl:{},selectiveBloom:false,
     scenePBRHasCustomHooks:()=>true,sceneSelenaIsMaterial:()=>true,
     sceneSelenaMaterialLayout:m=>m.shaderLayout,
     scenePBRCustomUniformDeclarations:values=>Object.keys(values||{}).sort().map(k=>k+":"+ (Array.isArray(values[k])?values[k].length:"float")).join("|"),
@@ -43,6 +43,17 @@ test("animated Selena uniform values share one GPU program and keep skin variant
   assert.notEqual(h.context.ensureSelenaProgram({...m,customFragment:"edited"},false),first);
   assert.notEqual(h.context.ensureSelenaProgram({...m,shaderLayout:{uniformBlock:{size:48}}},false),first);
   assert.equal(h.count(),4);
+});
+test("Selena color and selective fragments retain separate cached programs",()=>{
+  const h=harness(),m={customVertex:"vertex",customFragment:"color",specularFragmentGLSL:"color-plus-specular",shaderLayout:{uniformBlock:{size:32}}};
+  const color=h.context.ensureSelenaProgram(m,false);
+  h.context.selectiveBloom=true;
+  const selective=h.context.ensureSelenaProgram(m,false);
+  assert.notEqual(selective,color);
+  assert.equal(h.context.ensureSelenaProgram(m,false),selective);
+  h.context.selectiveBloom=false;
+  assert.equal(h.context.ensureSelenaProgram(m,false),color);
+  assert.equal(h.count(),2);
 });
 test("custom PBR program identity depends on uniform declarations, not uniform values",()=>{
   const h=harness(),m={key:"first",customVertex:"vertex",customFragment:"fragment"};

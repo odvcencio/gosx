@@ -16,9 +16,11 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import rendererSourceSet from "./scene3d-renderer-source-set.js";
 
 const { readSceneRendererBackendSrc } = rendererSourceSet;
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
@@ -27,7 +29,9 @@ function readSrc(name) {
   return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const sharedSource = readSrc("15a-scene-postfx-shared.ts");
+const sharedSource = ts.transpileModule(readSrc("15a-scene-postfx-shared.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 const webglSource = readSceneRendererBackendSrc("webgl");
 const webgpuSource = readSceneRendererBackendSrc("webgpu");
 // sceneRenderBackendTruth and its DOM surface live in

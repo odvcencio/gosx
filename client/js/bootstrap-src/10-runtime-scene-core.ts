@@ -810,12 +810,19 @@
       customFragment: typeof value("customFragment") === "string" ? value("customFragment") : (typeof current.customFragment === "string" ? current.customFragment : ""),
       customVertexWGSL: typeof value("customVertexWGSL") === "string" ? value("customVertexWGSL") : (typeof current.customVertexWGSL === "string" ? current.customVertexWGSL : ""),
       customFragmentWGSL: typeof value("customFragmentWGSL") === "string" ? value("customFragmentWGSL") : (typeof current.customFragmentWGSL === "string" ? current.customFragmentWGSL : ""),
+      specularFragmentGLSL: typeof value("specularFragmentGLSL") === "string" ? value("specularFragmentGLSL") : (typeof current.specularFragmentGLSL === "string" ? current.specularFragmentGLSL : ""),
+      specularFragmentWGSL: typeof value("specularFragmentWGSL") === "string" ? value("specularFragmentWGSL") : (typeof current.specularFragmentWGSL === "string" ? current.specularFragmentWGSL : ""),
       customUniforms: sceneIsPlainObject(value("customUniforms")) ? Object.assign({}, value("customUniforms")) : (sceneIsPlainObject(current.customUniforms) ? Object.assign({}, current.customUniforms) : null),
       shaderBackend: typeof value("shaderBackend") === "string" ? value("shaderBackend").trim().toLowerCase() : (typeof current.shaderBackend === "string" ? current.shaderBackend : ""),
       shaderLayout: sceneIsPlainObject(value("shaderLayout")) ? sceneCloneData(value("shaderLayout")) : (sceneIsPlainObject(current.shaderLayout) ? sceneCloneData(current.shaderLayout) : null),
       shaderSource: typeof value("shaderSource") === "string" ? value("shaderSource").trim() : (typeof current.shaderSource === "string" ? current.shaderSource : ""),
       shaderSourceFiles: sceneIsPlainObject(value("shaderSourceFiles")) ? sceneCloneData(value("shaderSourceFiles")) : (sceneIsPlainObject(current.shaderSourceFiles) ? sceneCloneData(current.shaderSourceFiles) : null),
     };
+  }
+
+  function sceneNormalizeSpecularAA(value) {
+    if (!value || typeof value !== "object") return null;
+    return { variance: clamp01(sceneNumber(value.variance, 0)), threshold: clamp01(sceneNumber(value.threshold, 0)) };
   }
 
   function sceneNormalizeMaterialLobes(item, current) {
@@ -826,6 +833,9 @@
     for (const key of ["thickness", "attenuationDistance"]) {
       out[key] = Math.max(0, sceneNumber(sceneObjectMaterialValue(item, key), sceneNumber(current[key], 0)));
     }
+    const aa = sceneObjectMaterialValue(item, "specularAA");
+    out.specularAA = sceneNormalizeSpecularAA(aa === undefined ? current.specularAA : aa);
+    out.thicknessMap = sceneMaterialString(item, current, "thicknessMap", true);
     out.attenuationColor = sceneCopyFiniteRGB(sceneObjectMaterialValue(item, "attenuationColor"), current.attenuationColor || [1, 1, 1]);
     return out;
   }
@@ -1520,7 +1530,7 @@
       override.alphaCutoff = sceneNormalizeMaterialAlphaCutoff(sceneObjectMaterialValue(current, "alphaCutoff"), null);
     }
     if (sceneObjectMaterialHasValue(current, "detail")) override.detail = sceneNormalizeDetail(sceneObjectMaterialValue(current, "detail"));
-    for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "thickness", "attenuationDistance", "attenuationColor"]) {
+    for (const key of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy", "thickness", "thicknessMap", "specularAA", "attenuationDistance", "attenuationColor"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
       }
@@ -1534,7 +1544,7 @@
     if (sceneObjectMaterialHasValue(current, "wireframe")) {
       override.wireframe = sceneObjectMaterialValue(current, "wireframe");
     }
-    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
+    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "specularFragmentGLSL", "specularFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
       if (sceneObjectMaterialHasValue(current, key)) {
         override[key] = sceneObjectMaterialValue(current, key);
       }
@@ -1689,7 +1699,7 @@
       }),
       ...lifecycle,
     };
-    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
+    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "specularFragmentGLSL", "specularFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"]) {
       if (sceneObjectMaterialHasValue(raw, key)) {
         batch[key] = sceneCloneData(sceneObjectMaterialValue(raw, key));
       } else if (Object.prototype.hasOwnProperty.call(current, key)) {
@@ -1768,7 +1778,7 @@
     // identity and pose vary here. Do not share these across command batches:
     // material/lifecycle changes must still participate in hydration.
     const raw = { src: batch.src };
-    for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles", "pickable", "visible", "static"]) {
+    for (const key of ["material", "materialKind", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "unlit", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "specularFragmentGLSL", "specularFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles", "pickable", "visible", "static"]) {
       if (batch[key] !== undefined && batch[key] !== null && batch[key] !== "") raw[key] = batch[key];
     }
     // Preserve an explicit null, which disables masking, as well as a numeric
@@ -2071,6 +2081,8 @@
       customFragment: sceneFallbackString(item, current, "customFragment"),
       customVertexWGSL: sceneFallbackString(item, current, "customVertexWGSL"),
       customFragmentWGSL: sceneFallbackString(item, current, "customFragmentWGSL"),
+      specularFragmentGLSL: sceneFallbackString(item, current, "specularFragmentGLSL"),
+      specularFragmentWGSL: sceneFallbackString(item, current, "specularFragmentWGSL"),
       shaderBackend: sceneFallbackString(item, current, "shaderBackend"),
       shaderSource: sceneFallbackString(item, current, "shaderSource"),
       customUniforms: sceneIsPlainObject(item.customUniforms)
@@ -3029,7 +3041,7 @@
     const source = sceneIsPlainObject(raw) ? raw : {};
     const base = sceneIsPlainObject(fallback) ? fallback : {};
     const out = {};
-    for (const name of ["baseColor", "normal", "roughness", "metalness", "occlusion", "emissive", "specularIntensity", "specularColor"]) {
+    for (const name of ["baseColor", "normal", "roughness", "metalness", "occlusion", "emissive", "specularIntensity", "specularColor", "thickness"]) {
       const descriptor = normalizeSceneTextureDescriptor(source[name], base[name]);
       if (descriptor) out[name] = descriptor;
     }
@@ -3457,6 +3469,8 @@
       customFragment: typeof material.customFragment === "string" ? material.customFragment : object.customFragment,
       customVertexWGSL: typeof material.customVertexWGSL === "string" ? material.customVertexWGSL : object.customVertexWGSL,
       customFragmentWGSL: typeof material.customFragmentWGSL === "string" ? material.customFragmentWGSL : object.customFragmentWGSL,
+      specularFragmentGLSL: typeof material.specularFragmentGLSL === "string" ? material.specularFragmentGLSL : object.specularFragmentGLSL,
+      specularFragmentWGSL: typeof material.specularFragmentWGSL === "string" ? material.specularFragmentWGSL : object.specularFragmentWGSL,
       customUniforms: sceneIsPlainObject(material.customUniforms) ? Object.assign({}, material.customUniforms) : object.customUniforms,
       shaderBackend: typeof material.shaderBackend === "string" ? material.shaderBackend : object.shaderBackend,
       shaderLayout: sceneIsPlainObject(material.shaderLayout) ? sceneCloneData(material.shaderLayout) : object.shaderLayout,
@@ -3464,7 +3478,7 @@
       shaderSourceFiles: sceneIsPlainObject(material.shaderSourceFiles) ? sceneCloneData(material.shaderSourceFiles) : object.shaderSourceFiles,
       variantKey: material.variantKey || object.variantKey,
     });
-    for (const key of "normalScale normalUVScale occlusionStrength roughness metalness ior specularIntensity specularColor clearcoat sheen transmission iridescence anisotropy thickness attenuationDistance attenuationColor opacity emissive wireframe depthWrite lineDash dashSize gapSize".split(" ")) {
+    for (const key of "normalScale normalUVScale occlusionStrength roughness metalness ior specularIntensity specularColor clearcoat sheen transmission iridescence anisotropy thickness thicknessMap specularAA attenuationDistance attenuationColor opacity emissive wireframe depthWrite lineDash dashSize gapSize".split(" ")) {
       if (material[key] != null) resolved[key] = material[key];
     }
     return resolved;
@@ -3494,6 +3508,8 @@
       customFragment: typeof material.customFragment === "string" && material.customFragment ? material.customFragment : (point.customFragment || ""),
       customVertexWGSL: typeof material.customVertexWGSL === "string" && material.customVertexWGSL ? material.customVertexWGSL : (point.customVertexWGSL || ""),
       customFragmentWGSL: typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL ? material.customFragmentWGSL : (point.customFragmentWGSL || ""),
+      specularFragmentGLSL: typeof material.specularFragmentGLSL === "string" && material.specularFragmentGLSL ? material.specularFragmentGLSL : (point.specularFragmentGLSL || ""),
+      specularFragmentWGSL: typeof material.specularFragmentWGSL === "string" && material.specularFragmentWGSL ? material.specularFragmentWGSL : (point.specularFragmentWGSL || ""),
       customUniforms: sceneIsPlainObject(material.customUniforms) ? Object.assign({}, material.customUniforms) : (point.customUniforms || null),
       shaderBackend: typeof material.shaderBackend === "string" && material.shaderBackend ? material.shaderBackend : (point.shaderBackend || ""),
       shaderLayout: sceneIsPlainObject(material.shaderLayout) ? sceneCloneData(material.shaderLayout) : (point.shaderLayout || null),
@@ -3516,6 +3532,8 @@
       cache.attenuation === nextValues.attenuation &&
       cache.customVertexWGSL === nextValues.customVertexWGSL &&
       cache.customFragmentWGSL === nextValues.customFragmentWGSL &&
+      cache.specularFragmentGLSL === nextValues.specularFragmentGLSL &&
+      cache.specularFragmentWGSL === nextValues.specularFragmentWGSL &&
       cache.customVertex === nextValues.customVertex &&
       cache.customFragment === nextValues.customFragment &&
       cache.shaderSource === nextValues.shaderSource
@@ -7336,6 +7354,8 @@
     sceneTransmissionSettings: typeof sceneTransmissionSettings === "function" ? sceneTransmissionSettings : undefined,
     sceneTransmissionVolume: typeof sceneTransmissionVolume === "function" ? sceneTransmissionVolume : undefined,
     sceneRenderBackground: typeof sceneRenderBackground === "function" ? sceneRenderBackground : undefined,
+    sceneSpecularBloomRequested: sceneSpecularBloomRequested,
+    sceneSpecularBloomEffects: sceneSpecularBloomEffects,
     sceneTransmissionEffects: typeof sceneTransmissionEffects === "function" ? sceneTransmissionEffects : undefined,
     scenePBRProjectionMatrix: typeof scenePBRProjectionMatrix === "function" ? scenePBRProjectionMatrix : undefined,
     scenePBRProjectionMatrixForCamera: typeof scenePBRProjectionMatrixForCamera === "function" ? scenePBRProjectionMatrixForCamera : undefined,

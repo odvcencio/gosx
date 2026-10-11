@@ -1,9 +1,11 @@
-// WebGL2 volume transmission uses one spare sampler after the eight material
-// maps, two shadow arrays and three IBL products (14 of the core 16 units).
+// WebGL2 volume transmission uses one spare sampler after the nine material
+// maps, two shadow arrays and three IBL products (15 of the core 16 units).
 const GLSL_TRANSMISSION = `
 uniform sampler2D u_transmissionScene;
 uniform vec2 u_transmissionCapture;
 uniform vec4 u_volume;
+uniform sampler2D u_thicknessMap;
+uniform bool u_hasThicknessMap;
 uniform vec3 u_attenuationColor;
 uniform mat4 u_projectionMatrix;
 vec3 transmissionEnvironment(vec3 ray, float roughness) {
@@ -15,11 +17,15 @@ vec3 transmissionEnvironment(vec3 ray, float roughness) {
     float hemi = clamp(ray.y * 0.5 + 0.5, 0.0, 1.0);
     return u_ambientColor * u_ambientIntensity + u_skyColor * u_skyIntensity * hemi + u_groundColor * u_groundIntensity * (1.0 - hemi);
 }
-vec3 volumeTransmission(vec3 P, vec3 N, vec3 V, float roughness) {
+float volumeThickness(vec2 uv) {
+    float thickness = u_volume.x;
+    if (u_hasThicknessMap) thickness *= clamp(texture(u_thicknessMap, uv).g, 0.0, 1.0);
+    return thickness;
+}
+vec3 volumeTransmission(vec3 P, vec3 N, vec3 V, float roughness, float pathLength) {
     if (u_volume.y == 0.0) return vec3(0.0);
     vec3 ray = refract(-V, N, 1.0 / u_volume.y);
     if (dot(ray, ray) < 0.0001) return vec3(0.0);
-    float pathLength = u_volume.x;
     vec3 light = transmissionEnvironment(ray, roughness);
     if (u_transmissionCapture.y > 0.5) {
         vec4 exit = u_projectionMatrix * u_viewMatrix * vec4(P + ray * pathLength, 1.0);

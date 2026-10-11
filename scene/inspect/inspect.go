@@ -173,10 +173,11 @@ func InspectDocumentWithOptions(path string, doc sceneschema.Document, validatio
 		kind := normalizeKind(object.Kind, "object")
 		addFeature("geometry." + kind)
 		report.Memory.GeometryBytes += objectGeometryBytes(object)
-		report.Memory.TextureBytes += materialTextureBytes(object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap)
-		addMaterialFeatures(addFeature, object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap)
+		report.Memory.TextureBytes += materialTextureBytes(object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap, object.ThicknessMap)
+		addMaterialFeatures(addFeature, object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap, object.ThicknessMap)
 		addAsset(object.Texture, object.ID, docPath+".texture")
 		addAsset(object.NormalMap, object.ID, docPath+".normalMap")
+		addAsset(object.ThicknessMap, object.ID, docPath+".thicknessMap")
 		addAsset(object.RoughnessMap, object.ID, docPath+".roughnessMap")
 		addAsset(object.MetalnessMap, object.ID, docPath+".metalnessMap")
 		addAsset(object.EmissiveMap, object.ID, docPath+".emissiveMap")
@@ -496,7 +497,7 @@ func materialTextureBytes(values ...string) int64 {
 func materialAssetTextureCount(objects []scene.ObjectIR) int {
 	total := 0
 	for _, object := range objects {
-		total += nonEmptyStringCount(object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap)
+		total += nonEmptyStringCount(object.Texture, object.NormalMap, object.RoughnessMap, object.MetalnessMap, object.EmissiveMap, object.ThicknessMap)
 	}
 	return total
 }

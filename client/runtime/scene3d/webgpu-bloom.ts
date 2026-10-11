@@ -104,7 +104,7 @@ function createSceneWebGPUMipBloom(host) {
       var scale = effect.scale > 0 && effect.scale <= 1 ? effect.scale : 0.5;
       ensureLevels(Math.max(1, Math.floor(args.width * scale)), Math.max(1, Math.floor(args.height * scale)), args.index);
       var radius = Math.min(2, Math.max(0.25, (effect.radius > 0 ? number(effect.radius, 5) : 5) / 5));
-      pass({ encoder: args.encoder, name: "bloomMipPrefilter", bufferName: "bloomMipPrefilter-" + args.index, source: prefilterSource, input: args.input,
+      pass({ encoder: args.encoder, name: "bloomMipPrefilter", bufferName: "bloomMipPrefilter-" + args.index, source: prefilterSource, input: args.source || args.input,
         output: levels[0].base.view, value: Math.max(0, number(effect.threshold, 0.8)) });
       for (var i = 1; i < levels.length; i++) {
         pass({ encoder: args.encoder, name: "bloomMipDownsample", source: downsampleSource, input: levels[i - 1].base.view,

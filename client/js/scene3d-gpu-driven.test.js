@@ -81,7 +81,7 @@ function sceneState(api, gpuDriven, options) {
     instancedMeshes: [
       { id: "crates", count: 30, kind: "box", width: 0.5, height: 0.5, depth: 0.5, transforms: transformsFor(30), castShadow: true, colors: new Array(30).fill("#ff8800") },
       { id: "orbs", count: 12, kind: "sphere", radius: 0.3, transforms: transformsFor(12) },
-      { id: "glass", count: 4, kind: "box", transforms: transformsFor(4), opacity: 0.4 },
+      { id: "glass", count: 4, kind: "box", transforms: transformsFor(4), opacity: 0.4, ...(opts.transmission ? { materialKind: "standard", transmission: 0.8, thickness: 0.4 } : {}) },
     ],
   };
   if (opts.light) scene.lights = [{ id: "sun", kind: "directional", castShadow: true, x: -1, y: -2, z: -1, intensity: 1 }];
@@ -260,3 +260,57 @@ for (const rejected of ["gosx-gpu-driven-cull", "gosx-gpu-driven-pbr"]) {
     harness.renderer.dispose();
   });
 }
+
+
+test("gpu-driven: selective bloom preserves both MSAA attachments across occlusion passes", async () => {
+  const { harness, api } = await gpuDrivenHarness();
+  const state = sceneState(api, { occlusion: true });
+  for (let frame = 0; frame < 4; frame++) {
+    harness.fake.state.renderPasses.length = 0;
+    const bundle = frameBundle(api, state);
+    bundle.msaaSamples = 4;
+    bundle.postEffects = [{ kind: "bloom", source: "specular", mode: "mip", intensity: 0.1 }];
+    harness.renderer.render(bundle, { width: 64, height: 64 }, { nowMS: frame * 16, active: true });
+    await flushAsyncWork();
+  }
+  const passes = mainPasses(harness.fake).filter(pass => pass.descriptor.colorAttachments.length === 2);
+  assert.equal(passes.length, 2, "early and late passes retain both attachments");
+  const [early, late] = passes;
+  assert.equal(late.descriptor.label, "gosx-gpu-driven-late");
+  for (let index = 0; index < 2; index++) {
+    const a = early.descriptor.colorAttachments[index], b = late.descriptor.colorAttachments[index];
+    assert.equal(a.resolveTarget, undefined, "do not resolve incomplete early pass");
+    assert.equal(b.view, a.view);
+    assert.equal(b.loadOp, "load");
+    assert.ok(b.resolveTarget, "resolve each color attachment after late geometry");
+  }
+  assert.ok(late.drawIndirects.length, "actual indirect draw uses the MRT pipeline");
+  for (const draw of late.drawIndirects) {
+    assert.equal(draw.pipeline.desc.fragment.entryPoint, "fragmentMainSpecular");
+    assert.deepEqual(Array.from(draw.pipeline.desc.fragment.targets, target => target.format), ["rgba16float", "rgba16float"]);
+  }
+  assert.equal(harness.renderer.getFailureReason(), "");
+  harness.renderer.dispose();
+});
+
+
+test("gpu-driven: transmission continuation resolves both selective MSAA attachments", async () => {
+  const { harness, api } = await gpuDrivenHarness();
+  const state = sceneState(api, { occlusion: true }, { transmission: true });
+  for (let frame = 0; frame < 4; frame++) {
+    harness.fake.state.renderPasses.length = 0;
+    const b = frameBundle(api, state);
+    b.msaaSamples = 4;
+    b.postEffects = [{ kind: "bloom", source: "specular", mode: "mip", intensity: 0.1 }];
+    harness.renderer.render(b, { width: 64, height: 64 }, { nowMS: frame * 16, active: true });
+    await flushAsyncWork();
+  }
+  const passes = mainPasses(harness.fake).filter(p => p.descriptor.colorAttachments.length === 2);
+  assert.equal(passes.length, 3, "opaque, late occlusion, then transparent transmission");
+  for (const attachment of passes.at(-1).descriptor.colorAttachments) {
+    assert.equal(attachment.loadOp, "load");
+    assert.ok(attachment.resolveTarget, "transparent contribution must reach the resolved texture");
+  }
+  assert.equal(harness.renderer.getFailureReason(), "");
+  harness.renderer.dispose();
+});

@@ -56,7 +56,7 @@ test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () =>
   assert.match(webgl, /vertexSource = sceneWebGLNormalizeCustomShaderSource\(vertexSource\);/);
   assert.match(webgl, /fragmentSource = sceneWebGLNormalizeCustomShaderSource\(fragmentSource\);/);
   assert.match(webgl, /var vertexSource = sceneWebGLNormalizeCustomShaderSource\(material\.customVertex\);/);
-  assert.match(webgl, /var fragmentSource = sceneWebGLNormalizeCustomShaderSource\(material\.customFragment\);/);
+  assert.match(webgl, /var fragmentSource = sceneWebGLNormalizeCustomShaderSource\(selective \? material\.specularFragmentGLSL : material\.customFragment\);/);
   assert.match(webgl, /var vertSrc = typeof entry\.customVertex === "string" \? entry\.customVertex\.trim\(\) : "";/);
   assert.match(webgl, /var fragSrc = typeof entry\.customFragment === "string" \? entry\.customFragment\.trim\(\) : "";/);
   assert.match(webgl, /scenePBRCompileShader\(gl, gl\.VERTEX_SHADER, sceneWebGLNormalizeCustomShaderSource\(vertSrc\)\)/);

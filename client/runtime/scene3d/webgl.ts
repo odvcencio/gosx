@@ -232,6 +232,7 @@
     "uniform bool u_hasAlbedoMap;",
     "uniform bool u_hasNormalMap;",
     "uniform bool u_hasRoughnessMap;",
+    "uniform vec2 u_specularAA;",
     "uniform bool u_hasMetalnessMap;",
     "#if GOSX_HDR_IBL",
     "uniform bool u_hasOcclusionMap;",
@@ -307,7 +308,8 @@
     "uniform float u_fogDensity;",
     "uniform vec3 u_fogColor;",
     "",
-    "out vec4 fragColor;",
+    "layout(location=0) out vec4 fragColor;",
+    "layout(location=1) out vec4 gosxSpecularOutput;",
     "",
     "const float PI = 3.14159265359;",
     "",
@@ -468,8 +470,14 @@
     "    return 1.0 / max(pow(distance, decay), 0.0001);",
     "}",
     "",
+    "float gsxSpecularRoughness(vec3 n, float r, vec2 aa) {",
+    "    vec3 dx = dFdx(n), dy = dFdy(n);",
+    "    float kernel = min(2.0 * aa.x * (dot(dx, dx) + dot(dy, dy)), aa.y);",
+    "    return kernel > 0.0 ? sqrt(sqrt(min(r*r*r*r + kernel, 1.0))) : r;",
+    "}",
     GLSL_TRANSMISSION,
     "void main() {",
+    "    gosxSpecularOutput = vec4(0.0);",
     // Resolve material properties, sampling textures when available.
     "    vec3 albedo = u_albedo;",
     "    albedo *= v_instanceColor.rgb;",
@@ -486,6 +494,8 @@
     "    }",
     "    roughness = clamp(roughness, 0.04, 1.0);",
     "    roughness = clamp(roughness * (1.0 - abs(u_anisotropy) * 0.28), 0.04, 1.0);",
+    "    roughness = gsxSpecularRoughness(normalize(v_normal), roughness, u_specularAA);",
+    "    float volumePathLength = volumeThickness(v_uv);",
     "",
     "    float metalness = u_metalness;",
     "    if (u_hasMetalnessMap) {",
@@ -542,6 +552,7 @@
     "        float opacity = u_opacity;",
     "        gosxApplyCustomFragment(color, opacity, normalize(v_normal), v_worldPosition, v_uv);",
     "        fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
+    "        gosxSpecularOutput = vec4(0.0, 0.0, 0.0, fragColor.a);",
     "        return;",
     "    }",
     "",
@@ -607,6 +618,8 @@
     // Accumulate direct lighting.
     "    float transmission = clamp(u_transmission, 0.0, 1.0) * (1.0 - metalness);",
     "    vec3 Lo = vec3(0.0);",
+    "    vec3 specularRadiance = vec3(0.0);",
+    "    vec3 specularEnvironment = vec3(0.0);",
     "",
     // View-space positive depth of this fragment — used to pick a cascade
     // in shadowFactorSlot*(). Light-space transforms already happen per
@@ -694,6 +707,7 @@
     "",
     "        vec3 radiance = lightColor * intensity * attenuation;",
     "        Lo += (kD * albedo * (1.0 - transmission) / PI + specular) * radiance * NdotL * shadow;",
+    "        specularRadiance += specular * radiance * NdotL * shadow;",
     "    }",
     "",
     // Environment lighting: assetpipe split-sum IBL, legacy equirectangular
@@ -712,6 +726,7 @@
     "        vec3 diffuseIBL = irradiance * albedo * kDenv * (1.0 - transmission);",
     "        vec3 specularIBL = prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y);",
     "        ambient = (diffuseIBL + specularIBL) * u_envIntensity;",
+    "        specularEnvironment = specularIBL * u_envIntensity;",
     "    } else",
     "#endif",
     "    if (u_hasEnvMap) {",
@@ -729,6 +744,7 @@
     "        vec3 FdielEnv = fresnelSchlickRoughness(max(dot(N, V), 0.0), specF0, specF90, roughness);",
     "        float kDenv = (1.0 - max(FdielEnv.x, max(FdielEnv.y, FdielEnv.z))) * (1.0 - metalness);",
     "        ambient = (kDenv * envDiffuse * (1.0 - transmission) + envSpecular * Fenv * (1.0 - roughness * 0.65)) * u_envIntensity;",
+    "        specularEnvironment = envSpecular * Fenv * (1.0 - roughness * 0.65) * u_envIntensity;",
     "    } else {",
     "        float hemi = N.y * 0.5 + 0.5;",
     "        vec3 envDiffuse = u_ambientColor * u_ambientIntensity",
@@ -738,18 +754,25 @@
     "    }",
     "    if (!u_hasEnvMap) {",
     "#if GOSX_HDR_IBL",
-    "        if (!u_hasIBL)",
+    "        if (!u_hasIBL) {",
     "#endif",
-    "        ambient += transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        vec3 reflectedTransmission = transmission * transmissionEnvironment(reflect(-V, N), roughness) * fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
+    "        ambient += reflectedTransmission;",
+    "        specularEnvironment += reflectedTransmission;",
+    "#if GOSX_HDR_IBL",
+    "        }",
+    "#endif",
     "    }",
     "#if GOSX_HDR_IBL",
     "    ambient *= ambientOcclusion;",
+    "    specularEnvironment *= ambientOcclusion;",
     "#endif",
     "",
     // Emissive contribution.
     "    vec3 emission = emissiveColor * emissiveStrength;",
     "",
     "    vec3 color = ambient + Lo + emission;",
+    "    specularRadiance += specularEnvironment;",
     "",
     // Rim light: a fresnel-style glancing-angle highlight, off by default
     // (u_rimStrength == 0 skips the pow() entirely). Additive, so it never
@@ -780,7 +803,7 @@
     "",
     "    if (transmission > 0.0001) {",
     "        vec3 Ft = fresnelSchlickRoughness(NoV, specF0, specF90, roughness);",
-    "        color += transmission * ( vec3(1.0) - Ft) * volumeTransmission(v_worldPosition, N, V, roughness);",
+    "        color += transmission * ( vec3(1.0) - Ft) * volumeTransmission(v_worldPosition, N, V, roughness, volumePathLength);",
     "    }",
     "",
     // Exponential fog.
@@ -789,6 +812,7 @@
     "        float fogFactor = exp(-u_fogDensity * u_fogDensity * fogDist * fogDist);",
     "        fogFactor = clamp(fogFactor, 0.0, 1.0);",
     "        color = mix(u_fogColor, color, fogFactor);",
+    "        specularRadiance *= fogFactor;",
     "    }",
     "",
     // Apply exposure exactly once. u_outputLinear == 0 means this shader
@@ -832,6 +856,7 @@
     "    float opacity = u_opacity;",
     "    gosxApplyCustomFragment(color, opacity, N, v_worldPosition, v_uv);",
     "    fragColor = vec4(color, masked ? 1.0 : opacity * v_instanceColor.a);",
+    "    gosxSpecularOutput = vec4(max(specularRadiance, vec3(0.0)), fragColor.a);",
     "}",
   ].join("\n");
 
@@ -2179,6 +2204,7 @@
   // Dispose an FBO and its attachments.
   function disposeScenePostFBO(gl, fboObj) {
     if (!fboObj) return;
+    if (fboObj.specularTex) gl.deleteTexture(fboObj.specularTex);
     if (fboObj.colorTex) gl.deleteTexture(fboObj.colorTex);
     if (fboObj.depthTex) gl.deleteTexture(fboObj.depthTex);
     if (fboObj.depthRB) gl.deleteRenderbuffer(fboObj.depthRB);
@@ -4491,6 +4517,7 @@
 	        clearPostTextureBindings();
 	      }
 	      gl.bindFramebuffer(gl.FRAMEBUFFER, targetFBO);
+          gl.drawBuffers(targetFBO ? [gl.COLOR_ATTACHMENT0] : [gl.BACK]);
 	      gl.viewport(0, 0, w, h);
 	      gl.useProgram(prog.program);
       gl.activeTexture(gl.TEXTURE0);
@@ -4626,7 +4653,9 @@
     // the composite writes directly to the screen).
     function applyBloom(inputTex, effect, targetFBO, passW, passH, scaledW, scaledH) {
 
-      if (effect.mode === "mip") return mipBloom.apply({ input: inputTex, effect: effect, target: targetFBO, passWidth: passW, passHeight: passH, width: scaledW, height: scaledH });
+      const bloomSource = effect.source === "specular" ? sceneFBO.specularTex : inputTex;
+      if (!bloomSource) return inputTex;
+      if (effect.mode === "mip") return mipBloom.apply({ input: inputTex, source: bloomSource, effect: effect, target: targetFBO, passWidth: passW, passHeight: passH, width: scaledW, height: scaledH });
       var brightProg = getProgram("bloomBright", SCENE_POST_BLOOM_BRIGHT_SOURCE);
       var blurProg = getProgram("bloomBlur", SCENE_POST_BLUR_SOURCE);
       var compositeProg = getProgram("bloomComposite", SCENE_POST_BLOOM_COMPOSITE_SOURCE);
@@ -4653,7 +4682,7 @@
       var intensity = sceneNumber(effect.intensity, 0.5);
 
       // 1. Bright pass: scene texture -> pingPong.a (bloom-res).
-      beginPostPass(brightProg, inputTex, pingPong.a.fbo, halfW, halfH);
+      beginPostPass(brightProg, bloomSource, pingPong.a.fbo, halfW, halfH);
       gl.uniform1f(sceneWaterUniformLocation(gl, brightProg.program, "u_threshold"), threshold);
       drawSceneFullscreenQuad(gl, quad.vao);
 
@@ -4782,7 +4811,7 @@
       // Returns { width, height, factor } — the scaled render target dims plus
       // the scale factor applied. Callers must use these dims for gl.viewport,
       // uniforms like u_viewportHeight, and the apply() call.
-	      begin: function(canvasW, canvasH, maxPixels) {
+	      begin: function(canvasW, canvasH, maxPixels, selective = false) {
         var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
         var sw = Math.max(1, Math.floor(canvasW * factor));
         var sh = Math.max(1, Math.floor(canvasH * factor));
@@ -4805,8 +4834,10 @@
           currentWidth = sw;
           currentHeight = sh;
         }
+          sceneWebGLSpecularTarget(gl, sceneFBO, selective && sceneFBO.hdrSupported);
 	        clearPostTextureBindings();
 	        gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+            gl.drawBuffers(sceneFBO.specularTex ? [gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1] : [gl.COLOR_ATTACHMENT0]);
 	        return {
             framebuffer: sceneFBO.fbo, width: sw,
             height: sh,
@@ -4816,6 +4847,7 @@
           };
 	      },
 
+      releaseSpecular: function() { if (sceneFBO) sceneWebGLSpecularTarget(gl, sceneFBO, false); },
       prepareTemporal: function(effects: any[], projection: Float32Array, view: Float32Array, canJitter: boolean, lights: any) {
         if (!canJitter) { if (temporal) temporal.reset(); temporalEnabled = false; return false; }
         if (!temporal) temporal = createSceneTemporalHistory(gl, quad);
@@ -4841,6 +4873,11 @@
       apply: function(effects, scaledW, scaledH, canvasW, canvasH, camera, projection: any, view: any, lights: any) {
         var atmosphereContext = postFrameContext(projection, view, lights); projection = atmosphereContext.projection; view = atmosphereContext.view; lights = atmosphereContext.lights;
         atmospherePost.begin(effects);
+        if (sceneFBO.specularTex) {
+          gl.bindFramebuffer(gl.FRAMEBUFFER, sceneFBO.fbo);
+          gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, null, 0);
+          gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+        }
         gl.bindFramebuffer(gl.FRAMEBUFFER, null);
         gl.disable(gl.DEPTH_TEST);
 
@@ -5514,7 +5551,7 @@
   // PBR programs. Returns a uniforms object with per-light arrays populated.
   function scenePBRCacheBaseUniforms(gl, program) {
 
-    var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
+    var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness specularAA thicknessMap hasThicknessMap metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
       alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
       specularF0: gl.getUniformLocation(program, "u_specularF0"),
       specularF90: gl.getUniformLocation(program, "u_specularF90"),
@@ -5782,7 +5819,7 @@
     } catch (_error) {
       maxUnits = 0;
     }
-    // 8 material + 2 depth arrays + legacy env + 3 IBL = 14 samplers.
+    // 9 material + 2 depth arrays + legacy env + 3 IBL + transmission = 16 samplers.
     return maxUnits >= 16;
   }
 
@@ -6058,11 +6095,11 @@
     if (info.fragmentShader) gl.deleteShader(info.fragmentShader);
   }
 
-  function createSceneSelenaProgram(gl, material, skinned) {
+  function createSceneSelenaProgram(gl, material, skinned, selective = false) {
     var layout = sceneSelenaMaterialLayout(material);
     if (!layout) return null;
     var vertexSource = sceneWebGLNormalizeCustomShaderSource(material.customVertex);
-    var fragmentSource = sceneWebGLNormalizeCustomShaderSource(material.customFragment);
+    var fragmentSource = sceneWebGLNormalizeCustomShaderSource(selective ? material.specularFragmentGLSL : material.customFragment);
     var skinInfo = null;
     if (skinned) {
       skinInfo = scenePBRSelenaSkinAugmentVertex(vertexSource);
@@ -6557,13 +6594,13 @@
     return customProgram;
   }
 
-  function scenePBREnsureSelenaProgram(gl: WebGL2RenderingContext, selenaProgramCache: any, material: any, skinned: any) {
+  function scenePBREnsureSelenaProgram(gl: WebGL2RenderingContext, selenaProgramCache: any, material: any, skinned: any, selective = false) {
     if (!sceneSelenaIsMaterial(material)) {
       return null;
     }
     // Match the WebGPU path: uniform values belong to per-draw bindings.
     // The material key includes values and would leak a program per frame.
-    const baseKey = JSON.stringify([material.customVertex || "", material.customFragment || "",
+    const baseKey = JSON.stringify([material.customVertex || "", selective ? material.specularFragmentGLSL : material.customFragment || "",
       sceneSelenaMaterialLayout(material)]);
     // Skinned draws compile a distinct program variant (augmented vertex
     // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
@@ -6574,7 +6611,7 @@
     if (cached) {
       return cached.failed || scenePBRProgramFailed(cached.program.program) ? null : cached.program;
     }
-    const selenaProgram = createSceneSelenaProgram(gl, material, skinned);
+    const selenaProgram = createSceneSelenaProgram(gl, material, skinned, selective);
     selenaProgramCache.set(key, selenaProgram ? { program: selenaProgram } : { failed: true });
     // Reported at the draw site — see ensureCustomProgram's note.
     return selenaProgram;
@@ -7440,10 +7477,11 @@
   const SCENE_SKY_FRAGMENT = [
     "#version 300 es",
     "precision highp float;",
-    "in vec2 v_uv; out vec4 fragColor;",
+    "in vec2 v_uv; layout(location=0) out vec4 fragColor; layout(location=1) out vec4 gosxSpecularOutput;",
     "uniform vec4 u_sky[11]; uniform sampler2D u_skyImage; uniform samplerCube u_skyCube;",
     "//GOSX_SKY_PHYSICAL",
     "void main() {",
+    "  gosxSpecularOutput = vec4(0);",
     "  vec2 ndc = v_uv*2.-1.;",
     "  vec3 ray = normalize(u_sky[2].xyz + u_sky[0].xyz*ndc.x*u_sky[0].w + u_sky[1].xyz*ndc.y*u_sky[1].w);",
     "  vec3 color = mix(u_sky[4].xyz, ray.y >= 0. ? u_sky[3].xyz : u_sky[5].xyz, abs(ray.y));",
@@ -7549,6 +7587,7 @@
   }
 
   function createScenePBRRenderer(gl, canvas) {
+    let selectiveBloom = false;
 
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -8548,6 +8587,8 @@
         scenePBRSRGBChannelToLinear(albedoRGBA[2]),
       );
       gl.uniform1f(uniforms.roughness, sceneNumber(mat.roughness, 0.5));
+      var aa = mat.specularAA || {};
+      gl.uniform2f(uniforms.specularAA, clamp01(sceneNumber(aa.variance, 0)), clamp01(sceneNumber(aa.threshold, 0)));
       gl.uniform1f(uniforms.metalness, sceneNumber(mat.metalness, 0));
       gl.uniform1f(uniforms.clearcoat, clamp01(sceneNumber(mat.clearcoat, 0)));
       gl.uniform1f(uniforms.sheen, clamp01(sceneNumber(mat.sheen, 0)));
@@ -8591,6 +8632,7 @@
           ["emissiveMap", { unit: 4 }], ["occlusionMap", { unit: 5, hdrOnly: true }],
           ["specularIntensityMap", { descriptor: "specularIntensity", role: "specular-intensity", unit: SCENE_TEXTURE_UNIT_MATERIALS.specularIntensity }],
           ["specularColorMap", { descriptor: "specularColor", role: "specular-color", unit: SCENE_TEXTURE_UNIT_MATERIALS.specularColor }],
+          ["thicknessMap", { descriptor: "thickness", role: "data", colorSpace: "linear", unit: SCENE_TEXTURE_UNIT_MATERIALS.thickness }],
         ].map(scenePBRTextureMap);
         if (textureCache) textureCache._pbrTextureMaps = textureMaps;
       }
@@ -8880,6 +8922,8 @@
       // --- Main Render Pass ---
 
       var postEffects = Array.isArray(bundle.postEffects) ? bundle.postEffects : [];
+      postEffects = sceneSpecularBloomEffects(bundle, postEffects, "webgl", hasLineData || hasPointsData || !!(bundle.waterSystems && bundle.waterSystems.length) || !!(bundle.environment && (bundle.environment.ocean || bundle.environment.clouds)) || !gl.getExtension("EXT_color_buffer_float"), canvas.parentNode);
+      selectiveBloom = sceneSpecularBloomRequested(postEffects);
       var authoredPostEffects = postEffects.length > 0;
       var postFXMaxPixels = typeof bundle.postFXMaxPixels === "number" ? bundle.postFXMaxPixels : 0;
       var hasTransmission = sceneTransmissionPresent(bundle);
@@ -8899,7 +8943,7 @@
 
       if (usePostProcessing) {
         textureCache._sceneTextureEpoch++;
-        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels);
+        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels, selectiveBloom);
         renderW = scaled.width;
         renderH = scaled.height;
         renderTarget = Object.assign({}, scaled, { linear: true });
@@ -8916,6 +8960,7 @@
         var antialiasing = temporalActive ? "taa" : temporalRequested || spatialRequested ? "fxaa" : "none";
         if (canvas.parentNode && canvas.parentNode.getAttribute("data-gosx-scene3d-antialiasing") !== antialiasing) canvas.parentNode.setAttribute("data-gosx-scene3d-antialiasing", antialiasing);
       } else if (postProcessor) {
+        postProcessor.releaseSpecular();
         postProcessor.resetTemporal();
       }
 
@@ -8936,9 +8981,14 @@
       }
 
       if (!frameMeta || frameMeta.compositeOverWater !== true) {
+        // Fullscreen post passes disable depth writes. Clear must restore the
+        // write mask first, or last frame's glass occludes this frame's opaque
+        // transmission capture even though the color attachment was cleared.
+        gl.depthMask(true);
         gl.clearColor(bg[0], bg[1], bg[2], bg[3]);
         gl.clearDepth(1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        if (selectiveBloom) gl.clearBufferfv(gl.COLOR, 1, new Float32Array(4));
       }
 
       var skyState = "none";
@@ -9105,7 +9155,7 @@
     }
 
     function ensureSelenaProgram(material, skinned) {
-      return scenePBREnsureSelenaProgram(gl, selenaProgramCache, material, skinned);
+      return scenePBREnsureSelenaProgram(gl, selenaProgramCache, material, skinned, selectiveBloom);
     }
 
     // reportWebGLMeshMaterialFallback classifies why an authored shader material

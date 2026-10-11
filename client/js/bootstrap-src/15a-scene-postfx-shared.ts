@@ -576,3 +576,23 @@ if (typeof window !== "undefined") {
     PIPELINE_OK: SCENE_RENDER_TRUTH_PIPELINE_OK,
   });
 }
+
+// Selective bloom never estimates specular from the finished color. A scene
+// must provide coverage-preserving MRT outputs for every visible draw path.
+function sceneSpecularBloomRequested(effects: any[]): boolean {
+  return effects.some(effect => effect && effect.kind === "bloom" && effect.source === "specular");
+}
+function sceneSpecularBloomEffects(bundle: any, effects: any[], backend: string, unsupported: boolean, mount: any): any[] {
+  if (!sceneSpecularBloomRequested(effects)) {
+    if (mount && mount.removeAttribute) mount.removeAttribute("data-gosx-scene3d-specular-bloom");
+    return effects;
+  }
+  let reason = unsupported ? "unsupported-draw-path" : "";
+  for (const material of bundle.materials || []) {
+    const custom = material.customFragment || material.customFragmentWGSL || material.customVertex || material.customVertexWGSL;
+    const variant = backend === "webgl" ? material.specularFragmentGLSL : material.specularFragmentWGSL;
+    if (custom && !variant) { reason = "missing-custom-specular-output"; break; }
+  }
+  if (mount && mount.setAttribute) mount.setAttribute("data-gosx-scene3d-specular-bloom", reason || "supported");
+  return reason ? effects.filter(effect => !(effect.kind === "bloom" && effect.source === "specular")) : effects;
+}

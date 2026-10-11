@@ -27,6 +27,8 @@
   }
 
   var sceneApi = window.__gosx_scene3d_api;
+  var sceneSpecularBloomRequested = sceneApi.sceneSpecularBloomRequested;
+  var sceneSpecularBloomEffects = sceneApi.sceneSpecularBloomEffects;
   var sceneDetailVariantKey = sceneApi.sceneDetailVariantKey;
   var sceneDetailUniformData = sceneApi.sceneDetailUniformData;
   var sceneDetailTextureRecords = sceneApi.sceneDetailTextureRecords;
