@@ -14,6 +14,7 @@ build/
 !/docs/ui-recipes.md
 !/docs/controllers.md
 !/docs/commands.md
+!/docs/workbench.md
 !/docs/browser-services.md
 !/docs/island-events.md
 !/docs/desktop-code-signing.md

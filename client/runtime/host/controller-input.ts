@@ -3,6 +3,7 @@
 (function() {
   "use strict";
   const host = window.__gosx.host;
+  host.controllers = host.controllers || {};
   let nextRequest = 0;
   const focusStack = [];
   let inertBranches = [];
@@ -56,23 +57,60 @@
     } }));
   };
 
+  // One pointer owner; remove listeners before releasing capture (which can
+  // synchronously dispatch lostpointercapture). Completion is idempotent.
+  function pointerGesture(element, down, hooks) {
+    let moved = false, ended = false;
+    const listeners = [], pointerId = down.pointerId;
+    function listen(target, type, fn) {
+      target.addEventListener(type, fn);
+      listeners.push([target, type, fn]);
+    }
+    function end(kind, event) {
+      if (ended) return;
+      ended = true;
+      for (const [target, type, fn] of listeners) target.removeEventListener(type, fn);
+      try { element.releasePointerCapture(pointerId); } catch (_error) {}
+      if (kind === "up") { if (hooks.onEnd) hooks.onEnd(event, moved); }
+      else if (hooks.onCancel) hooks.onCancel(kind, event);
+    }
+    function matches(event) { return event.pointerId === pointerId; }
+    function measure(event) {
+      const dx = event.clientX - down.clientX, dy = event.clientY - down.clientY;
+      moved = moved || Math.hypot(dx, dy) >= (hooks.thresholdPx || 0);
+      return [dx, dy];
+    }
+    listen(document, "pointermove", event => {
+      if (!matches(event)) return;
+      const [dx, dy] = measure(event);
+      if (hooks.onMove) hooks.onMove(event, dx, dy, moved);
+    });
+    listen(document, "pointerup", event => {
+      if (matches(event)) { measure(event); end("up", event); }
+    });
+    for (const type of ["pointercancel", "lostpointercapture"]) {
+      listen(hooks.cancelTarget || element, type, event => { if (matches(event)) end(type, event); });
+    }
+    listen(window, "blur", event => end("blur", event));
+    if (hooks.escape) listen(document, "keydown", event => {
+      if (event.key === "Escape") { event.preventDefault(); end("escape", event); }
+    });
+    try { element.setPointerCapture(pointerId); } catch (_error) {}
+    return { cancel: reason => end(reason || "cancel"), get moved() { return moved; }, pointerId };
+  }
+  host.controllers.pointerGesture = pointerGesture;
+
   function installDrag(record, binding, api) {
     if (!binding.source || !binding.output) return;
     let active = null, pending = null;
     const root = record.root;
     const threshold = binding.thresholdPx > 0 ? binding.thresholdPx : 4;
     function phase(output, drag) { if (output) api.publish(record, output, { kind: "drag", drag }); }
-    function release(gesture) {
-      if (gesture && gesture.element.releasePointerCapture) {
-        try { gesture.element.releasePointerCapture(gesture.pointerId); } catch (_error) {}
-      }
-    }
     function cancel(reason) {
-      const gesture = active || pending && pending.gesture;
-      active = null;
+      if (active) { active.gesture.cancel(reason); return; }
+      const gesture = pending && pending.gesture;
       if (pending) clearTimeout(pending.timer);
       pending = null;
-      release(gesture);
       if (gesture) phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason });
     }
     function finish(hit, target, gesture) {
@@ -92,45 +130,45 @@
       const element = api.matches(root, event.target, binding.source);
       if (!element || api.editable(event.target)) return;
       cancel("replaced");
-      active = { element, pointerId: event.pointerId, x: event.clientX, y: event.clientY, moved: false,
+      const gesture = { element, pointerId: event.pointerId,
         drag: { phase: "start", pointerId: event.pointerId, source: api.payload(event, element).target, inputs: clone(record.inputs) } };
-      if (element.setPointerCapture) { try { element.setPointerCapture(event.pointerId); } catch (_error) {} }
+      active = gesture;
+      gesture.gesture = pointerGesture(element, event, {
+        thresholdPx: threshold, cancelTarget: root === document ? document : root,
+        onMove(event, _dx, _dy, moved) {
+          gesture.drag.clientX = event.clientX; gesture.drag.clientY = event.clientY;
+          if (moved) phase(binding.moveOutput, { ...gesture.drag, phase: "move" });
+          if (binding.preventDefault) event.preventDefault();
+        },
+        onCancel(reason) {
+          active = null;
+          phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason });
+        },
+        onEnd(event, moved) {
+          active = null;
+          if (!moved) { phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason: "tap" }); return; }
+          gesture.drag.clientX = event.clientX; gesture.drag.clientY = event.clientY;
+          const physical = document.elementFromPoint(event.clientX, event.clientY);
+          for (const target of binding.targets || []) {
+            const element = api.matches(root, physical, target.target);
+            if (!element) continue;
+            if (!target.scene) { finish(null, target, gesture); return; }
+            const requestId = record.id + ":" + (++nextRequest);
+            pending = { requestId, target, gesture, element, timer: null };
+            pending.timer = setTimeout(() => cancel("timeout"), target.timeoutMs > 0 ? target.timeoutMs : 1000);
+            element.dispatchEvent(new CustomEvent("gosx:scene3d:pick-request", {
+              detail: { requestId, clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId },
+            }));
+            return;
+          }
+          phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason: "outside" });
+        },
+      });
       if (binding.preventDefault) event.preventDefault();
-      phase(binding.startOutput, active.drag);
+      phase(binding.startOutput, gesture.drag);
     }, false);
-    api.addListener(record, document, "pointermove", function(event) {
-      if (!active || active.pointerId !== event.pointerId) return;
-      active.moved = active.moved || Math.hypot(event.clientX - active.x, event.clientY - active.y) >= threshold;
-      active.drag.clientX = event.clientX; active.drag.clientY = event.clientY;
-      if (active.moved) phase(binding.moveOutput, { ...active.drag, phase: "move" });
-      if (binding.preventDefault) event.preventDefault();
-    }, false);
-    api.addListener(record, document, "pointerup", function(event) {
-      if (!active || active.pointerId !== event.pointerId) return;
-      const gesture = active;
-      if (!gesture.moved && Math.hypot(event.clientX - gesture.x, event.clientY - gesture.y) < threshold) { cancel("tap"); return; }
-      active = null;
-      release(gesture);
-      gesture.drag.clientX = event.clientX; gesture.drag.clientY = event.clientY;
-      const physical = document.elementFromPoint(event.clientX, event.clientY);
-      for (const target of binding.targets || []) {
-        const element = api.matches(root, physical, target.target);
-        if (!element) continue;
-        if (!target.scene) { finish(null, target, gesture); return; }
-        const requestId = record.id + ":" + (++nextRequest);
-        pending = { requestId, target, gesture, element, timer: null };
-        pending.timer = setTimeout(() => cancel("timeout"), target.timeoutMs > 0 ? target.timeoutMs : 1000);
-        element.dispatchEvent(new CustomEvent("gosx:scene3d:pick-request", {
-          detail: { requestId, clientX: event.clientX, clientY: event.clientY, pointerId: event.pointerId },
-        }));
-        return;
-      }
-      phase(binding.cancelOutput, { ...gesture.drag, phase: "cancel", reason: "outside" });
-    }, false);
-    for (const type of ["pointercancel", "lostpointercapture"]) api.addListener(record, root === document ? document : root, type, function(event) {
-      if (active && active.pointerId === event.pointerId) cancel(type);
-    }, false);
-    api.addListener(record, window, "blur", () => cancel("blur"), false);
+    // The scene hit request outlives the pointer gesture and still cancels on blur.
+    api.addListener(record, window, "blur", () => { if (pending) cancel("blur"); }, false);
     api.addListener(record, document, "gosx:scene3d:input", function(event) {
       const detail = event.detail, input = detail && detail.input;
       if (!pending || !detail || detail.kind !== "ray" || !input || input.requestId !== pending.requestId || event.target !== pending.element) return;

@@ -20,6 +20,7 @@ import (
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -2343,6 +2344,10 @@ func (r *Renderer) Summary() Summary {
 			summary.BootstrapControllerInputPath = r.bootstrapControllerInputPath
 			break
 		}
+	}
+	// Workbench handles need the hashed input URL even on pages without controllers.
+	if summary.BootstrapControllerInputPath == "" && slices.Contains(r.manifest.Features, "workbench") {
+		summary.BootstrapControllerInputPath = r.bootstrapControllerInputPath
 	}
 	if plan.Mode == "lite" {
 		summary.PatchPath = ""
