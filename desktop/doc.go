@@ -45,6 +45,9 @@
 // message box and works before New; App.ShowMessage owns the box by the app
 // window.
 //
+// MenuItem.Accelerator is a display label only; route keystrokes through the
+// page command registry.
+//
 // App.OfferSignedUpdate checks the signed update feed and asks before opening
 // a publisher's allowlisted download page; it never downloads or installs an update.
 //

@@ -58,6 +58,7 @@ func (d Document) ByID(id string) Element                { return Element{} }
 func (d Document) Query(selector string) Element         { return Element{} }
 func (d Document) QueryAll(selector string) Elements     { return Elements{} }
 func (d Document) Create(tag string) Element             { return Element{} }
+func (d Document) InstantiateTemplate(id string) Element { return Element{} }
 func (d Document) HasFocus() bool                        { return false }
 func (d Document) SetTitle(title string)                 {}
 func (d Document) ReadyState() string                    { return "" }

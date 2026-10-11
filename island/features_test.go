@@ -1,6 +1,7 @@
 package island
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -8,6 +9,85 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/engine"
 )
+
+func TestRequiredFeaturesSelectBootstrapWithoutEntries(t *testing.T) {
+	for _, enable := range []bool{false, true} {
+		t.Run(fmt.Sprint("enableBootstrap=", enable), func(t *testing.T) {
+			r := NewRenderer("page")
+			if enable {
+				r.EnableBootstrap()
+			}
+			if err := r.RequireFeature("workbench"); err != nil {
+				t.Fatal(err)
+			}
+			plan := r.clientRuntimePlan()
+			if !plan.Bootstrap || !plan.Selective || !plan.Manifest || plan.Mode != "full" || plan.SharedRuntime || plan.WASMExec {
+				t.Fatalf("feature-only plan = %+v", plan)
+			}
+			paths := r.FeaturePaths()
+			if len(paths) != 1 || paths["workbench"] != "/gosx/bootstrap-feature-workbench.js" {
+				t.Fatalf("feature paths = %v", paths)
+			}
+			head := gosx.RenderHTML(r.PageHead())
+			if !strings.Contains(head, "bootstrap-runtime.js") || !strings.Contains(head, `"features":["workbench"]`) || strings.Contains(head, `src="/gosx/bootstrap.js`) || strings.Contains(head, "bootstrap-lite.js") {
+				t.Fatalf("feature-only head = %s", head)
+			}
+		})
+	}
+}
+
+func TestNoRequiredFeaturesPreserveBootstrapModes(t *testing.T) {
+	r := NewRenderer("page")
+	if err := r.RequireFeature("Bad Name"); err == nil {
+		t.Fatal("invalid feature accepted")
+	}
+	// scene3d can only load for an engine, even if a caller assigns Features.
+	r.Manifest().Features = []string{"scene3d"}
+	if plan := r.clientRuntimePlan(); plan.Bootstrap || plan.Mode != "none" {
+		t.Fatalf("empty required-feature set bootstraps: %+v", plan)
+	}
+	r.EnableBootstrap()
+	if plan := r.clientRuntimePlan(); !plan.Bootstrap || plan.Selective || plan.Mode != "lite" {
+		t.Fatalf("bootstrap-only plan = %+v", plan)
+	}
+}
+
+func TestRequiredFeaturesOnlyUseHashedLoaderAndRequiredChunks(t *testing.T) {
+	r := NewRenderer("page")
+	m := &buildmanifest.Manifest{}
+	m.Runtime.BootstrapRuntime = buildmanifest.HashedAsset{File: "bootstrap-runtime.loader.js", Hash: "loader"}
+	m.Runtime.Features = map[string]buildmanifest.HashedAsset{
+		"workbench": {File: "bootstrap-feature-workbench.commands.js", Hash: "commands"},
+		"unused":    {File: "bootstrap-feature-unused.other.js", Hash: "other"},
+	}
+	if err := r.ApplyBuildManifest(m, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RequireFeature("workbench"); err != nil {
+		t.Fatal(err)
+	}
+	paths := r.FeaturePaths()
+	if len(paths) != 1 || paths["workbench"] != "/gosx/assets/runtime/bootstrap-feature-workbench.commands.js" {
+		t.Fatalf("required paths = %v", paths)
+	}
+	head := gosx.RenderHTML(r.PageHead())
+	hints := gosx.RenderHTML(r.PreloadHints())
+	if !strings.Contains(head, "bootstrap-runtime.loader.js") || strings.Contains(head, "bootstrap-feature-workbench.commands.js") || !strings.Contains(hints, paths["workbench"]) || strings.Contains(hints, "unused") {
+		t.Fatalf("feature-only assets: head=%s hints=%s", head, hints)
+	}
+}
+
+func TestRequiredLegacyFeatureBootstrapsWithoutEntries(t *testing.T) {
+	r := NewRenderer("page")
+	if err := r.RequireFeature("controllers"); err != nil {
+		t.Fatal(err)
+	}
+	plan := r.clientRuntimePlan()
+	paths := r.FeaturePaths()
+	if !plan.Selective || !plan.Manifest || len(paths) != 1 || paths["controllers"] == "" {
+		t.Fatalf("legacy feature-only plan=%+v paths=%v", plan, paths)
+	}
+}
 
 func TestRequiredFeatureAdvertisesPreloadNotScript(t *testing.T) {
 	m := &buildmanifest.Manifest{}

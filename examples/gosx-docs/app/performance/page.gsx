@@ -236,7 +236,7 @@ func Page() Node {
 				</If>
 				<ul class="performance-links" aria-label="Measurement sources">
 					<li>
-						<a						href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/performance/receipts.json">Committed receipts JSON</a>
+						<a							href="https://github.com/odvcencio/gosx/blob/main/examples/gosx-docs/app/performance/receipts.json">Committed receipts JSON</a>
 					</li>
 					<li>
 						<a href="https://github.com/odvcencio/gosx/blob/main/scripts/showcase-receipts.sh">Measurement script</a>

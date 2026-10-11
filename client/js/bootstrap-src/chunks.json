@@ -226,6 +226,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-workbench.js",
+      "sources": [
+        "../runtime/host/workbench.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
         "bootstrap-src/26i-feature-textlayout-prefix.ts",

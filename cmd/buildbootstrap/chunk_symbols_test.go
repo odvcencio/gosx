@@ -87,6 +87,12 @@ type symbolPlacement struct {
 // records a split the repository made on purpose, with the cost it removed.
 var shippedSymbolPlacements = []symbolPlacement{
 	{
+		symbol: "createCommandRegistry",
+		in:     []string{"bootstrap-feature-workbench.js"},
+		notIn:  []string{"bootstrap-runtime.js", "bootstrap-lite.js", "bootstrap.js", "bootstrap-feature-islands.js", "bootstrap-feature-controllers.js"},
+		why:    "opt-in chunk; a page without commands or handles must not carry it",
+	},
+	{
 		symbol: "hydrateScene3DInitialProgram",
 		in:     []string{"bootstrap.js", "bootstrap-feature-scene3d-hydrate.js"},
 		notIn:  []string{"bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-command.js", "bootstrap-runtime.js"},

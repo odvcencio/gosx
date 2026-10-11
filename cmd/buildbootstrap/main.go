@@ -388,6 +388,10 @@ var outputs = []output{
 		name:    "bootstrap-controller-input.js",
 		sources: []source{sourceFile("../runtime/host/controller-input.ts")},
 	},
+	{
+		name:    "bootstrap-feature-workbench.js",
+		sources: []source{sourceFile("../runtime/host/workbench.ts")},
+	},
 
 	{
 		// Text-layout engine chunk. bootstrap-lite.js and bootstrap-runtime.js

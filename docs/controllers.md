@@ -5,6 +5,19 @@ to shared signals and app intents without an island or a lifecycle script.
 Controllers are disposed with the page. They do not render UI.
 Navigation also cancels controllers waiting for their input chunk to load.
 
+## Key chords
+
+`controller.KeyBinding` matches modifiers exactly by default. A Ctrl+Z binding
+does not handle Ctrl+Shift+Z. Unlisted Shift is ignored for single symbol keys
+such as `?`, `+`, and `/`, because keyboard layouts can use Shift to produce them.
+Letters, digits, Space, and code-only bindings keep exact Shift matching.
+
+Set `AnyModifiers: true` to match whenever the listed modifiers are held, even
+if others are held too. To migrate a Ctrl+Z binding that also handled Ctrl+Shift+Z,
+add a second binding or use `AnyModifiers: true`. Bindings on symbols such as `?`
+keep working. Use the [page command registry](commands.md) for named actions
+with platform-aware `Mod` chords.
+
 ## Project events into typed intents
 
 `Projection.Value` supplies a Go value with the intent's JSON shape.

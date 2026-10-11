@@ -29,6 +29,7 @@ import (
 	"m31labs.dev/gosx/buildmanifest"
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/command"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
@@ -1086,6 +1087,14 @@ func (r *Renderer) RegisterController(config controller.Config) string {
 	return r.manifest.AddController(config)
 }
 
+// AddCommands registers named page actions in the hydration manifest.
+func (r *Renderer) AddCommands(cmds ...command.Command) error {
+	if r == nil || r.manifest == nil {
+		return nil
+	}
+	return r.manifest.AddCommands(cmds...)
+}
+
 func (r *Renderer) clientManifest() *hydrate.Manifest {
 	if r == nil || r.manifest == nil {
 		return nil
@@ -1116,8 +1125,8 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 
 // RequireFeature asks the browser loader to fetch the opt-in runtime chunk
 // bootstrap-feature-<name>.js for this page. The name must be lowercase words
-// joined by dashes. The chunk loads only on pages that already bootstrap the
-// selective runtime (engines, islands, hubs or controllers).
+// joined by dashes. Required features select the selective runtime even when
+// the page has no engines, islands, hubs or controllers.
 func (r *Renderer) RequireFeature(name string) error {
 	if r == nil {
 		return fmt.Errorf("island renderer is nil")
@@ -2249,17 +2258,20 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	engines := len(r.manifest.Engines)
 	hubs := len(r.manifest.Hubs)
 	controllers := len(r.manifest.Controllers)
+	// Required chunks need the core loader even on a page with no entries.
+	// explicitFeatures excludes scene3d, which must remain engine-driven.
+	features := len(r.explicitFeatures())
 	previewRelay := PreviewBootstrapEnabled() || r.fixturePreview
-	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0 || controllers > 0
+	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0 || controllers > 0 || features > 0
 	mode := "none"
 	if bootstrap {
 		mode = "full"
 	}
-	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
+	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 && features == 0 {
 		mode = "lite"
 	}
 	// Preview-only pages need the shared signal bridge without island programs.
-	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
+	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 && features == 0 {
 		mode = "preview"
 	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()

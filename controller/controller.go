@@ -74,12 +74,15 @@ type Event struct {
 
 // KeyBinding declares a global or root-scoped keyboard binding.
 type KeyBinding struct {
-	Key            string      `json:"key,omitempty"`
-	Code           string      `json:"code,omitempty"`
-	Output         string      `json:"output"`
-	Event          string      `json:"event,omitempty"`
-	Scope          string      `json:"scope,omitempty"`
-	Modifiers      []string    `json:"modifiers,omitempty"`
+	Key       string   `json:"key,omitempty"`
+	Code      string   `json:"code,omitempty"`
+	Output    string   `json:"output"`
+	Event     string   `json:"event,omitempty"`
+	Scope     string   `json:"scope,omitempty"`
+	Modifiers []string `json:"modifiers,omitempty"`
+	// AnyModifiers restores subset matching: extra held modifiers are allowed.
+	// The default is exact, with unlisted Shift ignored for single symbol keys.
+	AnyModifiers   bool        `json:"anyModifiers,omitempty"`
 	PreventDefault bool        `json:"preventDefault,omitempty"`
 	AllowEditable  bool        `json:"allowEditable,omitempty"`
 	Project        *Projection `json:"project,omitempty"`

@@ -236,10 +236,32 @@ func (d Document) QueryAll(selector string) Elements {
 	return Elements{d.value.Call("querySelectorAll", selector)}
 }
 func (d Document) Create(tag string) Element { return FromJS(d.value.Call("createElement", tag)) }
-func (d Document) HasFocus() bool            { return d.value.Call("hasFocus").Bool() }
-func (d Document) SetTitle(title string)     { d.value.Set("title", title) }
-func (d Document) ReadyState() string        { return d.value.Get("readyState").String() }
-func (d Document) Hidden() bool              { return d.value.Get("hidden").Bool() }
+
+// InstantiateTemplate returns a detached deep copy of the single element root
+// in an authored HTML template. Missing IDs, non-templates and templates with
+// zero or multiple element roots return an invalid Element. Top-level text and
+// comments are ignored; text within the root is preserved. The copy belongs to
+// this document and is inserted only when the caller appends it.
+func (d Document) InstantiateTemplate(id string) Element {
+	if !d.value.Truthy() {
+		return Element{}
+	}
+	template := d.value.Call("getElementById", id)
+	if !template.Truthy() || template.Get("localName").String() != "template" ||
+		template.Get("namespaceURI").String() != "http://www.w3.org/1999/xhtml" {
+		return Element{}
+	}
+	content := template.Get("content")
+	if !content.Truthy() || content.Get("childElementCount").Int() != 1 {
+		return Element{}
+	}
+	return FromJS(d.value.Call("importNode", content.Get("firstElementChild"), true))
+}
+
+func (d Document) HasFocus() bool        { return d.value.Call("hasFocus").Bool() }
+func (d Document) SetTitle(title string) { d.value.Set("title", title) }
+func (d Document) ReadyState() string    { return d.value.Get("readyState").String() }
+func (d Document) Hidden() bool          { return d.value.Get("hidden").Bool() }
 func (s Style) Set(name, value string) {
 	if !s.value.Truthy() {
 		return
