@@ -325,13 +325,17 @@
     function tabLinks(container) {
       return Array.from(container.querySelectorAll("[data-gosx-tab]")).filter(tab => tab.closest("[data-gosx-tabs]") === container);
     }
+    function tabPanel(container, tab) {
+      const id = tab.getAttribute("data-gosx-tab-panel");
+      return Array.from(container.querySelectorAll("[id]")).find(panel => panel.id === id && panel.closest("[data-gosx-tabs]") === container);
+    }
     function selectTab(container, tab, focus, publish = true) {
       if (!connected(container)) return;
       for (const item of tabLinks(container)) {
         const selected = item === tab;
         setAttr(item, "aria-selected", String(selected)); setAttr(item, "tabindex", selected ? "0" : "-1");
         if (selected) setAttr(item, "aria-current", "page"); else item.removeAttribute("aria-current");
-        const panel = document.getElementById(item.getAttribute("data-gosx-tab-panel"));
+        const panel = tabPanel(container, item);
         if (panel) { panel.hidden = !selected; if (selected) panel.removeAttribute("hidden"); else setAttr(panel, "hidden", ""); }
       }
       if (focus) tab.focus();
@@ -340,8 +344,6 @@
     }
     function upgradeTabs(container) {
       const state = binding(container);
-      if (state.tabs) return;
-      state.tabs = true;
       const links = tabLinks(container), nav = container.querySelector("nav");
       if (!links.length || !nav) return;
       setAttr(nav, "role", "tablist");
@@ -350,13 +352,17 @@
         setAttr(tab, "role", "tab");
         const id = tab.getAttribute("data-gosx-tab-panel");
         if (id) setAttr(tab, "aria-controls", id);
-        const panel = document.getElementById(id);
+        const panel = tabPanel(container, tab);
         if (panel) { setAttr(panel, "role", "tabpanel"); setAttr(panel, "aria-labelledby", tab.id); }
       }
-      selectTab(container, links.find(tab => tab.getAttribute("aria-current") === "page") || links[0], false, false);
       const signal = container.getAttribute("data-gosx-tabs-signal");
+      const value = readSignal(signal, undefined);
+      selectTab(container, links.find(tab => tab.getAttribute("data-gosx-tab") === value) || links.find(tab => tab.getAttribute("aria-current") === "page") || links[0], false, false);
+      // Enhance current children on every refresh; retain only one root subscription.
+      if (state.tabs) return;
+      state.tabs = true;
       if (signal) subscribe(container, signal, value => {
-        const tab = links.find(item => item.getAttribute("data-gosx-tab") === value);
+        const tab = tabLinks(container).find(item => item.getAttribute("data-gosx-tab") === value);
         if (tab) selectTab(container, tab, false, false);
       });
     }

@@ -91,6 +91,8 @@ horizontal tabs; Up / Down wrap through vertical tabs when the `nav` has
 `aria-orientation="vertical"`. Home / End select the first / last tab. Enter,
 Space and click select in place. `data-gosx-tabs-signal` records selection and
 restores it from a shared signal. Modified clicks retain ordinary link behavior.
+Replacing a tab container's children refreshes their roles and selection. Signal
+updates resolve the current links and panels within that container.
 
 `<details data-gosx-collapsible="$layout.browserOpen">` mirrors native `open`
 changes to the signal and boolean signal updates back to `open`. Its `summary`

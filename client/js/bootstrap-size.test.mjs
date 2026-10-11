@@ -1656,9 +1656,9 @@ const budgets = [
   // measurement rounded up to 100 bytes.
   { file: "bootstrap-feature-islands.js", raw: 19200, gzip: 4600, brotli: 4200 },
   // Wave 1 M3: drag handles, style binds, tabs and collapsible.
-  // Measured 12664 / 4928 / 4520; delta +8227 / +2952 / +2743
-  // from M2's 4437 / 1976 / 1777. Element lifetime cleanup adds
-  // 227 / 97 / 86 over the first M3 implementation; targets are unchanged.
+  // Measured 12805 / 4958 / 4561; delta +8368 / +2982 / +2784
+  // from M2's 4437 / 1976 / 1777. Element lifetime cleanup and tab
+  // child replacement add 368 / 127 / 127 over the first M3; targets are unchanged.
   { file: "bootstrap-feature-workbench.js", raw: 12900, gzip: 5100, brotli: 4700 },
 ];
 

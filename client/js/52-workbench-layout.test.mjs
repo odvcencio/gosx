@@ -39,22 +39,61 @@ test("removed tabs cannot select replacement panels before or after mutation ref
   assert.equal(next.panels[0].hidden, true); assert.equal(next.panels[1].hidden, false);
 });
 
-test("fifty region replacements keep every workbench binding bounded and leave detached controls untouched", async () => {
+function replaceChildren(root, children) {
+  for (const child of [...root.children]) child.remove();
+  for (const child of [...children]) root.appendChild(child);
+}
+
+test("tabs re-enhance replaced children and select current panels with changing tab counts", async () => {
+  let t = tabs(); const root = t.root;
+  const env = bootWorkbench({ elements: [root] }); await flushAsyncWork();
+  const set = env.context.__gosx.workbench.debug.setSignal;
+  for (const names of [["arrange", "session", "mixer"], ["mixer", "editor"]]) {
+    set("$view", "mixer");
+    const next = tabs(names); replaceChildren(root, next.root.children); t = { ...next, root };
+    // Signals can arrive before the child-list observer runs.
+    set("$view", names.at(-1));
+    assert.equal(t.panels.at(-1).hidden, false);
+    refreshDOM(env); await flushAsyncWork();
+    assert.equal(t.nav.getAttribute("role"), "tablist");
+    for (let i = 0; i < names.length; i++) {
+      assert.equal(t.links[i].getAttribute("role"), "tab");
+      assert.equal(t.links[i].getAttribute("aria-controls"), t.panels[i].id);
+      assert.equal(t.links[i].getAttribute("aria-selected"), String(i === names.length - 1));
+      assert.equal(t.links[i].getAttribute("tabindex"), i === names.length - 1 ? "0" : "-1");
+      assert.equal(t.panels[i].getAttribute("role"), "tabpanel");
+      assert.equal(t.panels[i].getAttribute("aria-labelledby"), t.links[i].id);
+    }
+    set("$view", names[0]);
+    assert.equal(t.panels[0].hidden, false); assert.equal(t.panels.at(-1).hidden, true);
+    keydown(env, { key: "End", target: t.links[0] });
+    assert.equal(env.document.activeElement, t.links.at(-1)); assert.equal(t.panels.at(-1).hidden, false);
+  }
+});
+
+for (const keepRoots of [false, true]) test("fifty replacements keep every binding bounded: " + (keepRoots ? "replace children, keep roots" : "replace roots"), async () => {
   function region(index) {
     const root = new FakeElement("div", null), drag = handle({ axis: "x", min: 160, max: 640, step: 8, scale: 1 });
     const style = styled(); style.setAttribute("data-gosx-bind-style", "--width:$layout.width:px,--peak:@data-peak"); style.setAttribute("data-peak", "0.5");
-    const t = tabs(); t.root.setAttribute("data-gosx-tabs-signal", "$tabs." + index);
+    const t = tabs(keepRoots && index % 2 ? ["arrange", "session", "mixer"] : undefined);
+    t.root.setAttribute("data-gosx-tabs-signal", keepRoots ? "$view" : "$tabs." + index);
     const details = new FakeElement("details", null); details.setAttribute("data-gosx-collapsible", "$open"); details.open = false;
     const button = new FakeElement("button", null); button.setAttribute("data-gosx-command", "layout.save");
+    const children = [drag, style, details, button].map(el => {
+      const child = new FakeElement(el === details ? "summary" : "span", null); el.appendChild(child); return child;
+    });
     for (const el of [drag, style, t.root, details, button]) root.appendChild(el);
-    return { root, drag, style, t, details, button, elements: [drag, style, t.root, t.nav, ...t.links, ...t.panels, details, button] };
+    return { root, drag, style, t, details, button, children, elements: [drag, style, t.root, t.nav, ...t.links, ...t.panels, details, button, ...children] };
   }
   let live = region(0), detachedWrites = 0;
   const env = bootHandles([live.root], { manifest: { commands: [{ id: "layout.save", keys: ["Mod+S"], action: { signal: "$saved", value: true } }] } });
   await flushAsyncWork();
   const set = env.context.__gosx.workbench.debug.setSignal;
+  const watched = new WeakSet();
   function watch(r) {
     for (const el of r.elements) {
+      if (watched.has(el)) continue;
+      watched.add(el);
       Object.defineProperty(el, "isConnected", { get: () => env.document.body.contains(el) });
       const touch = () => { if (!el.isConnected) detachedWrites++; };
       for (const name of ["setAttribute", "removeAttribute"]) {
@@ -76,23 +115,37 @@ test("fifty region replacements keep every workbench binding bounded and leave d
   for (let i = 1; i <= 50; i++) {
     const retired = live; live = region(i);
     // Exercise cancellation of an active gesture as well as its subscription.
-    pointer(env, "pointerdown", retired.drag); await flushAsyncWork();
+    pointer(env, "pointerdown", retired.children[0]); await flushAsyncWork();
     pointer(env, "pointermove", retired.drag, { clientX: 28 });
-    retired.root.remove(); env.document.body.appendChild(live.root); watch(live);
+    if (keepRoots) {
+      for (const key of ["drag", "style", "details", "button"]) {
+        replaceChildren(retired[key], live[key].children); live[key] = retired[key];
+      }
+      replaceChildren(retired.t.root, live.t.root.children); live.t.root = retired.t.root; live.root = retired.root;
+      live.elements = [live.drag, live.style, live.t.root, live.t.nav, ...live.t.links, ...live.t.panels, live.details, live.button, ...live.children];
+      pointer(env, "pointerup", live.children[0]);
+    } else {
+      retired.root.remove(); env.document.body.appendChild(live.root);
+    }
+    watch(live);
     // A signal may arrive before the MutationObserver delivers its records.
-    set("$tabs." + (i - 1), "session"); set("$layout", { width: 280 }); set("$mix.vol", 280); set("$open", true);
+    set(keepRoots ? "$view" : "$tabs." + (i - 1), "session"); set("$layout", { width: 280 }); set("$mix.vol", 280); set("$open", true);
     refreshDOM(env); await flushAsyncWork();
     assert.equal(retired.drag.capture, null);
     assert.equal([...retired.drag.listeners.values()].reduce((n, entries) => n + entries.length, 0), 0);
-    assert.equal(env.mutationObservers.some(o => retired.elements.some(el => o.targets.has(el))), false);
+    assert.equal(env.mutationObservers.some(o => retired.elements.some(el => !el.isConnected && o.targets.has(el))), false);
     set("$tabs." + (i - 1), "arrange"); set("$tabs." + i, "session");
+    if (keepRoots) set("$view", "session");
     set("$layout", { width: 288 }); set("$mix.vol", 288); set("$open", false);
     assert.equal(live.drag.getAttribute("aria-valuenow"), "288");
     assert.equal(live.style.properties.get("--width"), "288px"); assert.equal(live.details.open, false);
     assert.equal(live.t.panels[0].hidden, true); assert.equal(live.t.panels[1].hidden, false);
+    assert.equal(live.t.nav.getAttribute("role"), "tablist");
+    assert.equal(live.t.links[1].getAttribute("aria-selected"), "true");
     assert.deepEqual([subscriptions(), observers(), listeners()], baseline, "replacement " + i);
     assert.equal(detachedWrites, 0, "callbacks never write to a removed element");
-    env.document.dispatchEvent({ type: "click", target: live.button, preventDefault() {} });
+    set("$saved", false);
+    env.document.dispatchEvent({ type: "click", target: live.children[3], preventDefault() {} });
     assert.equal(env.context.__gosx.sharedSignals.values.get("$saved"), true);
   }
   await env.context.__gosx_dispose_page();
@@ -122,14 +175,14 @@ test("style bindings follow signal paths, attributes and region replacements", a
   env.context.__gosx.workbench.debug.setSignal("$layout", { sidebar: 400 }); assert.equal(replacement.properties.has("--gsx-split-a"), false);
 });
 
-export function tabs() {
+export function tabs(names = ["arrange", "session"]) {
   const root = new FakeElement("div", null); root.setAttribute("data-gosx-tabs", ""); root.setAttribute("data-gosx-tabs-signal", "$view");
   const nav = new FakeElement("nav", null); nav.setAttribute("class", "gsx-tabs__list"); nav.setAttribute("aria-label", "Views"); root.appendChild(nav);
   const links = [], panels = [];
-  for (const name of ["arrange", "session"]) {
+  for (const name of names) {
     const link = new FakeElement("a", null); link.setAttribute("href", "?tab=" + name); link.setAttribute("data-gosx-tab", name);
-    link.setAttribute("data-gosx-tab-panel", "panel-" + name); if (name === "arrange") link.setAttribute("aria-current", "page"); nav.appendChild(link); links.push(link);
-    const panel = new FakeElement("section", null); panel.id = "panel-" + name; panel.hidden = name !== "arrange";
+    link.setAttribute("data-gosx-tab-panel", "panel-" + name); if (name === names[0]) link.setAttribute("aria-current", "page"); nav.appendChild(link); links.push(link);
+    const panel = new FakeElement("section", null); panel.id = "panel-" + name; panel.hidden = name !== names[0];
     if (panel.hidden) panel.setAttribute("hidden", ""); root.appendChild(panel); panels.push(panel);
   }
   return { root, nav, links, panels };
