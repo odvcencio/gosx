@@ -378,6 +378,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-model-preparation.js",
+      "sources": [
+        "../runtime/scene3d/model-preparation.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-timeline.js",
       "sources": [
         "../runtime/scene3d/timeline.ts"

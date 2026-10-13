@@ -15,9 +15,10 @@ type Surface struct {
 	target   string
 	mount    js.Value
 	disposed bool
+	closed   chan struct{}
 }
 
-func NewSurface(target string) *Surface { return &Surface{target: target} }
+func NewSurface(target string) *Surface { return &Surface{target: target, closed: make(chan struct{})} }
 
 func (s *Surface) element() (js.Value, error) {
 	if s == nil || s.disposed || s.target == "" {
@@ -122,7 +123,10 @@ func (s *Surface) Resize(width, height int) (changed bool, err error) {
 }
 
 func (s *Surface) Dispose() {
-	if s != nil {
+	if s != nil && !s.disposed {
+		if s.closed != nil {
+			close(s.closed)
+		}
 		s.disposed = true
 		s.mount = js.Undefined()
 	}

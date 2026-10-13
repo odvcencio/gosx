@@ -7,6 +7,10 @@
 - Preserve live WebGL sampler bindings when PNG, HDR and KTX2 textures upload
   asynchronously. Settled texture resources invalidate the retained material
   cache; failed uploads restore bindings and report terminal failure.
+- Add opt-in `scene.Surface.PrepareModels` to decode selected models and upload
+  their material maps in the mounted renderer's cache. Context cancellation,
+  disposal and renderer replacement terminate preparation. Shader and vertex
+  buffer warming, and scene-generation commit, remain separate steps.
 
 ## v0.57.13
 

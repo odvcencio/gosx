@@ -2,7 +2,10 @@
 
 package scene
 
-import "errors"
+import (
+	"context"
+	"errors"
+)
 
 var errSurfaceBrowser = errors.New("scene surface requires js/wasm")
 
@@ -25,3 +28,7 @@ func NewStreamWriter(string) *StreamWriter                    { return &StreamWr
 func (*StreamWriter) Prepare() bool                           { return false }
 func (*StreamWriter) Apply(InstanceStreamFrame) (bool, error) { return false, errSurfaceBrowser }
 func (*StreamWriter) Dispose()                                {}
+
+func (*Surface) PrepareModels(context.Context, []ModelPreparation) (ModelPreparationResult, error) {
+	return ModelPreparationResult{}, errSurfaceBrowser
+}

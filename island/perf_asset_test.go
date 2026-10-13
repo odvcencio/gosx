@@ -49,6 +49,7 @@ func perfAssetRendererFixture(t *testing.T) (*Renderer, *buildmanifest.Manifest)
 		{"bootstrap-feature-scene3d-hydrate.js", &m.Runtime.BootstrapFeatureScene3DHydrate}, {"bootstrap-feature-scene3d-webgpu.js", &m.Runtime.BootstrapFeatureScene3DWebGPU},
 		{"bootstrap-feature-scene3d-webgl.js", &m.Runtime.BootstrapFeatureScene3DWebGL},
 		{"bootstrap-feature-scene3d-zoom.js", &m.Runtime.BootstrapFeatureScene3DZoom}, {"bootstrap-feature-scene3d-walk.js", &m.Runtime.BootstrapFeatureScene3DWalk},
+		{"bootstrap-feature-scene3d-model-preparation.js", &m.Runtime.BootstrapFeatureScene3DModelPreparation},
 		{"bootstrap-feature-scene3d-vessel.js", &m.Runtime.BootstrapFeatureScene3DVessel}, {"bootstrap-feature-scene3d-ocean-query.js", &m.Runtime.BootstrapFeatureScene3DOceanQuery},
 		{"bootstrap-feature-scene3d-compute.js", &m.Runtime.BootstrapFeatureScene3DCompute}, {"bootstrap-feature-scene3d-decompress.js", &m.Runtime.BootstrapFeatureScene3DDecompress},
 		{"bootstrap-feature-scene3d-gltf.js", &m.Runtime.BootstrapFeatureScene3DGLTF}, {"bootstrap-feature-scene3d-animation.js", &m.Runtime.BootstrapFeatureScene3DAnimation},
@@ -125,6 +126,7 @@ func TestPerfAssetRendererStartupZoom(t *testing.T) {
 func TestPerfAssetRendererSceneContentGates(t *testing.T) {
 	for _, tc := range []struct{ name, props, chunk, phase string }{
 		{"walk", `{"controls":"first-person","walk":{}}`, "walk", "startup"},
+		{"model-preparation", `{"controls":"first-person","walk":{}}`, "walk", "startup"},
 		{"walk-alias", `{"controls":" FPS ","walk":{}}`, "walk", "startup"},
 		{"walk-orbit", `{"controls":"orbit","walk":{}}`, "walk", "dormant"},
 		{"vessel", `{"vessel":{"nodeId":"boat"}}`, "vessel", "startup"},

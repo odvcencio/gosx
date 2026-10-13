@@ -80,6 +80,7 @@ func immutableCacheApp(t *testing.T) (*App, *http.Cookie, []string) {
 		{"bootstrap-feature-scene3d-compute.js", &manifest.Runtime.BootstrapFeatureScene3DCompute},
 		{"bootstrap-feature-scene3d-decompress.js", &manifest.Runtime.BootstrapFeatureScene3DDecompress},
 		{"bootstrap-feature-scene3d-walk.js", &manifest.Runtime.BootstrapFeatureScene3DWalk},
+		{"bootstrap-feature-scene3d-model-preparation.js", &manifest.Runtime.BootstrapFeatureScene3DModelPreparation},
 		{"bootstrap-feature-scene3d-zoom.js", &manifest.Runtime.BootstrapFeatureScene3DZoom},
 		{"bootstrap-feature-scene3d-vessel.js", &manifest.Runtime.BootstrapFeatureScene3DVessel},
 		{"bootstrap-feature-scene3d-ocean-query.js", &manifest.Runtime.BootstrapFeatureScene3DOceanQuery},

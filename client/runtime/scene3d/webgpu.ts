@@ -19289,7 +19289,7 @@
         shadowSlots[si] = null;
       }
 /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */
-      textureCache._gosxGeneration.disposed = true;
+      textureCache._gosxGeneration.disposed = true; textureCache._gosxGeneration.onResourceReady();
       for (var record of textureCache.values()) {
         if (record) {
           record.disposed = true;
@@ -19532,7 +19532,7 @@
       kind: "webgpu",
       type: "webgpu",
       supportsRetainedGeometry: true,
-      supportsBundle: supportsBundle,
+      supportsBundle: supportsBundle, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace) },
       queuePick: queuePick,
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,

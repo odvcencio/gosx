@@ -1929,3 +1929,29 @@ func TestScene3DWalkURLIsPropGated(t *testing.T) {
 		})
 	}
 }
+
+func TestScene3DModelPreparationURLIsAdvertisedWithoutEagerFetch(t *testing.T) {
+	r := NewRenderer("main")
+	m := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:                 buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:                 buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DModelPreparation: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-model-preparation.hash.js", Hash: "preparation"},
+	}}
+	if err := r.ApplyBuildManifest(m, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"scene":{}}`)}, gosx.Text(""))
+	scripts := gosx.RenderHTML(r.BootstrapScript())
+	url := "/gosx/assets/runtime/bootstrap-feature-scene3d-model-preparation.hash.js"
+	if !strings.Contains(scripts, `data-gosx-scene3d-model-preparation-url="`+url+`"`) {
+		t.Fatal("preparation URL missing")
+	}
+	if strings.Contains(scripts, `src="`+url+`"`) || strings.Contains(gosx.RenderHTML(r.PreloadHints()), url) {
+		t.Fatal("opt-in preparation was eager")
+	}
+	if asset, ok := r.runtimeScriptAsset(url); !ok || asset.Hash != "preparation" {
+		t.Fatal("preparation lost manifest identity")
+	}
+}

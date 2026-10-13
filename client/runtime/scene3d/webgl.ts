@@ -5260,7 +5260,7 @@
   }
 
   function scenePBRTextureDescriptor(raw, url, fallbackRole, fallbackColorSpace) {
-    var descriptor = raw && typeof raw === "object" ? raw : {};
+    var descriptor = raw && typeof raw === "object" ? raw : {}; const wrap = (value: any) => [33071, 33648, 10497].indexOf(value) >= 0 ? value : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071);
     return {
       uri: typeof descriptor.uri === "string" && descriptor.uri.trim() ? descriptor.uri.trim() : String(url || "").trim(),
       role: typeof descriptor.role === "string" ? descriptor.role.trim().toLowerCase() : String(fallbackRole || ""),
@@ -5273,8 +5273,8 @@
       width: Math.max(0, Math.floor(sceneNumber(descriptor.width, 0))),
       height: Math.max(0, Math.floor(sceneNumber(descriptor.height, 0))),
       faces: Math.max(0, Math.floor(sceneNumber(descriptor.faces, 0))),
-      wrapS: [33071, 33648, 10497].indexOf(descriptor.wrapS) >= 0 ? descriptor.wrapS : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
-      wrapT: [33071, 33648, 10497].indexOf(descriptor.wrapT) >= 0 ? descriptor.wrapT : ((descriptor.role || fallbackRole) === "normal" ? 10497 : 33071),
+      wrapS: wrap(descriptor.wrapS),
+      wrapT: wrap(descriptor.wrapT),
     };
   }
 
@@ -10959,7 +10959,7 @@
       computeParticleSystems.clear();
       lastComputeParticleTimeSeconds = null;
       if (shadowState.buffer) gl.deleteBuffer(shadowState.buffer);
-      textureCache._gosxGeneration.disposed = true;
+      textureCache._gosxGeneration.disposed = true; textureCache._gosxGeneration.onResourceReady();
       for (const record of textureCache.values()) {
         if (record) {
           record.disposed = true;
@@ -11129,7 +11129,7 @@
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
       },
-      prepareCrowdAtlas,
+      prepareCrowdAtlas, texturePreparation: { generation: textureCache._gosxGeneration, load: (url: any, descriptor: any, role: any, colorSpace: any) => scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace) },
       // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
       // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads
       // crowdMotionProgram directly (see drawPBRObjectList's rigidProgram

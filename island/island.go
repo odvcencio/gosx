@@ -90,12 +90,13 @@ type Renderer struct {
 	// policy.
 	bootstrapFeatureScene3dDecompressPath string
 	// Walk is advertised only when a Scene3D engine carries walk props.
-	bootstrapFeatureScene3dWalkPath          string
-	bootstrapFeatureScene3dTimelinePath      string
-	bootstrapFeatureScene3dZoomPath          string
-	bootstrapFeatureScene3dVesselPath        string
-	bootstrapFeatureScene3dOceanQueryPath    string
-	bootstrapFeatureScene3dParticleBurstPath string
+	bootstrapFeatureScene3dWalkPath             string
+	bootstrapFeatureScene3dModelPreparationPath string
+	bootstrapFeatureScene3dTimelinePath         string
+	bootstrapFeatureScene3dZoomPath             string
+	bootstrapFeatureScene3dVesselPath           string
+	bootstrapFeatureScene3dOceanQueryPath       string
+	bootstrapFeatureScene3dParticleBurstPath    string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -248,6 +249,7 @@ func NewRenderer(bundleID string) *Renderer {
 	renderer.bootstrapFeatureScene3dComputePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-compute.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCompute.Hash))
 	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
 	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
+	renderer.bootstrapFeatureScene3dModelPreparationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-model-preparation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DModelPreparation.Hash))
 	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
 	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
 	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
@@ -660,6 +662,13 @@ func (r *Renderer) SetBootstrapFeatureScene3DWalkPath(path string) {
 	r.bootstrapFeatureScene3dWalkPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DModelPreparationPath overrides the opt-in preparation chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DModelPreparationPath(path string) {
+	if r != nil {
+		r.bootstrapFeatureScene3dModelPreparationPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+	}
+}
+
 // SetBootstrapFeatureScene3DZoomPath overrides the optional zoom chunk URL.
 func (r *Renderer) SetBootstrapFeatureScene3DZoomPath(path string) {
 	if r == nil {
@@ -793,6 +802,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-walk.js", r.bootstrapFeatureScene3dWalkPath, r.runtimeAssets.BootstrapFeatureScene3DWalk):
 		return r.runtimeAssets.BootstrapFeatureScene3DWalk, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-model-preparation.js", r.bootstrapFeatureScene3dModelPreparationPath, r.runtimeAssets.BootstrapFeatureScene3DModelPreparation):
+		return r.runtimeAssets.BootstrapFeatureScene3DModelPreparation, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-zoom.js", r.bootstrapFeatureScene3dZoomPath, r.runtimeAssets.BootstrapFeatureScene3DZoom):
 		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
@@ -989,6 +1000,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureScene3DComputePath(runtime.BootstrapFeatureScene3DCompute)
 	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
 	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
+	r.SetBootstrapFeatureScene3DModelPreparationPath(runtime.BootstrapFeatureScene3DModelPreparation)
 	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
 	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
 	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
@@ -2151,6 +2163,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"webgpu", r.bootstrapFeatureScene3dWebGPUPath, true},
 		{"webgl", r.bootstrapFeatureScene3dWebGLPath, true},
 		{"walk", r.bootstrapFeatureScene3dWalkPath, r.scene3DNeedsWalkChunk()},
+		{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath, true},
 		{"zoom", r.bootstrapFeatureScene3dZoomPath, r.scene3DNeedsZoomChunk()},
 		{"vessel", r.bootstrapFeatureScene3dVesselPath, r.scene3DNeedsVesselChunk()},
 		{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath, r.scene3DNeedsVesselChunk()},

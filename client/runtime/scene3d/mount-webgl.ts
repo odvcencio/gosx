@@ -2563,8 +2563,8 @@
   // resolves to the parsed asset ({objects, points, labels, sprites, html,
   // lights, ...}, all empty arrays on failure) so callers can verify the load
   // actually produced content before committing to a swap.
-  /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ window.__gosx_scene3d_preload_model = function(src) {
-    return loadSceneModelAsset(String(src || "").trim(), null);
+  window.__gosx_scene3d_preload_model = function(src: any, meta: any = null) {
+    return loadSceneModelAsset(String(src || "").trim(), null, meta);
   };
   if (typeof window !== "undefined") {
     window.__gosx_runtime_payload_normalizers = window.__gosx_runtime_payload_normalizers || {};

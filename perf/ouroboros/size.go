@@ -1225,6 +1225,7 @@ func addManifestRuntimeRefs(refs map[string]string, manifest *buildmanifest.Mani
 		{"/gosx/bootstrap-feature-scene3d-compute.js", manifest.Runtime.BootstrapFeatureScene3DCompute.File},
 		{"/gosx/bootstrap-feature-scene3d-decompress.js", manifest.Runtime.BootstrapFeatureScene3DDecompress.File},
 		{"/gosx/bootstrap-feature-scene3d-walk.js", manifest.Runtime.BootstrapFeatureScene3DWalk.File},
+		{"/gosx/bootstrap-feature-scene3d-model-preparation.js", manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File},
 		{"/gosx/bootstrap-feature-scene3d-vessel.js", manifest.Runtime.BootstrapFeatureScene3DVessel.File},
 		{"/gosx/bootstrap-feature-scene3d-ocean-query.js", manifest.Runtime.BootstrapFeatureScene3DOceanQuery.File},
 		{"/gosx/patch.js", manifest.Runtime.Patch.File},
@@ -1422,6 +1423,8 @@ func manifestRefSource(distDir string, manifest *buildmanifest.Manifest, ref str
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCompute)
 	case "/gosx/bootstrap-feature-scene3d-walk.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWalk)
+	case "/gosx/bootstrap-feature-scene3d-model-preparation.js":
+		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DModelPreparation)
 	case "/gosx/bootstrap-feature-scene3d-vessel.js":
 		return runtimeAssetSource(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DVessel)
 	case "/gosx/bootstrap-feature-scene3d-ocean-query.js":
@@ -1755,6 +1758,7 @@ func allManifestAssets(manifest *buildmanifest.Manifest) []buildmanifest.HashedA
 		rt.BootstrapFeatureScene3DWebGPU, rt.BootstrapFeatureScene3DWebGL,
 		rt.BootstrapFeatureScene3DGLTF, rt.BootstrapFeatureScene3DAnimation,
 		rt.BootstrapFeatureScene3DCompute, rt.BootstrapFeatureScene3DDecompress, rt.BootstrapFeatureScene3DWalk,
+		rt.BootstrapFeatureScene3DModelPreparation,
 		rt.BootstrapFeatureScene3DVessel, rt.BootstrapFeatureScene3DOceanQuery,
 		rt.Patch, rt.VideoHLS, rt.StripeBridge, rt.Relay,
 	}

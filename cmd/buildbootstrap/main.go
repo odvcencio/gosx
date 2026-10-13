@@ -633,6 +633,10 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
 	},
 	{
+		name:    "bootstrap-feature-scene3d-model-preparation.js",
+		sources: []source{sourceFile("../runtime/scene3d/model-preparation.ts")},
+	},
+	{
 		name:    "bootstrap-feature-scene3d-timeline.js",
 		sources: []source{sourceFile("../runtime/scene3d/timeline.ts")},
 	},
