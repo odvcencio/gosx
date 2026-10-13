@@ -747,7 +747,8 @@ func buildTorusKnotSoup(key torusKnotKey) *triangleSoup {
 
 // SceneAccelerator answers many ray queries against one static scene graph.
 // Build it once, then call Trace or Raycast per ray. Rebuild it after the graph
-// changes; the accelerator holds a snapshot and never observes later edits.
+// changes with Update; the accelerator owns its triangle buffers and reuses
+// their hierarchies when a named mesh keeps identical geometry.
 type SceneAccelerator struct {
 	prims []accelPrim
 	boxes []aabb
@@ -757,9 +758,18 @@ type SceneAccelerator struct {
 	buildThreshold float64
 	nodesVisited   int
 	// soups holds one prebuilt hierarchy per distinct triangle mesh or polyline, so
-	// ten thousand instances of one mesh build one tree. The key is the address of
-	// the first coordinate, which stays fixed for the life of the snapshot.
-	soups map[*float64]Geometry
+	// ten thousand instances of one mesh build one tree. Complete buffer identities
+	// distinguish sub-slices and meshes that share positions but use other indices.
+	soups             map[soupBufferKey]Geometry
+	meshSoups         map[string]*triangleSoup
+	previousMeshSoups map[string]*triangleSoup
+}
+
+type soupBufferKey struct {
+	positions     *float64
+	positionCount int
+	indices       *int
+	indexCount    int
 }
 
 // NewSceneAccelerator flattens graph and builds a BVH over its raycastable
@@ -773,15 +783,35 @@ func NewSceneAccelerator(graph Graph, options ...RaycastOption) *SceneAccelerato
 		}
 	}
 	accel := &SceneAccelerator{buildThreshold: pointHitRadius(opts)}
+	accel.Update(graph)
+	return accel
+}
+
+// Update replaces the graph, including all world transforms and interaction
+// flags. Unchanged named triangle meshes reuse their exact hierarchies even
+// when fresh vertex slices arrive from JSON. Reuse compares positions and
+// indices against owned snapshots; no revision or immutability promise is
+// required. Removed geometry is released at each update. Update and ray queries
+// must not run concurrently on the same accelerator.
+func (accel *SceneAccelerator) Update(graph Graph) {
+	accel.previousMeshSoups = accel.meshSoups
+	accel.meshSoups = nil
+	accel.soups = nil
+	clear(accel.prims)
+	accel.prims = accel.prims[:0]
 	for _, node := range graph.Nodes {
 		accel.flatten(node, identityTransform())
 	}
-	accel.boxes = make([]aabb, len(accel.prims))
+	accel.previousMeshSoups = nil
+	if cap(accel.boxes) < len(accel.prims) {
+		accel.boxes = make([]aabb, len(accel.prims))
+	} else {
+		accel.boxes = accel.boxes[:len(accel.prims)]
+	}
 	for i := range accel.prims {
 		accel.boxes[i] = sphereAABB(accel.prims[i].world.Position, accel.prims[i].radius)
 	}
 	accel.tree = buildBVH(accel.boxes)
-	return accel
 }
 
 // PrimitiveCount reports how many raycastable primitives the accelerator holds.
@@ -998,7 +1028,7 @@ func (a *SceneAccelerator) flattenMesh(mesh Mesh, parent worldTransform) {
 	scale := meshScaleOrUnit(mesh.Scale)
 	radius, strokes := geometryBounds(mesh.Geometry)
 	a.append(accelPrim{
-		geometry: a.exactGeometry(mesh.Geometry),
+		geometry: a.exactGeometry(mesh.Geometry, strings.TrimSpace(mesh.ID)),
 		world:    world,
 		scale:    scale,
 		id:       strings.TrimSpace(mesh.ID),
@@ -1017,7 +1047,7 @@ func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent world
 	id := strings.TrimSpace(mesh.ID)
 	localRadius, strokes := geometryBounds(mesh.Geometry)
 	stroke := strokes * a.buildThreshold
-	geometry := a.exactGeometry(mesh.Geometry)
+	geometry := a.exactGeometry(mesh.Geometry, id)
 	for i := 0; i < count; i++ {
 		position := vectorAt(mesh.Positions, i, Vector3{})
 		rotation := eulerAt(mesh.Rotations, i, Euler{})
@@ -1044,11 +1074,10 @@ func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent world
 // lives in a cache keyed by the authored numbers, which both the walk and the
 // accelerator read.
 //
-// The cache key is the address of the first coordinate. The accelerator holds a
-// snapshot of the graph, so that address names the same geometry for its whole
-// life. Nothing outside one build reads the cache, so an edit to the graph cannot
-// leave a stale tree behind.
-func (a *SceneAccelerator) exactGeometry(geometry Geometry) Geometry {
+// Within one build, the complete buffer identity distinguishes shared positions
+// with different triangle indices. Between builds, named triangle meshes reuse
+// only after comparing their content with the previous owned snapshot.
+func (a *SceneAccelerator) exactGeometry(geometry Geometry, id string) Geometry {
 	var buffer BufferGeometry
 	switch typed := geometry.(type) {
 	case BufferGeometry:
@@ -1062,7 +1091,7 @@ func (a *SceneAccelerator) exactGeometry(geometry Geometry) Geometry {
 		if len(typed.Points) < 2 {
 			return geometry
 		}
-		key := &typed.Points[0].X
+		key := soupBufferKey{positions: &typed.Points[0].X, positionCount: len(typed.Points) * 3}
 		if cached, ok := a.soups[key]; ok {
 			return cached
 		}
@@ -1078,19 +1107,42 @@ func (a *SceneAccelerator) exactGeometry(geometry Geometry) Geometry {
 	if len(buffer.Positions) < 9 {
 		return geometry
 	}
-	key := &buffer.Positions[0]
+	key := soupBufferKey{positions: &buffer.Positions[0], positionCount: len(buffer.Positions), indexCount: len(buffer.Indices)}
+	if len(buffer.Indices) > 0 {
+		key.indices = &buffer.Indices[0]
+	}
 	if cached, ok := a.soups[key]; ok {
+		if soup, ok := cached.(*triangleSoup); ok {
+			a.rememberMeshSoup(id, soup)
+		}
 		return cached
 	}
-	soup := soupOfBuffer(buffer)
+	if previous := a.previousMeshSoups[id]; id != "" && previous != nil &&
+		slices.Equal(previous.positions, buffer.Positions) && slices.Equal(previous.indices, buffer.Indices) {
+		a.rememberSoup(key, previous)
+		a.rememberMeshSoup(id, previous)
+		return previous
+	}
+	soup := triangleSoup{positions: slices.Clone(buffer.Positions), indices: slices.Clone(buffer.Indices)}
 	soup.buildSoupTree()
 	a.rememberSoup(key, &soup)
+	a.rememberMeshSoup(id, &soup)
 	return &soup
 }
 
-func (a *SceneAccelerator) rememberSoup(key *float64, geometry Geometry) {
+func (a *SceneAccelerator) rememberMeshSoup(id string, soup *triangleSoup) {
+	if id == "" {
+		return
+	}
+	if a.meshSoups == nil {
+		a.meshSoups = make(map[string]*triangleSoup)
+	}
+	a.meshSoups[id] = soup
+}
+
+func (a *SceneAccelerator) rememberSoup(key soupBufferKey, geometry Geometry) {
 	if a.soups == nil {
-		a.soups = make(map[*float64]Geometry, 1)
+		a.soups = make(map[soupBufferKey]Geometry, 1)
 	}
 	a.soups[key] = geometry
 }

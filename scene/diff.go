@@ -706,7 +706,7 @@ func objectTransformPatch(previous, next *ObjectIR) (Command, bool) {
 	probe.X, probe.Y, probe.Z = next.X, next.Y, next.Z
 	probe.RotationX, probe.RotationY, probe.RotationZ = next.RotationX, next.RotationY, next.RotationZ
 	probe.ScaleX, probe.ScaleY, probe.ScaleZ = next.ScaleX, next.ScaleY, next.ScaleZ
-	probe.ParentMatrix = append([]float64(nil), next.ParentMatrix...)
+	probe.ParentMatrix = next.ParentMatrix
 	if !sceneRecordPointerJSONEqual(&probe, next) {
 		return Command{}, false
 	}
@@ -829,8 +829,8 @@ func sceneRecordJSONEqual[T any](a, b T) bool {
 // sceneRecordPointerJSONEqual answers the same question as sceneRecordJSONEqual
 // without copying either value.
 //
-// It rejects unequal plain object transforms, then tries provenJSONEqual and
-// marshals only when neither fast path settles the comparison.
+// It rejects unequal plain object transforms, tries provenJSONEqual, and then
+// rejects known scalar/vertex differences before resorting to marshaling.
 //
 // provenJSONEqual is one-way on purpose: true means the two values
 // must encode to identical JSON, and false means "not proven", never "different".
@@ -856,6 +856,9 @@ func sceneRecordPointerJSONEqual[T any](a, b *T) bool {
 	}
 	if provenJSONEqual(reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()) {
 		return true
+	}
+	if object, ok := any(a).(*ObjectIR); ok && objectRecordJSONDifferent(object, any(b).(*ObjectIR)) {
+		return false
 	}
 	return sceneRecordMarshalEqual(*a, *b)
 }

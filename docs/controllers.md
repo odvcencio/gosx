@@ -116,6 +116,13 @@ return subscription, err
 // scene.NewSceneAccelerator(graph).Raycast(ray) uses the same result type.
 ```
 
+For repeated native picking, keep a `scene.SceneAccelerator` and call
+`accelerator.Update(nextGraph)` after scene changes. It rebuilds world transforms
+and interaction flags while reusing triangle hierarchies for named meshes whose
+positions and indices are unchanged. Triangle buffers are owned snapshots, so
+fresh JSON slices and mutable source buffers are safe. Removed meshes are released
+on update; do not update and query the same accelerator concurrently.
+
 The Scene3D mount receives `gosx:scene3d:pick-request` and emits
 `gosx:scene3d:input` with `detail.kind == "ray"` and a correlated ray/pick in
 `detail.input`. `PickRequest.Ray` has the same JSON representation as `scene.Ray`.
