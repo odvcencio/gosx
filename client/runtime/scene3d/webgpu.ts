@@ -19888,6 +19888,7 @@
         materialFrame.data.subarray(0, (slotIndex * materialFrame.stride + 64) / 4));
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       materialFrame.signatures = materials.map(webGPUMaterialSignature);
+      if (objects.some(function(object: any) { return !materials[object.materialIndex]; })) materialFrame.signatures.push(webGPUMaterialSignature(null));
       materialFrame.groups = [];
       for (var index = 0; index < materialFrame.signatures.length; index++) {
         for (var shadow = 0; shadow < 2; shadow++) {

@@ -3,8 +3,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const { createBoardWebGPUHarness, flushAsyncWork, deviceCallSnapshot } = require("./runtime-test-harness.js");
 
-async function materialHarness(selena = false, count = 50, renderBundles = true) {
-  const harness = await createBoardWebGPUHarness({ fresh: true, fakeDeviceOptions: { renderBundles, validateBindings: true } });
+async function materialHarness(selena = false, count = 50, renderBundles = true, fresh = true) {
+  const harness = await createBoardWebGPUHarness({ fresh, fakeDeviceOptions: { renderBundles, validateBindings: true } });
   const api = harness.env.context.__gosx_scene3d_api;
   const shader = `struct Uniforms { mvp: mat4x4f, modelMatrix: mat4x4f, baseColor: vec4f, };
     @group(0) @binding(0) var<uniform> u: Uniforms;
@@ -277,6 +277,18 @@ test("bundle reuse preserves transparent order below the planner hash precision"
   b.meshObjects[0].depthCenter = 1.0000001; b.meshObjects[1].depthCenter = 1;
   await h.render(b);
   assert.ok(h.renderer.diagnostics().bundleDryRuns > dryRuns, "exact transparent order changes recorded commands");
+});
+
+for (const fresh of [true, false]) test(`fallback materials survive bundle replay (${fresh ? 'source' : 'generated'})`, async t => {
+  const h = await materialHarness(false, 1, true, fresh);
+  t.after(() => h.renderer.dispose());
+  const b = h.bundle(); b.materials = []; b.meshObjects[0].materialIndex = 4;
+  await h.render(b);
+  const group = h.fake.state.renderBundles.at(-1).recorded.bindGroups.find(c => c.slot === 1).group;
+  const uniform = group.desc.entries.find(e => e.binding === 0).resource.buffer;
+  await h.render(b);
+  assert.notEqual(uniform.destroyed, true, 'a live fallback material must remain valid during replay');
+  assert.equal(h.mount.getAttribute('data-gosx-scene3d-webgpu-bundle-state'), 'replayed');
 });
 
 module.exports = { materialHarness };
