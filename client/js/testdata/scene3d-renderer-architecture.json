@@ -719,7 +719,7 @@
     "../runtime/scene3d/webgpu.ts": 19714,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 208,
     "../runtime/scene3d/hydrate-input.ts": 90,
-    "../runtime/scene3d/mount-webgl.ts": 5390,
+    "../runtime/scene3d/mount-webgl.ts": 5401,
     "../runtime/scene3d/mount.ts": 3938,
     "../runtime/scene3d/webgl-ocean.ts": 243,
     "../runtime/scene3d/webgpu-ocean.ts": 237,
