@@ -19937,7 +19937,13 @@
         materialFrame.refs = refs;
         materialFrame.resourceRevision++;
       }
-      return prepared.signature + "|" + JSON.stringify(materialFrame.signatures) + "|" +
+      var commands = ["opaque", "alpha", "additive"].map(function(pass: string) {
+        return prepared.pbrPasses[pass].map(function(object: any) {
+          return [object.id, object.materialIndex, object.depthWrite, object.doubleSided,
+            sceneWebGPUObjectReflected(object), object.receiveShadow, object.vertexOffset, object.vertexCount];
+        });
+      });
+      return prepared.signature + "|" + JSON.stringify(commands) + "|" + JSON.stringify(materialFrame.signatures) + "|" +
         materialFrame.textureRevision + "|" + materialFrame.resourceRevision;
     }
     return null;

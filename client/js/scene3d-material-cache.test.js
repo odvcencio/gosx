@@ -51,6 +51,7 @@ for (const selena of [false, true]) test(`persistent ${selena ? "Selena" : "name
     }
   }
   assert.ok(pending <= 2);
+  assert.ok(h.fake.state.renderPasses.length > 0);
   assert.ok(Number(h.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-replays")) > 0);
   if (selena) {
     h.state.materials[0].customUniforms = { baseColor: [0.125, 0.25, 0.5, 1] };
@@ -197,6 +198,7 @@ for (const bundles of [false, true]) test(`400 retained meshes batch uploads (bu
   const beforeDiagnostics = h.renderer.diagnostics();
   await h.render();
   const after = deviceCallSnapshot(h.fake);
+  assert.ok(h.fake.state.submitCount > 0, "frames submit rendered commands");
   assert.ok(after.writeBufferCalls - before.writeBufferCalls <= 8,
     `expected a small constant, got ${after.writeBufferCalls - before.writeBufferCalls}`);
   assert.equal(after.bindGroups, before.bindGroups);
@@ -204,6 +206,76 @@ for (const bundles of [false, true]) test(`400 retained meshes batch uploads (bu
     "steady frame never calls createMaterialBindGroup");
   if (bundles) assert.equal(h.renderer.diagnostics().bundleDryRuns, beforeDiagnostics.bundleDryRuns,
     "unchanged planner and materials replay without the dry run");
+});
+
+test("material revisions refresh packed fields once and retire the replaced block", async t => {
+  const h = await materialHarness(false, 2, false);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 3; i++) await h.render();
+  const old = h.fake.state.renderPasses.at(-1).bindGroups.find(c => c.slot === 1)
+    .group.desc.entries.find(e => e.binding === 0).resource.buffer;
+  const b = h.bundle(); b.materials[0].revision = 1; b.materials[0].roughness = 0.625;
+  const calls = h.renderer.diagnostics().materialBindGroupCalls;
+  await h.render(b);
+  const updated = h.fake.state.writeBufferCalls.filter(c => c.data?.byteLength === 288).at(-1);
+  assert.equal(updated.data[3], 0.625);
+  assert.equal(old.destroyed, true);
+  assert.equal(h.renderer.diagnostics().materialBindGroupCalls, calls + 1);
+  await h.render(b);
+  assert.equal(h.renderer.diagnostics().materialBindGroupCalls, calls + 1);
+  const writes = h.fake.state.writeBufferCalls.filter(c => c.buffer === updated.buffer);
+  assert.equal(writes.length, 1);
+});
+
+test("model arena offsets preserve transforms and growth refreshes cached bindings", async t => {
+  const h = await materialHarness(false, 2, false);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 3; i++) await h.render();
+  const b = h.bundle();
+  b.meshObjects[0].modelMatrix[12] = 3.25;
+  b.meshObjects[1].modelMatrix[12] = -2.5;
+  await h.render(b);
+  const bound = h.fake.state.renderPasses.at(-1).bindGroups.filter(c => c.slot === 1 && c.group.desc.entries.some(e => e.binding === 19));
+  assert.deepEqual(bound.map(c => c.dynamicOffsets[0]), [256, 512]);
+  const arena = bound[0].group.desc.entries.find(e => e.binding === 19).resource.buffer;
+  const data = h.fake.state.writeBufferCalls.filter(c => c.buffer === arena).at(-1).data;
+  assert.equal(data[64 + 12], 3.25); assert.equal(data[128 + 12], -2.5);
+  const material = bound[0].group.desc.entries.find(e => e.binding === 0).resource.buffer;
+  const big = h.bundle();
+  big.meshObjects = Array.from({ length: 8 }, (_, i) => ({ ...big.meshObjects[i % 2], id: 'grown-' + i,
+    modelMatrix: new Float32Array(big.meshObjects[i % 2].modelMatrix) }));
+  await h.render(big);
+  assert.equal(arena.destroyed, true);
+  const groups = h.fake.state.renderPasses.at(-1).bindGroups.filter(c => c.slot === 1);
+  assert.ok(groups.every(c => c.group.desc.entries.find(e => e.binding === 19).resource.buffer !== arena));
+  assert.ok(groups.every(c => c.group.desc.entries.find(e => e.binding === 0).resource.buffer === material));
+});
+
+test("bundle reuse invalidates for depth overrides", async t => {
+  const h = await materialHarness(false, 2, true);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 4; i++) await h.render();
+  const before = h.renderer.diagnostics().bundleDryRuns;
+  const b = h.bundle(); b.meshObjects[0].depthWrite = false;
+  await h.render(b);
+  assert.ok(h.renderer.diagnostics().bundleDryRuns > before, "depth override changes recorded pipeline commands");
+  const groups = h.fake.state.renderBundles.at(-1);
+  assert.ok(groups.recorded.pipelines.some(p => p.desc.depthStencil.depthWriteEnabled === false));
+});
+
+
+test("bundle reuse preserves transparent order below the planner hash precision", async t => {
+  const h = await materialHarness(false, 2, true);
+  t.after(() => h.renderer.dispose());
+  const b = h.bundle();
+  Object.assign(b.materials[0], { renderPass: "alpha", blendMode: "alpha", opacity: 0.5 });
+  for (const object of b.meshObjects) object.renderPass = "alpha";
+  b.meshObjects[0].depthCenter = 1; b.meshObjects[1].depthCenter = 1.0000001;
+  for (let i = 0; i < 4; i++) await h.render(b);
+  const dryRuns = h.renderer.diagnostics().bundleDryRuns;
+  b.meshObjects[0].depthCenter = 1.0000001; b.meshObjects[1].depthCenter = 1;
+  await h.render(b);
+  assert.ok(h.renderer.diagnostics().bundleDryRuns > dryRuns, "exact transparent order changes recorded commands");
 });
 
 module.exports = { materialHarness };

@@ -1394,7 +1394,7 @@
       const reflected = object.directVertices && object.modelMatrix &&
         typeof sceneAffineDeterminant === "function" && sceneAffineDeterminant(object.modelMatrix, 0) < 0;
       return (material.shaderBackend || "pbr") + ":" + (material.detail ? "1" : "0") + ":" +
-        (object.skin ? "1" : "0") + ":" + (reflected ? "1" : "0") + ":" +
+        (object.skin ? "1" : "0") + ":" + (object.doubleSided ? "1" : "0") + ":" + (reflected ? "1" : "0") + ":" +
         (material.customVertex || material.customVertexWGSL || "") + ":" +
         (material.customFragment || material.customFragmentWGSL || "");
     };
