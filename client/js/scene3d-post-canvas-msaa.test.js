@@ -9,7 +9,8 @@ async function mountPost(extra = {}) {
   const env = H.createContext({elements: [mount], enableWebGL2: true, disableCanvas2D: true,
     manifest: {engines: [{id: "post-engine", component: "GoSXScene3D", kind: "surface", mountId: mount.id,
       props: {width: 640, height: 360, adaptiveQuality: false,
-        scene: {objects: [{kind: "box"}], postEffects: [{kind: "bloom"}, {kind: "toneMapping", mode: "aces"}]}, ...extra}}]}});
+        scene: {objects: [{id: "triangle", kind: "gltf-mesh", materialKind: "standard", wireframe: false,
+          vertices: {positions: [-1, -1, 0, 1, -1, 0, 0, 1, 0], normals: [0, 0, 1, 0, 0, 1, 0, 0, 1]}}], postEffects: [{kind: "bloom"}, {kind: "toneMapping", mode: "aces"}]}, ...extra}}]}});
   env.context.WebGL2RenderingContext = H.FakeWebGLContext;
   const raf = H.installManualRAF(env.context);
   H.runScript(H.bootstrapSource, env.context, "bootstrap.js");
@@ -46,5 +47,8 @@ test("turning initial post effects off retains antialiasing through FXAA", async
   s.raf.flush(64);
   assert.equal(state.postEffects.length, 0, "fallback must not change authored effects");
   assert.equal(s.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+  const outputModes = s.gl.ops.filter(op => op[0] === "uniform1i" && op[1] === "u_outputLinear");
+  assert.ok(outputModes.length > 0);
+  assert.equal(outputModes.at(-1)[2], 0, "FXAA fallback filters display colors without changing tone mapping or exposure");
   assert.equal(s.env.consoleLogs.error.length, 0);
 });

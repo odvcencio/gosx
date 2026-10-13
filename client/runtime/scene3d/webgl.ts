@@ -4457,6 +4457,7 @@
     var atmospherePost = createSceneAtmospherePostWebGL({ gl, quad, getProgram, beginPostPass });
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     function postFrameContext(projection, view, lights) { return projection && projection.projection ? projection : { projection: projection, view: view, lights: lights }; }
+    var currentLinearInput = true;
     var currentWidth = 0;
     var currentHeight = 0;
     var hdrDegradationReported = false;
@@ -4807,7 +4808,8 @@
       // Returns { width, height, factor } — the scaled render target dims plus
       // the scale factor applied. Callers must use these dims for gl.viewport,
       // uniforms like u_viewportHeight, and the apply() call.
-	      begin: function(canvasW, canvasH, maxPixels, selective = false) {
+	      begin: function(canvasW, canvasH, maxPixels, selective = false, linearInput = true) {
+        currentLinearInput = linearInput;
         var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
         var sw = Math.max(1, Math.floor(canvasW * factor));
         var sh = Math.max(1, Math.floor(canvasH * factor));
@@ -4855,7 +4857,7 @@
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
-          linearSceneInput: true,
+          linearSceneInput: currentLinearInput,
           hdrIntermediate: hdrSupported,
           intermediateFormat: sceneFBO ? sceneFBO.colorFormat : "unallocated",
           degraded: Boolean(sceneFBO && !hdrSupported),
@@ -7584,6 +7586,7 @@
 
   function createScenePBRRenderer(gl, canvas) {
     let selectiveBloom = false;
+    let canvasFXAAFallback = false;
 
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -8727,12 +8730,6 @@
         return "empty";
       }
 
-      // Context attributes cannot change after creation. If the initial post
-      // chain disappears, retain edge filtering without rebuilding the canvas.
-      if (scenePBRPostCanvasAntialiasFallback.has(gl) && !(bundle.postEffects && bundle.postEffects.length)) {
-        bundle = Object.assign({}, bundle, { postEffects: [{ kind: "fxaa" }] });
-      }
-
       const preparedScene = typeof prepareScene === "function"
         ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
           mount: canvas && canvas.parentNode || null,
@@ -8747,6 +8744,10 @@
         }
       }
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
+      // Context attributes are fixed. Filter display colors only when the
+      // original path would render directly, including implicit post effects.
+      canvasFXAAFallback = scenePBRPostCanvasAntialiasFallback.has(gl) && !(scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode).postEffects || []).length;
+      if (canvasFXAAFallback) bundle = Object.assign({}, bundle, { postEffects: [{ kind: "fxaa" }] });
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
@@ -8928,7 +8929,7 @@
       transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
       if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
       var usePostProcessing = postEffects.length > 0;
-      frameLinear = usePostProcessing;
+      frameLinear = usePostProcessing && !canvasFXAAFallback;
 
       // renderW/renderH reflect the actual render target. When postfx is
       // active with a cap, these may be smaller than canvas dims. All
@@ -8940,10 +8941,10 @@
 
       if (usePostProcessing) {
         textureCache._sceneTextureEpoch++;
-        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels, selectiveBloom);
+        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels, selectiveBloom, frameLinear);
         renderW = scaled.width;
         renderH = scaled.height;
-        renderTarget = Object.assign({}, scaled, { linear: true });
+        renderTarget = Object.assign({}, scaled, { linear: frameLinear });
         var temporalRequested = false, spatialRequested = false;
         for (var postIndex = 0; postIndex < postEffects.length; postIndex++) {
           temporalRequested = temporalRequested || postEffects[postIndex].kind === "taa";
@@ -8992,9 +8993,9 @@
       if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
         if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
         skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
-          camera: cam, aspect: aspect, linear: usePostProcessing }) : "unavailable";
+          camera: cam, aspect: aspect, linear: frameLinear }) : "unavailable";
       }
-      sceneCloudWebGLDraw(skyResources, gl, { environment: bundle.environment, meta: frameMeta, view: viewMatrix, camera: cam, aspect, linear: usePostProcessing, timeSeconds: performance.now()/1000 });
+      sceneCloudWebGLDraw(skyResources, gl, { environment: bundle.environment, meta: frameMeta, view: viewMatrix, camera: cam, aspect, linear: frameLinear, timeSeconds: performance.now()/1000 });
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
       // Camera matrices were already computed above the shadow pass so CSM
@@ -9031,7 +9032,7 @@
       gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, cam.z);
 
       // Upload exposure and tone mapping mode (disabled when post-processing handles it).
-      scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
+      scenePBRUploadExposure(gl, uniforms, bundle.environment, frameLinear);
 
       // Upload lights and environment once per frame.
       scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment, _frameLightsHash);
@@ -9046,9 +9047,9 @@
       drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta && frameMeta.frameRequest);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
-      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: usePostProcessing, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
+      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
-        meta: frameMeta, aspect, linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+        meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
       // Shared water must be present in the opaque capture sampled by glass.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
       // The ocean owns a program and texture unit zero. Restore the PBR pass
