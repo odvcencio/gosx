@@ -1654,15 +1654,16 @@ func scene3DChunkGateRenderer(t *testing.T, props any) string {
 	t.Helper()
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
-		Bootstrap:                         buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
-		BootstrapRuntime:                  buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
-		BootstrapFeatureEngines:           buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
-		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
-		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
-		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
-		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
-		BootstrapFeatureScene3DVessel:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-vessel.js", Hash: "vessel"},
-		BootstrapFeatureScene3DOceanQuery: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-query.js", Hash: "query"},
+		Bootstrap:                               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:                 buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:                 buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCompute:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
+		BootstrapFeatureScene3DDecompress:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		BootstrapFeatureScene3DWalk:             buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
+		BootstrapFeatureScene3DModelPreparation: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-model-preparation.js", Hash: "preparation"},
+		BootstrapFeatureScene3DVessel:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-vessel.js", Hash: "vessel"},
+		BootstrapFeatureScene3DOceanQuery:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-query.js", Hash: "query"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1942,7 +1943,7 @@ func TestScene3DModelPreparationURLIsAdvertisedWithoutEagerFetch(t *testing.T) {
 	if err := r.ApplyBuildManifest(m, "/gosx/assets"); err != nil {
 		t.Fatal(err)
 	}
-	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"scene":{}}`)}, gosx.Text(""))
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"scene":{},"modelPreparation":true}`)}, gosx.Text(""))
 	scripts := gosx.RenderHTML(r.BootstrapScript())
 	url := "/gosx/assets/runtime/bootstrap-feature-scene3d-model-preparation.hash.js"
 	if !strings.Contains(scripts, `data-gosx-scene3d-model-preparation-url="`+url+`"`) {
@@ -1953,5 +1954,29 @@ func TestScene3DModelPreparationURLIsAdvertisedWithoutEagerFetch(t *testing.T) {
 	}
 	if asset, ok := r.runtimeScriptAsset(url); !ok || asset.Hash != "preparation" {
 		t.Fatal("preparation lost manifest identity")
+	}
+}
+
+func TestScene3DModelPreparationURLRequiresExplicitOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		props map[string]any
+		want  bool
+	}{
+		{"absent", map[string]any{}, false},
+		{"null", map[string]any{"modelPreparation": nil}, false},
+		{"false", map[string]any{"modelPreparation": false}, false},
+		{"wrong-type", map[string]any{"modelPreparation": "true"}, false},
+		{"true", map[string]any{"modelPreparation": true}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			markup := scene3DChunkGateRenderer(t, tc.props)
+			if strings.Contains(markup, "data-gosx-scene3d-model-preparation-url=") != tc.want {
+				t.Fatalf("preparation gate: %s", markup)
+			}
+			if strings.Contains(markup, `src="/gosx/bootstrap-feature-scene3d-model-preparation`) {
+				t.Fatal("preparation executed eagerly")
+			}
+		})
 	}
 }

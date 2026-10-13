@@ -42,12 +42,10 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
   const records = new Set<any>();
   return new Promise((resolve, reject) => {
     let done = false, decoded = false;
-    let observer: MutationObserver;
     const alive = () => mount.isConnected && mount.__gosxScene3DState === state && mount.__gosxScene3DHandle === handle && state._crowdRenderer === renderer;
     function close(error: any = null) {
       if (done) return;
       done = true;
-      observer?.disconnect();
       canvas.removeEventListener('gosx:scene3d:resource-ready', check);
       signal?.removeEventListener('abort', cancel);
       error ? reject(error) : resolve({ models: selected.length, textures: records.size });
@@ -67,10 +65,7 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
     }
     canvas.addEventListener('gosx:scene3d:resource-ready', check);
     signal?.addEventListener('abort', cancel, { once: true });
-    observer = new MutationObserver(check);
-    observer.observe(mount, { attributes: true, attributeFilter: ['data-gosx-scene3d-command-ready', 'data-gosx-scene3d-renderer'] });
-    // Observe ancestor removal too: removing an entire island must end the wait.
-    observer.observe(mount.ownerDocument, { childList: true, subtree: true });
+    // Surface owns mount removal/replacement throughout chunk loading and this wait.
     check();
     if (done) return;
     Promise.all(selected.map(async req => {

@@ -92,7 +92,7 @@ test('mount replacement, island removal, renderer disposal and pending-map cance
     if (kind === 'removal') h.mount.isConnected = false;
     if (kind === 'renderer') h.generation.disposed = true;
     if (kind === 'cancel') controller.abort();
-    if (kind === 'renderer') h.notify(); else h.observers[0].callback();
+    h.notify();
     await rejected; assert.equal(h.listeners.size, 0); assert.ok(h.observers.every(observer => observer.closed));
   }
 });

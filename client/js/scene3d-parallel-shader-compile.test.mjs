@@ -830,6 +830,7 @@ test("points draw skips a late authored program until completion without queryin
 function importedBatchCapabilityHarness(h) {
   Object.assign(h.context, {
     gl: h.gl, instancedProgram: null, instancedProgramFailed: false,
+    textureCache: Object.assign(new Map(), { _gosxGeneration: { disposed: false } }),
     createSceneWebGLFrameTimer: () => ({}),
     prepareCrowdAtlas() {}, prepareCrowdMotionShaders() {}, diagnostics() {}, textureVariantContext: {},
   });

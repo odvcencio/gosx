@@ -25,3 +25,21 @@ func TestModelPreparationSnapshotValidation(t *testing.T) {
 		t.Fatalf("snapshot changed: %#v", got)
 	}
 }
+
+func TestPropsModelPreparationSerializesOnlyAuthoredCapability(t *testing.T) {
+	for _, value := range []*bool{nil, Bool(false), Bool(true)} {
+		props := Props{ModelPreparation: value}
+		data, err := props.MarshalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		got, present := payload["modelPreparation"]
+		if present != (value != nil) || value != nil && got != *value {
+			t.Fatalf("capability: %#v", payload)
+		}
+	}
+}

@@ -3,9 +3,13 @@
 `scene.Surface.PrepareModels` prepares selected assets for an existing mounted
 renderer without adding scene nodes. Invoke it from a goroutine before admitting
 actors whose first visible frame must include their geometry and material maps.
-The preparation module downloads only when this API is invoked.
+Enable `ModelPreparation` on the mounted scene to advertise this optional
+capability. The preparation module downloads only when this API is invoked;
+ordinary scenes do not advertise it or pay its wire cost.
 
 ```go
+props.ModelPreparation = scene.Bool(true)
+
 ctx, cancel := context.WithTimeout(parent, 30*time.Second)
 defer cancel()
 

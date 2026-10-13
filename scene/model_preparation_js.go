@@ -11,7 +11,8 @@ import (
 )
 
 // PrepareModels loads only the selected models and their material maps using
-// this mount's backend and texture-variant scope. Call from a goroutine. It
+// this mount's backend and texture-variant scope. Enable Props.ModelPreparation
+// on the mount and call from a goroutine. It
 // returns after decoding and native map upload, or on failure, context cancel,
 // Surface.Dispose, or renderer replacement. Shared fetches remain cache-owned.
 func (s *Surface) PrepareModels(ctx context.Context, requests []ModelPreparation) (result ModelPreparationResult, err error) {

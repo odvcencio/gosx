@@ -484,6 +484,7 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	// The shared desktop/touch input helper belongs to the existing lazy
 	// walking chunk and does not extend the historical minimal-runtime receipt.
 	wantFullOnly = uniqueStrings(append(wantFullOnly,
+		"__gosx_scene3d_model_preparation_api", // Opt-in mounted model/material preparation authority.
 		"__gosx_scene3d_ocean_query", "__gosx_scene3d_ocean_query_api", "__gosx_scene3d_ocean_waves",
 		"__gosx_scene3d_vessel_api", "__gosx_scene3d_vessel_input", "__gosx_scene3d_vessel_model",
 		"__gosx_scene3d_vessel_physics", "__gosx_scene3d_vessel_wake", "__gosx_scene3d_walk_input", "__gosx_scene3d_walk_surfaces"))

@@ -191,6 +191,8 @@ type Props struct {
 	MaxFrameRate    float64 `json:"maxFrameRate,omitempty"`
 	MaxFPS          float64 `json:"maxFPS,omitempty"`
 	FrameIntervalMS float64 `json:"frameIntervalMS,omitempty"`
+	// ModelPreparation advertises the opt-in Surface.PrepareModels authority.
+	ModelPreparation *bool `json:"modelPreparation,omitempty"`
 	// RenderBeforeModels lets the scene draw the first frame without waiting for models; models appear when loaded.
 	RenderBeforeModels *bool `json:"renderBeforeModels,omitempty"`
 	// FramePacing selects the render-loop pacing policy.
@@ -1970,6 +1972,7 @@ func (p Props) legacyBaseProps() map[string]any {
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
 	setBool(out, "renderBeforeModels", p.RenderBeforeModels)
+	setBool(out, "modelPreparation", p.ModelPreparation)
 	setString(out, "framePacing", p.FramePacing)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
 	if p.MaxPixels > 0 {

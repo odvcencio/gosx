@@ -2163,7 +2163,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 		{"webgpu", r.bootstrapFeatureScene3dWebGPUPath, true},
 		{"webgl", r.bootstrapFeatureScene3dWebGLPath, true},
 		{"walk", r.bootstrapFeatureScene3dWalkPath, r.scene3DNeedsWalkChunk()},
-		{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath, true},
+		{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath, r.scene3DNeedsModelPreparationChunk()},
 		{"zoom", r.bootstrapFeatureScene3dZoomPath, r.scene3DNeedsZoomChunk()},
 		{"vessel", r.bootstrapFeatureScene3dVesselPath, r.scene3DNeedsVesselChunk()},
 		{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath, r.scene3DNeedsVesselChunk()},
@@ -2745,6 +2745,22 @@ func (r *Renderer) scene3DNeedsZoomChunk() bool {
 			ControlZoom bool `json:"controlZoom"`
 		}
 		if json.Unmarshal(entry.Props, &props) == nil && props.ControlZoom {
+			return true
+		}
+	}
+	return false
+}
+
+// Preparation is advertised only for mounts that opt in through typed props.
+func (r *Renderer) scene3DNeedsModelPreparationChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		var props struct {
+			ModelPreparation bool `json:"modelPreparation"`
+		}
+		if json.Unmarshal(entry.Props, &props) == nil && props.ModelPreparation {
 			return true
 		}
 	}
