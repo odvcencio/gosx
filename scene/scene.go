@@ -227,8 +227,10 @@ type Props struct {
 	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	// MaxPixels caps the render target by total backing pixels after DPR.
 	// Zero leaves the render target governed by the DPR cap alone.
-	MaxPixels             int     `json:"maxPixels,omitempty"`
-	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
+	MaxPixels           int     `json:"maxPixels,omitempty"`
+	MinDevicePixelRatio float64 `json:"minDevicePixelRatio,omitempty"`
+	// AdaptiveQuality defaults to true and may reduce effects and resolution.
+	// Set Bool(false) to keep quality fixed.
 	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
 	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
 	AdaptiveWarmupFrames  int     `json:"adaptiveWarmupFrames,omitempty"`

@@ -1484,6 +1484,9 @@ func Page() Node {
 			</ul>
 			<h3>Frame-time governor</h3>
 			<p>
+				AdaptiveQuality is on by default. The tier governor may reduce effects and resolution under load, then recover after sustained clean frame cadence. Set AdaptiveQuality to scene.Bool(false) to keep quality fixed. The full tier starts at the capability DPR cap; the main-canvas pixel budget still applies.
+			</p>
+			<p>
 				The adaptive block reacts to delivered frame time.
 			</p>
 			{CodeBlock("go", data.sample044)}
