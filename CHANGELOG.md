@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.57.14
+
+- Preserve live WebGL sampler bindings when PNG, HDR and KTX2 textures upload
+  asynchronously. Settled texture resources invalidate the retained material
+  cache; failed uploads restore bindings and report terminal failure.
+
 ## v0.57.13
 
 - Keep browser telemetry fetches pending until the native response body has

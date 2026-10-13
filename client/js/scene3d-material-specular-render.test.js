@@ -91,6 +91,8 @@ function setupWebGLRenderer() {
       "var SCENE_TEXTURE_UNIT_MATERIALS", "function sceneTextureMipBytes"),
     sliceBetween(source, "function scenePBRSRGBChannelToLinear", "const SCENE_PBR_VERTEX_SOURCE"),
     sliceBetween(source, "function scenePBRDielectricF0", "function scenePBRCacheBaseUniforms"),
+    sliceBetween(source, "function scenePBRTextureLive", "// scenePBRUploadKTX2Texture"),
+    sliceBetween(source, "function scenePBRUploadImageTexture", "function scenePBRTextureDescriptor"),
     sliceBetween(source, "var sceneGLConstantCache", "function scenePBRHDRIBLAvailable"),
     sliceBetween(source, "function scenePBRHDRIBLTextureMinimum", "function scenePBRFragmentSourceForContext"),
     sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRTextureLayoutForFrame"),
@@ -1627,6 +1629,7 @@ test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidat
     TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243, CLAMP_TO_EDGE: 33071,
     LINEAR: 9729, LINEAR_MIPMAP_LINEAR: 9987, RGBA: 6408, UNSIGNED_BYTE: 5121,
     createTexture: () => ({}), bindTexture() {}, texImage2D() {},
+    getParameter() { return null; }, activeTexture() {},
     texParameteri: (target, axis, value) => parameters.push([axis, value]),
     generateMipmap: () => mipmaps++, };
   context.cache = new Map();
@@ -1671,9 +1674,11 @@ test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidat
 test("KTX2 material uploads restore the declared wrap modes after decoder defaults", async () => {
   const source = readSceneRendererBackendSrc("webgl");
   const context = createSceneCoreContext();
-  runFragment(context, sliceBetween(source, "function scenePBRUploadKTX2Texture", "function scenePBRLinearHDRPixels"), "ktx2-upload.js");
+  runFragment(context, sliceBetween(source, "function scenePBRTextureLive", "function scenePBRLinearHDRPixels"), "ktx2-upload.js");
+  runFragment(context, sliceBetween(source, "function scenePBRTextureParameters", "function scenePBRTextureMap"), "texture-parameters.js");
   const parameters = new Map();
   const gl = { TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067, TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243,
+    getParameter() { return null; }, activeTexture() {}, bindTexture() {},
     TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240, LINEAR: 9729,
     texParameteri: (target, axis, value) => parameters.set(axis, value) };
   context.scenePBRKTX2API = () => ({ load: async () => ({ faces: 1, levels: [{}], width: 63, height: 45 }),
@@ -1710,4 +1715,159 @@ test("glTF volume thickness texture keeps linear green data and authored wrappin
   assert.equal(descriptor.channels, "g");
   assert.equal(descriptor.wrapS, 33071);
   assert.equal(descriptor.wrapT, 33648);
+});
+
+// Execute the production loaders and uploadMaterial together: a texture that
+// arrives after another material is cached must not replace its live sampler.
+function setupTextureUploadHarness() {
+  const { context } = setupWebGLRenderer();
+  const source = readSceneRendererBackendSrc("webgl");
+  runFragment(context, sliceBetween(source, "function scenePBRTextureLive", "// Bind a texture record"), "texture-upload.js");
+  const images = [];
+  context.Image = class { constructor() { this.width = 4; this.height = 4; images.push(this); } };
+  context.scenePBRTextureLooksHDR = url => url.endsWith(".hdr");
+  context.scenePBRIsKTX2URL = url => url.endsWith(".ktx2");
+  context.scenePBRKTX2API = () => null;
+  context.sceneParseRadianceHDR = () => ({ width: 1, height: 1, data: [1, 2, 3] });
+  const gl = callIn(context, "recordingGL()");
+  Object.assign(gl, {
+    TEXTURE0: 33984, TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067,
+    TEXTURE_CUBE_MAP_POSITIVE_X: 34069, ACTIVE_TEXTURE: 34016,
+    TEXTURE_BINDING_2D: 32873, TEXTURE_BINDING_CUBE_MAP: 34068,
+    TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243, TEXTURE_WRAP_R: 32882,
+    CLAMP_TO_EDGE: 33071, LINEAR: 9729, LINEAR_MIPMAP_LINEAR: 9987,
+    RGBA: 6408, RGBA8: 32856, SRGB8_ALPHA8: 35907, RGBA16F: 34842,
+    FLOAT: 5126, UNSIGNED_BYTE: 5121,
+    activeUnit: 33984, bindings: new Map(), bindingCalls: 0, uploads: 0,
+    createTexture: () => ({}), getExtension: () => ({}),
+    getParameter(name) {
+      if (name === this.ACTIVE_TEXTURE) return this.activeUnit;
+      const target = name === this.TEXTURE_BINDING_2D ? this.TEXTURE_2D : this.TEXTURE_CUBE_MAP;
+      return this.bindings.get(`${this.activeUnit}:${target}`) || null;
+    },
+    activeTexture(unit) { this.activeUnit = unit; },
+    bindTexture(target, texture) {
+      this.bindingCalls++;
+      this.bindings.set(`${this.activeUnit}:${target}`, texture);
+    },
+    texImage2D() { this.uploads++; }, texParameteri() {}, generateMipmap() {},
+  });
+  let notifications = 0;
+  context.canvas = { dispatchEvent() { notifications++; } };
+  runFragment(context, sliceBetween(source, "const textureCache = Object.assign(new Map()", "// Persistent shadow pass state"), "renderer-texture-generation.js");
+  const cache = callIn(context, "textureCache");
+  const uniforms = callIn(context, "uniformSlots()");
+  const load = (url, descriptor) => context.scenePBRLoadTexture(gl, url, cache, descriptor, "base-color", "srgb");
+  const resident = load("resident.png");
+  images.at(-1).onload();
+  const material = { color: "#ffffff", texture: "resident.png" };
+  context.uploadMaterial(gl, uniforms, material, cache);
+  const draw = () => context.uploadMaterial(gl, uniforms, material, cache);
+  const binding = target => gl.getParameter(target === gl.TEXTURE_CUBE_MAP ? gl.TEXTURE_BINDING_CUBE_MAP : gl.TEXTURE_BINDING_2D);
+  return { context, gl, cache, images, uniforms, resident, load, draw, binding,
+    notifications: () => notifications };
+}
+
+test("creating a pending texture preserves the current material's 2D and cube samplers", () => {
+  const h = setupTextureUploadHarness();
+  const cube = {};
+  h.gl.bindTexture(h.gl.TEXTURE_CUBE_MAP, cube);
+  h.load("pending.png");
+  assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+  assert.equal(h.binding(h.gl.TEXTURE_CUBE_MAP), cube);
+  h.load("pending-cube.ktx2", { uri: "pending-cube.ktx2", view: "cube" });
+  assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+  assert.equal(h.binding(h.gl.TEXTURE_CUBE_MAP), cube);
+});
+
+test("a delayed PNG preserves cached samplers and invalidates exactly one material epoch", () => {
+  const h = setupTextureUploadHarness();
+  const delayed = h.load("delayed.png");
+  const image = h.images.at(-1);
+  // The currently active unit can belong to a different, settled material.
+  h.gl.activeTexture(h.gl.TEXTURE0 + 5);
+  const other = {};
+  h.gl.bindTexture(h.gl.TEXTURE_2D, other);
+  const epoch = h.cache._sceneTextureEpoch, notices = h.notifications();
+  image.onload();
+  assert.equal(delayed.loaded, true);
+  assert.equal(h.gl.activeUnit, h.gl.TEXTURE0 + 5);
+  assert.equal(h.binding(h.gl.TEXTURE_2D), other);
+  assert.equal(h.cache._sceneTextureEpoch, epoch + 1);
+  assert.equal(h.notifications(), notices + 1);
+  const before = h.gl.bindingCalls;
+  h.draw();
+  assert.ok(h.gl.bindingCalls > before, "a settled cached material rebinds after resource arrival");
+  assert.equal(h.gl.bindings.get(`${h.gl.TEXTURE0}:${h.gl.TEXTURE_2D}`), h.resident.texture);
+  const cached = h.gl.bindingCalls;
+  h.draw();
+  assert.equal(h.gl.bindingCalls, cached, "ordinary draws still reuse settled material bindings");
+});
+
+test("HDR settlement restores samplers on successful and throwing uploads", async () => {
+  for (const fails of [false, true]) {
+    const h = setupTextureUploadHarness();
+    let resolve;
+    h.context.fetch = () => new Promise(r => { resolve = r; });
+    const record = h.load("environment.hdr");
+    h.gl.bindTexture(h.gl.TEXTURE_2D, h.resident.texture);
+    const epoch = h.cache._sceneTextureEpoch;
+    if (fails) h.gl.texImage2D = () => { throw new Error("upload refused"); };
+    resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+    await new Promise(r => setImmediate(r));
+    assert.equal(record.loaded, !fails);
+    assert.equal(record.failed, fails);
+    assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+    assert.equal(h.cache._sceneTextureEpoch, epoch + 1);
+  }
+});
+
+test("KTX2 settlement preserves 2D and cube samplers, including decoder failures", async () => {
+  for (const faces of [1, 6]) {
+    for (const fails of [false, true]) {
+      const h = setupTextureUploadHarness();
+      const target = faces === 6 ? h.gl.TEXTURE_CUBE_MAP : h.gl.TEXTURE_2D;
+      const original = {};
+      h.gl.bindTexture(target, original);
+      h.context.scenePBRKTX2API = () => ({
+        load: async () => ({ faces, width: 4, height: 4, levels: [{}] }),
+        uploadWebGL2(gl, _image, opts) {
+          gl.bindTexture(target, opts.texture);
+          if (fails) throw new Error("decode refused");
+        },
+      });
+      const record = { texture: {}, generation: h.cache._gosxGeneration,
+        descriptor: { wrapS: 10497, wrapT: 33648 }, loaded: false, failed: false };
+      const epoch = h.cache._sceneTextureEpoch;
+      await h.context.scenePBRUploadKTX2Texture(h.gl, "delayed.ktx2", record);
+      assert.equal(record.loaded, !fails);
+      assert.equal(record.failed, fails);
+      assert.equal(h.binding(target), original);
+      assert.equal(h.cache._sceneTextureEpoch, epoch + 1);
+    }
+  }
+});
+
+test("PNG load and upload failures invalidate caches while disposed callbacks stay inert", () => {
+  for (const failure of ["load", "upload", "disposed"]) {
+    const h = setupTextureUploadHarness();
+    const record = h.load("delayed.png"), image = h.images.at(-1);
+    h.gl.bindTexture(h.gl.TEXTURE_2D, h.resident.texture);
+    const epoch = h.cache._sceneTextureEpoch, uploads = h.gl.uploads, notices = h.notifications();
+    if (failure === "load") image.onerror();
+    if (failure === "upload") {
+      h.gl.texImage2D = () => { throw new Error("upload refused"); };
+      assert.doesNotThrow(() => image.onload());
+    }
+    if (failure === "disposed") {
+      h.cache._gosxGeneration.disposed = true;
+      image.onload(); image.onerror();
+    }
+    assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+    assert.equal(record.failed, failure !== "disposed");
+    assert.equal(h.cache._sceneTextureEpoch, epoch + (failure === "disposed" ? 0 : 1));
+    assert.equal(h.notifications(), notices + (failure === "disposed" ? 0 : 1));
+    assert.equal(h.gl.uploads, uploads);
+  }
 });
