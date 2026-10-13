@@ -7917,7 +7917,7 @@
     textureCache._gosxGeneration = {
       disposed: false,
       onResourceReady: function() {
-        materialTextureRevision++;
+        materialFrame.textureRevision++;
         if (canvas && typeof canvas.dispatchEvent === "function") {
           var event = typeof CustomEvent === "function"
             ? new CustomEvent("gosx:scene3d:resource-ready")
@@ -7954,22 +7954,7 @@
     // (device=null, initFailed=true) and recovery always calls createRenderer()
     // again for a brand new one.
     var pbrSceneAttributeCache = {};
-    var retainedMaterialOwners = new WeakMap();
-    var retainedMaterialOwnerSources = new Map();
-    var retainedMaterialFrameSources = new WeakSet();
-    var materialResourceCache: Map<string, any> = new Map();
-    var frameMaterialGroups: any[] = [];
-    var frameMaterialSignatures: string[] = [];
-    var materialTextureRevision = 0;
-    var materialBindGroupCalls = 0;
-    var modelUniformBuffer: any = null;
-    var modelUniformCapacity = 0;
-    var modelUniformStride = 256;
-    var modelUniformData: Float32Array | null = null;
-    var modelUniformOffsets: WeakMap<object, number> = new WeakMap();
-    var retainedBundleResourcesReady = false;
-    var bundleResourceRevision = 0;
-    var bundleResourceRefs: any[] = [];
+    var materialFrame = sceneWebGPUCreateMaterialFrame();
 
     // 1x1 white placeholder texture (for unbound material maps).
     var placeholderTex = null;
@@ -15119,14 +15104,7 @@
       var mat = material || {};
       var albedoRGBA = sceneColorRGBA(mat.color, [0.8, 0.8, 0.8, 1]);
 
-      // MaterialUniforms: PBR fields (80 bytes) + per-object model matrix
-      // (64 bytes) + three scale signs (16-byte aligned) + one trailing
-      // dielectric-F0 scalar plus the vec3f-aligned effective specular
-      // factors and F90 (struct padded to 208 bytes). The signs recover
-      // the rotation-only normal/tangent transform used by the CPU-baked path,
-      // including negative and non-uniform scale. World-baked and instanced
-      // draws receive identity.
-      // Uses hoisted module-scope scratch; caller consumes synchronously before next call.
+      // Stable material fields retain their ABI; model transforms use the frame arena.
       var f = _materialUniformF;
       var u = _materialUniformU;
 
@@ -15143,7 +15121,6 @@
       f[10] = clamp01(sceneNumber(mat.iridescence, 0));
       f[11] = Math.max(-1, Math.min(1, sceneNumber(mat.anisotropy, 0)));
       u[12] = (mat.unlit || mat.kind === "flat" || mat.materialKind === "flat") ? 1 : 0;
-      // u[13..17] set by caller (texture-loaded flags); zero here for fields not written below
       u[13] = 0; u[14] = 0; u[15] = 0; u[16] = 0; u[17] = 0;
       u[18] = receiveShadow ? 1 : 0;
       u[19] = 0; // hasOcclusionMap, set by createMaterialBindGroup
@@ -15155,14 +15132,6 @@
       }
       f[36] = f[37] = f[38] = 1;
       f[39] = mat.normalUVScale ? sceneNumber(mat.normalUVScale[0], 1) : 1; // modelScaleSigns.w: normal-map U scale
-      // Dedicated trailing material scalars: normal-incidence dielectric F0
-      // from the authored IOR, then the vec3f alignment word at index 41
-      // reused as the hasSpecularIntensityMap flag (u[41], set by
-      // createMaterialBindGroup and zeroed here so a plain pack stays
-      // neutral), then the effective specular factors (F0 rgb, F90 =
-      // intensity) at the vec3f-aligned slots 44..47. Slot 42 carries the
-      // float32 alpha cutoff; slot 43 carries the normal-map V scale.
-      // Absent scales upload [1, 1], preserving explicit zero and negatives.
       f[40] = sceneWebGPUDielectricF0(mat.ior);
       f[41] = 0; // hasSpecularIntensityMap, set by createMaterialBindGroup
       var alphaCutoff = sceneNormalizeMaterialAlphaCutoff(mat.alphaCutoff, null);
@@ -15175,24 +15144,11 @@
       f[45] = specular.f0[1];
       f[46] = specular.f0[2];
       f[47] = specular.f90;
-      // Per-channel log2 of the authored dielectric specular coefficient.
-      // The shader reconstructs min(coefficient * texel, 1) * combined
-      // intensity via exp2(min(logCoef + log2(texel), 0)), so only safe
-      // finite logs are packed: an exact-zero coefficient uses the -1e30
-      // sentinel (shader maps it to exact-zero F0); finite log sums are
-      // stored as-is and the shader clamps the exponent to 0 before exp2.
-      // No arbitrary ceiling is applied to finite color components, so
-      // IOR = 1 + EPSILON with Number.MAX_VALUE color still keeps its huge
-      // finite log. hasSpecularColorMap (u[51]) stays zero here so a plain
-      // pack stays neutral until createMaterialBindGroup sets it.
       var colorLogs = sceneWebGPUSpecularColorLogs(mat);
       f[48] = colorLogs[0];
       f[49] = colorLogs[1];
       f[50] = colorLogs[2];
       u[51] = 0; // hasSpecularColorMap, set by createMaterialBindGroup
-      // Trailing fields (see WGSL_MATERIAL_STRUCT for exact layout): core
-      // glTF normal-scale/occlusion-strength factors, the emissive colour
-      // factor with its has-flag, and the optional rim-light term.
       f[52] = sceneNumber(mat.normalScale, 1);
       f[53] = clamp01(sceneNumber(mat.occlusionStrength, 1));
       u[54] = sceneWebGPUHasEmissiveColor(mat) ? 1 : 0;
@@ -15243,7 +15199,7 @@
     }
 
     function createMaterialBindGroup(material, receiveShadow, cacheOwner, modelMatrix) {
-      if (typeof materialBindGroupCalls !== "undefined") materialBindGroupCalls++;
+      if (typeof materialFrame !== "undefined") materialFrame.calls++;
       var mat = material || {};
       var uniform = materialUniformData(mat, receiveShadow, modelMatrix);
       var u = uniform.u;
@@ -15295,7 +15251,7 @@
       var bgCacheSlot = receiveShadow ? "_gosxWGPUMatBGCacheS" : "_gosxWGPUMatBGCache";
       var bgCache = owner[bgCacheSlot];
       if (bgCache && bgCache.device === device && bgCache.materialBuffer === materialBuffer &&
-          (typeof modelUniformBuffer === "undefined" || bgCache.modelBuffer === modelUniformBuffer)) {
+          (typeof materialFrame === "undefined" || bgCache.modelBuffer === materialFrame.buffer)) {
         var viewsMatch = true;
         for (var ti2 = 0; ti2 < texViews.length && viewsMatch; ti2++) {
           if (bgCache.texViews[ti2] !== texViews[ti2] || bgCache.texSamplers[ti2] !== texSamplers[ti2]) viewsMatch = false;
@@ -15324,7 +15280,7 @@
           { binding: 17, resource: texViews[8] },
           { binding: 18, resource: texSamplers[8] },
         ];
-      var modelBuffer = typeof modelUniformBuffer !== "undefined" ? modelUniformBuffer : null;
+      var modelBuffer = typeof materialFrame !== "undefined" ? materialFrame.buffer : null;
       if (modelBuffer) entries.push({ binding: 19, resource: { buffer: modelBuffer, size: 64 } });
       var matBG = device.createBindGroup({ layout: materialBindGroupLayout, entries: entries });
       owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews,
@@ -15332,95 +15288,7 @@
       return matBG;
     }
 
-    // Material values and texture descriptors are checked once per material,
-    // rather than packed and resolved for every retained mesh. Exact values
-    // also catch mutable callers that do not supply a revision.
-    var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
-    function webGPUMaterialSignature(material: any): string {
-      var mat = material || {};
-      return JSON.stringify(materialCacheFields.map(function(key) { return mat[key]; }));
-    }
-
-    function webGPUPrepareMaterialFrame(bundle: any) {
-      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
-      var alignment = sceneNumber(device.limits && device.limits.minUniformBufferOffsetAlignment, 256);
-      modelUniformStride = Math.ceil(64 / Math.max(16, alignment)) * Math.max(16, alignment);
-      var required = objects.length + 1;
-      if (!modelUniformBuffer || required > modelUniformCapacity) {
-        var capacity = Math.max(1, modelUniformCapacity);
-        while (capacity < required) capacity *= 2;
-        if (modelUniformBuffer) {
-          pointsEntryGPUBuffers.delete(modelUniformBuffer);
-          destroyRendererGPUResource(modelUniformBuffer);
-        }
-        modelUniformCapacity = capacity;
-        modelUniformBuffer = wgpuCreateTrackedBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-          capacity * modelUniformStride);
-        modelUniformData = new Float32Array(capacity * modelUniformStride / 4);
-      }
-      modelUniformOffsets = new WeakMap();
-      for (var mi = 0; mi < 16; mi++) modelUniformData[mi] = mi % 5 === 0 ? 1 : 0;
-      for (var i = 0; i < objects.length; i++) {
-        var object = objects[i];
-        var matrix = object && object.retainedGeometry ? webGPUObjectModelMatrix(object) : null;
-        var offset = (i + 1) * modelUniformStride;
-        if (matrix) modelUniformOffsets.set(matrix, offset);
-        for (var column = 0; column < 16; column++) {
-          modelUniformData[offset / 4 + column] = matrix
-            ? sceneNumber(matrix[column], column % 5 === 0 ? 1 : 0) : (column % 5 === 0 ? 1 : 0);
-        }
-      }
-      device.queue.writeBuffer(modelUniformBuffer, 0,
-        modelUniformData.subarray(0, (objects.length * modelUniformStride + 64) / 4));
-      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
-      frameMaterialSignatures = materials.map(webGPUMaterialSignature);
-      frameMaterialGroups = [];
-      for (var index = 0; index < frameMaterialSignatures.length; index++) {
-        for (var shadow = 0; shadow < 2; shadow++) {
-          var record = materialResourceCache.get(frameMaterialSignatures[index] + ":" + shadow);
-          if (record) record.seenEpoch = retainedMeshAttributeEpoch;
-        }
-      }
-      materialResourceCache.forEach(function(record, key) {
-        if (record.seenEpoch === retainedMeshAttributeEpoch) return;
-        for (var slot of ["_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"]) {
-          var buffer = record.owner[slot];
-          if (buffer) { pointsEntryGPUBuffers.delete(buffer); destroyRendererGPUResource(buffer); }
-        }
-        materialResourceCache.delete(key);
-      });
-    }
-
-    function webGPUFrameMaterialGroup(index: number, material: any, receiveShadow: boolean): any {
-      var shadow = receiveShadow ? 1 : 0;
-      var groups = frameMaterialGroups[index];
-      if (!groups) groups = frameMaterialGroups[index] = [];
-      if (groups[shadow]) return groups[shadow];
-      var key = (frameMaterialSignatures[index] || webGPUMaterialSignature(material)) + ":" + shadow;
-      var record = materialResourceCache.get(key);
-      if (!record) {
-        record = { owner: {}, bg: null, textureRevision: -1, modelBuffer: null, seenEpoch: retainedMeshAttributeEpoch };
-        materialResourceCache.set(key, record);
-      }
-      record.seenEpoch = retainedMeshAttributeEpoch;
-      if (!record.bg || record.textureRevision !== materialTextureRevision || record.modelBuffer !== modelUniformBuffer) {
-        record.bg = createMaterialBindGroup(material, receiveShadow, record.owner, null);
-        record.textureRevision = materialTextureRevision;
-        record.modelBuffer = modelUniformBuffer;
-      }
-      return groups[shadow] = record.bg;
-    }
-
-    // _frameBindGroupCache memoizes the frame bind group. Every entry is a
-    // buffer, a texture view or a sampler held BY REFERENCE, and every one of
-    // them is written with queue.writeBuffer rather than replaced, so the same
-    // bind group stays correct across frames. Rebuilding it each frame cost one
-    // createBindGroup per frame and, worse, gave the render-bundle recorder a
-    // new object identity every frame, so no bundle could ever replay.
-    //
-    // The cache compares identities, so a grown light buffer, a resized shadow
-    // map or a device-loss recovery rebuilds it.
-    // These opaque backend handles stay JavaScript-readable in raw-source tests.
+    // _frameBindGroupCache memoizes the frame group by GPU resource identity.
     var _frameBindGroupCache = JSON.parse("null");
     var transmissionResources = JSON.parse("null"), transmissionView = JSON.parse("null");
 
@@ -15558,55 +15426,6 @@
       return record.view;
     }
 
-    function webGPURetainedMaterialSource(obj) {
-      return obj && obj.resourceOwner && typeof obj.resourceOwner === "object"
-        ? obj.resourceOwner
-        : (obj && obj.vertices && typeof obj.vertices === "object" ? obj.vertices : obj);
-    }
-
-    function webGPURetireRetainedMaterialOwner(owner: any) {
-      if (!owner) return;
-      var slots = ["_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"];
-      for (var slotIndex = 0; slotIndex < slots.length; slotIndex++) {
-        var slot = slots[slotIndex];
-        var buffer = owner[slot];
-        if (buffer) {
-          pointsEntryGPUBuffers.delete(buffer);
-          try { buffer.destroy(); } catch (_err) {}
-        }
-        owner[slot] = null;
-        owner[slot + "Bytes"] = 0;
-        owner[slot + "Source"] = null;
-      }
-      owner["_gosxWGPUMatBGCache"] = null;
-      owner["_gosxWGPUMatBGCacheS"] = null;
-      var source = retainedMaterialOwnerSources.get(owner);
-      retainedMaterialOwners.delete(source);
-      retainedMaterialOwnerSources.delete(owner);
-    }
-
-    function webGPURetainedMaterialOwner(obj: any) {
-      var vertices = obj && obj.vertices;
-      var entry = vertices && retainedMeshAttributeCache.get(vertices);
-      if (entry && entry.revision !== obj.geometryRevision) {
-        retainedMeshBufferStats.rebuilds += 1;
-        retainedMeshBufferStats.revisionInvalidations += 1;
-        webGPURetireRetainedMeshEntry(vertices, entry);
-      }
-      var source = webGPURetainedMaterialSource(obj);
-      // Do not retire before createMaterialBindGroup: shared vertices and shadow
-      // passes may already reference the old owner's buffer in this frame.
-      // Sweeping absent sources after submit avoids destroying a bound buffer.
-      if (!source || typeof source !== "object") return defaultMaterialOwner;
-      var owner = retainedMaterialOwners.get(source);
-      if (!owner) {
-        owner = {};
-        retainedMaterialOwners.set(source, owner);
-        retainedMaterialOwnerSources.set(owner, source);
-      }
-      return owner;
-    }
-
     function webGPURetireRetainedMeshAttribute(entry, key) {
       var record = entry && entry.attributes && entry.attributes[key];
       if (!record) return;
@@ -15630,24 +15449,20 @@
 
     function webGPUBeginRetainedMeshFrame(bundle) {
       retainedMeshAttributeEpoch += 1;
-      retainedBundleResourcesReady = true;
+      materialFrame.geometryReady = true;
       var objects = Array.isArray(bundle && bundle.meshObjects) ? bundle.meshObjects : [];
-      retainedMaterialFrameSources = sceneWebGPURetainedFrameSources(objects, webGPURetainedMaterialSource);
       for (var i = 0; i < objects.length; i++) {
         var obj = objects[i];
         // Keep retained and indexed direct-vertex resources alive for this frame.
         if (!obj || !obj.vertices) continue;
         if (!obj.retainedGeometry && !obj.directVertices) continue;
         var entry = retainedMeshAttributeCache.get(obj.vertices);
-        if (obj.retainedGeometry && (!entry || entry.revision !== obj.geometryRevision)) retainedBundleResourcesReady = false;
+        if (obj.retainedGeometry && (!entry || entry.revision !== obj.geometryRevision)) materialFrame.geometryReady = false;
         if (entry) entry.lastSeenEpoch = retainedMeshAttributeEpoch;
       }
     }
 
     function webGPUSweepRetainedMeshBuffers() {
-      for (const pair of retainedMaterialOwnerSources) {
-        if (!retainedMaterialFrameSources.has(pair[1])) webGPURetireRetainedMaterialOwner(pair[0]);
-      }
       for (const pair of Array.from(retainedMeshAttributeCache.entries())) {
         if (pair[1].lastSeenEpoch !== retainedMeshAttributeEpoch) {
           webGPURetireRetainedMeshEntry(pair[0], pair[1]);
@@ -16729,7 +16544,7 @@
           bindPBRPipeline(reflectedDirect, mat);
           var skinnedOwner = mat || obj;
           if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || skinnedOwner !== lastMaterialOwner) {
-            var skinnedMatBG = webGPUFrameMaterialGroup(matIndex, mat, receiveShadow);
+            var skinnedMatBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
             pass.setBindGroup(1, skinnedMatBG, [0]);
             lastModelOffset = 0;
             lastMaterialIndex = matIndex;
@@ -16747,8 +16562,8 @@
         }
         bindPBRPipeline(reflectedDirect, mat);
 
-        var matBG = webGPUFrameMaterialGroup(matIndex, mat, receiveShadow);
-        var modelOffset = obj.retainedGeometry ? (modelUniformOffsets.get(obj.modelMatrix) || 0) : 0;
+        var matBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
+        var modelOffset = obj.retainedGeometry ? (materialFrame.offsets.get(obj.modelMatrix) || 0) : 0;
         if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || matBG !== lastMaterialOwner || modelOffset !== lastModelOffset) {
           pass.setBindGroup(1, matBG, [modelOffset]);
           lastMaterialIndex = matIndex;
@@ -18891,7 +18706,7 @@
         hasWaterData = Array.isArray(bundle.waterSystems) && bundle.waterSystems.length > 0;
       }
       webGPUBeginRetainedMeshFrame(bundle);
-      webGPUPrepareMaterialFrame(bundle);
+      webGPUPrepareMaterialFrame(materialFrame, device, bundle, retainedMeshAttributeEpoch, wgpuCreateTrackedBuffer, destroyRendererGPUResource, pointsEntryGPUBuffers);
       instancedCacheOwnerEpoch += 1;
       webGPUSweepInstancedCacheOwners();
       if (!hasPBRData && !hasPointsData && !hasInstancedData && !hasWorldLines && !hasScreenLines && !hasSurfaces && !hasLabels && !hasWaterData && !(bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) && !skyResources.renderer && !oceanResources.renderer) {
@@ -19360,9 +19175,7 @@
 
       // --- Render bundle decision ---
       //
-      // A frame qualifies when it draws PBR meshes and instanced meshes only.
-      // Everything else keeps the direct encoder; see
-      // sceneWebGPUBundleIneligibleReason for why.
+      // Non-bundleable paths retain the direct encoder.
       var bundleableDraws = (hasPBRData && (drawList.opaque.length + drawList.alpha.length + drawList.additive.length) > 0) ||
         (hasInstancedData && (instancedDrawList.opaque.length + instancedDrawList.alpha.length + instancedDrawList.additive.length) > 0);
       var bundleReason = sceneWebGPUBundleIneligibleReason({
@@ -19400,25 +19213,7 @@
           frameBindGroup: frameBindGroup,
           pbrBuffers: pbrSceneBuffers,
         };
-        // Uniform contents were uploaded above. A mesh-only PBR frame can
-        // reuse commands when the planner, materials and GPU resources agree.
-        // Selena and instanced draws retain the recorder's uniform/cull updates.
-        var fastSignature: string | null = null;
-        var simpleMaterials = materials.every(function(material: any) {
-          return !material.detail && !(typeof sceneSelenaIsMaterial === "function" && sceneSelenaIsMaterial(material));
-        });
-        if (preparedScene && !preparedScene.cssDynamic && simpleMaterials && retainedBundleResourcesReady &&
-            !hasInstancedData) {
-          var refs = [frameBindGroup, modelUniformBuffer, pbrSceneBuffers && pbrSceneBuffers.positions,
-            pbrSceneBuffers && pbrSceneBuffers.normals, pbrSceneBuffers && pbrSceneBuffers.uvs,
-            pbrSceneBuffers && pbrSceneBuffers.tangents];
-          if (refs.some(function(ref, i) { return ref !== bundleResourceRefs[i]; })) {
-            bundleResourceRefs = refs;
-            bundleResourceRevision++;
-          }
-          fastSignature = preparedScene.signature + "|" + JSON.stringify(frameMaterialSignatures) + "|" +
-            materialTextureRevision + "|" + bundleResourceRevision;
-        }
+        var fastSignature = sceneWebGPUFastMaterialSignature(materialFrame, preparedScene, materials, hasInstancedData, pbrSceneBuffers, frameBindGroup);
         var verdict = webGPUBundleCache.plan(bundleLayoutKey, function(recorder) {
           encodeBundleableSceneDraws(recorder, bundleContext);
         }, fastSignature);
@@ -19646,8 +19441,9 @@
       for (const pair of Array.from(retainedMeshAttributeCache.entries())) {
         webGPURetireRetainedMeshEntry(pair[0], pair[1]);
       }
-      sceneWebGPURetireMaterialOwners(retainedMaterialOwnerSources, webGPURetireRetainedMaterialOwner);
-      destroyRendererGPUResource(frameUniformBuffer); frameUniformBuffer = null;
+
+      destroyRendererGPUResource(frameUniformBuffer);
+      frameUniformBuffer = null;
       destroyRendererGPUResource(lightStorageBuffer);
       lightStorageBuffer = null;
       // Release the light buffers that capacity growth replaced.
@@ -19677,12 +19473,9 @@
         destroyRendererGPUResource(buffer);
       });
       pointsEntryGPUBuffers.clear();
-      materialResourceCache.clear();
-      frameMaterialGroups = [];
-      modelUniformBuffer = modelUniformData = null;
+      materialFrame.resources.clear(); materialFrame.groups = []; materialFrame.buffer = materialFrame.data = null;
       // Board glyph atlases are textures (not tracked in pointsEntryGPUBuffers);
       // destroy them explicitly. The per-label glyph buffers are tracked buffers,
-      // already freed above; just drop the owner map.
       boardGlyphAtlases.forEach(function(a) {
         if (a) destroyRendererGPUResource(a.texture);
       });
@@ -19879,6 +19672,7 @@
         ? sceneWebGPUDiagnostics()
         : {};
       var out = {};
+      Object.assign(out, sceneWebGPUMaterialDiagnostics(materialFrame, webGPUBundleCache));
       for (var key in base) {
         if (Object.prototype.hasOwnProperty.call(base, key)) {
           out[key] = base[key];
@@ -19947,7 +19741,6 @@
       if (scenePicker) Object.assign(out, scenePicker.diagnostics());
       // Render truth: implementation identity, the post-chain dispatch record
       // and the event journal, so a single diagnostics() call is a complete
-      // dump rather than a starting point for DOM scraping.
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var truthApi = renderTruth();
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.implementation = truthApi.implementation(out.adapterInfo || {});
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.browserEngine = typeof truthApi.browserEngine === "function" ? truthApi.browserEngine() : "";
@@ -19955,8 +19748,6 @@
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.shaderDiagnostics = typeof truthApi.shaderCounts === "function" ? truthApi.shaderCounts() : { messages: 0, errors: 0 };
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.postChain = lastWebGPUFrameStats && lastWebGPUFrameStats.postChain || null;
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ out.uniformTime = selenaFrame.time;
-      Object.assign(out, { materialBindGroupCalls: materialBindGroupCalls,
-        bundleDryRuns: webGPUBundleCache ? webGPUBundleCache.stats().dryRuns : 0 });
       out.textureVariantContext = {
         backend: textureVariantContext.backend,
         uploadReady: textureVariantContext.uploadReady,
@@ -20012,8 +19803,6 @@
   //     (the sub-feature chunk), whose suffix publishes
   //     createSceneWebGPURenderer to the api so the stub can dispatch.
   //
-  // createSceneWebGPURenderer itself (the real factory, ~1300 lines
-  // above) is still defined in this file and is exported by the suffix.
 
   // Local sceneWebGPUAvailable for use by createSceneWebGPURenderer's
   // own startup paths — checks the probe shared by the main bundle.
@@ -20047,18 +19836,110 @@
   function sceneWebGPUMeshCacheOwner(mesh: any, material: any, ownerForID: any, namespace = "selena"): any {
     return mesh && mesh.id ? ownerForID(mesh.id, undefined, namespace) : (mesh && mesh.resourceOwner || mesh || material);
   }
+  function sceneWebGPUMaterialDiagnostics(frame: any, bundles: any): any {
+    return { materialBindGroupCalls: frame.calls, bundleDryRuns: bundles ? bundles.stats().dryRuns : 0 };
+  }
+  function sceneWebGPUCreateMaterialFrame(): any {
+    return { resources: new Map(), groups: [], signatures: [], textureRevision: 0, calls: 0,
+      buffer: null, capacity: 0, stride: 256, data: null, offsets: new WeakMap(),
+      geometryReady: false, resourceRevision: 0, refs: [] };
+  }
 
-  function sceneWebGPURetainedFrameSources(objects: any[], sourceForObject: any): WeakSet<object> {
-    var sources: WeakSet<object> = new WeakSet();
-    for (var i = 0; i < objects.length; i++) {
-      var object = objects[i];
-      if (!object || !object.vertices) continue;
-      var source = sourceForObject(object);
-      if (source && typeof source === "object") sources.add(source);
+    // Exact material signatures also catch mutable callers without revisions.
+    var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
+    function webGPUMaterialSignature(material: any): string {
+      var mat = material || {};
+      return JSON.stringify(materialCacheFields.map(function(key) { return mat[key]; }));
     }
-    return sources;
+
+    function webGPUPrepareMaterialFrame(materialFrame: any, device: any, bundle: any, epoch: number, createBuffer: any, destroyBuffer: any, buffers: Set<any>) {
+      materialFrame.epoch = epoch;
+      var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
+      var alignment = sceneNumber(device.limits && device.limits.minUniformBufferOffsetAlignment, 256);
+      materialFrame.stride = Math.ceil(64 / Math.max(16, alignment)) * Math.max(16, alignment);
+      var required = 1 + objects.filter(function(object: any) { return object && object.retainedGeometry; }).length;
+      if (!materialFrame.buffer || required > materialFrame.capacity) {
+        var capacity = Math.max(1, materialFrame.capacity);
+        while (capacity < required) capacity *= 2;
+        if (materialFrame.buffer) {
+          buffers.delete(materialFrame.buffer);
+          destroyBuffer(materialFrame.buffer);
+        }
+        materialFrame.capacity = capacity;
+        materialFrame.buffer = createBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+          capacity * materialFrame.stride);
+        materialFrame.data = new Float32Array(capacity * materialFrame.stride / 4);
+      }
+      materialFrame.offsets = new WeakMap();
+      for (var mi = 0; mi < 16; mi++) materialFrame.data[mi] = mi % 5 === 0 ? 1 : 0;
+      var slotIndex = 0;
+      for (var i = 0; i < objects.length; i++) {
+        var object = objects[i];
+        if (!object || !object.retainedGeometry) continue;
+        var matrix = webGPUObjectModelMatrix(object);
+        var offset = ++slotIndex * materialFrame.stride;
+        if (matrix) materialFrame.offsets.set(matrix, offset);
+        for (var column = 0; column < 16; column++) {
+          materialFrame.data[offset / 4 + column] = matrix
+            ? sceneNumber(matrix[column], column % 5 === 0 ? 1 : 0) : (column % 5 === 0 ? 1 : 0);
+        }
+      }
+      device.queue.writeBuffer(materialFrame.buffer, 0,
+        materialFrame.data.subarray(0, (slotIndex * materialFrame.stride + 64) / 4));
+      var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
+      materialFrame.signatures = materials.map(webGPUMaterialSignature);
+      materialFrame.groups = [];
+      for (var index = 0; index < materialFrame.signatures.length; index++) {
+        for (var shadow = 0; shadow < 2; shadow++) {
+          var record = materialFrame.resources.get(materialFrame.signatures[index] + ":" + shadow);
+          if (record) record.seenEpoch = epoch;
+        }
+      }
+      materialFrame.resources.forEach(function(record, key) {
+        if (record.seenEpoch === epoch) return;
+        for (var slot of ["_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"]) {
+          var buffer = record.owner[slot];
+          if (buffer) { buffers.delete(buffer); destroyBuffer(buffer); }
+        }
+        materialFrame.resources.delete(key);
+      });
+    }
+    function webGPUFrameMaterialGroup(materialFrame: any, index: number, material: any, receiveShadow: boolean, createGroup: any): any {
+      var shadow = receiveShadow ? 1 : 0;
+      var groups = materialFrame.groups[index];
+      if (!groups) groups = materialFrame.groups[index] = [];
+      if (groups[shadow]) return groups[shadow];
+      var key = (materialFrame.signatures[index] || webGPUMaterialSignature(material)) + ":" + shadow;
+      var record = materialFrame.resources.get(key);
+      if (!record) {
+        record = { owner: {}, bg: null, textureRevision: -1, modelBuffer: null, seenEpoch: materialFrame.epoch };
+        materialFrame.resources.set(key, record);
+      }
+      record.seenEpoch = materialFrame.epoch;
+      if (!record.bg || record.textureRevision !== materialFrame.textureRevision || record.modelBuffer !== materialFrame.buffer) {
+        record.bg = createGroup(material, receiveShadow, record.owner, null);
+        record.textureRevision = materialFrame.textureRevision;
+        record.modelBuffer = materialFrame.buffer;
+      }
+      return groups[shadow] = record.bg;
+    }
+
+  function sceneWebGPUFastMaterialSignature(materialFrame: any, prepared: any, materials: any[], hasInstancedData: boolean, pbrBuffers: any, frameGroup: any): string | null {
+    var simpleMaterials = materials.every(function(material: any) {
+      return !material.detail && !(typeof sceneSelenaIsMaterial === "function" && sceneSelenaIsMaterial(material));
+    });
+    if (prepared && !prepared.cssDynamic && simpleMaterials && materialFrame.geometryReady &&
+        !hasInstancedData) {
+      var refs = [frameGroup, materialFrame.buffer, pbrBuffers && pbrBuffers.positions,
+        pbrBuffers && pbrBuffers.normals, pbrBuffers && pbrBuffers.uvs,
+        pbrBuffers && pbrBuffers.tangents];
+      if (refs.some(function(ref, i) { return ref !== materialFrame.refs[i]; })) {
+        materialFrame.refs = refs;
+        materialFrame.resourceRevision++;
+      }
+      return prepared.signature + "|" + JSON.stringify(materialFrame.signatures) + "|" +
+        materialFrame.textureRevision + "|" + materialFrame.resourceRevision;
+    }
+    return null;
   }
 
-  function sceneWebGPURetireMaterialOwners(owners: Map<any, any>, retire: (owner: any) => void): void {
-    for (const owner of owners.keys()) retire(owner);
-  }
