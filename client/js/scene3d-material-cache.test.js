@@ -61,7 +61,7 @@ for (const selena of [false, true]) test(`persistent ${selena ? "Selena" : "name
   }
 });
 
-test("replacing a retained resource owner retires its material uniform", async t => {
+test("replacing a retained resource owner reuses the shared material uniform", async t => {
   const h = await materialHarness(false, 1, false);
   t.after(() => h.renderer.dispose());
   for (let i = 0; i < 3; i++) await h.render();
@@ -69,9 +69,13 @@ test("replacing a retained resource owner retires its material uniform", async t
   const materialBuffer = h.fake.state.bindGroups.flatMap(g => g.desc.entries || [])
     .map(e => e.resource && e.resource.buffer).find(b => b && b.size === 288);
   assert.ok(materialBuffer);
+  const bufferCount = h.fake.state.buffers.length;
+  const calls = h.renderer.diagnostics().materialBindGroupCalls;
   b.meshObjects[0].resourceOwner = {};
   await h.render(b);
-  assert.ok(materialBuffer.destroyed, "old owner's uniform is destroyed on replacement");
+  assert.notEqual(materialBuffer.destroyed, true, "shared material remains live after an object owner replacement");
+  assert.equal(h.fake.state.buffers.length, bufferCount);
+  assert.equal(h.renderer.diagnostics().materialBindGroupCalls, calls);
 });
 
 
