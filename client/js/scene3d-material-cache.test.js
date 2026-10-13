@@ -202,6 +202,7 @@ for (const bundles of [false, true]) test(`400 retained meshes batch uploads (bu
   assert.ok(after.writeBufferCalls - before.writeBufferCalls <= 8,
     `expected a small constant, got ${after.writeBufferCalls - before.writeBufferCalls}`);
   assert.equal(after.bindGroups, before.bindGroups);
+  assert.equal(after.renderPipelines, before.renderPipelines);
   assert.equal(h.renderer.diagnostics().materialBindGroupCalls, beforeDiagnostics.materialBindGroupCalls,
     "steady frame never calls createMaterialBindGroup");
   if (bundles) assert.equal(h.renderer.diagnostics().bundleDryRuns, beforeDiagnostics.bundleDryRuns,
