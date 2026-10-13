@@ -11,6 +11,7 @@ func blackglassBeachVessel() *scene.Vessel {
 		Length: 22, Beam: 5, Draft: 1.4, DeckHeight: beachgen.JettyDeck, Helm: scene.Vec3(.65, 4.2, 8),
 		WindDirection: 8, WindStrength: 8, MaxSpeed: 10, SailTrim: .55, QuickBoard: true,
 		OpenWater:   true,
+		Navigation:  true,
 		LODs:        []scene.VesselLOD{{NodeID: "clipper-mid", Distance: 65}, {NodeID: "clipper-low", Distance: 120}},
 		WakeTexture: blackglassBeachModelRoot + "wake-foam.png",
 	}

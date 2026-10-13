@@ -167,6 +167,7 @@
     {"id":"app/docs/public/models/runner.gosx3d.json","owner":"app","kind":"model","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/site.webmanifest","owner":"app","kind":"other","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/scaffold/public/styles.css","owner":"app","kind":"css","phase":"dormant","condition":"always","dependencies":[]},
+    {"id":"app/docs/public/blackglass-chart.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/blackglass-discoveries.css","owner":"app","kind":"css","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/blackglass-discoveries.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/demos/blackglass-handheld/handheld.css","owner":"app","kind":"css","phase":"dormant","condition":"always","dependencies":[]},

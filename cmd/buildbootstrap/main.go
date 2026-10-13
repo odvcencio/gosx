@@ -621,6 +621,7 @@ var outputs = []output{
 	{
 		name: "bootstrap-feature-scene3d-vessel.js",
 		sources: []source{
+			sourceFile("../runtime/scene3d/vessel-navigation.ts"),
 			sourceFile("../runtime/scene3d/vessel-physics.ts"),
 			sourceFile("../runtime/scene3d/vessel-input.ts"),
 			sourceFile("../runtime/scene3d/vessel-model.ts"),

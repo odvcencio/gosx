@@ -22,7 +22,7 @@
       wind: (c.windDirection ?? ocean.windDirection ?? 0) * radians,
       strength: c.windStrength || 8, maxSpeed: c.maxSpeed || 10, mode: "moored", cameraMode: "stern",
       pressure: 0, luff: 1, bowImpact: 0, bowWater: NaN, reduced: false,
-      grounded: false, accumulator: 0, speed: 0, tack: 0, cameraReady: false, camera: {x:0,y:0,z:0,rotationX:0,rotationY:0,rotationZ:0} };
+      grounded: false, accumulator: 0, speed: 0, tack: 0, course: NaN, distance: 0, cameraReady: false, camera: {x:0,y:0,z:0,rotationX:0,rotationY:0,rotationZ:0} };
   }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function localPoint(s, x, y, z) {
@@ -39,7 +39,7 @@
   }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
   function helm(s, camera, quick=false) {
-    if (s.mode === "sailing") { s.mode = "deck"; s.trim = 0; s.rudder = 0; return "leave"; }
+    if (s.mode === "sailing") { s.mode = "deck"; s.trim = 0; s.rudder = 0; s.course = NaN; return "leave"; }
     if (!canBoard(s,camera) && !(quick && s.config.quickBoard)) return "far";
     s.mode = "sailing"; s.rudder = 0; return "take";
   }
@@ -118,7 +118,7 @@
     if (s.mode === "moored") return;
     const sailing = s.mode === "sailing";
     s.trim=clamp(s.trim+(sailing ? (input.sail||0)*dt*.4 : -dt*.8),0,1);
-    s.rudder += ((sailing ? clamp(input.rudder||0,-1,1) : 0)-s.rudder)*(1-Math.exp(-dt*7));
+    s.rudder += ((sailing ? window.__gosx_scene3d_vessel_navigation.rudder(s,input) : 0)-s.rudder)*(1-Math.exp(-dt*7));
     const off=angle(s.heading-s.wind), curve=speedCurve(off), fx=-Math.sin(s.heading),fz=-Math.cos(s.heading);
     const target=s.maxSpeed*Math.min(1.5,s.strength/8)*curve*s.trim*(s.grounded ? .03 : 1);
     const forward=s.vx*fx+s.vz*fz, side=s.vx*fz-s.vz*fx;
@@ -133,13 +133,14 @@
     s.yawVelocity+=(turn-s.yawVelocity)*(1-Math.exp(-dt*3.5));
     const heading=angle(s.heading+s.yawVelocity*dt);
     if (allowed(s,s.x,s.z,heading,floor)) s.heading=heading; else s.yawVelocity*=.3;
-    const nx=s.x+s.vx*dt,nz=s.z+s.vz*dt;
+    const beforeX=s.x,beforeZ=s.z,nx=s.x+s.vx*dt,nz=s.z+s.vz*dt;
     if (allowed(s,nx,nz,s.heading,floor)) { s.x=nx;s.z=nz; }
     else {
       if (allowed(s,nx,s.z,s.heading,floor)) s.x=nx; else s.vx*=Math.exp(-dt*12);
       if (allowed(s,s.x,nz,s.heading,floor)) s.z=nz; else s.vz*=Math.exp(-dt*12);
       s.trim=Math.max(0,s.trim-dt*.1);
     }
+    s.distance+=Math.hypot(s.x-beforeX,s.z-beforeZ);
     s.tack=Math.sign(Math.sin(off));
   }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.

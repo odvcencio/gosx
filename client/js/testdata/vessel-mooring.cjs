@@ -2,7 +2,7 @@
 // Run by the beacon Go test with the real authored vessel and collision map.
 const fs=require('node:fs'),vm=require('node:vm'),assert=require('node:assert/strict');
 const root=process.argv[2],context={window:{},atob};
-for(const name of ['vessel-physics','walk-surfaces']) {
+for(const name of ['vessel-navigation','vessel-physics','walk-surfaces']) {
  const file=root+'/client/runtime/scene3d/'+name+'.ts';
  vm.runInNewContext(fs.readFileSync(file,'utf8'),context);
 }

@@ -364,6 +364,7 @@
     {
       "name": "bootstrap-feature-scene3d-vessel.js",
       "sources": [
+        "../runtime/scene3d/vessel-navigation.ts",
         "../runtime/scene3d/vessel-physics.ts",
         "../runtime/scene3d/vessel-input.ts",
         "../runtime/scene3d/vessel-model.ts",

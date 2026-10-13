@@ -22,9 +22,44 @@ type Vessel struct {
 	MaxSpeed      float64     `json:"maxSpeed,omitempty"`      // default 10
 	Bounds        *WalkBounds `json:"bounds,omitempty"`        // otherwise uses Walk.Bounds unless OpenWater
 	OpenWater     bool        `json:"openWater,omitempty"`     // sail beyond Walk.Bounds; terrain and collider checks still apply
+	Navigation    bool        `json:"navigation,omitempty"`    // opt into course holding and scoped vessel command/state events
 	LODs          []VesselLOD `json:"lods,omitempty"`
 	WakeTexture   string      `json:"wakeTexture,omitempty"` // optional alpha foam image
 	Wake          *bool       `json:"wake,omitempty"`        // default true
+}
+
+// VesselCommandEvent accepts a VesselCommand on the mounted Scene3D element.
+// Navigation is opt-in; commands are local input, not authoritative network state.
+const VesselCommandEvent = "gosx:scene3d:vessel-command"
+
+// VesselStateEvent bubbles a VesselState at five Hz, plus explicit commands.
+const VesselStateEvent = "gosx:scene3d:vessel-state"
+
+// VesselCommand controls the configured vessel without taking ownership of its
+// transforms. Actions are helm, course, release-course and trim. Course Bearing
+// is a compass heading in degrees [0,360]; Trim is a fraction in [0,1].
+type VesselCommand struct {
+	NodeID  string  `json:"nodeId"`
+	Action  string  `json:"action"`
+	Bearing float64 `json:"bearing"`
+	Trim    float64 `json:"trim"`
+}
+
+// VesselState is a snapshot of local navigation, not trusted multiplayer state.
+// Bearing and WindFrom are compass degrees; Course is nil when steering freely.
+// Position and Distance are metres, Speed and WindStrength metres per second.
+type VesselState struct {
+	NodeID       string   `json:"nodeId"`
+	Mode         string   `json:"mode"` // moored, deck or sailing
+	Position     Vector3  `json:"position"`
+	Bearing      float64  `json:"bearing"`
+	Speed        float64  `json:"speed"`
+	Trim         float64  `json:"trim"`
+	Distance     float64  `json:"distance"`
+	Grounded     bool     `json:"grounded"`
+	WindFrom     float64  `json:"windFrom"`
+	WindStrength float64  `json:"windStrength"`
+	Course       *float64 `json:"course"`
 }
 
 // VesselLOD switches visibility at Distance from the ship (not another fetch).

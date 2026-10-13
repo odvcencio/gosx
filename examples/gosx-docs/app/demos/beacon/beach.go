@@ -48,6 +48,12 @@ type blackglassBeachView struct {
 
 func blackglassBeachViewFor(raw string) blackglassBeachView {
 	switch raw {
+	case "beacon":
+		p := scene.Vec3(beaconX+4, beachgen.TerrainHeight(beaconX+4, beaconZ+4, beachgen.Seed)+1.7, beaconZ+4)
+		return blackglassBeachView{"beacon", "The lighthouse", p, scene.Vec3(beaconX, p.Y+4, beaconZ)}
+	case "hollow":
+		p := scene.Vec3(grottoFrontX+3, beachgen.TerrainHeight(grottoFrontX+3, grottoZ, beachgen.Seed)+1.7, grottoZ)
+		return blackglassBeachView{"hollow", "The sun hollow", p, scene.Vec3(grottoBackX, p.Y, grottoZ)}
 	case "pools":
 		return blackglassBeachView{"pools", "The tide pools", scene.Vec3(10.8, 3.6, 10.6), scene.Vec3(11.1, .5, 5.3)}
 	case "glass":
@@ -183,7 +189,7 @@ func BlackglassBeachProgram(viewID, periodID string) scene.Props {
 				Position: scene.Vec3(beachgen.MonolithX, beachgen.MonolithY, beachgen.MonolithZ), Rotation: scene.Euler{Y: beachgen.MonolithYaw}, CastShadow: true, ReceiveShadow: true,
 				Material: scene.StandardMaterial{Color: "#596f6b", Roughness: 0.065, Metalness: 0, Clearcoat: 0.95, Transmission: 0.88, IOR: scene.Float(1.48),
 					Thickness: .45, AttenuationDistance: .3, AttenuationColor: &[3]float64{.12, .24, .21}}},
-		}, blackglassBeachBakedMoments(period.ID)...)...),
+		}, append(blackglassBeachBakedMoments(period.ID), blackglassBeachPoolRipple())...)...),
 	}
 	// Scenery is not a pick target: keep pointer queries bounded to the three
 	// pools and the collectible, rather than ray-testing the entire coastline.

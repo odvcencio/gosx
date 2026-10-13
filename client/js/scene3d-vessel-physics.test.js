@@ -1,12 +1,35 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path'),vm=require('node:vm');
 const context={window:{}};
-for(const name of ['ocean-waves','ocean-query','vessel-physics','vessel-input','vessel-model','walk-surfaces'])vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../runtime/scene3d',name+'.ts'),'utf8'),context);
+for(const name of ['ocean-waves','ocean-query','vessel-navigation','vessel-physics','vessel-input','vessel-model','walk-surfaces'])vm.runInNewContext(fs.readFileSync(path.join(__dirname,'../runtime/scene3d',name+'.ts'),'utf8'),context);
 const api=context.window.__gosx_scene3d_vessel_physics,touch=context.window.__gosx_scene3d_vessel_input;
 const flat=(x,z,t)=>({y:0}),deep=()=>-10,radians=Math.PI/180;
 function ship(config={},collision={}) {return api.create({nodeId:'ship',...config},{windDirection:0},collision);}
 function sail(s,seconds,input={rudder:0,sail:0},floor=deep) {for(let i=0;i<seconds*60;i++)api.advance(s,1/60,i/60,input,flat,floor);}
 const near=(a,b,e=1e-5)=>assert.ok(Math.abs(a-b)<e,`${a} != ${b}`);
+test('course hold turns out of irons and converges without teleporting the vessel',()=>{
+ const s=ship({navigation:true,heading:8*radians,windDirection:8});s.mode='sailing';s.trim=1;
+ assert.equal(context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,60),true);const initial=s.heading;sail(s,30);
+ near(s.heading,-60*radians,.015);assert.ok(Math.abs(s.heading-initial)>.7);assert.ok(s.speed>4&&s.distance>100);
+ assert.ok(s.x>50&&s.z<-40);
+});
+test('course hold takes the short route across the yaw wrap and yields immediately to manual steering',()=>{
+ const s=ship({navigation:true,heading:179*radians});s.mode='sailing';s.trim=1;
+ assert.equal(context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,179),true);sail(s,15);near(s.heading,-179*radians,.02);
+ sail(s,.1,{rudder:1});assert.ok(Number.isNaN(s.course));
+ assert.equal(context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,60),true);api.helm(s,{});assert.ok(Number.isNaN(s.course));
+});
+test('navigation is opt-in and rejects non-finite or out-of-range courses',()=>{
+ const disabled=ship();disabled.mode='sailing';assert.equal(context.window.__gosx_scene3d_vessel_navigation.holdCourse(disabled,60),false);
+ const s=ship({navigation:true});assert.equal(context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,60),false);s.mode='sailing';
+ for(const bearing of [NaN,Infinity,-1,361,'60',null])assert.equal(context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,bearing),false);
+ assert.equal(context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,0),true);near(s.course,0);
+});
+test('course-held voyages retain real collision constraints and record only accepted travel',()=>{
+ const s=ship({navigation:true,heading:Math.PI,length:4,beam:2,position:{x:0,z:-12}});s.mode='sailing';s.trim=1;
+ context.window.__gosx_scene3d_vessel_navigation.holdCourse(s,180);sail(s,20,{},(x,z)=>z>-1?-.3:-10);
+ assert.ok(s.z<-1.5);assert.ok(s.distance<12);assert.ok(Number.isFinite(s.speed));
+});
 test('boarding from a distance requires opt-in and an explicit button action; E retains proximity',()=>{
  const far={x:80,y:4,z:80},plain=ship();
  assert.equal(api.helm(plain,far,true),'far');assert.equal(plain.mode,'moored');

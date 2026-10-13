@@ -25,3 +25,16 @@ func TestVesselPropsAreOptInAndPreserveWalkSurfaces(t *testing.T) {
 		}
 	}
 }
+
+func TestVesselNavigationWirePreservesZeroCommands(t *testing.T) {
+	plain, _ := json.Marshal(Vessel{NodeID: "ship"})
+	if strings.Contains(string(plain), `"navigation"`) {
+		t.Fatal("navigation must remain opt-in")
+	}
+	for _, command := range []VesselCommand{{NodeID: "ship", Action: "course"}, {NodeID: "ship", Action: "trim"}} {
+		wire, err := json.Marshal(command)
+		if err != nil || !strings.Contains(string(wire), `"bearing":0`) || !strings.Contains(string(wire), `"trim":0`) {
+			t.Fatalf("zero bearing and lowered sails must survive the wire: %s, %v", wire, err)
+		}
+	}
+}

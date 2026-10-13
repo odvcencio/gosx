@@ -49,9 +49,10 @@ const budgets = [
   { file: "bootstrap-feature-scene3d-particle-burst.js", raw: 5_600, gzip: 2_400, brotli: 2_200 },
   // Ocean-driven heel, cloth normals, rig sway, impact spray and reduced-motion
   // deck bob remain lazy. Dormant-wake guards avoid unnecessary ocean queries.
-  // Measured 21,540 raw / 8,711 gzip / 7,746 Brotli bytes;
-  // ceilings leave less than 100 bytes of headroom in each transport format.
-  { file: "bootstrap-feature-scene3d-vessel.js", raw: 21_600, gzip: 8_800, brotli: 7_800 },
+  // Navigation adds bounded commands and five-Hz instruments in this lazy chunk.
+  // Measured 23,678 raw / 9,315 gzip / 8,522 Brotli bytes. Only the exhausted
+  // raw target rises by 30 bytes; allowances and compressed targets stay fixed.
+  { file: "bootstrap-feature-scene3d-vessel.js", raw: 21_630, gzip: 8_800, brotli: 7_800 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.

@@ -12,7 +12,8 @@
     const pocket = root.querySelector("[data-coast-pocket]");
     const keys = ["tide-pool-0", "tide-pool-1", "tide-pool-2", "shore-handheld"];
     const found = new Set();
-    let frame = null, previousFocus = null, resumeCoast = false, pickupApplied = false;
+    let frame = null, previousFocus = null, resumeCoast = false, pickupApplied = false, revision=0, pulseTimer=null, stopPulse=null;
+    const poolSites=JSON.parse(root.dataset.coastPoolSites);
     const storageKey = "gosx.blackglass.field-journal.v1";
     try {
       const saved = JSON.parse(localStorage.getItem(storageKey) || "[]");
@@ -26,11 +27,32 @@
       try { localStorage.setItem(storageKey, JSON.stringify([...found])); } catch (_) {}
     }
     function scene() { return root.querySelector("[data-gosx-scene3d-mounted]"); }
+    function issue(commands) {
+      const s=scene();if(s)s.dispatchEvent(new CustomEvent('gosx:scene3d:commands',{detail:{revision:++revision,commands}}));
+    }
+    root.addEventListener('gosx:scene3d:commands-applied',event=>{if(Number.isSafeInteger(event.detail?.revision))revision=Math.max(revision,event.detail.revision);});
+    function ripple(id) {
+      const site=poolSites[Number(id.slice(-1))],s=scene();
+      if(!site || !s || dialog.open || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches)return;
+      if(stopPulse)stopPulse();
+      const start=performance.now();
+      stopPulse=()=>{
+        clearInterval(pulseTimer);pulseTimer=null;stopPulse=null;
+        issue([{kind:'setTransform',objectId:'pool-ripple',data:{x:site[0],y:site[1],z:site[2],rotationX:Math.PI/2,rotationY:0,rotationZ:0,scaleX:.001,scaleY:.001,scaleZ:.001,parentMatrix:null}}]);
+      };
+      function tick() {
+        const progress=Math.min(1,(performance.now()-start)/1100),done=progress===1||document.hidden||dialog.open||!root.isConnected;
+        const scale=done?.001:site[3]*(.12+progress*.75);
+        issue([{kind:'setTransform',objectId:'pool-ripple',data:{x:site[0],y:site[1],z:site[2],rotationX:Math.PI/2,rotationY:0,rotationZ:0,scaleX:scale,scaleY:scale,scaleZ:Math.max(.001,1-progress),parentMatrix:null}}]);
+        if(done && stopPulse)stopPulse();
+      }
+      tick();pulseTimer=setInterval(tick,70);
+    }
     function removeCollectedHandheld() {
       const s = scene();
       if (pickupApplied || !found.has("shore-handheld") || !s || s.getAttribute("data-gosx-scene3d-model-hydration-status") !== "committed") return;
       const commands = JSON.parse(root.dataset.coastPickup);
-      s.dispatchEvent(new CustomEvent("gosx:scene3d:commands", {detail:{revision:1,commands}}));
+      issue(commands);
       pickupApplied = true;
     }
     function send(action) {
@@ -41,7 +63,9 @@
       previousFocus = document.activeElement;
       if (document.pointerLockElement) document.exitPointerLock();
       const s = scene();
-      resumeCoast = !!s && s.getAttribute("data-gosx-scene3d-animation-state") === "playing";
+      const sailing=!!s && s.getAttribute('data-gosx-scene3d-vessel')==='sailing' && s.getAttribute('data-gosx-scene3d-course-hold')==='true';
+      root.querySelector('[data-coast-handheld-sailing]').hidden=!sailing;
+      resumeCoast = !sailing && !!s && s.getAttribute("data-gosx-scene3d-animation-state") === "playing";
       if (resumeCoast) root.querySelector("[data-gosx-scene3d-animation-toggle]").click();
       if (!frame) {
         frame = document.createElement("iframe");
@@ -65,6 +89,7 @@
         openHandheld(); return;
       }
       const note = root.querySelector('[data-coast-note="' + id + '"]');
+      ripple(id);
       if (fromScene && note) {
         if (document.pointerLockElement) document.exitPointerLock();
         journal.open = true; note.open = true;
@@ -83,7 +108,6 @@
     root.addEventListener("gosx:scene3d:input", pick);
     root.addEventListener("gosx:scene3d:model-hydration-status", removeCollectedHandheld);
     root.addEventListener("click", activate);
-    for (const note of root.querySelectorAll("[data-coast-note]")) note.addEventListener("toggle", () => { if (note.open && !found.has(note.dataset.coastNote)) observe(note.dataset.coastNote, false); });
     pocket.addEventListener("click", openHandheld);
     root.querySelector("[data-coast-put-away]").addEventListener("click", () => dialog.close());
     dialog.addEventListener("close", () => {
@@ -98,7 +122,7 @@
       if (event.data && event.data.type === "blackglass-handheld-close") dialog.close();
     }
     window.addEventListener("message", message);
-    window.addEventListener("pagehide", () => { send("pause"); window.removeEventListener("message", message); });
+    window.addEventListener("pagehide", () => { send("pause"); if(stopPulse)stopPulse();window.removeEventListener("message", message); });
     window.addEventListener("pageshow", event => {
       if (event.persisted) { window.addEventListener("message", message); send(dialog.open ? "resume" : "pause"); }
     });

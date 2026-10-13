@@ -14,9 +14,9 @@ import (
 	"m31labs.dev/gosx/scene"
 )
 
-func TestBeachCachedRasterURLsMatchContent(t *testing.T) {
+func TestBeachCachedAssetURLsMatchContent(t *testing.T) {
 	depth := BlackglassBeachProgram("shore", "").Environment.Ocean.Bathymetry.Src
-	for _, src := range []string{blackglassBeachPosterSrc, depth} {
+	for _, src := range []string{blackglassBeachPosterSrc, depth, blackglassDiscoveriesScriptSrc, blackglassChartScriptSrc, blackglassDiscoveriesStylesSrc} {
 		u, err := url.Parse(src)
 		if err != nil {
 			t.Fatal(err)

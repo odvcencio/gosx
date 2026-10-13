@@ -9,7 +9,7 @@ import harness from './runtime-test-harness.js';
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
 const context=vm.createContext({window:{},Float32Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,ArrayBuffer,DataView,TextDecoder});
 for(const source of ['client/js/bootstrap-src/11-scene-math.ts','client/runtime/scene3d/gltf.ts',
- 'client/runtime/scene3d/vessel-physics.ts','client/runtime/scene3d/vessel-model.ts']) {
+ 'client/runtime/scene3d/vessel-navigation.ts','client/runtime/scene3d/vessel-physics.ts','client/runtime/scene3d/vessel-model.ts']) {
  vm.runInContext(fs.readFileSync(path.join(root,source),'utf8'),context);
 }
 const physics=context.window.__gosx_scene3d_vessel_physics,modelAPI=context.window.__gosx_scene3d_vessel_model;

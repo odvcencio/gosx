@@ -8,6 +8,7 @@ async function mountScene(vessel=true,maxFPS=60,realShip=false,coarse=false,spec
  const props={controls:'first-person',walk:{headBob:0},camera,maxFPS,scene:{camera,objects:[{id:'ship/hull',kind:'box',geometry:'box',size:3}]}};
  if(vessel) {props.vessel={nodeId:'ship',heading:Math.PI/2,windStrength:8,helm:{x:0,y:4.2,z:6.5},wake:false};props.camera={...camera,x:6.5,z:0};props.scene.camera=props.camera;props.scene.environment={ocean:{waveHeight:.9,waveLength:17,choppiness:.7}};}
  if(vessel&&options.quickBoard)props.vessel.quickBoard=true;
+ if(vessel&&options.navigation)props.vessel.navigation=true;
  if(vessel&&options.openWater) {
   props.vessel.openWater=true;props.vessel.position={x:2000,z:-3000};
   props.walk.bounds={minX:-10,minZ:-10,maxX:10,maxZ:10};
@@ -37,6 +38,41 @@ async function mountScene(vessel=true,maxFPS=60,realShip=false,coarse=false,spec
  function event(target,type,extra={}) {const e={type,preventDefault(){this.defaultPrevented=true;},...extra};target.dispatchEvent(e);return e;}
  return {env,mount,canvas,gl,raf,event,handle:mounted.handle};
 }
+test('scoped navigation commands validate input, publish snapshots, yield to steering, and dispose',async()=>{
+ const h=await mountScene(true,60,false,false,false,false,{quickBoard:true,far:true,navigation:true});
+ const snapshots=[];h.mount.addEventListener('gosx:scene3d:vessel-state',event=>snapshots.push(event.detail));
+ const command=detail=>h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',...detail}});
+ command({nodeId:'other',action:'helm'});assert.equal(h.mount.getAttribute('data-gosx-scene3d-vessel'),'moored');
+ command({action:'course',bearing:60});assert.equal(snapshots.length,0,'a moored vessel cannot hold course');
+ command({action:'helm'});assert.equal(snapshots.at(-1).mode,'sailing');
+ for(const bearing of [NaN,Infinity,-1,361,'60'])command({action:'course',bearing});
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-course-hold'),'false');
+ command({action:'trim',trim:1});command({action:'course',bearing:60});
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-course-hold'),'true');assert.ok(Math.abs(snapshots.at(-1).course-60)<1e-8);
+ const old=snapshots.at(-1),oldPosition={...old.position};for(let t=250;t<3000;t+=17)h.raf.flush(t);
+ assert.deepEqual({...old.position},oldPosition,'published position is a snapshot');assert.ok(snapshots.at(-1).distance>0);
+ assert.ok(snapshots.length<25,'telemetry is bounded to five updates per second plus explicit commands');
+ h.canvas.focus();h.event(h.env.document,'keydown',{code:'KeyA'});for(let t=3000;t<3400;t+=17)h.raf.flush(t);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-course-hold'),'false');
+ h.event(h.env.document,'keyup',{code:'KeyA'});command({action:'course',bearing:0});assert.equal(snapshots.at(-1).course,0);
+ command({action:'trim',trim:0});assert.equal(snapshots.at(-1).trim,0);command({action:'helm'});assert.equal(snapshots.at(-1).course,null);
+ h.handle.resetCamera();h.raf.flush(3650);assert.equal(h.mount.getAttribute('data-gosx-scene3d-course-hold'),'false');
+ h.handle.dispose();const count=snapshots.length;command({action:'helm'});assert.equal(snapshots.length,count);
+});
+test('navigation telemetry remains live with a frozen reduced-motion animation clock',async()=>{
+ const h=await mountScene(true,60,false,false,false,true,{navigation:true});
+ const snapshots=[];h.mount.addEventListener('gosx:scene3d:vessel-state',e=>snapshots.push(e.detail));
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'helm'}});
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'trim',trim:1}});
+ for(let t=250;t<2500;t+=17)h.raf.flush(t);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-animation-clock'),'0.000');
+ assert.ok(snapshots.length>8);assert.ok(snapshots.at(-1).distance>0);h.handle.dispose();
+});
+test('ordinary vessels ignore navigation events and publish no telemetry',async()=>{
+ const h=await mountScene();let calls=0;h.mount.addEventListener('gosx:scene3d:vessel-state',()=>calls++);
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'helm'}});h.raf.flush(250);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-vessel'),'moored');assert.equal(calls,0);h.handle.dispose();
+});
 test('Pilot ship is visible from shore, boards in one click, and returns to the authored camera on reset',async()=>{
  const h=await mountScene(true,60,false,false,false,false,{quickBoard:true,far:true});
  const panel=h.mount.querySelector('.gosx-scene3d-vessel-controls'),pilot=panel.querySelector('button');

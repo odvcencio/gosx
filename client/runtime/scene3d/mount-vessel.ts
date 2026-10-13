@@ -48,7 +48,7 @@
       if(base.controller&&base.controller.setSuspended)base.controller.setSuspended(value);
       else if(base.controller)base.controller.suspended=value;
     }
-    function leave() {state.mode='deck';state.trim=0;state.rudder=0;controller.active=false;suspend(false);}
+    function leave() {state.mode='deck';state.trim=0;state.rudder=0;state.course=NaN;controller.active=false;suspend(false);}
     function changeHelm(quick=false) {
       const result=physics.helm(state,read(),quick);if(result==='far')return;
       window.__gosx_scene3d_vessel_input.clear(controls.input);
@@ -58,6 +58,7 @@
     }
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     const controls=window.__gosx_scene3d_vessel_input.setup(canvas,mount,state,{helm:changeHelm,camera:()=>{physics.toggleCamera(state);state.camera=null;helpers.schedule('vessel-camera');},reset});
+    const navigation=props.vessel.navigation?window.__gosx_scene3d_vessel_navigation.setup(mount,state,props.vessel,changeHelm,helpers.schedule):null;
     if(base.bindReset)base.bindReset(reset);
     sceneState._gosxMotionController=controller;
     const wake=window.__gosx_scene3d_vessel_wake&&props.vessel.wake!==false?window.__gosx_scene3d_vessel_wake.create(sceneState,helpers,props.vessel):null;
@@ -84,9 +85,10 @@
       if(wake)wake.update(state,seconds,sample,detail,controller.currentCamera());
       controls.refresh(physics.canBoard(state,read()));
       mount.setAttribute('data-gosx-scene3d-vessel',state.mode);
+      if(navigation)navigation.advance(dt);
     },dispose() {
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-      disposed=true;controls.dispose();if(wake)wake.dispose();if(props.walk)walk.surfaces=walk.surfaces.filter(s=>s!==surface);
+      disposed=true;if(navigation)navigation.dispose();controls.dispose();if(wake)wake.dispose();if(props.walk)walk.surfaces=walk.surfaces.filter(s=>s!==surface);
       suspend(false);base.dispose();if(sceneState._gosxMotionController===controller)sceneState._gosxMotionController=null;
     }};
   }
