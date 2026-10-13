@@ -259,3 +259,16 @@ test("named materials reuse the WebGL rigid key across persistent-state frames",
   }
   assert.equal(hits, 29, "29 cache hits after the initial miss");
 });
+
+
+test("opaque planner groups pipelines and materials stably and keeps depth overrides last", () => {
+  const api = sceneCore();
+  const obj = (id, materialIndex, extra = {}) => ({ id, materialIndex, vertexOffset: 0,
+    vertexCount: 3, depthCenter: 1, ...extra });
+  const a = obj("a", 1), b = obj("b", 0), c = obj("c", 1);
+  const override = obj("override", 0, { depthWrite: false });
+  const detail = obj("detail", 2);
+  const passes = api.prepareScenePBRPasses({ materials: [{}, {}, { detail: {} }],
+    meshObjects: [override, detail, a, b, c] });
+  assert.deepEqual(Array.from(passes.opaque, o => o.id), ["b", "a", "c", "detail", "override"]);
+});

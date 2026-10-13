@@ -184,4 +184,22 @@ test("two objects sharing a named material preserve the surviving owner after re
   assert.notEqual(survivor.destroyed, true);
 });
 
+
+for (const bundles of [false, true]) test(`400 retained meshes batch uploads (bundles=${bundles})`, async t => {
+  const h = await materialHarness(false, 400, bundles);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 4; i++) await h.render();
+  const before = deviceCallSnapshot(h.fake);
+  const beforeDiagnostics = h.renderer.diagnostics();
+  await h.render();
+  const after = deviceCallSnapshot(h.fake);
+  assert.ok(after.writeBufferCalls - before.writeBufferCalls <= 8,
+    `expected a small constant, got ${after.writeBufferCalls - before.writeBufferCalls}`);
+  assert.equal(after.bindGroups, before.bindGroups);
+  assert.equal(h.renderer.diagnostics().materialBindGroupCalls, beforeDiagnostics.materialBindGroupCalls,
+    "steady frame never calls createMaterialBindGroup");
+  if (bundles) assert.equal(h.renderer.diagnostics().bundleDryRuns, beforeDiagnostics.bundleDryRuns,
+    "unchanged planner and materials replay without the dry run");
+});
+
 module.exports = { materialHarness };
