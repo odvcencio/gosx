@@ -169,6 +169,9 @@
     if (requestedSamples > 1) return true;
     if (requestedSamples === 1) return false;
     var tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    var scene = props && props.scene || {};
+    var effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
+    if (Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
     return sceneBool(props && props.antialias, tierDefault);
   }
 
@@ -178,7 +181,8 @@
     if (!waterFactory) return null;
     var entry = sceneFirstWaterEntry(props);
     if (!entry) return null;
-    var gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+    var initialAPI = sceneWebGLInitialProgramAPI();
+    var gl = initialAPI.createContext ? initialAPI.createContext(canvas, props, capability, false) : typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
       alpha: false, premultipliedAlpha: false, antialias: sceneWebGLAntialias(props, capability), depth: true,
       powerPreference: capability && (capability.lowPower || capability.tier === "constrained") ? "low-power" : "high-performance",
     }) : null;

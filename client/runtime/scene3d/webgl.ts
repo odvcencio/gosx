@@ -2107,18 +2107,12 @@
       gl.bindTexture(gl.TEXTURE_2D, depthTex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, width, height, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
       scenePBRTextureParameters(gl, gl.NEAREST);
-    } else {
-      depthRB = gl.createRenderbuffer();
-      gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
-      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTex, 0);
     if (depthTex) {
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTex, 0);
-    } else {
-      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
@@ -8733,6 +8727,12 @@
         return "empty";
       }
 
+      // Context attributes cannot change after creation. If the initial post
+      // chain disappears, retain edge filtering without rebuilding the canvas.
+      if (scenePBRPostCanvasAntialiasFallback.has(gl) && !(bundle.postEffects && bundle.postEffects.length)) {
+        bundle = Object.assign({}, bundle, { postEffects: [{ kind: "fxaa" }] });
+      }
+
       const preparedScene = typeof prepareScene === "function"
         ? prepareScene(bundle, bundle.camera, viewport, lastPreparedScene, {
           mount: canvas && canvas.parentNode || null,
@@ -11171,27 +11171,34 @@
 
   // --- Integration ---
 
-  function scenePBRCanvasAntialias(props, capability) {
+  var scenePBRPostCanvasAntialiasFallback = new WeakSet();
+  function scenePBRCanvasAntialias(props, capability, ignorePost = false) {
     const caps = capability || {};
     const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
     if (requestedSamples > 1) return true;
     if (requestedSamples === 1) return false;
     const tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    const scene = props && props.scene || {};
+    const effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
+    if (!ignorePost && Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
     return sceneBool(props && props.antialias, tierDefault);
   }
 
-  function createScenePBRContext(canvas, props, capability) {
+  function createScenePBRContext(canvas, props, capability, canvasAlpha = null) {
     if (!canvas || typeof canvas.getContext !== "function") return null;
     const caps = capability || {};
     try {
-      const useCanvasAlpha = sceneCanvasAlpha(props);
-      return canvas.getContext("webgl2", {
+      const useCanvasAlpha = canvasAlpha == null ? sceneCanvasAlpha(props) : canvasAlpha;
+      const antialias = scenePBRCanvasAntialias(props, caps);
+      const gl = canvas.getContext("webgl2", {
         alpha: useCanvasAlpha,
         premultipliedAlpha: useCanvasAlpha,
-        antialias: scenePBRCanvasAntialias(props, caps),
+        antialias,
         depth: true,
         powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
       });
+      if (gl && !antialias && scenePBRCanvasAntialias(props, caps, true)) scenePBRPostCanvasAntialiasFallback.add(gl);
+      return gl;
     } catch (_error) {
       return null;
     }

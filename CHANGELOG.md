@@ -66,6 +66,10 @@
 - Upgrade gotreesitter to v0.56.0. Explicit generic signal constructors that
   were silently dropped now lower correctly, and valid Go that previously
   produced ERROR nodes now parses. Parse allocations are about 98% lower.
+- Disable unused WebGL canvas MSAA for initial, undeferred Scene3D post
+  effects by default, and remove depth buffers from color-only post targets.
+  If the post chain turns off, FXAA retains edge filtering. Explicit
+  `Props.MSAASamples` preserves the authored canvas multisampling request.
 
 ## v0.57.15
 
