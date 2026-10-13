@@ -272,3 +272,12 @@ test("opaque planner groups pipelines and materials stably and keeps depth overr
     meshObjects: [override, detail, a, b, c] });
   assert.deepEqual(Array.from(passes.opaque, o => o.id), ["b", "a", "c", "detail", "override"]);
 });
+
+
+test("opaque planner preserves painter order without depth metadata", () => {
+  const api = sceneCore();
+  const objects = [{ id: "fill", materialIndex: 0, vertexOffset: 0, vertexCount: 6 },
+    { id: "sprite", materialIndex: 1, vertexOffset: 6, vertexCount: 6 }];
+  const passes = api.prepareScenePBRPasses({ materials: [{ shaderBackend: "selena" }, {}], meshObjects: objects });
+  assert.deepEqual(Array.from(passes.opaque, o => o.id), ["fill", "sprite"]);
+});

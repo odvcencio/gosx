@@ -1400,7 +1400,8 @@
     };
     const keys = new Map();
     for (const object of opaque) keys.set(object, pipelineKey(object));
-    opaque.sort(function(a, b) {
+    // Board wire bundles omit depth metadata and require painter order.
+    if (opaque.every(function(object) { return Number.isFinite(object.depthCenter); })) opaque.sort(function(a, b) {
       const aOverride = a.depthWrite != null || sceneNumber((materials[a.materialIndex] || {}).transmission, 0) > 0;
       const bOverride = b.depthWrite != null || sceneNumber((materials[b.materialIndex] || {}).transmission, 0) > 0;
       if (aOverride || bOverride) return Number(aOverride) - Number(bOverride);
