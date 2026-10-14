@@ -5293,7 +5293,7 @@
       // Keep slower stalled callbacks visible as missed cadence.
       const vsync = Math.min(50, state.rafTickIntervalMS);
       state.vsyncIntervalMS = state.vsyncIntervalMS > 0
-        ? Math.min(state.vsyncIntervalMS, vsync) : vsync;
+        ? state.vsyncIntervalMS * 0.9 + vsync * 0.1 : vsync;
     }
   }
 

@@ -103,3 +103,10 @@ test("transition events publish the DPR applied for the new tier", async () => {
   assert.equal(events[0].dprCap, 1.25);
   assert.equal(events[0].dprCap, s.canvas.width / 800);
 });
+
+test("rAF-only quality follows a display changing from 60 to 30 Hz", async () => {
+  const s = await mountQuality();
+  for (let i = 0; i < 120; i++) s.tick(1000 / 60);
+  for (let i = 0; i < 600; i++) s.tick(1000 / 30);
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full");
+});
