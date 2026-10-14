@@ -3348,6 +3348,9 @@ function loadSceneAdaptiveQualityAPI() {
   const end = source.indexOf("function applyScenePostFXState", start);
   assert.notEqual(start, -1, "adaptive controller start anchor missing");
   assert.notEqual(end, -1, "adaptive controller end anchor missing");
+  const dprStart = source.indexOf("function defaultSceneMaxDevicePixelRatio(");
+  const dprEnd = source.indexOf("\n  }", dprStart) + 4;
+  const capabilityDPR = source.slice(dprStart, dprEnd);
   const sceneProps = sceneCoreSourceRange("function sceneProps(props)", "function sceneCloneData");
   const sceneIsPlainObject = sceneCoreSourceRange("function sceneIsPlainObject(value)", "function normalizeSceneMaterialCapabilityTier");
   const qualityLadderCore = sceneCoreSourceRange(
@@ -3363,7 +3366,7 @@ function loadSceneAdaptiveQualityAPI() {
     function applyScenePostFXState() {}
     function gosxSceneEmit() {}
     const performance = { now: () => __clock.now };
-  ` + sceneProps + sceneIsPlainObject + qualityLadderCore + source.slice(start, end) + `
+  ` + capabilityDPR + sceneProps + sceneIsPlainObject + qualityLadderCore + source.slice(start, end) + `
     globalThis.adaptiveAPI = {
       createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,

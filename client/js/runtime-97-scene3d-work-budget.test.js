@@ -21,7 +21,7 @@ function check(actual, limits, name = "cases") {
 test("Scene3D default frame work stays within its down-only budget on both backends", async () => {
   const first = await measureAll();
   if (process.env.UPDATE_SCENE3D_WORK_BUDGET === "1") {
-    fs.writeFileSync(budgetPath, JSON.stringify({ schema: "gosx.scene3d-work/v1", note: "Exact maxima and totals over 120 rendered frames after eight warmup frames. Targets count live attachment pixels times samples; fake GL default MSAA is four samples. Pacing uses 120 RAF pulses at 60 Hz after settling. Lower every improved count; raises are forbidden by the base-branch ratchet.", cases: first }, null, 2) + "\n");
+    fs.writeFileSync(budgetPath, JSON.stringify({ schema: "gosx.scene3d-work/v1", note: "Exact maxima and totals over 120 rendered frames at 60 Hz after eight shader warmup frames and 32 governor warmup frames. Targets count live attachment pixels times samples; fake GL default MSAA is four samples. Pacing uses 120 RAF pulses at 60 Hz after settling. Lower every improved count; raises are forbidden by the base-branch ratchet.", cases: first }, null, 2) + "\n");
   }
   const budget = JSON.parse(fs.readFileSync(budgetPath));
   assert.equal(budget.schema, "gosx.scene3d-work/v1");

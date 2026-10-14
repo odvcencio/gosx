@@ -4971,7 +4971,7 @@
     const adaptiveConfig = adaptiveValue && typeof adaptiveValue === "object" ? adaptiveValue : {};
     const enabled = adaptiveValue && typeof adaptiveValue === "object"
       ? adaptiveValue.enabled !== false
-      : sceneBool(adaptiveValue, false);
+      : sceneBool(adaptiveValue, true);
     const targetFrameMS = Math.max(8, Math.min(50, sceneNumber(
       props && (props.adaptiveTargetFrameMS != null ? props.adaptiveTargetFrameMS : props.targetFrameMS),
       capability && capability.tier === "constrained" ? 20 : 16.7,
@@ -4999,7 +4999,7 @@
       : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 0));
     const profileOverrides = (props && (props.qualityProfiles || props.adaptiveQualityProfiles)) || adaptiveConfig.profiles || {};
     const defaults = {
-      full: { dprCap: 1.6, surfaceResolution: 160, causticsResolution: 512, objectShadowResolution: 512, objectTextureMaxSide: 512, objectTexturePixelBudget: 786432, expensivePassCadence: 1 },
+      full: { dprCap: defaultSceneMaxDevicePixelRatio(capability), surfaceResolution: 160, causticsResolution: 512, objectShadowResolution: 512, objectTextureMaxSide: 512, objectTexturePixelBudget: 786432, expensivePassCadence: 1 },
       balanced: { dprCap: 1.25, surfaceResolution: 128, causticsResolution: 384, objectShadowResolution: 384, objectTextureMaxSide: 384, objectTexturePixelBudget: 442368, expensivePassCadence: 2 },
       survival: { dprCap: 1.0, surfaceResolution: 96, causticsResolution: 256, objectShadowResolution: 256, objectTextureMaxSide: 256, objectTexturePixelBudget: 196608, expensivePassCadence: 3 },
     };
@@ -5084,6 +5084,7 @@
       cooldownUntilMS: 0,
       transitionReason: tierEnabled ? "initial" : "disabled",
       currentMaxDevicePixelRatio: profiles[requestedTier].dprCap,
+      renderDevicePixelRatio: 0,
       postFXSuppressed: false,
       tier: tierEnabled ? requestedTier : "fixed",
       qualityRevision: 0,
@@ -5126,6 +5127,7 @@
       return;
     }
     const profile = state.activeProfile || (state.profiles && state.profiles.full) || {};
+    const dprCap = state.renderDevicePixelRatio > 0 ? state.renderDevicePixelRatio : state.currentMaxDevicePixelRatio;
     mount.__gosxScene3DQualityState = {
       enabled: Boolean(state.enabled),
       requestedTier: state.requestedTier,
@@ -5140,6 +5142,7 @@
       missingRendererSamples: state.missingRendererSamples,
       lastMeasurement: state.lastMeasurement,
       profile,
+      dprCap,
       postFXSuppressed: Boolean(state.postFXSuppressed),
     };
     const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
@@ -5155,7 +5158,7 @@
     setAttrValue(mount, "data-gosx-scene3d-quality-reason", state.transitionReason || "");
     setAttrValue(mount, "data-gosx-scene3d-quality-measurement", state.measurement || "none");
     setAttrValue(mount, "data-gosx-scene3d-quality-renderer-timing-misses", String(Math.max(0, state.missingRendererSamples || 0)));
-    setAttrValue(mount, "data-gosx-scene3d-quality-dpr-cap", state.currentMaxDevicePixelRatio > 0 ? state.currentMaxDevicePixelRatio.toFixed(3) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-dpr-cap", dprCap > 0 ? dprCap.toFixed(3) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
     setAttrValue(mount, "data-gosx-scene3d-quality-p95-ms", state.p95FrameMS > 0 ? state.p95FrameMS.toFixed(2) : "");
@@ -5170,6 +5173,7 @@
   }
 
   function scenePrimeAdaptiveQuality(state, viewport, mount, sceneState) {
+    if (state && viewport && viewport.devicePixelRatio > 0) state.renderDevicePixelRatio = viewport.devicePixelRatio;
     if (state && state.mode === "ladder") {
       // Prime the STARTING rung's postEffects admitted-set before the first
       // render — without this, the scene would render with the author's
@@ -5278,6 +5282,10 @@
   }
 
   function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
+    if (state && viewport && viewport.devicePixelRatio > 0 && state.renderDevicePixelRatio !== viewport.devicePixelRatio) {
+      state.renderDevicePixelRatio = viewport.devicePixelRatio;
+      applySceneAdaptiveQualityState(mount, state, frameNowMS, true);
+    }
     if (state && state.mode === "ladder") {
       return sceneUpdateQualityLadder(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer);
     }
@@ -5327,14 +5335,17 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const cpuMeasured = sample.source.indexOf("cpu-raf") === 0 || sample.source.indexOf("cpu-work+") === 0;
+    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    const cpuMeasured = isRAFMeasured || sample.source.indexOf("cpu-work+") === 0;
     const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {
       state.badFrames += 1;
       state.goodFrames = 0;
-    } else if (frameMS < target * 0.72) {
+    // rAF timing has a display-cadence floor, so it cannot show GPU headroom.
+    // Match the ladder governor: recover after sustained clean cadence.
+    } else if (isRAFMeasured ? frameMS <= target * 1.06 : frameMS < target * 0.72) {
       state.goodFrames += 1;
       state.badFrames = 0;
     } else {
@@ -5380,7 +5391,7 @@
         ewmaFrameMS: state.ewmaFrameMS,
         p95FrameMS: state.p95FrameMS,
         targetFrameMS: state.targetFrameMS,
-        dprCap: state.currentMaxDevicePixelRatio,
+        dprCap: state.renderDevicePixelRatio || state.currentMaxDevicePixelRatio,
         postFXSuppressed: state.postFXSuppressed,
       });
       return true;
