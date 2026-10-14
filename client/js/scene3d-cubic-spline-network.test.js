@@ -187,6 +187,8 @@ test('affine receipt joins the model arena through the recorded dynamic offset',
   assert.deepEqual(joined.wgModel.values, model);
   assert.equal(joined.wgDraw.modelBuffer, joined.wgModel.buffer);
   assert.equal(joined.wgMaterial.buffer, record.materialBuffer);
+  window.__affineWGUploads[2] = {buffer:3,offset:256,values:model};
+  assert.deepEqual(evidence().wgModel.values, model, 'partial uploads join at the actual buffer offset');
   record.modelOffset = 0;
   assert.equal(evidence().wgDraw, null, 'binding the identity row cannot produce an affine receipt');
   record.modelOffset = 256; record.modelBuffer = 4;

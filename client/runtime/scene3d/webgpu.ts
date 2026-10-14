@@ -19804,8 +19804,7 @@
   //     createSceneWebGPURenderer to the api so the stub can dispatch.
   //
 
-  // Local sceneWebGPUAvailable for use by createSceneWebGPURenderer's
-  // own startup paths — checks the probe shared by the main bundle.
+  // Local availability checks the probe shared by the main bundle.
   // _externalProbe is a function (not a snapshot) so each call sees
   // the current probe state — the main bundle's probe is async and
   // may still be pending when this chunk first loads.
@@ -19869,9 +19868,10 @@
         materialFrame.buffer = createBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
           capacity * materialFrame.stride);
         materialFrame.data = new Float32Array(capacity * materialFrame.stride / 4);
+        for (var mi = 0; mi < 16; mi++) materialFrame.data[mi] = mi % 5 === 0 ? 1 : 0;
+        device.queue.writeBuffer(materialFrame.buffer, 0, materialFrame.data.subarray(0, 16));
       }
       materialFrame.offsets = new WeakMap();
-      for (var mi = 0; mi < 16; mi++) materialFrame.data[mi] = mi % 5 === 0 ? 1 : 0;
       var slotIndex = 0;
       for (var i = 0; i < objects.length; i++) {
         var object = objects[i];
@@ -19884,8 +19884,8 @@
             ? sceneNumber(matrix[column], column % 5 === 0 ? 1 : 0) : (column % 5 === 0 ? 1 : 0);
         }
       }
-      device.queue.writeBuffer(materialFrame.buffer, 0,
-        materialFrame.data.subarray(0, (slotIndex * materialFrame.stride + 64) / 4));
+      if (slotIndex) device.queue.writeBuffer(materialFrame.buffer, materialFrame.stride,
+        materialFrame.data.subarray(materialFrame.stride / 4, (slotIndex * materialFrame.stride + 64) / 4));
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       materialFrame.signatures = materials.map(webGPUMaterialSignature);
       if (objects.some(function(object: any) { return !materials[object.materialIndex]; })) materialFrame.signatures.push(webGPUMaterialSignature(null));

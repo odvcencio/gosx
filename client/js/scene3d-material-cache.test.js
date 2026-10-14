@@ -239,8 +239,9 @@ test("model arena offsets preserve transforms and growth refreshes cached bindin
   const bound = h.fake.state.renderPasses.at(-1).bindGroups.filter(c => c.slot === 1 && c.group.desc.entries.some(e => e.binding === 19));
   assert.deepEqual(bound.map(c => c.dynamicOffsets[0]), [256, 512]);
   const arena = bound[0].group.desc.entries.find(e => e.binding === 19).resource.buffer;
-  const data = h.fake.state.writeBufferCalls.filter(c => c.buffer === arena).at(-1).data;
-  assert.equal(data[64 + 12], 3.25); assert.equal(data[128 + 12], -2.5);
+  const upload = h.fake.state.writeBufferCalls.filter(c => c.buffer === arena).at(-1);
+  assert.equal(upload.offset, 256);
+  assert.equal(upload.data[12], 3.25); assert.equal(upload.data[64 + 12], -2.5);
   const material = bound[0].group.desc.entries.find(e => e.binding === 0).resource.buffer;
   const big = h.bundle();
   big.meshObjects = Array.from({ length: 8 }, (_, i) => ({ ...big.meshObjects[i % 2], id: 'grown-' + i,
@@ -289,6 +290,15 @@ for (const fresh of [true, false]) test(`fallback materials survive bundle repla
   await h.render(b);
   assert.notEqual(uniform.destroyed, true, 'a live fallback material must remain valid during replay');
   assert.equal(h.mount.getAttribute('data-gosx-scene3d-webgpu-bundle-state'), 'replayed');
+});
+
+test('one retained mesh uploads less than its former material block', async t => {
+  const h = await materialHarness(false,1,false);
+  t.after(() => h.renderer.dispose());
+  for(let i=0;i<3;i++) await h.render();
+  const before=deviceCallSnapshot(h.fake); await h.render(); const after=deviceCallSnapshot(h.fake);
+  assert.ok(after.writeBufferBytes-before.writeBufferBytes<=740,
+    'frame uniforms and one model row must fit below the former 288-byte material upload');
 });
 
 module.exports = { materialHarness };
