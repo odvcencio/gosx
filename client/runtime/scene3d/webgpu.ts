@@ -8794,18 +8794,6 @@
       return pipeline;
     }
 
-    function sceneSelenaIsMaterial(material) {
-      return Boolean(
-        material &&
-        material.shaderBackend === "selena" &&
-        sceneSelenaMaterialLayout(material) &&
-        (
-          (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
-          (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())
-        )
-      );
-    }
-
     function sceneSelenaWGSLSource(material) {
       var src = typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()
         ? material.customVertexWGSL
@@ -17724,31 +17712,6 @@
       return total;
     }
 
-    function webGPUCustomMaterialStats(materials) {
-      var stats = { customMaterialFallbacks: 0, customWGSLFallbacks: 0, customUniformFallbacks: 0 };
-      var source = Array.isArray(materials) ? materials : [];
-      for (var i = 0; i < source.length; i++) {
-        var material = source[i] || {};
-        if (sceneSelenaIsMaterial(material)) {
-          continue;
-        }
-        var hasWGSL = (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
-          (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim());
-        var hasCustomUniforms = material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0;
-        if (!hasWGSL && !hasCustomUniforms) {
-          continue;
-        }
-        stats.customMaterialFallbacks += 1;
-        if (hasWGSL) {
-          stats.customWGSLFallbacks += 1;
-        }
-        if (hasCustomUniforms) {
-          stats.customUniformFallbacks += 1;
-        }
-      }
-      return stats;
-    }
-
     function publishWebGPUFrameStats(stats: any) {
       var mount = canvas && canvas.parentNode;
       if (!mount) return;
@@ -19919,8 +19882,7 @@
       record.seenEpoch = materialFrame.epoch;
       if (!record.bg || record.textureRevision !== materialFrame.textureRevision || record.modelBuffer !== materialFrame.buffer) {
         record.bg = createGroup(material, receiveShadow, record.owner, null);
-        record.textureRevision = materialFrame.textureRevision;
-        record.modelBuffer = materialFrame.buffer;
+        record.textureRevision = materialFrame.textureRevision; record.modelBuffer = materialFrame.buffer;
       }
       return groups[shadow] = record.bg;
     }
@@ -19935,8 +19897,7 @@
         pbrBuffers && pbrBuffers.normals, pbrBuffers && pbrBuffers.uvs,
         pbrBuffers && pbrBuffers.tangents];
       if (refs.some(function(ref, i) { return ref !== materialFrame.refs[i]; })) {
-        materialFrame.refs = refs;
-        materialFrame.resourceRevision++;
+        materialFrame.refs = refs; materialFrame.resourceRevision++;
       }
       var commands = ["opaque", "alpha", "additive"].map(function(pass: string) {
         return prepared.pbrPasses[pass].map(function(object: any) {
@@ -19950,3 +19911,24 @@
     return null;
   }
 
+  function sceneSelenaIsMaterial(material) {
+    return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) &&
+      ((typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
+       (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())));
+  }
+  function webGPUCustomMaterialStats(materials) {
+    var stats = { customMaterialFallbacks: 0, customWGSLFallbacks: 0, customUniformFallbacks: 0 };
+    var source = Array.isArray(materials) ? materials : [];
+    for (var i = 0; i < source.length; i++) {
+      var material = source[i] || {};
+      if (sceneSelenaIsMaterial(material)) continue;
+      var hasWGSL = (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
+        (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim());
+      var hasCustomUniforms = material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0;
+      if (!hasWGSL && !hasCustomUniforms) continue;
+      stats.customMaterialFallbacks += 1;
+      if (hasWGSL) stats.customWGSLFallbacks += 1;
+      if (hasCustomUniforms) stats.customUniformFallbacks += 1;
+    }
+    return stats;
+  }

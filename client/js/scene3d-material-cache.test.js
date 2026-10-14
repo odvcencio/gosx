@@ -301,4 +301,21 @@ test('one retained mesh uploads less than its former material block', async t =>
     'frame uniforms and one model row must fit below the former 288-byte material upload');
 });
 
+test("shadow-casting Selena bundles keep live uniform uploads on every replay", async t => {
+  const h = await materialHarness(true, 1);
+  t.after(() => h.renderer.dispose());
+  h.state.objects.get("box-0").castShadow = true;
+  const render = () => {
+    const b = h.bundle();
+    b.lights = [{ kind: "directional", castShadow: true, x: 2, y: 4, z: 2,
+      directionX: 0.2, directionY: -1, directionZ: -0.3, shadowSize: 64 }];
+    return h.render(b);
+  };
+  for (let i = 0; i < 5; i++) await render();
+  const start = h.fake.state.writeBufferCalls.length;
+  await render();
+  assert.ok(h.fake.state.writeBufferCalls.slice(start).some(c => c.data?.byteLength === 144),
+    "Selena replay must still pack live model and frame uniforms");
+});
+
 module.exports = { materialHarness };
