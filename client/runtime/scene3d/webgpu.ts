@@ -8687,7 +8687,7 @@
 
     var initialPipelinesPrepared = false, initialPipelinesReady = false, preparedPipelineKey = "";
     function getObjectSelenaPipeline(object: any, material: any, blend: string, depth: boolean) {
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var options = sceneWebGPUSelenaPipelineOptions(object, sceneWebGPUObjectReflected(object));
       return webGPUObjectIsSkinned(object) ? getSelenaSkinnedPipeline(material, blend, depth, options) : getSelenaPipeline(material, blend, depth, options);
     }
@@ -18730,7 +18730,7 @@
       // canvas commands until the entire frame has encoded successfully.
       pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
         bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds) ||
-        (bundle.materials || []).some(function(material: any) { return sceneSelenaIsMaterial(material); }) ||
+        (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
         postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST; }));
 
       // Upload per-frame uniforms (use scaled dims so point sprites and
