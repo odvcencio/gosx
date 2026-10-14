@@ -5288,13 +5288,6 @@
       state.p95FrameMS = 0;
       state.badFrames = state.goodFrames = state.severeFrames = 0;
     }
-    if (state.rafTickIntervalMS > 0) {
-      // The configured target already supports intervals through 50 ms.
-      // Keep slower stalled callbacks visible as missed cadence.
-      const vsync = Math.min(50, state.rafTickIntervalMS);
-      state.vsyncIntervalMS = state.vsyncIntervalMS > 0
-        ? state.vsyncIntervalMS * 0.9 + vsync * 0.1 : vsync;
-    }
   }
 
   function sceneAdaptiveSetTier(state, tier, reason, nowMS) {
@@ -5334,6 +5327,13 @@
     const renderIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
     const rafIntervalMS = state.lastTickNowMS === rafNow ? state.rafTickIntervalMS : renderIntervalMS;
     state.lastRAFNowMS = rafNow;
+    // Estimate display cadence from light frames so CPU stalls cannot increase
+    // their own budget. Intervals beyond the supported 50 ms target stay misses.
+    if (rafIntervalMS > 0 && rafIntervalMS < 250 && cpuDurationMS < rafIntervalMS * 0.5) {
+      const vsync = Math.min(50, rafIntervalMS);
+      state.vsyncIntervalMS = state.vsyncIntervalMS > 0
+        ? state.vsyncIntervalMS * 0.9 + vsync * 0.1 : vsync;
+    }
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
     const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));

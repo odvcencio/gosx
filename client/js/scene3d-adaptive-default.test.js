@@ -110,3 +110,13 @@ test("rAF-only quality follows a display changing from 60 to 30 Hz", async () =>
   for (let i = 0; i < 600; i++) s.tick(1000 / 30);
   assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full");
 });
+
+test("CPU-bound ticks do not raise the measured display budget", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  for (let i = 0; i < 40; i++) {
+    h.clock.now += 40;
+    h.api.sceneObserveAdaptiveQualityRAF(h.state, h.clock.now);
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, null);
+  }
+  assert.equal(h.state.activeTier, "balanced");
+});

@@ -3368,7 +3368,7 @@ function loadSceneAdaptiveQualityAPI() {
     const performance = { now: () => __clock.now };
   ` + capabilityDPR + sceneProps + sceneIsPlainObject + qualityLadderCore + source.slice(start, end) + `
     globalThis.adaptiveAPI = {
-      createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality,
+      createSceneAdaptiveQualityState, applySceneAdaptiveQualityState, sceneUpdateAdaptiveQuality, sceneObserveAdaptiveQualityRAF,
       sceneApplyQualityLadderRung, sceneQualityLadderAdmittedGroups, sceneFilterObjectsByQualityGroups,
       sceneEffectivePointQualityGroup, sceneFilterPointsByQualityGroups,
       sceneQualityLadderPointBudgetScale, sceneApplyPointBudgetScale,
