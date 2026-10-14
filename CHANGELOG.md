@@ -28,6 +28,8 @@
   reductions under load. Set `AdaptiveQuality: scene.Bool(false)` to opt out.
   The full tier starts at the capability DPR cap, telemetry reports rendered
   DPR, and rAF-only timing can recover quality after sustained clean cadence.
+  Keep quality stable through idle gaps, capped ticks and low-refresh displays;
+  failed promotions wait longer before retrying.
 
 ## v0.57.15
 
