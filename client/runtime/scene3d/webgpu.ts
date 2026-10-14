@@ -15203,7 +15203,6 @@
         { prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 },
         { prop: "thicknessMap", descriptor: "thickness", role: "data", colorSpace: "linear", index: 71 },
       ];
-
       var texViews = [];
       var texSamplers = [];
       for (var ti = 0; ti < textureMaps.length; ti++) {
@@ -15218,7 +15217,6 @@
         texViews.push(loaded ? record.view : placeholderView);
         texSamplers.push(wgpuMaterialSampler(device, linearSampler, descriptor, tm.role));
       }
-
       var owner = (cacheOwner && typeof cacheOwner === "object")
         ? cacheOwner
         : ((material && typeof material === "object") ? material : defaultMaterialOwner);
@@ -15230,7 +15228,6 @@
         GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
         true
       );
-
       // Memoize the bind group. The material uniform buffer is written above
       // (dynamic=true) and referenced by identity in the bind group, so the
       // same bind group remains valid across frames as long as the material
@@ -15275,7 +15272,6 @@
         texSamplers: texSamplers, modelBuffer: modelBuffer, bg: matBG };
       return matBG;
     }
-
     // _frameBindGroupCache memoizes the frame group by GPU resource identity.
     var _frameBindGroupCache = JSON.parse("null");
     var transmissionResources = JSON.parse("null"), transmissionView = JSON.parse("null");
@@ -19792,7 +19788,6 @@
   if (typeof window !== "undefined") {
     window.__gosx_scene3d_ktx2_texture_loader = wgpuUploadKTX2Texture;
   }
-
   // Selena's current draw record supplies uniforms; persistent owners hold
   // GPU resources. Keep this selector independent of the renderer closure.
   function sceneWebGPUMeshCacheOwner(mesh: any, material: any, ownerForID: any, namespace = "selena"): any {
@@ -19806,14 +19801,12 @@
       buffer: null, capacity: 0, stride: 256, data: null, offsets: new WeakMap(),
       geometryReady: false, resourceRevision: 0, refs: [] };
   }
-
     // Exact material signatures also catch mutable callers without revisions.
     var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
     function webGPUMaterialSignature(material: any): string {
       var mat = material || {};
       return JSON.stringify(materialCacheFields.map(function(key: string) { return mat[key]; }));
     }
-
     function webGPUPrepareMaterialFrame(materialFrame: any, device: any, bundle: any, epoch: number, createBuffer: any, destroyBuffer: any, buffers: Set<any>) {
       materialFrame.epoch = epoch;
       var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
@@ -19886,7 +19879,6 @@
       }
       return groups[shadow] = record.bg;
     }
-
   function sceneWebGPUFastMaterialSignature(materialFrame: any, prepared: any, materials: any[], hasInstancedData: boolean, pbrBuffers: any, frameGroup: any): string | null {
     var simpleMaterials = materials.every(function(material: any) {
       return !material.detail && !(typeof sceneWebGPUIsSelenaMaterial === "function" && sceneWebGPUIsSelenaMaterial(material));

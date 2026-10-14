@@ -1552,7 +1552,7 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
 test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(webgpu, /function webGPUCustomMaterialStats\(materials\)/);
+  assert.match(webgpu, /function webGPUCustomMaterialStats\(materials(?:: any)?\)/);
   assert.match(webgpu, /material\.customVertexWGSL/);
   assert.match(webgpu, /material\.customFragmentWGSL/);
   assert.match(webgpu, /material\.customUniforms/);
