@@ -120,3 +120,9 @@ test("CPU-bound ticks do not raise the measured display budget", () => {
   }
   assert.equal(h.state.activeTier, "balanced");
 });
+
+test("GPU timing uses the measured 30 Hz display budget", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  for (let i = 0; i < 600; i++) h.sample(22, 1000 / 30);
+  assert.equal(h.state.activeTier, "full");
+});

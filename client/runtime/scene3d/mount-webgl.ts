@@ -5380,7 +5380,7 @@
 
     const cpuMeasured = isRAFMeasured || sample.source.indexOf("cpu-work+") === 0;
     const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7),
-      isRAFMeasured ? state.vsyncIntervalMS : 0);
+      state.vsyncIntervalMS);
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {
