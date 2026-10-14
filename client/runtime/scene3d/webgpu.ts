@@ -19811,7 +19811,7 @@
     var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
     function webGPUMaterialSignature(material: any): string {
       var mat = material || {};
-      return JSON.stringify(materialCacheFields.map(function(key) { return mat[key]; }));
+      return JSON.stringify(materialCacheFields.map(function(key: string) { return mat[key]; }));
     }
 
     function webGPUPrepareMaterialFrame(materialFrame: any, device: any, bundle: any, epoch: number, createBuffer: any, destroyBuffer: any, buffers: Set<any>) {
@@ -19911,12 +19911,12 @@
     return null;
   }
 
-  function sceneWebGPUIsSelenaMaterial(material) {
+  function sceneWebGPUIsSelenaMaterial(material: any) {
     return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) &&
       ((typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
        (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())));
   }
-  function webGPUCustomMaterialStats(materials) {
+  function webGPUCustomMaterialStats(materials: any) {
     var stats = { customMaterialFallbacks: 0, customWGSLFallbacks: 0, customUniformFallbacks: 0 };
     var source = Array.isArray(materials) ? materials : [];
     for (var i = 0; i < source.length; i++) {
