@@ -9083,7 +9083,7 @@
     // variant using WGPU_PBR_VERTEX_LAYOUT, no attrs). Keep the two in sync —
     // any substantive change here must be mirrored there.
     function getSelenaPipeline(material, blendMode, depthWrite, options) {
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
       const selective = selectiveBloom && !(options && options.targetFormat);
       var pipelineSampleCount = Math.max(1, Math.floor(sceneNumber(
@@ -9226,7 +9226,7 @@
     // deliberately does NOT expose an attrs field (avoids double-binding).
     function getSelenaSkinnedPipeline(material, blendMode, depthWrite, options) {
       const selective = selectiveBloom;
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var pipelineCullMode = options && typeof options.cullMode === "string" && options.cullMode ? options.cullMode : "back";
       var pipelineFrontFace = selenaPipelineFrontFace(options);
       // Per-material memo, mirroring getSelenaPipeline. A SEPARATE stamp slot
@@ -9530,7 +9530,7 @@
     // compute pipeline has none of those), so the per-material memo is simpler
     // than the render path's.
     function getSelenaComputePipeline(material) {
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var memo = material._gosxWGPUSelenaComputeResource;
       if (memo) return memo.failed ? null : memo.resource;
       var layout = sceneSelenaMaterialLayout(material);
@@ -9703,7 +9703,7 @@
     }
 
     function getSelenaPostPipeline(material, options) {
-      if (!sceneSelenaIsMaterial(material)) return null;
+      if (!sceneWebGPUIsSelenaMaterial(material)) return null;
       var layout = sceneSelenaMaterialLayout(material);
       if (!layout || layout.kind !== "post") return null;
       var pipelineTargetFormat = options && options.targetFormat ? options.targetFormat : targetFormat;
@@ -11748,7 +11748,7 @@
         var materialIndex = Math.max(0, Math.floor(sceneNumber(obj.materialIndex, 0)));
         var material = materialList[materialIndex] || {};
         var materialName = String(material.name || material.id || obj.material || material.kind || material.materialKind || "?");
-        var materialBackend = sceneSelenaIsMaterial(material) ? "selena" : String(material.shaderBackend || material.kind || material.materialKind || "pbr");
+        var materialBackend = sceneWebGPUIsSelenaMaterial(material) ? "selena" : String(material.shaderBackend || material.kind || material.materialKind || "pbr");
         parts.push([
           sceneWaterMeshObjectID(obj) || "?",
           String(obj.kind || "?"),
@@ -19889,7 +19889,7 @@
 
   function sceneWebGPUFastMaterialSignature(materialFrame: any, prepared: any, materials: any[], hasInstancedData: boolean, pbrBuffers: any, frameGroup: any): string | null {
     var simpleMaterials = materials.every(function(material: any) {
-      return !material.detail && !(typeof sceneSelenaIsMaterial === "function" && sceneSelenaIsMaterial(material));
+      return !material.detail && !(typeof sceneWebGPUIsSelenaMaterial === "function" && sceneWebGPUIsSelenaMaterial(material));
     });
     if (prepared && !prepared.cssDynamic && simpleMaterials && materialFrame.geometryReady &&
         !hasInstancedData) {
@@ -19911,7 +19911,7 @@
     return null;
   }
 
-  function sceneSelenaIsMaterial(material) {
+  function sceneWebGPUIsSelenaMaterial(material) {
     return Boolean(material && material.shaderBackend === "selena" && sceneSelenaMaterialLayout(material) &&
       ((typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
        (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim())));
@@ -19921,7 +19921,7 @@
     var source = Array.isArray(materials) ? materials : [];
     for (var i = 0; i < source.length; i++) {
       var material = source[i] || {};
-      if (sceneSelenaIsMaterial(material)) continue;
+      if (sceneWebGPUIsSelenaMaterial(material)) continue;
       var hasWGSL = (typeof material.customVertexWGSL === "string" && material.customVertexWGSL.trim()) ||
         (typeof material.customFragmentWGSL === "string" && material.customFragmentWGSL.trim());
       var hasCustomUniforms = material.customUniforms && typeof material.customUniforms === "object" && Object.keys(material.customUniforms).length > 0;
