@@ -448,7 +448,7 @@ test("browser direct, instanced, skinned and morph shaders share affine normal s
     assert.match(gl, /vec4 q=gosxAffineNormal\(m,a_normal\)/);
     assert.match(gl, /gosxAffineNormal\(m,gosxNormal\)/);
     assert.match(gl, /gosxAffineNormal\(mat3\(u_modelMatrix \* selenaSkinMatrix\), a_normal\)/);
-    assert.match(gpu, /gosxAffineNormal\(material\.modelMatrix, in\.normal\)/);
+    assert.match(gpu, /gosxAffineNormal\(objectModel, in\.normal\)/);
     assert.equal((gpu.match(/gosxAffineNormal\(model, in\.normal\)/g) || []).length, 1);
     assert.match(gpu, /WGSL_PBR_INSTANCED_CULL_VERTEX = WGSL_PBR_INSTANCED_VERTEX/);
     assert.match(gpu, /let an = gosxAffineNormal\(morph\.model, localNormal\)/);
@@ -463,7 +463,7 @@ test("browser direct, instanced, skinned and morph shaders share affine normal s
   }
   assertContract(webgl, webgpu, webgpu);
   assert.throws(() => assertContract(webgl.replaceAll("gosxAffineNormal(m,a_normal)", "vec4(normalize(m*a_normal),1.0)"), webgpu, webgpu));
-  assert.throws(() => assertContract(webgl, webgpu.replace("gosxAffineNormal(material.modelMatrix, in.normal)", "vec4f(normalize(in.normal),1.0)"), webgpu));
+  assert.throws(() => assertContract(webgl, webgpu.replace("gosxAffineNormal(objectModel, in.normal)", "vec4f(normalize(in.normal),1.0)"), webgpu));
   assert.throws(() => assertContract(webgl.replaceAll("gl.frontFace(gl.CW)", "gl.frontFace(gl.CCW)"), webgpu, webgpu));
   assert.throws(() => assertContract(webgl, webgpu.replaceAll('reflected ? "cw" : "ccw"', '"ccw"'), webgpu));
 });

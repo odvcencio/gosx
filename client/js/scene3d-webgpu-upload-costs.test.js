@@ -222,6 +222,9 @@ test("WebGPU baked buffers rebind after a retained mesh changes vertex slots", a
     const bundle = bakedBundle(h, 3);
     bundle.meshObjects[1] = bakedBundle(h, 3, false, true, true).meshObjects[1];
     assert.equal(bundle.meshObjects[1].retainedGeometry, true);
+    // Explicit depth-write overrides preserve this interleaving under the
+    // shared planner's pipeline/material grouping.
+    for (const object of bundle.meshObjects) object.depthWrite = true;
     await draw(h, bundle);
     const cost = await draw(h, bundle);
     const main = cost.passes.find(p => p.descriptor.colorAttachments.length > 0);

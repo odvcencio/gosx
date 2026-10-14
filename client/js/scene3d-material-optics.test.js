@@ -21,7 +21,7 @@ for(const backend of ['WebGL','WebGPU'])test(`${backend} thickness and geometric
   h.renderer.render(disabled,{width:64,height:64});assert.deepEqual(aa.at(-1),[0,0]);assert.ok(aa.some(v=>v[0]===.15&&v[1]===.2));
  }else{
   h.renderer.render(enabled,{width:64,height:64});await flushAsyncWork();h.renderer.render(enabled,{width:64,height:64});
-  const groups=h.fake.state.renderPasses.flatMap(p=>p.bindGroups).filter(b=>b.slot===1&&b.group?.desc?.entries?.length===19).map(b=>b.group);assert.ok(groups.length,'material group is bound');
+  const groups=h.fake.state.renderPasses.flatMap(p=>p.bindGroups).filter(b=>b.slot===1&&b.group?.desc?.entries?.length===20).map(b=>b.group);assert.ok(groups.length,'material group is bound');
   const group=groups.at(-1),entries=group.desc.entries;assert.ok(entries.find(e=>e.binding===17)&&entries.find(e=>e.binding===18),'thickness texture and sampler are present');
   const buffer=entries.find(e=>e.binding===0).resource.buffer;
   const data=h.fake.state.writeBufferCalls.filter(w=>w.buffer===buffer).at(-1).data;

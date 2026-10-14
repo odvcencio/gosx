@@ -602,7 +602,7 @@ for (const fixture of [
   { label: "source", fresh: true },
   { label: "generated", fresh: false },
 ]) {
-test(`Scene3D WebGPU ${fixture.label} retained meshes keep material uniforms until their source leaves`, async () => {
+test(`Scene3D WebGPU ${fixture.label} retained meshes share materials independently of geometry`, async () => {
   const harness = await createBoardWebGPUHarness({ fresh: fixture.fresh });
   harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;
   const api = harness.env.context.__gosx_scene3d_api;
@@ -622,11 +622,11 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes keep material uniforms unt
   const secondRetainedStats = harness.renderer.diagnostics().retainedGeometry;
   assert.equal(secondRetainedStats.uploadCalls, firstRetainedStats.uploadCalls, "second frame must not upload retained vertex arrays");
   assert.ok(secondRetainedStats.hits >= firstRetainedStats.hits + 4);
-  const materialWrite = secondWrites.find((call) => call.buffer === firstMaterialBuffer);
-  assert.ok(materialWrite, "second frame must rewrite the identified retained material uniform buffer");
-  assert.ok(materialWrite.data && materialWrite.data.byteLength === 288,
-    "second frame must upload the current 288-byte material uniform to the identified buffer");
-  assert.equal(materialWrite.data.byteLength / 4, 72, "material uniform payload must be 72 floats");
+  assert.equal(secondWrites.some(call => call.buffer === firstMaterialBuffer), false,
+    "steady frames reuse packed material fields");
+  const arena = harness.fake.state.bindGroups.flatMap(group => group.desc.entries || [])
+    .find(entry => entry.binding === 19)?.resource.buffer;
+  assert.ok(arena && secondWrites.some(call => call.buffer === arena), "model transforms upload through the frame arena");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-retained-mesh-objects"), "1");
 
   object.vertices.positions[0] = -2;
@@ -634,8 +634,8 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes keep material uniforms unt
   harness.renderer.render(renderBundle(api, object, 2), viewport);
   const revisedMaterialBuffer = latestPBRMaterialBuffer(harness.fake);
   const dirtyRetainedStats = harness.renderer.diagnostics().retainedGeometry;
-  assert.notEqual(firstMaterialBuffer.destroyed, true, "a live source keeps its material buffer across geometry revisions");
-  assert.equal(revisedMaterialBuffer, firstMaterialBuffer, "geometry revisions preserve the live material owner");
+  assert.notEqual(firstMaterialBuffer.destroyed, true, "geometry revision preserves the shared material");
+  assert.equal(revisedMaterialBuffer, firstMaterialBuffer);
   assert.notEqual(revisedMaterialBuffer.destroyed, true);
   assert.equal(dirtyRetainedStats.uploadCalls, secondRetainedStats.uploadCalls + 4, "explicit revision must refresh all retained GPU attributes");
   assert.equal(dirtyRetainedStats.revisionInvalidations, 1);
@@ -644,17 +644,20 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes keep material uniforms unt
   harness.renderer.render(renderBundle(api, replacement, 3), viewport);
   const replacementMaterialBuffer = latestPBRMaterialBuffer(harness.fake);
   const replacedStats = harness.renderer.diagnostics().retainedGeometry;
-  assert.equal(revisedMaterialBuffer.destroyed, true, "epoch sweep must destroy a removed retained material buffer");
-  assert.notEqual(replacementMaterialBuffer, revisedMaterialBuffer);
+  assert.notEqual(revisedMaterialBuffer.destroyed, true, "object replacement preserves the shared material");
+  assert.equal(replacementMaterialBuffer, revisedMaterialBuffer);
   assert.equal(replacedStats.cacheEntries, 1);
   assert.equal(replacedStats.liveBytes, dirtyRetainedStats.liveBytes);
   assert.ok(replacedStats.retirements >= dirtyRetainedStats.retirements + 4);
 
   harness.renderer.render(renderBundle(api, replacement, 4, [], false), viewport);
   const retiredStats = harness.renderer.diagnostics().retainedGeometry;
-  assert.equal(replacementMaterialBuffer.destroyed, true, "retained-to-world-baked transition must retire its material buffer");
+  assert.notEqual(replacementMaterialBuffer.destroyed, true, "world-baked geometry also uses the shared material");
   assert.equal(retiredStats.cacheEntries, 0);
   assert.equal(retiredStats.liveBytes, 0);
+  const empty = renderBundle(api, replacement, 5); empty.materials = []; empty.meshObjects = [];
+  harness.renderer.render(empty, viewport);
+  assert.equal(replacementMaterialBuffer.destroyed, true, "removing the last material retires its uniform");
 });
 }
 
