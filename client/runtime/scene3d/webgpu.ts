@@ -19859,7 +19859,7 @@
           if (record) record.seenEpoch = epoch;
         }
       }
-      materialFrame.resources.forEach(function(record, key) {
+      materialFrame.resources.forEach(function(record: any, key: string) {
         if (record.seenEpoch === epoch) return;
         for (var slot of ["_gosxWGPUMaterialUniform", "_gosxWGPUMaterialShadowUniform"]) {
           var buffer = record.owner[slot];
