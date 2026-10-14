@@ -7,6 +7,13 @@ async function mountPost(extra = {}) {
   const mount = new H.FakeElement("div", null);
   mount.id = "post-canvas-msaa";
   const env = H.createContext({elements: [mount], enableWebGL2: true, disableCanvas2D: true,
+    createWebGL2Context() {
+      const gl = new H.FakeWebGLContext();
+      gl.textureSizes = [];
+      const upload = gl.texImage2D.bind(gl);
+      gl.texImage2D = (...args) => {if (args.length === 9) gl.textureSizes.push([args[3], args[4]]); upload(...args);};
+      return gl;
+    },
     manifest: {engines: [{id: "post-engine", component: "GoSXScene3D", kind: "surface", mountId: mount.id,
       props: {width: 640, height: 360, adaptiveQuality: false,
         scene: {objects: [{id: "triangle", kind: "gltf-mesh", materialKind: "standard", wireframe: false,
@@ -51,4 +58,21 @@ test("turning initial post effects off retains antialiasing through FXAA", async
   assert.ok(outputModes.length > 0);
   assert.equal(outputModes.at(-1)[2], 0, "FXAA fallback filters display colors without changing tone mapping or exposure");
   assert.equal(s.env.consoleLogs.error.length, 0);
+});
+
+test("unsupported specular-only bloom retains FXAA for points on the full tier", async () => {
+  const s = await mountPost({scene: {points: [{positions: [0, 0, 0], count: 1, sizes: [3]}],
+    postEffects: [{kind: "bloom", source: "specular"}]}});
+  assert.equal(s.canvas.contextCalls.filter(c => c.kind === "webgl2").at(-1).options.antialias, false);
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+  assert.equal(s.mount.__gosxScene3DState.postEffects[0].source, "specular");
+});
+
+test("private FXAA uses the full canvas resolution above the post pixel default", async () => {
+  const s = await mountPost({width: 2560, height: 1440, maxPixels: -1});
+  s.mount.__gosxScene3DHandle.applyCommands([{kind: 7, data: {postEffects: []}}]);
+  s.raf.flush(48); await H.flushAsyncWork(); s.raf.flush(64);
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-antialiasing"), "fxaa");
+  const allocations = s.gl.textureSizes.filter(size => size[0] === 2560 && size[1] === 1440);
+  assert.ok(allocations.length > 0, "private FXAA target must match the backing canvas");
 });

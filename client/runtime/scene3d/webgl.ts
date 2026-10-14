@@ -8744,15 +8744,17 @@
         }
       }
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
-      // Context attributes are fixed. Filter display colors only when the
-      // original path would render directly, including implicit post effects.
-      canvasFXAAFallback = scenePBRPostCanvasAntialiasFallback.has(gl) && !(scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode).postEffects || []).length;
-      if (canvasFXAAFallback) bundle = Object.assign({}, bundle, { postEffects: [{ kind: "fxaa" }] });
       detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
-      scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode), programPreparation);
+      var preparationBundle = scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode);
+      // Prepare the private fallback before checking asynchronous shader readiness.
+      // The draw pass decides whether it is needed after filtering all effects.
+      if (scenePBRPostCanvasAntialiasFallback.has(gl)) preparationBundle = Object.assign({}, preparationBundle, {
+        postEffects: (preparationBundle.postEffects || []).concat([{ kind: "fxaa" }]),
+      });
+      scenePBRPrepareBundlePrograms(gl, preparationBundle, programPreparation);
       postProcessor = programPreparation.postProcessor;
       if (!scenePBRFrameProgramsReady(gl, program)) return "pending";
 
@@ -8928,6 +8930,11 @@
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
       transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
       if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
+      canvasFXAAFallback = scenePBRPostCanvasAntialiasFallback.has(gl) && postEffects.length === 0;
+      if (canvasFXAAFallback) {
+        postEffects = [{ kind: "fxaa" }];
+        postFXMaxPixels = canvas.width * canvas.height;
+      }
       var usePostProcessing = postEffects.length > 0;
       frameLinear = usePostProcessing && !canvasFXAAFallback;
 
@@ -11185,12 +11192,12 @@
     return sceneBool(props && props.antialias, tierDefault);
   }
 
-  function createScenePBRContext(canvas, props, capability, canvasAlpha = null) {
+  function createScenePBRContext(canvas, props, capability, canvasAlpha = null, ignorePost = false) {
     if (!canvas || typeof canvas.getContext !== "function") return null;
     const caps = capability || {};
     try {
       const useCanvasAlpha = canvasAlpha == null ? sceneCanvasAlpha(props) : canvasAlpha;
-      const antialias = scenePBRCanvasAntialias(props, caps);
+      const antialias = scenePBRCanvasAntialias(props, caps, ignorePost);
       const gl = canvas.getContext("webgl2", {
         alpha: useCanvasAlpha,
         premultipliedAlpha: useCanvasAlpha,
