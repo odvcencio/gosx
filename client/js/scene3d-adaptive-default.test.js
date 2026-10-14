@@ -49,3 +49,57 @@ test("rAF-only timing demotes under load and recovers on sustained 60 Hz cadence
   assert.equal(s.canvas.width, 1600);
   assert.equal(s.env.consoleLogs.error.length, 0);
 });
+
+test("on-demand refresh gaps do not demote a static scene", async () => {
+  const s = await mountQuality({autoRotate: false});
+  for (let i = 0; i < 12; i++) {
+    s.mount.__gosxScene3DHandle.applyCommands([{kind: 7, data: {background: "#123456"}}]);
+    s.tick(2000); await H.flushAsyncWork();
+  }
+  assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full");
+  assert.equal(s.canvas.width, 1600);
+});
+
+for (const hz of [50, 48, 30]) {
+  test(`rAF-only quality stays full at ${hz} Hz`, async () => {
+    const s = await mountQuality();
+    for (let i = 0; i < 600; i++) s.tick(1000 / hz);
+    assert.equal(s.mount.getAttribute("data-gosx-scene3d-quality-active"), "full");
+  });
+}
+
+test("reversed promotions back off instead of repeatedly flapping", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  let transitions = 0;
+  let last = h.state.activeTier;
+  for (let i = 0; i < 3600; i++) {
+    h.sample(h.state.activeTier === "full" ? 24 : 5, 1000 / 60);
+    if (last !== h.state.activeTier) {transitions++; last = h.state.activeTier;}
+  }
+  console.log(`tier transitions over 60 seconds: ${transitions}`);
+  assert.ok(transitions <= 7, `expected promotion backoff, got ${transitions} transitions`);
+  assert.equal(h.state.activeTier, "balanced");
+});
+
+test("scroll interaction holds rAF-only tier decisions", () => {
+  const h = H.createAdaptiveQualityHarness({qualityTier: "full"});
+  h.sceneState._scrollCamera = {_activeInputUntil: 1e9};
+  for (let i = 0; i < 600; i++) {
+    h.clock.now += 60;
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now, h.clock.now, null);
+  }
+  assert.equal(h.state.activeTier, "full");
+});
+
+test("transition events publish the DPR applied for the new tier", async () => {
+  const s = await mountQuality();
+  const events = [];
+  s.env.context.__gosx_emit = (level, source, message, fields) => {
+    if (message === "adaptive-quality-transition") events.push({...fields});
+  };
+  for (let i = 0; i < 40; i++) s.tick(60);
+  assert.equal(events.length, 1);
+  assert.equal(events[0].activeTier, "balanced");
+  assert.equal(events[0].dprCap, 1.25);
+  assert.equal(events[0].dprCap, s.canvas.width / 800);
+});

@@ -1461,6 +1461,7 @@
     function runSceneFrame() { return sceneRunFrameGuard(runSceneFrameInner, arguments, function() { return frameHandle === -1; }, function() { frameHandle = 0; }); }
     function runSceneFrameInner() {
         const now = motionScheduler && typeof motionScheduler.now === "function" ? motionScheduler.now() : arguments[0];
+        sceneObserveAdaptiveQualityRAF(adaptiveQuality, now);
         if (frameHandle !== -1) frameHandle = 0;
         const scheduledRender = renderHandle === -1;
         if (scheduledRender) renderHandle = null;
@@ -3085,6 +3086,10 @@
         const nextViewport = sceneViewportFromMount(mount, props, viewportBase, canvas, capability, adaptiveQuality);
         viewport = applySceneViewport(mount, canvas, labelLayer, nextViewport, viewportBase);
         viewportDirty = false;
+        if (adaptiveQuality.pendingTransition) {
+          gosxSceneEmit("warn", "adaptive-quality-transition", Object.assign(adaptiveQuality.pendingTransition, {dprCap: viewport.devicePixelRatio}));
+          adaptiveQuality.pendingTransition = null;
+        }
       }
       if (!sceneCanRender()) {
         cancelFrame();

@@ -4996,7 +4996,7 @@
     ));
     const cpuRAFBudgetMS = Math.max(targetFrameMS, authoredFrameIntervalMS > 0
       ? authoredFrameIntervalMS
-      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 0));
+      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 1000 / 60));
     const profileOverrides = (props && (props.qualityProfiles || props.adaptiveQualityProfiles)) || adaptiveConfig.profiles || {};
     const defaults = {
       full: { dprCap: defaultSceneMaxDevicePixelRatio(capability), surfaceResolution: 160, causticsResolution: 512, objectShadowResolution: 512, objectTextureMaxSide: 512, objectTexturePixelBudget: 786432, expensivePassCadence: 1 },
@@ -5077,6 +5077,12 @@
       sampleCursor: 0,
       sampleScratch: new Array(120),
       lastRAFNowMS: null,
+      lastTickNowMS: null,
+      rafTickIntervalMS: 0,
+      vsyncIntervalMS: 0,
+      promotionFrames: 300,
+      promotedTier: null,
+      pendingTransition: null,
       missingRendererSamples: 0,
       rendererTimingFallbackFrames: Math.max(2, Math.floor(sceneNumber(props && props.adaptiveRendererTimingFallbackFrames, 8))),
       resumePending: true,
@@ -5266,8 +5272,38 @@
     }
   }
 
+  // Observe every scheduled display tick, including ticks skipped by a frame cap.
+  // Sparse on-demand refreshes are resume boundaries, not frame costs.
+  function sceneObserveAdaptiveQualityRAF(state, nowMS) {
+    if (!state || !state.enabled || !Number.isFinite(nowMS)) return;
+    const interval = state.lastTickNowMS == null ? 0 : nowMS - state.lastTickNowMS;
+    state.lastTickNowMS = nowMS;
+    state.rafTickIntervalMS = interval > 0 && interval < 250 ? interval : 0;
+    if (interval >= 250) {
+      state.resumePending = true;
+      state.lastRAFNowMS = null;
+      state.sampleWindow.length = 0;
+      state.sampleCursor = 0;
+      state.ewmaFrameMS = 0;
+      state.p95FrameMS = 0;
+      state.badFrames = state.goodFrames = state.severeFrames = 0;
+    }
+    if (state.rafTickIntervalMS > 0) {
+      // The configured target already supports intervals through 50 ms.
+      // Keep slower stalled callbacks visible as missed cadence.
+      const vsync = Math.min(50, state.rafTickIntervalMS);
+      state.vsyncIntervalMS = state.vsyncIntervalMS > 0
+        ? Math.min(state.vsyncIntervalMS, vsync) : vsync;
+    }
+  }
+
   function sceneAdaptiveSetTier(state, tier, reason, nowMS) {
     if (!state.profiles[tier] || state.activeTier === tier) return false;
+    if (reason === "recovered") state.promotedTier = tier;
+    else if (state.promotedTier === state.activeTier) {
+      state.promotionFrames = Math.min(19200, state.promotionFrames * 2);
+      state.promotedTier = null;
+    }
     state.activeTier = tier;
     state.activeProfile = state.profiles[tier];
     state.tier = tier;
@@ -5295,7 +5331,8 @@
     const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
     const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
     const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
-    const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
+    const renderIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
+    const rafIntervalMS = state.lastTickNowMS === rafNow ? state.rafTickIntervalMS : renderIntervalMS;
     state.lastRAFNowMS = rafNow;
     state.frameCount += 1;
     const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
@@ -5321,6 +5358,12 @@
       return false;
     }
     const frameMS = sample.durationMS;
+    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
+    if (isRAFMeasured && (rafIntervalMS >= 250 || sceneQualityLadderScrollInputActive(sceneState, now))) {
+      state.badFrames = state.goodFrames = state.severeFrames = 0;
+      applySceneAdaptiveQualityState(mount, state, now, false);
+      return false;
+    }
     state.lastFrameMS = frameMS;
     state.measurement = sample.source;
     state.lastMeasurement = sample;
@@ -5335,9 +5378,9 @@
     }
     if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
 
-    const isRAFMeasured = sample.source.indexOf("cpu-raf") === 0;
     const cpuMeasured = isRAFMeasured || sample.source.indexOf("cpu-work+") === 0;
-    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7),
+      isRAFMeasured ? state.vsyncIntervalMS : 0);
     const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
     const severeMiss = frameMS > target * 2;
     if (missesBudget) {
@@ -5368,7 +5411,7 @@
         state.cooldownUntilMS = now + state.cooldownMS;
         changed = true;
       }
-    } else if (now >= state.cooldownUntilMS && state.validSamples >= 300 && state.goodFrames >= 300) {
+    } else if (now >= state.cooldownUntilMS && state.validSamples >= state.promotionFrames && state.goodFrames >= state.promotionFrames) {
       if (state.postFXSuppressed) {
         state.postFXSuppressed = false;
         state.qualityRevision += 1;
@@ -5383,7 +5426,7 @@
       sceneApplyAdaptivePostFX(sceneState, state);
       applyScenePostFXState(mount, sceneState);
       applySceneAdaptiveQualityState(mount, state, now, true);
-      gosxSceneEmit("warn", "adaptive-quality-transition", {
+      state.pendingTransition = {
         reason: state.transitionReason,
         requestedTier: state.requestedTier,
         activeTier: state.activeTier,
@@ -5391,9 +5434,8 @@
         ewmaFrameMS: state.ewmaFrameMS,
         p95FrameMS: state.p95FrameMS,
         targetFrameMS: state.targetFrameMS,
-        dprCap: state.renderDevicePixelRatio || state.currentMaxDevicePixelRatio,
         postFXSuppressed: state.postFXSuppressed,
-      });
+      };
       return true;
     }
     applySceneAdaptiveQualityState(mount, state, now, false);
