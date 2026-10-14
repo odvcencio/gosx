@@ -2107,18 +2107,12 @@
       gl.bindTexture(gl.TEXTURE_2D, depthTex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, width, height, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
       scenePBRTextureParameters(gl, gl.NEAREST);
-    } else {
-      depthRB = gl.createRenderbuffer();
-      gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
-      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTex, 0);
     if (depthTex) {
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTex, 0);
-    } else {
-      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
@@ -4463,6 +4457,7 @@
     var atmospherePost = createSceneAtmospherePostWebGL({ gl, quad, getProgram, beginPostPass });
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     function postFrameContext(projection, view, lights) { return projection && projection.projection ? projection : { projection: projection, view: view, lights: lights }; }
+    var currentLinearInput = true;
     var currentWidth = 0;
     var currentHeight = 0;
     var hdrDegradationReported = false;
@@ -4813,7 +4808,8 @@
       // Returns { width, height, factor } — the scaled render target dims plus
       // the scale factor applied. Callers must use these dims for gl.viewport,
       // uniforms like u_viewportHeight, and the apply() call.
-	      begin: function(canvasW, canvasH, maxPixels, selective = false) {
+	      begin: function(canvasW, canvasH, maxPixels, selective = false, linearInput = true) {
+        currentLinearInput = linearInput;
         var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
         var sw = Math.max(1, Math.floor(canvasW * factor));
         var sh = Math.max(1, Math.floor(canvasH * factor));
@@ -4861,7 +4857,7 @@
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
-          linearSceneInput: true,
+          linearSceneInput: currentLinearInput,
           hdrIntermediate: hdrSupported,
           intermediateFormat: sceneFBO ? sceneFBO.colorFormat : "unallocated",
           degraded: Boolean(sceneFBO && !hdrSupported),
@@ -7590,6 +7586,7 @@
 
   function createScenePBRRenderer(gl, canvas) {
     let selectiveBloom = false;
+    let canvasFXAAFallback = false;
 
     const pbrProgram = createScenePBRProgram(gl);
     if (!pbrProgram) {
@@ -8751,7 +8748,13 @@
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
-      scenePBRPrepareBundlePrograms(gl, scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode), programPreparation);
+      var preparationBundle = scenePBRPreparationBundle(bundle, frameMeta, canvas.parentNode);
+      // Prepare the private fallback before checking asynchronous shader readiness.
+      // The draw pass decides whether it is needed after filtering all effects.
+      if (scenePBRPostCanvasAntialiasFallback.has(gl)) preparationBundle = Object.assign({}, preparationBundle, {
+        postEffects: (preparationBundle.postEffects || []).concat([{ kind: "fxaa" }]),
+      });
+      scenePBRPrepareBundlePrograms(gl, preparationBundle, programPreparation);
       postProcessor = programPreparation.postProcessor;
       if (!scenePBRFrameProgramsReady(gl, program)) return "pending";
 
@@ -8927,8 +8930,13 @@
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
       transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
       if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
+      canvasFXAAFallback = scenePBRPostCanvasAntialiasFallback.has(gl) && postEffects.length === 0;
+      if (canvasFXAAFallback) {
+        postEffects = [{ kind: "fxaa" }];
+        postFXMaxPixels = canvas.width * canvas.height;
+      }
       var usePostProcessing = postEffects.length > 0;
-      frameLinear = usePostProcessing;
+      frameLinear = usePostProcessing && !canvasFXAAFallback;
 
       // renderW/renderH reflect the actual render target. When postfx is
       // active with a cap, these may be smaller than canvas dims. All
@@ -8940,10 +8948,10 @@
 
       if (usePostProcessing) {
         textureCache._sceneTextureEpoch++;
-        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels, selectiveBloom);
+        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels, selectiveBloom, frameLinear);
         renderW = scaled.width;
         renderH = scaled.height;
-        renderTarget = Object.assign({}, scaled, { linear: true });
+        renderTarget = Object.assign({}, scaled, { linear: frameLinear });
         var temporalRequested = false, spatialRequested = false;
         for (var postIndex = 0; postIndex < postEffects.length; postIndex++) {
           temporalRequested = temporalRequested || postEffects[postIndex].kind === "taa";
@@ -8992,9 +9000,9 @@
       if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
         if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
         skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
-          camera: cam, aspect: aspect, linear: usePostProcessing }) : "unavailable";
+          camera: cam, aspect: aspect, linear: frameLinear }) : "unavailable";
       }
-      sceneCloudWebGLDraw(skyResources, gl, { environment: bundle.environment, meta: frameMeta, view: viewMatrix, camera: cam, aspect, linear: usePostProcessing, timeSeconds: performance.now()/1000 });
+      sceneCloudWebGLDraw(skyResources, gl, { environment: bundle.environment, meta: frameMeta, view: viewMatrix, camera: cam, aspect, linear: frameLinear, timeSeconds: performance.now()/1000 });
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
       // Camera matrices were already computed above the shadow pass so CSM
@@ -9031,7 +9039,7 @@
       gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, cam.z);
 
       // Upload exposure and tone mapping mode (disabled when post-processing handles it).
-      scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
+      scenePBRUploadExposure(gl, uniforms, bundle.environment, frameLinear);
 
       // Upload lights and environment once per frame.
       scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment, _frameLightsHash);
@@ -9046,9 +9054,9 @@
       drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta && frameMeta.frameRequest);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
-      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: usePostProcessing, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
+      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
-        meta: frameMeta, aspect, linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+        meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
       // Shared water must be present in the opaque capture sampled by glass.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
       // The ocean owns a program and texture unit zero. Restore the PBR pass
@@ -11171,27 +11179,34 @@
 
   // --- Integration ---
 
-  function scenePBRCanvasAntialias(props, capability) {
+  var scenePBRPostCanvasAntialiasFallback = new WeakSet();
+  function scenePBRCanvasAntialias(props, capability, ignorePost = false) {
     const caps = capability || {};
     const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
     if (requestedSamples > 1) return true;
     if (requestedSamples === 1) return false;
     const tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    const scene = props && props.scene || {};
+    const effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
+    if (!ignorePost && Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
     return sceneBool(props && props.antialias, tierDefault);
   }
 
-  function createScenePBRContext(canvas, props, capability) {
+  function createScenePBRContext(canvas, props, capability, canvasAlpha = null, ignorePost = false) {
     if (!canvas || typeof canvas.getContext !== "function") return null;
     const caps = capability || {};
     try {
-      const useCanvasAlpha = sceneCanvasAlpha(props);
-      return canvas.getContext("webgl2", {
+      const useCanvasAlpha = canvasAlpha == null ? sceneCanvasAlpha(props) : canvasAlpha;
+      const antialias = scenePBRCanvasAntialias(props, caps, ignorePost);
+      const gl = canvas.getContext("webgl2", {
         alpha: useCanvasAlpha,
         premultipliedAlpha: useCanvasAlpha,
-        antialias: scenePBRCanvasAntialias(props, caps),
+        antialias,
         depth: true,
         powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
       });
+      if (gl && !antialias && scenePBRCanvasAntialias(props, caps, true)) scenePBRPostCanvasAntialiasFallback.add(gl);
+      return gl;
     } catch (_error) {
       return null;
     }
