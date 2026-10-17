@@ -51,7 +51,20 @@
 // App.OfferSignedUpdate checks the signed update feed and asks before opening
 // a publisher's allowlisted download page; it never downloads or installs an update.
 //
-// macOS and Linux currently return ErrUnsupported; darwin/amd64 and
-// darwin/arm64 are cross-compiled in CI so the unsupported path stays
-// buildable while the native macOS backend is developed.
+// The macOS backend (darwin/amd64 and darwin/arm64) hosts a WKWebView in an
+// NSWindow, also without cgo: Objective-C is reached through load-time imports
+// and objc_msgSend, and the delegate callbacks are small assembly routines that
+// record events for Go to handle on the main thread. App.Run must be called from
+// the main goroutine, which this package pins to the main thread when it is
+// imported. The backend currently provides the window, the web view, Navigate,
+// SetHTML, Reload, ExecuteScript, SetTitle, PrependBootstrapScript,
+// Options.OnWindowCreated, OnNavigationCompleted, OnBeforeClose (with a zero
+// placement) and OnClose, and the startup timeline, where EnvironmentReady stays
+// zero because WebKit has no separate environment step. Menus, dialogs, the page
+// bridge, window placement, single-instance launch handling and the other
+// features report ErrUnsupported until later slices land. Options.UserDataDir,
+// GPU, AdditionalBrowserArguments, BrowserExecutableFolder, DPIAwareness,
+// MuteAudio and SingleInstance have no effect on macOS yet.
+//
+// Linux currently returns ErrUnsupported.
 package desktop

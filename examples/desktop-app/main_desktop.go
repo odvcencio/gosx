@@ -1,11 +1,16 @@
-//go:build windows
+//go:build windows || darwin
 
 // Command desktop-app is a template for a GoSX desktop app: a native window
 // hosting web UI, a sidecar engine process, native menus and dialogs, typed
 // Go services for the page, and single-instance launch handling.
 //
 // Run it with `go run ./examples/desktop-app` on Windows (WebView2Loader.dll
-// must sit next to the executable or on PATH).
+// must sit next to the executable or on PATH) or on macOS (AppKit and WKWebView
+// ship with the system; no cgo, no Xcode). On macOS the backend currently
+// provides the window, web view, navigation events and the startup timeline;
+// the menu bar, dialogs, bridge and the other Windows features return
+// desktop.ErrUnsupported until later slices land, and this example tolerates
+// that where it can.
 package main
 
 import (
@@ -16,7 +21,9 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/signal"
 	"regexp"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -134,8 +141,8 @@ func runHost(smoke bool) error {
 		},
 		OnNavigationCompleted: func(event desktop.NavigationCompleted) {
 			timeline := app.StartupTimeline()
-			log.Printf("navigation %d success=%v; startup: window %v, WebView2 %v, first page %v",
-				event.ID, event.Success, timeline.WindowShown, timeline.ControllerReady, timeline.FirstNavigationCompleted)
+			log.Printf("navigation %d success=%v status=%d; startup: window %v, web view %v, first page %v",
+				event.ID, event.Success, event.WebErrorStatus, timeline.WindowShown, timeline.ControllerReady, timeline.FirstNavigationCompleted)
 		},
 	})
 	if err != nil {
@@ -157,9 +164,23 @@ func runHost(smoke bool) error {
 			{Separator: true},
 			{ID: "file.exit", Label: "E&xit", OnClick: func() { _ = app.Close() }},
 		}}},
-	}}); err != nil {
+	}}); err != nil && !errors.Is(err, desktop.ErrUnsupported) {
+		// A backend without native menus (macOS until the menu slice) reports
+		// ErrUnsupported; the window works without them.
 		return err
 	}
+
+	// SIGINT and SIGTERM close the window instead of killing the process, so
+	// OnClose-style cleanup (stopping the engine below) runs. Close is safe from
+	// any goroutine.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM)
+	defer signal.Stop(signals)
+	go func() {
+		for range signals {
+			_ = app.Close()
+		}
+	}()
 
 	// Start the engine while the window and WebView2 start. The sidecar
 	// has no console window and ends with this process, even after a crash.

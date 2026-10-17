@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- Add a macOS desktop backend (first slice) in `desktop`: an `NSWindow` hosting
+  a `WKWebView`, built with `CGO_ENABLED=0` through load-time imports,
+  `objc_msgSend` and small assembly delegate routines, with no cgo, Xcode or
+  third-party FFI. It provides `Navigate`, `SetHTML`, `Reload`, `ExecuteScript`,
+  `SetTitle`, preload scripts, `OnWindowCreated`, `OnNavigationCompleted`,
+  `OnBeforeClose`, `OnClose` and the startup timeline on darwin/amd64 and
+  darwin/arm64; menus, dialogs, the page bridge and the other features still
+  return `desktop.ErrUnsupported` there. `App.Run` must be called from the main
+  goroutine. `examples/desktop-app` now builds on macOS (`main_windows.go` became
+  `main_desktop.go`).
+
 - Add `command.Action.Submit`, a CSS selector for a managed form or its submit
   button. The workbench calls `requestSubmit` on it, so a chord submits through
   the page's managed form path. `commands.list()` rows carry `submit`.
