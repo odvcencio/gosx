@@ -23,6 +23,7 @@
 //   data-gosx-action="POST /url"    element/button → fetch(url, {Accept: json}); no reload.
 //   <form data-gosx-action[="..."]>  submit → fetch URLSearchParams(FormData);
 //                                    method/url default to the form's method/action.
+//                                    GET/HEAD merge fields into the URL query.
 //   data-gosx-reset                  on a data-gosx-action form → clear text inputs on 2xx.
 //   data-gosx-submit-on="change"     input → el.form.requestSubmit() on change.
 //   data-gosx-set="$signal"          element → on click, set the shared signal to
@@ -122,8 +123,20 @@
     var actionEl = contractEl || el;
     var opts = { method: method, headers: { Accept: "application/json" } };
     if (body !== undefined) {
-      opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
-      opts.body = body;
+      if (/^(GET|HEAD)$/i.test(method)) {
+        var target = gosxRequestURL(url);
+        var fields = new URLSearchParams(body);
+        // Submitted fields replace stale URL values. Delete first so repeated
+        // controls retain every submitted value and unrelated queries survive.
+        fields.forEach(function (_, name) { target.searchParams.delete(name); });
+        fields.forEach(function (value, name) {
+          target.searchParams.append(name, value);
+        });
+        url = target.href;
+      } else {
+        opts.headers["Content-Type"] = "application/x-www-form-urlencoded";
+        opts.body = body;
+      }
     }
     if (el && "disabled" in el) el.disabled = true;
     return gosxActionRequest(url, opts)
@@ -335,10 +348,10 @@
 
   function formBody(form, submitter) {
     var formData = new FormData(form);
-    var name = submitter && (submitter.name || (submitter.getAttribute && submitter.getAttribute("name")));
-    if (name && (!formData.has || !formData.has(name))) {
-      var value = submitter.value || (submitter.getAttribute && submitter.getAttribute("value")) || "";
-      if (typeof formData.append === "function") formData.append(name, value);
+    // FormData(form) excludes submit buttons. A matching field name must not
+    // suppress the clicked button or collapse repeated successful controls.
+    if (submitter && submitter.name && !submitter.disabled) {
+      formData.append(submitter.name, submitter.value);
     }
     return new URLSearchParams(formData);
   }
