@@ -20,6 +20,10 @@ TESTS = (
     "TestDarwinFilePanelsConfigureAndCancel",
     "TestDarwinFinderLaunchServicesDelivery",
     "TestDarwinWebMessagesRoundTrip",
+    "TestDarwinWebFileInputSelection",
+    "TestDarwinWebFileInputCancelAndReselect",
+    "TestDarwinWebDirectoryInputSelection",
+    "TestDarwinJavaScriptDialogs",
 )
 
 

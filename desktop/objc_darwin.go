@@ -287,7 +287,7 @@ func nsColorSRGB(r, g, b, a float64) uintptr {
 }
 
 // The delegate class. One instance serves as NSApplicationDelegate,
-// NSWindowDelegate and WKNavigationDelegate; AppKit and WebKit use
+// NSWindowDelegate, WKNavigationDelegate and WKUIDelegate; AppKit and WebKit use
 // respondsToSelector:, so protocol conformance need not be declared. The
 // recorder finds its ctrl block through the one instance variable, at offset 8
 // of a direct NSObject subclass (after isa). The offset is asserted when the
@@ -378,6 +378,10 @@ func registerDelegateClass() (uintptr, error) {
 		{"application:openFiles:", impStubs[impStubOpenFiles], "v@:@@"},
 		{"application:openURLs:", impStubs[impStubOpenURLs], "v@:@@"},
 		{"userContentController:didReceiveScriptMessage:", impStubs[impStubWebMessage], "v@:@@"},
+		{"webView:runOpenPanelWithParameters:initiatedByFrame:completionHandler:", impStubs[impStubWebFilePanel], "v@:@@@@?"},
+		{"webView:runJavaScriptAlertPanelWithMessage:initiatedByFrame:completionHandler:", impStubs[impStubWebAlert], "v@:@@@@?"},
+		{"webView:runJavaScriptConfirmPanelWithMessage:initiatedByFrame:completionHandler:", impStubs[impStubWebConfirm], "v@:@@@@?"},
+		{"webView:runJavaScriptTextInputPanelWithPrompt:defaultText:initiatedByFrame:completionHandler:", impStubs[impStubWebPrompt], "v@:@@@@@?"},
 		{"webView:didFinishNavigation:", impStubs[impStubNavigationFinished], "v@:@@"},
 		{"webView:didFailNavigation:withError:", impStubs[impStubNavigationFailed], "v@:@@@"},
 		{"webView:didFailProvisionalNavigation:withError:", impStubs[impStubNavigationFailed], "v@:@@@"},

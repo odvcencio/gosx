@@ -211,7 +211,9 @@ func TestRecorderToleratesAnUnwiredInstance(t *testing.T) {
 	// A delegate instance whose ctrl variable is still nil must be answered, not
 	// crash AppKit.
 	self := &fakeSelf{}
-	for i, stub := range impStubs {
+	// The WKUIDelegate stubs additionally require a real completion Block;
+	// TestDarwinWebUIUnwiredRecorderCancelsCompletion exercises that contract.
+	for i, stub := range impStubs[:impStubWebFilePanel] {
 		if ret := callStub(stub, self, objcSel("probe:"), 1, 2, 3); ret != 0 {
 			t.Errorf("stub %d returned %#x for an unwired instance, want 0", i, ret)
 		}

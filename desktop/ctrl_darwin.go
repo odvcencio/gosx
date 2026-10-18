@@ -58,7 +58,7 @@ type ctrl struct {
 	retain  uintptr // objc_retain: the recorder calls it once per retained argument
 	dropped uint64  // records dropped because the ring was full; written only by the recorder
 	calls   uint64  // records appended; written only by the recorder
-	retains uint64  // retain calls made; written only by the recorder
+	retains uint64  // object retains and Block copies; written only by the recorder
 
 	// Wake. WebKit calls its delegate from a run-loop source, not from an
 	// NSEvent, so the event pump that is waiting in AppKit does not return when a
@@ -72,16 +72,19 @@ type ctrl struct {
 	wakeSelf  uintptr
 	wakeSel   uintptr
 	wakeEvent uintptr
+	blockCopy uintptr // _Block_copy, for asynchronous WKUIDelegate completions
 }
 
-// nativeEvent is one ring record: what a delegate method was called with. It is
-// exactly 64 bytes (a cache line) and the recorder writes every field.
+// nativeEvent is one ring record: what a delegate method was called with. Its
+// original offsets and 64-byte size stay fixed; WKUIDelegate uses one reserved
+// word for a copied completion Block. Other events ignore that word.
 type nativeEvent struct {
-	kind uint64     // an ev* constant, chosen by the stub that entered the recorder
-	sel  uintptr    // the selector the method was invoked for (_cmd)
-	args [3]uintptr // the first three arguments after self and _cmd
-	mask uint64     // bit i set: args[i] was retained by the recorder, and Go must release it
-	_    [2]uint64
+	kind       uint64     // an ev* constant, chosen by the stub that entered the recorder
+	sel        uintptr    // the selector the method was invoked for (_cmd)
+	args       [3]uintptr // the first three arguments after self and _cmd
+	mask       uint64     // bit i set: args[i] was retained by the recorder, and Go must release it
+	completion uintptr    // copied native Block; uses one formerly reserved word
+	_          uint64
 }
 
 // Event kinds. The stubs in imp_darwin_*.s load these through go_asm.h.
@@ -95,15 +98,20 @@ const (
 	evOpenFiles          uint64 = 6 // application:openFiles:
 	evOpenURLs           uint64 = 7 // application:openURLs:
 	evWebMessage         uint64 = 8 // userContentController:didReceiveScriptMessage:
+	evWebFilePanel       uint64 = 9
+	evWebAlert           uint64 = 10
+	evWebConfirm         uint64 = 11
+	evWebPrompt          uint64 = 12
 )
 
-// Retain masks for the stubs: bit i retains argument i. The numeric values
-// appear in imp_darwin_*.s; keep them equal.
+// Retain masks: bit i retains argument i, while copyCompletion owns the native
+// completion Block. The numeric values appear in the assembly stubs.
 const (
-	retainNone uint64 = 0
-	retainArg0 uint64 = 1 << 0 // the sender (the NSMenuItem) of menuAction:
-	retainArg1 uint64 = 1 << 1 // document arrays and WKScriptMessage
-	retainArg2 uint64 = 1 << 2 // the NSError of the didFail methods
+	retainNone     uint64 = 0
+	retainArg0     uint64 = 1 << 0 // the sender (the NSMenuItem) of menuAction:
+	retainArg1     uint64 = 1 << 1 // document arrays and WKScriptMessage
+	retainArg2     uint64 = 1 << 2 // the NSError of the didFail methods
+	copyCompletion uint64 = 1 << 8 // completion is copied with _Block_copy, not objc_retain
 )
 
 // ringEvents is the ring's capacity in records. A page load produces a handful
@@ -125,6 +133,11 @@ func impMenuAction()
 func impOpenFiles()
 func impOpenURLs()
 func impWebMessage()
+func impWebUIRecord()
+func impWebFilePanel()
+func impWebAlert()
+func impWebConfirm()
+func impWebPrompt()
 
 // impStubs holds the C-ABI entry address of each stub, published by the
 // assembly: windowShouldClose:, applicationShouldTerminate:,
@@ -140,6 +153,10 @@ const (
 	impStubOpenFiles
 	impStubOpenURLs
 	impStubWebMessage
+	impStubWebFilePanel
+	impStubWebAlert
+	impStubWebConfirm
+	impStubWebPrompt
 	impStubCount
 )
 
@@ -189,6 +206,7 @@ func newNativeRing(capacity int) (*nativeRing, error) {
 	r.c.mask = uint64(capacity - 1)
 	r.c.data = uintptr(r.buf)
 	r.c.retain = fnobjc_retain
+	r.c.blockCopy = fnBlockCopy
 	return r, nil
 }
 
@@ -217,6 +235,13 @@ func (r *nativeRing) drain(handle func(nativeEvent)) int {
 		ev := *r.event(tail)
 		if handle != nil {
 			handle(ev)
+		} else if ev.mask&copyCompletion != 0 {
+			// A stale Run or shutdown must resolve WebKit's outstanding request.
+			invokeNativeBlock(ev.completion, 0)
+		}
+		if ev.mask&copyCompletion != 0 {
+			releaseNativeBlock(ev.completion)
+			r.releases.Add(1)
 		}
 		for i, arg := range ev.args {
 			if ev.mask&(1<<uint(i)) != 0 {
