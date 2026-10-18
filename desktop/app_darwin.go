@@ -347,6 +347,7 @@ func (a *darwinApp) createWebView(window, delegate uintptr, frame nsRect, backgr
 
 	send1(view, objcSel("setAutoresizingMask:"), nsViewWidthSizable|nsViewHeightSizable)
 	send1(view, objcSel("setNavigationDelegate:"), delegate)
+	send1(view, objcSel("setUIDelegate:"), delegate)
 	if background != 0 && respondsTo(view, "setUnderPageBackgroundColor:") {
 		// macOS 12+: the color WebKit paints under the page, including before
 		// the first paint, so a dark app does not flash white.
@@ -447,6 +448,8 @@ func (a *darwinApp) handleNativeEvent(ev nativeEvent) {
 		a.openDocuments(ev.args[1], ev.kind == evOpenURLs)
 	case evWebMessage:
 		a.receiveWebMessage(ev.args[1])
+	case evWebFilePanel, evWebAlert, evWebConfirm, evWebPrompt:
+		a.handleWebUI(ev)
 	case evNavigationFailed:
 		a.navID++
 		status := 0
@@ -501,6 +504,11 @@ func (a *darwinApp) teardown() {
 			controller := send0(send0(web, objcSel("configuration")), objcSel("userContentController"))
 			send1(controller, objcSel("removeScriptMessageHandlerForName:"), nsString(darwinMessageHandler))
 			send1(web, objcSel("setNavigationDelegate:"), 0)
+			send1(web, objcSel("setUIDelegate:"), 0)
+			// Resolve queued UI requests while WebKit and its view still exist.
+			if a.ring != nil {
+				a.ring.drain(nil)
+			}
 			send0(web, objcSel("stopLoading"))
 			send0(web, objcSel("removeFromSuperview"))
 		}
