@@ -648,6 +648,10 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/motion/transport.ts")},
 	},
 	{
+		name:    "bootstrap-feature-motion-track.js",
+		sources: []source{sourceFile("../runtime/motion/track.ts")},
+	},
+	{
 		name:    "bootstrap-feature-motion-scene.js",
 		sources: []source{sourceFile("../runtime/motion/easing.ts"), sourceFile("../runtime/motion/scene.ts")},
 	},
