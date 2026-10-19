@@ -518,7 +518,10 @@ test("world-baked WebGL attributes upload once, stay private, and refresh on pos
   const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
   const U32 = vm.runInContext("Uint32Array", h.env.context);
   h.object.vertices.indices = new U32([2, 0, 1]);
-  const first = renderBundle(h.api, h.object, 0);
+  const cold = renderBundle(h.api, h.object, 0);
+  assert.equal(cold.meshObjects[0]._worldBakedUpload, undefined, "the first pose streams normally");
+  h.draw(cold);
+  const first = renderBundle(h.api, h.object, 1);
   const mesh = first.meshObjects[0], upload = mesh._worldBakedUpload;
   assert.equal(mesh.directVertices, undefined, "authored shader world-space semantics stay unchanged");
   assert.ok(upload && upload.resident);
@@ -531,7 +534,7 @@ test("world-baked WebGL attributes upload once, stay private, and refresh on pos
   assert.ok(staticOps.some(op => JSON.stringify(h.gl.bufferUploads.get(op[2])) === JSON.stringify(Array.from(first.worldMeshPositions))),
     "the uploaded indexed triangle soup matches the ordinary world-space stream exactly");
   const initial = h.renderer.diagnostics().retainedGeometry;
-  for (let frame = 1; frame < 15; frame++) h.draw(renderBundle(h.api, h.object, frame));
+  for (let frame = 2; frame < 15; frame++) h.draw(renderBundle(h.api, h.object, frame));
   assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, initial.uploadCalls);
   h.object.color = "#804020";
   h.draw(renderBundle(h.api, h.object, 15));
@@ -541,15 +544,34 @@ test("world-baked WebGL attributes upload once, stay private, and refresh on pos
   h.draw(renderBundle(h.api, h.object, 16));
   assert.equal(upload.resident, false, "an obsolete pose cannot retain upload eligibility");
   assert.equal(first.worldMeshPositions[0], priorPosition, "held frame storage remains independent");
+  const moving = h.renderer.diagnostics().retainedGeometry;
+  assert.equal(moving.uploadCalls, initial.uploadCalls, "a moving frame does not allocate retained buffers");
+  assert.equal(moving.liveBytes, 0);
+  h.draw(renderBundle(h.api, h.object, 17));
   const moved = h.renderer.diagnostics().retainedGeometry;
   assert.ok(moved.uploadCalls > initial.uploadCalls);
   assert.ok(moved.retirements > initial.retirements);
   assert.equal(moved.liveBytes, initial.liveBytes, "old GPU attributes retire in the next submitted frame");
   h.object.vertices.positions[0] -= 0.25;
   h.object.vertices.revision++;
-  h.draw(renderBundle(h.api, h.object, 17));
+  h.draw(renderBundle(h.api, h.object, 18));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, moved.uploadCalls);
+  h.draw(renderBundle(h.api, h.object, 19));
   assert.ok(h.renderer.diagnostics().retainedGeometry.uploadCalls > moved.uploadCalls);
   assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, initial.liveBytes);
+});
+
+test("continuously moving world meshes keep streaming until their pose settles", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  for (let frame = 0; frame < 12; frame++) {
+    h.object.x += 0.1;
+    const bundle = renderBundle(h.api, h.object, frame);
+    assert.equal(bundle.meshObjects[0]._worldBakedUpload, undefined);
+    h.draw(bundle);
+    assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, 0);
+  }
+  h.draw(renderBundle(h.api, h.object, 12));
+  assert.ok(h.renderer.diagnostics().retainedGeometry.uploadCalls > 0, "the settled pose becomes reusable");
 });
 
 test("mutable world-baked geometry keeps streaming current attributes", t => {
@@ -568,7 +590,8 @@ test("mutable world-baked geometry keeps streaming current attributes", t => {
 
 test("evicted world snapshots fall back safely when a held frame is rendered again", t => {
   const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
-  const held = renderBundle(h.api, h.object, 0); h.draw(held);
+  renderBundle(h.api, h.object, 0);
+  const held = renderBundle(h.api, h.object, 1); h.draw(held);
   const upload = held.meshObjects[0]._worldBakedUpload;
   const initial = h.renderer.diagnostics().retainedGeometry.uploadCalls;
   for (let frame = 0; frame < 10; frame++) renderBundle(h.api, [], frame);
