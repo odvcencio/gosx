@@ -59,6 +59,8 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Authored shader-key reuse adds a bounded per-renderer index. Only exhausted
 // measured targets move to their minimum; allowance policy stays unchanged.
 const budgets = [
+  // Input-driven tracks and scene binding adapters remain optional.
+  { file: "bootstrap-feature-motion-track.js", raw: 3500, gzip: 1500, brotli: 1350 },
   // Optional seekable motion; ordinary pages retain their existing ceilings.
   { file: "bootstrap-feature-motion-transport.js", raw: 7000, gzip: 2500, brotli: 2200 },
   { file: "bootstrap-feature-motion-scene.js", raw: 7500, gzip: 3100, brotli: 2800 },

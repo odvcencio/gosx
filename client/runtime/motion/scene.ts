@@ -186,4 +186,5 @@
       record.stops.push(function() { active = false; stop(); record.transportAdapters.delete(adapter); controller.dispose(); });
     }
   });
+  if (window.__gosx_register_bootstrap_feature) window.__gosx_register_bootstrap_feature("motion-scene", () => ({}));
 })();

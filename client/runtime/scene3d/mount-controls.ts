@@ -58,16 +58,6 @@
     return bundle;
   }
 
-  function motionSceneProperty() {
-    const target = arguments[0], property = arguments[1], value = arguments[2];
-    if (!target || typeof target !== "object") return;
-    const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "";
-    let field = parts[parts.length - 1];
-    if (group === "rotation" && ["x", "y", "z"].includes(field)) field = "rotation" + field.toUpperCase();
-    if (group === "scale" && ["x", "y", "z"].includes(field)) field = "scale" + field.toUpperCase();
-    if (["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "opacity", "fov", "near", "far", "zoom"].includes(field)) target[field] = value;
-  }
-
   function motionSceneCameraProperty() {
     const property = arguments[0];
     const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "", field = parts[parts.length - 1];
@@ -75,32 +65,31 @@
     return ["x", "y", "z", "fov", "near", "far", "zoom", "rotationX", "rotationY", "rotationZ"].includes(field) ? field : "";
   }
 
-  function applyMotionBindingToRuntimeBundle() {
-    const bundle = arguments[0], binding = arguments[1], value = arguments[2];
-    if (!bundle || !binding) return;
-    if (binding.target === "camera") {
-      const field = motionSceneCameraProperty.call(null, binding.property);
-      if (field) { if (!bundle.camera || typeof bundle.camera !== "object") bundle.camera = {}; bundle.camera[field] = value; }
-      return;
-    }
-    for (const object of Array.isArray(bundle.meshObjects) ? bundle.meshObjects : []) {
-      if (!object || String(object.id || "") !== String(binding.node || "")) continue;
-      if (binding.target === "materialUniform") {
-        if (!object.customUniforms || typeof object.customUniforms !== "object") object.customUniforms = {};
-        object.customUniforms[binding.property] = value;
-      } else if (binding.target === "sceneNode") motionSceneProperty.call(null, object, binding.property, value);
-    }
+  function sceneMotionObjects() {
+    const motion = window.__gosx && window.__gosx.motion;
+    return motion && motion._sceneObjects ? motion._sceneObjects(arguments[0], arguments[1]) : arguments[0];
   }
 
   function applyMotionBindingsToRuntimeBundle() {
     const bundle = arguments[0], sceneState = arguments[1], controls = arguments[2];
     const layers = sceneState && sceneState._gosxMotionRuntimeBindings;
     if (!bundle || !layers || typeof layers.values !== "function") return;
+    const materials = new Map();
     let cameraOverride = false;
     for (const layer of layers.values()) {
       for (const item of layer.values()) {
-        applyMotionBindingToRuntimeBundle.call(null, bundle, item.binding, item.value);
-        if (item.binding.target === "camera") cameraOverride = true;
+        if (item.binding.target === "camera") {
+          const field = motionSceneCameraProperty.call(null, item.binding.property);
+          if (field) { if (!bundle.camera) bundle.camera = {}; bundle.camera[field] = item.value; cameraOverride = true; }
+        } else {
+          const apply = window.__gosx.motion._sceneBinding;
+          if (apply) apply(bundle, item.binding, item.value, materials);
+          // Finite timelines use validated canonical properties and can run
+          // without the optional scalar-track adapters.
+          else if (item.binding.target === "sceneNode") for (const object of bundle.meshObjects || []) {
+            if (object.id === item.binding.node) object[item.binding.property] = item.value;
+          }
+        }
       }
     }
     if (cameraOverride) applySceneControlsCamera(controls, bundle.camera);

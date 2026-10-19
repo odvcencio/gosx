@@ -193,4 +193,5 @@
       });
   }
   motion.mountPrograms(document.body || document.documentElement);
+  if (window.__gosx_register_bootstrap_feature) window.__gosx_register_bootstrap_feature("motion-transport", () => ({}));
 })();

@@ -65,6 +65,7 @@ const (
 	SignalMix        SignalKind = "mix"
 	SignalVelocity   SignalKind = "velocity"
 	SignalCurve      SignalKind = "curve"
+	SignalTrack      SignalKind = "track"
 )
 
 // MotionAxis names the axis for scroll and pointer sources.
@@ -329,6 +330,11 @@ func (p *Program) Marshal() ([]byte, error) {
 		}
 		if signal.Kind == SignalCurve {
 			if err := validateCurveSignal(signal); err != nil {
+				return nil, err
+			}
+		}
+		if signal.Kind == SignalTrack {
+			if err := validateTrackSignal(signal); err != nil {
 				return nil, err
 			}
 		}

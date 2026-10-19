@@ -14,8 +14,8 @@ go run ./examples/motion-shader
 ```
 
 The example uses one `.sel` material as a flat background and a sphere. Its
-heading, form and uniforms share time. Keyboard and touch controls can pause,
-reverse, replay and seek to the named crest.
+staggered lettering, swaying form, camera and warming material share time.
+Keyboard and touch controls can pause, reverse, replay and seek to the bloom.
 
 ## Author a playhead
 
@@ -60,6 +60,67 @@ Reduced motion settles automatic playback at the end. Bound Selena scene
 clocks stay at zero so shader animation remains still. Semantic HTML remains
 readable without enhancement; playback buttons enable once their scope mounts.
 
+## Compose expressive keyframes
+
+`Program.SampleTrack` connects the existing native `motion.Track` and `Key`
+types to any scalar input. With a playhead, key times are absolute seconds;
+with a scroll signal they are scroll progress. The optional `motion-track`
+chunk reuses the shared signal graph, easing functions and lifecycle. It owns
+no clock and adds no bytes to the base runtime. Scene node, material and pin
+bindings also load its optional adapters, which apply values before geometry
+baking and material interning. Static scenes retain their existing budgets.
+
+```go
+rise, err := program.SampleTrack("heading-rise", clock, motion.Track{
+    Ease: motion.Ease{Kind: motion.EaseOutBack, Args: []float64{.8}},
+    Keys: []motion.Key{
+        {T: .2, Value: motion.ScalarV(32)},
+        {T: 1.4, Value: motion.ScalarV(0)},
+        {T: 4, Value: motion.ScalarV(0)}, // hold, then leave
+        {T: 5, Value: motion.ScalarV(-12)},
+    },
+})
+// Handle err before rendering the scope.
+program.BindStyle(rise, ".heading", "transform.y", "px")
+```
+
+An outgoing key's `Ease` overrides the track's default. Linear, power, cubic
+Bezier, back and stepped easing use the same math as native `motion.Eval`.
+Back easing retains its overshoot. `InterpStep` holds the previous key until
+the exact next key boundary. Values hold outside the key range and reverse
+seeks reproduce the same value; no elapsed-time integration is involved.
+
+Use the existing `ExpandStagger` to delay copies before sampling them:
+
+```go
+tracks := motion.ExpandStagger(template, []int{0, 1, 2}, motion.StaggerSpec{
+    From: motion.FromCenter,
+    Delay: .14, // seconds with a playhead, otherwise the input's units
+})
+for i, track := range tracks {
+    ref, err := program.SampleTrack(fmt.Sprintf("line-%d", i), clock, track)
+    if err != nil {
+        return err
+    }
+    program.BindStyle(ref, selectors[i], "transform.y", "px")
+}
+```
+
+The same distributions support first, last, center, a chosen index and grids.
+Bind several independent tracks to overlap cues, or use `Map`, `Clamp` and
+`Mix` to compose their outputs. Scene transforms, material uniforms, cameras
+and SVG/scene-transition progress can all consume the resulting scalar signal.
+Progress bindings clamp to `[0,1]`; use direct scalar property bindings when
+overshoot is desired. `server.MotionControl` and transport capture settlement
+continue to work without application JavaScript.
+
+Each scalar track requires 2–4,096 finite, strictly increasing keys. Unsupported
+generators, vector/quaternion channels and tangent splines return an error;
+their native motion IR remains available. `Target`, `TargetID` and `PropID`
+are not used by this bridge: the ordinary binding methods select the target.
+Reduced motion holds each track's final key and restores the current input
+position when the preference is lifted.
+
 ## Apply a shader to either dimension
 
 ```go
@@ -101,7 +162,9 @@ After pausing or seeking, `settled()` flushes queued writes, waits for each
 bound scene to submit the requested clock revision, and allows presentation
 boundaries before capture. It follows deferred hydration and reduced-motion
 policy changes, and rejects a concurrent playback/seek command or a bounded
-timeout. This verifies submission, not GPU completion or frame rate.
+timeout. Bound scenes must be visible for renderer submission; offscreen scenes
+can remain parked until they re-enter view. This verifies submission, not GPU
+completion or frame rate.
 
 The shared clock drives declarative Selena materials, custom post effects and
 authored point shaders on both browser backends. Renderer telemetry and
