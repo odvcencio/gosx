@@ -342,6 +342,13 @@ func (a *darwinApp) createWebView(window, delegate uintptr, frame nsRect, backgr
 	a.mu.Lock()
 	a.webview = view
 	a.mu.Unlock()
+	// AppKit may constrain the window to its screen when it is shown. Use
+	// the resulting content bounds so the initial view fits, and subsequent
+	// autoresizing does not preserve an oversized requested frame. KVC boxes
+	// the NSRect, avoiding a structure-return Objective-C call.
+	content := send0(window, objcSel("contentView"))
+	bounds := send1(content, objcSel("valueForKey:"), nsString("bounds"))
+	send2(view, objcSel("setValue:forKey:"), bounds, nsString("frame"))
 	controller := send0(config.obj, objcSel("userContentController"))
 	send2(controller, objcSel("addScriptMessageHandler:name:"), delegate, nsString(darwinMessageHandler))
 
@@ -356,7 +363,7 @@ func (a *darwinApp) createWebView(window, delegate uintptr, frame nsRect, backgr
 	if devTools && respondsTo(view, "setInspectable:") {
 		send1(view, objcSel("setInspectable:"), 1) // macOS 13.3+
 	}
-	send1(send0(window, objcSel("contentView")), objcSel("addSubview:"), view)
+	send1(content, objcSel("addSubview:"), view)
 	if err := a.applyBootstrapScriptsOnUI(); err != nil {
 		return err
 	}
@@ -677,13 +684,21 @@ func (a *darwinApp) executeScriptOnUI(script string) error {
 // set is replaced.
 func (a *darwinApp) prependBootstrapScriptOnUI(script string) error {
 	a.mu.Lock()
+	previous := a.pendingBootstrap
 	a.pendingBootstrap = script
 	web := a.webview
 	a.mu.Unlock()
 	if web == 0 {
 		return nil
 	}
-	return a.applyBootstrapScriptsOnUI()
+	if err := a.applyBootstrapScriptsOnUI(); err != nil {
+		a.mu.Lock()
+		a.pendingBootstrap = previous
+		a.mu.Unlock()
+		_ = a.applyBootstrapScriptsOnUI()
+		return err
+	}
+	return nil
 }
 
 // applyBootstrapScriptsOnUI replaces the web view's user scripts with the

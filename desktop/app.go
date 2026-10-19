@@ -162,13 +162,15 @@ type Options struct {
 
 // App is a native desktop host for a GoSX application or HTML document.
 type App struct {
-	options        Options
-	impl           platformApp
-	bridge         *bridge.Router
-	preloadMu      sync.Mutex
-	preloadScripts []string
-	serviceMu      sync.RWMutex
-	services       map[string]ServiceBinding
+	options         Options
+	impl            platformApp
+	bridge          *bridge.Router
+	preloadMu       sync.Mutex
+	preloadScripts  []string
+	methodRevision  uint64
+	serviceUpdateMu sync.Mutex
+	serviceMu       sync.RWMutex
+	services        map[string]ServiceBinding
 }
 
 type platformApp interface {
@@ -260,7 +262,7 @@ func New(options Options) (*App, error) {
 		}
 	}
 
-	if err := app.addPreloadScript(bridge.BootstrapScript()); err != nil {
+	if err := app.refreshBridgeCapabilities(); err != nil {
 		return nil, err
 	}
 
@@ -426,6 +428,47 @@ func (a *App) addPreloadScript(script string) error {
 	combined := strings.Join(a.preloadScripts, "\n;\n")
 	a.preloadMu.Unlock()
 	return a.impl.PrependBootstrapScript(combined)
+}
+
+// refreshBridgeCapabilities updates document-start metadata and the current
+// page. It does not register methods or restrict the raw bridge transport.
+func (a *App) refreshBridgeCapabilities() error {
+	publish, err := a.prepareBridgeCapabilities(a.bridge.MethodNames())
+	if err == nil {
+		publish()
+	}
+	return err
+}
+
+// prepareBridgeCapabilities installs the prospective document-start snapshot
+// before a service mutation commits. On failure the previous preload remains
+// current. The returned function publishes the snapshot after registration.
+func (a *App) prepareBridgeCapabilities(methods []string) (func(), error) {
+	if a.impl == nil {
+		return func() {}, nil
+	}
+	a.preloadMu.Lock()
+	defer a.preloadMu.Unlock()
+	revision := a.methodRevision + 1
+	script := bridge.BootstrapScriptWithMethods(methods, revision)
+	scripts := append([]string(nil), a.preloadScripts...)
+	if len(scripts) == 0 {
+		scripts = append(scripts, script)
+	} else {
+		scripts[0] = script
+	}
+	if err := a.impl.PrependBootstrapScript(strings.Join(scripts, "\n;\n")); err != nil {
+		return nil, err
+	}
+	a.preloadScripts = scripts
+	a.methodRevision = revision
+	// Before Run there is no page to receive events. The synchronous preload
+	// snapshot still advertises the complete registry on first navigation.
+	return func() {
+		_ = a.bridge.Emit("gosx.desktop.methods.changed", map[string]any{
+			"methods": methods, "revision": revision,
+		})
+	}, nil
 }
 
 func (a *App) registerNativeBridgeMethods() error {

@@ -42,6 +42,10 @@ func TestDesktopTypedServicesAndSynchronousInitiation(t *testing.T) {
 			return js.Undefined()
 		}
 	})
+	method(bridge, "hasMethod", func([]js.Value) any { return true })
+	services := object()
+	method(services, "available", func([]js.Value) any { return true })
+	bridge.Set("services", services)
 	method(diagnostics, "preview", func([]js.Value) any {
 		return resolved(map[string]any{"id": "reviewed-plan", "totalSizeText": "12 B", "files": []any{map[string]any{"name": "client.log", "size": 12}}})
 	})
