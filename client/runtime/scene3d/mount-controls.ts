@@ -84,6 +84,11 @@
         } else {
           const apply = window.__gosx.motion._sceneBinding;
           if (apply) apply(bundle, item.binding, item.value, materials);
+          // Finite timelines use validated canonical properties and can run
+          // without the optional scalar-track adapters.
+          else if (item.binding.target === "sceneNode") for (const object of bundle.meshObjects || []) {
+            if (object.id === item.binding.node) object[item.binding.property] = item.value;
+          }
         }
       }
     }
