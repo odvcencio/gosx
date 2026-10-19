@@ -5646,10 +5646,10 @@
 	  const _sceneMeshLocalBoundsCache = new WeakMap();
 	  const _sceneWorldBakedGeometryCache = new WeakMap();
 	  const _sceneWorldBakedGeometryResidency = new Set();
-	  // A baked attribute soup costs 48 bytes per vertex. Two MiB covers dense
-	  // groups of modest immutable effects while preventing a scene with many
-	  // live owners from multiplying CPU-side geometry without a hard ceiling.
-	  const sceneWorldBakedGeometryCacheMaxBytes = 2 * 1024 * 1024;
+	  // A baked attribute soup costs 48 bytes per vertex. Eight MiB covers a
+	  // dense table's immutable meshes while keeping all interleaved scenes
+	  // under one hard ceiling instead of multiplying storage per mount.
+	  const sceneWorldBakedGeometryCacheMaxBytes = 8 * 1024 * 1024;
 	  // Keep recently interleaved mounts warm, then clear records not observed
 	  // for eight complete bundle builds. Admission never evicts a hot record,
 	  // so an over-budget working set cannot turn into sequential LRU thrash.
