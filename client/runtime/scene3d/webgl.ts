@@ -1670,16 +1670,15 @@
       if (!obj.castShadow) continue;
       if (typeof drawInstancedCaster === "function" && drawInstancedCaster(obj, lightMatrix)) continue;
 
-      if (obj.directVertices) {
-        // Retained geometry casts from its cached model-space position buffer.
-        // Indexed meshes preserve authored topology with drawElements; expanded
-        // procedural triangle lists use drawArrays. Both avoid per-frame CPU
-        // expansion. The bind hook comes from the PBR renderer closure that owns
-        // the retained attribute and optional element-buffer caches.
+      if (obj.directVertices || (obj._worldBakedUpload && obj._worldBakedUpload.resident === true)) {
+        // Both local retained meshes and baked snapshots reuse position buffers.
+        // Local meshes preserve authored indices; baked snapshots already have
+        // expanded triangles. The PBR renderer owns these shared buffers.
         if (typeof bindDirectCaster !== "function") continue;
         var casterDraw = bindDirectCaster(obj, shadowProgram);
         if (!casterDraw || !(casterDraw.count > 0)) continue;
-        gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
+        // Baked snapshots already contain world transforms and corrected winding.
+        gl.frontFace(obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
         if (casterDraw.indexed) {
           gl.drawElements(gl.TRIANGLES, casterDraw.count, gl.UNSIGNED_INT, 0);
         } else {
@@ -10176,27 +10175,28 @@
     // synchronously before asking for the next caster.
     var directShadowCasterDraw = { indexed: false, count: 0 };
 
-    // bindScenePBRDirectShadowCaster binds a retained caster's cached position
-    // attribute, its optional Uint32Array element buffer, and its model matrix
-    // (the depth pass otherwise projects world-space soup through identity).
+    // Retained casters use local positions, authored indices and a model matrix.
+    // Cached world snapshots share their expanded position buffer with the color
+    // pass, with identity transform and no second application of authored indices.
     // Returns the exact draw shape so indexed and expanded triangle lists share
     // one retained shadow path.
     function bindScenePBRDirectShadowCaster(obj, shadowProgram) {
       if (
         !obj ||
-        obj.retainedGeometry !== true
+        (obj.retainedGeometry !== true && !(obj._worldBakedUpload && obj._worldBakedUpload.resident === true))
       ) {
         return null;
       }
       var count = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
       if (count <= 0) return null;
-      var positions = scenePBRDirectAttribute(obj.vertices, "positions", count, 3);
+      var positions = obj.directVertices ? scenePBRDirectAttribute(obj.vertices, "positions", count, 3) : null;
       if (!bindScenePBRDirectAttribute(obj, "positions", shadowProgram.attributes.position, 3, positions)) {
         return null;
       }
-      var indexCount = bindScenePBRDirectIndexBuffer(obj);
+      var indexCount = obj.directVertices ? bindScenePBRDirectIndexBuffer(obj) : 0;
       if (shadowProgram.uniforms.modelMatrix) {
-        gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
+        gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false,
+          obj.directVertices && obj.modelMatrix || identityModelMatrix);
       }
       directShadowCasterDraw.indexed = indexCount > 0;
       directShadowCasterDraw.count = indexCount > 0 ? indexCount : count;
