@@ -31,6 +31,8 @@ function ensureSceneGatedFeatureLoaded(kind: string, datasetKey: string, fallbac
     script.setAttribute("crossorigin", "anonymous");
     script.setAttribute("referrerpolicy", "no-referrer");
     script.setAttribute("data-gosx-script", "feature-" + name);
+    const integrity = resolveSceneSubFeatureURL(datasetKey.replace(/Url$/, "Integrity"), "");
+    if (integrity) script.setAttribute("integrity", integrity);
     script.src = url; script.setAttribute("src", url);
     if (typeof gosxApplyCurrentScriptNonce === "function") gosxApplyCurrentScriptNonce(script);
     script.onload = function() {
