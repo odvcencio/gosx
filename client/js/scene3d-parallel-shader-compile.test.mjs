@@ -39,9 +39,11 @@ const instancedFactorySource = sourceBetween(
 );
 const contextSource = sourceBetween(
   webglSource,
-  "function scenePBRCanvasAntialias",
+  "var scenePBRPostCanvasAntialiasFallback",
   "// Try to create a PBR renderer",
 );
+const canvasAntialiasStateSource = sourceBetween(webglSource,
+  "var scenePBRPostCanvasAntialiasFallback", "function scenePBRCanvasAntialias");
 const rendererFactorySource = sourceBetween(
   webglSource,
   "function createScenePBRRendererOrFallback",
@@ -132,6 +134,7 @@ function shaderHarness({ extension = true, linkOK = true, scheduler = false } = 
   runSource(sourceBetween(webglSource, "function scenePBRProgramLocations", "function scenePBRCompileShader"), context);
   runSource(sourceBetween(webglSource, "function sceneWebGLNow", "// One elapsed query covers"), context);
   runSource(initialProgramSource, context);
+  runSource(canvasAntialiasStateSource, context);
   runSource(baseFactorySource, context);
   runSource(instancedFactorySource, context);
   if (scheduler) {

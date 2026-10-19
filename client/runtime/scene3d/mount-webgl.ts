@@ -129,7 +129,7 @@
       return null;
     }
     const webglRenderer = legacyFactory(canvas, {
-      antialias: sceneWebGLAntialias(props, capability),
+      antialias: sceneWebGLAntialias(props, capability, true),
       powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
     });
     return webglRenderer ? { renderer: webglRenderer, fallbackReason: fallbackReason, degraded: [] } : null;
@@ -163,12 +163,15 @@
     if (api.discard) api.discard(preparation.gl, preparation.owner);
   }
 
-  function sceneWebGLAntialias(props, capability) {
+  function sceneWebGLAntialias(props, capability, ignorePost = false) {
     var caps = capability || {};
     var requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
     if (requestedSamples > 1) return true;
     if (requestedSamples === 1) return false;
     var tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    var scene = props && props.scene || {};
+    var effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
+    if (!ignorePost && Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
     return sceneBool(props && props.antialias, tierDefault);
   }
 
@@ -178,8 +181,12 @@
     if (!waterFactory) return null;
     var entry = sceneFirstWaterEntry(props);
     if (!entry) return null;
-    var gl = typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
-      alpha: false, premultipliedAlpha: false, antialias: sceneWebGLAntialias(props, capability), depth: true,
+    var initialAPI = sceneWebGLInitialProgramAPI();
+    var sceneDoc = props?.scene;
+    var environment = sceneDoc?.environment || props?.environment;
+    var waterOnly = !(Array.isArray(sceneDoc?.models) && sceneDoc.models.length || environment && (environment.sky || environment.ocean));
+    var gl = initialAPI.createContext ? initialAPI.createContext(canvas, props, capability, false, waterOnly) : typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+      alpha: false, premultipliedAlpha: false, antialias: sceneWebGLAntialias(props, capability, waterOnly), depth: true,
       powerPreference: capability && (capability.lowPower || capability.tier === "constrained") ? "low-power" : "high-performance",
     }) : null;
     if (!gl) return null;
@@ -194,7 +201,6 @@
     // Create the shared world target when either initial or live scene state
     // needs it. Keeping the water renderer alone is sufficient until then.
     var waterRenderer = renderer, worldRenderer: any = null, worldFailed = false;
-    var sceneDoc = props?.scene;
     function ensureWorld() {
       if (worldRenderer || worldFailed) return;
       worldRenderer = sceneWebGLRendererFactory()?.(gl, canvas, {});
@@ -209,7 +215,6 @@
         getFrameTiming: worldRenderer.getFrameTiming,
       });
     }
-    var environment = sceneDoc?.environment || props?.environment;
     if (Array.isArray(sceneDoc?.models) && sceneDoc.models.length || environment && (environment.sky || environment.ocean)) ensureWorld();
     var compositeMS = 0;
     renderer = {

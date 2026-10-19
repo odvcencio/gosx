@@ -5,14 +5,14 @@
     "hero/desktop-full/webgl": {
       "mount": {
         "backingPixels": 2072298,
-        "samples": 4,
-        "backingPixelSamples": 8289192,
+        "samples": 1,
+        "backingPixelSamples": 2072298,
         "postTargetPixels": 4144596,
         "shadowMapPixels": 65536,
         "contextAttributes": {
           "alpha": false,
           "premultipliedAlpha": false,
-          "antialias": true,
+          "antialias": false,
           "depth": true,
           "powerPreference": "high-performance"
         }
@@ -51,14 +51,14 @@
     "post/desktop-full/webgl": {
       "mount": {
         "backingPixels": 2072298,
-        "samples": 4,
-        "backingPixelSamples": 8289192,
-        "postTargetPixels": 10360352,
+        "samples": 1,
+        "backingPixelSamples": 2072298,
+        "postTargetPixels": 7252474,
         "shadowMapPixels": 65536,
         "contextAttributes": {
           "alpha": false,
           "premultipliedAlpha": false,
-          "antialias": true,
+          "antialias": false,
           "depth": true,
           "powerPreference": "high-performance"
         }
@@ -347,7 +347,7 @@
         "backingPixels": 740610,
         "samples": 1,
         "backingPixelSamples": 740610,
-        "postTargetPixels": 3701784,
+        "postTargetPixels": 2591502,
         "shadowMapPixels": 65536,
         "contextAttributes": {
           "alpha": false,
