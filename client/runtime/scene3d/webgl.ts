@@ -9535,6 +9535,14 @@
     }
 
     function bindScenePBRDirectAttribute(obj, key, attrib, size, data) {
+      // World-baked immutable attributes already have the exact Float32
+      // representation uploaded by the streaming path. Reuse that snapshot
+      // without changing the draw object's world-space/shader semantics.
+      var upload = obj && !obj.directVertices && obj._worldBakedUpload;
+      if (upload && upload.resident === true) {
+        data = scenePBRDirectAttribute(upload.vertices, key, obj.vertexCount, size);
+        obj = upload;
+      }
       var vertices = obj && obj.vertices;
       if (!vertices || !Number.isFinite(attrib) || attrib < 0 || !(data instanceof Float32Array)) {
         return false;
