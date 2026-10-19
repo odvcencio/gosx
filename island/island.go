@@ -18,7 +18,6 @@ import (
 	"m31labs.dev/gosx/internal/filepolicy"
 	"m31labs.dev/gosx/internal/htmlattr"
 	"m31labs.dev/gosx/internal/sceneprobe"
-	"m31labs.dev/gosx/internal/urlpath"
 	"maps"
 	neturl "net/url"
 	"os"
@@ -2220,7 +2219,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 	} {
 		if chunk.enabled && chunk.path != "" {
 			b.WriteString(` data-gosx-scene3d-` + chunk.name + `-url="`)
-			b.WriteString(html.EscapeString(urlpath.URL(r.basePath, chunk.path)))
+			b.WriteString(html.EscapeString(chunk.path))
 			b.WriteByte('"')
 			integrity := r.compatRuntimeIntegrity(chunk.path)
 			if integrity == "" {
