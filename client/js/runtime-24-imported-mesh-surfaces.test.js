@@ -152,7 +152,7 @@ test("immutable authored-shader world bake reuses exact finalized attributes wit
   assert.notDeepEqual(Array.from(second.worldMeshColors), Array.from(first.worldMeshColors),
     "current material color must remain outside the geometry cache");
   assert.deepEqual({ ...env.context.__meshTest.worldBakeCache() }, {
-    entries: 1, bytes: 144, maxBytes: 2 * 1024 * 1024, epoch: 2,
+    entries: 1, bytes: 144, maxBytes: 8 * 1024 * 1024, epoch: 2,
   });
 });
 
@@ -284,37 +284,65 @@ test("mutable, dirty, and wire authored-shader meshes never enter the world-bake
   }
 });
 
+function largeWorldBakedVertices(env, vertexCount) {
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const positions = new F32(vertexCount * 3);
+  const normals = new F32(vertexCount * 3);
+  const uvs = new F32(vertexCount * 2);
+  const tangents = new F32(vertexCount * 4);
+  for (let index = 0; index < vertexCount; index += 1) {
+    const corner = index % 3;
+    positions[index * 3] = corner === 1 ? 1 : 0;
+    positions[index * 3 + 1] = corner === 2 ? 1 : 0;
+    normals[index * 3 + 2] = 1;
+    uvs[index * 2] = corner === 1 ? 1 : 0;
+    uvs[index * 2 + 1] = corner === 2 ? 1 : 0;
+    tangents[index * 4] = 1;
+    tangents[index * 4 + 3] = 1;
+  }
+  return { count: vertexCount, positions, normals, uvs, tangents,
+    indices: null, immutable: true, revision: 0, dynamic: false };
+}
+
+test("world-bake cache retains a dense multi-mesh scene within one bounded budget", () => {
+  const env = importedMeshRuntime();
+  const vertices = largeWorldBakedVertices(env, 18000);
+  const objects = Array.from({ length: 8 }, (_, index) =>
+    immutableAuthoredShaderTriangle(env, {
+      id: "dense-mesh-" + index, vertices, x: index + 2,
+      scaleX: 1, scaleY: 1, scaleZ: 1,
+    }));
+  const helpers = env.context.__meshTest.countFallbackAttributeHelpers();
+  const first = buildWorldBakedBundle(env, objects);
+  const counts = fallbackHelperCalls(helpers());
+  const second = buildWorldBakedBundle(env, objects);
+  assert.deepEqual(fallbackHelperCalls(helpers()), counts,
+    "unchanged dense meshes must skip every per-vertex attribute helper");
+  const diagnostics = env.context.__meshTest.worldBakeCache();
+  assert.equal(diagnostics.entries, objects.length);
+  assert.equal(diagnostics.bytes, objects.length * 18000 * 48);
+  assert.ok(diagnostics.bytes > 2 * 1024 * 1024 && diagnostics.bytes <= diagnostics.maxBytes);
+  for (const key of ["worldMeshPositions", "worldMeshColors", "worldMeshNormals", "worldMeshUVs", "worldMeshTangents"]) {
+    assert.notEqual(first[key], second[key], "each frame owns its " + key);
+    assert.deepEqual(first[key], second[key], "caching must preserve every " + key + " value");
+  }
+});
+
 test("world-bake cache keeps hot owners, declines over-budget churn, and releases stale payloads", () => {
   const env = importedMeshRuntime();
-  const F32 = vm.runInContext("Float32Array", env.context);
-  function largeVertices(vertexCount) {
-    const positions = new F32(vertexCount * 3);
-    const normals = new F32(vertexCount * 3);
-    const uvs = new F32(vertexCount * 2);
-    const tangents = new F32(vertexCount * 4);
-    for (let index = 0; index < vertexCount; index += 1) {
-      const corner = index % 3;
-      positions[index * 3] = corner === 1 ? 1 : 0;
-      positions[index * 3 + 1] = corner === 2 ? 1 : 0;
-      normals[index * 3 + 2] = 1;
-      uvs[index * 2] = corner === 1 ? 1 : 0;
-      uvs[index * 2 + 1] = corner === 2 ? 1 : 0;
-      tangents[index * 4] = 1;
-      tangents[index * 4 + 3] = 1;
-    }
-    return { count: vertexCount, positions, normals, uvs, tangents,
-      indices: null, immutable: true, revision: 0, dynamic: false };
-  }
+  const maxBytes = env.context.__meshTest.worldBakeCache().maxBytes;
+  const hotCount = Math.floor(maxBytes * .7 / (48 * 3)) * 3;
+  const churnCount = Math.floor(maxBytes * .35 / (48 * 3)) * 3;
   const hot = immutableAuthoredShaderTriangle(env, {
-    id: "hot-cache-owner", vertices: largeVertices(30000), x: 0, y: 0, z: 0,
+    id: "hot-cache-owner", vertices: largeWorldBakedVertices(env, hotCount), x: 0, y: 0, z: 0,
     scaleX: 1, scaleY: 1, scaleZ: 1,
   });
-  const churnVertices = largeVertices(15000);
+  const churnVertices = largeWorldBakedVertices(env, churnCount);
   const helperCounts = env.context.__meshTest.countFallbackAttributeHelpers();
   buildWorldBakedBundle(env, [hot]);
   const hotDiagnostics = env.context.__meshTest.worldBakeCache();
   assert.deepEqual({ entries: hotDiagnostics.entries, bytes: hotDiagnostics.bytes },
-    { entries: 1, bytes: 30000 * 48 });
+    { entries: 1, bytes: hotCount * 48 });
 
   let lastChurn = null;
   for (let index = 0; index < 12; index += 1) {
@@ -324,13 +352,13 @@ test("world-bake cache keeps hot owners, declines over-budget churn, and release
     });
     const bundle = buildWorldBakedBundle(env, [hot, lastChurn]);
     assert.equal(bundle.meshObjects[0].vertexOffset, 0);
-    assert.equal(bundle.meshObjects[1].vertexOffset, 30000);
+    assert.equal(bundle.meshObjects[1].vertexOffset, hotCount);
     const diagnostics = env.context.__meshTest.worldBakeCache();
     assert.equal(diagnostics.entries, 1, "new owners cannot evict the hot record");
-    assert.equal(diagnostics.bytes, 30000 * 48);
+    assert.equal(diagnostics.bytes, hotCount * 48);
     assert.ok(diagnostics.bytes <= diagnostics.maxBytes);
   }
-  assert.equal(helperCounts().worldNormalInto, 30000 + 12 * 15000,
+  assert.equal(helperCounts().worldNormalInto, hotCount + 12 * churnCount,
     "the hot owner hits while each over-budget replacement bakes once");
 
   for (let index = 0; index < 9; index += 1) buildWorldBakedBundle(env, []);
@@ -342,9 +370,9 @@ test("world-bake cache keeps hot owners, declines over-budget churn, and release
   const beforeReturn = helperCounts().worldNormalInto;
   buildWorldBakedBundle(env, [lastChurn]);
   buildWorldBakedBundle(env, [lastChurn]);
-  assert.equal(helperCounts().worldNormalInto - beforeReturn, 15000,
+  assert.equal(helperCounts().worldNormalInto - beforeReturn, churnCount,
     "a replacement owner can enter the cache after stale bytes are reclaimed");
-  assert.equal(env.context.__meshTest.worldBakeCache().bytes, 15000 * 48);
+  assert.equal(env.context.__meshTest.worldBakeCache().bytes, churnCount * 48);
 });
 
 test("world-baked mesh attribute scratches preserve exact legacy output without aliasing", () => {
