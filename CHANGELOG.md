@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Send enhanced GET and HEAD form fields in the URL query. Preserve repeated
+  controls, unrelated query parameters and the clicked submit button's value.
+
 - Add `command.Action.Submit`, a CSS selector for a managed form or its submit
   button. The workbench calls `requestSubmit` on it, so a chord submits through
   the page's managed form path. `commands.list()` rows carry `submit`.
