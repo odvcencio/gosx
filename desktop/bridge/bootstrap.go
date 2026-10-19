@@ -1,12 +1,36 @@
 package bridge
 
+import (
+	"encoding/json"
+	"strings"
+)
+
 const bootstrapScript = `(function () {
   "use strict";
 
   var root = window;
+  var capabilities = __GOSX_METHOD_CAPABILITIES__;
   var existing = root.gosxDesktop;
   if (existing && existing.__gosxDesktopBridge === true) {
+    if (typeof existing.__setMethodCapabilities === "function") {
+      existing.__setMethodCapabilities(capabilities);
+    }
     return;
+  }
+
+  var methodRevision = -1;
+  var registeredMethods = new Set();
+  function setMethodCapabilities(snapshot) {
+    if (!snapshot || !Array.isArray(snapshot.methods) || snapshot.revision < methodRevision) {
+      return;
+    }
+    registeredMethods = new Set(snapshot.methods);
+    methodRevision = snapshot.revision;
+  }
+  setMethodCapabilities(capabilities);
+
+  function hasMethod(method) {
+    return registeredMethods.has(method);
   }
 
   var pending = new Map();
@@ -93,6 +117,10 @@ const bootstrapScript = `(function () {
   }
 
   function dispatchEvent(env) {
+    if (env.method === "gosx.desktop.methods.changed") {
+      setMethodCapabilities(env.payload);
+      return;
+    }
     if (env.method === "gosx.dev.reload") {
       root.location.reload();
       return;
@@ -292,6 +320,14 @@ const bootstrapScript = `(function () {
   });
 
   var servicesAPI = Object.freeze({
+    available: function () {
+      for (var method of registeredMethods) {
+        if (method.indexOf("gosx.desktop.service.") === 0) {
+          return true;
+        }
+      }
+      return false;
+    },
     list: function () {
       return call("gosx.desktop.services.list");
     },
@@ -300,6 +336,8 @@ const bootstrapScript = `(function () {
 
   var api = Object.freeze({
     __gosxDesktopBridge: true,
+    __setMethodCapabilities: setMethodCapabilities,
+    hasMethod: hasMethod,
     call: call,
     emit: emit,
     on: on,
@@ -329,5 +367,19 @@ const bootstrapScript = `(function () {
 // desktop IPC bridge. Inject it once during page initialization; the
 // script is idempotence-guarded and installs window.gosxDesktop.
 func BootstrapScript() string {
-	return bootstrapScript
+	return BootstrapScriptWithMethods(nil, 0)
+}
+
+// BootstrapScriptWithMethods installs synchronous capability metadata. A newer
+// revision wins when WebView2 replays accumulated document-start scripts.
+// This metadata only describes registration; raw calls remain unrestricted.
+func BootstrapScriptWithMethods(methods []string, revision uint64) string {
+	if methods == nil {
+		methods = []string{}
+	}
+	snapshot, _ := json.Marshal(struct {
+		Methods  []string `json:"methods"`
+		Revision uint64   `json:"revision"`
+	}{methods, revision})
+	return strings.Replace(bootstrapScript, "__GOSX_METHOD_CAPABILITIES__", string(snapshot), 1)
 }

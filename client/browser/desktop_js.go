@@ -32,10 +32,45 @@ func (d DesktopBridge) ServicesAvailable() (available bool) {
 		}
 	}()
 	bridge, err := desktopValue()
-	return err == nil && bridge.Get("service").Type() == js.TypeFunction
+	if err != nil || bridge.Get("service").Type() != js.TypeFunction {
+		return false
+	}
+	services := bridge.Get("services")
+	return services.Type() == js.TypeObject && !services.IsNull() &&
+		services.Get("available").Type() == js.TypeFunction && services.Call("available").Truthy()
 }
-func (d DesktopBridge) DiagnosticsAvailable() bool { return d.ServicesAvailable() }
-func (d DesktopBridge) PrivacyAvailable() bool     { return d.ServicesAvailable() }
+func (d DesktopBridge) DiagnosticsAvailable() bool {
+	return d.methodsAvailable("gosx.desktop.service.diagnostics.preview", "gosx.desktop.service.diagnostics.export")
+}
+func (d DesktopBridge) PrivacyAvailable() bool {
+	return d.methodsAvailable(
+		"gosx.desktop.service.privacySettings.sendBrowserErrorReports",
+		"gosx.desktop.service.privacySettings.checkForUpdates",
+		"gosx.desktop.service.privacySettings.setBrowserErrorReports",
+		"gosx.desktop.service.privacySettings.setCheckForUpdates",
+		"gosx.desktop.service.privacySettings.deleteMyData",
+	)
+}
+
+// Older hosts lack registration metadata. Proxy presence cannot establish a
+// capability; explicit calls remain compatible with those hosts.
+func (d DesktopBridge) methodsAvailable(methods ...string) (available bool) {
+	defer func() {
+		if recover() != nil {
+			available = false
+		}
+	}()
+	bridge, err := desktopValue()
+	if err != nil || bridge.Get("hasMethod").Type() != js.TypeFunction {
+		return false
+	}
+	for _, method := range methods {
+		if !bridge.Call("hasMethod", method).Truthy() {
+			return false
+		}
+	}
+	return true
+}
 func (d DesktopBridge) WindowAvailable() (available bool) {
 	defer func() {
 		if recover() != nil {
@@ -47,7 +82,8 @@ func (d DesktopBridge) WindowAvailable() (available bool) {
 		return false
 	}
 	window := bridge.Get("window")
-	return window.Type() == js.TypeObject && !window.IsNull() && window.Get("setFullscreen").Type() == js.TypeFunction
+	return window.Type() == js.TypeObject && !window.IsNull() && window.Get("setFullscreen").Type() == js.TypeFunction &&
+		d.methodsAvailable("gosx.desktop.window.setFullscreen")
 }
 
 // invoke resolves only a named framework-owned service method. It deliberately
