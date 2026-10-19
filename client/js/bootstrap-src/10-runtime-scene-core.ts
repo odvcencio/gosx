@@ -6781,6 +6781,9 @@
       receiveShadow: Boolean(object.receiveShadow),
       depthWrite: object.depthWrite,
       bounds: bounds,
+      // These bounds cover the emitted world-space triangle soup. Consumers
+      // can round its extrema to Float32 instead of rescanning every vertex.
+      _worldBakedBounds: true,
       depthNear: depth.near,
       depthFar: depth.far,
       depthCenter: depth.center,
