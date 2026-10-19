@@ -88,10 +88,11 @@ func blackglassBeachDiscoveryModels() []scene.Node {
 	}
 }
 
+func blackglassHandheldPickup() []scene.Command {
+	return []scene.Command{scene.SetTransformCommand("shore-handheld", scene.TransformPatch{Y: -100, ScaleX: 1, ScaleY: 1, ScaleZ: 1})}
+}
 func blackglassHandheldPickupCommands() string {
-	data, err := json.Marshal([]scene.Command{scene.SetTransformCommand("shore-handheld", scene.TransformPatch{
-		Y: -100, ScaleX: 1, ScaleY: 1, ScaleZ: 1,
-	})})
+	data, err := json.Marshal(blackglassHandheldPickup())
 	if err != nil {
 		panic(err)
 	}

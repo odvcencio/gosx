@@ -1605,13 +1605,10 @@ test("Scene3D selena time auto-uniform: both backends declare the clock var and 
   assert.match(webgl, /var autoUniform = sceneSelenaAutoUniformValue\(name, sceneSelenaFrameTime, sceneSelenaFrameProximity\);[\s\S]*?hasOwnProperty\.call\(values, name\)/);
   assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,500}sceneSelenaMaterialValue\(material, name\)/);
 
-  // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
-  // before any render-pass encoder draw commands.
-  assert.match(webgpu, /var frameTimeSeconds = frameNowMS \/ 1000;\s*\n\s*selenaFrame\.time = frameTimeSeconds; selenaFrame\.cameraProximity =/);
-
-  // WebGL: clock is set right after scratchSelenaViewProjection is populated
-  // (sceneMat4MultiplyInto), before the shadow pass and before drawPBRObjectList.
-  assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*prepareRigidMeshBatches\(bundle\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000; sceneSelenaFrameProximity =/);
+  // Shader time and wall time are distinct. Stateful water retains the wall
+  // clock, while declarative materials receive the mounted scene playhead.
+  assert.match(webgpu, /selenaFrame\.time = frameMeta\?\.sceneTime \?\?/);
+  assert.match(webgl, /sceneSelenaFrameTime = frameMeta\?\.sceneTime \?\?/);
 });
 
 test("Scene3D selena camera proximity auto-uniform is renderer-owned on both backends", () => {

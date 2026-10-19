@@ -70,12 +70,16 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraT
 		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath, extraTags...)...)
 		cmd.Dir = scratchDir
 		cmd.Env = setEnv(candidate.env, "GOFLAGS", goModuleCommandFlags)
-		out, err := cmd.CombinedOutput()
+		out, err := runValidatedWASMCompiler(cmd, outputPath)
 		if err == nil {
 			if candidate.label != "" {
 				fmt.Printf("    TinyGo toolchain: %s\n", candidate.label)
 			}
 			return nil
+		}
+		var invalidOutput *invalidCompilerWASMOutput
+		if errors.As(err, &invalidOutput) {
+			return fmt.Errorf("tinygo build: %w", err)
 		}
 		failures = append(failures, tinyGoFailure(candidate.label, err, out))
 		if !tinyGoFailureLooksToolchainRelated(out) {

@@ -174,6 +174,7 @@ func decodeFallback(raw json.RawMessage, original *Probe) *Probe {
 	if json.Unmarshal(raw, &bursts) == nil {
 		p.ParticleBursts = bursts.ParticleBursts
 	}
+	_ = json.Unmarshal(raw, &p.experienceFields)
 	var zoom struct{ ControlZoom bool }
 	if json.Unmarshal(raw, &zoom) == nil {
 		p.ControlZoom = zoom.ControlZoom

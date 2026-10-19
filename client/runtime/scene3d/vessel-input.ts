@@ -51,7 +51,7 @@
   function steering(mount,canvas,state,input,listen) {
     const api=window.__gosx_scene3d_vessel_input,root=document.createElement('div'),track=document.createElement('div'),knob=document.createElement('span'),caption=document.createElement('span');
     root.className='gosx-scene3d-vessel-controls gosx-scene3d-vessel-steering';root.setAttribute('class',root.className);root.setAttribute('role','group');root.setAttribute('aria-label','Ship steering');
-    root.style.cssText='position:absolute;left:14px;bottom:110px;z-index:12;display:none;width:144px;max-width:calc(50% - 14px);padding:8px;box-sizing:border-box;border-radius:18px;background:rgba(14,20,24,.82);color:#fff;font:12px sans-serif;touch-action:none;user-select:none;text-align:center';
+    root.style.cssText='position:absolute;left:14px;bottom:var(--gosx-vessel-controls-bottom,110px);z-index:12;display:none;width:144px;max-width:calc(50% - 14px);padding:8px;box-sizing:border-box;border-radius:18px;background:rgba(14,20,24,.82);color:#fff;font:12px sans-serif;touch-action:none;user-select:none;text-align:center';
     track.className='gosx-scene3d-rudder';track.setAttribute('class',track.className);track.setAttribute('role','slider');track.setAttribute('tabindex','0');track.setAttribute('aria-label','Rudder');
     for(const [name,v] of [['aria-valuemin','-100'],['aria-valuemax','100'],['aria-valuenow','0'],['aria-valuetext','Centered']])track.setAttribute(name,v);
     track.style.cssText='position:relative;height:72px;border:1px solid #aab5b080;border-radius:36px;background:linear-gradient(90deg,#edf3ed14 1px,transparent 1px) center/25% 100%;touch-action:none';
@@ -103,6 +103,7 @@
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     function listen(target,name,fn) {target.addEventListener(name,fn,{passive:false});listeners.push([target,name,fn]);}
     const pad=touch?steering(mount,canvas,state,input,listen):null;
+    const disposeHUD=sceneReserveVesselHUD(state,mount,listen);
     function focused() {return document.activeElement===canvas || document.pointerLockElement===canvas;}
     bindLook(canvas,state,input,listen,actions);
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
@@ -157,7 +158,7 @@
       if(layout!==key) {
         layout=key;panel.hidden=hidden;if(!active)clear(input);
         panel.style.display=hidden?'none':'grid';panel.style.left=active?'auto':'50%';panel.style.right=active?'14px':'auto';
-        panel.style.top=active?'auto':'58px';panel.style.bottom=active?'110px':'auto';panel.style.transform=active?'none':'translateX(-50%)';
+        panel.style.top=active?'auto':'58px';panel.style.bottom=active?'var(--gosx-vessel-controls-bottom,110px)':'auto';panel.style.transform=active?'none':'translateX(-50%)';
         panel.style.width=active?(touch?'min(220px, calc(50% - 14px))':'280px'):'auto';panel.style.gridTemplateColumns=active?'1fr 1fr':'1fr';
         helm.textContent=active?helmLabels.leave:state.detached?'Return to helm':state.config.quickBoard?'Pilot ship':helmLabels.take;
         view.hidden=!active;raise.hidden=!active;lower.hidden=!active;readout.hidden=!active;
@@ -165,7 +166,7 @@
       pad?.refresh(active);
       const next=state.grounded?'Grounded · turn toward deeper water':window.__gosx_scene3d_vessel_physics.speedCurve(state.heading-state.wind)===0?'Into the wind · '+(touch?'steer to tack':'hold A/D to tack'):Math.round(state.trim*100)+'% sail · '+state.speed.toFixed(1)+' m/s'+(touch?'':' · drag to look · A/D steer · W/S sail');
       if(label!==next) {label=next;readout.textContent=next;}
-    },dispose() {clear(input);panel.remove();pad?.dispose();for(const [target,name,fn] of listeners)target.removeEventListener(name,fn);} };
+    },dispose() {disposeHUD();clear(input);panel.remove();pad?.dispose();for(const [target,name,fn] of listeners)target.removeEventListener(name,fn);} };
   }
   window.__gosx_scene3d_vessel_input={create,down,move,up,clear,value,setup};
 })();

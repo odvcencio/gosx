@@ -1,6 +1,7 @@
 "use strict";
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const vm = require("node:vm");
 const { createBoardWebGPUHarness, flushAsyncWork, deviceCallSnapshot } = require("./runtime-test-harness.js");
 
 async function materialHarness(selena = false, count = 50, renderBundles = true, fresh = true) {
@@ -198,6 +199,8 @@ for (const bundles of [false, true]) test(`400 retained meshes batch uploads (bu
   const beforeDiagnostics = h.renderer.diagnostics();
   await h.render();
   const after = deviceCallSnapshot(h.fake);
+  t.diagnostic(JSON.stringify({ bundles, meshes: 400, steadyWriteCalls: after.writeBufferCalls - before.writeBufferCalls,
+    steadyWriteBytes: after.writeBufferBytes - before.writeBufferBytes }));
   assert.ok(h.fake.state.submitCount > 0, "frames submit rendered commands");
   assert.ok(after.writeBufferCalls - before.writeBufferCalls <= 8,
     `expected a small constant, got ${after.writeBufferCalls - before.writeBufferCalls}`);
@@ -207,6 +210,30 @@ for (const bundles of [false, true]) test(`400 retained meshes batch uploads (bu
     "steady frame never calls createMaterialBindGroup");
   if (bundles) assert.equal(h.renderer.diagnostics().bundleDryRuns, beforeDiagnostics.bundleDryRuns,
     "unchanged planner and materials replay without the dry run");
+});
+
+for (const fresh of [true, false]) test(`unchanged ${fresh ? "source" : "generated"} bundled frames avoid serializing draw metadata`, async t => {
+  const h = await materialHarness(false, 400, true, fresh);
+  const originalJSON = vm.runInContext("JSON", h.env.context);
+  t.after(() => { h.env.context.JSON = originalJSON; h.renderer.dispose(); });
+  const bundle = h.bundle();
+  for (let i = 0; i < 4; i++) await h.render(bundle);
+  let serializedDraws = 0;
+  h.env.context.JSON = {
+    parse: originalJSON.parse,
+    stringify(value, replacer, space) {
+      const encoded = originalJSON.stringify(value, replacer, space);
+      if (typeof encoded === "string") serializedDraws += (encoded.match(/"box-\d+"/g) || []).length;
+      return encoded;
+    },
+  };
+  const before = h.renderer.diagnostics();
+  const submissions = h.fake.state.submitCount;
+  for (let i = 0; i < 30; i++) await h.render(bundle);
+  assert.equal(h.fake.state.submitCount, submissions + 30, "all measured frames submit");
+  assert.equal(h.renderer.diagnostics().bundleDryRuns, before.bundleDryRuns,
+    "unchanged draws keep replaying the bundle");
+  assert.equal(serializedDraws, 0, "steady replay must not serialize every draw again");
 });
 
 test("material revisions refresh packed fields once and retire the replaced block", async t => {

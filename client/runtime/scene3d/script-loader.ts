@@ -12,6 +12,7 @@ function resolveSceneSubFeatureURL(datasetKey: string, fallback: string) {
 }
 
 function sceneGatedFeatureAPI(kind: string) {
+  if (kind === "experience") return window.__gosx_runtime_api.scene3DExperience;
   if (kind === "command") return window.__gosx_scene3d_command_bridge;
   if (kind === "timeline" || kind === "particle-burst") return window.__gosx_scene3d_api?.[kind];
   return kind === "decompress" ? (sceneDecompressAPIFunction("sceneDecompressProps") && window.__gosx_scene3d_api) : kind === "zoom" ? window.__gosx_runtime_api.scene3DZoom : window["__gosx_scene3d_" + kind.replace(/-/g, "_") + "_api"];
@@ -30,6 +31,8 @@ function ensureSceneGatedFeatureLoaded(kind: string, datasetKey: string, fallbac
     script.setAttribute("crossorigin", "anonymous");
     script.setAttribute("referrerpolicy", "no-referrer");
     script.setAttribute("data-gosx-script", "feature-" + name);
+    const integrity = resolveSceneSubFeatureURL(datasetKey.replace(/Url$/, "Integrity"), "");
+    if (integrity) script.setAttribute("integrity", integrity);
     script.src = url; script.setAttribute("src", url);
     if (typeof gosxApplyCurrentScriptNonce === "function") gosxApplyCurrentScriptNonce(script);
     script.onload = function() {

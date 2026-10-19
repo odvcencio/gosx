@@ -90,7 +90,7 @@ func TestBlackglassPoolJournalAndLazyCartridgeServe(t *testing.T) {
 	if page.Code != http.StatusOK {
 		t.Fatalf("pool view returned %d", page.Code)
 	}
-	for _, want := range []string{`data-view="pools"`, `Field journal`, `Ochre stars`, `Anemone garden`, `limpet ledge`, `shore-handheld.glb`, `data-coast-pickup=`, `?view=pools&amp;period=blue-hour`} {
+	for _, want := range []string{`data-view="pools"`, `Field journal`, `Ochre stars`, `Anemone garden`, `limpet ledge`, `shore-handheld.glb`, `coast-handheld`, `data-period="blue-hour"`} {
 		if !strings.Contains(page.Body.String(), want) {
 			t.Fatalf("pool view missing %q", want)
 		}
@@ -98,10 +98,15 @@ func TestBlackglassPoolJournalAndLazyCartridgeServe(t *testing.T) {
 	if strings.Contains(page.Body.String(), "boytacean_bg.wasm") || strings.Contains(page.Body.String(), "coast-walk.gb") {
 		t.Fatal("cartridge assets must not be requested by the initial scene")
 	}
+	for _, retired := range []string{"blackglass-content.js", "blackglass-discoveries.js", "blackglass-chart.js", "blackglass-view.js", "blackglass-spyglass.js"} {
+		if strings.Contains(page.Body.String(), retired) {
+			t.Fatalf("Blackglass must express interactions through GoSX constructs: %s", retired)
+		}
+	}
 	for path, contentType := range map[string]string{
-		"/demos/blackglass-handheld/pocket.html":                               "text/html",
-		"/demos/blackglass-handheld/handheld.js":                               "javascript",
-		"/demos/blackglass-handheld/vendor/boytacean-0.13.2/boytacean_bg.wasm": "application/wasm",
+		"/demos/blackglass-handheld/pocket.html":                  "text/html",
+		"/gosx/gameboy/runtime.js":                                "javascript",
+		"/gosx/gameboy/vendor/boytacean-0.13.2/boytacean_bg.wasm": "application/wasm",
 	} {
 		response := httptest.NewRecorder()
 		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))

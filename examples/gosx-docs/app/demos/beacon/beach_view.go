@@ -25,7 +25,7 @@ func BlackglassBeachViewUpdate(viewID, fromPeriod, periodID string) BlackglassVi
 	blackglassViewOnce.Do(func() {
 		blackglassViewPeriods = make(map[string]scene.SceneIR, len(beachgen.Periods))
 		for _, id := range beachgen.Periods {
-			blackglassViewPeriods[id] = BlackglassBeachProgram("shore", id).SceneIR()
+			blackglassViewPeriods[id] = blackglassBeachProgram("shore", id, false).SceneIR()
 		}
 	})
 	before := blackglassViewPeriods[blackglassBeachPeriodFor(fromPeriod).ID]
@@ -41,4 +41,27 @@ func BlackglassBeachViewUpdate(viewID, fromPeriod, periodID string) BlackglassVi
 		camera.PortraitFOV = 95
 	}
 	return BlackglassViewUpdate{View: view.ID, Period: period.ID, Label: "Blackglass Beach — " + view.Name + " at " + period.Name, Camera: scene.CameraIR(camera), Commands: commands}
+}
+
+func blackglassBeachPresentation(view, period string) *scene.Presentation {
+	config := &scene.Presentation{Endpoint: "/api/blackglass-view", InputSignal: "$blackglass.presentation", OutputSignal: "$blackglass.presentationState", InitialView: view, InitialPeriod: period, Query: true}
+	for _, id := range []string{"shore", "glass", "cliff", "pools", "ship", "beacon", "hollow"} {
+		v := blackglassBeachViewFor(id)
+		camera := scene.PerspectiveCamera{Position: v.Position, Rotation: blackglassBeachLookRotation(v.Position, v.Target), FOV: 50, PortraitFOV: 70, Near: .1, Far: 900}
+		if id == "pools" {
+			camera.PortraitFOV = 95
+		}
+		config.Views = append(config.Views, scene.PresentationView{ID: id, Label: v.Name, Camera: scene.CameraIR(camera), Vessel: id == "ship"})
+	}
+	for _, id := range beachgen.Periods {
+		hour := 17.5
+		if id == beachgen.PeriodNoon {
+			hour = 12
+		}
+		if id == beachgen.PeriodBlue {
+			hour = 18.3
+		}
+		config.Periods = append(config.Periods, scene.PresentationPeriod{ID: id, Hour: hour})
+	}
+	return config
 }

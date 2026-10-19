@@ -25,7 +25,7 @@
     }
   },
   "program": {
-    "nodes": 40,
+    "nodes": 41,
     "jsonBytes": 66200,
     "gzipBytes": 29500
   },

@@ -18782,7 +18782,9 @@
             : (Number.isFinite(frameMeta.revision) ? frameMeta.revision : 0)))
         : 0;
       var frameTimeSeconds = frameNowMS / 1000;
-      selenaFrame.time = frameTimeSeconds; selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before every Selena draw this frame
+      // Shader time is seekable; telemetry and compute retain wall time.
+      selenaFrame.time = frameMeta?.sceneTime ?? frameTimeSeconds;
+      selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
       var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
@@ -18796,11 +18798,8 @@
       var waterUpdateStats = sceneWebGPUWaterDebugSkipsUpdate(waterDebugMode)
         ? updateWaterSystems([], encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH)
         : updateWaterSystems(bundle.waterSystems, encoder, frameNowMS, frameActive, frameQualityProfile, frameQualityRevision, bundle, pbrSceneBuffers, scaledW, scaledH);
-      // GPU frustum cull: runs AFTER uploadFrameUniforms so scratchSelenaViewProjection
-      // is ready (WebGPU post-depth-remap VP). Runs BEFORE shadow and main passes
-      // so outputBuf + drawArgsBuf are populated before drawInstancedMeshes reads them.
-      // Only processes meshes with cullKernelWGSL present (gpu-cull capability active
-      // by virtue of being in the WebGPU renderer). Meshes without a kernel draw-all.
+      // After frame uniform upload, cull before render passes.
+      // Meshes without a cull kernel retain draw-all behavior.
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       var instancedDrawList = hasInstancedData
         ? buildInstancedDrawList(bundle, materials)
@@ -19309,7 +19308,7 @@
         /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Create a dummy material bind group for group 1 (points pipeline layout requires it).
         var dummyMatBG = createMaterialBindGroup(null, false, defaultMaterialOwner);
         mainPass.setBindGroup(1, dummyMatBG, [0]);
-        Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, frameTimeSeconds));
+        Object.assign(frameStats, drawPointsEntries(mainPass, bundle, cam, selenaFrame.time));
         Object.assign(frameStats, drawComputeParticleEntries(mainPass, computeParticleRecords, bundle.environment, frameTimeSeconds));
       }
 
@@ -19799,7 +19798,9 @@
   function sceneWebGPUCreateMaterialFrame(): any {
     return { resources: new Map(), groups: [], signatures: [], textureRevision: 0, calls: 0,
       buffer: null, capacity: 0, stride: 256, data: null, offsets: new WeakMap(),
-      geometryReady: false, resourceRevision: 0, refs: [] };
+      geometryReady: false, resourceRevision: 0, refs: [],
+      bundleInputs: { draws: [], materials: [], prepared: null, textureRevision: -1,
+        resourceRevision: -1, version: 0, key: null } };
   }
     // Exact material signatures also catch mutable callers without revisions.
     var materialCacheFields = "kind materialKind color roughness metalness emissive opacity clearcoat sheen transmission iridescence anisotropy unlit normalUVScale ior alphaCutoff specularIntensity specularColor normalScale occlusionStrength emissiveColor rimPower rimStrength rimColor specularAA thickness attenuationDistance attenuationColor texture normalMap roughnessMap metalnessMap emissiveMap occlusionMap specularIntensityMap specularColorMap thicknessMap textureDescriptors blendMode renderPass revision version".split(" ");
@@ -19879,28 +19880,58 @@
       }
       return groups[shadow] = record.bg;
     }
+  var sceneWebGPUReplayPasses = ["opaque", "alpha", "additive"];
+  var sceneWebGPUReplayFields = ["id", "materialIndex", "depthWrite", "doubleSided", "reflected", "receiveShadow", "vertexOffset", "vertexCount"];
+  var sceneWebGPUReplayBufferFields = ["positions", "normals", "uvs", "tangents"];
   function sceneWebGPUFastMaterialSignature(materialFrame: any, prepared: any, materials: any[], hasInstancedData: boolean, pbrBuffers: any, frameGroup: any): string | null {
     var simpleMaterials = materials.every(function(material: any) {
       return !material.detail && !(typeof sceneWebGPUIsSelenaMaterial === "function" && sceneWebGPUIsSelenaMaterial(material));
     });
-    if (prepared && !prepared.cssDynamic && simpleMaterials && materialFrame.geometryReady &&
-        !hasInstancedData) {
-      var refs = [frameGroup, materialFrame.buffer, pbrBuffers && pbrBuffers.positions,
-        pbrBuffers && pbrBuffers.normals, pbrBuffers && pbrBuffers.uvs,
-        pbrBuffers && pbrBuffers.tangents];
-      if (refs.some(function(ref, i) { return ref !== materialFrame.refs[i]; })) {
-        materialFrame.refs = refs; materialFrame.resourceRevision++;
-      }
-      var commands = ["opaque", "alpha", "additive"].map(function(pass: string) {
-        return prepared.pbrPasses[pass].map(function(object: any) {
-          return [object.id, object.materialIndex, object.depthWrite, object.doubleSided,
-            sceneWebGPUObjectReflected(object), object.receiveShadow, object.vertexOffset, object.vertexCount];
-        });
-      });
-      return prepared.signature + "|" + JSON.stringify(commands) + "|" + JSON.stringify(materialFrame.signatures) + "|" +
-        materialFrame.textureRevision + "|" + materialFrame.resourceRevision;
+    if (!prepared || prepared.cssDynamic || !simpleMaterials || !materialFrame.geometryReady || hasInstancedData) return null;
+    var refs = materialFrame.refs;
+    var resourceChanged = refs[0] !== frameGroup || refs[1] !== materialFrame.buffer;
+    refs[0] = frameGroup; refs[1] = materialFrame.buffer;
+    for (var refIndex = 0; refIndex < sceneWebGPUReplayBufferFields.length; refIndex++) {
+      var ref = pbrBuffers && pbrBuffers[sceneWebGPUReplayBufferFields[refIndex]];
+      if (refs[refIndex + 2] !== ref) resourceChanged = true;
+      refs[refIndex + 2] = ref;
     }
-    return null;
+    if (resourceChanged) materialFrame.resourceRevision++;
+
+    // Keep exact command fields without rebuilding and serializing a row for
+    // every mesh on every replay. Pass lengths preserve membership and order.
+    var cache = materialFrame.bundleInputs;
+    var changed = cache.prepared !== prepared.signature || cache.textureRevision !== materialFrame.textureRevision ||
+      cache.resourceRevision !== materialFrame.resourceRevision;
+    var cursor = 0, draws = cache.draws;
+    for (var passIndex = 0; passIndex < sceneWebGPUReplayPasses.length; passIndex++) {
+      var objects = prepared.pbrPasses[sceneWebGPUReplayPasses[passIndex]];
+      if (draws[cursor] !== objects.length) changed = true;
+      draws[cursor++] = objects.length;
+      for (var objectIndex = 0; objectIndex < objects.length; objectIndex++) {
+        var object = objects[objectIndex];
+        for (var fieldIndex = 0; fieldIndex < sceneWebGPUReplayFields.length; fieldIndex++) {
+          var field = sceneWebGPUReplayFields[fieldIndex];
+          var value = field === "reflected" ? sceneWebGPUObjectReflected(object) : object[field];
+          if (!Object.is(draws[cursor], value)) changed = true;
+          draws[cursor++] = value;
+        }
+      }
+    }
+    if (draws.length !== cursor) { draws.length = cursor; changed = true; }
+    var signatures = materialFrame.signatures;
+    for (var index = 0; index < signatures.length; index++) {
+      if (cache.materials[index] !== signatures[index]) changed = true;
+      cache.materials[index] = signatures[index];
+    }
+    if (cache.materials.length !== signatures.length) { cache.materials.length = signatures.length; changed = true; }
+    if (changed) {
+      cache.prepared = prepared.signature; cache.textureRevision = materialFrame.textureRevision;
+      cache.resourceRevision = materialFrame.resourceRevision;
+      // This private token changes only when the recorder must validate again.
+      cache.key = String(++cache.version);
+    }
+    return cache.key;
   }
 
   function sceneWebGPUIsSelenaMaterial(material: any) {

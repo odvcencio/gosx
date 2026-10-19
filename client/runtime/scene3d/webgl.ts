@@ -1670,16 +1670,15 @@
       if (!obj.castShadow) continue;
       if (typeof drawInstancedCaster === "function" && drawInstancedCaster(obj, lightMatrix)) continue;
 
-      if (obj.directVertices) {
-        // Retained geometry casts from its cached model-space position buffer.
-        // Indexed meshes preserve authored topology with drawElements; expanded
-        // procedural triangle lists use drawArrays. Both avoid per-frame CPU
-        // expansion. The bind hook comes from the PBR renderer closure that owns
-        // the retained attribute and optional element-buffer caches.
+      if (obj.directVertices || (obj._worldBakedUpload && obj._worldBakedUpload.resident === true)) {
+        // Both local retained meshes and baked snapshots reuse position buffers.
+        // Local meshes preserve authored indices; baked snapshots already have
+        // expanded triangles. The PBR renderer owns these shared buffers.
         if (typeof bindDirectCaster !== "function") continue;
         var casterDraw = bindDirectCaster(obj, shadowProgram);
         if (!casterDraw || !(casterDraw.count > 0)) continue;
-        gl.frontFace(sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
+        // Baked snapshots already contain world transforms and corrected winding.
+        gl.frontFace(obj.directVertices && sceneAffineDeterminant(obj.modelMatrix, 0) < 0 ? gl.CW : gl.CCW);
         if (casterDraw.indexed) {
           gl.drawElements(gl.TRIANGLES, casterDraw.count, gl.UNSIGNED_INT, 0);
         } else {
@@ -2107,18 +2106,12 @@
       gl.bindTexture(gl.TEXTURE_2D, depthTex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, width, height, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
       scenePBRTextureParameters(gl, gl.NEAREST);
-    } else {
-      depthRB = gl.createRenderbuffer();
-      gl.bindRenderbuffer(gl.RENDERBUFFER, depthRB);
-      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT24, width, height);
     }
 
     gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, colorTex, 0);
     if (depthTex) {
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, depthTex, 0);
-    } else {
-      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, depthRB);
     }
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
 
@@ -4463,6 +4456,7 @@
     var atmospherePost = createSceneAtmospherePostWebGL({ gl, quad, getProgram, beginPostPass });
     var mipBloom = createSceneWebGLMipBloom({ gl: gl, quad: quad, getProgram: getProgram, beginPostPass: beginPostPass, compositeSource: SCENE_POST_BLOOM_COMPOSITE_SOURCE });
     function postFrameContext(projection, view, lights) { return projection && projection.projection ? projection : { projection: projection, view: view, lights: lights }; }
+    var currentLinearInput = true;
     var currentWidth = 0;
     var currentHeight = 0;
     var hdrDegradationReported = false;
@@ -4813,7 +4807,8 @@
       // Returns { width, height, factor } — the scaled render target dims plus
       // the scale factor applied. Callers must use these dims for gl.viewport,
       // uniforms like u_viewportHeight, and the apply() call.
-	      begin: function(canvasW, canvasH, maxPixels, selective = false) {
+	      begin: function(canvasW, canvasH, maxPixels, selective = false, linearInput = true) {
+        currentLinearInput = linearInput;
         var factor = resolvePostFXFactor(maxPixels, canvasW * canvasH);
         var sw = Math.max(1, Math.floor(canvasW * factor));
         var sh = Math.max(1, Math.floor(canvasH * factor));
@@ -4861,7 +4856,7 @@
       diagnostics: function() {
         var hdrSupported = Boolean(sceneFBO && sceneFBO.hdrSupported);
         return {
-          linearSceneInput: true,
+          linearSceneInput: currentLinearInput,
           hdrIntermediate: hdrSupported,
           intermediateFormat: sceneFBO ? sceneFBO.colorFormat : "unallocated",
           degraded: Boolean(sceneFBO && !hdrSupported),
@@ -6559,14 +6554,38 @@
     });
   }
 
+  // Index keys by their source strings before encoding them. A frame may build
+  // fresh material profiles, so material identity cannot guard this cache.
+  // The weak owner is the renderer's program cache, not a global shader registry.
+  var scenePBRAuthoredProgramKeys = new WeakMap();
+  function scenePBRAuthoredProgramKey(programCache: any, vertex: any, fragment: any, layoutKey: string, skinned = false) {
+    let vertices = scenePBRAuthoredProgramKeys.get(programCache);
+    if (!vertices || programCache.size === 0) {
+      vertices = new Map();
+      scenePBRAuthoredProgramKeys.set(programCache, vertices);
+    }
+    let fragments = vertices.get(vertex);
+    if (!fragments) vertices.set(vertex, fragments = new Map());
+    let layouts = fragments.get(fragment);
+    if (!layouts) fragments.set(fragment, layouts = new Map());
+    const variant = skinned ? layoutKey + "::skinned" : layoutKey;
+    let key = layouts.get(variant);
+    if (key === undefined) {
+      const sources = JSON.stringify([vertex, fragment]);
+      key = sources.slice(0, -1) + "," + layoutKey + "]" + (skinned ? "::skinned" : "");
+      layouts.set(variant, key);
+    }
+    return key;
+  }
+
   function scenePBREnsureCustomProgram(gl: WebGL2RenderingContext, customProgramCache: any, material: any) {
     if (!scenePBRHasCustomHooks(material)) {
       return null;
     }
     // Programs depend on authored code and uniform declarations, not values.
     // Dynamic uniforms are uploaded for each draw without recompilation.
-    const key = JSON.stringify([material.customVertex || "", material.customFragment || "",
-      scenePBRCustomUniformDeclarations(material.customUniforms)]);
+    const key = scenePBRAuthoredProgramKey(customProgramCache, material.customVertex || "", material.customFragment || "",
+      JSON.stringify(scenePBRCustomUniformDeclarations(material.customUniforms)));
     const cached = customProgramCache.get(key);
     if (cached) {
       return cached.failed || scenePBRProgramFailed(cached.program.program) ? null : cached.program;
@@ -6587,13 +6606,13 @@
     }
     // Match the WebGPU path: uniform values belong to per-draw bindings.
     // The material key includes values and would leak a program per frame.
-    const baseKey = JSON.stringify([material.customVertex || "", selective ? material.specularFragmentGLSL : material.customFragment || "",
-      sceneSelenaMaterialLayout(material)]);
     // Skinned draws compile a distinct program variant (augmented vertex
     // source — see scenePBRSelenaSkinAugmentVertex), so it's cached under
     // its own key: the same material can back both static and skinned
     // objects across a scene.
-    const key = skinned ? baseKey + "::skinned" : baseKey;
+    const key = scenePBRAuthoredProgramKey(selenaProgramCache, material.customVertex || "",
+      selective ? material.specularFragmentGLSL : material.customFragment || "",
+      JSON.stringify(sceneSelenaMaterialLayout(material)), !!skinned);
     const cached = selenaProgramCache.get(key);
     if (cached) {
       return cached.failed || scenePBRProgramFailed(cached.program.program) ? null : cached.program;
@@ -6642,9 +6661,13 @@
     if (bundle.environment && bundle.environment.sky && !hooks.skyResources.renderer) {
       hooks.skyResources.renderer = createSceneSkyWebGLRenderer(gl, hooks.textureCache, hooks.placeholder);
     }
-    if ((bundle.postEffects || []).length) {
-      if (!hooks.postProcessor) hooks.postProcessor = createScenePostProcessor(gl, hooks.resolveUniform);
-      hooks.postProcessor.preparePrograms(bundle.postEffects);
+    const canvasFallback = scenePBRPostCanvasAntialiasFallback.has(gl);
+    if (bundle.postEffects?.length || canvasFallback) {
+      if (!hooks.postProcessor) {
+        hooks.postProcessor = createScenePostProcessor(gl, hooks.resolveUniform);
+        if (canvasFallback) hooks.postProcessor.preparePrograms(scenePBRCanvasFXAAEffects);
+      }
+      if (bundle.postEffects?.length) hooks.postProcessor.preparePrograms(bundle.postEffects);
     }
   }
 
@@ -8798,16 +8821,16 @@
       const projMatrix = scenePBRProjectionMatrixForCamera(cam, aspect, scratchProjMatrix);
       sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
       prepareRigidMeshBatches(bundle);
-      sceneSelenaFrameTime = performance.now() / 1000; sceneSelenaFrameProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0))); // feed auto time and proximity uniforms before any Selena mesh draw
+      // Shader and crowd time follow the scene; stateful compute retains wall time.
+      sceneSelenaFrameTime = frameMeta?.sceneTime ?? performance.now() / 1000;
+      sceneSelenaFrameProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
       const batchPrograms = scenePBRPrepareBatchPrograms(gl, rigidObjectBatches, {
         crowdProgram, crowdShadowProgram, rigidShadowProgram, rigidShadowProgramFailed,
         prepareCrowdMotionShaders, ensureInstancedProgram });
       crowdProgram = batchPrograms.crowdProgram; crowdShadowProgram = batchPrograms.crowdShadowProgram;
       rigidShadowProgram = batchPrograms.rigidShadowProgram;
       if (scenePBRProgramsPending(gl)) return "pending";
-      // GPU-motion crowd instances interpolate/animate from this SAME clock
-      // (see SCENE_CROWD_MOTION_ATTRIBUTES_GLSL's doc comment): one uniform
-      // write per render(), never per instance.
+      // GPU crowd motion uploads this shared clock once per frame.
       setCrowdMotionNow(sceneSelenaFrameTime);
 
       // --- Shadow Pass ---
@@ -8927,8 +8950,13 @@
       var transmissionSettings = sceneTransmissionSettings(frameMeta, canvas.parentNode);
       transmissionSettings.screen = transmissionSettings.screen && hasTransmission;
       if (transmissionSettings.screen) postEffects = sceneTransmissionEffects(postEffects, bundle.environment);
+      const canvasFXAAFallback = scenePBRPostCanvasAntialiasFallback.has(gl) && postEffects.length === 0;
+      if (canvasFXAAFallback) {
+        postEffects = scenePBRCanvasFXAAEffects;
+        postFXMaxPixels = canvas.width * canvas.height;
+      }
       var usePostProcessing = postEffects.length > 0;
-      frameLinear = usePostProcessing;
+      frameLinear = usePostProcessing && !canvasFXAAFallback;
 
       // renderW/renderH reflect the actual render target. When postfx is
       // active with a cap, these may be smaller than canvas dims. All
@@ -8940,10 +8968,10 @@
 
       if (usePostProcessing) {
         textureCache._sceneTextureEpoch++;
-        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels, selectiveBloom);
+        var scaled = postProcessor.begin(canvas.width, canvas.height, postFXMaxPixels, selectiveBloom, frameLinear);
         renderW = scaled.width;
         renderH = scaled.height;
-        renderTarget = Object.assign({}, scaled, { linear: true });
+        renderTarget = Object.assign({}, scaled, { linear: frameLinear });
         var temporalRequested = false, spatialRequested = false;
         for (var postIndex = 0; postIndex < postEffects.length; postIndex++) {
           temporalRequested = temporalRequested || postEffects[postIndex].kind === "taa";
@@ -8968,7 +8996,7 @@
       gl.viewport(0, 0, renderW, renderH);
 
       // Clear — "transparent" clears to fully transparent for alpha compositing.
-      var implicitOutput = usePostProcessing && !authoredPostEffects;
+      var implicitOutput = frameLinear && !authoredPostEffects;
       var bg = sceneRenderBackground(bundle.background, implicitOutput && renderTarget.hdrSupported ? postEffects[0] : null);
       // RGBA8 cannot store the inverse HDR clear. Mark untouched pixels with
       // zero alpha and restore the authored background in the output pass.
@@ -8992,9 +9020,9 @@
       if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
         if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
         skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
-          camera: cam, aspect: aspect, linear: usePostProcessing }) : "unavailable";
+          camera: cam, aspect: aspect, linear: frameLinear }) : "unavailable";
       }
-      sceneCloudWebGLDraw(skyResources, gl, { environment: bundle.environment, meta: frameMeta, view: viewMatrix, camera: cam, aspect, linear: usePostProcessing, timeSeconds: performance.now()/1000 });
+      sceneCloudWebGLDraw(skyResources, gl, { environment: bundle.environment, meta: frameMeta, view: viewMatrix, camera: cam, aspect, linear: frameLinear, timeSeconds: performance.now()/1000 });
       if (canvas.parentNode) canvas.parentNode.setAttribute("data-gosx-scene3d-sky", skyState);
 
       // Camera matrices were already computed above the shadow pass so CSM
@@ -9031,7 +9059,7 @@
       gl.uniform3f(uniforms.cameraPosition, cam.x, cam.y, cam.z);
 
       // Upload exposure and tone mapping mode (disabled when post-processing handles it).
-      scenePBRUploadExposure(gl, uniforms, bundle.environment, usePostProcessing);
+      scenePBRUploadExposure(gl, uniforms, bundle.environment, frameLinear);
 
       // Upload lights and environment once per frame.
       scenePBRUploadLights(gl, uniforms, bundle.lights, bundle.environment, _frameLightsHash);
@@ -9046,9 +9074,9 @@
       drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta && frameMeta.frameRequest);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
-      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: usePostProcessing, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
+      const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
       sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
-        meta: frameMeta, aspect, linear: usePostProcessing, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
+        meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
       // Shared water must be present in the opaque capture sampled by glass.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
       // The ocean owns a program and texture unit zero. Restore the PBR pass
@@ -9092,7 +9120,7 @@
       var frameTimeSeconds = performance.now() / 1000;
       activeStaticPointEntries.clear();
       activeStaticPointKeys.clear();
-      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
+      drawPointsEntries(gl, Array.isArray(bundle.points) ? bundle.points : [], bundle.environment, viewMatrix, projMatrix, sceneSelenaFrameTime, renderH);
       drawPointsEntries(gl, buildComputePointsEntries(bundle.computeParticles, frameTimeSeconds), bundle.environment, viewMatrix, projMatrix, frameTimeSeconds, renderH);
       releaseInactiveStaticPointBuffers();
       publishWebGLComputeParticleDrawStats();
@@ -9511,6 +9539,14 @@
     }
 
     function bindScenePBRDirectAttribute(obj, key, attrib, size, data) {
+      // World-baked immutable attributes already have the exact Float32
+      // representation uploaded by the streaming path. Reuse that snapshot
+      // without changing the draw object's world-space/shader semantics.
+      var upload = obj && !obj.directVertices && obj._worldBakedUpload;
+      if (upload && upload.resident === true) {
+        data = scenePBRDirectAttribute(upload.vertices, key, obj.vertexCount, size);
+        obj = upload;
+      }
       var vertices = obj && obj.vertices;
       if (!vertices || !Number.isFinite(attrib) || attrib < 0 || !(data instanceof Float32Array)) {
         return false;
@@ -10144,27 +10180,28 @@
     // synchronously before asking for the next caster.
     var directShadowCasterDraw = { indexed: false, count: 0 };
 
-    // bindScenePBRDirectShadowCaster binds a retained caster's cached position
-    // attribute, its optional Uint32Array element buffer, and its model matrix
-    // (the depth pass otherwise projects world-space soup through identity).
+    // Retained casters use local positions, authored indices and a model matrix.
+    // Cached world snapshots share their expanded position buffer with the color
+    // pass, with identity transform and no second application of authored indices.
     // Returns the exact draw shape so indexed and expanded triangle lists share
     // one retained shadow path.
     function bindScenePBRDirectShadowCaster(obj, shadowProgram) {
       if (
         !obj ||
-        obj.retainedGeometry !== true
+        (obj.retainedGeometry !== true && !(obj._worldBakedUpload && obj._worldBakedUpload.resident === true))
       ) {
         return null;
       }
       var count = Math.max(0, Math.floor(sceneNumber(obj.vertexCount, 0)));
       if (count <= 0) return null;
-      var positions = scenePBRDirectAttribute(obj.vertices, "positions", count, 3);
+      var positions = obj.directVertices ? scenePBRDirectAttribute(obj.vertices, "positions", count, 3) : null;
       if (!bindScenePBRDirectAttribute(obj, "positions", shadowProgram.attributes.position, 3, positions)) {
         return null;
       }
-      var indexCount = bindScenePBRDirectIndexBuffer(obj);
+      var indexCount = obj.directVertices ? bindScenePBRDirectIndexBuffer(obj) : 0;
       if (shadowProgram.uniforms.modelMatrix) {
-        gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false, obj.modelMatrix || identityModelMatrix);
+        gl.uniformMatrix4fv(shadowProgram.uniforms.modelMatrix, false,
+          obj.directVertices && obj.modelMatrix || identityModelMatrix);
       }
       directShadowCasterDraw.indexed = indexCount > 0;
       directShadowCasterDraw.count = indexCount > 0 ? indexCount : count;
@@ -10226,36 +10263,26 @@
     // casualty.
     function applyPointsAuthoredCustomUniforms(prog, uniforms, frameTimeSeconds) {
       if (uniforms && typeof uniforms === "object") {
-        var keys = Object.keys(uniforms);
-        for (var k = 0; k < keys.length; k++) {
-          var name = keys[k];
+        for (const name of Object.keys(uniforms)) {
           if (name === "time") continue;
-          var val = uniforms[name];
-        var loc = gl.getUniformLocation(prog.program, name);
-        if (loc == null) continue;
-        if (typeof val === "number") {
-          gl.uniform1f(loc, val);
-        } else if (Array.isArray(val) || (val && val.buffer instanceof ArrayBuffer)) {
-          var arr = Array.isArray(val) ? val : Array.from(val);
-          switch (arr.length) {
-          case 1: gl.uniform1f(loc, arr[0]); break;
-          case 2: gl.uniform2f(loc, arr[0], arr[1]); break;
-          case 3: gl.uniform3f(loc, arr[0], arr[1], arr[2]); break;
-          case 4: gl.uniform4f(loc, arr[0], arr[1], arr[2], arr[3]); break;
-          default:
-            if (arr.length === 9) gl.uniformMatrix3fv(loc, false, new Float32Array(arr));
-            else if (arr.length === 16) gl.uniformMatrix4fv(loc, false, new Float32Array(arr));
-            break;
+          const value = uniforms[name], loc = gl.getUniformLocation(prog.program, name);
+          if (loc == null) continue;
+          if (typeof value === "number") sceneSelenaUploadUniform(gl, loc, "float", value);
+          else if (Array.isArray(value) || (value && value.buffer instanceof ArrayBuffer)) {
+            switch (value.length) {
+            case 1: sceneSelenaUploadUniform(gl, loc, "float", value); break;
+            case 2: case 3: case 4:
+              sceneSelenaUploadUniform(gl, loc, "vec" + value.length, value); break;
+            default:
+              if (value.length === 9) sceneSelenaUploadUniform(gl, loc, "mat3", new Float32Array(value));
+              else if (value.length === 16) sceneSelenaUploadUniform(gl, loc, "mat4", new Float32Array(value));
+            }
           }
         }
-        }
       }
-      // Force the frame clock last so nothing the author shipped can shadow
-      // it — the WebGL mirror of the WGSL packer's reserved-name rule.
-      var timeLoc = gl.getUniformLocation(prog.program, "time");
-      if (timeLoc != null && typeof frameTimeSeconds === "number") {
-        gl.uniform1f(timeLoc, frameTimeSeconds);
-      }
+      // Reserved clock values override authored placeholders on every draw.
+      const timeLoc = gl.getUniformLocation(prog.program, "time");
+      if (timeLoc != null && typeof frameTimeSeconds === "number") gl.uniform1f(timeLoc, frameTimeSeconds);
     }
 
     function disposeComputeParticleSystemRecord(record) {
@@ -11042,6 +11069,7 @@
         }
       }
       customProgramCache.clear();
+      scenePBRAuthoredProgramKeys.delete(customProgramCache);
 
       for (const record of selenaProgramCache.values()) {
         const sp = record && record.program;
@@ -11052,6 +11080,7 @@
         }
       }
       selenaProgramCache.clear();
+      scenePBRAuthoredProgramKeys.delete(selenaProgramCache);
 
       if (lineProgram && lineResources) {
         disposeSceneWebGLRenderer(gl, lineProgram, lineResources);
@@ -11171,27 +11200,35 @@
 
   // --- Integration ---
 
-  function scenePBRCanvasAntialias(props, capability) {
+  var scenePBRPostCanvasAntialiasFallback = new WeakSet();
+  const scenePBRCanvasFXAAEffects = [{ kind: "fxaa" }];
+  function scenePBRCanvasAntialias(props, capability, ignorePost = false) {
     const caps = capability || {};
     const requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
     if (requestedSamples > 1) return true;
     if (requestedSamples === 1) return false;
     const tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    const scene = props && props.scene || {};
+    const effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
+    if (!ignorePost && Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
     return sceneBool(props && props.antialias, tierDefault);
   }
 
-  function createScenePBRContext(canvas, props, capability) {
+  function createScenePBRContext(canvas, props, capability, canvasAlpha = null, ignorePost = false) {
     if (!canvas || typeof canvas.getContext !== "function") return null;
     const caps = capability || {};
     try {
-      const useCanvasAlpha = sceneCanvasAlpha(props);
-      return canvas.getContext("webgl2", {
+      const useCanvasAlpha = canvasAlpha == null ? sceneCanvasAlpha(props) : canvasAlpha;
+      const antialias = scenePBRCanvasAntialias(props, caps, ignorePost);
+      const gl = canvas.getContext("webgl2", {
         alpha: useCanvasAlpha,
         premultipliedAlpha: useCanvasAlpha,
-        antialias: scenePBRCanvasAntialias(props, caps),
+        antialias,
         depth: true,
         powerPreference: caps.lowPower || caps.tier === "constrained" ? "low-power" : "high-performance",
       });
+      if (gl && !antialias && scenePBRCanvasAntialias(props, caps, true)) scenePBRPostCanvasAntialiasFallback.add(gl);
+      return gl;
     } catch (_error) {
       return null;
     }

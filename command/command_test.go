@@ -1,6 +1,7 @@
 package command
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -69,5 +70,36 @@ func TestValidate(t *testing.T) {
 		if err := Validate(cmds); err == nil || !strings.Contains(err.Error(), cmds[len(cmds)-1].ID) {
 			t.Errorf("%s: error = %v; must name the command", name, err)
 		}
+	}
+}
+
+func TestSubmitAction(t *testing.T) {
+	good := []Command{{ID: "edit.undo", Title: "Undo", Keys: []string{"Mod+Z"}, Action: Action{Submit: "#undo-form"}}}
+	if err := Validate(good); err != nil {
+		t.Fatal(err)
+	}
+	for name, cmd := range map[string]Command{
+		"empty action": {ID: "x", Title: "X", Action: Action{}},
+		"blank submit": {ID: "x", Title: "X", Action: Action{Submit: " "}},
+		"reserved":     {ID: "x", Title: "X", Reserved: true, Action: Action{Submit: "#f"}},
+	} {
+		err := Validate([]Command{cmd})
+		if err == nil || !strings.Contains(err.Error(), `"x"`) {
+			t.Errorf("%s: error = %v; must name the command", name, err)
+		}
+	}
+	if err := Validate([]Command{{ID: "x", Title: "X", Action: Action{}}}); err == nil || !strings.Contains(err.Error(), "needs an action") {
+		t.Errorf("empty action error = %v; want \"needs an action\"", err)
+	}
+	data, err := json.Marshal(good[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"submit":"#undo-form"`) {
+		t.Errorf("JSON %s lacks submit", data)
+	}
+	data, _ = json.Marshal(Command{ID: "y", Title: "Y", Action: Action{Open: "#p"}})
+	if strings.Contains(string(data), "submit") {
+		t.Errorf("JSON %s must omit empty submit", data)
 	}
 }

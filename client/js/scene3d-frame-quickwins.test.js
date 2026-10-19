@@ -228,13 +228,17 @@ test("a SwiftShader WebGPU adapter preserves constrained tier and one MSAA sampl
 });
 
 test("settling WebGPU has no extra animation-frame boundary", async () => {
-  let frames = 0, prepared = 0;
-  const api = sourceSection("../runtime/scene3d/mount-webgl.ts", "  async function settlePreferredWebGPUBackend", "  async function ensurePreferredWebGPUBackend", vm.createContext({
-    ensurePreferredWebGPUBackend: async () => { prepared++; },
+  let frames = 0;
+  const preparation = [];
+  const api = sourceSection("../runtime/scene3d/mount-webgl.ts", "  async function ensurePreferredWebGPUBackend", "  function ensureWebGLFeatureLoaded", vm.createContext({
+    window: { __gosx_scene3d_webgpu_probe_ready: async () => { preparation.push("probe"); return true; } },
+    sceneCapabilityWebGPUPreference: () => "prefer",
+    sceneNeedsWebGLForWebGPUCoverage: () => false,
+    ensureWebGPUFeatureLoaded: async () => { preparation.push("load"); },
     sceneWebGPUAvailable: () => true, sceneNextFrame: async () => { frames++; },
   }));
-  await api.settlePreferredWebGPUBackend({}, {});
-  assert.equal(prepared, 1);
+  assert.equal(await api.ensurePreferredWebGPUBackend({}, {}), true);
+  assert.deepEqual(preparation, ["probe", "load"]);
   assert.equal(frames, 0);
 });
 

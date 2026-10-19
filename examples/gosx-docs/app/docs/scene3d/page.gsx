@@ -66,6 +66,17 @@ func Page() Node {
 		<section id="scene3d-demo" class="scene3d-demo-well" aria-label="PBR demo scene">
 			<Scene3D {...data.demoScene} />
 		</section>
+		<section id="experiences">
+			<h2>Interactive Experiences</h2>
+			<p>Author controls in GoSX islands with typed shared signals. Scene3D owns the camera, simulation, environmental clock, and input lifecycle. Selecting a view or changing the light preserves the mounted world.</p>
+			{CodeBlock("go", data.sample051)}
+			<p><span class="inline-code">DayCycle</span> advances a physical sky over 18 minutes by default. It pauses with the scene clock. Its seeded weather changes cloud coverage and haze; it does not simulate rain or rebuild the environment map. The cloud scattering source is Selena and compiles for both WebGPU and WebGL.</p>
+			<p>Set <span class="inline-code">NightLightID</span> to an existing directional light to illuminate the world after sunset. Scene3D moves it opposite the sun and fades its intensity at dawn; its color and shadows remain authored in Go. <span class="inline-code">NightEnvIntensity</span> sets the ambient floor so paths and controls remain readable.</p>
+			<p><span class="inline-code">Optics</span> publishes bearings and surveyed landmarks. <span class="inline-code">Presentation</span> accepts typed viewpoint and lighting requests. <span class="inline-code">Exploration</span> records discoveries, plays authored synth cues, and can retain a pocket surface when it is put away.</p>
+			<p>For a larger world, serve <span class="inline-code">scene.Experience.GoSXProps()</span> as same-origin JSON and set <span class="inline-code">ExperienceRef</span>. The descriptor loads before controls mount and is limited to 128 KiB. The experience runtime loads only when a scene requests these constructs.</p>
+			<p>The optional <span class="inline-code">gameboy.Player</span> construct owns its emulator, audio, input, and checkpoints. Install its assets with <span class="inline-code">gameboy.Install(app)</span>. Cartridge files remain application data and are not included in the framework.</p>
+			<p>Explore these constructs in <a href="/demos/beacon" data-gosx-link="true">Blackglass Coast</a>, whose application interactions are authored in Go and GSX.</p>
+		</section>
 		<section id="no-hierarchical-scale">
 			<h2>No Hierarchical Scale</h2>
 			<div class="scene3d-warning" role="note">

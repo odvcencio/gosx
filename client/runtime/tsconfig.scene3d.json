@@ -23,6 +23,7 @@
     "scene3d/gltf.ts",
     "scene3d/mount-lifecycle.ts",
     "scene3d/mount.ts",
+    "scene3d/mount-presentation.ts",
     "scene3d/geometry-assets.ts",
     "scene3d/compute.ts",
     "scene3d/overlay-dom.ts",
@@ -59,6 +60,7 @@
     "scene3d/mount-input.ts",
     "scene3d/webgl-specular-bloom.ts",
     "scene3d/webgpu-specular-bloom.ts",
-    "scene3d/model-preparation.ts"
+    "scene3d/model-preparation.ts",
+    "scene3d/vessel-instruments.ts"
   ]
 }

@@ -311,3 +311,4 @@ declare var sceneScreenToRay: any;
 
 declare function sceneSpecularBloomRequested(effects: any[]): boolean;
 declare function sceneSpecularBloomEffects(bundle: any, effects: any[], backend: string, unsupported: boolean, mount: any): any[];
+declare function setSharedSignalValue(name: string, value: any): any;

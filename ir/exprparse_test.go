@@ -3,8 +3,26 @@ package ir
 import (
 	"testing"
 
+	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/island/program"
 )
+
+func TestParseTypedRecordInitializer(t *testing.T) {
+	exprs, id, err := ParseExpr(`scene.OpticsState{Ready:false, BearingLabel:"000° N", Position:scene.Vector3{X:12, Z:-3},}`, &ExprScope{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := vm.NewVM(&program.Program{Exprs: exprs}, nil)
+	got := m.Eval(id).Map()
+	if got["BearingLabel"].Text() != "000° N" || got["Ready"].Truth() || got["Position"].Map()["X"].Number() != 12 || got["Position"].Map()["Z"].Number() != -3 {
+		t.Fatalf("record initializer degraded: %#v", got)
+	}
+	for _, source := range []string{`scene.OpticsState{true}`, `scene.OpticsState{Ready:}`, `scene.OpticsState{Ready:false`} {
+		if _, _, err := ParseExpr(source, &ExprScope{}); err == nil {
+			t.Fatalf("accepted malformed record %q", source)
+		}
+	}
+}
 
 func TestParseIntLiteral(t *testing.T) {
 	exprs, rootID, err := ParseExpr("42", &ExprScope{})

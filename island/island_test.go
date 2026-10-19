@@ -162,7 +162,7 @@ func TestPageHeadCarriesManifestSRIForRuntimeScripts(t *testing.T) {
 		`integrity="sha256-runtime-integrity"`,
 		`src="/gosx/assets/runtime/bootstrap-feature-scene3d.44444444.js"`,
 		`integrity="sha256-scene-integrity"`,
-		`s.setAttribute('integrity',"sha256-webgpu-integrity");`,
+		`data-gosx-scene3d-webgpu-integrity="sha256-webgpu-integrity"`,
 	} {
 		if !strings.Contains(runtimeHTML, want) {
 			t.Fatalf("expected production runtime to include %q in %s", want, runtimeHTML)
@@ -801,7 +801,7 @@ func TestApplyBuildManifestRejectsAmbiguousIslandAssetsBeforeMutation(t *testing
 	}
 }
 
-func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
+func TestScene3DBackendsLoadOnlyThroughSceneSelection(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -817,8 +817,11 @@ func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
 	}
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 	html := gosx.RenderHTML(r.BootstrapScript())
-	if !strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
-		t.Fatalf("Scene3D WebGPU loader lacks GoSX provenance: %s", html)
+	if strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
+		t.Fatal("independent WebGPU loader bypasses Scene3D backend selection")
+	}
+	if !strings.Contains(html, `data-gosx-scene3d-webgpu-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgpu.js"`) {
+		t.Fatalf("Scene3D script lacks WebGPU chunk URL: %s", html)
 	}
 	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`) {
 		t.Fatalf("Scene3D script lacks command chunk URL: %s", html)
@@ -911,7 +914,7 @@ func TestSetBootstrapFeatureScene3DInstanceStreamPathAddsVersionQueryLikeCommand
 	}
 }
 
-func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) {
+func TestScene3DWebGPULazyLoaderReceivesNonceAndIntegrity(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -919,7 +922,7 @@ func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) 
 		BootstrapFeatureEngines:        buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
 		BootstrapFeatureScene3D:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
-		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: strings.Repeat("00", 32)},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -928,9 +931,9 @@ func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) 
 
 	html := gosx.RenderHTML(r.BootstrapScriptWithNonce("scene-nonce"))
 	for _, snippet := range []string{
-		`data-gosx-script="feature-scene3d-webgpu-loader" nonce="scene-nonce"`,
-		`document.currentScript.nonce`,
-		`if(_n){s.nonce=_n;}`,
+		`data-gosx-script="feature-scene3d"`,
+		`nonce="scene-nonce"`,
+		`data-gosx-scene3d-webgpu-integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected Scene3D WebGPU loader to include %q in %s", snippet, html)

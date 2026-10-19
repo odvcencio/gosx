@@ -1,0 +1,19 @@
+scene.Props{
+	DayCycle: &scene.DayCycle{
+		DurationSeconds:   18 * 60,
+		InitialHour:       17.5,
+		SunLightID:        "sun",
+		NightLightID:      "night-fill", // existing directional light in Graph
+		NightIntensity:    0.28,
+		NightEnvIntensity: 0.075,
+		Seed:              42,
+		Weather:           true,
+		InputSignal:       "$world.clockRunning",
+		OutputSignal:      "$world.day",
+	},
+	Optics: &scene.Optics{
+		Magnification: 3,
+		InputSignal:   "$world.spyglass",
+		OutputSignal:  "$world.sight",
+	},
+}

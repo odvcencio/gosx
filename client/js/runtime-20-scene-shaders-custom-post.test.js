@@ -1098,10 +1098,10 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
 // reaches the GPU: its WGSL compiles into a shader module, and on the frame
 // after the async pipeline resolves it is BOUND AND DRAWN. Assert the draw, not
 // just the compile: a pass that compiles but never dispatches is exactly the bug.
-async function renderValidatedPostFrame(harness, bundle, viewport) {
+async function renderValidatedPostFrame(harness, bundle, viewport, meta) {
   const before = harness.renderer.diagnostics().frameSeq;
   for (let i = 0; i < 8; i++) {
-    await renderPreparedFrame(harness.renderer, bundle, viewport);
+    await renderPreparedFrame(harness.renderer, bundle, viewport, meta);
     await flushAsyncWork();
     if (harness.renderer.diagnostics().frameSeq > before) return;
   }
@@ -1249,6 +1249,16 @@ test("custom post WebGPU: reserved time and patched uniforms reach the post unif
   const packed = postUniformWrites[postUniformWrites.length - 1].data;
   assert.equal(Math.abs(Number(packed[0]) - 4.2) < 0.00001, true,
     "reserved time must use the renderer frame clock, not the compiled default or effect.uniforms.time");
+
+  // Wall time keeps increasing; the actual uniform upload must follow seek,
+  // reverse and pause rather than just reporting the requested DOM clock.
+  for (const seconds of [1.25, 3.5, 1.25]) {
+    nowMS += 1000;
+    await renderValidatedPostFrame(harness, bundle, viewport, {nowMS, sceneTime: seconds});
+    const writes = fake.state.writeBufferCalls.filter(call => call.data && Math.abs(Number(call.data[1]) - .75) < .00001);
+    assert.equal(Number(writes.at(-1).data[0]), seconds);
+    assert.equal(harness.renderer.diagnostics().uniformTime, seconds);
+  }
 });
 
 test("Selena mesh WebGPU: postFX MSAA render pass uses a matching pipeline sample count", async () => {

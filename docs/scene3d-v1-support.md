@@ -21,6 +21,24 @@ by typed test evidence with an exact CI job, step, and command owner.
 
 ## v1 boundary
 
+### Optical instruments
+
+For a mounted perspective scene with `ControlZoom` enabled, dispatch
+`gosx:scene3d:optical-zoom` directly on its Scene3D engine element with
+`detail: { factor: 3 }` to magnify the view. Factors are finite numbers from
+1 to 8; factor 1 restores the underlying wheel/pinch zoom. Magnification
+changes the projection FOV, including portrait framing, without moving the
+camera, detaching a sailing helm, changing a held course, or starting another
+animation loop. Orthographic cameras keep their existing projection.
+
+The engine emits the bubbling `gosx:scene3d:optical-zoom-state` event with
+`detail: { factor }` when accepting a factor or clearing it on camera/scene
+reset. Scope listeners to the engine that owns the instrument. Malformed
+factors and events originating in child elements are ignored. Applications
+should put instruments away on page exit and keep controls accessible while
+the view is magnified. Blackglass Coast demonstrates this with its spyglass
+and Go-authored chart destinations.
+
 ### Material detail layers
 
 `StandardMaterial.Detail` and `Model.Detail` add world-space albedo, normal, and

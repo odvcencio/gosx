@@ -16,8 +16,8 @@
   "governanceBudgetRevision": {
     "originalAuthoredLineTarget": 600,
     "revisedGovernanceLineBudget": 3618,
-    "actualGovernanceLinesAtReview": 3442,
-    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values. RenderBeforeModels moves the initial render ahead of model hydration in mount.ts; its limit rises from 3866 to the measured 3884 lines. The ocean passes and the mip-chain bloom both hook into the renderers; this branch carries both, so the combined hooks raise the measured limits. Carrying both the ocean passes and the mip-chain bloom raises the WebGL and WebGPU source sets and renderer-set bytes by the sum of their measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Integration of the walk controller with the ocean, sky and bloom branches. The walk hook adds its lines to mount.ts on top of RenderBeforeModels. Detail layers add governed atlas/program helpers and opt-in draw hooks. Function exceptions and physical line limits track measured integration growth; default limits stay fixed. WebGPU detail adds a governed atlas module and cached pipeline/binding hooks. Limits reflect measured source and function growth. Integration of detail layers with the ocean, sky, bloom and walk branches. Ocean reflection hooks and new governed passes use measured physical lines and function metrics. Existing function exception locations move with the hooks; new orchestration growth is limited to reflection setup, pass splitting and disposal. Three nullable WebGPU target declarations and the optional pass callback retain plain-JS syntax; the typed bridge governs the new module interface without increasing the implicit-any ratchet. Living sky and atmosphere use governed pass modules with exact measured line caps; orchestration exceptions grow only for uniforms, quality shedding, and disposal. Shader variants depend on authored feature presence. Depth haze, reduced sun shafts, AgX and grain extend the same modules. Post-dispatch and cleanup exceptions record their measured growth; the WebGL planar draw scopes mirrored frame state and culling with guaranteed restoration. Integration of the atmosphere features with detail layers and the walk controller. The atmosphere tier is capped by the device capability tier. CPU ocean querying registers a lazy governed module and shares the generated wave packer with the GPU; its new files have measured line caps. Opt-in sailing and wake register bounded standalone authorities. Mount growth is the lazy URL gate and one per-render advance call; walking grows only by separate surfaces and suspension/carry/reset seams. New exceptions record measured cumulative IIFE and input-installation metrics, with reasons. Query defaults add five physical lines. Grounded retreat and friction add nine physics lines; phone guidance adds four input lines. Wake winding adds four lines. Caps and cumulative function exceptions equal the measured authored sources. Integration of the vessel controller with atmosphere, detail and walk. Clipper repairs add one physics line and two cloth lines; file caps match measured sources. The baked-buffer guard and wheel near plane add one conditional each; only their measured complexity exceptions rise. The translucent pass explicitly binds the PBR program after the ocean draw so wake uniforms never target the ocean program; line limits grow by that one measured binding. Volume transmission preserves the existing detail, reflection and atmosphere authorities. File and function limits record their measured combined source; default limits remain fixed. Wind-loaded sails, heel, bow spray and deck bobbing keep the vessel authority lazy; its file and function limits record measured growth. WebGL depth AO adds a governed depth-post source. It reconstructs view-space normals and samples twelve depth taps; depth-reading passes use a separate framebuffer, including atmosphere. User-controlled sailing stays responsive under reduced motion while decorative animation stays frozen; mount limits record the measured input-loop change. Opt-in zoom registers a bounded control module. Walk line growth covers navigation scaling and exact listener teardown; vessel metrics cover pinch cancellation, follow distance and reduced-motion chase. Existing limits increase only to the measured values. Zoom stays in its opt-in lazy chunk; ordinary scenes do not download the authority. Mount growth is the four-line prop gate. WebGPU detail resource lifecycle adds stable texture/control keys, frame reuse, retirement and repeatable disposal. The regression workload drops from 12 live detail buffers to one across 12 color changes; detail file and source-set caps grow only by the 56 measured helper lines. Renderer orchestration complexity decreases; existing function exceptions and default limits stay fixed. The normal-map UV scale adds one uniform upload with two defaults to createScenePBRRenderer and one selection to createSceneWebGPURenderer; their exceptions record the measured values. glTF sampler wrap modes now reach both backends. WebGPU binds and caches one sampler per texture slot and invalidates bind groups when those samplers change; the renderer limits rise only by measured changes. Function anchors shift with the added wrap descriptors and sampler helper. KTX2 uploads restore material wrap modes after decoder defaults; renderer source line caps record the exact authored growth. Merge reconciliation preserves both renderer source sets; file caps cover only the measured combined source growth. Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Startup shader readiness integrates the current physical-sky and walking sources; renderer function locations and limits use the merged source measurements. The normal-map UV scale adds one uniform upload with two defaults to createScenePBRRenderer and one selection to createSceneWebGPURenderer; their exceptions record the measured values. glTF sampler wrap modes now reach both backends. WebGPU binds and caches one sampler per texture slot and invalidates bind groups when those samplers change; the renderer limits rise only by measured changes. Function anchors shift with the added wrap descriptors and sampler helper. KTX2 uploads restore material wrap modes after decoder defaults; renderer source line caps record the exact authored growth. Base shader failure adds an optional renderer ABI method and six mount lines for fallback and context isolation; function anchors follow CSS preparation before readiness. WebGPU pipeline validation adds scoped creation and a shared failure guard; source line caps and function anchors follow the measured changes. Core failure uses the existing optional getFailureReason ABI method. Shared Selena IBL texture binding and renderer context use a governed helper; the WebGPU source-set cap grows by 59 measured lines: 43 binding/context lines and 16 explicit type/narrowing lines. The shared uniform helper grows by exactly its three context lines. Existing monolith and function complexity caps remain unchanged. Selective specular bloom registers opt-in attachment owners with caps measured from their source; it reuses the existing filter chain. Reviewed optics/MRT bundle deltas: shared scene +463B Brotli, WebGL +643B, WebGPU +1032B (plus glTF material transport); four aggregate Brotli targets are the minimum measured values under the unchanged 5% allowance. Raw/gzip targets and every other byte cap stay fixed. Both generated backend bundles pass the real Chrome thickness/AA/specular/opaque-occlusion oracle. Ordinary skeletal bind retention adds 133 Brotli bytes to the shared scene chunk; only four exceeded aggregate Brotli targets move to their exact minimum under the unchanged allowance. Source-line caps and all other byte targets remain fixed. The optional vessel navigation module adds one source registration line; governance caps reflect that one authored line. Reviewed submitted-frame receipts add explicit complete/pending renderer outcomes and an opt-in color-membership collector. Only measured increases for WebGL drawFrame, createScenePBRRenderer, renderFrame and drawPBRObjectList and WebGPU createSceneWebGPURenderer, render and drawPBRObjects are admitted; the two draw-list parameter increases carry the collector only for the final color pass. Existing exception locations move with these hooks, with every unrelated cap preserved. Default function limits, unrelated source and byte caps, and the crowd bounds work guard remain unchanged. Reviewed complete-submission and owning-mount hooks add 5 physical WebGL lines, 10 WebGPU lines and 41 mount lines above their existing caps; complete water/world outcome forwarding and exact packed-pose batch expansion add 43 mount-webgl lines. Only these file and matching backend set caps move to measured minima. The opt-in frame submission test registers one direct WebGPU source reference. Only the exhausted WebGL renderer aggregate Brotli target rises from 237769 to 237848 for its measured 249741 bytes under the unchanged 5% policy; every other aggregate metric is preserved. Frame overhead changes keep all complexity ceilings fixed; moved function anchors and the split diagnostic mirror inherit existing limits. The WebGPU file/source inventory records 93 authored lines for the rounding-preserving direct presentation, cached diagnostics and reusable frame records. getFrameProgress is optional in the mount ABI; WebGL behavior is unchanged. The ocean publisher adds its optional cached-attribute callback; its file cap records the one authored line. Frame-overhead CI measured exhausted aggregate Brotli caps. base+webgl brotli target 217675→217707 (+32), measured 228593, hard limit 228593; base+webgl+gltf+animation brotli target 237848→237902 (+54), measured 249798, hard limit 249798. Only exact minimum targets move; the existing 5% allowance and every other byte target remain fixed. Frame review repairs add exactly 16 WebGPU source lines and one recovery label line for double-buffered publication, eager output variants and per-frame timing events. Function complexity limits stay fixed; moved anchors are refreshed. Instance-upload integration preserves both helper sets, refreshes function anchors and records the measured combined source lines without raising complexity ceilings. Sailing integration retains its ocean line caps and the cached publisher callback; backend source line inventories use the combined authored sources. Lazy first-frame pipelines and review fixes use measured source and function limits; adapter classification preserves software tiers, and ready mesh frames bypass deferred encoding. Default limits and size policies stay fixed. Merge inventory anchors and function metrics match the combined reviewed sources; no new function exceptions or policy changes. Scene defaults review records exact exhausted minima: base+webgl brotli 217963 to 218111 (+148), measured 229017; base+webgpu brotli 242967 to 243115 (+148), measured 255271; base+webgl+gltf+animation brotli 238159 to 238306 (+147), measured 250222; base+webgpu+gltf+animation brotli 263162 to 263310 (+148), measured 276476. Allowances and other metrics stay fixed."
+    "actualGovernanceLinesAtReview": 3444,
+    "reason": "Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. The open-ocean passes add two governed renderer sources (224 WebGL2 and 211 WebGPU lines); set limits grow by exactly those lines and each file is capped at its measured size. The WebGL createScenePBRRenderer/render and WebGPU createSceneWebGPURenderer/render functions each grow by the one ocean draw call and its early-exit and dispose terms; their exceptions record the measured values. Opt-in mip bloom registers a governed pass module with limits equal to its measured source growth. WebGPU mip bloom adds the same governed filter chain and measured resource cleanup growth. The opt-in mip-chain bloom adds one dispatch per backend; exceptions record the measured values. RenderBeforeModels moves the initial render ahead of model hydration in mount.ts; its limit rises from 3866 to the measured 3884 lines. The ocean passes and the mip-chain bloom both hook into the renderers; this branch carries both, so the combined hooks raise the measured limits. Carrying both the ocean passes and the mip-chain bloom raises the WebGL and WebGPU source sets and renderer-set bytes by the sum of their measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Integration of the walk controller with the ocean, sky and bloom branches. The walk hook adds its lines to mount.ts on top of RenderBeforeModels. Detail layers add governed atlas/program helpers and opt-in draw hooks. Function exceptions and physical line limits track measured integration growth; default limits stay fixed. WebGPU detail adds a governed atlas module and cached pipeline/binding hooks. Limits reflect measured source and function growth. Integration of detail layers with the ocean, sky, bloom and walk branches. Ocean reflection hooks and new governed passes use measured physical lines and function metrics. Existing function exception locations move with the hooks; new orchestration growth is limited to reflection setup, pass splitting and disposal. Three nullable WebGPU target declarations and the optional pass callback retain plain-JS syntax; the typed bridge governs the new module interface without increasing the implicit-any ratchet. Living sky and atmosphere use governed pass modules with exact measured line caps; orchestration exceptions grow only for uniforms, quality shedding, and disposal. Shader variants depend on authored feature presence. Depth haze, reduced sun shafts, AgX and grain extend the same modules. Post-dispatch and cleanup exceptions record their measured growth; the WebGL planar draw scopes mirrored frame state and culling with guaranteed restoration. Integration of the atmosphere features with detail layers and the walk controller. The atmosphere tier is capped by the device capability tier. CPU ocean querying registers a lazy governed module and shares the generated wave packer with the GPU; its new files have measured line caps. Opt-in sailing and wake register bounded standalone authorities. Mount growth is the lazy URL gate and one per-render advance call; walking grows only by separate surfaces and suspension/carry/reset seams. New exceptions record measured cumulative IIFE and input-installation metrics, with reasons. Query defaults add five physical lines. Grounded retreat and friction add nine physics lines; phone guidance adds four input lines. Wake winding adds four lines. Caps and cumulative function exceptions equal the measured authored sources. Integration of the vessel controller with atmosphere, detail and walk. Clipper repairs add one physics line and two cloth lines; file caps match measured sources. The baked-buffer guard and wheel near plane add one conditional each; only their measured complexity exceptions rise. The translucent pass explicitly binds the PBR program after the ocean draw so wake uniforms never target the ocean program; line limits grow by that one measured binding. Volume transmission preserves the existing detail, reflection and atmosphere authorities. File and function limits record their measured combined source; default limits remain fixed. Wind-loaded sails, heel, bow spray and deck bobbing keep the vessel authority lazy; its file and function limits record measured growth. WebGL depth AO adds a governed depth-post source. It reconstructs view-space normals and samples twelve depth taps; depth-reading passes use a separate framebuffer, including atmosphere. User-controlled sailing stays responsive under reduced motion while decorative animation stays frozen; mount limits record the measured input-loop change. Opt-in zoom registers a bounded control module. Walk line growth covers navigation scaling and exact listener teardown; vessel metrics cover pinch cancellation, follow distance and reduced-motion chase. Existing limits increase only to the measured values. Zoom stays in its opt-in lazy chunk; ordinary scenes do not download the authority. Mount growth is the four-line prop gate. WebGPU detail resource lifecycle adds stable texture/control keys, frame reuse, retirement and repeatable disposal. The regression workload drops from 12 live detail buffers to one across 12 color changes; detail file and source-set caps grow only by the 56 measured helper lines. Renderer orchestration complexity decreases; existing function exceptions and default limits stay fixed. The normal-map UV scale adds one uniform upload with two defaults to createScenePBRRenderer and one selection to createSceneWebGPURenderer; their exceptions record the measured values. glTF sampler wrap modes now reach both backends. WebGPU binds and caches one sampler per texture slot and invalidates bind groups when those samplers change; the renderer limits rise only by measured changes. Function anchors shift with the added wrap descriptors and sampler helper. KTX2 uploads restore material wrap modes after decoder defaults; renderer source line caps record the exact authored growth. Merge reconciliation preserves both renderer source sets; file caps cover only the measured combined source growth. Renderer governance checks source roles, paths, bundles, direct references, and function limits. GPU crowd motion adds tests and a benchmark. The Blackglass water composite adds one registered test reference. The line limit equals the measured registry. The shadow array tests now use the source-set reader, which removes one direct source reference. Frame completion timing adds five renderer ABI entries. HDR post processing adds a presentation pass and one format selection; limits increase only by the measured source growth. Opt-in sky adds shader and resource factories; limits use measured source growth. Scene node focus proxies add 7 lines to mount.ts (creating the proxy state, disposing it, and four per-frame sync calls); the proxy code lives in mount-scene-focus.ts and the limit increases only by that measured growth. Walking registers a separate governed module; the mount line caps increase only for its lazy load and reset hooks. Shared URL loading reduces mount-webgl.ts; its cap is tightened to the measured source. The walk module adds a zero-specificity default stylesheet for its hint and joystick and caps walk renders at the scene's MaxFPS. The walk module defers rendering to an animating scene loop, caps walk renders at MaxFPS, and ships restylable defaults. Startup shader readiness integrates the current physical-sky and walking sources; renderer function locations and limits use the merged source measurements. The normal-map UV scale adds one uniform upload with two defaults to createScenePBRRenderer and one selection to createSceneWebGPURenderer; their exceptions record the measured values. glTF sampler wrap modes now reach both backends. WebGPU binds and caches one sampler per texture slot and invalidates bind groups when those samplers change; the renderer limits rise only by measured changes. Function anchors shift with the added wrap descriptors and sampler helper. KTX2 uploads restore material wrap modes after decoder defaults; renderer source line caps record the exact authored growth. Base shader failure adds an optional renderer ABI method and six mount lines for fallback and context isolation; function anchors follow CSS preparation before readiness. WebGPU pipeline validation adds scoped creation and a shared failure guard; source line caps and function anchors follow the measured changes. Core failure uses the existing optional getFailureReason ABI method. Shared Selena IBL texture binding and renderer context use a governed helper; the WebGPU source-set cap grows by 59 measured lines: 43 binding/context lines and 16 explicit type/narrowing lines. The shared uniform helper grows by exactly its three context lines. Existing monolith and function complexity caps remain unchanged. Selective specular bloom registers opt-in attachment owners with caps measured from their source; it reuses the existing filter chain. Reviewed optics/MRT bundle deltas: shared scene +463B Brotli, WebGL +643B, WebGPU +1032B (plus glTF material transport); four aggregate Brotli targets are the minimum measured values under the unchanged 5% allowance. Raw/gzip targets and every other byte cap stay fixed. Both generated backend bundles pass the real Chrome thickness/AA/specular/opaque-occlusion oracle. Ordinary skeletal bind retention adds 133 Brotli bytes to the shared scene chunk; only four exceeded aggregate Brotli targets move to their exact minimum under the unchanged allowance. Source-line caps and all other byte targets remain fixed. The optional vessel navigation module adds one source registration line; governance caps reflect that one authored line. Reviewed submitted-frame receipts add explicit complete/pending renderer outcomes and an opt-in color-membership collector. Only measured increases for WebGL drawFrame, createScenePBRRenderer, renderFrame and drawPBRObjectList and WebGPU createSceneWebGPURenderer, render and drawPBRObjects are admitted; the two draw-list parameter increases carry the collector only for the final color pass. Existing exception locations move with these hooks, with every unrelated cap preserved. Default function limits, unrelated source and byte caps, and the crowd bounds work guard remain unchanged. Reviewed complete-submission and owning-mount hooks add 5 physical WebGL lines, 10 WebGPU lines and 41 mount lines above their existing caps; complete water/world outcome forwarding and exact packed-pose batch expansion add 43 mount-webgl lines. Only these file and matching backend set caps move to measured minima. The opt-in frame submission test registers one direct WebGPU source reference. Only the exhausted WebGL renderer aggregate Brotli target rises from 237769 to 237848 for its measured 249741 bytes under the unchanged 5% policy; every other aggregate metric is preserved. Frame overhead changes keep all complexity ceilings fixed; moved function anchors and the split diagnostic mirror inherit existing limits. The WebGPU file/source inventory records 93 authored lines for the rounding-preserving direct presentation, cached diagnostics and reusable frame records. getFrameProgress is optional in the mount ABI; WebGL behavior is unchanged. The ocean publisher adds its optional cached-attribute callback; its file cap records the one authored line. Frame-overhead CI measured exhausted aggregate Brotli caps. base+webgl brotli target 217675→217707 (+32), measured 228593, hard limit 228593; base+webgl+gltf+animation brotli target 237848→237902 (+54), measured 249798, hard limit 249798. Only exact minimum targets move; the existing 5% allowance and every other byte target remain fixed. Frame review repairs add exactly 16 WebGPU source lines and one recovery label line for double-buffered publication, eager output variants and per-frame timing events. Function complexity limits stay fixed; moved anchors are refreshed. Instance-upload integration preserves both helper sets, refreshes function anchors and records the measured combined source lines without raising complexity ceilings. Sailing integration retains its ocean line caps and the cached publisher callback; backend source line inventories use the combined authored sources. Lazy first-frame pipelines and review fixes use measured source and function limits; adapter classification preserves software tiers, and ready mesh frames bypass deferred encoding. Default limits and size policies stay fixed. Merge inventory anchors and function metrics match the combined reviewed sources; no new function exceptions or policy changes. Scene defaults review records exact exhausted minima: base+webgl brotli 217963 to 218111 (+148), measured 229017; base+webgpu brotli 242967 to 243115 (+148), measured 255271; base+webgl+gltf+animation brotli 238159 to 238306 (+147), measured 250222; base+webgpu+gltf+animation brotli 263162 to 263310 (+148), measured 276476. Allowances and other metrics stay fixed. Typed experience demand loading, clock advancement and early-safe cleanup add six measured mount lines; the remaining helpers live in the optional command chunk. Selena cloud linking measures 229223 and 250428 Brotli bytes in the two WebGL renderer sets; only exhausted byte targets change under the existing allowance policy. The shared-signal optics survey adds 41 mount-zoom lines; typed navigation adds seven vessel-navigation lines and HUD disposal adds one vessel-input line. Each file limit uses its measured authored growth. The current-main integration adds two mount lines; final file limits and renderer-set byte allocations are measured from the combined source. Camera detach reserves one declaration line and publishes navigation synchronously, avoiding stale follow state during rapid view changes. WebGL authored-program key reuse adds a weak per-program-cache index and disposal cleanup; the measured WebGL source grows to 11313 lines without changing shader or rendering behavior. Shader-key cache byte targets use exact exhausted minima, retaining every allowance. Source-set and file caps record the measured lines. Bounded baked-attribute GPU reuse adds eight WebGL source lines and four measured branch decisions; only affected caps and later function anchors change. Shadow depth passes reuse the existing bounded world-baked GPU buffers with identity transforms and expanded triangle semantics. Post-effect canvas AA and the display-space FXAA fallback retain the settled-shadow-buffer integration. WebGL grows by 13 physical lines; only measured function and exhausted size targets move to their exact minima. Default complexity and size allowance policies stay fixed. Shared WebGPU material blocks, the aligned model arena and exact reusable replay metadata retain current-main clocks and frame-submission boundaries. WebGPU grows by 35 physical lines; only the exhausted file/maximum-file limits rise by 29 and the source-set total by 4. Function budgets and default complexity ceilings stay fixed. Thirteen exhausted size targets move to measured minima under the unchanged allowance policy; all twelve improved runtime-work limits decrease."
   },
   "rendererSourceNamingContract": [
     "Extracted backend runtime sources must live under client/runtime/scene3d and be named webgl*.ts or webgpu*.ts.",
@@ -662,8 +662,8 @@
         "../runtime/scene3d/webgl-contact-shadows.ts",
         "../runtime/scene3d/webgl-taa.ts"
       ],
-      "maxLines": 12505,
-      "maxFileLines": 11297
+      "maxLines": 12517,
+      "maxFileLines": 11334
     },
     "webgpu": {
       "chunk": "bootstrap-feature-scene3d-webgpu.js",
@@ -715,17 +715,17 @@
         "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-contact-shadows.ts"
       ],
-      "maxLines": 21339,
-      "maxFileLines": 19928
+      "maxLines": 21343,
+      "maxFileLines": 19957
     }
   },
   "files": {
-    "../runtime/scene3d/webgl.ts": 11297,
-    "../runtime/scene3d/webgpu.ts": 19928,
+    "../runtime/scene3d/webgl.ts": 11334,
+    "../runtime/scene3d/webgpu.ts": 19957,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 208,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5390,
-    "../runtime/scene3d/mount.ts": 3938,
+    "../runtime/scene3d/mount.ts": 3955,
     "../runtime/scene3d/webgl-ocean.ts": 243,
     "../runtime/scene3d/webgpu-ocean.ts": 237,
     "../runtime/scene3d/webgl-bloom.ts": 114,
@@ -741,25 +741,26 @@
     "../runtime/scene3d/ocean-waves.ts": 27,
     "../runtime/scene3d/walk-surfaces.ts": 14,
     "../runtime/scene3d/vessel-physics.ts": 191,
-    "../runtime/scene3d/vessel-input.ts": 171,
+    "../runtime/scene3d/vessel-input.ts": 172,
     "../runtime/scene3d/vessel-model.ts": 103,
     "../runtime/scene3d/vessel-wake.ts": 127,
-    "../runtime/scene3d/mount-vessel.ts": 107,
+    "../runtime/scene3d/mount-vessel.ts": 108,
     "../runtime/scene3d/webgpu-transmission.ts": 102,
     "../runtime/scene3d/webgl-transmission.ts": 98,
     "../runtime/scene3d/webgl-depth-post.ts": 68,
     "../runtime/scene3d/webgl-contact-shadows.ts": 63,
     "../runtime/scene3d/webgpu-contact-shadows.ts": 75,
     "../runtime/scene3d/webgl-taa.ts": 143,
-    "../runtime/scene3d/mount-zoom.ts": 123,
+    "../runtime/scene3d/mount-zoom.ts": 186,
     "../runtime/scene3d/pipeline-recovery.ts": 33,
     "../runtime/scene3d/webgpu-selena-textures.ts": 56,
     "../runtime/scene3d/webgl-specular-bloom.ts": 26,
     "../runtime/scene3d/webgpu-specular-bloom.ts": 41,
     "../runtime/scene3d/walk-input.ts": 58,
-    "../runtime/scene3d/vessel-navigation.ts": 68,
+    "../runtime/scene3d/vessel-navigation.ts": 76,
     "../runtime/scene3d/model-preparation.ts": 87,
-    "../runtime/scene3d/mount-pan.ts": 63
+    "../runtime/scene3d/mount-pan.ts": 63,
+    "../runtime/scene3d/vessel-instruments.ts": 80
   },
   "functionDefaults": {
     "lines": 200,
@@ -772,22 +773,22 @@
     {
       "source": "../runtime/scene3d/mount-vessel.ts",
       "name": "anonymous@2:2",
-      "lines": 106,
+      "lines": 107,
       "cyclomatic": 72,
       "cognitive": 77,
       "maxNesting": 2,
       "parameters": 0,
-      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose."
+      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose. Camera detach publishes authoritative navigation synchronously before another presentation request; the one declaration line is measured growth."
     },
     {
       "source": "../runtime/scene3d/mount-vessel.ts",
       "name": "setup@25:3",
-      "lines": 81,
+      "lines": 82,
       "cyclomatic": 65,
       "cognitive": 69,
       "maxNesting": 2,
       "parameters": 5,
-      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose."
+      "reason": "Measured paced-loop orchestration for bathymetry, dynamic deck, walker ownership, helm transitions, reset and landing. Look feeds the existing camera authority without another RAF. Stable vessel attributes and helm layout avoid per-frame DOM writes; deck carry reads the pose directly without allocating a matrix copy. Wave sampling uses the rendered animation clock, while simulation and foam aging retain elapsed time. Hull, deck, camera and wake use one interpolated presentation pose. Camera detach publishes authoritative navigation synchronously before another presentation request; the one declaration line is measured growth."
     },
     {
       "source": "../runtime/scene3d/mount-walk.ts",
@@ -812,22 +813,22 @@
     {
       "source": "../runtime/scene3d/vessel-input.ts",
       "name": "anonymous@2:2",
-      "lines": 170,
+      "lines": 171,
       "cyclomatic": 109,
       "cognitive": 148,
       "maxNesting": 4,
       "parameters": 0,
-      "reason": "Measured cumulative input installer with independent rudder, sail and look pointer ownership, focused arrow controls, cancellation and disposal. Helm layout updates only on mode changes and readout text only when its displayed value changes. A separate bounded helper adds a spring-centered mobile rudder pad, held arrows and a value indicator. Pointer cancellation, hidden tabs and leaving the helm neutralize input; slider keyboard input remains separate from camera arrows. Dragging releases the cursor for instruments; mounted input tests cover simultaneous touch and course-preserving look. A three-pixel touch dead zone prevents accidental manual takeover at the centered helm."
+      "reason": "Measured cumulative input installer with independent rudder, sail and look pointer ownership, focused arrow controls, cancellation and disposal. Helm layout updates only on mode changes and readout text only when its displayed value changes. A separate bounded helper adds a spring-centered mobile rudder pad, held arrows and a value indicator. Pointer cancellation, hidden tabs and leaving the helm neutralize input; slider keyboard input remains separate from camera arrows. Dragging releases the cursor for instruments; mounted input tests cover simultaneous touch and course-preserving look. A three-pixel touch dead zone prevents accidental manual takeover at the centered helm. A typed HUD anchor adds one disposal handle; input complexity is unchanged."
     },
     {
       "source": "../runtime/scene3d/vessel-input.ts",
       "name": "setup@90:3",
-      "lines": 80,
+      "lines": 81,
       "cyclomatic": 57,
       "cognitive": 81,
       "maxNesting": 4,
       "parameters": 4,
-      "reason": "Measured cumulative input installer with independent rudder, sail and look pointer ownership, focused arrow controls, cancellation and disposal. Helm layout updates only on mode changes and readout text only when its displayed value changes. A separate bounded helper adds a spring-centered mobile rudder pad, held arrows and a value indicator. Pointer cancellation, hidden tabs and leaving the helm neutralize input; slider keyboard input remains separate from camera arrows. Dragging releases the cursor for instruments; mounted input tests cover simultaneous touch and course-preserving look."
+      "reason": "Measured cumulative input installer with independent rudder, sail and look pointer ownership, focused arrow controls, cancellation and disposal. Helm layout updates only on mode changes and readout text only when its displayed value changes. A separate bounded helper adds a spring-centered mobile rudder pad, held arrows and a value indicator. Pointer cancellation, hidden tabs and leaving the helm neutralize input; slider keyboard input remains separate from camera arrows. Dragging releases the cursor for instruments; mounted input tests cover simultaneous touch and course-preserving look. A typed HUD anchor adds one disposal handle; input complexity is unchanged."
     },
     {
       "source": "../runtime/scene3d/vessel-model.ts",
@@ -861,7 +862,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterSimWebGL@2430:3",
+      "name": "createSceneWaterSimWebGL@2423:3",
       "lines": 252,
       "cyclomatic": 76,
       "cognitive": 82,
@@ -870,7 +871,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createSceneWaterRendererWebGL@3180:3",
+      "name": "createSceneWaterRendererWebGL@3173:3",
       "lines": 1180,
       "cyclomatic": 307,
       "cognitive": 377,
@@ -879,7 +880,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "waterShadowSignature@3365:5",
+      "name": "waterShadowSignature@3358:5",
       "lines": 11,
       "cyclomatic": 4,
       "cognitive": 4,
@@ -888,7 +889,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyWaterQualityProfile@3696:5",
+      "name": "applyWaterQualityProfile@3689:5",
       "lines": 100,
       "cyclomatic": 58,
       "cognitive": 68,
@@ -897,7 +898,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderMeshTextureTarget@3854:5",
+      "name": "renderMeshTextureTarget@3847:5",
       "lines": 28,
       "cyclomatic": 6,
       "cognitive": 5,
@@ -906,7 +907,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawFrame@3883:5",
+      "name": "drawFrame@3876:5",
       "lines": 408,
       "cyclomatic": 104,
       "cognitive": 131,
@@ -915,8 +916,8 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePostProcessor@4454:3",
-      "lines": 586,
+      "name": "createScenePostProcessor@4447:3",
+      "lines": 588,
       "cyclomatic": 164,
       "cognitive": 232,
       "maxNesting": 5,
@@ -924,7 +925,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "anonymous@4875:14",
+      "name": "anonymous@4870:14",
       "lines": 153,
       "cyclomatic": 40,
       "cognitive": 87,
@@ -933,7 +934,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadLights@6962:3",
+      "name": "scenePBRUploadLights@6985:3",
       "lines": 86,
       "cyclomatic": 15,
       "cognitive": 36,
@@ -942,7 +943,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "scenePBRUploadEnvironmentMap@7304:3",
+      "name": "scenePBRUploadEnvironmentMap@7327:3",
       "lines": 125,
       "cyclomatic": 52,
       "cognitive": 98,
@@ -951,16 +952,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "createScenePBRRenderer@7591:3",
-      "lines": 3334,
-      "cyclomatic": 1066,
-      "cognitive": 1680,
+      "name": "createScenePBRRenderer@7614:3",
+      "lines": 3340,
+      "cyclomatic": 1077,
+      "cognitive": 1687,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8539:5",
+      "name": "uploadCustomUniforms@8562:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -969,16 +970,16 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderFrame@8761:5",
-      "lines": 340,
-      "cyclomatic": 116,
-      "cognitive": 166,
+      "name": "renderFrame@8784:5",
+      "lines": 345,
+      "cyclomatic": 119,
+      "cognitive": 169,
       "maxNesting": 4,
       "parameters": 4
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9582:5",
+      "name": "prepareRigidMeshBatches@9618:5",
       "lines": 148,
       "cyclomatic": 86,
       "cognitive": 198,
@@ -987,7 +988,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@9857:5",
+      "name": "drawPBRObjectList@9893:5",
       "lines": 254,
       "cyclomatic": 86,
       "cognitive": 202,
@@ -996,7 +997,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10227:5",
+      "name": "applyPointsAuthoredCustomUniforms@10264:5",
       "lines": 33,
       "cyclomatic": 16,
       "cognitive": 44,
@@ -1005,7 +1006,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10403:5",
+      "name": "drawPointsEntries@10430:5",
       "lines": 187,
       "cyclomatic": 59,
       "cognitive": 120,
@@ -1014,7 +1015,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10695:5",
+      "name": "drawInstancedMeshes@10722:5",
       "lines": 191,
       "cyclomatic": 57,
       "cognitive": 116,
@@ -1285,7 +1286,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "dispose@19371:5",
+      "name": "dispose@19370:5",
       "lines": 145,
       "cyclomatic": 37,
       "cognitive": 61,
@@ -1295,7 +1296,7 @@
     },
     {
       "source": "../runtime/scene3d/webgpu.ts",
-      "name": "diagnostics@19629:5",
+      "name": "diagnostics@19628:5",
       "lines": 90,
       "cyclomatic": 47,
       "cognitive": 47,
@@ -1304,23 +1305,23 @@
     },
     {
       "source": "../runtime/scene3d/mount-zoom.ts",
-      "name": "anonymous@3:2",
-      "lines": 121,
-      "cyclomatic": 70,
-      "cognitive": 82,
+      "name": "anonymous@64:2",
+      "lines": 123,
+      "cyclomatic": 75,
+      "cognitive": 87,
       "maxNesting": 3,
       "parameters": 0,
-      "reason": "The scoped zoom authority owns input normalization, damped state, focus-scoped keys, pinch handoff and teardown. Aggregate metrics include the nested handlers; each handler remains independently inventoried. Portrait framing supplies the default FOV and cannot overwrite optical zoom."
+      "reason": "The zoom authority owns wheel, pinch, focus and teardown. Typed optics can install this authority without enabling ordinary zoom; its five additional guards preserve wheel/touch behavior and the underlying viewport FOV. The lens has a separate signal subscription and disposal path. Caps reflect the measured changed functions; handlers remain independently inventoried."
     },
     {
       "source": "../runtime/scene3d/mount-zoom.ts",
-      "name": "setup@25:3",
-      "lines": 97,
-      "cyclomatic": 62,
-      "cognitive": 73,
+      "name": "setup@86:3",
+      "lines": 99,
+      "cyclomatic": 67,
+      "cognitive": 78,
       "maxNesting": 3,
       "parameters": 4,
-      "reason": "The scoped zoom authority owns input normalization, damped state, focus-scoped keys, pinch handoff and teardown. Aggregate metrics include the nested handlers; each handler remains independently inventoried. Portrait framing supplies the default FOV and cannot overwrite optical zoom."
+      "reason": "The zoom authority owns wheel, pinch, focus and teardown. Typed optics can install this authority without enabling ordinary zoom; its five additional guards preserve wheel/touch behavior and the underlying viewport FOV. The lens has a separate signal subscription and disposal path. Caps reflect the measured changed functions; handlers remain independently inventoried."
     }
   ],
   "symbols": [
@@ -1336,9 +1337,9 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
-      "lines": 3334,
-      "cyclomatic": 1066,
-      "cognitive": 1680,
+      "lines": 3340,
+      "cyclomatic": 1077,
+      "cognitive": 1687,
       "maxNesting": 7,
       "parameters": 2
     },
@@ -1444,7 +1445,7 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePostProcessor",
-      "lines": 586,
+      "lines": 588,
       "cyclomatic": 164,
       "cognitive": 232,
       "maxNesting": 5,
@@ -1468,8 +1469,8 @@
       ],
       "raw": 916700,
       "gzip": 262900,
-      "brotli": 218239,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 879763 raw, 249525 gzip and 206908 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 887738 / 251948 / 208858. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 891400, 'gzip': 253556, 'brotli': 210360}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 892009, 'gzip': 253808, 'brotli': 210592}; only exhausted targets rise. The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Startup readiness with the current sky and walking features measures 881393 raw, 249153 gzip and 206896 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. Combined startup readiness and normal-map sampling measures 881435 raw, 249353 gzip and 207025 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. CSS post-effect retention and shader-failure recovery measure 881661 raw, 249420 gzip and 207218 Brotli bytes; only exceeded targets rise by the smallest sufficient 100-byte steps. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Frame review repairs integrated with sailing main measure 228618 Brotli bytes; only the exhausted target rises to the exact minimum 217731, with the 5% allowance unchanged. Lazy pipeline review measures 228862 brotli bytes; target 217731 → 217963 is the minimum under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 218111 -> 218239 (+128; measured 229151). Allowances, tolerances and policies remain unchanged."
+      "brotli": 219467,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 879763 raw, 249525 gzip and 206908 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 887738 / 251948 / 208858. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 891400, 'gzip': 253556, 'brotli': 210360}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 892009, 'gzip': 253808, 'brotli': 210592}; only exhausted targets rise. The merged frame caching and GPU crowd motion build measures 845390 raw, 236395 gzip, and 197150 Brotli bytes. These targets leave narrow rounding room. Startup readiness with the current sky and walking features measures 881393 raw, 249153 gzip and 206896 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. Combined startup readiness and normal-map sampling measures 881435 raw, 249353 gzip and 207025 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. CSS post-effect retention and shader-failure recovery measure 881661 raw, 249420 gzip and 207218 Brotli bytes; only exceeded targets rise by the smallest sufficient 100-byte steps. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Frame review repairs integrated with sailing main measure 228618 Brotli bytes; only the exhausted target rises to the exact minimum 217731, with the 5% allowance unchanged. Lazy pipeline review measures 228862 brotli bytes; target 217731 → 217963 is the minimum under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 218111 -> 218239 (+128; measured 229151). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 218765; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 229967 brotli bytes; only the exhausted target rises from 218932 to 219016, preserving the governed allowance. Bounded world-baked GPU reuse measures 230235 brotli bytes; only the exhausted target moves to 219271 under the unchanged allowance."
     },
     "base+webgpu": {
       "chunks": [
@@ -1478,8 +1479,8 @@
       ],
       "raw": 1073800,
       "gzip": 291400,
-      "brotli": 244221,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1031136 raw, 277958 gzip and 229589 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1039111 / 280381 / 231539. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 1043953, 'gzip': 282317, 'brotli': 233244}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 1044562, 'gzip': 282569, 'brotli': 233476}; only exhausted targets rise. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Lazy pipeline review measures 254738 brotli bytes; target 242143 → 242607 is the minimum under the unchanged allowance. Merged reviewed pipeline and mipmap sources measure 255116 brotli bytes; 242967 is the minimum target under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 243115 -> 243348 (+233; measured 255516). Allowances, tolerances and policies remain unchanged. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 243348 -> 244221 (+873; measured 256432). Allowances, tolerances and policies remain unchanged."
+      "brotli": 245380,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 990963 raw, 263084 gzip, and 218583 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1031136 raw, 277958 gzip and 229589 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1039111 / 280381 / 231539. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 1043953, 'gzip': 282317, 'brotli': 233244}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 1044562, 'gzip': 282569, 'brotli': 233476}; only exhausted targets rise. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Lazy pipeline review measures 254738 brotli bytes; target 242143 → 242607 is the minimum under the unchanged allowance. Merged reviewed pipeline and mipmap sources measure 255116 brotli bytes; 242967 is the minimum target under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 243115 -> 243348 (+233; measured 255516). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 243719; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 256007 brotli bytes; only the exhausted target rises from 243795 to 243816, preserving the governed allowance. Bounded world-baked GPU reuse measures 256213 brotli bytes; only the exhausted target moves to 244012 under the unchanged allowance."
     },
     "base+webgl+gltf+animation": {
       "chunks": [
@@ -1490,8 +1491,8 @@
       ],
       "raw": 979700,
       "gzip": 285000,
-      "brotli": 238434,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 942585 raw, 272500 gzip and 227335 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 950560 / 274923 / 229285. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 954362, 'gzip': 276577, 'brotli': 230801}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 954971, 'gzip': 276829, 'brotli': 231033}; only exhausted targets rise. The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Combined startup readiness and normal-map sampling measures 944991 raw, 272560 gzip and 227672 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. CSS post-effect retention and shader-failure recovery measure 945217 raw, 272627 gzip and 227865 Brotli bytes; only exceeded targets rise by the smallest sufficient 100-byte steps. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Frame review repairs integrated with sailing main measure 249823 Brotli bytes; only the exhausted target rises to the exact minimum 237926, with the 5% allowance unchanged. Lazy pipeline review measures 250067 brotli bytes; target 237926 → 238159 is the minimum under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 238306 -> 238434 (+128; measured 250356). Allowances, tolerances and policies remain unchanged."
+      "brotli": 239662,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 942585 raw, 272500 gzip and 227335 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 950560 / 274923 / 229285. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 954362, 'gzip': 276577, 'brotli': 230801}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 954971, 'gzip': 276829, 'brotli': 231033}; only exhausted targets rise. The merged frame caching and GPU crowd motion build measures 908212 raw, 259370 gzip, and 217577 Brotli bytes. These targets leave narrow rounding room. Combined startup readiness and normal-map sampling measures 944991 raw, 272560 gzip and 227672 Brotli bytes; only exceeded targets rise to the next sufficient 100-byte step. CSS post-effect retention and shader-failure recovery measure 945217 raw, 272627 gzip and 227865 Brotli bytes; only exceeded targets rise by the smallest sufficient 100-byte steps. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Frame review repairs integrated with sailing main measure 249823 Brotli bytes; only the exhausted target rises to the exact minimum 237926, with the 5% allowance unchanged. Lazy pipeline review measures 250067 brotli bytes; target 237926 → 238159 is the minimum under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 238306 -> 238434 (+128; measured 250356). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 238961; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 251172 brotli bytes; only the exhausted target rises from 239127 to 239211, preserving the governed allowance. Bounded world-baked GPU reuse measures 251440 brotli bytes; only the exhausted target moves to 239466 under the unchanged allowance."
     },
     "base+webgpu+gltf+animation": {
       "chunks": [
@@ -1502,8 +1503,8 @@
       ],
       "raw": 1136800,
       "gzip": 314400,
-      "brotli": 264416,
-      "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1093958 raw, 300933 gzip and 250016 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1101933 / 303356 / 251966. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 1106915, 'gzip': 305338, 'brotli': 253685}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 1107524, 'gzip': 305590, 'brotli': 253917}; only exhausted targets rise. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Lazy pipeline review measures 275943 brotli bytes; target 262238 → 262802 is the minimum under the unchanged allowance. Merged reviewed pipeline and mipmap sources measure 276321 brotli bytes; 263162 is the minimum target under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 263310 -> 263543 (+233; measured 276721). Allowances, tolerances and policies remain unchanged. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 263543 -> 264416 (+873; measured 277637). Allowances, tolerances and policies remain unchanged."
+      "brotli": 265575,
+      "ledger": "The merged frame caching and GPU crowd motion build measures 1053785 raw, 286059 gzip, and 239010 Brotli bytes. These targets leave narrow rounding room. Environment.Ocean measures 1093958 raw, 300933 gzip and 250016 Brotli; targets rise by the smallest 100-byte steps. With motion milestone 2 and Environment.Ocean it measures 1101933 / 303356 / 251966. Ocean geometry reflections add opaque captures, bounded SSR, mirrored PBR fallback, and shared quality policy. Targets use current generated byte counts rounded to 100 bytes. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Living sky/atmosphere pass modules and opt-in ocean integration: targets equal current generated bytes rounded to 100. Shared wave packing for CPU/GPU parity measures {'raw': 1106915, 'gzip': 305338, 'brotli': 253685}. Targets grow only where the existing 5% allowance is exhausted. Vessel lazy gates and one paced advance hook measure {'raw': 1107524, 'gzip': 305590, 'brotli': 253917}; only exhausted targets rise. Rich-material texture-slot negotiation adds 21 Brotli bytes; only exhausted targets move to the exact minimum without changing allowances. Lazy pipeline review measures 275943 brotli bytes; target 262238 → 262802 is the minimum under the unchanged allowance. Merged reviewed pipeline and mipmap sources measure 276321 brotli bytes; 263162 is the minimum target under the unchanged allowance. Retained material lifetime and caching fixes use only the exact exhausted minima: brotli 263310 -> 263543 (+233; measured 276721). Allowances, tolerances and policies remain unchanged. Native cross-chunk hash callbacks and touch deduplication use only the exhausted Brotli minimum 263914; all existing allowances remain unchanged. Selena-bound cloud helpers reduce emitted shader text by 23–24%, with measured compression dictionary changes; only the exhausted minimum moves and the allowance is unchanged. Integration of bounded dense-mesh retention measures 277212 brotli bytes; only the exhausted target rises from 263990 to 264011, preserving the governed allowance. Bounded world-baked GPU reuse measures 277418 brotli bytes; only the exhausted target moves to 264207 under the unchanged allowance."
     }
   },
   "rendererABI": {
@@ -1597,6 +1598,7 @@
     "vessel": {
       "chunk": "bootstrap-feature-scene3d-vessel.js",
       "sources": [
+        "../runtime/scene3d/vessel-instruments.ts",
         "../runtime/scene3d/vessel-navigation.ts",
         "../runtime/scene3d/vessel-physics.ts",
         "../runtime/scene3d/vessel-input.ts",

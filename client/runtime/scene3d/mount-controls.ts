@@ -58,16 +58,6 @@
     return bundle;
   }
 
-  function motionSceneProperty() {
-    const target = arguments[0], property = arguments[1], value = arguments[2];
-    if (!target || typeof target !== "object") return;
-    const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "";
-    let field = parts[parts.length - 1];
-    if (group === "rotation" && ["x", "y", "z"].includes(field)) field = "rotation" + field.toUpperCase();
-    if (group === "scale" && ["x", "y", "z"].includes(field)) field = "scale" + field.toUpperCase();
-    if (["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "opacity", "fov", "near", "far", "zoom"].includes(field)) target[field] = value;
-  }
-
   function motionSceneCameraProperty() {
     const property = arguments[0];
     const parts = String(property || "").split("."), group = parts.length > 1 ? parts[0] : "", field = parts[parts.length - 1];
@@ -75,32 +65,31 @@
     return ["x", "y", "z", "fov", "near", "far", "zoom", "rotationX", "rotationY", "rotationZ"].includes(field) ? field : "";
   }
 
-  function applyMotionBindingToRuntimeBundle() {
-    const bundle = arguments[0], binding = arguments[1], value = arguments[2];
-    if (!bundle || !binding) return;
-    if (binding.target === "camera") {
-      const field = motionSceneCameraProperty.call(null, binding.property);
-      if (field) { if (!bundle.camera || typeof bundle.camera !== "object") bundle.camera = {}; bundle.camera[field] = value; }
-      return;
-    }
-    for (const object of Array.isArray(bundle.meshObjects) ? bundle.meshObjects : []) {
-      if (!object || String(object.id || "") !== String(binding.node || "")) continue;
-      if (binding.target === "materialUniform") {
-        if (!object.customUniforms || typeof object.customUniforms !== "object") object.customUniforms = {};
-        object.customUniforms[binding.property] = value;
-      } else if (binding.target === "sceneNode") motionSceneProperty.call(null, object, binding.property, value);
-    }
+  function sceneMotionObjects() {
+    const motion = window.__gosx && window.__gosx.motion;
+    return motion && motion._sceneObjects ? motion._sceneObjects(arguments[0], arguments[1]) : arguments[0];
   }
 
   function applyMotionBindingsToRuntimeBundle() {
     const bundle = arguments[0], sceneState = arguments[1], controls = arguments[2];
     const layers = sceneState && sceneState._gosxMotionRuntimeBindings;
     if (!bundle || !layers || typeof layers.values !== "function") return;
+    const materials = new Map();
     let cameraOverride = false;
     for (const layer of layers.values()) {
       for (const item of layer.values()) {
-        applyMotionBindingToRuntimeBundle.call(null, bundle, item.binding, item.value);
-        if (item.binding.target === "camera") cameraOverride = true;
+        if (item.binding.target === "camera") {
+          const field = motionSceneCameraProperty.call(null, item.binding.property);
+          if (field) { if (!bundle.camera) bundle.camera = {}; bundle.camera[field] = item.value; cameraOverride = true; }
+        } else {
+          const apply = window.__gosx.motion._sceneBinding;
+          if (apply) apply(bundle, item.binding, item.value, materials);
+          // Finite timelines use validated canonical properties and can run
+          // without the optional scalar-track adapters.
+          else if (item.binding.target === "sceneNode") for (const object of bundle.meshObjects || []) {
+            if (object.id === item.binding.node) object[item.binding.property] = item.value;
+          }
+        }
       }
     }
     if (cameraOverride) applySceneControlsCamera(controls, bundle.camera);
@@ -1050,7 +1039,7 @@
       scheduleRender(reason);
     };
     base = setupSceneBaseControls(canvas, props, readViewport, readSourceCamera, schedule, sceneState);
-    if (props.controlZoom && !base.controller) {
+    if ((props.controlZoom || props.optics) && !base.controller) {
       // Fixed cameras retain their authored angle. Opt-in navigation must not
       // enable orbit rotation or consume single-pointer object gestures.
       const fixed = {
@@ -1067,12 +1056,14 @@
     }
     if (sceneVesselEnabled(props)) base = window.__gosx_scene3d_vessel_api.setup(canvas, props, base, sceneState, {
       schedule, current: sceneCurrentControlCamera,
+      subscribe: typeof gosxSubscribeSharedSignal === "function" ? gosxSubscribeSharedSignal : undefined,
+      publish: typeof setSharedSignalValue === "function" ? setSharedSignalValue : undefined,
       // @ts-ignore TS7006 -- renderer-neutral creation seam for the lazy wake
       addObject: (state, id, object) => state.objects.set(id, normalizeSceneObject(Object.assign({ id, kind: "mesh" }, object), id)),
       // @ts-ignore TS2339 -- Chromium deviceMemory is also used by the ocean quality gate
       lowHardware: () => gosxLowEndHardware(navigator.deviceMemory, navigator.hardwareConcurrency),
     });
-    if (!props.controlZoom || !base.controller) return base;
+    if ((!props.controlZoom && !props.optics) || !base.controller) return base;
     const controller = base.controller, current = controller.currentCamera;
     // @ts-ignore TS7006 -- plain JavaScript control adapter.
     if (!current) controller.syncCamera = camera => {
@@ -1086,6 +1077,8 @@
     };
     return window.__gosx_runtime_api.scene3DZoom.setup(canvas, props, base, {
       read,
+      subscribe: typeof gosxSubscribeSharedSignal === "function" ? gosxSubscribeSharedSignal : undefined,
+      publish: typeof setSharedSignalValue === "function" ? setSharedSignalValue : undefined,
       // @ts-ignore TS7006 -- viewport FOV is sampled at view reset, before optical zoom.
       fov: camera => sceneViewportCamera(camera, sceneState.camera || readSourceCamera(), readViewport()).fov,
       // @ts-ignore TS7006 -- plain JavaScript control adapter.

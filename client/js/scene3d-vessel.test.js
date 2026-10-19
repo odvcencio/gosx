@@ -257,6 +257,7 @@ for(const reduced of [false,true])test('navigation camera detaches while sailing
  for(let t=250;t<2000;t+=17)h.raf.flush(t);
  const before=state.distance,course=state.course;
  assert.equal(h.handle.setCamera({x:80,y:4.2,z:80,rotationX:0,rotationY:0}),true);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-vessel-following'),'false','camera detach must publish before the next view request');
  h.canvas.focus();h.event(h.env.document,'keydown',{code:'KeyW'});h.event(h.env.document,'keydown',{code:'KeyA'});
  for(let t=2000;t<4000;t+=17)h.raf.flush(t);
  h.event(h.env.document,'keyup',{code:'KeyW'});h.event(h.env.document,'keyup',{code:'KeyA'});

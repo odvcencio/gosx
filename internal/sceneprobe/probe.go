@@ -124,7 +124,29 @@ func (p *Probe) NeedsDecompress() bool {
 	return p.Scene.NeedsDecompress()
 }
 
+type experienceFields struct {
+	ExperienceRef, MetricsSignal                string
+	Optics, Presentation, DayCycle, Exploration json.RawMessage
+}
+
+func (p *Probe) HasOptics() bool { return p != nil && len(p.Optics) > 0 && string(p.Optics) != "null" }
+func (p *Probe) HasExperience() bool {
+	if p == nil {
+		return false
+	}
+	if strings.TrimSpace(p.ExperienceRef) != "" || strings.TrimSpace(p.MetricsSignal) != "" || p.HasOptics() {
+		return true
+	}
+	for _, value := range []json.RawMessage{p.Presentation, p.DayCycle, p.Exploration} {
+		if len(value) > 0 && string(value) != "null" {
+			return true
+		}
+	}
+	return false
+}
+
 type Probe struct {
+	experienceFields
 	ComputeChunk, DecompressChunk, WebGPU, WebGL bool `json:"-"`
 
 	Controls string

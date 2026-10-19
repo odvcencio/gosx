@@ -15,7 +15,7 @@ import (
 func TestOptionalWASMOptimizerMissingWarnsAndPreservesInput(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
 	input := filepath.Join(t.TempDir(), "runtime.wasm")
-	if err := os.WriteFile(input, []byte("compiled"), 0600); err != nil {
+	if err := os.WriteFile(input, wasmOutputFixture("compiled"), 0600); err != nil {
 		t.Fatal(err)
 	}
 	var diagnostics bytes.Buffer
@@ -28,7 +28,7 @@ func TestOptionalWASMOptimizerMissingWarnsAndPreservesInput(t *testing.T) {
 			t.Fatalf("missing %q in diagnostic: %s", want, &diagnostics)
 		}
 	}
-	if data, err := os.ReadFile(input); err != nil || string(data) != "compiled" {
+	if data, err := os.ReadFile(input); err != nil || !bytes.Equal(data, wasmOutputFixture("compiled")) {
 		t.Fatalf("input changed: %q, %v", data, err)
 	}
 }
@@ -54,14 +54,14 @@ fi
 			if fail {
 				script += "printf '%s' 'partial' > \"$8\"\nprintf '%s\\n' 'fixture optimizer failure' >&2\nexit 7\n"
 			} else {
-				script += "printf '%s' 'optimized' > \"$8\"\n"
+				script += "printf '\\000asm\\001\\000\\000\\000\\000\\012\\011optimized' > \"$8\"\n"
 			}
 			if err := os.WriteFile(tool, []byte(script), 0755); err != nil {
 				t.Fatal(err)
 			}
 			t.Setenv("PATH", bin)
 			input := filepath.Join(t.TempDir(), "runtime.wasm")
-			if err := os.WriteFile(input, []byte("compiled"), 0600); err != nil {
+			if err := os.WriteFile(input, wasmOutputFixture("compiled"), 0600); err != nil {
 				t.Fatal(err)
 			}
 			var diagnostics optimizerWarningWriter
@@ -69,9 +69,9 @@ fi
 			if err != nil || optimized == fail {
 				t.Fatalf("optimized=%v err=%v diagnostics=%s", optimized, err, &diagnostics)
 			}
-			wantInput := "optimized"
+			wantInput := wasmOutputFixture("optimized")
 			if fail {
-				wantInput = "compiled"
+				wantInput = wasmOutputFixture("compiled")
 				for _, want := range []string{tool, "exit status 7", "fixture optimizer failure", "keeping compiled WASM"} {
 					if !strings.Contains(diagnostics.String(), want) {
 						t.Fatalf("missing %q in diagnostic: %s", want, &diagnostics)
@@ -86,7 +86,7 @@ fi
 			if fail && diagnostics.writes != 1 {
 				t.Fatalf("warning used %d writes, want one", diagnostics.writes)
 			}
-			if data, err := os.ReadFile(input); err != nil || string(data) != wantInput {
+			if data, err := os.ReadFile(input); err != nil || !bytes.Equal(data, wantInput) {
 				t.Fatalf("input=%q err=%v, want %q", data, err, wantInput)
 			}
 		})
@@ -114,11 +114,16 @@ func TestOptionalWASMOptimizerMissingWarnsOncePerBuild(t *testing.T) {
 		var diagnostics optimizerWarningWriter
 		optimizer := newOptionalWASMOptimizer(&diagnostics)
 		var wg sync.WaitGroup
+		dir := t.TempDir()
 		for variant := 0; variant < 5; variant++ {
+			input := filepath.Join(dir, fmt.Sprintf("variant-%d.wasm", variant))
+			if err := os.WriteFile(input, wasmOutputFixture("compiled"), 0600); err != nil {
+				t.Fatal(err)
+			}
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				if optimized, err := optimizer.optimize(fmt.Sprintf("variant-%d.wasm", variant)); err != nil || optimized {
+				if optimized, err := optimizer.optimize(input); err != nil || optimized {
 					t.Errorf("optimized=%v err=%v", optimized, err)
 				}
 			}()
