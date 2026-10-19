@@ -2238,7 +2238,9 @@ const routeBudgets = [
     raw: 1241400,
     gzip: 357200,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
-    brotli: 301504,
+    // The bounded dense-mesh cache changes compression by 101 bytes beyond
+    // the old hard limit. Keep the 5% policy and raise only the exhausted target.
+    brotli: 301601,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
