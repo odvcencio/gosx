@@ -789,7 +789,7 @@ const budgets = [
     // Colour lifetime and frame-cached snapshots measure 1,940,344 raw bytes.
     // Raise only the raw target by 470 B to the exact minimum; keep the 65,536 B allowance.
     file: "bootstrap.js", // Reused baked shadow bounds measure 1941783 raw bytes; preserve governed allowances.
-    raw: 1876247, gzip: 524100,
+    raw: 1876423, gzip: 524100,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 432800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->

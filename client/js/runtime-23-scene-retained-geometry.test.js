@@ -132,7 +132,7 @@ function assertVectorClose(actual, expected, message) {
   }
 }
 
-function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry) {
+function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, lights) {
   return api.createSceneRenderBundle(
     320,
     180,
@@ -142,7 +142,7 @@ function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry) 
     [],
     [],
     [],
-    [],
+    lights || [],
     {},
     timeSeconds || 0,
     [],
@@ -501,8 +501,8 @@ test("Scene3D WebGL retained meshes upload static attributes once across animate
   assert.equal(dirtyStats.cacheEntries, 1);
 });
 
-function worldUploadHarness() {
-  const h = createWebGLRendererForPost({ fresh: true });
+function worldUploadHarness(fresh = true) {
+  const h = createWebGLRendererForPost({ fresh });
   const api = h.env.context.__gosx_scene3d_api;
   const object = retainedTriangle({ spinZ: 0,
     customVertex: "attribute vec3 a_position; uniform mat4 u_mvp; void main() { gl_Position = u_mvp * vec4(a_position, 1.0); }",
@@ -513,6 +513,105 @@ function worldUploadHarness() {
   h.env.document.body.appendChild(h.canvas);
   return { ...h, api, object, gl, draw: b => h.renderer.render(b, viewport) };
 }
+
+function worldShadowUploadHarness(fresh) {
+  const h = worldUploadHarness(fresh);
+  h.object.castShadow = true;
+  h.object.scaleX = 2;
+  h.object.x = 0;
+  h.object.parentMatrix = new (vm.runInContext("Float32Array", h.env.context))([
+    -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+  ]);
+  h.object.vertices.positions[2] = -1;
+  h.object.vertices.positions[5] = 1;
+  h.object.vertices.indices = new (vm.runInContext("Uint32Array", h.env.context))([2, 0, 1, 0, 2, 1]);
+  const light = h.api.normalizeSceneLight({ id: "sun", kind: "directional", x: 4, y: 6, z: 8,
+    intensity: 1, castShadow: true, shadowCascades: 2, shadowSize: 256 }, 0, null);
+  // A small moving caster inside the first mesh's bounds redraws the maps
+  // without changing their fit, as a landing ficha does among settled fichas.
+  const other = retainedTriangle({ id: "moving-caster", x: 0, spinZ: 0,
+    scaleX: 0.1, scaleY: 0.1, scaleZ: 0.1, castShadow: true },
+    vm.runInContext("Float32Array", h.env.context));
+  other.vertices.immutable = false;
+  const draws = [];
+  let positionBuffer, model, lightMatrix, winding = h.gl.CCW;
+  const pointer = h.gl.vertexAttribPointer;
+  h.gl.vertexAttribPointer = function(location, ...args) {
+    if (location === 0) positionBuffer = this._boundArrayBuffer.id;
+    return pointer.call(this, location, ...args);
+  };
+  const matrix = h.gl.uniformMatrix4fv;
+  h.gl.uniformMatrix4fv = function(location, transpose, value) {
+    if (location.name === "u_modelMatrix") model = Array.from(value);
+    if (location.name === "u_lightViewProjection") lightMatrix = Array.from(value);
+    return matrix.call(this, location, transpose, value);
+  };
+  const frontFace = h.gl.frontFace;
+  h.gl.frontFace = function(mode) { winding = mode; return frontFace.call(this, mode); };
+  const drawArrays = h.gl.drawArrays;
+  h.gl.drawArrays = function(mode, first, count) {
+    if (count === 6 && this.programShaderSources(this._activeProgram).includes("u_lightViewProjection *")) {
+      draws.push({ count, positions: this.bufferUploads.get(positionBuffer).slice(0, count * 3),
+        model, lightMatrix, winding, buffer: positionBuffer });
+    }
+    return drawArrays.call(this, mode, first, count);
+  };
+  return { ...h, draws, bundle(time) {
+    other.z = (time % 4) * 0.1;
+    return renderBundle(h.api, [h.object, other], time, [], true, [light]);
+  } };
+}
+
+for (const fresh of [true, false]) {
+  test(`world-baked ${fresh ? "source" : "generated"} shadows reuse positions across cascades without changing geometry`, t => {
+    const h = worldShadowUploadHarness(fresh); t.after(() => h.renderer.dispose());
+    h.draw(h.bundle(0));
+    const cold = h.draws.slice(); assert.equal(cold.length, 2);
+    const warm = h.bundle(1), at = h.gl.ops.length;
+    h.draw(warm);
+    const cached = h.draws.slice(2); assert.equal(cached.length, 2);
+    for (let i = 0; i < 2; i++) {
+      assert.equal(cached[i].count, 6, "authored indices are expanded exactly once");
+      for (const key of ["positions", "model", "lightMatrix", "winding"]) assert.deepEqual(cached[i][key], cold[i][key], key);
+      assert.deepEqual(cached[i].positions, Array.from(warm.worldMeshPositions.subarray(0, 18)));
+      assert.equal(cached[i].winding, h.gl.CCW, "mirrored world geometry already has corrected winding");
+    }
+    assert.equal(cached[0].buffer, cached[1].buffer, "cascades share one cached position buffer");
+    assert.equal(h.gl.ops.slice(at).filter(op => op[0] === "bufferData" && op[2] === cached[0].buffer).length, 1);
+    const next = h.gl.ops.length; h.draw(h.bundle(2));
+    assert.equal(h.gl.ops.slice(next).filter(op => op[0] === "bufferData" && op[2] === cached[0].buffer).length, 0,
+      "settled shadow and color passes upload no geometry again");
+  });
+}
+
+test("moving and mutable world casters keep their current shadow geometry", t => {
+  const h = worldShadowUploadHarness(true); t.after(() => h.renderer.dispose());
+  h.draw(h.bundle(0)); h.draw(h.bundle(1));
+  h.object.x += 1;
+  const moved = h.bundle(2); assert.equal(moved.meshObjects[0]._worldBakedUpload, undefined);
+  h.draw(moved);
+  assert.deepEqual(h.draws.at(-1).positions, Array.from(moved.worldMeshPositions.subarray(0, 18)));
+  assert.notDeepEqual(h.draws.at(-1).positions, h.draws[0].positions);
+  h.object.vertices.immutable = false; h.object.vertices.positions[0] -= 0.5;
+  const mutable = h.bundle(3); h.draw(mutable);
+  assert.deepEqual(h.draws.at(-1).positions, Array.from(mutable.worldMeshPositions.subarray(0, 18)));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0);
+});
+
+test("expired world snapshots preserve held-frame shadow geometry through streaming", t => {
+  const h = worldShadowUploadHarness(true); t.after(() => h.renderer.dispose());
+  h.bundle(0); const held = h.bundle(1); h.draw(held);
+  const before = h.draws.slice();
+  h.draw(h.bundle(2));
+  for (let frame = 0; frame < 10; frame++) renderBundle(h.api, [], frame);
+  assert.equal(held.meshObjects[0]._worldBakedUpload.resident, false);
+  const at = h.draws.length;
+  h.draw(held);
+  for (let i = 0; i < 2; i++) for (const key of ["positions", "model", "lightMatrix", "winding"]) {
+    assert.deepEqual(h.draws[i + at][key], before[i][key], key);
+  }
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0);
+});
 
 test("world-baked WebGL attributes upload once, stay private, and refresh on pose/revision edits", t => {
   const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
