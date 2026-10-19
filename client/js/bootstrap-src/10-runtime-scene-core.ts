@@ -6636,7 +6636,6 @@
     const cachedGeometry = cacheEligible
       ? sceneWorldBakedGeometryCacheLookup(object, vertices, geometryRevision, modelMatrix)
       : null;
-    let geometryForUpload = cachedGeometry;
     if (!cacheEligible) sceneDropWorldBakedGeometryCache(object);
     if (cachedGeometry) {
       // Cached attributes already have the final Float32 representation.
@@ -6763,7 +6762,7 @@
         }
       }
       if (capture && bounds && meshVertexCount === bakedVertexCount) {
-        geometryForUpload = sceneStoreWorldBakedGeometryCache(
+        sceneStoreWorldBakedGeometryCache(
           object, vertices, geometryRevision, modelMatrix, capture, bounds);
       }
     }
@@ -6813,9 +6812,11 @@
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
     });
-    if (geometryForUpload && geometryForUpload.upload) {
+    if (cachedGeometry && cachedGeometry.upload) {
+      // A cold pose keeps streaming. Admit only an unchanged cache hit so
+      // animated meshes do not allocate replacement GPU buffers each frame.
       // Keep GPU bookkeeping out of exported/serialized bundle snapshots.
-      Object.defineProperty(meshRecord, "_worldBakedUpload", { value: geometryForUpload.upload });
+      Object.defineProperty(meshRecord, "_worldBakedUpload", { value: cachedGeometry.upload });
     }
     bundle.meshObjects.push(meshRecord);
     bundle.worldBakedMeshObjectCount += 1;
