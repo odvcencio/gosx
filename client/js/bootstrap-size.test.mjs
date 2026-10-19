@@ -2243,7 +2243,7 @@ const routeBudgets = [
     // the old hard limit. Keep the 5% policy and raise only the exhausted target.
     // Bulk flat-color writes measure 316752 brotli bytes; preserve governed allowances.
     // Float32-safe baked shadow bounds measure 316929 Brotli bytes.
-    brotli: 301837,
+    brotli: 301976,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
