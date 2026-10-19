@@ -3,12 +3,14 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const H = require("./runtime-test-harness.js");
 
-async function mountPost(extra = {}) {
+async function mountPost(extra = {}, {hdr = false} = {}) {
   const mount = new H.FakeElement("div", null);
   mount.id = "post-canvas-msaa";
   const env = H.createContext({elements: [mount], enableWebGL2: true, disableCanvas2D: true,
     createWebGL2Context() {
       const gl = new H.FakeWebGLContext();
+      const getExtension = gl.getExtension.bind(gl);
+      gl.getExtension = name => name === "EXT_color_buffer_float" ? hdr ? {} : null : getExtension(name);
       gl.textureSizes = [];
       const upload = gl.texImage2D.bind(gl);
       gl.texImage2D = (...args) => {if (args.length === 9) gl.textureSizes.push([args[3], args[4]]); upload(...args);};
@@ -94,5 +96,18 @@ test("fallback preparation does not copy the scene bundle on steady frames", () 
     assert.equal(h.env.consoleLogs.error.length, 0);
   } finally {
     h.renderer.dispose();
+  }
+});
+
+test("private FXAA preserves authored background clears in HDR and RGBA8", async () => {
+  for (const hdr of [true, false]) {
+    const clears = [];
+    for (const msaaSamples of [0, 4]) {
+      const s = await mountPost({background: "#315879", msaaSamples}, {hdr});
+      s.mount.__gosxScene3DHandle.applyCommands([{kind: 7, data: {postEffects: []}}]);
+      s.raf.flush(48); await H.flushAsyncWork(); s.raf.flush(64);
+      clears.push(s.gl.ops.filter(op => op[0] === "clearColor").at(-1).slice(1));
+    }
+    assert.deepEqual(clears[0], clears[1], "display-space FXAA must clear the same background as direct output");
   }
 });

@@ -8997,7 +8997,7 @@
       gl.viewport(0, 0, renderW, renderH);
 
       // Clear — "transparent" clears to fully transparent for alpha compositing.
-      var implicitOutput = usePostProcessing && !authoredPostEffects;
+      var implicitOutput = frameLinear && !authoredPostEffects;
       var bg = sceneRenderBackground(bundle.background, implicitOutput && renderTarget.hdrSupported ? postEffects[0] : null);
       // RGBA8 cannot store the inverse HDR clear. Mark untouched pixels with
       // zero alpha and restore the authored background in the output pass.
