@@ -142,6 +142,7 @@ var baseAggregateNeeds = []string{
 	"release-gate",
 	"go-tests",
 	"go-race-tests",
+	"desktop-macos",
 	"go-cli-tests",
 	"go-cli-tests-b",
 	"go-cli-tests-c",

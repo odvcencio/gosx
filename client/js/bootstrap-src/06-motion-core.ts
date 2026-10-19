@@ -9,6 +9,7 @@
   const namedValues = new Map();
   const namedListeners = new Map();
   const programRecords = new Map();
+  const programFeatures = new Map();
   const sceneAdapters = new Map();
   let programObserver = null;
   let nextAnimationID = 0;
@@ -16,6 +17,11 @@
   function motionNumber(value, fallback) {
     const number = Number(value);
     return Number.isFinite(number) ? number : fallback;
+  }
+
+  function motionPositive(value, fallback) {
+    const number = motionNumber(value, fallback);
+    return number > 0 ? number : fallback;
   }
 
   function motionNow() {
@@ -80,7 +86,8 @@
       for (let i = 0; i < out.length; i++) out[i] = a[i] + (b[i] - a[i]) * t;
       return out;
     }
-    return motionNumber(a, 0) + (motionNumber(b, 0) - motionNumber(a, 0)) * t;
+    const from = motionNumber(a, 0);
+    return from + (motionNumber(b, 0) - from) * t;
   }
 
   // Piecewise scalar curve used by "curve" signals and camera rails. The math
@@ -163,12 +170,6 @@
       maxWriteMS: 0,
       maxRenderMS: 0,
     };
-
-    function clockNow() {
-      return typeof performance !== "undefined" && typeof performance.now === "function"
-        ? performance.now()
-        : Date.now();
-    }
 
     function hasWork() {
       if (frameCallbacks.size || writes.size || continuous.size) return true;
@@ -375,7 +376,7 @@
 
     function runFrame(timestamp) {
       frameHandle = null;
-      const startMS = clockNow();
+      const startMS = motionNow();
       currentFrameMS = motionNumber(timestamp, startMS);
       deltaSeconds = lastFrameMS == null ? 0 : motionClamp((currentFrameMS - lastFrameMS) / 1000, 0, 0.25);
       lastFrameMS = currentFrameMS;
@@ -384,7 +385,7 @@
       frameCallbacks = new Map();
       activeFrameCallbacks = callbacks;
 
-      let phaseStart = clockNow();
+      let phaseStart = motionNow();
       for (const [id, callback] of Array.from(callbacks)) {
         if (!callbacks.delete(id)) continue;
         try { callback(currentFrameMS); } catch (error) {
@@ -392,14 +393,14 @@
         }
       }
       activeFrameCallbacks = null;
-      metrics.maxReadMS = Math.max(metrics.maxReadMS, clockNow() - phaseStart);
+      metrics.maxReadMS = Math.max(metrics.maxReadMS, motionNow() - phaseStart);
 
-      phaseStart = clockNow();
+      phaseStart = motionNow();
       readRects();
       runCallbacks(phases.read, [currentFrameMS, deltaSeconds]);
-      metrics.maxReadMS = Math.max(metrics.maxReadMS, clockNow() - phaseStart);
+      metrics.maxReadMS = Math.max(metrics.maxReadMS, motionNow() - phaseStart);
 
-      phaseStart = clockNow();
+      phaseStart = motionNow();
       runCallbacks(phases.evaluate, [currentFrameMS, deltaSeconds]);
       for (const callback of Array.from(continuous)) {
         try {
@@ -409,14 +410,14 @@
           if (window.console && typeof window.console.error === "function") window.console.error("[gosx] motion animation stopped:", error);
         }
       }
-      metrics.maxEvaluateMS = Math.max(metrics.maxEvaluateMS, clockNow() - phaseStart);
+      metrics.maxEvaluateMS = Math.max(metrics.maxEvaluateMS, motionNow() - phaseStart);
 
-      phaseStart = clockNow();
+      phaseStart = motionNow();
       flushWrites();
       runCallbacks(phases.write, [currentFrameMS, deltaSeconds]);
-      metrics.maxWriteMS = Math.max(metrics.maxWriteMS, clockNow() - phaseStart);
+      metrics.maxWriteMS = Math.max(metrics.maxWriteMS, motionNow() - phaseStart);
 
-      phaseStart = clockNow();
+      phaseStart = motionNow();
       for (const record of Array.from(sceneRecords)) {
         if (record.disposed || (!record.active && !record.dirty)) continue;
         record.dirty = false;
@@ -425,10 +426,10 @@
           if (window.console && typeof window.console.error === "function") window.console.error("[gosx] scene frame failed:", error);
         }
       }
-      metrics.maxRenderMS = Math.max(metrics.maxRenderMS, clockNow() - phaseStart);
+      metrics.maxRenderMS = Math.max(metrics.maxRenderMS, motionNow() - phaseStart);
       inFrame = false;
       metrics.frames++;
-      metrics.lastFrameMS = Math.max(0, clockNow() - startMS);
+      metrics.lastFrameMS = Math.max(0, motionNow() - startMS);
       metrics.maxFrameMS = Math.max(metrics.maxFrameMS, metrics.lastFrameMS);
       if (hasWork()) wake();
       else lastFrameMS = null;
@@ -474,7 +475,7 @@
       rect: rect,
       invalidateRects: invalidateRects,
       wake: wake,
-      now: function() { return inFrame ? currentFrameMS : clockNow(); },
+      now: function() { return inFrame ? currentFrameMS : motionNow(); },
       delta: function() { return deltaSeconds; },
       isFrame: function() { return inFrame; },
       metrics: snapshotMetrics,
@@ -613,9 +614,9 @@
   function createSpringSignal(initial, options, name) {
     const opts = options || {};
     const value = createSignal(motionNumber(initial, 0), name);
-    const mass = motionNumber(opts.mass, 1) > 0 ? motionNumber(opts.mass, 1) : 1;
-    const stiffness = motionNumber(opts.stiffness, 100) > 0 ? motionNumber(opts.stiffness, 100) : 100;
-    const damping = motionNumber(opts.damping, 10) > 0 ? motionNumber(opts.damping, 10) : 10;
+    const mass = motionPositive(opts.mass, 1);
+    const stiffness = motionPositive(opts.stiffness, 100);
+    const damping = motionPositive(opts.damping, 10);
     let current = motionNumber(initial, 0);
     let target = current;
     let velocity = motionNumber(opts.velocity, 0);
@@ -1128,14 +1129,14 @@
     return out;
   }
 
-  function setBoundDOMValue(binding, element, value, transformState) {
-    if (!motionBindingIsValid(binding)) return;
+  function setBoundDOMValue(binding, element, value) {
     const property = String(binding.property || "");
     if (binding.target === "cssVar") {
       motionSetStyle(element, property, value, binding.unit || "");
       return;
     }
     if (property.indexOf("transform.") === 0) {
+      const transformState = motionTransformComponents(element.style && element.style.transform);
       const key = property.slice("transform.".length).toLowerCase();
       if (key === "x" || key === "y" || key === "z") transformState[key] = motionNumber(value, transformState[key]);
       else if (key === "scale") transformState.scale = motionNumber(value, transformState.scale);
@@ -1155,7 +1156,6 @@
       value.dispose = scheduler.addContinuous(function(now) { value.set(Math.max(0, (now - start) / 1000)); return true; });
       return value;
     }
-    if (kind === "visibility" || kind === "scroll" || kind === "pointer" || kind === "hover") return createSignal(0, name);
     if (kind === "spring") {
       const value = createSpringSignal(spec.from, {
         to: spec.input ? spec.from : spec.to,
@@ -1168,44 +1168,16 @@
       return createTweenSignal(spec.from, spec.to, spec.duration, spec.ease, name, spec.reducedMotion);
     }
     if (kind === "keyframes") {
-      const frames = (spec.frames || []).map(function(frame) { return { at: frame.at, value: frame.value, ease: frame.ease }; });
-      return createKeyframeSignal(frames, spec.duration, name, spec.reducedMotion);
+      return createKeyframeSignal(spec.frames, spec.duration, name, spec.reducedMotion);
     }
-    if (kind === "map" || kind === "clamp" || kind === "velocity") {
-      const input = getValue(spec.input);
-      const value = createSignal(0, name);
-      let previous = motionNumber(input.get(), 0), previousTime = scheduler.now();
-      const compute = function(next) {
-        const number = motionNumber(next, 0);
-        if (kind === "map") {
-          const span = motionNumber(spec.to, 1) - motionNumber(spec.from, 0);
-          const t = span === 0 ? 0 : (number - motionNumber(spec.from, 0)) / span;
-          value.set(motionNumber(spec.min, 0) + (motionNumber(spec.max, 1) - motionNumber(spec.min, 0)) * t);
-        } else if (kind === "clamp") value.set(motionClamp(number, motionNumber(spec.min, 0), motionNumber(spec.max, 1)));
-        else {
-          const now = scheduler.now(), dt = Math.max(1e-6, (now - previousTime) / 1000);
-          value.set((number - previous) / dt);
-          previous = number; previousTime = now;
-        }
-      };
-      input.subscribe(compute);
-      return value;
-    }
+    if (kind === "map") return motion.map(getValue(spec.input), motionNumber(spec.from, 0), motionNumber(spec.to, 1), motionNumber(spec.min, 0), motionNumber(spec.max, 1), name);
+    if (kind === "clamp") return motion.clamp(getValue(spec.input), motionNumber(spec.min, 0), motionNumber(spec.max, 1), name);
+    if (kind === "velocity") return createVelocitySignal(getValue(spec.input), name, false);
     if (kind === "curve") {
-      const input = getValue(spec.input);
-      const stops = motionCurveStops(spec.frames);
-      const smooth = spec.smooth === true;
-      const value = createSignal(stops.length ? stops[0].value : 0, name);
-      input.subscribe(function(next) { value.set(motionCurveValue(stops, smooth, motionNumber(next, 0))); });
-      return value;
+      const stops = motionCurveStops(spec.frames), smooth = spec.smooth === true;
+      return createDerivedSignal(getValue(spec.input), function(next) { return motionCurveValue(stops, smooth, motionNumber(next, 0)); }, name);
     }
-    if (kind === "mix") {
-      const a = getValue(spec.a), b = getValue(spec.b), weight = getValue(spec.weight);
-      const value = createSignal(motionMix(a.get(), b.get(), motionClamp(motionNumber(weight.get(), 0), 0, 1)), name);
-      const update = function() { value.set(motionMix(a.get(), b.get(), motionClamp(motionNumber(weight.get(), 0), 0, 1))); };
-      a.subscribe(update, { immediate: false }); b.subscribe(update, { immediate: false }); weight.subscribe(update, { immediate: false });
-      return value;
-    }
+    if (kind === "mix") return motion.mix(getValue(spec.a), getValue(spec.b), getValue(spec.weight), name);
     return createSignal(0, name);
   }
 
@@ -1237,6 +1209,7 @@
       if (spec) for (const ref of [spec.input, spec.a, spec.b, spec.weight]) visit(ref);
     };
     for (const binding of bindings) visit(binding && binding.signal);
+    for (const binding of program.svgMorphs || []) visit(binding.signal);
     const signals = program.signals.filter(function(spec) { return spec && needed.has(String(spec.id)); });
     return Object.assign({}, program, { signals: signals, bindings: bindings });
   }
@@ -1246,7 +1219,7 @@
     const program = motionNumber(parsed.version, 0) === 1 && Array.isArray(parsed.signals) ? motionWithoutCSSCompiled(parsed) : parsed;
     if (motionNumber(program.version, 0) !== 1 || !Array.isArray(program.signals)) return null;
     const programID = String(program.id || "motion");
-    const record = { root: root, id: programID, signals: new Map(), specs: new Map(), bindings: [], pins: [], stops: [], values: [], adapters: new Set(), disposed: false };
+    const record = { root: root, id: programID, program: parsed, signals: new Map(), specs: new Map(), bindings: [], pins: [], stops: [], values: [], adapters: new Set(), disposed: false };
     for (const spec of program.signals) if (spec && spec.id) record.specs.set(String(spec.id), spec);
     const creating = new Set();
     function getValue(id) {
@@ -1352,11 +1325,7 @@
       if (target === "style" || target === "cssVar") {
         const elements = motionQuery(root, binding.selector);
         for (const element of elements) {
-          const transformState = motionTransformComponents(element.style && element.style.transform);
-          const apply = function(next) {
-            scheduler.queueWrite(element, function() { setBoundDOMValue(binding, element, next, transformState); });
-          };
-          record.stops.push(value.subscribe(apply));
+          record.stops.push(bindDOM(value, element, binding.property, binding.unit));
         }
       } else {
         const sceneElement = motionQuery(root, binding.selector)[0] || null;
@@ -1365,12 +1334,7 @@
         if (item.adapter) record.adapters.add(item.adapter);
         const apply = function(next) {
           item.latest = motionClone(next);
-          scheduler.queueWrite(item, function() {
-            if (item.adapter && !record.disposed) {
-              item.adapter.write(binding, motionClone(item.latest), record);
-              if (typeof item.adapter.invalidate === "function") item.adapter.invalidate("motion-binding");
-            }
-          });
+          queueSceneBinding(item, record);
         };
         record.stops.push(value.subscribe(apply));
         record.bindings.push(item);
@@ -1427,6 +1391,7 @@
     const record = createProgram(element, parsed);
     if (!record) return null;
     programRecords.set(element, record);
+    for (const feature of programFeatures.keys()) feature(record, parsed);
     return record;
   }
 
@@ -1434,6 +1399,7 @@
     const target = root || document.body || document.documentElement;
     if (target && target.nodeType === 1 && target.hasAttribute && target.hasAttribute("data-gosx-motion-program")) mountProgramElement(target);
     for (const element of motionQuery(target, "[data-gosx-motion-program]")) mountProgramElement(element);
+    for (const scan of programFeatures.values()) if (scan) scan(target);
     installProgramObserver(document.body || document.documentElement);
   }
 
@@ -1444,7 +1410,7 @@
   }
 
   function installProgramObserver(root) {
-    if (programObserver || typeof MutationObserver !== "function" || !root || programRecords.size === 0) return;
+    if (programObserver || typeof MutationObserver !== "function" || !root || (!programRecords.size && !programFeatures.size)) return;
     programObserver = new MutationObserver(function(changes) {
       for (const change of changes || []) {
         if (change.type === "attributes" && change.target && change.attributeName === "data-gosx-motion-program") {
@@ -1459,6 +1425,16 @@
     programObserver.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-gosx-motion-program"] });
   }
 
+  function queueSceneBinding(binding, record) {
+    scheduler.queueWrite(binding, function() {
+      const adapter = binding.adapter;
+      if (adapter && !record.disposed) {
+        adapter.write(binding.binding, motionClone(binding.latest), record);
+        if (typeof adapter.invalidate === "function") adapter.invalidate("motion-binding");
+      }
+    });
+  }
+
   function attachScene(mount, adapter) {
     if (!mount || !adapter || typeof adapter.write !== "function") return function() {};
     const attachment = { mount: mount, adapter: adapter };
@@ -1467,12 +1443,7 @@
       for (const binding of record.bindings) if (binding.scene === mount) {
         binding.adapter = adapter;
         record.adapters.add(adapter);
-        scheduler.queueWrite(binding, function() {
-          if (!record.disposed) {
-            adapter.write(binding.binding, motionClone(binding.latest), record);
-            if (typeof adapter.invalidate === "function") adapter.invalidate("motion-binding");
-          }
-        });
+        queueSceneBinding(binding, record);
       }
       for (const pin of record.pins) if (pin.scene === mount) {
         pin.adapter = adapter;
@@ -1504,21 +1475,42 @@
     return value;
   }
 
+  function createVelocitySignal(input, name, continuous) {
+    const value = createSignal(0, name);
+    let previous = motionNumber(input.get(), 0), previousMS = scheduler.now();
+    function sample(next, now) {
+      const current = motionNumber(next, 0), dt = Math.max(1e-6, (now - previousMS) / 1000);
+      value.set((current - previous) / dt);
+      previous = current; previousMS = now;
+    }
+    value.dispose = continuous
+      ? scheduler.on("evaluate", function(now) { sample(input.get(), now); })
+      : input.subscribe(function(next) { sample(next, scheduler.now()); });
+    return value;
+  }
+
   function bindDOM(signal, element, property, unit) {
     if (!signal || !element) return function() {};
     const binding = { target: property.indexOf("--") === 0 ? "cssVar" : "style", property: property, unit: unit || "" };
     if (!motionBindingIsValid(binding)) return function() {};
-    const transform = motionTransformComponents(element.style && element.style.transform);
-    return signal.subscribe(function(value) {
-      scheduler.queueWrite(element, function() { setBoundDOMValue(binding, element, value, transform); });
+    let active = true;
+    const stop = signal.subscribe(function(value) {
+      scheduler.queueWrite(binding, function() { if (active) setBoundDOMValue(binding, element, value); });
     });
+    return function() { active = false; stop(); };
   }
 
   motion.ease = motionEase;
   motion.scheduler = scheduler;
+  // Optional features share the base program's mount, replacement and disposal.
+  motion.registerProgramFeature = function(feature, scan) {
+    programFeatures.set(feature, scan);
+    for (const record of programRecords.values()) feature(record, record.program);
+    mountPrograms(document.body || document.documentElement);
+  };
   motion.signal = function(initial, name) { return createSignal(initial, name ? String(name) : ""); };
   motion.spring = function(initial, options) { return createSpringSignal(initial, options || {}, options && options.name ? String(options.name) : ""); };
-  motion.tween = function(from, options) { return createPublicTween(from, options || {}, options && options.name ? String(options.name) : ""); };
+  motion.tween = function(from, options) { return createPublicTween(from, options, options && options.name ? String(options.name) : ""); };
   motion.timeline = function(frames, options) {
     const opts = options || {};
     return createKeyframeSignal(frames, opts.duration, opts.name ? String(opts.name) : "", opts.reducedMotion);
@@ -1533,24 +1525,14 @@
     return createDerivedSignal(signal, function(value) { return motionClamp(motionNumber(value, 0), min, max); }, name || "");
   };
   motion.mix = function(a, b, weight, name) {
-    const value = createSignal(motionMix(a.get(), b.get(), motionClamp(motionNumber(weight.get(), 0), 0, 1)), name || "");
-    const update = function() { value.set(motionMix(a.get(), b.get(), motionClamp(motionNumber(weight.get(), 0), 0, 1))); };
-    const stopA = a.subscribe(update, { immediate: false }), stopB = b.subscribe(update, { immediate: false }), stopW = weight.subscribe(update, { immediate: false });
-    value.dispose = function() { stopA(); stopB(); stopW(); };
+    const sample = function() { return motionMix(a.get(), b.get(), motionClamp(motionNumber(weight.get(), 0), 0, 1)); };
+    const value = createSignal(sample(), name || "");
+    const update = function() { value.set(sample()); };
+    const stops = [a, b, weight].map(function(input) { return input.subscribe(update, { immediate: false }); });
+    value.dispose = function() { for (const stop of stops) stop(); };
     return value;
   };
-  motion.velocity = function(signal, name) {
-    const value = createSignal(0, name || "");
-    let previous = motionNumber(signal.get(), 0), previousMS = scheduler.now();
-    const stop = scheduler.on("evaluate", function(now) {
-      const current = motionNumber(signal.get(), 0);
-      const dt = Math.max(1e-6, (now - previousMS) / 1000);
-      value.set(current === previous ? 0 : (current - previous) / dt);
-      previous = current; previousMS = now;
-    });
-    value.dispose = stop;
-    return value;
-  };
+  motion.velocity = function(signal, name) { return createVelocitySignal(signal, name || "", true); };
   motion.bind = bindDOM;
   motion.animateKeyframes = animateKeyframes;
   motion.animate = function(element, keyframes, options) { return animateKeyframes(element, keyframes, options); };

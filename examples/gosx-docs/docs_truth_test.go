@@ -579,6 +579,8 @@ func TestRuntimeNavigationMigrationRendersAllowlist(t *testing.T) {
 		t.Fatal(err)
 	}
 	w := httptest.NewRecorder()
+	// This source-rendering contract must not read ignored production ISR artifacts.
+	app.SetRuntimeRoot(t.TempDir())
 	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/docs/runtime/", nil))
 	pattern := "/gosx/assets/runtime/navigation.*.js"
 	body := w.Body.String()

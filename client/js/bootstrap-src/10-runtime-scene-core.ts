@@ -3439,6 +3439,7 @@
 
   function sceneApplyNamedMaterialToObject(object, material) {
     const resolved = Object.assign({}, object, {
+      resourceOwner: object.resourceOwner || object,
       // Named materials are public live state. A derived wrapper cannot keep
       // the engine-owned immutable material promise used by rigid batching.
       _rigidMaterialProfileStable: false,
@@ -5138,6 +5139,26 @@
     builder.length = offset + 4;
   }
 
+  function sceneAppendFloat32RepeatedQuad(builder, vertexCount, first, second, third, fourth) {
+    const length = Math.max(0, Math.floor(sceneNumber(vertexCount, 0))) * 4;
+    if (length <= 0) return;
+    const offset = builder.length;
+    const buffer = builder.buffer;
+    buffer[offset] = first;
+    buffer[offset + 1] = second;
+    buffer[offset + 2] = third;
+    buffer[offset + 3] = fourth;
+    // Seed one finalized Float32 tuple, then copy its repeated pattern in
+    // native buffer operations. Each bundle still owns independent storage.
+    let filled = 4;
+    while (filled < length) {
+      const count = Math.min(filled, length - filled);
+      buffer.copyWithin(offset + filled, offset, offset + count);
+      filled += count;
+    }
+    builder.length = offset + length;
+  }
+
   function sceneAppendFloat32Stream(builder, values) {
     builder.buffer.set(values, builder.length);
     builder.length += values.length;
@@ -5540,7 +5561,6 @@
           vertices: candidate.vertices,
           directVertices: true,
           retainedGeometry: true,
-          resourceOwner: object,
           geometryRevision: candidate.revision,
           modelMatrix: group.matrices[0],
           instanceMatrices: group.matrices,
@@ -5646,10 +5666,10 @@
 	  const _sceneMeshLocalBoundsCache = new WeakMap();
 	  const _sceneWorldBakedGeometryCache = new WeakMap();
 	  const _sceneWorldBakedGeometryResidency = new Set();
-	  // A baked attribute soup costs 48 bytes per vertex. Two MiB covers dense
-	  // groups of modest immutable effects while preventing a scene with many
-	  // live owners from multiplying CPU-side geometry without a hard ceiling.
-	  const sceneWorldBakedGeometryCacheMaxBytes = 2 * 1024 * 1024;
+	  // A baked attribute soup costs 48 bytes per vertex. Eight MiB covers a
+	  // dense table's immutable meshes while keeping all interleaved scenes
+	  // under one hard ceiling instead of multiplying storage per mount.
+	  const sceneWorldBakedGeometryCacheMaxBytes = 8 * 1024 * 1024;
 	  // Keep recently interleaved mounts warm, then clear records not observed
 	  // for eight complete bundle builds. Admission never evicts a hot record,
 	  // so an over-budget working set cannot turn into sequential LRU thrash.
@@ -5660,6 +5680,8 @@
 	  function sceneReleaseWorldBakedGeometryCacheRecord(record) {
 	    if (!record || record.resident !== true) return;
 	    record.resident = false;
+	    if (record.upload) record.upload.resident = false;
+	    record.upload = null;
 	    _sceneWorldBakedGeometryResidency.delete(record);
 	    sceneWorldBakedGeometryCacheBytes = Math.max(0,
 	      sceneWorldBakedGeometryCacheBytes - Math.max(0, sceneNumber(record.byteLength, 0)));
@@ -5756,6 +5778,14 @@
 	      bounds: {
 	        minX: bounds.minX, minY: bounds.minY, minZ: bounds.minZ,
 	        maxX: bounds.maxX, maxY: bounds.maxY, maxZ: bounds.maxZ,
+	      },
+	      // Share finalized attributes without adding vertex storage. The GPU
+	      // view expires with this bounded CPU cache record's residency.
+	      upload: {
+	        resident: true,
+	        retainedGeometry: true,
+	        geometryRevision: 0,
+	        vertices: Object.assign({ count: payload.positions.length / 3 }, payload),
 	      },
 	    };
 	    _sceneWorldBakedGeometryCache.set(object, record);
@@ -6425,6 +6455,7 @@
     if (sceneMeshObjectEffectivelyInvisible(object, material)) {
       return;
     }
+    const resourceOwner = object.resourceOwner || object;
     const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
     const outlineColor = emitsSelectionEdges ? (authoredOutlineColor || "#facc15") : "";
     const outlineWidth = emitsSelectionEdges ? Math.max(2, authoredOutlineWidth || 3) : 0;
@@ -6477,9 +6508,9 @@
         depthWrite: object.depthWrite, bounds, depthNear: depth.near, depthFar: depth.far, depthCenter: depth.center,
         viewCulled: false, doubleSided: Boolean(object.doubleSided), skin: null, _crowdSkin: object._crowdSkin,
         _crowdMotion: motion || null,
-        vertices, directVertices: true, retainedGeometry: true, resourceOwner: object, geometryRevision: 0,
+        vertices, directVertices: true, retainedGeometry: true, resourceOwner, geometryRevision: 0,
         modelMatrix, vertexOffset: 0, vertexCount: vertices.count };
-      sceneStampRetainedMeshCSSInput(meshRecord, object);
+      sceneStampRetainedMeshCSSInput(meshRecord, resourceOwner);
       bundle.meshObjects.push(meshRecord);
       bundle.retainedMeshObjectCount += 1;
       bundle.retainedMeshVertexCount += vertices.count;
@@ -6518,14 +6549,14 @@
         vertices: vertices,
         directVertices: true,
         retainedGeometry: retained,
-        resourceOwner: retained ? object : undefined,
+        resourceOwner: retained ? resourceOwner : undefined,
         geometryRevision: retained ? geometryRevision : undefined,
         modelMatrix: sceneObjectModelMatrix(object, timeSeconds),
         vertexOffset: 0,
         vertexCount: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
       };
       if (retained) {
-        sceneStampRetainedMeshCSSInput(meshRecord, object);
+        sceneStampRetainedMeshCSSInput(meshRecord, resourceOwner);
         bundle.retainedMeshObjectCount += 1;
         bundle.retainedMeshVertexCount += meshRecord.vertexCount;
         bundle.retainedGeometryTelemetry.retained += 1;
@@ -6562,13 +6593,13 @@
           vertices,
           directVertices: true,
           retainedGeometry: true,
-          resourceOwner: object,
+          resourceOwner,
           geometryRevision,
           modelMatrix,
           vertexOffset: 0,
           vertexCount,
         };
-        sceneStampRetainedMeshCSSInput(meshRecord, object);
+        sceneStampRetainedMeshCSSInput(meshRecord, resourceOwner);
         bundle.meshObjects.push(meshRecord);
         bundle.retainedMeshObjectCount += 1;
         bundle.retainedMeshVertexCount += vertexCount;
@@ -6579,17 +6610,6 @@
     if (bundle && bundle.retainedGeometryTelemetry) {
       bundle.retainedGeometryTelemetry.fallback += 1;
     }
-    // World-baked fallback attributes are consumed as scalars within this
-    // invocation. Keep the scratch lifetime local to the mesh: twelve fixed
-    // objects/arrays replace eighteen transient objects per triangle without
-    // sharing mutable state between independent meshes or bundle builds.
-    const normals = [{ x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }];
-    const uvs = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
-    const tangents = [
-      { x: 1, y: 0, z: 0, w: 1 },
-      { x: 1, y: 0, z: 0, w: 1 },
-      { x: 1, y: 0, z: 0, w: 1 },
-    ];
     const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     const wireVertexOffset = bundle.worldPositions.length / 3;
     const meshVertexOffset = bundle.worldMeshPositions.length / 3;
@@ -6627,16 +6647,23 @@
       sceneAppendFloat32Stream(bundle.worldMeshNormals, cachedGeometry.normals);
       sceneAppendFloat32Stream(bundle.worldMeshUVs, cachedGeometry.uvs);
       sceneAppendFloat32Stream(bundle.worldMeshTangents, cachedGeometry.tangents);
-      // Colour belongs to the current material, not the geometry cache.
-      for (let index = 0; index < cachedGeometry.vertexCount; index += 1) {
-        sceneAppendFloat32Quad(bundle.worldMeshColors, flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
-      }
       meshVertexCount = cachedGeometry.vertexCount;
       bounds = {
         minX: cachedGeometry.bounds.minX, minY: cachedGeometry.bounds.minY, minZ: cachedGeometry.bounds.minZ,
         maxX: cachedGeometry.bounds.maxX, maxY: cachedGeometry.bounds.maxY, maxZ: cachedGeometry.bounds.maxZ,
       };
     } else {
+      // World-baked fallback attributes are consumed as scalars within this
+      // invocation. Keep the scratch lifetime local to the mesh: twelve fixed
+      // objects/arrays replace eighteen transient objects per triangle without
+      // sharing mutable state between independent meshes or bundle builds.
+      const normals = [{ x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }];
+      const uvs = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+      const tangents = [
+        { x: 1, y: 0, z: 0, w: 1 },
+        { x: 1, y: 0, z: 0, w: 1 },
+        { x: 1, y: 0, z: 0, w: 1 },
+      ];
       const bakeLinearState = sceneObjectMeshBakeLinearState(object, modelMatrix);
       const reverseWinding = bakeLinearState[9] < 0;
       const capture = cacheEligible && sceneCanCaptureWorldBakedGeometry(bakedVertexCount)
@@ -6701,7 +6728,7 @@
           const tangent = tangents[index];
           const color = lighting ? lighting[index] : flatMeshColor;
           sceneAppendFloat32Triple(bundle.worldMeshPositions, point.x, point.y, point.z);
-          sceneAppendFloat32Quad(bundle.worldMeshColors, color[0], color[1], color[2], color[3]);
+          if (lighting) sceneAppendFloat32Quad(bundle.worldMeshColors, color[0], color[1], color[2], color[3]);
           sceneAppendFloat32Triple(bundle.worldMeshNormals, normal.x, normal.y, normal.z);
           sceneAppendFloat32Pair(bundle.worldMeshUVs, uv.x, uv.y);
           sceneAppendFloat32Quad(bundle.worldMeshTangents, tangent.x, tangent.y, tangent.z, tangent.w);
@@ -6741,6 +6768,12 @@
       }
     }
 
+    // Flat color follows the live material on both cold bakes and cache hits.
+    // Wire lighting remains per vertex; ordinary fills need one repeated tuple.
+    if (!emitWireSegments) {
+      sceneAppendFloat32RepeatedQuad(bundle.worldMeshColors, meshVertexCount,
+        flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
+    }
     if (!bounds || meshVertexCount <= 0) {
       return;
     }
@@ -6758,6 +6791,9 @@
       receiveShadow: Boolean(object.receiveShadow),
       depthWrite: object.depthWrite,
       bounds: bounds,
+      // These bounds cover the emitted world-space triangle soup. Consumers
+      // can round its extrema to Float32 instead of rescanning every vertex.
+      _worldBakedBounds: true,
       depthNear: depth.near,
       depthFar: depth.far,
       depthCenter: depth.center,
@@ -6773,10 +6809,17 @@
         vertexCount: wireVertexCount,
       }));
     }
-    bundle.meshObjects.push(Object.assign({}, shared, {
+    const meshRecord = Object.assign({}, shared, {
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
-    }));
+    });
+    if (cachedGeometry && cachedGeometry.upload) {
+      // A cold pose keeps streaming. Admit only an unchanged cache hit so
+      // animated meshes do not allocate replacement GPU buffers each frame.
+      // Keep GPU bookkeeping out of exported/serialized bundle snapshots.
+      Object.defineProperty(meshRecord, "_worldBakedUpload", { value: cachedGeometry.upload });
+    }
+    bundle.meshObjects.push(meshRecord);
     bundle.worldBakedMeshObjectCount += 1;
     bundle.worldBakedMeshVertexCount += meshVertexCount;
   }

@@ -387,6 +387,16 @@ func (p *exprParser) parsePrimary() (program.ExprID, error) {
 
 	case tokenIdent:
 		p.next()
+		// Keyed Go records are also valid signal initializers. Preserve the
+		// authored field names, including records from imported packages.
+		if p.peek().kind == tokenLBrace {
+			return p.parseRecordLiteral(tok.text)
+		}
+		if p.pos+2 < len(p.tokens) && p.tokens[p.pos].kind == tokenDot && p.tokens[p.pos+1].kind == tokenIdent && p.tokens[p.pos+2].kind == tokenLBrace {
+			p.next()
+			name := tok.text + "." + p.next().text
+			return p.parseRecordLiteral(name)
+		}
 		switch tok.text {
 		case "true", "false":
 			return p.addExpr(program.Expr{
@@ -411,6 +421,33 @@ func (p *exprParser) parsePrimary() (program.ExprID, error) {
 	}
 
 	return 0, fmt.Errorf("cannot parse expression: %q", p.source)
+}
+
+func (p *exprParser) parseRecordLiteral(name string) (program.ExprID, error) {
+	p.next() // {
+	var operands []program.ExprID
+	for !p.match(tokenRBrace) {
+		field, err := p.expect(tokenIdent)
+		if err != nil {
+			return 0, err
+		}
+		if _, err = p.expect(tokenColon); err != nil {
+			return 0, err
+		}
+		value, err := p.parseConditional()
+		if err != nil {
+			return 0, err
+		}
+		key := p.addExpr(program.Expr{Op: program.OpLitString, Value: field.text, Type: program.TypeString})
+		operands = append(operands, key, value)
+		if p.match(tokenRBrace) {
+			break
+		}
+		if _, err = p.expect(tokenComma); err != nil {
+			return 0, err
+		}
+	}
+	return p.addExpr(program.Expr{Op: program.OpComposite, Value: "struct:" + name, Operands: operands, Type: program.TypeAny}), nil
 }
 
 // parseSliceLiteral lowers a typed Go slice literal through the same

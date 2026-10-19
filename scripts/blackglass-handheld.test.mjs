@@ -4,16 +4,8 @@ import { readFileSync } from 'node:fs';
 import vm from 'node:vm';
 import { webcrypto, createHash } from 'node:crypto';
 
-test('pocket shell versions its loader and styles so returning players bypass stale cached assets', () => {
-  const root = new URL('../examples/gosx-docs/public/demos/blackglass-handheld/', import.meta.url);
-  const html = readFileSync(new URL('pocket.html', root), 'utf8');
-  for (const name of ['handheld.js', 'handheld.css']) {
-    const digest = createHash('sha256').update(readFileSync(new URL(name, root))).digest('hex').slice(0, 16);
-    assert.ok(html.includes(`"${name}?v=${digest}"`), `${name} must have a current content version: old cached URLs cannot load the deployment cartridge`);
-  }
-});
-
-const source = readFileSync(new URL('../examples/gosx-docs/public/demos/blackglass-handheld/handheld.js', import.meta.url), 'utf8').replace(/^import[^\n]+\n/, '');
+const driver = readFileSync(new URL('../gameboy/assets/runtime.js', import.meta.url), 'utf8');
+const source = driver.replace(/const runtimeURL=[^\n]+\n/, '').replace(/const \{default:init[^\n]+\n/, '');
 async function handheld({storage=new Map(),embedded=false,quota=false}={}) {
   const element = () => ({ dataset: {}, value: '3', listeners: {}, addEventListener(name, fn) { this.listeners[name] = fn; }, setAttribute() {}, focus() {} });
   const canvas = element();
@@ -50,7 +42,9 @@ async function handheld({storage=new Map(),embedded=false,quota=false}={}) {
   const context = vm.createContext({ document, window, parent, localStorage, btoa, atob, StateManager,SaveStateFormat:{Bosc:1},StateFormat:{Full:3},FromGbOptions:{new:()=>({})}, location: { origin: 'https://coast.test' }, init: async () => {}, GameBoy, GameBoyMode: { Dmg: 0, Cgb: 1 }, PadKey: { A: 1, Start: 2 }, AudioContext, crypto: webcrypto,
     requestAnimationFrame: fn => { frames.set(++rafID, fn); return rafID; }, cancelAnimationFrame: id => frames.delete(id), AbortSignal,
     fetch: async url => { assert.equal(url, '/api/blackglass-cartridge', 'empty deployments must not fetch a ROM'); return { ok: true, json: async () => ({ available: false }) }; } });
-  await vm.runInContext(`(async () => { ${source}\nglobalThis.pocket = { load, play, tick, key, frames: () => gb?.ppu_frame() || 0, inputs: () => gb.inputs, machine:()=>gb, checkpoint, hash:()=>romHash }; })()`, context);
+  const instrumented=source.replace('return {dispose(){', 'globalThis.pocket = {load,play,tick,key,frames:()=>gb?.ppu_frame()||0,inputs:()=>gb.inputs,machine:()=>gb,checkpoint,hash:()=>romHash};return {dispose(){');
+  vm.runInContext(instrumented,context);
+  await context.window.__gosx_engine_factories.GoSXGameBoy({mount:document,props:{batteryPrefix:'gosx.blackglass.cartridge.',checkpointPrefix:'gosx.blackglass.pocket-state.v1.',protocol:'gosx-handheld'}});
   const rom = new Uint8Array(32768); let checksum = 0; for (let i = 0x134; i < 0x14d; i++) checksum = (checksum - 1) & 255; rom[0x14d] = checksum;
   return { context, controls, canvas, document, sources, frames, rom, storage, messages, window, parent, api: context.pocket };
 }
@@ -100,12 +94,12 @@ test('putting away checkpoints the full machine and repeated pickup keeps the sa
 });
 
 test('a closed pocket cannot start a late cartridge load, and messages require its actual parent origin',async()=>{
- const h=await handheld({embedded:true});assert.ok(h.messages.some(m=>m.type==='blackglass-handheld-ready'));
+ const h=await handheld({embedded:true});assert.ok(h.messages.some(m=>m.type==='gosx-handheld-ready'));
  await h.api.load(h.rom,'late-probe.gb');assert.equal(h.frames.size,0);assert.equal(h.canvas.dataset.playing,'false');
  const message=h.window.listeners.message;
- message({origin:'https://other.test',source:h.parent,data:{type:'blackglass-handheld',action:'resume'}});assert.equal(h.frames.size,0);
- message({origin:'https://coast.test',source:{},data:{type:'blackglass-handheld',action:'resume'}});assert.equal(h.frames.size,0);
- message({origin:'https://coast.test',source:h.parent,data:{type:'blackglass-handheld',action:'resume'}});assert.equal(h.canvas.dataset.playing,'true');
+ message({origin:'https://other.test',source:h.parent,data:{type:'gosx-handheld',action:'resume'}});assert.equal(h.frames.size,0);
+ message({origin:'https://coast.test',source:{},data:{type:'gosx-handheld',action:'resume'}});assert.equal(h.frames.size,0);
+ message({origin:'https://coast.test',source:h.parent,data:{type:'gosx-handheld',action:'resume'}});assert.equal(h.canvas.dataset.playing,'true');
 });
 
 test('checkpoints are cartridge-specific and corrupt state falls back to the battery save',async()=>{

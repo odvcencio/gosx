@@ -1,0 +1,6 @@
+# GitHub's hosted Intel label is newer than some supported local actionlint
+# versions. Extend only that label; retain all other runner-label checks.
+# https://docs.github.com/en/actions/reference/runners/github-hosted-runners
+self-hosted-runner:
+  labels:
+    - macos-15-intel

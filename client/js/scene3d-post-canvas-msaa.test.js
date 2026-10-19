@@ -76,3 +76,23 @@ test("private FXAA uses the full canvas resolution above the post pixel default"
   const allocations = s.gl.textureSizes.filter(size => size[0] === 2560 && size[1] === 1440);
   assert.ok(allocations.length > 0, "private FXAA target must match the backing canvas");
 });
+
+test("fallback preparation does not copy the scene bundle on steady frames", () => {
+  const h = H.createWebGLRendererForPost({fresh: true,
+    props: {scene: {postEffects: [{kind: "bloom"}]}}});
+  let enumerations = 0;
+  const bundle = new Proxy(H.makeWebGLBundleWithCustomPost({kind: "bloom"}), {
+    ownKeys(target) { enumerations++; return Reflect.ownKeys(target); },
+  });
+  try {
+    h.renderer.render(bundle, {width: 320, height: 180});
+    enumerations = 0;
+    for (let frame = 0; frame < 30; frame++) {
+      assert.notEqual(h.renderer.render(bundle, {width: 320, height: 180}), "pending");
+    }
+    assert.equal(enumerations, 0, "preparing private FXAA must not enumerate and copy the scene bundle");
+    assert.equal(h.env.consoleLogs.error.length, 0);
+  } finally {
+    h.renderer.dispose();
+  }
+});

@@ -525,6 +525,7 @@ test-perf-budget-ci:
 	sh scripts/perf-budget-ci-test.sh
 	sh scripts/verify-perf-browser-identity-test.sh
 	sh scripts/check-perf-browser-pin-test.sh
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_showcase_windows_cdp.py
 
 release-gate:
 	@echo "release-gate (1/10): go run ./cmd/gosx release check"

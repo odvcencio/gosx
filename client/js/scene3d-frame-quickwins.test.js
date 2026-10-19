@@ -228,12 +228,38 @@ test("a SwiftShader WebGPU adapter preserves constrained tier and one MSAA sampl
 });
 
 test("settling WebGPU has no extra animation-frame boundary", async () => {
-  let frames = 0, prepared = 0;
-  const api = sourceSection("../runtime/scene3d/mount-webgl.ts", "  async function settlePreferredWebGPUBackend", "  async function ensurePreferredWebGPUBackend", vm.createContext({
-    ensurePreferredWebGPUBackend: async () => { prepared++; },
+  let frames = 0;
+  const preparation = [];
+  const api = sourceSection("../runtime/scene3d/mount-webgl.ts", "  async function ensurePreferredWebGPUBackend", "  function ensureWebGLFeatureLoaded", vm.createContext({
+    window: { __gosx_scene3d_webgpu_probe_ready: async () => { preparation.push("probe"); return true; } },
+    sceneCapabilityWebGPUPreference: () => "prefer",
+    sceneNeedsWebGLForWebGPUCoverage: () => false,
+    ensureWebGPUFeatureLoaded: async () => { preparation.push("load"); },
     sceneWebGPUAvailable: () => true, sceneNextFrame: async () => { frames++; },
   }));
-  await api.settlePreferredWebGPUBackend({}, {});
-  assert.equal(prepared, 1);
+  assert.equal(await api.ensurePreferredWebGPUBackend({}, {}), true);
+  assert.deepEqual(preparation, ["probe", "load"]);
   assert.equal(frames, 0);
+});
+
+test("named materials reuse the WebGL rigid key across persistent-state frames", () => {
+  const api = sceneCore();
+  sourceSection(readSceneRendererBackendSrc("webgl"), "  var sceneGLConstantCache = new WeakMap();",
+    "  function scenePBRHDRIBLTextureMinimum(", api);
+  const state = api.createSceneState({ scene: { materials: [{ id: "m", color: "#112233" }],
+    objects: [{ id: "box", kind: "box", material: "m", wireframe: false }] } }, { tier: "full" });
+  let first;
+  let hits = 0;
+  for (let frame = 0; frame < 30; frame++) {
+    const bundle = api.createSceneRenderBundle(640, 480, "#000000", { x: 0, y: 0, z: 5 },
+      api.sceneStateObjectsWithMaterials(state), [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+      { retainedGeometry: true });
+    const obj = bundle.meshObjects[0];
+    const prior = obj.resourceOwner._rigidBatchKeyCache;
+    api.sceneRigidBatchKey(obj, true);
+    if (prior === obj.resourceOwner._rigidBatchKeyCache) hits++;
+    if (!first) first = obj.resourceOwner;
+    assert.equal(obj.resourceOwner, first);
+  }
+  assert.equal(hits, 29, "29 cache hits after the initial miss");
 });

@@ -35,15 +35,18 @@ type PerfHeadRef struct {
 var DefaultPerfHeadScanner func(head string) ([]PerfHeadRef, error)
 
 // PerfAssetOptions declares resolved browser/document gates and observed calls.
-// A nil NavigatorGPU conservatively includes the inline loader's download.
+// Nil NavigatorGPU/WebGPUAttempted gates conservatively include a possible
+// WebGPU renderer download. WebGPUAttempted records whether startup requested
+// that renderer; the eventual backend may differ after renderer creation fails.
 // Model contents and video source/browser state require a non-nil
 // RuntimeFetches trace, including an empty trace proving no additional loads.
 type PerfAssetOptions struct {
-	Backend        string
-	Navigation     bool
-	NavigatorGPU   *bool
-	TextLayout     bool
-	RuntimeFetches []PerfRuntimeFetch
+	Backend         string
+	Navigation      bool
+	NavigatorGPU    *bool
+	WebGPUAttempted *bool
+	TextLayout      bool
+	RuntimeFetches  []PerfRuntimeFetch
 	// HeadScanner lists the script and link tags in the rendered head. It
 	// defaults to DefaultPerfHeadScanner.
 	HeadScanner func(head string) ([]PerfHeadRef, error)
@@ -72,6 +75,9 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 	}
 	if backend == "webgpu" && opts.NavigatorGPU != nil && !*opts.NavigatorGPU {
 		return fail("invalid-input", "/navigatorGPU")
+	}
+	if opts.WebGPUAttempted != nil && ((backend == "webgpu" && !*opts.WebGPUAttempted) || (*opts.WebGPUAttempted && opts.NavigatorGPU != nil && !*opts.NavigatorGPU)) {
+		return fail("invalid-input", "/webgpuAttempted")
 	}
 	uses := clonePerfAssetUses(r.perfAssets)
 	byURL, byID := map[string]int{}, map[string]int{}
@@ -260,9 +266,9 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 		if !r.perfSceneBackendAllowed(backend) {
 			return fail("backend-unavailable", "/backend")
 		}
-		// The emitted loader checks navigator.gpu before adapter acquisition.
-		// Its download is independent of the eventual rendering backend.
-		if path := r.bootstrapFeatureScene3dWebGPUPath; r.scene3DCanUseWebGPU() && path != "" && (opts.NavigatorGPU == nil || *opts.NavigatorGPU) {
+		// Backend selection owns the renderer download. A failed probe or a
+		// WebGL policy skips WebGPU; a later renderer failure can fetch both.
+		if path := r.bootstrapFeatureScene3dWebGPUPath; r.scene3DCanUseWebGPU() && path != "" && (opts.NavigatorGPU == nil || *opts.NavigatorGPU) && (opts.WebGPUAttempted == nil || *opts.WebGPUAttempted) {
 			if err := mark(public(path), "startup", "always", base); err != nil {
 				return nil, err
 			}

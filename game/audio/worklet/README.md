@@ -5,13 +5,18 @@ bounded command/message buffers, memory views, diagnostics and shutdown. A
 backend owns its WASM synthesis reactor, project format and command meanings.
 There is no dependency on Cicada or any other synthesizer in this package.
 
-Mount `worklet.Handler()` under a same-origin asset prefix. Load that prefix plus
+Mount the server-only `worklet.Handler()` under a same-origin asset prefix. Load that prefix plus
 `worklet.Path()` with `HostJS.AddWorkletModule`, compile the backend's WASM once
 with `HostJS.CompileWASM`, then create independent nodes with
 `HostJS.NewWASMWorklet`. Pass a validated `Backend`, opaque image bytes and
 backend-extracted `ImageInfo`. The processor URL contains its source digest, so
 cached code cannot mix with a newer host. It works with an Activity proxy prefix
 and an external-script CSP; no source is generated in the application.
+
+Browser imports retain the typed ABI and portable `Path`/`Source` APIs, but
+exclude the HTTP handler and its server dependencies. Processor assets are
+hashed only when requested, so unused audio worklets add no asset initialization
+to applications that use only the ordinary typed audio host.
 
 The reactor ABI uses `gosx_audio_` exports by default; `Backend.ExportPrefix`
 supports other export names. It requires an exported `memory`, `_initialize`,

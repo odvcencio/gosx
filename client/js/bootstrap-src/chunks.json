@@ -99,6 +99,7 @@
         "../runtime/scene3d/mount-input.ts",
         "../runtime/scene3d/geometry-assets.ts",
         "../runtime/scene3d/mount-lifecycle.ts",
+        "../runtime/scene3d/mount-presentation.ts",
         "../runtime/scene3d/mount.ts",
         "bootstrap-src/28-video-sync-fallback.ts",
         "../runtime/host/events.ts",
@@ -308,6 +309,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-experience.js",
+      "sources": [
+        "../runtime/scene3d/mount-presentation.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-command.js",
       "sources": [
         "../runtime/scene3d/command-runtime.ts"
@@ -364,6 +371,7 @@
     {
       "name": "bootstrap-feature-scene3d-vessel.js",
       "sources": [
+        "../runtime/scene3d/vessel-instruments.ts",
         "../runtime/scene3d/vessel-navigation.ts",
         "../runtime/scene3d/vessel-physics.ts",
         "../runtime/scene3d/vessel-input.ts",
@@ -382,6 +390,32 @@
       "name": "bootstrap-feature-scene3d-model-preparation.js",
       "sources": [
         "../runtime/scene3d/model-preparation.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-transport.js",
+      "sources": [
+        "../runtime/motion/transport.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-track.js",
+      "sources": [
+        "../runtime/motion/track.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-scene.js",
+      "sources": [
+        "../runtime/motion/easing.ts",
+        "../runtime/motion/scene.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-motion-svg.js",
+      "sources": [
+        "../runtime/motion/easing.ts",
+        "../runtime/motion/svg.ts"
       ]
     },
     {

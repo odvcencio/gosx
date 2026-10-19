@@ -59,6 +59,15 @@ type ServiceMethod struct {
 // Payloads are decoded from JSON into the single payload argument. Services are
 // app-owned native code; bind only when the hosted content is trusted.
 func (a *App) Bind(name string, service any) (ServiceBinding, error) {
+	var binding ServiceBinding
+	err := a.runServiceUpdate(func() (err error) {
+		binding, err = a.bind(name, service)
+		return err
+	})
+	return binding, err
+}
+
+func (a *App) bind(name string, service any) (ServiceBinding, error) {
 	if a == nil || a.bridge == nil {
 		return ServiceBinding{}, fmt.Errorf("%w: nil app", ErrInvalidOptions)
 	}
@@ -75,6 +84,15 @@ func (a *App) Bind(name string, service any) (ServiceBinding, error) {
 	}
 
 	if err := a.registerServiceBridgeMethods(); err != nil {
+		return ServiceBinding{}, err
+	}
+	a.serviceUpdateMu.Lock()
+	defer a.serviceUpdateMu.Unlock()
+	a.serviceMu.RLock()
+	previous := a.services[name]
+	a.serviceMu.RUnlock()
+	publish, err := a.prepareBridgeCapabilities(a.prospectiveServiceMethods(previous, methods))
+	if err != nil {
 		return ServiceBinding{}, err
 	}
 	a.serviceMu.Lock()
@@ -98,11 +116,27 @@ func (a *App) Bind(name string, service any) (ServiceBinding, error) {
 	}
 	a.services[name] = binding
 	a.serviceMu.Unlock()
+	publish()
 	return binding, nil
 }
 
 // Unbind removes a previously bound desktop service.
 func (a *App) Unbind(name string) error {
+	return a.runServiceUpdate(func() error { return a.unbind(name) })
+}
+
+// Dispatch before taking service/preload locks: an update from a background
+// goroutine must not hold a lock needed by a callback on the window thread.
+func (a *App) runServiceUpdate(update func() error) error {
+	if a != nil {
+		if platform, ok := a.impl.(interface{ onUIThread(func() error) error }); ok {
+			return platform.onUIThread(update)
+		}
+	}
+	return update()
+}
+
+func (a *App) unbind(name string) error {
 	if a == nil || a.bridge == nil {
 		return fmt.Errorf("%w: nil app", ErrInvalidOptions)
 	}
@@ -110,19 +144,45 @@ func (a *App) Unbind(name string) error {
 	if err := validateServiceName(name); err != nil {
 		return err
 	}
-	a.serviceMu.Lock()
+	a.serviceUpdateMu.Lock()
+	defer a.serviceUpdateMu.Unlock()
+	a.serviceMu.RLock()
 	binding, ok := a.services[name]
-	if ok {
-		delete(a.services, name)
-	}
-	a.serviceMu.Unlock()
+	a.serviceMu.RUnlock()
 	if !ok {
 		return nil
 	}
+	publish, err := a.prepareBridgeCapabilities(a.prospectiveServiceMethods(binding, nil))
+	if err != nil {
+		return err
+	}
+	a.serviceMu.Lock()
+	delete(a.services, name)
 	for _, method := range binding.Methods {
 		a.bridge.Unregister(method.Method)
 	}
+	a.serviceMu.Unlock()
+	publish()
 	return nil
+}
+
+func (a *App) prospectiveServiceMethods(previous ServiceBinding, next []boundServiceMethod) []string {
+	removed := make(map[string]bool, len(previous.Methods))
+	for _, method := range previous.Methods {
+		removed[method.Method] = true
+	}
+	names := a.bridge.MethodNames()
+	kept := names[:0]
+	for _, name := range names {
+		if !removed[name] {
+			kept = append(kept, name)
+		}
+	}
+	for _, method := range next {
+		kept = append(kept, method.info.Method)
+	}
+	sort.Strings(kept)
+	return kept
 }
 
 // ServiceBindings returns a stable snapshot of currently bound services.

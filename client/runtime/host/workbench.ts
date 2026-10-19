@@ -102,6 +102,14 @@
             if (element) disclosure[kind](element);
           }
         }
+        if (action.submit) {
+          const el = document.querySelector(action.submit), tag = el && el.tagName;
+          const fail = reason => document.dispatchEvent(new CustomEvent("gosx:command:error", { detail: { id: cmd.id, reason } }));
+          const submitter = (tag === "BUTTON" && el.type === "submit") || (tag === "INPUT" && (el.type === "submit" || el.type === "image"));
+          const form = tag === "FORM" ? el : submitter && el.form;
+          if (!form || typeof form.requestSubmit !== "function") fail("submit-target");
+          else try { if (el !== form) form.requestSubmit(el); else form.requestSubmit(); } catch (_) { fail("submit-failed"); }
+        }
         return true;
       }
       function onKeydown(event) {
@@ -144,7 +152,7 @@
         }
       }
       const publicAPI = {
-        list: () => entries.map(({ command: cmd }) => ({ id: cmd.id, title: cmd.title, keys: cmd.keys || [], group: cmd.group, reserved: !!cmd.reserved, available: available(cmd) })),
+        list: () => entries.map(({ command: cmd }) => ({ id: cmd.id, title: cmd.title, keys: cmd.keys || [], group: cmd.group, submit: cmd.action?.submit, reserved: !!cmd.reserved, available: available(cmd) })),
         run: id => run(find(id)),
         available: id => available(find(id)),
         platformMod,

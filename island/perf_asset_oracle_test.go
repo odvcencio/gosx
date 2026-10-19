@@ -209,6 +209,8 @@ func perfLoaderPage(t *testing.T, variant, base string, features []string) (stri
 		}
 		gpu := pair.GPU != "absent"
 		opts.NavigatorGPU = &gpu
+		ready := pair.GPU == "usable"
+		opts.WebGPUAttempted = &ready
 		if set["gpu-only"] {
 			props["backendCaps"] = map[string]any{"capable": []string{"webgpu"}}
 		}

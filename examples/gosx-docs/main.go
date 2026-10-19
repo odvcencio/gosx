@@ -21,6 +21,7 @@ import (
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
 	docshubs "m31labs.dev/gosx/examples/gosx-docs/app/docs/hubs"
 	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
+	"m31labs.dev/gosx/gameboy"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
 	"m31labs.dev/gosx/session"
@@ -148,9 +149,23 @@ func buildDocsApp(root, port string) (*server.App, error) {
 		})
 	})
 	app.SetPublicDir(filepath.Join(root, "public"))
+	gameboy.Install(app)
+	app.Page("GET /demos/blackglass-handheld/pocket.html", func(ctx *server.Context) gosx.Node {
+		ctx.SetNavigationHead(nil)
+		return gameboy.Player(ctx, gameboy.Props{Heading: "FOUND ON BLACKGLASS COAST", CartridgeURL: "/api/blackglass-cartridge", BatteryPrefix: "gosx.blackglass.cartridge.", CheckpointPrefix: "gosx.blackglass.pocket-state.v1."})
+	})
 	if err := mountBlackglassCartridge(app, root); err != nil {
 		return nil, err
 	}
+	app.Mount("GET /api/blackglass-chart.svg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		_, _ = w.Write([]byte(beacon.BlackglassBeachChartSVG()))
+	}))
+	app.API("GET /api/blackglass-experience", func(ctx *server.Context) (any, error) {
+		q := ctx.Request.URL.Query()
+		return beacon.BlackglassBeachExperience(q.Get("view"), q.Get("period")).GoSXProps(), nil
+	})
 	app.API("GET /api/blackglass-view", func(ctx *server.Context) (any, error) {
 		q := ctx.Request.URL.Query()
 		return beacon.BlackglassBeachViewUpdate(q.Get("view"), q.Get("from"), q.Get("period")), nil

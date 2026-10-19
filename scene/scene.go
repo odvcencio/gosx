@@ -101,6 +101,8 @@ type Environment struct {
 // Props is the typed Go-side Scene3D surface. It lowers into the current
 // Scene3D compatibility prop bag while preserving room for a real scene graph.
 type Props struct {
+	ExperienceRef string `json:"experienceRef,omitempty"`
+
 	ProgramRef           string   `json:"-"`
 	Capabilities         []string `json:"-"`
 	RequiredCapabilities []string `json:"-"`
@@ -169,7 +171,13 @@ type Props struct {
 	ControlRotateDirection string  `json:"controlRotateDirection,omitempty"`
 	ControlRotateSpeed     float64 `json:"controlRotateSpeed,omitempty"`
 	// ControlZoom opts into damped wheel, pinch and focused keyboard zoom in all camera modes.
-	ControlZoom *bool `json:"controlZoom,omitempty"`
+	// Optics adds a signal-driven instrument without application JavaScript.
+	Optics        *Optics       `json:"optics,omitempty"`
+	Presentation  *Presentation `json:"presentation,omitempty"`
+	DayCycle      *DayCycle     `json:"dayCycle,omitempty"`
+	Exploration   *Exploration  `json:"-"`
+	MetricsSignal string        `json:"metricsSignal,omitempty"`
+	ControlZoom   *bool         `json:"controlZoom,omitempty"`
 	// ControlPan adds two-finger screen-space panning to ControlZoom. A named
 	// handle also supports pointer drag and arrow keys without taking over
 	// single-pointer object interactions on the scene canvas.
@@ -1967,6 +1975,20 @@ func (p Props) legacyBaseProps() map[string]any {
 	if p.ControlZoom != nil {
 		out["controlZoom"] = *p.ControlZoom
 	}
+	if p.Optics != nil {
+		out["optics"] = p.Optics
+	}
+	if p.Presentation != nil {
+		out["presentation"] = p.Presentation
+	}
+	if p.DayCycle != nil {
+		out["dayCycle"] = p.DayCycle
+	}
+	if p.Exploration != nil {
+		out["exploration"] = p.Exploration.GoSXProps()
+	}
+	setString(out, "metricsSignal", p.MetricsSignal)
+	setString(out, "experienceRef", p.ExperienceRef)
 	if p.ControlPan != nil {
 		out["controlPan"] = *p.ControlPan
 	}

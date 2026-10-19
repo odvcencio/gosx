@@ -76,9 +76,14 @@ type Menu struct {
 // MenuItem is one native menu entry. Separator entries ignore Label, ID, and
 // Submenu. Submenu entries ignore OnClick.
 type MenuItem struct {
+	// Role routes a standard editing action through the macOS responder chain.
+	// Other platforms use OnClick as the fallback when one is supplied.
+	Role MenuRole
 	// Accelerator is a display label in the shortcut column (after a tab on
 	// Windows). It installs no native accelerator table; the page command
-	// registry handles keystrokes, so its chord and this label must agree.
+	// registry handles keystrokes, so its chord and this label must agree. On
+	// macOS a label that reads as a chord, such as "Cmd+N", also becomes the
+	// item's key equivalent (see the package documentation).
 	Accelerator string
 	ID          string
 	Label       string
@@ -89,6 +94,18 @@ type MenuItem struct {
 	OnClick     func()
 }
 
+// MenuRole names standard editing actions performed by the focused native view.
+type MenuRole string
+
+const (
+	MenuRoleUndo      MenuRole = "undo"
+	MenuRoleRedo      MenuRole = "redo"
+	MenuRoleCut       MenuRole = "cut"
+	MenuRoleCopy      MenuRole = "copy"
+	MenuRolePaste     MenuRole = "paste"
+	MenuRoleSelectAll MenuRole = "selectAll"
+)
+
 // MenuPlan is the platform-neutral menu payload produced for tests and native
 // backends. Command IDs are assigned to actionable leaf items.
 type MenuPlan struct {
@@ -98,6 +115,7 @@ type MenuPlan struct {
 
 // MenuPlanItem is one validated menu entry in a MenuPlan.
 type MenuPlanItem struct {
+	Role        MenuRole
 	Accelerator string
 	ID          string
 	Label       string
@@ -194,6 +212,11 @@ func buildMenuPlanItems(items []MenuItem, next *uint16, depth int) ([]MenuPlanIt
 	}
 	out := make([]MenuPlanItem, 0, len(items))
 	for i, item := range items {
+		switch item.Role {
+		case "", MenuRoleUndo, MenuRoleRedo, MenuRoleCut, MenuRoleCopy, MenuRolePaste, MenuRoleSelectAll:
+		default:
+			return nil, fmt.Errorf("%w: menu item %d has unknown role %q", ErrInvalidOptions, i, item.Role)
+		}
 		if strings.ContainsRune(item.ID, '\x00') {
 			return nil, fmt.Errorf("%w: menu item %d id contains NUL", ErrInvalidOptions, i)
 		}
@@ -204,6 +227,7 @@ func buildMenuPlanItems(items []MenuItem, next *uint16, depth int) ([]MenuPlanIt
 			return nil, fmt.Errorf("%w: menu item %d accelerator contains NUL or tab", ErrInvalidOptions, i)
 		}
 		planItem := MenuPlanItem{
+			Role:        item.Role,
 			Accelerator: strings.TrimSpace(item.Accelerator),
 			ID:          strings.TrimSpace(item.ID),
 			Label:       strings.TrimSpace(item.Label),

@@ -4,49 +4,11 @@
 package worklet
 
 import (
-	"bytes"
-	"crypto/sha256"
-	_ "embed"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"path"
-	"time"
 )
 
 const ProcessorName = "gosx-wasm-audio"
-
-//go:embed processor.js
-var source []byte
-
-var digest = fmt.Sprintf("%x", sha256.Sum256(source))
-
-// Path is content-addressed so a cached processor always matches the Go host.
-// Mount Handler under a same-origin prefix and pass that prefix plus Path to
-// HostJS.AddWorkletModule. No inline source, eval, or Blob URL is needed.
-func Path() string { return "worklet/wasm-processor." + digest[:16] + ".js" }
-
-func Source() []byte { return bytes.Clone(source) }
-
-// Handler serves only the versioned processor, including HEAD and ETags.
-func Handler() http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			w.Header().Set("Allow", "GET, HEAD")
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if path.Clean("/"+r.URL.Path) != "/"+Path() {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
-		w.Header().Set("ETag", `"`+digest+`"`)
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		http.ServeContent(w, r, Path(), time.Time{}, bytes.NewReader(source))
-	})
-}
 
 // Backend describes the gosx_audio reactor ABI without teaching the processor
 // an engine's project format. ExportPrefix defaults to "gosx_audio_". Reactors

@@ -18,7 +18,6 @@ import (
 	"m31labs.dev/gosx/internal/filepolicy"
 	"m31labs.dev/gosx/internal/htmlattr"
 	"m31labs.dev/gosx/internal/sceneprobe"
-	"m31labs.dev/gosx/internal/urlpath"
 	"maps"
 	neturl "net/url"
 	"os"
@@ -43,29 +42,30 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
-	fixturePreview                     bool
-	basePath                           string
-	manifest                           *hydrate.Manifest
-	counter                            int
-	bundleID                           string
-	releaseManifestText                bool
-	programDir                         string // directory where island programs are stored
-	programFormat                      string // "json" or "bin"
-	programAssets                      map[string]programAsset
-	wasmExecPath                       string
-	standardGoWASMExecPath             string
-	patchPath                          string
-	bootstrapPath                      string
-	bootstrapLitePath                  string
-	bootstrapRuntimePath               string
-	bootstrapRuntimeConfigured         bool
-	bootstrapFeatureIslandsPath        string
-	bootstrapFeatureEnginesPath        string
-	bootstrapFeatureHubsPath           string
-	bootstrapFeatureControllersPath    string
-	bootstrapControllerInputPath       string
-	bootstrapFeatureScene3dPath        string
-	bootstrapFeatureScene3dCommandPath string
+	fixturePreview                        bool
+	basePath                              string
+	manifest                              *hydrate.Manifest
+	counter                               int
+	bundleID                              string
+	releaseManifestText                   bool
+	programDir                            string // directory where island programs are stored
+	programFormat                         string // "json" or "bin"
+	programAssets                         map[string]programAsset
+	wasmExecPath                          string
+	standardGoWASMExecPath                string
+	patchPath                             string
+	bootstrapPath                         string
+	bootstrapLitePath                     string
+	bootstrapRuntimePath                  string
+	bootstrapRuntimeConfigured            bool
+	bootstrapFeatureIslandsPath           string
+	bootstrapFeatureEnginesPath           string
+	bootstrapFeatureHubsPath              string
+	bootstrapFeatureControllersPath       string
+	bootstrapControllerInputPath          string
+	bootstrapFeatureScene3dPath           string
+	bootstrapFeatureScene3dCommandPath    string
+	bootstrapFeatureScene3dExperiencePath string
 	// bootstrapFeatureScene3dInstanceStreamPath serves the opt-in binary
 	// instance-transform fast path. Advertised unconditionally, exactly like
 	// bootstrapFeatureScene3dCommandPath above: instance-stream-bridge.ts
@@ -269,6 +269,7 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	renderer.bootstrapControllerInputPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-controller-input.js", strings.TrimSpace(runtimeAssets.BootstrapControllerInput.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
 	renderer.bootstrapFeatureScene3dCommandPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-command.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCommand.Hash))
+	renderer.bootstrapFeatureScene3dExperiencePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-experience.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DExperience.Hash))
 	renderer.bootstrapFeatureScene3dInstanceStreamPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-instance-stream.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DInstanceStream.Hash))
 	renderer.bootstrapFeatureScene3dHydratePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hydrate.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHydrate.Hash))
 	renderer.bootstrapFeatureScene3dWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash))
@@ -620,6 +621,14 @@ func (r *Renderer) SetBootstrapFeatureScene3DCommandPath(path string) {
 	r.bootstrapFeatureScene3dCommandPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DExperiencePath overrides the optional experience chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DExperiencePath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dExperiencePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DInstanceStreamPath overrides the lazy Scene3D
 // instance-stream sub-feature chunk URL. Emitted unconditionally as a
 // data-* attribute, the same as SetBootstrapFeatureScene3DCommandPath: there
@@ -653,7 +662,7 @@ func (r *Renderer) SetBootstrapFeatureScene3DWebGLPath(path string) {
 
 // SetBootstrapFeatureScene3DWebGPUPath overrides the async Scene3D WebGPU
 // sub-feature chunk URL. Emitted inline after the main scene3d script tag,
-// gated on navigator.gpu so non-WebGPU browsers skip the download.
+// loaded on demand after Scene3D selects a usable WebGPU backend.
 func (r *Renderer) SetBootstrapFeatureScene3DWebGPUPath(path string) {
 	if strings.TrimSpace(path) == "" {
 		return
@@ -827,6 +836,8 @@ func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, b
 		return r.runtimeAssets.BootstrapFeatureScene3D, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-command.js", r.bootstrapFeatureScene3dCommandPath, r.runtimeAssets.BootstrapFeatureScene3DCommand):
 		return r.runtimeAssets.BootstrapFeatureScene3DCommand, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-experience.js", r.bootstrapFeatureScene3dExperiencePath, r.runtimeAssets.BootstrapFeatureScene3DExperience):
+		return r.runtimeAssets.BootstrapFeatureScene3DExperience, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-instance-stream.js", r.bootstrapFeatureScene3dInstanceStreamPath, r.runtimeAssets.BootstrapFeatureScene3DInstanceStream):
 		return r.runtimeAssets.BootstrapFeatureScene3DInstanceStream, true
 	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-hydrate.js", r.bootstrapFeatureScene3dHydratePath, r.runtimeAssets.BootstrapFeatureScene3DHydrate):
@@ -893,7 +904,7 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 	}
 	target := compatRuntimePath(path)
 	switch target {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-experience.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
 		if path == target {
 			return path + "?v=" + neturl.QueryEscape(hash)
 		}
@@ -1034,6 +1045,7 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapFeatureTextlayoutPath(runtime.BootstrapFeatureTextlayout)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
 	r.SetBootstrapFeatureScene3DCommandPath(runtime.BootstrapFeatureScene3DCommand)
+	r.SetBootstrapFeatureScene3DExperiencePath(runtime.BootstrapFeatureScene3DExperience)
 	r.SetBootstrapFeatureScene3DInstanceStreamPath(runtime.BootstrapFeatureScene3DInstanceStream)
 	r.SetBootstrapFeatureScene3DHydratePath(runtime.BootstrapFeatureScene3DHydrate)
 	r.SetBootstrapFeatureScene3DWebGPUPath(runtime.BootstrapFeatureScene3DWebGPU)
@@ -1370,7 +1382,6 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 
 	var b strings.Builder
 	plan := r.clientRuntimePlan()
-	nonceAttr := cspNonceAttr(nonce)
 	// Preview-mode relay emits an additional script that wires
 	// window.__gosx_relay_* before the bootstrap runs. Emitted FIRST so
 	// the relay's message listener is installed before any cross-frame
@@ -1417,51 +1428,6 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		b.WriteString(r.runtimeScriptAttrs(scene3dPath, nonce))
 		b.WriteString(">\x3c/script>")
 
-		// WebGPU sub-feature: lazy-load only when navigator.gpu exists.
-		// Safari and Firefox-on-most-platforms skip the download
-		// entirely, saving ~55KB gzip / 120KB raw per load. Chromium
-		// browsers fetch it in parallel with the main scene3d chunk so
-		// the scene mount can pick webgpu on the first render. Inlined
-		// rather than added to a manifest loader to keep the HTML byte
-		// cost minimal — the script body is ~190 bytes before gzip.
-		if webgpuPath := r.selectedBootstrapFeaturePath("scene3d-webgpu"); webgpuPath != "" {
-			b.WriteByte('\n')
-			// Gate the sub-chunk load behind DOMContentLoaded so it runs
-			// AFTER the parser-inserted defer scripts (which include the
-			// main bootstrap-feature-scene3d.js). Trying s.async = false
-			// on the dynamically-inserted script element doesn't work
-			// reliably in every Chromium build — the sub-chunk still
-			// races the main bundle and usually wins, firing the
-			// IIFE's early-return guard because __gosx_scene3d_api
-			// isn't defined yet. Waiting for DCL sidesteps the ordering
-			// problem entirely: by the time DCL fires, all parser-
-			// inserted defer scripts have already executed, so the main
-			// scene3d bundle has published its API.
-			//
-			// NB: Go raw-string (backticks) doesn't process \x escapes,
-			// so the closing </script> must come from a double-quoted
-			// string — hence the split. Historical bug from v0.17.16:
-			// using `\x3c/script>` inside a raw-string literal produced
-			// a literal "\x3c/script>" in the HTML, which JS parsed as
-			// a syntax error, silently dropping the entire inline loader.
-			b.WriteString(`<script data-gosx-script="feature-scene3d-webgpu-loader"`)
-			b.WriteString(nonceAttr)
-			b.WriteString(`>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _n=document.currentScript&&(document.currentScript.nonce||document.currentScript.getAttribute('nonce'))||'';var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.type='text/javascript';s.setAttribute('crossorigin','anonymous');s.setAttribute('referrerpolicy','no-referrer');s.dataset.gosxScript='feature-scene3d-webgpu';if(_n){s.nonce=_n;}if(_n){s.setAttribute('nonce',_n);}`)
-			integrity := r.compatRuntimeIntegrity(webgpuPath)
-			if integrity == "" {
-				integrity = sriIntegrity(r.compatRuntimeHash(webgpuPath))
-			}
-			if integrity != "" {
-				b.WriteString(`s.setAttribute('integrity',`)
-				b.WriteString(htmlJSStringLiteral(integrity))
-				b.WriteString(`);`)
-			}
-			b.WriteString(`s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
-			b.WriteString(htmlJSStringLiteral(urlpath.URL(r.basePath, webgpuPath)))
-			b.WriteString(";document.head.appendChild(s);});};")
-			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")
-			b.WriteString("\x3c/script>")
-		}
 	}
 	return gosx.RawHTML(b.String())
 }
@@ -2236,6 +2202,7 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 	}{
 		{"gltf", r.bootstrapFeatureScene3dGLTFPath, true},
 		{"command", r.bootstrapFeatureScene3dCommandPath, true},
+		{"experience", r.bootstrapFeatureScene3dExperiencePath, r.scene3DNeedsExperienceChunk()},
 		{"instance-stream", r.bootstrapFeatureScene3dInstanceStreamPath, true},
 		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
 		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
@@ -2254,6 +2221,15 @@ func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
 			b.WriteString(` data-gosx-scene3d-` + chunk.name + `-url="`)
 			b.WriteString(html.EscapeString(chunk.path))
 			b.WriteByte('"')
+			integrity := r.compatRuntimeIntegrity(chunk.path)
+			if integrity == "" {
+				integrity = sriIntegrity(r.compatRuntimeHash(chunk.path))
+			}
+			if integrity != "" {
+				b.WriteString(` data-gosx-scene3d-` + chunk.name + `-integrity="`)
+				b.WriteString(html.EscapeString(integrity))
+				b.WriteByte('"')
+			}
 		}
 	}
 }
@@ -2496,8 +2472,7 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 	case "scene3d-webgpu":
 		// Paired with "scene3d" — emitted only when the page has a
 		// Scene3D engine AND the WebGPU sub-feature bundle exists.
-		// The inline loader in RenderEntrypoints gates the actual
-		// download on navigator.gpu so Safari / Firefox skip it.
+		// The Scene3D mount selects and loads a usable backend on demand.
 		if !r.scene3DCanUseWebGPU() {
 			return ""
 		}
@@ -2730,7 +2705,7 @@ func (r *Renderer) scene3DNeedsZoomChunk() bool {
 			continue
 		}
 		props := sceneProbe(entry)
-		if props.ControlZoom {
+		if props.ControlZoom || props.HasOptics() || strings.TrimSpace(props.ExperienceRef) != "" {
 			return true
 		}
 	}
@@ -3016,7 +2991,18 @@ func (r *Renderer) scene3DNeedsVesselChunk() bool {
 			continue
 		}
 		props := sceneProbe(entry)
-		if props.Vessel != nil && props.Vessel.NodeID != "" {
+		if strings.TrimSpace(props.ExperienceRef) != "" || (props.Vessel != nil && props.Vessel.NodeID != "") {
+			return true
+		}
+	}
+	return false
+}
+
+// Descriptor-backed worlds resolve their controls before client mounting.
+func (r *Renderer) scene3DNeedsExperienceChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).HasExperience() {
 			return true
 		}
 	}

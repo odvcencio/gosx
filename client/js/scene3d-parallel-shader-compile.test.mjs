@@ -772,6 +772,7 @@ function pointsHarness(h) {
       authoredDrawEntries: 0, authoredDrawInstances: 0, authoredDrawCalls: 0 },
     ensurePointsProgram: () => { throw new Error("authored particles must prepare their own program"); },
   });
+  runSource(sourceBetween(webglSource, "function sceneSelenaUploadScalar", "// Degraded resolver used only"), h.context);
   runSource(sourceBetween(webglSource, "function scenePointsProgramInfo", "// Compile the instanced PBR vertex shader"), h.context);
   runSource(sourceBetween(webglSource, "function failPointsAuthoredGLProgram", "function disposeComputeParticleSystemRecord"), h.context);
   runSource(sourceBetween(webglSource, "function drawPointsEntries(gl, pointsArray", "// Ensure the instanced PBR program"), h.context);

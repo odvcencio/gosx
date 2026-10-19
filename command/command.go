@@ -28,14 +28,18 @@ type Command struct {
 	Group         string `json:"group,omitempty"`
 }
 
-// Action writes a shared signal and/or opens or closes a disclosure selector.
-// At least one of Signal, Open or Close is required unless the command is reserved.
+// Action writes a shared signal, opens or closes a disclosure selector and/or
+// submits a managed form. At least one of Signal, Open, Close or Submit is required unless the command is reserved.
 type Action struct {
 	Signal string `json:"signal,omitempty"`
 	// Value defaults to {id, at} in the browser when absent or null.
 	Value any    `json:"value,omitempty"`
 	Open  string `json:"open,omitempty"`
 	Close string `json:"close,omitempty"`
+	// Submit names a managed form (or a submit button inside one) by CSS selector;
+	// the workbench calls requestSubmit on it, so the submit goes through the
+	// page's managed form path, including the edit queue when it is loaded.
+	Submit string `json:"submit,omitempty"`
 }
 
 // Chord is a parsed keyboard chord. Key holds KeyboardEvent.key with single
@@ -161,8 +165,14 @@ func Validate(cmds []Command) error {
 				return fmt.Errorf("command %q: %w", cmd.ID, err)
 			}
 		}
-		if !cmd.Reserved && cmd.Action.Signal == "" && cmd.Action.Open == "" && cmd.Action.Close == "" {
-			return fmt.Errorf("command %q: action is empty", cmd.ID)
+		if cmd.Action.Submit != "" && strings.TrimSpace(cmd.Action.Submit) == "" {
+			return fmt.Errorf("command %q: submit selector is blank", cmd.ID)
+		}
+		if cmd.Reserved && cmd.Action.Submit != "" {
+			return fmt.Errorf("command %q: reserved commands cannot submit", cmd.ID)
+		}
+		if !cmd.Reserved && cmd.Action.Signal == "" && cmd.Action.Open == "" && cmd.Action.Close == "" && cmd.Action.Submit == "" {
+			return fmt.Errorf("command %q: needs an action", cmd.ID)
 		}
 	}
 	return nil

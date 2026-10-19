@@ -72,6 +72,7 @@ func immutableCacheApp(t *testing.T) (*App, *http.Cookie, []string) {
 		{"bootstrap-feature-textlayout.js", &manifest.Runtime.BootstrapFeatureTextlayout},
 		{"bootstrap-feature-scene3d.js", &manifest.Runtime.BootstrapFeatureScene3D},
 		{"bootstrap-feature-scene3d-command.js", &manifest.Runtime.BootstrapFeatureScene3DCommand},
+		{"bootstrap-feature-scene3d-experience.js", &manifest.Runtime.BootstrapFeatureScene3DExperience},
 		{"bootstrap-feature-scene3d-hydrate.js", &manifest.Runtime.BootstrapFeatureScene3DHydrate},
 		{"bootstrap-feature-scene3d-webgpu.js", &manifest.Runtime.BootstrapFeatureScene3DWebGPU},
 		{"bootstrap-feature-scene3d-webgl.js", &manifest.Runtime.BootstrapFeatureScene3DWebGL},

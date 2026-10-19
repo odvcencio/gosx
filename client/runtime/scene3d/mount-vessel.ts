@@ -39,11 +39,12 @@
     if(props.walk) {walk.surfaces=walk.surfaces||[];walk.surfaces.push(surface);}
     const mount=canvas.closest('[data-gosx-engine="GoSXScene3D"]')||canvas.parentElement;
     const read=()=>helpers.current(base.controller,sceneState.camera,sceneState._scrollCamera);
+    let navigation: any = null;
     const controller={get zoomScale(){return base.controller.zoomScale||1;},set zoomScale(value: number){base.controller.zoomScale=value;},mode:'first-person',touched:false,get active(){return state.mode==='sailing'||!!base.controller?.active;},currentCamera:()=>state.mode==='sailing'&&!state.detached?state.camera||read():read(),
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
       syncCamera:camera=>base.controller?.syncCamera?.(camera),
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-      applyCamera:camera=>{if(state.mode==='sailing'&&props.vessel.navigation){state.detached=true;window.__gosx_scene3d_vessel_input.clear(controls.input);suspend(false);}else leave();base.controller?.applyCamera?.(camera);}};
+      applyCamera:camera=>{if(state.mode==='sailing'&&props.vessel.navigation){state.detached=true;window.__gosx_scene3d_vessel_input.clear(controls.input);suspend(false);navigation?.publish();}else leave();base.controller?.applyCamera?.(camera);}};
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     function suspend(value) {
       if(base.controller&&base.controller.setSuspended)base.controller.setSuspended(value);
@@ -66,7 +67,7 @@
       base.controller?.applyCamera?.(Object.assign({},read(),site.position,{rotationX:0,rotationY:0}));
       return true;
     }
-    const navigation=props.vessel.navigation?window.__gosx_scene3d_vessel_navigation.setup(mount,state,props.vessel,changeHelm,helpers.schedule,land):null;
+    navigation=props.vessel.navigation?window.__gosx_scene3d_vessel_navigation.setup(mount,state,props.vessel,changeHelm,helpers.schedule,land,helpers):null;
     if(base.bindReset)base.bindReset(reset);
     sceneState._gosxMotionController=controller;
     const wake=window.__gosx_scene3d_vessel_wake&&props.vessel.wake!==false?window.__gosx_scene3d_vessel_wake.create(sceneState,helpers,props.vessel):null;

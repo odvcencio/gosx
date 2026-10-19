@@ -2,7 +2,7 @@
 
 A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.57.15**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.17**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -603,6 +603,8 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 [Scene3D particle bursts](docs/scene3d-particle-bursts.md) start finite event effects with typed Go emitters and automatic browser cleanup.
 
 [Scene3D timelines](docs/scene3d-timeline.md) sequence object and camera tweens in Go, with seekable browser playback and reduced-motion settling.
+
+[Shared motion and shader surfaces](docs/motion-transport.md) coordinate HTML, cameras, uniforms and Selena time from Go, with typed playback controls and the same material in 2D and 3D.
 
 [Text3D](docs/scene3d-text.md) draws Go-authored scores and labels on world-space texture planes.
 
@@ -1358,7 +1360,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.57.15**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.17**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 
