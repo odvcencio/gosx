@@ -501,6 +501,86 @@ test("Scene3D WebGL retained meshes upload static attributes once across animate
   assert.equal(dirtyStats.cacheEntries, 1);
 });
 
+function worldUploadHarness() {
+  const h = createWebGLRendererForPost({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const object = retainedTriangle({ spinZ: 0,
+    customVertex: "attribute vec3 a_position; uniform mat4 u_mvp; void main() { gl_Position = u_mvp * vec4(a_position, 1.0); }",
+    customFragment: "precision mediump float; void main() { gl_FragColor = vec4(1.0); }",
+  }, vm.runInContext("Float32Array", h.env.context));
+  const gl = h.canvas.getContext("webgl2");
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  h.env.document.body.appendChild(h.canvas);
+  return { ...h, api, object, gl, draw: b => h.renderer.render(b, viewport) };
+}
+
+test("world-baked WebGL attributes upload once, stay private, and refresh on pose/revision edits", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  const U32 = vm.runInContext("Uint32Array", h.env.context);
+  h.object.vertices.indices = new U32([2, 0, 1]);
+  const first = renderBundle(h.api, h.object, 0);
+  const mesh = first.meshObjects[0], upload = mesh._worldBakedUpload;
+  assert.equal(mesh.directVertices, undefined, "authored shader world-space semantics stay unchanged");
+  assert.ok(upload && upload.resident);
+  assert.equal(Object.keys(mesh).includes("_worldBakedUpload"), false);
+  assert.equal(JSON.stringify(first).includes("_worldBakedUpload"), false);
+  const at = h.gl.ops.length;
+  h.draw(first);
+  const staticOps = h.gl.ops.slice(at).filter(op => op[0] === "bufferData" && op[4] === h.gl.STATIC_DRAW);
+  assert.ok(staticOps.length > 0);
+  assert.ok(staticOps.some(op => JSON.stringify(h.gl.bufferUploads.get(op[2])) === JSON.stringify(Array.from(first.worldMeshPositions))),
+    "the uploaded indexed triangle soup matches the ordinary world-space stream exactly");
+  const initial = h.renderer.diagnostics().retainedGeometry;
+  for (let frame = 1; frame < 15; frame++) h.draw(renderBundle(h.api, h.object, frame));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, initial.uploadCalls);
+  h.object.color = "#804020";
+  h.draw(renderBundle(h.api, h.object, 15));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, initial.uploadCalls, "appearance edits keep geometry buffers warm");
+  const priorPosition = first.worldMeshPositions[0];
+  h.object.x += 1;
+  h.draw(renderBundle(h.api, h.object, 16));
+  assert.equal(upload.resident, false, "an obsolete pose cannot retain upload eligibility");
+  assert.equal(first.worldMeshPositions[0], priorPosition, "held frame storage remains independent");
+  const moved = h.renderer.diagnostics().retainedGeometry;
+  assert.ok(moved.uploadCalls > initial.uploadCalls);
+  assert.ok(moved.retirements > initial.retirements);
+  assert.equal(moved.liveBytes, initial.liveBytes, "old GPU attributes retire in the next submitted frame");
+  h.object.vertices.positions[0] -= 0.25;
+  h.object.vertices.revision++;
+  h.draw(renderBundle(h.api, h.object, 17));
+  assert.ok(h.renderer.diagnostics().retainedGeometry.uploadCalls > moved.uploadCalls);
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, initial.liveBytes);
+});
+
+test("mutable world-baked geometry keeps streaming current attributes", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  h.object.vertices.immutable = false;
+  const first = renderBundle(h.api, h.object, 0);
+  assert.equal(first.meshObjects[0]._worldBakedUpload, undefined);
+  h.draw(first);
+  const initial = h.gl.ops.filter(op => op[0] === "bufferData" && op[4] === h.gl.DYNAMIC_DRAW).length;
+  h.object.vertices.positions[0] -= 1;
+  const next = renderBundle(h.api, h.object, 1); h.draw(next);
+  assert.notEqual(next.worldMeshPositions[0], first.worldMeshPositions[0]);
+  assert.ok(h.gl.ops.filter(op => op[0] === "bufferData" && op[4] === h.gl.DYNAMIC_DRAW).length > initial);
+  assert.equal(h.renderer.diagnostics().retainedGeometry.cacheEntries, 0);
+});
+
+test("evicted world snapshots fall back safely when a held frame is rendered again", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  const held = renderBundle(h.api, h.object, 0); h.draw(held);
+  const upload = held.meshObjects[0]._worldBakedUpload;
+  const initial = h.renderer.diagnostics().retainedGeometry.uploadCalls;
+  for (let frame = 0; frame < 10; frame++) renderBundle(h.api, [], frame);
+  assert.equal(upload.resident, false);
+  const start = h.gl.ops.length;
+  h.draw(held);
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, initial, "an evicted snapshot uses ordinary streaming");
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0);
+  assert.ok(h.gl.ops.slice(start).some(op => op[0] === "bufferData" && op[4] === h.gl.DYNAMIC_DRAW &&
+    JSON.stringify(h.gl.bufferUploads.get(op[2])) === JSON.stringify(Array.from(held.worldMeshPositions))));
+});
+
 for (const fixture of [
   { label: "source", fresh: true },
   { label: "generated", fresh: false },
