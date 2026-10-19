@@ -5138,6 +5138,26 @@
     builder.length = offset + 4;
   }
 
+  function sceneAppendFloat32RepeatedQuad(builder, vertexCount, first, second, third, fourth) {
+    const length = Math.max(0, Math.floor(sceneNumber(vertexCount, 0))) * 4;
+    if (length <= 0) return;
+    const offset = builder.length;
+    const buffer = builder.buffer;
+    buffer[offset] = first;
+    buffer[offset + 1] = second;
+    buffer[offset + 2] = third;
+    buffer[offset + 3] = fourth;
+    // Seed one finalized Float32 tuple, then copy its repeated pattern in
+    // native buffer operations. Each bundle still owns independent storage.
+    let filled = 4;
+    while (filled < length) {
+      const count = Math.min(filled, length - filled);
+      buffer.copyWithin(offset + filled, offset, offset + count);
+      filled += count;
+    }
+    builder.length = offset + length;
+  }
+
   function sceneAppendFloat32Stream(builder, values) {
     builder.buffer.set(values, builder.length);
     builder.length += values.length;
@@ -6579,17 +6599,6 @@
     if (bundle && bundle.retainedGeometryTelemetry) {
       bundle.retainedGeometryTelemetry.fallback += 1;
     }
-    // World-baked fallback attributes are consumed as scalars within this
-    // invocation. Keep the scratch lifetime local to the mesh: twelve fixed
-    // objects/arrays replace eighteen transient objects per triangle without
-    // sharing mutable state between independent meshes or bundle builds.
-    const normals = [{ x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }];
-    const uvs = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
-    const tangents = [
-      { x: 1, y: 0, z: 0, w: 1 },
-      { x: 1, y: 0, z: 0, w: 1 },
-      { x: 1, y: 0, z: 0, w: 1 },
-    ];
     const flatMeshColor = emitWireSegments ? null : sceneColorRGBA(material && material.color, [0.55, 0.88, 1, 1]);
     const wireVertexOffset = bundle.worldPositions.length / 3;
     const meshVertexOffset = bundle.worldMeshPositions.length / 3;
@@ -6627,16 +6636,23 @@
       sceneAppendFloat32Stream(bundle.worldMeshNormals, cachedGeometry.normals);
       sceneAppendFloat32Stream(bundle.worldMeshUVs, cachedGeometry.uvs);
       sceneAppendFloat32Stream(bundle.worldMeshTangents, cachedGeometry.tangents);
-      // Colour belongs to the current material, not the geometry cache.
-      for (let index = 0; index < cachedGeometry.vertexCount; index += 1) {
-        sceneAppendFloat32Quad(bundle.worldMeshColors, flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
-      }
       meshVertexCount = cachedGeometry.vertexCount;
       bounds = {
         minX: cachedGeometry.bounds.minX, minY: cachedGeometry.bounds.minY, minZ: cachedGeometry.bounds.minZ,
         maxX: cachedGeometry.bounds.maxX, maxY: cachedGeometry.bounds.maxY, maxZ: cachedGeometry.bounds.maxZ,
       };
     } else {
+      // World-baked fallback attributes are consumed as scalars within this
+      // invocation. Keep the scratch lifetime local to the mesh: twelve fixed
+      // objects/arrays replace eighteen transient objects per triangle without
+      // sharing mutable state between independent meshes or bundle builds.
+      const normals = [{ x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }, { x: 0, y: 1, z: 0 }];
+      const uvs = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 0, y: 0 }];
+      const tangents = [
+        { x: 1, y: 0, z: 0, w: 1 },
+        { x: 1, y: 0, z: 0, w: 1 },
+        { x: 1, y: 0, z: 0, w: 1 },
+      ];
       const bakeLinearState = sceneObjectMeshBakeLinearState(object, modelMatrix);
       const reverseWinding = bakeLinearState[9] < 0;
       const capture = cacheEligible && sceneCanCaptureWorldBakedGeometry(bakedVertexCount)
@@ -6701,7 +6717,7 @@
           const tangent = tangents[index];
           const color = lighting ? lighting[index] : flatMeshColor;
           sceneAppendFloat32Triple(bundle.worldMeshPositions, point.x, point.y, point.z);
-          sceneAppendFloat32Quad(bundle.worldMeshColors, color[0], color[1], color[2], color[3]);
+          if (lighting) sceneAppendFloat32Quad(bundle.worldMeshColors, color[0], color[1], color[2], color[3]);
           sceneAppendFloat32Triple(bundle.worldMeshNormals, normal.x, normal.y, normal.z);
           sceneAppendFloat32Pair(bundle.worldMeshUVs, uv.x, uv.y);
           sceneAppendFloat32Quad(bundle.worldMeshTangents, tangent.x, tangent.y, tangent.z, tangent.w);
@@ -6741,6 +6757,12 @@
       }
     }
 
+    // Flat color follows the live material on both cold bakes and cache hits.
+    // Wire lighting remains per vertex; ordinary fills need one repeated tuple.
+    if (!emitWireSegments) {
+      sceneAppendFloat32RepeatedQuad(bundle.worldMeshColors, meshVertexCount,
+        flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
+    }
     if (!bounds || meshVertexCount <= 0) {
       return;
     }
