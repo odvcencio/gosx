@@ -61,6 +61,9 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Post-effect canvas AA and its display-space fallback retain main's shadow
 // buffer reuse. Only seven exhausted bundle/route/renderer-set targets move to
 // measured minima; size allowances and every other target stay fixed.
+// Enhanced read forms retain repeated controls and submitter values. Only the
+// exhausted monolith gzip target moves by 16 bytes to the measured minimum;
+// size allowances and every other target remain fixed.
 const budgets = [
   // Input-driven tracks and scene binding adapters remain optional.
   { file: "bootstrap-feature-motion-track.js", raw: 3500, gzip: 1500, brotli: 1350 },
@@ -817,7 +820,7 @@ const budgets = [
     // Native touch deduplication and the cross-chunk bridge measure 1969984 raw / 544188 gzip; targets use only the exhausted minima under unchanged allowances.
     // Typed night lighting and held-signal deduplication: only the exhausted gzip minimum moves; allowances remain unchanged.
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
-    file: "bootstrap.js", raw: 1904448, gzip: 528824,
+    file: "bootstrap.js", raw: 1904448, gzip: 528840,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 432800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
