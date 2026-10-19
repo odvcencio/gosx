@@ -459,7 +459,9 @@ func TestCompatibilityAuditReceiptAndReconciliation(t *testing.T) {
 	if len(audit.Reconciliation.AddedSinceAnchor) != 0 || len(audit.Reconciliation.RemovedSinceAnchor) != 0 {
 		t.Fatalf("anchor/current changed unexpectedly: %+v", audit.Reconciliation)
 	}
-	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}
+	// WebGPU requests now share sceneGatedFeaturePromises in script-loader.ts;
+	// its redundant window promise cache is retired from the historical receipt.
+	wantReceiptOnly := []string{"__gosx_", "__gosx_capability_probe__", "__gosx_crdt_apply", "__gosx_handled", "__gosx_motion_mixer_", "__gosx_scene3d_webgpu_feature_promise", "__gosx_surface_event", "__gosx_video_prefs_probe__", "__gosx_video_sync_"}
 	// __gosx_manifest: the memoized manifest parse published by loadManifest
 	// (see 10-runtime-scene-utils.ts) so other bundles reuse the parse instead
 	// of re-reading the DOM text.
