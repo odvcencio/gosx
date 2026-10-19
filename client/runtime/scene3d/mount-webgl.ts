@@ -1685,19 +1685,7 @@
     if (!sceneHasNavigatorWebGPU()) {
       return Promise.resolve(null);
     }
-    if (window.__gosx_scene3d_webgpu_api) {
-      return Promise.resolve(window.__gosx_scene3d_webgpu_api);
-    }
-    if (window.__gosx_scene3d_webgpu_feature_promise) {
-      return window.__gosx_scene3d_webgpu_feature_promise;
-    }
-    const promise = ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
-    window.__gosx_scene3d_webgpu_feature_promise = promise;
-    return promise;
-  }
-
-  async function settlePreferredWebGPUBackend(props, capability) {
-    await ensurePreferredWebGPUBackend(props, capability);
+    return ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
   }
 
   async function ensurePreferredWebGPUBackend(props, capability) {
@@ -1708,14 +1696,14 @@
       return false;
     }
     try {
-      var api = await ensureWebGPUFeatureLoaded();
-      if (!api) {
+      // The probe is in the scene core, so failed adapter/device/context
+      // checks can fall back without fetching the unused renderer chunk.
+      if (typeof window.__gosx_scene3d_webgpu_probe_ready === "function"
+        && !(await window.__gosx_scene3d_webgpu_probe_ready())) {
         return false;
       }
-      if (typeof window.__gosx_scene3d_webgpu_probe_ready === "function") {
-        await window.__gosx_scene3d_webgpu_probe_ready();
-      }
-      return typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+      await ensureWebGPUFeatureLoaded();
+      return sceneWebGPUAvailable();
     } catch (error) {
       console.warn("[gosx] failed to prepare Scene3D WebGPU backend:", error && error.message ? error.message : error);
       return false;
@@ -1806,7 +1794,7 @@
   }
 
   // settlePreferredWebGLBackend is the WebGL sibling of
-  // settlePreferredWebGPUBackend. Await it before createSceneRenderer so a
+  // ensurePreferredWebGPUBackend. Await it before createSceneRenderer so a
   // page that draws with WebGL has the chunk, the registry entry and the water
   // runtime in place on the very first render.
   //
