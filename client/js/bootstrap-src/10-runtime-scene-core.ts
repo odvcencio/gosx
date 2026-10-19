@@ -5680,6 +5680,8 @@
 	  function sceneReleaseWorldBakedGeometryCacheRecord(record) {
 	    if (!record || record.resident !== true) return;
 	    record.resident = false;
+	    if (record.upload) record.upload.resident = false;
+	    record.upload = null;
 	    _sceneWorldBakedGeometryResidency.delete(record);
 	    sceneWorldBakedGeometryCacheBytes = Math.max(0,
 	      sceneWorldBakedGeometryCacheBytes - Math.max(0, sceneNumber(record.byteLength, 0)));
@@ -5776,6 +5778,14 @@
 	      bounds: {
 	        minX: bounds.minX, minY: bounds.minY, minZ: bounds.minZ,
 	        maxX: bounds.maxX, maxY: bounds.maxY, maxZ: bounds.maxZ,
+	      },
+	      // Share finalized attributes without adding vertex storage. The GPU
+	      // view expires with this bounded CPU cache record's residency.
+	      upload: {
+	        resident: true,
+	        retainedGeometry: true,
+	        geometryRevision: 0,
+	        vertices: Object.assign({ count: payload.positions.length / 3 }, payload),
 	      },
 	    };
 	    _sceneWorldBakedGeometryCache.set(object, record);
@@ -6799,10 +6809,17 @@
         vertexCount: wireVertexCount,
       }));
     }
-    bundle.meshObjects.push(Object.assign({}, shared, {
+    const meshRecord = Object.assign({}, shared, {
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
-    }));
+    });
+    if (cachedGeometry && cachedGeometry.upload) {
+      // A cold pose keeps streaming. Admit only an unchanged cache hit so
+      // animated meshes do not allocate replacement GPU buffers each frame.
+      // Keep GPU bookkeeping out of exported/serialized bundle snapshots.
+      Object.defineProperty(meshRecord, "_worldBakedUpload", { value: cachedGeometry.upload });
+    }
+    bundle.meshObjects.push(meshRecord);
     bundle.worldBakedMeshObjectCount += 1;
     bundle.worldBakedMeshVertexCount += meshVertexCount;
   }
