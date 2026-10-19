@@ -13,7 +13,7 @@ function importedMeshRuntime(options = {}) {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   const source = freshFeatureBundleSource("scene3d").replace(
     "window.__gosx_scene3d_available = true;",
-    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, updatePoses: sceneUpdateRigidInstancePoses, holdLoad: function(src) { const original = loadSceneModelAsset; let release; const gate = new Promise(resolve => { release = resolve; }); loadSceneModelAsset = async function(value, options) { if (value === src) await gate; return original(value, options); }; return release; }, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; }, fallbackReference: function(object,time) { const vertexNormal=function(vertices,index){const offset=index*3;if(!vertices||!vertices.normals||vertices.normals.length<offset+3)return{x:0,y:1,z:0};return{x:sceneNumber(vertices.normals[offset],0),y:sceneNumber(vertices.normals[offset+1],1),z:sceneNumber(vertices.normals[offset+2],0)};}, vertexUV=function(vertices,index){const offset=index*2;if(!vertices||!vertices.uvs||vertices.uvs.length<offset+2)return{x:0,y:0};return{x:sceneNumber(vertices.uvs[offset],0),y:sceneNumber(vertices.uvs[offset+1],0)};}, vertexTangent=function(vertices,index){const offset=index*4;if(!vertices||!vertices.tangents||vertices.tangents.length<offset+4)return{x:1,y:0,z:0,w:1};return{x:sceneNumber(vertices.tangents[offset],1),y:sceneNumber(vertices.tangents[offset+1],0),z:sceneNumber(vertices.tangents[offset+2],0),w:sceneNumber(vertices.tangents[offset+3],1)};}, normalize=function(point){const x=sceneNumber(point&&point.x,0),y=sceneNumber(point&&point.y,0),z=sceneNumber(point&&point.z,0),length=Math.sqrt(x*x+y*y+z*z);return length<=.000001?{x:0,y:1,z:0}:{x:x/length,y:y/length,z:z/length};}, worldNormal=function(vertices,index,normalTransform){const normal=vertexNormal(vertices,index);return normalize(sceneMatrixTransformInto(normal,normalTransform,normal.x,normal.y,normal.z,3,false));}, worldTangent=function(vertices,index,modelMatrix,normal,orientation){const tangent=vertexTangent(vertices,index);sceneMatrixTransformInto(tangent,modelMatrix,tangent.x,tangent.y,tangent.z,4,false);let x=tangent.x,y=tangent.y,z=tangent.z;const normalDot=x*normal.x+y*normal.y+z*normal.z;x-=normal.x*normalDot;y-=normal.y*normalDot;z-=normal.z*normalDot;let length=Math.sqrt(x*x+y*y+z*z);if(length<=.000001){if(Math.abs(normal.x)<=Math.abs(normal.y)&&Math.abs(normal.x)<=Math.abs(normal.z)){x=0;y=-normal.z;z=normal.y;}else if(Math.abs(normal.y)<=Math.abs(normal.z)){x=normal.z;y=0;z=-normal.x;}else{x=-normal.y;y=normal.x;z=0;}length=Math.max(.000001,Math.sqrt(x*x+y*y+z*z));}return{x:x/length,y:y/length,z:z/length,w:tangent.w*orientation};}, vertices=object.vertices, matrix=sceneObjectModelMatrix(object,time||0), linear=sceneObjectMeshBakeLinearState(object,matrix), indices=vertices.indices instanceof Uint32Array&&vertices.indices.length>=3&&vertices.indices.length%3===0?vertices.indices:null, count=indices?indices.length:vertices.count, normals=[],uvs=[],tangents=[];for(let tri=0;tri+2<count;tri+=3){const a=indices?indices[tri]:tri,b=indices?indices[tri+1]:tri+1,c=indices?indices[tri+2]:tri+2,order=linear[9]<0?[a,c,b]:[a,b,c];for(const source of order){const normal=worldNormal(vertices,source,linear),uv=vertexUV(vertices,source),tangent=worldTangent(vertices,source,matrix,normal,linear[9]);normals.push(normal.x,normal.y,normal.z);uvs.push(uv.x,uv.y);tangents.push(tangent.x,tangent.y,tangent.z,tangent.w);}}return{normals,uvs,tangents};}, countFallbackAttributeHelpers: function() { const counts={allocating:0,normalInto:0,worldNormalInto:0,uvInto:0,tangentInto:0,worldTangentInto:0,normalizeInto:0}; for (const name of ['sceneMeshVertexNormal','sceneMeshWorldNormal','sceneMeshVertexUV','sceneMeshVertexTangent','sceneMeshWorldTangent']) { const original=eval(name); eval(name+'=function(...args){counts.allocating++;return original(...args);}'); } for (const pair of [['sceneMeshVertexNormalInto','normalInto'],['sceneMeshWorldNormalInto','worldNormalInto'],['sceneMeshVertexUVInto','uvInto'],['sceneMeshVertexTangentInto','tangentInto'],['sceneMeshWorldTangentInto','worldTangentInto'],['sceneNormalizeDirectionInto','normalizeInto']]) { const original=eval(pair[0]); eval(pair[0]+'=function(...args){counts[pair[1]]++;return original(...args);}'); } return function(){return Object.assign({},counts);}; }, countStreamAllocations: function() { const original=sceneReserveFloat32Builder; let allocations=0,copiedFloats=0; sceneReserveFloat32Builder=function(builder,count) { const before=builder.buffer,length=builder.length; original(builder,count); if(before!==builder.buffer){allocations++;if(before)copiedFloats+=length;} }; return function(){return{allocations,copiedFloats};}; }, floatBuilder: { create: sceneCreateFloat32Builder, reserve: sceneReserveFloat32Builder, append2: sceneAppendFloat32Pair, append3: sceneAppendFloat32Triple, append4: sceneAppendFloat32Quad, finish: sceneFinishFloat32Builder }, worldBakeCache: sceneWorldBakedGeometryCacheDiagnostics }; window.__gosx_scene3d_available = true;",
+    "window.__meshTest = { countVertexCopies: function() { const original=sceneNormalizeMeshVertexData; let count=0; sceneNormalizeMeshVertexData=function(value) { if(value && value.positions && value.positions.length) count++; return original(value); }; return function(){return count;}; }, countVertexTransforms: function() { const original=sceneModelTransformMeshFloats; let count=0; sceneModelTransformMeshFloats=function(...args) { count++; return original(...args); }; return function(){return count;}; }, countStages: function() { const original=sceneStageModelHydration; let count=0; sceneStageModelHydration=async function(...args) { count++; return original(...args); }; return function(){return count;}; }, countMembershipWork: function() { const expand=sceneInstancedGLBModelsFromBatches, clone=sceneCloneHydrationModel, key=sceneRigidInstanceHydrationKey; let expansions=0, clones=0, keyIDs=[]; sceneInstancedGLBModelsFromBatches=function(...args){expansions++;return expand(...args);}; sceneCloneHydrationModel=function(...args){clones++;return clone(...args);}; sceneRigidInstanceHydrationKey=function(state,model,...args){keyIDs.push(String(model&&model.id||''));return key(state,model,...args);}; return function(){return {expansions:expansions,clones:clones,keys:keyIDs.length,keyIDs:keyIDs.slice()};}; }, countMaterialInputComparisons: function() { const original=sceneMaterialInputEqual; let count=0; sceneMaterialInputEqual=function(...args){count++;return original(...args);}; return function(){return count;}; }, materialProfile: sceneObjectMaterialProfile, resolveUniforms: sceneResolveMaterialUniforms, prepare: prepareScene, hydrate: hydrateSceneStateModels, updatePoses: sceneUpdateRigidInstancePoses, holdLoad: function(src) { const original = loadSceneModelAsset; let release; const gate = new Promise(resolve => { release = resolve; }); loadSceneModelAsset = async function(value, options) { if (value === src) await gate; return original(value, options); }; return release; }, normalize: normalizeSceneModel, instantiate: sceneInstantiateModelObject, transform: sceneApplyStaticModelObjectTransform, failLoad: function(src) { const original=loadSceneModelAsset; loadSceneModelAsset=async function(path,...args) { if(path===src) throw new Error('injected stage failure'); return original(path,...args); }; }, countMatrices: function() { const original = sceneObjectModelMatrix; let count = 0; sceneObjectModelMatrix = function(object, time) { count++; return original(object, time); }; return function() { return count; }; }, fallbackReference: function(object,time) { const vertexNormal=function(vertices,index){const offset=index*3;if(!vertices||!vertices.normals||vertices.normals.length<offset+3)return{x:0,y:1,z:0};return{x:sceneNumber(vertices.normals[offset],0),y:sceneNumber(vertices.normals[offset+1],1),z:sceneNumber(vertices.normals[offset+2],0)};}, vertexUV=function(vertices,index){const offset=index*2;if(!vertices||!vertices.uvs||vertices.uvs.length<offset+2)return{x:0,y:0};return{x:sceneNumber(vertices.uvs[offset],0),y:sceneNumber(vertices.uvs[offset+1],0)};}, vertexTangent=function(vertices,index){const offset=index*4;if(!vertices||!vertices.tangents||vertices.tangents.length<offset+4)return{x:1,y:0,z:0,w:1};return{x:sceneNumber(vertices.tangents[offset],1),y:sceneNumber(vertices.tangents[offset+1],0),z:sceneNumber(vertices.tangents[offset+2],0),w:sceneNumber(vertices.tangents[offset+3],1)};}, normalize=function(point){const x=sceneNumber(point&&point.x,0),y=sceneNumber(point&&point.y,0),z=sceneNumber(point&&point.z,0),length=Math.sqrt(x*x+y*y+z*z);return length<=.000001?{x:0,y:1,z:0}:{x:x/length,y:y/length,z:z/length};}, worldNormal=function(vertices,index,normalTransform){const normal=vertexNormal(vertices,index);return normalize(sceneMatrixTransformInto(normal,normalTransform,normal.x,normal.y,normal.z,3,false));}, worldTangent=function(vertices,index,modelMatrix,normal,orientation){const tangent=vertexTangent(vertices,index);sceneMatrixTransformInto(tangent,modelMatrix,tangent.x,tangent.y,tangent.z,4,false);let x=tangent.x,y=tangent.y,z=tangent.z;const normalDot=x*normal.x+y*normal.y+z*normal.z;x-=normal.x*normalDot;y-=normal.y*normalDot;z-=normal.z*normalDot;let length=Math.sqrt(x*x+y*y+z*z);if(length<=.000001){if(Math.abs(normal.x)<=Math.abs(normal.y)&&Math.abs(normal.x)<=Math.abs(normal.z)){x=0;y=-normal.z;z=normal.y;}else if(Math.abs(normal.y)<=Math.abs(normal.z)){x=normal.z;y=0;z=-normal.x;}else{x=-normal.y;y=normal.x;z=0;}length=Math.max(.000001,Math.sqrt(x*x+y*y+z*z));}return{x:x/length,y:y/length,z:z/length,w:tangent.w*orientation};}, vertices=object.vertices, matrix=sceneObjectModelMatrix(object,time||0), linear=sceneObjectMeshBakeLinearState(object,matrix), indices=vertices.indices instanceof Uint32Array&&vertices.indices.length>=3&&vertices.indices.length%3===0?vertices.indices:null, count=indices?indices.length:vertices.count, normals=[],uvs=[],tangents=[];for(let tri=0;tri+2<count;tri+=3){const a=indices?indices[tri]:tri,b=indices?indices[tri+1]:tri+1,c=indices?indices[tri+2]:tri+2,order=linear[9]<0?[a,c,b]:[a,b,c];for(const source of order){const normal=worldNormal(vertices,source,linear),uv=vertexUV(vertices,source),tangent=worldTangent(vertices,source,matrix,normal,linear[9]);normals.push(normal.x,normal.y,normal.z);uvs.push(uv.x,uv.y);tangents.push(tangent.x,tangent.y,tangent.z,tangent.w);}}return{normals,uvs,tangents};}, countFallbackAttributeHelpers: function() { const counts={allocating:0,normalInto:0,worldNormalInto:0,uvInto:0,tangentInto:0,worldTangentInto:0,normalizeInto:0}; for (const name of ['sceneMeshVertexNormal','sceneMeshWorldNormal','sceneMeshVertexUV','sceneMeshVertexTangent','sceneMeshWorldTangent']) { const original=eval(name); eval(name+'=function(...args){counts.allocating++;return original(...args);}'); } for (const pair of [['sceneMeshVertexNormalInto','normalInto'],['sceneMeshWorldNormalInto','worldNormalInto'],['sceneMeshVertexUVInto','uvInto'],['sceneMeshVertexTangentInto','tangentInto'],['sceneMeshWorldTangentInto','worldTangentInto'],['sceneNormalizeDirectionInto','normalizeInto']]) { const original=eval(pair[0]); eval(pair[0]+'=function(...args){counts[pair[1]]++;return original(...args);}'); } return function(){return Object.assign({},counts);}; }, countStreamAllocations: function() { const original=sceneReserveFloat32Builder; let allocations=0,copiedFloats=0; sceneReserveFloat32Builder=function(builder,count) { const before=builder.buffer,length=builder.length; original(builder,count); if(before!==builder.buffer){allocations++;if(before)copiedFloats+=length;} }; return function(){return{allocations,copiedFloats};}; }, floatBuilder: { create: sceneCreateFloat32Builder, reserve: sceneReserveFloat32Builder, append2: sceneAppendFloat32Pair, append3: sceneAppendFloat32Triple, append4: sceneAppendFloat32Quad, repeat4: sceneAppendFloat32RepeatedQuad, finish: sceneFinishFloat32Builder }, worldBakeCache: sceneWorldBakedGeometryCacheDiagnostics }; window.__gosx_scene3d_available = true;",
   );
   runScript(source, env.context, "bootstrap-feature-scene3d.js");
   return env;
@@ -96,6 +96,30 @@ test("world-mesh typed builder grows geometrically and finalizes exact owned sto
   assert.equal(builderAPI.finish(exact), exactStorage, "exact capacity needs no final copy");
 });
 
+test("repeated world colors preserve scalar Float32 output, offsets and independent frames", () => {
+  const env = importedMeshRuntime();
+  const api = env.context.__meshTest.floatBuilder;
+  const F32 = vm.runInContext("Float32Array", env.context);
+  for (const count of [0, 1, 3, 17, 4097]) {
+    const builder = api.create();
+    api.reserve(builder, (count + 2) * 4);
+    api.append4(builder, .1, .2, .3, .4);
+    const color = [1 / 3, -0, NaN, Infinity];
+    api.repeat4(builder, count, ...color);
+    api.append4(builder, 9, 8, 7, 6);
+    const actual = api.finish(builder);
+    const expected = new F32((count + 2) * 4);
+    expected.set([.1, .2, .3, .4]);
+    for (let i = 0; i < count; i++) expected.set(color, (i + 1) * 4);
+    expected.set([9, 8, 7, 6], (count + 1) * 4);
+    assert.deepEqual(actual, expected, "same finalized attributes as scalar appends: " + count);
+    const before = actual.slice();
+    api.reserve(builder, 4);
+    api.repeat4(builder, 1, 99, 98, 97, 96);
+    assert.deepEqual(actual, before, "later frames cannot overwrite completed colors");
+  }
+});
+
 test("immutable authored-shader world bake reuses exact finalized attributes without caching live routing", () => {
   const env = importedMeshRuntime();
   const object = immutableAuthoredShaderTriangle(env, { customUniforms: { pulse: .25 } });
@@ -152,7 +176,7 @@ test("immutable authored-shader world bake reuses exact finalized attributes wit
   assert.notDeepEqual(Array.from(second.worldMeshColors), Array.from(first.worldMeshColors),
     "current material color must remain outside the geometry cache");
   assert.deepEqual({ ...env.context.__meshTest.worldBakeCache() }, {
-    entries: 1, bytes: 144, maxBytes: 2 * 1024 * 1024, epoch: 2,
+    entries: 1, bytes: 144, maxBytes: 8 * 1024 * 1024, epoch: 2,
   });
 });
 
@@ -284,37 +308,65 @@ test("mutable, dirty, and wire authored-shader meshes never enter the world-bake
   }
 });
 
+function largeWorldBakedVertices(env, vertexCount) {
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const positions = new F32(vertexCount * 3);
+  const normals = new F32(vertexCount * 3);
+  const uvs = new F32(vertexCount * 2);
+  const tangents = new F32(vertexCount * 4);
+  for (let index = 0; index < vertexCount; index += 1) {
+    const corner = index % 3;
+    positions[index * 3] = corner === 1 ? 1 : 0;
+    positions[index * 3 + 1] = corner === 2 ? 1 : 0;
+    normals[index * 3 + 2] = 1;
+    uvs[index * 2] = corner === 1 ? 1 : 0;
+    uvs[index * 2 + 1] = corner === 2 ? 1 : 0;
+    tangents[index * 4] = 1;
+    tangents[index * 4 + 3] = 1;
+  }
+  return { count: vertexCount, positions, normals, uvs, tangents,
+    indices: null, immutable: true, revision: 0, dynamic: false };
+}
+
+test("world-bake cache retains a dense multi-mesh scene within one bounded budget", () => {
+  const env = importedMeshRuntime();
+  const vertices = largeWorldBakedVertices(env, 18000);
+  const objects = Array.from({ length: 8 }, (_, index) =>
+    immutableAuthoredShaderTriangle(env, {
+      id: "dense-mesh-" + index, vertices, x: index + 2,
+      scaleX: 1, scaleY: 1, scaleZ: 1,
+    }));
+  const helpers = env.context.__meshTest.countFallbackAttributeHelpers();
+  const first = buildWorldBakedBundle(env, objects);
+  const counts = fallbackHelperCalls(helpers());
+  const second = buildWorldBakedBundle(env, objects);
+  assert.deepEqual(fallbackHelperCalls(helpers()), counts,
+    "unchanged dense meshes must skip every per-vertex attribute helper");
+  const diagnostics = env.context.__meshTest.worldBakeCache();
+  assert.equal(diagnostics.entries, objects.length);
+  assert.equal(diagnostics.bytes, objects.length * 18000 * 48);
+  assert.ok(diagnostics.bytes > 2 * 1024 * 1024 && diagnostics.bytes <= diagnostics.maxBytes);
+  for (const key of ["worldMeshPositions", "worldMeshColors", "worldMeshNormals", "worldMeshUVs", "worldMeshTangents"]) {
+    assert.notEqual(first[key], second[key], "each frame owns its " + key);
+    assert.deepEqual(first[key], second[key], "caching must preserve every " + key + " value");
+  }
+});
+
 test("world-bake cache keeps hot owners, declines over-budget churn, and releases stale payloads", () => {
   const env = importedMeshRuntime();
-  const F32 = vm.runInContext("Float32Array", env.context);
-  function largeVertices(vertexCount) {
-    const positions = new F32(vertexCount * 3);
-    const normals = new F32(vertexCount * 3);
-    const uvs = new F32(vertexCount * 2);
-    const tangents = new F32(vertexCount * 4);
-    for (let index = 0; index < vertexCount; index += 1) {
-      const corner = index % 3;
-      positions[index * 3] = corner === 1 ? 1 : 0;
-      positions[index * 3 + 1] = corner === 2 ? 1 : 0;
-      normals[index * 3 + 2] = 1;
-      uvs[index * 2] = corner === 1 ? 1 : 0;
-      uvs[index * 2 + 1] = corner === 2 ? 1 : 0;
-      tangents[index * 4] = 1;
-      tangents[index * 4 + 3] = 1;
-    }
-    return { count: vertexCount, positions, normals, uvs, tangents,
-      indices: null, immutable: true, revision: 0, dynamic: false };
-  }
+  const maxBytes = env.context.__meshTest.worldBakeCache().maxBytes;
+  const hotCount = Math.floor(maxBytes * .7 / (48 * 3)) * 3;
+  const churnCount = Math.floor(maxBytes * .35 / (48 * 3)) * 3;
   const hot = immutableAuthoredShaderTriangle(env, {
-    id: "hot-cache-owner", vertices: largeVertices(30000), x: 0, y: 0, z: 0,
+    id: "hot-cache-owner", vertices: largeWorldBakedVertices(env, hotCount), x: 0, y: 0, z: 0,
     scaleX: 1, scaleY: 1, scaleZ: 1,
   });
-  const churnVertices = largeVertices(15000);
+  const churnVertices = largeWorldBakedVertices(env, churnCount);
   const helperCounts = env.context.__meshTest.countFallbackAttributeHelpers();
   buildWorldBakedBundle(env, [hot]);
   const hotDiagnostics = env.context.__meshTest.worldBakeCache();
   assert.deepEqual({ entries: hotDiagnostics.entries, bytes: hotDiagnostics.bytes },
-    { entries: 1, bytes: 30000 * 48 });
+    { entries: 1, bytes: hotCount * 48 });
 
   let lastChurn = null;
   for (let index = 0; index < 12; index += 1) {
@@ -324,13 +376,13 @@ test("world-bake cache keeps hot owners, declines over-budget churn, and release
     });
     const bundle = buildWorldBakedBundle(env, [hot, lastChurn]);
     assert.equal(bundle.meshObjects[0].vertexOffset, 0);
-    assert.equal(bundle.meshObjects[1].vertexOffset, 30000);
+    assert.equal(bundle.meshObjects[1].vertexOffset, hotCount);
     const diagnostics = env.context.__meshTest.worldBakeCache();
     assert.equal(diagnostics.entries, 1, "new owners cannot evict the hot record");
-    assert.equal(diagnostics.bytes, 30000 * 48);
+    assert.equal(diagnostics.bytes, hotCount * 48);
     assert.ok(diagnostics.bytes <= diagnostics.maxBytes);
   }
-  assert.equal(helperCounts().worldNormalInto, 30000 + 12 * 15000,
+  assert.equal(helperCounts().worldNormalInto, hotCount + 12 * churnCount,
     "the hot owner hits while each over-budget replacement bakes once");
 
   for (let index = 0; index < 9; index += 1) buildWorldBakedBundle(env, []);
@@ -342,9 +394,9 @@ test("world-bake cache keeps hot owners, declines over-budget churn, and release
   const beforeReturn = helperCounts().worldNormalInto;
   buildWorldBakedBundle(env, [lastChurn]);
   buildWorldBakedBundle(env, [lastChurn]);
-  assert.equal(helperCounts().worldNormalInto - beforeReturn, 15000,
+  assert.equal(helperCounts().worldNormalInto - beforeReturn, churnCount,
     "a replacement owner can enter the cache after stale bytes are reclaimed");
-  assert.equal(env.context.__meshTest.worldBakeCache().bytes, 15000 * 48);
+  assert.equal(env.context.__meshTest.worldBakeCache().bytes, churnCount * 48);
 });
 
 test("world-baked mesh attribute scratches preserve exact legacy output without aliasing", () => {

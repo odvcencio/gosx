@@ -1129,14 +1129,14 @@
     return out;
   }
 
-  function setBoundDOMValue(binding, element, value, transformState) {
-    if (!motionBindingIsValid(binding)) return;
+  function setBoundDOMValue(binding, element, value) {
     const property = String(binding.property || "");
     if (binding.target === "cssVar") {
       motionSetStyle(element, property, value, binding.unit || "");
       return;
     }
     if (property.indexOf("transform.") === 0) {
+      const transformState = motionTransformComponents(element.style && element.style.transform);
       const key = property.slice("transform.".length).toLowerCase();
       if (key === "x" || key === "y" || key === "z") transformState[key] = motionNumber(value, transformState[key]);
       else if (key === "scale") transformState.scale = motionNumber(value, transformState.scale);
@@ -1334,12 +1334,7 @@
         if (item.adapter) record.adapters.add(item.adapter);
         const apply = function(next) {
           item.latest = motionClone(next);
-          scheduler.queueWrite(item, function() {
-            if (item.adapter && !record.disposed) {
-              item.adapter.write(binding, motionClone(item.latest), record);
-              if (typeof item.adapter.invalidate === "function") item.adapter.invalidate("motion-binding");
-            }
-          });
+          queueSceneBinding(item, record);
         };
         record.stops.push(value.subscribe(apply));
         record.bindings.push(item);
@@ -1430,6 +1425,16 @@
     programObserver.observe(root, { subtree: true, childList: true, attributes: true, attributeFilter: ["data-gosx-motion-program"] });
   }
 
+  function queueSceneBinding(binding, record) {
+    scheduler.queueWrite(binding, function() {
+      const adapter = binding.adapter;
+      if (adapter && !record.disposed) {
+        adapter.write(binding.binding, motionClone(binding.latest), record);
+        if (typeof adapter.invalidate === "function") adapter.invalidate("motion-binding");
+      }
+    });
+  }
+
   function attachScene(mount, adapter) {
     if (!mount || !adapter || typeof adapter.write !== "function") return function() {};
     const attachment = { mount: mount, adapter: adapter };
@@ -1438,12 +1443,7 @@
       for (const binding of record.bindings) if (binding.scene === mount) {
         binding.adapter = adapter;
         record.adapters.add(adapter);
-        scheduler.queueWrite(binding, function() {
-          if (!record.disposed) {
-            adapter.write(binding.binding, motionClone(binding.latest), record);
-            if (typeof adapter.invalidate === "function") adapter.invalidate("motion-binding");
-          }
-        });
+        queueSceneBinding(binding, record);
       }
       for (const pin of record.pins) if (pin.scene === mount) {
         pin.adapter = adapter;
@@ -1493,10 +1493,11 @@
     if (!signal || !element) return function() {};
     const binding = { target: property.indexOf("--") === 0 ? "cssVar" : "style", property: property, unit: unit || "" };
     if (!motionBindingIsValid(binding)) return function() {};
-    const transform = motionTransformComponents(element.style && element.style.transform);
-    return signal.subscribe(function(value) {
-      scheduler.queueWrite(element, function() { setBoundDOMValue(binding, element, value, transform); });
+    let active = true;
+    const stop = signal.subscribe(function(value) {
+      scheduler.queueWrite(binding, function() { if (active) setBoundDOMValue(binding, element, value); });
     });
+    return function() { active = false; stop(); };
   }
 
   motion.ease = motionEase;

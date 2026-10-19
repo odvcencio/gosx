@@ -196,9 +196,19 @@ func TestNativeBridgeMessageBoxMethodRegistered(t *testing.T) {
 	}
 }
 
+// nativeBackendCompiled reports whether this GOOS/GOARCH has a native desktop
+// backend (app_windows.go or app_darwin.go) instead of the unsupported stub.
+func nativeBackendCompiled() bool {
+	switch runtime.GOOS {
+	case "windows", "darwin":
+		return runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64"
+	}
+	return false
+}
+
 func TestRunUnsupportedPlatform(t *testing.T) {
-	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
-		t.Skip("windows desktop backend is supported on this architecture")
+	if nativeBackendCompiled() {
+		t.Skip("a native desktop backend is supported on this platform")
 	}
 	err := Run(Options{})
 	if !errors.Is(err, ErrUnsupported) {
@@ -249,8 +259,8 @@ func (a *recordingPlatformApp) SetFileDropHandler(func([]string)) error       { 
 func (a *recordingPlatformApp) PrimaryWindow() *Window                        { return nil }
 
 func TestNewUnsupportedPlatform(t *testing.T) {
-	if runtime.GOOS == "windows" && (runtime.GOARCH == "amd64" || runtime.GOARCH == "arm64") {
-		t.Skip("windows desktop backend is supported on this architecture")
+	if nativeBackendCompiled() {
+		t.Skip("a native desktop backend is supported on this platform")
 	}
 	_, err := New(Options{})
 	if !errors.Is(err, ErrUnsupported) {

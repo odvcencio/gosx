@@ -16,23 +16,24 @@ import (
 // contract holds.
 const (
 	// ICoreWebView2 additions.
-	webViewGetSettings                         = 3
-	webViewAddNavigationCompleted              = 15
-	webViewRemoveNavigationCompleted           = 16
-	webViewAddPermissionRequested              = 23
-	webViewRemovePermissionRequested           = 24
-	webViewAddProcessFailed                    = 25
-	webViewRemoveProcessFailed                 = 26
-	webViewAddScriptToExecuteOnDocumentCreated = 27
-	webViewExecuteScript                       = 29
-	webViewReload                              = 31
-	webViewPostWebMessageAsString              = 33
-	webViewAddWebMessageReceived               = 34
-	webViewRemoveWebMessageReceived            = 35
-	webViewOpenDevToolsWindow                  = 51
-	webViewAddFullscreenChanged                = 52
-	webViewRemoveFullscreenChanged             = 53
-	webViewGetContainsFullscreenElement        = 54
+	webViewGetSettings                            = 3
+	webViewAddNavigationCompleted                 = 15
+	webViewRemoveNavigationCompleted              = 16
+	webViewAddPermissionRequested                 = 23
+	webViewRemovePermissionRequested              = 24
+	webViewAddProcessFailed                       = 25
+	webViewRemoveProcessFailed                    = 26
+	webViewAddScriptToExecuteOnDocumentCreated    = 27
+	webViewRemoveScriptToExecuteOnDocumentCreated = 28
+	webViewExecuteScript                          = 29
+	webViewReload                                 = 31
+	webViewPostWebMessageAsString                 = 33
+	webViewAddWebMessageReceived                  = 34
+	webViewRemoveWebMessageReceived               = 35
+	webViewOpenDevToolsWindow                     = 51
+	webViewAddFullscreenChanged                   = 52
+	webViewRemoveFullscreenChanged                = 53
+	webViewGetContainsFullscreenElement           = 54
 
 	// ICoreWebView2Settings.
 	settingsPutIsScriptEnabled                  = 4
@@ -175,19 +176,36 @@ func (w *coreWebView2) postWebMessageAsString(message string) error {
 // every document load. Useful for bootstrapping the Go↔JS bridge — the
 // preamble script can attach chrome.webview.addEventListener('message',...)
 // so the page's app code sees messages synchronously from load.
-func (w *coreWebView2) addScriptToExecuteOnDocumentCreated(script string) error {
+func (w *coreWebView2) addScriptToExecuteOnDocumentCreated(script string, completed func(string, error)) error {
 	ptr, err := syscall.UTF16PtrFromString(script)
 	if err != nil {
 		return fmt.Errorf("%w: bootstrap script: %v", ErrInvalidOptions, err)
 	}
+	handler := newScriptCompletedHandler(completed)
+	defer scriptCompletedRelease(uintptr(unsafe.Pointer(handler)))
 	hr, _, _ := syscall.SyscallN(
 		comMethod(unsafe.Pointer(w), webViewAddScriptToExecuteOnDocumentCreated),
 		uintptr(unsafe.Pointer(w)),
 		uintptr(unsafe.Pointer(ptr)),
-		0, // ICoreWebView2AddScriptToExecuteOnDocumentCreatedCompletedHandler* (ignored)
+		uintptr(unsafe.Pointer(handler)),
 	)
 	if failedHRESULT(hr) {
 		return hresultError{Op: "ICoreWebView2.AddScriptToExecuteOnDocumentCreated", Code: hr}
+	}
+	return nil
+}
+
+func (w *coreWebView2) removeScriptToExecuteOnDocumentCreated(id string) error {
+	ptr, err := syscall.UTF16PtrFromString(id)
+	if err != nil {
+		return err
+	}
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveScriptToExecuteOnDocumentCreated),
+		uintptr(unsafe.Pointer(w)), uintptr(unsafe.Pointer(ptr)),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.RemoveScriptToExecuteOnDocumentCreated", Code: hr}
 	}
 	return nil
 }

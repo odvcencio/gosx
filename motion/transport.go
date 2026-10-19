@@ -40,6 +40,11 @@ func (p *Program) WithTransport(options TransportOptions) *Program {
 		}
 	}
 	p.Transport = spec
+	for _, binding := range p.Bindings {
+		if binding.Target == BindingSceneTransition {
+			p.addTransitionScene(binding.Selector)
+		}
+	}
 	return p
 }
 

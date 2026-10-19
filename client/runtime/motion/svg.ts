@@ -7,18 +7,6 @@
   const geometry = ["x", "y", "x1", "y1", "x2", "y2", "cx", "cy", "r", "rx", "ry", "width", "height", "d", "points", "transform"];
   const shapes = "rect,circle,ellipse,line,path,polyline,polygon,use";
 
-  // The returned sampler owns no animation. Compile CSS easing once, rather
-  // than constructing an effect or reading layout during every sampled frame.
-  function createEasing(value) {
-    if (typeof value !== "string") return function(t) { return motion.ease(t, value); };
-    if (typeof KeyframeEffect !== "function" || typeof Animation !== "function") return function(t) { return t; };
-    try {
-      const effect = new KeyframeEffect(null, [{}], {duration: 1, fill: "both", easing: value});
-      const animation = new Animation(effect);
-      return function(t) { animation.currentTime = t; return effect.getComputedTiming().progress ?? t; };
-    } catch (_error) { return function(t) { return t; }; }
-  }
-
   function interpolate(from, to, key) {
     if (from == null || to == null || from.length > 65536 || to.length > 65536) return null;
     if (from.replace(numeric, "#") !== to.replace(numeric, "#")) return null;
@@ -81,7 +69,7 @@
         fades.push({el: el, opacity: opacity, priority: priority, base: Number.isFinite(base) ? base : 1});
       }
     }
-    const ease = createEasing(options && options.easing);
+    const ease = motion.createEasing(options && options.easing);
     let disposed = false, progress = 1;
     function restore() {
       for (const track of tracks) track.el.setAttribute(track.key, track.final);
@@ -103,7 +91,6 @@
     return {sample: sample, dispose: function() { if (disposed) return; disposed = true; stopReduced(); restore(); }};
   }
 
-  motion.createEasing = createEasing;
   motion.createSVGMorph = createSVGMorph;
   motion.registerProgramFeature(function(record, spec) {
     for (const binding of (Array.isArray(spec.svgMorphs) ? spec.svgMorphs : []).slice(0, 128)) {
@@ -118,4 +105,5 @@
       record.stops.push(function() { active = false; stop(); transition.dispose(); });
     }
   });
+  if (window.__gosx_register_bootstrap_feature) window.__gosx_register_bootstrap_feature("motion-svg", () => ({}));
 })();

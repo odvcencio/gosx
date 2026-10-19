@@ -38,8 +38,8 @@
 :global(.bgb__link:hover), :global(.bgb__link:focus-visible) { color: #fff; background: rgba(255,255,255,.12); }
 :global(.bgb__link:focus-visible), :global(.bgb__close:focus-visible), :global(.bgb__reveal a:focus-visible), :global(.bgb canvas:focus-visible) { outline: 2px solid #f2c38c; outline-offset: 3px; }
 :global(.bgb__reset) { border: 0; background: transparent; font-family: inherit; cursor: pointer; }
-:global(.bgb:not(:has([data-gosx-scene3d-vessel-following="true"])) .gosx-scene3d-vessel-controls) { padding: 0 !important; background: transparent !important; }
-:global(.bgb:not(:has([data-gosx-scene3d-vessel-following="true"])) .gosx-scene3d-vessel-controls button) { min-height: 44px !important; border-radius: 999px !important; background: #f4e4c9 !important; color: #16130f !important; font: 600 13px ui-sans-serif, system-ui, sans-serif !important; box-shadow: 0 3px 16px #0004; }
+:global(.bgb:not([data-coast-following="true"]) .gosx-scene3d-vessel-controls) { padding: 0 !important; background: transparent !important; }
+:global(.bgb:not([data-coast-following="true"]) .gosx-scene3d-vessel-controls button) { min-height: 44px !important; border-radius: 999px !important; background: #f4e4c9 !important; color: #16130f !important; font: 600 13px ui-sans-serif, system-ui, sans-serif !important; box-shadow: 0 3px 16px #0004; }
 :global(.bgb__instructions) { flex-basis: 100%; margin: 0; font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 4px #101318; }
 :global(.bgb:has([data-gosx-scene3d-vessel-following="true"]) .bgb__instructions) { display: none !important; }
 :global(.bgb__discoveries) { max-width: 660px; font-size: 11px; color: rgba(255,255,255,.68); }
@@ -80,55 +80,4 @@
 @media (prefers-reduced-motion: reduce) { :global(.bgb__controls), :global(.bgb__reveal) { transition: none; transform: none; } }
 @media (scripting: none) {
   :global(.bgb__controls) { opacity: 1; visibility: visible; transform: none; }
-}
-
-:global(.bgb__explore-toggle), :global(.bgb__panel-toggle) { display: none; }
-:global(.bgb__scene-panel), :global(.bgb__panel-switches) { display: contents; }
-:global(.bgb__reveal) { position: fixed; }
-:global(.bgb[data-revealed="true"] .bgb__controls), :global(.bgb:focus-within .bgb__controls) { transform: none; }
-
-@media (max-width: 640px), (pointer: coarse) and (max-height: 500px) {
-  :global(.bgb :is(button, summary, a)) { -webkit-tap-highlight-color: transparent; }
-  :global(.bgb .bgb__controls) {
-    left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right));
-    bottom: max(14px, calc(env(safe-area-inset-bottom) + 14px));
-    min-height: 44px; align-items: center; gap: 8px;
-  }
-  :global(.bgb__explore-toggle) {
-    display: block; position: fixed; z-index: 16;
-    top: max(12px, env(safe-area-inset-top)); left: max(12px, env(safe-area-inset-left));
-  }
-  :global(.bgb .bgb__panel-toggle) {
-    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-    min-height: 44px; padding: 10px 16px; box-sizing: border-box;
-    border: 1px solid #f5e5c02e; border-radius: 999px;
-    background: #151d20ed; color: #f4eee2; box-shadow: 0 3px 16px #0003;
-    font: 600 12px/1.5 ui-sans-serif, system-ui, sans-serif; cursor: pointer;
-  }
-  :global(.bgb__panel-toggle::after) { content: "+"; color: #ebc998; font-size: 16px; line-height: 1; }
-  :global(.bgb__panel-toggle[aria-expanded="true"]::after) { content: "−"; }
-  :global(.bgb__panel-toggle:focus-visible) { outline: 2px solid #f2c38c; outline-offset: 3px; }
-  :global(.bgb .bgb__tools), :global(.bgb .bgb__scene-panel) { display: none; }
-  :global(.bgb:has(.bgb__panel-toggle[data-panel="explore"][aria-expanded="true"]) .bgb__tools) {
-    display: flex; flex-wrap: wrap; top: max(68px, calc(env(safe-area-inset-top) + 68px));
-    left: max(12px, env(safe-area-inset-left)); right: max(12px, env(safe-area-inset-right));
-    max-height: calc(100dvh - 156px); overflow-y: auto;
-  }
-  :global(.bgb:has(.bgb__panel-toggle[data-panel="scene"][aria-expanded="true"]) .bgb__scene-panel) {
-    display: flex; flex-direction: column; gap: 12px;
-    position: absolute; bottom: calc(100% + 10px); left: 0;
-    width: min(360px, 100%); max-height: calc(100dvh - 154px); overflow-y: auto;
-    padding: 16px; box-sizing: border-box; border: 1px solid #f5e5c02e; border-radius: 18px;
-    background: #151d20f5; box-shadow: 0 8px 30px #0005;
-  }
-  :global(.bgb .bgb__scene-panel .bgb__group) { flex-wrap: wrap; gap: 4px; padding: 0; border-radius: 0; background: transparent; }
-  :global(.bgb .bgb__scene-panel .bgb__link) { min-height: 44px; padding: 10px 12px; font-size: 12px; }
-  :global(.bgb .bgb__scene-panel .bgb__day) { flex-wrap: wrap; gap: 4px 8px; }
-  :global(.bgb .bgb__scene-panel .bgb__reveal) { position: static; margin-top: 2px; transform: none; font-size: 10px; }
-  :global(.bgb .bgb__scene-panel .bgb__reveal a) { display: inline-block; min-height: 44px; padding-top: 10px; box-sizing: border-box; }
-  :global(.bgb:has(.bgb__panel-toggle[aria-expanded="true"]) .gosx-scene3d-vessel-controls) { visibility: hidden; }
-  :global(.bgb:has(.bgb__spyglass:not([hidden])) .bgb__tools) { display: contents; }
-  :global(.bgb:has(.bgb__spyglass:not([hidden])) :is(.bgb__explore-toggle, .bgb__chart, .bgb__journal, .bgb__spyglass-toggle)) { display: none; }
-  :global(.bgb .gosx-scene3d-vessel-steering > div:has(> [data-gosx-rudder])) { display: none !important; }
-  :global(.bgb .bgb__close) { width: 44px; height: 44px; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); }
 }

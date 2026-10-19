@@ -23,9 +23,103 @@ wcdp_init() {
   cat > "$WCDP_DIR_WSL/start-chrome.ps1" <<'PS'
 param([string]$ChromePath, [string]$ArgsFile)
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'stop-owned-process.ps1')
 $arguments = @(Get-Content -LiteralPath $ArgsFile | Where-Object { $_ })
 $process = Start-Process -FilePath $ChromePath -ArgumentList $arguments -PassThru
-$process.Id
+try {
+  $null = $process.Handle
+  $native = Get-CimInstance Win32_Process -Filter "ProcessId=$($process.Id)"
+  if (!$native -or !$native.CommandLine) { throw 'Cannot record owned Chrome identity' }
+  @{ id=$process.Id; started=$process.StartTime.ToUniversalTime().Ticks.ToString(); executable=$process.Path; command=$native.CommandLine } |
+    ConvertTo-Json -Compress | Set-Content -Encoding UTF8 -LiteralPath (Join-Path $PSScriptRoot "process-$($process.Id).json")
+  $process.Id
+} catch {
+  $failure = $_
+  try {
+    if (!$process.HasExited) {
+      $killed = Invoke-WcdpTaskkill $process.Id
+      [Console]::Error.WriteLine("unreported Chrome PID $($process.Id): taskkill exit $($killed.code): $($killed.message)")
+    }
+    if (!$process.WaitForExit(5000)) { throw 'unreported Chrome did not exit within 5000 ms' }
+  } catch {
+    [Console]::Error.WriteLine("unreported Chrome PID $($process.Id): cleanup failed: $_")
+  }
+  throw $failure
+} finally {
+  $process.Dispose()
+}
+PS
+  cat > "$WCDP_DIR_WSL/stop-owned-process.ps1" <<'PS'
+param([int]$ProcessId, [int]$WaitMilliseconds=5000)
+$ErrorActionPreference = 'Stop'
+$ProgressPreference = 'SilentlyContinue'
+
+function Invoke-WcdpTaskkill([int]$TargetId) {
+  # Explicit pipes and ExitCode avoid relying on WSL-inherited console handles
+  # or PowerShell's native-command output/exit-status propagation.
+  $info = New-Object Diagnostics.ProcessStartInfo
+  $info.FileName = Join-Path ([Environment]::GetFolderPath('System')) 'taskkill.exe'
+  $info.Arguments = "/PID $TargetId /T /F"
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $command = New-Object Diagnostics.Process
+  $command.StartInfo = $info
+  try {
+    $null = $command.Start()
+    $stdout = $command.StandardOutput.ReadToEndAsync()
+    $stderr = $command.StandardError.ReadToEndAsync()
+    if (!$command.WaitForExit(3000)) {
+      $command.Kill()
+      return @{ code=-1; message='taskkill itself exceeded 3000 ms' }
+    }
+    return @{ code=$command.ExitCode; message=($stdout.Result + $stderr.Result).Trim() }
+  } finally { $command.Dispose() }
+}
+
+function Stop-WcdpOwnedProcess([int]$TargetId, [int]$WaitMilliseconds) {
+  # Query failure is inconclusive, never evidence of absence. Keep a handle to
+  # the recorded process so waiting cannot accidentally follow a reused PID.
+  $native = Get-CimInstance Win32_Process -Filter "ProcessId=$TargetId" -ErrorAction Stop
+  if (!$native) { return @{ code=0; message='already absent' } }
+  $ownerPath = Join-Path $PSScriptRoot "process-$TargetId.json"
+  if (!(Test-Path -LiteralPath $ownerPath)) {
+    return @{ code=21; message='no ownership record; refusing termination' }
+  }
+  $owner = Get-Content -Raw -LiteralPath $ownerPath | ConvertFrom-Json
+  $process = Get-Process -Id $TargetId -ErrorAction Stop
+  try {
+    $null = $process.Handle
+    if ($owner.id -ne $TargetId -or
+        $owner.started -ne $process.StartTime.ToUniversalTime().Ticks.ToString() -or
+        $owner.executable -ine $process.Path -or $owner.command -cne $native.CommandLine -or
+        $native.CommandLine.IndexOf(($PSScriptRoot.TrimEnd('\') + '\'), [StringComparison]::OrdinalIgnoreCase) -lt 0) {
+      return @{ code=21; message='process identity or lane mismatch; refusing termination' }
+    }
+    $killed = Invoke-WcdpTaskkill $TargetId
+    if (!$process.WaitForExit($WaitMilliseconds)) {
+      if ($killed.code -ne 0) {
+        return @{ code=23; message="taskkill failed ($($killed.code)) and exit is unproven: $($killed.message)" }
+      }
+      return @{ code=20; message="process did not exit within $WaitMilliseconds ms" }
+    }
+    return @{ code=0; message="process exit verified; taskkill exit $($killed.code): $($killed.message)" }
+  } finally {
+    $process.Dispose()
+  }
+}
+
+if ($MyInvocation.InvocationName -ne '.') {
+  try {
+    $result = Stop-WcdpOwnedProcess $ProcessId $WaitMilliseconds
+  } catch {
+    $result = @{ code=22; message="process verification failed: $_" }
+  }
+  [Console]::Error.WriteLine("wcdp cleanup PID ${ProcessId}: $($result.message)")
+  Write-Output "WCDP_STOP_RESULT=$($result.code)"
+  exit $result.code
+}
 PS
   cat > "$WCDP_DIR_WSL/start-bridge.ps1" <<'PS'
 param([string]$ListenIp, [string]$Pairs)
@@ -101,6 +195,11 @@ wcdp_start_chrome() {
 
 wcdp_stop_pid() {
   [[ -n "${1:-}" ]] || return 0
+  if [[ -f "$WCDP_DIR_WSL/process-$1.json" ]]; then
+    # EXIT traps must not bypass a checked cleanup's ownership rejection.
+    wcdp_stop_pid_checked "$1" || true
+    return
+  fi
   "$WCDP_TASKKILL" /PID "$1" /T /F >/dev/null 2>&1 || true
 }
 
@@ -108,9 +207,25 @@ wcdp_stop_pid() {
 # another cold profile. The best-effort helper above remains suitable for traps.
 wcdp_stop_pid_checked() {
   [[ "${1:-}" =~ ^[1-9][0-9]*$ ]] || return 1
-  "$WCDP_TASKKILL" /PID "$1" /T /F >/dev/null 2>&1 || true
-  "$WCDP_POWERSHELL" -NoProfile -Command \
-    "if (Get-Process -Id $1 -ErrorAction SilentlyContinue) { exit 1 }; exit 0" >/dev/null
+  local attempt output status result
+  for attempt in 1 2 3; do
+    if output=$(timeout -k 1 12 "$WCDP_POWERSHELL" -NoProfile -ExecutionPolicy Bypass \
+      -File "$WCDP_DIR_WIN\\stop-owned-process.ps1" -ProcessId "$1" 2>&1); then
+      status=0
+    else
+      status=$?
+    fi
+    result=$(printf '%s\n' "$output" | tr -d '\r' | tail -1)
+    printf 'wcdp cleanup PID %s attempt %s exit %s: %s\n' "$1" "$attempt" "$status" "$output" >&2
+    case "$result" in
+      WCDP_STOP_RESULT=0) [[ "$status" == 0 ]] && return 0 ;;
+      WCDP_STOP_RESULT=20|WCDP_STOP_RESULT=21|WCDP_STOP_RESULT=22|WCDP_STOP_RESULT=23) return 1 ;;
+    esac
+    # No valid completion means a failed/uncertain WSL native transport. Retry
+    # with a fresh invocation; it revalidates ownership before any repeat kill.
+    [[ "$attempt" == 3 ]] || sleep 1
+  done
+  return 1
 }
 
 wcdp_remove_profile() {

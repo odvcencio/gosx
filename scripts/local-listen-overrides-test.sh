@@ -79,7 +79,7 @@ for arg; do
    addr="${arg#http://}"; addr="${addr%%/*}"
    grep -Fx "$addr" "$FAKE_LISTEN_LOG" >/dev/null 2>&1 || exit 1
    ;;
-  */demos/water) printf '<div data-gosx-scene3d></div><script src="/bootstrap-feature-scene3d.abc.js"></script><script src="/bootstrap-feature-scene3d-webgpu.abc.js"></script>\n' ;;
+  */demos/water) printf '<div data-gosx-scene3d></div><script src="/bootstrap-feature-scene3d.abc.js" data-gosx-scene3d-webgpu-url="/bootstrap-feature-scene3d-webgpu.abc.js"></script>\n' ;;
  esac
 done
 CURL

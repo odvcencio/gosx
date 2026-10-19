@@ -70,7 +70,7 @@
     const sceneState = createSceneState(props, capability);
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
-    await settlePreferredWebGPUBackend(props, capability);
+    await ensurePreferredWebGPUBackend(props, capability);
     if (!scene3DFactoryCurrent()) return {};
     // Settle lazy WebGL and compute before first renderer creation/fallback.
     await settlePreferredWebGLBackend(props, capability);
@@ -3198,7 +3198,7 @@
         viewport.cssHeight,
         sceneState.background,
         activeCamera,
-        sceneFilterObjectsByQualityGroups(sceneStateObjectsWithMaterials(sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality)),
+        sceneFilterObjectsByQualityGroups(sceneMotionObjects.call(null, sceneStateObjectsWithMaterials(sceneState), sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality)),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),
         sceneStateHTML(sceneState),

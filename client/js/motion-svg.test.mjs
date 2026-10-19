@@ -4,7 +4,7 @@ import test from "node:test";
 import vm from "node:vm";
 
 const core = fs.readFileSync(new URL("./bootstrap-src/06-motion-core.ts", import.meta.url), "utf8");
-const svgSource = fs.readFileSync(new URL("../runtime/motion/svg.ts", import.meta.url), "utf8");
+const svgSource = fs.readFileSync(new URL("../runtime/motion/easing.ts", import.meta.url), "utf8") + fs.readFileSync(new URL("../runtime/motion/svg.ts", import.meta.url), "utf8");
 const transport = fs.readFileSync(new URL("../runtime/motion/transport.ts", import.meta.url), "utf8");
 
 class Element {

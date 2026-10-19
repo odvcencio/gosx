@@ -69,6 +69,49 @@
 - Upgrade gotreesitter to v0.56.0. Explicit generic signal constructors that
   were silently dropped now lower correctly, and valid Go that previously
   produced ERROR nodes now parses. Parse allocations are about 98% lower.
+- Disable unused WebGL canvas MSAA for initial, undeferred Scene3D post
+  effects by default, and remove depth buffers from color-only post targets.
+  If the post chain turns off, FXAA retains edge filtering. Explicit
+  `Props.MSAASamples` preserves the authored canvas multisampling request.
+
+## v0.57.17
+
+- Add the macOS desktop backend on darwin/amd64 and darwin/arm64: an `NSWindow`
+  hosting `WKWebView`, built with `CGO_ENABLED=0`. Support navigation, HTML,
+  scripts, lifecycle callbacks, native menus and Edit responder roles, window
+  size limits, URL opening and message alerts. Call `App.Run` from the main
+  goroutine.
+- Add native macOS open/save panels, Finder document delivery and Go/WKWebView
+  messaging. HTML file inputs support single/multiple files and directories;
+  JavaScript alert, confirm and prompt dialogs use native panels.
+- Fit the initial macOS web view to the window's actual content bounds after
+  AppKit constrains an oversized window. Keep the web view fitted on resize.
+- Report typed desktop service and window availability from synchronous
+  registered-method metadata. Partial or unbound service proxies no longer
+  advertise privacy or diagnostics support; Bind/Unbind updates current and
+  future pages. Hosts without metadata report availability as false while
+  explicit service operations and raw bridge calls remain usable.
+- Replace superseded Windows document-start scripts instead of retaining a
+  script for every service update, and wait for initial bootstrap registration
+  before navigation. Immediate preload errors preserve the prior binding and
+  metadata.
+- Share a Go-authored motion transport across DOM, Scene3D and Selena shader
+  surfaces, with play, pause, seek, reverse, replay and named labels. Shader
+  clocks follow absolute scene time on WebGL and WebGPU; semantic playback
+  controls and capture use the same transport.
+- Add optional Go-authored SVG morphs and prepared Scene3D command transitions
+  on the shared motion lifecycle. Compatible SVG geometry and prepared scene
+  poses support absolute forward and reverse sampling; incompatible SVG
+  geometry falls back to a valid destination path and fade.
+- Add `Program.SampleTrack` for per-key easing, anticipation, overshoot, holds
+  and stepped timing from a playhead or scalar input. Compose same-element DOM
+  bindings, apply scene overrides before geometry baking and material interning,
+  and preserve finite timelines without the optional scalar-track adapter.
+- Reuse canonical WebGL authored shader program keys across frames and retain
+  dense immutable Scene3D world geometry within an 8 MiB shared cache. Preserve
+  layout invalidation, exact geometry, disposal and stale-owner cleanup.
+- Simplify Blackglass mobile controls into compact, exclusive GoSX panels while
+  preserving touch steering, keyboard support and the mounted scene.
 
 ## v0.57.16
 

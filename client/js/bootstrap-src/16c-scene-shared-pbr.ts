@@ -594,6 +594,29 @@
       var count = obj.vertexCount;
       if (!Number.isFinite(offset) || !Number.isFinite(count) || count <= 0) continue;
 
+      // Bundle construction already visits every baked vertex to fit its
+      // world bounds. Float32 rounding is monotonic, so rounding those six
+      // extrema produces the same fit as scanning the uploaded stream.
+      // Only trust bounds stamped by the baker: older/manual bundles retain
+      // the vertex scan, as do non-finite and signed-zero edge cases.
+      var bounds = obj._worldBakedBounds === true && obj.bounds;
+      if (bounds) {
+        var bx0 = Math.fround(bounds.minX), by0 = Math.fround(bounds.minY), bz0 = Math.fround(bounds.minZ);
+        var bx1 = Math.fround(bounds.maxX), by1 = Math.fround(bounds.maxY), bz1 = Math.fround(bounds.maxZ);
+        if (Number.isFinite(bx0) && Number.isFinite(by0) && Number.isFinite(bz0) &&
+            Number.isFinite(bx1) && Number.isFinite(by1) && Number.isFinite(bz1) &&
+            !Object.is(bx0, -0) && !Object.is(by0, -0) && !Object.is(bz0, -0) &&
+            !Object.is(bx1, -0) && !Object.is(by1, -0) && !Object.is(bz1, -0)) {
+          if (bx0 < minX) minX = bx0;
+          if (by0 < minY) minY = by0;
+          if (bz0 < minZ) minZ = bz0;
+          if (bx1 > maxX) maxX = bx1;
+          if (by1 > maxY) maxY = by1;
+          if (bz1 > maxZ) maxZ = bz1;
+          continue;
+        }
+      }
+
       for (var v = 0; v < count; v++) {
         var idx = (offset + v) * 3;
         var px = positions[idx];

@@ -354,7 +354,7 @@ var runtimeExcludableAssetRoles = map[string][]string{
 	"hubs":        {"bootstrap-feature-hubs.js"},
 	"controllers": {"bootstrap-feature-controllers.js", "bootstrap-controller-input.js"},
 	"workbench":   {"bootstrap-feature-workbench.js"},
-	"motion":      {"bootstrap-feature-motion-transport.js", "bootstrap-feature-motion-svg.js"},
+	"motion":      {"bootstrap-feature-motion-transport.js", "bootstrap-feature-motion-svg.js", "bootstrap-feature-motion-scene.js", "bootstrap-feature-motion-track.js"},
 	"textlayout":  {"bootstrap-feature-textlayout.js"},
 	"scene3d": {
 		"bootstrap-feature-scene3d.js",

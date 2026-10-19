@@ -169,3 +169,16 @@ test("late scopes attach, replace their transport with the signal graph, and dis
   await r.deliver([{type: "childList", addedNodes: [], removedNodes: [root]}]);
   assert.equal(r.motion.transport("late"), null); assert.throws(() => replacement.play(), /disposed/);
 });
+
+
+test("queued scene writes follow the current attachment and ignore detached adapters", () => {
+  const r = runtime(), mount = {}, writes = [];
+  const spec = {version: 1,id: "binding",signals: [{id: "clock",kind: "time"}],bindings: [{signal: "clock",target: "camera",selector: "#scene",property: "position.x"}]};
+  const root = {nodeType: 1,hasAttribute: () => true,getAttribute: () => JSON.stringify(spec),querySelectorAll: selector => selector === "#scene" ? [mount] : []};
+  r.motion.mountPrograms(root);
+  const detach = r.motion.attachScene(mount, {write() {writes.push("old");}});
+  detach();
+  r.motion.attachScene(mount, {write() {writes.push("new");}});
+  r.advance(16); assert.deepEqual(writes, ["new"]);
+  r.motion.disposePrograms(root);
+});

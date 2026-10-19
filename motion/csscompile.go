@@ -409,6 +409,9 @@ func cloneMotionProgram(p *Program) Program {
 	copy.Bindings = append([]Binding(nil), p.Bindings...)
 	copy.Pins = append([]PinBinding(nil), p.Pins...)
 	copy.SVGMorphs = append([]SVGMorphBinding(nil), p.SVGMorphs...)
+	for i := range copy.Bindings {
+		copy.Bindings[i].Transition = append([]byte(nil), copy.Bindings[i].Transition...)
+	}
 	return copy
 }
 

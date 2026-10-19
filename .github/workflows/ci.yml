@@ -152,6 +152,51 @@ jobs:
       - name: Desktop Artifact Signing provider with fake tool
         run: GOWORK=off GOFLAGS=-p=1 go test -count=1 ./cmd/gosx -run '^TestDesktopPackageAzureFakeTool$'
 
+  desktop-macos:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    name: Native desktop (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 15
+    env:
+      GOWORK: "off"
+      GOSX_DARWIN_INTERACTIVE: "0"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Safe cgo-free desktop and sidecar tests
+        shell: bash
+        run: |
+          mkdir -p artifacts/desktop-macos
+          CGO_ENABLED=0 go test -count=1 -short ./desktop ./desktop/sidecar 2>&1 | tee artifacts/desktop-macos/short.log
+
+      # The race detector requires cgo; the shipped GUI binary below does not.
+      - name: Safe desktop and sidecar race tests
+        shell: bash
+        run: CGO_ENABLED=1 go test -count=1 -race -short ./desktop ./desktop/sidecar 2>&1 | tee artifacts/desktop-macos/race-short.log
+
+      - name: Native panels, Finder delivery and WebKit messages through LaunchServices
+        run: python3 scripts/test-desktop-macos-gui.py --artifacts artifacts/desktop-macos
+
+      - name: Retain native desktop reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-${{ matrix.runner }}
+          path: artifacts/desktop-macos
+          if-no-files-found: error
+
   # go-race-tests: the race detector gates split out of go-tests so they run
   # in parallel instead of serializing after the unit lane. Pushes need TinyGo
   # for cmd/gosx production-build tests; neither path needs Node. Pull requests
@@ -798,6 +843,7 @@ jobs:
       - release-gate
       - go-tests
       - go-race-tests
+      - desktop-macos
       - go-cli-tests
       - go-cli-tests-b
       - go-cli-tests-c
@@ -819,6 +865,7 @@ jobs:
           RELEASE_GATE_RESULT: ${{ needs.release-gate.result }}
           GO_TESTS_RESULT: ${{ needs.go-tests.result }}
           GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
+          DESKTOP_MACOS_RESULT: ${{ needs.desktop-macos.result }}
           GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
           GO_CLI_TESTS_B_RESULT: ${{ needs.go-cli-tests-b.result }}
           GO_CLI_TESTS_C_RESULT: ${{ needs.go-cli-tests-c.result }}
@@ -855,6 +902,7 @@ jobs:
             "release-gate=$RELEASE_GATE_RESULT" \
             "go-tests=$GO_TESTS_RESULT" \
             "go-race-tests=$GO_RACE_TESTS_RESULT" \
+            "desktop-macos=$DESKTOP_MACOS_RESULT" \
             "go-cli-tests=$GO_CLI_TESTS_RESULT" \
             "go-cli-tests-b=$GO_CLI_TESTS_B_RESULT" \
             "go-cli-tests-c=$GO_CLI_TESTS_C_RESULT" \
@@ -876,7 +924,7 @@ jobs:
                 ;;
             esac
           done
-          echo "release-gate, go-tests, go-race-tests, go-cli-tests, go-cli-tests-b, go-cli-tests-c, js-tests, js-tests-b, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, browser-tests, browser-tests-b, and browser-tests-c all passed"
+          echo "release-gate, go-tests, go-race-tests, desktop-macos, go-cli-tests, go-cli-tests-b, go-cli-tests-c, js-tests, js-tests-b, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, browser-tests, browser-tests-b, and browser-tests-c all passed"
 
   # browser-tests-b and browser-tests-c: the other two shares of the e2e browser
   # suite (`citest browser 1` and `citest browser 2`). browser-tests runs share 0

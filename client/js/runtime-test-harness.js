@@ -5545,7 +5545,7 @@ function createWebGLRendererForPost(options) {
   const canvas = env.document.createElement("canvas");
   canvas.width = 320;
   canvas.height = 180;
-  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  const renderer = backend.create(canvas, opts.props || { background: "#000000" }, { tier: "full" });
   const warnLog = [];
   const orig = env.context.console.warn;
   env.context.console.warn = function() {

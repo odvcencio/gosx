@@ -30,7 +30,7 @@ func Page() Node {
 		</div>
 		<p class="bgb__preview-state" role="status">Still preview · interactive 3D needs JavaScript and graphics support.</p>
 		<a class="bgb__close" href="/demos" aria-label="Back to the demos">×</a>
-		<div id="coast-explore-panel" class="bgb__tools">
+		<div class="bgb__tools">
 			<CoastChart
 				driftX={data.chartIslands.driftX}
 				driftZ={data.chartIslands.driftZ}
@@ -44,81 +44,33 @@ func Page() Node {
 		</div>
 		<button type="button" hidden data-gosx-scene3d-animation-toggle>Pause coast</button>
 		<div id="coast-controls" class="bgb__controls">
-			<CoastPanels />
-			<div id="coast-scene-panel" class="bgb__scene-panel">
-				<p class="bgb__instructions bgb__instructions-desktop">{data.instructions}</p>
-				<p class="bgb__instructions bgb__instructions-touch">{data.touchInstructions}</p>
-				<p class="bgb__instructions bgb__discoveries">
-					Tide pools ashore. Three islands offshore. Plot a course, step ashore, and bring discoveries back in your journal.
-				</p>
-				<CoastViews view={data.view} period={data.period} />
-				<CoastDay />
-				<CoastMetrics />
-			</div>
+			<p class="bgb__instructions bgb__instructions-desktop">{data.instructions}</p>
+			<p class="bgb__instructions bgb__instructions-touch">{data.touchInstructions}</p>
+			<p class="bgb__instructions bgb__discoveries">
+				Tide pools ashore. Three islands offshore. Plot a course, step ashore, and bring discoveries back in your journal.
+			</p>
+			<CoastViews view={data.view} period={data.period} />
 			<CoastPocket />
+			<CoastDay />
 		</div>
+		<CoastMetrics />
 	</section>
-}
-
-//gosx:island
-func CoastPanels() Node {
-	explore := signal.NewShared("blackglass.mobileExplore", false)
-	settings := signal.NewShared("blackglass.mobileScene", false)
-	chartOpen := signal.NewShared("blackglass.chartOpen", false)
-	journalOpen := signal.NewShared("blackglass.journalOpen", false)
-	spyglass := signal.NewShared("blackglass.spyglass", false)
-	toggleExplore := func() {
-		explore.Set(!explore.Get())
-		settings.Set(false)
-		chartOpen.Set(false)
-		journalOpen.Set(false)
-		spyglass.Set(false)
-	}
-	toggleSettings := func() {
-		settings.Set(!settings.Get())
-		explore.Set(false)
-		chartOpen.Set(false)
-		journalOpen.Set(false)
-		spyglass.Set(false)
-	}
-	return <div class="bgb__panel-switches">
-		<button
-			type="button"
-			class="bgb__panel-toggle bgb__explore-toggle"
-			data-panel="explore"
-			aria-controls="coast-explore-panel"
-			aria-label={explore.Get()?"Close Explore":"Explore"}
-			aria-expanded={explore.Get()}
-			onClick={toggleExplore}
-		>{explore.Get()?"Close":"Explore"}</button>
-		<button
-			type="button"
-			class="bgb__panel-toggle"
-			data-panel="scene"
-			aria-controls="coast-scene-panel"
-			aria-label={settings.Get()?"Close View & light":"View & light"}
-			aria-expanded={settings.Get()}
-			onClick={toggleSettings}
-		>{settings.Get()?"Close":"View & light"}</button>
-	</div>
 }
 
 //gosx:island
 func CoastSpyglass() Node {
 	enabled := signal.NewShared("blackglass.spyglass", false)
-	panel := signal.NewShared("blackglass.mobileExplore", false)
 	sight := signal.NewShared("blackglass.sight", scene.OpticsState{BearingLabel: "000° N", LandmarkName: "Open sea", RangeLabel: "Drag to look · bearings follow your view"})
 	destination := signal.NewShared("blackglass.destination", "")
 	chartOpen := signal.NewShared("blackglass.chartOpen", false)
 	journalOpen := signal.NewShared("blackglass.journalOpen", false)
-	raise := func() { chartOpen.Set(false); journalOpen.Set(false); panel.Set(false); enabled.Set(!enabled.Get()) }
+	raise := func() { chartOpen.Set(false); journalOpen.Set(false); enabled.Set(!enabled.Get()) }
 	putAway := func() { enabled.Set(false) }
 	plot := func() {
 		destination.Set(sight.Get().LandmarkID)
 		chartOpen.Set(true)
 		journalOpen.Set(false)
 		enabled.Set(false)
-		panel.Set(true)
 	}
 
 	return <div class="bgb__optics">
@@ -153,15 +105,12 @@ func CoastSpyglass() Node {
 func CoastViews(props struct{ View, Period string }) Node {
 	request := signal.NewShared("blackglass.presentation", scene.PresentationRequest{})
 	state := signal.NewShared("blackglass.presentationState", scene.PresentationState{View: props.View, Period: props.Period})
-	panel := signal.NewShared("blackglass.mobileScene", false)
-	selectView := func() { request.Set(scene.PresentationRequest{View: eventData, Revision: request.Get().Revision + 1}); panel.Set(false) }
+	selectView := func() { request.Set(scene.PresentationRequest{View: eventData, Revision: request.Get().Revision + 1}) }
 	selectPeriod := func() {
 		request.Set(scene.PresentationRequest{Period: eventData, Revision: request.Get().Revision + 1})
-		panel.Set(false)
 	}
 	reset := func() {
 		request.Set(scene.PresentationRequest{View: state.Get().View, Reset: true, Revision: request.Get().Revision + 1})
-		panel.Set(false)
 	}
 	return <div class="bgb__view-controls">
 		<nav class="bgb__group" aria-label="View">
@@ -319,8 +268,7 @@ func CoastJournal() Node {
 	toggleJournal := func() { browser.PreventDefault(); journalOpen.Set(!journalOpen.Get()); chartOpen.Set(false) }
 	journal := signal.NewShared("blackglass.journal", scene.JournalState{CountLabel: "0 / 7", Notice: "Explore at your own pace."})
 	request := signal.NewShared("blackglass.presentation", scene.PresentationRequest{})
-	panel := signal.NewShared("blackglass.mobileExplore", false)
-	pools := func() { request.Set(scene.PresentationRequest{View: "pools", Revision: request.Get().Revision + 1}); journalOpen.Set(false); panel.Set(false) }
+	pools := func() { request.Set(scene.PresentationRequest{View: "pools", Revision: request.Get().Revision + 1}) }
 	return <details class="bgb__journal" open={journalOpen.Get()}>
 		<summary onClick={toggleJournal}>Field journal <span>{journal.Get().CountLabel}</span></summary>
 		<p class="bgb__journal-intro">Small worlds in the basalt. Visit the pools, then click or tap the water to take a closer look.</p>

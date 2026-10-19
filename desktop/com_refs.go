@@ -21,6 +21,10 @@ var iidIUnknown = comGUID{
 
 // WebView2 handler IIDs from the Microsoft.Web.WebView2 1.0.4191.47 SDK.
 var (
+	iidAddScriptToExecuteOnDocumentCreatedCompletedHandler = comGUID{
+		Data1: 0xb99369f3, Data2: 0x9b11, Data3: 0x47b5,
+		Data4: [8]byte{0xbc, 0x6f, 0x8e, 0x78, 0x95, 0xfc, 0xea, 0x17},
+	}
 	iidCreateCoreWebView2EnvironmentCompletedHandler = comGUID{
 		Data1: 0x4e8a3389, Data2: 0xc9d8, Data3: 0x4bd2,
 		Data4: [8]byte{0xb6, 0xb5, 0x12, 0x4f, 0xee, 0x6c, 0xc1, 0x4d},

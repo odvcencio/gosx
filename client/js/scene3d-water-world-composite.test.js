@@ -213,3 +213,37 @@ test("water composition propagates complete outcomes and rejects partial subpass
     }
   }
 });
+
+test("water-only post requests keep canvas MSAA while composite post disables it", () => {
+  for (const models of [[], [{id: "world"}]]) {
+    let options;
+    const context = {
+      sceneNumber: (value, fallback) => Number(value) || fallback,
+      sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
+      window: {__gosx_scene3d_webgl_api: {
+        createSceneWaterRendererWebGL: () => ({render() {}, dispose() {}}),
+        createScenePBRRendererOrFallback: () => ({render() {}, renderSurfaces() {}, dispose() {}}),
+      }},
+    };
+    vm.createContext(context);
+    vm.runInContext(ts.transpileModule(source, {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText, context);
+    const canvas = {getContext(kind, received) {options = received; return {};}};
+    context.createSceneWaterWebGLResult(canvas, {scene: {models, waterSystems: [{id: "cove"}], postEffects: [{kind: "bloom"}]}}, {tier: "full"}, "");
+    assert.equal(options.antialias, models.length === 0);
+  }
+});
+
+test("legacy shader-failure renderer keeps the canvas MSAA request", () => {
+  let options;
+  const context = {
+    sceneNumber: (value, fallback) => Number(value) || fallback,
+    sceneBool: (value, fallback) => value == null ? fallback : Boolean(value),
+    window: {__gosx_scene3d_api: {
+      createSceneWebGLRenderer(canvas, received) {options = received; return {render() {}};},
+    }},
+  };
+  vm.createContext(context);
+  vm.runInContext(ts.transpileModule(source, {compilerOptions: {target: ts.ScriptTarget.ES2022}}).outputText, context);
+  context.createSceneWebGLResult({}, {scene: {postEffects: [{kind: "bloom"}]}}, {tier: "full"}, "webgl-shader-failed");
+  assert.equal(options.antialias, true);
+});

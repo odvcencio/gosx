@@ -364,6 +364,27 @@ func TestStructuralMutationsFailClosed(t *testing.T) {
 			want: "aggregate dependency assertion.env.GO_TESTS_RESULT",
 		},
 		{
+			name:   "native macOS aggregate contract omitted",
+			mutate: removeAggregateSlot("desktop-macos", "DESKTOP_MACOS_RESULT"),
+			want:   "aggregate test job.needs",
+		},
+		{
+			name: "native macOS result binding omitted",
+			mutate: replace(
+				"          DESKTOP_MACOS_RESULT: ${{ needs.desktop-macos.result }}\n",
+				"",
+			),
+			want: "aggregate dependency assertion.env: missing field \"DESKTOP_MACOS_RESULT\"",
+		},
+		{
+			name: "native macOS result binding redirected",
+			mutate: replace(
+				"          DESKTOP_MACOS_RESULT: ${{ needs.desktop-macos.result }}\n",
+				"          DESKTOP_MACOS_RESULT: ${{ needs.go-tests.result }}\n",
+			),
+			want: "aggregate dependency assertion.env.DESKTOP_MACOS_RESULT",
+		},
+		{
 			name: "aggregate failure exit weakened",
 			mutate: replace(
 				"                exit 1\n                ;;\n",
@@ -817,7 +838,11 @@ func assertActionlintValid(t *testing.T, workflow string) {
 	if err != nil {
 		return
 	}
-	command := exec.Command(actionlint, "-")
+	// Stdin workflows have no file path from which actionlint can discover
+	// the repository config (including hosted labels newer than local tools).
+	_, file, _, _ := runtime.Caller(0)
+	config := filepath.Join(filepath.Dir(file), "..", "..", ".github", "actionlint.yaml")
+	command := exec.Command(actionlint, "-config-file", config, "-")
 	command.Stdin = strings.NewReader(workflow)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("mutation must remain actionlint-valid: %v\n%s", err, output)
