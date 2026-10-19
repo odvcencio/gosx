@@ -1129,14 +1129,14 @@
     return out;
   }
 
-  function setBoundDOMValue(binding, element, value, transformState) {
-    if (!motionBindingIsValid(binding)) return;
+  function setBoundDOMValue(binding, element, value) {
     const property = String(binding.property || "");
     if (binding.target === "cssVar") {
       motionSetStyle(element, property, value, binding.unit || "");
       return;
     }
     if (property.indexOf("transform.") === 0) {
+      const transformState = motionTransformComponents(element.style && element.style.transform);
       const key = property.slice("transform.".length).toLowerCase();
       if (key === "x" || key === "y" || key === "z") transformState[key] = motionNumber(value, transformState[key]);
       else if (key === "scale") transformState.scale = motionNumber(value, transformState.scale);
@@ -1493,10 +1493,11 @@
     if (!signal || !element) return function() {};
     const binding = { target: property.indexOf("--") === 0 ? "cssVar" : "style", property: property, unit: unit || "" };
     if (!motionBindingIsValid(binding)) return function() {};
-    const transform = motionTransformComponents(element.style && element.style.transform);
-    return signal.subscribe(function(value) {
-      scheduler.queueWrite(element, function() { setBoundDOMValue(binding, element, value, transform); });
+    let active = true;
+    const stop = signal.subscribe(function(value) {
+      scheduler.queueWrite(binding, function() { if (active) setBoundDOMValue(binding, element, value); });
     });
+    return function() { active = false; stop(); };
   }
 
   motion.ease = motionEase;

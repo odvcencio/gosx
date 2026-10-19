@@ -3198,7 +3198,7 @@
         viewport.cssHeight,
         sceneState.background,
         activeCamera,
-        sceneFilterObjectsByQualityGroups(sceneStateObjectsWithMaterials(sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality)),
+        sceneFilterObjectsByQualityGroups(sceneMotionObjects.call(null, sceneStateObjectsWithMaterials(sceneState), sceneState), sceneQualityLadderAdmittedGroups(adaptiveQuality)),
         sceneStateLabels(sceneState),
         sceneStateSprites(sceneState),
         sceneStateHTML(sceneState),

@@ -168,26 +168,29 @@ test('public playback cannot fetch an unadvertised timeline', async () => {
 });
 
 test('shared render bundles receive node bindings and release the camera after settling', async () => {
-  const r = runtime(), state = {}, poses = [], handle = {};
-  vm.runInContext(ts.transpileModule(read('../runtime/scene3d/mount-controls.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
-  const playback = r.api.playMounted(fixture, state, handle, (_state, commands) => poses.push(plain(commands)), null, () => {}, () => {}, () => true);
-  playback.pause(); playback.seek(0.1); r.frame();
-  const bundle = { camera: { y: 4, z: 6 }, meshObjects: [{ id: 'piece', y: 1, x: 2 }] };
-  const cameras = [];
-  r.context.applyMotionBindingsToRuntimeBundle(bundle, state, { applyCamera: camera => cameras.push({ ...camera }) });
-  assert.equal(bundle.meshObjects[0].y, 0.25);
-  assert.equal(bundle.meshObjects[0].x, 2);
-  assert.equal(bundle.camera.y, 3.5);
-  assert.equal(cameras.length, 1);
-  playback.finish(); r.frame(); await playback.finished;
-  const next = { camera: { y: 8 }, meshObjects: [{ id: 'piece', y: 1 }] };
-  r.context.applyMotionBindingsToRuntimeBundle(next, state, null);
-  assert.equal(next.camera.y, 8, 'camera must be free for user control after completion');
-  assert.equal(next.meshObjects[0].y, 0, 'settled pose must survive the shared runtime frame');
-  r.api.clear(state, handle, [{ kind: 6 }]);
-  assert.equal(state._gosxMotionRuntimeBindings.size, 1, 'particle updates preserve settled transforms');
-  r.api.clear(state, handle, [{ kind: 2 }]);
-  assert.equal(state._gosxMotionRuntimeBindings.size, 0, 'authoritative transforms supersede presentation');
+  for (const withTracks of [false, true]) {
+    const r = runtime(), state = {}, poses = [], handle = {};
+    if (withTracks) vm.runInContext(read('../runtime/motion/track.ts'), r.context);
+    vm.runInContext(ts.transpileModule(read('../runtime/scene3d/mount-controls.ts'), { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText, r.context);
+    const playback = r.api.playMounted(fixture, state, handle, (_state, commands) => poses.push(plain(commands)), null, () => {}, () => {}, () => true);
+    playback.pause(); playback.seek(0.1); r.frame();
+    const bundle = { camera: { y: 4, z: 6 }, meshObjects: [{ id: 'piece', y: 1, x: 2 }] };
+    const cameras = [];
+    r.context.applyMotionBindingsToRuntimeBundle(bundle, state, { applyCamera: camera => cameras.push({ ...camera }) });
+    assert.equal(bundle.meshObjects[0].y, 0.25);
+    assert.equal(bundle.meshObjects[0].x, 2);
+    assert.equal(bundle.camera.y, 3.5);
+    assert.equal(cameras.length, 1);
+    playback.finish(); r.frame(); await playback.finished;
+    const next = { camera: { y: 8 }, meshObjects: [{ id: 'piece', y: 1 }] };
+    r.context.applyMotionBindingsToRuntimeBundle(next, state, null);
+    assert.equal(next.camera.y, 8, 'camera must be free for user control after completion');
+    assert.equal(next.meshObjects[0].y, 0, 'settled pose must survive the shared runtime frame');
+    r.api.clear(state, handle, [{ kind: 6 }]);
+    assert.equal(state._gosxMotionRuntimeBindings.size, 1, 'particle updates preserve settled transforms');
+    r.api.clear(state, handle, [{ kind: 2 }]);
+    assert.equal(state._gosxMotionRuntimeBindings.size, 0, 'authoritative transforms supersede presentation');
+  }
 });
 
 test('demand-loaded adapters cancel paused playback on disposal and restore host methods', async () => {

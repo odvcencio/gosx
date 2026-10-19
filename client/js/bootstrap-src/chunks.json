@@ -399,6 +399,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-motion-track.js",
+      "sources": [
+        "../runtime/motion/track.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-motion-scene.js",
       "sources": [
         "../runtime/motion/easing.ts",
