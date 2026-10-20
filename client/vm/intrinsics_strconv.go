@@ -17,17 +17,17 @@ func init() {
 		if len(args) != 1 {
 			return Value{}, errors.New("strconv.Itoa expects 1 argument")
 		}
-		return StringVal(strconv.Itoa(int(args[0].num))), nil
+		return StringVal(strconv.FormatInt(args[0].integer(), 10)), nil
 	})
 	RegisterIntrinsic("strconv.Atoi", func(args []Value) (Value, error) {
 		if len(args) != 1 {
 			return Value{}, errors.New("strconv.Atoi expects 1 argument")
 		}
-		n, err := strconv.Atoi(args[0].text())
+		n, err := strconv.ParseInt(args[0].text(), 10, 64)
 		if err != nil {
 			return Value{}, err
 		}
-		return IntVal(n), nil
+		return Int64Val(n), nil
 	})
 	RegisterIntrinsic("strconv.FormatFloat", func(args []Value) (Value, error) {
 		// Go signature: FormatFloat(f float64, fmt byte, prec, bitSize int)
@@ -39,14 +39,14 @@ func init() {
 		if spec := args[1].text(); spec != "" {
 			format = spec[0]
 		}
-		return StringVal(strconv.FormatFloat(args[0].num, format, int(args[2].num), int(args[3].num))), nil
+		return StringVal(strconv.FormatFloat(args[0].number(), format, int(args[2].integer()), int(args[3].integer()))), nil
 	})
 	RegisterIntrinsic("strconv.ParseFloat", func(args []Value) (Value, error) {
 		// Go signature: ParseFloat(s string, bitSize int)
 		if len(args) != 2 {
 			return Value{}, errors.New("strconv.ParseFloat expects 2 arguments")
 		}
-		f, err := strconv.ParseFloat(args[0].text(), int(args[1].num))
+		f, err := strconv.ParseFloat(args[0].text(), int(args[1].integer()))
 		if err != nil {
 			return Value{}, err
 		}

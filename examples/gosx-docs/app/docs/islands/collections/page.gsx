@@ -64,6 +64,7 @@ func Page() Node {
 		<p>The handler uses a Go if guard and bare return to reject empty drafts and keep the collection within its limit, even when a submission bypasses the disabled button. Nested if, else if, and else branches use the same shared VM. Handler-local assignments, loops, if initializers, and return values remain outside this subset.</p>
 		<p>Share behavior with named func() helpers inside the island. Add and Clear call the same focusDraft helper. Helpers share the current event and signal state; a bare return exits the helper while its caller continues. Calls must be standalone handler statements, and helpers cannot declare parameters or results. Rendering and signal initializers cannot call them.</p>
 		<p>This intrinsic supports individual elements. Variadic slice expansion with ... remains outside the island expression subset. The example uses the shared VM and introduces no browser feature module or runtime opcode.</p>
+		<p><a href="/docs/islands/integers/">Try an exact 64-bit counter</a> with typed server props and the shared island VM.</p>
 		<h2 id="collection-source">Source</h2>
 		{CodeBlock("gosx", data.collectionSample)}
 		<a href="/docs/islands/">Island reference</a>

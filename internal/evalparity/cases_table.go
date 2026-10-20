@@ -143,7 +143,7 @@ var cases = []Case{
 	{
 		ID:           "numeric_precision_large_int",
 		Category:     "numeric",
-		Note:         "a bare props.A read (no arithmetic) preserves full int64 precision on every backend — reflect and JSON round-trips both pass the exact value through untouched. Arithmetic is what loses precision: route's numericValue and the VM's Value both fold every number through a float64 field, which cannot represent 2^53+1 exactly; transpile keeps the real Go int64",
+		Note:         "transpiled Go and the shared island VM preserve signed int64 precision through props and arithmetic; the generic route interpreter still converts arithmetic operands through numericValue's float64 path",
 		Expr:         "props.A + 0",
 		PropsFields:  "A int64",
 		PropsLiteral: "A: 9007199254740993",
@@ -151,22 +151,18 @@ var cases = []Case{
 		Want:         "9007199254740993",
 		Diverges: map[Backend]string{
 			Route: "9.007199254740992e+15",
-			VM:    "9007199254740992",
 		},
 		DivergesReason: map[Backend]string{
 			Route: "route/fileeval.go's applyFileBinaryOp ADD always returns numericValue(left)+numericValue(right) as a bare float64, which cannot represent 2^53+1 exactly (rounds to 9007199254740992) and then formats through fmt.Sprint's large-magnitude float path as scientific notation",
-			VM:    "client/vm/value.go's Value packs every number into a float64 num field; Add keeps the TypeInt tag when both operands are int-kind, but the value it carries already rounded to the nearest representable float64 (9007199254740992) before Add ever ran",
 		},
 	},
 
 	{
 		ID: "equality_large_integers", Category: "numeric",
-		Note: "route compares integer identifiers without float64 rounding",
+		Note: "all backends compare integer identifiers without float64 rounding",
 		Expr: "props.A == props.B", PropsFields: "A int64\nB int64",
 		PropsLiteral: "A: 9007199254740993, B: 9007199254740992",
 		PropsValue:   map[string]any{"A": int64(9007199254740993), "B": int64(9007199254740992)}, Want: "false",
-		Diverges:       map[Backend]string{VM: "true"},
-		DivergesReason: map[Backend]string{VM: "the VM stores both identifiers in float64 and rounds them to the same value"},
 	},
 	{
 		ID: "equality_number_nonnumeric_string", Category: "numeric",

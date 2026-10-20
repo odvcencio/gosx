@@ -13,6 +13,7 @@ package vm
 
 import (
 	"errors"
+	"math"
 	"math/rand"
 	"sync"
 
@@ -42,19 +43,22 @@ func init() {
 		if len(args) != 1 {
 			return Value{}, errors.New("rand.Intn expects 1 argument")
 		}
-		n := int(args[0].num)
+		n := args[0].integer()
 		if n <= 0 {
 			return Value{}, errors.New("rand.Intn: n must be > 0")
 		}
 		randMu.Lock()
 		defer randMu.Unlock()
-		return IntVal(randSrc.Intn(n)), nil
+		if n <= math.MaxInt32 {
+			return IntVal(randSrc.Intn(int(n))), nil
+		}
+		return Int64Val(randSrc.Int63n(n)), nil
 	})
 	RegisterIntrinsic("rand.Seed", func(args []Value) (Value, error) {
 		if len(args) != 1 {
 			return Value{}, errors.New("rand.Seed expects 1 argument")
 		}
-		seed := int64(args[0].num)
+		seed := args[0].integer()
 		randMu.Lock()
 		defer randMu.Unlock()
 		randSrc = rand.New(rand.NewSource(seed))

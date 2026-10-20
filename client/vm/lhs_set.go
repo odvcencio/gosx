@@ -117,8 +117,8 @@ func (vm *VM) indexSetValue(e *program.Expr) Value {
 	switch {
 	case target.isList():
 		items := target.list()
-		idx := int(key.num)
-		if idx < 0 || idx >= len(items) {
+		idx := key.integer()
+		if idx < 0 || idx >= int64(len(items)) {
 			vm.recordExprDiagnostic(
 				"index_set_out_of_range",
 				fmt.Sprintf("OpIndexSet index %d out of range [0,%d)", idx, len(items)),

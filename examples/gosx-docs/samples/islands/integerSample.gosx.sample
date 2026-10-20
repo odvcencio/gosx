@@ -1,0 +1,23 @@
+package integers
+
+import "m31labs.dev/gosx/signal"
+
+type ExactCounterProps struct {
+	Initial int64
+}
+
+//gosx:island
+component ExactCounter(props: ExactCounterProps) {
+	count := signal.New(props.Initial)
+	increment := func() { count.Set(count.Get() + 1) }
+	decrement := func() { count.Set(count.Get() - 1) }
+	reset := func() { count.Set(props.Initial) }
+	return <section aria-label="Exact integer counter">
+		<p id="island-integer-value" aria-live="polite">{count.Get()}</p>
+		<div>
+			<button type="button" onClick={decrement}>Subtract one</button>
+			<button type="button" onClick={increment}>Add one</button>
+			<button type="button" onClick={reset}>Reset</button>
+		</div>
+	</section>
+}
