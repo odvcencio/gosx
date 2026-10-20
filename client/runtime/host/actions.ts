@@ -141,11 +141,6 @@
     if (el && "disabled" in el) el.disabled = true;
     return gosxActionRequest(url, opts)
       .then(function (r) {
-        // Re-enable on settle (success OR failure), not just on failure: a
-        // persistent submit button (composer send, comment Pin, suggest) must
-        // be usable again after a successful 2xx. Buttons that re-render away
-        // (accept/dismiss) are replaced anyway, so re-enabling is harmless.
-        if (el && "disabled" in el) el.disabled = false;
         if (!r.ok) {
           console.warn("[gosx] action failed", method, url, r.status);
           reportActionFailure(
@@ -159,6 +154,8 @@
           );
         }
         return responsePayload(r).then(function (result) {
+          // The body is ready; enable before projection restores focus.
+          if (el && "disabled" in el) el.disabled = false;
           applyActionResult(actionEl, result, el);
           var detail = {
             element: el,
