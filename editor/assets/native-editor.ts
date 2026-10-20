@@ -332,6 +332,10 @@
     const findStatus = form.querySelector(".editor-code-find-status");
     let findMatches = [];
     let findIndex = -1;
+    const gotoPanel = form.querySelector("[data-code-goto-panel]");
+    const gotoQuery = form.querySelector('[data-code-goto="query"]');
+    const gotoStatus = form.querySelector('[data-code-goto="status"]');
+    let gotoOrigin = null;
     const localUndo = [];
     const localRedo = [];
     let historyApplying = false;
@@ -455,6 +459,9 @@
       measure.style.letterSpacing = style.letterSpacing;
       measure.style.lineHeight = style.lineHeight;
       measure.style.tabSize = style.tabSize;
+      measure.style.whiteSpace = style.whiteSpace;
+      measure.style.overflowWrap = style.overflowWrap;
+      measure.style.wordBreak = style.wordBreak;
     };
 
     const normalizeWhitespaceOnlyLines = () => {
@@ -568,6 +575,29 @@
       if (lineNumbers) {
         lineNumbers.scrollTop = textarea.scrollTop;
       }
+    };
+
+    const revealSelection = (focus = true) => {
+      const offset = textarea.selectionStart || 0;
+      const measure = ensureLineMeasure();
+      syncLineMeasureStyle(measure, sourceContentWidth());
+      const marker = document.createElement("span");
+      marker.textContent = textarea.value.slice(offset) || "\u200b";
+      measure.replaceChildren(document.createTextNode(textarea.value.slice(0, offset)), marker);
+      const rect = marker.getClientRects()[0];
+      const origin = measure.getBoundingClientRect();
+      const style = getComputedStyle(textarea);
+      const top = (rect?.top ?? origin.top) - origin.top + (parseFloat(style.paddingTop) || 0);
+      const left = (rect?.left ?? origin.left) - origin.left + (parseFloat(style.paddingLeft) || 0);
+      const height = sourceLineHeight();
+      if (focus) textarea.focus({preventScroll: true});
+      if (top < textarea.scrollTop || top + height > textarea.scrollTop + textarea.clientHeight) {
+        textarea.scrollTop = Math.max(0, top - (textarea.clientHeight - height) / 2);
+      }
+      if (left < textarea.scrollLeft || left + height > textarea.scrollLeft + textarea.clientWidth) {
+        textarea.scrollLeft = Math.max(0, left - textarea.clientWidth / 2);
+      }
+      syncScroll();
     };
 
     const rebuildOutline = () => {
@@ -1116,21 +1146,28 @@
       return findMatches.length;
     };
 
-    const selectFindMatch = (direction = 0) => {
-      if (rebuildFindMatches(direction >= 0 ? textarea.selectionEnd || 0 : 0) === 0) return false;
-      if (direction !== 0) {
-        const current = findMatches.findIndex(offset => offset === textarea.selectionStart);
-        findIndex = current < 0 ? findIndex : (current + direction + findMatches.length) % findMatches.length;
+    const selectFindMatch = (direction = 0, focus = true) => {
+      if (rebuildFindMatches() === 0) return false;
+      const current = findMatches.findIndex(offset => offset === textarea.selectionStart &&
+        textarea.selectionEnd === offset + String(findQuery.value).length);
+      if (current >= 0) {
+        findIndex = (current + direction + findMatches.length) % findMatches.length;
+      } else if (direction < 0) {
+        findIndex = findMatches.findLastIndex(offset => offset < textarea.selectionStart);
+        if (findIndex < 0) findIndex = findMatches.length - 1;
       }
       const offset = findMatches[findIndex];
+      clearSecondaryCursors();
       textarea.setSelectionRange(offset, offset + String(findQuery.value).length);
-      textarea.focus();
+      revealSelection(focus);
       if (findStatus) findStatus.textContent = `${findIndex + 1} / ${findMatches.length}`;
       return true;
     };
 
     const openFind = (replace = false) => {
       if (!findPanel || !findQuery) return;
+      if (gotoPanel) gotoPanel.hidden = true;
+      gotoOrigin = null;
       findPanel.hidden = false;
       const selected = textarea.value.slice(textarea.selectionStart || 0, textarea.selectionEnd || 0);
       if (selected && !selected.includes("\n")) findQuery.value = selected;
@@ -1147,11 +1184,61 @@
     };
 
     const replaceFindMatch = () => {
-      if (!findQuery || !findReplacement || !selectFindMatch(0)) return;
+      if (!findQuery || !findReplacement || !selectFindMatch(0, false)) return;
       rememberLocalEdit();
       textarea.setRangeText(findReplacement.value, textarea.selectionStart, textarea.selectionEnd, "end");
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
       rebuildFindMatches();
+    };
+
+    const openGoToLine = () => {
+      if (!codeSurface || !gotoPanel || !gotoQuery) return;
+      if (gotoPanel.hidden) {
+        gotoOrigin = {
+          start: textarea.selectionStart, end: textarea.selectionEnd, direction: textarea.selectionDirection,
+          top: textarea.scrollTop, left: textarea.scrollLeft,
+        };
+      }
+      if (findPanel) findPanel.hidden = true;
+      gotoPanel.hidden = false;
+      const before = textarea.value.slice(0, textarea.selectionStart);
+      gotoQuery.value = `${before.split("\n").length}:${Array.from(before.slice(before.lastIndexOf("\n") + 1)).length + 1}`;
+      gotoQuery.removeAttribute("aria-invalid");
+      if (gotoStatus) gotoStatus.textContent = "";
+      gotoQuery.focus();
+      gotoQuery.select();
+    };
+
+    const closeGoToLine = (restore = true) => {
+      if (!gotoPanel) return;
+      gotoPanel.hidden = true;
+      textarea.focus({preventScroll: true});
+      if (restore && gotoOrigin) {
+        textarea.setSelectionRange(gotoOrigin.start, gotoOrigin.end, gotoOrigin.direction);
+        textarea.scrollTop = gotoOrigin.top;
+        textarea.scrollLeft = gotoOrigin.left;
+        syncScroll();
+      }
+      gotoOrigin = null;
+    };
+
+    const goToLine = () => {
+      if (!gotoQuery) return;
+      const match = gotoQuery.value.trim().match(/^([1-9]\d*)(?::([1-9]\d*))?$/);
+      const lines = textarea.value.split("\n");
+      const line = match ? Number(match[1]) : 0;
+      const column = match ? Number(match[2] || 1) : 0;
+      if (!Number.isSafeInteger(line) || line < 1 || line > lines.length || !Number.isSafeInteger(column) || column < 1) {
+        gotoQuery.setAttribute("aria-invalid", "true");
+        if (gotoStatus) gotoStatus.textContent = `Enter a line from 1 to ${lines.length}, optionally followed by :column.`;
+        return;
+      }
+      const start = lineStartOffsets()[line - 1];
+      const offset = start + Array.from(lines[line - 1]).slice(0, column - 1).join("").length;
+      clearSecondaryCursors();
+      closeGoToLine(false);
+      textarea.setSelectionRange(offset, offset);
+      revealSelection();
     };
 
     const replaceAllFindMatches = () => {
@@ -1452,6 +1539,7 @@
       if (codeCommand && form.contains(codeCommand)) {
         const command = codeCommand.dataset.codeCommand;
         if (command === "find") openFind(false);
+        if (command === "goto") openGoToLine();
         if (command === "comment") toggleLineComment();
         if (command === "bracket") goToMatchingBracket();
         return;
@@ -1466,6 +1554,12 @@
         if (action === "replace-all") replaceAllFindMatches();
         if (action === "close") closeFind();
         return;
+      }
+
+      const gotoAction = event.target.closest("[data-code-goto]");
+      if (gotoAction && form.contains(gotoAction)) {
+        if (gotoAction.dataset.codeGoto === "go") goToLine();
+        if (gotoAction.dataset.codeGoto === "close") closeGoToLine();
       }
 
       const metadataButton = event.target.closest("[data-metadata-action]");
@@ -1522,6 +1616,11 @@
     listen(textarea, "keydown", (event) => {
       if (composing || event.isComposing || event.keyCode === 229) return;
       if (handleEmojiAutocompleteKeydown(event)) return;
+      if (codeSurface && event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "g") {
+        event.preventDefault();
+        openGoToLine();
+        return;
+      }
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "z") {
         event.preventDefault();
         restoreLocalHistory(!event.shiftKey);
@@ -1578,11 +1677,19 @@
       handleTabKey(event);
       handleCodeEnter(event);
     });
-    listen(findQuery, "input", () => selectFindMatch(0));
+    listen(findQuery, "input", event => {
+      if (!event.isComposing) selectFindMatch(0, false);
+    });
+    listen(findQuery, "compositionend", () => selectFindMatch(0, false));
     listen(findQuery, "keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         event.preventDefault();
-        selectFindMatch(event.shiftKey ? -1 : 1);
+        selectFindMatch(event.shiftKey ? -1 : 1, false);
+      }
+      if (event.key === "F3") {
+        event.preventDefault();
+        selectFindMatch(event.shiftKey ? -1 : 1, false);
       }
       if (event.key === "Escape") {
         event.preventDefault();
@@ -1590,6 +1697,7 @@
       }
     });
     listen(findReplacement, "keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
       if (event.key === "Enter") {
         event.preventDefault();
         replaceFindMatch();
@@ -1597,6 +1705,24 @@
       if (event.key === "Escape") {
         event.preventDefault();
         closeFind();
+      }
+    });
+    listen(gotoQuery, "keydown", (event) => {
+      if (event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Enter") {
+        event.preventDefault();
+        goToLine();
+      }
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeGoToLine();
+      }
+    });
+    listen(gotoPanel, "keydown", event => {
+      if (event.target === gotoQuery || event.isComposing || event.keyCode === 229) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeGoToLine();
       }
     });
     listen(textarea, "beforeinput", applyMultiCursorEdit);

@@ -25,6 +25,15 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 		`internal/api/api.go`,
 		`name="content"`,
 		`data-code-command="find"`,
+		`data-code-command="goto"`,
+		`aria-label="Go to line"`,
+		`data-code-goto-panel`,
+		`data-code-goto="query"`,
+		`aria-label="Line and column"`,
+		`data-code-goto="go"`,
+		`data-code-goto="close"`,
+		`aria-label="Close go to line"`,
+		`data-code-goto="status" aria-live="polite"`,
 		`data-code-command="comment"`,
 		`data-code-command="bracket"`,
 		`data-code-find="query"`,
@@ -45,6 +54,13 @@ func TestCodeSurfaceUsesSourceEditingContract(t *testing.T) {
 	}
 	if !strings.Contains(html, `class="editor-native-card editor-panel editor-panel-diagnostics"`) {
 		t.Fatalf("diagnostics panel must participate in panel selection: %s", html)
+	}
+}
+
+func TestMarkdownSurfaceOmitsCodeNavigation(t *testing.T) {
+	html := gosx.RenderHTML(New("markdown", Options{Content: "# Note"}).Render())
+	if strings.Contains(html, `data-code-command="goto"`) || strings.Contains(html, `data-code-goto-panel`) {
+		t.Fatal("Markdown surface must not render code navigation")
 	}
 }
 

@@ -152,7 +152,7 @@
     source.addEventListener("input", update, {signal: lifetime.signal});
     source.addEventListener("gosx:remote-input", update, {signal: lifetime.signal});
     source.addEventListener("keydown", (event) => {
-      if (event.isComposing || event.keyCode === 229) return;
+      if (event.defaultPrevented || event.isComposing || event.keyCode === 229) return;
       if (event.key === "F12") {
         const target = definitionAtCursor(source, latestTags);
         if (!target) return;
