@@ -16,12 +16,13 @@ type NavigationTiming struct {
 
 // RuntimeState holds GoSX runtime introspection.
 type RuntimeState struct {
-	IslandCount     int  `json:"islandCount"`
-	EngineCount     int  `json:"engineCount"`
-	PerfReady       bool `json:"perfReady"`
-	FirstFrame      bool `json:"firstFrame"`
-	FrameCount      int  `json:"frameCount"`
-	HubMessageCount int  `json:"hubMessageCount"`
+	SceneFrameCounterAvailable bool `json:"sceneFrameCounterAvailable"`
+	IslandCount                int  `json:"islandCount"`
+	EngineCount                int  `json:"engineCount"`
+	PerfReady                  bool `json:"perfReady"`
+	FirstFrame                 bool `json:"firstFrame"`
+	FrameCount                 int  `json:"frameCount"`
+	HubMessageCount            int  `json:"hubMessageCount"`
 }
 
 // HydrationEntry from __gosx_perf.hydrationLog.
@@ -164,6 +165,7 @@ func QueryRuntimeState(d *Driver) (RuntimeState, error) {
 	var st RuntimeState
 	err := d.Evaluate(`(function(){
 		var r = {
+			sceneFrameCounterAvailable: false,
 			islandCount: 0,
 			engineCount: 0,
 			perfReady: false,
@@ -176,7 +178,9 @@ func QueryRuntimeState(d *Driver) (RuntimeState, error) {
 			if (window.__gosx.engines) r.engineCount = window.__gosx.engines.size || 0;
 		}
 		var p = window.__gosx_perf;
+		if (p && typeof p.flushObservers === "function") p.flushObservers();
 		if (p) {
+			r.sceneFrameCounterAvailable = !!(p.availability && p.availability.sceneFrames);
 			r.perfReady = !!p.ready;
 			r.firstFrame = !!p.firstFrame;
 			r.frameCount = p.frameCount || 0;

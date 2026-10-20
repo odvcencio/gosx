@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
@@ -306,7 +307,9 @@ func (d *Driver) Context() context.Context {
 
 // Navigate goes to the given URL and waits for DOMContentLoaded.
 func (d *Driver) Navigate(url string) error {
-	return chromedp.Run(d.ctx, chromedp.Navigate(url))
+	// Remote browsers may already have an active tab. Background targets do
+	// not deliver paint or animation-frame samples, even after loading finishes.
+	return chromedp.Run(d.ctx, page.BringToFront(), chromedp.Navigate(url))
 }
 
 // Evaluate runs JavaScript in the page and unmarshals the result into dst.

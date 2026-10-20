@@ -24,6 +24,8 @@
     firstInputDelay: 0,
     signalWrites: 0,
     signalReads: 0,
+    availability: {lcp: false, cls: false, fid: false, longTasks: false, sceneFrames: false},
+    wasHidden: document.visibilityState === "hidden",
 
     // Browser animation-frame cadence and Scene3D telemetry are sampled
     // independently from scene3d-render. The latter is CPU submission work,
@@ -34,6 +36,31 @@
     presentedFrameIntervals: [], // {duration, startTime, phase}
     sceneAttributeSamples: [],   // {mount, name, value, numericValue, startTime, phase}
     sceneTelemetryEvents: []     // {type, detail, startTime, phase}
+  };
+
+  document.addEventListener("visibilitychange", function() {
+    if (document.visibilityState === "hidden") perf.wasHidden = true;
+  });
+
+  function _supportsEntry(type) {
+    return typeof PerformanceObserver === "function" &&
+      Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+      PerformanceObserver.supportedEntryTypes.indexOf(type) !== -1;
+  }
+
+  var _observers = [];
+  function _observe(type, consume) {
+    var observer = new PerformanceObserver(function(list) { consume(list.getEntries()); });
+    observer.observe({type: type, buffered: true});
+    _observers.push({observer: observer, consume: consume});
+  }
+  // Observer callbacks can still be queued when CDP asks for a snapshot.
+  // Drain pending entries before reading counters or claiming a measured zero.
+  perf.flushObservers = function() {
+    for (var i = 0; i < _observers.length; i++) {
+      var pending = _observers[i].observer.takeRecords();
+      if (pending.length) _observers[i].consume(pending);
+    }
   };
 
   // --- 1. Bridge gosx:ready CustomEvent → performance mark ---
@@ -47,10 +74,10 @@
 
   // --- 3. Observe scene frames + detect first frame ---
   try {
-    var sceneObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
+    _observe("measure", function(entries) {
       for (var i = 0; i < entries.length; i++) {
         if (entries[i].name === "scene3d-render") {
+          perf.availability.sceneFrames = true;
           perf.frameCount++;
           if (!perf.firstFrame) {
             perf.firstFrame = true;
@@ -60,7 +87,7 @@
         }
       }
     });
-    sceneObserver.observe({ type: "measure", buffered: true });
+    perf.availability.sceneFrames = _supportsEntry("measure");
   } catch (_e) {}
 
   // --- 3a. Browser animation-frame cadence ---
@@ -233,8 +260,8 @@
   // This is the single most valuable signal for scroll jank diagnosis:
   // any main-thread task > 50ms will cause dropped frames during scroll.
   try {
-    var longTaskObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
+    _observe("longtask", function(entries) {
+      perf.availability.longTasks = true;
       for (var i = 0; i < entries.length; i++) {
         var e = entries[i];
         perf.longTasks.push({
@@ -244,26 +271,25 @@
         });
       }
     });
-    longTaskObserver.observe({ type: "longtask", buffered: true });
+    perf.availability.longTasks = _supportsEntry("longtask");
   } catch (_e) {}
 
   // --- 3d. Core Web Vitals: Largest Contentful Paint ---
   try {
-    var lcpObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
+    _observe("largest-contentful-paint", function(entries) {
       // LCP can update multiple times; use the latest entry.
       var last = entries[entries.length - 1];
+      if (last) perf.availability.lcp = true;
       if (last && last.startTime > perf.largestContentfulPaint) {
         perf.largestContentfulPaint = last.startTime;
       }
     });
-    lcpObserver.observe({ type: "largest-contentful-paint", buffered: true });
   } catch (_e) {}
 
   // --- 3e. Core Web Vitals: Cumulative Layout Shift ---
   try {
-    var clsObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
+    _observe("layout-shift", function(entries) {
+      perf.availability.cls = true;
       for (var i = 0; i < entries.length; i++) {
         var e = entries[i];
         // Ignore shifts triggered by user input
@@ -272,19 +298,18 @@
         }
       }
     });
-    clsObserver.observe({ type: "layout-shift", buffered: true });
+    perf.availability.cls = _supportsEntry("layout-shift");
   } catch (_e) {}
 
   // --- 3f. Core Web Vitals: First Input Delay ---
   try {
-    var fidObserver = new PerformanceObserver(function(list) {
-      var entries = list.getEntries();
+    _observe("first-input", function(entries) {
       if (entries.length > 0 && perf.firstInputDelay === 0) {
+        perf.availability.fid = true;
         var first = entries[0];
         perf.firstInputDelay = first.processingStart - first.startTime;
       }
     });
-    fidObserver.observe({ type: "first-input", buffered: true });
   } catch (_e) {}
 
   // --- 4. Trap __gosx_runtime_ready assignment ---

@@ -13,9 +13,10 @@ import (
 // Direction tells the formatter which way is "good" (lower is better for
 // timing, higher is better for coverage ratio).
 type Comparison struct {
-	Baseline  string           `json:"baselinePath"`
-	Candidate string           `json:"candidatePath"`
-	Metrics   []ComparedMetric `json:"metrics"`
+	Baseline    string           `json:"baselinePath"`
+	Candidate   string           `json:"candidatePath"`
+	Metrics     []ComparedMetric `json:"metrics"`
+	Unavailable []string         `json:"unavailable,omitempty"`
 }
 
 // Direction encodes which way improvement points for a metric.
@@ -102,6 +103,15 @@ func CompareReports(baseline, candidate *Report) Comparison {
 			Direction: dir,
 		})
 	}
+	addRecorded := func(metric, name, unit string, dir Direction) {
+		bv, baselineFound := ResolvePageMetric(metric, &b)
+		cv, candidateFound := ResolvePageMetric(metric, &c)
+		if baselineFound && candidateFound {
+			add(name, unit, bv, cv, dir)
+		} else if baselineFound || candidateFound {
+			cmp.Unavailable = append(cmp.Unavailable, name)
+		}
+	}
 
 	// Lifecycle — lower is better across the board.
 	add("TTFB", "ms", b.TTFBMs, c.TTFBMs, LowerBetter)
@@ -111,34 +121,26 @@ func CompareReports(baseline, candidate *Report) Comparison {
 	}
 
 	// Web vitals.
-	if b.LargestContentfulPaintMs > 0 || c.LargestContentfulPaintMs > 0 {
-		add("LCP", "ms", b.LargestContentfulPaintMs, c.LargestContentfulPaintMs, LowerBetter)
-	}
-	if b.CumulativeLayoutShift > 0 || c.CumulativeLayoutShift > 0 {
-		add("CLS", "", b.CumulativeLayoutShift, c.CumulativeLayoutShift, LowerBetter)
-	}
+	addRecorded("lcp", "LCP", "ms", LowerBetter)
+	addRecorded("cls", "CLS", "", LowerBetter)
 
 	// Main-thread blocking.
-	add("Long tasks", "", float64(b.LongTaskCount), float64(c.LongTaskCount), LowerBetter)
-	add("Long task total", "ms", b.LongTaskTotalMs, c.LongTaskTotalMs, LowerBetter)
-	add("TBT", "ms", b.TotalBlockingTimeMs, c.TotalBlockingTimeMs, LowerBetter)
+	addRecorded("long_tasks", "Long tasks", "", LowerBetter)
+	addRecorded("long_task_total", "Long task total", "ms", LowerBetter)
+	addRecorded("tbt", "TBT", "ms", LowerBetter)
 
 	// Scene frame stats if both reports have them.
-	if b.Scene != nil && c.Scene != nil {
-		add("Scene first frame", "ms", b.Scene.FirstFrameMs, c.Scene.FirstFrameMs, LowerBetter)
-		add("Scene p50", "ms", b.Scene.FrameStats.P50, c.Scene.FrameStats.P50, LowerBetter)
-		add("Scene p95", "ms", b.Scene.FrameStats.P95, c.Scene.FrameStats.P95, LowerBetter)
-		add("Scene p99", "ms", b.Scene.FrameStats.P99, c.Scene.FrameStats.P99, LowerBetter)
-	}
+	addRecorded("first_frame", "Scene first frame", "ms", LowerBetter)
+	addRecorded("p50", "Scene p50", "ms", LowerBetter)
+	addRecorded("p95", "Scene p95", "ms", LowerBetter)
+	addRecorded("p99", "Scene p99", "ms", LowerBetter)
 
 	// Runtime throughput.
-	if b.HubMessageBytes > 0 || c.HubMessageBytes > 0 {
-		add("Hub bytes", "B", float64(b.HubMessageBytes), float64(c.HubMessageBytes), LowerBetter)
-	}
+	addRecorded("hub_bytes", "Hub bytes", "B", LowerBetter)
 
 	// Network.
-	add("Network bytes", "KB", float64(b.TotalBytesTransferred)/1024, float64(c.TotalBytesTransferred)/1024, LowerBetter)
-	add("Requests", "", float64(len(b.Resources)), float64(len(c.Resources)), LowerBetter)
+	addRecorded("network_kb", "Network bytes", "KB", LowerBetter)
+	addRecorded("requests", "Requests", "", LowerBetter)
 
 	// JS coverage (overall) — higher is better.
 	if len(b.Coverage) > 0 && len(c.Coverage) > 0 {
@@ -193,6 +195,9 @@ func FormatComparison(cmp Comparison, threshold float64) string {
 	b.WriteString(fmt.Sprintf("gosx perf compare — baseline: %s  candidate: %s\n",
 		cmp.Baseline, cmp.Candidate))
 	b.WriteString("\n")
+	if len(cmp.Unavailable) > 0 {
+		b.WriteString("    Not compared (missing evidence in one report): " + strings.Join(cmp.Unavailable, ", ") + "\n\n")
+	}
 	b.WriteString(fmt.Sprintf("    %-22s%14s%14s%12s  %s\n",
 		"Metric", "Baseline", "Candidate", "Δ%", "Status"))
 	b.WriteString("    " + strings.Repeat("-", 70) + "\n")

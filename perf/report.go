@@ -14,6 +14,7 @@ func FormatTable(r *Report) string {
 
 	// Use the embedded PageReport for single-page reports, or first page
 	p := &r.PageReport
+	available := pageMetricAvailability(p)
 	url := r.URL
 
 	b.WriteString(fmt.Sprintf("gosx perf — %s\n", url))
@@ -41,7 +42,7 @@ func FormatTable(r *Report) string {
 		if p.Scene.FirstRenderStartMs > 0 {
 			b.WriteString(fmt.Sprintf("    %-24s%.1fms after navigation\n", "First render start", p.Scene.FirstRenderStartMs))
 		}
-		if p.Scene.FirstFrameMs > 0 {
+		if p.Scene.FrameStats.Count > 0 {
 			b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "First CPU submit", p.Scene.FirstFrameMs))
 		}
 
@@ -52,7 +53,7 @@ func FormatTable(r *Report) string {
 				fs.P50, fs.P95, fs.P99, fs.Max))
 		}
 
-		if presentation := p.Scene.Presentation; presentation != nil {
+		if presentation := p.Scene.Presentation; presentation != nil && presentation.Stats.Count > 0 {
 			fs = presentation.Stats
 			b.WriteString(fmt.Sprintf("    rAF presentation cadence (%d intervals)\n", fs.Count))
 			b.WriteString(fmt.Sprintf("      p50    %.1fms    p95    %.1fms    p99    %.1fms    max    %.1fms\n",
@@ -123,7 +124,11 @@ func FormatTable(r *Report) string {
 			}
 		}
 
-		b.WriteString(fmt.Sprintf("    %-24s%d CPU render measures\n", "Frame count", p.Scene.FrameCount))
+		if available.SceneFrames {
+			b.WriteString(fmt.Sprintf("    %-24s%d CPU render measures\n", "Frame count", p.Scene.FrameCount))
+		} else {
+			b.WriteString(fmt.Sprintf("    %-24sunavailable\n", "Frame count"))
+		}
 	}
 
 	// Interactions
@@ -137,9 +142,9 @@ func FormatTable(r *Report) string {
 	}
 
 	// Core Web Vitals
-	if p.LargestContentfulPaintMs > 0 || p.CumulativeLayoutShift > 0 || p.FirstInputDelayMs > 0 {
+	if p.MetricAvailability != nil || available.LCP || available.CLS || available.FID {
 		b.WriteString("\n  Core Web Vitals\n")
-		if p.LargestContentfulPaintMs > 0 {
+		if available.LCP {
 			rating := " (good)"
 			if p.LargestContentfulPaintMs > 4000 {
 				rating = " (poor)"
@@ -147,8 +152,10 @@ func FormatTable(r *Report) string {
 				rating = " (needs improvement)"
 			}
 			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "LCP", p.LargestContentfulPaintMs, rating))
+		} else {
+			b.WriteString(fmt.Sprintf("    %-24sunavailable\n", "LCP"))
 		}
-		if p.CumulativeLayoutShift > 0 {
+		if available.CLS {
 			rating := " (good)"
 			if p.CumulativeLayoutShift > 0.25 {
 				rating = " (poor)"
@@ -156,8 +163,10 @@ func FormatTable(r *Report) string {
 				rating = " (needs improvement)"
 			}
 			b.WriteString(fmt.Sprintf("    %-24s%.3f%s\n", "CLS", p.CumulativeLayoutShift, rating))
+		} else {
+			b.WriteString(fmt.Sprintf("    %-24sunavailable\n", "CLS"))
 		}
-		if p.FirstInputDelayMs > 0 {
+		if available.FID {
 			rating := " (good)"
 			if p.FirstInputDelayMs > 300 {
 				rating = " (poor)"
@@ -165,11 +174,13 @@ func FormatTable(r *Report) string {
 				rating = " (needs improvement)"
 			}
 			b.WriteString(fmt.Sprintf("    %-24s%.1fms%s\n", "FID", p.FirstInputDelayMs, rating))
+		} else {
+			b.WriteString(fmt.Sprintf("    %-24sunavailable\n", "FID"))
 		}
 	}
 
 	// Long tasks — main thread blocking
-	if p.LongTaskCount > 0 {
+	if available.LongTasks {
 		b.WriteString("\n  Main-Thread Blocking\n")
 		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Long tasks", p.LongTaskCount))
 		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Long task total", p.LongTaskTotalMs))
@@ -186,10 +197,12 @@ func FormatTable(r *Report) string {
 		if len(p.LongTasks) > 5 {
 			b.WriteString(fmt.Sprintf("      ... %d more\n", len(p.LongTasks)-5))
 		}
+	} else if p.MetricAvailability != nil {
+		b.WriteString("\n  Main-Thread Blocking\n    unavailable\n")
 	}
 
 	// GoSX runtime throughput
-	if p.SignalWrites > 0 || p.SignalReads > 0 || p.HubMessageCount > 0 {
+	if available.RuntimeCounters && (p.SignalWrites > 0 || p.SignalReads > 0 || p.HubMessageCount > 0) {
 		b.WriteString("\n  Runtime Throughput\n")
 		if p.SignalWrites > 0 || p.SignalReads > 0 {
 			b.WriteString(fmt.Sprintf("    %-24sw:%d  r:%d\n", "Signal ops", p.SignalWrites, p.SignalReads))
@@ -317,11 +330,13 @@ func FormatTable(r *Report) string {
 	}
 
 	// Network summary (detail available via --waterfall)
-	if len(p.Resources) > 0 {
+	if available.Network {
 		b.WriteString("\n  Network\n")
 		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Total requests", len(p.Resources)))
 		b.WriteString(fmt.Sprintf("    %-24s%.1fKB\n", "Total transferred", float64(p.TotalBytesTransferred)/1024))
 		b.WriteString(fmt.Sprintf("    %-24s%.0fms\n", "Blocking resource", p.BlockingResourceMs))
+	} else if p.MetricAvailability != nil {
+		b.WriteString("\n  Network\n    unavailable\n")
 	}
 
 	return b.String()
