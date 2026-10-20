@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Compose static `func()` callback props inside islands. Same-file views forward
+  parent-owned handlers without another VM or runtime instructions. Check
+  callback ownership and signatures, keep callbacks out of serialized data, and
+  prove forwarded bindings during scalar AOT admission.
+
 - Lower VM engine-surface packages together so Go helpers, struct layouts and
   file-local import aliases work across source files. Preserve source locations
   in compiler diagnostics, retain callable functions from every file, and reject

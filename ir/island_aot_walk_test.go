@@ -50,6 +50,7 @@ func oracleFieldPolicies() map[string]string {
 		{"Component.AcceptsChildren Component.AcceptsSlots Component.Syntax Component.PropsTyped", "component boundary shape and slot names"},
 		{"Component.IsIsland Component.IsEngine Component.EngineKind Component.EngineCapabilities Component.ServerOnly Component.EngineSurface Component.SurfaceHandlers SurfaceHandlerRef.EventName SurfaceHandlerRef.FunctionName", "execution category and surface capability metadata"},
 		{"ComponentScope.Locals SignalInfo.Name SignalInfo.Local SignalInfo.TypeHint SignalInfo.SourceType ComputedInfo.Name ComputedInfo.ReturnType HandlerInfo.Name", "declaration names and type/constructor evidence"},
+		{"HandlerInfo.HasParameters HandlerInfo.HasResults", "signature admission flags; callback signatures are proved from authored Go"},
 		{"Node.Kind Node.syntheticConditional Node.Tag Node.IsStatic Node.IsIslandRoot", "node discriminants, component binding name and hydration metadata"},
 		{"Attr.Kind Attr.Name Attr.IsEvent", "attribute discriminant/name and handler classification"},
 		{"Component.Span Node.Span Attr.Span Span.File Span.StartLine Span.StartCol Span.EndLine Span.EndCol", "diagnostic source coordinates"},

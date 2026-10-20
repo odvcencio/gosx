@@ -60,6 +60,11 @@ func islandComponent(prog *Program, compIdx int) (Component, error) {
 	if !comp.IsIsland {
 		return Component{}, fmt.Errorf("component %q is not an island", comp.Name)
 	}
+	for name, typ := range comp.PropsFields {
+		if islandCallbackType(typ) {
+			return Component{}, callbackError("root island %s cannot receive callback prop %s from server data; declare its handler inside the island", comp.Name, name)
+		}
+	}
 	return comp, nil
 }
 
@@ -214,6 +219,7 @@ type islandProjection struct {
 type islandInlineContext struct {
 	component    string
 	props        map[string]islandInlineExpr
+	callbacks    map[string]string
 	children     islandProjection
 	slots        map[string]islandProjection
 	identAliases map[string]string
@@ -794,6 +800,20 @@ func (l *islandLowerer) lowerComposedCall(call *Node, targetIdx int, callerConte
 		}
 	}
 	for _, attr := range call.Attrs {
+		if islandCallbackType(target.PropsFields[attr.Name]) {
+			if attr.Kind != AttrExpr {
+				return 0, callbackError("component <%s> callback prop %s requires a handler expression", target.Name, attr.Name)
+			}
+			handler, err := l.callbackHandler(attr.Expr, callerContext, callScope)
+			if err != nil {
+				return 0, err
+			}
+			if context.callbacks == nil {
+				context.callbacks = make(map[string]string)
+			}
+			context.callbacks[attr.Name] = handler
+			continue
+		}
 		var source string
 		switch attr.Kind {
 		case AttrStatic:
@@ -851,7 +871,7 @@ func (l *islandLowerer) composableCalleeError(target *Component) error {
 	sort.Strings(fields)
 	for _, field := range fields {
 		typ := target.PropsFields[field]
-		if !strictRendererScalarType(typ) {
+		if !strictRendererScalarType(typ) && !islandCallbackType(typ) {
 			return fmt.Errorf("component <%s> reads non-scalar prop %s (%s); v1 island composition accepts typed string, bool, integer, and floating-point props only", target.Name, field, typ)
 		}
 	}
@@ -878,6 +898,15 @@ func (l *islandLowerer) composableViewTreeError(componentName string, id NodeID,
 			return fmt.Errorf("pure-view component <%s> contains reserved attribute %q: the island renderer generates it for event dispatch; use a non-reserved name such as data-app-%s", componentName, attr.Name, strings.TrimPrefix(strings.ToLower(attr.Name), "data-gosx-"))
 		}
 		if attr.IsEvent || (attr.Kind == AttrStatic && strings.HasPrefix(strings.ToLower(strings.TrimSpace(attr.Name)), "data-on-")) {
+			component := &l.src.Components[l.componentIndex[componentName]]
+			if field, ok := islandCallbackField(attr.Expr); attr.Kind == AttrExpr && ok && islandCallbackType(component.PropsFields[field]) {
+				if node.Kind == NodeElement {
+					if _, supported := islandEventTypes[attr.Name]; !supported {
+						return callbackError("callback event %q is not supported", attr.Name)
+					}
+				}
+				continue
+			}
 			return fmt.Errorf("pure-view component <%s> contains handler attribute %q; keep behavior in the parent island and pass only scalar view data", componentName, attr.Name)
 		}
 	}
@@ -1086,10 +1115,20 @@ func (l *islandLowerer) lowerAttr(attr Attr, context *islandInlineContext) (prog
 		}, nil
 	case AttrExpr:
 		if attr.IsEvent {
+			handler := attr.Expr
+			if context != nil && context.component != "" {
+				var err error
+				handler, err = l.callbackHandler(attr.Expr, context, l.scope)
+				if err != nil {
+					return program.Attr{}, err
+				}
+			} else if _, callback := islandCallbackField(attr.Expr); callback {
+				return program.Attr{}, callbackError("root island %s cannot receive a callback from server props; declare its handler inside the island", l.dst.Name)
+			}
 			return program.Attr{
 				Kind:  program.AttrEvent,
 				Name:  attr.Name,
-				Event: attr.Expr, // handler name from expression
+				Event: handler,
 			}, nil
 		}
 		// Expression attribute -- add to expr table, substituting any
@@ -1431,6 +1470,9 @@ func (l *islandLowerer) appendInlineExpr(exprs []program.Expr, id program.ExprID
 		return 0, fmt.Errorf("island expression references invalid opcode %d", id)
 	}
 	if field, ok := directPropsField(exprs, id); ok && context != nil && context.component != "" {
+		if context.callbacks[field] != "" {
+			return 0, callbackError("component <%s> callback prop %s can only bind an event or another callback prop", context.component, field)
+		}
 		binding, supplied := context.props[field]
 		if !supplied {
 			return 0, fmt.Errorf("composed component <%s> requires scalar prop %s, but the call does not supply it", context.component, field)
