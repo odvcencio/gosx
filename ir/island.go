@@ -331,6 +331,16 @@ func (l *islandLowerer) emitHandlerDefs(handlers []HandlerInfo) error {
 	handlerScope := handlerExprScope(l.scope)
 	for _, handler := range handlers {
 		h := program.Handler{Name: handler.Name}
+		l.origin = islandExprOrigin{declaration: "handler/" + handler.Name}
+		body, structured, err := l.lowerHandlerStatements(handler.Statements, handlerScope)
+		if err != nil {
+			return fmt.Errorf("parse handler %s: %w", handler.Name, err)
+		}
+		if structured {
+			h.Body = body
+			l.dst.Handlers = append(l.dst.Handlers, h)
+			continue
+		}
 		for stmtIndex, stmtSource := range handler.Statements {
 			l.origin = islandExprOrigin{declaration: "handler/" + handler.Name, statement: stmtIndex}
 			stmtExprs, stmtID, err := ParseExpr(stmtSource, handlerScope)

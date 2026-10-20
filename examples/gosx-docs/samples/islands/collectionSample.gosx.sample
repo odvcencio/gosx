@@ -12,6 +12,9 @@ component Collection() {
 	edit := func() { draft.Set(value) }
 	add := func() {
 		browser.PreventDefault()
+		if draft.Get() == "" || len(items.Get()) >= 12 {
+			return
+		}
 		items.Set(append(items.Get(), draft.Get()))
 		draft.Set("")
 	}

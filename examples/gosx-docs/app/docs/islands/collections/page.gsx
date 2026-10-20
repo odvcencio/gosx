@@ -16,6 +16,9 @@ component LiveCollection(props: LiveCollectionProps) {
 	edit := func() { draft.Set(value) }
 	add := func() {
 		browser.PreventDefault()
+		if draft.Get() == "" || len(items.Get()) >= 12 {
+			return
+		}
 		items.Set(append(items.Get(), draft.Get()))
 		draft.Set("")
 		browser.Focus("#island-collection-draft")
@@ -56,6 +59,7 @@ func Page() Node {
 			>View the collection source</a>
 		</section>
 		<p>Use append(items.Get(), item) and Set to grow a list. Each renders the updated slice. Several individual elements may be appended in one call, and a call with only the slice preserves its value. The VM creates a fresh slice for additions, keeping earlier signal values independent.</p>
+		<p>The handler uses a Go if guard and bare return to reject empty drafts and keep the collection within its limit, even when a submission bypasses the disabled button. Nested if, else if, and else branches use the same shared VM. Handler-local assignments, loops, if initializers, and return values remain outside this subset.</p>
 		<p>This intrinsic supports individual elements. Variadic slice expansion with ... remains outside the island expression subset. The example uses the shared VM and introduces no browser feature module or runtime opcode.</p>
 		<h2 id="collection-source">Source</h2>
 		{CodeBlock("gosx", data.collectionSample)}
