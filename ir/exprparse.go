@@ -841,6 +841,26 @@ func (p *exprParser) buildFixedArityMethod(receiverID program.ExprID, normalized
 }
 
 func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (program.ExprID, error) {
+	// Keep Go's append spelling and handler shadowing. The VM already owns
+	// immutable append semantics; lowering individual elements to its existing
+	// operation adds no runtime opcode or browser feature dependency.
+	if name == "append" && (p.scope == nil || !p.scope.Handlers[name]) {
+		if len(args) == 0 {
+			return 0, fmt.Errorf("append requires a slice as its first argument")
+		}
+		result := args[0]
+		if p.exprs[result].Type != program.TypeAny {
+			return 0, fmt.Errorf("append requires a slice as its first argument")
+		}
+		for _, item := range args[1:] {
+			result = p.addExpr(program.Expr{
+				Op:       program.OpAppend,
+				Operands: []program.ExprID{result, item},
+				Type:     program.TypeAny,
+			})
+		}
+		return result, nil
+	}
 	switch strings.ToLower(name) {
 	case "len":
 		if len(args) != 1 {

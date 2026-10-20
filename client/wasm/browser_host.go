@@ -13,8 +13,8 @@ import (
 
 // browserHostReceiver is the browser-owned capability surface bound under the
 // reserved `browser` receiver for DOM island handlers. It holds only the root
-// id: every selector lookup is repeated against the current root so navigation
-// reconciliation and deferred form submission never retain detached nodes.
+// id. Deferred selectors resolve against the current root; queued focus also
+// checks the original wrapper's identity before affecting it.
 type browserHostReceiver struct {
 	islandID string
 }
@@ -70,7 +70,18 @@ func (r *browserHostReceiver) Call(method string, args []vm.Value) (result vm.Va
 		if err != nil || selector == "" {
 			return vm.BoolVal(false), err
 		}
-		return vm.BoolVal(browserDefer(func() { r.callElement(selector, "focus") })), nil
+		root, ok := r.root()
+		if !ok {
+			return vm.BoolVal(false), nil
+		}
+		// Native pointer focus can run after microtasks. Wait for the event's
+		// default actions too, and never focus a replacement island after nav.
+		return vm.BoolVal(browserDeferAfterEvent(func() {
+			current, ok := r.root()
+			if ok && current.Equal(root) {
+				r.callElement(selector, "focus")
+			}
+		})), nil
 	case "FocusMove":
 		if err := requireBrowserArity(method, callArgs, 2, 2); err != nil {
 			return vm.BoolVal(false), err
@@ -748,6 +759,14 @@ func browserRefresh() bool {
 }
 
 func browserDefer(fn func()) (queued bool) {
+	return browserSchedule(fn, false)
+}
+
+func browserDeferAfterEvent(fn func()) (queued bool) {
+	return browserSchedule(fn, true)
+}
+
+func browserSchedule(fn func(), afterEvent bool) (queued bool) {
 	var callback js.Func
 	callback = js.FuncOf(func(this js.Value, args []js.Value) any {
 		defer callback.Release()
@@ -761,6 +780,10 @@ func browserDefer(fn func()) (queued bool) {
 		}
 	}()
 	global := js.Global()
+	if afterEvent && global.Get("setTimeout").Type() == js.TypeFunction {
+		global.Call("setTimeout", callback, 0)
+		return true
+	}
 	if global.Get("queueMicrotask").Type() == js.TypeFunction {
 		global.Call("queueMicrotask", callback)
 		return true

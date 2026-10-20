@@ -22,6 +22,7 @@ func init() {
 					{"href": "#island-model", "label": "Island Model"},
 					{"href": "#authoring", "label": "Authoring"},
 					{"href": "#composition", "label": "Composition"},
+					{"href": "#collections", "label": "Collections"},
 					{"href": "#vm-subset", "label": "VM Subset"},
 					{"href": "#shared-signals", "label": "Shared Signals"},
 					{"href": "#program-assets", "label": "Program Assets"},

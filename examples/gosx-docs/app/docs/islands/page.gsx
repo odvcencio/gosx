@@ -17,6 +17,7 @@ component LiveCounter(props: LiveCounterProps) {
 	</button>
 }
 
+
 func Page() Node {
 	return <article class="prose">
 		<section class="docs-live-example" aria-label="Interactive counter island">
@@ -70,12 +71,17 @@ func Page() Node {
 			A parent island may call a same-file strict pure-view component. The compiler inlines every invocation into the parent's program, including direct typed scalar props, caller-owned children, and named slots. Projected child markup can read the parent island's signals and bind its handlers. The browser still hydrates one root with one VM, and the encoded program has no component-call opcode.
 		</p>
 		<p>
-			Pure-view means the callee owns no signals, computed values, handlers, or effects. Nested islands, engines, legacy and imported callees, handler-valued props, nested or slice props, spreads, recursion, and more than 32 composed component frames fail closed. Expanded programs retain the 65,535-node and expression limits.
+			Pure-view means the callee owns no signals, computed values, handlers, or effects. A typed func() prop may forward a handler owned by the parent island, including through another pure-view wrapper. Callbacks remain static event bindings and cannot come from server props or be used as ordinary data. Nested islands, engines, legacy and imported callees, nested or slice props, spreads, recursion, and more than 32 composed component frames fail closed. Expanded programs retain the 65,535-node and expression limits.
 		</p>
 		<p>
 			Caller children and named slots belong on an inner pure-view component, as in the sample. The root island itself cannot declare those holes because its
 			<span class="inline-code">.gxi</span>
 			asset is compiled before any individual server call site supplies content.
+		</p>
+		<h2 id="collections">Slice collections</h2>
+		<p>
+			Use append(items.Get(), item) to grow a signal-backed slice, then render it with Each.
+			<a href="/docs/islands/collections/">Try the collection editor</a> for a working GoSX example and its supported syntax.
 		</p>
 		<h2 id="vm-subset">Expression VM subset</h2>
 		<p>
