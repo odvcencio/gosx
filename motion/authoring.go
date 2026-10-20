@@ -8,34 +8,6 @@ import (
 	"time"
 )
 
-var motionCSSUnits = map[string]struct{}{
-	"": {}, "px": {}, "%": {}, "em": {}, "rem": {}, "vh": {}, "vw": {},
-	"vmin": {}, "vmax": {}, "deg": {}, "rad": {}, "turn": {}, "ms": {}, "s": {},
-}
-
-var motionStyleProperties = map[string]struct{}{
-	"opacity": {}, "color": {}, "background": {}, "backgroundColor": {}, "background-color": {},
-	"transform": {}, "transform.x": {}, "transform.y": {}, "transform.z": {}, "transform.scale": {}, "transform.rotate": {}, "transform.rotation": {},
-	"width": {}, "height": {}, "minWidth": {}, "maxWidth": {}, "minHeight": {}, "maxHeight": {},
-	"top": {}, "right": {}, "bottom": {}, "left": {}, "margin": {}, "marginTop": {}, "marginRight": {}, "marginBottom": {}, "marginLeft": {},
-	"padding": {}, "paddingTop": {}, "paddingRight": {}, "paddingBottom": {}, "paddingLeft": {},
-	"borderRadius": {}, "filter": {}, "clipPath": {}, "letterSpacing": {}, "wordSpacing": {},
-}
-
-var motionSceneProperties = map[string]struct{}{
-	"position": {}, "scale": {}, "rotation": {},
-	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
-	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
-	"scale.x": {}, "scale.y": {}, "scale.z": {}, "opacity": {},
-}
-
-var motionCameraProperties = map[string]struct{}{
-	"position": {}, "rotation": {},
-	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
-	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
-	"fov": {}, "near": {}, "far": {}, "zoom": {},
-}
-
 // SignalRef names a motion value in a Program.
 type SignalRef string
 
@@ -401,7 +373,7 @@ func validateBinding(binding Binding) error {
 	if property != binding.Property || unit != binding.Unit {
 		return errors.New("motion: binding property and unit must not contain surrounding whitespace")
 	}
-	if _, ok := motionCSSUnits[unit]; !ok {
+	if !validMotionCSSUnit(unit) {
 		return fmt.Errorf("motion: unsupported binding unit %q", binding.Unit)
 	}
 	switch binding.Target {
@@ -410,7 +382,7 @@ func validateBinding(binding Binding) error {
 			return errors.New("motion: scene transition requires the pose property without a unit")
 		}
 	case BindingStyle:
-		if _, ok := motionStyleProperties[property]; !ok {
+		if !validMotionStyleProperty(property) {
 			return fmt.Errorf("motion: unsupported style binding property %q", binding.Property)
 		}
 	case BindingCSSVariable:
@@ -418,7 +390,7 @@ func validateBinding(binding Binding) error {
 			return fmt.Errorf("motion: invalid CSS variable binding property %q", binding.Property)
 		}
 	case BindingSceneNode:
-		if _, ok := motionSceneProperties[property]; !ok || strings.TrimSpace(binding.Node) == "" || unit != "" {
+		if !validMotionSceneProperty(property) || strings.TrimSpace(binding.Node) == "" || unit != "" {
 			return fmt.Errorf("motion: unsupported scene-node binding property %q", binding.Property)
 		}
 	case BindingMaterialUniform:
@@ -426,13 +398,54 @@ func validateBinding(binding Binding) error {
 			return fmt.Errorf("motion: invalid material-uniform binding property %q", binding.Property)
 		}
 	case BindingCamera:
-		if _, ok := motionCameraProperties[property]; !ok || unit != "" {
+		if !validMotionCameraProperty(property) || unit != "" {
 			return fmt.Errorf("motion: unsupported camera binding property %q", binding.Property)
 		}
 	default:
 		return fmt.Errorf("motion: unsupported binding target %q", binding.Target)
 	}
 	return nil
+}
+
+// Keep authoring allowlists as code so runtime-only motion users can discard them.
+func validMotionCSSUnit(unit string) bool {
+	switch unit {
+	case "", "px", "%", "em", "rem", "vh", "vw", "vmin", "vmax", "deg", "rad", "turn", "ms", "s":
+		return true
+	}
+	return false
+}
+
+func validMotionStyleProperty(property string) bool {
+	switch property {
+	case "opacity", "color", "background", "backgroundColor", "background-color", "transform",
+		"transform.x", "transform.y", "transform.z", "transform.scale", "transform.rotate",
+		"transform.rotation", "width", "height", "minWidth", "maxWidth", "minHeight", "maxHeight", "top",
+		"right", "bottom", "left", "margin", "marginTop", "marginRight", "marginBottom", "marginLeft",
+		"padding", "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderRadius", "filter",
+		"clipPath", "letterSpacing", "wordSpacing":
+		return true
+	}
+	return false
+}
+
+func validMotionSceneProperty(property string) bool {
+	switch property {
+	case "position", "scale", "rotation", "x", "y", "z", "position.x", "position.y", "position.z",
+		"rotation.x", "rotation.y", "rotation.z", "rotationX", "rotationY", "rotationZ", "scale.x", "scale.y",
+		"scale.z", "opacity":
+		return true
+	}
+	return false
+}
+
+func validMotionCameraProperty(property string) bool {
+	switch property {
+	case "position", "rotation", "x", "y", "z", "position.x", "position.y", "position.z", "rotation.x",
+		"rotation.y", "rotation.z", "rotationX", "rotationY", "rotationZ", "fov", "near", "far", "zoom":
+		return true
+	}
+	return false
 }
 
 func validCSSVariable(property string) bool {
