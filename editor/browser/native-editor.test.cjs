@@ -280,6 +280,8 @@ browserTest('retained-form morph restores mounted presentation and analysis with
       form: document.querySelector('form'), textarea: document.querySelector('textarea'),
     };
     window.__providerCalls = 0;
+    window.__analysisEpoch = 0;
+    document.querySelector('form').addEventListener('gosx:code-analysis', () => window.__analysisEpoch++);
     window.fetch = async () => {
       window.__providerCalls++;
       return new Response(JSON.stringify({highlights: [{startByte: 0, endByte: 2, capture: 'current'}]}), {status: 200});
@@ -313,12 +315,13 @@ browserTest('retained-form morph restores mounted presentation and analysis with
       const refs = window.__retainedEditor;
       return refs.page === document.querySelector('.editor-page-native') && refs.form === document.querySelector('form') && refs.textarea === document.querySelector('textarea');
     }), true);
+    const epoch = await page.evaluate(() => window.__analysisEpoch);
     await select(textarea, 0);
     await page.keyboard.press('Tab');
     assert.equal(await textarea.inputValue(), '  ' + source);
     await page.keyboard.press('Control+z');
     assert.equal(await textarea.inputValue(), source, 'morph duplicated keyboard handlers');
-    await page.waitForFunction(() => document.querySelector('form').dataset.codeIntelligenceLane === 'server');
+    await page.waitForFunction(epoch => window.__analysisEpoch > epoch, epoch);
   }
 
   // Attribute repair converges: it must not keep repainting or refetching
