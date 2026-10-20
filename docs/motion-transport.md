@@ -63,7 +63,7 @@ readable without enhancement; playback buttons enable once their scope mounts.
 ## Compose expressive keyframes
 
 `Program.SampleTrack` connects the existing native `motion.Track` and `Key`
-types to any scalar input. With a playhead, key times are absolute seconds;
+types to any scalar input and samples scalar, vector, color or quaternion values. With a playhead, key times are absolute seconds;
 with a scroll signal they are scroll progress. The optional `motion-track`
 chunk reuses the shared signal graph, easing functions and lifecycle. It owns
 no clock and adds no bytes to the base runtime. Scene node, material and pin
@@ -114,12 +114,66 @@ Progress bindings clamp to `[0,1]`; use direct scalar property bindings when
 overshoot is desired. `server.MotionControl` and transport capture settlement
 continue to work without application JavaScript.
 
-Each scalar track requires 2–4,096 finite, strictly increasing keys. Unsupported
-generators, vector/quaternion channels and tangent splines return an error;
-their native motion IR remains available. `Target`, `TargetID` and `PropID`
+Each track requires 2–4,096 finite, strictly increasing keys with one consistent
+arity. Generators and tangent splines return an error; their native motion IR
+remains available. Quaternion keys must be unit length and use shortest-arc
+slerp, including the normalized-linear fast path for nearly parallel poses.
+`InterpSlerp` is accepted only for quaternion tracks. The scalar wire format
+remains unchanged. `Target`, `TargetID` and `PropID`
 are not used by this bridge: the ordinary binding methods select the target.
 Reduced motion holds each track's final key and restores the current input
 position when the preference is lifted.
+
+### Sample a complete pose or color
+
+Use the existing value constructors instead of separate scalar tracks for every
+component. One prepared sample finds the segment once and writes into a reusable
+buffer; the graph owns snapshots when notifying subscribers.
+
+```go
+position, err := program.SampleTrack("form-position", clock, motion.Track{
+    Keys: []motion.Key{
+        {T: 0, Value: motion.Vec3V(-.4, -.2, 0)},
+        {T: 5, Value: motion.Vec3V(.4, .3, -.1)},
+    },
+})
+// Handle err before binding.
+program.BindSceneNode(position, "#sculpture", "form", "position")
+
+rotation, err := program.SampleTrack("form-rotation", clock, motion.Track{
+    Keys: []motion.Key{
+        {T: 0, Value: motion.QuatV(motion.QuatFromEuler(.2, 0, 0))},
+        {T: 5, Value: motion.QuatV(motion.QuatFromEuler(.4, 2, .1))},
+    },
+})
+// Handle err before binding.
+program.BindSceneNode(rotation, "#sculpture", "form", "rotation")
+
+tint, err := program.SampleTrack("tint", clock, motion.Track{
+    Keys: []motion.Key{
+        {T: 0, Value: motion.ColorV(.34, .81, .76, 1)},
+        {T: 5, Value: motion.ColorV(.96, .58, .34, 1)},
+    },
+})
+// Handle err before binding.
+program.BindStyle(tint, ".caption", "color", "")
+program.BindMaterialUniform(tint, "#sculpture", "form", "glow")
+```
+
+`position` and `scale` bindings take Vec3 tracks; `rotation` takes quaternion
+tracks. Cameras accept Vec3 positions and quaternion rotations. Scene rotation
+reuses the renderer's quaternion-to-Euler conversion. Material uniforms accept
+scalar, Vec2, Vec3 and Vec4 values, including colors. Color style bindings use
+`color`, `background` or `backgroundColor`. CSS custom properties receive raw,
+space-separated channels, with the requested unit on each component.
+
+Vectors and colors interpolate their supplied channels without a color-space
+conversion. Style colors clamp RGBA channels to `[0,1]`; shader uniforms retain
+HDR values and easing overshoot. `Mix` supports matching vector/color arities;
+quaternion mixing and passing vector values through scalar operators return an
+error. Binding shapes are checked before serializing a program, and cyclic graphs or dependency paths longer than
+1,024 edges are rejected. Reduced motion retains an independent
+final pose and restores the current playhead when the preference is lifted.
 
 ## Apply a shader to either dimension
 

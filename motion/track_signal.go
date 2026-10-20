@@ -6,30 +6,35 @@ import (
 	"strings"
 )
 
-// SampleTrack drives a scalar Track with an absolute input, such as Playhead
+// SampleTrack drives a typed Track with an absolute input, such as Playhead
 // seconds or ScrollProgress. Key times use the input's units. Values hold before
 // the first and after the last key; easing belongs to the outgoing key, with the
 // track's Ease as its default. InterpStep holds until the next key.
 //
 // This reuses Track, Key, Ease and ExpandStagger from the native motion IR. It
-// does not start another clock. Generators, vectors, quaternions and tangent
-// splines are not scalar signals and are rejected. Reduced motion holds the
-// last value, matching the native evaluator. Target and resolved IDs are ignored;
+// does not start another clock. Vectors and colors interpolate component-wise;
+// unit quaternions use shortest-arc slerp. Generators and tangent splines are
+// rejected. Reduced motion holds the last value, matching the native evaluator.
+// Target and resolved IDs are ignored;
 // bind the returned signal with the usual Program binding methods.
 func (p *Program) SampleTrack(id string, input SignalRef, track Track) (SignalRef, error) {
 	if p == nil {
 		return "", fmt.Errorf("motion: nil program")
 	}
-	if track.Gen != nil || track.Interp != InterpLinear && track.Interp != InterpStep {
-		return "", fmt.Errorf("motion: scalar track requires linear or step keyframes")
+	if track.Gen != nil || track.Interp != InterpLinear && track.Interp != InterpStep && track.Interp != InterpSlerp {
+		return "", fmt.Errorf("motion: sampled track requires linear, step, or quaternion slerp keyframes")
 	}
 	if len(track.Keys) < 2 || len(track.Keys) > 4096 {
-		return "", fmt.Errorf("motion: scalar track needs 2..4096 keys")
+		return "", fmt.Errorf("motion: sampled track needs 2..4096 keys")
 	}
 	frames := make([]MotionKeyframe, len(track.Keys))
+	arity := track.Keys[0].Value.Arity
+	if arity > ArityColor || track.Interp == InterpSlerp && arity != ArityQuat {
+		return "", fmt.Errorf("motion: invalid track arity or non-quaternion slerp")
+	}
 	for i, key := range track.Keys {
-		if key.Value.Arity != ArityScalar {
-			return "", fmt.Errorf("motion: track key %d must be scalar", i)
+		if key.Value.Arity != arity {
+			return "", fmt.Errorf("motion: track key %d must have the same arity as the first key", i)
 		}
 		ease := track.Ease
 		if key.Ease != nil {
@@ -38,9 +43,13 @@ func (p *Program) SampleTrack(id string, input SignalRef, track Track) (SignalRe
 		if track.Interp == InterpStep {
 			ease = Ease{Kind: EaseSteps, Args: []float64{1}}
 		}
-		frames[i] = MotionKeyframe{At: key.T, Value: key.Value.F[0], Ease: wireEase(ease)}
+		var value any = key.Value.F[0]
+		if arity != ArityScalar {
+			value = append([]float64(nil), key.Value.F[:arity.Width()]...)
+		}
+		frames[i] = MotionKeyframe{At: key.T, Value: value, Ease: wireEase(ease)}
 	}
-	spec := SignalSpec{ID: strings.TrimSpace(id), Kind: SignalTrack, Input: input, Frames: frames}
+	spec := SignalSpec{ID: strings.TrimSpace(id), Kind: SignalTrack, Input: input, Frames: frames, Arity: arity}
 	if spec.ID == "" {
 		return "", fmt.Errorf("motion: track signal id is required")
 	}
@@ -54,11 +63,13 @@ func validateTrackSignal(signal SignalSpec) error {
 	if strings.TrimSpace(string(signal.Input)) == "" || len(signal.Frames) < 2 || len(signal.Frames) > 4096 {
 		return fmt.Errorf("motion: track %q needs an input and 2..4096 keys", signal.ID)
 	}
+	if signal.Arity > ArityColor {
+		return fmt.Errorf("motion: track %q has invalid value arity", signal.ID)
+	}
 	previous := math.Inf(-1)
 	for i, frame := range signal.Frames {
-		value, ok := frame.Value.(float64)
-		if !ok || !finiteTrackNumber(value) || !finiteTrackNumber(frame.At) || !(frame.At > previous) {
-			return fmt.Errorf("motion: track %q key %d must have a finite scalar value and strictly increasing time", signal.ID, i)
+		if !validTrackValue(frame.Value, signal.Arity) || !finiteTrackNumber(frame.At) || !(frame.At > previous) {
+			return fmt.Errorf("motion: track %q key %d must have a finite scalar or correctly sized vector value, unit quaternion, and strictly increasing time", signal.ID, i)
 		}
 		previous = frame.At
 		if err := validateTrackEase(frame.Ease); err != nil {
@@ -66,6 +77,43 @@ func validateTrackSignal(signal SignalSpec) error {
 		}
 	}
 	return nil
+}
+
+func validTrackValue(value any, arity ValueArity) bool {
+	if arity == ArityScalar {
+		number, ok := value.(float64)
+		return ok && finiteTrackNumber(number)
+	}
+	var values []float64
+	switch v := value.(type) {
+	case []float64:
+		values = v
+	case []any:
+		if len(v) != arity.Width() {
+			return false
+		}
+		values = make([]float64, len(v))
+		for i, component := range v {
+			var ok bool
+			values[i], ok = component.(float64)
+			if !ok {
+				return false
+			}
+		}
+	default:
+		return false
+	}
+	if len(values) != arity.Width() {
+		return false
+	}
+	var norm float64
+	for _, component := range values {
+		if !finiteTrackNumber(component) {
+			return false
+		}
+		norm += component * component
+	}
+	return arity != ArityQuat || math.Abs(norm-1) <= 1e-6
 }
 
 func finiteTrackNumber(value float64) bool { return !math.IsNaN(value) && !math.IsInf(value, 0) }

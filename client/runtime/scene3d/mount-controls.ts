@@ -106,6 +106,22 @@
         const layers = sceneState._gosxMotionRuntimeBindings || (sceneState._gosxMotionRuntimeBindings = new Map());
         let entries = layers.get(programToken);
         if (!entries) { entries = new Map(); layers.set(programToken, entries); }
+        if ((binding.target === "sceneNode" || binding.target === "camera") && ["position", "scale", "rotation"].includes(binding.property)) {
+          if (!Array.isArray(value) || value.length !== (binding.property === "rotation" ? 4 : 3) || value.some(component => !Number.isFinite(component))) return;
+          let components = value;
+          if (binding.property === "rotation") {
+            const euler = sceneQuatToEulerXYZ(value[0], value[1], value[2], value[3]);
+            components = [euler.x, euler.y, euler.z];
+          }
+          for (let i = 0; i < 3; i++) {
+            const property = binding.property + "." + ["x", "y", "z"][i];
+            const key = [binding.target, binding.node || "", property].join("|");
+            const entry = entries.get(key);
+            if (entry) entry.value = components[i];
+            else entries.set(key, {key, binding: Object.assign({}, binding, {property}), value: components[i]});
+          }
+          return;
+        }
         const key = [binding.target, binding.node || "", binding.property || ""].join("|");
         entries.set(key, { key: key, binding: Object.assign({}, binding), value: value });
       },
