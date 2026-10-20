@@ -506,7 +506,7 @@ var cases = []Case{
 	{
 		ID:           "index_map_missing_key",
 		Category:     "indexing",
-		Note:         "missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends",
+		Note:         "missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends. File routes preserve other element zero types; dynamically nil values render as empty text and compare equal to nil",
 		Expr:         `props.M["missing"]`,
 		PropsFields:  "M map[string]int",
 		PropsLiteral: `M: map[string]int{"k": 42}`,

@@ -1,6 +1,7 @@
 package route
 
 import (
+	"go/parser"
 	"reflect"
 	"testing"
 )
@@ -33,6 +34,54 @@ func TestMapIndexMissingReturnsTypedZero(t *testing.T) {
 				t.Fatalf("got %#v (%T), want %#v (%T)", got, got, item.want, item.want)
 			}
 		})
+	}
+}
+
+type mapNilStringer struct{}
+
+func (value *mapNilStringer) String() string {
+	if value == nil {
+		panic("nil String method receiver")
+	}
+	return "present"
+}
+
+func TestMapIndexNilZeroExpressions(t *testing.T) {
+	for _, target := range []any{
+		map[string]*int{}, map[string][]int{}, map[string]map[string]int{},
+		map[string]chan int{}, map[string]func(){}, map[string]any{},
+	} {
+		for expression, want := range map[string]bool{
+			`values["missing"] == nil`: true,
+			`nil == values["missing"]`: true,
+			`values["missing"] != nil`: false,
+		} {
+			expr, err := parser.ParseExpr(expression)
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := lowerFileExpr(expr)(fileRenderEnv{values: map[string]any{"values": target}})
+			if got != want {
+				t.Errorf("%T: %s = %v, want %v", target, expression, got, want)
+			}
+		}
+	}
+	if equalValues([]int{}, nil) || equalValues(new(int), nil) {
+		t.Fatal("non-nil empty slice or pointer compared equal to nil")
+	}
+}
+
+func TestMapIndexNilZeroRendersEmpty(t *testing.T) {
+	for _, target := range []any{
+		map[string]*int{}, map[string][]int{}, map[string]map[string]int{},
+		map[string]chan int{}, map[string]func(){}, map[string]*mapNilStringer{},
+	} {
+		if got := stringifyValue(indexValue(target, "missing")); got != "" {
+			t.Errorf("%T: nil map value rendered as %q", target, got)
+		}
+	}
+	if got := stringifyValue(&mapNilStringer{}); got != "present" {
+		t.Fatalf("non-nil Stringer rendered as %q", got)
 	}
 }
 

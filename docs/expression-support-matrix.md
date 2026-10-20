@@ -188,7 +188,7 @@ Notes:
 - `index_slice_out_of_range`: out-of-range slice index: real Go panics at runtime (recovered by the harness — see caseCallLine); route fails soft to "", VM fails soft to the element type's zero value. Documented, not fixed: ir/lower.go's strict-renderer validator already refuses index expressions for exactly this reason ("out-of-range behavior differs from Go")
   - transpile unsupported: real Go panics at runtime: "index out of range [9] with length 3"
   - route diverges: route/fileeval.go's indexSequentialValue returns the zero any (nil) past the slice bound instead of erroring, which renders as empty text rather than a zero-valued element
-- `index_map_missing_key`: missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends
+- `index_map_missing_key`: missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends. File routes preserve other element zero types; dynamically nil values render as empty text and compare equal to nil
 - `index_nested_struct_field`: field access on a nested named-struct props field
 
 ## bool-coercion

@@ -1010,9 +1010,10 @@ func numericValue(value any) float64 {
 }
 
 func stringifyValue(value any) string {
-	switch v := value.(type) {
-	case nil:
+	if isNilFileValue(value) {
 		return ""
+	}
+	switch v := value.(type) {
 	case string:
 		return v
 	case fmt.Stringer:
@@ -1021,6 +1022,19 @@ func stringifyValue(value any) string {
 		return gosx.RenderHTML(v)
 	default:
 		return fmt.Sprint(v)
+	}
+}
+
+func isNilFileValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
 	}
 }
 
@@ -1050,7 +1064,7 @@ func equalValues(left, right any) bool {
 		return stringifyValue(left) == ""
 	}
 	if left == nil || right == nil {
-		return false
+		return isNilFileValue(left) && isNilFileValue(right)
 	}
 	if isNumeric(left) || isNumeric(right) {
 		if lnegative, lmagnitude, lok := equalityInteger(left); lok {
