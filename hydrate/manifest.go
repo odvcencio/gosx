@@ -218,6 +218,10 @@ type HubEntry struct {
 	// RoundTrip asks the bootstrap to measure request/response time against
 	// this hub. The server echoes the ping payload using PongEvent.
 	RoundTrip *HubRoundTripConfig `json:"roundTrip,omitempty"`
+
+	// Document binds a server-rendered textarea view to this hub. Its optional
+	// runtime chunk owns editing, presence and caret lifecycle without app JavaScript.
+	Document *HubDocumentConfig `json:"document,omitempty"`
 }
 
 // HubRoundTripConfig configures a bootstrap-owned heartbeat that writes the

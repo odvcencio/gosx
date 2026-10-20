@@ -759,6 +759,38 @@ h.On("update", func(client *hub.Client, msg hub.Message) {
 
 Hubs handle client lifecycle, message framing, broadcast patterns, per-connection state, and typed message dispatch. They integrate cleanly with the `crdt` package for conflict-free collaborative state and with the `sim` package for authoritative game loops.
 
+Server-rendered text views can use a typed Hub document binding:
+
+```go
+_, err := ctx.Runtime().BindHubDocument("notes", "/notes/ws", hydrate.HubDocumentConfig{
+    RootID: "notes-editor",
+    Version: state.Version,
+})
+```
+
+Inside that root, mark a textarea with `data-gosx-document-source` and a preview
+with `data-gosx-document-preview`. Optional `data-gosx-document-status`,
+`-version`, `-presence`, `-identity` and `-cursors` elements receive the matching
+state. Remote caret overlays use an unwrapped textarea (`wrap="off"`) and a
+positioned cursor layer. The collaboration demo shows the complete markup.
+
+The server handles `doc:edit` with `{text, version}`, broadcasts `doc:update`
+with `{text, version, html?}`, and answers `doc:sync` with a current snapshot.
+Optional presence and cursor events have configurable names in
+`hydrate.HubDocumentEvents`; cursor offsets use native textarea UTF-16 units.
+Render preview HTML on the server. GoSX's content renderer enforces an inert
+Markdown HTML policy when `content.MDPPOptions.Sanitize` is true, excluding
+active embeds, forms, SVG and MathML and rejecting executable URL schemes.
+
+The binding loads one optional browser host and needs no WASM or application
+JavaScript. It debounces edits, protects newer local input from delayed replies,
+keeps unsent input on the page during reconnect, and flushes pending edits before
+soft navigation. Caret layout coalesces into animation frames and caches unchanged line and width
+measurements; disposal removes
+listeners, carets and timers. Authorization, document storage and conflict policy
+remain server responsibilities. The demo uses last-write-wins snapshots; the
+separate editor package supplies the richer CRDT editing surface.
+
 ## Collaboration: CRDT + Workspace
 
 The `crdt` package implements a conflict-free replicated document model with a bloom-filter-based sync protocol, delta-encoded changes, and vector-clock causality tracking. Documents serialize to a compact binary snapshot — interned actor and object tables, zigzag varint deltas, run-length tombstones, and change hashes recomputed on load rather than stored — which costs about 5 bytes per character of text. The chunk framing follows Automerge's shape (magic bytes, ULEB128 length, truncated checksum) but the body is GoSX's own encoding, so treat it as protocol-compatible in structure, not byte-compatible with Automerge. Older JSON snapshots still load. Its convergence contract is covered by partitioned concurrent text edits, large partitioned histories, tombstone save/load merge tests, and sync recovery tests. It's independent of the transport — you can drive it over a `hub`, over Redis, or over raw bytes in a file.

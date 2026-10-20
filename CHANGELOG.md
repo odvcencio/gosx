@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add typed Hub document views with debounced editing, server-rendered previews,
+  presence, UTF-16 remote carets, reconnect recovery and navigation cleanup in an
+  optional browser host. Replace the collaboration demo's application script
+  with the GoSX binding and keep preview parsing on the server.
+
+- Enforce `content.MDPPOptions.Sanitize` in the GoSX content renderer. Preserve
+  Markdown formatting and source positions while removing executable URL
+  schemes, active embeds, active form controls and framework dispatch attributes.
+
 - Compose static `func()` callback props inside islands. Same-file views forward
   parent-owned handlers without another VM or runtime instructions. Check
   callback ownership and signatures, keep callbacks out of serialized data, and

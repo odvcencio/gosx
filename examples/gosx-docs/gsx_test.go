@@ -671,7 +671,7 @@ func TestCollabDemoShape(t *testing.T) {
 
 	serverChecks := []struct{ needle, label string }{
 		{`hub.New("collab")`, `hub.New("collab")`},
-		{"ctx.Runtime().BindHub(", "ctx.Runtime().BindHub("},
+		{"ctx.Runtime().BindHubDocument(", "typed Hub document binding"},
 		{`"doc:edit"`, `"doc:edit"`},
 		{`"doc:update"`, `"doc:update"`},
 	}
@@ -705,7 +705,7 @@ func TestCollabDemoShape(t *testing.T) {
 	}
 	gsxSrc := string(gsxSource)
 
-	gsxChecks := []string{"collab-source", "collab-preview", "/collab-client.js"}
+	gsxChecks := []string{"collab-source", "collab-preview", "data-gosx-document-source", "data-gosx-document-preview"}
 	for _, needle := range gsxChecks {
 		if !strings.Contains(gsxSrc, needle) {
 			t.Errorf("collab/page.gsx missing %q", needle)
@@ -721,18 +721,11 @@ func TestCollabDemoShape(t *testing.T) {
 		t.Error("collab/page.gsx: expected Page component")
 	}
 
-	// ── public/collab-client.js ───────────────────────────────────────────────
-	jsSource, err := os.ReadFile(filepath.Join(publicDir, "collab-client.js"))
-	if err != nil {
-		t.Fatalf("read public/collab-client.js: %v", err)
+	if strings.Contains(gsxSrc, "<script") {
+		t.Fatal("collaboration view must use framework constructs")
 	}
-	jsSrc := string(jsSource)
-
-	jsChecks := []string{"gosx:hub:event", "doc:edit", "renderMarkdown"}
-	for _, needle := range jsChecks {
-		if !strings.Contains(jsSrc, needle) {
-			t.Errorf("public/collab-client.js missing %q", needle)
-		}
+	if _, err := os.Stat(filepath.Join(publicDir, "collab-client.js")); !os.IsNotExist(err) {
+		t.Fatalf("bespoke collaboration client must be removed: %v", err)
 	}
 
 	// ── layout.gsx: collab must be a live <a>, not an aria-disabled <span> ───

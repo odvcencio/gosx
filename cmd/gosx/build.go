@@ -60,6 +60,7 @@ type BuildOptions struct {
 var runtimeFeatureChunks = []struct{ name, role string }{
 	{"browser-services", "engines"},
 	{"workbench", "workbench"},
+	{"hub-document", "hubs"},
 	{"motion-transport", "motion"},
 	{"motion-svg", "motion"},
 	{"motion-scene", "motion"},

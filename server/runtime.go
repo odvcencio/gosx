@@ -169,6 +169,19 @@ func (r *PageRuntime) BindHub(name, path string, bindings []hydrate.HubBinding) 
 	return r.renderer.BindHub(name, path, bindings)
 }
 
+// BindHubDocument declares a framework-owned document view over an ordinary
+// Hub. The page supplies Go-rendered markup and server document handlers.
+func (r *PageRuntime) BindHubDocument(name, path string, config hydrate.HubDocumentConfig) (string, error) {
+	if r == nil || r.renderer == nil {
+		return "", fmt.Errorf("page runtime is nil")
+	}
+	id, err := r.renderer.BindHubDocument(name, path, config)
+	if err == nil {
+		r.active = true
+	}
+	return id, err
+}
+
 // BindHubInput registers a realtime hub and asks the GoSX bootstrap to forward
 // browser input snapshots to it.
 func (r *PageRuntime) BindHubInput(name, path string, bindings []hydrate.HubBinding, input hydrate.HubInputConfig) string {

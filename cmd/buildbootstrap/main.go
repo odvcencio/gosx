@@ -394,6 +394,10 @@ var outputs = []output{
 		name:    "bootstrap-feature-workbench.js",
 		sources: []source{sourceFile("../runtime/host/workbench.ts")},
 	},
+	{
+		name:    "bootstrap-feature-hub-document.js",
+		sources: []source{sourceFile("../runtime/host/hub-document.ts")},
+	},
 
 	{
 		// Text-layout engine chunk. bootstrap-lite.js and bootstrap-runtime.js

@@ -43,6 +43,7 @@
     if (record.socket.readyState === 1 || record.socket.readyState == null) {
       bindHubOutputs(record);
       startHubRoundTrip(record);
+      emitHubConnection(record, "open");
     }
   }
 
@@ -580,6 +581,7 @@
       record.closed = true;
       stopHubRoundTrip(record);
       scheduleHubReconnect(record);
+      emitHubConnection(record, "reconnecting");
     };
 
     socket.onerror = function(e) {
@@ -645,6 +647,14 @@
         data: message.data,
       },
     }));
+  }
+
+  // Page views observe lifecycle without polling the socket. These local
+  // notifications never enter the wire protocol or shared-signal bindings.
+  function emitHubConnection(record, state) {
+    for (const entry of record.entries.values()) {
+      emitHubEvent(entry, { event: "__connection", data: { state: state } });
+    }
   }
 
   // reconnectDelayMs computes a hub's next reconnect delay: exponential
