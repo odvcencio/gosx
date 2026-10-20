@@ -15,24 +15,34 @@ func FormatTable(r *Report) string {
 	// Use the embedded PageReport for single-page reports, or first page
 	p := &r.PageReport
 	available := pageMetricAvailability(p)
+	metricText := func(name, format string) string {
+		value, found := ResolvePageMetric(name, p)
+		if !found {
+			return "unavailable"
+		}
+		return fmt.Sprintf(format, value)
+	}
 	url := r.URL
 
 	b.WriteString(fmt.Sprintf("gosx perf — %s\n", url))
 
 	// Page Lifecycle
 	b.WriteString("\n  Page Lifecycle\n")
-	b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "TTFB", p.TTFBMs))
-	b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "DOMContentLoaded", p.DCLMs))
+	b.WriteString(fmt.Sprintf("    %-24s%s\n", "TTFB", metricText("ttfb", "%.1fms")))
+	b.WriteString(fmt.Sprintf("    %-24s%s\n", "DOMContentLoaded", metricText("dcl", "%.1fms")))
 
-	if len(p.Islands) > 0 {
-		b.WriteString(fmt.Sprintf("    %-24s%d (hydrated in %.1fms total)\n",
-			"Islands", len(p.Islands), p.IslandHydrationMs))
+	if len(p.Islands) > 0 && available.Hydration {
+		if _, found := ResolvePageMetric("hydration_total", p); found {
+			b.WriteString(fmt.Sprintf("    %-24s%d (hydrated in %.1fms total)\n", "Islands", len(p.Islands), p.IslandHydrationMs))
+		} else {
+			b.WriteString(fmt.Sprintf("    %-24s%d (hydration total unavailable)\n", "Islands", len(p.Islands)))
+		}
 		for _, isl := range p.Islands {
 			b.WriteString(fmt.Sprintf("      %-22s%.1fms\n", isl.ID, isl.HydrationMs))
 		}
 	}
 
-	if p.JSHeapSizeMB > 0 {
+	if available.Heap {
 		b.WriteString(fmt.Sprintf("    %-24s%.1f MB\n", "JS Heap", p.JSHeapSizeMB))
 	}
 
@@ -63,9 +73,13 @@ func FormatTable(r *Report) string {
 				presentation.EstimatedMissedVsyncs,
 				len(presentation.HitchClusters)))
 			if presentation.Cold.Count > 0 || presentation.Warm.Count > 0 {
-				b.WriteString(fmt.Sprintf("      cold p95 %.1fms (%d)    warm p95 %.1fms (%d)\n",
-					presentation.Cold.P95, presentation.Cold.Count,
-					presentation.Warm.P95, presentation.Warm.Count))
+				phase := func(stats FrameStats) string {
+					if stats.Count == 0 {
+						return "unavailable"
+					}
+					return fmt.Sprintf("%.1fms (%d)", stats.P95, stats.Count)
+				}
+				b.WriteString(fmt.Sprintf("      cold p95 %s    warm p95 %s\n", phase(presentation.Cold), phase(presentation.Warm)))
 			}
 		}
 
@@ -82,6 +96,10 @@ func FormatTable(r *Report) string {
 				sort.Strings(passNames)
 				for _, name := range passNames {
 					pass := gpu.Passes[name]
+					if pass.Stats.Count == 0 {
+						b.WriteString(fmt.Sprintf("      GPU pass %-14sunavailable\n", name))
+						continue
+					}
 					b.WriteString(fmt.Sprintf("      GPU pass %-14sp50 %.1fms  p95 %.1fms\n",
 						name, pass.Stats.P50, pass.Stats.P95))
 				}
@@ -182,9 +200,9 @@ func FormatTable(r *Report) string {
 	// Long tasks — main thread blocking
 	if available.LongTasks {
 		b.WriteString("\n  Main-Thread Blocking\n")
-		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Long tasks", p.LongTaskCount))
-		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Long task total", p.LongTaskTotalMs))
-		b.WriteString(fmt.Sprintf("    %-24s%.1fms\n", "Total blocking time", p.TotalBlockingTimeMs))
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Long tasks", metricText("long_tasks", "%.0f")))
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Long task total", metricText("long_task_total", "%.1fms")))
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Total blocking time", metricText("tbt", "%.1fms")))
 		// Show top 5 longest
 		show := len(p.LongTasks)
 		if show > 5 {
@@ -205,11 +223,17 @@ func FormatTable(r *Report) string {
 	if available.RuntimeCounters && (p.SignalWrites > 0 || p.SignalReads > 0 || p.HubMessageCount > 0) {
 		b.WriteString("\n  Runtime Throughput\n")
 		if p.SignalWrites > 0 || p.SignalReads > 0 {
-			b.WriteString(fmt.Sprintf("    %-24sw:%d  r:%d\n", "Signal ops", p.SignalWrites, p.SignalReads))
+			counter := func(value int) string {
+				if p.MetricAvailability == nil && value == 0 {
+					return "unavailable"
+				}
+				return fmt.Sprint(value)
+			}
+			b.WriteString(fmt.Sprintf("    %-24sw:%s  r:%s\n", "Signal ops", counter(p.SignalWrites), counter(p.SignalReads)))
 		}
 		if p.HubMessageCount > 0 {
-			b.WriteString(fmt.Sprintf("    %-24srecv:%d (%dB)  send:%d\n",
-				"Hub messages", p.HubMessageCount, p.HubMessageBytes, p.HubSendCount))
+			b.WriteString(fmt.Sprintf("    %-24srecv:%s (%s)  send:%s\n",
+				"Hub messages", metricText("hub_messages", "%.0f"), metricText("hub_bytes", "%.0fB"), metricText("hub_sends", "%.0f")))
 		}
 	}
 
@@ -332,9 +356,13 @@ func FormatTable(r *Report) string {
 	// Network summary (detail available via --waterfall)
 	if available.Network {
 		b.WriteString("\n  Network\n")
-		b.WriteString(fmt.Sprintf("    %-24s%d\n", "Total requests", len(p.Resources)))
-		b.WriteString(fmt.Sprintf("    %-24s%.1fKB\n", "Total transferred", float64(p.TotalBytesTransferred)/1024))
-		b.WriteString(fmt.Sprintf("    %-24s%.0fms\n", "Blocking resource", p.BlockingResourceMs))
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Total requests", metricText("requests", "%.0f")))
+		b.WriteString(fmt.Sprintf("    %-24s%s\n", "Total transferred", metricText("network_kb", "%.1fKB")))
+		if p.MetricAvailability != nil || p.BlockingResourceMs > 0 {
+			b.WriteString(fmt.Sprintf("    %-24s%.0fms\n", "Blocking resource", p.BlockingResourceMs))
+		} else {
+			b.WriteString(fmt.Sprintf("    %-24sunavailable\n", "Blocking resource"))
+		}
 	} else if p.MetricAvailability != nil {
 		b.WriteString("\n  Network\n    unavailable\n")
 	}

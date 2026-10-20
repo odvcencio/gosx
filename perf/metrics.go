@@ -72,6 +72,9 @@ type PageReport struct {
 // or an optional collection query that failed. Older reports omit this field;
 // their nonzero values and recorded samples remain usable as evidence.
 type MetricAvailability struct {
+	Navigation      bool `json:"navigation"`
+	Heap            bool `json:"heap"`
+	Hydration       bool `json:"hydration"`
 	LCP             bool `json:"lcp"`
 	CLS             bool `json:"cls"`
 	FID             bool `json:"fid"`
@@ -339,6 +342,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 	pr.TTFBMs = nav.TTFB
 	pr.DCLMs = nav.DOMContentLoaded
 	pr.FullyLoadedMs = nav.FullyLoaded
+	pr.MetricAvailability.Navigation = nav.Available
 
 	// Heap size
 	var heap float64
@@ -350,6 +354,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 		return nil, err
 	}
 	pr.JSHeapSizeMB = heap
+	pr.MetricAvailability.Heap = heap > 0
 
 	// Hydration log
 	var hydLog []HydrationEntry
@@ -461,6 +466,7 @@ func collectPageReport(d *Driver, url string, queries pageReportQueries, runner 
 		pr.MetricAvailability.FID = vitals.Availability.FID
 		pr.MetricAvailability.RuntimeCounters = vitals.Instrumented
 	}
+	pr.MetricAvailability.Hydration = len(hydLog) > 0 || pr.MetricAvailability.RuntimeCounters
 	pr.LargestContentfulPaintMs = vitals.LCP
 	pr.CumulativeLayoutShift = vitals.CLS
 	pr.FirstInputDelayMs = vitals.FID

@@ -10,7 +10,7 @@ import (
 )
 
 func TestResolvePageMetricRequiresRecordedEvidence(t *testing.T) {
-	names := []string{"lcp", "lcp_ms", "cls", "fid", "fid_ms", "long_tasks", "long_task_total", "long_task_total_ms", "tbt", "tbt_ms", "network_kb", "requests", "hub_messages", "hub_bytes", "hub_sends", "first_frame", "scene_first_frame", "p50", "scene_p50", "p95", "scene_p95", "p99", "scene_p99", "frame_max", "scene_frame_max", "dropped_frames", "scene_dropped_frames", "frame_count", "scene_frame_count"}
+	names := []string{"ttfb", "dcl", "fully_loaded", "heap_mb", "hydration_total", "island_count", "lcp", "lcp_ms", "cls", "fid", "fid_ms", "long_tasks", "long_task_total", "long_task_total_ms", "tbt", "tbt_ms", "network_kb", "requests", "hub_messages", "hub_bytes", "hub_sends", "first_frame", "scene_first_frame", "p50", "scene_p50", "p95", "scene_p95", "p99", "scene_p99", "frame_max", "scene_frame_max", "dropped_frames", "scene_dropped_frames", "frame_count", "scene_frame_count"}
 	for _, metadata := range []*MetricAvailability{nil, {}} {
 		p := PageReport{MetricAvailability: metadata, Scene: BuildSceneMetric(nil, SceneTelemetrySnapshot{}, 0)}
 		for _, name := range names {
@@ -22,8 +22,8 @@ func TestResolvePageMetricRequiresRecordedEvidence(t *testing.T) {
 }
 
 func TestResolvePageMetricAcceptsRecordedZero(t *testing.T) {
-	p := PageReport{MetricAvailability: &MetricAvailability{LCP: true, CLS: true, FID: true, LongTasks: true, Network: true, RuntimeCounters: true, SceneFrames: true}, Scene: &SceneMetric{FrameStats: FrameStats{Count: 1}, Presentation: &PresentationMetric{TelemetrySeries: TelemetrySeries{Stats: FrameStats{Count: 1}}}}}
-	for _, name := range []string{"lcp", "cls", "fid", "long_tasks", "long_task_total", "tbt", "network_kb", "requests", "hub_messages", "hub_bytes", "hub_sends", "first_frame", "p50", "p95", "p99", "frame_max", "dropped_frames", "frame_count"} {
+	p := PageReport{MetricAvailability: &MetricAvailability{Navigation: true, Heap: true, Hydration: true, LCP: true, CLS: true, FID: true, LongTasks: true, Network: true, RuntimeCounters: true, SceneFrames: true}, Scene: &SceneMetric{FrameStats: FrameStats{Count: 1}, Presentation: &PresentationMetric{TelemetrySeries: TelemetrySeries{Stats: FrameStats{Count: 1}}}}}
+	for _, name := range []string{"ttfb", "dcl", "fully_loaded", "heap_mb", "hydration_total", "island_count", "lcp", "cls", "fid", "long_tasks", "long_task_total", "tbt", "network_kb", "requests", "hub_messages", "hub_bytes", "hub_sends", "first_frame", "p50", "p95", "p99", "frame_max", "dropped_frames", "frame_count"} {
 		value, found := ResolvePageMetric(name, &p)
 		if !found || value != 0 {
 			t.Errorf("%s: recorded zero = %v,%v", name, value, found)
@@ -43,7 +43,7 @@ func TestResolvePageMetricAcceptsRecordedZero(t *testing.T) {
 }
 
 func TestResolvePageMetricLegacySamplesAndExplicitFailure(t *testing.T) {
-	p := PageReport{LargestContentfulPaintMs: 12, FirstInputDelayMs: 3, CumulativeLayoutShift: .1, LongTasks: []LongTaskMetric{{DurationMs: 60}}, LongTaskCount: 1, TotalBytesTransferred: 1, HubMessageCount: 1, Scene: &SceneMetric{FrameCount: 2}}
+	p := PageReport{LargestContentfulPaintMs: 12, FirstInputDelayMs: 3, CumulativeLayoutShift: .1, LongTasks: []LongTaskMetric{{DurationMs: 60}}, LongTaskCount: 1, LongTaskTotalMs: 60, TotalBlockingTimeMs: 10, TotalBytesTransferred: 1, HubMessageCount: 1, Scene: &SceneMetric{FrameCount: 2}}
 	for _, name := range []string{"lcp", "cls", "fid", "long_tasks", "tbt", "network_kb", "hub_messages", "frame_count"} {
 		if _, found := ResolvePageMetric(name, &p); !found {
 			t.Errorf("lost legacy sample: %s", name)
@@ -126,7 +126,7 @@ func TestBudgetMissingEvidenceFailsDuringRendererRecovery(t *testing.T) {
 }
 
 func TestCompareReportsDoesNotTurnMissingDataIntoImprovement(t *testing.T) {
-	baseline := PageReport{LargestContentfulPaintMs: 100, TotalBlockingTimeMs: 10, LongTaskCount: 1, TotalBytesTransferred: 100, Scene: &SceneMetric{FirstFrameMs: 1, FrameStats: FrameStats{P50: 1, P95: 2, P99: 3, Count: 2}}}
+	baseline := PageReport{TTFBMs: 50, DCLMs: 100, JSHeapSizeMB: 1, LargestContentfulPaintMs: 100, TotalBlockingTimeMs: 10, LongTaskCount: 1, TotalBytesTransferred: 100, Scene: &SceneMetric{FirstFrameMs: 1, FrameStats: FrameStats{P50: 1, P95: 2, P99: 3, Count: 2}}}
 	missing := PageReport{MetricAvailability: &MetricAvailability{}, Scene: &SceneMetric{}}
 	cmp := CompareReports(&Report{Pages: []PageReport{baseline}}, &Report{Pages: []PageReport{missing}})
 	for _, m := range cmp.Metrics {
@@ -134,7 +134,7 @@ func TestCompareReportsDoesNotTurnMissingDataIntoImprovement(t *testing.T) {
 			t.Errorf("missing measurement compared as an improvement: %+v", m)
 		}
 	}
-	for _, name := range []string{"LCP", "TBT", "Scene p95", "Network bytes"} {
+	for _, name := range []string{"TTFB", "DCL", "JS heap", "LCP", "TBT", "Scene p95", "Network bytes"} {
 		if !strings.Contains(strings.Join(cmp.Unavailable, ","), name) {
 			t.Errorf("missing comparison was not disclosed: %s", name)
 		}
@@ -194,5 +194,23 @@ func TestLoadReportNormalizesLegacySinglePageAvailability(t *testing.T) {
 		if _, found := ResolvePageMetric("lcp", &r.Pages[0]); !found {
 			t.Fatal("legacy measurement or explicit recorded zero lost during normalization")
 		}
+	}
+}
+
+func TestLegacyPartialReportsDoNotInventZeroMetrics(t *testing.T) {
+	p := PageReport{DCLMs: 12, TotalBlockingTimeMs: 12, TotalBytesTransferred: 12, HubMessageCount: 1}
+	for _, name := range []string{"ttfb", "fully_loaded", "heap_mb", "long_tasks", "long_task_total", "requests", "hub_bytes", "hub_sends"} {
+		if _, found := ResolvePageMetric(name, &p); found {
+			t.Errorf("partial report invented zero for %s", name)
+		}
+	}
+	for _, name := range []string{"dcl", "tbt", "network_kb", "hub_messages"} {
+		if _, found := ResolvePageMetric(name, &p); !found {
+			t.Errorf("partial report lost recorded %s", name)
+		}
+	}
+	out := FormatTable(&Report{PageReport: p})
+	if !strings.Contains(out, "Long tasks              unavailable") || !strings.Contains(out, "Total requests          unavailable") {
+		t.Fatalf("table invented partial-report zeros: %s", out)
 	}
 }

@@ -120,11 +120,9 @@ func CompareReports(baseline, candidate *Report) Comparison {
 	}
 
 	// Lifecycle — lower is better across the board.
-	add("TTFB", "ms", b.TTFBMs, c.TTFBMs, LowerBetter)
-	add("DCL", "ms", b.DCLMs, c.DCLMs, LowerBetter)
-	if b.JSHeapSizeMB > 0 || c.JSHeapSizeMB > 0 {
-		add("JS heap", "MB", b.JSHeapSizeMB, c.JSHeapSizeMB, LowerBetter)
-	}
+	addRecorded("ttfb", "TTFB", "ms", LowerBetter)
+	addRecorded("dcl", "DCL", "ms", LowerBetter)
+	addRecorded("heap_mb", "JS heap", "MB", LowerBetter)
 
 	// Web vitals.
 	addRecorded("lcp", "LCP", "ms", LowerBetter)

@@ -9,6 +9,7 @@ type PerfEntry struct {
 
 // NavigationTiming holds page lifecycle timestamps.
 type NavigationTiming struct {
+	Available        bool
 	TTFB             float64 // responseStart - requestStart
 	DOMContentLoaded float64 // domContentLoadedEventEnd - navigationStart
 	FullyLoaded      float64 // loadEventEnd - navigationStart
@@ -121,14 +122,16 @@ func QueryPerformanceMeasures(d *Driver, prefix string) ([]PerfEntry, error) {
 // TTFB, DOMContentLoaded, and FullyLoaded durations.
 func QueryNavigationTiming(d *Driver) (NavigationTiming, error) {
 	var raw struct {
-		TTFB float64 `json:"ttfb"`
-		DCL  float64 `json:"dcl"`
-		Full float64 `json:"full"`
+		Available bool    `json:"available"`
+		TTFB      float64 `json:"ttfb"`
+		DCL       float64 `json:"dcl"`
+		Full      float64 `json:"full"`
 	}
 	err := d.Evaluate(`(function(){
 		var n = performance.getEntriesByType("navigation")[0];
 		if (!n) return {ttfb:0, dcl:0, full:0};
 		return {
+			available: true,
 			ttfb: n.responseStart - n.requestStart,
 			dcl:  n.domContentLoadedEventEnd - n.startTime,
 			full: n.loadEventEnd - n.startTime
@@ -138,6 +141,7 @@ func QueryNavigationTiming(d *Driver) (NavigationTiming, error) {
 		return NavigationTiming{}, err
 	}
 	return NavigationTiming{
+		Available:        raw.Available,
 		TTFB:             raw.TTFB,
 		DOMContentLoaded: raw.DCL,
 		FullyLoaded:      raw.Full,
