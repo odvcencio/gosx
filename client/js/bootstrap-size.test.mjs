@@ -69,7 +69,7 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // existing compressed targets, route limits and allowance policy stay fixed.
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
-  { file: "bootstrap-feature-hub-document.js", raw: 7033, gzip: 2905, brotli: 2636 },
+  { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
   // Input-driven tracks and scene binding adapters remain optional.
   { file: "bootstrap-feature-motion-track.js", raw: 3500, gzip: 1500, brotli: 1350 },
   // Optional seekable motion; ordinary pages retain their existing ceilings.

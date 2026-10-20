@@ -5,7 +5,7 @@ const path = require("node:path");
 const {createContext, runScript, FakeElement, installManualTimers, flushAsyncWork} = require("../../js/runtime-test-harness.js");
 const sourceCode = fs.readFileSync(path.join(__dirname, "hub-document.ts"), "utf8");
 
-async function editor() {
+async function editor(options = {}) {
   const root = new FakeElement("section"); root.id = "notes";
   const source = new FakeElement("textarea"); source.setAttribute("data-gosx-document-source", ""); source.value = "hello";
   source.scrollTop = 0; source.scrollLeft = 0;
@@ -18,7 +18,9 @@ async function editor() {
   const env = createContext({elements: [root]});
   const create = env.document.createElement.bind(env.document);
   env.document.createElement = tag => {
-    const node = create(tag); node.style.setProperty = (name, value) => { node.style[name] = value; }; return node;
+    const node = create(tag); node.style.setProperty = (name, value) => { node.style[name] = value; };
+    if (tag === "canvas" && options.measureText) node.getContext = () => ({measureText: options.measureText});
+    return node;
   };
   const timers = installManualTimers(env.context);
   let now = 100000;
@@ -144,5 +146,23 @@ test("document view bounds roster DOM and coalesces caret layout into one frame"
   assert.equal(e.timers.count(), 2, "one caret frame and one expiry timer");
   e.advance(16);
   assert.equal(e.timers.count(), 1);
+  e.feature.disposePage(); assert.equal(e.timers.count(), 0);
+});
+
+test("document view reuses unchanged caret measurements while text edits invalidate layout", async () => {
+  const calls = [];
+  const e = await editor({measureText(line) { calls.push(line); return {width: line.length * 9}; }});
+  e.context.getComputedStyle = () => ({font: "16px monospace", fontSize: "16px", lineHeight: "20px", paddingTop: "0", paddingLeft: "0"});
+  e.emit("doc:update", {text: "abc\ndef\nghi", version: 1});
+  e.emit("cursor:roster", [{id: "a", offset: 5}, {id: "b", offset: 9}]); e.advance(16);
+  assert.deepEqual(calls, ["d", "g"]);
+  assert.equal(e.nodes.cursors.children[0].style.top, "20px");
+  assert.equal(e.nodes.cursors.children[1].style.top, "40px");
+  e.emit("cursor:update", {id: "a", offset: 6}); e.advance(16);
+  assert.deepEqual(calls, ["d", "g", "de"]);
+  e.source.scrollTop = 10; e.source.dispatchEvent({type: "scroll"}); e.advance(16);
+  assert.equal(e.nodes.cursors.children[0].style.top, "10px"); assert.equal(calls.length, 3);
+  e.emit("doc:update", {text: "ABC\nDEF\nGHI", version: 2}); e.advance(16);
+  assert.deepEqual(calls, ["d", "g", "de", "DE", "G"]);
   e.feature.disposePage(); assert.equal(e.timers.count(), 0);
 });

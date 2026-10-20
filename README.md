@@ -785,7 +785,8 @@ active embeds, forms, SVG and MathML and rejecting executable URL schemes.
 The binding loads one optional browser host and needs no WASM or application
 JavaScript. It debounces edits, protects newer local input from delayed replies,
 keeps unsent input on the page during reconnect, and flushes pending edits before
-soft navigation. Caret layout coalesces into animation frames; disposal removes
+soft navigation. Caret layout coalesces into animation frames and caches unchanged line and width
+measurements; disposal removes
 listeners, carets and timers. Authorization, document storage and conflict policy
 remain server responsibilities. The demo uses last-write-wins snapshots; the
 separate editor package supplies the richer CRDT editing surface.

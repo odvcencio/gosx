@@ -19,6 +19,7 @@
       const events = config.events;
       let version = config.version, serverText = source.value, lastVersion = -1;
       let previewText = source.value, changedBlocks = [];
+      let layoutText = null, layoutRevision = 0, lineStarts = [];
       let disposed = false, dirty = false, composing = false, sent = null, selfID = "";
       let editTimer = null, cursorTimer = null, sweepTimer = null, flashTimer = null;
       let frame = null, sweepAt = 0, lastCursorAt = 0, syncSocket = null;
@@ -198,13 +199,28 @@
         const style = getComputedStyle(source);
         const height = parseFloat(style.lineHeight) || (parseFloat(style.fontSize) || 16) * 1.2;
         const top = parseFloat(style.paddingTop) || 0, left = parseFloat(style.paddingLeft) || 0;
-        if (measure) measure.font = style.font || style.fontSize + " " + style.fontFamily;
+        const font = style.font || style.fontSize + " " + style.fontFamily;
+        if (measure) measure.font = font;
+        const text = source.value;
+        if (layoutText !== text) {
+          layoutText = text; layoutRevision++; lineStarts = [0];
+          for (let at = text.indexOf("\n"); at >= 0; at = text.indexOf("\n", at + 1)) lineStarts.push(at + 1);
+        }
         for (const current of peers.values()) {
-          const before = source.value.slice(0, Math.min(current.offset, source.value.length));
-          const lines = before.split("\n"), line = lines[lines.length - 1];
-          const width = measure ? measure.measureText(line).width : line.length * (parseFloat(style.fontSize) || 16) * 0.6;
-          current.node.style.left = (left + width - source.scrollLeft) + "px";
-          current.node.style.top = (top + (lines.length - 1) * height - source.scrollTop) + "px";
+          const offset = Math.min(current.offset, text.length);
+          let layout = current.layout;
+          if (!layout || layout.revision !== layoutRevision || layout.offset !== offset || layout.font !== font) {
+            let low = 0, high = lineStarts.length;
+            while (low + 1 < high) {
+              const middle = (low + high) >>> 1;
+              if (lineStarts[middle] <= offset) low = middle; else high = middle;
+            }
+            const line = text.slice(lineStarts[low], offset);
+            const width = measure ? measure.measureText(line).width : line.length * (parseFloat(style.fontSize) || 16) * 0.6;
+            layout = {revision: layoutRevision, offset, font, row: low, width}; current.layout = layout;
+          }
+          current.node.style.left = (left + layout.width - source.scrollLeft) + "px";
+          current.node.style.top = (top + layout.row * height - source.scrollTop) + "px";
           current.node.style.height = height + "px";
         }
       }
