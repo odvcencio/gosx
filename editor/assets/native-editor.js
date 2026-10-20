@@ -394,7 +394,7 @@
       if (cursor < source.length) fragment.appendChild(document.createTextNode(source.slice(cursor)));
       fragment.appendChild(document.createTextNode("\n"));
       highlight.replaceChildren(fragment);
-      form.dataset.highlightSpanCount = String(ranges.length);
+      if (form.dataset.highlightSpanCount !== String(ranges.length)) form.dataset.highlightSpanCount = String(ranges.length);
     };
 
     listen(form, "gosx:highlight-spans", event => {
@@ -841,8 +841,8 @@
     });
 
     const updateHistoryStatus = () => {
-      form.dataset.undoDepth = String(localUndo.length);
-      form.dataset.redoDepth = String(localRedo.length);
+      if (form.dataset.undoDepth !== String(localUndo.length)) form.dataset.undoDepth = String(localUndo.length);
+      if (form.dataset.redoDepth !== String(localRedo.length)) form.dataset.redoDepth = String(localRedo.length);
     };
 
     const rememberLocalEdit = () => {
@@ -873,7 +873,7 @@
 
     const updateMultiCursorStatus = () => {
       const count = secondaryCursors.length + 1;
-      form.dataset.multiCursorCount = String(count);
+      if (form.dataset.multiCursorCount !== String(count)) form.dataset.multiCursorCount = String(count);
       if (!multiCursorStatus && saveStatus?.parentElement) {
         multiCursorStatus = document.createElement("span");
         multiCursorStatus.className = "editor-multi-cursor-status";
@@ -1661,7 +1661,15 @@
     if (form.querySelector("#editor-excerpt-preview")) {
       void requestMetadata("preview");
     }
-    return { textarea, cleanup: () => {
+    return { textarea, refresh: () => {
+      // Managed morphs can retain this editor while restoring server-owned
+      // attributes. Restore the mounted surface without replacing its history.
+      const page = form.closest(".editor-page-native");
+      if (page && !page.classList.contains("editor-highlight-ready")) page.classList.add("editor-highlight-ready");
+      updateHistoryStatus();
+      if (form.dataset.multiCursorCount !== String(secondaryCursors.length + 1)) updateMultiCursorStatus();
+      scheduleEditorRender();
+    }, cleanup: () => {
       disposed = true;
       lifetime.abort();
       clearTimeout(previewTimer);
@@ -1682,7 +1690,10 @@
       }
     }
     for (const form of document.querySelectorAll("form[data-editor-native='true']")) {
-      if (mounts.has(form)) continue;
+      if (mounts.has(form)) {
+        mounts.get(form).refresh();
+        continue;
+      }
       const state = mount(form);
       if (state) mounts.set(form, state);
     }
@@ -1693,7 +1704,12 @@
     new MutationObserver(records => {
       const selector = "form[data-editor-native='true']";
       const relevant = node => node.nodeType === 1 && (node.matches(selector + ", #editor-content") || node.querySelector(selector));
-      if (records.some(record => Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) refresh();
-    }).observe(document.documentElement, { childList: true, subtree: true });
+      if (records.some(record => record.type === "attributes"
+        ? record.target.matches(selector + ", .editor-page-native")
+        : record.target.matches?.("#editor-content") || Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) refresh();
+    }).observe(document.documentElement, {
+      childList: true, subtree: true, attributes: true,
+      attributeFilter: ["class", "data-undo-depth", "data-redo-depth", "data-multi-cursor-count"],
+    });
   });
 })();

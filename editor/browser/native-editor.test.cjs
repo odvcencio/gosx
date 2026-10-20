@@ -271,3 +271,69 @@ browserTest('a provider outage retries on editing and successful analysis clears
   await page.waitForFunction(() => document.querySelector('#editor-diagnostics').textContent === '');
   assert.equal(await page.evaluate(() => window.__providerCalls), 4);
 });
+
+browserTest('retained-form morph restores mounted presentation and analysis without replacing history or handlers', async t => {
+  const {page, textarea} = await mount(t, 'alpha');
+  await page.evaluate(() => {
+    window.__retainedEditor = {
+      page: document.querySelector('.editor-page-native'),
+      form: document.querySelector('form'), textarea: document.querySelector('textarea'),
+    };
+    window.__providerCalls = 0;
+    window.fetch = async () => {
+      window.__providerCalls++;
+      return new Response(JSON.stringify({highlights: [{startByte: 0, endByte: 2, capture: 'current'}]}), {status: 200});
+    };
+    document.querySelector('form').dataset.codeIntelligenceServer = '/analyze';
+  });
+  await page.addScriptTag({content: intelligenceScript});
+  await page.locator('.syntax-current').waitFor();
+  await select(textarea, 5);
+  await page.keyboard.type('!');
+
+  for (const source of ['beta', 'gamma']) {
+    const depth = await page.locator('form').getAttribute('data-undo-depth');
+    await page.evaluate(source => {
+      const {page, form, textarea} = window.__retainedEditor;
+      // A managed save/Undo projection writes the server attributes and
+      // canonical textarea content while keeping all three DOM identities.
+      page.className = 'editor-page-native editor-surface-code';
+      for (const key of ['undoDepth', 'redoDepth', 'multiCursorCount', 'codeIntelligenceLane', 'highlightSpanCount']) delete form.dataset[key];
+      textarea.defaultValue = source;
+      textarea.value = source;
+    }, source);
+    await page.waitForFunction(() => {
+      const refs = window.__retainedEditor;
+      return refs.page.classList.contains('editor-highlight-ready') &&
+        refs.form.dataset.codeIntelligenceLane === 'server' && refs.form.dataset.highlightSpanCount === '1' &&
+        refs.form.querySelector('#editor-highlight-content').textContent === refs.textarea.value + '\n';
+    });
+    assert.equal(await page.locator('form').getAttribute('data-undo-depth'), depth, 'morph replaced local history');
+    assert.equal(await page.evaluate(() => {
+      const refs = window.__retainedEditor;
+      return refs.page === document.querySelector('.editor-page-native') && refs.form === document.querySelector('form') && refs.textarea === document.querySelector('textarea');
+    }), true);
+    await select(textarea, 0);
+    await page.keyboard.press('Tab');
+    assert.equal(await textarea.inputValue(), '  ' + source);
+    await page.keyboard.press('Control+z');
+    assert.equal(await textarea.inputValue(), source, 'morph duplicated keyboard handlers');
+    await page.waitForFunction(() => document.querySelector('form').dataset.codeIntelligenceLane === 'server');
+  }
+
+  // Attribute repair converges: it must not keep repainting or refetching
+  // the same analysis after the managed transaction has settled.
+  await page.waitForFunction(() => document.querySelector('.syntax-current')?.textContent === 'ga');
+  const idle = await page.evaluate(async () => {
+    let mutations = 0;
+    const observer = new MutationObserver(records => { mutations += records.length; });
+    observer.observe(document.querySelector('form'), {attributes: true, childList: true, subtree: true});
+    const settle = () => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    await settle();
+    const before = {mutations, calls: window.__providerCalls};
+    await settle();
+    observer.disconnect();
+    return {before, after: {mutations, calls: window.__providerCalls}};
+  });
+  assert.deepEqual(idle.after, idle.before, 'retained-form repair did not become idle');
+});
