@@ -56,10 +56,12 @@
     "paddingBottom", "paddingLeft", "borderRadius", "filter", "clipPath", "letterSpacing", "wordSpacing",
   ]);
   const motionSceneProperties = new Set([
+    "position", "scale", "rotation",
     "x", "y", "z", "position.x", "position.y", "position.z", "rotation.x", "rotation.y", "rotation.z",
     "rotationX", "rotationY", "rotationZ", "scale.x", "scale.y", "scale.z", "opacity",
   ]);
   const motionCameraProperties = new Set([
+    "position", "rotation",
     "x", "y", "z", "position.x", "position.y", "position.z", "rotation.x", "rotation.y", "rotation.z",
     "rotationX", "rotationY", "rotationZ", "fov", "near", "far", "zoom",
   ]);
@@ -900,7 +902,7 @@
 
   function motionSetStyle(element, property, value, unit) {
     if (!element || !element.style) return;
-    const next = typeof value === "number" ? String(value) + (unit || "") : String(value == null ? "" : value);
+    const next = Array.isArray(value) && motion._formatStyleValue ? motion._formatStyleValue(property, value, unit) : typeof value === "number" ? String(value) + (unit || "") : String(value == null ? "" : value);
     if (property.indexOf("--") === 0 && typeof element.style.setProperty === "function") {
       element.style.setProperty(property, next);
       return;

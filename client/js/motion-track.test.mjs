@@ -110,3 +110,65 @@ test("track and transport chunks tolerate either load order, deferred loading, c
     assert.equal(writes.length, count); assert.equal(r.frames.size, 0, "disposed tracks leave no RAF");
   }
 });
+
+const valueFixtures = JSON.parse(read("../../motion/testdata/track_value_golden.json"));
+test("typed vector, HDR color and shortest-arc quaternion tracks agree with native Eval", () => {
+  const r = runtime(); r.load();
+  for (const fixture of valueFixtures) {
+    const sample = r.motion.createTrackSampler(fixture.signal.frames, fixture.signal.arity);
+    const scratch = new Array(fixture.samples[0].value.length);
+    for (const {time, value} of fixture.samples) {
+      const got = sample(time, scratch);
+      assert.equal(got, scratch, "prepared sampling reuses the caller's output buffer");
+      for (let i = 0; i < value.length; i++) assert.ok(Math.abs(got[i] - value[i]) < 1e-7, `arity ${fixture.signal.arity} at ${time}, component ${i}: ${got[i]} vs ${value[i]}`);
+    }
+    const endpoint = sample(-1); endpoint[0] = 99;
+    assert.notEqual(sample(-1)[0], 99, "samples cannot mutate the prepared key snapshots");
+  }
+  assert.equal(r.frames.size, 0);
+});
+
+test("typed samplers reject invalid shapes, values and quaternions", () => {
+  const r = runtime(); r.load();
+  const keys = value => [{at:0,value},{at:1,value}];
+  for (const [frames,arity] of [[keys([1,2]),2],[keys([1,2,NaN]),2],[keys([0,0,0,0]),4],
+    [keys([0,0,0,2]),4],[keys(new Array(3)),2],[keys([1,2]),6],[keys([1,2]),1.5]]) {
+    assert.throws(() => r.motion.createTrackSampler(frames,arity));
+  }
+  const frames = keys([1,2,3]), sample = r.motion.createTrackSampler(frames,2);
+  frames[0].value[0] = 99;
+  assert.equal(sample(.5)[0],1);
+  assert.throws(() => sample(.5,[]), /width/);
+});
+
+test("typed tracks preserve their rest pose across seeks, reduced motion, load order and disposal", () => {
+  for (const late of [false,true]) {
+    const r = runtime(), title = {style:{color:""}}, scene = {}, writes = [];
+    r.load(transport); if (!late) r.load();
+    const program = {version:1,id:"typed",transport:{durationMs:2000},signals:[
+      {id:"clock",kind:"playhead"},
+      {id:"position",kind:"track",input:"clock",arity:2,frames:[{at:0,value:[0,1,2]},{at:2,value:[2,3,4]}]},
+      {id:"other",kind:"track",input:"clock",arity:2,frames:[{at:0,value:[2,3,4]},{at:2,value:[4,5,6]}]},
+      {id:"weight",kind:"map",input:"clock",from:0,to:2,min:0,max:1},
+      {id:"mixed",kind:"mix",a:"position",b:"other",weight:"weight"},
+      {id:"tint",kind:"track",input:"clock",arity:5,frames:[{at:0,value:[0,0,0,1]},{at:2,value:[1,.5,0,.5]}]},
+    ],bindings:[
+      {signal:"mixed",target:"camera",selector:"#scene",property:"position"},
+      {signal:"tint",target:"materialUniform",selector:"#scene",node:"orb",property:"glow"},
+      {signal:"tint",target:"style",selector:".title",property:"color"},
+    ]};
+    const root = {nodeType:1,hasAttribute:name=>name==="data-gosx-motion-program",getAttribute:()=>JSON.stringify(program),
+      querySelectorAll:selector=>selector===".title"?[title]:selector==="#scene"?[scene]:[]};
+    r.motion.attachScene(scene,{write(binding,value){writes.push([binding.target,Array.from(value || [])]);},invalidate(){}});
+    r.motion.mountPrograms(root);
+    const t = r.motion.transport("typed"); t.seek(1000); if(late)r.load(); r.advance();
+    assert.deepEqual(writes.slice(-2),[["camera",[2,3,4]],["materialUniform",[.5,.25,0,.75]]]);
+    assert.equal(title.style.color,"rgba(128,64,0,0.75)");
+    t.seek(500);r.advance();r.reduce(true);r.advance();
+    assert.deepEqual(writes.slice(-2),[["camera",[4,5,6]],["materialUniform",[1,.5,0,.5]]]);
+    r.reduce(false);t.seek(1000);r.advance();
+    assert.equal(title.style.color,"rgba(128,64,0,0.75)");
+    r.motion.disposePrograms(root);r.advance();const count=writes.length;r.reduce(true);r.advance();
+    assert.equal(writes.length,count);assert.equal(r.frames.size,0);
+  }
+});

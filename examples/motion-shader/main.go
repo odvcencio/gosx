@@ -6,7 +6,6 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
-	"math"
 	"os"
 	"time"
 
@@ -32,7 +31,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	form, err := (scene.ShaderSurface{Material: material, Shape: scene.ShaderSphere, MeshID: "form", Label: "The same material on a sphere"}).EngineConfig()
+	form, err := (scene.ShaderSurface{Material: material, Shape: scene.ShaderTorus, MeshID: "form", Label: "The same material on a rotating torus"}).EngineConfig()
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -54,6 +53,7 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	})
 	clock := program.Playhead("clock")
 	key := func(at, value float64) motion.Key { return motion.Key{T: at, Value: motion.ScalarV(value)} }
+	valueKey := func(at float64, value motion.Value) motion.Key { return motion.Key{T: at, Value: value} }
 	sample := func(id string, ease motion.Ease, keys ...motion.Key) motion.SignalRef {
 		ref, err := program.SampleTrack(id, clock, motion.Track{Ease: ease, Keys: keys})
 		if err != nil {
@@ -63,7 +63,12 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	}
 	soft := motion.Ease{Kind: motion.EaseInOutPow, Args: []float64{2}}
 	gain := sample("gain", soft, key(0, .35), key(5, .95), key(9, .45), key(14, .6))
-	warmth := sample("warmth", soft, key(0, 0), key(7, 1), key(14, .18))
+	tint := sample("tint", soft,
+		valueKey(0, motion.ColorV(.34, .81, .76, 1)),
+		valueKey(5, motion.ColorV(.96, .58, .34, 1)),
+		valueKey(9, motion.ColorV(.62, .48, .92, 1)),
+		valueKey(14, motion.ColorV(.42, .83, .8, 1)),
+	)
 	progress := sample("pose", soft, key(0, 0), key(5, .85), key(9, .25), key(14, 1))
 	entrances := motion.ExpandStagger(motion.Track{
 		Ease: motion.Ease{Kind: motion.EaseOutBack, Args: []float64{.8}},
@@ -79,18 +84,29 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 		fade := program.Map(id+"-fade", rise, 32, 0, 0, 1)
 		program.BindStyle(program.Clamp(id+"-visible", fade, 0, 1), selector, "opacity", "")
 	}
-	sway := sample("sway", soft, key(0, -.45), key(5, .5), key(9, -.25), key(14, .15))
-	lift := sample("lift", motion.Ease{Kind: motion.EaseInOutBack, Args: []float64{.6}}, key(0, -.25), key(5, .25), key(9, -.15), key(14, 0))
-	turn := sample("turn", soft, key(0, 0), key(5, math.Pi), key(9, 1.5*math.Pi), key(14, 2*math.Pi))
-	tilt := sample("tilt", soft, key(0, .6), key(5, -.3), key(9, .4), key(14, .15))
-	breath := sample("breath", soft, key(0, .82), key(5, 1.04), key(9, .92), key(14, 1))
-	program.BindSceneNode(sway, "#form", "form", "position.x")
-	program.BindSceneNode(lift, "#form", "form", "position.y")
-	program.BindSceneNode(turn, "#form", "form", "rotation.y")
-	program.BindSceneNode(tilt, "#form", "form", "rotation.x")
-	for _, property := range []string{"scale.x", "scale.y", "scale.z"} {
-		program.BindSceneNode(breath, "#form", "form", property)
-	}
+	position := sample("position", soft,
+		valueKey(0, motion.Vec3V(-.45, -.25, 0)),
+		valueKey(5, motion.Vec3V(.4, .25, -.1)),
+		valueKey(9, motion.Vec3V(-.2, -.15, .15)),
+		valueKey(14, motion.Vec3V(.05, 0, 0)),
+	)
+	rotation := sample("rotation", soft,
+		valueKey(0, motion.QuatV(motion.QuatFromEuler(.65, -.35, -.2))),
+		valueKey(5, motion.QuatV(motion.QuatFromEuler(1.15, .45, -.2))),
+		valueKey(9, motion.QuatV(motion.QuatFromEuler(1.4, -.5, .25))),
+		valueKey(14, motion.QuatV(motion.QuatFromEuler(.95, .6, .15))),
+	)
+	size := sample("size", soft,
+		valueKey(0, motion.Vec3V(.9, .9, .9)),
+		valueKey(5, motion.Vec3V(1.12, 1.12, 1.12)),
+		valueKey(9, motion.Vec3V(.98, .98, .98)),
+		valueKey(14, motion.Vec3V(1, 1, 1)),
+	)
+	program.BindSceneNode(position, "#form", "form", "position")
+	program.BindSceneNode(rotation, "#form", "form", "rotation")
+	program.BindSceneNode(size, "#form", "form", "scale")
+	program.BindStyle(tint, ".study-copy .eyebrow", "color", "")
+	program.BindStyle(tint, ".chapter-fill", "backgroundColor", "")
 	if err := program.BindSceneTransition(progress, "#form", scene.CommandTransition{
 		From: []scene.Command{
 			scene.SetCameraCommand(scene.PerspectiveCamera{Position: scene.Vec3(0, 0, 10), FOV: 50}),
@@ -103,8 +119,8 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	}
 	program.BindMaterialUniform(gain, "#tide", "ribbon", "gain")
 	program.BindMaterialUniform(gain, "#form", "form", "gain")
-	program.BindMaterialUniform(warmth, "#tide", "ribbon", "warmth")
-	program.BindMaterialUniform(warmth, "#form", "form", "warmth")
+	program.BindMaterialUniform(tint, "#tide", "ribbon", "glow")
+	program.BindMaterialUniform(tint, "#form", "form", "glow")
 	for i, window := range [][2]float64{{0, 5}, {5, 9}, {9, 14}} {
 		id := fmt.Sprintf("chapter-%d", i)
 		fill := sample(id, motion.Ease{}, key(window[0], 0), key(window[1], 100))
@@ -125,11 +141,11 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 				),
 			),
 			gosx.El("section", gosx.Attrs(gosx.Attr("class", "study")),
-				gosx.El("div", gosx.Attrs(gosx.Attr("class", "form")), ctx.Engine(form, gosx.El("p", gosx.Text("The same ribbons, wrapped around a sphere.")))),
+				gosx.El("div", gosx.Attrs(gosx.Attr("class", "form")), ctx.Engine(form, gosx.El("p", gosx.Text("The same ribbons, wrapped around a turning torus.")))),
 				gosx.El("div", gosx.Attrs(gosx.Attr("class", "study-copy")),
 					gosx.El("p", gosx.Attrs(gosx.Attr("class", "eyebrow")), gosx.Text("Move through the moment")),
 					gosx.El("h2", gosx.Text("Arrive. Bloom. Exhale.")),
-					gosx.El("p", gosx.Text("The form sways, turns and breathes as teal ribbons warm to amber. Pause anywhere, or follow the same moment back.")),
+					gosx.El("p", gosx.Text("The same light flows through words, ribbons and a turning form. Pause anywhere, or follow the moment back.")),
 					gosx.El("div", gosx.Attrs(gosx.Attr("class", "chapters"), gosx.Attr("aria-hidden", "true")),
 						chapter("chapter-0", "01", "Arrive"), chapter("chapter-1", "02", "Bloom"), chapter("chapter-2", "03", "Exhale")),
 					gosx.El("div", gosx.Attrs(gosx.Attr("class", "controls"), gosx.Attr("role", "group"), gosx.Attr("aria-label", "Motion playback")),

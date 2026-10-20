@@ -3,14 +3,12 @@ material Tide {
     param ink : color = rgb(0.025, 0.043, 0.075)
     param glow : color = rgb(0.34, 0.81, 0.76)
     param gain : float = 0.6
-    param warmth : float = 0.0
     context { time : float }
     surface(geo) -> color {
         let coord = geo.uv
         let drift = time * 0.65
         let wave = sin(coord.x * 12.0 + sin(coord.y * 5.0 + drift) * 2.0 + drift) * 0.5 + 0.5
         let ribbon = pow(wave, 5.0)
-        let light = mix(glow, rgb(0.93, 0.55, 0.35), clamp(warmth, 0.0, 1.0))
-        return mix(ink, light, clamp(ribbon * gain, 0.0, 1.0))
+        return mix(ink, glow, clamp(ribbon * gain, 0.0, 1.0))
     }
 }

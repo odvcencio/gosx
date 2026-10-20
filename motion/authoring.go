@@ -23,12 +23,14 @@ var motionStyleProperties = map[string]struct{}{
 }
 
 var motionSceneProperties = map[string]struct{}{
+	"position": {}, "scale": {}, "rotation": {},
 	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
 	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
 	"scale.x": {}, "scale.y": {}, "scale.z": {}, "opacity": {},
 }
 
 var motionCameraProperties = map[string]struct{}{
+	"position": {}, "rotation": {},
 	"x": {}, "y": {}, "z": {}, "position.x": {}, "position.y": {}, "position.z": {},
 	"rotation.x": {}, "rotation.y": {}, "rotation.z": {}, "rotationX": {}, "rotationY": {}, "rotationZ": {},
 	"fov": {}, "near": {}, "far": {}, "zoom": {},
@@ -117,6 +119,7 @@ type SignalSpec struct {
 	Max           float64             `json:"max,omitempty"`
 	Ease          *MotionEase         `json:"ease,omitempty"`
 	Frames        []MotionKeyframe    `json:"frames,omitempty"`
+	Arity         ValueArity          `json:"arity,omitempty"`
 	Smooth        bool                `json:"smooth,omitempty"`
 	ReducedMotion ReducedMotionPolicy `json:"reducedMotion,omitempty"`
 }
@@ -272,19 +275,18 @@ func (p *Program) BindCSSVariable(signal SignalRef, selector, name, unit string)
 	p.bind(Binding{Signal: signal, Target: BindingCSSVariable, Selector: selector, Property: name, Unit: unit})
 }
 
-// BindSceneNode binds a scalar signal to a node property such as position.y,
-// rotation.z, scale.x, or opacity.
+// BindSceneNode binds a scalar property, a Vec3 position/scale, or a quaternion
+// rotation. Component properties such as position.y continue to take scalars.
 func (p *Program) BindSceneNode(signal SignalRef, sceneSelector, node, property string) {
 	p.bind(Binding{Signal: signal, Target: BindingSceneNode, Selector: sceneSelector, Node: node, Property: property})
 }
 
-// BindMaterialUniform binds a scalar signal to a mesh's named material uniform.
+// BindMaterialUniform binds a scalar, vector, or color to a named material uniform.
 func (p *Program) BindMaterialUniform(signal SignalRef, sceneSelector, mesh, uniform string) {
 	p.bind(Binding{Signal: signal, Target: BindingMaterialUniform, Selector: sceneSelector, Node: mesh, Property: uniform})
 }
 
-// BindCamera binds a scalar signal to a camera property such as position.z,
-// rotation.y, or fov.
+// BindCamera binds a scalar camera property, Vec3 position, or quaternion rotation.
 func (p *Program) BindCamera(signal SignalRef, sceneSelector, property string) {
 	p.bind(Binding{Signal: signal, Target: BindingCamera, Selector: sceneSelector, Property: property})
 }
@@ -349,6 +351,10 @@ func (p *Program) Marshal() ([]byte, error) {
 			}
 		}
 	}
+	arities, err := programValueArities(p.Signals)
+	if err != nil {
+		return nil, err
+	}
 	for _, binding := range p.Bindings {
 		if _, exists := ids[string(binding.Signal)]; !exists {
 			return nil, fmt.Errorf("motion: binding references unknown signal %q", binding.Signal)
@@ -358,6 +364,14 @@ func (p *Program) Marshal() ([]byte, error) {
 		}
 		if err := validateBinding(binding); err != nil {
 			return nil, err
+		}
+		if err := validateBindingArity(binding, arities[binding.Signal]); err != nil {
+			return nil, err
+		}
+	}
+	for _, binding := range p.SVGMorphs {
+		if arities[binding.Signal] != ArityScalar {
+			return nil, fmt.Errorf("motion: SVG morph progress %q must be scalar", binding.Signal)
 		}
 	}
 	if err := validateSVGMorphs(p.SVGMorphs, ids); err != nil {

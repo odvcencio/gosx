@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-var updateTrackGolden = flag.Bool("update-track-golden", false, "rewrite scalar track native/browser parity fixtures")
+var updateTrackGolden = flag.Bool("update-track-golden", false, "rewrite track native/browser parity fixtures")
 
 func scalarTrack(ease Ease) Track {
 	return Track{Ease: ease, Keys: []Key{
@@ -107,7 +107,7 @@ func TestSampleTrackRejectsInvalidAuthoringWithoutMutation(t *testing.T) {
 		{"too many", func(tr *Track) { tr.Keys = make([]Key, 4097) }},
 		{"generator", func(tr *Track) { tr.Gen = &Generator{Kind: GenSpin} }},
 		{"spline", func(tr *Track) { tr.Interp = InterpCubicSpline }},
-		{"vector", func(tr *Track) { tr.Keys[0].Value = Vec2V(1, 2) }},
+		{"mixed arity", func(tr *Track) { tr.Keys[0].Value = Vec2V(1, 2) }},
 		{"duplicate time", func(tr *Track) { tr.Keys[1].T = tr.Keys[0].T }},
 		{"nan", func(tr *Track) { tr.Keys[0].T = math.NaN() }},
 		{"infinite value", func(tr *Track) { tr.Keys[0].Value = ScalarV(math.Inf(1)) }},
