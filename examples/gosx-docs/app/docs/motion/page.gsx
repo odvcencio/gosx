@@ -18,6 +18,7 @@ func Page() Node {
 			aria-labelledby={docScene.HeadingID}
 			data-gosx-motion-program={data.motionProgram}
 			data-gosx-motion-scope={data.motionScope}
+			data-gosx-scene3d-status-scope
 		>
 			{motionStyle}
 			<div
@@ -49,9 +50,12 @@ func Page() Node {
 						</div>
 						<output
 							class="motion-demo__adapter"
-							data-gosx-motion-adapter-report="#motion-scene"
 							aria-live="polite"
-						>Waiting for the scene adapter…</output>
+						>
+							<span data-gosx-scene3d-status="renderer">starting…</span>
+							{" adapter: "}
+							<span data-gosx-scene3d-status="adapter">waiting for adapter details…</span>
+						</output>
 					</div>
 				</div>
 				<div id="motion-scroll-track" class="motion-demo__scroll-track" aria-hidden="true"></div>

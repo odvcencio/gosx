@@ -4925,6 +4925,14 @@
         value = backend === "starting" ? "starting…" : sceneStatusBindingLabel(backend);
         output.hidden = false;
         setAttrValue(output, "data-state", backend);
+      } else if (kind === "adapter") {
+        const truth = mount.__gosxScene3DRenderBackendTruth;
+        if (!truth) continue;
+        const info = truth.adapterInfo || {};
+        const adapter = truth.adapter || [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(" ");
+        value = adapter || "adapter details unavailable";
+        output.hidden = false;
+        setAttrValue(output, "data-state", adapter ? "ready" : "unavailable");
       } else if (kind === "fallback") {
         value = fallback ? "· fallback: " + sceneStatusBindingLabel(fallback) : "";
         output.hidden = !fallback;
