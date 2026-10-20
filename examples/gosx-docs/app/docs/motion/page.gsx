@@ -48,10 +48,7 @@ func Page() Node {
 							<span aria-hidden="true"></span>
 							<p>HTML marker</p>
 						</div>
-						<output
-							class="motion-demo__adapter"
-							aria-live="polite"
-						>
+						<output class="motion-demo__adapter" aria-live="polite">
 							<span data-gosx-scene3d-status="renderer">starting…</span>
 							{" adapter: "}
 							<span data-gosx-scene3d-status="adapter">waiting for adapter details…</span>
