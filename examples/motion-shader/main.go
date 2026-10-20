@@ -158,7 +158,14 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 		),
 		gosx.El("footer", gosx.Text("Two dimensions. Three dimensions. One framework.")),
 	)
-	return server.HTMLDocument(&server.DocumentContext{Title: "Tidal forms — GoSX motion", Head: gosx.El("style", gosx.RawHTML(style)), Body: body})
+	return server.HTMLDocument(&server.DocumentContext{
+		Title: "Tidal forms — GoSX motion",
+		Head: gosx.Fragment(
+			gosx.El("link", gosx.Attrs(gosx.Attr("rel", "icon"), gosx.Attr("href", "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='10' fill='none' stroke='%236bcfc2' stroke-width='6'/%3E%3C/svg%3E"))),
+			gosx.El("style", gosx.RawHTML(style)),
+		),
+		Body: body,
+	})
 }
 
 func chapter(class, number, name string) gosx.Node {
