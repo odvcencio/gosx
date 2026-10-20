@@ -19797,7 +19797,7 @@
   }
   function sceneWebGPUCreateMaterialFrame(): any {
     return { resources: new Map(), groups: [], signatures: [], textureRevision: 0, calls: 0,
-      buffer: null, capacity: 0, stride: 256, data: null, offsets: new WeakMap(),
+      buffer: null, capacity: 0, stride: 256, data: null, words: null, offsets: new WeakMap(),
       geometryReady: false, resourceRevision: 0, refs: [],
       bundleInputs: { draws: [], materials: [], prepared: null, textureRevision: -1,
         resourceRevision: -1, version: 0, key: null } };
@@ -19814,7 +19814,8 @@
       var alignment = sceneNumber(device.limits && device.limits.minUniformBufferOffsetAlignment, 256);
       materialFrame.stride = Math.ceil(64 / Math.max(16, alignment)) * Math.max(16, alignment);
       var required = 1 + objects.filter(function(object: any) { return object && object.retainedGeometry; }).length;
-      if (!materialFrame.buffer || required > materialFrame.capacity) {
+      var resized = !materialFrame.buffer || required > materialFrame.capacity;
+      if (resized) {
         var capacity = Math.max(1, materialFrame.capacity);
         while (capacity < required) capacity *= 2;
         if (materialFrame.buffer) {
@@ -19825,24 +19826,30 @@
         materialFrame.buffer = createBuffer(GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
           capacity * materialFrame.stride);
         materialFrame.data = new Float32Array(capacity * materialFrame.stride / 4);
+        materialFrame.words = new Uint32Array(materialFrame.data.buffer);
         for (var mi = 0; mi < 16; mi++) materialFrame.data[mi] = mi % 5 === 0 ? 1 : 0;
         device.queue.writeBuffer(materialFrame.buffer, 0, materialFrame.data.subarray(0, 16));
       }
       materialFrame.offsets = new WeakMap();
-      var slotIndex = 0;
+      var slotIndex = 0, firstDirty = 0, lastDirty = 0;
       for (var i = 0; i < objects.length; i++) {
         var object = objects[i];
         if (!object || !object.retainedGeometry) continue;
         var matrix = webGPUObjectModelMatrix(object);
         var offset = ++slotIndex * materialFrame.stride;
         if (matrix) materialFrame.offsets.set(matrix, offset);
+        var changed = resized;
         for (var column = 0; column < 16; column++) {
-          materialFrame.data[offset / 4 + column] = matrix
+          var index = offset / 4 + column, before = materialFrame.words[index];
+          materialFrame.data[index] = matrix
             ? sceneNumber(matrix[column], column % 5 === 0 ? 1 : 0) : (column % 5 === 0 ? 1 : 0);
+          // Compare stored float32 bits, including the rounding of wire numbers.
+          if (materialFrame.words[index] !== before) changed = true;
         }
+        if (changed) { if (!firstDirty) firstDirty = slotIndex; lastDirty = slotIndex; }
       }
-      if (slotIndex) device.queue.writeBuffer(materialFrame.buffer, materialFrame.stride,
-        materialFrame.data.subarray(materialFrame.stride / 4, (slotIndex * materialFrame.stride + 64) / 4));
+      if (lastDirty) device.queue.writeBuffer(materialFrame.buffer, firstDirty * materialFrame.stride,
+        materialFrame.data.subarray(firstDirty * materialFrame.stride / 4, (lastDirty * materialFrame.stride + 64) / 4));
       var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
       materialFrame.signatures = materials.map(webGPUMaterialSignature);
       if (objects.some(function(object: any) { return !materials[object.materialIndex]; })) materialFrame.signatures.push(webGPUMaterialSignature(null));

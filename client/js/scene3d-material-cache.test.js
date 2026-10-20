@@ -255,6 +255,41 @@ test("material revisions refresh packed fields once and retire the replaced bloc
   assert.equal(writes.length, 1);
 });
 
+for (const [fresh, bundles] of [[true, false], [false, false], [true, true]]) test(`unchanged model matrices stay on GPU and sparse changes upload one row (source=${fresh}, bundles=${bundles})`, async t => {
+  const h = await materialHarness(false, 3, bundles, fresh);
+  t.after(() => h.renderer.dispose());
+  const b = h.bundle();
+  for (let i = 0; i < 4; i++) await h.render(b);
+  const group = h.fake.state.bindGroups.findLast(g =>
+    g.desc.entries.some(e => e.binding === 0 && e.resource.buffer?.size === 288) &&
+    g.desc.entries.some(e => e.binding === 19));
+  const arena = group.desc.entries.find(e => e.binding === 19).resource.buffer;
+  const writes = () => h.fake.state.writeBufferCalls.filter(c => c.buffer === arena);
+  const initial = writes().length;
+  const submissions = h.fake.state.submitCount;
+  for (let i = 0; i < 3; i++) await h.render(b);
+  assert.equal(h.fake.state.submitCount, submissions + 3);
+  assert.equal(writes().length, initial, "settled transforms need no model uploads");
+
+  const matrix = Array.from(b.meshObjects[1].modelMatrix);
+  matrix[12] = 0.1; // The wire format carries float64 numbers; the uniform stores float32.
+  b.meshObjects[1].modelMatrix = matrix;
+  await h.render(b);
+  assert.equal(writes().length, initial + 1);
+  assert.equal(writes().at(-1).offset, 512);
+  assert.equal(writes().at(-1).data.byteLength, 64, "one changed transform sends one matrix");
+  assert.deepEqual(Array.from(writes().at(-1).data), Array.from(new Float32Array(matrix)));
+
+  b.meshObjects[1].modelMatrix = matrix.slice();
+  await h.render(b);
+  assert.equal(writes().length, initial + 1, "equivalent float64 input stays cached after float32 rounding");
+  if (!bundles) {
+    const bound = h.fake.state.renderPasses.at(-1).bindGroups.filter(c => c.slot === 1 &&
+      c.group.desc.entries.some(e => e.binding === 19 && e.resource.buffer === arena));
+    assert.deepEqual(bound.map(c => c.dynamicOffsets[0]), [256, 512, 768], "fresh matrix arrays retain their draw offsets");
+  }
+});
+
 test("model arena offsets preserve transforms and growth refreshes cached bindings", async t => {
   const h = await materialHarness(false, 2, false);
   t.after(() => h.renderer.dispose());
