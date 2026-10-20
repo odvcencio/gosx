@@ -4,8 +4,8 @@
 // (keyExpr, valueExpr) per the encoding documented on
 // program.OpComposite.
 //
-// The lowerer builds a per-file struct type registry at the start of
-// LowerASTFile so it can map positional struct literals like
+// The lowerer builds a package-wide struct type registry before lowering
+// function bodies so it can map positional struct literals like
 // `vec2{x, y}` to their named-field equivalent (`{X:x, Y:y}`) without
 // requiring the author to spell the names. Named literals
 // (`vec2{X:x, Y:y}`) skip the registry lookup entirely.

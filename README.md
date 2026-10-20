@@ -119,6 +119,10 @@ Strict `//gosx:engine` declarations and automatic `.gsx` engine-surface
 discovery remain preview/post-v1. The v1 engine contract is the programmatic
 `engine.Config` / `ctx.Engine` surface described below.
 
+Within that preview, VM engine surfaces share helper functions and struct layouts
+across their Go source files, while import aliases stay local to each file.
+The existing VM Go subset and 65,535-expression package limit apply.
+
 An island may compose same-file strict **pure-view** components. GoSX inlines
 each invocation into the parent island program at compile time, so composition
 adds no browser component runtime: the result still has one hydration root,

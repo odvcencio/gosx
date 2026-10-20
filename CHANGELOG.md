@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Lower VM engine-surface packages together so Go helpers, struct layouts and
+  file-local import aliases work across source files. Preserve source locations
+  in compiler diagnostics, retain callable functions from every file, and reject
+  packages that exceed the VM expression limit before IDs can wrap.
+
 - Keep declarative action buttons disabled while reading the response body,
   including failed responses, and restore them before the result updates focus.
   Slow response bodies no longer invite an early second click.

@@ -47,6 +47,7 @@
 package golower
 
 import (
+	"fmt"
 	"go/ast"
 
 	"m31labs.dev/gosx/island/program"
@@ -77,13 +78,19 @@ type userFuncInfo struct {
 // for the VM to execute. External linkage is out of scope for the
 // engine-surface subset.
 func (c *lowerCtx) scanUserFuncs(file *ast.File) {
-	c.funcs = funcRegistry{defs: map[string]userFuncInfo{}}
+	if c.funcs.defs == nil {
+		c.funcs = funcRegistry{defs: map[string]userFuncInfo{}}
+	}
 	for _, decl := range file.Decls {
 		fn, ok := decl.(*ast.FuncDecl)
 		if !ok {
 			continue
 		}
 		if fn.Recv != nil || fn.Body == nil || fn.Name == nil {
+			continue
+		}
+		if _, exists := c.funcs.defs[fn.Name.Name]; exists {
+			c.addIssue(fn, fmt.Sprintf("duplicate function %q", fn.Name.Name), "")
 			continue
 		}
 		info := userFuncInfo{

@@ -52,6 +52,7 @@ type LowerError struct {
 // Issue is a single lowering problem. The Suggestion field, when set,
 // points the author at the escape-hatch contract.
 type Issue struct {
+	File       string
 	Handler    string
 	Line       int
 	Message    string
@@ -65,7 +66,13 @@ func (e *LowerError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "golower: %s: %d issue(s)\n", e.File, len(e.Issues))
 	for _, i := range e.Issues {
-		fmt.Fprintf(&b, "  %s:%d: %s", i.Handler, i.Line, i.Message)
+		if i.File != "" && i.Handler != "" {
+			fmt.Fprintf(&b, "  %s:%d (%s): %s", i.File, i.Line, i.Handler, i.Message)
+		} else if i.File != "" {
+			fmt.Fprintf(&b, "  %s:%d: %s", i.File, i.Line, i.Message)
+		} else {
+			fmt.Fprintf(&b, "  %s:%d: %s", i.Handler, i.Line, i.Message)
+		}
 		if i.Suggestion != "" {
 			fmt.Fprintf(&b, "  (suggestion: %s)", i.Suggestion)
 		}
@@ -95,10 +102,28 @@ func LowerFile(src []byte) (*program.Program, error) {
 // LowerFile so callers that already have an AST (caching, multi-file
 // surfaces) don't re-parse.
 func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error) {
-	prog := &program.Program{
-		Name: file.Name.Name,
+	return LowerASTFiles(fset, []*ast.File{file})
+}
+
+// LowerASTFiles lowers one package in the supplied file/declaration order.
+// Functions and struct layouts are package-scoped; import aliases retain their
+// file scope. This accepts the same Go subset as LowerFile, without type checking.
+func LowerASTFiles(fset *token.FileSet, files []*ast.File) (*program.Program, error) {
+	if fset == nil || len(files) == 0 {
+		return nil, fmt.Errorf("golower: a file set and package files are required")
 	}
-	lerr := &LowerError{File: fset.Position(file.Pos()).Filename}
+	for i, file := range files {
+		if file == nil || file.Name == nil {
+			return nil, fmt.Errorf("golower: invalid package file %d", i)
+		}
+		if file.Name.Name != files[0].Name.Name {
+			return nil, fmt.Errorf("golower: %s: package %s does not match %s", fset.Position(file.Pos()).Filename, file.Name.Name, files[0].Name.Name)
+		}
+	}
+	prog := &program.Program{
+		Name: files[0].Name.Name,
+	}
+	lerr := &LowerError{File: fset.Position(files[0].Pos()).Filename}
 
 	ctx := &lowerCtx{
 		prog:   prog,
@@ -107,35 +132,17 @@ func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error)
 		exprs:  []program.Expr{},
 	}
 
-	// Pre-pass: build the struct-type registry so positional
-	// composite literals (`vec2{x, y}`) can recover field names without
-	// a full go/types pass. Named-form literals (`Node{ID: id}`) don't
-	// need this — they carry field names inline — but the registry is
-	// cheap and keeps the lowering paths uniform.
-	ctx.scanStructTypes(file)
-
-	// Pre-pass: build the user-function registry so
-	// in-package calls (`updatePosition(node)` calling a sibling
-	// helper) can resolve through OpIndirectCall instead of the
-	// legacy "calls to user-defined function" diagnostic. The pass
-	// runs BEFORE lowerTopLevelDecl so forward references resolve
-	// (Go allows `func A() { B() }; func B() {}`).
-	ctx.scanUserFuncs(file)
-
-	// Pre-pass: record the source-level identifier of
-	// each imported package so lowerCallExpr's selector branch can
-	// tell pkg.Func (intrinsic) apart from receiver.Method (host
-	// dispatch through OpHostCall).
-	ctx.scanImports(file)
-
-	// Two passes:
-	//   1. Hoist package-level var declarations into signal defs so
-	//      function bodies can reference them by name. Init expressions
-	//      defer to expression lowering, which may forward-reference
-	//      other signals declared later in the file.
-	//   2. Lower each function declaration into a Handler entry.
-	for _, decl := range file.Decls {
-		ctx.lowerTopLevelDecl(decl)
+	// Register the entire package before lowering any function body, including
+	// positional composite literals and forward calls into another source file.
+	for _, file := range files {
+		ctx.scanStructTypes(file)
+		ctx.scanUserFuncs(file)
+	}
+	for _, file := range files {
+		ctx.scanImports(file)
+		for _, decl := range file.Decls {
+			ctx.lowerTopLevelDecl(decl)
+		}
 	}
 
 	prog.Exprs = ctx.exprs
@@ -149,11 +156,12 @@ func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error)
 // lowerCtx threads parsing state through the recursive lowering helpers
 // without forcing each one to take ten parameters.
 type lowerCtx struct {
-	prog    *program.Program
-	fset    *token.FileSet
-	issues  *LowerError
-	exprs   []program.Expr
-	handler string // name of the handler currently being lowered (for diagnostics)
+	prog            *program.Program
+	fset            *token.FileSet
+	issues          *LowerError
+	exprs           []program.Expr
+	handler         string // name of the handler currently being lowered (for diagnostics)
+	expressionLimit bool
 
 	// currentResults is the declared return-value count of the function
 	// whose body is currently being lowered. Used by lowerReturnStmt
@@ -163,13 +171,13 @@ type lowerCtx struct {
 	currentResults int
 
 	// structs holds the ordered field-name list for every struct type
-	// declared at the top level of the file. Populated by
+	// declared at the top level of the package. Populated by
 	// scanStructTypes so positional struct literals like
 	// `vec2{x, y}` can recover field names without a separate
 	// go/types pass.
 	structs map[string]structTypeInfo
 
-	// funcs is the per-file user-function registry. Populated by
+	// funcs is the package-wide user-function registry. Populated by
 	// scanUserFuncs so call sites can detect a
 	// bare-identifier call into a sibling helper and emit
 	// OpIndirectCall instead of the legacy "calls to user-defined
@@ -199,10 +207,18 @@ type lowerCtx struct {
 	closureLocals map[string]bool
 }
 
-// addExpr appends e to the program's expression table and returns the
-// ExprID. Centralizing this lets future optimization passes (CSE,
-// constant folding) hook in without touching every call site.
+const maxProgramExpressions = 1<<16 - 1
+
+// addExpr never wraps the uint16 expression table. A rejected package retains
+// one diagnostic and a bounded partial program; callers must check the error.
 func (c *lowerCtx) addExpr(e program.Expr) program.ExprID {
+	if len(c.exprs) >= maxProgramExpressions {
+		if !c.expressionLimit {
+			c.addIssue(nil, "package exceeds the 65,535 expression limit", "")
+			c.expressionLimit = true
+		}
+		return 0
+	}
 	id := program.ExprID(len(c.exprs))
 	c.exprs = append(c.exprs, e)
 	return id
@@ -212,10 +228,13 @@ func (c *lowerCtx) addExpr(e program.Expr) program.ExprID {
 // caller can keep going so multiple problems surface in one pass.
 func (c *lowerCtx) addIssue(node ast.Node, msg, suggestion string) {
 	line := 0
+	file := ""
 	if node != nil {
-		line = c.fset.Position(node.Pos()).Line
+		position := c.fset.Position(node.Pos())
+		line, file = position.Line, position.Filename
 	}
 	c.issues.Issues = append(c.issues.Issues, Issue{
+		File:       file,
 		Handler:    c.handler,
 		Line:       line,
 		Message:    msg,
