@@ -313,8 +313,8 @@ func TestParseHandlerCall(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exprs[rootID].Op != program.OpCall {
-		t.Fatal("expected Call")
+	if exprs[rootID].Op != program.OpIndirectCall {
+		t.Fatal("expected IndirectCall")
 	}
 	if exprs[rootID].Value != "handleClick" {
 		t.Fatal("expected handleClick")
@@ -502,8 +502,8 @@ func TestParseHandlerCallWithArgs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exprs[rootID].Op != program.OpCall {
-		t.Fatalf("expected OpCall, got %d", exprs[rootID].Op)
+	if exprs[rootID].Op != program.OpIndirectCall {
+		t.Fatalf("expected OpIndirectCall, got %d", exprs[rootID].Op)
 	}
 	if len(exprs[rootID].Operands) != 2 {
 		t.Fatalf("expected 2 call args, got %d", len(exprs[rootID].Operands))

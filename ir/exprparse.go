@@ -841,10 +841,20 @@ func (p *exprParser) buildFixedArityMethod(receiverID program.ExprID, normalized
 }
 
 func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (program.ExprID, error) {
+	// A declared Go handler shadows builtins and calls through the VM's
+	// function registry. OpCall is reserved for registered intrinsics.
+	if p.scope != nil && p.scope.Handlers[name] {
+		return p.addExpr(program.Expr{
+			Op:       program.OpIndirectCall,
+			Operands: args,
+			Value:    name,
+			Type:     program.TypeAny,
+		}), nil
+	}
 	// Keep Go's append spelling and handler shadowing. The VM already owns
 	// immutable append semantics; lowering individual elements to its existing
 	// operation adds no runtime opcode or browser feature dependency.
-	if name == "append" && (p.scope == nil || !p.scope.Handlers[name]) {
+	if name == "append" {
 		if len(args) == 0 {
 			return 0, fmt.Errorf("append requires a slice as its first argument")
 		}
@@ -870,14 +880,6 @@ func (p *exprParser) buildFunctionCall(name string, args []program.ExprID) (prog
 			Op:       program.OpLen,
 			Operands: []program.ExprID{args[0]},
 			Type:     program.TypeInt,
-		}), nil
-	}
-	if p.scope != nil && p.scope.Handlers != nil && p.scope.Handlers[name] {
-		return p.addExpr(program.Expr{
-			Op:       program.OpCall,
-			Operands: args,
-			Value:    name,
-			Type:     program.TypeAny,
 		}), nil
 	}
 	return 0, fmt.Errorf("unknown function %q", name)

@@ -14,6 +14,7 @@ component LiveCollection(props: LiveCollectionProps) {
 	items := signal.New([]string{props.Initial})
 	draft := signal.New("")
 	edit := func() { draft.Set(value) }
+	focusDraft := func() { browser.Focus("#island-collection-draft") }
 	add := func() {
 		browser.PreventDefault()
 		if draft.Get() == "" || len(items.Get()) >= 12 {
@@ -21,9 +22,9 @@ component LiveCollection(props: LiveCollectionProps) {
 		}
 		items.Set(append(items.Get(), draft.Get()))
 		draft.Set("")
-		browser.Focus("#island-collection-draft")
+		focusDraft()
 	}
-	clear := func() { items.Set([]string{}); browser.Focus("#island-collection-draft") }
+	clear := func() { items.Set([]string{}); focusDraft() }
 	return <section aria-label="Interactive collection">
 		<form onSubmit={add}>
 			<label for="island-collection-draft">Add a building block</label>
@@ -60,6 +61,7 @@ func Page() Node {
 		</section>
 		<p>Use append(items.Get(), item) and Set to grow a list. Each renders the updated slice. Several individual elements may be appended in one call, and a call with only the slice preserves its value. The VM creates a fresh slice for additions, keeping earlier signal values independent.</p>
 		<p>The handler uses a Go if guard and bare return to reject empty drafts and keep the collection within its limit, even when a submission bypasses the disabled button. Nested if, else if, and else branches use the same shared VM. Handler-local assignments, loops, if initializers, and return values remain outside this subset.</p>
+		<p>Share behavior with named func() helpers inside the island. Add and Clear call the same focusDraft helper. Helpers share the current event and signal state; a bare return exits the helper while its caller continues. Calls must be standalone handler statements, and helpers cannot declare parameters or results. Rendering and signal initializers cannot call them.</p>
 		<p>This intrinsic supports individual elements. Variadic slice expansion with ... remains outside the island expression subset. The example uses the shared VM and introduces no browser feature module or runtime opcode.</p>
 		<h2 id="collection-source">Source</h2>
 		{CodeBlock("gosx", data.collectionSample)}

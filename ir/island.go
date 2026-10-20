@@ -42,6 +42,9 @@ func lowerIslandWithEvidence(prog *Program, compIdx int, evidence islandExprEvid
 	if err := l.emitComponentScope(comp.Scope); err != nil {
 		return nil, err
 	}
+	if err := l.linkHandlerCalls(comp.Scope); err != nil {
+		return nil, err
+	}
 	if err := l.populateStaticMask(); err != nil {
 		return nil, err
 	}
