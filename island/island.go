@@ -1603,6 +1603,15 @@ func (r *Renderer) BindHub(name, path string, bindings []hydrate.HubBinding) str
 	return r.manifest.AddHub(name, path, bindings)
 }
 
+// BindHubDocument binds a server-rendered text view to a Hub document protocol.
+// The opt-in browser host owns editing, presence, cursors and page disposal.
+func (r *Renderer) BindHubDocument(name, path string, config hydrate.HubDocumentConfig) (string, error) {
+	if r == nil || r.manifest == nil {
+		return "", fmt.Errorf("island renderer is nil")
+	}
+	return r.manifest.AddHubDocument(name, path, config)
+}
+
 // BindHubInput registers a realtime hub connection with bootstrap-owned input
 // forwarding.
 func (r *Renderer) BindHubInput(name, path string, bindings []hydrate.HubBinding, input hydrate.HubInputConfig) string {

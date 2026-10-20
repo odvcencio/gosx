@@ -64,7 +64,12 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Enhanced read forms retain repeated controls and submitter values. Only the
 // exhausted monolith gzip target moves by 16 bytes to the measured minimum;
 // size allowances and every other target remain fixed.
+// Hub lifecycle events add 131 raw bytes to the monolith and hubs chunk.
+// Only the two exhausted raw targets move to their measured minima; all
+// existing compressed targets, route limits and allowance policy stay fixed.
 const budgets = [
+  // Optional document views; no new payload on pages without the binding.
+  { file: "bootstrap-feature-hub-document.js", raw: 7033, gzip: 2905, brotli: 2636 },
   // Input-driven tracks and scene binding adapters remain optional.
   { file: "bootstrap-feature-motion-track.js", raw: 3500, gzip: 1500, brotli: 1350 },
   // Optional seekable motion; ordinary pages retain their existing ceilings.
@@ -820,7 +825,7 @@ const budgets = [
     // Native touch deduplication and the cross-chunk bridge measure 1969984 raw / 544188 gzip; targets use only the exhausted minima under unchanged allowances.
     // Typed night lighting and held-signal deduplication: only the exhausted gzip minimum moves; allowances remain unchanged.
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
-    file: "bootstrap.js", raw: 1904958, gzip: 529976,
+    file: "bootstrap.js", raw: 1905089, gzip: 529976,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 433821 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
@@ -1729,7 +1734,7 @@ const budgets = [
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
   // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
   // hard limit had only 10 bytes left; targets grow by the measured change.
-  { file: "bootstrap-feature-hubs.js", raw: 47960, gzip: 14804, brotli: 13314 },
+  { file: "bootstrap-feature-hubs.js", raw: 48082, gzip: 14804, brotli: 13314 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact

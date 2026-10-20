@@ -233,6 +233,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-hub-document.js",
+      "sources": [
+        "../runtime/host/hub-document.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
         "bootstrap-src/26i-feature-textlayout-prefix.ts",
