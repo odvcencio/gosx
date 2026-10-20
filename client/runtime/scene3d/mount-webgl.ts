@@ -4674,17 +4674,9 @@
     return null;
   }
 
-  // sceneRenderBackendTruth builds the SINGLE machine-readable record of which
-  // backend actually runs and why anything else was rejected.
-  //
-  // Before this, answering "why is this page on WebGL?" meant correlating
-  // data-gosx-scene3d-backend, -renderer-fallback, -software-webgl,
-  // -webgpu-preference, -dropped and the WebGPU probe's internal error string
-  // across two files. Each of those is individually true and individually
-  // insufficient; three of them read "healthy" during the incidents this work
-  // came out of. One JSON blob with the adapter, the WGSL implementation
-  // (Dawn/Tint versus wgpu/naga), the fallback reason and the transition
-  // journal is what a probe or a deploy gate can actually assert against.
+  // Publish the actual backend, adapter, implementation and fallback as one
+  // machine-readable record. The journal preserves backend transitions that
+  // the final selection alone cannot explain after a recovered device loss.
   function sceneRenderBackendTruth(mount, renderer, fallbackReason, degraded) {
     const api = sceneRenderTruthAPI();
     const kind = renderer && renderer.kind ? renderer.kind : "";
@@ -4692,9 +4684,7 @@
     let adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : {}; const probe = typeof window !== "undefined" && window.__gosx && window.__gosx.scene3dWebGLProbe; if (kind === "webgl" && probe) adapterInfo = Object.assign({}, adapterInfo, { vendor: adapterInfo.vendor || probe.vendor || "", device: adapterInfo.device || probe.renderer || "", description: adapterInfo.description || probe.renderer || "" });
     const truth = {
       backend: kind,
-      // gpu is the assertion a deploy gate wants: did a shader run at all?
-      // A canvas2d mount runs none, which is how a dead post pass shipped
-      // behind a green "visual smoke passed" check for a week.
+      // This identifies shader-backed APIs; draw and frame evidence is separate.
       gpu: kind === "webgpu" || kind === "webgl",
       fallbackReason: fallbackReason || "",
       dropped: Array.isArray(degraded) ? degraded.slice() : [],
