@@ -154,6 +154,8 @@
           );
         }
         return responsePayload(r).then(function (result) {
+          // The body is ready; enable before projection restores focus.
+          if (el && "disabled" in el) el.disabled = false;
           applyActionResult(actionEl, result, el);
           var detail = {
             element: el,
@@ -180,6 +182,7 @@
         });
       })
       .catch(function (err) {
+        if (el && "disabled" in el) el.disabled = false;
         console.warn("[gosx] action error", method, url, err);
         dispatchActionEvent("gosx:action:error", {
           element: el,
@@ -196,10 +199,6 @@
         });
         observeAction("error", "action request failed", { method: method, url: url });
         return null;
-      })
-      .finally(function () {
-        // Hold the control through body parsing, result projection and errors.
-        if (el && "disabled" in el) el.disabled = false;
       });
   }
 

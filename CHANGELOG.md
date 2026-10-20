@@ -2,9 +2,9 @@
 
 ## Unreleased
 
-- Keep declarative action buttons disabled until the response body and result
-  updates finish, including failed requests, so slow responses cannot invite
-  another click before the action settles.
+- Keep declarative action buttons disabled while reading the response body,
+  including failed responses, and restore them before the result updates focus.
+  Slow response bodies no longer invite an early second click.
 
 - Add adapter details to native Scene3D status bindings, including backend
   fallback updates. Motion docs use these bindings without a page script.

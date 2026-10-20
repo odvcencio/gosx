@@ -445,7 +445,7 @@ test("data-gosx-action button POSTs, disables during flight, re-enables on settl
   assert.equal(btn.disabled, false, "re-enabled on settle");
 });
 
-test("action buttons stay disabled until the response body and result projection finish", async (t) => {
+test("action buttons stay disabled until the response body is available", async (t) => {
   for (const ok of [true, false]) {
     await t.test(ok ? "success" : "HTTP failure", async () => {
       let finishBody;
@@ -472,6 +472,18 @@ test("action buttons stay disabled until the response body and result projection
       assert.equal(dispatched.filter((event) => event.type === "gosx:action:result").length, 1);
     });
   }
+});
+
+test("action result projection restores focus to an enabled trigger", async () => {
+  const target = { innerHTML: "" };
+  const { ctx } = runModule({ targetSelector: "#result", target, responsePayload: { html: "<p>Saved</p>" } });
+  const button = makeEl({ "data-gosx-action-target": "#result" }, { tag: "button" });
+  let focused = false;
+  button.focus = () => { assert.equal(button.disabled, false); focused = true; };
+  const response = await ctx.window.__gosx.actions.run(button, "POST", "/publish");
+  assert.equal(response.ok, true);
+  assert.equal(focused, true);
+  assert.equal(target.innerHTML, "<p>Saved</p>");
 });
 
 test("action buttons become usable again after a request rejects", async () => {
