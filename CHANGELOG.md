@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add adapter details to native Scene3D status bindings, including backend
+  fallback updates. Motion docs use these bindings without a page script.
+
 - Make copy controls ready before engine startup completes and restore their
   readiness after navigation. Docs use the framework handler directly.
 

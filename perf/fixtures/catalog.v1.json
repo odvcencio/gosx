@@ -153,7 +153,6 @@
     {"id":"app/docs/public/collab-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/fluid-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/livesim-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
-    {"id":"app/docs/public/motion-adapter-report.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/playground-editor.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/scene3d-bench-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/water-diag.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},

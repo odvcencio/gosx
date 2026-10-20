@@ -21,6 +21,25 @@ by typed test evidence with an exact CI job, step, and command owner.
 
 ## v1 boundary
 
+### Renderer status outputs
+
+Place one Scene3D mount and its status outputs inside a
+`data-gosx-scene3d-status-scope` element. The scene updates these outputs when
+its renderer changes; applications do not need a script or an observer.
+
+```gsx
+<section data-gosx-scene3d-status-scope>
+  <Scene3D {...sceneProps} />
+  <output data-gosx-scene3d-status="renderer">starting…</output>
+  <output data-gosx-scene3d-status="adapter">waiting for adapter details…</output>
+</section>
+```
+
+`renderer`, `adapter`, `fallback`, `quality`, and `frame-p95` are supported
+status kinds. Adapter text comes from the running renderer's published truth,
+including a software adapter or a backend fallback. It remains plain text and
+reports unavailable details explicitly; it does not certify hardware speed.
+
 ### Optical instruments
 
 For a mounted perspective scene with `ControlZoom` enabled, dispatch
