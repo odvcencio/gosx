@@ -4,7 +4,7 @@
 
 - Reduce steady WebGPU uploads by sharing material uniforms and batching
   retained mesh transforms. Skip settled transforms, bound changed matrices
-  to one upload span, and reuse draw metadata during render-bundle replay.
+  to one upload span, and preserve exact command validation during bundle replay.
 
 - Send enhanced GET and HEAD form fields in the URL query. Preserve repeated
   controls, unrelated query parameters and the clicked submit button's value.

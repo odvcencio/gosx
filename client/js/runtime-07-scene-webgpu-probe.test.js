@@ -62,7 +62,6 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
   assert.match(webgpu, /function getShadowInstancedPipeline/);
   assert.match(webgpu, /webGPUFrameMaterialGroup\(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup\)/);
-  assert.match(webgpu, /pass\.setBindGroup\(1, matBG, \[modelOffset\]\)/);
   assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
   assert.doesNotMatch(mount, /instanced-meshes/);
 });

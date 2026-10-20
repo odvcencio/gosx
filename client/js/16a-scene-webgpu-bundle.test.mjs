@@ -600,18 +600,3 @@ test("alternating Selena bindings stop consecutive bundle re-encodes and recover
   const recovered = cache.plan(LAYOUT, stable);
   assert.ok(recovered.eligible, "stable commands can bundle again");
 });
-
-
-test("an unchanged planner signature replays without recording and invalidates on change", () => {
-  const { cache, objects } = cacheHarness();
-  const state = baseState(objects);
-  let walks = 0;
-  const encode = target => { walks++; encodeFrame(state)(target); };
-  cache.plan("layout", encode, "planner-1");
-  cache.adopt("layout", { label: "bundle" });
-  assert.equal(cache.plan("layout", encode, "planner-1").reusable, true);
-  assert.equal(walks, 1, "the steady frame skips the recorder");
-  state.material = objects.altFrame;
-  assert.equal(cache.plan("layout", encode, "planner-2").reusable, false);
-  assert.equal(walks, 2, "a changed signature checks the command stream");
-});

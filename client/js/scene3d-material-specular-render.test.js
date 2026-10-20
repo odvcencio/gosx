@@ -1260,6 +1260,7 @@ test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => 
 function setupWebGPUMaterialBinding() {
   const source = readSceneRendererBackendSrc("webgpu");
   const context = createSceneCoreContext();
+  context.materialFrame = { buffer: null };
   const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
   runFragment(context, [
     bufferDecls,
