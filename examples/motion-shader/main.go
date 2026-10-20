@@ -6,6 +6,7 @@ import (
 	_ "embed"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"time"
 
@@ -37,6 +38,11 @@ func main() {
 	}
 	flat.MountID, form.MountID = "tide", "form"
 	app := server.New()
+	app.Mount("GET /favicon.ico", http.RedirectHandler("/favicon.svg", http.StatusTemporaryRedirect))
+	app.Mount("GET /favicon.svg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		_, _ = w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><circle cx="16" cy="16" r="10" fill="none" stroke="#6bcfc2" stroke-width="6"/></svg>`))
+	}))
 	app.Page("GET /", func(ctx *server.Context) gosx.Node { return page(ctx, flat, form) })
 	port := os.Getenv("PORT")
 	if port == "" {
@@ -161,7 +167,7 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	return server.HTMLDocument(&server.DocumentContext{
 		Title: "Tidal forms — GoSX motion",
 		Head: gosx.Fragment(
-			gosx.El("link", gosx.Attrs(gosx.Attr("rel", "icon"), gosx.Attr("href", "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='10' fill='none' stroke='%236bcfc2' stroke-width='6'/%3E%3C/svg%3E"))),
+			gosx.El("link", gosx.Attrs(gosx.Attr("rel", "icon"), gosx.Attr("href", "/favicon.svg"))),
 			gosx.El("style", gosx.RawHTML(style)),
 		),
 		Body: body,
