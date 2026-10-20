@@ -5,6 +5,7 @@ package main
 import (
 	"syscall/js"
 	"testing"
+	"time"
 
 	"m31labs.dev/gosx/client/vm"
 )
@@ -21,6 +22,15 @@ func browserTestFunc(t *testing.T, fn func(this js.Value, args []js.Value) any) 
 	wrapped := js.FuncOf(fn)
 	t.Cleanup(wrapped.Release)
 	return wrapped
+}
+
+func browserTestAwait(t *testing.T, done <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("browser effect did not finish")
+	}
 }
 
 func TestBrowserHostCurrentEventEffectsAndGuard(t *testing.T) {
@@ -241,12 +251,14 @@ func TestBrowserHostFocusDoesNotReenterOuterDispatch(t *testing.T) {
 	outerDispatching := true
 	reentered := false
 	focused := 0
+	done := make(chan struct{}, 1)
 	element := js.Global().Get("Object").New()
 	element.Set("focus", browserTestFunc(t, func(js.Value, []js.Value) any {
 		focused++
 		if outerDispatching {
 			reentered = true
 		}
+		done <- struct{}{}
 		return nil
 	}))
 	root := js.Global().Get("Object").New()
@@ -256,11 +268,6 @@ func TestBrowserHostFocusDoesNotReenterOuterDispatch(t *testing.T) {
 	document.Set("getElementById", browserTestFunc(t, func(js.Value, []js.Value) any { return root }))
 	browserTestGlobal(t, "document", document)
 
-	var queued js.Value
-	browserTestGlobal(t, "queueMicrotask", browserTestFunc(t, func(_ js.Value, args []js.Value) any {
-		queued = args[0]
-		return nil
-	}))
 	receiver := newBrowserHostReceiver("island-0")
 	result, err := receiver.Call("Focus", []vm.Value{vm.StringVal("#search")})
 	if err != nil || !result.Truth() {
@@ -269,11 +276,8 @@ func TestBrowserHostFocusDoesNotReenterOuterDispatch(t *testing.T) {
 	if focused != 0 || reentered {
 		t.Fatalf("Focus synchronously re-entered outer dispatch: focused=%d reentered=%v", focused, reentered)
 	}
-	if queued.IsUndefined() || queued.IsNull() {
-		t.Fatal("Focus did not queue its DOM effect")
-	}
 	outerDispatching = false
-	queued.Invoke()
+	browserTestAwait(t, done)
 	if focused != 1 || reentered {
 		t.Fatalf("deferred Focus order = focused=%d reentered=%v, want 1/false", focused, reentered)
 	}
@@ -282,6 +286,7 @@ func TestBrowserHostFocusDoesNotReenterOuterDispatch(t *testing.T) {
 func TestBrowserHostSelectorSkipsNestedIslandMatches(t *testing.T) {
 	nestedFocused := 0
 	ownedFocused := 0
+	done := make(chan struct{}, 1)
 	root := js.Global().Get("Object").New()
 	root.Set("matches", browserTestFunc(t, func(js.Value, []js.Value) any { return false }))
 	root.Set("hasAttribute", browserTestFunc(t, func(_ js.Value, args []js.Value) any {
@@ -302,6 +307,7 @@ func TestBrowserHostSelectorSkipsNestedIslandMatches(t *testing.T) {
 	owned.Set("parentNode", root)
 	owned.Set("focus", browserTestFunc(t, func(js.Value, []js.Value) any {
 		ownedFocused++
+		done <- struct{}{}
 		return nil
 	}))
 	list := js.Global().Get("Array").New(2)
@@ -312,18 +318,12 @@ func TestBrowserHostSelectorSkipsNestedIslandMatches(t *testing.T) {
 	document := js.Global().Get("Object").New()
 	document.Set("getElementById", browserTestFunc(t, func(js.Value, []js.Value) any { return root }))
 	browserTestGlobal(t, "document", document)
-	var queued js.Value
-	browserTestGlobal(t, "queueMicrotask", browserTestFunc(t, func(_ js.Value, args []js.Value) any {
-		queued = args[0]
-		return nil
-	}))
-
 	receiver := newBrowserHostReceiver("outer")
 	result, err := receiver.Call("Focus", []vm.Value{vm.StringVal("[data-focus]")})
 	if err != nil || !result.Truth() {
 		t.Fatalf("Focus result/error = %v/%v", result, err)
 	}
-	queued.Invoke()
+	browserTestAwait(t, done)
 	if nestedFocused != 0 || ownedFocused != 1 {
 		t.Fatalf("nested/owned focus calls = %d/%d, want 0/1", nestedFocused, ownedFocused)
 	}
