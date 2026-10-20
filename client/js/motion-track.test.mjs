@@ -27,7 +27,7 @@ function runtime() {
 test("prepared scalar tracks agree with native Eval for easing, holds, step boundaries, stagger and reverse seeks", () => {
   const r = runtime(); r.load();
   for (const fixture of fixtures) {
-    const sample = r.motion.createTrackSampler(fixture.signal.frames);
+    const sample = r.motion.createTrackSampler(fixture.signal.frames, 0, fixture.signal.interp);
     for (const [time, want] of fixture.samples) {
       assert.ok(Math.abs(sample(time) - want) < 1e-7, `${JSON.stringify(fixture.signal)} at ${time}: ${sample(time)} vs ${want}`);
     }
@@ -115,7 +115,7 @@ const valueFixtures = JSON.parse(read("../../motion/testdata/track_value_golden.
 test("typed vector, HDR color and shortest-arc quaternion tracks agree with native Eval", () => {
   const r = runtime(); r.load();
   for (const fixture of valueFixtures) {
-    const sample = r.motion.createTrackSampler(fixture.signal.frames, fixture.signal.arity);
+    const sample = r.motion.createTrackSampler(fixture.signal.frames, fixture.signal.arity, fixture.signal.interp);
     const scratch = new Array(fixture.samples[0].value.length);
     for (const {time, value} of fixture.samples) {
       const got = sample(time, scratch);
@@ -141,13 +141,32 @@ test("typed samplers reject invalid shapes, values and quaternions", () => {
   assert.throws(() => sample(.5,[]), /width/);
 });
 
+test("spline samplers own tangents, accept quaternion derivatives and reject malformed tangent wire data", () => {
+  const r = runtime(); r.load();
+  const frames = [{at:0,value:[0,0],outTangent:[1,2]}, {at:2,value:[2,0],inTangent:[1,-2]}];
+  const sample = r.motion.createTrackSampler(frames,1,2), out = [0,0];
+  assert.equal(sample(1,out),out);
+  assert.deepEqual(out,[1,1]);
+  frames[0].outTangent[1] = 99; frames[1].inTangent[1] = 99;
+  assert.deepEqual(Array.from(sample(1)),[1,1]);
+  assert.throws(() => sample(1,[]), /width/);
+  for (const tangent of [[1], [1,NaN], [1,Infinity], new Array(2), 2]) {
+    assert.throws(() => r.motion.createTrackSampler([{at:0,value:[0,0],outTangent:tangent},{at:1,value:[1,1]}],1,2));
+  }
+  for (const interp of [-1,4,1.5,"2",NaN,3]) assert.throws(() => r.motion.createTrackSampler(frames,1,interp));
+  assert.throws(() => r.motion.createTrackSampler(frames,1), /tangents/);
+  const q = r.motion.createTrackSampler([{at:0,value:[1,0,0,0],outTangent:[0,0,0,0]},
+    {at:2,value:[-1,0,0,0],inTangent:[0,0,0,0]}],4,2);
+  assert.deepEqual(Array.from(q(1)),[0,0,0,1]);
+});
+
 test("typed tracks preserve their rest pose across seeks, reduced motion, load order and disposal", () => {
   for (const late of [false,true]) {
     const r = runtime(), title = {style:{color:""}}, scene = {}, writes = [];
     r.load(transport); if (!late) r.load();
     const program = {version:1,id:"typed",transport:{durationMs:2000},signals:[
       {id:"clock",kind:"playhead"},
-      {id:"position",kind:"track",input:"clock",arity:2,frames:[{at:0,value:[0,1,2]},{at:2,value:[2,3,4]}]},
+      {id:"position",kind:"track",input:"clock",arity:2,interp:2,frames:[{at:0,value:[0,1,2],outTangent:[1,1,3]},{at:2,value:[2,3,4],inTangent:[1,1,-1]}]},
       {id:"other",kind:"track",input:"clock",arity:2,frames:[{at:0,value:[2,3,4]},{at:2,value:[4,5,6]}]},
       {id:"weight",kind:"map",input:"clock",from:0,to:2,min:0,max:1},
       {id:"mixed",kind:"mix",a:"position",b:"other",weight:"weight"},
@@ -162,7 +181,7 @@ test("typed tracks preserve their rest pose across seeks, reduced motion, load o
     r.motion.attachScene(scene,{write(binding,value){writes.push([binding.target,Array.from(value || [])]);},invalidate(){}});
     r.motion.mountPrograms(root);
     const t = r.motion.transport("typed"); t.seek(1000); if(late)r.load(); r.advance();
-    assert.deepEqual(writes.slice(-2),[["camera",[2,3,4]],["materialUniform",[.5,.25,0,.75]]]);
+    assert.deepEqual(writes.slice(-2),[["camera",[2,3,4.5]],["materialUniform",[.5,.25,0,.75]]]);
     assert.equal(title.style.color,"rgba(128,64,0,0.75)");
     t.seek(500);r.advance();r.reduce(true);r.advance();
     assert.deepEqual(writes.slice(-2),[["camera",[4,5,6]],["materialUniform",[1,.5,0,.5]]]);

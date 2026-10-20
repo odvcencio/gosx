@@ -13,7 +13,7 @@ Run the complete example:
 go run ./examples/motion-shader
 ```
 
-The example uses one `.sel` material as a flat background and a sphere. Its
+The example uses one `.sel` material as a flat background and a torus. Its
 staggered lettering, swaying form, camera and warming material share time.
 Keyboard and touch controls can pause, reverse, replay and seek to the bloom.
 
@@ -115,14 +115,44 @@ overshoot is desired. `server.MotionControl` and transport capture settlement
 continue to work without application JavaScript.
 
 Each track requires 2–4,096 finite, strictly increasing keys with one consistent
-arity. Generators and tangent splines return an error; their native motion IR
-remains available. Quaternion keys must be unit length and use shortest-arc
+arity. Generators return an error; their native motion IR remains available.
+Quaternion keys must be unit length and use shortest-arc
 slerp, including the normalized-linear fast path for nearly parallel poses.
-`InterpSlerp` is accepted only for quaternion tracks. The scalar wire format
-remains unchanged. `Target`, `TargetID` and `PropID`
+`InterpSlerp` is accepted only for quaternion tracks. Existing linear scalar
+wire data remains unchanged. `Target`, `TargetID` and `PropID`
 are not used by this bridge: the ordinary binding methods select the target.
 Reduced motion holds each track's final key and restores the current input
 position when the preference is lifted.
+
+### Follow a curved path
+
+`InterpCubicSpline` accepts the native `Key.InTangent` and `Key.OutTangent`.
+Tangents express change per input unit: units per second for a playhead, or per
+unit of scroll progress for `ScrollProgress`. Each segment scales its outgoing
+and incoming tangents by its duration before sampling the Hermite curve.
+
+```go
+departure := motion.Vec3V(0, .3, 0)
+arrival := motion.Vec3V(0, -.3, 0)
+path, err := program.SampleTrack("camera-path", clock, motion.Track{
+    Interp: motion.InterpCubicSpline,
+    Keys: []motion.Key{
+        {T: 0, Value: motion.Vec3V(-1, 0, 3), OutTangent: &departure},
+        {T: 4, Value: motion.Vec3V(1, 0, 3), InTangent: &arrival},
+    },
+})
+// Handle err before binding.
+program.BindCamera(path, "#sculpture", "position")
+```
+
+Use matching incoming and outgoing tangents at an interior key for continuous
+velocity. Tangents must have the same arity as their key values and finite
+components. Complete spline segments ignore easing, matching native `Eval`;
+a segment missing either required tangent falls back to eased interpolation.
+Quaternion splines interpolate components and normalize the result, rather
+than flipping signs for shortest-arc slerp. Quaternion tangents are derivatives
+and do not need unit length. A near-zero result uses the identity quaternion.
+Scalar, vector and color splines can overshoot; choose tangents accordingly.
 
 ### Sample a complete pose or color
 

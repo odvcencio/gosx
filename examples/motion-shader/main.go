@@ -60,12 +60,15 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	clock := program.Playhead("clock")
 	key := func(at, value float64) motion.Key { return motion.Key{T: at, Value: motion.ScalarV(value)} }
 	valueKey := func(at float64, value motion.Value) motion.Key { return motion.Key{T: at, Value: value} }
-	sample := func(id string, ease motion.Ease, keys ...motion.Key) motion.SignalRef {
-		ref, err := program.SampleTrack(id, clock, motion.Track{Ease: ease, Keys: keys})
+	sampleTrack := func(id string, track motion.Track) motion.SignalRef {
+		ref, err := program.SampleTrack(id, clock, track)
 		if err != nil {
 			log.Fatal(err)
 		}
 		return ref
+	}
+	sample := func(id string, ease motion.Ease, keys ...motion.Key) motion.SignalRef {
+		return sampleTrack(id, motion.Track{Ease: ease, Keys: keys})
 	}
 	soft := motion.Ease{Kind: motion.EaseInOutPow, Args: []float64{2}}
 	gain := sample("gain", soft, key(0, .35), key(5, .95), key(9, .45), key(14, .6))
@@ -90,12 +93,15 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 		fade := program.Map(id+"-fade", rise, 32, 0, 0, 1)
 		program.BindStyle(program.Clamp(id+"-visible", fade, 0, 1), selector, "opacity", "")
 	}
-	position := sample("position", soft,
-		valueKey(0, motion.Vec3V(-.45, -.25, 0)),
-		valueKey(5, motion.Vec3V(.4, .25, -.1)),
-		valueKey(9, motion.Vec3V(-.2, -.15, .15)),
-		valueKey(14, motion.Vec3V(.05, 0, 0)),
-	)
+	splineKey := func(at float64, value, tangent motion.Value) motion.Key {
+		return motion.Key{T: at, Value: value, InTangent: &tangent, OutTangent: &tangent}
+	}
+	position := sampleTrack("position", motion.Track{Interp: motion.InterpCubicSpline, Keys: []motion.Key{
+		splineKey(0, motion.Vec3V(-.45, -.25, 0), motion.Vec3V(0, 0, 0)),
+		splineKey(5, motion.Vec3V(.4, .25, -.1), motion.Vec3V(0, -.08, .06)),
+		splineKey(9, motion.Vec3V(-.2, -.15, .15), motion.Vec3V(.08, 0, -.04)),
+		splineKey(14, motion.Vec3V(.05, 0, 0), motion.Vec3V(0, 0, 0)),
+	}})
 	rotation := sample("rotation", soft,
 		valueKey(0, motion.QuatV(motion.QuatFromEuler(.65, -.35, -.2))),
 		valueKey(5, motion.QuatV(motion.QuatFromEuler(1.15, .45, -.2))),
