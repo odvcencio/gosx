@@ -130,14 +130,14 @@
       "/docs/getting-started/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 28620,
+          "frameworkJsWireBytes": 67514,
           "htmlWireBytes": 12817,
           "imageWireBytes": 48647,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 29430,
+          "jsWireBytes": 67514,
           "lazyJsWireBytes": 256,
-          "requests": 6,
-          "totalWireBytes": 150009,
+          "requests": 7,
+          "totalWireBytes": 188161,
           "wasmWireBytes": 256
         },
         "require": [
@@ -149,7 +149,7 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-19 native docs controls: static docs explicitly enable the existing lite framework bootstrap so copy works without application JavaScript or WASM. Measured 65,868 JS bytes and 183,572 total bytes on getting-started; retain the unchanged 2.5% byte headroom and original seven requests. Other route limits, required policies and tolerance remain unchanged."
       },
       "/docs/islands/": {
         "limits": {

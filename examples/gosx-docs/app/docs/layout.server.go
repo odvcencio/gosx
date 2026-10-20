@@ -11,6 +11,9 @@ import (
 func init() {
 	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Bindings: func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+			if ctx != nil {
+				ctx.Runtime().EnableBootstrap()
+			}
 			currentPath := page.RoutePath
 			if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path != "" {
 				currentPath = ctx.Request.URL.Path

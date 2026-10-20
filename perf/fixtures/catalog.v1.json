@@ -151,7 +151,6 @@
     {"id":"app/docs/public/checkers-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/cms-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/collab-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
-    {"id":"app/docs/public/docs/copy-controls.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/fluid-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/livesim-client.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
     {"id":"app/docs/public/motion-adapter-report.js","owner":"app","kind":"js","phase":"dormant","condition":"always","dependencies":[]},
