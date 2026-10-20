@@ -12,6 +12,14 @@ func acquireBudgetLock(file *os.File) error {
 	return windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK, 0, 1, 0, &windows.Overlapped{})
 }
 
+func tryTinyGoWorkspaceLock(file *os.File) bool {
+	return windows.LockFileEx(windows.Handle(file.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, &windows.Overlapped{}) == nil
+}
+
+func releaseTinyGoWorkspaceLock(file *os.File) {
+	_ = windows.UnlockFileEx(windows.Handle(file.Fd()), 0, 1, 0, &windows.Overlapped{})
+}
+
 func openBudgetDirectory(root *os.Root, path string) (*os.File, error) {
 	dir, err := root.Open(path)
 	if err != nil {

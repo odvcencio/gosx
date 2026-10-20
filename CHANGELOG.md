@@ -6,6 +6,10 @@
   including failed responses, and restore them before the result updates focus.
   Slow response bodies no longer invite an early second click.
 
+- Reuse TinyGo package caches across production rebuilds with stable runtime
+  source directories. Each build stages current sources, with process locks
+  and temporary-directory fallback for concurrent or unavailable workspaces.
+
 - Add adapter details to native Scene3D status bindings, including backend
   fallback updates. Motion docs use these bindings without a page script.
 

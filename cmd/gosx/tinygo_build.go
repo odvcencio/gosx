@@ -180,12 +180,9 @@ func prepareTinyGoWASMModule(gosxRoot string, tags ...string) (string, func(), e
 		return "", nil, err
 	}
 
-	scratchDir, err := os.MkdirTemp("", "gosx-tinygo-wasm-*")
+	scratchDir, cleanup, err := tinyGoScratchDirectory(gosxRoot, tags...)
 	if err != nil {
-		return "", nil, fmt.Errorf("create tinygo scratch module: %w", err)
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(scratchDir)
+		return "", nil, err
 	}
 
 	for _, pkg := range packages {

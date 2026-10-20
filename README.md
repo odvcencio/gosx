@@ -925,7 +925,7 @@ Controls:
 | `GOSX_RUNTIME_MODE=tinygo` | Require TinyGo; never fall back to a prebuilt runtime. |
 | `GOSX_RUNTIME_MODE=prebuilt` | Skip the TinyGo probe; always resolve a prebuilt runtime. |
 | `GOSX_RUNTIME_MODE=auto` (default) | Prefer TinyGo; fall back to prebuilt only when TinyGo is missing. |
-| `GOSX_RUNTIME_CACHE=<dir>` | Override the verified-artifact cache directory. |
+| `GOSX_RUNTIME_CACHE=<dir>` | Override the verified-runtime and compiler-workspace cache directory. |
 | `GOSX_RUNTIME_RELEASE_REPO=<owner>/<repo>` | Resolve prebuilt runtimes from a fork's own releases. |
 | `gosx build --offline` | Disable the prebuilt *network fetch*; an already cached, verified version still resolves. |
 
@@ -934,6 +934,13 @@ A project still building against unreleased GoSX source (a `go.mod` local
 always requires TinyGo — there is no prebuilt runtime for source that was
 never tagged. `gosx dev` never needs TinyGo; it always uses the standard Go
 WASM compiler.
+
+When building runtimes with TinyGo, `gosx build` uses stable source-module
+paths under `$GOSX_RUNTIME_CACHE/tinygo-build` so TinyGo can reuse its package
+cache across rebuilds. Every build stages current source and dependency files;
+edited, added and deleted files take effect immediately. Workspaces are scoped
+to the GoSX source location and runtime tags and protected by process locks.
+Concurrent builds or unavailable cache storage use isolated temporary modules.
 
 ## Performance Budgets
 
