@@ -18,9 +18,9 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 
 | Backend | Agrees | Diverges | Unsupported | Total |
 |---|---|---|---|---|
-| transpile | 47 | 0 | 20 | 67 |
-| route | 63 | 4 | 0 | 67 |
-| client-vm | 65 | 2 | 0 | 67 |
+| transpile | 55 | 0 | 20 | 75 |
+| route | 73 | 2 | 0 | 75 |
+| client-vm | 73 | 2 | 0 | 75 |
 
 ## numeric
 
@@ -40,14 +40,22 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 | `numeric_float_format_small` | `0.0001` | agrees: `0.0001` | agrees: `0.0001` | agrees: `0.0001` |
 | `numeric_float_negative` | `-3.5` | agrees: `-3.5` | agrees: `-3.5` | agrees: `-3.5` |
 | `numeric_float_repeating` | `1.0 / 3.0` | agrees: `0.3333333333333333` | agrees: `0.3333333333333333` | agrees: `0.3333333333333333` |
-| `numeric_precision_large_int` | `props.A + 0` | agrees: `9007199254740993` | diverges: `9.007199254740992e+15` | agrees: `9007199254740993` |
+| `numeric_precision_large_int` | `props.A + 0` | agrees: `9007199254740993` | agrees: `9007199254740993` | agrees: `9007199254740993` |
+| `numeric_precision_sub` | `props.A - props.B` | agrees: `9007199254740992` | agrees: `9007199254740992` | agrees: `9007199254740992` |
+| `numeric_precision_mul` | `props.A * props.B` | agrees: `27021597764222979` | agrees: `27021597764222979` | agrees: `27021597764222979` |
+| `numeric_precision_div` | `props.A / props.B` | agrees: `3002399751580331` | agrees: `3002399751580331` | agrees: `3002399751580331` |
+| `numeric_precision_mod` | `props.A % props.B` | agrees: `0` | agrees: `0` | agrees: `0` |
+| `numeric_precision_order` | `props.A > props.B` | agrees: `true` | agrees: `true` | agrees: `true` |
+| `numeric_precision_negative` | `-props.A` | agrees: `-9007199254740993` | agrees: `-9007199254740993` | agrees: `-9007199254740993` |
+| `numeric_precision_overflow` | `props.A + props.B` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` |
+| `numeric_precision_min_div` | `props.A / props.B` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` | agrees: `-9223372036854775808` |
 | `equality_large_integers` | `props.A == props.B` | agrees: `false` | agrees: `false` | agrees: `false` |
 | `equality_number_nonnumeric_string` | `props.A == props.S` | unsupported | agrees: `false` | agrees: `false` |
 | `equality_number_exact_string` | `props.A == props.S` | unsupported | agrees: `true` | diverges: `false` |
 | `equality_fractional_float_string` | `props.F == props.S` | unsupported | agrees: `true` | diverges: `false` |
 | `equality_bounded_hexadecimal_string` | `props.A == props.S` | unsupported | agrees: `false` | agrees: `false` |
 | `numeric_unary_neg_props` | `-props.A` | agrees: `-5` | agrees: `-5` | agrees: `-5` |
-| `numeric_negative_literal_div` | `-7 / 2` | agrees: `-3` | diverges: `-3.5` | agrees: `-3` |
+| `numeric_negative_literal_div` | `-7 / 2` | agrees: `-3` | agrees: `-3` | agrees: `-3` |
 
 Notes:
 
@@ -66,8 +74,15 @@ Notes:
 - `numeric_float_format_small`: small float literal keeps decimal notation
 - `numeric_float_negative`: negative float literal
 - `numeric_float_repeating`: a repeating-decimal float division formats identically (shortest round-trip representation, both strconv and fmt)
-- `numeric_precision_large_int`: transpiled Go and the shared island VM preserve signed int64 precision through props and arithmetic; the generic route interpreter still converts arithmetic operands through numericValue's float64 path
-  - route diverges: route/fileeval.go's applyFileBinaryOp ADD always returns numericValue(left)+numericValue(right) as a bare float64, which cannot represent 2^53+1 exactly (rounds to 9007199254740992) and then formats through fmt.Sprint's large-magnitude float path as scientific notation
+- `numeric_precision_large_int`: all backends preserve signed int64 precision through props and integer arithmetic
+- `numeric_precision_sub`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_mul`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_div`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_mod`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_order`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_negative`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_overflow`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
+- `numeric_precision_min_div`: Signed 64-bit integer operations agree with native Go without floating-point conversion.
 - `equality_large_integers`: all backends compare integer identifiers without float64 rounding
 - `equality_number_nonnumeric_string`: failed numeric string conversion cannot match a numeric identifier
   - transpile unsupported: Go rejects equality between int and string
@@ -80,8 +95,7 @@ Notes:
 - `equality_bounded_hexadecimal_string`: route rejects hexadecimal exponents outside the request-data parsing limit
   - transpile unsupported: Go rejects equality between int and string
 - `numeric_unary_neg_props`: unary minus on a direct int prop read (not a nested sub-expression) agrees everywhere
-- `numeric_negative_literal_div`: -7 / 2: real Go and the VM truncate toward zero (-3); route's applyFileUnaryOp SUB case converts through numericValue (float64) before QUO ever sees the operand, discarding the int-ness the QUO fix (route/exprlower.go) depends on — a known, narrower-than-full-fix gap: QUO's fix only recovers int-ness from a DIRECT int operand (a struct field, a bare positive literal), not one already erased by a prior unary/binary op. Fixing that fully means every arithmetic op preserving Go's static type through the interpreter's untyped `any` pipeline, a materially bigger change than this harness's targeted QUO fix
-  - route diverges: applyFileUnaryOp's SUB case returns -numericValue(value) (always float64); QUO's isIntegerKind check then sees a float64 left operand and falls back to float division
+- `numeric_negative_literal_div`: Integer negation keeps its integer kind, so chained integer division truncates toward zero on every backend.
 
 ## string
 

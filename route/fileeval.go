@@ -940,6 +940,8 @@ func numericValue(value any) float64 {
 		return float64(v)
 	case uint64:
 		return float64(v)
+	case uintptr:
+		return float64(v)
 	case float32:
 		return float64(v)
 	case float64:
@@ -963,7 +965,7 @@ func numericValue(value any) float64 {
 	switch rv.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return float64(rv.Int())
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return float64(rv.Uint())
 	case reflect.Float32, reflect.Float64:
 		return rv.Float()
@@ -1057,22 +1059,14 @@ func equalityFloatString(number, text any) (equal, handled bool) {
 // equalityInteger uses the sign and magnitude so signed and unsigned IDs
 // can compare without overflow, rounding, or allocating a big number.
 func equalityInteger(value any) (negative bool, magnitude uint64, ok bool) {
-	rv, ok := indirectValueOf(value)
+	n, ok := integerOperand(value)
 	if !ok {
 		return false, 0, false
 	}
-	switch rv.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n := rv.Int()
-		if n < 0 {
-			return true, uint64(-(n + 1)) + 1, true
-		}
-		return false, uint64(n), true
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-		return false, rv.Uint(), true
-	default:
-		return false, 0, false
+	if !n.unsigned && int64(n.bits) < 0 {
+		return true, -n.bits, true
 	}
+	return false, n.bits, true
 }
 
 // equalityNumber preserves the exact value rather than rounding identifiers
@@ -1087,7 +1081,7 @@ func equalityNumber(value any) (*big.Rat, bool) {
 	switch rv.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return n.SetInt64(rv.Int()), true
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return n.SetInt(new(big.Int).SetUint64(rv.Uint())), true
 	case reflect.Float32, reflect.Float64:
 		n = n.SetFloat64(rv.Float())
@@ -1130,15 +1124,35 @@ func parseEqualityNumericString(value string, bitSize int) (text string, number 
 }
 
 func compareValues(left, right any) int {
+	ln, lm, lok := equalityInteger(left)
+	rn, rm, rok := equalityInteger(right)
+	if lok && rok {
+		if ln != rn {
+			if ln {
+				return -1
+			}
+			return 1
+		}
+		result := 0
+		if lm < rm {
+			result = -1
+		} else if lm > rm {
+			result = 1
+		}
+		if ln {
+			return -result
+		}
+		return result
+	}
 	if isStringLike(left) || isStringLike(right) {
 		return strings.Compare(stringifyValue(left), stringifyValue(right))
 	}
-	ln := numericValue(left)
-	rn := numericValue(right)
+	lf := numericValue(left)
+	rf := numericValue(right)
 	switch {
-	case ln < rn:
+	case lf < rf:
 		return -1
-	case ln > rn:
+	case lf > rf:
 		return 1
 	default:
 		return 0
@@ -1147,7 +1161,7 @@ func compareValues(left, right any) int {
 
 func isNumeric(value any) bool {
 	switch value.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, uintptr, float32, float64:
 		return true
 	}
 	rv, ok := indirectValueOf(value)
@@ -1155,29 +1169,7 @@ func isNumeric(value any) bool {
 		return false
 	}
 	switch rv.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
-		return true
-	default:
-		return false
-	}
-}
-
-// isIntegerKind reports whether value is a Go/reflect integer kind, the
-// same set isNumeric checks minus float32/float64. applyFileBinaryOp's QUO
-// case uses this to decide int-truncating division vs float division: an
-// int-typed props field or int literal on both sides of "/" must divide the
-// same way the generated Go and the island VM do (see gosx eval-parity).
-func isIntegerKind(value any) bool {
-	switch value.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64:
-		return true
-	}
-	rv, ok := indirectValueOf(value)
-	if !ok {
-		return false
-	}
-	switch rv.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64:
 		return true
 	default:
 		return false
