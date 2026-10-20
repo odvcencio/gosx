@@ -13,6 +13,29 @@ import (
 	"m31labs.dev/gosx/island/program"
 )
 
+func TestIslandAOTGuardClausesRequireVM(t *testing.T) {
+	source := []byte(`package example
+//gosx:island
+component Counter() {
+ count := signal.New(0)
+ increment := func() { if count.Get() >= 3 { return }; count.Set(count.Get() + 1) }
+ return <button onClick={increment}>{count.Get()}</button>
+}`)
+	p, err := parseAOT(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.PackagePath = "example/components"
+	if _, err := ir.LowerIsland(p, 0); err != nil {
+		t.Fatal(err)
+	}
+	// Scalar AOT has no early-return contract. Keep this valid VM program
+	// outside that profile until source evidence and emission support it.
+	if _, err := ir.LowerIslandAOT(p, 0); err == nil {
+		t.Fatal("guard clauses were admitted without AOT source/control-flow evidence")
+	}
+}
+
 func TestIslandAOTSourceContract(t *testing.T) {
 	src := []byte(`package example
 type CounterProps struct { Label string; Initial int32 }

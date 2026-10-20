@@ -39,6 +39,8 @@ func TestCheckIslandCollectionUsesGoTypes(t *testing.T) {
 		source string
 	}{
 		{"text input", collectionCheckSource},
+		{"guarded collection", strings.Replace(collectionCheckSource, `items.Set(append(items.Get(), draft.Get()))`, `if draft.Get() == "" || len(items.Get()) >= 12 { return }; items.Set(append(items.Get(), draft.Get()))`, 1)},
+		{"event values in branches", strings.Replace(collectionCheckSource, `draft.Set(value)`, `if checked { draft.Set(value) } else { return }`, 1)},
 		{"shared slice", strings.Replace(collectionCheckSource, `state.New([]string{props.Initial})`, `state.NewShared("collection", []string{props.Initial})`, 1)},
 		{"explicit slice type", strings.Replace(collectionCheckSource, `state.New([]string{props.Initial})`, `state.New[[]string]([]string{props.Initial})`, 1)},
 		{"signal named value", strings.Replace(strings.Replace(collectionCheckSource, `draft := state.New("")`, "draft := state.New(\"\")\n value := state.New(\"bound signal\")", 1), `draft.Set(value)`, `draft.Set(value.Get())`, 1)},
@@ -51,6 +53,16 @@ func TestCheckIslandCollectionUsesGoTypes(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestCheckIslandGuardConditionUsesGoTypes(t *testing.T) {
+	dir := newCollectionModule(t)
+	path := filepath.Join(dir, "page.gsx")
+	mustWrite(t, path, strings.Replace(collectionCheckSource, `draft.Set(value)`, `if value { draft.Set(value) }`, 1))
+	err := CheckFile(context.Background(), path)
+	if err == nil || !strings.Contains(err.Error(), "non-boolean") {
+		t.Fatalf("string event value accepted as a guard: %v", err)
 	}
 }
 
