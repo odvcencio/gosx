@@ -167,3 +167,58 @@ test('browser renderer receipts retain primitive metadata for async pipelines', 
   assert.equal(context.wgPipelines.get(pipeline)?.frontFace, 'cw');
   assert.equal(context.wgPipelines.get(pipeline)?.cullMode, 'none');
 });
+test('affine receipt joins the model arena through the recorded dynamic offset', () => {
+  const local = [-0.4, -0.4, 0, 0.4, -0.4, 0, 0, 0.4, 0];
+  const model = [-2,0,0,0,0,1,0,0,0,0,1,0,0.5,0.5,1,1];
+  const identity = [1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1];
+  const material = Array(72).fill(0); material.splice(20,16,...identity);
+  const arena = Array(80).fill(0); arena.splice(0,16,...identity); arena.splice(64,16,...model);
+  const record = { kind:'drawIndexed', positionBuffer:1, materialBuffer:2, modelBuffer:3,
+    modelOffset:256, bundle:1, frontFace:'cw', cullMode:'none' };
+  const window = { __affineRefs:{object:{parentMatrix:model},mount:{id:'affine-wg'}},
+    __affineWGUploads:[{buffer:1,values:local},{buffer:2,values:material},{buffer:3,values:arena}],
+    __affineWGDrawRecords:[record], __affineWGExecutedBundles:[1] };
+  const begin = producer.indexOf('function affineEvidenceExpr() {');
+  const end = producer.indexOf('\nfunction hubExpr(', begin);
+  const context = vm.createContext({window, AFFINE_LOCAL_POSITIONS:local, AFFINE_MODEL_MATRIX:model});
+  vm.runInContext(producer.slice(begin,end), context);
+  const evidence = () => JSON.parse(JSON.stringify(vm.runInContext(context.affineEvidenceExpr(),context)));
+  const joined = evidence();
+  assert.deepEqual(joined.wgModel.values, model);
+  assert.equal(joined.wgDraw.modelBuffer, joined.wgModel.buffer);
+  assert.equal(joined.wgMaterial.buffer, record.materialBuffer);
+  window.__affineWGUploads[2] = {buffer:3,offset:256,values:model};
+  assert.deepEqual(evidence().wgModel.values, model, 'partial uploads join at the actual buffer offset');
+  record.modelOffset = 0;
+  assert.equal(evidence().wgDraw, null, 'binding the identity row cannot produce an affine receipt');
+  record.modelOffset = 256; record.modelBuffer = 4;
+  assert.equal(evidence().wgDraw, null, 'an unbound model upload cannot produce an affine receipt');
+});
+
+test('affine GPU instrumentation records the bound model buffer and typed dynamic-offset range', () => {
+  class Device {
+    createBuffer() { return {}; }
+    createBindGroup() { return {}; }
+    createRenderPipeline() { return {}; }
+  }
+  class Pass {
+    setVertexBuffer() {} setBindGroup() {} setPipeline() {} draw() {} drawIndexed() {} executeBundles() {}
+  }
+  const window = {__affineWGDrawRecords:[],__affineWGExecutedBundles:[]};
+  const begin = producer.indexOf('  var nextWGBufferID =');
+  const end = producer.indexOf("  document.addEventListener('gosx:scene3d:input'",begin);
+  assert.ok(begin > 0 && end > begin);
+  const context = vm.createContext({window,GPUDevice:Device,GPURenderPassEncoder:Pass,Float32Array});
+  vm.runInContext(`function floats(v){return v instanceof Float32Array?Array.from(v):null;}
+    function wrap(proto,name,handler){const original=proto[name];if(original)proto[name]=function(){return handler.call(this,original,arguments);};}
+    ${producer.slice(begin,end)}`,context);
+  const device = new Device(), position = device.createBuffer(), material = device.createBuffer(), model = device.createBuffer();
+  const group = device.createBindGroup({entries:[{binding:0,resource:{buffer:material}},
+    {binding:19,resource:{buffer:model,offset:0,size:64}}]});
+  const pass = new Pass(); pass.setVertexBuffer(0,position);
+  pass.setBindGroup(1,group,new Uint32Array([0,256,512]),1,1);
+  pass.drawIndexed(3);
+  const receipt = window.__affineWGDrawRecords[0];
+  assert.equal(receipt.positionBuffer,1); assert.equal(receipt.materialBuffer,2);
+  assert.equal(receipt.modelBuffer,3); assert.equal(receipt.modelOffset,256);
+});

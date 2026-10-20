@@ -1387,6 +1387,28 @@
       }
     }
 
+    // Stable sorting preserves authored order within a pipeline/material group.
+    // Explicit depth-mask draws stay last, in authored order.
+    const pipelineKey = function(object) {
+      const material = materials[object.materialIndex] || {};
+      const reflected = object.directVertices && object.modelMatrix &&
+        typeof sceneAffineDeterminant === "function" && sceneAffineDeterminant(object.modelMatrix, 0) < 0;
+      return (material.shaderBackend || "pbr") + ":" + (material.detail ? "1" : "0") + ":" +
+        (object.skin ? "1" : "0") + ":" + (object.doubleSided ? "1" : "0") + ":" + (reflected ? "1" : "0") + ":" +
+        (material.customVertex || material.customVertexWGSL || "") + ":" +
+        (material.customFragment || material.customFragmentWGSL || "");
+    };
+    const keys = new Map();
+    for (const object of opaque) keys.set(object, pipelineKey(object));
+    // Board wire bundles omit depth metadata and require painter order.
+    if (opaque.every(function(object) { return Number.isFinite(object.depthCenter); })) opaque.sort(function(a, b) {
+      const aOverride = a.depthWrite != null || sceneNumber((materials[a.materialIndex] || {}).transmission, 0) > 0;
+      const bOverride = b.depthWrite != null || sceneNumber((materials[b.materialIndex] || {}).transmission, 0) > 0;
+      if (aOverride || bOverride) return Number(aOverride) - Number(bOverride);
+      const aKey = keys.get(a), bKey = keys.get(b);
+      return aKey < bKey ? -1 : aKey > bKey ? 1 : (a.materialIndex || 0) - (b.materialIndex || 0);
+    });
+
     if (typeof scenePBRDepthSort === "function") {
       alpha.sort(scenePBRDepthSort);
       additive.sort(scenePBRDepthSort);

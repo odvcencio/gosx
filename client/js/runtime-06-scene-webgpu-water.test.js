@@ -1536,7 +1536,6 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
   assert.match(webgpu, /new ArrayBuffer\(160\)/);
   assert.match(webgpu, /modelMatrix: mat4x4f/);
   assert.match(webgpu, /modelScaleSigns: vec4f/);
-  assert.match(webgpu, /f\[20 \+ mi\] = model/);
   assert.match(webgpu, /f\[7\] = clamp01\(sceneNumber\(mat\.clearcoat, 0\)\)/);
   assert.match(webgpu, /f\[8\] = clamp01\(sceneNumber\(mat\.sheen, 0\)\)/);
   assert.match(webgpu, /f\[9\] = clamp01\(sceneNumber\(mat\.transmission, 0\)\)/);
@@ -1552,7 +1551,7 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
 test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
   const webgpu = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(webgpu, /function webGPUCustomMaterialStats\(materials\)/);
+  assert.match(webgpu, /function webGPUCustomMaterialStats\(materials\s*(?::\s*any\s*)?\)/);
   assert.match(webgpu, /material\.customVertexWGSL/);
   assert.match(webgpu, /material\.customFragmentWGSL/);
   assert.match(webgpu, /material\.customUniforms/);
@@ -1586,7 +1585,7 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   assert.match(webgpu, /function sceneSelenaUniformBufferSlot/);
   assert.match(webgpu, /var vectorValue = Array\.isArray\(value\) \|\| \(value && typeof value\.length === "number"\)/);
   assert.match(webgpu, /if \(!vectorValue\) \{[\s\S]{0,180}f32\[base\] = sceneSelenaScalar\(value\)/);
-  assert.match(webgpu, /if \(sceneSelenaIsMaterial\(material\)\) \{\n          continue;/);
+  assert.match(webgpu, /if \(sceneWebGPUIsSelenaMaterial\(material\)\) continue;/);
 });
 
 test("Scene3D selena time auto-uniform: both backends declare the clock var and assign it before draws", () => {

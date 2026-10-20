@@ -104,7 +104,7 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
     sceneSelenaLiveTextureView:()=>null,
     sceneSelenaTextureURL:()=>{throw Error("IBL resource passed to URL loader");},
   });
-  vm.runInContext(["sceneWebGPUMeshCacheOwner","sceneWebGPUSelenaEnvironmentSlot","sceneWebGPUAppendSelenaTextures","createSelenaBindGroup"].map(n=>fn(source,n)).join("\n"),context);
+  vm.runInContext(["sceneWebGPUSelenaEnvironmentSlot","sceneWebGPUAppendSelenaTextures","createSelenaBindGroup"].map(n=>fn(source,n)).join("\n"),context);
   context.selenaTextureContext={
     device:context.device,textureCache:{},iblResources:context.iblResources,
     placeholderCubeView:cube,placeholderView:image,envMapSampler:sampler,linearSampler:context.linearSampler,
