@@ -72,8 +72,14 @@ func LoadReport(path string) (*Report, error) {
 	// Backfill: single-page reports sometimes lack Pages but have the
 	// embedded PageReport populated. Normalize so downstream code can
 	// always read from Pages[0].
-	if len(r.Pages) == 0 && r.PageReport.URL != "" {
-		r.Pages = []PageReport{r.PageReport}
+	if len(r.Pages) == 0 {
+		p := r.PageReport
+		if p.URL == "" {
+			p.URL = r.URL
+		}
+		if p.URL != "" {
+			r.Pages = []PageReport{p}
+		}
 	}
 	return &r, nil
 }

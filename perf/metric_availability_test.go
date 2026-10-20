@@ -3,6 +3,8 @@ package perf
 import (
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -172,6 +174,25 @@ func TestFormatTableShowsUnavailableAndRecordedZeros(t *testing.T) {
 	for _, line := range []string{"LCP                     0.0ms", "CLS                     0.000", "Total blocking time     0.0ms", "Total requests          0"} {
 		if !strings.Contains(out, line) {
 			t.Errorf("captured zero missing %q in:\n%s", line, out)
+		}
+	}
+}
+
+func TestLoadReportNormalizesLegacySinglePageAvailability(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "report.json")
+	for _, input := range []string{`{"url":"https://example.test","lcpMs":12}`, `{"url":"https://example.test","lcpMs":0,"metricAvailability":{"lcp":true}}`} {
+		if err := os.WriteFile(path, []byte(input), 0600); err != nil {
+			t.Fatal(err)
+		}
+		r, err := LoadReport(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(r.Pages) != 1 || r.Pages[0].URL != "https://example.test" {
+			t.Fatalf("single-page URL lost during normalization: %+v", r)
+		}
+		if _, found := ResolvePageMetric("lcp", &r.Pages[0]); !found {
+			t.Fatal("legacy measurement or explicit recorded zero lost during normalization")
 		}
 	}
 }
