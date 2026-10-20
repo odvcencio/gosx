@@ -1,4 +1,9 @@
 (() => {
+  const mountKey = Symbol.for("gosx.editor.native");
+  if (window[mountKey]) {
+    window[mountKey]();
+    return;
+  }
   const ready = (fn) => {
     if (document.readyState === "loading") {
       document.addEventListener("DOMContentLoaded", fn, { once: true });
@@ -273,15 +278,20 @@
     return window.M31Diagrams.render(root);
   };
 
-  ready(() => {
-    const form = document.querySelector("form[data-editor-native='true']");
-    const textarea = document.getElementById("editor-content");
-    const highlight = document.getElementById("editor-highlight-content");
-    const lineNumbers = document.getElementById("editor-line-numbers");
-    const saveStatus = document.getElementById("editor-save-status");
+  const mounts = new Map();
+  const mount = (form) => {
+    const textarea = form.querySelector("#editor-content");
+    const highlight = form.querySelector("#editor-highlight-content");
+    const lineNumbers = form.querySelector("#editor-line-numbers");
+    const saveStatus = form.querySelector("#editor-save-status");
     if (!form || !textarea || !highlight) return;
 
-    const page = document.querySelector(".editor-page-native");
+    const lifetime = new AbortController();
+    let disposed = false;
+    const live = () => !disposed && form.isConnected;
+    const listen = (target, type, listener, options = {}) => target?.addEventListener(type, listener, { ...options, signal: lifetime.signal });
+    const selectedPanel = () => form.querySelector(".editor-panel-radio:checked")?.value || "preview";
+    const page = form.closest(".editor-page-native");
     page?.classList.add("editor-highlight-ready");
 
     let previewTimer = null;
@@ -309,6 +319,11 @@
     let visualRowMapSource = null;
     let visualRowMapWidth = 0;
     let preserveWhitespaceOnlyLines = false;
+    let composing = false;
+    const codeSurface = form.dataset.editorSurface === "code";
+    const tabWidth = Math.max(1, Math.min(16, Number.parseInt(form.dataset.codeTabWidth, 10) || 4));
+    const indentUnit = form.hasAttribute("data-code-insert-spaces") ? " ".repeat(tabWidth) : "\t";
+    const macPlatform = /Mac|iPhone|iPad|iPod/i.test(navigator.userAgentData?.platform || navigator.platform || "");
     let secondaryCursors = [];
     let multiCursorStatus = null;
     const findPanel = form.querySelector(".editor-code-find");
@@ -331,7 +346,12 @@
     };
 
     const renderHighlight = () => {
-	  if (form.dataset.codeHighlightSource === "external" || form.dataset.codeIntelligenceRuntime || form.dataset.codeIntelligenceServer) return;
+      if (form.dataset.codeHighlightSource === "external" || form.dataset.codeIntelligenceRuntime || form.dataset.codeIntelligenceServer) {
+        // Keep edited text visible while the asynchronous provider catches up.
+        // Preserve semantic spans when they already describe the exact buffer.
+        if (highlight.textContent !== textarea.value && highlight.textContent !== textarea.value + "\n") highlight.textContent = textarea.value + "\n";
+        return;
+      }
       highlight.innerHTML = highlightMarkdownPP(textarea.value) + "\n";
     };
 
@@ -377,7 +397,7 @@
       form.dataset.highlightSpanCount = String(ranges.length);
     };
 
-    form.addEventListener("gosx:highlight-spans", event => {
+    listen(form, "gosx:highlight-spans", event => {
       renderExternalHighlights(event.detail?.spans || event.detail || []);
     });
 
@@ -551,7 +571,7 @@
     };
 
     const rebuildOutline = () => {
-      const nav = document.getElementById("editor-outline-headings");
+      const nav = form.querySelector("#editor-outline-headings");
       if (!nav) return;
       const headings = [];
       const re = /^(#{1,6})\s+(.+)$/gm;
@@ -570,8 +590,8 @@
 
     const flushPreview = async () => {
       previewTimer = null;
-      if (!previewPending || previewInFlight) return;
-      const preview = document.getElementById("editor-preview-content");
+      if (!live() || !previewPending || previewInFlight) return;
+      const preview = form.querySelector("#editor-preview-content");
       const url = form.dataset.previewUrl;
       if (!preview || !url) return;
       const source = textarea.value;
@@ -581,6 +601,7 @@
       previewInFlight = true;
       try {
         const res = await fetch(url, {
+          signal: lifetime.signal,
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -591,6 +612,7 @@
         });
         if (!res.ok || request !== previewRequest) return;
         const json = await res.json();
+        if (!live()) return;
         const data = json.data || json;
         if (data && typeof data.redirect === "string" && data.redirect !== "") {
           window.location.href = data.redirect;
@@ -619,6 +641,7 @@
     };
 
     const updatePreview = () => {
+      if (!live()) return;
       if (textarea.value === lastPreviewSource) return;
       previewPending = true;
       if (previewInFlight) return;
@@ -650,18 +673,19 @@
     };
 
     const updateExcerptPreview = (html) => {
-      const preview = document.getElementById("editor-excerpt-preview");
+      const preview = form.querySelector("#editor-excerpt-preview");
       if (!preview || typeof html !== "string") return;
       preview.innerHTML = html;
     };
 
     const requestMetadata = async (mode = "preview") => {
       const url = form.dataset.metadataUrl;
-      if (!url || metadataInFlight) return;
+      if (!live() || !url || metadataInFlight) return;
       const request = ++metadataRequest;
       metadataInFlight = true;
       try {
         const res = await fetch(url, {
+          signal: lifetime.signal,
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -672,6 +696,7 @@
         });
         if (!res.ok || request !== metadataRequest) return;
         const json = await res.json();
+        if (!live()) return;
         const data = json.data || json;
         updateExcerptPreview(data.excerpt_html || "");
         if (mode === "excerpt" && data.excerpt) {
@@ -693,7 +718,7 @@
     };
 
     const scheduleMetadataPreview = () => {
-      if (!form.dataset.metadataUrl) return;
+      if (!live() || !form.dataset.metadataUrl) return;
       clearTimeout(metadataTimer);
       metadataTimer = setTimeout(() => {
         void requestMetadata("preview");
@@ -710,12 +735,13 @@
     };
 
     const queueAutosaveTimer = () => {
+      if (!live()) return;
       clearTimeout(autosaveTimer);
       autosaveTimer = setTimeout(flushAutosave, autosaveDelay);
     };
 
     const scheduleAutosave = () => {
-      if (!form.dataset.autosaveUrl) return;
+      if (!live() || !form.dataset.autosaveUrl) return;
       if (autosaveFingerprint() === lastAutosaveFingerprint) {
         if (!autosaveInFlight) setSaveStatus("saved", "Saved");
         return;
@@ -727,7 +753,7 @@
 
     async function flushAutosave() {
       autosaveTimer = null;
-      if (!autosavePending || autosaveInFlight) return;
+      if (!live() || !autosavePending || autosaveInFlight) return;
       const url = form.dataset.autosaveUrl;
       if (!url) return;
 
@@ -743,6 +769,7 @@
       setSaveStatus("saving", "Saving...");
       try {
         const res = await fetch(url, {
+          signal: lifetime.signal,
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -753,6 +780,7 @@
         });
         if (!res.ok) throw new Error("autosave failed");
         const json = await res.json().catch(() => ({}));
+        if (!live()) return;
         const data = json.data || json;
         lastAutosaveFingerprint = fingerprint;
         setSaveStatus("saved", "Saved");
@@ -760,6 +788,7 @@
           window.location.href = data.redirect;
         }
       } catch (_) {
+        if (!live()) return;
         autosavePending = autosaveFingerprint() !== fingerprint;
         setSaveStatus("error", navigator.onLine === false ? "Offline" : "Save failed");
       } finally {
@@ -769,10 +798,10 @@
     }
 
     const updateEditorStats = () => {
-      const wordCount = document.getElementById("editor-word-count");
-      const wordLabel = document.getElementById("editor-word-label");
-      const readingTime = document.getElementById("editor-reading-time");
-      const readingLabel = document.getElementById("editor-reading-label");
+      const wordCount = form.querySelector("#editor-word-count");
+      const wordLabel = form.querySelector("#editor-word-label");
+      const readingTime = form.querySelector("#editor-reading-time");
+      const readingLabel = form.querySelector("#editor-reading-label");
       if (!wordCount && !readingTime) return;
 
       const stats = computeEditorStats(textarea.value);
@@ -792,7 +821,7 @@
     };
 
     const scheduleEditorRender = () => {
-      if (renderFrame) return;
+      if (!live() || renderFrame) return;
       renderFrame = requestAnimationFrame(renderEditorFrame);
     };
 
@@ -891,11 +920,12 @@
     };
 
     const applyMultiCursorEdit = (event) => {
+      if (composing || event.isComposing || event.inputType === "insertCompositionText") return false;
       if (secondaryCursors.length === 0) return false;
       const type = event.inputType || "";
       let inserted = event.data;
       if (type === "insertLineBreak" || type === "insertParagraph") inserted = "\n";
-      const supportedInsert = type === "insertText" || type === "insertCompositionText" ||
+      const supportedInsert = type === "insertText" ||
         type === "insertLineBreak" || type === "insertParagraph";
       const supportedDelete = type === "deleteContentBackward" || type === "deleteContentForward";
       if (!supportedInsert && !supportedDelete) return false;
@@ -945,35 +975,74 @@
     const selectedLineRange = (start, end) => {
       const value = textarea.value;
       const blockStart = start <= 0 ? 0 : value.lastIndexOf("\n", start - 1) + 1;
-      const blockEnd = end > start && value[end - 1] === "\n" ? end - 1 : end;
+      const lastSelected = end > start && value[end - 1] === "\n" ? end - 1 : end;
+      const lineEnd = value.indexOf("\n", lastSelected);
+      const blockEnd = lineEnd < 0 ? value.length : lineEnd;
       return { blockStart, blockEnd };
     };
 
     const handleTabKey = (event) => {
-	  if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (event.key !== "Tab" || event.altKey || event.ctrlKey || event.metaKey) return;
       event.preventDefault();
 
       const start = textarea.selectionStart || 0;
       const end = textarea.selectionEnd || start;
+      const direction = textarea.selectionDirection;
       const selection = textarea.value.slice(start, end);
-      rememberLocalEdit();
-	  if (event.shiftKey) {
-		const { blockStart, blockEnd } = selectedLineRange(start, end);
-		const block = textarea.value.slice(blockStart, blockEnd);
-		const lines = block.split("\n");
-		const dedented = lines.map(line => line.startsWith("\t") ? line.slice(1) : line.replace(/^ {1,4}/, "")).join("\n");
-		textarea.setRangeText(dedented, blockStart, blockEnd, "select");
-	  } else if (start !== end && selection.includes("\n")) {
+      const unit = codeSurface ? indentUnit : "\t";
+      if (event.shiftKey || (start !== end && selection.includes("\n"))) {
         const { blockStart, blockEnd } = selectedLineRange(start, end);
         const block = textarea.value.slice(blockStart, blockEnd);
-        const lineCount = block.split("\n").length;
-        const indented = block.split("\n").map((line) => `\t${line}`).join("\n");
-        textarea.setRangeText(indented, blockStart, blockEnd, "preserve");
-        textarea.setSelectionRange(start + 1, end + lineCount);
+        const edits = [];
+        let offset = blockStart;
+        const changed = block.split("\n").map(line => {
+          const removed = event.shiftKey ? (line.startsWith("\t") ? 1 : Math.min(line.match(/^ */)[0].length, codeSurface ? tabWidth : 4)) : 0;
+          const inserted = event.shiftKey ? "" : unit;
+          edits.push({ at: offset, removed, inserted: inserted.length });
+          offset += line.length + 1;
+          return inserted + line.slice(removed);
+        }).join("\n");
+        if (changed === block) return;
+        const mapOffset = original => {
+          let delta = 0;
+          for (const edit of edits) {
+            if (original < edit.at) break;
+            if (original < edit.at + edit.removed) return edit.at + delta + edit.inserted;
+            delta += edit.inserted - edit.removed;
+          }
+          return original + delta;
+        };
+        rememberLocalEdit();
+        textarea.setRangeText(changed, blockStart, blockEnd, "preserve");
+        textarea.setSelectionRange(mapOffset(start), mapOffset(end), direction);
       } else {
-        textarea.setRangeText("\t", start, end, "end");
+        rememberLocalEdit();
+        textarea.setRangeText(unit, start, end, "end");
       }
 
+      dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
+    };
+
+    const handleCodeEnter = (event) => {
+      if (!codeSurface || event.key !== "Enter" || event.altKey || event.ctrlKey || event.metaKey) return;
+      event.preventDefault();
+      const start = textarea.selectionStart || 0;
+      let end = textarea.selectionEnd || start;
+      const lineStart = start === 0 ? 0 : textarea.value.lastIndexOf("\n", start - 1) + 1;
+      const before = textarea.value.slice(lineStart, start);
+      const indentation = before.match(/^[ \t]*/)[0];
+      const opener = before.trimEnd().slice(-1);
+      const closer = { "{": "}", "[": "]", "(": ")" }[opener];
+      const inner = indentation + (closer ? indentUnit : "");
+      let inserted = "\n" + inner;
+      const closing = textarea.value.slice(end).match(/^[ \t]*([}\])])/);
+      if (closer && closing && closing[1] === closer) {
+        end += closing[0].length - 1;
+        inserted += "\n" + indentation;
+      }
+      rememberLocalEdit();
+      textarea.setRangeText(inserted, start, end, "end");
+      textarea.setSelectionRange(start + 1 + inner.length, start + 1 + inner.length);
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
     };
 
@@ -1120,11 +1189,11 @@
 
       emojiSearch = emojiPicker.querySelector("#editor-emoji-search");
       emojiGrid = emojiPicker.querySelector(".editor-emoji-grid");
-      emojiSearch.addEventListener("input", () => {
+      listen(emojiSearch, "input", () => {
         emojiActiveIndex = 0;
         renderEmojiPicker(emojiSearch.value);
       });
-      emojiSearch.addEventListener("keydown", (event) => {
+      listen(emojiSearch, "keydown", (event) => {
         if (event.key === "ArrowDown") {
           event.preventDefault();
           moveEmojiSelection(1);
@@ -1139,13 +1208,13 @@
           closeEmojiPicker({ restoreFocus: true });
         }
       });
-      emojiGrid.addEventListener("mousemove", (event) => {
+      listen(emojiGrid, "mousemove", (event) => {
         const option = event.target.closest("[data-emoji-index]");
         if (!option) return;
         emojiActiveIndex = Number(option.dataset.emojiIndex || 0);
         renderEmojiPicker(emojiSearch.value);
       });
-      emojiGrid.addEventListener("click", (event) => {
+      listen(emojiGrid, "click", (event) => {
         const option = event.target.closest("[data-emoji-index]");
         if (!option) return;
         const item = emojiResults[Number(option.dataset.emojiIndex || 0)];
@@ -1275,36 +1344,43 @@
     };
 
     const uploadImage = async (file) => {
-      if (!file || !form.dataset.uploadUrl) return;
+      if (!live() || !file || !form.dataset.uploadUrl) return;
       const body = new FormData();
       body.append("file", file);
-      const res = await fetch(form.dataset.uploadUrl, {
-        method: "POST",
-        headers: { "X-CSRF-Token": form.querySelector("[name='csrf_token']")?.value || "" },
-        body,
-      });
-      if (!res.ok) return;
-      const json = await res.json();
-      const url = json.data ? json.data.url : json.url;
-      if (url) insertAtSelection(`![${file.name}](${url})`);
-      galleryLoaded = false;
-      if (selectedPanel() === "images") void loadGallery();
+      try {
+        const res = await fetch(form.dataset.uploadUrl, {
+          signal: lifetime.signal,
+          method: "POST",
+          headers: { "X-CSRF-Token": form.querySelector("[name='csrf_token']")?.value || "" },
+          body,
+        });
+        if (!res.ok) return;
+        const json = await res.json();
+        if (!live()) return;
+        const url = json.data ? json.data.url : json.url;
+        if (url) insertAtSelection(`![${file.name}](${url})`);
+        galleryLoaded = false;
+        if (selectedPanel() === "images") void loadGallery();
+      } catch (_) {
+        // A disconnected editor aborts its pending upload.
+      }
     };
 
     const chooseImage = () => {
       const input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
-      input.addEventListener("change", () => uploadImage(input.files && input.files[0]));
+      listen(input, "change", () => uploadImage(input.files && input.files[0]));
       input.click();
     };
 
     const loadGallery = async () => {
-      const grid = document.getElementById("editor-gallery-grid");
-      if (!grid || !form.dataset.imagesUrl || galleryLoaded) return;
+      const grid = form.querySelector("#editor-gallery-grid");
+      if (!live() || !grid || !form.dataset.imagesUrl || galleryLoaded) return;
       grid.innerHTML = '<p class="editor-preview-empty">Loading images...</p>';
       try {
         const res = await fetch(form.dataset.imagesUrl, {
+          signal: lifetime.signal,
           method: "POST",
           headers: {
             "Accept": "application/json",
@@ -1313,6 +1389,7 @@
         });
         if (!res.ok) throw new Error("image list failed");
         const json = await res.json();
+        if (!live()) return;
         const images = (json.data && json.data.images) || json.images || [];
         galleryLoaded = true;
         if (!images.length) {
@@ -1332,7 +1409,7 @@
       }
     };
 
-    document.addEventListener("click", (event) => {
+    listen(document, "click", (event) => {
       if (
         emojiPicker &&
         !emojiPicker.hidden &&
@@ -1345,7 +1422,7 @@
       const segment = event.target.closest(".editor-segment[for]");
       if (segment && form.contains(segment)) {
         const target = document.getElementById(segment.getAttribute("for"));
-        const none = document.getElementById("editor-panel-none");
+        const none = form.querySelector("#editor-panel-none");
         if (target && none && target.checked) {
           event.preventDefault();
           none.checked = true;
@@ -1411,8 +1488,8 @@
       }
     });
 
-    document.querySelectorAll(".editor-panel-radio").forEach((radio) => {
-      radio.addEventListener("change", () => {
+    form.querySelectorAll(".editor-panel-radio").forEach((radio) => {
+      listen(radio, "change", () => {
         if (radio.checked && radio.value === "preview") updatePreview();
         if (radio.checked && radio.value === "metadata") void requestMetadata("preview");
         if (radio.checked && radio.value === "images") void loadGallery();
@@ -1420,19 +1497,30 @@
       });
     });
 
-    textarea.addEventListener("input", () => {
-      if (!preserveWhitespaceOnlyLines) normalizeWhitespaceOnlyLines();
+    listen(textarea, "input", () => {
+      if (!codeSurface && !composing && !preserveWhitespaceOnlyLines) normalizeWhitespaceOnlyLines();
       scheduleEditorRender();
       if (selectedPanel() === "preview") updatePreview();
       if (selectedPanel() === "metadata") scheduleMetadataPreview();
       scheduleAutosave();
-      updateEmojiAutocomplete();
+      if (!composing) updateEmojiAutocomplete();
     });
-    textarea.addEventListener("beforeinput", (event) => {
+    listen(textarea, "compositionstart", () => {
+      rememberLocalEdit();
+      composing = true;
+      clearSecondaryCursors();
+    });
+    listen(textarea, "compositionend", () => {
+      composing = false;
+      scheduleEditorRender();
+    });
+    listen(textarea, "beforeinput", (event) => {
+      if (composing || event.isComposing || event.inputType === "insertCompositionText") return;
       if (event.inputType === "historyUndo" || event.inputType === "historyRedo") return;
       rememberLocalEdit();
     });
-    textarea.addEventListener("keydown", (event) => {
+    listen(textarea, "keydown", (event) => {
+      if (composing || event.isComposing || event.keyCode === 229) return;
       if (handleEmojiAutocompleteKeydown(event)) return;
       if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "z") {
         event.preventDefault();
@@ -1449,7 +1537,7 @@
         openFind(false);
         return;
       }
-      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === "h") {
+      if ((macPlatform ? event.metaKey && event.altKey && event.key.toLowerCase() === "f" : event.ctrlKey && !event.altKey && event.key.toLowerCase() === "h")) {
         event.preventDefault();
         openFind(true);
         return;
@@ -1488,9 +1576,10 @@
 		return;
 	  }
       handleTabKey(event);
+      handleCodeEnter(event);
     });
-    findQuery?.addEventListener("input", () => selectFindMatch(0));
-    findQuery?.addEventListener("keydown", (event) => {
+    listen(findQuery, "input", () => selectFindMatch(0));
+    listen(findQuery, "keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         selectFindMatch(event.shiftKey ? -1 : 1);
@@ -1500,7 +1589,7 @@
         closeFind();
       }
     });
-    findReplacement?.addEventListener("keydown", (event) => {
+    listen(findReplacement, "keydown", (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         replaceFindMatch();
@@ -1510,13 +1599,13 @@
         closeFind();
       }
     });
-    textarea.addEventListener("beforeinput", applyMultiCursorEdit);
-    textarea.addEventListener("mousedown", (event) => {
+    listen(textarea, "beforeinput", applyMultiCursorEdit);
+    listen(textarea, "mousedown", (event) => {
       if (!event.ctrlKey && !event.metaKey && !event.altKey) clearSecondaryCursors();
       focusBlankVisualRow(event);
     });
-    textarea.addEventListener("scroll", syncScroll);
-    textarea.addEventListener("paste", (event) => {
+    listen(textarea, "scroll", syncScroll);
+    listen(textarea, "paste", (event) => {
       const items = event.clipboardData && event.clipboardData.items;
       if (!items) return;
       for (const item of items) {
@@ -1530,37 +1619,37 @@
         }
       }
     });
-    textarea.addEventListener("drop", (event) => {
+    listen(textarea, "drop", (event) => {
       const file = event.dataTransfer && event.dataTransfer.files && event.dataTransfer.files[0];
       if (file && file.type && file.type.startsWith("image/")) {
         event.preventDefault();
         void uploadImage(file);
       }
     });
-    textarea.addEventListener("dragover", (event) => event.preventDefault());
-    form.addEventListener("input", (event) => {
+    listen(textarea, "dragover", (event) => event.preventDefault());
+    listen(form, "input", (event) => {
       if (event.target === textarea || event.target?.classList?.contains("editor-panel-radio")) return;
       if (event.target?.name === "excerpt") scheduleMetadataPreview();
       scheduleAutosave();
     });
-    form.addEventListener("change", (event) => {
+    listen(form, "change", (event) => {
       if (event.target === textarea || event.target?.classList?.contains("editor-panel-radio")) return;
       scheduleAutosave();
     });
-    window.addEventListener("online", () => {
+    listen(window, "online", () => {
       if (autosavePending) queueAutosaveTimer();
     });
-    window.addEventListener("resize", () => {
+    listen(window, "resize", () => {
       visualRowMapWidth = 0;
       scheduleEditorRender();
       if (emojiPicker && !emojiPicker.hidden) positionEmojiPicker();
     });
 
-    normalizeWhitespaceOnlyLines();
+    if (!codeSurface) normalizeWhitespaceOnlyLines();
     lastAutosaveFingerprint = autosaveFingerprint();
     setSaveStatus("saved", "Saved");
     renderEditorFrame();
-    const initialPreview = document.getElementById("editor-preview-content");
+    const initialPreview = form.querySelector("#editor-preview-content");
     const initialPreviewIsPlaceholder = !!initialPreview?.querySelector(".editor-preview-empty");
     const initialPreviewHasHTML = !!initialPreview && !initialPreviewIsPlaceholder && initialPreview.innerHTML.trim() !== "";
     if (initialPreviewHasHTML) {
@@ -1569,8 +1658,42 @@
     if (selectedPanel() === "preview" && textarea.value.trim() !== "") {
       updatePreview();
     }
-    if (document.getElementById("editor-excerpt-preview")) {
+    if (form.querySelector("#editor-excerpt-preview")) {
       void requestMetadata("preview");
     }
+    return { textarea, cleanup: () => {
+      disposed = true;
+      lifetime.abort();
+      clearTimeout(previewTimer);
+      clearTimeout(metadataTimer);
+      clearTimeout(autosaveTimer);
+      cancelAnimationFrame(renderFrame);
+      emojiPicker?.remove();
+      multiCursorStatus?.remove();
+      lineMeasure?.remove();
+    } };
+  };
+
+  const refresh = () => {
+    for (const [form, state] of mounts) {
+      if (!form.isConnected || form.querySelector("#editor-content") !== state.textarea) {
+        state.cleanup();
+        mounts.delete(form);
+      }
+    }
+    for (const form of document.querySelectorAll("form[data-editor-native='true']")) {
+      if (mounts.has(form)) continue;
+      const state = mount(form);
+      if (state) mounts.set(form, state);
+    }
+  };
+  window[mountKey] = refresh;
+  ready(() => {
+    refresh();
+    new MutationObserver(records => {
+      const selector = "form[data-editor-native='true']";
+      const relevant = node => node.nodeType === 1 && (node.matches(selector + ", #editor-content") || node.querySelector(selector));
+      if (records.some(record => Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) refresh();
+    }).observe(document.documentElement, { childList: true, subtree: true });
   });
 })();
