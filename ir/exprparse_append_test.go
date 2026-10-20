@@ -42,7 +42,7 @@ func TestParseGoAppendKeepsHandlerBinding(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if exprs[root].Op != program.OpCall || exprs[root].Value != "append" {
+	if exprs[root].Op != program.OpIndirectCall || exprs[root].Value != "append" {
 		t.Fatal("the builtin replaced a declared handler named append")
 	}
 }

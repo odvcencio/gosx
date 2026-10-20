@@ -36,6 +36,28 @@ component Counter() {
 	}
 }
 
+func TestIslandAOTHelperCallsRequireVM(t *testing.T) {
+	source := []byte(`package example
+//gosx:island
+component Counter() {
+ count := signal.New(0)
+ helper := func() { count.Set(count.Get() + 1) }
+ increment := func() { helper() }
+ return <button onClick={increment}>{count.Get()}</button>
+}`)
+	p, err := parseAOT(t, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.PackagePath = "example/components"
+	if _, err := ir.LowerIsland(p, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ir.LowerIslandAOT(p, 0); err == nil {
+		t.Fatal("helper calls were admitted without AOT function-call evidence")
+	}
+}
+
 func TestIslandAOTSourceContract(t *testing.T) {
 	src := []byte(`package example
 type CounterProps struct { Label string; Initial int32 }

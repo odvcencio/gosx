@@ -10,6 +10,7 @@ component Collection() {
 	items := signal.New([]string{"GoSX"})
 	draft := signal.New("")
 	edit := func() { draft.Set(value) }
+	focusDraft := func() { browser.Focus("#collection-draft") }
 	add := func() {
 		browser.PreventDefault()
 		if draft.Get() == "" || len(items.Get()) >= 12 {
@@ -17,11 +18,12 @@ component Collection() {
 		}
 		items.Set(append(items.Get(), draft.Get()))
 		draft.Set("")
+		focusDraft()
 	}
-	clear := func() { items.Set([]string{}) }
+	clear := func() { items.Set([]string{}); focusDraft() }
 	return <section>
 		<form onSubmit={add}>
-			<input aria-label="New item" value={draft.Get()} onInput={edit} required maxlength="48" />
+			<input id="collection-draft" aria-label="New item" value={draft.Get()} onInput={edit} required maxlength="48" />
 			<button type="submit" disabled={draft.Get() == "" || len(items.Get()) >= 12}>Add</button>
 			<button type="button" onClick={clear}>Clear</button>
 		</form>

@@ -39,6 +39,7 @@ func TestCheckIslandCollectionUsesGoTypes(t *testing.T) {
 		source string
 	}{
 		{"text input", collectionCheckSource},
+		{"helper reads event", strings.Replace(collectionCheckSource, `edit := func() { draft.Set(value) }`, `helper := func() { draft.Set(value) }; edit := func() { helper() }`, 1)},
 		{"guarded collection", strings.Replace(collectionCheckSource, `items.Set(append(items.Get(), draft.Get()))`, `if draft.Get() == "" || len(items.Get()) >= 12 { return }; items.Set(append(items.Get(), draft.Get()))`, 1)},
 		{"event values in branches", strings.Replace(collectionCheckSource, `draft.Set(value)`, `if checked { draft.Set(value) } else { return }`, 1)},
 		{"shared slice", strings.Replace(collectionCheckSource, `state.New([]string{props.Initial})`, `state.NewShared("collection", []string{props.Initial})`, 1)},
