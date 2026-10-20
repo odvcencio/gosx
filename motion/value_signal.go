@@ -8,36 +8,48 @@ import (
 // Resolve shapes once at authoring time; the browser graph can then share one
 // vector sample without silently coercing it through scalar operators.
 func programValueArities(signals []SignalSpec) (map[SignalRef]ValueArity, error) {
-	specs := make(map[SignalRef]SignalSpec, len(signals))
-	for _, signal := range signals {
-		specs[SignalRef(strings.TrimSpace(signal.ID))] = signal
+	specs := make(map[SignalRef]int, len(signals))
+	for i, signal := range signals {
+		specs[SignalRef(strings.TrimSpace(signal.ID))] = i
 	}
 	arities := make(map[SignalRef]ValueArity, len(signals))
-	visiting := make(map[SignalRef]bool)
+	visiting := make([]bool, len(signals))
+	pathDepth := make([]int, len(signals))
 	var resolve func(SignalRef, int) (ValueArity, error)
 	resolve = func(ref SignalRef, depth int) (ValueArity, error) {
 		if ref == "" {
 			return ArityScalar, nil
 		}
+		index, exists := specs[ref]
+		if !exists {
+			return 0, fmt.Errorf("motion: unknown signal %q", ref)
+		}
+		if depth+pathDepth[index] > 1024 {
+			return 0, fmt.Errorf("motion: signal dependency nesting exceeds 1024 at %q", ref)
+		}
 		if arity, ok := arities[ref]; ok {
 			return arity, nil
 		}
-		if visiting[ref] {
+		if visiting[index] {
 			return 0, fmt.Errorf("motion: cyclic signal dependency at %q", ref)
 		}
-		if depth > 1024 {
-			return 0, fmt.Errorf("motion: signal dependency nesting exceeds 1024 at %q", ref)
-		}
-		visiting[ref] = true
-		signal := specs[ref]
+		visiting[index] = true
+		signal := &signals[index]
 		arity := ArityScalar
 		if signal.Kind == SignalTrack {
 			arity = signal.Arity
 		}
 		for _, input := range []SignalRef{signal.Input, signal.A, signal.B, signal.Weight} {
+			if input == "" {
+				continue
+			}
 			inputArity, err := resolve(input, depth+1)
 			if err != nil {
 				return 0, err
+			}
+			pathDepth[index] = max(pathDepth[index], pathDepth[specs[input]]+1)
+			if pathDepth[index] > 1024 {
+				return 0, fmt.Errorf("motion: signal dependency nesting exceeds 1024 at %q", ref)
 			}
 			if inputArity == ArityScalar {
 				continue
@@ -60,7 +72,7 @@ func programValueArities(signals []SignalSpec) (map[SignalRef]ValueArity, error)
 			}
 			arity = a
 		}
-		delete(visiting, ref)
+		visiting[index] = false
 		arities[ref] = arity
 		return arity, nil
 	}

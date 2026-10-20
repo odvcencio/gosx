@@ -171,8 +171,8 @@ Vectors and colors interpolate their supplied channels without a color-space
 conversion. Style colors clamp RGBA channels to `[0,1]`; shader uniforms retain
 HDR values and easing overshoot. `Mix` supports matching vector/color arities;
 quaternion mixing and passing vector values through scalar operators return an
-error. Binding shapes are checked before serializing a program, and cyclic or
-excessively nested graphs are rejected. Reduced motion retains an independent
+error. Binding shapes are checked before serializing a program, and cyclic graphs or dependency paths longer than
+1,024 edges are rejected. Reduced motion retains an independent
 final pose and restores the current playhead when the preference is lifted.
 
 ## Apply a shader to either dimension

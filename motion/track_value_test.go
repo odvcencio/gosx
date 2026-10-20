@@ -2,6 +2,7 @@ package motion
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"os"
 	"path/filepath"
@@ -153,5 +154,21 @@ func TestSampleValueTrackBindingsAndComposition(t *testing.T) {
 	p.Signals = []SignalSpec{{ID: "a", Kind: SignalMap, Input: "b"}, {ID: "b", Kind: SignalMap, Input: "a"}}
 	if _, err := p.Marshal(); err == nil || !strings.Contains(err.Error(), "cyclic") {
 		t.Fatalf("cycle: %v", err)
+	}
+}
+
+func TestMotionValueGraphDepthLimitIsDeterministic(t *testing.T) {
+	for _, edges := range []int{1024, 1025} {
+		p := NewProgram("depth")
+		previous := p.Time("clock")
+		for i := 0; i < edges; i++ {
+			previous = p.Map(fmt.Sprintf("level-%d", i), previous, 0, 1, 0, 1)
+		}
+		for attempt := 0; attempt < 20; attempt++ {
+			_, err := p.Marshal()
+			if (err != nil) != (edges > 1024) {
+				t.Fatalf("%d dependency edges, attempt %d: %v", edges, attempt, err)
+			}
+		}
 	}
 }
