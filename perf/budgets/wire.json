@@ -136,7 +136,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 29430,
           "lazyJsWireBytes": 256,
-          "requests": 7,
+          "requests": 6,
           "totalWireBytes": 150009,
           "wasmWireBytes": 256
         },
@@ -160,7 +160,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 91332,
           "lazyJsWireBytes": 256,
-          "requests": 12,
+          "requests": 11,
           "totalWireBytes": 383937,
           "wasmWireBytes": 219045
         },
