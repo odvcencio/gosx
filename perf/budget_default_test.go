@@ -19,9 +19,11 @@ func TestDefaultBudgetFileProfilesResolveAndAssertionsEvaluate(t *testing.T) {
 
 	neutralPage := func(url string) PageReport {
 		return PageReport{
-			URL:              url,
-			CoverageCaptured: true,
+			URL:                url,
+			CoverageCaptured:   true,
+			MetricAvailability: &MetricAvailability{LCP: true, LongTasks: true, Network: true, SceneFrames: true},
 			Scene: &SceneMetric{
+				FrameStats: FrameStats{Count: 1},
 				Presentation: &PresentationMetric{
 					TelemetrySeries: TelemetrySeries{Stats: FrameStats{Count: 1}},
 				},
