@@ -7,6 +7,10 @@
   in compiler diagnostics, retain callable functions from every file, and reject
   packages that exceed the VM expression limit before IDs can wrap.
 
+- Keep declarative action buttons disabled while reading the response body,
+  including failed responses, and restore them before the result updates focus.
+  Slow response bodies no longer invite an early second click.
+
 - Reuse TinyGo package caches across production rebuilds with stable runtime
   source directories. Each build stages current sources, with process locks
   and temporary-directory fallback for concurrent or unavailable workspaces.
