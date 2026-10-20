@@ -7,6 +7,14 @@ const {after, before, test} = require('node:test');
 // an existing Playwright installation; this module needs no npm dependencies.
 const modulePath = process.env.GOSX_PLAYWRIGHT_MODULE;
 let browser, script, intelligenceScript;
+const readAsset = async name => {
+  try {
+    return await readFile(path.join(__dirname, '../assets', name + '.js'), 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return readFile(path.join(__dirname, '../assets', name + '.ts'), 'utf8');
+  }
+};
 before(async () => {
   if (!modulePath) return;
   const {chromium} = require(modulePath);
@@ -14,8 +22,8 @@ before(async () => {
     executablePath: process.env.GOSX_BROWSER_EXECUTABLE || undefined,
     headless: true,
   });
-  script = await readFile(path.join(__dirname, '../assets/native-editor.js'), 'utf8');
-  intelligenceScript = await readFile(path.join(__dirname, '../assets/code-intelligence.js'), 'utf8');
+  script = await readAsset('native-editor');
+  intelligenceScript = await readAsset('code-intelligence');
 });
 after(async () => { await browser?.close(); });
 
