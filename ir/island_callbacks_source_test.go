@@ -97,6 +97,23 @@ func TestAuthoredIslandCallbackRejectsHandlerArguments(t *testing.T) {
 	t.Fatal("missing Counter")
 }
 
+func TestAuthoredIslandCallbackRejectsHandlerResults(t *testing.T) {
+	source := strings.Replace(callbackCounterSource, "increment := func() { count.Set(count.Get() + 1) }", "increment := func() int { return 1 }", 1)
+	p, err := parse(t, []byte(source))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, component := range p.Components {
+		if component.Name == "Counter" {
+			if _, err := ir.LowerIsland(p, index); err == nil || !strings.Contains(err.Error(), "signature func()") {
+				t.Fatalf("callback result was accepted: %v", err)
+			}
+			return
+		}
+	}
+	t.Fatal("missing Counter")
+}
+
 func TestAuthoredIslandCallbacksMatchFlatProgram(t *testing.T) {
 	flat := `package app
 import "m31labs.dev/gosx/signal"

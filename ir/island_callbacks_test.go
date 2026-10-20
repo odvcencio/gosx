@@ -59,3 +59,17 @@ func TestIslandComposedCallbackRejectsDynamicOrDataUse(t *testing.T) {
 		t.Fatalf("callback rendered as data: %v", err)
 	}
 }
+
+func TestIslandCallbackRequiresADeclaredHandlerAndSupportedEvent(t *testing.T) {
+	p := callbackCompositionProgram()
+	p.Nodes[0].Attrs = []Attr{{Kind: AttrExpr, Name: "onClick", Expr: "forged", IsEvent: true}}
+	p.Nodes[1].Attrs[1].Expr = "forged"
+	if _, err := LowerIsland(p, 0); err == nil || !strings.Contains(err.Error(), "callback") {
+		t.Fatalf("an event reference was mistaken for a declared handler: %v", err)
+	}
+	p = callbackCompositionProgram()
+	p.Nodes[2].Attrs[0].Name = "onUnknownEvent"
+	if _, err := LowerIsland(p, 0); err == nil || !strings.Contains(err.Error(), "not supported") {
+		t.Fatalf("unhandled DOM event accepted: %v", err)
+	}
+}
