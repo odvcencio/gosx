@@ -249,7 +249,7 @@
   function manifestNeedsWASMRuntime(manifest) {
     return (manifest?.preview && gosxHost.relay?.isPreview?.())
       || manifestNeedsIslandsFeature(manifest)
-      || manifest?.engines?.some(entry => entry && entry.runtime === "shared");
+      || manifest?.engines?.some(entry => entry && (entry.runtime === "shared" || entry.runtime === "kernel"));
   }
 
   function ensureManifestFeatures(manifest) {
