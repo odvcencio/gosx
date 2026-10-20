@@ -19,7 +19,7 @@ Each row is one case from `internal/evalparity`'s differential test table (`case
 | Backend | Agrees | Diverges | Unsupported | Total |
 |---|---|---|---|---|
 | transpile | 55 | 0 | 20 | 75 |
-| route | 73 | 2 | 0 | 75 |
+| route | 74 | 1 | 0 | 75 |
 | client-vm | 73 | 2 | 0 | 75 |
 
 ## numeric
@@ -178,7 +178,7 @@ Notes:
 | `index_slice_inbounds` | `props.Items[1]` | agrees: `20` | agrees: `20` | agrees: `20` |
 | `index_map_present` | `props.M["k"]` | agrees: `42` | agrees: `42` | agrees: `42` |
 | `index_slice_out_of_range` | `props.Items[9]` | unsupported | diverges: `(empty)` | agrees: `0` |
-| `index_map_missing_key` | `props.M["missing"]` | agrees: `0` | diverges: `(empty)` | agrees: `0` |
+| `index_map_missing_key` | `props.M["missing"]` | agrees: `0` | agrees: `0` | agrees: `0` |
 | `index_nested_struct_field` | `props.Nested.X` | agrees: `5` | agrees: `5` | agrees: `5` |
 
 Notes:
@@ -188,8 +188,7 @@ Notes:
 - `index_slice_out_of_range`: out-of-range slice index: real Go panics at runtime (recovered by the harness — see caseCallLine); route fails soft to "", VM fails soft to the element type's zero value. Documented, not fixed: ir/lower.go's strict-renderer validator already refuses index expressions for exactly this reason ("out-of-range behavior differs from Go")
   - transpile unsupported: real Go panics at runtime: "index out of range [9] with length 3"
   - route diverges: route/fileeval.go's indexSequentialValue returns the zero any (nil) past the slice bound instead of erroring, which renders as empty text rather than a zero-valued element
-- `index_map_missing_key`: missing map key: real Go returns the value type's zero value at compile-checked type, matching VM; route fails soft to "" the same way index_slice_out_of_range does
-  - route diverges: route/fileeval.go's indexMapValue (via mapLookup) returns nil for a missing key instead of the value type's zero value, which renders as empty text instead of "0"
+- `index_map_missing_key`: missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends
 - `index_nested_struct_field`: field access on a nested named-struct props field
 
 ## bool-coercion
