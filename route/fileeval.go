@@ -476,7 +476,7 @@ func selectValue(target any, name string) any {
 }
 
 func indexValue(target any, index any) any {
-	if target == nil || index == nil {
+	if target == nil {
 		return nil
 	}
 
@@ -489,6 +489,9 @@ func indexValue(target any, index any) any {
 	case reflect.Map:
 		return indexMapValue(rv, index)
 	case reflect.Array, reflect.Slice, reflect.String:
+		if index == nil {
+			return nil
+		}
 		return indexSequentialValue(rv, index)
 	default:
 		return nil
@@ -520,15 +523,44 @@ func selectStructValue(target any, name string) (any, bool) {
 }
 
 func indexMapValue(rv reflect.Value, index any) any {
-	key, ok := reflectValue(index, rv.Type().Key())
+	key, ok := mapIndexKey(index, rv.Type().Key())
 	if !ok {
 		return nil
 	}
 	value := rv.MapIndex(key)
-	if !value.IsValid() || !value.CanInterface() {
+	if !value.IsValid() {
+		return reflect.Zero(rv.Type().Elem()).Interface()
+	}
+	if !value.CanInterface() {
 		return nil
 	}
 	return value.Interface()
+}
+
+func mapIndexKey(index any, target reflect.Type) (reflect.Value, bool) {
+	if index == nil {
+		switch target.Kind() {
+		case reflect.Interface, reflect.Pointer, reflect.Chan, reflect.UnsafePointer:
+			return reflect.Zero(target), true
+		default:
+			return reflect.Value{}, false
+		}
+	}
+	// Try direct assignment/conversion before the general props coercion, which
+	// allocates fresh pointers and would change the identity of pointer keys.
+	raw := reflect.ValueOf(index)
+	// Slice-to-array conversions also depend on the slice's runtime length.
+	if raw.Type().ConvertibleTo(target) && !raw.CanConvert(target) {
+		return reflect.Value{}, false
+	}
+	key, ok := reflectDirectValue(raw, target)
+	if !ok {
+		key, ok = reflectValue(index, target)
+	}
+	if !ok || !key.IsValid() || !key.Type().AssignableTo(target) || !key.Comparable() {
+		return reflect.Value{}, false
+	}
+	return key, true
 }
 
 func indexSequentialValue(rv reflect.Value, index any) any {
@@ -978,9 +1010,10 @@ func numericValue(value any) float64 {
 }
 
 func stringifyValue(value any) string {
-	switch v := value.(type) {
-	case nil:
+	if isNilFileValue(value) {
 		return ""
+	}
+	switch v := value.(type) {
 	case string:
 		return v
 	case fmt.Stringer:
@@ -989,6 +1022,19 @@ func stringifyValue(value any) string {
 		return gosx.RenderHTML(v)
 	default:
 		return fmt.Sprint(v)
+	}
+}
+
+func isNilFileValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
 	}
 }
 
@@ -1018,7 +1064,7 @@ func equalValues(left, right any) bool {
 		return stringifyValue(left) == ""
 	}
 	if left == nil || right == nil {
-		return false
+		return isNilFileValue(left) && isNilFileValue(right)
 	}
 	if isNumeric(left) || isNumeric(right) {
 		if lnegative, lmagnitude, lok := equalityInteger(left); lok {

@@ -506,18 +506,12 @@ var cases = []Case{
 	{
 		ID:           "index_map_missing_key",
 		Category:     "indexing",
-		Note:         "missing map key: real Go returns the value type's zero value at compile-checked type, matching VM; route fails soft to \"\" the same way index_slice_out_of_range does",
+		Note:         "missing integer map key returns the element type's zero value across the compiled Go, route, and VM backends. File routes preserve other element zero types; dynamically nil values render as empty text and compare equal to nil",
 		Expr:         `props.M["missing"]`,
 		PropsFields:  "M map[string]int",
 		PropsLiteral: `M: map[string]int{"k": 42}`,
 		PropsValue:   map[string]any{"M": map[string]int{"k": 42}},
 		Want:         "0",
-		Diverges: map[Backend]string{
-			Route: "",
-		},
-		DivergesReason: map[Backend]string{
-			Route: "route/fileeval.go's indexMapValue (via mapLookup) returns nil for a missing key instead of the value type's zero value, which renders as empty text instead of \"0\"",
-		},
 	},
 	{
 		ID:           "index_nested_struct_field",
