@@ -518,6 +518,10 @@
   }
 
   function refreshBindings() {
+    var root = document.documentElement;
+    if (root && root.getAttribute("data-gosx-copy-ready") !== "true") {
+      root.setAttribute("data-gosx-copy-ready", "true");
+    }
     if (typeof document.querySelectorAll !== "function") return;
     document.querySelectorAll("[data-gosx-bind-source]").forEach(bindSource);
   }

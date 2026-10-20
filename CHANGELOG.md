@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Make copy controls ready before engine startup completes and restore their
+  readiness after navigation. Docs use the framework handler directly.
+
 - Reduce steady WebGPU uploads by sharing material uniforms and batching
   retained mesh transforms. Skip settled transforms, bound changed matrices
   to one upload span, and preserve exact command validation during bundle replay.
