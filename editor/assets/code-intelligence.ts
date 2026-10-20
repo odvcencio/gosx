@@ -20,16 +20,22 @@
     }
     for (const form of document.querySelectorAll(selector)) {
       if (!forms.has(form)) void mount(form);
+      else forms.get(form).refresh();
     }
   }
   window[mountKey] = refresh;
   firstPaint.then(refresh);
   new MutationObserver(records => {
     const relevant = node => node.nodeType === 1 && (node.matches(selector + ", textarea[name=content]") || node.querySelector(selector));
-    if (records.some(record => Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) {
+    if (records.some(record => record.type === "attributes"
+      ? record.target.matches(selector + ", .editor-page-native")
+      : record.target.matches?.("textarea[name=content]") || Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) {
       firstPaint.then(refresh);
     }
-  }).observe(document.documentElement, {childList: true, subtree: true});
+  }).observe(document.documentElement, {
+    childList: true, subtree: true, attributes: true,
+    attributeFilter: ["class", "data-code-intelligence-lane", "data-highlight-span-count"],
+  });
 
   function waitForFirstContentfulPaint() {
     if (performance.getEntriesByName("first-contentful-paint", "paint").length > 0) return Promise.resolve();
@@ -65,6 +71,9 @@
     let latestTags = [];
     let serverFallback = false;
     let requestSequence = 0;
+    let latestAnalysis;
+    let analyzedSource;
+    let refreshAnalysis = () => {};
     let disposed = false;
     const lifetime = new AbortController();
     const live = () => !disposed && form.isConnected;
@@ -75,8 +84,14 @@
       lifetime.abort();
       if (runtimeOpen) runtime.close(documentID);
     };
-    forms.set(form, {source, cleanup});
+    forms.set(form, {source, cleanup, refresh: () => refreshAnalysis()});
     const initialSource = source.value;
+    const acceptAnalysis = analysis => {
+      latestTags = analysis.tags || [];
+      latestAnalysis = analysis;
+      analyzedSource = source.value;
+      applyAnalysis(form, source, highlight, analysis);
+    };
 
     try {
       let initial;
@@ -95,8 +110,7 @@
       }
       if (!live()) return;
       if (source.value === initialSource) {
-        latestTags = initial.tags || [];
-        applyAnalysis(form, source, highlight, initial);
+        acceptAnalysis(initial);
       }
     } catch (error) {
       if (!live()) return;
@@ -109,8 +123,7 @@
         const initial = await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, initialSource, lifetime.signal);
         if (!live()) return;
         if (source.value === initialSource) {
-          latestTags = initial.tags || [];
-          applyAnalysis(form, source, highlight, initial);
+          acceptAnalysis(initial);
         }
       } catch (fallbackError) {
         if (!live()) return;
@@ -130,8 +143,7 @@
             ? await requestServerAnalysis(form, cfg.codeIntelligenceServer, cfg.collaborationPath, value, lifetime.signal)
             : requireOK(runtime.update(documentID, value));
           if (!live() || sequence !== requestSequence || value !== source.value) return;
-          latestTags = analysis.tags || [];
-          applyAnalysis(form, source, highlight, analysis);
+          acceptAnalysis(analysis);
         } catch (error) {
           if (live() && sequence === requestSequence) reportError(form, error);
         }
@@ -158,6 +170,15 @@
       }
     }, {signal: lifetime.signal});
     window.addEventListener("pagehide", cleanup, {once: true, signal: lifetime.signal});
+    refreshAnalysis = () => {
+      if (!live()) return;
+      if (analyzedSource !== source.value) {
+        update();
+      } else if (latestAnalysis && (form.dataset.codeIntelligenceLane !== (latestAnalysis.lane || "wasm") ||
+        form.dataset.highlightSpanCount !== String((latestAnalysis.highlights || []).length))) {
+        applyAnalysis(form, source, highlight, latestAnalysis);
+      }
+    };
     if (source.value !== initialSource) update();
   }
 
@@ -277,7 +298,8 @@
   }
 
   function applyAnalysis(form, source, highlight, analysis) {
-    form.dataset.codeIntelligenceLane = analysis.lane || "wasm";
+    const lane = analysis.lane || "wasm";
+    if (form.dataset.codeIntelligenceLane !== lane) form.dataset.codeIntelligenceLane = lane;
     renderHighlights(highlight, source.value, analysis.highlights || []);
 	form.dispatchEvent(new CustomEvent("gosx:highlight-spans", {detail: {spans: analysis.highlights || []}}));
     renderOutline(form, source, analysis.tags || []);
