@@ -269,7 +269,11 @@ func browserIntArg(method string, args []vm.Value, index int) (int, error) {
 	if index >= len(args) || args[index].Type != program.TypeInt {
 		return 0, fmt.Errorf("browser.%s argument %d must be an integer", method, index+1)
 	}
-	return int(args[index].Number()), nil
+	n := args[index].Int64()
+	if int64(int(n)) != n {
+		return 0, fmt.Errorf("browser.%s argument %d exceeds the host integer range", method, index+1)
+	}
+	return int(n), nil
 }
 
 func (r *browserHostReceiver) root() (js.Value, bool) {

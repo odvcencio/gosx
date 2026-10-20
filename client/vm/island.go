@@ -423,7 +423,7 @@ func parseProps(prog *program.Program, propsJSON string) map[string]Value {
 	propsObject := make(map[string]any, len(rawProps))
 	for name, raw := range rawProps {
 		var decoded any
-		if err := json.Unmarshal(raw, &decoded); err != nil {
+		if err := decodeJSON(string(raw), &decoded); err != nil {
 			props[name] = ZeroValue(program.TypeAny)
 			continue
 		}
@@ -489,7 +489,7 @@ func parseEventData(eventDataJSON string) map[string]Value {
 		return nil
 	}
 	var mixed map[string]any
-	if err := json.Unmarshal([]byte(eventDataJSON), &mixed); err != nil {
+	if err := decodeJSON(eventDataJSON, &mixed); err != nil {
 		return nil
 	}
 	eventData := make(map[string]Value, len(mixed))
@@ -507,8 +507,12 @@ func parseEventFieldValue(key string, value any) Value {
 	// before OpEventGet could promote it back to float.
 	switch key {
 	case "timeStamp", "clientX", "clientY", "pressure", "width", "height":
-		if number, ok := value.(float64); ok {
+		switch number := value.(type) {
+		case float64:
 			return FloatVal(number)
+		case json.Number:
+			f, _ := number.Float64()
+			return FloatVal(f)
 		}
 	}
 	return parseAnyValue(value)
@@ -528,9 +532,13 @@ func parseJSONValue(raw json.RawMessage, typ program.ExprType) Value {
 		json.Unmarshal(raw, &s)
 		return StringVal(s)
 	case program.TypeInt:
-		var n float64
-		json.Unmarshal(raw, &n)
-		return IntVal(int(n))
+		var n int64
+		if err := json.Unmarshal(raw, &n); err == nil {
+			return Int64Val(n)
+		}
+		var f float64
+		_ = json.Unmarshal(raw, &f)
+		return Int64Val(int64(f))
 	case program.TypeFloat:
 		var f float64
 		json.Unmarshal(raw, &f)
@@ -541,7 +549,7 @@ func parseJSONValue(raw json.RawMessage, typ program.ExprType) Value {
 		return BoolVal(b)
 	default:
 		var value any
-		if err := json.Unmarshal(raw, &value); err != nil {
+		if err := decodeJSON(string(raw), &value); err != nil {
 			return ZeroValue(typ)
 		}
 		return parseAnyValue(value)
@@ -556,9 +564,25 @@ func parseAnyValue(value any) Value {
 		return StringVal(v)
 	case bool:
 		return BoolVal(v)
+	case json.Number:
+		if n, err := v.Int64(); err == nil {
+			return Int64Val(n)
+		}
+		f, _ := v.Float64()
+		return parseAnyValue(f)
+	case int:
+		return IntVal(v)
+	case int8:
+		return Int64Val(int64(v))
+	case int16:
+		return Int64Val(int64(v))
+	case int32:
+		return Int64Val(int64(v))
+	case int64:
+		return Int64Val(v)
 	case float64:
-		if math.Trunc(v) == v {
-			return IntVal(int(v))
+		if math.Trunc(v) == v && v >= -0x1p63 && v < 0x1p63 {
+			return Int64Val(int64(v))
 		}
 		return FloatVal(v)
 	case []any:

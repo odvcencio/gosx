@@ -36,7 +36,7 @@
   function reportMissingComputeIslandCapabilities(entry, status) {
     const missing = status.missing.join(" ");
     console.error(`[gosx] missing required compute island capabilities for ${entry.id}: ${missing}`);
-    if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+    if (typeof window.__gosx_emit === "function") {
       window.__gosx_emit("error", "compute-island", "missing required compute island capabilities", {
         islandID: String(entry.id || ""),
         component: String(entry.component || ""),
@@ -68,7 +68,7 @@
     const programFormat = inferProgramFormat(entry);
     if (!entry.programRef) {
       console.error(`[gosx] skipping island ${entry.id} — missing programRef`);
-      if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+      if (typeof window.__gosx_emit === "function") {
         window.__gosx_emit("error", "island", "missing programRef", {
           islandID: String(entry.id || ""),
           component: String(entry.component || ""),
@@ -132,13 +132,13 @@
       const result = hydrateFn(
         entry.id,
         entry.component,
-        JSON.stringify(entry.props || {}),
+        entry.propsJSON || JSON.stringify(entry.props || {}),
         program.data,
         program.format
       );
-      if (typeof result === "string" && result !== "") {
+      if (typeof result === "string" && result) {
         console.error(`[gosx] failed to hydrate island ${entry.id}: ${result}`);
-        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        if (typeof window.__gosx_emit === "function") {
           window.__gosx_emit("error", "island", "failed to hydrate island", {
             islandID: String(entry.id || ""),
             component: String(entry.component || ""),
@@ -204,13 +204,13 @@
       const result = hydrateFn(
         entry.id,
         entry.component,
-        JSON.stringify(entry.props || {}),
+        entry.propsJSON || JSON.stringify(entry.props || {}),
         program.data,
         program.format
       );
-      if (typeof result === "string" && result !== "") {
+      if (typeof result === "string" && result) {
         console.error(`[gosx] failed to hydrate compute island ${entry.id}: ${result}`);
-        if (typeof window !== "undefined" && typeof window.__gosx_emit === "function") {
+        if (typeof window.__gosx_emit === "function") {
           window.__gosx_emit("error", "compute-island", "failed to hydrate compute island", {
             islandID: String(entry.id || ""),
             component: String(entry.component || ""),
@@ -276,7 +276,7 @@
   async function hydrateAllIslands(manifest) {
     const islands = Array.isArray(manifest && manifest.islands) ? manifest.islands : [];
     const computeIslands = Array.isArray(manifest && manifest.computeIslands) ? manifest.computeIslands : [];
-    if (islands.length === 0 && computeIslands.length === 0) return;
+    if (islands.length + computeIslands.length === 0) return;
 
     // Hydrate islands concurrently — each is independent.
     const promises = islands.map(function(entry) {

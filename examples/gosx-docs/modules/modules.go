@@ -31,6 +31,7 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/images"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/islands"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/islands/collections"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/islands/integers"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/motion"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/routing"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/docs/runtime"

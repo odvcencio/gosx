@@ -766,7 +766,7 @@ const (
 
 // litSlot caches the decoded form of one OpLitInt or OpLitFloat expression.
 type litSlot struct {
-	num  float64
+	bits uint64
 	kind litKind
 }
 
@@ -797,15 +797,15 @@ func buildLiteralTable(exprs []program.Expr) []litSlot {
 				table[i] = litSlot{kind: litBad}
 				continue
 			}
-			// Match IntVal(int(n)) exactly, including its narrowing.
-			table[i] = litSlot{num: float64(int(n)), kind: litInt}
+			// Cache integer bits without a float or host-int conversion.
+			table[i] = litSlot{bits: uint64(n), kind: litInt}
 		case program.OpLitFloat:
 			f, err := strconv.ParseFloat(exprs[i].Value, 64)
 			if err != nil {
 				table[i] = litSlot{kind: litBad}
 				continue
 			}
-			table[i] = litSlot{num: f, kind: litFloat}
+			table[i] = litSlot{bits: math.Float64bits(f), kind: litFloat}
 		}
 	}
 	return table
@@ -817,9 +817,9 @@ func buildLiteralTable(exprs []program.Expr) []litSlot {
 func (vm *VM) decodedLiteral(id program.ExprID, slot litSlot) Value {
 	switch slot.kind {
 	case litInt:
-		return Value{Type: program.TypeInt, num: slot.num}
+		return Int64Val(int64(slot.bits))
 	case litFloat:
-		return Value{Type: program.TypeFloat, num: slot.num}
+		return FloatVal(math.Float64frombits(slot.bits))
 	}
 	e := &vm.exprs[id]
 	if e.Op == program.OpLitFloat {
@@ -837,7 +837,7 @@ func (vm *VM) parseIntLiteral(e *program.Expr) Value {
 		vm.recordExprDiagnostic("invalid_int_literal", fmt.Sprintf("invalid integer literal %q: %v", e.Value, err), e.Op, e.Value)
 		return ZeroValue(program.TypeInt)
 	}
-	return IntVal(int(n))
+	return Int64Val(n)
 }
 
 // parseFloatLiteral decodes an OpLitFloat from its text. See parseIntLiteral.
@@ -1115,8 +1115,8 @@ func safeBoundInt(f float64) int {
 func (vm *VM) sliceValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 3) {
 		coll := vm.Eval(e.Operands[0])
-		start := safeBoundInt(vm.Eval(e.Operands[1]).num)
-		end := safeBoundInt(vm.Eval(e.Operands[2]).num)
+		start := safeBoundInt(vm.Eval(e.Operands[1]).Number())
+		end := safeBoundInt(vm.Eval(e.Operands[2]).Number())
 		// Slice Y.E.3: OpSlice now dispatches on the runtime collection
 		// kind so the lowerer's *ast.SliceExpr handler can emit a single
 		// opcode without knowing whether the source operand is a slice
@@ -1178,8 +1178,8 @@ func (vm *VM) replaceValue(e *program.Expr) Value {
 func (vm *VM) substringValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 3) {
 		coll := vm.Eval(e.Operands[0])
-		start := safeBoundInt(vm.Eval(e.Operands[1]).num)
-		end := safeBoundInt(vm.Eval(e.Operands[2]).num)
+		start := safeBoundInt(vm.Eval(e.Operands[1]).Number())
+		end := safeBoundInt(vm.Eval(e.Operands[2]).Number())
 		return coll.SubstringVal(start, end)
 	}
 	return StringVal("")
@@ -1547,7 +1547,7 @@ func (vm *VM) autoKey(source int, tag string) (string, bool) {
 	if !hasIndex {
 		return "", false
 	}
-	return fmt.Sprintf("_auto_%d_%s_%d", int(idxVal.num), tag, source), true
+	return fmt.Sprintf("_auto_%d_%s_%d", idxVal.integer(), tag, source), true
 }
 
 type eachEntry struct {
@@ -1598,9 +1598,9 @@ func valueTruthy(value Value) bool {
 		text := value.text()
 		return text != "" && text != "0" && text != "false"
 	case program.TypeInt, program.TypeFloat:
-		return value.num != 0
+		return value.number() != 0
 	default:
-		return value.truth() || value.num != 0 || value.text() != ""
+		return value.truth() || value.number() != 0 || value.text() != ""
 	}
 }
 
