@@ -112,6 +112,69 @@ func TestMotionExportLoadTickRoundTrip(t *testing.T) {
 	}
 }
 
+func TestMotionExportPreparedSpringExactSeeks(t *testing.T) {
+	registerMotionExports()
+	timeline := &motion.Timeline{}
+	for id := 0; id < 2; id++ {
+		timeline.Children = append(timeline.Children, motion.Positioned{Track: &motion.Track{
+			TargetID: id,
+			Gen: &motion.Generator{Kind: motion.GenSpring, Base: motion.Vec2V(-.2, 1.4),
+				Spring: motion.Spring{Mass: 1, Stiffness: 400, Damping: 2, Velocity: -.1}},
+		}})
+	}
+	load := js.Global().Get("__gosx_motion_load")
+	tick := js.Global().Get("__gosx_motion_tick")
+	unload := js.Global().Get("__gosx_motion_unload")
+	handle := load.Invoke(jsUint8ArrayFromGo(motion.EncodeProgram(timeline, nil, nil))).Int()
+	if handle < 1 {
+		t.Fatalf("spring program load returned %d", handle)
+	}
+	defer unload.Invoke(handle)
+	output := js.Global().Get("Uint8Array").New(8 * 8)
+	bytes := make([]byte, 8*8)
+	for _, reduced := range []bool{false, true, false} {
+		for _, at := range []float64{-1, 0, .003, .5, 2, 8.007, .13, 11, math.NaN(), math.Inf(1), math.Inf(-1)} {
+			n := tick.Invoke(handle, at, reduced, output).Int()
+			want := referenceWrites(timeline, at, reduced)
+			if n != len(want) || n != 8 {
+				t.Fatalf("spring tick produced %d floats, want %d", n, len(want))
+			}
+			js.CopyBytesToGo(bytes, output)
+			got := decodeLEFloat64s(bytes, n)
+			for i := range want {
+				if math.Float64bits(got[i]) != math.Float64bits(want[i]) {
+					t.Fatalf("spring export at %g, reduced=%v, value %d: %.20g vs %.20g", at, reduced, i, got[i], want[i])
+				}
+			}
+		}
+	}
+}
+
+func TestMotionExportNonFiniteSpringTimeBounded(t *testing.T) {
+	timeline := &motion.Timeline{Children: []motion.Positioned{{Track: &motion.Track{
+		Gen: &motion.Generator{Kind: motion.GenSpring, Base: motion.Vec2V(0, 1), Spring: motion.Spring{Mass: math.NaN()}},
+	}}}}
+	handle := motionLoad([]js.Value{jsUint8ArrayFromGo(motion.EncodeProgram(timeline, nil, nil))})
+	if handle < 1 {
+		t.Fatal("non-finite spring program did not load")
+	}
+	defer motionUnload([]js.Value{js.ValueOf(handle)})
+	output := js.Global().Get("Uint8Array").New(4 * 8)
+	bytes := make([]byte, 4*8)
+	for _, at := range []float64{math.NaN(), math.Inf(1), math.Inf(-1), 1e100, math.MaxFloat64} {
+		n := motionTick([]js.Value{js.ValueOf(handle), js.ValueOf(at), js.ValueOf(false), output})
+		if n != 4 {
+			t.Fatalf("non-finite spring tick produced %d floats", n)
+		}
+		js.CopyBytesToGo(bytes, output)
+		got := decodeLEFloat64s(bytes, n)[3]
+		want := referenceWrites(timeline, at, false)[3]
+		if got != want && !(math.IsNaN(got) && math.IsNaN(want)) {
+			t.Fatalf("non-finite spring export at %g: %g vs %g", at, got, want)
+		}
+	}
+}
+
 // TestMotionExportRegisteredOnGlobal verifies registration installs callable
 // functions on the JS global and that they behave the same as the handlers.
 func TestMotionExportRegisteredOnGlobal(t *testing.T) {

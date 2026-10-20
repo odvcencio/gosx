@@ -9,11 +9,11 @@ import "math"
 // When policy.ReducedMotion is true, each track immediately emits its rest/final
 // state instead of animating (1.6d).
 func Eval(tl *Timeline, t float64, policy Policy, out *WriteBuf) {
-	evalTimeline(tl, t, 0, policy, out)
+	evalTimeline(tl, t, 0, policy, out, nil)
 }
 
 // evalTimeline recurses into a timeline with a base offset applied to t.
-func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *WriteBuf) {
+func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *WriteBuf, springs map[*Track]*PreparedSpring) {
 	for i := range tl.Children {
 		child := &tl.Children[i]
 
@@ -24,12 +24,21 @@ func evalTimeline(tl *Timeline, t, baseOffset float64, policy Policy, out *Write
 		}
 
 		if child.Track != nil {
-			evalTrack(child.Track, t, start, policy, out)
+			var sampler *PreparedSpring
+			if springs != nil && !policy.ReducedMotion && child.Track.Gen != nil && child.Track.Gen.Kind == GenSpring {
+				sampler = springs[child.Track]
+			}
+			if sampler == nil {
+				evalTrack(child.Track, t, start, policy, out)
+			} else {
+				// Generators use global time, including within offset timelines.
+				out.Push(child.Track.TargetID, child.Track.PropID, ScalarV(sampler.Value(t)))
+			}
 		}
 
 		if child.Sub != nil {
 			// TODO(1.6): nested timeline positioning (PosRel, PosLabel, PosPrevRel)
-			evalTimeline(child.Sub, t, start, policy, out)
+			evalTimeline(child.Sub, t, start, policy, out, springs)
 		}
 	}
 }

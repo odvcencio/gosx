@@ -8,11 +8,12 @@ type motionProgram struct {
 	targetRefs []string
 	propRefs   []string
 	buf        *WriteBuf
+	springs    map[*Track]*PreparedSpring
 }
 
 // Runtime is the host-testable motion runtime. It manages a set of loaded programs
-// keyed by integer handles. This is the pure-Go logic that the future WASM exports
-// (motionLoad/motionTick) will wrap — no syscall/js here.
+// keyed by integer handles. This is the pure-Go logic behind the WASM
+// motionLoad/motionTick exports — no syscall/js here.
 //
 // TinyGo-clean: no reflect, no encoding/json.
 type Runtime struct {
@@ -29,7 +30,8 @@ func NewRuntime() *Runtime {
 }
 
 // Load decodes a wire-format program, stores it under a fresh handle (>=1), and
-// allocates a reusable WriteBuf for it. Returns the handle.
+// allocates a reusable WriteBuf and bounded, shared spring checkpoints for it.
+// The decoded timeline is owned by the runtime. Returns the handle.
 func (r *Runtime) Load(irBytes []byte) (handle int, err error) {
 	tl, targetRefs, propRefs, err := DecodeProgram(irBytes)
 	if err != nil {
@@ -40,6 +42,7 @@ func (r *Runtime) Load(irBytes []byte) (handle int, err error) {
 		targetRefs: targetRefs,
 		propRefs:   propRefs,
 		buf:        NewWriteBuf(64),
+		springs:    prepareRuntimeSprings(tl),
 	}
 	handle = r.next
 	r.next++
@@ -60,7 +63,7 @@ func (r *Runtime) Tick(handle int, t float64, reduced bool, out []float64) (n in
 		return 0, fmt.Errorf("motion: unknown handle %d", handle)
 	}
 	p.buf.Reset()
-	Eval(p.tl, t, Policy{ReducedMotion: reduced}, p.buf)
+	evalTimeline(p.tl, t, 0, Policy{ReducedMotion: reduced}, p.buf, p.springs)
 	w := p.buf.Writes()
 	copy(out, w)
 	return len(w), nil

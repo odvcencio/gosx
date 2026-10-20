@@ -343,3 +343,33 @@ playback buttons. Framework adapters can use `motion.createSVGMorph(fromSVG,
 toSVG, {easing: "ease-in-out"})` and call `sample(progress)` / `dispose()`;
 GoSX-slides uses this boundary for storyboard navigation. Applications use the
 Go binding rather than authoring browser scripts.
+
+## Repeated native spring sampling
+
+For repeated absolute-time samples in Go, prepare a spring once:
+
+```go
+spring := motion.Spring{Mass: 1, Stiffness: 400, Damping: 2}
+samples := spring.Prepare(0, 1)
+value := samples.Value(playheadSeconds)
+settleTime := samples.Duration()
+```
+
+`PreparedSpring` retains immutable position/velocity checkpoints from the same
+240 Hz Euler integrator as `Spring.Value`. Each sample replays at most 31 steps
+and preserves the original float bits, including reverse seeks and step
+boundaries. Sampling allocates nothing and supports concurrent readers.
+Preparation runs at most 2,400 steps once and uses at most 1,216 bytes of
+checkpoint tables per spring. A one-off sample can use `Spring.Value` directly.
+
+`motion.Runtime.Load` automatically prepares decoded spring-generator tracks.
+Identical physics and endpoints share a table, with signed-zero distinctions
+preserved. Each decoded program admits at most 64 KiB of checkpoint tables;
+additional unique springs use the uncached evaluator. Reduced motion keeps the
+same final value. These optimizations apply to Go and its WASM motion runtime;
+they do not change the browser's interruptible reactive spring integrator.
+
+Non-finite physics use the uncached evaluator. Spring time handling is bounded:
+NaN and negative times hold the starting value, positive infinity holds the
+target, and replay never exceeds the ten-second duration cap even if invalid
+physics produce a NaN settle time.

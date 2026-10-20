@@ -6,6 +6,8 @@ import "math"
 // Both native Go and WASM use this constant to guarantee deterministic output.
 const SpringDT = 1.0 / 240.0
 
+const springMaxTime = 10.0
+
 // Spring drives a scalar from `from` to `to` under physics.
 // Zero values are replaced by sane defaults before integration.
 //
@@ -38,16 +40,22 @@ func (s Spring) defaults() Spring {
 // No mutable state is used or modified across calls.
 //
 //   - t <= 0  → returns from exactly.
+//   - NaN t holds from; positive infinity holds to.
 //   - t >= Duration(from,to)  → returns to exactly (early-out).
 //   - otherwise: runs int(t/SpringDT) fixed-dt steps from t0 and returns x.
+//     Replay never exceeds the ten-second duration cap, even with invalid
+//     physics whose settle-time calculation produces NaN.
 func (s Spring) Value(from, to, t float64) float64 {
-	if t <= 0 {
+	if !(t > 0) {
 		return from
 	}
 
 	// Early-out: if the spring has settled, return to exactly.
-	if t >= s.Duration(from, to) {
+	if math.IsInf(t, 1) || t >= s.Duration(from, to) {
 		return to
+	}
+	if t > springMaxTime {
+		t = springMaxTime
 	}
 
 	p := s.defaults()
@@ -99,7 +107,6 @@ func (s Spring) Value(from, to, t float64) float64 {
 // Guard: if rate ≤ 0 (unreachable with Damping > 0 after defaults), the
 // 10 s cap is returned.
 func (s Spring) Duration(from, to float64) float64 {
-	const maxTime = 10.0
 	const settleTol = 1e-3
 	const safety = 1.4
 
@@ -122,7 +129,7 @@ func (s Spring) Duration(from, to float64) float64 {
 	}
 
 	if rate <= 0 {
-		return maxTime
+		return springMaxTime
 	}
 
 	var ts float64
@@ -134,8 +141,8 @@ func (s Spring) Duration(from, to float64) float64 {
 		ts = safety * (-math.Log(settleTol) / rate)
 	}
 
-	if ts > maxTime {
-		return maxTime
+	if ts > springMaxTime {
+		return springMaxTime
 	}
 	return ts
 }
