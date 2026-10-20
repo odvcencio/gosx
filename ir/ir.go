@@ -90,6 +90,13 @@ type Component struct {
 	// check (for a struct name) before the component observes the value.
 	PropsFields map[string]string
 
+	// ClientProps describes data crossing a strict island's JSON boundary.
+	// ClientTypes holds named record definitions, including recursive records.
+	// These schemas project declared fields instead of invoking JSON methods
+	// or exposing additional fields carried by a server loader's value.
+	ClientProps map[string]*ClientValueSchema `json:",omitempty"`
+	ClientTypes map[string]*ClientValueSchema `json:",omitempty"`
+
 	// PropsPaths records exact builtin leaf types for nested props reads
 	// (props.A.B[.C], added alongside PropsFields' struct-typed roots),
 	// keyed by the dot-joined path under its root ("Player.Name" ->

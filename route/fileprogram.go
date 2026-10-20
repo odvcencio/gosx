@@ -1395,14 +1395,16 @@ func (r *fileProgramRenderer) renderLocalIsland(name string, node *ir.Node, env 
 		))
 	}
 
-	props := r.componentAttrMap(node.Attrs, env)
+	var props map[string]any
 	if comp := r.components[name]; comp != nil && comp.Syntax == ir.ComponentSyntaxStrict {
 		converted, _, err := localComponentProps(comp, node.Attrs, env, gosx.Node{})
 		if err != nil {
 			r.err = fmt.Errorf("render strict island %s: %w", name, err)
 			return ""
 		}
-		props = converted
+		props = clientIslandProps(comp, prog, converted)
+	} else {
+		props = r.componentAttrMap(node.Attrs, env)
 	}
 	return gosx.RenderHTML(env.island(prog, props))
 }
@@ -2240,6 +2242,20 @@ func setStrictComponentChildren(comp *ir.Component, props map[string]any, childr
 }
 
 func strictComponentAttrValue(comp *ir.Component, attr ir.Attr, env fileRenderEnv, fieldType string) (any, error) {
+	if schema := comp.ClientProps[attr.Name]; comp.IsIsland && schema != nil {
+		if strictScalarFieldType(fieldType) {
+			plain := *comp
+			plain.ClientProps = nil
+			return strictComponentAttrValue(&plain, attr, env, fieldType)
+		}
+		if attr.Kind != ir.AttrExpr {
+			return nil, fmt.Errorf("client data %s requires an expression", fieldType)
+		}
+		if strings.TrimSpace(attr.Expr) == "nil" && (schema.Type == "slice" || schema.Type == "map") {
+			return nil, nil
+		}
+		return projectClientValue(evalFileExpr(attr.Expr, env), schema, comp.ClientTypes)
+	}
 	if fieldType == "map[string]string" && attr.Kind == ir.AttrExpr {
 		return requireStrictStringMap(evalFileExpr(attr.Expr, env))
 	}
@@ -2685,6 +2701,8 @@ func strictSpreadProps(comp *ir.Component, value any) (map[string]any, error) {
 		var proved any
 		var err error
 		switch {
+		case comp.IsIsland && comp.ClientProps[field] != nil:
+			proved, err = projectClientValue(raw, comp.ClientProps[field], comp.ClientTypes)
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
 		case fieldType == "map[string]string":
@@ -2759,6 +2777,8 @@ func strictSpreadPropsFromTypedFrame(comp *ir.Component, frame map[string]any) (
 		var proved any
 		var err error
 		switch {
+		case comp.IsIsland && comp.ClientProps[field] != nil:
+			proved, err = projectClientValue(raw, comp.ClientProps[field], comp.ClientTypes)
 		case strictScalarFieldType(fieldType):
 			proved, err = requireStrictScalarType(raw, fieldType)
 		case fieldType == "map[string]string":
