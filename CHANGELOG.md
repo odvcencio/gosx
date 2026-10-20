@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Lower VM engine-surface packages together so Go helpers, struct layouts and
+  file-local import aliases work across source files. Preserve source locations
+  in compiler diagnostics, retain callable functions from every file, and reject
+  packages that exceed the VM expression limit before IDs can wrap.
+
 - Reuse TinyGo package caches across production rebuilds with stable runtime
   source directories. Each build stages current sources, with process locks
   and temporary-directory fallback for concurrent or unavailable workspaces.
