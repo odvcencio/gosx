@@ -445,6 +445,62 @@ test("data-gosx-action button POSTs, disables during flight, re-enables on settl
   assert.equal(btn.disabled, false, "re-enabled on settle");
 });
 
+test("action buttons stay disabled until the response body and result projection finish", async (t) => {
+  for (const ok of [true, false]) {
+    await t.test(ok ? "success" : "HTTP failure", async () => {
+      let finishBody;
+      let readingBody = false;
+      const body = new Promise((resolve) => { finishBody = resolve; });
+      const response = {
+        ok,
+        status: ok ? 200 : 422,
+        json() { readingBody = true; return body; },
+      };
+      const { ctx, signals, dispatched } = runModule({ coreRequest: () => Promise.resolve(response) });
+      const button = makeEl({ "data-gosx-action-signal": "$result" }, { tag: "button" });
+      const pending = ctx.window.__gosx.actions.run(button, "POST", "/publish");
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(readingBody, true, "headers arrived and body consumption started");
+      assert.equal(button.disabled, true, "headers alone must not release the button");
+      assert.equal(dispatched.length, 0);
+      assert.equal(signals.length, 0);
+
+      finishBody({ value: "published" });
+      assert.equal(await pending, response);
+      assert.equal(button.disabled, false);
+      assert.deepEqual(signals, [{ name: "$result", payload: '"published"' }]);
+      assert.equal(dispatched.filter((event) => event.type === "gosx:action:result").length, 1);
+    });
+  }
+});
+
+test("action buttons become usable again after a request rejects", async () => {
+  let fail;
+  const request = new Promise((_, reject) => { fail = reject; });
+  const { ctx, dispatched } = runModule({ coreRequest: () => request });
+  const button = makeEl({}, { tag: "button" });
+  const pending = ctx.window.__gosx.actions.run(button, "POST", "/publish");
+  assert.equal(button.disabled, true);
+  fail(new Error("connection lost"));
+  await pending;
+  assert.equal(button.disabled, false);
+  assert.equal(dispatched.filter((event) => event.type === "gosx:action:error").length, 1);
+});
+
+test("action buttons become usable again when the response body rejects", async () => {
+  let failBody;
+  const body = new Promise((_, reject) => { failBody = reject; });
+  const response = { ok: true, status: 200, json: () => body };
+  const { ctx } = runModule({ coreRequest: () => Promise.resolve(response) });
+  const button = makeEl({}, { tag: "button" });
+  const pending = ctx.window.__gosx.actions.run(button, "POST", "/publish");
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(button.disabled, true);
+  failBody(new Error("truncated response body"));
+  assert.equal(await pending, response);
+  assert.equal(button.disabled, false);
+});
+
 test("data-gosx-action form submits via fetch and does not navigate", () => {
   const { listeners, fetches } = runModule();
   const form = makeEl({ "data-gosx-action": "" , method: "POST", action: "/api/x/agent" }, { tag: "form" });

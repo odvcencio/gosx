@@ -141,11 +141,6 @@
     if (el && "disabled" in el) el.disabled = true;
     return gosxActionRequest(url, opts)
       .then(function (r) {
-        // Re-enable on settle (success OR failure), not just on failure: a
-        // persistent submit button (composer send, comment Pin, suggest) must
-        // be usable again after a successful 2xx. Buttons that re-render away
-        // (accept/dismiss) are replaced anyway, so re-enabling is harmless.
-        if (el && "disabled" in el) el.disabled = false;
         if (!r.ok) {
           console.warn("[gosx] action failed", method, url, r.status);
           reportActionFailure(
@@ -185,7 +180,6 @@
         });
       })
       .catch(function (err) {
-        if (el && "disabled" in el) el.disabled = false;
         console.warn("[gosx] action error", method, url, err);
         dispatchActionEvent("gosx:action:error", {
           element: el,
@@ -202,6 +196,10 @@
         });
         observeAction("error", "action request failed", { method: method, url: url });
         return null;
+      })
+      .finally(function () {
+        // Hold the control through body parsing, result projection and errors.
+        if (el && "disabled" in el) el.disabled = false;
       });
   }
 
