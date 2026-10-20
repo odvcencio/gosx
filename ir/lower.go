@@ -193,6 +193,7 @@ const (
 	strictReadScalar strictReadClass = 1 << iota
 	strictReadLoopSource
 	strictReadSpreadForward
+	strictReadCallback
 )
 
 func (c strictReadClass) has(bit strictReadClass) bool { return c&bit != 0 }
@@ -807,8 +808,10 @@ func (l *lowerer) handlerInfoForAssignedExpr(varName string, rightExpr *gotreesi
 		return HandlerInfo{}, false
 	}
 	return HandlerInfo{
-		Name:       varName,
-		Statements: l.extractStatements(body),
+		Name:          varName,
+		Statements:    l.extractStatements(body),
+		HasParameters: l.functionHasParameters(rightExpr),
+		HasResults:    l.functionHasResults(rightExpr),
 	}, true
 }
 
@@ -1653,6 +1656,9 @@ func (l *lowerer) collectStrictElementReads(node *gotreesitter.Node, reads map[s
 	isSpreadForwardTag := isStrictCallee
 	for i := 0; i < int(open.NamedChildCount()); i++ {
 		attrChild := open.NamedChild(i)
+		if l.collectStrictCallbackRead(tag, attrChild, reads) {
+			continue
+		}
 		if isEach && l.nodeType(attrChild) == "jsx_attribute" {
 			nameNode := l.childByField(attrChild, "name")
 			if nameNode != nil && l.text(nameNode) == "of" {
@@ -1726,6 +1732,9 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 					fieldType := ""
 					if fieldTypeNode := l.childByField(current, "type"); fieldTypeNode != nil {
 						fieldType = strings.TrimSpace(l.text(fieldTypeNode))
+						if l.nodeType(fieldTypeNode) == "function_type" && !l.functionHasParameters(fieldTypeNode) && !l.functionHasResults(fieldTypeNode) {
+							fieldType = "func()"
+						}
 					}
 					for i := 0; i < int(current.NamedChildCount()); i++ {
 						fieldNode := current.NamedChild(i)
@@ -1787,6 +1796,12 @@ func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentNam
 		segments := strings.Split(path, ".")
 		if class.has(strictReadScalar) {
 			l.resolveStrictSelectorPath(n, componentName, propsType, segments)
+		}
+		if class.has(strictReadCallback) {
+			resolved := l.walkStrictHops("props", baseType, segments)
+			if len(segments) != 1 || resolved.failKind != strictHopOK || !islandCallbackType(resolved.leafType) {
+				l.errorf(n, "strict component %s callback props.%s must be a direct func() field", componentName, path)
+			}
 		}
 		if class.has(strictReadLoopSource) {
 			if elem := l.resolveStrictEachSourceType(n, componentName, propsType, segments); elem != "" {
@@ -3311,6 +3326,9 @@ func (l *lowerer) validateStrictServerExpressions(root NodeID, componentName, pr
 			return
 		}
 		for _, attr := range node.Attrs {
+			if attr.Kind == AttrExpr && l.strictCallbackAttribute(node.Tag, attr.Name) {
+				continue
+			}
 			if isBuiltinIf && attr.Name == "cond" && attr.Kind == AttrExpr {
 				l.validateStrictConditionalExpression(node.Span, attr.Expr, componentName, propsType, scope)
 				continue

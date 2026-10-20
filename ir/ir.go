@@ -325,8 +325,10 @@ type ComputedInfo struct {
 // HandlerInfo describes a handler function declaration.
 // Pattern: name := func() { ...statements... }
 type HandlerInfo struct {
-	Name       string   // variable name (e.g., "increment")
-	Statements []string // source text of each statement in the body
+	Name          string   // variable name (e.g., "increment")
+	Statements    []string // source text of each statement in the body
+	HasParameters bool     `json:",omitempty"`
+	HasResults    bool     `json:",omitempty"`
 }
 
 // NodeKind discriminates the kind of IR node.

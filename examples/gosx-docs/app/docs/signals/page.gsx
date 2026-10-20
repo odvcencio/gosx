@@ -8,16 +8,25 @@ type LiveSignalsProps struct {
 	Initial int
 }
 
+type SignalControlProps struct {
+	Count int
+	OnIncrement func()
+}
+
+component SignalControl(props: SignalControlProps) {
+	return <button type="button" onClick={props.OnIncrement}>
+		Count:
+		{props.Count}
+	</button>
+}
+
 //gosx:island
 component ReactiveExample(props: LiveSignalsProps) {
 	count := signal.New(props.Initial)
 	doubled := signal.Derive(func() int { return count.Get() * 2 })
 	increment := func() { count.Set(count.Get() + 1) }
 	return <section>
-		<button onClick={increment}>
-			Count:
-			{count.Get()}
-		</button>
+		<SignalControl Count={count.Get()} OnIncrement={increment} />
 		<p>
 			Doubled:
 			{doubled.Get()}

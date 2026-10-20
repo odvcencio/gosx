@@ -1014,8 +1014,12 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 			return
 		}
 
+		target := &prog.Components[targetIdx]
 		callInvalid := false
 		for _, attr := range node.Attrs {
+			if islandCallbackType(target.PropsFields[attr.Name]) {
+				continue // The exact lowerer validates static ownership and forwarding.
+			}
 			switch {
 			case attr.Kind == AttrSpread:
 				callInvalid = true
@@ -1039,7 +1043,6 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 			}
 		}
 
-		target := &prog.Components[targetIdx]
 		for _, name := range stack {
 			if name == target.Name {
 				path := append(append([]string(nil), stack...), target.Name)
@@ -1075,8 +1078,9 @@ func validateIslandExprs(prog *Program, comp *Component) []Diagnostic {
 	if compIdx, ok := checker.componentIndex[comp.Name]; ok {
 		if _, err := LowerIsland(prog, compIdx); err != nil {
 			var expansionErr *islandExpansionError
-			if errors.As(err, &expansionErr) {
-				diags = append(diags, Diagnostic{Span: comp.Span, Message: expansionErr.Error()})
+			var callbackErr *islandCallbackError
+			if errors.As(err, &expansionErr) || errors.As(err, &callbackErr) {
+				diags = append(diags, Diagnostic{Span: comp.Span, Message: err.Error()})
 			}
 		}
 	}
