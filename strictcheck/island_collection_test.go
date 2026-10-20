@@ -57,6 +57,31 @@ func TestCheckIslandCollectionUsesGoTypes(t *testing.T) {
 	}
 }
 
+func TestCheckIslandCollectionProps(t *testing.T) {
+	for _, tc := range []struct{ name, source string }{
+		{"strings", strings.Replace(strings.Replace(collectionCheckSource, `Initial string`, `Initial []string`, 1), `state.New([]string{props.Initial})`, `state.New(props.Initial)`, 1)},
+		{"records", `package app
+import state "m31labs.dev/gosx/signal"
+type Block struct { Name string; Active bool }
+type Props struct { Initial []Block }
+//gosx:island
+component Collection(props: Props) {
+ items := state.New(props.Initial)
+ clear := func() { items.Set([]Block{}) }
+ return <section><button onClick={clear}>Clear</button><ul><Each of={items.Get()} as="item"><li>{item.Name}</li></Each></ul></section>
+}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := newCollectionModule(t)
+			path := filepath.Join(dir, "page.gsx")
+			mustWrite(t, path, tc.source)
+			if err := CheckFile(context.Background(), path); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestCheckIslandGuardConditionUsesGoTypes(t *testing.T) {
 	dir := newCollectionModule(t)
 	path := filepath.Join(dir, "page.gsx")

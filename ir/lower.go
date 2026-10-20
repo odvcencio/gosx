@@ -59,20 +59,21 @@ func Lower(root *gotreesitter.Node, source []byte, lang *gotreesitter.Language) 
 }
 
 type lowerer struct {
-	src          []byte
-	srcStr       string
-	lang         *gotreesitter.Language
-	prog         *Program
-	errs         []Diagnostic
-	imports      *ImportTable // file-wide import table; see binding.go
-	strict       bool
-	strictNames  map[string]struct{}
-	legacyNames  map[string]struct{}
-	strictProps  map[string]string
-	strictReads  map[string]map[string]strictReadClass
-	structFields map[string]map[string]string
-	structTypes  map[string]map[string]string
-	strictServer bool
+	src           []byte
+	srcStr        string
+	lang          *gotreesitter.Language
+	prog          *Program
+	errs          []Diagnostic
+	imports       *ImportTable // file-wide import table; see binding.go
+	strict        bool
+	strictNames   map[string]struct{}
+	legacyNames   map[string]struct{}
+	strictProps   map[string]string
+	strictReads   map[string]map[string]strictReadClass
+	structFields  map[string]map[string]string
+	structTypes   map[string]map[string]string
+	clientStructs map[string]bool
+	strictServer  bool
 
 	scalarTypeShadows map[string]bool
 	// inIsland is true while the body of a //gosx:island component is being
@@ -194,6 +195,7 @@ const (
 	strictReadLoopSource
 	strictReadSpreadForward
 	strictReadCallback
+	strictReadState
 )
 
 func (c strictReadClass) has(bit strictReadClass) bool { return c&bit != 0 }
@@ -521,6 +523,9 @@ func (l *lowerer) analyzeBody(funcDecl, bodyNode *gotreesitter.Node) *ComponentS
 	}
 
 	propsName, propsType := l.extractProps(funcDecl)
+	if l.nodeType(funcDecl) == "gosx_component_declaration" {
+		propsName, propsType = l.extractStrictProps(funcDecl)
+	}
 	if propsName == "props" {
 		scope.SourcePropsPaths = make(map[string]string)
 		sources := []string{}
@@ -1332,6 +1337,7 @@ func (l *lowerer) collectStrictSchemas(root *gotreesitter.Node) {
 	l.strictReads = make(map[string]map[string]strictReadClass)
 	l.structFields = make(map[string]map[string]string)
 	l.structTypes = make(map[string]map[string]string)
+	l.clientStructs = make(map[string]bool)
 	l.collectFormStateSchemas()
 	l.legacyProps = make(map[string]string)
 	l.typedLegacyProps = make(map[string]string)
@@ -1575,6 +1581,7 @@ func (l *lowerer) componentDeclaredSlots(decl *gotreesitter.Node) []string {
 // whether a given <Each> is the builtin or a shadowing component call.
 func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strictReadClass {
 	reads := make(map[string]strictReadClass)
+	readClass := strictReadScalar
 	var walk func(*gotreesitter.Node)
 	walk = func(node *gotreesitter.Node) {
 		if node == nil {
@@ -1583,13 +1590,13 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strict
 		switch l.nodeType(node) {
 		case "selector_expression", "index_expression":
 			if path, ok := strictcomponent.ServerPropPath(l.text(node)); ok {
-				registerStrictPropRead(reads, path, strictReadScalar)
+				registerStrictPropRead(reads, path, readClass)
 				return
 			}
 		case "jsx_attribute_expression":
 			expr := stripGSXAttributeExpressionText(l.text(node))
 			for _, path := range strictcomponent.ServerExpressionPropPaths(expr) {
-				registerStrictPropRead(reads, path, strictReadScalar)
+				registerStrictPropRead(reads, path, readClass)
 			}
 			return
 		case "jsx_element", "jsx_self_closing_element":
@@ -1600,7 +1607,25 @@ func (l *lowerer) collectStrictPropReads(n *gotreesitter.Node) map[string]strict
 			walk(node.NamedChild(i))
 		}
 	}
-	walk(n)
+	if l.hasIslandDirective(n) && l.nodeType(n) == "gosx_component_declaration" {
+		body := l.childByField(n, "body")
+		statements := l.statementListNode(body)
+		if statements == nil {
+			statements = body
+		}
+		if statements != nil {
+			for i := 0; i < int(statements.NamedChildCount()); i++ {
+				statement := statements.NamedChild(i)
+				readClass = strictReadState
+				if l.nodeType(statement) == "return_statement" {
+					readClass = strictReadScalar
+				}
+				walk(statement)
+			}
+		}
+	} else {
+		walk(n)
+	}
 	return reads
 }
 
@@ -1723,12 +1748,14 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 			}
 			fields := make(map[string]string)
 			fieldTypes := make(map[string]string)
+			plainClientStruct := true
 			var collectFields func(*gotreesitter.Node)
 			collectFields = func(current *gotreesitter.Node) {
 				if current == nil {
 					return
 				}
 				if l.nodeType(current) == "field_declaration" {
+					namedField := false
 					fieldType := ""
 					if fieldTypeNode := l.childByField(current, "type"); fieldTypeNode != nil {
 						fieldType = strings.TrimSpace(l.text(fieldTypeNode))
@@ -1741,8 +1768,10 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 						if l.nodeType(fieldNode) != "field_identifier" {
 							continue
 						}
+						namedField = true
 						field := l.text(fieldNode)
-						if field == "" || field[0] < 'A' || field[0] > 'Z' {
+						if field == "" || !unicode.IsUpper([]rune(field)[0]) {
+							plainClientStruct = false
 							continue
 						}
 						fields[field] = field
@@ -1754,6 +1783,9 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 							fields[alias] = field
 						}
 					}
+					if !namedField {
+						plainClientStruct = false
+					}
 					return
 				}
 				for i := 0; i < int(current.NamedChildCount()); i++ {
@@ -1761,6 +1793,7 @@ func (l *lowerer) collectStructSchemas(n *gotreesitter.Node) {
 				}
 			}
 			collectFields(typeNode)
+			l.clientStructs[l.text(nameNode)] = plainClientStruct
 			if len(fields) > 0 {
 				name := l.text(nameNode)
 				l.structFields[name] = fields
@@ -1794,6 +1827,12 @@ func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentNam
 	for _, path := range paths {
 		class := reads[path]
 		segments := strings.Split(path, ".")
+		if class.has(strictReadState) {
+			resolved := l.walkStrictHops("props", baseType, segments)
+			if resolved.failKind != strictHopOK {
+				l.errorf(n, "%s", strictHopMessage(componentName, resolved))
+			}
+		}
 		if class.has(strictReadScalar) {
 			l.resolveStrictSelectorPath(n, componentName, propsType, segments)
 		}
@@ -1804,6 +1843,9 @@ func (l *lowerer) validateStrictRenderedProps(n *gotreesitter.Node, componentNam
 			}
 		}
 		if class.has(strictReadLoopSource) {
+			if l.hasIslandDirective(n) {
+				continue // Island JSON collections are checked by collectClientProps.
+			}
 			if elem := l.resolveStrictEachSourceType(n, componentName, propsType, segments); elem != "" {
 				if l.strictEachElems == nil {
 					l.strictEachElems = make(map[string]map[string]string)
@@ -3096,6 +3138,11 @@ func (l *lowerer) lowerStrictComponentDecl(n *gotreesitter.Node) {
 
 	if !isIsland && !isEngine {
 		comp.PropsSlices = l.validateStrictServerExpressions(comp.Root, componentName, propsType)
+	}
+	if isIsland {
+		if err := l.collectClientProps(&comp); err != nil {
+			l.errorf(n, "%v", err)
+		}
 	}
 	l.prog.Components = append(l.prog.Components, comp)
 }

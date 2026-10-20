@@ -5,9 +5,11 @@ import (
 	"m31labs.dev/gosx/signal"
 )
 
+type CollectionProps struct { Initial []string }
+
 //gosx:island
-component Collection() {
-	items := signal.New([]string{"GoSX"})
+component Collection(props: CollectionProps) {
+	items := signal.New(props.Initial)
 	draft := signal.New("")
 	edit := func() { draft.Set(value) }
 	focusDraft := func() { browser.Focus("#collection-draft") }
