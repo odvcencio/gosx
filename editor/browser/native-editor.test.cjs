@@ -7,6 +7,14 @@ const {after, before, test} = require('node:test');
 // an existing Playwright installation; this module needs no npm dependencies.
 const modulePath = process.env.GOSX_PLAYWRIGHT_MODULE;
 let browser, script, intelligenceScript;
+const readAsset = async name => {
+  try {
+    return await readFile(path.join(__dirname, '../assets', name + '.js'), 'utf8');
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error;
+    return readFile(path.join(__dirname, '../assets', name + '.ts'), 'utf8');
+  }
+};
 before(async () => {
   if (!modulePath) return;
   const {chromium} = require(modulePath);
@@ -14,8 +22,8 @@ before(async () => {
     executablePath: process.env.GOSX_BROWSER_EXECUTABLE || undefined,
     headless: true,
   });
-  script = await readFile(path.join(__dirname, '../assets/native-editor.js'), 'utf8');
-  intelligenceScript = await readFile(path.join(__dirname, '../assets/code-intelligence.js'), 'utf8');
+  script = await readAsset('native-editor');
+  intelligenceScript = await readAsset('code-intelligence');
 });
 after(async () => { await browser?.close(); });
 
@@ -28,15 +36,26 @@ async function mount(t, source, options = {}) {
   page.on('pageerror', error => errors.push(error.message));
   t.after(() => assert.deepEqual(errors, []));
   await page.setContent(`<!doctype html><style>
-    textarea { width: 600px; height: 300px; font: 16px/24px monospace; }
+    .editor-source-shell { position: relative; width: 600px; height: 300px; }
+    textarea, .editor-highlight-layer { position: absolute; inset: 0; width: 600px; height: 300px; margin: 0; border: 0; box-sizing: border-box; padding: 8px; font: 16px/24px monospace; white-space: pre-wrap; overflow-wrap: break-word; overflow: auto; }
+    textarea { z-index: 1; }
+    .editor-line-numbers { height: 300px; overflow: hidden; box-sizing: border-box; padding: 8px 0; }
+    .editor-line-numbers span { display: block; height: 24px; }
   </style><main class="editor-page-native"><form data-editor-native="true"
     data-editor-surface="${options.surface || 'code'}" data-code-tab-width="${options.width || 2}"
     ${options.tabs ? '' : 'data-code-insert-spaces'} data-code-highlight-source="external">
-    <textarea id="editor-content" name="content">${escape(source)}</textarea>
-    <pre id="editor-highlight-content"><span class="syntax-initial">${escape(source)}</span></pre>
+    <div class="editor-source-shell"><div id="editor-line-numbers" class="editor-line-numbers"></div>
+    <pre class="editor-highlight-layer"><code id="editor-highlight-content"><span class="syntax-initial">${escape(source)}</span></code></pre>
+    <textarea id="editor-content" name="content">${escape(source)}</textarea></div>
     <div><span id="editor-save-status"></span></div>
+    <button type="button" data-code-command="goto">Go to line</button>
+    <div data-code-goto-panel hidden><input data-code-goto="query" aria-label="Line and column">
+      <button type="button" data-code-goto="go">Go</button><button type="button" data-code-goto="close">Close go to line</button>
+      <span data-code-goto="status" aria-live="polite"></span>
+    </div>
     <div class="editor-code-find" hidden><input data-code-find="query"><input data-code-find="replacement">
       <span class="editor-code-find-status"></span>
+      <button type="button" data-code-find-action="replace">Replace</button>
       <button type="button" data-code-find-action="close">Close</button>
     </div>
   </form></main>`);
@@ -53,6 +72,20 @@ async function select(textarea, start, end = start, direction = 'forward') {
 }
 async function snapshot(textarea) {
   return textarea.evaluate(node => ({value: node.value, start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection}));
+}
+async function caretVisible(textarea) {
+  return textarea.evaluate(node => {
+    const walker = document.createTreeWalker(document.querySelector('#editor-highlight-content'), NodeFilter.SHOW_TEXT);
+    let offset = node.selectionStart, text;
+    while ((text = walker.nextNode())) {
+      if (offset >= text.length) { offset -= text.length; continue; }
+      const range = document.createRange();
+      range.setStart(text, offset); range.setEnd(text, offset + 1);
+      const rect = range.getBoundingClientRect(), view = node.getBoundingClientRect();
+      return rect.top >= view.top && rect.bottom <= view.bottom && rect.left >= view.left && rect.right <= view.right;
+    }
+    return false;
+  });
 }
 const browserTest = (name, run) => test(name, {skip: !modulePath && 'Set GOSX_PLAYWRIGHT_MODULE to run browser contracts'}, run);
 
@@ -151,6 +184,134 @@ browserTest('Replace uses platform conventions and Mac Control-H/Command-H stay 
       return event.defaultPrevented;
     }));
     assert.deepEqual(prevented, [false, false]);
+  }
+});
+
+browserTest('Find keeps typing focus, navigates both directions and wraps; Replace edits the selected match with local Undo', async t => {
+  const {page, textarea} = await mount(t, 'alpha beta alpha');
+  await page.keyboard.press('Control+f');
+  const query = page.locator('[data-code-find="query"]');
+  for (const character of 'alpha') {
+    await page.keyboard.type(character);
+    assert.equal(await query.evaluate(node => document.activeElement === node), true, 'typing stole search focus');
+  }
+  assert.equal(await query.inputValue(), 'alpha');
+  assert.equal(await textarea.inputValue(), 'alpha beta alpha', 'search typing edited the source');
+  assert.equal(await page.locator('.editor-code-find-status').textContent(), '1 / 2');
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [11, 16]);
+  assert.equal(await query.evaluate(node => document.activeElement === node), true);
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [0, 5]);
+  await page.keyboard.press('Shift+Enter');
+  assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [11, 16]);
+  await textarea.focus();
+  await page.keyboard.press('F3');
+  assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [0, 5]);
+  await page.keyboard.press('Shift+F3');
+  assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [11, 16]);
+  await select(textarea, 8);
+  await page.keyboard.press('Shift+F3');
+  assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [0, 5]);
+  const replacement = page.locator('[data-code-find="replacement"]');
+  await replacement.fill('omega');
+  await page.keyboard.press('Enter');
+  assert.equal(await textarea.inputValue(), 'omega beta alpha', 'Replace skipped the selected occurrence');
+  assert.equal(await replacement.evaluate(node => document.activeElement === node), true);
+  await page.keyboard.press('Enter');
+  assert.equal(await textarea.inputValue(), 'omega beta omega');
+  await textarea.focus();
+  await page.keyboard.press('Control+z');
+  assert.equal(await textarea.inputValue(), 'omega beta alpha', 'Undo did not restore exactly one replacement');
+  for (const field of [query, replacement]) {
+    const prevented = await field.evaluate(node => {
+      const event = new KeyboardEvent('keydown', {key: 'Enter', isComposing: true, bubbles: true, cancelable: true});
+      node.dispatchEvent(event);
+      return event.defaultPrevented;
+    });
+    assert.equal(prevented, false, 'search command intercepted IME confirmation');
+  }
+  assert.equal(await textarea.inputValue(), 'omega beta alpha');
+});
+
+browserTest('Go to line uses scalar columns, reveals distant and wrapped targets, validates input and restores Escape checkpoint', async t => {
+  const lines = ['// 🎵 café', 'a🎵bc', ...Array.from({length: 160}, (_, i) => `line ${i}`), 'x'.repeat(2000)];
+  const source = lines.join('\n');
+  for (const platform of ['Linux x86_64', 'Win32', 'MacIntel']) {
+    const {page, textarea} = await mount(t, source, {platform});
+    await page.keyboard.press('Control+g');
+    const query = page.locator('[data-code-goto="query"]');
+    const panel = page.locator('[data-code-goto-panel]');
+    assert.equal(await query.inputValue(), '1:1');
+    assert.equal(await query.evaluate(node => document.activeElement === node), true, platform);
+    await query.fill('2:4');
+    await page.keyboard.press('Enter');
+    const unicodeOffset = lines[0].length + 1 + 4;
+    assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [unicodeOffset, unicodeOffset]);
+    assert.equal(await panel.isHidden(), true);
+    assert.equal(await textarea.evaluate(node => document.activeElement === node), true);
+    await page.keyboard.press('Control+g');
+    await query.fill('2:999');
+    await page.keyboard.press('Enter');
+    assert.equal((await snapshot(textarea)).start, lines[0].length + 1 + lines[1].length, 'columns beyond EOL must clamp');
+    await page.keyboard.press('Control+g');
+    for (const invalid of ['0', '999', '2:0', '-1', '1.5', '2:1.5', 'wat']) {
+      await query.fill(invalid); await page.keyboard.press('Enter');
+      assert.equal(await query.getAttribute('aria-invalid'), 'true', invalid);
+      assert.notEqual(await page.locator('[data-code-goto="status"]').textContent(), '');
+      assert.equal(await panel.isVisible(), true);
+      assert.equal(await textarea.inputValue(), source);
+    }
+    await query.fill('150'); await page.keyboard.press('Enter');
+    const distant = await textarea.evaluate(node => node.scrollTop);
+    assert.ok(distant > 1000, 'distant line stayed outside the editor viewport');
+    assert.equal(await caretVisible(textarea), true, 'distant line caret is outside the visible text area');
+    await page.keyboard.press('Control+g');
+    await query.fill(`${lines.length}:1800`); await page.keyboard.press('Enter');
+    assert.ok(await textarea.evaluate(node => node.scrollTop) > distant + 400, 'wrapped long-line column was not revealed');
+    assert.equal(await caretVisible(textarea), true, 'wrapped target caret is outside the visible text area');
+    const synchronized = await textarea.evaluate(node => ({
+      textarea: node.scrollTop, layer: document.querySelector('.editor-highlight-layer').scrollTop,
+      gutter: document.querySelector('#editor-line-numbers').scrollTop,
+    }));
+    assert.equal(synchronized.layer, synchronized.textarea);
+    assert.equal(synchronized.gutter, synchronized.textarea);
+    await textarea.evaluate(async node => {
+      node.style.whiteSpace = 'pre';
+      document.querySelector('.editor-highlight-layer').style.whiteSpace = 'pre';
+      window.dispatchEvent(new Event('resize'));
+      await new Promise(requestAnimationFrame);
+    });
+    await page.keyboard.press('Control+g');
+    await query.fill(`${lines.length}:1800`); await page.keyboard.press('Enter');
+    assert.ok(await textarea.evaluate(node => node.scrollLeft) > 1000, 'unwrapped long-line target did not scroll horizontally');
+    assert.equal(await caretVisible(textarea), true, 'horizontal target caret is outside the visible text area');
+    await select(textarea, 4, 12, 'backward');
+    const original = await textarea.evaluate(node => {
+      node.scrollTop = 240; node.scrollLeft = 300;
+      node.dispatchEvent(new Event('scroll'));
+      return {start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection, top: node.scrollTop, left: node.scrollLeft};
+    });
+    await page.keyboard.press('Control+g');
+    await query.fill('150:4');
+    const imePrevented = await query.evaluate(node => {
+      const event = new KeyboardEvent('keydown', {key: 'Enter', isComposing: true, bubbles: true, cancelable: true});
+      node.dispatchEvent(event); return event.defaultPrevented;
+    });
+    assert.equal(imePrevented, false, 'Go to line intercepted IME confirmation');
+    assert.equal(await panel.isVisible(), true);
+    await page.keyboard.press('Escape');
+    assert.deepEqual(await textarea.evaluate(node => ({start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection, top: node.scrollTop, left: node.scrollLeft})), original);
+    assert.equal(await panel.isHidden(), true);
+    assert.equal(await textarea.inputValue(), source);
+    if (platform === 'MacIntel') {
+      const prevented = await textarea.evaluate(node => {
+        const event = new KeyboardEvent('keydown', {key: 'g', metaKey: true, bubbles: true, cancelable: true});
+        node.dispatchEvent(event);
+        return event.defaultPrevented;
+      });
+      assert.equal(prevented, false, 'Mac Command-G must remain native');
+    }
   }
 });
 
@@ -280,6 +441,8 @@ browserTest('retained-form morph restores mounted presentation and analysis with
       form: document.querySelector('form'), textarea: document.querySelector('textarea'),
     };
     window.__providerCalls = 0;
+    window.__analysisEpoch = 0;
+    document.querySelector('form').addEventListener('gosx:code-analysis', () => window.__analysisEpoch++);
     window.fetch = async () => {
       window.__providerCalls++;
       return new Response(JSON.stringify({highlights: [{startByte: 0, endByte: 2, capture: 'current'}]}), {status: 200});
@@ -313,12 +476,13 @@ browserTest('retained-form morph restores mounted presentation and analysis with
       const refs = window.__retainedEditor;
       return refs.page === document.querySelector('.editor-page-native') && refs.form === document.querySelector('form') && refs.textarea === document.querySelector('textarea');
     }), true);
+    const epoch = await page.evaluate(() => window.__analysisEpoch);
     await select(textarea, 0);
     await page.keyboard.press('Tab');
     assert.equal(await textarea.inputValue(), '  ' + source);
     await page.keyboard.press('Control+z');
     assert.equal(await textarea.inputValue(), source, 'morph duplicated keyboard handlers');
-    await page.waitForFunction(() => document.querySelector('form').dataset.codeIntelligenceLane === 'server');
+    await page.waitForFunction(epoch => window.__analysisEpoch > epoch, epoch);
   }
 
   // Attribute repair converges: it must not keep repainting or refetching
