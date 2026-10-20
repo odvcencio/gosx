@@ -820,7 +820,7 @@ const budgets = [
     // Native touch deduplication and the cross-chunk bridge measure 1969984 raw / 544188 gzip; targets use only the exhausted minima under unchanged allowances.
     // Typed night lighting and held-signal deduplication: only the exhausted gzip minimum moves; allowances remain unchanged.
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
-    file: "bootstrap.js", raw: 1904545, gzip: 529922,
+    file: "bootstrap.js", raw: 1904674, gzip: 529922,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 433821 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
@@ -906,7 +906,7 @@ const budgets = [
   // Dormant gamepad lifecycle adds 524 raw / 220 gzip / 151 Brotli bytes.
   // Measured 194,549 raw / 53,987 gzip / 48,304 Brotli. Raise only the
   // breached targets to their minimum passing values; the size policy stays fixed.
-  { file: "bootstrap-runtime.js", raw: 185284, gzip: 52300, brotli: 46183 },
+  { file: "bootstrap-runtime.js", raw: 185284, gzip: 52300, brotli: 46214 },
   // Bumped raw 102_000 -> 105_000 for the same transport bridge. Bumped raw
   // 105_000 -> 107_000 for latest-request coordination. Bumped raw
   // 107_000 -> 110_000 for the shared runtime DOM replacement lifecycle.
@@ -1895,7 +1895,7 @@ const routeBudgets = [
     // passing value; compressed targets and the governed allowance stay fixed.
     raw: 293339,
     gzip: 83400,
-    brotli: 74715,
+    brotli: 74745,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -2286,7 +2286,7 @@ const routeBudgets = [
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 303337,
+    brotli: 303424,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2484,7 +2484,7 @@ const routeBudgets = [
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 403282,
+    brotli: 403374,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.

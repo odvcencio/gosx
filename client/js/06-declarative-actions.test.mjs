@@ -308,8 +308,15 @@ test("data-gosx-toggle-target owns attribute and aria state without page JS", ()
   assert.equal(trigger.getAttribute("aria-expanded"), "false");
 });
 
-test("data-gosx-copy-button copies code and announces the result", async () => {
+test("copy controls work before runtime startup and recover readiness after navigation", async () => {
   const copied = [];
+  const root = makeEl({ "data-gosx-runtime-ready": "false" }, { tag: "html" });
+  const setAttribute = root.setAttribute.bind(root);
+  let readinessWrites = 0;
+  root.setAttribute = (name, value) => {
+    if (name === "data-gosx-copy-ready") readinessWrites++;
+    setAttribute(name, value);
+  };
   const code = { textContent: "fmt.Println(\"Hello, GoSX\")" };
   const status = { textContent: "" };
   const button = makeEl({
@@ -320,13 +327,17 @@ test("data-gosx-copy-button copies code and announces the result", async () => {
     children: [button],
     querySelector: (selector) => selector === "pre code" ? code : status,
   });
-  const { listeners } = runModule({
+  const { listeners, ctx } = runModule({
+    documentElement: root,
+    noSharedSignalWriter: true,
     clipboard: (text) => {
       copied.push(text);
       return Promise.resolve();
     },
   });
 
+  assert.equal(root.getAttribute("data-gosx-copy-ready"), "true");
+  assert.equal(root.getAttribute("data-gosx-runtime-ready"), "false");
   const prevented = fire(listeners.click, button);
   assert.equal(prevented, true);
   assert.equal(button.disabled, true);
@@ -335,6 +346,13 @@ test("data-gosx-copy-button copies code and announces the result", async () => {
   assert.equal(button.disabled, false);
   assert.equal(button.textContent, "Copied");
   assert.equal(status.textContent, "Copied code to the clipboard.");
+  root.removeAttribute("data-gosx-copy-ready");
+  listeners["gosx:navigate"]();
+  assert.equal(root.getAttribute("data-gosx-copy-ready"), "true");
+  assert.equal(root.getAttribute("data-gosx-runtime-ready"), "false");
+  ctx.window.__gosx.actions.refreshBindings();
+  ctx.window.__gosx.actions.refreshBindings();
+  assert.equal(readinessWrites, 2, "steady refreshes do not repeatedly mutate the root");
 });
 
 test("data-gosx-copy-button falls back to a temporary textarea", async () => {

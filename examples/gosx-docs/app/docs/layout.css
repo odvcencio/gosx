@@ -220,10 +220,6 @@
   display: none;
 }
 
-:global(html[data-gosx-runtime-ready="true"] .docs-content .code-sample__copy) {
-  display: inline-flex;
-}
-
 :global(html[data-gosx-copy-ready="true"] .docs-content .code-sample__copy) {
   display: inline-flex;
 }
