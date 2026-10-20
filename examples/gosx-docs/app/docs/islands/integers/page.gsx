@@ -36,6 +36,7 @@ func Page() Node {
 		<p>The server supplies Initial as int64. The shared island VM preserves signed 64-bit integers through nested JSON props, literals, signals, integer arithmetic, comparisons, and text rendering. Putting a number into a float explicitly uses floating-point precision.</p>
 		<p>Integer arithmetic wraps at signed 64-bit limits. Integer division truncates toward zero; the VM returns zero for division or remainder by zero. Unsigned values above the signed 64-bit range are outside this exact-integer contract.</p>
 		<p>The scalar AOT path retains its checked 32-bit integer contract. This int64 example uses the shared VM. The framework preserves the original props JSON at the browser handoff when an integer exceeds JavaScript's safe range; ordinary props retain one snapshot.</p>
+		<p>Server arithmetic starts at <output id="island-integer-server-value">{data.integerProps.Initial + 0}</output> and adds one to get <output id="island-integer-server-next">{data.integerProps.Initial + 1}</output>. The file route interpreter uses signed 64-bit arithmetic for signed integer operands and unsigned 64-bit arithmetic when either integer operand is unsigned. Narrow integer kinds are promoted to that common width; an operation with a floating-point operand keeps floating-point behavior.</p>
 		<h2 id="integer-source">Source</h2>
 		{CodeBlock("gosx", data.integerSample)}
 		<a href="/docs/islands/collections/">Collection editor</a>
