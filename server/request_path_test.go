@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -249,6 +250,31 @@ func TestISRColdStartRunsOneRegeneration(t *testing.T) {
 	}
 }
 
+func TestISRColdStartReusesArtifactWrittenBeforeLeaseAcquisition(t *testing.T) {
+	root := t.TempDir()
+	store := NewInMemoryISRStore()
+	artifact := isrArtifact{bundleRoot: root, staticDir: root, store: store,
+		page: isrRoute{Path: "/", File: "index.html"}}
+	const cached = "already generated"
+	if _, err := store.WriteArtifact(root, "/", "index.html", []byte(cached)); err != nil {
+		t.Fatal(err)
+	}
+	app := New()
+	app.EnableISR()
+	renders := 0
+	_, mode, ok := app.regenerateISRArtifact(context.Background(), artifact, func(w http.ResponseWriter, _ *http.Request, _ bool) {
+		renders++
+		_, _ = w.Write([]byte("duplicate render"))
+	})
+	if !ok || mode != "HIT" || renders != 0 {
+		t.Fatalf("expected the completed artifact without rendering, got ok=%t mode=%q renders=%d", ok, mode, renders)
+	}
+	stored, err := store.ReadArtifact(root, "/", "index.html")
+	if err != nil || string(stored.Body) != cached {
+		t.Fatalf("completed artifact changed: body=%q err=%v", stored.Body, err)
+	}
+}
+
 // TestISRWriteArtifactUsesUniqueTempName proves that two concurrent writers do
 // not share one temporary path. A shared name lets one writer truncate the file
 // that the other renames.
@@ -478,9 +504,8 @@ func TestEnableCSPSetsHeadersAndNonce(t *testing.T) {
 	}
 }
 
-// TestSecurityPolicyStaysOptIn proves that the default app emits no CSP. A
-// default policy would break apps that already ship inline scripts.
-func TestSecurityPolicyStaysOptIn(t *testing.T) {
+// TestDefaultFramingPolicy preserves inline scripts while restricting framing.
+func TestDefaultFramingPolicy(t *testing.T) {
 	app := New()
 	app.Page("GET /plain", func(ctx *Context) gosx.Node {
 		return gosx.Text("plain")
@@ -488,8 +513,8 @@ func TestSecurityPolicyStaysOptIn(t *testing.T) {
 	handler := app.Build()
 	res := httptest.NewRecorder()
 	handler.ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/plain", nil))
-	if got := res.Header().Get("Content-Security-Policy"); got != "" {
-		t.Fatalf("expected no default policy, got %q", got)
+	if got := res.Header().Get("Content-Security-Policy"); got != "frame-ancestors 'self'" {
+		t.Fatalf("unexpected default policy %q", got)
 	}
 }
 
@@ -535,6 +560,46 @@ func TestSharedCacheablePageDropsNoncePolicy(t *testing.T) {
 	}
 	if strings.Contains(res.Body.String(), "nonce=") {
 		t.Fatalf("expected no nonce attribute in a shared-cacheable body")
+	}
+}
+
+func TestSharedCacheableAppStripsNonceBakedByHandlerScripts(t *testing.T) {
+	app := New()
+	app.EnableSecurityPolicy(SecurityPolicy{
+		ContentSecurityPolicy: "default-src 'self' 'unsafe-inline'; script-src 'nonce-{nonce}'",
+	})
+	var issuedNonce string
+	app.Page("GET /shared-authored-scripts", func(ctx *Context) gosx.Node {
+		issuedNonce = ctx.Nonce()
+		ctx.CachePublic(time.Minute)
+		ctx.AddHead(ctx.InlineScript("window.appHeadScript = true"))
+		return gosx.El("main",
+			ctx.InlineScript("window.appBodyScript = true"),
+			ctx.JSONScript("app-json", map[string]string{"status": "shared"}),
+		)
+	})
+
+	res := httptest.NewRecorder()
+	app.Build().ServeHTTP(res, httptest.NewRequest(http.MethodGet, "/shared-authored-scripts", nil))
+
+	if issuedNonce == "" {
+		t.Fatal("expected the handler to observe a request nonce before CachePublic")
+	}
+	if got, want := res.Header().Get("Content-Security-Policy"), "default-src 'self' 'unsafe-inline'; script-src 'none'"; got != want {
+		t.Fatalf("shared policy = %q, want %q", got, want)
+	}
+	body := res.Body.String()
+	if strings.Contains(body, issuedNonce) || strings.Contains(body, "nonce=") {
+		t.Fatalf("shared body retained request nonce %q: %s", issuedNonce, body)
+	}
+	for _, want := range []string{
+		"window.appHeadScript = true",
+		"window.appBodyScript = true",
+		`id="app-json"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("shared body missing %q: %s", want, body)
+		}
 	}
 }
 

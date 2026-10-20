@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	"m31labs.dev/gosx/internal/basepath"
+	"m31labs.dev/gosx/session"
 )
 
 const isrBypassHeader = "X-GoSX-ISR-Revalidate"
@@ -30,8 +32,9 @@ type isrConfig struct {
 }
 
 type isrManifest struct {
-	Pages  []string   `json:"pages"`
-	Routes []isrRoute `json:"routes,omitempty"`
+	BasePath string     `json:"basePath,omitempty"`
+	Pages    []string   `json:"pages"`
+	Routes   []isrRoute `json:"routes,omitempty"`
 }
 
 type isrRoute struct {
@@ -94,8 +97,30 @@ func (a *App) maybeServeISR(w http.ResponseWriter, r *http.Request, dispatch fun
 	if !ok {
 		return false
 	}
-	a.isr.serve(w, r, artifact, mode)
+	a.isr.serve(w, r, artifact, mode, !a.compressionOff)
 	return true
+}
+
+// isrOriginRequest maps an exported trailing-slash URL back to its origin
+// route when the request bypasses static HTML or an artifact cannot be served.
+func (a *App) isrOriginRequest(r *http.Request) *http.Request {
+	if a == nil || a.isr == nil || r == nil || r.URL == nil ||
+		(r.Method != http.MethodGet && r.Method != http.MethodHead) ||
+		r.URL.Path == "/" || !strings.HasSuffix(r.URL.Path, "/") {
+		return r
+	}
+	if !a.isr.load(a.effectiveRuntimeRoot()) {
+		return r
+	}
+	artifact, ok := a.isr.artifact(r.URL.Path)
+	if !ok || artifact.page.Path == r.URL.Path {
+		return r
+	}
+	destination := artifact.page.Path
+	if r.URL.RawQuery != "" {
+		destination += "?" + r.URL.RawQuery
+	}
+	return rewriteRequest(r, destination)
 }
 
 func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWriter, *http.Request, bool)) bool {
@@ -106,6 +131,11 @@ func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWrite
 		return false
 	}
 	if strings.TrimSpace(r.Header.Get(isrBypassHeader)) != "" {
+		return false
+	}
+	// Static HTML is the anonymous representation. Session visitors must
+	// render their own token, flash state and identity through the origin.
+	if r.Header.Get("Cookie") != "" || r.Header.Get("Authorization") != "" || session.HasState(r) {
 		return false
 	}
 	return acceptsHTML(r)
@@ -169,6 +199,15 @@ func (a *App) regenerateISRArtifact(ctx context.Context, artifact isrArtifact, d
 			_ = lease.Release()
 		}
 	}()
+
+	// Another request may have finished between the initial cache lookup and
+	// this lease acquisition. Reuse its artifact instead of rendering twice.
+	if info, err := artifact.store.StatArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File); err == nil {
+		artifact.modTime = info.ModTime
+		return a.isrServeArtifact(artifact, dispatch)
+	} else if !errors.Is(err, ErrISRArtifactNotFound) {
+		return isrArtifact{}, "", false
+	}
 
 	started := time.Now()
 	info, err := a.isr.regenerate(artifact, a.Revalidator(), dispatch)
@@ -299,15 +338,27 @@ func readISRManifest(manifestPath string) (isrManifest, error) {
 }
 
 func routesForISRManifest(manifest isrManifest) []isrRoute {
+	prefix, _ := basepath.Normalize(manifest.BasePath)
+	internalPath := func(public string) string {
+		if prefix != "" && (public == prefix || strings.HasPrefix(public, prefix+"/")) {
+			public = strings.TrimPrefix(public, prefix)
+			if public == "" {
+				return "/"
+			}
+		}
+		return public
+	}
 	if len(manifest.Routes) > 0 {
-		routes := make([]isrRoute, 0, len(manifest.Routes))
-		routes = append(routes, manifest.Routes...)
+		routes := append([]isrRoute(nil), manifest.Routes...)
+		for i := range routes {
+			routes[i].Path = internalPath(routes[i].Path)
+		}
 		return routes
 	}
 	routes := make([]isrRoute, 0, len(manifest.Pages))
 	for _, pagePath := range manifest.Pages {
 		routes = append(routes, isrRoute{
-			Path: pagePath,
+			Path: internalPath(pagePath),
 			File: buildmanifest.ExportFilePath(pagePath),
 		})
 	}
@@ -476,6 +527,9 @@ func (c *isrConfig) regenerate(artifact isrArtifact, revalidator *Revalidator, d
 	if result.StatusCode != http.StatusOK {
 		return ISRArtifactInfo{}, fmt.Errorf("isr regenerate %s: unexpected status %d", artifact.page.Path, result.StatusCode)
 	}
+	if len(result.Header.Values("Set-Cookie")) > 0 || responseDisallowsSharedCache(result.Header) {
+		return ISRArtifactInfo{}, fmt.Errorf("isr regenerate %s: response is private", artifact.page.Path)
+	}
 
 	info, err := artifact.store.WriteArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File, rec.Body.Bytes())
 	if err != nil {
@@ -483,6 +537,19 @@ func (c *isrConfig) regenerate(artifact isrArtifact, revalidator *Revalidator, d
 	}
 	c.updateState(artifact, info.ModTime, revalidator)
 	return info, nil
+}
+
+func responseDisallowsSharedCache(headers http.Header) bool {
+	for _, value := range headers.Values("Cache-Control") {
+		for _, directive := range strings.Split(value, ",") {
+			name, _, _ := strings.Cut(strings.TrimSpace(directive), "=")
+			switch strings.ToLower(name) {
+			case "private", "no-store", "no-cache":
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (c *isrConfig) updateState(artifact isrArtifact, generatedAt time.Time, revalidator *Revalidator) {
@@ -502,11 +569,29 @@ func (c *isrConfig) updateState(artifact isrArtifact, generatedAt time.Time, rev
 	_ = artifact.store.SaveState(artifact.bundleRoot, artifact.page.Path, state)
 }
 
-func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrArtifact, mode string) {
+func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrArtifact, mode string, compression bool) {
 	if w == nil || r == nil {
 		return
 	}
 	data := artifact.body
+	encoding := ""
+	// A stale body is already a snapshot. Compress that snapshot dynamically
+	// rather than loading a variant that a background refresh could replace.
+	if compression && data == nil && canServeCompressedFile(r) && w.Header().Get("Content-Encoding") == "" {
+		if store, ok := artifact.store.(ISRCompressedStore); ok {
+			for _, candidate := range []string{"br", "gzip"} {
+				if !requestAcceptsEncoding(r, candidate) {
+					continue
+				}
+				stored, err := store.ReadCompressedArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File, candidate, artifact.modTime)
+				if err == nil {
+					data = stored.Body
+					encoding = candidate
+					break
+				}
+			}
+		}
+	}
 	if data == nil {
 		stored, err := artifact.store.ReadArtifact(artifact.staticDir, artifact.page.Path, artifact.page.File)
 		if err != nil {
@@ -523,6 +608,13 @@ func (c *isrConfig) serve(w http.ResponseWriter, r *http.Request, artifact isrAr
 	}
 	w.Header().Set("Cache-Control", cacheControl)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if compression {
+		addAcceptEncodingVary(w.Header())
+	}
+	if encoding != "" {
+		weakenETag(w.Header())
+		w = &encodedContentWriter{ResponseWriter: w, encoding: encoding}
+	}
 	if mode != "" {
 		w.Header().Set("X-GoSX-ISR", mode)
 	}

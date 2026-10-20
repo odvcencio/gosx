@@ -1,0 +1,10 @@
+node := ctx.TextBlock(server.TextBlockProps{
+	Tag:        "p",
+	Text:       article.Summary,
+	Font:       "400 16px Inter",
+	Lang:       "en",
+	MaxWidth:   520,
+	LineHeight: 24,
+	MaxLines:   3,
+	Overflow:   textlayout.OverflowEllipsis,
+})

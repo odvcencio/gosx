@@ -1,0 +1,199 @@
+"use strict";
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  createBoardWebGPUHarness, createWebGLRendererForPost, makePointsBundle,
+  createContext, FakeElement, runScript, freshFeatureBundleSource, flushAsyncWork, bootstrapRuntimeSource, installManualRAF, flushSceneInitialFrameBoundary,
+} = require("./runtime-test-harness.js");
+
+// A normalized ocean record (normalizeSceneOcean applies these defaults).
+function oceanRecord(extra) {
+  return Object.assign({ level: 0, windDirection: 0, waveHeight: 0.8, waveLength: 18, choppiness: 0.6, speed: 1,
+    deepColor: "#03141f", shallowColor: "#1f6f78", scatterColor: "#2fa58f", foamColor: "#e9eef0",
+    clarity: 4, roughness: 0.06, foam: 0.6, surf: 0.5, extent: 4000, bathymetry: null }, extra || {});
+}
+
+test("ocean uniform block packs 35 vec4s with a Gerstner table sized by significant height", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const env = { sky: { mode: "physical", sunDirection: { x: 0, y: 0.1, z: -1 } } };
+  const out = api.sceneOceanUniformData(oceanRecord({ waveHeight: 2 }), env, { x: 1, y: 2, z: 3 }, 5, true, "high");
+  assert.equal(out.length, 140, "both ocean passes allocate 140 floats");
+  assert.deepEqual(Array.from(out.slice(28, 32)), [1, 2, 3, 1], "camera and linear output");
+  assert.equal(out[27], 6); assert.equal(out[32], 192); assert.equal(out[33], 256);
+  let sumA2 = 0;
+  for (let i = 0; i < 6; i++) sumA2 += out[36 + i * 8 + 4] ** 2;
+  assert.ok(Math.abs(sumA2 - 4 / 8) < 1e-5, `sum(a^2) = Hs^2/8, got ${sumA2}`);
+  for (let i = 0; i < 6; i++) {
+    const k = out[36 + i * 8 + 2], qa = out[36 + i * 8 + 5];
+    assert.ok(Math.abs(out[36 + i * 8 + 3] - Math.sqrt(9.81 * k)) < 1e-4, "deep-water dispersion");
+    assert.ok(k * qa * 6 <= 0.6 + 1e-6, "Gerstner steepness never loops");
+  }
+  assert.equal(out[84 + 23], 4, "the physical sky block rides along");
+  assert.ok(out[132] > 0 && out[132] > out[134], "a low sun is warm");
+  assert.ok(out[128] > 0 && out[130] > 0, "ambient sky light is positive");
+  const low = api.sceneOceanUniformData(oceanRecord(), {}, {}, 0, false, "low");
+  assert.deepEqual([low[27], low[32], low[33]], [4, 96, 128], "low quality: four waves and a quarter of the grid");
+  assert.deepEqual(Array.from(low.slice(132, 135)), [0, 0, 0], "no physical sky: no sun glint");
+  const shore = api.sceneOceanUniformData(oceanRecord({ bathymetry: { src: "/h.png", minX: -60, minZ: -40, maxX: 60, maxZ: 50, minHeight: -8, maxHeight: 4 } }), {}, {}, 0, true, "high");
+  assert.deepEqual(Array.from(shore.slice(20, 27)), [-60, -40, 60, 50, -8, 4, 1]);
+  const sqrt = api.sceneOceanUniformData(oceanRecord({ bathymetry: { src: "/h.png", minX: -60, minZ: -40, maxX: 60, maxZ: 50, minHeight: -8, maxHeight: 4, encoding: "signed-sqrt" } }), {}, {}, 0, true, "high");
+  assert.deepEqual(Array.from(sqrt.slice(24, 27)), [0, 8, 2], "signed-sqrt packs its symmetric range and flag 2");
+  h.renderer.dispose();
+});
+
+test("the ocean survives scene state and per-frame lighting resolution into the render bundle", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const state = api.createSceneState({ scene: { environment: { ocean: { waveHeight: 1.4 } } } });
+  assert.equal(state.environment.ocean.waveHeight, 1.4);
+  const bundle = api.createSceneRenderBundle(64, 64, "#000000", {}, [], [], [], [], [],
+    state.environment, 0, [], [], [], [], [], 0, false);
+  assert.ok(bundle.environment.ocean, "the render bundle carries the ocean");
+  assert.equal(bundle.environment.ocean.waveHeight, 1.4);
+  h.renderer.dispose();
+});
+
+test("WebGPU draws the ocean in the direct path with premultiplied alpha and restores the frame group", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const bundle = makePointsBundle(null); bundle.points = [];
+  bundle.environment.ocean = oceanRecord();
+  h.canvas.width = h.canvas.height = 64;
+  h.renderer.render(bundle, { width: 64, height: 64 });
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ocean"), "surface");
+  const module = h.fake.state.shaderModules.find(m => m.label === "gosx-ocean");
+  assert.match(module.code, /fn gosxPhysicalSky\(/);
+  const draw = h.fake.state.renderPasses.flatMap(p => p.draws).find(d => d.pipeline?.desc?.label === "gosx-ocean");
+  assert.ok(draw, "the ocean draws even with no meshes");
+  const target = draw.pipeline.desc.fragment.targets[0];
+  assert.equal(target.blend.color.srcFactor, "one");
+  assert.equal(target.blend.color.dstFactor, "one-minus-src-alpha");
+  assert.equal(draw.pipeline.desc.depthStencil.depthWriteEnabled, true);
+  bundle.environment.ocean = oceanRecord({ bathymetry: { src: "/missing.png", minX: 0, minZ: 0, maxX: 1, maxZ: 1, minHeight: 0, maxHeight: 1 } });
+  h.renderer.render(bundle, { width: 64, height: 64 });
+  assert.match(h.mount.getAttribute("data-gosx-scene3d-ocean"), /^bathymetry-/);
+  const passesBeforeRemoval = h.fake.state.renderPasses.length;
+  bundle.environment.ocean = null;
+  h.renderer.render(bundle, { width: 64, height: 64 });
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-ocean"), "none");
+  assert.ok(h.fake.state.renderPasses.length > passesBeforeRemoval, "ocean removal presents a cleared frame");
+  h.renderer.dispose();
+});
+
+test("WebGL draws the ocean after opaque geometry from the gl_VertexID grid", () => {
+  const h = createWebGLRendererForPost({ fresh: true });
+  const mount = h.env.document.createElement("div"); mount.appendChild(h.canvas);
+  const gl = h.canvas.getContext("webgl2");
+  const enabled = new Set([gl.CULL_FACE]);
+  gl.isEnabled = cap => enabled.has(cap);
+  gl.enable = cap => enabled.add(cap); gl.disable = cap => enabled.delete(cap);
+  gl.createSampler = () => ({}); gl.deleteSampler = () => {}; gl.samplerParameteri = () => {}; gl.bindSampler = () => {};
+  gl.uniform4fv = gl.uniform4fv || (() => {});
+  gl.blendFuncSeparate = gl.blendFuncSeparate || (() => {});
+  const draws = [];
+  const drawArrays = gl.drawArrays.bind(gl);
+  gl.drawArrays = (mode, first, count) => { draws.push(count); return drawArrays(mode, first, count); };
+  const bundle = makePointsBundle(null); bundle.points = [];
+  bundle.environment.ocean = oceanRecord();
+  bundle.worldMeshPositions = new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  bundle.worldMeshNormals = new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  bundle.worldMeshColors = new Float32Array([1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]);
+  bundle.materials = [{ kind: "standard", color: "#ffffff", opacity: 0.5, transparent: true, blendMode: "alpha" }];
+  bundle.meshObjects = [{ id: "translucent", vertexOffset: 0, vertexCount: 3, materialIndex: 0 }];
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface");
+  assert.ok(draws.includes(192 * 256 * 6) || draws.includes(96 * 128 * 6), `grid draw, got ${draws}`);
+  assert.equal(enabled.has(gl.CULL_FACE), true, "culling is restored");
+  const oceanProgram = gl.programMatching("u_ocean[35]");
+  const meshDraw = gl.ops.find(op => op[0] === "drawArrays" && op[3] === 3);
+  assert.ok(meshDraw, "translucent triangle draws after the ocean");
+  assert.notEqual(meshDraw[4], oceanProgram.id, "translucent mesh uses its own shader");
+  bundle.meshObjects = [];
+  const clearsBeforeRemoval = gl.ops.filter(op => op[0] === "clear").length;
+  bundle.environment.ocean = null;
+  h.renderer.render(bundle, { width: 320, height: 180 });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "none");
+  assert.ok(gl.ops.filter(op => op[0] === "clear").length > clearsBeforeRemoval, "ocean removal clears the frame");
+  assert.deepEqual(h.warnLog, []);
+  h.renderer.dispose();
+});
+
+
+
+test("ocean-only mounts reveal their first rendered content", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "ocean-reveal";
+  mount.setAttribute("data-gosx-scene3d-reveal-class", "ocean-ready");
+  const env = createContext({ elements: [mount], enableWebGPU: true,
+    navigatorGPU: { requestAdapter: async () => ({ requestDevice: async () => ({
+      lost: new Promise(() => {}), features: new Set(), limits: {},
+    }) }), getPreferredCanvasFormat: () => "rgba8unorm" },
+    fetchRoutes: {
+      "/gosx/bootstrap-feature-engines.js": { text: freshFeatureBundleSource("engines") },
+      "/gosx/bootstrap-feature-scene3d-webgpu.js": { text: `
+        window.__gosx_scene3d_webgpu_api = { createRenderer: function() {
+          return { kind: "webgpu", diagnostics: function() { return {}; }, render: function() { return "submitted"; }, dispose: function() {} };
+        } };` },
+    },
+    manifest: { runtime: { path: "/gosx/runtime.wasm" }, engines: [{
+      id: "ocean-reveal-engine", component: "GoSXScene3D", kind: "surface", mountId: mount.id, jsExport: "GoSXScene3D",
+      props: { width: 320, height: 180, preferWebGPU: true, preferWebGL: false, scene: { environment: { ocean: {} } } },
+    }] },
+  });
+  const revealedClasses = new Set();
+  env.document.documentElement.classList = { add: value => revealedClasses.add(value), remove: value => revealedClasses.delete(value), contains: value => revealedClasses.has(value) };
+  const timers = require("./runtime-test-harness.js").installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+  raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-revealed"), "true", JSON.stringify(env.consoleLogs));
+  assert.ok(env.document.documentElement.classList.contains("ocean-ready"));
+});
+
+for (const path of ["typed-scene", "typed-canonical", "diff-scene", "diff-canonical"]) test(`Go ${path} commands remove an ocean in browser state`, t => {
+ const {spawnSync} = require("node:child_process"), nodePath = require("node:path");
+ const run = spawnSync("go", ["run","./scene/testdata/ocean-command"], {cwd:nodePath.join(__dirname,"../.."),encoding:"utf8",timeout:60000});
+ assert.equal(run.status,0,run.stderr);
+ const h = createWebGLRendererForPost({fresh:true});t.after(()=>h.renderer.dispose());
+ const api = h.env.context.__gosx_scene3d_api;
+ const state = api.createSceneState({scene:{environment:{ocean:{waveHeight:1.4}}}});
+ api.applySceneCommands(state,JSON.parse(run.stdout)[path]);
+ assert.equal(state.environment.ocean,null);
+ // Omitting ocean from an ordinary partial update still preserves it.
+ const partial = api.createSceneState({scene:{environment:{ocean:{}}}});
+ api.applySceneCommands(partial,[{kind:13,data:{environment:{exposure:1.2}}}]);
+ assert.ok(partial.environment.ocean);
+});
+
+test("ocean horizon fog leaves dry bathymetry uncovered in actual raster output", t => {
+ const {spawnSync} = require("node:child_process"), path = require("node:path");
+ const h = createWebGLRendererForPost({fresh:true});t.after(()=>h.renderer.dispose());
+ const api = h.env.context.__gosx_scene3d_api, gl = h.canvas.getContext("webgl2");
+ const bundle = makePointsBundle(null);bundle.points=[];bundle.environment.ocean=oceanRecord();
+ h.renderer.render(bundle,{width:64,height:64});
+ const fragment = gl.programMatching("u_ocean[35]").attached.find(shader=>shader.type===gl.FRAGMENT_SHADER).source;
+ const uniforms={};
+ for(const [name,height] of [["dry",4],["wet",-4]]) uniforms[name]=Array.from(api.sceneOceanUniformData(oceanRecord({surf:0,extent:1000,bathymetry:{src:"/height.png",minX:-2,minZ:-2,maxX:2,maxZ:2,minHeight:height,maxHeight:height}}),{}, {x:0,y:4,z:900},0,false,"high"));
+ const python = require("node:fs").existsSync("/usr/bin/python3") ? "/usr/bin/python3" : "python3";
+ const result = spawnSync(python,[path.join(__dirname,"testdata/scene3d-ocean-pixels.py")],{input:JSON.stringify({fragment,uniforms}),encoding:"utf8",timeout:30000,env:{...process.env,LIBGL_ALWAYS_SOFTWARE:"1",GALLIUM_DRIVER:"llvmpipe"}});
+ if(result.error?.code === "ENOENT") return t.skip("Python is unavailable for the optional CPU raster test");
+ assert.equal(result.status,0,result.stderr || String(result.error));
+ const pixels=JSON.parse(result.stdout);
+ if(pixels.skip) return t.skip(pixels.skip);
+ assert.deepEqual(pixels,{dry:0,wet:4096});
+});
+
+test("WebGPU applies shoreline coverage after horizon fog", async t => {
+ const h=await createBoardWebGPUHarness({fresh:true});t.after(()=>h.renderer.dispose());
+ const bundle=makePointsBundle(null);bundle.points=[];bundle.environment.ocean=oceanRecord();
+ h.renderer.render(bundle,{width:64,height:64});
+ const shader=h.fake.state.shaderModules.find(module=>module.label==="gosx-ocean").code;
+ assert.ok(shader.indexOf("color *= sf; alpha *= sf;") > shader.indexOf("alpha = mix(alpha, 1.0, fog)"));
+ assert.match(shader,/if \(sf <= 0.0\) \{ discard; \}/);
+});

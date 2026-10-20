@@ -131,6 +131,17 @@ func TestAssetHandlerServesNativeAssets(t *testing.T) {
 		if strings.TrimSpace(w.Body.String()) == "" {
 			t.Fatalf("%s returned an empty body", path)
 		}
+		if strings.HasSuffix(path, ".js") && w.Header().Get("Content-Type") != "application/javascript; charset=utf-8" {
+			t.Fatalf("%s content type = %q, want JavaScript", path, w.Header().Get("Content-Type"))
+		}
+	}
+}
+
+func TestAssetHandlerDoesNotExposeTypeScriptAuthorityPaths(t *testing.T) {
+	w := httptest.NewRecorder()
+	AssetHandler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/native-editor.ts", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("typed authority returned %d, want 404", w.Code)
 	}
 }
 

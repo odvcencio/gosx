@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -13,11 +14,14 @@ import (
 	"m31labs.dev/gosx/auth"
 	"m31labs.dev/gosx/env"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
+	beacon "m31labs.dev/gosx/examples/gosx-docs/app/demos/beacon"
 	checkers "m31labs.dev/gosx/examples/gosx-docs/app/demos/checkers"
 	collab "m31labs.dev/gosx/examples/gosx-docs/app/demos/collab"
 	fluid "m31labs.dev/gosx/examples/gosx-docs/app/demos/fluid"
 	livesim "m31labs.dev/gosx/examples/gosx-docs/app/demos/livesim"
+	docshubs "m31labs.dev/gosx/examples/gosx-docs/app/docs/hubs"
 	_ "m31labs.dev/gosx/examples/gosx-docs/modules"
+	"m31labs.dev/gosx/gameboy"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
 	"m31labs.dev/gosx/session"
@@ -30,58 +34,92 @@ func main() {
 		log.Fatal(err)
 	}
 	port := getenv("PORT", "8080")
+	app, err := buildDocsApp(root, port)
+	if err != nil {
+		log.Fatal(err)
+	}
+	log.Printf("gosx-docs at http://localhost:%s", port)
+	log.Fatal(app.ListenAndServe(":" + port))
+}
+
+// buildDocsApp wires the docs site: sessions, auth, the file router over
+// root/app, the demo hubs, and the production readiness checks. main serves
+// the result; the race test serves it in-process.
+func buildDocsApp(root, port string) (*server.App, error) {
 	publicBase := strings.TrimRight(getenv("PUBLIC_URL", "http://localhost:"+port), "/")
 	// Keep the Secure cookie flag, unless PUBLIC_URL serves plain HTTP. A
 	// local HTTP run needs the opt-out, because a browser drops a Secure
 	// cookie on a plain HTTP origin.
-	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{
+	secret, err := sessionSecret()
+	if err != nil {
+		return nil, err
+	}
+	sessions, err := session.New(secret, session.Options{
 		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
 	})
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	authn := auth.New(sessions, auth.Options{LoginPath: "/docs/auth"})
 	docsapp.BindAuth(authn)
-	magicLinks := authn.MagicLinks(auth.MagicLinkOptions{
-		Path: "/auth/magic-link",
-		// Pin the origin that carries the sign-in token. Without BaseURL a
-		// forged Host header could send the token to another site.
-		BaseURL:     publicBase,
-		SuccessPath: "/docs/auth",
-		FailurePath: "/docs/auth",
-		FlashKey:    "magicLink",
-		Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
-			return docsDemoUser(email), nil
-		}),
-	})
+	publicAuthDemos := !strings.HasPrefix(strings.ToLower(publicBase), "https://")
+	var magicLinks *auth.MagicLinks
+	var webauthn *auth.WebAuthn
+	if publicAuthDemos {
+		magicLinks = authn.MagicLinks(auth.MagicLinkOptions{
+			Path: "/auth/magic-link",
+			// Pin the origin that carries the sign-in token. Without BaseURL a
+			// forged Host header could send the token to another site.
+			BaseURL:     publicBase,
+			SuccessPath: "/docs/auth",
+			FailurePath: "/docs/auth",
+			FlashKey:    "magicLink",
+			Resolver: auth.MagicLinkResolverFunc(func(_ context.Context, email string) (auth.User, error) {
+				return docsDemoUser(email), nil
+			}),
+			// Local demo delivery: print the link to this process's log, like a
+			// development mail catcher. The link never appears in the HTTP response.
+			Sender: auth.MagicLinkSenderFunc(func(_ context.Context, delivery auth.MagicLinkDelivery) error {
+				log.Printf("docs magic-link demo: sign-in link for %s: %s", delivery.Email, delivery.URL)
+				return nil
+			}),
+		})
+		webauthn = authn.WebAuthn(auth.WebAuthnOptions{
+			RPName:      "GoSX",
+			Origin:      publicBase,
+			SuccessPath: "/docs/auth",
+			FailurePath: "/docs/auth",
+			FlashKey:    "passkey",
+			Resolver: auth.WebAuthnResolverFunc(func(_ context.Context, login string) (auth.User, error) {
+				return docsDemoUser(login), nil
+			}),
+		})
+	}
 	docsapp.BindMagicLinks(magicLinks)
-	webauthn := authn.WebAuthn(auth.WebAuthnOptions{
-		RPName:      "GoSX",
-		Origin:      publicBase,
-		SuccessPath: "/docs/auth",
-		FailurePath: "/docs/auth",
-		FlashKey:    "passkey",
-		Resolver: auth.WebAuthnResolverFunc(func(_ context.Context, login string) (auth.User, error) {
-			return docsDemoUser(login), nil
-		}),
-	})
 	docsapp.BindWebAuthn(webauthn)
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(server.NavigationScript())
-		ctx.AddHead(gosx.RawHTML(`<link rel="icon" href="data:,">`))
-		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
-		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
+		if ctx.Request == nil || ctx.Request.URL == nil || !strings.HasPrefix(ctx.Request.URL.Path, "/demos") {
+			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
+			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))
+		}
 		ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/JetBrainsMono-Regular.woff2" as="font" type="font/woff2" crossorigin>`))
-		return server.HTMLDocument(ctx.Title("GoSX"), ctx.Head(), body)
+		ctx.SetLanguage("en")
+		return server.HTMLDocument(ctx.Document("GoSX", body))
 	})
 
-	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
-		log.Fatal(err)
+	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{
+		ExternalCSS: "/_gosx/docs-css/",
+		ExternalCSSFilter: func(page route.FilePage) bool {
+			return page.RoutePath == "/demos/beacon" || strings.HasPrefix(page.RoutePath, "/demos/beacon/")
+		},
+	}); err != nil {
+		return nil, err
 	}
 
 	app := server.New()
+	app.EnableGzip()
 	// Keep page-generated hashed runtime URLs and the runtime file server on the
 	// same application root. Without this, `go run ./examples/gosx-docs` from
 	// the repository root can read the repository's dist/build.json while
@@ -91,6 +129,9 @@ func main() {
 	router.SetRevalidator(app.Revalidator())
 	app.EnableISR()
 	app.EnableNavigation()
+	app.Use(docsSecurityHeaders)
+	app.Use(canonicalDocsIndex)
+	app.Use(limitDocsRequestBodies(1 << 20))
 	app.Use(sessions.Middleware)
 	app.Use(authn.Middleware)
 	// CSRF-protect unsafe requests, but exempt the telemetry beacon: it is
@@ -100,7 +141,7 @@ func main() {
 	app.Use(func(next http.Handler) http.Handler {
 		protected := sessions.Protect(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == server.ClientEventsRoute {
+			if r.URL.Path == server.ClientEventsRoute || r.URL.Path == "/api/site/probe" {
 				next.ServeHTTP(w, r)
 				return
 			}
@@ -108,30 +149,65 @@ func main() {
 		})
 	})
 	app.SetPublicDir(filepath.Join(root, "public"))
-	app.Mount("/auth/magic-link/request", magicLinks.RequestHandler())
-	app.Mount("/auth/magic-link", magicLinks.CallbackHandler())
-	app.Mount("/auth/webauthn/register/options", webauthn.RegisterOptionsHandler())
-	app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
-	app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
-	app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
-	// Only the bare /docs path redirects. A "GET /docs/" pattern would be a
-	// subtree match under Go's ServeMux, so it also matches /docs/getting-started
-	// — the redirect target itself — and every other page below /docs. Each of
-	// those then redirects to a target that redirects again, which the static
-	// export reports as "stopped after 10 redirects".
-	app.Redirect("GET /docs", "/docs/getting-started", http.StatusTemporaryRedirect)
+	gameboy.Install(app)
+	app.Page("GET /demos/blackglass-handheld/pocket.html", func(ctx *server.Context) gosx.Node {
+		ctx.SetNavigationHead(nil)
+		return gameboy.Player(ctx, gameboy.Props{Heading: "FOUND ON BLACKGLASS COAST", CartridgeURL: "/api/blackglass-cartridge", BatteryPrefix: "gosx.blackglass.cartridge.", CheckpointPrefix: "gosx.blackglass.pocket-state.v1."})
+	})
+	if err := mountBlackglassCartridge(app, root); err != nil {
+		return nil, err
+	}
+	app.Mount("GET /api/blackglass-chart.svg", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "image/svg+xml")
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+		_, _ = w.Write([]byte(beacon.BlackglassBeachChartSVG()))
+	}))
+	app.API("GET /api/blackglass-experience", func(ctx *server.Context) (any, error) {
+		q := ctx.Request.URL.Query()
+		return beacon.BlackglassBeachExperience(q.Get("view"), q.Get("period")).GoSXProps(), nil
+	})
+	app.API("GET /api/blackglass-view", func(ctx *server.Context) (any, error) {
+		q := ctx.Request.URL.Query()
+		return beacon.BlackglassBeachViewUpdate(q.Get("view"), q.Get("from"), q.Get("period")), nil
+	})
+	app.API("GET /api/docs-hubs/open-tabs", func(ctx *server.Context) (any, error) {
+		return map[string]any{
+			"html": fmt.Sprintf("<h2>Open guide tabs: %d</h2>", docshubs.ExampleHub.Presence().Count()),
+		}, nil
+	})
+	mountSiteDocuments(app, root)
+	configureProductionReadiness(app)
+	if publicAuthDemos {
+		app.Mount("/auth/magic-link/request", magicLinks.RequestHandler())
+		app.Mount("/auth/magic-link", magicLinks.CallbackHandler())
+		app.Mount("/auth/webauthn/register/options", webauthn.RegisterOptionsHandler())
+		app.Mount("/auth/webauthn/register", webauthn.RegisterHandler())
+		app.Mount("/auth/webauthn/login/options", webauthn.LoginOptionsHandler())
+		app.Mount("/auth/webauthn/login", webauthn.LoginHandler())
+	}
 	app.Mount("/demos/collab/ws", collab.Hub)
 	app.Mount("/demos/checkers/ws", checkers.Hub)
 	app.Mount("/demos/fluid/ws", fluid.Hub)
 	app.Mount("/demos/livesim/ws", livesim.Hub)
+	app.Mount("/docs/hubs/ws", docshubs.ExampleHub)
 	rootHandler, err := router.BuildChecked()
 	if err != nil {
-		log.Fatal(err)
+		return nil, err
 	}
 	app.Mount("/", rootHandler)
 
-	log.Printf("gosx-docs at http://localhost:%s", port)
-	log.Fatal(app.ListenAndServe(":" + port))
+	return app, nil
+}
+
+func limitDocsRequestBodies(maxBytes int64) server.Middleware {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Body != nil && maxBytes > 0 && r.Method != http.MethodGet && r.Method != http.MethodHead {
+				r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 func getenv(key, fallback string) string {

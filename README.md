@@ -1,8 +1,8 @@
 # GoSX
 
-A Go-native web platform. Write components in `.gsx` — Go with embedded markup — compile through a real compiler pipeline, render on the server by default, hydrate interactive islands with WebAssembly. No JavaScript toolchain. No CGo. A deliberately small dependency budget.
+A Go-native web platform. Declare `.gsx` components with the strict, typed `component Name(props: Type)` form. GoSX compiles through a real compiler pipeline. It renders on the server by default and hydrates interactive islands with WebAssembly. It needs no app-side JavaScript toolchain and no CGo, and it keeps a small dependency budget.
 
-Current release: **v0.36.0**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
+Current release: **v0.57.17**. Pre-1.0; breaking changes are documented in [CHANGELOG.md](./CHANGELOG.md).
 
 ## Agent Skills
 
@@ -14,33 +14,195 @@ For native mobile, editor, admin, and CMS periphery, read: [using-gosx-ecosystem
 
 GoSX starts from a simple premise: the browser is a render target, not a runtime. Server components are Go functions that return HTML. Interactive components compile to bytecode and run in a shared WASM VM. Everything between those two points — the parser, the compiler, the reconciler, the signal system, the 3D scene graph, the vector store, the collaborative document model — is pure Go.
 
-```go
+```gsx
 package app
 
-// Server component: renders to HTML, zero JavaScript.
-func Greeting(props GreetingProps) Node {
+import "m31labs.dev/gosx/signal"
+
+type GreetingProps struct {
+    Name string
+}
+
+// Strict typed server component: renders to HTML, zero JavaScript.
+component Greeting(props: GreetingProps) {
     return <div class="greeting">
         <h1>Hello, {props.Name}!</h1>
         <p>Welcome to GoSX.</p>
     </div>
 }
 
-// Island component: compiles to bytecode, hydrates in the browser.
+component WelcomePage() {
+    return <main><Greeting name="GoSX" /></main>
+}
+
+type CounterProps struct {
+    Initial int
+}
+
+// Strict islands keep the same typed component boundary, then hydrate the
+// supported signal/handler subset in the shared browser VM.
 //gosx:island
-func Counter(props CounterProps) Node {
+component Counter(props: CounterProps) {
     count := signal.New(props.Initial)
-    increment := func() { count.Update(func(n int) int { return n + 1 }) }
-    decrement := func() { count.Update(func(n int) int { return n - 1 }) }
+    increment := func() { count.Set(count.Get() + 1) }
+    decrement := func() { count.Set(count.Get() - 1) }
 
     return <div class="counter">
         <button onClick={decrement}>-</button>
-        <span>{count}</span>
+        <span>{count.Get()}</span>
         <button onClick={increment}>+</button>
     </div>
 }
 ```
 
-The `//gosx:island` directive marks a component for client-side hydration. The compiler extracts signals, computed values, and handlers from the Go source, compiles expressions to VM opcodes, and serializes the result as a compact island program (~1-10KB). Server components emit static HTML with no client-side cost.
+`component Name(props: Type) { ... }` is the one way GoSX teaches to declare
+a server component. `Type` is an ordinary Go struct declared in the same
+`.gsx` file, so the package check catches an unknown field or an
+incompatible value. `component` supplies the `Node` result type; it does not
+make the return implicit. A strict body currently contains one top-level GSX
+return, with a deliberately small, renderer-safe expression surface. A
+`props` field expression accepts only:
+
+- a quoted string
+- `true` or `false`
+- an ungrouped non-negative base-10 integer in the `int64` range
+- a finite ungrouped decimal float
+- one direct field whose same-file type is an exact built-in scalar
+
+A same-file strict call accepts an exported Go field name or its TSX-like
+lower-camel alias (`Label`/`label`, `HTMLFor`/`htmlFor`, `URL`/`url`). An
+ambiguous alias needs the exact Go spelling. Supply every field the callee
+renders explicitly, including `0`, `false`, and `""`, so the generated Go
+and the server rendering observe the same zero values.
+
+### Spreading a value into a strict component
+
+A strict component accepts one `{...source}` spread instead of named
+attributes. A strict caller spreads a value whose declared type is exactly
+the callee's props type. The compiler proves the type and emits the
+generated Go call verbatim.
+
+A nested struct field inside a spread is proved **structurally**, by the
+fields the callee renders under it, not by the declared type's name. A
+sibling `.go` file may therefore build its own converter type and spread it
+in; the type does not have to match the name the `.gsx` file declares, and a
+nested model never has to be flattened into scalar fields to satisfy the
+check. A named attribute keeps the exact-type rule, because its generated Go
+call site is a composite literal the Go compiler proves.
+
+A strict component's props struct, and every struct its body reaches by
+field access, must be declared in the same `.gsx` file. The reason is the
+file renderer: it executes the IR and never compiles Go, so it resolves each
+rendered field from schema data the compiler writes into the IR, and the
+compiler builds that data from the one `.gsx` file it reads. A type declared
+in a sibling `.go` file is invisible at that moment.
+
+`gosx compile` transpiles a strict `component Name` to a package-level Go
+`func Name`. A `.gsx` type declaration compiles to itself. `gosx check`
+reads that generated Go and reports a name a sibling `.go` file in the
+same package already declares, naming both declarations and positions.
+
+The file renderer never runs this generated Go. `router.AddDir` — the
+form the scaffold's `main.go` calls in production — parses and lowers
+each `.gsx` file to IR once. It then interprets that IR per request, the
+way the previous paragraph describes.
+
+### Islands are strict-capable; engines use the programmatic v1 surface
+
+The `//gosx:island` directive may mark a strict `component Name(...)` or a
+legacy function component for client-side hydration. The compiler extracts
+supported signals, computed values, and handlers, compiles expressions to VM
+instructions, and serializes an island program. Server components emit static
+HTML with no client-side cost.
+
+Island expressions accept `append(items.Get(), first, second)` for individual
+slice elements, including no new elements. Additions use the VM's existing
+immutable append operation; earlier slice values remain independent. Variadic
+slice expansion (`append(items, more...)`) is not in this expression subset.
+
+Strict `//gosx:engine` declarations and automatic `.gsx` engine-surface
+discovery remain preview/post-v1. The v1 engine contract is the programmatic
+`engine.Config` / `ctx.Engine` surface described below.
+
+Within that preview, VM engine surfaces share helper functions and struct layouts
+across their Go source files, while import aliases stay local to each file.
+The existing VM Go subset and 65,535-expression package limit apply.
+
+An island may compose same-file strict **pure-view** components. GoSX inlines
+each invocation into the parent island program at compile time, so composition
+adds no browser component runtime: the result still has one hydration root,
+one VM, and the same `.gxi` shape as equivalent hand-flattened markup. Direct
+typed scalar props, static `func()` callback props, caller-owned children, and
+named slots are supported;
+projected children keep access to the parent island's signals and handlers.
+
+The v1 boundary is deliberately fail-closed. A composed callee cannot be an
+island, engine, legacy or imported component; own signals, computed values,
+handlers, or effects; read nested/slice props; or
+use spreads. Recursion is rejected, composition depth is capped at 32, and the
+expanded island retains the VM's 65,535-node and expression limits. Put state
+and behavior in the parent island and pass scalar view data down.
+
+Root island call-site children and named slots are not supported: island
+program assets are compiled per component, before any individual server call
+site exists. Put the slot-bearing pure-view component *inside* the island when
+you need that composition shape.
+
+Callback props bind an existing parent island handler, or forward another view's
+callback prop, to a supported DOM event. The handler takes no arguments and
+returns no value. Callbacks remain compiler bindings: they cannot be rendered,
+evaluated as data, or supplied to a root island from server props. Composition
+reuses the same handler and VM instructions as the equivalent flat markup.
+
+### Legacy component syntax (deprecated)
+
+Earlier GoSX releases also accepted `func Name(props T) Node` as a
+component declaration, in two forms:
+
+- A **typed legacy** component, where `T` is a struct declared in the same
+  `.gsx` file. It carries the same prop contract a strict component does.
+- An **untyped legacy** component, where `T` is `any`, an attribute list, or
+  a type declared elsewhere (`props any` is the common case). Nothing about
+  its props can be checked.
+
+Both forms still compile, check, and render today, so existing code keeps
+working. `gosx check` now warns on a `func Name(props any) Node`
+declaration. This untyped legacy form is deprecated, and GoSX removes it
+before v1.0. A typed legacy component gets no warning yet, but new code
+should not add either form; declare `component Name(props: Type)` instead.
+
+To convert an untyped legacy component, declare its props as a struct in
+the same file, then switch the declaration:
+
+```gsx
+// Before: untyped legacy, no schema, deprecated.
+func Card(props any) Node {
+    return <div>{props.Label}</div>
+}
+
+// After: strict, checked by the Go compiler.
+type CardProps struct {
+    Label string
+}
+
+component Card(props: CardProps) {
+    return <div>{props.Label}</div>
+}
+```
+
+A strict caller cannot call an untyped legacy component at all. It can call
+a typed legacy component only through the rules a strict callee follows.
+
+An untyped legacy component cannot spread its own `props` into a strict
+component either. An untyped legacy render frame binds `props` to a
+`map[string]any`. The strict boundary proves struct values only, so that
+composition fails on every render. Converting the callee to a typed legacy
+or strict component removes the restriction.
+
+An island can convert to strict syntax when its props and browser behavior fit
+the strict island subset. A `.gsx` engine component cannot convert to strict
+syntax today; keep `.gsx //gosx:engine` discovery out of the v1 contract and
+use programmatic `engine.Config` / `ctx.Engine` for v1 engine work.
 
 ## Philosophy
 
@@ -51,8 +213,8 @@ GoSX is opinionated about a small number of things and flexible about everything
 - **No JavaScript toolchain is not zero browser cost.** GoSX still ships a measured browser bootstrap, feature chunks, and WASM runtime only when a route needs them. The performance contract is that the compiler and build pipeline justify every shipped runtime slice.
 - **No CGo, anywhere.** Every package compiles to WASM and cross-compiles cleanly. The 3D engine runs in pure Go. The vector store runs in pure Go. The CRDT sync protocol runs in pure Go. This is not a portability footnote — it is the design constraint that lets Scene3D, `field`, `vecdb`, and `crdt` ship as ordinary Go libraries that also happen to run in a browser tab.
 - **Primitives, not frameworks-within-frameworks.** A form submission is not a canvas game is not a collaborative document. GoSX gives you five distinct execution primitives and enforces the distinction; none of them try to be the others.
-- **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Island-only and compute-island-only routes select a slim `runtime-islands.wasm` that drops the shared engine bridge and editor/runtime helpers; routes that need shared engines keep the full WASM runtime. An app with no islands has no client VM; an app with no engines has no engine bundle.
-- **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure. The island VM is 68 opcodes. The patch applier and island hook are under 1k lines of JS. You can read all of it. (The Scene3D feature chunk is larger — see the build manifest for the exact bytes a route ships.)
+- **You pay for what you use.** Static pages are static. Islands ship only when a page has an island. Production manifests choose among capability-linked `core`, `engine`, `collab`, and `full` WASM profiles; the legacy `islands` name remains a read-compatible alias. An app with no islands has no client VM; an app with no engines has no engine bundle.
+- **No hidden magic in the hot path.** The compiler pipeline is inspectable (`gosx compile`, `gosx check`). The IR is a flat-array data structure, and the island VM, patch applier, and feature chunks are source you can read. Build manifests report the exact bytes each route ships.
 - **Small dependency budget.** That's not marketing — it's a design constraint. Every new transitive dep is a bug surface, a license to audit, and a supply-chain risk. We take that budget seriously.
 
 ## Five Primitives
@@ -71,6 +233,11 @@ Use what you need. A static marketing page uses only Server. A dashboard adds Is
 
 Scene3D is the built-in 3D engine primitive: prop-based scenes and composable `<Scene3D><Mesh /><Points /></Scene3D>` authoring both lower toward the same versioned SceneIR contract. The `game` package layers deterministic fixed-step simulation, input actions, ECS-style state, assets, physics, and Scene3D mounting on top of Engine + Hub when an app needs an interactive simulation/game runtime.
 
+Standard Go/WASM engines can keep browser interop inside GoSX with typed DOM,
+events, fetch, storage, audio, sockets, desktop services and retained Scene3D
+streams. See [browser services and lifetimes](docs/browser-services.md) for the
+small-package boundaries and buffer ownership contracts.
+
 ## Quick Start
 
 ```bash
@@ -86,6 +253,31 @@ gosx init my-docs --template docs
 cd my-docs
 go run .
 ```
+
+Both templates ignore `.env` and its variants in Git. Their generated `.env`
+sets `GOSX_ENV=development`: when `SESSION_SECRET` is missing or still a known
+placeholder, the app generates a random per-process secret and logs that
+sessions reset on restart. `gosx dev` also enables this fallback when
+`GOSX_ENV` is unset. Other modes, including an unset mode outside `gosx dev`,
+refuse to start without a non-placeholder secret of at least 16 bytes.
+Short secrets are rejected in every mode. The docs example uses the same
+policy. `session.New` keeps its existing API and validation.
+
+Before deploying, set `GOSX_ENV=production` and supply a random secret through
+your deployment environment, for example one
+generated with `openssl rand -hex 32`.
+Keep it stable across restarts and replicas to preserve sessions. The known
+placeholders are `change-me-in-production`, `gosx-app-session-secret`, and
+`gosx-docs-session-secret`.
+
+Export and production-build prerendering supply a fresh random session secret.
+`PORT` remains numeric for existing Go listeners; GoSX servers bind to loopback
+through a separate `GOSX_LISTEN_ADDR`. Custom HTTP servers retain their own
+listener behavior. `PUBLIC_URL` is inherited unchanged, including its absence,
+so application defaults remain in canonical metadata. Local wire, perf, E2E,
+tutorial, and docs deployment identity checks also use disposable secrets.
+These secrets are supplied only to local processes and are never saved in
+deployment bundles.
 
 Minimal server without the CLI:
 
@@ -139,7 +331,7 @@ if err := route.RegisterFileModuleHere(route.FileModuleOptions{
     Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
         post, err := db.GetPost(ctx.Param("slug"))
         if err != nil {
-            return nil, route.NotFound()
+            return nil, route.NotFound("post not found")
         }
         return post, nil
     },
@@ -167,15 +359,17 @@ GSX syntax is parsed by [gotreesitter](https://github.com/odvcencio/gotreesitter
   -> server components: render to HTML directly
   -> island components:
        -> extract signals, computeds, handlers from Go source
-       -> compile expressions to VM opcodes (68 operations)
+       -> compile expressions to VM instructions
        -> serialize as IslandProgram (JSON dev / binary prod)
-       -> browser: shared WASM VM + JS patch applier and island hook (under 1k lines)
-       -> per-island programs are 1-10KB each
+       -> browser: shared WASM VM + TypeScript-owned patch and host runtime
 ```
 
 Island expressions are constrained to what the client VM can evaluate: literals, property and signal access, arithmetic, comparisons, boolean logic, string operations, conditionals, handler dispatch, and list iteration. Goroutines, channels, and arbitrary Go are compile-time errors in islands. The full supported subset — array-method shorthand (`.filter`, `.map`, `.find`, `.slice`, `.append`), string methods, and single-param closures — is specified in [`docs/expressions.md`](docs/expressions.md).
 
 ## Reactive State
+
+For typed browser intents, drag/drop and modal focus
+ownership, see [browser controllers](docs/controllers.md).
 
 Signals provide fine-grained reactivity in islands:
 
@@ -197,25 +391,69 @@ $theme   // shared: all islands react to changes
 count    // local to the declaring island
 ```
 
+Declare shared state in Go with `signal.NewShared("selection", initial)` or its
+alias `signal.Shared`. Both return `*signal.Signal[T]` and support explicit type
+arguments. The compiler lowers `"selection"` and `"$selection"` to the same
+browser signal, `$selection`, without renaming the Go variable:
+
+```go
+selection := signal.NewShared("selection", "")
+selection.Set("tile-1")
+```
+
+Native Go creates a fresh signal on every call, even for the same name. Keep
+these declarations inside the request or component; they do not share server
+state between requests. Browser sharing is scoped to the page runtime.
+
 ## Server Features
 
 **Sessions and Auth** — Cookie-backed sessions with HMAC-SHA256 signing, optional AES-GCM encryption, previous-secret rotation, CSRF protection with constant-time token comparison, and flash values. Auth supports sessions, magic links, OAuth 2.0 (GitHub, Google), and WebAuthn/Passkeys.
 
-**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, and redirect-safe flash state.
+**Actions** — Named server-side mutation handlers with form/JSON parsing, field-level validation errors, redirect-safe flash state, and `action.WantsJSON` as the shared authority when application code must distinguish a managed action from a native form submission. Native forms can preserve an exact path, query, and fragment by rendering the reserved return-target field:
+
+```go
+<input
+    type="hidden"
+    name={action.ReturnTargetField}
+    value="/board?page=2#board-pool"
+/>
+```
+
+Return targets must be root-relative and same-origin. An explicit handler redirect takes precedence; otherwise GoSX falls back to a safe same-site referrer and then the action route. Managed navigation preserves authored fragments across fetches and same-origin HTTP redirects, and same-document fragment changes do not refetch the page.
+
+Actions that should return to the submitting page can opt in with
+`ctx.RedirectBackWithMessage("/fallback", "Saved.")`. GoSX chooses the valid
+`__gosx_return_to` target first, then the sanitized root-relative fallback;
+invalid or empty values resolve to `/`. Query strings and fragments are
+preserved, and the reserved field never enters `Context.FormData` or the
+returned values. Use `ctx.RedirectWithMessage` when the action intentionally
+chooses a different destination; explicit non-empty redirects are sanitized to
+a same-origin root-relative path, with unsafe values resolving to `/`.
 
 **Caching** — Semantic cache helpers (`ctx.CacheStatic()`, `ctx.CacheRevalidate()`, `ctx.CacheData()`), automatic weak ETags from content hashing, path/tag-based revalidation, and ISR with background regeneration.
 
-**Navigation** — Opt-in client-side page transitions via `app.EnableNavigation()` with managed head swaps and intent-prefetching. Pages render server-first, enhance progressively.
+Content-addressed framework assets retain public immutable caching when global
+auth middleware reads the session. Session writes, cookies, HTML/data and
+private response policies keep their cache boundaries. See
+[immutable asset caching with sessions](./docs/immutable-asset-caching.md) for
+the classified routes and response checks.
+
+**Navigation** — `app.EnableNavigation()` adds server-driven soft transitions with managed head swaps, conservative keyed body reconciliation, and intent-prefetching. Same-origin anchors, GET forms, and GoSX `/__actions/` forms are managed automatically; `data-gosx-native` is the explicit native-browser opt-out. Stable `id`/`data-gosx-key` elements keep DOM identity and dirty focused form state while incoming attributes and content update. Pages remain server-first and progressively enhanced.
+
+**Declarative Transfer** — `data-gosx-transfer` describes a stable source and fixed target for pointer/touch or keyboard assignment. Pointer/touch drags never relocate nodes optimistically; while a pointer is held near an edge, GoSX scrolls the nearest scrollable ancestor (or the viewport) and re-tests the held coordinates against live targets. The managed action response remains authoritative.
 
 **Streaming** — Deferred page regions via `ctx.Defer()` and component-level `ctx.Suspense()` boundaries render fallback content immediately, then stream resolved content into place as each boundary completes.
 
-**Image and Font Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, immutable caching, auto responsive `server.Image` markup, and a `server.Font` helper for preload plus `@font-face`.
+**Image and Font Optimization** — Local image handler at `/_gosx/image` with resize, format conversion, immutable caching, auto responsive `server.Image` markup, ordered `server.ImageSource` art direction through native `<picture>` markup with explicit wrapper attributes and per-crop dimensions, and a `server.Font` helper for preload plus `@font-face`.
 
 **Routing and Edge** — Server middleware can be annotated with `app.UseEdge`, and `app.UseI18n` adds locale-prefix routing that composes with both `server.App` and file routing.
 
 **Content and Components** — `content` uses mdpp as the canonical Markdown++ content-source layer for `.md`, `.mdx`, and `.mdpp` collections, with typed frontmatter, diagnostics, renderer hooks, and slug indexes. `components` provides a registry for reusable server component libraries and file-route bindings, and `ui` seeds GoSX UI: layout, typography, form, card, tab, table, badge, and stylesheet primitives users can copy from or compose directly.
 
-**Text Layout** — `TextBlock` supports both server-measured native rendering with no JavaScript and bootstrap-managed browser refinement. Font, width, line-height, locale, clamping, and ellipsis stay in one framework-level contract.
+**Text Layout** — `TextBlock` supports a deterministic approximate server
+layout and bootstrap-managed refinement with browser font metrics. Font,
+width, line-height, locale, clamping, and ellipsis stay in one framework-level
+contract without pretending the approximate first pass is exact.
 
 **Managed Video** — `server.Video`, `ctx.Video`, and the `.gsx` `<Video />` builtin render a real server `<video>` baseline with `<source>` and `<track>` children, then the built-in video engine can layer in HLS fallback (with fatal-error recovery and muted-autoplay retry), selectable audio tracks, text and bitmap subtitle cues, sync, and shared `$video.*` signals when the page needs them.
 
@@ -224,6 +462,12 @@ count    // local to the declaring island
 **Managed Background Audio (YouTube)** — a declarative bridge served at `/gosx/youtube-audio.js` (`server.YouTubeAudioBridgePath`, tag helper `server.YouTubeAudioBridgeScriptTag()`). Any element with `data-gosx-youtube-audio="<youtube url>"` becomes a play/pause toggle for one shared hidden player, and the active element carries `data-gosx-youtube-audio-state="playing"` for CSS styling. The bridge lazy-loads the YouTube IFrame API on first activation, so pages without audio toggles load nothing.
 
 **Runtime Surfaces** — `gosx.RuntimeSurface`, `gosx.Action`, and `gosx.Region` describe progressive-enhancement contracts in server HTML (`data-gosx-runtime-surface`), and the shared bootstrap owns discovery, navigation remounting, scoped DOM/query/fetch/listen access, stream-template consumption, and disposal — so rich pages register framework-managed behavior instead of shipping bespoke script tags.
+
+**Embedded apps** — Opt into iframe framing allowlists, a public base path for routes and runtime URLs, and partitioned session cookies for Discord Activities. Defaults retain same-origin framing and SameSite=Lax cookies. See [the embedded apps guide](./docs/embedded-apps.md).
+
+**Stripe** — Hosted Checkout is server-first: `stripeui.HostedCheckoutForm` posts to an app-owned Go endpoint that calls Stripe's API and returns a native 303, with no Stripe.js or GoSX browser runtime. Elements and embedded Checkout are explicit runtime surfaces whose HTML contains only a publishable key, typed allowlisted display options, and a fixed same-origin session-action path; client secrets are fetched through scoped CSRF-aware transport and never serialized into the page or forwarded in events. `stripeui.Require` emits the nonced bootstrap, direct Stripe.js loader, and local bridge in lifecycle order. See [the Stripe integration guide](./docs/stripe.md).
+
+**Polar** — Hosted Checkout stays entirely server-first: `polarui.CheckoutForm` submits only an opaque offer ID and CSRF token to `polaradapter`, which resolves typed server-owned checkout inputs, calls Polar through a bounded private-OAT client, and returns an empty 303 to an exact configured HTTPS checkout origin. It adds no browser runtime or provider data to SSR. See [the Polar integration guide](./docs/polar.md).
 
 ## Engines
 
@@ -239,6 +483,39 @@ ctx.Engine(engine.Config{
     WASMPath:             "/engines/visualizer.wasm",
 }, fallbackNode)
 ```
+
+Declare the module's package in `gosx.config.json` to build it together with the
+server and shared runtime:
+
+```json
+{"build":{"goWASM":{"visualizer":"./cmd/visualizer"}}}
+```
+
+`gosx build` compiles these explicit entries with the standard Go toolchain,
+even when TinyGo builds the shared runtime. It inherits the project's Go
+toolchain selection and emits the matching standard-Go loader. Entry names
+start with a lowercase letter and contain lowercase letters, digits, `_` or
+`-`; package paths must be `.` or a single `./` directory inside the project.
+Wildcards, flags, external paths and non-`main` packages are rejected.
+
+`gosx build --prod --go-wasm-only .` builds just these modules and their
+matching standard-Go loader. It skips components, build hooks, public assets,
+the server and the shared runtime. Output defaults to `dist/go-wasm`; use
+`--output <directory>` to select an isolated staging directory. The output's
+`build.json` resolves the hashed modules and loader using the same manifest
+contract as a full build. This mode requires configured `build.goWASM` entries
+and cannot be combined with server, runtime or packaging options. Production
+module builds use `-trimpath -ldflags='-s -w'`; development builds retain debug
+information. Compiler diagnostics and compressed sidecars are preserved.
+
+Each entry becomes `assets/go-wasm/<name>.<hash>.wasm` with compressed sidecars
+and a `goWASM` entry in `build.json`. Use `app.GoWASMURL("visualizer")` for
+`WASMPath`; it resolves the configured runtime root, including a relocated
+deployment bundle. `manifest.GoWASMURL(assetBaseURL, name)` also supports a
+custom asset prefix. Both return an empty string for unknown entries.
+`gosx size` includes the named modules in its inventory and totals, without
+assuming every page loads every module. Existing explicit `WASMPath` URLs
+remain supported and projects without `build.goWASM` keep their output.
 
 The module is an ordinary `GOOS=js GOARCH=wasm` Go program. It may register one
 or more reusable components during synchronous startup:
@@ -339,9 +616,17 @@ Kinds choose the mount model. Capabilities declare which browser APIs the engine
 
 ## Scene3D — 3D Engine
 
+[Scene3D particle bursts](docs/scene3d-particle-bursts.md) start finite event effects with typed Go emitters and automatic browser cleanup.
+
+[Scene3D timelines](docs/scene3d-timeline.md) sequence object and camera tweens in Go, with seekable browser playback and reduced-motion settling.
+
+[Shared motion and shader surfaces](docs/motion-transport.md) coordinate HTML, cameras, uniforms and Selena time from Go, with typed playback controls and the same material in 2D and 3D.
+
+[Text3D](docs/scene3d-text.md) draws Go-authored scores and labels on world-space texture planes.
+
 The `scene` package is a full 3D engine authored in Go. You describe the scene as a typed Go struct tree and the runtime lowers it to a compact IR. Where that IR renders depends on the target, and the split is deliberate:
 
-- **On the web**, two hand-written JavaScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
+- **On the web**, two authored TypeScript backends consume the IR: a WebGPU renderer and a WebGL2 renderer. Each ships as a separately fetched chunk, so a WebGPU-capable browser never downloads the WebGL renderer and the reverse also holds.
 - **On the desktop**, and for headless rendering, a pure-Go WebGPU pipeline (`render/gpu` + `render/bundle`, with hand-written WGSL) consumes the same IR. It also backs `scene/preview`, which renders to PNG with no browser and no GPU.
 
 Typed Scene3D surfaces declare WebGPU as a default capability, so a capable browser takes the WebGPU path first and falls back through WebGL2 to canvas when the device or the scene needs it. The server computes a per-backend fidelity verdict and ships it with the scene, so a backend that cannot render a scene faithfully is diverted rather than allowed to draw the wrong image. There is no separate engine binary. There is no three.js. There is no JavaScript scene graph.
@@ -405,17 +690,48 @@ scene.Props{
 
 ### Feature surface
 
+The release boundary is narrower than the full feature inventory below. See
+[the Scene3D v1 support contract](docs/scene3d-v1-support.md) for the executable
+corpus, current blockers, backend evidence targets, and non-goals.
+
+Generic hosted CI certifies production WebGPU renderer execution and exact
+pixels from a proof-private GPU target. Actual WebGPU canvas presentation is a
+separate release-pinned hardware certification obligation in that contract.
+
 - **Scene graph** — `Group`, `Mesh`, `LODGroup`, `Decal`, `InstancedMesh`, `Points`, `Label`, `Sprite`, `Model`, `ComputeParticles`, per-node transforms, nesting, world-transform lowering
 - **Geometry** — `Box`, `Cube`, `Plane`, `Pyramid`, `Sphere`, `Lines`, `Cylinder`, `Torus`, helper-generated axes/grids/boxes/skeletons/gizmos, plus arbitrary geometry from loaded models
 - **Materials** — `StandardMaterial` (PBR with roughness/metalness plus clearcoat, sheen, transmission, iridescence, and anisotropy), `FlatMaterial`, `GhostMaterial`, `GlassMaterial`, `GlowMaterial`, `MatteMaterial`, `LineBasicMaterial`, `LineDashedMaterial`, Selena-authored shader materials via `scene.CompileSelenaMaterial` and `scene.CompileSelenaBundle`, typed Selena host uniforms via `scene.SelenaUniforms`, `CustomMaterial` shader hooks, configurable blend modes and render passes
+
+  Selena browser shaders use GLSL ES 3.00 for GoSX's WebGL2 contexts. The returned
+  binding layout contains the WebGL2 host requirements. Materials with extra host
+  requirements include `shaderLayout.targetRequires`; `scene.SelenaTargetRequirements(material.ShaderLayout, target)`
+  exposes requirements for each compiler target. Post vertices use the renderer's
+  quad and bottom-left texture origin. Derivatives need no extension on WebGL2.
+  Shader substitutions appear in the renderer's
+  `data-gosx-scene3d-render-mesh-material-fallback` count and its `-detail`
+  attribute, including cached compile failures.
+
+  To retain native programs, set `SelenaMaterialOptions.Targets: selena.AllTargets()`.
+  `CustomMaterial.ShaderProgram(target)`, `IRMaterial.ShaderProgram(target)`, and
+  `engine.RenderMaterial.ShaderProgram(target)` let native host adapters read the
+  same compiler artifact through JSON and native render bundles. Opting into
+  `Targets` also sends every requested program artifact in browser scene payloads,
+  increasing their size. Source and binding
+  descriptors travel together in `shaderLayout.programs`; browser host adaptations
+  remain in `VertexGLSL`/`FragmentGLSL` and `VertexWGSL`/`FragmentWGSL`. Default browser
+  materials avoid duplicating shader sources. Transport does not imply execution:
+  the current native mesh renderer uses the standard material and reports
+  `MaterialFallbacks` in frame stats and `scene.native.custom_material_fallback`
+  in preview diagnostics.
+
 - **Lights** — `AmbientLight`, `DirectionalLight`, `PointLight`, `SpotLight`, `HemisphereLight`, `RectAreaLight`, `LightProbe`; shadow maps on directional lights, with per-light `ShadowSize` and a scene-wide `Shadows.MaxPixels` cap; spot lights render their cone and penumbra but do not yet cast shadows on either browser backend
 - **Cameras** — perspective and orthographic cameras with orbit, first-person, fly, drag, pointer-lock, and transition hints plus picking and projection-aware sprites/labels
 - **glTF / GLB** — `scene.Model{Src: "/assets/thing.glb"}` loads binary or JSON glTF 2.0 through the in-runtime pure-JS loader (`19-scene-gltf.js`), including animations
-- **Build-time asset planning** — `gosx assets plan public` and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio, USDZ, and WGSL assets into a low-memory `scene-assets.json` contract. It reads real structure: glTF mesh, material and animation counts, KTX2 headers, and WGSL entry points and bind groups. It then records the optimizations each asset *would* benefit from — KTX2 transcodes, GGX IBL prefiltering, split-sum LUT generation, meshopt or Draco compression, LOD stacks, vertex and animation stream compression — as `candidate` or `planned` actions. **Planning is all it does today. GoSX ships no encoder for any of them**, and the runtime glTF loader cannot consume Draco, meshopt or KTX2 either — it raises a named error instead of building a corrupt mesh
+- **Build-time asset planning** — `gosx assets plan public` and `gosx build` inventory GLB/glTF, KTX2, HDR/EXR, raster textures, audio, USDZ, and WGSL assets into a low-memory `scene-assets.json` contract. It reads real structure: glTF mesh, material and animation counts, KTX2 headers, and WGSL entry points and bind groups. It then records the optimizations each asset *would* benefit from — KTX2 transcodes, GGX IBL prefiltering, split-sum LUT generation, meshopt or Draco compression, LOD stacks, vertex and animation stream compression — as `candidate` or `planned` actions. **Planning is all it does today. GoSX ships no encoder for any of them.** The runtime glTF loader rejects Draco and meshopt with named errors and degrades `KHR_texture_basisu` to a warned missing texture; renderer-level KTX2 block upload is a separate capability
 - **Server-driven scene diffs** — `scene.DiffCommands(prev.SceneIR(), next.SceneIR())` emits the browser command protocol for live object, label, sprite, and light replacement, so a Go server can mutate typed scene state and stream compact Scene3D commands over a hub instead of shipping a new page payload
-- **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF animation playback with loop, speed, blend weight, fade-in/fade-out, and replay-sequence controls; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
+- **Animation** — `AnimationClip` / `AnimationChannel` for node-level keyframe animation, `Spin` convenience for auto-rotation, glTF `LINEAR`, `STEP`, and `CUBICSPLINE` playback for TRS and morph weights, with loop, speed, blend weight, fade-in/fade-out, and replay-sequence controls; scene-level `autoRotate` is opt-in and static scenes do not keep a RAF loop alive by default
 - **Instancing** — `InstancedMesh` renders repeated geometry through WebGPU instance-rate vertex buffers and WebGL2 `drawArraysInstanced`, with per-instance transforms, colors, material passes, receive shadows, and WebGPU instanced shadow casters
-- **World primitives** — helper lines, thick world lines, wire overlays, grids, axes, clip-space guides, and textured plane surfaces render on WebGPU through dedicated color, screen-space line-expansion, and surface-texture pipelines; dashed line styles remain the explicit WebGL2 compatibility escape hatch
+- **World primitives** — helper lines, thick world lines, wire overlays, grids, axes, clip-space guides, and textured plane surfaces use backend-specific pipelines; dashed world lines currently require the Canvas2D fallback rather than either browser 3D backend
 - **Particles** — GPU-computed particle systems via `ComputeParticles` with emitter, forces, and material
 - **Water** — `WaterSystem` GPU heightfield simulation with box/rounded pool shapes, caustics, reflection, refraction, projected object optics, drop/orbit/object-drag interaction, independent surface mesh topology, and adaptive quality profiles — WebGPU-first with a WebGL path rendered from the same authored Selena sources
 - **Environment** — ambient, hemisphere, sky/ground, cubemap IBL, exposure, fog, tonemapping
@@ -433,7 +749,7 @@ scene.Props{
 - **Shared IR across backends** — the JS WebGPU and WebGL2 browser backends, the pure-Go desktop WebGPU pipeline, and the headless software rasterizer all consume the same SceneIR, with feature parity gated by what each target surface actually supports and reported through the capability verdict
 - **CSS-stylable 3D** — composable materials, lights, environment, point layers, and post-FX can read `var(--scene-*)` custom properties through the planner, so class changes, media queries, and CSS transitions can drive scene state without authored JavaScript animation code
 
-The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. You can hold the whole thing in your head, and when something goes wrong you read Go and JavaScript — not a black box.
+The scene graph is inspectable Go code. The IR is serializable. The renderer is reproducible. When something goes wrong, the implementation is Go and authored TypeScript rather than a black box.
 
 ## Hubs
 
@@ -447,6 +763,38 @@ h.On("update", func(client *hub.Client, msg hub.Message) {
 ```
 
 Hubs handle client lifecycle, message framing, broadcast patterns, per-connection state, and typed message dispatch. They integrate cleanly with the `crdt` package for conflict-free collaborative state and with the `sim` package for authoritative game loops.
+
+Server-rendered text views can use a typed Hub document binding:
+
+```go
+_, err := ctx.Runtime().BindHubDocument("notes", "/notes/ws", hydrate.HubDocumentConfig{
+    RootID: "notes-editor",
+    Version: state.Version,
+})
+```
+
+Inside that root, mark a textarea with `data-gosx-document-source` and a preview
+with `data-gosx-document-preview`. Optional `data-gosx-document-status`,
+`-version`, `-presence`, `-identity` and `-cursors` elements receive the matching
+state. Remote caret overlays use an unwrapped textarea (`wrap="off"`) and a
+positioned cursor layer. The collaboration demo shows the complete markup.
+
+The server handles `doc:edit` with `{text, version}`, broadcasts `doc:update`
+with `{text, version, html?}`, and answers `doc:sync` with a current snapshot.
+Optional presence and cursor events have configurable names in
+`hydrate.HubDocumentEvents`; cursor offsets use native textarea UTF-16 units.
+Render preview HTML on the server. GoSX's content renderer enforces an inert
+Markdown HTML policy when `content.MDPPOptions.Sanitize` is true, excluding
+active embeds, forms, SVG and MathML and rejecting executable URL schemes.
+
+The binding loads one optional browser host and needs no WASM or application
+JavaScript. It debounces edits, protects newer local input from delayed replies,
+keeps unsent input on the page during reconnect, and flushes pending edits before
+soft navigation. Caret layout coalesces into animation frames and caches unchanged line and width
+measurements; disposal removes
+listeners, carets and timers. Authorization, document storage and conflict policy
+remain server responsibilities. The demo uses last-write-wins snapshots; the
+separate editor package supplies the richer CRDT editing surface.
 
 ## Collaboration: CRDT + Workspace
 
@@ -530,40 +878,117 @@ gosx desktop --url <url>              # Direct native desktop host smoke
 gosx desktop --bundle dist/offline    # Run a packaged app://gosx bundle
 gosx desktop --url <url> --native-bridge
                                       # Direct trusted host with built-in desktop APIs
-gosx build [--prod] [app]             # Build with hashed assets, optional static prerender
-gosx build --offline [app]            # Stage a versioned offline asset bundle
-gosx build --msix [app]               # Stage and package Windows MSIX output
-gosx build --sign --msix [app]        # Sign MSIX via signtool
-gosx build --appinstaller <uri> [app] # Emit AppInstaller update feed XML
+gosx build [--prod] <app>              # Build with hashed assets, optional static prerender
+gosx build --offline <app>             # Stage a versioned offline asset bundle
+gosx build --msix <app>                # Stage and package Windows MSIX output
+gosx build --sign --msix <app>         # Sign MSIX via signtool
+gosx build --appinstaller <uri> <app>  # Emit AppInstaller update feed XML
+gosx deploy check [--json] dist        # Validate a production bundle before upload
 gosx assets plan [path...]            # Inspect 3D/game assets and planned build optimizations
-gosx scene render [--out image.png] <scene-file>
+gosx scene render --out image.png <scene-file>
                                       # Render a typed scene natively to PNG (no browser or GPU)
-gosx scene inspect [--cert] [--budget file] <file-or-dir>...
+gosx scene check [--golden baseline.png] <scene-file>
+                                      # Validate, cost, render, and prove one scene
+gosx scene inspect [--strict] [--budget file] <file-or-dir>...
                                       # Authoring report: surface, assets, memory, fallbacks, budgets
 gosx scene validate [--strict] <file-or-dir>...
                                       # Structured schema diagnostics for scene documents
-gosx scene certify [--backend webgpu|webgl|canvas2d] <scene-file>
-                                      # Backend capability certification report
 gosx scene schema [--out path]        # Emit the SceneIR JSON schema
 gosx export [app]                     # Pre-render static pages to dist/static/
-gosx compile [file.gsx]               # Compile .gsx to IR
-gosx check [file.gsx]                 # Parse and validate
-gosx render [file.gsx]                # Render component to HTML
-gosx fmt [file.gsx]                   # Format source
+gosx compile <file.gsx>                # Compile .gsx to Go
+gosx check <file.gsx>                  # Parse, validate, and check strict props with Go
+gosx render <file.gsx> [component]     # Render component to HTML
+gosx fmt <file.gsx|dir>                # Format source
 gosx lsp                              # Language server for editor integration
-gosx perf --json [url...]             # Profile browser runtime performance
-gosx perf --budget perf-budget.json [url...]
+gosx perf --json <url>...              # Profile browser runtime performance
+gosx perf --budget perf-budget.json <url>...
                                       # Profile and fail when a route exceeds budgets
 gosx perf compare base.json next.json # Fail on perf regressions
 gosx perf budget perf.json budget.json # Check a saved report
-gosx size [--json] dist               # Report exact gzip sizes for full/island runtime profiles and feature chunks
+gosx size [--json] dist               # Report exact gzip sizes and feature chunks
 ```
 
-Production builds require TinyGo on `PATH`, emit a route-selected
-`runtime-islands.wasm` for island-only and compute-island routes, and write
-`.gz` sidecars for immutable runtime assets when compression wins. Dev builds
-still use standard-Go WASM so local iteration does not depend on the production
-compiler.
+Performance instrumentation preserves chained runtime-ready callbacks, including
+soft navigation, and records readiness once per page.
+
+Production builds require TinyGo on `PATH`, emit capability-linked `core`,
+`engine`, `collab`, and `full` runtime profiles (plus the legacy `islands`
+compatibility artifact), and write `.gz` sidecars for immutable runtime assets
+when compression wins. Dev builds still use standard-Go WASM so local
+iteration does not depend on the production compiler.
+
+When Binaryen's `wasm-opt` is on `PATH`, the builder applies an optional `-Oz`
+pass before hashing and compressing WASM. A missing or failing optimizer emits
+a warning and keeps the compiled output. For comparable production sizes, use
+the same Go, TinyGo, and Binaryen versions as CI; the wire gate's optimizer is
+pinned in [`scripts/install-ci-binaryen.sh`](scripts/install-ci-binaryen.sh).
+
+Production builds start the server for prerendering only when static routes
+exist. Apps that need request-time authentication or a database can also disable
+build-time prerendering in `gosx.config.json`:
+
+```json
+{"build":{"prerender":{"enabled":false}}}
+```
+
+This keeps the server binary and normal production assets, and omits static
+snapshots and the edge export. The default is `true`; `gosx export` remains an
+explicit export command. Export harnesses supply a numeric `PORT` and a loopback
+`GOSX_LISTEN_ADDR`. Use `server.App.ListenAndServe` to honor both, including when
+your app's default address comes from another environment variable.
+
+Set `build.server.strip` to `true` to build the native server with
+`-ldflags='-s -w'`, omitting its symbol table and debug information. The default
+is `false`, preserving the normal Go debug information. This setting applies
+to the native server produced by `gosx build`, not the shared runtime or
+configured `build.goWASM` browser modules.
+
+Install the CLI at the version required by your project's `go.mod`, using
+`go install m31labs.dev/gosx/cmd/gosx@<version>`. The version guard reads the
+binary's compiled module version, so matching pseudo-versions work as well as
+releases. Local development binaries without a module version fall back to the
+release constant. A genuine mismatch still reports the matching install command.
+
+### Prebuilt runtime (no TinyGo required)
+
+A project pinned to a stable released `m31labs.dev/gosx` version (a plain
+`require`, not a local `replace`) does not need TinyGo installed at all.
+When `gosx build --prod` cannot find `tinygo` on `PATH`, it automatically
+falls back to a release-matched, integrity-verified prebuilt runtime:
+
+1. It resolves the project's exact pinned GoSX version (the same check
+   `gosx`'s version-skew guard already runs).
+2. It fetches that release's runtime WASM variants, `wasm_exec.js` shim, and
+   a hashed manifest (`gosx-runtime-artifacts.json`) from the GitHub release
+   published for that tag.
+3. It verifies every file's SHA-256 against the manifest before staging it
+   into `dist/`, and caches the verified files under
+   `$GOSX_RUNTIME_CACHE` (default `os.UserCacheDir()/gosx/runtime`) so a
+   later build for the same version fetches nothing.
+
+Controls:
+
+| Env var | Effect |
+| --- | --- |
+| `GOSX_RUNTIME_MODE=tinygo` | Require TinyGo; never fall back to a prebuilt runtime. |
+| `GOSX_RUNTIME_MODE=prebuilt` | Skip the TinyGo probe; always resolve a prebuilt runtime. |
+| `GOSX_RUNTIME_MODE=auto` (default) | Prefer TinyGo; fall back to prebuilt only when TinyGo is missing. |
+| `GOSX_RUNTIME_CACHE=<dir>` | Override the verified-runtime and compiler-workspace cache directory. |
+| `GOSX_RUNTIME_RELEASE_REPO=<owner>/<repo>` | Resolve prebuilt runtimes from a fork's own releases. |
+| `gosx build --offline` | Disable the prebuilt *network fetch*; an already cached, verified version still resolves. |
+
+A project still building against unreleased GoSX source (a `go.mod` local
+`replace`, or a version with no published release, such as a pseudo-version)
+always requires TinyGo — there is no prebuilt runtime for source that was
+never tagged. `gosx dev` never needs TinyGo; it always uses the standard Go
+WASM compiler.
+
+When building runtimes with TinyGo, `gosx build` uses stable source-module
+paths under `$GOSX_RUNTIME_CACHE/tinygo-build` so TinyGo can reuse its package
+cache across rebuilds. Every build stages current source and dependency files;
+edited, added and deleted files take effect immediately. Workspaces are scoped
+to the GoSX source location and runtime tags and protected by process locks.
+Concurrent builds or unavailable cache storage use isolated temporary modules.
 
 ## Performance Budgets
 
@@ -626,19 +1051,18 @@ Production builds and static exports also write route capability metadata into `
 
 `make wasm-size-budget` (script: `scripts/check-wasm-size.sh`) builds both
 flavors of `client/wasm` and asserts the resulting WebAssembly artifacts stay
-within budget. CI runs the gate on every PR. Baselines (Phase 1c shipped):
+within budget. CI runs the gate on every PR. Measured 2026-09-23 (TinyGo
+0.41.1, wasm-opt -Oz):
 
-| Flavor | Build tags                    | Shipped (Phase 1c) | Budget |
-|--------|-------------------------------|--------------------|--------|
-| full   | _(none)_                      | ~1,368 KB          | 5,500 KB |
-| tiny   | `gosx_tiny_islands_only`      | ~684 KB            | 3,200 KB |
+| Flavor | Build tags                    | Measured | Budget |
+|--------|-------------------------------|----------|--------|
+| full   | _(none)_                      | 2,191 KB | 2,450 KB |
+| tiny   | `gosx_tiny_islands_only`      | 817 KB   | 920 KB |
 
 Override the budget for a planned-growth slice by exporting
-`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. **Any budget increase
-greater than 10% over the Phase 1c baseline requires an ADR** explaining what
-deliberate growth shipped (e.g. Phase 2's `<CanvasBoard>` primitive, future
-opcode-set expansion). The gate fires on incidental regressions so they get
-caught at the PR boundary instead of slipping into a release.
+`WASM_FULL_BUDGET_KB` and/or `WASM_TINY_BUDGET_KB`. The gate fires on
+incidental regressions so they get caught at the PR boundary instead of
+slipping into a release.
 
 `gosx desktop [app]` opens the dev server in the native desktop host. On Windows
 it uses WebView2 through the pure-Go `desktop` package; `gosx desktop --url
@@ -653,6 +1077,26 @@ Windows backend still returns `desktop.ErrUnsupported` for extra windows until
 shared WebView2-environment support lands. From WSL or CI, `make
 build-desktop-windows` emits `build/gosx-windows-amd64.exe` and
 `build/gosx-windows-arm64.exe` for handoff to a Windows host.
+
+Desktop games can select a Fixed Version WebView2 runtime with
+`desktop.Options.BrowserExecutableFolder` and pass Chromium options through
+`desktop.Options.AdditionalBrowserArguments`; for example, `--mute-audio` and
+`--autoplay-policy=no-user-gesture-required`. GoSX sets the documented
+`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable before environment creation.
+WebView2 environment variables are process-wide and apply to every WebView2
+environment in the process. `desktop.WebView2RuntimeVersion` reports
+the selected runtime, while `desktop.ErrWebView2LoaderUnavailable` and
+`desktop.ErrWebView2RuntimeUnavailable` identify a missing loader or runtime
+and still match `desktop.ErrWebView2Unavailable`.
+
+Production mode disables WebView2 browser accelerators, zoom controls, and its
+status bar; `Options.Debug` leaves them enabled. `Options.OnProcessFailed`
+receives a `desktop.ProcessFailedKind`; the game can call `App.Reload` when it
+chooses to recover. HTML `requestFullscreen()` uses borderless fullscreen on
+the window's monitor and returns to the earlier window state when it ends.
+The first icon resource in the executable supplies the window's large and
+small icons when present. Run `make test-desktop-windows-shipping-smoke` from
+WSL to verify these behaviors on a Windows host.
 
 Trusted desktop content can call `window.gosxDesktop.app`,
 `window.gosxDesktop.window`, `window.gosxDesktop.dialog`,
@@ -680,18 +1124,180 @@ Trusted desktop content can then call:
 const prefs = await window.gosxDesktop.service("prefs").load({ scope: "user" });
 ```
 
-The `desktop` package also exposes release-time hooks: `App.UpdateCheck()` /
-`App.UpdateApply()` consume MSIX AppInstaller feeds, and
-`CrashReporterOptions` captures Go panics plus Windows minidumps with optional
-user-consented upload.
+The `desktop` package exposes two update paths. `App.UpdateCheck()` and
+`App.UpdateApply()` use the Windows App Installer feed for MSIX releases.
+`App.CheckSignedUpdate()` verifies the signed `latest.json` feed emitted by
+`gosx desktop package` for direct-download releases. It only reports an update;
+the player follows the returned download page and reinstalls Setup. Both paths
+are separate from the optional `CrashReporterOptions`, which captures Go
+panics plus Windows minidumps with optional user-consented upload.
 
-`gosx build --prod` emits a deployable `dist/` bundle with a server binary,
-hashed assets, prerendered static pages, an ISR manifest, and edge worker
-support. Add `--offline` to stage `dist/offline/` with a versioned asset
+`gosx build --prod` emits a deployable `dist/` bundle with a server binary and
+hashed assets. With prerendering enabled it also emits static pages, an ISR
+manifest, and edge worker support. Validate the server bundle before upload:
+
+```sh
+gosx deploy check dist
+gosx deploy check --json dist # JSON for check failures and invalid arguments
+```
+
+The check verifies the existing bundle policy, declared asset sizes, content
+hashes and script integrity, compressed sidecars, executable launch files, and
+exported route files. It reads only the bundle and works without starting the
+application, connecting to a database, or supplying production secrets.
+Exit codes are 0 for success, 1 for failed checks and 2 for invalid arguments.
+With `--json`, invalid arguments also produce a JSON report. This command is
+an offline artifact check; host compatibility, runtime configuration, migrations,
+and live health still need validation on the destination. It currently accepts
+server bundles from `gosx build`, not static-only `gosx export` output.
+
+Add `--offline` to stage `dist/offline/` with a versioned asset
 manifest, `--msix` to generate `dist/msix/package/AppxManifest.xml` and
 `dist/app.msix` through MakeAppx, `--sign` to run signtool with
 `GOSX_CODESIGN_CERT` / `GOSX_CODESIGN_KEY`, and `--appinstaller <uri>` to emit
 `dist/app.appinstaller` for AppInstaller-based updates.
+
+For a direct Windows download, stage the app's `.exe`, `WebView2Loader.dll`,
+assets and other runtime files, then package them from Linux:
+
+```sh
+gosx desktop package --input dist/windows --config release/desktop.json --output dist/download
+```
+
+The JSON config supplies `app_id`, `name`, `publisher`, `version`, `icon`,
+`host_exe`, `data_dir`, `update_public_key`, `channel`, `released`, `notes`, and
+`download_page`. `data_dir` must be the player's app-selected data folder; the
+installer never stores player data in its install root. Set
+`webview2_bootstrapper` to a local Microsoft Evergreen bootstrapper when you
+have one, or omit it to download the Microsoft bootstrapper during packaging.
+The packager records its SHA-256 in `package-metadata.json` and bundles it in
+Setup for offline use after download.
+
+The output contains a per-user Setup executable, a portable ZIP, `latest.json`,
+`SHA256SUMS`, and `package-metadata.json`. Setup verifies each payload file
+before extraction, uses `%LOCALAPPDATA%\Programs\<App>` by default, and asks
+before replacing an install with a lower version. It needs no administrator
+rights. The uninstaller asks whether to remove `data_dir`; its default is to
+keep player data. For unsigned builds, metadata records `unsigned`. Use
+`--sign-cmd` to sign each app PE before packaging and Setup after the payload is
+appended. The command template accepts `{input}`, `{output}`, and `{file}`. Use
+`--manifest-key <file>` or `--manifest-sign-cmd <template>` to sign `latest.json`.
+
+Use `gosx desktop package` for a direct-download app with an ordinary per-user
+installer and publisher-hosted `latest.json` manifest. The app embeds the
+matching Ed25519 public key in its build and calls the update API after startup,
+from a menu action or later background check. For example, the application can
+keep the key in a Go source constant and keep the check state in its player-data
+directory:
+
+```go
+result, err := app.CheckSignedUpdate(ctx, desktop.SignedUpdateCheckOptions{
+    ManifestURL:     "https://updates.example.com/wb/latest.json",
+    Channel:         "stable",
+    PublicKey:       updatePublicKey,
+    StateFile:       filepath.Join(playerDataDir, "update-check.json"),
+    Enabled:         updateChecksEnabled,
+    StartupComplete: appIsReady,
+    Online:          networkIsAvailable,
+})
+if err == nil && result.Status == desktop.SignedUpdateAvailable {
+    // Show result.Version, result.Notes, and a link to result.DownloadPage.
+}
+```
+
+The app ID and current version come from `desktop.Options`. The state file
+limits attempts to one per 24 hours, including failed requests. The API skips
+checks when disabled, before startup completes, or while the caller reports
+offline. It requires HTTPS; `AllowLoopbackHTTPForTests` is only for local test
+servers. `--manifest-key <file>` or `--manifest-sign-cmd <template>` signs the
+manifest during packaging. Use `gosx build --msix` and `--appinstaller <uri>`
+when the app distributes MSIX packages through the Windows App Installer feed;
+that existing feed and its `App.UpdateCheck()` / `App.UpdateApply()` methods
+remain the MSIX path.
+
+### Bundle boundary and mutable state
+
+The production build is a clean-room staging boundary. It validates the
+project before removing an old dist/ directory, then stages app/, content/,
+and public/ with Lstat-based containment checks. Secrets, credential files,
+private metadata directories, symlinks, sockets, devices, FIFOs, and mutable
+database/state files are not deployable artifacts.
+
+Applications that intentionally ship immutable server data can declare exact
+paths in gosx.config.json:
+
+    {
+      "build": {
+        "bundle": {
+          "allow": ["app/catalog.db"],
+          "allowPublic": ["public/seed.db"],
+          "exclude": ["content/drafts"]
+        }
+      }
+    }
+
+allow entries are for immutable app/ or content/ data. allowPublic is a
+separate, loudly warned exception for one exact public file and therefore
+makes that file anonymously readable. No allowance can re-enable secrets or
+symlinks, and exclusions cannot hide them. SQLite -wal, -shm, and -journal
+sidecars must be handled outside the bundle and are never implied by an
+allow entry.
+
+Runtime databases, write-ahead logs, uploads, sessions, and other mutable
+state should live in an explicitly mounted runtime volume or external state
+service, not under app/, content/, or public/. The offline, static, image, and
+server consumers all use the filtered staged tree, and a final artifact audit
+protects it from build hooks reintroducing denied material.
+
+### Runtime asset selection
+
+`gosx build` writes every runtime asset by default: the bootstrap chain, every
+feature chunk (islands, engines, hubs, controllers, text layout, all eight
+Scene3D chunks, video, payments, and the preview relay), and a `.js.map`
+source-map sidecar for each. A server-rendered app that never declares a
+feature does not need its chunk or its map.
+
+`gosx.config.json`'s `build.runtime` block controls two independent things:
+whether `gosx build` writes `.js.map` sidecars, and which runtime feature
+chunks it skips entirely.
+
+    {
+      "build": {
+        "runtime": {
+          "sourceMaps": false,
+          "exclude": ["scene3d", "video", "payments", "relay", "textlayout"]
+        }
+      }
+    }
+
+This example fits a server-rendered app with no 3D scenes, no video player,
+no Stripe checkout, no cross-frame preview, and no demand-loaded text layout.
+`sourceMaps: false` also drops every remaining `.js.map` sidecar.
+
+Valid `exclude` roles: `islands`, `engines`, `hubs`, `controllers`,
+`textlayout`, `scene3d` (all eight Scene3D chunks), `video` (the HLS
+runtime), `payments` (the Stripe bridge), and `relay` (the cross-frame
+preview relay). An unknown role fails the build with a clear error naming
+the valid set.
+
+An excluded role's files never reach `dist/assets/runtime`, and its keys
+never reach `dist/build.json`. No renderer change is required: island.go
+already gates every feature tag and preload hint on whether a page uses
+that feature, never on whether the manifest recorded the asset. Excluding
+a feature a page does use breaks that page — `build.runtime.exclude` trusts
+the project to only exclude what it does not render.
+
+The core loader chain — `bootstrap.js`, `bootstrap-lite.js`,
+`bootstrap-runtime.js`, `wasm_exec.js`, and `patch.js` — is never
+excludable. `build.runtime.exclude` never skips WASM compilation; a later
+`build.runtime.features` allow-list that also skips unneeded WASM builds is
+a separate, future change.
+
+Both fields default to `sourceMaps` true and nothing excluded. This includes
+every available source-map sidecar. Scene3D core, WebGL, and WebGPU release
+chunks omit maps because their second minification pass cannot compose them.
+For framework debugging, `GOSX_BUNDLE_DEBUG=1 make build-bootstrap` generates
+those chunks with matching source maps.
 
 ## Deploy
 
@@ -706,14 +1312,16 @@ Three tiers:
 | Package | Purpose |
 |---------|---------|
 | `gosx` | Node API, grammar, parser, compiler |
-| `ir` | Intermediate representation, lowering, validation, expression parser |
+| `ir` | Intermediate representation, lowering, validation, expression parser. Experimental pre-1.0: pin an exact gosx version if you compile against it directly. |
 | `island` | Island renderer, manifest generation, program serialization |
 | `signal` | Reactive state: `Signal[T]`, `Computed[T]`, `Effect`, `Batch` |
 | `server` | HTTP server, page rendering, caching, streaming, i18n, edge annotations, assets |
-| `route` | File-based routing, layouts, data loaders, modules |
+| `route` | File-based routing, layouts, data loaders, modules. Includes an EXPERIMENTAL render-profile hook (`RenderProfile`, gosx#185): pin an exact gosx version if you depend on it directly. |
 | `content` | mdpp-backed Markdown/MDX/Markdown++ collection loading with typed metadata, diagnostics, and renderer hooks |
 | `components` | Registry and binding adapters for server component libraries |
 | `ui` | GoSX UI primitives and registry-backed component library seed |
+| `polarui` | Zero-runtime native Polar hosted-checkout form |
+| `polaradapter` | Typed server-only Polar Checkout API and POST/303 adapter |
 | `action` | Named mutation handlers with validation |
 | `session` | Signed cookie sessions, CSRF, flash state |
 | `auth` | Auth middleware, OAuth, magic links, WebAuthn |
@@ -730,11 +1338,11 @@ Three tiers:
 | `engine` | Worker/surface model with capability declarations |
 | `engine/wasm` | Standard-Go WASM engine registration, browser context, and instance lifecycle |
 | `editor` | Go-native text editor building blocks (textmodel, input, highlight, toolbar, vscode shim) |
-| `highlight` | Syntax highlighting for Go, GSX, JavaScript, JSON, and Bash |
+| `highlight` | Syntax highlighting for Go, GSX, JavaScript/TypeScript, JSON, and Bash |
 | `client/vm` | Expression VM, tree reconciler, patch generation |
 | `client/bridge` | WASM bridge for island/engine lifecycle |
 | `client/wasm` | WASM entry point |
-| `client/js` | Browser runtime: bootstrap (lite/runtime/full), patch applier, feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
+| `client/js` | Authored TypeScript browser runtime and generated bundles: bootstrap, patch applier, and feature chunks (islands, hubs, engines, Scene3D WebGL/WebGPU/glTF/animation) |
 | `render` | Server-side HTML rendering from IR |
 | `css` | Component-scoped CSS with `:where()` selectors |
 | `textlayout` | Text measurement, line breaking, ellipsis |
@@ -762,7 +1370,7 @@ make test-desktop  # Desktop package tests plus Windows cross-compile guards
 make test-desktop-macos # macOS desktop/cmd cross-compile guardrails
 make build-desktop-windows  # Windows desktop-capable CLI binaries
 make build-desktop-macos    # macOS CLI binaries; native backend still unsupported
-make build-runtime # TinyGo production full + island-only WASM runtime builds
+make build-runtime # TinyGo production capability-profile WASM runtime builds
 make canopy-index  # Memory-bounded structural index in .canopy/index.json
 make canopy-stats  # Inspect the cached structural index
 make ci            # All of the above + build verification
@@ -794,7 +1402,10 @@ The six libraries the framework's runtime paths use:
 
 **No CGo.** `CGO_ENABLED=0 go build ./...` is clean, and `windows/amd64`, `darwin/arm64` and `linux/arm64` all cross-compile clean. `GOOS=js GOARCH=wasm` builds every package, with no exceptions — `make build-wasm-all` is a CI gate, so this sentence fails the build rather than going stale.
 
-**No JavaScript toolchain** — for your app. The framework itself contains roughly 79,000 lines of hand-written browser JavaScript and vendors `hls.min.js` for HLS playback. The claim is about your build, and there it holds: no Node, no npm, no bundler config.
+**No JavaScript toolchain** — for your app. The framework itself owns a
+TypeScript browser-runtime pipeline and vendors `hls.min.js` for HLS playback;
+generated bundles are checked against those authored sources. The claim is
+about application builds, and there it holds: no Node, npm, or bundler config.
 
 ## Built On
 
@@ -804,7 +1415,7 @@ The same compiler infrastructure powers [Arbiter](https://github.com/odvcencio/a
 
 ## Status
 
-GoSX is pre-1.0. The current release is **v0.36.0**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
+GoSX is pre-1.0. The current release is **v0.57.17**. The five primitives (Server, Action, Island, Engine, Hub) are stable in shape — we do not expect their top-level API to change before 1.0. Subsystems like `ir`, `scene`, `desktop`, `field`, `sim`, `workspace`, and `semantic` are still under active development and may take breaking changes; each such change is called out explicitly in [CHANGELOG.md](./CHANGELOG.md) with a migration path.
 
 If you're evaluating GoSX for production work, the server + island + route + engine + scene stack has been used in production. The semantic, workspace, and sim layers have production users but are newer.
 

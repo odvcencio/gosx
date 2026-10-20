@@ -16,22 +16,30 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSrc(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const sharedSource = readSrc("15a-scene-postfx-shared.js");
-const webglSource = readSrc("16-scene-webgl.js");
-const webgpuSource = readSrc("16a-scene-webgpu.js");
+const sharedSource = ts.transpileModule(readSrc("15a-scene-postfx-shared.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+const webglSource = readSceneRendererBackendSrc("webgl");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
 // sceneRenderBackendTruth and its DOM surface live in
 // 20b-scene-mount-webgl-chunk.js, not 20-scene-mount.js: applySceneRendererState
 // (its only caller) moved there when the former single 20-scene-mount.js split
 // into the 20a..20h file set.
-const backendMountSource = readSrc("20b-scene-mount-webgl-chunk.js");
+const backendMountSource = readSrc("../runtime/scene3d/mount-webgl.ts");
+const pipelineRecoverySource = readSrc("../runtime/scene3d/pipeline-recovery.ts");
 
 // loadRenderTruth evaluates 15a in a throwaway VM with a minimal window and
 // returns the published API. No DOM library needed: the only DOM surface the
@@ -222,8 +230,8 @@ test("render truth: both renderers are wired to the shared publisher", () => {
   assert.match(webglSource, /webglRenderTruthStats\.meshDrawn \+= 1;/);
   assert.match(webglSource, /webglRenderTruthStats\.meshViewCulled \+= 1;/);
   assert.match(webglSource, /webglRenderTruthStats\.meshUndrawable \+= 1;/);
-  assert.match(webgpuSource, /truthApi\.publish\(mount, \{/);
-  assert.match(webgpuSource, /meshUndrawable: webGPUCountUndrawableMeshObjects\(bundle\)/);
+  assert.match(webgpuSource, /truthApi\.publish\(webGPUAttributeSink, \{/);
+  assert.match(webgpuSource, /frameStats\.meshUndrawable = webGPUCountUndrawableMeshObjects\(bundle\)/);
 });
 
 test("render truth: the WebGPU post chain is marked at the single dispatch funnel", () => {
@@ -231,8 +239,8 @@ test("render truth: the WebGPU post chain is marked at the single dispatch funne
   // newly added effect cannot forget to report itself, and bloom's four
   // internal passes are counted honestly.
   const funnel = webgpuSource.slice(
-    webgpuSource.indexOf("function fullscreenPass(encoder, pipeline, bindGroup, targetView)")
-  ).slice(0, 900);
+    webgpuSource.indexOf("function fullscreenPass(encoder, pipeline, bindGroup, targetView, options)")
+  ).slice(0, 1400);
   assert.match(funnel, /pass\.end\(\);/);
   assert.match(funnel, /activePostChain && activePostIndex >= 0/);
   // ...and the final blit must NOT be attributed to the last authored effect.
@@ -260,7 +268,8 @@ test("render truth: authored Selena shader modules capture browser compilation i
 test("render truth: device loss and uncaptured GPU errors reach the journal", () => {
   assert.match(webgpuSource, /renderTruth\(\)\.record\("device-lost"/);
   assert.match(webgpuSource, /addEventListener\("uncapturederror"/);
-  assert.match(webgpuSource, /renderTruth\(\)\.record\("gpu-uncaptured-error"/);
+  assert.match(webgpuSource, /function uncaptured\(event/);
+  assert.match(pipelineRecoverySource, /truth\.pipelineFailure\(pass \|\| "core", label, message\)/);
 });
 
 test("render truth: the mount publishes ONE machine-readable backend record", () => {
@@ -270,4 +279,73 @@ test("render truth: the mount publishes ONE machine-readable backend record", ()
   // gpu must be derived from the backend that actually ran, so a Canvas2D
   // mount -- which runs no shader at all -- can never report gpu=true.
   assert.match(backendMountSource, /gpu: kind === "webgpu" \|\| kind === "webgl"/);
+});
+
+test("scene status binding exposes the rolling frame percentile in milliseconds", () => {
+  const start = backendMountSource.indexOf("  function sceneSyncStatusBindings(mount) {");
+  const end = backendMountSource.indexOf("\n  function createSceneAdaptiveQualityState", start);
+  assert.ok(start >= 0 && end > start, "Scene3D status binding function should be present");
+  const output = {
+    hidden: true,
+    textContent: "measuring…",
+    attrs: new Map([["data-gosx-scene3d-status", "frame-p95"]]),
+    getAttribute(name) { return this.attrs.get(name) || null; },
+    setAttribute(name, value) { this.attrs.set(name, String(value)); },
+  };
+  const scope = {
+    parentNode: null,
+    hasAttribute(name) { return name === "data-gosx-scene3d-status-scope"; },
+    querySelectorAll(selector) {
+      assert.equal(selector, "[data-gosx-scene3d-status]");
+      return [output];
+    },
+  };
+  const mount = {
+    parentNode: scope,
+    hasAttribute() { return false; },
+    getAttribute(name) { return name === "data-gosx-scene3d-quality-p95-ms" ? "12.34" : null; },
+  };
+  const context = {
+    Number,
+    mount,
+    sceneStatusBindingLabel(value) { return String(value); },
+    setAttrValue(element, name, value) { element.setAttribute(name, value); },
+  };
+  vm.runInNewContext(`${backendMountSource.slice(start, end)}\nsceneSyncStatusBindings(mount);`, context);
+  assert.equal(output.textContent, "12.3 ms");
+  assert.equal(output.attrs.get("data-state"), "ready");
+  assert.equal(output.hidden, false);
+});
+
+test("scene status binding reports that frame-p95 is measuring without a sample", () => {
+  const start = backendMountSource.indexOf("  function sceneSyncStatusBindings(mount) {");
+  const end = backendMountSource.indexOf("\n  function createSceneAdaptiveQualityState", start);
+  assert.ok(start >= 0 && end > start, "Scene3D status binding function should be present");
+  const output = {
+    hidden: true,
+    textContent: "",
+    attrs: new Map([["data-gosx-scene3d-status", "frame-p95"]]),
+    getAttribute(name) { return this.attrs.get(name) || null; },
+    setAttribute(name, value) { this.attrs.set(name, String(value)); },
+  };
+  const scope = {
+    parentNode: null,
+    hasAttribute(name) { return name === "data-gosx-scene3d-status-scope"; },
+    querySelectorAll() { return [output]; },
+  };
+  const mount = {
+    parentNode: scope,
+    hasAttribute() { return false; },
+    getAttribute() { return null; },
+  };
+  const context = {
+    Number,
+    mount,
+    sceneStatusBindingLabel(value) { return String(value); },
+    setAttrValue(element, name, value) { element.setAttribute(name, value); },
+  };
+  vm.runInNewContext(`${backendMountSource.slice(start, end)}\nsceneSyncStatusBindings(mount);`, context);
+  assert.equal(output.textContent, "measuring…");
+  assert.equal(output.attrs.get("data-state"), "measuring");
+  assert.equal(output.hidden, false);
 });

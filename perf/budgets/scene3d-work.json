@@ -1,0 +1,594 @@
+{
+  "schema": "gosx.scene3d-work/v1",
+  "note": "Exact maxima and totals over 120 rendered frames after eight warmup frames. Targets count live attachment pixels times samples; fake GL default MSAA is four samples. Pacing uses 120 RAF pulses at 60 Hz after settling. Lower every improved count; raises are forbidden by the base-branch ratchet.",
+  "cases": {
+    "hero/desktop-full/webgl": {
+      "mount": {
+        "backingPixels": 2072298,
+        "samples": 1,
+        "backingPixelSamples": 2072298,
+        "postTargetPixels": 4144596,
+        "shadowMapPixels": 65536,
+        "contextAttributes": {
+          "alpha": false,
+          "premultipliedAlpha": false,
+          "antialias": false,
+          "depth": true,
+          "powerPreference": "high-performance"
+        }
+      },
+      "steady": {
+        "draws": 11,
+        "programBinds": 8,
+        "pipelineBinds": 0,
+        "framebufferBinds": 6,
+        "renderPasses": 0,
+        "bufferUploadBytes": 64000,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 6
+      },
+      "steadyTotal": {
+        "draws": 1320,
+        "programBinds": 960,
+        "pipelineBinds": 0,
+        "framebufferBinds": 720,
+        "renderPasses": 0,
+        "bufferUploadBytes": 7680000,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 601
+      }
+    },
+    "post/desktop-full/webgl": {
+      "mount": {
+        "backingPixels": 2072298,
+        "samples": 1,
+        "backingPixelSamples": 2072298,
+        "postTargetPixels": 7252474,
+        "shadowMapPixels": 65536,
+        "contextAttributes": {
+          "alpha": false,
+          "premultipliedAlpha": false,
+          "antialias": false,
+          "depth": true,
+          "powerPreference": "high-performance"
+        }
+      },
+      "steady": {
+        "draws": 6,
+        "programBinds": 9,
+        "pipelineBinds": 0,
+        "framebufferBinds": 8,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 720,
+        "programBinds": 1080,
+        "pipelineBinds": 0,
+        "framebufferBinds": 960,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 1080
+      }
+    },
+    "dense/desktop-full/webgl": {
+      "mount": {
+        "backingPixels": 2072298,
+        "samples": 4,
+        "backingPixelSamples": 8289192,
+        "postTargetPixels": 0,
+        "shadowMapPixels": 0,
+        "contextAttributes": {
+          "alpha": false,
+          "premultipliedAlpha": false,
+          "antialias": true,
+          "depth": true,
+          "powerPreference": "high-performance"
+        }
+      },
+      "steady": {
+        "draws": 134,
+        "programBinds": 4,
+        "pipelineBinds": 0,
+        "framebufferBinds": 1,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 16080,
+        "programBinds": 480,
+        "pipelineBinds": 0,
+        "framebufferBinds": 120,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 1080
+      }
+    },
+    "static/desktop-full/webgl": {
+      "framesInTwoSeconds": 0
+    },
+    "ambient/desktop-full/webgl": {
+      "framesInTwoSeconds": 120
+    },
+    "hidden/desktop-full/webgl": {
+      "framesInTwoSeconds": 1
+    },
+    "offscreen/desktop-full/webgl": {
+      "framesInTwoSeconds": 0
+    },
+    "hero/desktop-full/webgpu": {
+      "mount": {
+        "backingPixels": 2072298,
+        "samples": 4,
+        "backingPixelSamples": 8289192,
+        "postTargetPixels": 18650682,
+        "shadowMapPixels": 65537,
+        "contextAttributes": {
+          "format": "rgba8unorm",
+          "alphaMode": "premultiplied",
+          "usage": 20
+        }
+      },
+      "steady": {
+        "draws": 11,
+        "programBinds": 0,
+        "pipelineBinds": 5,
+        "framebufferBinds": 0,
+        "renderPasses": 3,
+        "bufferUploadBytes": 2804,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 1,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 1320,
+        "programBinds": 0,
+        "pipelineBinds": 600,
+        "framebufferBinds": 0,
+        "renderPasses": 360,
+        "bufferUploadBytes": 336480,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 120,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 290
+      }
+    },
+    "post/desktop-full/webgpu": {
+      "mount": {
+        "backingPixels": 2072298,
+        "samples": 4,
+        "backingPixelSamples": 8289192,
+        "postTargetPixels": 21758560,
+        "shadowMapPixels": 65537,
+        "contextAttributes": {
+          "format": "rgba8unorm",
+          "alphaMode": "premultiplied",
+          "usage": 20
+        }
+      },
+      "steady": {
+        "draws": 7,
+        "programBinds": 0,
+        "pipelineBinds": 7,
+        "framebufferBinds": 0,
+        "renderPasses": 7,
+        "bufferUploadBytes": 772,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 5,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 840,
+        "programBinds": 0,
+        "pipelineBinds": 840,
+        "framebufferBinds": 0,
+        "renderPasses": 840,
+        "bufferUploadBytes": 92640,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 600,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 765
+      }
+    },
+    "dense/desktop-full/webgpu": {
+      "mount": {
+        "backingPixels": 2072298,
+        "samples": 4,
+        "backingPixelSamples": 8289192,
+        "postTargetPixels": 0,
+        "shadowMapPixels": 1,
+        "contextAttributes": {
+          "format": "rgba8unorm",
+          "alphaMode": "premultiplied",
+          "usage": 20
+        }
+      },
+      "steady": {
+        "draws": 134,
+        "programBinds": 0,
+        "pipelineBinds": 2,
+        "framebufferBinds": 0,
+        "renderPasses": 1,
+        "bufferUploadBytes": 152676,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 16080,
+        "programBinds": 0,
+        "pipelineBinds": 240,
+        "framebufferBinds": 0,
+        "renderPasses": 120,
+        "bufferUploadBytes": 18321120,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 765
+      }
+    },
+    "static/desktop-full/webgpu": {
+      "framesInTwoSeconds": 0
+    },
+    "ambient/desktop-full/webgpu": {
+      "framesInTwoSeconds": 120
+    },
+    "hidden/desktop-full/webgpu": {
+      "framesInTwoSeconds": 1
+    },
+    "offscreen/desktop-full/webgpu": {
+      "framesInTwoSeconds": 0
+    },
+    "hero/phone-balanced/webgl": {
+      "mount": {
+        "backingPixels": 740610,
+        "samples": 1,
+        "backingPixelSamples": 740610,
+        "postTargetPixels": 1481220,
+        "shadowMapPixels": 65536,
+        "contextAttributes": {
+          "alpha": false,
+          "premultipliedAlpha": false,
+          "antialias": false,
+          "depth": true,
+          "powerPreference": "high-performance"
+        }
+      },
+      "steady": {
+        "draws": 10,
+        "programBinds": 8,
+        "pipelineBinds": 0,
+        "framebufferBinds": 6,
+        "renderPasses": 0,
+        "bufferUploadBytes": 64000,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 6
+      },
+      "steadyTotal": {
+        "draws": 1200,
+        "programBinds": 960,
+        "pipelineBinds": 0,
+        "framebufferBinds": 720,
+        "renderPasses": 0,
+        "bufferUploadBytes": 7680000,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 601
+      }
+    },
+    "post/phone-balanced/webgl": {
+      "mount": {
+        "backingPixels": 740610,
+        "samples": 1,
+        "backingPixelSamples": 740610,
+        "postTargetPixels": 2591502,
+        "shadowMapPixels": 65536,
+        "contextAttributes": {
+          "alpha": false,
+          "premultipliedAlpha": false,
+          "antialias": false,
+          "depth": true,
+          "powerPreference": "high-performance"
+        }
+      },
+      "steady": {
+        "draws": 6,
+        "programBinds": 9,
+        "pipelineBinds": 0,
+        "framebufferBinds": 8,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 720,
+        "programBinds": 1080,
+        "pipelineBinds": 0,
+        "framebufferBinds": 960,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 1080
+      }
+    },
+    "dense/phone-balanced/webgl": {
+      "mount": {
+        "backingPixels": 740610,
+        "samples": 1,
+        "backingPixelSamples": 740610,
+        "postTargetPixels": 0,
+        "shadowMapPixels": 0,
+        "contextAttributes": {
+          "alpha": false,
+          "premultipliedAlpha": false,
+          "antialias": false,
+          "depth": true,
+          "powerPreference": "high-performance"
+        }
+      },
+      "steady": {
+        "draws": 134,
+        "programBinds": 4,
+        "pipelineBinds": 0,
+        "framebufferBinds": 1,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 16080,
+        "programBinds": 480,
+        "pipelineBinds": 0,
+        "framebufferBinds": 120,
+        "renderPasses": 0,
+        "bufferUploadBytes": 0,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 1080
+      }
+    },
+    "static/phone-balanced/webgl": {
+      "framesInTwoSeconds": 0
+    },
+    "ambient/phone-balanced/webgl": {
+      "framesInTwoSeconds": 120
+    },
+    "hidden/phone-balanced/webgl": {
+      "framesInTwoSeconds": 1
+    },
+    "offscreen/phone-balanced/webgl": {
+      "framesInTwoSeconds": 0
+    },
+    "hero/phone-balanced/webgpu": {
+      "mount": {
+        "backingPixels": 740610,
+        "samples": 1,
+        "backingPixelSamples": 740610,
+        "postTargetPixels": 1481220,
+        "shadowMapPixels": 65537,
+        "contextAttributes": {
+          "format": "rgba8unorm",
+          "alphaMode": "premultiplied",
+          "usage": 20
+        }
+      },
+      "steady": {
+        "draws": 11,
+        "programBinds": 0,
+        "pipelineBinds": 5,
+        "framebufferBinds": 0,
+        "renderPasses": 3,
+        "bufferUploadBytes": 2804,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 1,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 1320,
+        "programBinds": 0,
+        "pipelineBinds": 600,
+        "framebufferBinds": 0,
+        "renderPasses": 360,
+        "bufferUploadBytes": 336480,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 120,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 290
+      }
+    },
+    "post/phone-balanced/webgpu": {
+      "mount": {
+        "backingPixels": 740610,
+        "samples": 1,
+        "backingPixelSamples": 740610,
+        "postTargetPixels": 2591502,
+        "shadowMapPixels": 65537,
+        "contextAttributes": {
+          "format": "rgba8unorm",
+          "alphaMode": "premultiplied",
+          "usage": 20
+        }
+      },
+      "steady": {
+        "draws": 7,
+        "programBinds": 0,
+        "pipelineBinds": 7,
+        "framebufferBinds": 0,
+        "renderPasses": 7,
+        "bufferUploadBytes": 772,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 5,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 840,
+        "programBinds": 0,
+        "pipelineBinds": 840,
+        "framebufferBinds": 0,
+        "renderPasses": 840,
+        "bufferUploadBytes": 92640,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 600,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 765
+      }
+    },
+    "dense/phone-balanced/webgpu": {
+      "mount": {
+        "backingPixels": 740610,
+        "samples": 1,
+        "backingPixelSamples": 740610,
+        "postTargetPixels": 0,
+        "shadowMapPixels": 1,
+        "contextAttributes": {
+          "format": "rgba8unorm",
+          "alphaMode": "premultiplied",
+          "usage": 20
+        }
+      },
+      "steady": {
+        "draws": 134,
+        "programBinds": 0,
+        "pipelineBinds": 2,
+        "framebufferBinds": 0,
+        "renderPasses": 1,
+        "bufferUploadBytes": 152676,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 9
+      },
+      "steadyTotal": {
+        "draws": 16080,
+        "programBinds": 0,
+        "pipelineBinds": 240,
+        "framebufferBinds": 0,
+        "renderPasses": 120,
+        "bufferUploadBytes": 18321120,
+        "textureUploadBytes": 0,
+        "gpuBuffersCreated": 0,
+        "bindGroupsCreated": 0,
+        "getParameter": 0,
+        "getError": 0,
+        "readPixels": 0,
+        "domAttributeWrites": 765
+      }
+    },
+    "static/phone-balanced/webgpu": {
+      "framesInTwoSeconds": 0
+    },
+    "ambient/phone-balanced/webgpu": {
+      "framesInTwoSeconds": 120
+    },
+    "hidden/phone-balanced/webgpu": {
+      "framesInTwoSeconds": 1
+    },
+    "offscreen/phone-balanced/webgpu": {
+      "framesInTwoSeconds": 0
+    }
+  }
+}

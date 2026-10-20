@@ -1,155 +1,83 @@
-.beacon {
-	position: relative;
-	min-height: 100%;
-	min-width: 0;
-	overflow: hidden;
-	background: var(--demo-bg);
+:global(html:has(.bgb)), :global(body:has(.bgb)) { overflow: hidden; margin: 0; }
+:global(body:has(.bgb) :is(.pill-nav, .nav-overlay, .skip-link, .demo-dock, .demo-meta, .demo-details, .site-footer)) { display: none; }
+:global(.bgb) {
+  position: fixed; inset: 0; z-index: 1000; background: #0b0d10;
+  color: #f4f1ec; font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-
-.beacon__canvas {
-	position: absolute;
-	inset: 0;
-	z-index: 0;
+:global(.bgb__canvas), :global(.bgb__canvas > *) { position: absolute; inset: 0; width: 100%; height: 100%; }
+:global(.bgb__preview-state) {
+  position: absolute; top: max(20px, env(safe-area-inset-top)); left: max(20px, env(safe-area-inset-left));
+  right: 64px; z-index: 2; width: fit-content; max-width: calc(100% - 84px); margin: 0;
+  padding: 8px 12px; border-radius: 6px; background: rgba(10,12,14,.8); color: #f4f1ec; font-size: 12px; line-height: 1.5;
 }
-
-.beacon__canvas canvas {
-	display: block;
-	width: 100%;
-	height: 100%;
+:global(.bgb:has([data-gosx-scene3d-render-gpu="true"][data-gosx-scene3d-mounted="true"]) .bgb__preview-state) { display: none; }
+:global(.bgb::after) {
+  content: ""; position: absolute; inset: auto 0 0; height: 200px; z-index: 1;
+  background: linear-gradient(transparent, rgba(10, 12, 14, 0.65)); pointer-events: none;
 }
-
-.beacon__overlay {
-	position: absolute;
-	z-index: 1;
-	top: var(--space-lg);
-	left: var(--space-lg);
-	width: min(31rem, calc(100% - 2 * var(--space-lg)));
-	padding: var(--space-md);
-	border: 1px solid var(--color-border-strong);
-	border-left: 3px solid var(--demo-accent);
-	background: color-mix(in srgb, var(--color-canvas) 90%, transparent);
-	box-shadow: 0 1rem 3rem var(--color-backdrop);
-	pointer-events: none;
+:global(.bgb__close) {
+  position: absolute; top: max(14px, env(safe-area-inset-top)); right: 16px; z-index: 2;
+  width: 36px; height: 36px; display: grid; place-items: center;
+  border-radius: 50%; color: rgba(255,255,255,.78); text-decoration: none; font-size: 22px; line-height: 1;
+  background: rgba(10,12,14,.22);
 }
-
-.beacon__eyebrow,
-.beacon__runtime,
-.beacon__controls,
-.beacon__budgets {
-	margin: 0;
-	font-family: var(--font-mono);
-	font-size: var(--type-xs);
-	letter-spacing: 0.07em;
-	text-transform: uppercase;
+:global(.bgb__controls), :global(.bgb__reveal) {
+  position: absolute; left: max(20px, env(safe-area-inset-left)); right: 20px; z-index: 2;
+  opacity: 0; visibility: hidden; transform: translateY(8px);
+  transition: opacity .7s ease, transform .7s ease, visibility .7s;
 }
-
-.beacon__eyebrow,
-.beacon__runtime output,
-.beacon__controls {
-	color: var(--demo-accent);
+:global(.bgb[data-revealed="true"] :is(.bgb__controls, .bgb__reveal)), :global(.bgb:focus-within :is(.bgb__controls, .bgb__reveal)) {
+  opacity: 1; visibility: visible; transform: translateY(0);
 }
-
-.beacon h1 {
-	margin: var(--space-xs) 0;
-	color: var(--demo-fg);
-	font-family: var(--font-display);
-	font-size: var(--type-2xl);
-	line-height: 0.98;
-	letter-spacing: -0.035em;
+:global(.bgb__controls) { bottom: max(62px, calc(env(safe-area-inset-bottom) + 62px)); display: flex; flex-wrap: wrap; gap: 8px; }
+:global(.bgb__group) { display: flex; gap: 2px; padding: 3px; border-radius: 999px; background: rgba(10,12,14,.36); backdrop-filter: blur(10px); }
+:global(.bgb__link) {
+  padding: 6px 12px; border:0; background:transparent; font:inherit; border-radius: 999px; font-size: 12px; letter-spacing: .01em;
+  color: rgba(255,255,255,.78); text-decoration: none; white-space: nowrap;
 }
-
-.beacon h1 span {
-	display: block;
-	color: var(--color-text-secondary);
-	font-size: var(--type-lg);
-	letter-spacing: 0;
+:global(.bgb__link:hover), :global(.bgb__link:focus-visible) { color: #fff; background: rgba(255,255,255,.12); }
+:global(.bgb__link:focus-visible), :global(.bgb__close:focus-visible), :global(.bgb__reveal a:focus-visible), :global(.bgb canvas:focus-visible) { outline: 2px solid #f2c38c; outline-offset: 3px; }
+:global(.bgb__reset) { border: 0; background: transparent; font-family: inherit; cursor: pointer; }
+:global(.bgb:not([data-coast-following="true"]) .gosx-scene3d-vessel-controls) { padding: 0 !important; background: transparent !important; }
+:global(.bgb:not([data-coast-following="true"]) .gosx-scene3d-vessel-controls button) { min-height: 44px !important; border-radius: 999px !important; background: #f4e4c9 !important; color: #16130f !important; font: 600 13px ui-sans-serif, system-ui, sans-serif !important; box-shadow: 0 3px 16px #0004; }
+:global(.bgb__instructions) { flex-basis: 100%; margin: 0; font-size: 12px; color: rgba(255,255,255,.85); text-shadow: 0 1px 4px #101318; }
+:global(.bgb:has([data-gosx-scene3d-vessel-following="true"]) .bgb__instructions) { display: none !important; }
+:global(.bgb__discoveries) { max-width: 660px; font-size: 11px; color: rgba(255,255,255,.68); }
+:global(.bgb__reveal) { bottom: max(20px, env(safe-area-inset-bottom)); margin: 0; font-size: 12px; line-height: 1.6; color: rgba(255,255,255,.8); text-shadow: 0 1px 4px #101318; }
+:global(.bgb .bgb__reveal output[data-gosx-scene3d-status]) { display: inline !important; font-variant-numeric: tabular-nums; }
+:global(.bgb__reveal a) { margin-left: 12px; color: inherit; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+:global(.bgb[data-view="shore"] .bgb__view-shore),
+:global(.bgb[data-view="glass"] .bgb__view-glass),
+:global(.bgb[data-view="cliff"] .bgb__view-cliff),
+:global(.bgb[data-view="ship"] .bgb__view-ship),
+:global(.bgb[data-period="golden-hour"] .bgb__period-golden-hour),
+:global(.bgb[data-period="blue-hour"] .bgb__period-blue-hour),
+:global(.bgb[data-period="noon"] .bgb__period-noon) { color: #16130f; background: rgba(255,244,230,.92); }
+@media (max-width: 640px) {
+  :global(.bgb__controls), :global(.bgb__reveal) { left: 12px; right: 12px; }
+  :global(.bgb__controls) { bottom: max(80px, calc(env(safe-area-inset-bottom) + 80px)); gap: 6px; }
+  :global(.bgb:has([data-gosx-scene3d-vessel-following="true"]) [data-gosx-scene3d-vessel="sailing"] > :is(span, .gosx-scene3d-vessel-controls)) { bottom: var(--gosx-vessel-controls-bottom, calc(220px + env(safe-area-inset-bottom))) !important; }
+  :global(.bgb__link) { padding: 6px 9px; font-size: 11px; }
+  :global(.bgb__instructions) { font-size: 11px; }
+  :global(.bgb__discoveries) { display: none; }
+  :global(.bgb__reveal) { font-size: 11px; max-width: 350px; }
+  :global(.bgb__reveal a) { display: block; margin-left: 0; }
 }
-
-.beacon__copy {
-	margin: 0 0 var(--space-sm);
-	color: var(--color-text-secondary);
-	font-family: var(--font-body);
-	font-size: var(--type-sm);
-	line-height: 1.5;
+:global(.bgb__instructions-touch) { display: none; }
+@media (pointer: coarse) {
+  :global(.bgb__instructions-desktop), :global(.bgb__discoveries) { display: none; }
+  :global(.bgb__instructions-touch) { display: block; }
+  :global(.bgb:has([data-gosx-scene3d-vessel-following="true"]) [data-gosx-scene3d-vessel="sailing"] > .gosx-scene3d-vessel-controls) { bottom: var(--gosx-vessel-controls-bottom, 180px) !important; }
 }
-
-.beacon__runtime {
-	display: flex;
-	gap: var(--space-xs);
-	color: var(--demo-muted);
+:global(.bgb .gosx-scene3d-rudder:focus-visible) { outline: 2px solid #f2c38c; outline-offset: 3px; }
+@media (pointer: coarse) and (max-height: 420px) {
+  :global(.bgb__controls) { bottom: max(34px, calc(env(safe-area-inset-bottom) + 34px)); gap: 4px; }
+  :global(.bgb__link) { min-height: 44px; padding: 4px 8px; font-size: 11px; }
+  :global(.bgb__reveal) { bottom: max(4px, env(safe-area-inset-bottom)); font-size: 10px; }
+  :global(.bgb .gosx-scene3d-rudder) { height: 56px !important; }
+  :global(.bgb .gosx-scene3d-rudder > span) { top: 9px !important; }
 }
-
-.beacon__runtime output + output {
-	margin-left: calc(-1 * var(--space-2xs));
-}
-
-.beacon__budgets {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--space-xs);
-	margin: var(--space-sm) 0;
-	padding: var(--space-sm) 0;
-	border-top: 1px solid var(--color-border);
-	border-bottom: 1px solid var(--color-border);
-	color: var(--color-text-secondary);
-	list-style: none;
-}
-
-.beacon__budgets li:not(:last-child)::after {
-	content: "·";
-	margin-left: var(--space-xs);
-	color: var(--demo-accent);
-}
-
-.beacon__controls {
-	opacity: 0.78;
-}
-
-@media (max-width: 700px) {
-	.beacon__overlay {
-		top: auto;
-		right: var(--space-md);
-		bottom: var(--space-md);
-		left: var(--space-md);
-		width: auto;
-		padding: var(--space-sm);
-	}
-
-	.beacon h1 {
-		font-size: var(--type-xl);
-	}
-
-	.beacon__copy {
-		font-size: var(--type-xs);
-	}
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.beacon *,
-	.beacon *::before,
-	.beacon *::after {
-		scroll-behavior: auto;
-		transition-duration: 0s;
-		animation-duration: 0s;
-	}
-}
-
-.beacon__quality {
-	display: flex;
-	gap: var(--space-xs);
-	margin: 0;
-	color: var(--demo-muted);
-	font-family: var(--font-mono);
-	font-size: var(--type-xs);
-	letter-spacing: 0.07em;
-	text-transform: uppercase;
-}
-
-.beacon__quality output {
-	color: var(--demo-accent);
-}
-.beacon__telemetry {
-	display: flex;
-	flex-wrap: wrap;
-	gap: var(--space-sm);
+@media (prefers-reduced-motion: reduce) { :global(.bgb__controls), :global(.bgb__reveal) { transition: none; transform: none; } }
+@media (scripting: none) {
+  :global(.bgb__controls) { opacity: 1; visibility: visible; transform: none; }
 }

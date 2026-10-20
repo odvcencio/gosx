@@ -1,6 +1,10 @@
 package vm
 
-import "strings"
+import (
+	"strings"
+
+	"m31labs.dev/gosx/internal/htmlattr"
+)
 
 // ResolvedTree is the fully evaluated DOM tree produced by the VM after
 // evaluating all expressions and resolving dynamic content.
@@ -54,6 +58,8 @@ type ResolvedAttr struct {
 	Name  string
 	Value string
 	Bool  bool
+	// generatedDispatch is set only when materializing framework event bindings.
+	generatedDispatch bool
 }
 
 // ResolvedEvent is a delegated DOM event binding attached to a concrete node.
@@ -74,25 +80,44 @@ func (node *ResolvedNode) effectiveDOMAttrs() []ResolvedAttr {
 }
 
 func materializeDOMAttrs(attrs []ResolvedAttr, events []ResolvedEvent) []ResolvedAttr {
-	// Fast path: no events → alias the attrs slice directly instead of
+	// Fast path: no events or reserved names → alias the attrs slice instead of
 	// allocating a copy. The returned slice is treated as read-only by
 	// the reconcile walker (it only indexes DOMAttrs, never appends),
 	// so aliasing is safe.
-	if len(events) == 0 {
+	reserved := false
+	for _, attr := range attrs {
+		if htmlattr.ReservedDispatchName(attr.Name) {
+			reserved = true
+			break
+		}
+	}
+	if len(events) == 0 && !reserved {
 		return attrs
 	}
 	out := make([]ResolvedAttr, 0, len(attrs)+(len(events)*2))
-	out = append(out, attrs...)
+	for _, attr := range attrs {
+		if !htmlattr.ReservedDispatchName(attr.Name) {
+			out = append(out, attr)
+		}
+	}
+	return appendGeneratedDispatchAttrs(out, events)
+}
+
+// appendGeneratedDispatchAttrs is the only constructor for privileged DOM
+// markers, shared by VM evaluation and lazy resolved-node materialization.
+func appendGeneratedDispatchAttrs(out []ResolvedAttr, events []ResolvedEvent) []ResolvedAttr {
 	for _, event := range events {
 		eventType := eventAttrType(event.Name)
 		out = append(out, ResolvedAttr{
-			Name:  eventMarkerAttr(eventType),
-			Value: event.Handler,
+			generatedDispatch: true,
+			Name:              eventMarkerAttr(eventType),
+			Value:             event.Handler,
 		})
 		if eventType == "click" {
 			out = append(out, ResolvedAttr{
-				Name:  "data-gosx-handler",
-				Value: event.Handler,
+				generatedDispatch: true,
+				Name:              "data-gosx-handler",
+				Value:             event.Handler,
 			})
 		}
 	}
@@ -124,6 +149,30 @@ func eventMarkerAttr(eventType string) string {
 		return "data-gosx-on-focus"
 	case "blur":
 		return "data-gosx-on-blur"
+	case "dragstart":
+		return "data-gosx-on-dragstart"
+	case "dragend":
+		return "data-gosx-on-dragend"
+	case "dragover":
+		return "data-gosx-on-dragover"
+	case "dragleave":
+		return "data-gosx-on-dragleave"
+	case "drop":
+		return "data-gosx-on-drop"
+	case "pointerdown":
+		return "data-gosx-on-pointerdown"
+	case "pointermove":
+		return "data-gosx-on-pointermove"
+	case "pointerup":
+		return "data-gosx-on-pointerup"
+	case "pointercancel":
+		return "data-gosx-on-pointercancel"
+	case "document-keydown":
+		return "data-gosx-on-document-keydown"
+	case "document-keyup":
+		return "data-gosx-on-document-keyup"
+	case "window-resize":
+		return "data-gosx-on-window-resize"
 	default:
 		return "data-gosx-on-" + eventType
 	}
@@ -147,9 +196,35 @@ func eventAttrType(name string) string {
 		return "focus"
 	case "onBlur":
 		return "blur"
+	case "onDragStart":
+		return "dragstart"
+	case "onDragEnd":
+		return "dragend"
+	case "onDragOver":
+		return "dragover"
+	case "onDragLeave":
+		return "dragleave"
+	case "onDrop":
+		return "drop"
+	case "onPointerDown":
+		return "pointerdown"
+	case "onPointerMove":
+		return "pointermove"
+	case "onPointerUp":
+		return "pointerup"
+	case "onPointerCancel":
+		return "pointercancel"
+	case "onDocumentKeyDown":
+		return "document-keydown"
+	case "onDocumentKeyUp":
+		return "document-keyup"
+	case "onWindowResize":
+		return "window-resize"
 	default:
+		// Lowercase the whole suffix, as the island renderer does, so multiword
+		// names (onDblClick, onLostPointerCapture) agree between both mappers.
 		if len(name) > 2 && name[:2] == "on" {
-			return strings.ToLower(name[2:3]) + name[3:]
+			return strings.ToLower(name[2:])
 		}
 		return strings.ToLower(name)
 	}

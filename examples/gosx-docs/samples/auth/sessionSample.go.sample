@@ -1,0 +1,13 @@
+sessions, err := session.New(os.Getenv("SESSION_SECRET"), session.Options{
+	CookieName:      "__Host-myapp",
+	Encrypt:         true,
+	PreviousSecrets: strings.Fields(os.Getenv("SESSION_PREVIOUS_SECRETS")),
+})
+if err != nil {
+	log.Fatal(err)
+}
+
+authn := auth.New(sessions, auth.Options{LoginPath: "/login"})
+app.Use(sessions.Middleware)
+app.Use(authn.Middleware)
+app.Use(sessions.Protect)

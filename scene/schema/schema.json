@@ -70,6 +70,14 @@
       "type": "integer",
       "minimum": 0
     },
+    "gpuDriven": {
+      "type": ["object", "null"],
+      "additionalProperties": true,
+      "properties": {
+        "occlusion": { "type": "boolean" },
+        "shadowCulling": { "type": "boolean" }
+      }
+    },
     "backendCaps": {
       "type": "object",
       "properties": {
@@ -183,6 +191,18 @@
         "live": { "$ref": "#/$defs/liveArray" }
       }
     },
+    "affineMatrix": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 0 },
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 0 },
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 0 },
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "const": 1 }
+      ],
+      "items": false,
+      "minItems": 16,
+      "maxItems": 16
+    },
     "transformFields": {
       "type": "object",
       "additionalProperties": true,
@@ -193,6 +213,7 @@
         "scaleX": { "type": "number" },
         "scaleY": { "type": "number" },
         "scaleZ": { "type": "number" },
+        "parentMatrix": { "$ref": "#/$defs/affineMatrix" },
         "rotationX": { "type": "number" },
         "rotationY": { "type": "number" },
         "rotationZ": { "type": "number" },
@@ -247,6 +268,9 @@
         "transmission": { "type": "number" },
         "iridescence": { "type": "number" },
         "anisotropy": { "type": "number" },
+        "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
+        "specularIntensity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+        "specularColor": { "type": ["array", "null"], "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
         "normalMap": { "type": "string" },
         "roughnessMap": { "type": "string" },
         "metalnessMap": { "type": "string" },
@@ -379,6 +403,15 @@
               "type": "string",
               "minLength": 1
             },
+            "previewSrc": {
+              "type": "string",
+              "minLength": 1
+            },
+            "fullSrc": {
+              "type": "string",
+              "minLength": 1
+            },
+            "progressive": { "type": "boolean" },
             "scaleX": { "type": "number" },
             "scaleY": { "type": "number" },
             "scaleZ": { "type": "number" },
@@ -477,6 +510,9 @@
             "color": { "type": "string" },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
+            "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
+            "specularIntensity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "specularColor": { "type": ["array", "null"], "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
             "transforms": { "$ref": "#/$defs/numberArray" },
             "colors": { "$ref": "#/$defs/stringArray" },
             "attributes": {
@@ -506,12 +542,19 @@
             },
             "roughness": { "type": "number" },
             "metalness": { "type": "number" },
+            "ior": { "anyOf": [{ "const": 0 }, { "type": "number", "minimum": 1 }] },
+            "specularIntensity": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "specularColor": { "type": ["array", "null"], "items": { "type": "number", "minimum": 0 }, "minItems": 3, "maxItems": 3 },
             "instances": {
               "type": "array",
               "items": { "$ref": "#/$defs/meshInstance" }
             },
             "pickable": { "type": "boolean" },
-            "static": { "type": "boolean" }
+            "static": { "type": "boolean" },
+            "sharedAppearance": {
+              "type": "boolean",
+              "description": "Allow corresponding rigid GLB primitives to share one renderer appearance across instances; per-instance scene-node CSS appearance overrides are disabled for this batch."
+            }
           }
         }
       ]
@@ -523,7 +566,10 @@
           "type": "object",
           "additionalProperties": true,
           "properties": {
-            "id": { "type": "string" }
+            "id": { "type": "string" },
+            "animation": { "type": "string" },
+            "animationTime": { "type": "number", "minimum": 0 },
+            "animationLoop": { "type": "boolean" }
           }
         }
       ]
@@ -1138,6 +1184,43 @@
         "maxBlur": {
           "type": "number",
           "minimum": 0
+        },
+        "domRegions": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "selector": { "type": "string" },
+            "max": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 16
+            },
+            "uniforms": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "count": { "type": "string" },
+                "aspect": { "type": "string" },
+                "rect": { "type": "string" },
+                "meta": { "type": "string" }
+              }
+            },
+            "bounds": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["", "union"]
+                },
+                "paddingPx": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2048
+                }
+              }
+            }
+          }
         }
       }
     }

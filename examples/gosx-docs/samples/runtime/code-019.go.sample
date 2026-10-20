@@ -1,0 +1,4 @@
+func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    ctx.Runtime().EnableBootstrap()
+	    return map[string]any{"title": "Wire"}, nil
+	}

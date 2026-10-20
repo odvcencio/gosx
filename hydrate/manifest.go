@@ -5,15 +5,96 @@ package hydrate
 import (
 	"encoding/json"
 	"fmt"
+	"m31labs.dev/gosx/internal/sceneprobe"
+	"regexp"
 	"strings"
 
 	"m31labs.dev/gosx/assetpipe"
+	"m31labs.dev/gosx/command"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 )
 
+var featureNamePattern = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+
+// legacyFeatureKeys are the document-contract keys of the chunks that predate
+// manifest.features. textlayout keeps a capital L in its key.
+var legacyFeatureKeys = map[string]string{
+	"islands":     "bootstrapFeatureIslandsPath",
+	"engines":     "bootstrapFeatureEnginesPath",
+	"hubs":        "bootstrapFeatureHubsPath",
+	"controllers": "bootstrapFeatureControllersPath",
+	"scene3d":     "bootstrapFeatureScene3dPath",
+	"textlayout":  "bootstrapFeatureTextLayoutPath",
+}
+
+// FeatureContractKey returns the flat document-contract key that publishes a
+// feature chunk URL: engine-bridge becomes bootstrapFeatureEngineBridgePath.
+// The legacy chunks keep their original keys. The browser loader derives the
+// same key from the name (bootstrapFeatureKey in 26-runtime-tail.ts).
+func FeatureContractKey(name string) string {
+	if key, ok := legacyFeatureKeys[name]; ok {
+		return key
+	}
+	var b strings.Builder
+	b.WriteString("bootstrapFeature")
+	upper := true
+	for _, ch := range name {
+		if ch == '-' {
+			upper = true
+			continue
+		}
+		if upper && ch >= 'a' && ch <= 'z' {
+			ch -= 'a' - 'A'
+		}
+		upper = false
+		b.WriteRune(ch)
+	}
+	b.WriteString("Path")
+	return b.String()
+}
+
+// RequireFeature records an opt-in runtime chunk by name. Names are trimmed,
+// validated as lowercase dash-separated words, and deduplicated. Dashes are
+// dropped when a name becomes a contract key, so two names can map to one key
+// (a1 and a-1) or a name can map onto a legacy chunk's key (text-layout and
+// textlayout). RequireFeature rejects such a name, naming both features,
+// because the second URL would overwrite the first in the document contract.
+func (m *Manifest) RequireFeature(name string) error {
+	name = strings.TrimSpace(name)
+	if !featureNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid runtime feature name %q", name)
+	}
+	if name == "scene3d" {
+		return fmt.Errorf("runtime feature %q loads only for a GoSXScene3D engine: add the engine instead of requiring the feature", name)
+	}
+	for _, have := range m.Features {
+		if have == name {
+			return nil
+		}
+	}
+	key := FeatureContractKey(name)
+	if _, legacy := legacyFeatureKeys[name]; !legacy {
+		for other, reserved := range legacyFeatureKeys {
+			if reserved == key {
+				return fmt.Errorf("runtime feature %q collides with legacy feature %q: both publish contract key %s", name, other, key)
+			}
+		}
+	}
+	for _, have := range m.Features {
+		if FeatureContractKey(have) == key {
+			return fmt.Errorf("runtime feature %q collides with feature %q: both publish contract key %s", name, have, key)
+		}
+	}
+	m.Features = append(m.Features, name)
+	return nil
+}
+
 // Manifest describes all islands and engines on a page.
 type Manifest struct {
+	basePath       string
+	basePathSource *Manifest
+
 	// Version of the manifest format.
 	Version string `json:"version"`
 
@@ -32,11 +113,21 @@ type Manifest struct {
 	// Controllers lists headless declarative browser controllers for the page.
 	Controllers []ControllerEntry `json:"controllers,omitempty"`
 
+	// Commands lists named page actions dispatched by the workbench chunk.
+	Commands []command.Command `json:"commands,omitempty"`
+
+	// Features names opt-in runtime chunks the page needs beyond those inferred
+	// from entries; the loader fetches bootstrap-feature-<name>.js for each.
+	Features []string `json:"features,omitempty"`
+
 	// ClientIdentity describes optional browser-owned client identity state.
 	ClientIdentity *ClientIdentityConfig `json:"clientIdentity,omitempty"`
 
 	// Bundles maps bundle IDs to WASM asset paths.
 	Bundles map[string]BundleRef `json:"bundles"`
+
+	// Preview starts the shared signal bridge even when the page has no islands.
+	Preview bool `json:"preview,omitempty"`
 
 	// Runtime points to the shared island WASM runtime.
 	Runtime RuntimeRef `json:"runtime"`
@@ -68,6 +159,9 @@ type ManifestVariantRef struct {
 // EngineEntry describes a single engine instance.
 // Engines are arbitrary client compute modules — separate from islands.
 type EngineEntry struct {
+	// Scene3DProbe holds server decisions for this immutable props snapshot.
+	Scene3DProbe *sceneprobe.Probe `json:"-"`
+
 	// ID is the DOM anchor ID (e.g., "gosx-engine-0").
 	ID string `json:"id"`
 
@@ -120,6 +214,23 @@ type HubEntry struct {
 	// Input describes optional browser input forwarding owned by the GoSX
 	// bootstrap rather than page-authored JavaScript.
 	Input *HubInputConfig `json:"input,omitempty"`
+
+	// RoundTrip asks the bootstrap to measure request/response time against
+	// this hub. The server echoes the ping payload using PongEvent.
+	RoundTrip *HubRoundTripConfig `json:"roundTrip,omitempty"`
+
+	// Document binds a server-rendered textarea view to this hub. Its optional
+	// runtime chunk owns editing, presence and caret lifecycle without app JavaScript.
+	Document *HubDocumentConfig `json:"document,omitempty"`
+}
+
+// HubRoundTripConfig configures a bootstrap-owned heartbeat that writes the
+// measured hub round trip in milliseconds to a shared signal.
+type HubRoundTripConfig struct {
+	Signal     string `json:"signal"`
+	PingEvent  string `json:"pingEvent,omitempty"`
+	PongEvent  string `json:"pongEvent,omitempty"`
+	IntervalMS int    `json:"intervalMs,omitempty"`
 }
 
 // ControllerEntry describes one bootstrap-owned headless controller instance.
@@ -128,13 +239,31 @@ type ControllerEntry struct {
 	Config controller.Config `json:"config"`
 }
 
-// HubBinding maps a hub event to a shared signal name.
+// HubBinding maps hub events to shared signals, Scene3D commands or input, or
+// a soft page refresh. Direction, throttle, and debounce also describe
+// outbound signal and Scene3D input bindings.
 type HubBinding struct {
 	Event      string `json:"event"`
-	Signal     string `json:"signal"`
+	Signal     string `json:"signal,omitempty"`
 	Direction  string `json:"direction,omitempty"`
 	ThrottleMS int    `json:"throttleMs,omitempty"`
 	DebounceMS int    `json:"debounceMs,omitempty"`
+	// SceneMountID routes a hub payload to one Scene3D mount. SceneCommands
+	// applies {revision, commands} as a revisioned mount command batch. A
+	// non-empty SceneInput forwards matching semantic input kinds from that
+	// mount to the named hub event; "pick" and "gizmo-commit" are supported by
+	// Scene3D today. SceneInputKind replaces the forwarded kind when non-empty.
+	SceneMountID   string `json:"sceneMountId,omitempty"`
+	SceneCommands  bool   `json:"sceneCommands,omitempty"`
+	SceneInput     string `json:"sceneInput,omitempty"`
+	SceneInputKind string `json:"sceneInputKind,omitempty"`
+	// Refresh forces a same-URL soft navigation after a matching inbound event.
+	Refresh bool `json:"refresh,omitempty"`
+	// RefreshDebounceMS joins the hub connection's refresh burst and rearms its
+	// single timer. Zero still coalesces matching events until the current task ends.
+	RefreshDebounceMS int `json:"refreshDebounceMs,omitempty"`
+	// RefreshPreserveScroll defaults to true; false wins within a pending burst.
+	RefreshPreserveScroll *bool `json:"refreshPreserveScroll,omitempty"`
 }
 
 // HubInputConfig lets the browser bootstrap forward bounded, page-declared
@@ -230,8 +359,21 @@ type RuntimeRef struct {
 	// Hash for cache busting.
 	Hash string `json:"hash,omitempty"`
 
-	// Size in bytes (compressed).
+	// ManifestHash identifies the exact browser/WASM ABI contract.
+	ManifestHash string `json:"manifestHash,omitempty"`
+
+	// Size in bytes before compression.
 	Size int64 `json:"size,omitempty"`
+
+	// Transfer sizes guide server-side selection and stay out of page JSON.
+	GzipSize   int64 `json:"-"`
+	BrotliSize int64 `json:"-"`
+
+	// Variant is the capability-linked runtime selected for this page.
+	Variant string `json:"variant,omitempty"`
+
+	// FeatureMask is the ABI capability declaration expected from Variant.
+	FeatureMask uint32 `json:"featureMask,omitempty"`
 }
 
 // IslandEntry describes a single island instance in the rendered HTML.
@@ -249,7 +391,7 @@ type IslandEntry struct {
 	Props json.RawMessage `json:"props"`
 
 	// Events lists the event bindings for this island.
-	Events []EventSlot `json:"events,omitempty"`
+	Events []EventSlot `json:"events"`
 
 	// Static is true if the island has no dynamic content and can skip hydration.
 	Static bool `json:"static,omitempty"`
@@ -329,9 +471,11 @@ type EventSlot struct {
 	ServerAction bool `json:"serverAction,omitempty"`
 }
 
-// Marshal serializes the manifest to JSON.
+// Marshal serializes the manifest to compact JSON. Production pages embed
+// this output verbatim in a script tag, so indentation would only add
+// transfer weight with no reader benefit.
 func (m *Manifest) Marshal() ([]byte, error) {
-	return json.MarshalIndent(m, "", "  ")
+	return json.Marshal(m)
 }
 
 // Unmarshal deserializes a manifest from JSON.
@@ -363,6 +507,7 @@ func (m *Manifest) AddIsland(component string, bundleID string, props any) (stri
 		Component: component,
 		BundleID:  bundleID,
 		Props:     propsJSON,
+		Events:    []EventSlot{},
 	}
 	m.Islands = append(m.Islands, entry)
 	return id, nil
@@ -458,6 +603,37 @@ func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, inp
 	return id
 }
 
+// AddHubWithRoundTrip registers a realtime hub with an optional measured
+// request/response heartbeat. The named server handler must echo ping data on
+// the configured pong event.
+func (m *Manifest) AddHubWithRoundTrip(name, path string, bindings []HubBinding, roundTrip HubRoundTripConfig) string {
+	id := m.AddHub(name, path, bindings)
+	if id == "" {
+		return ""
+	}
+	roundTrip.Signal = strings.TrimSpace(roundTrip.Signal)
+	if roundTrip.Signal == "" {
+		return id
+	}
+	roundTrip.PingEvent = strings.TrimSpace(roundTrip.PingEvent)
+	if roundTrip.PingEvent == "" {
+		roundTrip.PingEvent = "ping"
+	}
+	roundTrip.PongEvent = strings.TrimSpace(roundTrip.PongEvent)
+	if roundTrip.PongEvent == "" {
+		roundTrip.PongEvent = "pong"
+	}
+	if roundTrip.IntervalMS <= 0 {
+		roundTrip.IntervalMS = 2000
+	} else if roundTrip.IntervalMS < 250 {
+		roundTrip.IntervalMS = 250
+	} else if roundTrip.IntervalMS > 60000 {
+		roundTrip.IntervalMS = 60000
+	}
+	m.Hubs[len(m.Hubs)-1].RoundTrip = &roundTrip
+	return id
+}
+
 // AddController registers a declarative headless controller and returns the
 // assigned stable manifest ID.
 func (m *Manifest) AddController(config controller.Config) string {
@@ -467,6 +643,16 @@ func (m *Manifest) AddController(config controller.Config) string {
 		Config: config,
 	})
 	return id
+}
+
+// AddCommands validates the complete registry before appending page commands.
+func (m *Manifest) AddCommands(cmds ...command.Command) error {
+	all := append(append([]command.Command(nil), m.Commands...), cmds...)
+	if err := command.Validate(all); err != nil {
+		return err
+	}
+	m.Commands = all
+	return nil
 }
 
 // SetClientIdentity configures bootstrap-owned client identity state.

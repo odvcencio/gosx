@@ -1,0 +1,20 @@
+Controls:               scene.ControlOrbit,
+	ControlTarget:          scene.Vec3(0, 1, 0),
+	ControlRotateSpeed:     1.0,
+	ControlZoomSpeed:       1.2,
+	ControlMinDistance:     3,
+	ControlMaxDistance:     40,
+	ControlPitchLimit:      1.2,
+	ControlRotateDirection: "grab", // "orbit" keeps the historical direction
+	DragToRotate:           scene.Bool(true),
+
+	// First-person alternative.
+	// Controls:         scene.ControlFirstPerson,
+	// PointerLock:      scene.Bool(true),
+	// ControlLookSpeed: 0.9,
+	// ControlMoveSpeed: 6,
+
+	// Scroll-driven camera for parallax hero sections. The two values are
+	// page-scroll fractions: 0 is the top of the page, 1 is the bottom.
+	ScrollCameraStart: 0.0,
+	ScrollCameraEnd:   1.0,

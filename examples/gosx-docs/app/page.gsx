@@ -19,8 +19,8 @@ func Page() Node {
 					</div>
 					<ul class="hero__facts" aria-label="Platform summary">
 						<li>Server HTML</li>
+						<li>Strict, typed GSX</li>
 						<li>Go/WASM islands</li>
-						<li>WebGPU + WebGL2</li>
 					</ul>
 				</div>
 			</div>
@@ -144,6 +144,29 @@ func Page() Node {
 								Explore
 								{path.title}
 							</a>
+						</article>
+					</Each>
+				</div>
+			</div>
+		</section>
+		<section class="site-proof" aria-labelledby="site-proof-title">
+			<div class="section-shell">
+				<header class="section-heading">
+					<p class="kicker">This site is the product</p>
+					<h2 id="site-proof-title">
+						Follow each surface into a working route.
+					</h2>
+					<p>
+						The guides explain the contract. These production routes exercise it and link back to the exact source and deliberate limits.
+					</p>
+				</header>
+				<div class="site-proof__grid">
+					<Each of={data.siteProofs} as="proof">
+						<article class="site-proof__card">
+							<span>{proof.surface}</span>
+							<h3>{proof.title}</h3>
+							<p>{proof.body}</p>
+							<a href={proof.href} data-gosx-link="true">{proof.cta}</a>
 						</article>
 					</Each>
 				</div>

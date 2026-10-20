@@ -1,0 +1,6 @@
+ctx.BodyAttrs(
+	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
+	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
+	)
+	ctx.SetLanguage("en")
+	return server.HTMLDocument(ctx.Document(appName, body))

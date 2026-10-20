@@ -81,6 +81,18 @@ func TestValidateJSONTextureHTMLRequiresFallbackInStrictMode(t *testing.T) {
 	}
 }
 
+func TestValidatePerspectiveHTMLRequiresPositiveSurfaceDimensions(t *testing.T) {
+	report := ValidateJSON([]byte(`{
+		"html":[{"id":"panel","mode":"dom","html":"<button>Open</button>","perspective":true,"surfaceWidth":1.5}]
+	}`), Options{Strict: true})
+	if report.Valid {
+		t.Fatal("expected perspective HTML without surfaceHeight to fail validation")
+	}
+	if !hasCode(report, "scene.html.perspective_size_missing") {
+		t.Fatalf("expected perspective surface-size diagnostic: %+v", report.Diagnostics)
+	}
+}
+
 func TestValidateHTMLRejectsNonFiniteRotationAndSpin(t *testing.T) {
 	fields := []struct {
 		name string
@@ -158,6 +170,43 @@ func TestValidateJSONRejectsNegativeModelBounds(t *testing.T) {
 	}
 }
 
+func TestValidateJSONAcceptsProgressiveModelWithoutSrc(t *testing.T) {
+	report := ValidateJSON([]byte(`{
+		"models":[{
+			"id":"hero",
+			"progressive":true,
+			"previewSrc":"/models/hero-preview.glb",
+			"fullSrc":"/models/hero-full.glb"
+		}]
+	}`), Options{Strict: true})
+	if !report.Valid {
+		t.Fatalf("expected progressive model without src to be valid: %+v", report.Diagnostics)
+	}
+}
+
+func TestValidateJSONRejectsModelWithoutSrcUnlessProgressiveSourcesExist(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{name: "ordinary model", body: `{"models":[{"id":"ordinary"}]}`},
+		{name: "progressive missing preview", body: `{"models":[{"id":"missing-preview","progressive":true,"fullSrc":"/models/full.glb"}]}`},
+		{name: "progressive missing full", body: `{"models":[{"id":"missing-full","progressive":true,"previewSrc":"/models/preview.glb"}]}`},
+		{name: "non-progressive preview pair", body: `{"models":[{"id":"not-progressive","previewSrc":"/models/preview.glb","fullSrc":"/models/full.glb"}]}`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			report := ValidateJSON([]byte(tc.body), Options{})
+			if report.Valid {
+				t.Fatal("expected invalid report")
+			}
+			if !hasCode(report, "scene.asset.missing") {
+				t.Fatalf("expected missing asset diagnostic: %+v", report.Diagnostics)
+			}
+		})
+	}
+}
+
 func TestValidateJSONAcceptsAllMajorRecordsAndUnknownFields(t *testing.T) {
 	report := ValidateJSON([]byte(`{
 		"schema":"`+scene.SceneIRSchema+`",
@@ -166,7 +215,7 @@ func TestValidateJSONAcceptsAllMajorRecordsAndUnknownFields(t *testing.T) {
 		"models":[{"id":"model-1","src":"/model.glb","scaleX":1,"scaleY":1,"scaleZ":1,"bounds":0.5,"fit":"contain","fitAlign":"center-min-y"}],
 		"points":[{"id":"points-1","count":2,"positions":[0,0,0,1,1,1],"sizes":[1,2],"colors":["#fff","#000"],"positionStride":3}],
 		"instancedMeshes":[{"id":"batch-1","count":1,"kind":"cube","transforms":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"colors":["#fff"]}],
-		"instancedGLBMeshes":[{"id":"glb-batch-1","src":"/part.glb","instances":[{"id":"glb-instance-1","x":1,"scaleX":1,"scaleY":1,"scaleZ":1}]}],
+		"instancedGLBMeshes":[{"id":"glb-batch-1","src":"/part.glb","sharedAppearance":true,"instances":[{"id":"glb-instance-1","x":1,"scaleX":1,"scaleY":1,"scaleZ":1}]}],
 		"computeParticles":[{"id":"particles-1","count":8,"emitter":{"kind":"sphere","radius":1,"rate":2,"lifetime":3},"material":{"size":2,"opacity":1},"bounds":10}],
 		"waterSystems":[{"id":"water-1","interactionProfile":"water-object-drop-orbit","interactionTarget":"water-1","interactionObject":"Sphere","resolution":256,"surfaceResolution":201,"poolShape":"Box","poolWidth":7.2,"poolHeight":1.1,"poolLength":4.4,"seedDrops":20,"dropRadius":0.03,"dropEventID":1,"dropX":-0.1,"dropZ":0.2,"dropEventRadius":0.03,"dropEventStrength":0.01,"shallowColor":"#7ad1eb","deepColor":"#082e57","objectKind":"compound","objectX":-1.28,"objectY":0.22,"objectZ":0.1,"objectRadius":0.44,"objectBobAmplitude":0.08,"objectBobSpeed":1.55,"objectDisplacementScale":1,"objectDisplacementSpheres":[{"offsetX":0,"offsetY":0,"offsetZ":0,"radius":0.15},{"offsetX":0.1,"offsetY":0.05,"offsetZ":-0.02,"radius":0.08}],"computeBackend":"elio","materialBackend":"selena"}],
 		"animations":[{"name":"move","duration":1,"channels":[{"targetNode":0,"property":"translation","times":[0,1],"values":[0,0,0,1,1,1]}]}],
@@ -242,7 +291,7 @@ func TestValidateJSONHardensReferencesArraysCompressionAndAnimations(t *testing.
 		"instancedMeshes":[{"id":"bad-batch","count":2,"kind":"cube","transforms":[1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1],"colors":["#fff"]}],
 		"computeParticles":[{"id":"bad-particles","count":1,"bounds":-1,"emitter":{"radius":-1,"arms":-2},"material":{"size":-1}}],
 		"html":[{"id":"bad-html","target":"missing","mode":"dom","html":"<div></div>"}],
-		"animations":[{"name":"bad-animation","duration":-1,"channels":[{"targetNode":8,"property":"","times":[0,0.5,0.25]}]}],
+		"animations":[{"name":"bad-animation","duration":-1,"channels":[{"targetNode":-1,"property":"translation","times":[0,0.5,0.25]},{"targetNode":8,"targetID":"missing","property":"","times":[0,0.5,0.25]}]}],
 		"postFXMaxPixels":-1,
 		"shadowMaxPixels":-1
 	}`), Options{})
@@ -258,6 +307,7 @@ func TestValidateJSONHardensReferencesArraysCompressionAndAnimations(t *testing.
 		"scene.particles.invalid_emitter",
 		"scene.html.invalid_target",
 		"scene.animation.invalid_target",
+		"scene.animation.unknown_target",
 		"scene.animation.invalid_time",
 		"scene.animation.values_missing",
 		"scene.postfx.invalid_max_pixels",
@@ -289,7 +339,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"[data-glass]",
 				"max":8,
-				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"region%dRect","meta":"region%dMeta"}
+				"uniforms":{"count":"regionCount","aspect":"regionAspect","rect":"region%dRect","meta":"region%dMeta"},
+				"bounds":{"mode":"union","paddingPx":96}
 			}
 		}]
 	}`), Options{})
@@ -303,7 +354,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 			"domRegions":{
 				"selector":"",
 				"max":17,
-				"uniforms":{"rect":"bad uniform","meta":"region%d%dMeta"}
+				"uniforms":{"rect":"bad uniform","meta":"region%d%dMeta"},
+				"bounds":{"mode":"clip","paddingPx":4096}
 			}
 		}]
 	}`), Options{})
@@ -314,6 +366,8 @@ func TestValidateJSONCustomPostDOMRegions(t *testing.T) {
 		"scene.post_effect.dom_regions.selector",
 		"scene.post_effect.dom_regions.max",
 		"scene.post_effect.dom_regions.uniform",
+		"scene.post_effect.dom_regions.bounds_mode",
+		"scene.post_effect.dom_regions.bounds_padding",
 	} {
 		if !hasCode(invalid, code) {
 			t.Fatalf("expected %s diagnostic: %+v", code, invalid.Diagnostics)

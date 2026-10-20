@@ -1,7 +1,7 @@
-// Slice Y.G — *ast.FuncLit (closure) lowering.
+// *ast.FuncLit (closure) lowering.
 //
-// Pre-Y.G the lowerer rejected every *ast.FuncLit from expr.go's
-// default branch ("unsupported expression *ast.FuncLit"). Y.G adds
+// Without this, the lowerer rejected every *ast.FuncLit from expr.go's
+// default branch ("unsupported expression *ast.FuncLit"). This adds
 // closure support so engine-surface handlers like graph_surface.go's
 // Mount can lower their `c.StartLoop(func(dt float64) { ... })`
 // animation hook cleanly.
@@ -15,7 +15,7 @@
 //     captured locals; the closure carries a reference to them.
 //
 //  2. Register the FuncLit body as a synthetic FuncDef on the
-//     Program — same shape Y.D uses for user-defined functions — with
+//     Program — same shape used for user-defined functions — with
 //     a generated name `__y_g_funclit_<pos>`. The body's locals
 //     (params + internal :=) live in the closure's own frame at
 //     invocation time; captured names resolve through the saved
@@ -27,8 +27,8 @@
 //     of the CURRENT frame and stores it on the ClosureVal.
 //
 //  4. Dispatch: OpIndirectCall sniffs whether its callee resolves to a
-//     ClosureVal (via a local lookup) or a registered FuncDef (Y.D
-//     path). Closures push a closure-aware frame that consults the
+//     ClosureVal (via a local lookup) or a registered FuncDef.
+//     Closures push a closure-aware frame that consults the
 //     captured frame's slots whenever an OpLocalGet / OpAssign /
 //     OpLocalSet / OpFieldSet / OpIndexSet hits a captured name.
 //
@@ -41,7 +41,7 @@
 // Go's `func(){ count++ }` semantics that production engine surfaces
 // (c.StartLoop(func(dt float64) { ... mutate gPos/gVel ...})) rely on.
 //
-// Discrimination from OpIndirectCall (Y.D): Y.D's user-function calls
+// Discrimination from OpIndirectCall: user-function calls
 // resolve `id(args)` where `id` is a bare-identifier match in the
 // user-function registry. Closures resolve `cv(args)` where `cv` is a
 // LOCAL holding a ClosureVal — the lowerer can't distinguish these
@@ -103,7 +103,7 @@ func (c *lowerCtx) lowerFuncLit(fl *ast.FuncLit) program.ExprID {
 	// Pre-register the synthetic FuncDef in the user-function registry
 	// BEFORE lowering the body so any recursive `f()` inside (rare for
 	// closures, but legal in Go via reassignment) can resolve through
-	// the user-fn path. This mirrors Y.D's pre-pass semantic.
+	// the user-fn path. This mirrors the user-function pre-pass semantic.
 	c.funcs.defs[synthName] = userFuncInfo{
 		params:  params,
 		results: c.currentResults,

@@ -1,0 +1,4 @@
+scene.Props{
+    GPUDriven: &scene.GPUDriven{Occlusion: true},
+    Graph:     scene.NewGraph(city...),
+}

@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/basepath"
+	"m31labs.dev/gosx/session"
 )
 
 const streamTailMarker = "<!--gosx-stream-tail-->"
@@ -61,14 +63,28 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	if status == 0 {
 		status = http.StatusOK
 	}
+	if session.HasState(res.Request) || (res.Request != nil &&
+		(res.Request.Header.Get("Cookie") != "" || res.Request.Header.Get("Authorization") != "")) {
+		if res.Cache == nil {
+			res.Cache = NewCacheState()
+		}
+		res.Cache.SetPolicy(NoStoreCache())
+	}
 
-	html := gosx.RenderHTML(res.Node)
+	html := basepath.HTML(basepath.FromRequest(res.Request), gosx.RenderHTML(res.Node))
 	streaming := res.Deferred != nil && res.Deferred.HasDeferred()
+	if streaming {
+		disableCompressedBodyCache(w)
+	}
 
 	if res.Cache.SharedCacheable() {
-		// A shared cache stores one body and replays it to every client, so the
-		// response must carry no per-request value. The body already dropped the
-		// request ID and the nonce; align the policy header with it.
+		// Handler and layout nodes can capture the request nonce before they mark
+		// the response shared-cacheable. Remove that exact rendered attribute
+		// from the completed document before hashing or writing it; the remaining
+		// inline scripts are governed by the nonce-free, fail-closed shared CSP.
+		html = stripResponseNonceAttribute(html, res.Nonce)
+		// A shared cache stores one body and replays it to every client. Align the
+		// policy header with the now nonce-free body.
 		applySharedCacheSecurityHeaders(w, res.Request)
 		res.Nonce = ""
 	}
@@ -78,11 +94,10 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 	if res.Cache.shouldApply() {
 		// A streamed response has no complete body yet, so report no body and
 		// keep the request-derived validator. See ApplyCacheHeadersForBody.
-		var body []byte
 		if !streaming {
-			body = res.cacheDigestBody(html)
+			res.Cache.setRepresentationString(res.cacheDigestHTML(html))
 		}
-		if ApplyCacheHeadersForBody(res.Request, res.Headers, status, res.Cache, res.Revalidator, body) {
+		if ApplyCacheHeaders(res.Request, res.Headers, status, res.Cache, res.Revalidator) {
 			WriteNotModified(w, res.Headers)
 			return
 		}
@@ -110,14 +125,22 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 		flusher.Flush()
 	}
 
-	streamDeferredChunks(w, res.Deferred, flusher, res.Nonce)
+	streamDeferredChunksWithBasePath(w, res.Deferred, flusher, res.Nonce, basepath.FromRequest(res.Request))
 
 	if marked {
 		io.WriteString(w, suffix)
 	}
 }
 
-// cacheDigestBody returns the bytes that describe the resource representation.
+func stripResponseNonceAttribute(markup, nonce string) string {
+	if nonce == "" {
+		return markup
+	}
+	nonceAttr := gosx.RenderAttrs(gosx.Attrs(gosx.Attr("nonce", nonce)))
+	return strings.ReplaceAll(markup, nonceAttr, "")
+}
+
+// cacheDigestHTML returns the string that describe the resource representation.
 //
 // WHY it strips values: a GoSX document embeds the per-request ID in its
 // document contract script, and it can embed a per-request
@@ -126,7 +149,7 @@ func WriteHTML(w http.ResponseWriter, res HTMLResponse) {
 // request could ever match. Neither value describes the resource: a shared cache
 // that replayed one client's request ID or nonce to another client would be
 // wrong. Remove them, then hash what is left.
-func (res HTMLResponse) cacheDigestBody(html string) []byte {
+func (res HTMLResponse) cacheDigestHTML(html string) string {
 	if id := RequestID(res.Request); id != "" {
 		html = strings.ReplaceAll(html, id, "")
 	}
@@ -136,7 +159,7 @@ func (res HTMLResponse) cacheDigestBody(html string) []byte {
 		}
 		html = strings.ReplaceAll(html, value, "")
 	}
-	return []byte(html)
+	return html
 }
 
 func splitStreamTail(html string) (string, string, bool) {
@@ -148,6 +171,10 @@ func splitStreamTail(html string) (string, string, bool) {
 }
 
 func streamDeferredChunks(w http.ResponseWriter, registry *DeferredRegistry, flusher http.Flusher, nonce string) {
+	streamDeferredChunksWithBasePath(w, registry, flusher, nonce, "")
+}
+
+func streamDeferredChunksWithBasePath(w http.ResponseWriter, registry *DeferredRegistry, flusher http.Flusher, nonce, prefix string) {
 	blocks := registry.snapshot()
 	if len(blocks) == 0 {
 		return
@@ -170,7 +197,7 @@ func streamDeferredChunks(w http.ResponseWriter, registry *DeferredRegistry, flu
 
 	for range blocks {
 		chunk := <-chunks
-		io.WriteString(w, renderDeferredChunk(chunk.slotID, chunk.html, nonce))
+		io.WriteString(w, renderDeferredChunk(chunk.slotID, basepath.HTML(prefix, chunk.html), nonce))
 		if flusher != nil {
 			flusher.Flush()
 		}

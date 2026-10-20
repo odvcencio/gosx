@@ -2,7 +2,7 @@ apiVersion: traefik.io/v1alpha1
 kind: Middleware
 metadata:
   name: gosx-demo-redirect
-  namespace: draco-quest
+  namespace: __NAMESPACE__
 spec:
   redirectRegex:
     regex: ^https?://gosx-demo\.m31labs\.dev/(.*)
@@ -13,10 +13,10 @@ apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: gosx-demo
-  namespace: draco-quest
+  namespace: __NAMESPACE__
   annotations:
     cert-manager.io/cluster-issuer: cloudflare-issuer
-    traefik.ingress.kubernetes.io/router.middlewares: draco-quest-gosx-demo-redirect@kubernetescrd
+    traefik.ingress.kubernetes.io/router.middlewares: __NAMESPACE__-gosx-demo-redirect@kubernetescrd
     traefik.ingress.kubernetes.io/router.priority: "20"
 spec:
   ingressClassName: traefik

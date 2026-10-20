@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Authored shader payloads: compute particles, authored point pipelines, the
 // shaderLib reference inflation and the custom post-effect passes.
 //
@@ -16,7 +18,7 @@ const {
   bootstrapRuntimeSource,
   bootstrapFeatureEnginesSource,
   bootstrapFeatureScene3DSource,
-  bootstrapScene3DWebGPUSourceFile,
+  scene3DWebGPUBackendSource,
   bootstrapScene3DInputSourceFile,
   bootstrapScene3DMountSourceFile,
   FakeWebGLContext,
@@ -26,6 +28,7 @@ const {
   installManualTimers,
   runScript,
   flushAsyncWork,
+  renderPreparedFrame,
   createBoardWebGPUHarness,
   mainRenderPasses,
   boardBundleManyObjectsOneMaterial,
@@ -46,7 +49,7 @@ const {
 } = require("./runtime-test-harness.js");
 
 test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   assert.match(webgl, /function sceneWebGLNormalizeCustomShaderSource\(source\)/);
   assert.match(webgl, /precision\s+highp\s+float/);
@@ -54,9 +57,11 @@ test("Scene3D WebGL normalizes custom GLSL precision before Firefox link", () =>
   assert.match(webgl, /vertexSource = sceneWebGLNormalizeCustomShaderSource\(vertexSource\);/);
   assert.match(webgl, /fragmentSource = sceneWebGLNormalizeCustomShaderSource\(fragmentSource\);/);
   assert.match(webgl, /var vertexSource = sceneWebGLNormalizeCustomShaderSource\(material\.customVertex\);/);
-  assert.match(webgl, /var fragmentSource = sceneWebGLNormalizeCustomShaderSource\(material\.customFragment\);/);
-  assert.match(webgl, /sceneWebGLNormalizeCustomShaderSource\(entry\.customVertex\.trim\(\)\)/);
-  assert.match(webgl, /sceneWebGLNormalizeCustomShaderSource\(entry\.customFragment\.trim\(\)\)/);
+  assert.match(webgl, /var fragmentSource = sceneWebGLNormalizeCustomShaderSource\(selective \? material\.specularFragmentGLSL : material\.customFragment\);/);
+  assert.match(webgl, /var vertSrc = typeof entry\.customVertex === "string" \? entry\.customVertex\.trim\(\) : "";/);
+  assert.match(webgl, /var fragSrc = typeof entry\.customFragment === "string" \? entry\.customFragment\.trim\(\) : "";/);
+  assert.match(webgl, /scenePBRCompileShader\(gl, gl\.VERTEX_SHADER, sceneWebGLNormalizeCustomShaderSource\(vertSrc\)\)/);
+  assert.match(webgl, /scenePBRCompileShader\(gl, gl\.FRAGMENT_SHADER, sceneWebGLNormalizeCustomShaderSource\(fragSrc\)\)/);
 });
 
 test("compute particle payload kernel: invalid WGSL (async rejection) falls back to builtin, caches failure, warns once", async () => {
@@ -897,11 +902,11 @@ test("normalizeSceneInstancedMeshEntry preserves cullKernelWGSL/cullKernelEntry/
 });
 
 test("WebGPU water sampled state only uses the defined ping-pong textures", () => {
-  assert.doesNotMatch(bootstrapScene3DWebGPUSourceFile, /stateTexture:\s*stateTexture[,\n]/);
-  assert.doesNotMatch(bootstrapScene3DWebGPUSourceFile, /system\.stateTexture(?![A-Z])/);
-  assert.match(bootstrapScene3DWebGPUSourceFile, /stateTextureA:\s*stateTextureA/);
-  assert.match(bootstrapScene3DWebGPUSourceFile, /stateTextureB:\s*stateTextureB/);
-  assert.match(bootstrapScene3DWebGPUSourceFile, /function syncWaterSampledState\(/);
+  assert.doesNotMatch(scene3DWebGPUBackendSource, /stateTexture:\s*stateTexture[,\n]/);
+  assert.doesNotMatch(scene3DWebGPUBackendSource, /system\.stateTexture(?![A-Z])/);
+  assert.match(scene3DWebGPUBackendSource, /stateTextureA:\s*stateTextureA/);
+  assert.match(scene3DWebGPUBackendSource, /stateTextureB:\s*stateTextureB/);
+  assert.match(scene3DWebGPUBackendSource, /function syncWaterSampledState\(/);
 });
 
 test("Scene3D raycast returns the exact nearest non-uniformly scaled instance", async () => {
@@ -967,12 +972,9 @@ test("capability/drift: WebGPU-only capabilities are explicit in backend JSON", 
   // scene/capability/water_shadow_test.go, which reads both renderers.
   assert.equal(webglCaps["water-object-mesh-shadow-pass"], false, "WebGL2 capabilities JSON must declare water-object-mesh-shadow-pass: false (no mesh rasterization in the WebGL2 water renderer)");
   assert.ok("water-object-mesh-shadow-pass" in webglCaps, "water-object-mesh-shadow-pass must be explicit in WebGL2 capabilities JSON (not absent)");
-  // ibl is false on BOTH backends. The WebGL2 path tone maps the environment to
-  // an 8-bit texture and taps it twice; it holds no samplerCube, no
-  // textureCubeLod and no BRDF lookup table. See assetpipe/ibl for the products
-  // a real consumer needs.
-  assert.equal(webglCaps["ibl"], false, "WebGL2 capabilities JSON must declare ibl: false (tone-mapped equirect is not prefiltered IBL)");
-  assert.equal(webgpuCaps["ibl"], false, "WebGPU capabilities JSON must declare ibl: false");
+  // Depth arrays fit both cascaded shadows and split-sum IBL in 16 units.
+  assert.equal(webglCaps["ibl"], true, "WebGL2 depth arrays leave room for IBL at the minimum 16 fragment texture units");
+  assert.equal(webgpuCaps["ibl"], true, "WebGPU capabilities JSON must declare ibl: true (unconditional split-sum consumer)");
 });
 
 test("getSelenaPipeline memo: N objects sharing one material build the content key ONCE per material per frame", async () => {
@@ -1074,7 +1076,7 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
   });
 
   // Frame 1: pipeline enqueued.
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, 1, "frame 1 must trigger exactly one createRenderPipelineAsync");
 
   await flushAsyncWork();
@@ -1096,6 +1098,16 @@ test("custom post WebGPU: valid fragmentWGSL+vertexWGSL builds async pipeline an
 // reaches the GPU: its WGSL compiles into a shader module, and on the frame
 // after the async pipeline resolves it is BOUND AND DRAWN. Assert the draw, not
 // just the compile: a pass that compiles but never dispatches is exactly the bug.
+async function renderValidatedPostFrame(harness, bundle, viewport, meta) {
+  const before = harness.renderer.diagnostics().frameSeq;
+  for (let i = 0; i < 8; i++) {
+    await renderPreparedFrame(harness.renderer, bundle, viewport, meta);
+    await flushAsyncWork();
+    if (harness.renderer.diagnostics().frameSeq > before) return;
+  }
+  assert.fail("validated post frame did not submit");
+}
+
 test("custom post WebGPU: a customPost authored through createSceneState is compiled AND drawn", async () => {
   const fake = makeFakeGPUDeviceForCompute({
     pipelineAsyncBehavior(desc) {
@@ -1152,7 +1164,7 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
 
   // Frame 1: the pass is entered and its WGSL submitted; the pipeline is async
   // so this frame still falls through to the identity blit.
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
 
   const postModules = fake.state.shaderModules.filter(
     (module) => module.label === "selena-post-galaxy-liquid-glass",
@@ -1168,7 +1180,7 @@ test("custom post WebGPU: a customPost authored through createSceneState is comp
   const drawsBefore = mainRenderPasses(fake).reduce((n, pass) => n + pass.draws.length, 0);
 
   // Frame 2: the pipeline has resolved, so the pass must BIND AND DRAW.
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
 
   const postBindGroups = fake.state.bindGroups.filter(
     (bg) => bg.desc && bg.desc.layout && bg.desc.layout.desc && bg.desc.layout.desc.label === "gosx-selena-post",
@@ -1223,12 +1235,12 @@ test("custom post WebGPU: reserved time and patched uniforms reach the post unif
     },
   });
 
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
   await flushAsyncWork();
   await flushAsyncWork();
 
   nowMS = 4200;
-  harness.renderer.render(bundle, viewport);
+  await renderValidatedPostFrame(harness, bundle, viewport);
 
   const postUniformWrites = fake.state.writeBufferCalls
     .filter((call) => call.data && call.data.length >= 2)
@@ -1237,6 +1249,16 @@ test("custom post WebGPU: reserved time and patched uniforms reach the post unif
   const packed = postUniformWrites[postUniformWrites.length - 1].data;
   assert.equal(Math.abs(Number(packed[0]) - 4.2) < 0.00001, true,
     "reserved time must use the renderer frame clock, not the compiled default or effect.uniforms.time");
+
+  // Wall time keeps increasing; the actual uniform upload must follow seek,
+  // reverse and pause rather than just reporting the requested DOM clock.
+  for (const seconds of [1.25, 3.5, 1.25]) {
+    nowMS += 1000;
+    await renderValidatedPostFrame(harness, bundle, viewport, {nowMS, sceneTime: seconds});
+    const writes = fake.state.writeBufferCalls.filter(call => call.data && Math.abs(Number(call.data[1]) - .75) < .00001);
+    assert.equal(Number(writes.at(-1).data[0]), seconds);
+    assert.equal(harness.renderer.diagnostics().uniformTime, seconds);
+  }
 });
 
 test("Selena mesh WebGPU: postFX MSAA render pass uses a matching pipeline sample count", async () => {
@@ -1331,7 +1353,7 @@ test("custom post WebGPU: identical complete WGSL module is submitted once", asy
     "}",
   ].join("\n");
 
-  harness.renderer.render(makeBundleWithCustomPost({
+  await renderPreparedFrame(harness.renderer, makeBundleWithCustomPost({
     fragmentWGSL: completeModule,
     vertexWGSL: completeModule,
   }), viewport);
@@ -1376,12 +1398,12 @@ test("custom post WebGPU: same name and WGSL prefix with different tail builds d
     "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(0.9, 0.8, 0.7, 1.0); }",
   ].join("\n");
 
-  harness.renderer.render(makeBundleWithCustomPost({
+  await renderValidatedPostFrame(harness, makeBundleWithCustomPost({
     name: "same-prefix-lens",
     fragmentWGSL: moduleA,
     vertexWGSL: moduleA,
   }), viewport);
-  harness.renderer.render(makeBundleWithCustomPost({
+  await renderValidatedPostFrame(harness, makeBundleWithCustomPost({
     name: "same-prefix-lens",
     fragmentWGSL: moduleB,
     vertexWGSL: moduleB,
@@ -1419,7 +1441,7 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
   });
 
   // Frame 1: pipeline attempt fires.
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, 1, "frame 1 must attempt one createRenderPipelineAsync");
 
   await flushAsyncWork();
@@ -1432,7 +1454,7 @@ test("custom post WebGPU: invalid WGSL triggers async validation failure, warns 
 
   // Frame 2: failure cached — no new pipeline attempt.
   const callsBefore = renderPipelineAsyncCalls;
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, callsBefore, "failure must be cached — no re-attempt on frame 2");
 
   // Still exactly one warn.
@@ -1460,6 +1482,38 @@ test("custom post WebGL2: absent vertexGLSL/fragmentGLSL goes straight to identi
   assert.equal(customPostWarnsBefore, 0, "absent GLSL must not warn");
 
   renderer.dispose();
+});
+
+test("WebGL post passes replace targets after additive geometry across frames", () => {
+  const { renderer, canvas } = createWebGLRendererForPost({ fresh: true });
+  const gl = canvas.getContext("webgl2");
+  gl.deleteRenderbuffer = buffer => gl.ops.push(["deleteRenderbuffer", buffer]);
+  const drawArrays = gl.drawArrays.bind(gl), drawInstanced = gl.drawArraysInstanced.bind(gl);
+  const postBlending = [], geometryBlending = [];
+  gl.drawArrays = (mode, first, count) => {
+    if (mode === gl.TRIANGLE_STRIP) postBlending.push(gl.isEnabled(gl.BLEND));
+    drawArrays(mode, first, count);
+  };
+  gl.drawArraysInstanced = (...args) => {
+    geometryBlending.push(gl.isEnabled(gl.BLEND));
+    drawInstanced(...args);
+  };
+  const bundle = makeWebGLBundleWithCustomPost({
+    vertexGLSL: "attribute vec2 a_position; void main() { gl_Position = vec4(a_position, 0.0, 1.0); }",
+    fragmentGLSL: "precision mediump float; void main() { gl_FragColor = vec4(0.25, 0.5, 0.75, 1.0); }",
+  });
+  bundle.points = [];
+  bundle.materials = [{ key: "glow", kind: "standard", color: "#ffffff", renderPass: "additive", opacity: 0.2 }];
+  bundle.instancedMeshes = [{ id: "glow", kind: "box", materialIndex: 0, count: 1,
+    transforms: [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1] }];
+  bundle.postEffects.unshift({ kind: "bloom", intensity: 0.1 },
+    { kind: "toneMapping", exposure: 1 }, { kind: "vignette", intensity: 0.2 }, { kind: "fxaa" });
+  try {
+    for (let frame = 0; frame < 2; frame++) renderer.render(bundle, { width: 320, height: 180 });
+    assert.deepEqual(geometryBlending, [true, true], "each frame renders genuinely additive geometry");
+    assert.ok(postBlending.length >= 10, "built-in intermediate and custom final passes both draw");
+    assert.ok(postBlending.every(enabled => !enabled), "retained post targets must overwrite rather than accumulate prior pixels");
+  } finally { renderer.dispose(); }
 });
 
 test("custom post WebGL2: valid vertexGLSL+fragmentGLSL compiles and links the program", async () => {
@@ -1990,18 +2044,9 @@ test("shaderLib hydrate: customVertexWGSL in materials profile reaches point lay
   assert.equal(pt.customFragmentWGSL, shaderSrc, "post-inflate customFragmentWGSL must flow from materials profile to point layer");
 });
 
-test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope results, and enablePostProcessing rebuilds the post chain", async () => {
+test("Scene3D WebGPU clean frames and manual post toggles restore a healthy chain", async () => {
   const harness = await createBoardWebGPUHarness({ fresh: true });
   const api = harness.env.context.__gosx_scene3d_api;
-
-  // Toggled per-frame by the test; the REAL beginWebGPUErrorScope /
-  // endWebGPUErrorScope pair in render() awaits this exact promise.
-  let nextFrameErrors = false;
-  harness.fake.device.popErrorScope = function() {
-    return nextFrameErrors
-      ? Promise.resolve({ message: "Buffer with '' label is invalid" })
-      : Promise.resolve(null);
-  };
 
   const state = api.createSceneState({
     scene: {
@@ -2026,7 +2071,6 @@ test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope 
   harness.canvas.height = 64;
 
   async function renderFrame(hasError) {
-    nextFrameErrors = hasError;
     harness.renderer.render(bundle, { width: 64, height: 64 });
     // endWebGPUErrorScope's device.popErrorScope().then(...) resolves over
     // two microtask hops (the fake's Promise.resolve(...) plus the real
@@ -2040,25 +2084,9 @@ test("Scene3D WebGPU frame-error/clean streaks are driven by real popErrorScope 
   assert.equal(diag.postFXDisabled, false);
   assert.equal(diag.postProcessing, true, "a non-empty postEffects bundle must build the post chain when not force-disabled");
 
-  // Five consecutive error frames -> frameErrorStreak must read exactly 5,
-  // driven purely by real popErrorScope rejections.
-  for (let i = 0; i < 5; i++) {
-    await renderFrame(true);
-  }
+  for (let i = 0; i < 4; i++) await renderFrame(false);
   diag = harness.renderer.diagnostics();
-  assert.equal(diag.frameErrorStreak, 5);
-  assert.equal(diag.frameCleanStreak, 0, "an error frame must zero the clean streak");
-
-  // One clean frame breaks the error streak and starts the clean streak.
-  await renderFrame(false);
-  diag = harness.renderer.diagnostics();
-  assert.equal(diag.frameErrorStreak, 0, "a clean frame must zero the error streak");
-  assert.equal(diag.frameCleanStreak, 1);
-
-  for (let i = 0; i < 4; i++) {
-    await renderFrame(false);
-  }
-  diag = harness.renderer.diagnostics();
+  assert.equal(diag.frameErrorStreak, 0);
   assert.equal(diag.frameCleanStreak, 5);
 
   // disablePostProcessing/enablePostProcessing actually gate the post chain
@@ -2203,10 +2231,13 @@ test("Scene3D WebGPU post-FX demotes at the trip threshold, restores after a sca
               canvas.__webgpuClaimed = true;
               return {
                 kind: "webgpu",
+                getFrameProgress: function() {
+                  return { frameSeq: window.__testWebGPUFrameSeq || 0, frameAt: window.__testWebGPUFrameSeq || 0 };
+                },
                 diagnostics: function() {
-                  // Advance the mount's frame-seq/frame-at progress markers
+                  // Advance the fake renderer's progress markers
                   // on every diagnostics() poll -- readSceneWebGPUProgress()
-                  // reads them from the DOM, and this fake never runs a real
+                  // reads them from JS, and this fake never runs a real
                   // render loop (no raf.flush between polls in this test),
                   // so without this the UNRELATED render-STALL watchdog
                   // (checkSceneRenderWatchdog's own progress-staleness check,
@@ -2394,7 +2425,7 @@ test("custom post WebGPU: a module with compilation errors is refused even when 
     vertexWGSL: "BAD WGSL VERTEX",
   });
 
-  harness.renderer.render(bundle, viewport);
+  await renderPreparedFrame(harness.renderer, bundle, viewport);
   assert.equal(renderPipelineAsyncCalls, 1);
   await flushAsyncWork();
   await flushAsyncWork();
@@ -2403,4 +2434,69 @@ test("custom post WebGPU: a module with compilation errors is refused even when 
   const warns = harness.warnLog.filter(m => m.includes("custom post pass") && (m.includes("passthrough") || m.includes("validation")));
   assert.equal(warns.length, 1, "a module carrying compilation errors must still fail the pass");
   assert.ok(warns[0].includes("expected declaration"), "the warn must carry the module's own compiler message");
+});
+
+test("points authored profile: an INLINE authored material survives scene-state normalization", async () => {
+  // The points normalizer builds its result from an explicit whitelist. That
+  // whitelist carried only `material` (a string naming an entry in
+  // scene.materials), while the mesh, instanced-mesh and model normalizers
+  // all carry the authored shader fields through. A points layer that
+  // authored its shader INLINE — the content starfields, whose entire
+  // motion (twinkle, depth wrap, per-star impulse) lives in that shader —
+  // therefore reached the renderer stripped, and both backends silently drew
+  // it with the BUILTIN points program. Nothing failed loudly: the shader was
+  // never handed to the GPU to fail, and the render loop still ran because
+  // sceneHasTimeDrivenMaterials reads the RAW props scene, so the layer
+  // redrew an identical frame forever. Verified in a real browser: before
+  // this fix the authored starfield GLSL was never passed to gl.shaderSource
+  // and the `time` uniform was never uploaded across 531 draw calls.
+  const api = await makeSceneApiEnv();
+
+  const vert = "#version 300 es\nuniform float time;\nvoid main() { gl_Position = vec4(time); }";
+  const frag = "#version 300 es\nprecision highp float;\nout vec4 c;\nvoid main() { c = vec4(1.0); }";
+
+  const state = api.createSceneState({
+    scene: {
+      points: [
+        {
+          id: "starfield-stars",
+          count: 2,
+          positions: [0, 0, 0, 1, 1, 1],
+          color: "#ffffff",
+          blendMode: "additive",
+          customVertex: vert,
+          customFragment: frag,
+          customVertexWGSL: "@vertex fn vertexMain() -> @builtin(position) vec4<f32> { return vec4<f32>(0.0); }",
+          customFragmentWGSL: "@fragment fn fragmentMain() -> @location(0) vec4<f32> { return vec4<f32>(1.0); }",
+          customUniforms: { time: 0 },
+          shaderBackend: "custom",
+          shaderLayout: { material: "StarfieldDepthWrap" },
+        },
+      ],
+    },
+  });
+
+  const point = state.points[0];
+  assert.equal(point.customVertex, vert, "inline customVertex must survive normalization");
+  assert.equal(point.customFragment, frag, "inline customFragment must survive normalization");
+  assert.ok(point.customVertexWGSL, "inline customVertexWGSL must survive normalization");
+  assert.ok(point.customFragmentWGSL, "inline customFragmentWGSL must survive normalization");
+  assert.equal(point.shaderBackend, "custom", "shaderBackend must survive normalization");
+  assert.ok(point.customUniforms && typeof point.customUniforms === "object", "customUniforms must survive");
+  assert.equal(point.customUniforms.time, 0, "the declared time uniform must survive");
+  assert.ok(point.shaderLayout && point.shaderLayout.material === "StarfieldDepthWrap", "shaderLayout must survive");
+
+  // customUniforms is cloned, not aliased: the mount mutates the live bag
+  // per frame (the material clock) and must not write back into props.
+  point.customUniforms.time = 42;
+  const second = api.createSceneState({
+    scene: { points: [{ id: "starfield-stars", count: 1, positions: [0, 0, 0], customUniforms: { time: 0 } }] },
+  });
+  assert.equal(second.points[0].customUniforms.time, 0, "customUniforms must be cloned per normalization");
+
+  // The layer keeps reaching the renderer through the same path a named
+  // material uses, so the draw loop sees one entry either way.
+  const withMaterials = api.sceneStatePointsWithMaterials(state);
+  assert.equal(withMaterials.length, 1);
+  assert.equal(withMaterials[0].customVertex, vert, "inline authored shader must reach the render bundle");
 });

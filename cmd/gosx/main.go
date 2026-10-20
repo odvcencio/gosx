@@ -5,10 +5,11 @@
 //	gosx build [--offline|--msix|--sign|--scene-budget file] <dir>
 //	                              Build GoSX application
 //	gosx assets plan [path...]    Plan Scene3D asset optimization work
-//	gosx build-runtime [outdir]   Build TinyGo production WASM runtimes
+//	gosx build-runtime [flags] [outdir]   Build TinyGo production WASM runtimes
 //	gosx dev [--scene-inspector] <dir>
 //	                              Start development server with hot reload
 //	gosx desktop [dev] <dir>     Start development server in a native desktop host
+//	gosx desktop package         Package a Windows desktop app for direct download
 //	gosx export <dir>            Pre-render static GoSX pages
 //	gosx init [dir]              Scaffold a GoSX application or docs site
 //	gosx compile <file.gsx>      Compile GoSX to Go
@@ -18,18 +19,25 @@
 //	gosx lsp                     Start the GoSX language server over stdio
 //	gosx perf [--budget file] <url>
 //	                              Profile browser runtime performance
+//	gosx ouroboros inventory      Collect O0.2 runtime baseline inventory
+//	gosx ouroboros compare        Compare O0.2 browser baseline artifacts
 //	gosx perf budget <report> <budget>
 //	                              Check saved perf output against budgets
 //	gosx release check           Check release metadata consistency
-//	gosx scene certify           Check Scene3D feature certification
+//	gosx scene check             Check Scene3D feature support and budgets
 //	gosx scene inspect           Inspect Scene3D feature use and budgets
 //	gosx scene validate          Validate SceneIR JSON files
 //	gosx size [--json] <dist|build.json>
 //	                              Report runtime bundle sizes
+//	gosx ui list                 List source-owned UI recipes
+//	gosx ui add <recipe>         Install recipe source into an app
+//	gosx ui diff <recipe>        Compare installed source with a recipe
 package main
 
 import (
 	"bytes"
+	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -38,7 +46,9 @@ import (
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/format"
+	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/strictcheck"
 	"m31labs.dev/gosx/transpile"
 )
 
@@ -58,12 +68,16 @@ func main() {
 	switch cmd {
 	case "assets":
 		cmdAssets()
+	case "budget":
+		cmdBudget()
 	case "build":
 		cmdBuild()
 	case "build-runtime":
 		cmdBuildRuntime()
 	case "dev":
 		cmdDev()
+	case "deploy":
+		cmdDeploy()
 	case "desktop":
 		cmdDesktop()
 	case "export":
@@ -82,8 +96,12 @@ func main() {
 		cmdLSP()
 	case "perf":
 		cmdPerf()
+	case "ouroboros":
+		cmdOuroboros()
 	case "size", "size-report":
 		cmdSizeReport()
+	case "ui":
+		cmdUI()
 	case "visual":
 		cmdVisual()
 	case "repl":
@@ -115,20 +133,27 @@ func isHelpArg(arg string) bool {
 
 func commandUsage(cmd string, w io.Writer) bool {
 	switch cmd {
+	case "deploy":
+		deployUsage(w)
 	case "assets":
 		assetsUsage(w)
 	case "build":
 		fmt.Fprintf(w, `gosx build - Build GoSX applications
 
 Usage:
-  gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>
+  gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>
 
 `)
 	case "build-runtime":
 		fmt.Fprintf(w, `gosx build-runtime - Build TinyGo production WASM runtimes
 
 Usage:
-  gosx build-runtime [outdir]
+  gosx build-runtime [--ouroboros-out dir --inventory file --root dir] [outdir]
+
+Flags:
+  --ouroboros-out dir  Write a canonical, write-once runtime evidence receipt
+  --inventory file     Bind canonical evidence to a source inventory
+  --root dir           Repository root used for both compilation and evidence
 
 `)
 	case "dev":
@@ -139,12 +164,17 @@ Usage:
 
 `)
 	case "desktop":
+		if len(os.Args) > 2 && os.Args[2] == "package" {
+			desktopPackageUsage(w)
+			break
+		}
 		fmt.Fprintf(w, `gosx desktop - Run a GoSX app in a native desktop host
 
 Usage:
   gosx desktop [flags] [dev [dir]]
   gosx desktop --url <url>
   gosx desktop --html <html>
+  gosx desktop package --input <staged-app> --config <config.json> [flags]
 
 `)
 	case "export":
@@ -167,7 +197,10 @@ Usage:
 		fmt.Fprintf(w, `gosx check - Parse and validate .gsx source
 
 Usage:
-  gosx check <file.gsx>
+  gosx check [--types] <file.gsx>
+
+Flags:
+  --types  Also run the go/types oracle over the package (experimental)
 
 `)
 	case "render":
@@ -186,6 +219,8 @@ Usage:
   gosx lsp
 
 `)
+	case "budget":
+		budgetUsage(w)
 	case "perf":
 		fmt.Fprintf(w, `gosx perf - Profile browser runtime performance
 
@@ -195,8 +230,12 @@ Usage:
   gosx perf budget <report.json> <budget.json>
 
 `)
+	case "ouroboros":
+		ouroborosUsage(w)
 	case "size", "size-report":
 		sizeUsage(w)
+	case "ui":
+		uiUsage(w)
 	case "visual":
 		visualUsage(w)
 	case "repl":
@@ -233,10 +272,12 @@ Commands:
   build [--offline|--msix|--sign] [--appinstaller <uri>] <dir>
                        Build GoSX application
   assets plan [path...] Plan build-time optimization for Scene3D assets
-  build-runtime [outdir]
+  build-runtime [--ouroboros-out dir --inventory file --root dir] [outdir]
                        Build TinyGo production WASM runtimes
   dev [--scene-inspector] <dir>
                        Start development server with hot reload
+  deploy check [--json] <dist>
+                       Validate a built server bundle before deployment
   desktop [dev] <dir>  Start dev server in a native desktop host
   export <dir>         Pre-render static GoSX pages
   init [dir]           Scaffold a GoSX application or docs site
@@ -245,16 +286,23 @@ Commands:
   render <file> [comp] Render component to HTML
   fmt <path>           Format GoSX source files
   lsp                  Start the GoSX language server
+  budget derive        Derive performance allocations
+  budget explain       Explain performance allocations
   perf [--budget file] <url>
                        Profile browser runtime performance
+  ouroboros inventory  Collect O0.2 runtime baseline inventory
+  ouroboros compare    Compare O0.2 browser baseline artifacts
   perf budget <report> <budget>
                        Check saved perf output against budgets
   size [--json] <dist|build.json>
                        Report runtime bundle sizes
+  ui list              List the local source-owned UI recipe catalog
+  ui add <recipe>      Install readable recipe source into an app
+  ui diff <recipe>     Compare installed source with the catalog
   visual <url>         Pixel-level visual regression testing
   repl <url>           Interactive browser runtime explorer
   release check        Check release metadata consistency
-  scene certify        Check Scene3D feature certification
+  scene check          Check Scene3D feature support and budgets
   scene inspect        Inspect Scene3D feature use and budgets
   scene validate       Validate SceneIR JSON files
   version              Print version
@@ -268,7 +316,7 @@ Init templates:
 
 func cmdBuild() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--offline|--msix|--sign] [--appinstaller <uri>] [--scene-budget file] <dir>")
+		fmt.Fprintln(os.Stderr, "Usage: gosx build [--dev|--prod|--go-wasm-only|--offline|--msix|--sign] [--output dir] [--appinstaller <uri>] [--scene-budget file] [--islands-backend vm|auto] [--cpu-profile file] [--perf-app ID] <dir>")
 		os.Exit(1)
 	}
 	opts := BuildOptions{Dev: true}
@@ -280,6 +328,15 @@ func cmdBuild() {
 			opts.Dev = true
 		case "--prod":
 			opts.Dev = false
+		case "--go-wasm-only":
+			opts.GoWASMOnly = true
+		case "--output":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --output requires a directory")
+				os.Exit(1)
+			}
+			opts.OutputDir = os.Args[i]
 		case "--offline":
 			opts.Offline = true
 		case "--msix":
@@ -294,6 +351,17 @@ func cmdBuild() {
 				os.Exit(1)
 			}
 			opts.AppInstallerURI = os.Args[i]
+		case "--islands-backend", "--cpu-profile":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintf(os.Stderr, "build error: %s requires a value\n", arg)
+				os.Exit(1)
+			}
+			if arg == "--islands-backend" {
+				opts.IslandsBackend = os.Args[i]
+			} else {
+				opts.CPUProfile = os.Args[i]
+			}
 		case "--scene-budget":
 			i++
 			if i >= len(os.Args) {
@@ -303,7 +371,26 @@ func cmdBuild() {
 			opts.SceneBudgetPath = os.Args[i]
 		case "--scene-budget-strict":
 			opts.SceneBudgetStrict = true
+		case "--perf-app":
+			i++
+			if i >= len(os.Args) {
+				fmt.Fprintln(os.Stderr, "build error: --perf-app requires an app ID")
+				os.Exit(1)
+			}
+			opts.PerfAppID = os.Args[i]
 		default:
+			if strings.HasPrefix(arg, "--output=") {
+				opts.OutputDir = strings.TrimPrefix(arg, "--output=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--islands-backend=") {
+				opts.IslandsBackend = strings.TrimPrefix(arg, "--islands-backend=")
+				continue
+			}
+			if strings.HasPrefix(arg, "--cpu-profile=") {
+				opts.CPUProfile = strings.TrimPrefix(arg, "--cpu-profile=")
+				continue
+			}
 			if strings.HasPrefix(arg, "--appinstaller=") {
 				opts.AppInstallerURI = strings.TrimPrefix(arg, "--appinstaller=")
 				continue
@@ -368,19 +455,43 @@ func cmdCompile() {
 
 	output, err := transpile.Transpile(source, transpile.Options{SourceFile: file})
 	if err != nil {
-		fatal("compile: %v", err)
+		fatal("compile: %s:%v", file, err)
 	}
 	fmt.Print(output)
 }
 
 func cmdCheck() {
-	file := requireArg(2, "check")
+	fs := flag.NewFlagSet("gosx check", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	// --types is opt-in (gosx#typeoracle milestone 1): a real go/types pass
+	// over the package's strict projection plus its sibling .go files,
+	// beside strictcheck's own go/ast-based checks rather than in place of
+	// them. Opt-in until it has run clean across enough real gosx code to
+	// trust as a default -- see internal/typeoracle's package doc for the
+	// design, and this slice's own report for what running it over
+	// examples/ found.
+	withTypes := fs.Bool("types", false, "also run the go/types oracle over the package (experimental; internal/typeoracle)")
+	if err := fs.Parse(os.Args[2:]); err != nil {
+		fatal("check: %v", err)
+	}
+	if fs.NArg() < 1 {
+		fatal("check requires a file argument")
+	}
+	file := fs.Arg(0)
 	if err := runCheck(file, os.Stderr); err != nil {
 		fatal("check: %v", err)
+	}
+	if *withTypes {
+		if err := runCheckTypes(file, os.Stderr); err != nil {
+			fatal("check: %v", err)
+		}
 	}
 }
 
 func runCheck(file string, stderr io.Writer) error {
+	if err := checkVersionSkew(filepath.Dir(file)); err != nil {
+		return err
+	}
 	source, err := os.ReadFile(file)
 	if err != nil {
 		return fmt.Errorf("read %s: %w", file, err)
@@ -388,8 +499,41 @@ func runCheck(file string, stderr io.Writer) error {
 
 	prog, err := gosx.Compile(source)
 	if err != nil {
-		return err
+		return fmt.Errorf("%s:%w", file, err)
 	}
+	if len(prog.Components) == 0 {
+		tree, lang, err := gosx.Parse(source)
+		if err == nil {
+			err = gosx.DescribeMissingComponents(tree.RootNode(), source, lang)
+		}
+		if err != nil {
+			return fmt.Errorf("%s:%w", file, err)
+		}
+	}
+	// Warnings (gosx#249) are collected and printed regardless of whether
+	// the check itself passes or fails below -- a warning never changes
+	// this command's exit code; see strictcheck.Options.Warnings' doc
+	// comment for why that split exists.
+	var warnings []ir.Diagnostic
+	checkErr := strictcheck.CheckFileWithOptions(context.Background(), file, strictcheck.Options{Warnings: &warnings})
+	printCheckWarnings(stderr, warnings)
+	if checkErr != nil {
+		return checkErr
+	}
+	for i, component := range prog.Components {
+		if !component.IsIsland {
+			continue
+		}
+		if _, err := ir.LowerIsland(prog, i); err != nil {
+			return fmt.Errorf("lower island %s: %w", component.Name, err)
+		}
+	}
+	// Advisory findings (an untyped legacy component, gosx#249's own
+	// checks 1/2/4/5) already printed above by printCheckWarnings:
+	// strictcheck.CheckFileWithOptions' Warnings collection runs
+	// ir.ValidateWarnings per file (see strictcheck/warnings.go), so a
+	// second, direct ir.ValidateWarnings(prog) call here would print every
+	// one of those findings twice.
 	fmt.Fprintf(stderr, "ok: %d components\n", len(prog.Components))
 	for _, c := range prog.Components {
 		fmt.Fprintf(stderr, "  %s", c.Name)
@@ -403,23 +547,34 @@ func runCheck(file string, stderr io.Writer) error {
 
 func cmdRender() {
 	file := requireArg(2, "render")
+	componentName := ""
+	if len(os.Args) > 3 {
+		componentName = os.Args[3]
+	}
+	if err := runRender(file, componentName, os.Stdout); err != nil {
+		fatal("render: %v", err)
+	}
+}
+
+func runRender(file, componentName string, stdout io.Writer) error {
+	if err := strictcheck.CheckFile(context.Background(), file); err != nil {
+		return err
+	}
 	source, err := os.ReadFile(file)
 	if err != nil {
-		fatal("read %s: %v", file, err)
+		return fmt.Errorf("read %s: %w", file, err)
 	}
 
 	prog, err := gosx.Compile(source)
 	if err != nil {
-		fatal("compile: %v", err)
+		return fmt.Errorf("compile: %w", err)
 	}
 
-	componentName := ""
-	if len(os.Args) > 3 {
-		componentName = os.Args[3]
-	} else if len(prog.Components) > 0 {
+	if componentName == "" && len(prog.Components) > 0 {
 		componentName = prog.Components[0].Name
-	} else {
-		fatal("no components found")
+	}
+	if componentName == "" {
+		return fmt.Errorf("no components found")
 	}
 
 	// route.RenderProgramComponent is the single server-side IR renderer. The
@@ -427,9 +582,10 @@ func cmdRender() {
 	// removed. Output is compact instead of indented.
 	html, err := route.RenderProgramComponent(prog, componentName, route.ProgramRenderEnv{})
 	if err != nil {
-		fatal("render: %v", err)
+		return err
 	}
-	fmt.Println(html)
+	_, err = fmt.Fprintln(stdout, html)
+	return err
 }
 
 func cmdFmt() {

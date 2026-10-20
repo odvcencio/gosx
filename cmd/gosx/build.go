@@ -3,9 +3,7 @@ package main
 import (
 	"bytes"
 	"compress/gzip"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -13,14 +11,20 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"runtime/pprof"
 	"strings"
 	"sync"
 
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/internal/bundlepolicy"
+	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
+	"m31labs.dev/gosx/strictcheck"
 )
 
 // BuildManifest describes all build outputs for deployment.
@@ -33,6 +37,10 @@ type CSSAsset = buildmanifest.CSSAsset
 type HashedAsset = buildmanifest.HashedAsset
 
 type BuildOptions struct {
+	GoWASMOnly        bool
+	OutputDir         string
+	IslandsBackend    string
+	CPUProfile        string
 	Dev               bool
 	Offline           bool
 	MSIX              bool
@@ -40,6 +48,23 @@ type BuildOptions struct {
 	AppInstallerURI   string
 	SceneBudgetPath   string
 	SceneBudgetStrict bool
+	// PerfAppID enables private performance asset metadata for a production
+	// build. The stable app identity must be provided explicitly.
+	PerfAppID string
+}
+
+// runtimeFeatureChunks lists opt-in feature chunks that ship as
+// client/js/bootstrap-feature-<name>.js and load by name at runtime
+// (hydrate.Manifest.Features). Each row's role is a runtimeExcludableAssetRoles
+// key. The change that adds a chunk file appends its row here.
+var runtimeFeatureChunks = []struct{ name, role string }{
+	{"browser-services", "engines"},
+	{"workbench", "workbench"},
+	{"hub-document", "hubs"},
+	{"motion-transport", "motion"},
+	{"motion-svg", "motion"},
+	{"motion-scene", "motion"},
+	{"motion-track", "motion"},
 }
 
 type wasmCompiler string
@@ -53,10 +78,21 @@ type hashedWriteOptions struct {
 	CompressedSidecars bool
 }
 
-// contentHash returns the first 8 hex chars of sha256.
+// contentHash returns the first 16 hex chars (8 bytes) of sha256. Delegates to
+// buildmanifest.ContentHash so every content hash the build writes —
+// hashed asset filenames and island SourceHash entries alike — comes from
+// one algorithm; a server comparing them later must never see two schemes.
 func contentHash(data []byte) string {
-	h := sha256.Sum256(data)
-	return hex.EncodeToString(h[:8])
+	return buildmanifest.ContentHash(data)
+}
+
+// withRuntimeIntegrity keeps the short content hash used in asset filenames
+// while recording the complete digest needed for browser SRI checks. Runtime
+// assets are the only manifest entries emitted into executable script tags;
+// island/CSS/image entries keep their smaller historical metadata surface.
+func withRuntimeIntegrity(asset HashedAsset, data []byte) HashedAsset {
+	asset.Integrity = buildmanifest.ContentIntegrity(data)
+	return asset
 }
 
 // writeHashed writes data to dir/name.hash.ext and returns the asset info.
@@ -76,11 +112,21 @@ func writeHashedWithOptions(dir, name, ext string, data []byte, opts hashedWrite
 			return HashedAsset{}, err
 		}
 	}
-	return HashedAsset{
-		File: filename,
-		Hash: hash,
-		Size: int64(len(data)),
-	}, nil
+	asset := HashedAsset{File: filename, Hash: hash, Size: int64(len(data))}
+	if opts.CompressedSidecars {
+		for _, sidecar := range []struct {
+			ext  string
+			size *int64
+		}{{".gz", &asset.GzipSize}, {".br", &asset.BrotliSize}} {
+			info, err := os.Stat(path + sidecar.ext)
+			if err == nil {
+				*sidecar.size = info.Size()
+			} else if !os.IsNotExist(err) {
+				return HashedAsset{}, err
+			}
+		}
+	}
+	return asset, nil
 }
 
 func writeHashedWithoutCompressedSidecars(dir, name, ext string, data []byte) (HashedAsset, error) {
@@ -154,6 +200,71 @@ func removeFileIfExists(path string) error {
 	return nil
 }
 
+// writeIslandManifestAssets serializes and content-hash-writes each already-
+// discovered island program under islandDir, and returns the IslandAsset
+// manifest entries for them — including SourceFile/SourceHash, which let a
+// server started later (issue #166) detect that an island's .gsx source
+// changed since this build without re-running the compiler pipeline: it
+// re-hashes the file at SourceFile and compares against SourceHash. Store
+// the path project-relative so it stays stable across machines and matches
+// the manifest.SourceRoot / effectiveRuntimeRoot a server resolves it
+// against. Best-effort: an island whose source lives outside the project
+// tree (an imported package elsewhere on disk) still gets a "../"-relative
+// path.
+//
+// RunBuildWithOptions calls this as its real island+manifest stage.
+// Factored out so a test can exercise the real manifest-writing and
+// SourceFile-recording code without paying for the wasm runtime compile
+// RunBuildWithOptions also performs — see
+// TestWarnStaleIslandsEndToEndAfterRealBuildPipeline.
+func writeIslandManifestAssets(dir, islandDir string, dev bool, islandProgs []*IslandProgramSource) ([]IslandAsset, error) {
+	if err := validateUniqueIslandProgramNames(islandProgs); err != nil {
+		return nil, err
+	}
+	fmt.Println("\n  Islands:")
+	islandExt := ".gxi" // GoSX Island — binary prod format
+	if dev {
+		islandExt = ".json"
+	}
+
+	islands := make([]IslandAsset, 0, len(islandProgs))
+	for _, prog := range islandProgs {
+		var data []byte
+		var err error
+		format := "bin"
+		if dev {
+			data, err = program.EncodeJSON(prog.Program)
+			format = "json"
+		} else {
+			data, err = program.EncodeBinary(prog.Program)
+		}
+		if err != nil {
+			return nil, fmt.Errorf("serialize %s: %w", prog.Name, err)
+		}
+
+		asset, err := writeHashed(islandDir, prog.Name, islandExt, data)
+		if err != nil {
+			return nil, fmt.Errorf("write island %s: %w", prog.Name, err)
+		}
+
+		sourceFile := ""
+		if rel, relErr := filepath.Rel(dir, prog.SourceFile); relErr == nil {
+			sourceFile = filepath.ToSlash(rel)
+		}
+
+		islands = append(islands, IslandAsset{
+			Name:        prog.Name,
+			Format:      format,
+			HashedAsset: asset,
+			SourceFile:  sourceFile,
+			SourceHash:  prog.SourceHash,
+		})
+
+		fmt.Printf("    %s → %s (%d bytes)\n", prog.Name, asset.File, asset.Size)
+	}
+	return islands, nil
+}
+
 // RunBuild orchestrates the full GoSX build pipeline.
 //
 // Output structure (prod):
@@ -180,12 +291,41 @@ func RunBuild(dir string, dev bool) error {
 }
 
 func RunBuildWithOptions(dir string, opts BuildOptions) error {
-	absDir, err := filepath.Abs(dir)
+	if err := validatePerfBuildOptions(opts); err != nil {
+		return err
+	}
+	if opts.CPUProfile != "" {
+		profile, err := os.Create(opts.CPUProfile)
+		if err != nil {
+			return err
+		}
+		if err := pprof.StartCPUProfile(profile); err != nil {
+			profile.Close()
+			return err
+		}
+		defer func() { pprof.StopCPUProfile(); profile.Close() }()
+	}
+
+	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
 	dir = absDir
+	if opts.GoWASMOnly {
+		return runGoWASMOnlyBuild(dir, opts)
+	}
+	if opts.OutputDir != "" {
+		return fmt.Errorf("--output requires --go-wasm-only")
+	}
+	// The initial discovery is a side-effect barrier: invalid source must fail
+	// before module sync, dependency resolution, or a user hook can run.
+	if _, err := collectProjectIslandDiscovery(dir); err != nil {
+		return err
+	}
 
+	if err := checkVersionSkew(dir); err != nil {
+		return err
+	}
 	if err := syncModulesPackage(dir); err != nil {
 		return err
 	}
@@ -196,11 +336,29 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err != nil {
 		return err
 	}
-	if err := runBuildHookCommands(dir, "pre-build", cfg.Build.Hooks.Pre); err != nil {
+	discovery, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, cfg.Build.Hooks.Pre)
+	if err != nil {
 		return err
 	}
-
+	islandProgs, gsxFiles := discovery.Programs, discovery.GSXFiles
+	backend := opts.IslandsBackend
+	if backend == "" {
+		backend = cfg.Build.Islands.Backend
+	}
+	if err := admitBuildIslands(islandProgs, backend, ir.LowerIslandAOT); err != nil {
+		return err
+	}
+	printBundlePolicyWarnings(cfg.Build.Bundle)
+	if diagnostics := bundlepolicy.ValidateProject(dir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
+	}
+	if err := checkStrictProject(context.Background(), dir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
 	distDir := filepath.Join(dir, "dist")
+	if err := os.RemoveAll(distDir); err != nil {
+		return fmt.Errorf("clean output directory: %w", err)
+	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
 	islandDir := filepath.Join(distDir, "assets", "islands")
 	cssDir := filepath.Join(distDir, "assets", "css")
@@ -212,6 +370,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	manifest := BuildManifest{}
+	// SourceRoot records this build's project root so a server started later
+	// on the same host can resolve IslandAsset.SourceFile against it
+	// directly, instead of guessing the project root from wherever it found
+	// build.json — see buildmanifest.Manifest.SourceRoot and
+	// server.resolveIslandSourceRoot (issue #166).
+	manifest.SourceRoot = dir
 	mode := "prod"
 	if opts.Dev {
 		mode = "dev"
@@ -247,49 +411,15 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 
 	// ── Tier 1: Compile .gsx files ──────────────────────────────────────
 
-	islandProgs, gsxFiles, err := collectProjectIslandPrograms(dir)
-	if err != nil {
-		return err
-	}
-
 	fmt.Printf("  Sources: %d .gsx files\n", len(gsxFiles))
 
 	// ── Tier 3: Island programs (content-hashed) ────────────────────────
 
-	fmt.Println("\n  Islands:")
-	islandFormat := "json"
-	islandExt := ".gxi" // GoSX Island — binary prod format
-	if opts.Dev {
-		islandExt = ".json"
+	islandAssets, err := writeIslandManifestAssets(dir, islandDir, opts.Dev, islandProgs)
+	if err != nil {
+		return err
 	}
-
-	for _, prog := range islandProgs {
-		var data []byte
-		var err error
-		if opts.Dev {
-			data, err = program.EncodeJSON(prog)
-			islandFormat = "json"
-		} else {
-			data, err = program.EncodeBinary(prog)
-			islandFormat = "bin"
-		}
-		if err != nil {
-			return fmt.Errorf("serialize %s: %w", prog.Name, err)
-		}
-
-		asset, err := writeHashed(islandDir, prog.Name, islandExt, data)
-		if err != nil {
-			return fmt.Errorf("write island %s: %w", prog.Name, err)
-		}
-
-		manifest.Islands = append(manifest.Islands, IslandAsset{
-			Name:        prog.Name,
-			Format:      islandFormat,
-			HashedAsset: asset,
-		})
-
-		fmt.Printf("    %s → %s (%d bytes)\n", prog.Name, asset.File, asset.Size)
-	}
+	manifest.Islands = append(manifest.Islands, islandAssets...)
 
 	// ── Tier 3: Sidecar CSS (content-hashed) ────────────────────────────
 
@@ -322,6 +452,13 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		fmt.Printf("    CSS: %s → %s (%d bytes)\n", component, asset.File, asset.Size)
 	}
 
+	// Explicit app modules use standard Go, independently of the compiler
+	// selected below for the shared framework runtime.
+	manifest.GoWASM, err = buildGoWASMAssetsWithOptions(dir, distDir, cfg.Build.GoWASM, !opts.Dev)
+	if err != nil {
+		return err
+	}
+
 	// ── Tier 2: Shared runtime (content-hashed) ─────────────────────────
 
 	fmt.Println("\n  Runtime:")
@@ -337,14 +474,15 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	}
 
 	type wasmResult struct {
-		data     []byte
-		asset    HashedAsset
-		compiler string
-		label    string
-		err      error
+		data         []byte
+		asset        HashedAsset
+		compiler     string
+		label        string
+		optimization *buildmanifest.WASMOptimization
+		err          error
 	}
 
-	compiler, tinygoPath, err := resolveWASMCompiler(opts, exec.LookPath)
+	compiler, tinygoPath, prebuiltRuntime, err := resolveWASMCompilerForProject(opts, dir, exec.LookPath)
 	if err != nil {
 		return err
 	}
@@ -352,54 +490,83 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		fmt.Println("    Using TinyGo for smaller WASM binary...")
 		fmt.Printf("    TinyGo toolchain: current Go\n")
 	}
+	if compiler == wasmCompilerPrebuilt {
+		fmt.Println("    TinyGo not found; using a release-matched prebuilt runtime instead...")
+	}
 
-	// Build both WASM binaries in parallel. The islands-only runtime is a
+	// Build runtime variants with bounded workers. The islands-only runtime is a
 	// route-selected Go WASM variant that drops shared engine, CRDT, syntax
 	// highlighting, and text-layout exports for pages that only hydrate islands.
-	var wg sync.WaitGroup
-	runtimeResult := wasmResult{label: "runtime"}
+	optimizer := newOptionalWASMOptimizer(os.Stderr)
+	coreResult := wasmResult{label: "core"}
+	engineResult := wasmResult{label: "engine"}
+	collabResult := wasmResult{label: "collab"}
+	runtimeResult := wasmResult{label: "full"}
 	islandsResult := wasmResult{label: "islands"}
 
-	buildOneWASM := func(result *wasmResult, compiler wasmCompiler, name, outputName string, extraTags ...string) {
-		defer wg.Done()
+	buildOneWASM := func(result *wasmResult, compiler wasmCompiler, name, outputName string, extraTags ...string) error {
 		tmpPath := filepath.Join(distDir, outputName+".wasm.tmp")
 
-		if compiler == wasmCompilerTinyGo {
+		switch compiler {
+		case wasmCompilerTinyGo:
 			if err := buildTinyGoWASM(dir, gosxRoot, tmpPath, tinygoPath, extraTags...); err != nil {
-				result.err = err
-				return
+				return err
 			}
 			result.compiler = string(wasmCompilerTinyGo)
-			if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
-				result.err = err
-				return
+			if optimized, err := optimizeOptionalBuildWASM(optimizer, tmpPath, opts.PerfAppID == ""); err != nil {
+				return err
 			} else if optimized {
 				fmt.Printf("    Applied wasm-opt -Oz (%s)\n", name)
 			}
-		} else {
+		case wasmCompilerPrebuilt:
+			srcPath, variant, ok := prebuiltRuntime.VariantPath(name)
+			if !ok {
+				return fmt.Errorf("prebuilt runtime bundle has no %q variant", name)
+			}
+			data, err := os.ReadFile(srcPath)
+			if err != nil {
+				return fmt.Errorf("read prebuilt runtime %s: %w", name, err)
+			}
+			if err := verifyRuntimeAssetDigest(variant.File, data, variant.SHA256, variant.Bytes); err != nil {
+				return err
+			}
+			if err := validateWASMFraming(data); err != nil {
+				return fmt.Errorf("invalid prebuilt WASM: %w", err)
+			}
+			if err := os.WriteFile(tmpPath, data, 0o644); err != nil {
+				return fmt.Errorf("stage prebuilt runtime %s: %w", name, err)
+			}
+			result.compiler = string(wasmCompilerPrebuilt)
+		default:
 			cmd := exec.Command("go", goWASMBuildArgs(tmpPath, extraTags...)...)
 			cmd.Env = append(execEnvWithoutGoFlags(), "GOOS=js", "GOARCH=wasm", "GOWORK=off", "GOFLAGS="+goModuleCommandFlags)
 			cmd.Dir = dir
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				result.err = fmt.Errorf("go wasm build failed: %w", err)
-				return
+			output, err := runValidatedWASMCompiler(cmd, tmpPath)
+			if err != nil {
+				return fmt.Errorf("go wasm build failed: %w\n%s", err, output)
 			}
 			result.compiler = string(wasmCompilerGo)
-			if standardGoWASMOptEnabled() {
-				if optimized, err := optimizeWASMWithWasmOpt(tmpPath); err != nil {
-					result.err = err
-					return
+			if opts.PerfAppID == "" && standardGoWASMOptEnabled() {
+				if optimized, err := optimizer.optimize(tmpPath); err != nil {
+					return err
 				} else if optimized {
 					fmt.Printf("    Applied wasm-opt -Oz (%s, Go)\n", name)
 				}
 			}
 		}
 
+		if opts.PerfAppID != "" {
+			result.optimization, result.err = optimizePerfBuildWASM(tmpPath)
+			if result.err != nil {
+				return result.err
+			}
+		}
 		data, err := os.ReadFile(tmpPath)
 		if err != nil {
-			result.err = fmt.Errorf("read compiled WASM: %w", err)
-			return
+			return fmt.Errorf("read compiled WASM: %w", err)
+		}
+		if err := validateWASMFraming(data); err != nil {
+			return fmt.Errorf("invalid WASM before hashing: %w", err)
 		}
 		writeRuntimeWASM := writeHashed
 		if opts.Dev {
@@ -407,34 +574,64 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 		asset, err := writeRuntimeWASM(runtimeDir, outputName, ".wasm", data)
 		if err != nil {
-			result.err = fmt.Errorf("write wasm asset: %w", err)
-			return
+			return fmt.Errorf("write wasm asset: %w", err)
 		}
 		result.data = data
 		result.asset = asset
 		_ = os.Remove(tmpPath)
+		return nil
 	}
 
-	// Shared runtime — always built
-	wg.Add(1)
-	go buildOneWASM(&runtimeResult, compiler, "runtime", "gosx-runtime")
-
-	// Islands-only runtime — parallel with shared runtime.
+	// Keep every capability-linked variant, but respect the caller's existing
+	// Go concurrency limit rather than launching five compilers unconditionally.
 	buildIslands := !tinyGoFullRuntimeEnabled()
-	if buildIslands {
-		wg.Add(1)
-		go buildOneWASM(&islandsResult, compiler, "islands", "gosx-runtime-islands", islandOnlyWASMTags(compiler)...)
+	jobs := []struct {
+		result       *wasmResult
+		name, output string
+		tags         []string
+	}{
+		{&coreResult, "core", "gosx-runtime-core", runtimeVariantBuildTags(runtimewasm.VariantCore)},
+		{&engineResult, "engine", "gosx-runtime-engine", runtimeVariantBuildTags(runtimewasm.VariantEngine)},
+		{&collabResult, "collab", "gosx-runtime-collab", runtimeVariantBuildTags(runtimewasm.VariantCollab)},
+		{&runtimeResult, "full", "gosx-runtime", runtimeVariantBuildTags(runtimewasm.VariantFull)},
 	}
-
-	wg.Wait()
+	if buildIslands {
+		jobs = append(jobs, struct {
+			result       *wasmResult
+			name, output string
+			tags         []string
+		}{&islandsResult, "islands", "gosx-runtime-islands", islandOnlyWASMTags(compiler)})
+	}
+	tasks := make([]func() error, len(jobs))
+	for i, job := range jobs {
+		tasks[i] = func() error { return buildOneWASM(job.result, compiler, job.name, job.output, job.tags...) }
+	}
+	for i, err := range runRuntimeBuildTasks(tasks) {
+		jobs[i].result.err = err
+	}
 
 	// Process runtime result.
 	if runtimeResult.err != nil {
 		return fmt.Errorf("wasm runtime build with %s: %w", compiler, runtimeResult.err)
 	}
+	for _, result := range []*wasmResult{&coreResult, &engineResult, &collabResult} {
+		if result.err != nil {
+			return fmt.Errorf("wasm %s runtime build with %s: %w", result.label, compiler, result.err)
+		}
+	}
 	manifest.Runtime.WASM = runtimeResult.asset
+	manifest.Runtime.WASMVariants = publishedRuntimeVariantAssets(
+		coreResult.asset,
+		engineResult.asset,
+		collabResult.asset,
+		runtimeResult.asset,
+	)
 	gzEst := gzip_c_len(runtimeResult.data)
 	fmt.Printf("    %s (%d bytes, %dKB gz, built with %s)\n", runtimeResult.asset.File, runtimeResult.asset.Size, gzEst/1024, runtimeResult.compiler)
+	for _, result := range []*wasmResult{&coreResult, &engineResult, &collabResult} {
+		gzEst := gzip_c_len(result.data)
+		fmt.Printf("    %s (%d bytes, %dKB gz, built with %s, %s)\n", result.asset.File, result.asset.Size, gzEst/1024, result.compiler, result.label)
+	}
 
 	// Process islands result
 	if buildIslands {
@@ -447,15 +644,33 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 
-	// wasm_exec.js — use TinyGo's version if we built with TinyGo
+	if opts.PerfAppID != "" {
+		manifest.Runtime.WASMOptimization = make(map[string]buildmanifest.WASMOptimization)
+		for _, result := range []*wasmResult{&coreResult, &engineResult, &collabResult, &runtimeResult, &islandsResult} {
+			if result.optimization != nil {
+				manifest.Runtime.WASMOptimization[result.label] = *result.optimization
+			}
+		}
+	}
+	// wasm_exec.js — use TinyGo's version if we built with TinyGo, or the
+	// prebuilt runtime's own verified shim if we built with that instead.
 	wasmExecFound := false
-	if runtimeResult.compiler == "TinyGo" {
+	if runtimeResult.compiler == string(wasmCompilerTinyGo) {
 		asset, err := writeTinyGoWASMExec(tinygoPath, runtimeDir)
 		if err != nil {
 			return err
 		}
 		manifest.Runtime.WASMExec = asset
 		fmt.Printf("    %s (%d bytes, TinyGo)\n", asset.File, asset.Size)
+		wasmExecFound = true
+	}
+	if !wasmExecFound && runtimeResult.compiler == string(wasmCompilerPrebuilt) {
+		asset, err := writePrebuiltWASMExec(prebuiltRuntime, runtimeDir)
+		if err != nil {
+			return err
+		}
+		manifest.Runtime.WASMExec = asset
+		fmt.Printf("    %s (%d bytes, prebuilt)\n", asset.File, asset.Size)
 		wasmExecFound = true
 	}
 	if !wasmExecFound {
@@ -469,6 +684,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 				if err != nil {
 					return fmt.Errorf("write wasm_exec.js: %w", err)
 				}
+				asset = withRuntimeIntegrity(asset, data)
 				manifest.Runtime.WASMExec = asset
 				fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
 				wasmExecFound = true
@@ -480,7 +696,12 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		return fmt.Errorf("unable to locate wasm_exec.js")
 	}
 
-	standardGoWASMExec, err := readStandardGoWASMExec()
+	var standardGoWASMExec []byte
+	if len(cfg.Build.GoWASM) > 0 {
+		standardGoWASMExec, err = readProjectStandardGoWASMExec(dir)
+	} else {
+		standardGoWASMExec, err = readStandardGoWASMExec()
+	}
 	if err != nil {
 		return err
 	}
@@ -489,36 +710,57 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err != nil {
 		return fmt.Errorf("write standard-Go wasm_exec.js: %w", err)
 	}
+	standardGoWASMExecAsset = withRuntimeIntegrity(standardGoWASMExecAsset, standardGoWASMExec)
 	manifest.Runtime.StandardGoWASMExec = standardGoWASMExecAsset
 	fmt.Printf("    %s (%d bytes, standard Go)\n", standardGoWASMExecAsset.File, standardGoWASMExecAsset.Size)
 
-	// bootstrap.js, patch.js, and the lazily loaded HLS runtime.
+	// bootstrap.js, patch.js, and the lazily loaded HLS runtime. Each entry
+	// carries a build.runtime.exclude role (cmd/gosx/size.go
+	// runtimeExcludableAssetRoles); a blank role marks the core loader chain,
+	// which build.runtime.exclude can never drop. This loop never reaches
+	// WASM compilation or wasm_exec.js — those stay outside this lane.
 	for _, js := range []struct {
 		name string
 		path string
 		dest *HashedAsset
+		role string
 	}{
-		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap},
-		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite},
-		{"bootstrap-runtime", filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js"), &manifest.Runtime.BootstrapRuntime},
-		{"bootstrap-feature-islands", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js"), &manifest.Runtime.BootstrapFeatureIslands},
-		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines},
-		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs},
-		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers},
-		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout},
-		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D},
-		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand},
-		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU},
-		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL},
-		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF},
-		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation},
-		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute},
-		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress},
-		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch},
-		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS},
-		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge},
-		{"relay", filepath.Join(gosxRoot, "client", "js", "relay.js"), &manifest.Runtime.Relay},
+		{"bootstrap", filepath.Join(gosxRoot, "client", "js", "bootstrap.js"), &manifest.Runtime.Bootstrap, ""},
+		{"bootstrap-lite", filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js"), &manifest.Runtime.BootstrapLite, ""},
+		{"bootstrap-runtime", filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js"), &manifest.Runtime.BootstrapRuntime, ""},
+		{"bootstrap-feature-islands", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js"), &manifest.Runtime.BootstrapFeatureIslands, "islands"},
+		{"bootstrap-feature-engines", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js"), &manifest.Runtime.BootstrapFeatureEngines, "engines"},
+		{"bootstrap-feature-hubs", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js"), &manifest.Runtime.BootstrapFeatureHubs, "hubs"},
+		{"bootstrap-feature-controllers", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js"), &manifest.Runtime.BootstrapFeatureControllers, "controllers"},
+		{"bootstrap-controller-input", filepath.Join(gosxRoot, "client", "js", "bootstrap-controller-input.js"), &manifest.Runtime.BootstrapControllerInput, "controllers"},
+		{"bootstrap-feature-textlayout", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js"), &manifest.Runtime.BootstrapFeatureTextlayout, "textlayout"},
+		{"bootstrap-feature-scene3d", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d.js"), &manifest.Runtime.BootstrapFeatureScene3D, "scene3d"},
+		{"bootstrap-feature-scene3d-command", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-command.js"), &manifest.Runtime.BootstrapFeatureScene3DCommand, "scene3d"},
+		{"bootstrap-feature-scene3d-experience", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-experience.js"), &manifest.Runtime.BootstrapFeatureScene3DExperience, "scene3d"},
+		{"bootstrap-feature-scene3d-hydrate", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-hydrate.js"), &manifest.Runtime.BootstrapFeatureScene3DHydrate, "scene3d"},
+		{"bootstrap-feature-scene3d-webgpu", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgpu.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGPU, "scene3d"},
+		{"bootstrap-feature-scene3d-webgl", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-webgl.js"), &manifest.Runtime.BootstrapFeatureScene3DWebGL, "scene3d"},
+		{"bootstrap-feature-scene3d-gltf", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-gltf.js"), &manifest.Runtime.BootstrapFeatureScene3DGLTF, "scene3d"},
+		{"bootstrap-feature-scene3d-animation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-animation.js"), &manifest.Runtime.BootstrapFeatureScene3DAnimation, "scene3d"},
+		{"bootstrap-feature-scene3d-compute", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-compute.js"), &manifest.Runtime.BootstrapFeatureScene3DCompute, "scene3d"},
+		{"bootstrap-feature-scene3d-decompress", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-decompress.js"), &manifest.Runtime.BootstrapFeatureScene3DDecompress, "scene3d"},
+		{"bootstrap-feature-scene3d-walk", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-walk.js"), &manifest.Runtime.BootstrapFeatureScene3DWalk, "scene3d"},
+		{"bootstrap-feature-scene3d-model-preparation", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-model-preparation.js"), &manifest.Runtime.BootstrapFeatureScene3DModelPreparation, "scene3d"},
+		{"bootstrap-feature-scene3d-particle-burst", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-particle-burst.js"), &manifest.Runtime.BootstrapFeatureScene3DParticleBurst, "scene3d"},
+		{"bootstrap-feature-scene3d-zoom", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-zoom.js"), &manifest.Runtime.BootstrapFeatureScene3DZoom, "scene3d"},
+		{"bootstrap-feature-scene3d-timeline", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-timeline.js"), &manifest.Runtime.BootstrapFeatureScene3DTimeline, "scene3d"},
+		{"bootstrap-feature-scene3d-vessel", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-vessel.js"), &manifest.Runtime.BootstrapFeatureScene3DVessel, "scene3d"},
+		{"bootstrap-feature-scene3d-ocean-query", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-ocean-query.js"), &manifest.Runtime.BootstrapFeatureScene3DOceanQuery, "scene3d"},
+		{"bootstrap-feature-scene3d-instance-stream", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-instance-stream.js"), &manifest.Runtime.BootstrapFeatureScene3DInstanceStream, "scene3d"},
+		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &manifest.Runtime.Patch, ""},
+		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &manifest.Runtime.VideoHLS, "video"},
+		{"stripe-bridge", filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js"), &manifest.Runtime.StripeBridge, "payments"},
+		{"relay", filepath.Join(gosxRoot, "client", "js", "relay.js"), &manifest.Runtime.Relay, "relay"},
 	} {
+		if cfg.Build.Runtime.excludesRole(js.role) {
+			fmt.Printf("    (skipped: %s, excluded by build.runtime.exclude %q)\n", js.name, js.role)
+			continue
+		}
 		data, err := os.ReadFile(js.path)
 		if err != nil {
 			return fmt.Errorf("read %s: %w", js.path, err)
@@ -528,11 +770,49 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		if err != nil {
 			return fmt.Errorf("write %s: %w", js.name, err)
 		}
+		asset = withRuntimeIntegrity(asset, data)
 		*js.dest = asset
 		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
-		if mapData, err := os.ReadFile(js.path + ".map"); err == nil {
-			if err := os.WriteFile(filepath.Join(runtimeDir, js.name+".js.map"), mapData, 0644); err != nil {
-				return fmt.Errorf("write %s source map: %w", js.name, err)
+		if cfg.Build.Runtime.sourceMapsEnabled() {
+			if mapData, err := os.ReadFile(js.path + ".map"); err == nil {
+				if err := os.WriteFile(filepath.Join(runtimeDir, js.name+".js.map"), mapData, 0644); err != nil {
+					return fmt.Errorf("write %s source map: %w", js.name, err)
+				}
+			}
+		}
+	}
+
+	// Opt-in feature chunks (see runtimeFeatureChunks) are staged like the
+	// fixed entries above and recorded under manifest.Runtime.Features so the
+	// document contract can publish one flat bootstrapFeature<Name>Path key
+	// per chunk.
+	for _, chunk := range runtimeFeatureChunks {
+		if cfg.Build.Runtime.excludesRole(chunk.role) {
+			fmt.Printf("    (skipped: bootstrap-feature-%s, excluded by build.runtime.exclude %q)\n", chunk.name, chunk.role)
+			continue
+		}
+		srcPath := filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-"+chunk.name+".js")
+		data, err := os.ReadFile(srcPath)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", srcPath, err)
+		}
+		assetName := "bootstrap-feature-" + chunk.name
+		data = runtimeJSAssetData(assetName, data)
+		asset, err := writeHashed(runtimeDir, assetName, ".js", data)
+		if err != nil {
+			return fmt.Errorf("write %s: %w", assetName, err)
+		}
+		asset = withRuntimeIntegrity(asset, data)
+		if manifest.Runtime.Features == nil {
+			manifest.Runtime.Features = map[string]HashedAsset{}
+		}
+		manifest.Runtime.Features[chunk.name] = asset
+		fmt.Printf("    %s (%d bytes)\n", asset.File, asset.Size)
+		if cfg.Build.Runtime.sourceMapsEnabled() {
+			if mapData, err := os.ReadFile(srcPath + ".map"); err == nil {
+				if err := os.WriteFile(filepath.Join(runtimeDir, assetName+".js.map"), mapData, 0644); err != nil {
+					return fmt.Errorf("write %s source map: %w", assetName, err)
+				}
 			}
 		}
 	}
@@ -555,40 +835,52 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		)
 	}
 
-	// ── Engine surface bytecode lowering ────────────────────────────────
-	//
-	// Engine surfaces no longer produce a per-component WASM artifact at
-	// build time. They lower to shared-VM bytecode at server start via
-	// engine/surface.Discover, which writes JSON programs into
-	// .gosx/cache/surfaces/. See ADR 0003 (supersedure) and ADR 0005
-	// (buildsurface deletion) in the m31labs-gosx hyphae space.
-
-	// ── Build manifest ──────────────────────────────────────────────────
-
-	manifestJSON, err := json.MarshalIndent(manifest, "", "  ")
-	if err != nil {
-		return fmt.Errorf("marshal manifest: %w", err)
-	}
-	manifestPath := filepath.Join(distDir, "build.json")
-	if err := os.WriteFile(manifestPath, manifestJSON, 0644); err != nil {
-		return fmt.Errorf("write manifest: %w", err)
-	}
+	// Automatic .gsx engine-surface discovery is preview/post-v1 and is not
+	// part of the production build contract. Programmatic engine.Config is
+	// the v1 engine surface and uses the runtime assets staged above.
 
 	// Build the application binary when the target directory is a runnable app.
 	serverBinaryPath := filepath.Join(distDir, "server", "app"+targetExecutableExt())
-	builtServer, err := buildServerBinaryIfPresent(dir, serverBinaryPath)
+	builtServer, err := buildServerBinaryWithOptions(dir, serverBinaryPath, cfg.Build.Server)
 	if err != nil {
 		return fmt.Errorf("build server binary: %w", err)
 	}
-	if err := stageDeploymentBundle(dir, distDir, builtServer, serverBinaryPath); err != nil {
+	if err := stageDeploymentBundleWithPolicy(dir, distDir, &manifest, builtServer, serverBinaryPath, cfg.Build.Bundle); err != nil {
 		return fmt.Errorf("stage deployment bundle: %w", err)
 	}
+	if !opts.Dev {
+		if err := writeTextSidecars(filepath.Join(distDir, "public"), cfg.Build.Bundle); err != nil {
+			return fmt.Errorf("compress public assets: %w", err)
+		}
+	}
+
+	// ── Build manifest ──────────────────────────────────────────────────
+	//
+	// Written after stageDeploymentBundle (not before, as every other tier
+	// above): stageDeploymentBundle's own image variant stage populates
+	// manifest.Images, and the static prerender subprocess started just
+	// below reads build.json at startup to resolve real image variant URLs
+	// during GOSX_STATIC_EXPORT (server/image_resolver.go, issue #200) --
+	// so build.json must already carry Images by the time that subprocess
+	// launches.
+
+	if opts.PerfAppID != "" {
+		if err := stagePerfBuildAssets(distDir, &manifest, opts.PerfAppID); err != nil {
+			return err
+		}
+	}
+	manifestPath, err := writeBuildManifest(distDir, &manifest)
+	if err != nil {
+		return err
+	}
+
 	staticPages := 0
-	if !opts.Dev && builtServer {
+	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
 		exportManifest, err := prerenderStaticBundle(staticExportOptions{
-			AppRoot:    distDir,
-			OutputDir:  filepath.Join(distDir, "static"),
-			BinaryPath: serverBinaryPath,
+			AppRoot:      distDir,
+			OutputDir:    filepath.Join(distDir, "static"),
+			BinaryPath:   serverBinaryPath,
+			BundlePolicy: cfg.Build.Bundle,
 			StageAssets: func(outputDir string, exportManifest exportManifest) error {
 				return stageStaticBuildAssets(distDir, &manifest, outputDir, exportManifest)
 			},
@@ -605,7 +897,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		}
 	}
 	if opts.Offline {
-		if err := stageOfflineAssetBundle(dir, distDir); err != nil {
+		if err := stageOfflineAssetBundleWithPolicy(distDir, cfg.Build.Bundle); err != nil {
 			return fmt.Errorf("stage offline asset bundle: %w", err)
 		}
 	}
@@ -644,12 +936,17 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 		manifest.Runtime.BootstrapFeatureEngines.File,
 		manifest.Runtime.BootstrapFeatureHubs.File,
 		manifest.Runtime.BootstrapFeatureControllers.File,
+		manifest.Runtime.BootstrapControllerInput.File,
 		manifest.Runtime.BootstrapFeatureTextlayout.File,
 		manifest.Runtime.Patch.File,
 		manifest.Runtime.VideoHLS.File,
-	))
+	)+countRuntimeVariantAssets(manifest.Runtime.WASMVariants))
 	fmt.Printf("  Tier 3 (islands): %d programs + %d CSS, immutable CDN\n",
 		len(manifest.Islands), len(manifest.CSS))
+	if len(manifest.Images) > 0 {
+		fmt.Printf("  Tier 3 (images): %d sources, %d variants, immutable CDN\n",
+			len(manifest.Images), countImageVariantAssets(manifest.Images))
+	}
 	fmt.Printf("  Manifest: %s\n", manifestPath)
 	if releaseArtifacts.Package != "" {
 		fmt.Printf("  MSIX: %s\n", releaseArtifacts.Package)
@@ -663,7 +960,7 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	fmt.Println("  • Island programs cached forever, invalidated by hash (Tier 3)")
 	fmt.Println("  • Manifest tells the server which hashed URLs to reference")
 	fmt.Println("  • dist/ includes app/, content/, and public/ for file-routed runtime deployment")
-	if !opts.Dev && builtServer {
+	if !opts.Dev && builtServer && cfg.Build.Prerender.enabled() {
 		fmt.Println("  • dist/edge/worker.js can serve prerendered HTML at the edge and proxy dynamic requests to origin")
 		fmt.Println("  • dist/platform/ contains deployment metadata and cache headers for hosted platforms")
 	}
@@ -671,8 +968,60 @@ func RunBuildWithOptions(dir string, opts BuildOptions) error {
 	if err := runBuildHookCommands(dir, "post-build", cfg.Build.Hooks.Post); err != nil {
 		return err
 	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
+	}
 
 	return nil
+}
+
+// runPreBuildHooksAndRefreshIslandDiscovery makes the post-hook filesystem the
+// sole source of truth for build artifacts. Hooks are allowed to mutate,
+// generate, or delete .gsx files, so the pre-hook validation snapshot must
+// never be reused for manifest rows, island programs, or sidecar CSS.
+func runPreBuildHooksAndRefreshIslandDiscovery(dir string, commands []string) (*islandDiscoveryResult, error) {
+	if err := runBuildHookCommands(dir, "pre-build", commands); err != nil {
+		return nil, err
+	}
+	discovery, err := collectProjectIslandDiscovery(dir)
+	if err != nil {
+		return discovery, fmt.Errorf("validate island sources after pre-build hook: %w", err)
+	}
+	return discovery, nil
+}
+
+func checkStrictProject(ctx context.Context, dir string) error {
+	// Warnings (gosx#249) are collected and printed to stderr regardless of
+	// whether the build gate itself passes or fails -- a warning never
+	// changes this function's return value; see Options.Warnings' doc
+	// comment for why that split exists.
+	var warnings []ir.Diagnostic
+	err := strictcheck.CheckTreeWithOptions(ctx, dir, strictcheck.Options{
+		Env:      execEnvWithoutGoFlags(),
+		GOWORK:   "off",
+		GOFLAGS:  goModuleCommandFlags,
+		Warnings: &warnings,
+	})
+	printCheckWarnings(os.Stderr, warnings)
+	return err
+}
+
+func countRuntimeVariantAssets(variants map[string]buildmanifest.RuntimeVariantAsset) int {
+	count := 0
+	for _, asset := range variants {
+		if strings.TrimSpace(asset.File) != "" {
+			count++
+		}
+	}
+	return count
+}
+
+func countImageVariantAssets(images []buildmanifest.ImageAsset) int {
+	count := 0
+	for _, asset := range images {
+		count += len(asset.Variants)
+	}
+	return count
 }
 
 // gzip_c_len returns the best-compression gzip transfer size.
@@ -686,6 +1035,52 @@ func goWASMBuildArgs(outputPath string, extraTags ...string) []string {
 		args = append(args, "-tags="+strings.Join(tags, " "))
 	}
 	return append(args, gosxModuleImportPath+"/client/wasm")
+}
+
+func runtimeVariantAsset(variant string, asset HashedAsset) buildmanifest.RuntimeVariantAsset {
+	return buildmanifest.RuntimeVariantAsset{
+		HashedAsset:  asset,
+		Variant:      variant,
+		FeatureMask:  uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant))),
+		ManifestHash: runtimewasm.ManifestIdentity(),
+	}
+}
+
+func publishedRuntimeVariantAssets(core, engine, collab, full HashedAsset) map[string]buildmanifest.RuntimeVariantAsset {
+	// GOSX_TINYGO_FULL_RUNTIME predates capability-linked profiles. Preserve
+	// its original meaning for callers that use it as a compatibility escape
+	// hatch: the manifest may only advertise the full runtime, so route-level
+	// selection cannot silently choose a slim artifact.
+	if tinyGoFullRuntimeEnabled() {
+		return map[string]buildmanifest.RuntimeVariantAsset{
+			string(runtimewasm.VariantFull): runtimeVariantAsset(string(runtimewasm.VariantFull), full),
+		}
+	}
+	return map[string]buildmanifest.RuntimeVariantAsset{
+		string(runtimewasm.VariantCore):   runtimeVariantAsset(string(runtimewasm.VariantCore), core),
+		string(runtimewasm.VariantEngine): runtimeVariantAsset(string(runtimewasm.VariantEngine), engine),
+		string(runtimewasm.VariantCollab): runtimeVariantAsset(string(runtimewasm.VariantCollab), collab),
+		string(runtimewasm.VariantFull):   runtimeVariantAsset(string(runtimewasm.VariantFull), full),
+	}
+}
+
+// runtimeVariantBuildTags makes each advertised profile select the same source
+// family under TinyGo and standard Go. Core and engine deliberately use the
+// slim implementations for collaboration, highlighting, and text layout;
+// collab and full retain the corresponding full implementations.
+func runtimeVariantBuildTags(variant runtimewasm.Variant) []string {
+	switch variant {
+	case runtimewasm.VariantCore:
+		return []string{"gosx_tiny_runtime", "gosx_runtime_core"}
+	case runtimewasm.VariantEngine:
+		return []string{"gosx_tiny_runtime", "gosx_runtime_engine"}
+	case runtimewasm.VariantCollab:
+		return []string{"gosx_runtime_collab"}
+	case runtimewasm.VariantFull:
+		return []string{"gosx_runtime_full"}
+	default:
+		return nil
+	}
 }
 
 func islandOnlyWASMTags(compiler wasmCompiler) []string {
@@ -719,20 +1114,76 @@ func standardGoWASMOptEnabled() bool {
 	}
 }
 
-func optimizeWASMWithWasmOpt(path string) (bool, error) {
-	woptPath, woptErr := exec.LookPath("wasm-opt")
-	if woptErr != nil {
+type optionalWASMOptimizer struct {
+	tool        string
+	diagnostics io.Writer
+	missing     sync.Once
+	mu          sync.Mutex
+}
+
+func newOptionalWASMOptimizer(diagnostics io.Writer) *optionalWASMOptimizer {
+	tool, err := exec.LookPath("wasm-opt")
+	if err != nil {
+		tool = ""
+	}
+	return &optionalWASMOptimizer{tool: tool, diagnostics: diagnostics}
+}
+
+func optimizeWASMWithWasmOptDiagnostics(path string, diagnostics io.Writer) (bool, error) {
+	return newOptionalWASMOptimizer(diagnostics).optimize(path)
+}
+
+// Each build shares an optimizer. Missing-tool warnings appear once, and each
+// complete warning (including subprocess output) is emitted with one write.
+func (optimizer *optionalWASMOptimizer) warn(message string) {
+	optimizer.mu.Lock()
+	defer optimizer.mu.Unlock()
+	_, _ = io.WriteString(optimizer.diagnostics, message)
+}
+
+func (optimizer *optionalWASMOptimizer) optimize(path string) (bool, error) {
+	if err := validateWASMFile(path); err != nil {
+		return false, fmt.Errorf("invalid optimizer input %s: %w", path, err)
+	}
+	if optimizer.tool == "" {
+		optimizer.missing.Do(func() {
+			optimizer.warn(fmt.Sprintf("warning: optional wasm-opt optimization skipped for this build (%s): wasm-opt is not available on PATH; keeping compiled WASM. Install Binaryen matching your CI toolchain for comparable production sizes.\n", filepath.Base(path)))
+		})
 		return false, nil
 	}
 	optTmp := path + ".opt"
-	optCmd := exec.Command(woptPath, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
-	if optCmd.Run() != nil {
+	defer os.Remove(optTmp)
+	if err := os.Remove(optTmp); err != nil && !os.IsNotExist(err) {
+		return false, fmt.Errorf("clear owned optimizer output: %w", err)
+	}
+	optCmd := exec.Command(optimizer.tool, "-Oz", "--enable-bulk-memory", "--enable-nontrapping-float-to-int", "--strip-debug", "--strip-producers", path, "-o", optTmp)
+	output, err := optCmd.CombinedOutput()
+	if err != nil {
+		message := fmt.Sprintf("warning: optional wasm-opt optimization skipped for %s: %s failed: %v; keeping compiled WASM. Check this optimizer's version against your CI toolchain.\n", filepath.Base(path), optimizer.tool, err)
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			message += detail + "\n"
+		}
+		optimizer.warn(message)
+		return false, nil
+	}
+	if err := validateWASMFile(optTmp); err != nil {
+		message := fmt.Sprintf("warning: optional wasm-opt optimization skipped for %s: invalid optimizer output: %v; keeping compiled WASM.\n", filepath.Base(path), err)
+		if detail := strings.TrimSpace(string(output)); detail != "" {
+			message += detail + "\n"
+		}
+		optimizer.warn(message)
 		return false, nil
 	}
 	if err := os.Rename(optTmp, path); err != nil {
 		return false, fmt.Errorf("rename optimized wasm: %w", err)
 	}
 	return true, nil
+}
+
+// optimizeWASMUsing runs one pinned wasm-opt binary. Perf builds record that
+// tool and require it to succeed; a failure warns on stderr and returns false.
+func optimizeWASMUsing(path, tool string) (bool, error) {
+	return (&optionalWASMOptimizer{tool: tool, diagnostics: os.Stderr}).optimize(path)
 }
 
 func countNonEmpty(strs ...string) int {
@@ -829,6 +1280,10 @@ func getGOROOT() string {
 }
 
 func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
+	return buildServerBinaryWithOptions(dir, outputPath, projectBuildServer{})
+}
+
+func buildServerBinaryWithOptions(dir, outputPath string, options projectBuildServer) (bool, error) {
 	cmd := exec.Command("go", "list", "-f", "{{.Name}}", ".")
 	cmd.Dir = dir
 	cmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
@@ -847,7 +1302,7 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 		return false, err
 	}
 
-	buildCmd := exec.Command("go", "build", "-o", outputPath, ".")
+	buildCmd := exec.Command("go", goServerBuildArgsWithOptions(outputPath, options)...)
 	buildCmd.Dir = dir
 	buildCmd.Env = append(execEnvWithoutGoFlags(), "GOFLAGS="+goModuleCommandFlags, "GOWORK=off")
 	buildCmd.Stderr = os.Stderr
@@ -857,8 +1312,25 @@ func buildServerBinaryIfPresent(dir, outputPath string) (bool, error) {
 	return true, nil
 }
 
-func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverBinaryPath string) error {
-	if err := copyDirIfPresent(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app")); err != nil {
+func goServerBuildArgs(outputPath string) []string {
+	return goServerBuildArgsWithOptions(outputPath, projectBuildServer{})
+}
+
+func goServerBuildArgsWithOptions(outputPath string, options projectBuildServer) []string {
+	args := []string{"build", "-trimpath"}
+	if options.Strip {
+		args = append(args, "-ldflags=-s -w")
+	}
+	return append(args, "-o", outputPath, ".")
+}
+
+func stageDeploymentBundleWithPolicy(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string, policy bundlepolicy.Config) error {
+	for _, root := range []string{"app", "public"} {
+		if err := os.RemoveAll(filepath.Join(distDir, root)); err != nil {
+			return fmt.Errorf("clean staged %s: %w", root, err)
+		}
+	}
+	if err := bundlepolicy.CopyTree(filepath.Join(projectDir, "app"), filepath.Join(distDir, "app"), bundlepolicy.RootApp, policy); err != nil {
 		return err
 	}
 	// Content collections are runtime inputs for server-rendered and
@@ -869,15 +1341,33 @@ func stageDeploymentBundle(projectDir, distDir string, builtServer bool, serverB
 	if err := os.RemoveAll(contentDistDir); err != nil {
 		return fmt.Errorf("clean staged content: %w", err)
 	}
-	if err := copyDirIfPresent(filepath.Join(projectDir, "content"), contentDistDir); err != nil {
+	if err := bundlepolicy.CopyTree(filepath.Join(projectDir, "content"), contentDistDir, bundlepolicy.RootContent, policy); err != nil {
 		return err
 	}
-	if err := copyDirIfPresent(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public")); err != nil {
+	if err := bundlepolicy.CopyTree(filepath.Join(projectDir, "public"), filepath.Join(distDir, "public"), bundlepolicy.RootPublic, policy); err != nil {
 		return err
 	}
-	if err := copyFileIfPresent(filepath.Join(projectDir, ".env.example"), filepath.Join(distDir, ".env.example")); err != nil {
+
+	// ── Tier 3: Image variants (content-hashed) ──────────────────────────
+	//
+	// Beside the public copy just above: probe every raster image gosx
+	// build just copied into dist/public, resize it down the
+	// AutoImageWidths ladder capped at its own intrinsic width, and encode
+	// each rung to WebP (plus its native format) via imagepipe. Those
+	// hashed outputs are what a static export serves in place of the old
+	// passthrough at server/image_resolver.go (issue #200).
+	imageAssets, err := stageImageVariantsFromPublicDir(filepath.Join(distDir, "public"), distDir)
+	if err != nil {
+		return fmt.Errorf("stage image variants: %w", err)
+	}
+	if manifest != nil {
+		manifest.Images = imageAssets
+	}
+
+	if err := writeBundlePolicySidecar(distDir, policy); err != nil {
 		return err
 	}
+
 	if err := writeBuildReadme(filepath.Join(distDir, "README.md"), builtServer); err != nil {
 		return err
 	}
@@ -924,7 +1414,10 @@ func runtimeJSAssetData(name string, data []byte) []byte {
 }
 
 func readStandardGoWASMExec() ([]byte, error) {
-	goroot := getGOROOT()
+	return readGoWASMExec(getGOROOT())
+}
+
+func readGoWASMExec(goroot string) ([]byte, error) {
 	for _, candidate := range []string{
 		filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"),
 		filepath.Join(goroot, "misc", "wasm", "wasm_exec.js"),
@@ -994,6 +1487,11 @@ func copyCompressedSidecars(dst, src string) error {
 
 func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref string) (string, bool) {
 	ref = path.Clean("/" + strings.TrimLeft(strings.TrimSpace(ref), "/"))
+	// Prerender fetches the embedded navigation asset from the app binary;
+	// it has no source file in the manifest runtime directory.
+	if ref == runtimehost.NavigationRuntimePath {
+		return "", false
+	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/assets/"); ok && rel != "" {
 		return filepath.Join(distDir, "assets", filepath.FromSlash(rel)), true
 	}
@@ -1001,11 +1499,22 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return "", false
 	}
 	runtimeDir := filepath.Join(distDir, "assets", "runtime")
+	if name, ok := buildmanifest.FeatureChunkName(strings.TrimPrefix(ref, "/gosx/")); ok && strings.HasPrefix(ref, "/gosx/") {
+		if asset, found := manifest.Runtime.Features[name]; found {
+			return manifestRuntimeFilePath(runtimeDir, asset.File)
+		}
+	}
 	switch ref {
 	case "/gosx/runtime.wasm":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASM.File)
 	case "/gosx/runtime-islands.wasm":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMIslands.File)
+	case "/gosx/runtime-core.wasm":
+		return manifestRuntimeVariantFilePath(runtimeDir, manifest, "core")
+	case "/gosx/runtime-engine.wasm":
+		return manifestRuntimeVariantFilePath(runtimeDir, manifest, "engine")
+	case "/gosx/runtime-collab.wasm":
+		return manifestRuntimeVariantFilePath(runtimeDir, manifest, "collab")
 	case "/gosx/wasm_exec.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.WASMExec.File)
 	case "/gosx/standard-go-wasm_exec.js":
@@ -1024,12 +1533,18 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureHubs.File)
 	case "/gosx/bootstrap-feature-controllers.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureControllers.File)
+	case "/gosx/bootstrap-controller-input.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapControllerInput.File)
 	case "/gosx/bootstrap-feature-textlayout.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureTextlayout.File)
 	case "/gosx/bootstrap-feature-scene3d.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "/gosx/bootstrap-feature-scene3d-command.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCommand.File)
+	case "/gosx/bootstrap-feature-scene3d-experience.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DExperience.File)
+	case "/gosx/bootstrap-feature-scene3d-hydrate.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
 	case "/gosx/bootstrap-feature-scene3d-webgl.js":
@@ -1040,8 +1555,24 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DAnimation.File)
 	case "/gosx/bootstrap-feature-scene3d-compute.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DCompute.File)
+	case "/gosx/bootstrap-feature-scene3d-walk.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DWalk.File)
+	case "/gosx/bootstrap-feature-scene3d-model-preparation.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File)
+	case "/gosx/bootstrap-feature-scene3d-particle-burst.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
+	case "/gosx/bootstrap-feature-scene3d-zoom.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DZoom.File)
+	case "/gosx/bootstrap-feature-scene3d-timeline.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DTimeline.File)
+	case "/gosx/bootstrap-feature-scene3d-vessel.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DVessel.File)
+	case "/gosx/bootstrap-feature-scene3d-ocean-query.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DOceanQuery.File)
 	case "/gosx/bootstrap-feature-scene3d-decompress.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
+	case "/gosx/bootstrap-feature-scene3d-instance-stream.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DInstanceStream.File)
 	case "/gosx/patch.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.Patch.File)
 	case "/gosx/hls.min.js":
@@ -1079,6 +1610,17 @@ func manifestRuntimeFilePath(runtimeDir, file string) (string, bool) {
 		return "", false
 	}
 	return filepath.Join(runtimeDir, file), true
+}
+
+func manifestRuntimeVariantFilePath(runtimeDir string, manifest *BuildManifest, variant string) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+	asset, ok := manifest.Runtime.WASMVariants[strings.TrimSpace(variant)]
+	if !ok {
+		return "", false
+	}
+	return manifestRuntimeFilePath(runtimeDir, asset.File)
 }
 
 func cssCompatFilename(asset CSSAsset) string {
@@ -1169,13 +1711,19 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"- `content/` contains collection documents loaded by server-rendered and prerendered routes.",
 		"- `public/` contains root-served static assets when present.",
 		"- `build.json` maps hashed asset names for runtime/island loading.",
-		"- `edge/worker.js` can serve prerendered routes at the edge and proxy misses/actions to origin.",
-		"- `platform/` contains deployment metadata for hosted/static-edge setups.",
+		"- When prerendering is enabled, `edge/worker.js` serves static routes and proxies misses/actions to origin.",
+		"- When prerendering is enabled, `platform/` contains metadata for hosted/static-edge setups.",
 	}
 	if builtServer {
 		lines = append(lines,
 			"- `server/app` is the compiled Go server binary.",
 			"- `run.sh` launches the bundle with `GOSX_APP_ROOT` pointing at this directory.",
+			"",
+			"Validate this bundle before uploading it:",
+			"```sh",
+			"gosx deploy check .",
+			"```",
+			"This checks artifact integrity only. Supply runtime secrets through the host environment and verify destination health before routing traffic.",
 			"",
 			"Run locally:",
 			"```sh",
@@ -1193,7 +1741,10 @@ func writeBuildReadme(path string, builtServer bool) error {
 		"Deployment notes:",
 		"- Keep `assets/` on immutable caching because filenames are content-hashed.",
 		"- Roll the server binary independently from hashed assets.",
-		"- Provide runtime env vars externally; `.env.example` is copied only when present.",
+		"- Provide runtime env vars externally; root .env.example files are never copied into a bundle.",
 	)
 	return os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0644)
+}
+func stageDeploymentBundle(projectDir, distDir string, manifest *BuildManifest, builtServer bool, serverBinaryPath string) error {
+	return stageDeploymentBundleWithPolicy(projectDir, distDir, manifest, builtServer, serverBinaryPath, bundlepolicy.Config{})
 }

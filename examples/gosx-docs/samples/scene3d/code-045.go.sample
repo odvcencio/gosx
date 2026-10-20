@@ -1,0 +1,6 @@
+commands := scene.DiffPropsCommands(previous, next)
+	payload, err := scene.MarshalCommands(commands)
+	if err != nil {
+	    return err
+	}
+	// Publish payload on any hub channel the page already binds.

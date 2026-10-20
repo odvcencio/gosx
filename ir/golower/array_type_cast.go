@@ -1,9 +1,8 @@
-// Slice Y.E.3 — `[]T(x)` ArrayType-cast lowering.
+// `[]T(x)` ArrayType-cast lowering.
 //
 // Go's AST represents `[]rune(s)` as a CallExpr whose Fun is an
-// *ast.ArrayType with Elt = "rune". This was Y.D's "residual #3" —
-// not in Y.D's plan-defined scope but recognized as needing handling
-// before graph_surface.go could lower cleanly.
+// *ast.ArrayType with Elt = "rune". This was recognized as needing
+// handling before graph_surface.go could lower cleanly.
 //
 // Supported element types — exactly what graph_surface.go uses:
 //

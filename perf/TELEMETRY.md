@@ -13,8 +13,13 @@ work as separate evidence sources:
   `hitchClusters` are estimates based on the observed cadence; they are never
   inferred from CPU submission duration.
 - `scene.gpu` is present only when a renderer publishes actual GPU timestamp
-  query values through stable `data-gosx-scene3d-*-gpu-ms` or
-  `data-gosx-scene3d-*-gpu-pass-*-ms` attributes. No CPU value substitutes for
+  query values. The injected profiler enables WebGPU per-pass queries with
+  `__gosx_scene3d_webgpu_pass_timing` and collects each asynchronous readback
+  through `gosx:scene3d:perf` events (`source: "gpu-timestamp"`, `scope: "frame"`
+  or `"passes"`, and `frameSeq`). Frame samples contain `gpuMS`; pass samples
+  contain `shadowMS`, `mainMS`, and `sceneMS`. Event series take precedence over
+  diagnostic attributes, which refresh at most four times per second. Older
+  renderers can still supply attribute series. No CPU value substitutes for
   an unavailable GPU query.
 
 Timing series contain `stats`, `cold`, and `warm` distributions. The cold

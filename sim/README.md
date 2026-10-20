@@ -31,6 +31,39 @@ type Simulation interface {
 The runner handles tick scheduling, input collection, state broadcast,
 snapshot storage, replay recording, and spectator sync.
 
+## Tick observation
+
+`sim.Options.Observer` receives one `TickEvent` after each whole tick: input
+drain, simulation, one snapshot, optional replay, state serialization and the
+existing broadcast. `StateBytes` is the state size before hub encoding; `Inputs`
+counts drained players. The observer receives aggregate values, not player IDs
+or state contents. It runs synchronously outside runner state locks and must
+return promptly. Stop the runner from its owner, not from its callback.
+
+Telemetry can bind a declared loop meter without changing simulation ownership:
+
+```go
+meter, err := loopKind.Instance() // after declaring the kind and building the app
+if err != nil { /* handle capacity or shutdown */ }
+runner := sim.New(matchHub, &myGame{}, sim.Options{
+    TickRate: 60,
+    Observer: tel.SimObserver(meter),
+})
+runner.Start()
+// When the game's owner finishes:
+runner.Stop()
+health := meter.Health() // lifetime health, before closing the meter
+_ = health
+meter.Close()
+```
+
+`Options.Clock` accepts the same clock interface as telemetry, including its
+deterministic test clock. Lag is elapsed start time minus the ticker's scheduled
+deadline, clamped at zero. Slow work may drop periods; the runner executes no
+catch-up ticks. A nil observer skips timing reads. `game.NewRunner` forwards
+these options unchanged. Metering that runner covers its authoritative runtime;
+do not also meter the runtime's internal `Step`.
+
 ## Features
 
 - **Fixed-rate tick loop** — deterministic simulation at configurable tick rate

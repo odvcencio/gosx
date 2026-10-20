@@ -1,0 +1,105 @@
+.quickstart {
+  margin: 0 0 var(--space-xl);
+}
+
+.quickstart__grid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  align-items: start;
+  gap: var(--space-md);
+}
+
+.prose .quickstart__commands h2 {
+  margin: 0 0 var(--space-sm);
+  padding: 0;
+  border: 0;
+  font-size: var(--text-h3);
+}
+
+.quickstart__commands .code-sample {
+  margin: 0 0 var(--space-xs);
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.quickstart__commands .code-sample__head {
+  padding: 0.3rem var(--space-xs);
+}
+
+.quickstart__commands .code-sample__body pre {
+  padding: 0.35rem var(--space-xs);
+  font-size: 0.73rem;
+  line-height: 1.35;
+}
+
+.quickstart__commands .code-block {
+  min-width: 0;
+  overflow-x: auto;
+  white-space: pre;
+}
+
+.quickstart__preview {
+  margin: 0;
+}
+
+.quickstart__preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: cover;
+  object-position: top;
+  border: 1px solid var(--border);
+}
+
+.quickstart__preview figcaption {
+  margin-top: var(--space-xs);
+  color: var(--text-primary);
+  font-size: var(--text-small);
+  line-height: var(--lh-body);
+}
+
+.quickstart__tutorial {
+  margin: var(--space-sm) 0 0;
+  color: var(--text-primary);
+}
+
+.quickstart__tutorial a {
+  font-weight: 600;
+}
+
+.getting-started .docs-section-block h2:first-child {
+  margin-top: var(--space-xl);
+}
+
+@media (max-width: 48rem) {
+  .quickstart__grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-sm);
+  }
+
+  .prose .quickstart__commands h2 {
+    font-size: var(--text-h4);
+  }
+
+  .quickstart__commands .code-sample__head {
+    padding: 0.2rem 0.35rem;
+  }
+
+  .quickstart__commands .code-sample__body pre {
+    padding: 0.25rem 0.35rem;
+    font-size: 0.68rem;
+    line-height: 1.25;
+  }
+
+  .quickstart__preview img {
+    height: auto;
+    aspect-ratio: 1.6;
+    object-fit: cover;
+    object-position: top;
+  }
+
+  .quickstart__preview figcaption {
+    font-size: 0.65rem;
+    line-height: 1.25;
+  }
+}

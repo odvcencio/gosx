@@ -11,16 +11,19 @@
 package hub
 
 import (
+	"compress/flate"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"log"
 	"net/http"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"m31labs.dev/gosx/internal/clock"
 )
 
 const (
@@ -33,6 +36,20 @@ const (
 	// that may push CRDT sync. A full document bootstrap can be large, so the
 	// allowance is much larger than maxMessageSize.
 	defaultSyncMessageSize = 16 * 1024 * 1024
+
+	// defaultCompressionLevel is the flate level a hub uses when
+	// EnableCompression is true and CompressionLevel is left at zero. Level 6
+	// trades a moderate CPU cost for good ratio on repetitive JSON, well above
+	// gorilla/websocket's own default of 1 (fastest, weakest).
+	defaultCompressionLevel = 6
+
+	// minCompressionLevel and maxCompressionLevel bound CompressionLevel.
+	// They match compress/flate's accepted range: HuffmanOnly (-2) through
+	// BestCompression (9). gorilla/websocket validates the same range
+	// internally; a hub checks it up front so a bad config fails at Serve
+	// time with a clear log line instead of a silent per-connection error.
+	minCompressionLevel = flate.HuffmanOnly
+	maxCompressionLevel = flate.BestCompression
 )
 
 // Hub is a long-lived server-side coordinator for realtime state.
@@ -40,6 +57,22 @@ type Hub struct {
 	name    string
 	clients map[string]*Client
 	mu      sync.RWMutex
+	// pendingClients reserves capacity while WebSocket upgrades are in flight,
+	// closing the check-then-register race around MaxClients.
+	pendingClients     int
+	served             bool
+	closing            bool
+	closingConnections bool
+	pumps              int
+	finalizing         bool
+	closeDone          chan struct{}
+	observers          atomic.Pointer[observerList]
+	observerWarningMu  sync.Mutex
+	observerWarningAt  time.Time
+	policyWarningAt    time.Time     // protected by observerWarningMu
+	telemetryObserver  *observerSlot // protected by mu
+	queueSampleEvery   atomic.Uint32
+	transportClock     clock.Clock // configured before serving; initialized under mu
 
 	// Event handlers registered via On()
 	handlers map[string]HandlerFunc
@@ -67,17 +100,60 @@ type Hub struct {
 
 	// textDropped and binaryDropped total the messages every client, present
 	// or departed, lost to a full send buffer. They only grow.
-	textDropped   atomic.Uint64
-	binaryDropped atomic.Uint64
+	textDropped      atomic.Uint64
+	binaryDropped    atomic.Uint64
+	snapshotReplaced atomic.Uint64
 
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
 	MaxClients int
+
+	// RequireOrigin rejects WebSocket upgrades that omit Origin, in addition
+	// to the default same-origin check. Browsers send Origin for WebSockets;
+	// public browser-only hubs should enable this before serving.
+	RequireOrigin bool
+
+	// MaxMessagesPerSecond bounds inbound text and binary messages per client.
+	// MaxMessageBurst is the per-client token-bucket capacity; when zero it
+	// defaults to twice MaxMessagesPerSecond. Zero rate means unlimited.
+	// Configure these fields before accepting the first connection.
+	MaxMessagesPerSecond int
+	MaxMessageBurst      int
+
+	// SlowClient evicts connections based on recent queue drops. Zero disables
+	// eviction; configure before the first upgrade. Invalid policies refuse it.
+	SlowClient SlowClientPolicy
 
 	// MaxSyncMessageSize is the inbound frame allowance, in bytes, for a
 	// connection that may push CRDT sync. Zero selects
 	// defaultSyncMessageSize, which is 16 MiB. Set it before the first
 	// connection; a change does not reach an accepted connection.
 	MaxSyncMessageSize int
+
+	// EnableCompression opts a hub into negotiating permessage-deflate
+	// (RFC 7692) on WebSocket upgrade. Off by default: compression buys back
+	// bandwidth at a CPU cost on every send, so it is a per-hub choice, not a
+	// package default. A client that does not offer the extension connects
+	// uncompressed regardless of this setting.
+	//
+	// gorilla/websocket's server only implements the no-context-takeover mode
+	// of permessage-deflate: every message resets the deflate window instead
+	// of carrying a dictionary forward from the previous message. That still
+	// compresses well for a single JSON message with repeated keys and
+	// structure — the dominant shape for a broadcast snapshot — but it does
+	// not get the cross-message reuse that context takeover would add.
+	//
+	// Configure before the first connection; a later change does not reach
+	// already-accepted clients.
+	EnableCompression bool
+
+	// CompressionLevel selects the flate level used when EnableCompression is
+	// true, from -2 (flate.HuffmanOnly, cheapest) to 9 (flate.BestCompression,
+	// smallest output, most CPU). Zero selects defaultCompressionLevel (6),
+	// tuned for repetitive JSON. Ignored when EnableCompression is false. A
+	// value outside the valid range is rejected at Serve time and falls back
+	// to the default, with a log line — it never panics or drops a
+	// connection.
+	CompressionLevel int
 }
 
 // ConnectionMetadata contains server-supplied values associated with one
@@ -88,18 +164,23 @@ type ConnectionMetadata map[string]string
 
 // Client represents a connected WebSocket client.
 type Client struct {
-	ID         string
-	Hub        *Hub
-	metadata   ConnectionMetadata
-	conn       *websocket.Conn
-	send       chan []byte
-	binarySend chan []byte
-	syncStates *peerSyncState
-	mu         sync.Mutex
+	ID               string
+	Hub              *Hub
+	metadata         ConnectionMetadata
+	conn             *websocket.Conn
+	send             chan []byte
+	binarySend       chan []byte
+	snapshotWake     chan struct{}
+	snapshot         *binarySnapshot
+	snapshotReplaced atomic.Uint64
+	syncStates       *peerSyncState
+	mu               sync.Mutex
 	// closed is set under mu by removeClient before it closes send/binarySend.
 	// trySend/tryBinarySend check it under the same mu before writing, so a
 	// send can never race with the close of the same channel — see trySend.
-	closed bool
+	closed     bool
+	disconnect DisconnectEvent
+	transport  *transportState
 
 	// textDropped and binaryDropped count the messages this client lost
 	// because its send buffer was full. They only grow. Read them with
@@ -108,6 +189,11 @@ type Client struct {
 	binaryDropped atomic.Uint64
 	// loggedDrop marks that the first drop for this client was logged.
 	loggedDrop atomic.Bool
+
+	// inbound token-bucket state belongs to readPump, the sole reader for a
+	// connection, so it needs no additional mutex.
+	messageTokens float64
+	messageLast   time.Time
 }
 
 // DropStats counts the messages a hub or one client lost because a send buffer
@@ -201,38 +287,51 @@ func (c *Client) Metadata(key string) (string, bool) {
 // the buffer-full case as a drop; a departed client is not a drop, because
 // removeClient already reports the disconnect.
 func (c *Client) trySend(msg []byte) bool {
+	sent, _ := c.trySendResult(msg)
+	return sent
+}
+
+func (c *Client) trySendResult(msg []byte) (sent, dropped bool) {
+	return c.enqueue(msg, false, nil)
+}
+
+func (c *Client) enqueue(msg []byte, binary bool, batch *enqueueBatch) (sent, dropped bool) {
 	c.mu.Lock()
 	if c.closed {
 		c.mu.Unlock()
-		return false
+		return false, false
+	}
+	queue := c.send
+	if binary {
+		queue = c.binarySend
 	}
 	select {
-	case c.send <- msg:
+	case queue <- msg:
+		event, sample := c.queueEventLocked(binary, len(msg), false)
 		c.mu.Unlock()
-		return true
+		if sample {
+			c.publishEnqueue(event, batch)
+		}
+		return true, false
 	default:
+		event, publish := c.queueEventLocked(binary, len(msg), true)
 		c.mu.Unlock()
-		c.recordDrop(false)
-		return false
+		c.recordDrop(binary)
+		if publish {
+			c.publishEnqueue(event, batch)
+		}
+		return false, true
 	}
 }
 
 // tryBinarySend is trySend for the binary (CRDT sync) channel.
 func (c *Client) tryBinarySend(msg []byte) bool {
-	c.mu.Lock()
-	if c.closed {
-		c.mu.Unlock()
-		return false
-	}
-	select {
-	case c.binarySend <- msg:
-		c.mu.Unlock()
-		return true
-	default:
-		c.mu.Unlock()
-		c.recordDrop(true)
-		return false
-	}
+	sent, _ := c.tryBinarySendResult(msg)
+	return sent
+}
+
+func (c *Client) tryBinarySendResult(msg []byte) (sent, dropped bool) {
+	return c.enqueue(msg, true, nil)
 }
 
 // HandlerFunc handles an event from a client.
@@ -244,6 +343,52 @@ type Context struct {
 	Hub    *Hub
 	Event  string
 	Data   json.RawMessage
+}
+
+// invokeHandler calls a registered HandlerFunc under a panic boundary.
+//
+// WHY: ServeHTTPWithMetadata starts readPump and writePump on their own
+// goroutines (`go client.readPump()`), and every handler this package calls
+// — join, leave, and per-event — runs from inside one of those. net/http
+// recovers a panic inside the synchronous call to a request's own
+// http.Handler, but that recovery never reaches a goroutine the handler
+// spawned and returned from: an unrecovered panic on ANY goroutine
+// terminates the whole process, not just the offending connection. Before
+// this boundary, one client sending a message that panicked a handler could
+// take down every other client's connection along with it.
+//
+// Recovering here, at the single call site every handler invocation shares,
+// means one misbehaving handler drops only the message or lifecycle event
+// that triggered it — the client's connection, and the rest of the hub,
+// keep running.
+func (h *Hub) invokeHandler(handler HandlerFunc, ctx *Context) {
+	observed := h.observers.Load() != nil
+	var start time.Time
+	if observed {
+		start = time.Now()
+	}
+	defer func() {
+		r := recover()
+		if r != nil {
+			clientID := ""
+			if ctx != nil && ctx.Client != nil {
+				clientID = ctx.Client.ID
+			}
+			event := ""
+			if ctx != nil {
+				event = ctx.Event
+			}
+			log.Printf("[hub/%s] recovered panic in handler (client=%q event=%q): %v\n%s", h.name, clientID, event, r, debug.Stack())
+		}
+		if observed {
+			event := HandlerEvent{Duration: time.Since(start), Panicked: r != nil}
+			if ctx != nil {
+				event.Event = ctx.Event
+			}
+			h.observe(func(o Observer) { o.Handler(h, event) })
+		}
+	}()
+	handler(ctx)
 }
 
 // Presence tracks connected clients.
@@ -268,15 +413,39 @@ type Message struct {
 var upgrader = websocket.Upgrader{
 	// CheckOrigin: reject cross-origin requests by default.
 	// Use SetCheckOrigin to override for development or trusted origins.
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		return origin == "" || origin == "http://"+r.Host || origin == "https://"+r.Host
-	},
+	CheckOrigin: func(r *http.Request) bool { return sameOrigin(r, false) },
+}
+
+func sameOrigin(r *http.Request, require bool) bool {
+	if r == nil {
+		return false
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return !require
+	}
+	return origin == "http://"+r.Host || origin == "https://"+r.Host
 }
 
 // SetCheckOrigin overrides the default origin check for WebSocket upgrades.
 func SetCheckOrigin(fn func(*http.Request) bool) {
 	upgrader.CheckOrigin = fn
+}
+
+// resolvedCompressionLevel returns the flate level a hub applies to a
+// compressed connection: h.CompressionLevel when it is set and in range,
+// otherwise defaultCompressionLevel. It never returns a level rejected by
+// gorilla/websocket's own validation.
+func (h *Hub) resolvedCompressionLevel() int {
+	level := h.CompressionLevel
+	if level == 0 {
+		return defaultCompressionLevel
+	}
+	if level < minCompressionLevel || level > maxCompressionLevel {
+		log.Printf("[hub/%s] CompressionLevel %d out of range [%d, %d]; using default %d", h.name, level, minCompressionLevel, maxCompressionLevel, defaultCompressionLevel)
+		return defaultCompressionLevel
+	}
+	return level
 }
 
 // generateClientID produces a cryptographically random client ID.
@@ -367,11 +536,8 @@ func (h *Hub) Broadcast(event string, data any) {
 	}
 	h.latchedMu.Unlock()
 
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, client := range h.clients {
-		client.trySend(msg)
-	}
+	sent, dropped := h.fanout(msg, false, nil)
+	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 }
 
 // BroadcastWhere sends an event only to connections accepted by predicate.
@@ -387,13 +553,8 @@ func (h *Hub) BroadcastWhere(event string, data any, predicate func(*Client) boo
 	if err != nil {
 		return
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	for _, client := range h.clients {
-		if predicate(client) {
-			client.trySend(msg)
-		}
-	}
+	sent, dropped := h.fanout(msg, false, predicate)
+	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 }
 
 // BroadcastBinary sends one binary WebSocket frame to every connected client
@@ -410,14 +571,8 @@ func (h *Hub) BroadcastBinary(payload []byte) int {
 	if len(payload) == 0 {
 		return 0
 	}
-	h.mu.RLock()
-	defer h.mu.RUnlock()
-	sent := 0
-	for _, client := range h.clients {
-		if client.tryBinarySend(payload) {
-			sent++
-		}
-	}
+	sent, dropped := h.fanout(payload, true, nil)
+	h.observeConcurrent(func(o Observer) { o.Broadcast(h, sent, dropped) })
 	return sent
 }
 
@@ -464,10 +619,19 @@ func (h *Hub) Disconnect(clientID, reason string) bool {
 		client.mu.Unlock()
 		return false
 	}
-	_ = client.conn.SetWriteDeadline(time.Now().Add(writeWait))
+	if client.disconnect.Reason == "" {
+		client.disconnect = DisconnectEvent{Reason: "server", AppReason: reason}
+	}
+	client.mu.Unlock()
+
+	// writePump is the sole normal writer and the sole owner of the
+	// connection write deadline. Gorilla permits WriteControl and Close to
+	// run concurrently with every other connection method. In particular,
+	// do not hold client.mu here: WriteControl can wait for an in-flight
+	// normal write until its deadline, while client.mu must remain available
+	// to the non-blocking trySend and channel-close lifecycle.
 	_ = client.conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.ClosePolicyViolation, reason), time.Now().Add(writeWait))
 	_ = client.conn.Close()
-	client.mu.Unlock()
 	return true
 }
 
@@ -572,47 +736,124 @@ func (h *Hub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //		hub.ServeHTTPWithMetadata(w, r, metadata)
 //	}))
 func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, metadata ConnectionMetadata) {
-	if h.MaxClients > 0 && h.ClientCount() >= h.MaxClients {
-		http.Error(w, "hub full", http.StatusServiceUnavailable)
+	policy, err := h.SlowClient.normalized()
+	if err != nil {
+		h.warnInvalidSlowClient(time.Now())
+		h.observeConcurrent(func(o Observer) { o.Rejected(h, RejectedOther) })
+		http.Error(w, "invalid hub policy", http.StatusServiceUnavailable)
 		return
 	}
+	if !h.reserveClientSlot() {
+		h.mu.RLock()
+		reason := RejectedCapacity
+		body := "hub full"
+		if h.closing {
+			reason = RejectedClosed
+			body = "hub closing"
+		}
+		h.mu.RUnlock()
+		h.observeConcurrent(func(o Observer) { o.Rejected(h, reason) })
+		http.Error(w, body, http.StatusServiceUnavailable)
+		return
+	}
+	reserved := true
+	defer func() {
+		if reserved {
+			h.releaseClientSlot()
+		}
+	}()
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	connectionUpgrader := upgrader
+	if h.RequireOrigin {
+		connectionUpgrader.CheckOrigin = func(r *http.Request) bool { return sameOrigin(r, true) }
+	}
+	connectionUpgrader.EnableCompression = h.EnableCompression
+	originRejected := false
+	checkOrigin := connectionUpgrader.CheckOrigin
+	if checkOrigin != nil && h.observers.Load() != nil {
+		connectionUpgrader.CheckOrigin = func(r *http.Request) bool {
+			accepted := checkOrigin(r)
+			originRejected = !accepted
+			return accepted
+		}
+	}
+	conn, err := connectionUpgrader.Upgrade(w, r, nil)
 	if err != nil {
+		reason := RejectedUpgrade
+		if originRejected {
+			reason = RejectedOrigin
+		}
+		h.observe(func(o Observer) { o.Rejected(h, reason) })
 		log.Printf("[hub/%s] upgrade error: %v", h.name, err)
 		return
 	}
+	if h.EnableCompression {
+		if err := conn.SetCompressionLevel(h.resolvedCompressionLevel()); err != nil {
+			// SetCompressionLevel only rejects an out-of-range level, which
+			// resolvedCompressionLevel already guards against. Treat a
+			// rejection as non-fatal: the connection still works, just
+			// uncompressed or at gorilla's own default.
+			log.Printf("[hub/%s] compression level error: %v", h.name, err)
+		}
+	}
 	if err := conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
+		h.observe(func(o Observer) { o.Rejected(h, RejectedUpgrade) })
 		log.Printf("[hub/%s] set read deadline error: %v", h.name, err)
 		conn.Close()
 		return
 	}
-	conn.SetPongHandler(func(string) error {
+	clientID := generateClientID(h.name)
+	transport, err := h.transport(policy)
+	if err != nil {
+		h.observe(func(o Observer) { o.Rejected(h, RejectedOther) })
+		log.Print("[gosx hub] connection refused; class=entropy_unavailable")
+		_ = conn.Close()
+		return
+	}
+	client := &Client{
+		ID:           clientID,
+		Hub:          h,
+		metadata:     cloneConnectionMetadata(metadata),
+		conn:         conn,
+		send:         make(chan []byte, 256),
+		binarySend:   make(chan []byte, 256),
+		snapshotWake: make(chan struct{}, 1),
+		syncStates:   newPeerSyncState(),
+		transport:    transport,
+	}
+	conn.SetPongHandler(func(payload string) error {
+		client.observePong(payload)
+		// Any valid pong retains the existing connection liveness behavior.
 		return conn.SetReadDeadline(time.Now().Add(readWait))
 	})
-
-	clientID := generateClientID(h.name)
-	client := &Client{
-		ID:         clientID,
-		Hub:        h,
-		metadata:   cloneConnectionMetadata(metadata),
-		conn:       conn,
-		send:       make(chan []byte, 256),
-		binarySend: make(chan []byte, 256),
-		syncStates: newPeerSyncState(),
-	}
 
 	// The read limit is per connection, so a client that may not push CRDT
 	// sync keeps the small frame allowance. See readLimitFor.
 	conn.SetReadLimit(h.readLimitFor(client))
 
-	// Register client
+	// Register the client and convert its in-flight capacity reservation into
+	// a live slot under the same lock.
 	h.mu.Lock()
+	h.pendingClients--
+	if h.closing {
+		finish := h.finishCloseLocked()
+		h.mu.Unlock()
+		reserved = false
+		_ = conn.Close()
+		h.observeConcurrent(func(o Observer) { o.Rejected(h, RejectedClosed) })
+		if finish {
+			h.finishClose()
+		}
+		return
+	}
 	h.clients[clientID] = client
+	h.pumps += 2
 	h.mu.Unlock()
+	reserved = false
 
 	// Track presence
 	h.presence.add(clientID)
+	h.observe(func(o Observer) { o.ClientConnected(h, client, r) })
 
 	// Send client their ID first — before any broadcast from join handler
 	welcome, _ := json.Marshal(Message{
@@ -647,8 +888,11 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	}
 
 	// Fire join handler (may broadcast to all clients including this one)
-	if handler, ok := h.handlers["join"]; ok {
-		handler(&Context{
+	h.mu.RLock()
+	handler, ok := h.handlers["join"]
+	h.mu.RUnlock()
+	if ok {
+		h.invokeHandler(handler, &Context{
 			Client: client,
 			Hub:    h,
 			Event:  "join",
@@ -662,21 +906,98 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	go client.readPump()
 }
 
+func (h *Hub) reserveClientSlot() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closing {
+		return false
+	}
+	if h.MaxClients > 0 && len(h.clients)+h.pendingClients >= h.MaxClients {
+		return false
+	}
+	h.pendingClients++
+	h.served = true
+	return true
+}
+
+func (h *Hub) releaseClientSlot() {
+	h.mu.Lock()
+	h.pendingClients--
+	finish := h.finishCloseLocked()
+	h.mu.Unlock()
+	if finish {
+		h.finishClose()
+	}
+}
+
+func (c *Client) allowInboundMessage(now time.Time) bool {
+	rate := c.Hub.MaxMessagesPerSecond
+	if rate <= 0 {
+		return true
+	}
+	burst := c.Hub.MaxMessageBurst
+	if burst <= 0 {
+		burst = rate * 2
+	}
+	if c.messageLast.IsZero() {
+		c.messageTokens = float64(burst)
+		c.messageLast = now
+	} else {
+		elapsed := now.Sub(c.messageLast).Seconds()
+		if elapsed > 0 {
+			c.messageTokens += elapsed * float64(rate)
+			if c.messageTokens > float64(burst) {
+				c.messageTokens = float64(burst)
+			}
+			c.messageLast = now
+		}
+	}
+	if c.messageTokens < 1 {
+		return false
+	}
+	c.messageTokens--
+	return true
+}
+
 func (c *Client) readPump() {
+	defer c.Hub.pumpFinished()
 	defer func() {
 		c.Hub.removeClient(c)
 		c.conn.Close()
 	}()
+	// Defense in depth: invokeHandler already recovers every handler call
+	// below, but this outer recover keeps a panic anywhere else in the loop
+	// (a future change, a third-party dependency) from crashing the process
+	// too — readPump runs on its own goroutine, so an unrecovered panic here
+	// is not a per-connection failure, it is a whole-server outage.
+	defer func() {
+		if r := recover(); r != nil {
+			c.setDisconnectReason("panic", "")
+			log.Printf("[hub/%s] recovered panic in readPump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
+		}
+	}()
 
 	for {
 		if err := c.conn.SetReadDeadline(time.Now().Add(readWait)); err != nil {
+			c.setDisconnectReason("read_error", "")
 			break
 		}
 		msgType, data, err := c.conn.ReadMessage()
 		if err != nil {
-			if !websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure, websocket.CloseNormalClosure) {
-				log.Printf("[hub/%s] read error: %v", c.Hub.name, err)
+			reason := readDisconnectReason(err)
+			c.setDisconnectReason(reason, "")
+			if reason != "peer_closed" {
+				// A CloseError includes peer-controlled close text. Diagnostics
+				// keep only the fixed transport class, never the raw error.
+				log.Printf("[gosx hub] read failed (%s)", reason)
 			}
+			break
+		}
+		c.Hub.observeMessage(c, TrafficEvent{Direction: Inbound, Binary: msgType == websocket.BinaryMessage, Bytes: len(data), QueueDepth: -1})
+		if !c.allowInboundMessage(time.Now()) {
+			c.setDisconnectReason("rate_limited", "")
+			c.Hub.observe(func(o Observer) { o.MessageRejected(c.Hub, c, MessageRateLimited) })
+			log.Printf("[hub/%s] client %s exceeded inbound message rate", c.Hub.name, c.ID)
 			break
 		}
 
@@ -687,6 +1008,7 @@ func (c *Client) readPump() {
 
 		var msg Message
 		if err := json.Unmarshal(data, &msg); err != nil {
+			c.Hub.observe(func(o Observer) { o.MessageRejected(c.Hub, c, MessageMalformed) })
 			continue
 		}
 
@@ -695,7 +1017,7 @@ func (c *Client) readPump() {
 		c.Hub.mu.RUnlock()
 
 		if ok {
-			handler(&Context{
+			c.Hub.invokeHandler(handler, &Context{
 				Client: c,
 				Hub:    c.Hub,
 				Event:  msg.Event,
@@ -706,82 +1028,110 @@ func (c *Client) readPump() {
 }
 
 func (c *Client) writePump() {
-	ticker := time.NewTicker(pingPeriod)
+	defer c.Hub.pumpFinished()
+	// writePump runs on its own goroutine and calls no hub-registered
+	// handler, but the same whole-process-crash risk applies to any panic
+	// here (see readPump's matching recover), so it gets the same boundary.
 	defer func() {
-		ticker.Stop()
+		if r := recover(); r != nil {
+			c.setDisconnectReason("panic", "")
+			log.Printf("[hub/%s] recovered panic in writePump (client=%q): %v\n%s", c.Hub.name, c.ID, r, debug.Stack())
+		}
+	}()
+	var ticks <-chan time.Time
+	var stop func()
+	if c.transport == nil {
+		ticker := time.NewTicker(pingPeriod)
+		ticks, stop = ticker.C, ticker.Stop
+	} else {
+		s := c.transport
+		now := s.clock.Now().Monotonic
+		s.nextPing, s.lastCheck = after(now, pingPeriod), now
+		ticker := s.clock.NewTicker(s.interval())
+		ticks, stop = ticker.C(), ticker.Stop
+	}
+	defer func() {
+		stop()
 		c.conn.Close()
 	}()
 
+	preferSnapshot := false
 	for {
-		select {
-		case msg, ok := <-c.send:
+		frame := c.nextOutbound(ticks, preferSnapshot)
+		if frame.kind != 0 {
 			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
-			if !ok {
-				// The send channel was closed.
+			if frame.closed {
 				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
 				return
 			}
-
-			err := c.conn.WriteMessage(websocket.TextMessage, msg)
-			c.mu.Unlock()
-			if err != nil {
+			if err := c.conn.WriteMessage(frame.kind, frame.payload); err != nil {
+				c.setDisconnectReason("write_error", "")
 				return
 			}
-		case msg, ok := <-c.binarySend:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
-			if !ok {
-				_ = c.conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
-				c.mu.Unlock()
+			c.Hub.observeMessage(c, TrafficEvent{Direction: Outbound, Binary: frame.kind == websocket.BinaryMessage, Snapshot: frame.snapshot, Bytes: len(frame.payload), QueueDepth: -1, Written: true})
+			preferSnapshot = !frame.snapshot
+			continue
+		}
+		var payload []byte
+		if c.transport != nil {
+			now := c.transport.clock.Now().Monotonic
+			if c.slowClient(now) {
+				c.setDisconnectReason("slow_client", "")
 				return
 			}
-
-			err := c.conn.WriteMessage(websocket.BinaryMessage, msg)
-			c.mu.Unlock()
-			if err != nil {
-				return
+			if !c.transport.pingDue(now) {
+				continue
 			}
-		case <-ticker.C:
-			c.conn.SetWriteDeadline(time.Now().Add(writeWait))
-			c.mu.Lock()
-			err := c.conn.WriteMessage(websocket.PingMessage, nil)
-			c.mu.Unlock()
-			if err != nil {
-				return
+			if c.Hub.observers.Load() != nil {
+				ping := c.startPing(now)
+				payload = ping[:]
+			} else {
+				c.abandonPing(false)
 			}
+		}
+		c.conn.SetWriteDeadline(time.Now().Add(writeWait))
+		err := c.conn.WriteMessage(websocket.PingMessage, payload)
+		if err != nil {
+			c.abandonPing(false)
+			c.setDisconnectReason("write_error", "")
+			return
 		}
 	}
 }
 
 func (h *Hub) removeClient(c *Client) {
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return
+	}
+	// Senders use c.mu too, so no send can race these channel closes.
+	c.closed = true
+	c.snapshot = nil
+	disconnect := c.disconnect
+	if disconnect.Reason == "" {
+		disconnect.Reason = "other"
+	}
+	close(c.send)
+	close(c.binarySend)
+	c.mu.Unlock()
+	c.abandonPing(disconnect.Reason == "read_timeout")
 	h.mu.Lock()
 	delete(h.clients, c.ID)
+	handler, ok := h.handlers["leave"]
 	h.mu.Unlock()
 
 	h.presence.remove(c.ID)
 
-	// Mark closed under c.mu before closing the channels: trySend/
-	// tryBinarySend check c.closed under the same mutex before writing, so
-	// this ordering guarantees any send that observes closed=false completes
-	// its channel write strictly before the close below runs (mutually
-	// exclusive via c.mu), and any send that loses the race simply observes
-	// closed=true and skips the write instead of racing the close.
-	c.mu.Lock()
-	c.closed = true
-	c.mu.Unlock()
-	close(c.send)
-	close(c.binarySend)
-
 	// Fire leave handler
-	if handler, ok := h.handlers["leave"]; ok {
-		handler(&Context{
+	if ok {
+		h.invokeHandler(handler, &Context{
 			Client: c,
 			Hub:    h,
 			Event:  "leave",
 		})
 	}
+	h.observe(func(o Observer) { o.ClientDisconnected(h, c, disconnect) })
 
 	log.Printf("[hub/%s] client %s disconnected (%d remaining)", h.name, c.ID, h.ClientCount())
 }

@@ -76,6 +76,9 @@ func TestManagedScriptRendersRuntimeMetadata(t *testing.T) {
 	for _, snippet := range []string{
 		`src="/runtime/page.js"`,
 		`data-gosx-script="lifecycle"`,
+		`type="text/javascript"`,
+		`crossorigin="anonymous"`,
+		`referrerpolicy="no-referrer"`,
 		`defer="defer"`,
 	} {
 		if !strings.Contains(html, snippet) {
@@ -84,15 +87,16 @@ func TestManagedScriptRendersRuntimeMetadata(t *testing.T) {
 	}
 }
 
-func TestManagedScriptCanRequestDOMLoading(t *testing.T) {
+func TestManagedScriptUsesDOMLoadingPolicy(t *testing.T) {
 	html := gosx.RenderHTML(ManagedScript("https://js.stripe.com/clover/stripe.js", ManagedScriptOptions{
 		Role: ManagedScriptRoleManaged,
-		Load: ManagedScriptLoadDOM,
 	}))
 	for _, snippet := range []string{
 		`src="https://js.stripe.com/clover/stripe.js"`,
 		`data-gosx-script="managed"`,
-		`data-gosx-script-load="dom"`,
+		`type="text/javascript"`,
+		`crossorigin="anonymous"`,
+		`referrerpolicy="no-referrer"`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)

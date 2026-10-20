@@ -36,10 +36,9 @@ type ConsumerRequirement struct {
 // ConsumerRequirements lists everything a correct image-based-lighting consumer
 // needs for the products this package bakes.
 //
-// The IR carrier and both renderer consumers are present. WebGL2 activates the
-// full path when at least 18 fragment texture units are available and reports a
-// deterministic degradation otherwise; the unconditional FeatureIBL matrix
-// cell therefore remains false even though the consumer pieces below exist.
+// The IR carrier and both renderer consumers are present. WebGL2 stores
+// cascades in depth texture arrays, so all IBL products fit alongside eight
+// material maps and two shadow lights on a 16-fragment-sampler device.
 //
 // The build side is complete: the specular cubemap, the diffuse irradiance
 // cubemap, the spherical-harmonic sidecar, and the split-sum lookup table all
@@ -55,7 +54,7 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"byteOffset and byteLength. Inflate scheme 3 with DecompressionStream(\"deflate\"). " +
 				"Read the key/value block to check GoSXiblRole, GoSXColorSpace and GoSXiblModel for the formats this " +
 				"pipeline writes: R16G16B16A16_SFLOAT and R16G16_SFLOAT.",
-			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.ts",
 			Present: true,
 		},
 		{
@@ -68,7 +67,7 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"Require OES_texture_float_linear before enabling linear half-float sampling. " +
 				"KTX2 face order is +X, -X, +Y, -Y, +Z, -Z, which matches the GL cube face enums in " +
 				"order. Upload the irradiance cube the same way with one level.",
-			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js, 16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.ts, 16-scene-webgl.js and 16a-scene-webgpu.js",
 			Present: true,
 		},
 		{
@@ -78,7 +77,7 @@ func ConsumerRequirements() []ConsumerRequirement {
 				"roughness, both sampled at texel centres, so the shader must sample with " +
 				"CLAMP_TO_EDGE and LINEAR filtering and must not offset the coordinates. The table " +
 				"is scene independent, so one upload serves every page in a project.",
-			Where:   "client/js/bootstrap-src/19a-scene-ktx2.js, 16-scene-webgl.js and 16a-scene-webgpu.js",
+			Where:   "client/js/bootstrap-src/19a-scene-ktx2.ts, 16-scene-webgl.js and 16a-scene-webgpu.js",
 			Present: true,
 		},
 		{

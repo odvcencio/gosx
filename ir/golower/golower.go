@@ -1,9 +1,8 @@
 // Package golower lowers Go source files into program.Program values for
-// the shared VM. It is the AST-compiler initiative's lowerer (Slice X.C):
-// it walks Go's standard go/ast representation of an engine-surface
-// handler file and emits handler-by-handler opcode sequences using the
-// statement-sequencing opcodes from Slice X.A and the stdlib intrinsic
-// registry from Slice X.B.
+// the shared VM. It is the AST-compiler initiative's lowerer: it walks
+// Go's standard go/ast representation of an engine-surface handler file
+// and emits handler-by-handler opcode sequences using the
+// statement-sequencing opcodes and the stdlib intrinsic registry.
 //
 // Supported subset (locked, per plan):
 //   - Function declarations with parameter binding and `return` results.
@@ -24,12 +23,12 @@
 //
 // The lowerer is permissive about types — it accepts whatever go/ast
 // gives it and lets runtime type errors surface as VM diagnostics.
-// Lightweight go/types checking is a future improvement (X.C.6 noted
-// the choice; the answer is "skip for now").
+// Lightweight go/types checking is a future improvement (the answer
+// for now is "skip").
 //
 // Errors surface as a single LowerError that carries a list of
 // per-handler issues with line numbers and (where possible) the
-// suggestion to use the surface=wasm escape hatch per ADR 0006.
+// suggestion to use the surface=wasm escape hatch.
 
 package golower
 
@@ -51,8 +50,9 @@ type LowerError struct {
 }
 
 // Issue is a single lowering problem. The Suggestion field, when set,
-// points the author at the escape-hatch contract (ADR 0006).
+// points the author at the escape-hatch contract.
 type Issue struct {
+	File       string
 	Handler    string
 	Line       int
 	Message    string
@@ -66,7 +66,13 @@ func (e *LowerError) Error() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "golower: %s: %d issue(s)\n", e.File, len(e.Issues))
 	for _, i := range e.Issues {
-		fmt.Fprintf(&b, "  %s:%d: %s", i.Handler, i.Line, i.Message)
+		if i.File != "" && i.Handler != "" {
+			fmt.Fprintf(&b, "  %s:%d (%s): %s", i.File, i.Line, i.Handler, i.Message)
+		} else if i.File != "" {
+			fmt.Fprintf(&b, "  %s:%d: %s", i.File, i.Line, i.Message)
+		} else {
+			fmt.Fprintf(&b, "  %s:%d: %s", i.Handler, i.Line, i.Message)
+		}
 		if i.Suggestion != "" {
 			fmt.Fprintf(&b, "  (suggestion: %s)", i.Suggestion)
 		}
@@ -96,10 +102,28 @@ func LowerFile(src []byte) (*program.Program, error) {
 // LowerFile so callers that already have an AST (caching, multi-file
 // surfaces) don't re-parse.
 func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error) {
-	prog := &program.Program{
-		Name: file.Name.Name,
+	return LowerASTFiles(fset, []*ast.File{file})
+}
+
+// LowerASTFiles lowers one package in the supplied file/declaration order.
+// Functions and struct layouts are package-scoped; import aliases retain their
+// file scope. This accepts the same Go subset as LowerFile, without type checking.
+func LowerASTFiles(fset *token.FileSet, files []*ast.File) (*program.Program, error) {
+	if fset == nil || len(files) == 0 {
+		return nil, fmt.Errorf("golower: a file set and package files are required")
 	}
-	lerr := &LowerError{File: fset.Position(file.Pos()).Filename}
+	for i, file := range files {
+		if file == nil || file.Name == nil {
+			return nil, fmt.Errorf("golower: invalid package file %d", i)
+		}
+		if file.Name.Name != files[0].Name.Name {
+			return nil, fmt.Errorf("golower: %s: package %s does not match %s", fset.Position(file.Pos()).Filename, file.Name.Name, files[0].Name.Name)
+		}
+	}
+	prog := &program.Program{
+		Name: files[0].Name.Name,
+	}
+	lerr := &LowerError{File: fset.Position(files[0].Pos()).Filename}
 
 	ctx := &lowerCtx{
 		prog:   prog,
@@ -108,35 +132,17 @@ func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error)
 		exprs:  []program.Expr{},
 	}
 
-	// Pre-pass (Slice Y.A): build the struct-type registry so positional
-	// composite literals (`vec2{x, y}`) can recover field names without
-	// a full go/types pass. Named-form literals (`Node{ID: id}`) don't
-	// need this — they carry field names inline — but the registry is
-	// cheap and keeps the lowering paths uniform.
-	ctx.scanStructTypes(file)
-
-	// Pre-pass (Slice Y.D): build the user-function registry so
-	// in-package calls (`updatePosition(node)` calling a sibling
-	// helper) can resolve through OpIndirectCall instead of the
-	// legacy "calls to user-defined function" diagnostic. The pass
-	// runs BEFORE lowerTopLevelDecl so forward references resolve
-	// (Go allows `func A() { B() }; func B() {}`).
-	ctx.scanUserFuncs(file)
-
-	// Pre-pass (Slice Y.E): record the source-level identifier of
-	// each imported package so lowerCallExpr's selector branch can
-	// tell pkg.Func (intrinsic) apart from receiver.Method (host
-	// dispatch through OpHostCall).
-	ctx.scanImports(file)
-
-	// Two passes:
-	//   1. Hoist package-level var declarations into signal defs so
-	//      function bodies can reference them by name. Init expressions
-	//      defer to expression lowering, which may forward-reference
-	//      other signals declared later in the file.
-	//   2. Lower each function declaration into a Handler entry.
-	for _, decl := range file.Decls {
-		ctx.lowerTopLevelDecl(decl)
+	// Register the entire package before lowering any function body, including
+	// positional composite literals and forward calls into another source file.
+	for _, file := range files {
+		ctx.scanStructTypes(file)
+		ctx.scanUserFuncs(file)
+	}
+	for _, file := range files {
+		ctx.scanImports(file)
+		for _, decl := range file.Decls {
+			ctx.lowerTopLevelDecl(decl)
+		}
 	}
 
 	prog.Exprs = ctx.exprs
@@ -150,42 +156,50 @@ func LowerASTFile(fset *token.FileSet, file *ast.File) (*program.Program, error)
 // lowerCtx threads parsing state through the recursive lowering helpers
 // without forcing each one to take ten parameters.
 type lowerCtx struct {
-	prog    *program.Program
-	fset    *token.FileSet
-	issues  *LowerError
-	exprs   []program.Expr
-	handler string // name of the handler currently being lowered (for diagnostics)
+	prog            *program.Program
+	fset            *token.FileSet
+	issues          *LowerError
+	exprs           []program.Expr
+	handler         string // name of the handler currently being lowered (for diagnostics)
+	expressionLimit bool
 
 	// currentResults is the declared return-value count of the function
 	// whose body is currently being lowered. Used by lowerReturnStmt
-	// (Slice Y.D) to decide whether `return a, b` lowers to a multi-
+	// to decide whether `return a, b` lowers to a multi-
 	// value ObjectVal carrier or stays a diagnostic. Zero outside a
 	// FuncDecl body.
 	currentResults int
 
 	// structs holds the ordered field-name list for every struct type
-	// declared at the top level of the file. Populated by
-	// scanStructTypes (Slice Y.A) so positional struct literals like
+	// declared at the top level of the package. Populated by
+	// scanStructTypes so positional struct literals like
 	// `vec2{x, y}` can recover field names without a separate
 	// go/types pass.
 	structs map[string]structTypeInfo
 
-	// funcs is the per-file user-function registry. Populated by
-	// scanUserFuncs (Slice Y.D) so call sites can detect a
+	// funcs is the package-wide user-function registry. Populated by
+	// scanUserFuncs so call sites can detect a
 	// bare-identifier call into a sibling helper and emit
 	// OpIndirectCall instead of the legacy "calls to user-defined
 	// function" diagnostic.
 	funcs funcRegistry
 
-	// imports holds the source-level identifier of each imported
-	// package in the current file (Slice Y.E). Populated by
+	// imports maps the source-level identifier of each imported package
+	// in the current file to its canonical package name. Populated by
 	// scanImports so lowerCallExpr can tell `math.Sin(x)` (intrinsic
 	// dispatch through OpCall) apart from `c.MoveTo(x, y)` (host
-	// receiver dispatch through OpHostCall).
-	imports map[string]bool
+	// receiver dispatch through OpHostCall). The map's key is the local
+	// identifier a call site actually writes — the alias when the
+	// import declares one (`m "math"` → key "m") — and its value is
+	// always the canonical name (`m "math"` → value "math"), because
+	// knownIntrinsics in intrinsics_table.go is keyed by canonical
+	// package name, not by whatever alias one file happens to use.
+	// canonicalPackageName resolves a key to its value, doubling as the
+	// import-set membership check every caller needs.
+	imports map[string]string
 
 	// closureLocals holds the set of bare identifiers that the current
-	// handler body assigns a *ast.FuncLit value to (Slice Y.G). Used
+	// handler body assigns a *ast.FuncLit value to. Used
 	// by lowerCallExpr to decide between OpIndirectCall (closure
 	// dispatch via the VM's local-first contract) and the legacy
 	// "unsupported user function" diagnostic. Re-populated per
@@ -193,10 +207,18 @@ type lowerCtx struct {
 	closureLocals map[string]bool
 }
 
-// addExpr appends e to the program's expression table and returns the
-// ExprID. Centralizing this lets future optimization passes (CSE,
-// constant folding) hook in without touching every call site.
+const maxProgramExpressions = 1<<16 - 1
+
+// addExpr never wraps the uint16 expression table. A rejected package retains
+// one diagnostic and a bounded partial program; callers must check the error.
 func (c *lowerCtx) addExpr(e program.Expr) program.ExprID {
+	if len(c.exprs) >= maxProgramExpressions {
+		if !c.expressionLimit {
+			c.addIssue(nil, "package exceeds the 65,535 expression limit", "")
+			c.expressionLimit = true
+		}
+		return 0
+	}
 	id := program.ExprID(len(c.exprs))
 	c.exprs = append(c.exprs, e)
 	return id
@@ -206,10 +228,13 @@ func (c *lowerCtx) addExpr(e program.Expr) program.ExprID {
 // caller can keep going so multiple problems surface in one pass.
 func (c *lowerCtx) addIssue(node ast.Node, msg, suggestion string) {
 	line := 0
+	file := ""
 	if node != nil {
-		line = c.fset.Position(node.Pos()).Line
+		position := c.fset.Position(node.Pos())
+		line, file = position.Line, position.Filename
 	}
 	c.issues.Issues = append(c.issues.Issues, Issue{
+		File:       file,
 		Handler:    c.handler,
 		Line:       line,
 		Message:    msg,
@@ -218,6 +243,6 @@ func (c *lowerCtx) addIssue(node ast.Node, msg, suggestion string) {
 }
 
 // escapeHatchSuggestion is the standard wording the lowerer uses when a
-// construct is unsupported. Centralized so updates to ADR 0006's
-// reference text only happen in one place.
+// construct is unsupported. Centralized so updates to the reference
+// text only happen in one place.
 const escapeHatchSuggestion = "use the surface=wasm escape hatch (ADR 0006) — see gosx-vm-capability-gaps.md"

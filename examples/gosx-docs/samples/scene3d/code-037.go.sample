@@ -1,0 +1,5 @@
+// Compress one instanced mesh on its own, for a spread into a template.
+	props := scene.CompressInstancedTransforms(mesh, 12)
+	if props == nil {
+	    props = mesh.SpreadProps() // fall back to raw transforms
+	}

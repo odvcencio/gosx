@@ -7,23 +7,23 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"syscall"
 	"unsafe"
 )
 
-// Vtable indices for the WebView2 resource-interception surface. Stable
-// across ICoreWebView2 1.0 — appended-only on later versions.
+// Vtable indices from Microsoft.Web.WebView2 1.0.4191.47's WebView2.h.
 const (
 	// ICoreWebView2.
-	webViewAddWebResourceRequestedFilter    = 46
-	webViewRemoveWebResourceRequestedFilter = 47
-	webViewAddWebResourceRequested          = 48
-	webViewRemoveWebResourceRequested       = 49
+	webViewAddWebResourceRequested          = 55
+	webViewRemoveWebResourceRequested       = 56
+	webViewAddWebResourceRequestedFilter    = 57
+	webViewRemoveWebResourceRequestedFilter = 58
 
 	// ICoreWebView2Environment.
-	environmentCreateWebResourceResponse = 6
+	environmentCreateWebResourceResponse = 4
 
 	// ICoreWebView2WebResourceRequestedEventArgs.
 	resourceArgsGetRequest  = 3
@@ -89,7 +89,7 @@ func (w *coreWebView2) addWebResourceRequestedFilter(uri string) error {
 // addWebResourceRequested registers the Go-side resource-requested handler.
 // WebView2 fires handler.Invoke for every fetch that matches an earlier
 // AddWebResourceRequestedFilter call.
-func (w *coreWebView2) addWebResourceRequested(handler *webResourceRequestedHandler) error {
+func (w *coreWebView2) addWebResourceRequested(handler *webResourceRequestedHandler) (int64, error) {
 	var token int64
 	hr, _, _ := syscall.SyscallN(
 		comMethod(unsafe.Pointer(w), webViewAddWebResourceRequested),
@@ -98,7 +98,19 @@ func (w *coreWebView2) addWebResourceRequested(handler *webResourceRequestedHand
 		uintptr(unsafe.Pointer(&token)),
 	)
 	if failedHRESULT(hr) {
-		return hresultError{Op: "ICoreWebView2.add_WebResourceRequested", Code: hr}
+		return 0, hresultError{Op: "ICoreWebView2.add_WebResourceRequested", Code: hr}
+	}
+	return token, nil
+}
+
+func (w *coreWebView2) removeWebResourceRequested(token int64) error {
+	hr, _, _ := syscall.SyscallN(
+		comMethod(unsafe.Pointer(w), webViewRemoveWebResourceRequested),
+		uintptr(unsafe.Pointer(w)),
+		uintptr(token),
+	)
+	if failedHRESULT(hr) {
+		return hresultError{Op: "ICoreWebView2.remove_WebResourceRequested", Code: hr}
 	}
 	return nil
 }
@@ -127,6 +139,9 @@ func (e *coreWebView2Environment) createWebResourceResponse(content uintptr, sta
 		uintptr(unsafe.Pointer(&response)),
 	)
 	if failedHRESULT(hr) {
+		if response != nil {
+			comRelease(unsafe.Pointer(response))
+		}
 		return nil, hresultError{Op: "ICoreWebView2Environment.CreateWebResourceResponse", Code: hr}
 	}
 	return response, nil
@@ -181,6 +196,9 @@ func (a *coreWebView2WebResourceRequestedEventArgs) getRequest() (*coreWebView2W
 		uintptr(unsafe.Pointer(&req)),
 	)
 	if failedHRESULT(hr) {
+		if req != nil {
+			comRelease(unsafe.Pointer(req))
+		}
 		return nil, hresultError{Op: "ResourceRequestedEventArgs.get_Request", Code: hr}
 	}
 	if req == nil {
@@ -247,20 +265,17 @@ var webResourceRequestedHandlerVtblInstance = webResourceRequestedHandlerVtbl{
 }
 
 func newWebResourceRequestedHandler(app *windowsApp) *webResourceRequestedHandler {
-	return &webResourceRequestedHandler{
+	handler := &webResourceRequestedHandler{
 		vtbl: &webResourceRequestedHandlerVtblInstance,
 		refs: 1,
 		app:  app,
 	}
+	rootCOMHandler(uintptr(unsafe.Pointer(handler)), handler)
+	return handler
 }
 
-func webResourceRequestedQueryInterface(this, _, ppv uintptr) uintptr {
-	if ppv == 0 {
-		return ePointer
-	}
-	*(*uintptr)(unsafe.Pointer(ppv)) = this
-	webResourceRequestedAddRef(this)
-	return sOK
+func webResourceRequestedQueryInterface(this, iid, ppv uintptr) uintptr {
+	return queryInterfaceHandler(this, iid, ppv, iidWebResourceRequestedEventHandler, webResourceRequestedAddRef)
 }
 
 func webResourceRequestedAddRef(this uintptr) uintptr {
@@ -270,7 +285,12 @@ func webResourceRequestedAddRef(this uintptr) uintptr {
 
 func webResourceRequestedRelease(this uintptr) uintptr {
 	h := (*webResourceRequestedHandler)(unsafe.Pointer(this))
-	return uintptr(atomic.AddUint32(&h.refs, ^uint32(0)))
+	refs := atomic.AddUint32(&h.refs, ^uint32(0))
+	if refs == 0 {
+		unrootCOMHandler(this)
+	}
+	runtime.KeepAlive(h)
+	return uintptr(refs)
 }
 
 // webResourceRequestedInvoke is the per-request hot path. Runs on the

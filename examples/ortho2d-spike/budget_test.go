@@ -1,5 +1,5 @@
-// Package ortho2dspike is a THROWAWAY M1 de-risk spike for the gosx-studio
-// WebGPU canvas re-platform (plan.gosx-studio.m1-16a-ortho2d-board.v0.1).
+// Package ortho2dspike is a THROWAWAY de-risk spike for the gosx-studio
+// WebGPU canvas re-platform.
 //
 // FINDING (2026-06-09): the canvas board has NO GPU render path today. bundle2d
 // emits the board's rects into RenderBundle's 2D-painter display list
@@ -10,7 +10,7 @@
 // computeOrthoCamera2DMVP exist in render/bundle but nothing feeds them
 // GPU-drawable board geometry.
 //
-// Consequence: M1 slice 1 is NOT "feed bundle2d's bundle to 16a". It must first
+// Consequence: the fix is NOT "feed bundle2d's bundle to 16a". It must first
 // give the board a GPU-geometry representation — emit each rect as an
 // InstancedMesh/Surface quad (which drawInstancedMeshes/drawSurfaceEntries
 // render), or add an "objects" 2D-quad draw path to the renderer. The geometry
@@ -18,7 +18,7 @@
 // cheap on-GPU, but it has to actually draw first).
 //
 // This test PASSES by asserting the gap, so the finding is a durable regression.
-// DELETE / supersede once M1 slice 1 lands the GPU board path.
+// DELETE / supersede once the GPU board path lands.
 package ortho2dspike
 
 import (
@@ -89,7 +89,7 @@ func TestRenderBoardToPNG(t *testing.T) {
 	t.Logf("HEADLESS WebGPU board render → %s (%dx%d, %d cards). Open it to view.", outPath, w, h, len(nodes))
 }
 
-// TestOrtho2DObjectQuadRenders is the M1 slice-1 de-risk: prove the EXISTING
+// TestOrtho2DObjectQuadRenders is the de-risk test: prove the EXISTING
 // native object renderer (drawObjectMeshes) draws a board quad when the board's
 // Objects reference real WorldPositions — i.e. the DRY fix is "emit
 // WorldPositions+normals for the board's existing objects", reusing the object
@@ -156,7 +156,7 @@ func TestOrtho2DObjectQuadRenders(t *testing.T) {
 // canvas board carries its geometry in "objects" (the 26b1 painter format) with
 // the GPU geometry fields empty, so the WebGPU scene renderer draws nothing but
 // the cleared background.
-// TestCanvasGPUBundleRendersBoard is the M1 slice-1 end-to-end proof: board
+// TestCanvasGPUBundleRendersBoard is the end-to-end proof: board
 // nodes → bundle2d.ComputeCanvasGPUBundle → the existing object renderer draws
 // the rects at the right screen positions (the DRY fix, full pipeline). Colors
 // are dim (lit-pipeline ambient on Unlit — the unlit-in-2D follow-up) but hue +

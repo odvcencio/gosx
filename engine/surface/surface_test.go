@@ -49,7 +49,7 @@ func TestNewRenderer_Mount_DataAttrs(t *testing.T) {
 	checkAttr(t, html, `data-gosx-engine-caps="canvas,pointer"`)
 	checkAttr(t, html, `tabindex="0"`)
 
-	// The legacy WASM-backend attribute must NOT appear after ADR 0005.
+	// The legacy WASM-backend attribute must NOT appear.
 	if strings.Contains(html, "data-gosx-engine-wasm") {
 		t.Errorf("data-gosx-engine-wasm leaked into bytecode-only output: %s", html)
 	}

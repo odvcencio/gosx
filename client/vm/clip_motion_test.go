@@ -39,11 +39,34 @@ func TestObjectMatchesTarget3Way(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := objectMatchesTarget(tc.targetID, tc.objectID, tc.objectIndex); got != tc.want {
+			if got := objectMatchesTarget(tc.targetID, tc.objectID, tc.objectIndex, -1); got != tc.want {
 				t.Fatalf("objectMatchesTarget(%q,%q,%d)=%v want %v",
 					tc.targetID, tc.objectID, tc.objectIndex, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestAuthoredNodeIndexPreventsLegacyTargetCollision(t *testing.T) {
+	// The authored node list contains a light at index 0, mesh a at index 1,
+	// and mesh b at index 2. Numeric target "1" addresses mesh a in that
+	// authored space. It must not also match mesh b through the old flattened
+	// object-index+1 convention.
+	anim := translationAnim("1")
+	meshA, _ := buildObjectClipTimeline([]rootengine.RenderAnimation{anim}, "a", 0, 1)
+	meshB, _ := buildObjectClipTimeline([]rootengine.RenderAnimation{anim}, "b", 1, 2)
+	if meshA == nil {
+		t.Fatal("authored numeric target should animate mesh a")
+	}
+	if meshB != nil {
+		t.Fatal("authored numeric target must not animate mesh b through legacy fallback")
+	}
+
+	// A payload without authored-index metadata still uses the legacy fallback
+	// for backwards compatibility.
+	legacy, _ := buildObjectClipTimeline([]rootengine.RenderAnimation{anim}, "b", 1, -1)
+	if legacy == nil {
+		t.Fatal("unknown authored index should retain legacy numeric fallback")
 	}
 }
 
@@ -63,7 +86,7 @@ func translationAnim(targetID string) rootengine.RenderAnimation {
 
 func TestBuildAndEvalTranslation(t *testing.T) {
 	anims := []rootengine.RenderAnimation{translationAnim("3")}
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected a timeline for matching translation channel")
 	}
@@ -102,7 +125,7 @@ func TestBuildReconciliation3Way(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			anims := []rootengine.RenderAnimation{translationAnim("3")}
-			tl, _ := buildObjectClipTimeline(anims, tc.objectID, tc.objectIndex)
+			tl, _ := buildObjectClipTimeline(anims, tc.objectID, tc.objectIndex, -1)
 			if (tl != nil) != tc.wantTL {
 				t.Fatalf("buildObjectClipTimeline tl!=nil=%v want %v", tl != nil, tc.wantTL)
 			}
@@ -122,7 +145,7 @@ func TestEvalScale(t *testing.T) {
 			Interpolation: "LINEAR",
 		}},
 	}}
-	tl, dur := buildObjectClipTimeline(anims, "5", 5)
+	tl, dur := buildObjectClipTimeline(anims, "5", 5, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}
@@ -152,7 +175,7 @@ func TestEvalScaleUniform(t *testing.T) {
 			Interpolation: "LINEAR",
 		}},
 	}}
-	tl, dur := buildObjectClipTimeline(anims, "0", 0)
+	tl, dur := buildObjectClipTimeline(anims, "0", 0, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}
@@ -184,7 +207,7 @@ func TestEvalRotationEulerSingleAxis(t *testing.T) {
 			Interpolation: "LINEAR",
 		}},
 	}}
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}
@@ -214,7 +237,7 @@ func TestEvalRotationEulerThreeAxes(t *testing.T) {
 			{TargetID: "3", Property: "rotationZ", Times: []float64{0, 1}, Values: []float64{0, 0.8}, Interpolation: "LINEAR"},
 		},
 	}}
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}
@@ -248,7 +271,7 @@ func TestEvalRotationCombinedQuat(t *testing.T) {
 			Interpolation: "LINEAR",
 		}},
 	}}
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}
@@ -265,7 +288,7 @@ func TestEvalRotationCombinedQuat(t *testing.T) {
 
 func TestEvalLooping(t *testing.T) {
 	anims := []rootengine.RenderAnimation{translationAnim("3")}
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}
@@ -281,7 +304,7 @@ func TestEvalLooping(t *testing.T) {
 
 func TestNoMatch(t *testing.T) {
 	anims := []rootengine.RenderAnimation{translationAnim("3")}
-	tl, dur := buildObjectClipTimeline(anims, "other", 99)
+	tl, dur := buildObjectClipTimeline(anims, "other", 99, -1)
 	if tl != nil || dur != 0 {
 		t.Fatalf("expected (nil,0) for non-matching object, got (%v,%v)", tl, dur)
 	}
@@ -310,7 +333,7 @@ func TestDurationZeroHoldsAtLastKey(t *testing.T) {
 			Interpolation: "LINEAR",
 		}},
 	}}
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected a timeline for matching translation channel")
 	}
@@ -336,7 +359,7 @@ func TestDurationZeroHoldsAtLastKey(t *testing.T) {
 // t into [0,duration) — preserving the existing looping behaviour.
 func TestDurationNonzeroStillLoops(t *testing.T) {
 	anims := []rootengine.RenderAnimation{translationAnim("3")} // Duration:1
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}
@@ -379,7 +402,7 @@ func TestMultiChannelObject(t *testing.T) {
 			},
 		},
 	}
-	tl, dur := buildObjectClipTimeline(anims, "3", 3)
+	tl, dur := buildObjectClipTimeline(anims, "3", 3, -1)
 	if tl == nil {
 		t.Fatal("expected timeline")
 	}

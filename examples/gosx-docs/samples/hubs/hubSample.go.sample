@@ -1,0 +1,16 @@
+room := hub.New("chat")
+room.MaxClients = 200
+room.Latch("room-state")
+
+room.On("message", func(ctx *hub.Context) {
+	var payload map[string]string
+	if err := json.Unmarshal(ctx.Data, &payload); err != nil {
+		return
+	}
+	ctx.Hub.Broadcast("message", map[string]any{
+		"clientId": ctx.Client.ID,
+		"text":     payload["text"],
+	})
+})
+
+mux.Handle("/ws/chat", room)

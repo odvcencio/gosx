@@ -118,6 +118,37 @@ func TestCandidatePairsReturnsCopySafeSlice(t *testing.T) {
 	}
 }
 
+// TestStandaloneStaticCollidersKeepDistinctSlots is a regression test for a
+// bug in syncStatic: it used to key each static collider's slot in
+// staticEntries by collider.index, but only World.registerCollider ever
+// assigns that field. A *Collider built directly with NewCollider and used
+// through the public SpatialHash API (NewSpatialHash/CandidatePairs/
+// QueryStaticAABB), without a World, keeps index == 0. Two such standalone
+// static colliders then collapsed onto the same slot and overwrote each
+// other, so a near static collider's pair with a moving one silently
+// disappeared from CandidatePairs.
+func TestStandaloneStaticCollidersKeepDistinctSlots(t *testing.T) {
+	near := NewCollider(ColliderConfig{Shape: ShapeBox, Width: 2, Height: 2, Depth: 2})
+	far := NewCollider(ColliderConfig{Shape: ShapeBox, Width: 2, Height: 2, Depth: 2, Offset: Vec3{X: 50}})
+	body := NewRigidBody(BodyConfig{Mass: 1, Position: Vec3{X: 0.5}})
+	ball := NewCollider(ColliderConfig{Shape: ShapeSphere, Radius: 1})
+	ball.Body = body
+
+	h := NewSpatialHash(4)
+	for step := 0; step < 3; step++ {
+		pairs := h.CandidatePairs([]*Collider{near, far, ball})
+		found := false
+		for _, p := range pairs {
+			if (p.A == near && p.B == ball) || (p.A == ball && p.B == near) {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("step %d: ball/near pair missing; pairs=%d", step, len(pairs))
+		}
+	}
+}
+
 func TestSpatialHashQueryStaticAABBFindsOnlySolidStatics(t *testing.T) {
 	world := NewWorld(WorldConfig{Gravity: Vec3{}, FixedTimestep: 1.0 / 60.0, BroadPhaseCell: 2})
 	staticBox := world.AddCollider(ColliderConfig{Shape: ShapeBox, Width: 2, Height: 2, Depth: 2})

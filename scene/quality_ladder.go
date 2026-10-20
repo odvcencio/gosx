@@ -9,6 +9,7 @@ import "strings"
 // normalization (clamped ranges, non-empty Name) documented on
 // resolveQualityRung.
 type QualityRungIR struct {
+	Detail               *bool    `json:"detail,omitempty"`
 	Name                 string   `json:"name,omitempty"`
 	PostEffects          []string `json:"postEffects,omitempty"`
 	LayerGroups          []string `json:"layerGroups,omitempty"`
@@ -29,6 +30,8 @@ type QualityRungIR struct {
 // composite (post-FX off, native DPR) — never toward a blurred full-effects
 // scene scaled down.
 type QualityRung struct {
+	// Detail overrides the browser default: off at rung zero, on above it.
+	Detail *bool
 	// Name is a stable, author-chosen label surfaced verbatim on
 	// data-gosx-scene3d-quality-rung-name and in quality-rung-transition
 	// events. An empty Name falls back to "rung-<index>" at lowering time.
@@ -136,6 +139,7 @@ func resolveQualityRung(r QualityRung, index int) QualityRungIR {
 		}
 	}
 	return QualityRungIR{
+		Detail:               r.Detail,
 		Name:                 name,
 		PostEffects:          postEffects,
 		LayerGroups:          layerGroups,
@@ -151,6 +155,7 @@ func resolveQualityRung(r QualityRung, index int) QualityRungIR {
 // (see e.g. ObjectIR.legacyProps()).
 func (r QualityRungIR) legacyProps() map[string]any {
 	out := map[string]any{}
+	setBool(out, "detail", r.Detail)
 	setString(out, "name", r.Name)
 	if len(r.PostEffects) > 0 {
 		out["postEffects"] = append([]string(nil), r.PostEffects...)

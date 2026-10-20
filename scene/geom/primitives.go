@@ -3,8 +3,8 @@ package geom
 import "math"
 
 // This file holds the parametric bodies. Every generator is centered on the
-// origin and matches the browser runtime's generator in 12-scene-geometry.js and
-// 16c-scene-shared-pbr.js. UVs follow the standard face conventions: a box maps
+// origin and matches the browser runtime's generator in 12-scene-geometry.ts and
+// 16c-scene-shared-pbr.ts. UVs follow the standard face conventions: a box maps
 // each face to the unit square, a plane matches its extent, and a curved body
 // uses wrapped cylindrical or parametric coordinates.
 //

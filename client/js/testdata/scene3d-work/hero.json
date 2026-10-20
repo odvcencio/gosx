@@ -1,0 +1,201 @@
+{
+  "background": "#000000",
+  "camera": {
+    "far": 1000,
+    "fov": 55,
+    "near": 0.1,
+    "y": 1.8,
+    "z": 8.5
+  },
+  "controls": "orbit",
+  "fillHeight": true,
+  "height": 1080,
+  "responsive": true,
+  "scene": {
+    "objects": [
+      {
+        "id": "scene-object-1",
+        "kind": "torus",
+        "radius": 2.5,
+        "tube": 0.08,
+        "radialSegments": 64,
+        "tubularSegments": 128,
+        "materialKind": "standard",
+        "color": "#D4AF37",
+        "wireframe": false,
+        "castShadow": true,
+        "receiveShadow": true,
+        "roughness": 0.2,
+        "metalness": 0.9,
+        "x": 2.4,
+        "y": 1.5,
+        "rotationX": 0.523598775598299,
+        "spinY": 0.003
+      },
+      {
+        "id": "scene-object-2",
+        "kind": "sphere",
+        "segments": 48,
+        "materialKind": "standard",
+        "color": "#E8E8E8",
+        "wireframe": false,
+        "castShadow": true,
+        "receiveShadow": true,
+        "roughness": 0.1,
+        "metalness": 1,
+        "x": 2.4,
+        "y": 1.5
+      },
+      {
+        "id": "scene-object-3",
+        "kind": "box",
+        "width": 0.6,
+        "height": 0.6,
+        "depth": 0.6,
+        "materialKind": "standard",
+        "color": "#C0C0C0",
+        "wireframe": false,
+        "castShadow": true,
+        "receiveShadow": true,
+        "roughness": 0.3,
+        "metalness": 0.8,
+        "x": 5,
+        "y": 0.9,
+        "z": -1.5,
+        "spinY": 0.005,
+        "shiftY": 0.3,
+        "driftSpeed": 0.8
+      },
+      {
+        "id": "scene-object-4",
+        "kind": "pyramid",
+        "materialKind": "standard",
+        "color": "#c9a227",
+        "wireframe": false,
+        "castShadow": true,
+        "receiveShadow": true,
+        "roughness": 0.4,
+        "metalness": 0.7,
+        "x": 0.8,
+        "y": 0.45,
+        "z": 2.2,
+        "spinY": -0.004,
+        "shiftY": 0.2,
+        "driftSpeed": 1.2
+      },
+      {
+        "id": "scene-object-5",
+        "kind": "plane",
+        "materialKind": "standard",
+        "color": "#1a1a18",
+        "wireframe": false,
+        "receiveShadow": true,
+        "roughness": 0.8,
+        "metalness": 0.1,
+        "y": -0.5,
+        "rotationX": -1.5707963267948963
+      }
+    ],
+    "computeParticles": [
+      {
+        "id": "scene-particles-1",
+        "count": 2000,
+        "emitter": {
+          "kind": "sphere",
+          "x": 2.4,
+          "y": 1.8,
+          "radius": 5,
+          "rate": 200,
+          "lifetime": 4
+        },
+        "forces": [
+          {
+            "kind": "gravity",
+            "strength": 0.5,
+            "y": -1
+          },
+          {
+            "kind": "turbulence",
+            "strength": 0.3
+          }
+        ],
+        "material": {
+          "color": "#D4AF37",
+          "colorEnd": "#ffffff",
+          "size": 0.04,
+          "sizeEnd": 0.01,
+          "opacity": 0.8,
+          "blendMode": "additive",
+          "attenuation": true
+        },
+        "bounds": 12
+      }
+    ],
+    "lights": [
+      {
+        "id": "directional-light-1",
+        "kind": "directional",
+        "color": "#fff1d6",
+        "intensity": 1.2,
+        "directionX": 0.3,
+        "directionY": -1,
+        "directionZ": -0.5,
+        "castShadow": true
+      },
+      {
+        "id": "point-light-2",
+        "kind": "point",
+        "color": "#D4AF37",
+        "intensity": 0.8,
+        "x": -3,
+        "y": 4,
+        "z": 2,
+        "range": 20
+      }
+    ],
+    "environment": {
+      "ambientColor": "#ffffff",
+      "ambientIntensity": 0.15,
+      "exposure": 1.2,
+      "toneMapping": "aces",
+      "fogColor": "#000000",
+      "fogDensity": 0.008
+    },
+    "postEffects": [
+      {
+        "kind": "toneMapping",
+        "exposure": 1.2,
+        "mode": "aces"
+      }
+    ],
+    "postFXMaxPixels": 2073600,
+    "shadowMaxPixels": 1048576,
+    "backendCaps": {
+      "capable": [
+        "webgpu",
+        "webgl",
+        "canvas2d"
+      ],
+      "degraded": {
+        "canvas2d": [
+          "compute-particles"
+        ],
+        "webgl": [
+          "compute-particles"
+        ]
+      },
+      "reasons": [
+        {
+          "feature": "compute-particles",
+          "degrades": "webgl"
+        },
+        {
+          "feature": "compute-particles",
+          "degrades": "canvas2d"
+        }
+      ]
+    },
+    "motionProgram": "TU9UMwMAAAAOAAAAc2NlbmUtb2JqZWN0LTEOAAAAc2NlbmUtb2JqZWN0LTMOAAAAc2NlbmUtb2JqZWN0LTQBAAAACAAAAHJvdGF0aW9uAAAAAAMAAAAAAAAAAAAAAAAAAAAAAAAOAAAAc2NlbmUtb2JqZWN0LTEIAAAAcm90YXRpb24AAAAAAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAPp+arx0k2g/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADgAAAHNjZW5lLW9iamVjdC0zCAAAAHJvdGF0aW9uAAAAAAEBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAB7FK5H4Xp0PwAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA4AAABzY2VuZS1vYmplY3QtNAgAAAByb3RhdGlvbgAAAAABAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/Knx0k1icL8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAAAAAAD/////AAAAAAAAAAAAAQ=="
+  },
+  "width": 1920
+}

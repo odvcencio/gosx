@@ -67,7 +67,7 @@ type CanvasBoardProps struct {
 
 	// OnPick is the name of a Go handler invoked when a board node is
 	// clicked. The handler receives the pick payload via $surface.event.*
-	// signals (per ADR 0007). Empty string disables pick routing.
+	// signals. Empty string disables pick routing.
 	OnPick string
 
 	// ClassName forwards to the canvas's CSS class attribute.
@@ -124,7 +124,7 @@ type CanvasBoardNode struct {
 //	  data-gosx-onpick="handlePick" ...>
 //	</canvas>
 //
-// The WASM bootstrap (engine/surface/runtime/bootstrap.js) sees the
+// The WASM bootstrap (engine/surface/runtime/bootstrap.ts) sees the
 // data-gosx-surface-kind attribute and dispatches to __gosx_hydrate with
 // surfaceKind="canvas2d" — exactly the 6-arg form Phase 1d added.
 func CanvasBoard(props CanvasBoardProps) Node {

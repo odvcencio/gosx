@@ -61,10 +61,6 @@ func RunInit(dir string, module string, template string) error {
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
 	}
-	if err := os.MkdirAll(absDir, 0755); err != nil {
-		return fmt.Errorf("create %s: %w", absDir, err)
-	}
-
 	if module == "" {
 		module = defaultModuleName(absDir)
 	}
@@ -79,19 +75,15 @@ func RunInit(dir string, module string, template string) error {
 		return err
 	}
 
-	for _, file := range files {
-		if err := writeScaffoldFile(absDir, file.Path, file.Contents); err != nil {
-			return err
-		}
-	}
-	if err := syncModulesPackage(absDir); err != nil {
+	tidyErr, err := createScaffold(absDir, module, files, tidyScaffold)
+	if err != nil {
 		return err
 	}
 
 	fmt.Fprintf(os.Stderr, "gosx init: created %s template in %s\n", template, absDir)
 
-	if err := tidyScaffold(absDir); err != nil {
-		fmt.Fprintf(os.Stderr, "gosx init: %v\n", err)
+	if tidyErr != nil {
+		fmt.Fprintf(os.Stderr, "gosx init: %v\n", tidyErr)
 		fmt.Fprintf(os.Stderr, "gosx init: run `go mod tidy` in %s before `go run .`\n", absDir)
 		return nil
 	}
@@ -100,7 +92,9 @@ func RunInit(dir string, module string, template string) error {
 	return nil
 }
 
-// tidyScaffold resolves the new module's dependencies.
+// tidyScaffold resolves dependencies in a private staging tree before publication.
+// The Go command may still populate its shared module/build caches; those external
+// effects are not part of the scaffold file transaction.
 //
 // The template writes go.mod and no go.sum, and a module with neither will not
 // build — `go run .` stops on the first missing sum entry and names a package
@@ -137,22 +131,6 @@ func defaultModuleName(dir string) string {
 		return "gosx-app"
 	}
 	return base
-}
-
-func writeScaffoldFile(root string, rel string, contents string) error {
-	path := filepath.Join(root, rel)
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-		return fmt.Errorf("create %s: %w", filepath.Dir(path), err)
-	}
-	if _, err := os.Stat(path); err == nil {
-		return fmt.Errorf("%s already exists", path)
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("stat %s: %w", path, err)
-	}
-	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
-		return fmt.Errorf("write %s: %w", path, err)
-	}
-	return nil
 }
 
 func goModTemplate(module string) string {
@@ -307,7 +285,11 @@ func main() {
 	publicBase := getenv("PUBLIC_URL", "http://localhost:"+port)
 	// Local development serves plain HTTP. A Secure cookie never reaches the
 	// server there. Point PUBLIC_URL at an https origin to restore Secure.
-	sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{
+	secret, err := sessionSecret()
+	if err != nil {
+		log.Fatal(err)
+	}
+	sessions, err := session.New(secret, session.Options{
 		AllowInsecure: strings.HasPrefix(publicBase, "http://"),
 	})
 	if err != nil {
@@ -316,12 +298,13 @@ func main() {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
+		ctx.SetLanguage("en")
 		ctx.SetMetadata(server.Metadata{
 			Links: []server.LinkTag{
 				{Rel: "stylesheet", Href: "/styles.css"},
 			},
 		})
-		return server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document(appName, body))
 	})
 	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
 		log.Fatal(err)
@@ -405,6 +388,12 @@ import (
 	"m31labs.dev/gosx/session"
 )
 
+type PageData struct {
+	AppName string
+	Source string
+	Subscribe route.FormState
+}
+
 func init() {
 	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
@@ -412,14 +401,11 @@ func init() {
 			if appName == "" {
 				appName = "My GoSX App"
 			}
-			return map[string]string{
-				"appName": appName,
-				"source":  page.Source,
-			}, nil
+			return PageData{AppName: appName, Source: page.Source, Subscribe: ctx.FormState("subscribe")}, nil
 		},
 		Metadata: func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-			values, _ := data.(map[string]string)
-			appName := values["appName"]
+			values, _ := data.(PageData)
+			appName := values.AppName
 			if appName == "" {
 				appName = "My GoSX App"
 			}
@@ -449,10 +435,20 @@ func init() {
 func appHomeTemplate() string {
 	return `package app
 
-func Page() Node {
+import "m31labs.dev/gosx/route"
+
+type PageProps struct {
+	AppName string
+	Source string
+	Subscribe route.FormState
+}
+
+// The form's token is empty for anonymous visitors; Protect checks its origin.
+// Existing sessions also submit their token and receive private HTML.
+component Page(props: PageProps) {
 	return <main class="shell">
 		<span class="eyebrow">GoSX</span>
-		<h1>{data.appName}</h1>
+		<h1>{props.AppName}</h1>
 		<p>Server-rendered HTML, file-routed .gsx pages, session-backed form actions, root-level public assets, metadata, env loading, and JSON APIs are ready out of the box.</p>
 
 		<div class="actions">
@@ -466,19 +462,19 @@ func Page() Node {
 			<p>
 				This page posts to a relative action, validates on the server, and restores values after a normal browser redirect.
 			</p>
-			<form class="docs-form" method="post" action={actionPath("subscribe")}>
-				<input type="hidden" name="csrf_token" value={csrf.token}></input>
+			<form class="docs-form" method="post" action={props.Subscribe.ActionURL}>
+				<input type="hidden" name="csrf_token" value={props.Subscribe.CSRFToken}></input>
 				<label class="field">
 					<span>Name</span>
-					<input name="name" value={actions.subscribe.values.name}></input>
+					<input name="name" value={props.Subscribe.Values["name"]}></input>
 				</label>
 				<label class="field">
 					<span>Email</span>
-					<input name="email" value={actions.subscribe.values.email}></input>
+					<input name="email" value={props.Subscribe.Values["email"]}></input>
 				</label>
-				<p class="form-error">{actions.subscribe.fieldErrors.email}</p>
-				<p class="form-status">{action.message}</p>
-				<p class="flash-note">{flash.notice}</p>
+				<p class="form-error">{props.Subscribe.FieldErrors["email"]}</p>
+				<p class="form-status">{props.Subscribe.Message}</p>
+				<p class="flash-note">{props.Subscribe.Flash["notice"]}</p>
 				<div class="actions">
 					<button class="button primary" type="submit">Submit the starter action</button>
 				</div>
@@ -566,7 +562,7 @@ func init() {
 func appStackTemplate() string {
 	return `package app
 
-func Page() Node {
+component Page() {
 	return <main class="shell">
 		<span class="eyebrow">Client Navigation</span>
 		<h1>Page transitions without a full reload</h1>
@@ -583,7 +579,7 @@ func Page() Node {
 func appNotFoundTemplate() string {
 	return `package app
 
-func Page() Node {
+component NotFoundPage() {
 	return <main class="shell">
 		<span class="eyebrow">404</span>
 		<h1>Page not found</h1>
@@ -602,7 +598,7 @@ func Page() Node {
 func appErrorTemplate() string {
 	return `package app
 
-func Page() Node {
+component ErrorPage() {
 	return <main class="shell">
 		<span class="eyebrow">500</span>
 		<h1>Something broke</h1>
@@ -626,7 +622,46 @@ GOSX_ENV=development
 func gitignoreTemplate() string {
 	return `/build
 /dist
+.env
+.env.*
 .DS_Store
+`
+}
+
+func sessionSecretTemplate() string {
+	return `package main
+
+import (
+	"crypto/rand"
+	"encoding/base64"
+	"fmt"
+	"log"
+	"os"
+	"strings"
+)
+
+func sessionSecret() (string, error) {
+	secret := strings.TrimSpace(os.Getenv("SESSION_SECRET"))
+	switch secret {
+	case "", "change-me-in-production", "gosx-app-session-secret", "gosx-docs-session-secret":
+		mode := strings.TrimSpace(os.Getenv("GOSX_ENV"))
+		dev := strings.EqualFold(mode, "development") || (mode == "" && os.Getenv("GOSX_DEV") == "1")
+		if !dev {
+			return "", fmt.Errorf("set SESSION_SECRET to a random secret of at least 16 bytes; missing or placeholder secrets are only allowed in development")
+		}
+		var random [32]byte
+		if _, err := rand.Read(random[:]); err != nil {
+			return "", fmt.Errorf("generate development session secret: %w", err)
+		}
+		log.Print("Using a random per-process development session secret; sessions reset on restart. Set SESSION_SECRET for persistent sessions.")
+		return base64.RawURLEncoding.EncodeToString(random[:]), nil
+	default:
+		if len(secret) < 16 {
+			return "", fmt.Errorf("SESSION_SECRET must be at least 16 bytes")
+		}
+		return secret, nil
+	}
+}
 `
 }
 

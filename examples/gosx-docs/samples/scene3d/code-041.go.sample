@@ -1,0 +1,23 @@
+props.Physics = scene.PhysicsWorld{
+	    Gravity:          scene.Vec3(0, -9.81, 0),
+	    FixedTimestep:    1.0 / 60.0,
+	    SolverIterations: 8,
+	    BroadphaseCell:   2.0,
+	    Topic:            "arena:physics",
+	    Colliders: []scene.Collider3D{
+	        {Shape: "plane", Normal: scene.Vec3(0, 1, 0), Distance: 0},
+	    },
+	}
+
+	scene.Mesh{
+	    ID:       "crate-1",
+	    Geometry: scene.CubeGeometry{Size: 1},
+	    Material: scene.StandardMaterial{Color: "#a97b3d", Roughness: 0.8},
+	    Position: scene.Vec3(0, 6, 0),
+	    RigidBody: &scene.RigidBody3D{
+	        Mass:        4,
+	        Restitution: 0.2,
+	        Friction:    0.6,
+	        Colliders:   []scene.Collider3D{{Shape: "box", Width: 1, Height: 1, Depth: 1}},
+	    },
+	}

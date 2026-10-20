@@ -132,17 +132,17 @@ function assertVectorClose(actual, expected, message) {
   }
 }
 
-function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry) {
+function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, lights) {
   return api.createSceneRenderBundle(
     320,
     180,
     "#000000",
     { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
-    [object],
+    Array.isArray(object) ? object : [object],
     [],
     [],
     [],
-    [],
+    lights || [],
     {},
     timeSeconds || 0,
     [],
@@ -159,8 +159,14 @@ function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry) 
 function latestPBRMaterialBuffer(fake) {
   for (let index = fake.state.bindGroups.length - 1; index >= 0; index -= 1) {
     const group = fake.state.bindGroups[index];
-    const entries = group && group.desc && group.desc.entries;
-    if (!Array.isArray(entries) || entries.length !== 13) continue;
+    // The material bind group now carries 17 entries to the frame group's
+    // 15, so entry count alone misclassifies groups. Identify the real
+    // PBR material group by its gosx-material bind group layout descriptor.
+    const layout = group && group.desc && group.desc.layout;
+    const layoutDesc = layout && layout.desc;
+    if (!layoutDesc || layoutDesc.label !== "gosx-material") continue;
+    const entries = group.desc.entries;
+    if (!Array.isArray(entries)) continue;
     const uniform = entries.find((entry) => entry.binding === 0);
     if (uniform && uniform.resource && uniform.resource.buffer) {
       return uniform.resource.buffer;
@@ -213,18 +219,38 @@ test("Scene3D retains eligible local mesh arrays and updates only compact transf
   );
 });
 
+test("Scene3D mixed baked meshes keep exact, independent frame payloads", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const F32 = vm.runInContext("Float32Array", env.context);
+  const moving = retainedTriangle({ id: "moving", x: 0, spinZ: 0, geometryDirty: true }, F32);
+  const retained = retainedTriangle({ id: "retained", spinZ: 0 }, F32);
+  const wire = retainedTriangle({ id: "wire", x: 4, spinZ: 0, wireframe: true }, F32);
+  const first = renderBundle(api, [moving, retained, wire]);
+  const saved = Array.from(first.worldMeshPositions);
+  assert.equal(first.worldBakedMeshObjectCount, 2);
+  assert.equal(first.retainedMeshObjectCount, 1);
+  for (const [name, stride] of [["Positions", 3], ["Colors", 4], ["Normals", 3], ["UVs", 2], ["Tangents", 4]]) {
+    assert.equal(first["worldMesh" + name].length, 6 * stride, name);
+  }
+  moving.x = 1;
+  wire.visible = false;
+  const second = renderBundle(api, [moving, retained, wire]);
+  assert.equal(second.worldMeshPositions.length, 9);
+  assert.equal(second.worldBakedMeshObjectCount, 1);
+  assertVectorClose(Array.from(second.worldMeshPositions), [0, -1, 0, 2, -1, 0, 1, 1, 0]);
+  assert.deepEqual(Array.from(first.worldMeshPositions), saved, "later frames cannot overwrite earlier geometry");
+});
+
 test("Scene3D retained geometry uses explicit semantic fallbacks", () => {
   const { env, api } = loadFreshSceneAPI();
   const F32 = vm.runInContext("Float32Array", env.context);
   const cases = [
-    retainedTriangle({ id: "shadow", castShadow: true }, F32),
     retainedTriangle({ id: "dynamic", geometryDirty: true }, F32),
     retainedTriangle({ id: "wire", wireframe: true }, F32),
     retainedTriangle({ id: "custom", customVertex: "void main() {}" }, F32),
     retainedTriangle({ id: "morph", computedMorph: { alpha: 0.5 } }, F32),
     retainedTriangle({ id: "mutable", vertices: Object.assign({}, retainedTriangle({}, F32).vertices, { immutable: false }) }, F32),
     retainedTriangle({ id: "revisionless", vertices: Object.assign({}, retainedTriangle({}, F32).vertices, { revision: null }) }, F32),
-    retainedTriangle({ id: "nonuniform-scale", scaleY: 2 }, F32),
     retainedTriangle({ id: "reflected-scale", scaleX: -1 }, F32),
   ];
   for (const object of cases) {
@@ -244,10 +270,93 @@ test("Scene3D retained geometry uses explicit semantic fallbacks", () => {
   assert.equal(backendNeutral.worldMeshPositions.length, 9);
 });
 
+test("Scene3D immutable meshes complete missing attributes once and retain indexed geometry", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const raw = {
+    id: "untextured-moment", kind: "mesh", wireframe: false,
+    vertices: {
+      positions: [-1, 0, 0, 1, 0, 0, 1, 0, 2, -1, 0, 2],
+      indices: [0, 2, 1, 0, 3, 2], immutable: true, revision: 1,
+    },
+  };
+  const object = api.normalizeSceneObject(raw, 0);
+  const again = api.normalizeSceneObject(raw, 0);
+  assert.equal(again.vertices, object.vertices, "the completed snapshot is shared across normalization");
+  assert.deepEqual(Array.from(object.vertices.normals), [0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0]);
+  assert.deepEqual(Array.from(object.vertices.uvs), new Array(8).fill(0));
+  assert.deepEqual(Array.from(object.vertices.tangents), [1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 1]);
+  const retained = renderBundle(api, object, 0);
+  const baked = renderBundle(api, object, 0, [], false);
+  assert.equal(retained.retainedMeshObjectCount, 1);
+  assert.equal(retained.worldMeshPositions.length, 0);
+  assert.deepEqual(Array.from(retained.meshObjects[0].vertices.indices), raw.vertices.indices);
+  assert.deepEqual(Array.from(baked.worldMeshUVs), new Array(12).fill(0), "CPU fallback keeps the same defaults");
+  const mutable = api.normalizeSceneObject({ ...raw, vertices: { ...raw.vertices, immutable: false } }, 0);
+  assert.equal(mutable.vertices.uvs.length, 0, "mutable geometry keeps the live baked fallback");
+  raw.vertices.revision = 2;
+  raw.vertices.positions[0] = -2;
+  const revised = api.normalizeSceneObject(raw, 0);
+  assert.notEqual(revised.vertices, object.vertices, "a new revision must rebuild the snapshot");
+  assert.equal(revised.vertices.positions[0], -2);
+});
+
+test("Scene3D retains unindexed shadow casters with positive non-uniform scale", () => {
+  const { env, api } = loadFreshSceneAPI();
+  const object = retainedTriangle({
+    id: "scaled-shadow-caster",
+    castShadow: true,
+    scaleX: 2,
+    scaleY: 0.25,
+    scaleZ: 1.5,
+  }, vm.runInContext("Float32Array", env.context));
+  const bundle = renderBundle(api, object, 0);
+
+  assert.equal(bundle.retainedMeshObjectCount, 1);
+  assert.equal(bundle.retainedMeshVertexCount, 3);
+  assert.equal(bundle.worldBakedMeshObjectCount, 0);
+  assert.equal(bundle.worldMeshPositions.length, 0);
+  assert.equal(bundle.meshObjects[0].retainedGeometry, true);
+  assert.equal(bundle.meshObjects[0].castShadow, true);
+  assert.deepEqual(
+    {
+      minX: bundle.meshObjects[0].bounds.minX,
+      minY: bundle.meshObjects[0].bounds.minY,
+      maxX: bundle.meshObjects[0].bounds.maxX,
+      maxY: bundle.meshObjects[0].bounds.maxY,
+    },
+    { minX: 0, minY: -0.25, maxX: 4, maxY: 0.25 },
+  );
+});
+
+test("Scene3D retains a generated flattened sphere shadow caster end to end", () => {
+  const { api } = loadFreshSceneAPI();
+  const object = api.normalizeSceneObject({
+    id: "board-socket",
+    kind: "sphere",
+    radius: 0.3,
+    segments: 20,
+    scale: { x: 1, y: 0.28, z: 1 },
+    materialKind: "standard",
+    color: "#071019",
+    wireframe: false,
+    castShadow: true,
+    receiveShadow: true,
+  }, 0, null);
+  const bundle = renderBundle(api, object, 0);
+
+  assert.equal(object.vertices.count, 1080, "20-segment sphere keeps its existing tessellation");
+  assert.equal(object.vertices.tangents.length, object.vertices.count * 4, "primitive lowering completes tangent frames once");
+  assert.equal(bundle.retainedMeshObjectCount, 1);
+  assert.equal(bundle.retainedMeshVertexCount, object.vertices.count);
+  assert.equal(bundle.worldBakedMeshObjectCount, 0);
+  assert.equal(bundle.worldBakedMeshVertexCount, 0);
+  assert.equal(bundle.worldMeshPositions.length, 0);
+});
+
 test("Scene3D world-baked non-uniform transforms use inverse-transpose normals and linear tangents", () => {
   const { env, api } = loadFreshSceneAPI();
   const object = obliqueTriangle({ scaleX: 2, scaleY: 3, scaleZ: 4 }, vm.runInContext("Float32Array", env.context));
-  const bundle = renderBundle(api, object, 0);
+  const bundle = renderBundle(api, object, 0, [], false);
   const mesh = bundle.meshObjects[0];
   const expectedNormal = normalized([1 / 2, 1 / 3, 1 / 4]);
   const expectedTangent = normalized([2, -3, 0]);
@@ -299,7 +408,7 @@ test("Scene3D world-baked reflections preserve CCW faces and tangent-frame hande
   for (const fixture of cases) {
     const [scaleX, scaleY, scaleZ] = fixture.scale;
     const object = obliqueTriangle({ id: fixture.id, scaleX, scaleY, scaleZ }, F32);
-    const bundle = renderBundle(api, object, 0);
+    const bundle = renderBundle(api, object, 0, [], false);
     const mesh = bundle.meshObjects[0];
     const expectedOrder = fixture.reversed ? [0, 2, 1] : [0, 1, 2];
     const expectedNormal = normalized([1 / scaleX, 1 / scaleY, 1 / scaleZ]);
@@ -390,6 +499,208 @@ test("Scene3D WebGL retained meshes upload static attributes once across animate
   const dirtyStats = harness.renderer.diagnostics().retainedGeometry;
   assert.equal(dirtyStats.revisionInvalidations, 1);
   assert.equal(dirtyStats.cacheEntries, 1);
+});
+
+function worldUploadHarness(fresh = true) {
+  const h = createWebGLRendererForPost({ fresh });
+  const api = h.env.context.__gosx_scene3d_api;
+  const object = retainedTriangle({ spinZ: 0,
+    customVertex: "attribute vec3 a_position; uniform mat4 u_mvp; void main() { gl_Position = u_mvp * vec4(a_position, 1.0); }",
+    customFragment: "precision mediump float; void main() { gl_FragColor = vec4(1.0); }",
+  }, vm.runInContext("Float32Array", h.env.context));
+  const gl = h.canvas.getContext("webgl2");
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  h.env.document.body.appendChild(h.canvas);
+  return { ...h, api, object, gl, draw: b => h.renderer.render(b, viewport) };
+}
+
+function worldShadowUploadHarness(fresh) {
+  const h = worldUploadHarness(fresh);
+  h.object.castShadow = true;
+  h.object.scaleX = 2;
+  h.object.x = 0;
+  h.object.parentMatrix = new (vm.runInContext("Float32Array", h.env.context))([
+    -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1,
+  ]);
+  h.object.vertices.positions[2] = -1;
+  h.object.vertices.positions[5] = 1;
+  h.object.vertices.indices = new (vm.runInContext("Uint32Array", h.env.context))([2, 0, 1, 0, 2, 1]);
+  const light = h.api.normalizeSceneLight({ id: "sun", kind: "directional", x: 4, y: 6, z: 8,
+    intensity: 1, castShadow: true, shadowCascades: 2, shadowSize: 256 }, 0, null);
+  // A small moving caster inside the first mesh's bounds redraws the maps
+  // without changing their fit, as a landing ficha does among settled fichas.
+  const other = retainedTriangle({ id: "moving-caster", x: 0, spinZ: 0,
+    scaleX: 0.1, scaleY: 0.1, scaleZ: 0.1, castShadow: true },
+    vm.runInContext("Float32Array", h.env.context));
+  other.vertices.immutable = false;
+  const draws = [];
+  let positionBuffer, model, lightMatrix, winding = h.gl.CCW;
+  const pointer = h.gl.vertexAttribPointer;
+  h.gl.vertexAttribPointer = function(location, ...args) {
+    if (location === 0) positionBuffer = this._boundArrayBuffer.id;
+    return pointer.call(this, location, ...args);
+  };
+  const matrix = h.gl.uniformMatrix4fv;
+  h.gl.uniformMatrix4fv = function(location, transpose, value) {
+    if (location.name === "u_modelMatrix") model = Array.from(value);
+    if (location.name === "u_lightViewProjection") lightMatrix = Array.from(value);
+    return matrix.call(this, location, transpose, value);
+  };
+  const frontFace = h.gl.frontFace;
+  h.gl.frontFace = function(mode) { winding = mode; return frontFace.call(this, mode); };
+  const drawArrays = h.gl.drawArrays;
+  h.gl.drawArrays = function(mode, first, count) {
+    if (count === 6 && this.programShaderSources(this._activeProgram).includes("u_lightViewProjection *")) {
+      draws.push({ count, positions: this.bufferUploads.get(positionBuffer).slice(0, count * 3),
+        model, lightMatrix, winding, buffer: positionBuffer });
+    }
+    return drawArrays.call(this, mode, first, count);
+  };
+  return { ...h, draws, bundle(time) {
+    other.z = (time % 4) * 0.1;
+    return renderBundle(h.api, [h.object, other], time, [], true, [light]);
+  } };
+}
+
+for (const fresh of [true, false]) {
+  test(`world-baked ${fresh ? "source" : "generated"} shadows reuse positions across cascades without changing geometry`, t => {
+    const h = worldShadowUploadHarness(fresh); t.after(() => h.renderer.dispose());
+    h.draw(h.bundle(0));
+    const cold = h.draws.slice(); assert.equal(cold.length, 2);
+    const warm = h.bundle(1), at = h.gl.ops.length;
+    h.draw(warm);
+    const cached = h.draws.slice(2); assert.equal(cached.length, 2);
+    for (let i = 0; i < 2; i++) {
+      assert.equal(cached[i].count, 6, "authored indices are expanded exactly once");
+      for (const key of ["positions", "model", "lightMatrix", "winding"]) assert.deepEqual(cached[i][key], cold[i][key], key);
+      assert.deepEqual(cached[i].positions, Array.from(warm.worldMeshPositions.subarray(0, 18)));
+      assert.equal(cached[i].winding, h.gl.CCW, "mirrored world geometry already has corrected winding");
+    }
+    assert.equal(cached[0].buffer, cached[1].buffer, "cascades share one cached position buffer");
+    assert.equal(h.gl.ops.slice(at).filter(op => op[0] === "bufferData" && op[2] === cached[0].buffer).length, 1);
+    const next = h.gl.ops.length; h.draw(h.bundle(2));
+    assert.equal(h.gl.ops.slice(next).filter(op => op[0] === "bufferData" && op[2] === cached[0].buffer).length, 0,
+      "settled shadow and color passes upload no geometry again");
+  });
+}
+
+test("moving and mutable world casters keep their current shadow geometry", t => {
+  const h = worldShadowUploadHarness(true); t.after(() => h.renderer.dispose());
+  h.draw(h.bundle(0)); h.draw(h.bundle(1));
+  h.object.x += 1;
+  const moved = h.bundle(2); assert.equal(moved.meshObjects[0]._worldBakedUpload, undefined);
+  h.draw(moved);
+  assert.deepEqual(h.draws.at(-1).positions, Array.from(moved.worldMeshPositions.subarray(0, 18)));
+  assert.notDeepEqual(h.draws.at(-1).positions, h.draws[0].positions);
+  h.object.vertices.immutable = false; h.object.vertices.positions[0] -= 0.5;
+  const mutable = h.bundle(3); h.draw(mutable);
+  assert.deepEqual(h.draws.at(-1).positions, Array.from(mutable.worldMeshPositions.subarray(0, 18)));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0);
+});
+
+test("expired world snapshots preserve held-frame shadow geometry through streaming", t => {
+  const h = worldShadowUploadHarness(true); t.after(() => h.renderer.dispose());
+  h.bundle(0); const held = h.bundle(1); h.draw(held);
+  const before = h.draws.slice();
+  h.draw(h.bundle(2));
+  for (let frame = 0; frame < 10; frame++) renderBundle(h.api, [], frame);
+  assert.equal(held.meshObjects[0]._worldBakedUpload.resident, false);
+  const at = h.draws.length;
+  h.draw(held);
+  for (let i = 0; i < 2; i++) for (const key of ["positions", "model", "lightMatrix", "winding"]) {
+    assert.deepEqual(h.draws[i + at][key], before[i][key], key);
+  }
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0);
+});
+
+test("world-baked WebGL attributes upload once, stay private, and refresh on pose/revision edits", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  const U32 = vm.runInContext("Uint32Array", h.env.context);
+  h.object.vertices.indices = new U32([2, 0, 1]);
+  const cold = renderBundle(h.api, h.object, 0);
+  assert.equal(cold.meshObjects[0]._worldBakedUpload, undefined, "the first pose streams normally");
+  h.draw(cold);
+  const first = renderBundle(h.api, h.object, 1);
+  const mesh = first.meshObjects[0], upload = mesh._worldBakedUpload;
+  assert.equal(mesh.directVertices, undefined, "authored shader world-space semantics stay unchanged");
+  assert.ok(upload && upload.resident);
+  assert.equal(Object.keys(mesh).includes("_worldBakedUpload"), false);
+  assert.equal(JSON.stringify(first).includes("_worldBakedUpload"), false);
+  const at = h.gl.ops.length;
+  h.draw(first);
+  const staticOps = h.gl.ops.slice(at).filter(op => op[0] === "bufferData" && op[4] === h.gl.STATIC_DRAW);
+  assert.ok(staticOps.length > 0);
+  assert.ok(staticOps.some(op => JSON.stringify(h.gl.bufferUploads.get(op[2])) === JSON.stringify(Array.from(first.worldMeshPositions))),
+    "the uploaded indexed triangle soup matches the ordinary world-space stream exactly");
+  const initial = h.renderer.diagnostics().retainedGeometry;
+  for (let frame = 2; frame < 15; frame++) h.draw(renderBundle(h.api, h.object, frame));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, initial.uploadCalls);
+  h.object.color = "#804020";
+  h.draw(renderBundle(h.api, h.object, 15));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, initial.uploadCalls, "appearance edits keep geometry buffers warm");
+  const priorPosition = first.worldMeshPositions[0];
+  h.object.x += 1;
+  h.draw(renderBundle(h.api, h.object, 16));
+  assert.equal(upload.resident, false, "an obsolete pose cannot retain upload eligibility");
+  assert.equal(first.worldMeshPositions[0], priorPosition, "held frame storage remains independent");
+  const moving = h.renderer.diagnostics().retainedGeometry;
+  assert.equal(moving.uploadCalls, initial.uploadCalls, "a moving frame does not allocate retained buffers");
+  assert.equal(moving.liveBytes, 0);
+  h.draw(renderBundle(h.api, h.object, 17));
+  const moved = h.renderer.diagnostics().retainedGeometry;
+  assert.ok(moved.uploadCalls > initial.uploadCalls);
+  assert.ok(moved.retirements > initial.retirements);
+  assert.equal(moved.liveBytes, initial.liveBytes, "old GPU attributes retire in the next submitted frame");
+  h.object.vertices.positions[0] -= 0.25;
+  h.object.vertices.revision++;
+  h.draw(renderBundle(h.api, h.object, 18));
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, moved.uploadCalls);
+  h.draw(renderBundle(h.api, h.object, 19));
+  assert.ok(h.renderer.diagnostics().retainedGeometry.uploadCalls > moved.uploadCalls);
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, initial.liveBytes);
+});
+
+test("continuously moving world meshes keep streaming until their pose settles", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  for (let frame = 0; frame < 12; frame++) {
+    h.object.x += 0.1;
+    const bundle = renderBundle(h.api, h.object, frame);
+    assert.equal(bundle.meshObjects[0]._worldBakedUpload, undefined);
+    h.draw(bundle);
+    assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, 0);
+  }
+  h.draw(renderBundle(h.api, h.object, 12));
+  assert.ok(h.renderer.diagnostics().retainedGeometry.uploadCalls > 0, "the settled pose becomes reusable");
+});
+
+test("mutable world-baked geometry keeps streaming current attributes", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  h.object.vertices.immutable = false;
+  const first = renderBundle(h.api, h.object, 0);
+  assert.equal(first.meshObjects[0]._worldBakedUpload, undefined);
+  h.draw(first);
+  const initial = h.gl.ops.filter(op => op[0] === "bufferData" && op[4] === h.gl.DYNAMIC_DRAW).length;
+  h.object.vertices.positions[0] -= 1;
+  const next = renderBundle(h.api, h.object, 1); h.draw(next);
+  assert.notEqual(next.worldMeshPositions[0], first.worldMeshPositions[0]);
+  assert.ok(h.gl.ops.filter(op => op[0] === "bufferData" && op[4] === h.gl.DYNAMIC_DRAW).length > initial);
+  assert.equal(h.renderer.diagnostics().retainedGeometry.cacheEntries, 0);
+});
+
+test("evicted world snapshots fall back safely when a held frame is rendered again", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  renderBundle(h.api, h.object, 0);
+  const held = renderBundle(h.api, h.object, 1); h.draw(held);
+  const upload = held.meshObjects[0]._worldBakedUpload;
+  const initial = h.renderer.diagnostics().retainedGeometry.uploadCalls;
+  for (let frame = 0; frame < 10; frame++) renderBundle(h.api, [], frame);
+  assert.equal(upload.resident, false);
+  const start = h.gl.ops.length;
+  h.draw(held);
+  assert.equal(h.renderer.diagnostics().retainedGeometry.uploadCalls, initial, "an evicted snapshot uses ordinary streaming");
+  assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0);
+  assert.ok(h.gl.ops.slice(start).some(op => op[0] === "bufferData" && op[4] === h.gl.DYNAMIC_DRAW &&
+    JSON.stringify(h.gl.bufferUploads.get(op[2])) === JSON.stringify(Array.from(held.worldMeshPositions))));
 });
 
 for (const fixture of [
@@ -493,7 +804,7 @@ for (const fixture of [
   { label: "source", fresh: true },
   { label: "generated", fresh: false },
 ]) {
-test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms with geometry`, async () => {
+test(`Scene3D WebGPU ${fixture.label} retained meshes share materials independently of geometry`, async () => {
   const harness = await createBoardWebGPUHarness({ fresh: fixture.fresh });
   harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;
   const api = harness.env.context.__gosx_scene3d_api;
@@ -513,7 +824,11 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms w
   const secondRetainedStats = harness.renderer.diagnostics().retainedGeometry;
   assert.equal(secondRetainedStats.uploadCalls, firstRetainedStats.uploadCalls, "second frame must not upload retained vertex arrays");
   assert.ok(secondRetainedStats.hits >= firstRetainedStats.hits + 4);
-  assert.ok(secondWrites.some((call) => call.data && call.data.byteLength === 160), "second frame must upload compact material/model state");
+  assert.equal(secondWrites.some(call => call.buffer === firstMaterialBuffer), false,
+    "steady frames reuse packed material fields");
+  const arena = harness.fake.state.bindGroups.flatMap(group => group.desc.entries || [])
+    .find(entry => entry.binding === 19)?.resource.buffer;
+  assert.ok(arena && secondWrites.some(call => call.buffer === arena), "model transforms upload through the frame arena");
   assert.equal(harness.mount.getAttribute("data-gosx-scene3d-retained-mesh-objects"), "1");
 
   object.vertices.positions[0] = -2;
@@ -521,8 +836,8 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms w
   harness.renderer.render(renderBundle(api, object, 2), viewport);
   const revisedMaterialBuffer = latestPBRMaterialBuffer(harness.fake);
   const dirtyRetainedStats = harness.renderer.diagnostics().retainedGeometry;
-  assert.equal(firstMaterialBuffer.destroyed, true, "revision retirement must destroy the old material uniform buffer");
-  assert.notEqual(revisedMaterialBuffer, firstMaterialBuffer, "revision retirement must allocate a fresh material owner");
+  assert.notEqual(firstMaterialBuffer.destroyed, true, "geometry revision preserves the shared material");
+  assert.equal(revisedMaterialBuffer, firstMaterialBuffer);
   assert.notEqual(revisedMaterialBuffer.destroyed, true);
   assert.equal(dirtyRetainedStats.uploadCalls, secondRetainedStats.uploadCalls + 4, "explicit revision must refresh all retained GPU attributes");
   assert.equal(dirtyRetainedStats.revisionInvalidations, 1);
@@ -531,16 +846,54 @@ test(`Scene3D WebGPU ${fixture.label} retained meshes retire material uniforms w
   harness.renderer.render(renderBundle(api, replacement, 3), viewport);
   const replacementMaterialBuffer = latestPBRMaterialBuffer(harness.fake);
   const replacedStats = harness.renderer.diagnostics().retainedGeometry;
-  assert.equal(revisedMaterialBuffer.destroyed, true, "epoch sweep must destroy a removed retained material buffer");
-  assert.notEqual(replacementMaterialBuffer, revisedMaterialBuffer);
+  assert.notEqual(revisedMaterialBuffer.destroyed, true, "object replacement preserves the shared material");
+  assert.equal(replacementMaterialBuffer, revisedMaterialBuffer);
   assert.equal(replacedStats.cacheEntries, 1);
   assert.equal(replacedStats.liveBytes, dirtyRetainedStats.liveBytes);
   assert.ok(replacedStats.retirements >= dirtyRetainedStats.retirements + 4);
 
   harness.renderer.render(renderBundle(api, replacement, 4, [], false), viewport);
   const retiredStats = harness.renderer.diagnostics().retainedGeometry;
-  assert.equal(replacementMaterialBuffer.destroyed, true, "retained-to-world-baked transition must retire its material buffer");
+  assert.notEqual(replacementMaterialBuffer.destroyed, true, "world-baked geometry also uses the shared material");
   assert.equal(retiredStats.cacheEntries, 0);
   assert.equal(retiredStats.liveBytes, 0);
+  const empty = renderBundle(api, replacement, 5); empty.materials = []; empty.meshObjects = [];
+  harness.renderer.render(empty, viewport);
+  assert.equal(replacementMaterialBuffer.destroyed, true, "removing the last material retires its uniform");
 });
+}
+
+for (const fresh of [true, false]) {
+  test(`Scene3D WebGPU ${fresh ? 'source' : 'generated'} mixed meshes preserve baked vertex uploads`, async () => {
+    const harness = await createBoardWebGPUHarness({ fresh });
+    harness.env.context.__gosx_scene3d_webgpu_render_bundles = false;
+    const api = harness.env.context.__gosx_scene3d_api;
+    const F32 = vm.runInContext('Float32Array', harness.env.context);
+    const retained = retainedTriangle({ id: 'large-retained' }, F32);
+    for (const key of ['positions', 'normals', 'uvs', 'tangents']) {
+      retained.vertices[key] = new F32(Array.from(retained.vertices[key]).concat(...Array(3).fill(Array.from(retained.vertices[key]))));
+    }
+    retained.vertices.count = 12;
+    const baked = retainedTriangle({ id: 'small-baked', x: -2, spinZ: 0 }, F32);
+    baked.vertices.immutable = false;
+    baked.vertices.revision = null;
+    const viewport = { cssWidth: 640, cssHeight: 480, pixelWidth: 640, pixelHeight: 480, pixelRatio: 1 };
+    for (const objects of [[retained, baked], [baked, retained]]) {
+      const bundle = renderBundle(api, objects, 0);
+      assert.equal(bundle.retainedMeshObjectCount, 1);
+      assert.equal(bundle.worldBakedMeshObjectCount, 1);
+      assert.ok(bundle.meshObjects.find(o => o.retainedGeometry).vertexCount > bundle.worldMeshVertexCount);
+      const start = harness.fake.state.renderPasses.length;
+      harness.renderer.render(bundle, viewport);
+      const bindings = harness.fake.state.renderPasses.slice(start).flatMap(pass => pass.vertexBuffers);
+      for (const [slot, values] of [bundle.worldMeshPositions, bundle.worldMeshNormals, bundle.worldMeshUVs, bundle.worldMeshTangents].entries()) {
+        const binding = bindings.find(b => b.slot === slot && (b.offset || 0) === 0 && (b.size ?? b.buffer.size) === values.byteLength);
+        assert.ok(binding, `baked attribute slot ${slot} must be bound`);
+        const write = harness.fake.state.writeBufferCalls.filter(w => w.buffer === binding.buffer).at(-1);
+        const data = write ? write.data : new Float32Array(binding.buffer.getMappedRange());
+        assert.deepEqual(Array.from(data), Array.from(values), `slot ${slot} must upload authored baked values, without retained-mesh padding/defaults`);
+      }
+    }
+    harness.renderer.dispose();
+  });
 }

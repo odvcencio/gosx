@@ -3,14 +3,14 @@ module m31labs.dev/gosx
 go 1.26
 
 require (
+	github.com/evanw/esbuild v0.28.1
 	github.com/gorilla/websocket v1.5.3
-	github.com/odvcencio/gotreesitter v0.47.0
+	github.com/odvcencio/gotreesitter v0.56.0
 	github.com/rivo/uniseg v0.4.7
 	golang.org/x/image v0.38.0
 	golang.org/x/net v0.52.0
+	gopkg.in/yaml.v3 v3.0.1
 )
-
-require github.com/odvcencio/turboquant v0.1.3
 
 require (
 	github.com/alicebob/miniredis/v2 v2.37.0
@@ -23,13 +23,14 @@ require (
 	github.com/orisano/pixelmatch v0.0.0-20220722002657-fb0b55479cde
 	github.com/redis/go-redis/v9 v9.18.0
 	golang.org/x/sys v0.43.0
-	m31labs.dev/selena v0.4.0
+	m31labs.dev/selena v0.5.3-0.20261010191520-994398415643
+	m31labs.dev/turboquant v0.2.1
 )
 
 require (
+	github.com/odvcencio/turboquant v0.1.3 // indirect
 	m31labs.dev/mll v0.1.0 // indirect
 	m31labs.dev/prism v0.1.3 // indirect
-	m31labs.dev/turboquant v0.2.0 // indirect
 )
 
 require (
@@ -48,7 +49,6 @@ require (
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260120221211-b8f7ae30c516 // indirect
 	google.golang.org/grpc v1.80.0 // indirect
 	google.golang.org/protobuf v1.36.11 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	lukechampine.com/blake3 v1.4.1 // indirect
 	m31labs.dev/eos v0.1.4
 )

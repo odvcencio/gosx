@@ -68,10 +68,7 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 	metadata := opts.Metadata
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-		meta := server.Metadata{
-			Title:       server.Title{Absolute: title + " | GoSX"},
-			Description: description,
-		}
+		meta := baseDocsMetadata(title, description, docsCanonicalPath(ctx, page))
 		if metadata == nil {
 			return meta, nil
 		}
@@ -82,7 +79,8 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 		return mergeDocsMetadata(meta, extra), nil
 	}
 	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
-		bound := defaultDocsBindings()
+		bound := defaultDocsBindings(ctx, page)
+		bound.Values["docsSectionClassName"] = docsSectionClassName(data)
 		if bindings == nil {
 			return bound
 		}
@@ -93,15 +91,43 @@ func RegisterDocsPage(title, description string, opts route.FileModuleOptions) {
 	}
 }
 
+// RegisterDocsPageAt registers a documentation page module for an explicit
+// file route source. This is useful for dynamic routes whose directory name
+// cannot contain Go source files.
+func RegisterDocsPageAt(source, title, description string, opts route.FileModuleOptions) {
+	opts = withDocSceneFeature(opts)
+	metadata := opts.Metadata
+	bindings := opts.Bindings
+	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
+		meta := baseDocsMetadata(title, description, docsCanonicalPath(ctx, page))
+		if metadata == nil {
+			return meta, nil
+		}
+		extra, err := metadata(ctx, page, data)
+		if err != nil {
+			return server.Metadata{}, err
+		}
+		return mergeDocsMetadata(meta, extra), nil
+	}
+	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
+		bound := defaultDocsBindings(ctx, page)
+		bound.Values["docsSectionClassName"] = docsSectionClassName(data)
+		if bindings == nil {
+			return bound
+		}
+		return mergeDocsBindings(bound, bindings(ctx, page, data))
+	}
+	if err := route.RegisterFileModule(route.FileModuleFor(source, opts)); err != nil {
+		log.Fatal(err)
+	}
+}
+
 func RegisterStaticDocsPage(title, description string, opts route.FileModuleOptions) {
 	opts = withDocSceneFeature(opts)
 	metaMetadata := opts.Metadata
 	bindings := opts.Bindings
 	opts.Metadata = func(ctx *route.RouteContext, page route.FilePage, data any) (server.Metadata, error) {
-		meta := server.Metadata{
-			Title:       server.Title{Absolute: title + " | GoSX"},
-			Description: description,
-		}
+		meta := baseDocsMetadata(title, description, docsCanonicalPath(ctx, page))
 		if metaMetadata == nil {
 			return meta, nil
 		}
@@ -112,7 +138,8 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 		return mergeDocsMetadata(meta, extra), nil
 	}
 	opts.Bindings = func(ctx *route.RouteContext, page route.FilePage, data any) route.FileTemplateBindings {
-		bound := defaultDocsBindings()
+		bound := defaultDocsBindings(ctx, page)
+		bound.Values["docsSectionClassName"] = docsSectionClassName(data)
 		if bindings == nil {
 			return bound
 		}
@@ -121,6 +148,15 @@ func RegisterStaticDocsPage(title, description string, opts route.FileModuleOpti
 	if err := route.RegisterFileModuleCaller(1, opts); err != nil {
 		log.Fatal(err)
 	}
+}
+
+func docsSectionClassName(data any) string {
+	className := "docs-section"
+	values, ok := data.(map[string]any)
+	if ok && values["mode"] == "light" {
+		className += " light"
+	}
+	return className
 }
 
 func mergeDocsMetadata(base, extra server.Metadata) server.Metadata {
@@ -173,19 +209,84 @@ func isZeroDocsTitle(title server.Title) bool {
 	return title.Absolute == "" && title.Default == "" && title.Template == ""
 }
 
-func defaultDocsBindings() route.FileTemplateBindings {
+func baseDocsMetadata(title, description, canonicalPath string) server.Metadata {
+	canonical := PublicSiteURL(canonicalPath)
+	return server.Metadata{
+		Title:        server.Title{Absolute: title + " | GoSX"},
+		Description:  description,
+		MetadataBase: PublicBaseURL(),
+		Alternates:   &server.Alternates{Canonical: canonical},
+		Manifest:     "/site.webmanifest",
+		Icons: &server.Icons{Icon: []server.IconAsset{
+			{URL: "/favicon.svg", Type: "image/svg+xml", Sizes: "any"},
+		}},
+		ThemeColor: []server.ThemeColor{
+			{Color: "#000000", Media: "(prefers-color-scheme: dark)"},
+			{Color: "#fafaf8", Media: "(prefers-color-scheme: light)"},
+		},
+		OpenGraph: &server.OpenGraph{
+			Type:        "website",
+			URL:         canonical,
+			SiteName:    "GoSX",
+			Locale:      "en_US",
+			Title:       title,
+			Description: description,
+		},
+		Twitter: &server.Twitter{
+			Card:        "summary",
+			Title:       title,
+			Description: description,
+		},
+		JSONLD: []any{map[string]any{
+			"@context":    "https://schema.org",
+			"@type":       "WebPage",
+			"headline":    title,
+			"description": description,
+			"url":         canonical,
+			"isPartOf": map[string]any{
+				"@type": "WebSite",
+				"name":  "GoSX Documentation",
+				"url":   PublicBaseURL(),
+			},
+		}},
+	}
+}
+
+func docsCanonicalPath(ctx *route.RouteContext, page route.FilePage) string {
+	if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path != "" {
+		return ctx.Request.URL.Path
+	}
+	if page.RoutePath != "" {
+		return page.RoutePath
+	}
+	return "/"
+}
+
+func defaultDocsBindings(ctx *route.RouteContext, page route.FilePage) route.FileTemplateBindings {
+	currentPath := page.RoutePath
+	if ctx != nil && ctx.Request != nil && ctx.Request.URL != nil && ctx.Request.URL.Path != "" {
+		currentPath = ctx.Request.URL.Path
+	}
 	return route.FileTemplateBindings{
+		Values: map[string]any{
+			"docsNavigation":     DocsNavigation(currentPath),
+			"docsIndexClassName": DocsIndexClassName(currentPath),
+			"docsIndexCurrent":   DocsIndexAriaCurrent(currentPath),
+			"site":               SiteBuildInfo(),
+		},
+		// StatCard, CapabilityTag, and Tooltip are no longer bound here: all
+		// three moved to app/ui/*.gsx (see app/components.go's top-of-file
+		// comment) with no Go-callable adapter left behind, and every
+		// existing StatCard call site moved with it, to
+		// <ui.StatCard Value={...} Label={...}/>. A page that wants one of
+		// the three now imports the shared component directly: import ui
+		// "./ui" (or the matching ../ depth) and <ui.CapabilityTag Label=
+		// "..."/>.
 		Funcs: map[string]any{
-			"CodeBlock":     CodeBlock,
-			"StatCard":      StatCard,
-			"CapabilityTag": CapabilityTag,
-			"Tooltip":       Tooltip,
+			"CodeBlock": CodeBlock,
 		},
 		Components: map[string]any{
-			"CodeBlock":     CodeBlock,
-			"StatCard":      StatCard,
-			"CapabilityTag": CapabilityTag,
-			"Tooltip":       Tooltip,
+			"CodeBlock": CodeBlock,
 		},
 	}
 }

@@ -1,0 +1,10 @@
+package profile
+
+func Page() Node {
+	return <main>
+		<h1>{data.title}</h1>
+		<If cond={data.showInbox}>
+			<a href="/inbox">Open inbox</a>
+		</If>
+	</main>
+}

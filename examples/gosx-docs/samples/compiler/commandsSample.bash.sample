@@ -1,0 +1,5 @@
+gosx check app/page.gsx
+gosx render app/page.gsx Page
+gosx compile app/page.gsx
+gosx fmt --check app/page.gsx
+gosx build .

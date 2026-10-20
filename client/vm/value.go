@@ -52,6 +52,7 @@ type Value struct {
 	//   kindArray    the first element of the array
 	//   kindMap      the map header word
 	//   kindClosure  the *closureRef
+	//   kindWideInt  nil
 	//
 	// An empty string or an empty array keeps whatever data pointer the
 	// original header carried, which the runtime may report as nil. Read
@@ -62,11 +63,13 @@ type Value struct {
 	ptr unsafe.Pointer
 
 	// n is the string byte count for kindString and the element count for
-	// kindArray. Every other kind leaves it at 0.
+	// kindArray. For kindWideInt it stores the low 32 bits (read as uint32);
+	// all other kinds leave it at 0.
 	n int
 
-	// num is the float payload. Int-typed Values carry their integer here
-	// too. It stays a real field because arithmetic reads it on every
+	// num is the float payload. Exactly representable integers live here too;
+	// kindWideInt stores its signed high 32 bits here and its low bits in n.
+	// It stays a real field because arithmetic reads it on every
 	// step, and because a float field costs a float register, not one of
 	// the scarce integer registers.
 	num float64
@@ -101,6 +104,9 @@ const (
 	kindMap
 	// kindClosure marks a *closureRef in ptr.
 	kindClosure
+	// kindWideInt splits a signed 64-bit integer across num and n without
+	// boxing or depending on the host int width.
+	kindWideInt
 )
 
 const (
@@ -132,6 +138,22 @@ const (
 
 // kind reports which payload ptr and n hold.
 func (v *Value) kind() valueKind { return valueKind(v.tag & tagKindMask) }
+
+// integer reads an integer without rounding it through float64.
+func (v *Value) integer() int64 {
+	if v.tag&tagKindMask == uint8(kindWideInt) {
+		return int64(int32(v.num))<<32 | int64(uint32(v.n))
+	}
+	return int64(v.num)
+}
+
+// number is the explicit floating-point view used by mixed arithmetic and math.
+func (v *Value) number() float64 {
+	if v.tag&tagKindMask == uint8(kindWideInt) {
+		return float64(v.integer())
+	}
+	return v.num
+}
 
 // isList reports whether v carries an array payload.
 func (v *Value) isList() bool { return v.tag&tagKindMask == uint8(kindArray) }
@@ -168,8 +190,47 @@ func (v *Value) dict() map[string]Value {
 	return *(*map[string]Value)(unsafe.Pointer(&p))
 }
 
-// truth returns the boolean payload.
-func (v *Value) truth() bool { return v.tag&tagTruthBit != 0 }
+// truth returns v's truthiness.
+//
+// tagTruthBit is set ONLY by BoolVal(true) — IntVal, FloatVal, StringVal
+// and a non-nil ArrayVal/ObjectVal never touch it, so a raw bit read
+// answered "false" for every nonzero int, every non-empty string, and
+// every non-empty array or map, not just an actual false bool. And, Or,
+// and Not (value.go) and evalUnaryOp's OpNot (vm.go) call truth()
+// directly, so `props.Count && <span/>` on a nonzero int prop, or `!name`
+// on a non-empty string prop, always evaluated as if the operand were
+// false — the GSX expression grammar has no static bool requirement the
+// way Go's own && does (see internal/strictcomponent/expression.go's
+// separate, narrower strict-component gate), so this path is reachable
+// from ordinary (non-strict) component markup. Route's own truthy()
+// (route/fileeval.go) already derives per-kind truthiness the same way;
+// this brings the VM's opcode-level operator to the same rule set: a real
+// bool reads its stored bit, every other kind derives the standard rule
+// (nonzero number, non-empty string/array/map, a bound closure is always
+// present) — except a string, which route's truthy() (route/fileeval.go)
+// and the VM's own valueTruthy (client/vm/vm.go) both also fold "0" and
+// "false" into false, so a GSX author's `{props.flag && <span/>}` agrees
+// with server-rendered hydration even when flag arrives as the string
+// "false" rather than a bool. See TestValueTruthNonBoolKinds.
+func (v *Value) truth() bool {
+	switch v.tag & tagKindMask {
+	case uint8(kindString):
+		text := v.text()
+		return text != "" && text != "0" && text != "false"
+	case uint8(kindArray):
+		return v.n != 0
+	case uint8(kindMap):
+		return len(v.dict()) != 0
+	case uint8(kindClosure), uint8(kindWideInt):
+		return true
+	}
+	switch v.Type {
+	case program.TypeInt, program.TypeFloat:
+		return v.num != 0
+	default:
+		return v.tag&tagTruthBit != 0
+	}
+}
 
 // control returns the unwind sentinel v carries.
 func (v *Value) control() ControlSignal {
@@ -199,9 +260,12 @@ func (v *Value) closureRefOf() *closureRef {
 // are immutable, so no caller can write through the alias.
 func (v Value) Text() string { return v.text() }
 
-// Number returns the float payload. Int-typed Values carry their integer
-// in the same field, so read Number() and convert at the call site.
-func (v Value) Number() float64 { return v.num }
+// Number returns a floating-point view. Large integers may round; use Int64
+// when the exact integer is required.
+func (v Value) Number() float64 { return v.number() }
+
+// Int64 returns the exact integer payload, or truncates a floating-point value.
+func (v Value) Int64() int64 { return v.integer() }
 
 // Truth returns the boolean payload. It is the raw boolean, NOT a
 // truthiness test over the whole Value.
@@ -392,8 +456,15 @@ func StringVal(s string) Value {
 }
 
 // IntVal creates an integer Value.
-func IntVal(n int) Value {
-	return Value{Type: program.TypeInt, num: float64(n)}
+func IntVal(n int) Value { return Int64Val(int64(n)) }
+
+// Int64Val creates a signed 64-bit integer Value on every target, including
+// TinyGo's 32-bit wasm. Small integers retain the scalar fast path.
+func Int64Val(n int64) Value {
+	if n >= -(1<<53) && n <= 1<<53 {
+		return Value{Type: program.TypeInt, num: float64(n)}
+	}
+	return Value{Type: program.TypeInt, num: float64(int32(n >> 32)), n: int(uint32(n)), tag: uint8(kindWideInt)}
 }
 
 // FloatVal creates a float Value.
@@ -434,56 +505,59 @@ func (v Value) Add(b Value) Value {
 		return StringVal(v.String() + b.String())
 	}
 	if isInt(v, b) {
-		return Value{Type: program.TypeInt, num: float64(int64(v.num) + int64(b.num))}
+		return Int64Val(v.integer() + b.integer())
 	}
-	return Value{Type: program.TypeFloat, num: v.num + b.num}
+	return Value{Type: program.TypeFloat, num: v.number() + b.number()}
 }
 
 // Sub returns a - b.
 func (v Value) Sub(b Value) Value {
 	if isInt(v, b) {
-		return Value{Type: program.TypeInt, num: float64(int64(v.num) - int64(b.num))}
+		return Int64Val(v.integer() - b.integer())
 	}
-	return Value{Type: program.TypeFloat, num: v.num - b.num}
+	return Value{Type: program.TypeFloat, num: v.number() - b.number()}
 }
 
 // Mul returns a * b.
 func (v Value) Mul(b Value) Value {
 	if isInt(v, b) {
-		return Value{Type: program.TypeInt, num: float64(int64(v.num) * int64(b.num))}
+		return Int64Val(v.integer() * b.integer())
 	}
-	return Value{Type: program.TypeFloat, num: v.num * b.num}
+	return Value{Type: program.TypeFloat, num: v.number() * b.number()}
 }
 
 // Div returns a / b. Division by zero returns 0.
 func (v Value) Div(b Value) Value {
 	if isInt(v, b) {
-		if int64(b.num) == 0 {
+		if b.integer() == 0 {
 			return Value{Type: program.TypeInt, num: 0}
 		}
-		return Value{Type: program.TypeInt, num: float64(int64(v.num) / int64(b.num))}
+		return Int64Val(v.integer() / b.integer())
 	}
-	if b.num == 0 {
+	if b.number() == 0 {
 		return Value{Type: resultType(v, b), num: 0}
 	}
-	return Value{Type: program.TypeFloat, num: v.num / b.num}
+	return Value{Type: program.TypeFloat, num: v.number() / b.number()}
 }
 
 // Mod returns a % b.
 func (v Value) Mod(b Value) Value {
 	if isInt(v, b) {
-		if int64(b.num) == 0 {
+		if b.integer() == 0 {
 			return Value{Type: program.TypeInt, num: 0}
 		}
-		return Value{Type: program.TypeInt, num: float64(int64(v.num) % int64(b.num))}
+		return Int64Val(v.integer() % b.integer())
 	}
-	return Value{Type: program.TypeFloat, num: math.Mod(v.num, b.num)}
+	return Value{Type: program.TypeFloat, num: math.Mod(v.number(), b.number())}
 }
 
 // Neg returns -v. The result keeps v's static type and drops any pointer
 // payload, which matches the pre-union behaviour of building a fresh
 // struct with only Type and Num set.
 func (v Value) Neg() Value {
+	if v.Type == program.TypeInt {
+		return Int64Val(-v.integer())
+	}
 	return Value{Type: v.Type, num: -v.num}
 }
 
@@ -551,7 +625,10 @@ func eqAtDepth(v, b Value, depth int) Value {
 	if v.Type == program.TypeBool || b.Type == program.TypeBool {
 		return BoolVal(v.truth() == b.truth())
 	}
-	return BoolVal(v.num == b.num)
+	if isInt(v, b) {
+		return BoolVal(v.integer() == b.integer())
+	}
+	return BoolVal(v.number() == b.number())
 }
 
 // Neq returns whether v != b.
@@ -561,23 +638,54 @@ func (v Value) Neq(b Value) Value {
 }
 
 // Lt returns whether v < b.
+//
+// A plain v.num < b.num compares the STRING kind's num field too, which
+// Lt never writes (StringVal leaves it at its zero value) — so two
+// strings always compared 0 < 0 (false), regardless of their actual
+// text. `"apple" < "banana"` evaluated false. Eq already carries the
+// Type == TypeString branch this mirrors (see above); Lt/Gt/Lte/Gte
+// never picked it up.
 func (v Value) Lt(b Value) Value {
-	return BoolVal(v.num < b.num)
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() < b.text())
+	}
+	if isInt(v, b) {
+		return BoolVal(v.integer() < b.integer())
+	}
+	return BoolVal(v.number() < b.number())
 }
 
-// Gt returns whether v > b.
+// Gt returns whether v > b. See Lt's doc comment for the string case.
 func (v Value) Gt(b Value) Value {
-	return BoolVal(v.num > b.num)
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() > b.text())
+	}
+	if isInt(v, b) {
+		return BoolVal(v.integer() > b.integer())
+	}
+	return BoolVal(v.number() > b.number())
 }
 
-// Lte returns whether v <= b.
+// Lte returns whether v <= b. See Lt's doc comment for the string case.
 func (v Value) Lte(b Value) Value {
-	return BoolVal(v.num <= b.num)
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() <= b.text())
+	}
+	if isInt(v, b) {
+		return BoolVal(v.integer() <= b.integer())
+	}
+	return BoolVal(v.number() <= b.number())
 }
 
-// Gte returns whether v >= b.
+// Gte returns whether v >= b. See Lt's doc comment for the string case.
 func (v Value) Gte(b Value) Value {
-	return BoolVal(v.num >= b.num)
+	if v.Type == program.TypeString || b.Type == program.TypeString {
+		return BoolVal(v.text() >= b.text())
+	}
+	if isInt(v, b) {
+		return BoolVal(v.integer() >= b.integer())
+	}
+	return BoolVal(v.number() >= b.number())
 }
 
 // --- Boolean ops ---
@@ -649,7 +757,7 @@ func (v Value) stringAtDepth(depth int) string {
 	case program.TypeString:
 		return v.text()
 	case program.TypeInt:
-		return strconv.FormatInt(int64(v.num), 10)
+		return strconv.FormatInt(v.integer(), 10)
 	case program.TypeFloat:
 		return strconv.FormatFloat(v.num, 'g', -1, 64)
 	case program.TypeBool:
@@ -701,8 +809,8 @@ func (v Value) objectStringAtDepth(depth int) string {
 func (v Value) IndexVal(index Value) Value {
 	if v.isList() {
 		items := v.list()
-		idx := int(index.num)
-		if idx < 0 || idx >= len(items) {
+		idx := index.integer()
+		if idx < 0 || idx >= int64(len(items)) {
 			return ZeroValue(program.TypeAny)
 		}
 		return items[idx]
@@ -715,8 +823,8 @@ func (v Value) IndexVal(index Value) Value {
 	}
 	if v.Type == program.TypeString {
 		text := v.text()
-		idx := int(index.num)
-		if idx < 0 || idx >= len(text) {
+		idx := index.integer()
+		if idx < 0 || idx >= int64(len(text)) {
 			return ZeroValue(program.TypeString)
 		}
 		return StringVal(text[idx : idx+1])
@@ -938,7 +1046,7 @@ func (v Value) ToIntVal() Value {
 	case program.TypeInt:
 		return v
 	case program.TypeFloat:
-		return IntVal(int(v.num))
+		return Int64Val(int64(v.num))
 	case program.TypeString:
 		text := v.text()
 		n, err := strconv.ParseInt(text, 10, 64)
@@ -948,9 +1056,9 @@ func (v Value) ToIntVal() Value {
 			if err2 != nil {
 				return IntVal(0)
 			}
-			return IntVal(int(f))
+			return Int64Val(int64(f))
 		}
-		return IntVal(int(n))
+		return Int64Val(n)
 	case program.TypeBool:
 		if v.truth() {
 			return IntVal(1)
@@ -967,7 +1075,7 @@ func (v Value) ToFloatVal() Value {
 	case program.TypeFloat:
 		return v
 	case program.TypeInt:
-		return FloatVal(v.num)
+		return FloatVal(v.number())
 	case program.TypeString:
 		f, err := strconv.ParseFloat(v.text(), 64)
 		if err != nil {

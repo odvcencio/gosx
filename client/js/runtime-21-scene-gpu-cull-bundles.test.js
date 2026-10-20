@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // GPU and CPU instance culling, render bundles, indirect draws, GPU pass
 // timing and the Scene3D telemetry accessor.
 //
@@ -11,6 +13,15 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ts = require("../runtime/node_modules/typescript");
+
+// The joined mount authorities contain authored TypeScript. Apply the same
+// syntax lowering as the runtime builder before evaluating telemetry in a VM.
+function runTelemetrySource(source, context) {
+  vm.runInContext(ts.transpileModule(source, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+  }).outputText, context);
+}
 
 const {
   createContext,
@@ -31,7 +42,7 @@ const {
 // Task 1: source-string — new layout constant + pipeline accessor exist in 16a
 // -------------------------------------------------------------------------
 test("gpu-cull T1: WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT and cull pipeline accessor exist in 16a source", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // Layout constant: 80-byte stride, locations 4-8, uint32x4 at loc 8.
   assert.match(webgpu, /var WGPU_PBR_INSTANCED_CULL_VERTEX_LAYOUT/,
@@ -327,7 +338,7 @@ test("gpu pass timing: a device without timestamp-query reports the timer as una
   assert.equal(stamped.length, 0, "no pass may carry timestampWrites without the feature");
 });
 
-test("gpu pass timing: the pass timer feeds the shared sample when writeTimestamp is absent", async () => {
+test("gpu frame timing: standard timestamps cover the frame when writeTimestamp is absent", async () => {
   // This is the Chromium case: timestamp-query is present, encoder.writeTimestamp
   // is not. Before the pass timer the page got no GPU time at all.
   const harness = await createBoardWebGPUHarness({
@@ -357,8 +368,8 @@ test("gpu pass timing: the pass timer feeds the shared sample when writeTimestam
   }
   const mount = harness.mount;
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-pass-timing"), "measured");
-  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "measured-pass",
-    "the whole-scene span must stand in for the missing frame timer");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-timing"), "measured",
+    "the standard frame timer includes passes after the main draw");
   assert.equal(mount.getAttribute("data-gosx-scene3d-webgpu-gpu-ms"), "4.000");
 });
 
@@ -645,7 +656,7 @@ test("gpu-cull T2b: absent cullKernelWGSL → built-in kernel system", async () 
 // The defect this pins: a constant radius drops an instance that its transform
 // scales up, so the instance vanishes while it is plainly on screen. The built-in
 // kernel must scale the radius per thread, exactly as cullWGSL does in
-// render/bundle/cull.go. Removing any of the three length() calls fails this.
+// render/bundle/cull.go. Removing any column term fails this.
 test("gpu-cull T2b2: the built-in kernel scales the radius per instance", async () => {
   const { device } = makeFakeGPUDevice();
   const harness = await createCullSystemHarness(device);
@@ -654,8 +665,8 @@ test("gpu-cull T2b2: the built-in kernel scales the radius per instance", async 
   assert.equal(typeof wgsl, "string");
   assert.match(
     wgsl,
-    /let scale = max\(length\(m\[0\]\.xyz\), max\(length\(m\[1\]\.xyz\), length\(m\[2\]\.xyz\)\)\);/,
-    "the kernel must take the largest of the three transform column lengths",
+    /let scale = sqrt\(dot\(m\[0\]\.xyz, m\[0\]\.xyz\) \+ dot\(m\[1\]\.xyz, m\[1\]\.xyz\) \+ dot\(m\[2\]\.xyz, m\[2\]\.xyz\)\);/,
+    "the kernel must use the shear-safe Frobenius bound",
   );
   assert.match(wgsl, /if \(scale > 0\.0\) \{ radius = radius \* scale; \}/,
     "the radius must be scaled, and a degenerate transform must keep the base radius");
@@ -705,15 +716,15 @@ test("gpu-cull T2b3: the CPU oracle matches the kernel's scale term", async () =
     0, 0, 4, 0,
     5, 6, 7, 1,
   ]);
-  assert.equal(api.sceneInstanceColumnScale(transforms, 0), 4, "the largest column wins");
-  assert.equal(api.sceneInstanceCullRadius(1.5, transforms, 0), 6, "radius scales by the largest column");
+  assert.equal(api.sceneInstanceColumnScale(transforms, 0), Math.sqrt(29), "the Frobenius bound covers every linear entry");
+  assert.equal(api.sceneInstanceCullRadius(1.5, transforms, 0), 1.5 * Math.sqrt(29), "radius scales by the conservative bound");
   // A degenerate transform must keep the base radius rather than collapse.
   assert.equal(api.sceneInstanceCullRadius(1.5, new Float32Array(16), 0), 1.5);
 
   const two = new Float32Array(32);
   two.set(transforms, 0);
   two.set([9, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1], 16);
-  assert.equal(api.sceneInstancedMaxTransformScale(two, 2), 9, "the bound covers every instance");
+  assert.equal(api.sceneInstancedMaxTransformScale(two, 2), Math.sqrt(83), "the bound covers every instance");
   assert.equal(api.sceneInstancedMaxTransformScale(new Float32Array(16), 1), 1,
     "an all-zero transform must not report a zero bound");
 });
@@ -907,22 +918,22 @@ test("gpu-cull T2e: compute pass is dispatched when system is ready", async () =
 // -------------------------------------------------------------------------
 // Task 3: extractFrustumPlanesJS — golden test vs. native Go vectors
 // -------------------------------------------------------------------------
-test("gpu-cull T3: extractFrustumPlanesJS source exists in 11-scene-math.js (shared) and produces 6 normalized planes", () => {
-  // extractFrustumPlanesJS was hoisted from 16a to 11-scene-math.js (Slice 3)
+test("gpu-cull T3: extractFrustumPlanesJS source exists in 11-scene-math.ts (shared) and produces 6 normalized planes", () => {
+  // extractFrustumPlanesJS was hoisted from 16a to 11-scene-math.ts (Slice 3)
   // so both the WebGPU renderer (16a) and the WebGL2 renderer (16) share one
   // implementation with no divergence.
-  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // Function lives in the shared math module.
   assert.match(math, /function extractFrustumPlanesJS\(vp\)/,
-    "extractFrustumPlanesJS must be defined in 11-scene-math.js (shared)");
+    "extractFrustumPlanesJS must be defined in 11-scene-math.ts (shared)");
   assert.match(math, /near.*R2|R2.*near/,
     "near plane formula must reference R2 (Gribb-Hartmann near=R2)");
   assert.match(math, /addRow.*r3.*r0|left.*R3\+R0/,
     "left plane must be R3+R0 (Gribb-Hartmann)");
   assert.match(math, /function instancePassesCullTest\(/,
-    "instancePassesCullTest must be defined in 11-scene-math.js");
+    "instancePassesCullTest must be defined in 11-scene-math.ts");
 
   // 16a must NOT redefine it (hoisted away) — it only carries the comment pointer.
   assert.doesNotMatch(webgpu, /function extractFrustumPlanesJS\(vp\)/,
@@ -954,14 +965,14 @@ test("gpu-cull T3-golden: extractFrustumPlanesJS matches native Go cull.go outpu
   // a no-op.  The native Go extractFrustumPlanes produces identical output.
   // This golden test documents the parity.
   //
-  // Slice 3: extractFrustumPlanesJS was hoisted to 11-scene-math.js.
+  // Slice 3: extractFrustumPlanesJS was hoisted to 11-scene-math.ts.
   // NOTE: built files (bootstrap-feature-scene3d-webgpu.js) are minified by
   // esbuild and function names are mangled, so we extract from the SOURCE file.
   const mathSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+    path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   const match = mathSrc.match(/function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(match, "extractFrustumPlanesJS must be extractable from 11-scene-math.js source (check indentation)");
+  assert.ok(match, "extractFrustumPlanesJS must be extractable from 11-scene-math.ts source (check indentation)");
 
   const fnSrc = "function extractFrustumPlanesJS(vp) {" + match[1] + "\n  }";
   const extractFn = new Function("return (" + fnSrc + ")")();
@@ -1000,7 +1011,7 @@ test("gpu-cull T4a: no cullKernelWGSL → draw-all (direct pass.draw, not drawIn
   // renderer module (generateInstancedGeometry) which is not loaded in the WebGPU
   // test harness.  The behavioral contract is guaranteed by the source structure
   // and proven at runtime by T2e (compute dispatch) + T5-drawIndirect (fake records).
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // drawInstancedMeshes must contain a branch with pass.draw for draw-all.
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/,
@@ -1023,7 +1034,7 @@ test("gpu-cull T4b: cullKernelWGSL present but system not-ready → draw-all fal
   // Source-level test: the not-ready fallback falls through to pass.draw.
   // D3: not-ready → draw-all (NOT skip).  The else-branch handles this because
   // cullSys.isReady() returns false when the async pipeline is pending.
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The draw path gating — if cull system NOT ready, falls to else (draw-all).
   // Confirmed by: the if-guard is isReady(), so not-ready → else → pass.draw.
@@ -1049,7 +1060,7 @@ test("gpu-cull T4b: cullKernelWGSL present but system not-ready → draw-all fal
 // Task 5: capability gating
 // -------------------------------------------------------------------------
 test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedCullSystems in frame loop", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The dispatch hook must call updateInstancedCullSystems.
   assert.match(webgpu, /updateInstancedCullSystems\(bundle\.instancedMeshes,\s*encoder,\s*scratchSelenaViewProjection\)/,
@@ -1060,9 +1071,9 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
   const uploadPos = webgpu.indexOf("var cam = uploadFrameUniforms(");
   const cullPos   = webgpu.indexOf("updateInstancedCullSystems(bundle.instancedMeshes");
   // Use the call site, not the function definition — the definition appears first
-  // in the file but runs only when invoked.  The call passes `shadowSlots[slot]`
-  // which is unique to the call site; the definition uses parameter names.
-  const shadowPos = webgpu.indexOf("renderShadowPass(encoder, lightMatrix, bundle, shadowSlots");
+  // in the file but runs only when invoked. The call constructs a shadow-view
+  // descriptor; the definition only names its shadowResource parameter.
+  const shadowPos = webgpu.indexOf("renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots");
   // The main color pass is identified by `var mainPass = encoder.beginRenderPass(`
   // to avoid matching earlier shadow/utility beginRenderPass calls.
   const mainPassPos = webgpu.indexOf("var mainPass = encoder.beginRenderPass(");
@@ -1077,7 +1088,7 @@ test("gpu-cull T5: 16a source structure — dispatch hook calls updateInstancedC
 });
 
 test("gpu-cull T5-source: 16b exports createSceneInstancedCullSystem via __gosx_scene3d_api", () => {
-  const compute = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16b-scene-compute.js"), "utf8");
+  const compute = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "compute.ts"), "utf8");
 
   assert.match(compute, /function createSceneInstancedCullSystem/,
     "createSceneInstancedCullSystem must be defined in 16b");
@@ -1140,9 +1151,7 @@ test("gpu-cull T5-capability: gpu-cull is true in WebGPU capabilities and false 
 //   i2 at (-5,0,0)  → CULLED (left)
 //   i3 at (0,0,5)   → CULLED (far)
 //   i4 at (0,5,0)   → CULLED (top: [0,-1,0,1]: d = -5+1=-4<-2)
-//   i5 at (0,0,-3)  → near plane [0,0,1,0]: d=0*(-3)+0 = -3 < -2 → CULLED?
-//                     Actually d = plane[0]*cx + plane[1]*cy + plane[2]*cz + plane[3]
-//                               = 0*0 + 0*0 + 1*(-3) + 0 = -3 < -2 → CULLED (behind near)
+//   i5 at (0,0,-5)  → CULLED behind near
 // Expected survivors: only i0.
 
 test("cpu-cull S3-T1: instancePassesCullTest survivor parity vs hand-computed reference", () => {
@@ -1174,7 +1183,7 @@ test("cpu-cull S3-T1: instancePassesCullTest survivor parity vs hand-computed re
     makeTranslationMat4(-5, 0, 0),  // i2: far left  — CULLED
     makeTranslationMat4(0, 0, 5),   // i3: far back  — CULLED
     makeTranslationMat4(0, 5, 0),   // i4: far up    — CULLED
-    makeTranslationMat4(0, 0, -3),  // i5: behind near — CULLED
+    makeTranslationMat4(0, 0, -5),  // i5: behind near — CULLED
   ];
   const transforms = new Float32Array(instances.flat());
   const radius = 2.0;
@@ -1187,7 +1196,7 @@ test("cpu-cull S3-T1: instancePassesCullTest survivor parity vs hand-computed re
   assert.equal(results[2], false, "i2 at (-5,0,0) must be CULLED (left plane)");
   assert.equal(results[3], false, "i3 at (0,0,5) must be CULLED (far plane)");
   assert.equal(results[4], false, "i4 at (0,5,0) must be CULLED (top plane)");
-  assert.equal(results[5], false, "i5 at (0,0,-3) must be CULLED (near plane)");
+  assert.equal(results[5], false, "i5 at (0,0,-5) must be CULLED (near plane)");
 
   // Collect survivors.
   const survivors = instances
@@ -1206,21 +1215,21 @@ test("cpu-cull S3-T2: radius controls cull boundary (larger radius keeps more in
   ]);
   const planes = extractFrustumPlanesJS(identity);
 
-  // Instance at (3,0,0): right plane [-1,0,0,1]: d = -3+1 = -2.
-  // radius=1.5 → -2 < -1.5 → CULLED.
-  // radius=3   → -2 >= -3  → VISIBLE.
+  // Instance at (4,0,0): right plane d=-3. Identity has Frobenius bound √3.
+  // radius=1.5 → effective radius≈2.598 → CULLED.
+  // radius=3   → effective radius≈5.196 → VISIBLE.
   function makeTf(x, y, z) {
     const t = new Float32Array(16);
     t[0]=1; t[5]=1; t[10]=1; t[15]=1; // identity mat
     t[12]=x; t[13]=y; t[14]=z;
     return t;
   }
-  const tf3 = makeTf(3, 0, 0);
+  const tf3 = makeTf(4, 0, 0);
 
   assert.equal(instancePassesCullTest(tf3, 0, planes, 1.5), false,
-    "radius 1.5: instance at (3,0,0) must be CULLED");
+    "radius 1.5: instance at (4,0,0) must be CULLED");
   assert.equal(instancePassesCullTest(tf3, 0, planes, 3.0), true,
-    "radius 3.0: instance at (3,0,0) must be VISIBLE (sphere overlaps right plane)");
+    "radius 3.0: instance at (4,0,0) must be VISIBLE (sphere overlaps right plane)");
 });
 
 // -------------------------------------------------------------------------
@@ -1233,8 +1242,8 @@ test("cpu-cull S3-T3: absent or zero cullRadius defaults to 2.0 (matches GPU-cul
   ]);
   const planes = extractFrustumPlanesJS(identity);
 
-  // At (2.5,0,0): right plane d = -2.5+1 = -1.5; -default_radius = -2.0; -1.5 >= -2 → VISIBLE.
-  // At (3.5,0,0): right plane d = -3.5+1 = -2.5; -2.5 < -2.0 → CULLED.
+  // Identity has Frobenius bound √3, so the default effective radius is 2√3.
+  // At x=4 d=-3 and survives; at x=5 d=-4 and is culled.
   function makeTf(x) {
     const t = new Float32Array(16);
     t[0]=1; t[5]=1; t[10]=1; t[15]=1;
@@ -1243,23 +1252,22 @@ test("cpu-cull S3-T3: absent or zero cullRadius defaults to 2.0 (matches GPU-cul
   }
 
   // undefined radius → default 2.0
-  assert.equal(instancePassesCullTest(makeTf(2.5), 0, planes, undefined), true,
-    "undefined radius → default 2.0 → (2.5,0,0) is VISIBLE");
-  assert.equal(instancePassesCullTest(makeTf(3.5), 0, planes, undefined), false,
-    "undefined radius → default 2.0 → (3.5,0,0) is CULLED");
+  assert.equal(instancePassesCullTest(makeTf(4), 0, planes, undefined), true,
+    "undefined radius → default 2.0 → (4,0,0) is VISIBLE");
+  assert.equal(instancePassesCullTest(makeTf(5), 0, planes, undefined), false,
+    "undefined radius → default 2.0 → (5,0,0) is CULLED");
   // 0 radius → default 2.0
-  assert.equal(instancePassesCullTest(makeTf(2.5), 0, planes, 0), true,
-    "zero radius → default 2.0 → (2.5,0,0) is VISIBLE");
-  assert.equal(instancePassesCullTest(makeTf(3.5), 0, planes, 0), false,
-    "zero radius → default 2.0 → (3.5,0,0) is CULLED");
+  assert.equal(instancePassesCullTest(makeTf(4), 0, planes, 0), true,
+    "zero radius → default 2.0 → (4,0,0) is VISIBLE");
+  assert.equal(instancePassesCullTest(makeTf(5), 0, planes, 0), false,
+    "zero radius → default 2.0 → (5,0,0) is CULLED");
 });
 
 // -------------------------------------------------------------------------
 // S3 T4: WebGL2 source — CPU cull path present in 16-scene-webgl.js
 // -------------------------------------------------------------------------
 test("cpu-cull S3-T4: 16-scene-webgl.js contains CPU cull path with correct structure", () => {
-  const webgl = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   // The cull config check must be present.
   assert.match(webgl, /hasCullConfig/,
@@ -1292,8 +1300,7 @@ test("cpu-cull S3-T4: 16-scene-webgl.js contains CPU cull path with correct stru
 // S3 T5: WebGL2 capability gating — no-cull-config → draw-all (source check)
 // -------------------------------------------------------------------------
 test("cpu-cull S3-T5: no cullKernelWGSL on WebGL2 → draw-all (unchanged instanceCount)", () => {
-  const webgl = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   // The hasCullConfig branch is conditional — draw-all when false.
   assert.match(webgl, /if\s*\(hasCullConfig\)\s*\{/,
@@ -1309,8 +1316,7 @@ test("cpu-cull S3-T5: no cullKernelWGSL on WebGL2 → draw-all (unchanged instan
 });
 
 test("cpu-cull S3-T5b: WebGL instanced draw validates attribute capacity before drawArraysInstanced", () => {
-  const webgl = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   assert.match(webgl, /function sceneInstancedAttributeCapacity\(data, components\)/,
     "instanced path must measure typed-array capacity");
@@ -1329,8 +1335,7 @@ test("cpu-cull S3-T5b: WebGL instanced draw validates attribute capacity before 
 });
 
 test("cpu-cull S3-T5c: WebGL instanced draw disables stale unowned vertex attributes", () => {
-  const webgl = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   assert.match(webgl, /function sceneDisableUnownedVertexAttribArrays\(allowed\)/,
     "instanced path must clear stale global vertex attributes");
@@ -1358,6 +1363,9 @@ test("cpu-cull S3-T5c: WebGL instanced draw disables stale unowned vertex attrib
       const n = Number(value);
       return Number.isFinite(n) ? n : fallback;
     },
+    sceneCachedGLParameter(gl, pname) {
+      return gl.getParameter(pname);
+    },
   };
   vm.runInNewContext(fnMatch[0] + "\nsceneDisableUnownedVertexAttribArrays({0:true,4:true,5:true,6:true,7:true});", context);
 
@@ -1373,12 +1381,11 @@ test("cpu-cull S3-T5c: WebGL instanced draw disables stale unowned vertex attrib
 // S3 T6: WebGPU path untouched — extractFrustumPlanesJS not redefined in 16a
 // -------------------------------------------------------------------------
 test("cpu-cull S3-T6: WebGPU path (16a) does NOT redefine extractFrustumPlanesJS (uses shared 11)", () => {
-  const webgpu = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // Must not redefine the function (it was hoisted to 11).
   assert.doesNotMatch(webgpu, /function extractFrustumPlanesJS\(vp\)/,
-    "16a must not redefine extractFrustumPlanesJS (hoisted to 11-scene-math.js)");
+    "16a must not redefine extractFrustumPlanesJS (hoisted to 11-scene-math.ts)");
 
   // The GPU cull path must remain intact: updateInstancedCullSystems + drawIndirect.
   assert.match(webgpu, /updateInstancedCullSystems\(/,
@@ -1390,16 +1397,16 @@ test("cpu-cull S3-T6: WebGPU path (16a) does NOT redefine extractFrustumPlanesJS
 });
 
 // -------------------------------------------------------------------------
-// S3 T7: 11-scene-math.js exports both shared cull functions
+// S3 T7: 11-scene-math.ts exports both shared cull functions
 // -------------------------------------------------------------------------
-test("cpu-cull S3-T7: 11-scene-math.js defines extractFrustumPlanesJS and instancePassesCullTest", () => {
+test("cpu-cull S3-T7: 11-scene-math.ts defines extractFrustumPlanesJS and instancePassesCullTest", () => {
   const math = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+    path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   assert.match(math, /function extractFrustumPlanesJS\(vp\)/,
-    "extractFrustumPlanesJS must be defined in 11-scene-math.js");
+    "extractFrustumPlanesJS must be defined in 11-scene-math.ts");
   assert.match(math, /function instancePassesCullTest\(transforms, instanceIndex, planes, radius\)/,
-    "instancePassesCullTest must be defined in 11-scene-math.js");
+    "instancePassesCullTest must be defined in 11-scene-math.ts");
 
   // instancePassesCullTest must match cull.go: cull when d < -radius.
   assert.match(math, /if\s*\(d\s*<\s*-r\)\s*return false/,
@@ -1463,7 +1470,7 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
   const fnSource = mountSrc.slice(fnStart, fnEnd);
 
   const ctx = vm.createContext({
-    window: {},
+    window: { __gosx_runtime_api: {} },
     document: {
       querySelector(sel) { if (sel === "[data-gosx-scene3d-mounted]") return mount; return null; },
     },
@@ -1471,7 +1478,7 @@ test("telemetry T1: __gosx_scene3d_telemetry aggregates scene mount data attribu
     parseFloat,
   });
   // Wire window.__gosx_scene3d_webgpu_diagnostics to undefined (not available).
-  vm.runInContext(fnSource + "\n", ctx);
+  runTelemetrySource(fnSource, ctx);
 
   const snap = ctx.window.__gosx_scene3d_telemetry(mount);
   assert.ok(snap !== null, "telemetry snapshot must not be null");
@@ -1512,14 +1519,14 @@ test("telemetry T2: __gosx_scene3d_telemetry(null) returns null when no mounted 
   const fnSource = mountSrc.slice(fnStart, fnEnd);
 
   const ctx = vm.createContext({
-    window: {},
+    window: { __gosx_runtime_api: {} },
     document: {
       querySelector() { return null; },
     },
     JSON,
     parseFloat,
   });
-  vm.runInContext(fnSource + "\n", ctx);
+  runTelemetrySource(fnSource, ctx);
 
   const snap = ctx.window.__gosx_scene3d_telemetry(null);
   assert.equal(snap, null, "must return null when no mounted scene found");
@@ -1577,6 +1584,7 @@ test("telemetry T2a: explicit page scope exposes every registered mount and stan
   let webgpuProbeCalls = 0;
   const ctx = vm.createContext({
     window: {
+      __gosx_runtime_api: {},
       __gosx_scene3d_debug_registry: registry,
       __gosx_scene3d_webgpu_diagnostics() {
         webgpuProbeCalls += 1;
@@ -1595,7 +1603,7 @@ test("telemetry T2a: explicit page scope exposes every registered mount and stan
     JSON,
     parseFloat,
   });
-  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+  runTelemetrySource(mountSrc.slice(fnStart, fnEnd), ctx);
 
   const page = ctx.window.__gosx_scene3d_telemetry({scope: "page"});
   assert.equal(webgpuProbeCalls, 1, "one page snapshot must read page-global WebGPU capability exactly once");
@@ -1647,12 +1655,12 @@ test("telemetry T2b: strict typed parsing surfaces invalid values and malformed 
   const fnStart = mountSrc.indexOf("window.__gosx_scene3d_telemetry = function sceneTelemSnapshot");
   const fnEnd = mountSrc.indexOf("\n  window.__gosx_register_engine_factory", fnStart);
   const ctx = vm.createContext({
-    window: {},
+    window: { __gosx_runtime_api: {} },
     document: {querySelector() { return mount; }},
     JSON,
     parseFloat,
   });
-  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+  runTelemetrySource(mountSrc.slice(fnStart, fnEnd), ctx);
 
   const snap = ctx.window.__gosx_scene3d_telemetry(mount);
   assert.equal(snap.ready, null);
@@ -1698,6 +1706,7 @@ test("telemetry T2c: missing attributes stay quiet while producer failures are c
   let webgpuProbeFails = true;
   const ctx = vm.createContext({
     window: {
+      __gosx_runtime_api: {},
       __gosx_scene3d_debug_registry: registry,
       __gosx_scene3d_webgpu_diagnostics() {
         webgpuProbeCalls += 1;
@@ -1717,7 +1726,7 @@ test("telemetry T2c: missing attributes stay quiet while producer failures are c
     JSON,
     parseFloat,
   });
-  vm.runInContext(mountSrc.slice(fnStart, fnEnd) + "\n", ctx);
+  runTelemetrySource(mountSrc.slice(fnStart, fnEnd), ctx);
 
   const quiet = ctx.window.__gosx_scene3d_telemetry(quietMount);
   assert.equal(webgpuProbeCalls, 1, "direct mount scope probes once");
@@ -1765,7 +1774,7 @@ test("telemetry T2c: missing attributes stay quiet while producer failures are c
 // -------------------------------------------------------------------------
 test("telemetry T3: 16b-scene-compute.js exposes requestSurvivorReadback and pollSurvivors on cull system", () => {
   const compute = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16b-scene-compute.js"), "utf8");
+    path.join(__dirname, "..", "runtime", "scene3d", "compute.ts"), "utf8");
 
   assert.match(compute, /requestSurvivorReadback/,
     "cull system must expose requestSurvivorReadback");
@@ -1787,8 +1796,7 @@ test("telemetry T3: 16b-scene-compute.js exposes requestSurvivorReadback and pol
 // Telemetry T4: cull telemetry gate — 16a gates readback on cull_telemetry flag
 // -------------------------------------------------------------------------
 test("telemetry T4: 16a-scene-webgpu.js gates survivor readback on __gosx_scene3d_cull_telemetry", () => {
-  const webgpu = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /__gosx_scene3d_cull_telemetry/,
     "16a must reference __gosx_scene3d_cull_telemetry gate");
@@ -1826,8 +1834,7 @@ test("telemetry T5: 20-scene-mount.js defines __gosx_scene3d_telemetry", () => {
 // the prior frame's submitted copy, not a not-yet-submitted copy.
 // -------------------------------------------------------------------------
 test("telemetry T6: 16a pollSurvivors is called BEFORE requestSurvivorReadback in telemetry block", () => {
-  const webgpu = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // Use the LAST occurrence of "return instancedCullSystems;" as the block boundary
   // (there is an earlier early-return for the empty-meshes case that must be excluded).
@@ -1854,7 +1861,7 @@ test("telemetry T6: 16a pollSurvivors is called BEFORE requestSurvivorReadback i
 // -------------------------------------------------------------------------
 test("telemetry T7: 16b initialises lastSurvivors to null (not 0)", () => {
   const compute = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16b-scene-compute.js"), "utf8");
+    path.join(__dirname, "..", "runtime", "scene3d", "compute.ts"), "utf8");
 
   assert.match(compute, /lastSurvivors:\s*null/,
     "lastSurvivors must initialise to null so the HUD can distinguish pending from 0 survivors");
@@ -1866,8 +1873,7 @@ test("telemetry T7: 16b initialises lastSurvivors to null (not 0)", () => {
 // object comes from bundle.materials[] (which carries kind but never sets unlit).
 // -------------------------------------------------------------------------
 test("color T1: 16a materialUniformData sets unlit=1 for kind:flat and materialKind:flat", () => {
-  const webgpu = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The unlit uniform slot must be derived from mat.kind OR mat.materialKind,
   // not only from mat.unlit.  Regression guard: before the fix u[12] was set

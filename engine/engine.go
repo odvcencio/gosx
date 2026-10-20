@@ -18,6 +18,7 @@ package engine
 import (
 	"encoding/json"
 	"fmt"
+	"m31labs.dev/gosx/internal/sceneprobe"
 	"strings"
 	"sync"
 )
@@ -252,6 +253,9 @@ func ValidateRuntime(runtime Runtime, wasmPath string) error {
 
 // Config describes an engine instance for mounting.
 type Config struct {
+	// Scene3DProbe is a request-local server snapshot; it is never sent to clients.
+	Scene3DProbe *sceneprobe.Probe `json:"-"`
+
 	// Name is the engine component name.
 	Name string `json:"name"`
 

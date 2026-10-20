@@ -3,14 +3,20 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"syscall/js"
 
 	"m31labs.dev/gosx/client/bridge"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
 )
 
 func registerRuntime(b *bridge.Bridge) {
+	b.RegisterIslandHostFactory("browser", func(islandID string) vm.HostReceiver {
+		return newBrowserHostReceiver(islandID)
+	})
 	b.SetSharedSignalCallback(func(name, valueJSON string) {
 		notify := js.Global().Get("__gosx_notify_shared_signal")
 		if notify.Type() == js.TypeFunction {
@@ -18,7 +24,10 @@ func registerRuntime(b *bridge.Bridge) {
 		}
 	})
 	b.SetPatchCallback(func(islandID, patchJSON string) {
-		js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
+		applyLegacyPatches(islandID, patchJSON)
+	})
+	b.SetPatchMailboxCallback(func(islandID string, mailbox []byte) {
+		applyPatchMailbox(islandID, mailbox)
 	})
 	setRuntimeFunc("__gosx_hydrate", hydrateRuntimeFunc(b))
 	setRuntimeFunc("__gosx_hydrate_canvas", hydrateCanvasRuntimeFunc(b))
@@ -38,10 +47,11 @@ func registerRuntime(b *bridge.Bridge) {
 	registerTextLayoutRuntime()
 	registerCRDTRuntime()
 	// Cross-frame postMessage relay for $preview.* shared signals
-	// (ADR 0009 — see client/wasm/cross_frame.go). Idempotent and
+	// (see client/wasm/cross_frame.go). Idempotent and
 	// inert when the page does not opt into preview mode via the
 	// gosx-preview=1 query parameter.
 	registerCrossFrameRelay(b)
+	registerRuntimeABI(b)
 }
 
 func setRuntimeFunc(name string, fn js.Func) {
@@ -69,11 +79,40 @@ func hydrateRuntimeFunc(b *bridge.Bridge) js.Func {
 		if err != nil {
 			return jsError(err)
 		}
-		if err := b.HydrateReconciler(surfaceKind, call.islandID, call.componentName, call.propsJSON, call.programData, call.format); err != nil {
+		output, err := b.HydrateReconcilerOutput(surfaceKind, call.islandID, call.componentName, call.propsJSON, call.programData, call.format)
+		if err != nil {
 			return jsError(err)
 		}
-		return js.Null()
+		if output == nil {
+			return js.Null()
+		}
+		value, err := hydrateEnvelopeJSValue(output)
+		if err != nil {
+			b.DisposeEngine(call.islandID)
+			return jsError(err)
+		}
+		return value
 	})
+}
+
+var marshalHydrateEnvelope = json.Marshal
+
+func hydrateEnvelopeJSValue(output *bridge.HydrateEnvelope) (value js.Value, err error) {
+	data, err := marshalHydrateEnvelope(output)
+	if err != nil {
+		return js.Undefined(), fmt.Errorf("marshal hydrate output: %w", err)
+	}
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			value = js.Undefined()
+			err = fmt.Errorf("convert hydrate output: %v", recovered)
+		}
+	}()
+	value = js.Global().Get("JSON").Call("parse", string(data))
+	if value.Type() != js.TypeObject || value.IsNull() || value.InstanceOf(js.Global().Get("Array")) {
+		return js.Undefined(), errors.New("convert hydrate output: JSON.parse did not return an object")
+	}
+	return value, nil
 }
 
 // parseUnifiedHydrateArgs detects the call shape and returns the surfaceKind
@@ -141,7 +180,7 @@ func actionRuntimeFunc(b *bridge.Bridge) js.Func {
 			logRuntimeError("dispatch error", err)
 			return jsError(err)
 		}
-		return applyPatchedResult(args[0].String(), patches)
+		return applyPatchedResult(b, args[0].String(), patches)
 	})
 }
 
@@ -288,16 +327,76 @@ func normalizeJSONArg(value js.Value, fallback string) (string, error) {
 	}
 }
 
-func applyPatchedResult(islandID string, patches []vm.PatchOp) any {
+func applyPatchedResult(b *bridge.Bridge, islandID string, patches []vm.PatchOp) any {
 	if len(patches) == 0 {
 		return js.ValueOf(0)
 	}
+	b.EmitPatches(islandID, patches)
+	return js.ValueOf(len(patches))
+}
+
+func applyLegacyPatches(islandID, patchJSON string) {
+	apply := js.Global().Get("__gosx_apply_patches")
+	if apply.Type() == js.TypeFunction {
+		apply.Invoke(islandID, patchJSON)
+	}
+}
+
+func applyPatchMailbox(islandID string, mailbox []byte) {
+	apply, patch := js.Undefined(), js.Undefined()
+	facade := js.Global().Get("__gosx")
+	if facade.Type() == js.TypeObject {
+		host := facade.Get("host")
+		if host.Type() == js.TypeObject {
+			patch = host.Get("patch")
+			if patch.Type() == js.TypeObject {
+				apply = patch.Get("applyMailbox")
+			}
+		}
+	}
+	dispatchOps := patch.Type() == js.TypeObject && patch.Get("dispatchOps").Type() == js.TypeNumber && patch.Get("dispatchOps").Int() >= 1
+	if apply.Type() == js.TypeFunction && dispatchOps {
+		apply.Invoke(islandID, bytesToUint8Array(mailbox))
+		return
+	}
+	// patch.js ships independently from the bootstrap. Older chunks support
+	// attribute ops 1/2, but do not understand the protected dispatch ops 10/11.
+	header, _, patches, err := runtimewasm.DecodePatchMailbox(mailbox)
+	if err != nil {
+		logRuntimeError("patch mailbox decode", err)
+		return
+	}
+	if !dispatchOps {
+		for i := range patches {
+			switch patches[i].Kind {
+			case vm.PatchSetDispatch:
+				patches[i].Kind = vm.PatchSetAttr
+			case vm.PatchRemoveDispatch:
+				patches[i].Kind = vm.PatchRemoveAttr
+			}
+		}
+	}
+	if apply.Type() == js.TypeFunction {
+		legacyMailbox, err := runtimewasm.EncodePatchMailbox(islandID, header.RequestID, patches)
+		if err != nil {
+			logRuntimeError("patch mailbox fallback", err)
+			return
+		}
+		apply.Invoke(islandID, bytesToUint8Array(legacyMailbox))
+		return
+	}
 	patchJSON, err := bridge.MarshalPatches(patches)
 	if err != nil {
-		return js.ValueOf("marshal:" + err.Error())
+		logRuntimeError("patch fallback marshal", err)
+		return
 	}
-	js.Global().Call("__gosx_apply_patches", islandID, patchJSON)
-	return js.ValueOf(len(patches))
+	applyLegacyPatches(islandID, patchJSON)
+}
+
+func bytesToUint8Array(data []byte) js.Value {
+	array := js.Global().Get("Uint8Array").New(len(data))
+	js.CopyBytesToJS(array, data)
+	return array
 }
 
 func logRuntimeError(prefix string, err error) {

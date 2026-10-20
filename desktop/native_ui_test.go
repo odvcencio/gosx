@@ -6,6 +6,25 @@ import (
 	"testing"
 )
 
+func TestBuildMenuPlanAppendsAcceleratorLabel(t *testing.T) {
+	plan, err := BuildMenuPlan(Menu{Items: []MenuItem{{ID: "undo", Label: "Undo", Accelerator: " Ctrl+Z "}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item := plan.Items[0]; item.Label != "Undo\tCtrl+Z" || item.Accelerator != "Ctrl+Z" {
+		t.Fatalf("menu item = %+v", item)
+	}
+	for _, bad := range []string{"Ctrl\tZ", "Ctrl\x00Z"} {
+		if _, err := BuildMenuPlan(Menu{Items: []MenuItem{{Label: "Undo", Accelerator: bad}}}); !errors.Is(err, ErrInvalidOptions) {
+			t.Errorf("accelerator %q: error = %v", bad, err)
+		}
+	}
+	plan, err = BuildMenuPlan(Menu{Items: []MenuItem{{Label: "File", Accelerator: "F9", Submenu: &Menu{Items: []MenuItem{{Label: "Open"}}}}}})
+	if err != nil || plan.Items[0].Label != "File" {
+		t.Fatalf("submenu label includes accelerator: %+v, %v", plan, err)
+	}
+}
+
 func TestBuildMenuPlanAssignsCommandIDs(t *testing.T) {
 	plan, err := BuildMenuPlan(Menu{Items: []MenuItem{
 		{Label: "File", Submenu: &Menu{Items: []MenuItem{

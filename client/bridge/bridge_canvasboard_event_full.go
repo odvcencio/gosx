@@ -1,4 +1,4 @@
-//go:build !gosx_tiny_islands_only
+//go:build !gosx_tiny_islands_only && !gosx_runtime_core && !gosx_runtime_collab
 
 package bridge
 
@@ -11,7 +11,7 @@ import (
 
 // CanvasBoardEventKind identifies the interaction a CanvasBoardEvent carries.
 // The integer values are pinned to the JS bootstrap protocol (the canvas2d
-// branch in client/js/bootstrap-src/26b-feature-engines-prefix.js dispatches
+// branch in client/js/bootstrap-src/26b-feature-engines-prefix.ts dispatches
 // these via __gosx_canvas_event) so the two sides stay in lockstep without a
 // separate enum on the wire.
 //
@@ -20,10 +20,10 @@ import (
 // presence check passes while the browser sends a code Go reads as unknown.
 // See internal/claimcheck for the checker.
 //
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_canvas_event`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_EVENT_PAN = 1;`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_EVENT_NAV = 5;`
-//	gosx:claim count=5 client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_EVENT_[A-Z]+ = [0-9]+;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_canvas_event`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_EVENT_PAN = 1;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_EVENT_NAV = 5;`
+//	gosx:claim count=5 client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_EVENT_[A-Z]+ = [0-9]+;`
 type CanvasBoardEventKind int
 
 const (
@@ -40,13 +40,13 @@ const (
 	// under the cursor stays pinned to the same screen pixel.
 	CanvasBoardEventZoom CanvasBoardEventKind = 2
 	// CanvasBoardEventPick hit-tests a screen point and writes the result into
-	// $surface.event.* (ADR 0007).
+	// $surface.event.*.
 	//   floats = [screenX, screenY, cssWidth, cssHeight]
 	CanvasBoardEventPick CanvasBoardEventKind = 3
 	// CanvasBoardEventMarquee hit-tests a screen-space rectangle (shift-drag on
 	// empty canvas) and writes the comma-joined ids of every pickable node it
 	// covers into $surface.event.selectedIDs, plus the first/primary into
-	// selectedID (ADR 0007). A zero-area rect clears the selection (the Escape
+	// selectedID. A zero-area rect clears the selection (the Escape
 	// gesture). Mirrors the DOM board's startMarquee → selectedNodes.
 	//   floats = [x0, y0, x1, y1, cssWidth, cssHeight]
 	CanvasBoardEventMarquee CanvasBoardEventKind = 4
@@ -67,10 +67,10 @@ const (
 // A wrong code does not crash. It turns an arrow key into a move in another
 // direction, which a reader blames on the cost model in NavFrom.
 //
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_NAV_UP = 0;`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_NAV_RIGHT = 3;`
-//	gosx:claim count=4 client/js/bootstrap-src/26b-feature-engines-prefix.js `const CANVAS_NAV_[A-Z]+ = [0-9]+;`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `case "ArrowUp": return CANVAS_NAV_UP;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_NAV_UP = 0;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_NAV_RIGHT = 3;`
+//	gosx:claim count=4 client/js/bootstrap-src/26b-feature-engines-prefix.ts `const CANVAS_NAV_[A-Z]+ = [0-9]+;`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `case "ArrowUp": return CANVAS_NAV_UP;`
 type CanvasNavDirection int
 
 const (
@@ -102,7 +102,7 @@ func canvasNavDirString(code CanvasNavDirection) string {
 // adapter. Pan/zoom mutate the adapter's runtime camera (SetCamera) so the next
 // __gosx_render_canvas frame paints the new view; pick hit-tests through the
 // camera and writes selection/pointer signals into the shared store under
-// $surface.event.* (per ADR 0007, legacy $scene.event.* consumers receive the
+// $surface.event.* (legacy $scene.event.* consumers receive the
 // same writes via the read-only alias table).
 //
 // floats carries the kind-specific numeric payload (see the kind constants);
@@ -204,7 +204,7 @@ func canvasBoardApplyZoom(adapter *vm.CanvasBoardAdapter, factor, cursorX, curso
 
 // canvasBoardApplyPick converts a screen point to world, hit-tests the topmost
 // pickable node, and writes the outcome into the shared store under
-// $surface.event.* (ADR 0007). A miss clears selectedID/targetID to "" so a
+// $surface.event.*. A miss clears selectedID/targetID to "" so a
 // click on empty space deselects.
 func (b *Bridge) canvasBoardApplyPick(adapter *vm.CanvasBoardAdapter, screenX, screenY, cssW, cssH float64) {
 	panX, panY, zoom := adapter.Camera()
@@ -237,8 +237,8 @@ func (b *Bridge) canvasBoardApplyPick(adapter *vm.CanvasBoardAdapter, screenX, s
 // canvasBoardApplyMarquee converts a screen-space rectangle to world (via the
 // live camera, the same inverse-transform a single pick uses) and writes the
 // ids of every pickable node it covers into $surface.event.selectedIDs
-// (comma-joined, back-to-front) plus the first as the primary selectedID (ADR
-// 0007). A zero-area rect (the Escape / clear gesture) writes empty strings so
+// (comma-joined, back-to-front) plus the first as the primary selectedID.
+// A zero-area rect (the Escape / clear gesture) writes empty strings so
 // the muddy bridge clears the board's multi-selection. The two screen corners
 // are each inverted to world; PickWorldRect re-normalizes, so corner order does
 // not matter.
@@ -322,7 +322,7 @@ func canvasBoardJoinIDs(ids []string) string {
 }
 
 // canvasBoardScreenToWorld inverts the OrthoCamera2D screen transform the JS
-// painter applies (bootstrap-src/26b1-canvas2d-painter.js):
+// painter applies (bootstrap-src/26b1-canvas2d-painter.ts):
 //
 //	screenX = (worldX - panX) * zoom + cssW/2
 //	screenY = cssH/2 - (worldY - panY) * zoom   (Y flipped)

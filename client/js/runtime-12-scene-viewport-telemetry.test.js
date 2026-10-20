@@ -22,7 +22,182 @@ const {
   flushAsyncWork,
   telemetryPostBodies,
   telemetryEvents,
+  loadSceneViewportAPI,
+  resolveSceneViewportForTest,
 } = require("./runtime-test-harness.js");
+
+test("Scene3D viewport honors minDevicePixelRatio as a sharpness floor after capability selection", () => {
+  const viewport = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 2,
+    maxPixels: 2073600,
+  }, {
+    devicePixelRatio: 1.85,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(viewport.devicePixelRatio, 1.85);
+  assert.ok(viewport.pixelWidth >= 720, "mobile backing width must stay at or above 720px");
+  assert.ok(viewport.pixelWidth * viewport.pixelHeight <= 2073600, "1080p max-pixel budget must remain a hard cap");
+});
+
+test("Scene3D viewport constrains the DPR floor with maxPixels and authored maxDevicePixelRatio", () => {
+  const pixelCapped = resolveSceneViewportForTest({
+    width: 1000,
+    height: 500,
+    minDevicePixelRatio: 1.8,
+    maxDevicePixelRatio: 2,
+    maxPixels: 720000,
+  }, { devicePixelRatio: 2 });
+  assert.ok(Math.abs(pixelCapped.devicePixelRatio - 1.2) < 0.001);
+  assert.equal(pixelCapped.pixelWidth * pixelCapped.pixelHeight, 720000);
+
+  const authoredMaxCapped = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 1.5,
+    maxPixels: 2073600,
+  }, { devicePixelRatio: 2 });
+  assert.equal(authoredMaxCapped.devicePixelRatio, 1.5);
+});
+
+test("Scene3D viewport preserves low-power DPR caps unless an authored floor raises them", () => {
+  const capped = resolveSceneViewportForTest({ width: 390, height: 844 }, {
+    devicePixelRatio: 3,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(capped.devicePixelRatio, 1.25);
+
+  const floored = resolveSceneViewportForTest({
+    width: 390,
+    height: 844,
+    minDevicePixelRatio: 1.85,
+    maxDevicePixelRatio: 2,
+  }, {
+    devicePixelRatio: 3,
+    capability: { tier: "constrained", lowPower: true },
+  });
+  assert.equal(floored.devicePixelRatio, 1.85);
+});
+
+test("responsive fill-height Scene3D measures its mount instead of a stale intrinsic canvas", () => {
+  const viewport = resolveSceneViewportForTest({
+    width: 720,
+    height: 480,
+    responsive: true,
+    fillHeight: true,
+  }, {
+    measuredWidth: 663,
+    measuredHeight: 620,
+    canvasMeasuredWidth: 663,
+    canvasMeasuredHeight: 858,
+  });
+
+  assert.equal(viewport.cssWidth, 663);
+  assert.equal(viewport.cssHeight, 620);
+  assert.equal(viewport.pixelWidth, 663);
+  assert.equal(viewport.pixelHeight, 620);
+});
+
+test("responsive-height alias also measures its mount instead of a stale intrinsic canvas", () => {
+  const viewport = resolveSceneViewportForTest({
+    width: 720,
+    height: 480,
+    responsive: true,
+    responsiveHeight: true,
+  }, {
+    measuredWidth: 663,
+    measuredHeight: 620,
+    canvasMeasuredWidth: 663,
+    canvasMeasuredHeight: 858,
+  });
+
+  assert.equal(viewport.cssWidth, 663);
+  assert.equal(viewport.cssHeight, 620);
+  assert.equal(viewport.pixelWidth, 663);
+  assert.equal(viewport.pixelHeight, 620);
+});
+
+test("responsive Scene3D keeps canvas and labels in CSS coordinates under parent scaling", () => {
+  const api = loadSceneViewportAPI({ devicePixelRatio: 2 });
+  const props = { responsive: true, fillHeight: true, maxDevicePixelRatio: 2, maxPixels: 600000 };
+  const base = api.sceneViewportBase(props);
+  for (const scale of [0.7, 1.6]) {
+    const mount = {
+      clientWidth: 940, clientHeight: 340, style: {}, setAttribute() {},
+      computedStyle: { paddingTop: "12px", paddingBottom: "8px" },
+      getBoundingClientRect: () => ({ left: 30, top: 40, width: 944 * scale, height: 344 * scale }),
+    };
+    const canvas = {
+      clientWidth: 916, clientHeight: 320, offsetParent: mount, offsetLeft: 12, offsetTop: 12,
+      style: {}, setAttribute() {},
+      getBoundingClientRect: () => ({ left: 30 + 14 * scale, top: 40 + 14 * scale, width: 916 * scale, height: 320 * scale }),
+    };
+    const layer = { style: {} };
+    const viewport = api.sceneViewportFromMount(mount, props, base, canvas, { tier: "full" }, null);
+    assert.equal(viewport.cssWidth, 916, "CSS width must not inherit the parent's visual scale");
+    assert.equal(viewport.cssHeight, 320, "height uses the same unscaled coordinate system");
+    assert.ok(viewport.pixelWidth * viewport.pixelHeight <= props.maxPixels, "transforms must preserve the backing-pixel budget");
+    api.applySceneViewport(mount, canvas, layer, viewport, base);
+    assert.equal(layer.style.width, "916px");
+    assert.equal(layer.style.height, "320px");
+    assert.equal(layer.style.left, "12px", "overlay origin must use the canvas's local CSS offset");
+    assert.equal(layer.style.top, "12px");
+  }
+});
+
+test("responsive fill-height viewport converges when its mount is content-sized", () => {
+  const api = loadSceneViewportAPI();
+  const props = { width: 1920, height: 1080, responsive: true, fillHeight: true };
+  const base = api.sceneViewportBase(props);
+  const makeElement = () => {
+    const attributes = new Map();
+    return {
+      style: {},
+      setAttribute(name, value) { attributes.set(name, String(value)); },
+      getAttribute(name) { return attributes.has(name) ? attributes.get(name) : null; },
+    };
+  };
+  const mount = makeElement();
+  const canvas = makeElement();
+  const labelLayer = makeElement();
+  const mountWidth = 1440;
+  canvas.width = 1920;
+  canvas.height = 1080;
+  canvas.style.width = "100%";
+  canvas.style.height = "auto";
+  mount.computedStyle = { paddingTop: "12px", paddingBottom: "8px" };
+  Object.defineProperty(mount, "clientHeight", {
+    get() { return Math.ceil(mount.getBoundingClientRect().height); },
+  });
+  canvas.getBoundingClientRect = () => {
+    const width = canvas.style.width === "100%" ? mountWidth : Number.parseFloat(canvas.style.width) || canvas.width;
+    const height = canvas.style.height === "auto"
+      ? width * canvas.height / Math.max(1, canvas.width)
+      : Number.parseFloat(canvas.style.height) || canvas.height;
+    return { left: 0, top: 0, width, height };
+  };
+  mount.getBoundingClientRect = () => {
+    const canvasRect = canvas.getBoundingClientRect();
+    const labelHeight = labelLayer.style.position === "absolute" ? 0 : Number.parseFloat(labelLayer.style.height) || 0;
+    const inlineBaselineGap = canvas.style.display === "block" ? 0 : 9;
+    const verticalPadding = 20;
+    return { left: 0, top: 0, width: mountWidth, height: canvasRect.height + labelHeight + inlineBaselineGap + verticalPadding };
+  };
+
+  const heights = [];
+  for (let pass = 0; pass < 6; pass += 1) {
+    const viewport = api.sceneViewportFromMount(mount, props, base, canvas, { tier: "full" }, null);
+    heights.push(viewport.cssHeight);
+    api.applySceneViewport(mount, canvas, labelLayer, viewport, base);
+  }
+
+  assert.deepEqual(heights, [heights[0], heights[0], heights[0], heights[0], heights[0], heights[0]]);
+  assert.equal(canvas.style.display, "block");
+  assert.equal(labelLayer.style.position, "absolute");
+});
 
 test("bootstrap keeps Scene3D responsive across resize and DPR changes", async () => {
   const mount = new FakeElement("div", null);
@@ -827,6 +1002,134 @@ test("bootstrap telemetry records rejected fetch requests and pending request de
   assert.ok(snapshot.lastFailureAt > 0);
 });
 
+// Exercise native Response bodies as well as injected request compatibility.
+async function telemetryResponseFixture(transport, response) {
+  const env = createContext({});
+  env.context.__gosx_telemetry_config = { flushInterval: 30000 };
+  installManualTimers(env.context);
+  const requests = [];
+  if (transport === "fetch") {
+    const original = env.context.fetch;
+    env.context.fetch = (url, init) => {
+      if (new URL(url, env.context.location.href).pathname !== "/_gosx/client-events") return original(url, init);
+      requests.push({ url, init });
+      return Promise.resolve(response);
+    };
+  } else {
+    env.context.__gosx = { request(url, init) {
+      requests.push({ url, init });
+      return transport === "custom-sync" ? response : Promise.resolve(response);
+    } };
+  }
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  env.context.__gosx_emit("info", "response-completion", "event", {});
+  env.context.__gosx_telemetry_flush();
+  return { env, requests, snapshot: () => env.context.__gosx.telemetry.snapshot() };
+}
+
+for (const transport of ["fetch", "custom-promise", "custom-sync"]) {
+  test(`bootstrap telemetry keeps a 204 response pending until text completion (${transport})`, async () => {
+    const response = new Response(null, { status: 204 });
+    const originalText = response.text.bind(response);
+    let complete;
+    const completion = new Promise(resolve => { complete = resolve; });
+    let reads = 0;
+    response.text = () => { reads++; return completion.then(originalText); };
+    const x = await telemetryResponseFixture(transport, response);
+    await flushAsyncWork();
+    assert.equal(reads, 1, "even a bodyless 204 must invoke the native completion API");
+    assert.equal(x.snapshot().pendingRequests, 1);
+    assert.equal(x.snapshot().serverAcceptedEvents, 0, "headers alone do not settle telemetry delivery");
+    assert.equal(x.requests.length, 1);
+    assert.equal(x.requests[0].init.keepalive, true);
+    assert.equal(x.requests[0].init.credentials, "omit");
+    complete();
+    await flushAsyncWork();
+    assert.equal(x.snapshot().pendingRequests, 0);
+    assert.equal(x.snapshot().serverAcceptedEvents, 1);
+    assert.equal(x.snapshot().failedEvents, 0);
+    assert.equal(reads, 1);
+  });
+}
+
+test("bootstrap telemetry consumes a native streamed response before accepting it", async () => {
+  let controller;
+  const response = new Response(new ReadableStream({ start(value) { controller = value; } }));
+  const x = await telemetryResponseFixture("fetch", response);
+  await flushAsyncWork();
+  assert.equal(response.bodyUsed, true);
+  assert.equal(x.snapshot().pendingRequests, 1);
+  assert.equal(x.snapshot().serverAcceptedEvents, 0);
+  controller.enqueue(new TextEncoder().encode("accepted"));
+  controller.close();
+  await flushAsyncWork();
+  assert.equal(x.snapshot().pendingRequests, 0);
+  assert.equal(x.snapshot().serverAcceptedBatches, 1);
+});
+
+test("bootstrap telemetry records a native body rejection once without accepting or retrying", async () => {
+  let controller;
+  const response = new Response(new ReadableStream({ start(value) { controller = value; } }));
+  const x = await telemetryResponseFixture("fetch", response);
+  await flushAsyncWork();
+  assert.equal(x.snapshot().pendingRequests, 1);
+  controller.error(new Error("response truncated"));
+  await flushAsyncWork();
+  const snapshot = x.snapshot();
+  assert.equal(snapshot.pendingRequests, 0);
+  assert.equal(snapshot.serverAcceptedEvents, 0);
+  assert.equal(snapshot.fetchFailures, 1);
+  assert.equal(snapshot.failedEvents, 1);
+  assert.equal(snapshot.failedBatches, 1);
+  assert.equal(snapshot.lastFailureReason, "fetch-response-error");
+  assert.equal(snapshot.queueDepth, 0);
+  assert.equal(x.requests.length, 1, "body failures must not change retry/queue policy");
+});
+
+test("bootstrap telemetry retires pending when a custom response then getter throws", async () => {
+  const response = { get then() { throw new Error("invalid transport result"); } };
+  const x = await telemetryResponseFixture("custom-sync", response);
+  await flushAsyncWork();
+  assert.equal(x.snapshot().pendingRequests, 0);
+  assert.equal(x.snapshot().serverAcceptedEvents, 0);
+  assert.equal(x.snapshot().fetchFailures, 1);
+  assert.equal(x.snapshot().failedEvents, 1);
+  assert.equal(x.snapshot().lastFailureReason, "fetch-rejected");
+});
+
+test("bootstrap telemetry records a synchronous custom body-read exception", async () => {
+  const response = new Response(null, { status: 204 });
+  response.text = () => { throw new Error("response unavailable"); };
+  const x = await telemetryResponseFixture("custom-sync", response);
+  await flushAsyncWork();
+  assert.equal(x.snapshot().pendingRequests, 0);
+  assert.equal(x.snapshot().serverAcceptedEvents, 0);
+  assert.equal(x.snapshot().fetchFailures, 1);
+  assert.equal(x.snapshot().lastFailureReason, "fetch-response-error");
+});
+
+test("bootstrap telemetry preserves rejected HTTP status after completing its response", async () => {
+  const response = new Response("back off", { status: 429 });
+  const x = await telemetryResponseFixture("custom-promise", response);
+  await flushAsyncWork();
+  assert.equal(response.bodyUsed, true);
+  assert.equal(x.snapshot().pendingRequests, 0);
+  assert.equal(x.snapshot().serverAcceptedEvents, 0);
+  assert.equal(x.snapshot().fetchFailures, 1);
+  assert.equal(x.snapshot().lastFailureReason, "fetch-status-429");
+});
+
+for (const transport of ["custom-promise", "custom-sync"]) {
+  test(`bootstrap telemetry preserves completed status-only custom responses (${transport})`, async () => {
+    const x = await telemetryResponseFixture(transport, { ok: true, status: 204 });
+    await flushAsyncWork();
+    assert.equal(x.snapshot().pendingRequests, 0);
+    assert.equal(x.snapshot().serverAcceptedEvents, 1);
+    assert.equal(x.snapshot().failedEvents, 0);
+  });
+}
+
 test("bootstrap telemetry drops unserializable batches without throwing or recursively emitting", async () => {
   const env = createContext({
     fetchRoutes: {
@@ -1276,4 +1579,185 @@ test("bootstrap defers offscreen shared-runtime Scene3D rerenders until the moun
 
   const last = renderArgs[renderArgs.length - 1];
   assert.deepEqual(last.slice(2, 4), [320, 180]);
+});
+
+test("Scene3D webgl loss recovery rebuilds without a contextrestored event", async () => {
+  // Chrome does not guarantee `webglcontextrestored` after an involuntary
+  // loss, and in a real browser the Canvas2D stand-in lands on a REPLACEMENT
+  // canvas (the original is context-tainted), detaching the only restored
+  // listener with it. Before the recovery watchdog either path left the
+  // scene degraded forever. The watchdog must rebuild a real WebGL renderer
+  // on its own — on a fresh canvas when the original context stays lost —
+  // with no restored event ever firing.
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-webgl-loss-recovery";
+  let now = 0;
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    performanceNow: () => now,
+    fetchRoutes: {
+      "/_gosx/client-events": { status: 204, text: "" },
+    },
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-webgl-loss-recovery",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-webgl-loss-recovery",
+          jsExport: "GoSXScene3D",
+          props: {
+            width: 480,
+            height: 300,
+            autoRotate: false,
+            forceWebGL: true,
+            scene: {
+              objects: [
+                { kind: "box", width: 1.4, height: 1.1, depth: 1.2, x: 0, y: 0, z: 0, color: "#8de1ff" },
+              ],
+            },
+          },
+        },
+      ],
+    },
+  });
+  const timers = installManualTimers(env.context);
+  const raf = installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  timers.runDelay(0);
+  await flushAsyncWork();
+  await flushSceneInitialFrameBoundary(raf);
+
+  const originalCanvas = mount.children[0];
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  const lostGL = originalCanvas.getContext("webgl");
+  originalCanvas.dispatchEvent({ type: "webglcontextlost", preventDefault() {} });
+  await flushAsyncWork();
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+
+  // The original context never comes back: getContext keeps handing out the
+  // same lost context, exactly like a browser that never restores.
+  lostGL.isContextLost = () => true;
+
+  // Hidden-tab time must not spend recovery attempts.
+  env.context.document.visibilityState = "hidden";
+  now = 60000;
+  timers.runInterval(2000);
+  now = 120000;
+  timers.runInterval(2000);
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+
+  env.context.document.visibilityState = "visible";
+  now = 130000;
+  timers.runInterval(2000); // arms the eligibility baseline
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "canvas");
+  now = 134100;
+  timers.runInterval(2000); // first attempt after the 4s base delay
+  await flushAsyncWork();
+
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+  assert.equal(mount.getAttribute("data-gosx-scene3d-renderer-fallback"), null);
+  const recoveredCanvas = mount.children[0];
+  assert.notEqual(recoveredCanvas, originalCanvas);
+  const recoveredGL = recoveredCanvas.getContext("webgl");
+  assert.notEqual(recoveredGL, lostGL);
+  assert.ok(
+    recoveredGL.ops.some((entry) => entry[0] === "bufferData" && entry[3] > 0),
+    "recovered renderer must upload geometry buffers to the fresh GL context",
+  );
+});
+
+test("webgl authored points feed the frame clock to the time uniform", async () => {
+  // `time` is a reserved auto-uniform: the WGSL packer always resolves it
+  // from the per-frame clock and ignores the authored placeholder. The WebGL
+  // authored-points path used to upload entry.customUniforms verbatim —
+  // `time: 0` on every frame — so every shader-clock effect (twinkle, depth
+  // wrap, impulses) froze on WebGL while the same material animated on
+  // WebGPU. The content-route starfields were the canonical casualty.
+  let now = 0;
+  const env = createContext({
+    enableWebGL2: true,
+    disableCanvas2D: true,
+    performanceNow: () => now,
+  });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+
+  const api = env.context.__gosx_scene3d_api;
+  const backend = api.sceneBackendRegistry.select({
+    webgl: true,
+    webgl2: true,
+    webgpu: false,
+    canvas: false,
+    canvas2d: false,
+  });
+  const canvas = env.document.createElement("canvas");
+  canvas.width = 320;
+  canvas.height = 180;
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  assert.equal(renderer && renderer.type, "webgl-pbr");
+
+  const point = {
+    id: "clock-stars",
+    count: 2,
+    positions: [0, 0, 0, 1, 0, -4],
+    sizes: [1, 1],
+    colors: ["#ffffff", "#88ccff"],
+    size: 1,
+    opacity: 1,
+    blendMode: "additive",
+    depthWrite: false,
+    attenuation: false,
+    customVertex: "#version 300 es\nin vec3 a_position;\nuniform mat4 u_viewMatrix;\nuniform mat4 u_projectionMatrix;\nuniform float time;\nvoid main() { gl_Position = u_projectionMatrix * u_viewMatrix * vec4(a_position + vec3(time, 0.0, 0.0), 1.0); gl_PointSize = 2.0; }",
+    customFragment: "#version 300 es\nprecision highp float;\nout vec4 fragColor;\nvoid main() { fragColor = vec4(1.0); }",
+    customUniforms: { time: 0, twinkleBoost: 0.5 },
+    shaderBackend: "custom",
+  };
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    background: "#000000",
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {},
+    points: [point],
+    instancedMeshes: [],
+    computeParticles: [],
+    objects: [],
+    meshObjects: [],
+    materials: [],
+    labels: [],
+    sprites: [],
+    lights: [],
+    positions: new Float32Array(0),
+    colors: new Float32Array(0),
+    worldPositions: new Float32Array(0),
+    worldColors: new Float32Array(0),
+    worldLineWidths: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0),
+    worldMeshColors: new Float32Array(0),
+    worldMeshNormals: new Float32Array(0),
+    worldMeshUVs: new Float32Array(0),
+    worldMeshTangents: new Float32Array(0),
+    vertexCount: 0,
+    worldVertexCount: 0,
+    postEffects: [],
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+
+  now = 1500;
+  renderer.render(bundle, viewport);
+  now = 3000;
+  renderer.render(bundle, viewport);
+
+  const gl = canvas.getContext("webgl2");
+  const timeWrites = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
+    .map((entry) => entry[2]);
+  assert.deepEqual(timeWrites, [1.5, 3], "time must carry the frame clock each frame, never the authored 0");
+  const boostWrites = gl.ops
+    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "twinkleBoost")
+    .map((entry) => entry[2]);
+  assert.deepEqual(boostWrites, [0.5, 0.5], "non-reserved authored uniforms must still upload");
 });

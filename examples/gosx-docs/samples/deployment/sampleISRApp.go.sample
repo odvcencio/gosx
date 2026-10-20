@@ -1,0 +1,7 @@
+app := server.New()
+app.EnableISR()
+
+// Optional shared store for multiple server instances:
+app.SetISRStore(redis.NewISRStore(redisClient, redis.Options{
+    Prefix: "shop:gosx",
+}))

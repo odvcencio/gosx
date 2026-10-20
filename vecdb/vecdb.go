@@ -49,7 +49,7 @@ import (
 	"sort"
 	"sync"
 
-	"github.com/odvcencio/turboquant"
+	"m31labs.dev/turboquant"
 )
 
 // SearchResult holds one result from a similarity search.

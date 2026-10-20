@@ -8,7 +8,7 @@ import (
 	"m31labs.dev/gosx/island/program"
 )
 
-// TestLowerTrivialFunction is the spec test from X.C.1: lowering
+// TestLowerTrivialFunction is the spec test: lowering
 // `func F() int { return 42 }` produces a Program whose single Handler
 // evaluates to IntVal(42).
 func TestLowerTrivialFunction(t *testing.T) {
@@ -142,6 +142,31 @@ func TestLowerIntrinsicCall(t *testing.T) {
 import "math"
 
 func F() float64 { return math.Sqrt(16) }`)
+	prog, err := LowerFile(src)
+	if err != nil {
+		t.Fatalf("LowerFile: %v", err)
+	}
+	machine := vm.NewVM(prog, nil)
+	got := machine.EvalWithFrame(prog.Handlers[0].Body[0])
+	if got.Number() != 4 {
+		t.Errorf("F() = %f, want 4", got.Number())
+	}
+}
+
+// TestLowerIntrinsicCallThroughImportAlias proves the alias bug: an
+// intrinsic call through an aliased import (`m "math"`) must resolve to
+// the SAME canonical intrinsic ("math.Sqrt") that the unaliased import
+// resolves to in TestLowerIntrinsicCall, not to the alias-qualified name
+// ("m.Sqrt"), which knownIntrinsics never contains. Before the fix, the
+// lowerer built the qualified name from the source-level selector text —
+// the alias itself — so this call missed the intrinsic table and failed
+// to lower with "call to m.Sqrt is not in the supported intrinsic set."
+func TestLowerIntrinsicCallThroughImportAlias(t *testing.T) {
+	src := []byte(`package handlers
+
+import m "math"
+
+func F() float64 { return m.Sqrt(16) }`)
 	prog, err := LowerFile(src)
 	if err != nil {
 		t.Fatalf("LowerFile: %v", err)

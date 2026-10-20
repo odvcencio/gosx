@@ -1,0 +1,5 @@
+import "m31labs.dev/gosx/session"
+
+// inside an action handler:
+session.AddFlash(ctx.Request, "notice", "Your changes were saved.")
+return ctx.Success("", nil)

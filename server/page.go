@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/internal/basepath"
 )
 
 // PageHandler renders an HTML page for a given request context.
@@ -51,10 +53,15 @@ type DocumentFunc func(doc *DocumentContext) gosx.Node
 // DocumentContext captures the fully prepared page state used to render a
 // document shell.
 type DocumentContext struct {
-	Request       *http.Request
-	Pattern       string
-	Status        int
-	Title         string
+	Request *http.Request
+	Pattern string
+	Status  int
+	Title   string
+	// Language is the BCP 47 language tag written to the document's html
+	// element. Empty falls back to defaultDocumentLanguage ("en") so the
+	// rendered document always carries a lang attribute; set it explicitly
+	// to serve a different locale.
+	Language      string
 	PageID        string
 	Path          string
 	RequestID     string
@@ -62,12 +69,28 @@ type DocumentContext struct {
 	Bootstrap     bool
 	RuntimeActive bool
 	Runtime       PageRuntimeSummary
-	Navigation    bool
-	Head          gosx.Node
-	Body          gosx.Node
+	// FeaturePaths maps opt-in runtime chunk names to public URLs. The document
+	// contract writes one bootstrapFeature<Name>Path key per non-legacy entry.
+	FeaturePaths map[string]string
+	Navigation   bool
+	Head         gosx.Node
+	Body         gosx.Node
+	// BodyAttrs carries attributes contributed through Context.BodyAttrs /
+	// PageState.BodyAttrs onto the rendered <body> element, in addition to
+	// the framework's own body attributes (see document_attrs.go). See
+	// gosx#236.
+	BodyAttrs gosx.AttrList
 	// Nonce is the per-request Content-Security-Policy script nonce, if any.
 	// GoSX's document shell attaches it to script elements it emits directly.
 	Nonce string
+
+	// documentContractPrepared is set only by the framework's request pipeline
+	// after it has appended the document contract to Head.  HTMLDocument uses
+	// this capability marker instead of trying to inspect arbitrary RawHTML in
+	// Head: a prepared/custom-delegated context owns its head exactly as given,
+	// while a direct context receives one framework-owned contract on a private
+	// copy of the context.
+	documentContractPrepared bool
 }
 
 // DeferredResolver resolves a streamed page fragment after the initial HTML
@@ -96,6 +119,8 @@ type DeferredRegistry struct {
 // Context carries request-scoped page metadata, headers, and status.
 type Context struct {
 	Request *http.Request
+	// Pattern is the registered page/error pattern, never a client path.
+	Pattern string
 	PageState
 }
 
@@ -110,40 +135,53 @@ func newContext(r *http.Request) *Context {
 	return ctx
 }
 
-func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
-	c = ensureContext(c)
-	title := c.Title(defaultTitle)
-	path := documentContextPath(c.Request)
-	metadata := c.MetadataValue()
+// DocumentContext composes the complete native document state for a page.
+// The returned context carries every request and page field consumed by
+// HTMLDocument, including the framework-owned document contract in Head.
+// PageState has no implicit language default; callers choose one with
+// SetLanguage when their application serves a known locale.
+func (s *PageState) DocumentContext(request *http.Request, pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
+	if s == nil {
+		s = NewPageStateForRequest(request)
+	}
+	s.PrepareCache(request)
+	path := documentContextPath(request)
 	// A shared cache stores one body and replays it to every client, so the
 	// document must not name this request. Omit the request ID there.
 	requestID := ""
-	if !c.cache.SharedCacheable() {
-		requestID = RequestID(c.Request)
+	sharedCacheable := s.cache != nil && s.cache.SharedCacheable()
+	if !sharedCacheable {
+		requestID = RequestID(request)
 	}
 	doc := &DocumentContext{
-		Request:    c.Request,
+		Request:    request,
 		Pattern:    pattern,
-		Status:     c.StatusCode(),
-		Title:      title,
+		Status:     s.StatusCode(),
+		Title:      s.Title(defaultTitle),
+		Language:   s.Language(),
 		PageID:     documentPageID(pattern, path),
 		Path:       path,
 		RequestID:  requestID,
-		Metadata:   metadata,
+		Metadata:   s.MetadataValue(),
 		Navigation: navigation,
 		Body:       body,
-		Nonce:      c.Nonce(),
+		BodyAttrs:  s.BodyAttrsValue(),
+		Nonce:      s.Nonce(),
 	}
-	if runtime := c.RuntimeState(); runtime != nil {
+	if runtime := s.RuntimeState(); runtime != nil {
 		doc.Runtime = runtime.Summary()
+		doc.FeaturePaths = runtime.FeaturePaths()
 		doc.Bootstrap = doc.Runtime.Bootstrap
 		doc.RuntimeActive = doc.Runtime.Runtime
 	}
-	doc.Head = gosx.Fragment(
-		c.Head(),
-		documentContractNode(doc),
-	)
+	doc.Head = gosx.Fragment(s.Head(), documentContractNode(doc))
+	doc.documentContractPrepared = true
 	return doc
+}
+
+func (c *Context) documentContext(pattern, defaultTitle string, body gosx.Node, navigation bool) *DocumentContext {
+	c = ensureContext(c)
+	return c.PageState.DocumentContext(c.Request, pattern, defaultTitle, body, navigation)
 }
 
 func ensureContext(c *Context) *Context {
@@ -158,13 +196,14 @@ func documentContextPath(r *http.Request) string {
 		return "/"
 	}
 	if requestURI := strings.TrimSpace(r.URL.RequestURI()); requestURI != "" {
-		return requestURI
+		return basepath.URL(basepath.FromRequest(r), requestURI)
 	}
 	return "/"
 }
 
 type documentContract struct {
 	Version     int                         `json:"version"`
+	BasePath    string                      `json:"basePath,omitempty"`
 	Page        documentContractPage        `json:"page"`
 	Enhancement documentContractEnhancement `json:"enhancement"`
 	Assets      documentContractAssets      `json:"assets"`
@@ -197,13 +236,56 @@ type documentContractAssets struct {
 	BootstrapFeatureEnginesPath     string `json:"bootstrapFeatureEnginesPath,omitempty"`
 	BootstrapFeatureHubsPath        string `json:"bootstrapFeatureHubsPath,omitempty"`
 	BootstrapFeatureControllersPath string `json:"bootstrapFeatureControllersPath,omitempty"`
+	BootstrapControllerInputPath    string `json:"bootstrapControllerInputPath,omitempty"`
 	BootstrapFeatureScene3DPath     string `json:"bootstrapFeatureScene3dPath,omitempty"`
+	BootstrapFeatureTextLayoutPath  string `json:"bootstrapFeatureTextLayoutPath,omitempty"`
 	HLSPath                         string `json:"hlsPath,omitempty"`
 	Islands                         int    `json:"islands,omitempty"`
 	ComputeIslands                  int    `json:"computeIslands,omitempty"`
 	Engines                         int    `json:"engines,omitempty"`
 	Hubs                            int    `json:"hubs,omitempty"`
 	Controllers                     int    `json:"controllers,omitempty"`
+
+	// FeaturePaths carries the public URL of each opt-in runtime chunk. It is
+	// flattened into one bootstrapFeature<Name>Path key per non-legacy chunk
+	// (see MarshalJSON), because the browser loader reads flat keys only.
+	FeaturePaths map[string]string `json:"-"`
+}
+
+// legacyContractFeatures are the chunks whose contract keys are declared as
+// struct fields above and must not be written twice.
+var legacyContractFeatures = map[string]bool{
+	"islands": true, "engines": true, "hubs": true,
+	"controllers": true, "scene3d": true, "textlayout": true,
+}
+
+// MarshalJSON writes the declared fields and adds a flat
+// bootstrapFeature<Name>Path key for every non-legacy feature chunk, for
+// example engine-bridge becomes bootstrapFeatureEngineBridgePath.
+func (a documentContractAssets) MarshalJSON() ([]byte, error) {
+	type plain documentContractAssets
+	base, err := json.Marshal(plain(a))
+	if err != nil {
+		return nil, err
+	}
+	extra := map[string]string{}
+	for name, path := range a.FeaturePaths {
+		if !legacyContractFeatures[name] && strings.TrimSpace(path) != "" {
+			extra[hydrate.FeatureContractKey(name)] = path
+		}
+	}
+	if len(extra) == 0 {
+		// Keep the struct field order for pages with no opt-in chunks.
+		return base, nil
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(base, &fields); err != nil {
+		return nil, err
+	}
+	for key, path := range extra {
+		fields[key] = path
+	}
+	return json.Marshal(fields)
 }
 
 func documentContractNode(doc *DocumentContext) gosx.Node {
@@ -211,7 +293,8 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		return gosx.Text("")
 	}
 	payload, err := json.Marshal(documentContract{
-		Version: 1,
+		Version:  1,
+		BasePath: basepath.FromRequest(doc.Request),
 		Page: documentContractPage{
 			ID:        doc.PageID,
 			Pattern:   doc.Pattern,
@@ -228,22 +311,25 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		Assets: documentContractAssets{
 			BootstrapMode:                   documentBootstrapMode(doc.Runtime.BootstrapMode),
 			Manifest:                        doc.Runtime.Manifest,
-			RuntimePath:                     doc.Runtime.RuntimePath,
-			WASMExecPath:                    doc.Runtime.WASMExecPath,
-			StandardGoWASMExecPath:          doc.Runtime.StandardGoWASMExecPath,
-			PatchPath:                       doc.Runtime.PatchPath,
-			BootstrapPath:                   doc.Runtime.BootstrapPath,
-			BootstrapFeatureIslandsPath:     doc.Runtime.BootstrapFeatureIslandsPath,
-			BootstrapFeatureEnginesPath:     doc.Runtime.BootstrapFeatureEnginesPath,
-			BootstrapFeatureHubsPath:        doc.Runtime.BootstrapFeatureHubsPath,
-			BootstrapFeatureControllersPath: doc.Runtime.BootstrapFeatureControllersPath,
-			BootstrapFeatureScene3DPath:     doc.Runtime.BootstrapFeatureScene3DPath,
-			HLSPath:                         doc.Runtime.HLSPath,
+			RuntimePath:                     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.RuntimePath),
+			WASMExecPath:                    basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.WASMExecPath),
+			StandardGoWASMExecPath:          basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.StandardGoWASMExecPath),
+			PatchPath:                       basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.PatchPath),
+			BootstrapPath:                   basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapPath),
+			BootstrapFeatureIslandsPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureIslandsPath),
+			BootstrapFeatureEnginesPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureEnginesPath),
+			BootstrapFeatureHubsPath:        basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureHubsPath),
+			BootstrapFeatureControllersPath: basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureControllersPath),
+			BootstrapControllerInputPath:    basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapControllerInputPath),
+			BootstrapFeatureScene3DPath:     basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureScene3DPath),
+			BootstrapFeatureTextLayoutPath:  basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.BootstrapFeatureTextLayoutPath),
+			HLSPath:                         basepath.URL(basepath.FromRequest(doc.Request), doc.Runtime.HLSPath),
 			Islands:                         doc.Runtime.Islands,
 			ComputeIslands:                  doc.Runtime.ComputeIslands,
 			Engines:                         doc.Runtime.Engines,
 			Hubs:                            doc.Runtime.Hubs,
 			Controllers:                     doc.Runtime.Controllers,
+			FeaturePaths:                    documentFeaturePaths(basepath.FromRequest(doc.Request), doc.FeaturePaths),
 		},
 	})
 	if err != nil {
@@ -255,6 +341,17 @@ func documentContractNode(doc *DocumentContext) gosx.Node {
 		"&", "\\u0026",
 	).Replace(string(payload))
 	return gosx.RawHTML(`<script id="gosx-document" type="application/json" data-gosx-document-contract` + nonceAttr(doc.Nonce) + `>` + safe + `</script>`)
+}
+
+func documentFeaturePaths(prefix string, in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(in))
+	for name, path := range in {
+		out[name] = basepath.URL(prefix, path)
+	}
+	return out
 }
 
 func documentBootstrapMode(value string) string {

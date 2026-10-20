@@ -1,0 +1,9 @@
+//gosx:island
+component Counter() {
+	count := signal.New(0)
+	theme := signal.NewShared("theme", "dark")
+	increment := func() { count.Set(count.Get() + 1) }
+	return <button class={theme.Get()} onClick={increment}>
+		{count.Get()}
+	</button>
+}

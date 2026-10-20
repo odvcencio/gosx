@@ -887,8 +887,12 @@ func appendValueAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, valueElem bool, pat
 }
 
 func appendAttrSetOp(ops *[]PatchOp, attr ResolvedAttr, path *patchPath) {
+	kind := PatchSetAttr
+	if attr.generatedDispatch {
+		kind = PatchSetDispatch
+	}
 	*ops = append(*ops, PatchOp{
-		Kind:     PatchSetAttr,
+		Kind:     kind,
 		Path:     path.String(),
 		AttrName: attr.Name,
 		Text:     attr.Value,
@@ -900,8 +904,12 @@ func appendAttrRemoveOps(ops *[]PatchOp, prevAttrs []ResolvedAttr, nextAttrs att
 		if nextAttrs.has(attr.Name) {
 			continue
 		}
+		kind := PatchRemoveAttr
+		if attr.generatedDispatch {
+			kind = PatchRemoveDispatch
+		}
 		*ops = append(*ops, PatchOp{
-			Kind:     PatchRemoveAttr,
+			Kind:     kind,
 			Path:     path.String(),
 			AttrName: attr.Name,
 		})

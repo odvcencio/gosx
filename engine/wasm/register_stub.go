@@ -3,9 +3,12 @@
 package wasm
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
+	"m31labs.dev/gosx/client/browser"
 	"m31labs.dev/gosx/engine"
 )
 
@@ -25,6 +28,10 @@ func (Context) HasCapability(engine.Capability) bool      { return false }
 func (Context) PropsJSON() ([]byte, error)                { return nil, ErrUnsupported }
 func (Context) DecodeProps(any) error                     { return ErrUnsupported }
 func (Context) Emit(string, any) error                    { return ErrUnsupported }
+func (Context) SetSignal(string, any) error               { return ErrUnsupported }
+func (Context) SubscribeSignal(string, func(json.RawMessage)) (HandleFunc, error) {
+	return nil, ErrUnsupported
+}
 
 // Register returns ErrUnsupported on native targets after validating inputs.
 func Register(component string, factory Factory) error {
@@ -36,3 +43,9 @@ func Register(component string, factory Factory) error {
 	}
 	return ErrUnsupported
 }
+
+func (Context) MountElement() browser.Element                             { return browser.Element{} }
+func (Context) SignalJSON(string) (json.RawMessage, error)                { return nil, ErrUnsupported }
+func (Context) SetSignals(map[string]any) error                           { return ErrUnsupported }
+func (Context) Navigate(context.Context, string, NavigationOptions) error { return ErrUnsupported }
+func (Context) IsCurrent() bool                                           { return false }

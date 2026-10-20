@@ -65,11 +65,11 @@ func (c *lowerCtx) lowerStmt(s ast.Stmt) program.ExprID {
 
 // lowerAssignStmt handles `x = expr` (`=`) and `x := expr` (`:=`),
 // plus the compound-assign forms (`+=`, `-=`, ...). Multi-value
-// assigns dispatch to lowerMultiAssign (Slice Y.B) for the comma-ok
+// assigns dispatch to lowerMultiAssign for the comma-ok
 // map idiom and parallel assignment; multi-return function calls
-// remain Y.D territory and surface as a clear diagnostic from there.
+// surface as a clear diagnostic from there.
 // LHS selector / indexed-set forms (e.g. `node.X = ...`, `m[k] = ...`)
-// dispatch to lowerSelectorOrIndexAssign (Slice Y.C).
+// dispatch to lowerSelectorOrIndexAssign.
 func (c *lowerCtx) lowerAssignStmt(s *ast.AssignStmt) program.ExprID {
 	if len(s.Lhs) > 1 {
 		return c.lowerMultiAssign(s)
@@ -78,7 +78,7 @@ func (c *lowerCtx) lowerAssignStmt(s *ast.AssignStmt) program.ExprID {
 		c.addIssue(s, "multi-value assignment is not supported", escapeHatchSuggestion)
 		return c.addExpr(program.Expr{Op: program.OpSeq})
 	}
-	// Slice Y.C: route selector / index LHS forms before the bare-ident
+	// Route selector / index LHS forms before the bare-ident
 	// check so `node.X = ...` and `m[k] = ...` lower through the new
 	// OpFieldSet / OpIndexSet path instead of falling through to the
 	// "left-hand side must be a simple identifier" diagnostic.
@@ -164,9 +164,9 @@ func (c *lowerCtx) lowerIfStmt(s *ast.IfStmt) program.ExprID {
 	return c.addExpr(program.Expr{Op: program.OpSeq, Operands: seqOps})
 }
 
-// lowerForStmt handles 3-clause for loops. The VM's OpFor opcode (added
-// in Slice X.C alongside the lowerer) carries init / cond / post / body
-// as four operand slots with built-in iteration-cap safety.
+// lowerForStmt handles 3-clause for loops. The VM's OpFor opcode carries
+// init / cond / post / body as four operand slots with built-in
+// iteration-cap safety.
 //
 // `for {}` (infinite) and `for cond {}` (cond-only) lower the same way
 // — missing init/post are noop OpSeq, missing cond is OpLitBool(true).
@@ -192,7 +192,7 @@ func (c *lowerCtx) lowerForStmt(s *ast.ForStmt) program.ExprID {
 // _key = _index (an IntVal of the iteration counter), so slice code
 // like `for i, v := range s` continues to behave identically; for
 // maps _key holds the StringVal map key, which is what graph
-// surfaces like `for id, p := range gPos` actually want (Slice Y.B).
+// surfaces like `for id, p := range gPos` actually want.
 func (c *lowerCtx) lowerRangeStmt(s *ast.RangeStmt) program.ExprID {
 	collID := c.lowerExpr(s.X)
 
@@ -251,11 +251,11 @@ func (c *lowerCtx) lowerOptionalCond(e ast.Expr) program.ExprID {
 // OpForRange unwinds back to the handler's EvalWithFrame boundary.
 // `return` with no value lowers to a bare OpReturn with no operand.
 //
-// Slice Y.D extends this for multi-value returns: `return a, b` in a
+// Multi-value returns: `return a, b` in a
 // function declared with 2+ return values lowers to an OpReturn whose
 // payload is an OpComposite ObjectVal carrier keyed `__ret_<i>`. The
 // caller's lowerMultiAssign reads each `__ret_<i>` field via OpIndex
-// — same pattern as Slice Y.B's OpMapLookup carrier.
+// — same pattern as OpMapLookup's carrier.
 func (c *lowerCtx) lowerReturnStmt(s *ast.ReturnStmt) program.ExprID {
 	switch len(s.Results) {
 	case 0:
@@ -265,9 +265,9 @@ func (c *lowerCtx) lowerReturnStmt(s *ast.ReturnStmt) program.ExprID {
 		return c.addExpr(program.Expr{Op: program.OpReturn, Operands: []program.ExprID{valueID}})
 	default:
 		// Multi-value return: build an OpComposite carrier of kind
-		// "map" with __ret_<i> keys. This reuses Y.A's compositeMap
+		// "map" with __ret_<i> keys. This reuses the compositeMap
 		// path without expanding the Value model. The caller binds
-		// each LHS via OpIndex against the carrier (Y.B's bindFromTmp
+		// each LHS via OpIndex against the carrier (bindFromTmp
 		// helper, called via lowerMultiAssign).
 		carrierID := c.buildReturnCarrier(s.Results)
 		return c.addExpr(program.Expr{Op: program.OpReturn, Operands: []program.ExprID{carrierID}})
@@ -276,7 +276,7 @@ func (c *lowerCtx) lowerReturnStmt(s *ast.ReturnStmt) program.ExprID {
 
 // buildReturnCarrier emits an OpComposite ObjectVal of kind "map"
 // whose Fields are keyed `__ret_0`, `__ret_1`, ... — one per return
-// value, in declaration order. The Slice Y.D multi-return contract
+// value, in declaration order. The multi-return contract
 // expects the OpIndirectCall caller to read each slot via OpIndex on
 // the same key scheme.
 func (c *lowerCtx) buildReturnCarrier(results []ast.Expr) program.ExprID {
@@ -297,9 +297,9 @@ func (c *lowerCtx) buildReturnCarrier(results []ast.Expr) program.ExprID {
 	})
 }
 
-// returnKey is the Y.D multi-return carrier's key scheme. Reserved
+// returnKey is the multi-return carrier's key scheme. Reserved
 // prefix (`__ret_`) prevents collision with user identifiers and
-// matches Y.B's `__y_b_*` / Y.D's `__y_d_*` namespacing convention.
+// matches the `__y_b_*` / `__y_d_*` namespacing convention.
 func returnKey(i int) string {
 	return fmt.Sprintf("__ret_%d", i)
 }
@@ -318,13 +318,13 @@ func (c *lowerCtx) lowerBlockStmt(s *ast.BlockStmt) program.ExprID {
 // body. The local-declaration opcode reserves a slot; the optional
 // initializer is appended as an OpAssign.
 //
-// Slice Y.G — eager struct-zero-init: when the declared type is a
+// Eager struct-zero-init: when the declared type is a
 // known struct (registered by scanStructTypes), emit an OpComposite
 // zero-initializer alongside OpLocalDecl so the local starts with a
 // non-nil Fields map. This matches Go's `var x T` semantics ("x is
 // the zero value of T from the moment of declaration") and is what
 // makes `var props GraphProps; host.PropsInto(&props)` work — `&props`
-// pass-through (Y.E) now gives the host a Value whose Fields map
+// pass-through now gives the host a Value whose Fields map
 // EXISTS (even if empty), so host writes land in storage shared with
 // the caller's local. Without the eager init, the host receives a
 // nil-Fields Value and either panics (nil-map write) or writes into
@@ -355,7 +355,7 @@ func (c *lowerCtx) lowerDeclStmt(s *ast.DeclStmt) program.ExprID {
 				ops = append(ops, c.addExpr(program.Expr{Op: program.OpAssign, Value: name.Name, Operands: []program.ExprID{valueID}}))
 				continue
 			}
-			// Slice Y.G — eager struct zero-init for known struct
+			// Eager struct zero-init for known struct
 			// types, so `var x StructT` produces a non-nil Fields map
 			// that host calls and `&x` pass-through can populate.
 			if initID, ok := c.zeroInitForType(vs.Type); ok {
@@ -375,7 +375,7 @@ func (c *lowerCtx) lowerDeclStmt(s *ast.DeclStmt) program.ExprID {
 // Reports (id, false) for non-struct types (the existing OpLocalDecl
 // behavior remains — bare Value{} for scalars).
 //
-// Slice Y.G addition. Today only handles bare `*ast.Ident` type
+// Today only handles bare `*ast.Ident` type
 // expressions ("var x Box"). Pointer / array / slice / map types fall
 // through to the legacy zero — adding eager init for those is a
 // future expansion if a graph_surface-shaped pattern needs it.

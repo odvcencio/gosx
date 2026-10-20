@@ -58,20 +58,44 @@ func (l *singleInstanceLock) Close() error {
 	return nil
 }
 
-func singleInstanceMutexName(appID string) string {
-	return `Global\gosx-` + appID
+// AcquireSingleInstance reserves appID for this process. When first is false,
+// another process already owns the lock and the caller should forward its
+// launch information and exit.
+func AcquireSingleInstance(appID string) (*InstanceLock, bool, error) {
+	if err := validateAppID(appID); err != nil {
+		return nil, false, err
+	}
+	lock, first, err := acquireSingleInstanceLock(appID)
+	if err != nil {
+		return nil, false, err
+	}
+	if !first {
+		_ = lock.Close()
+		return nil, false, nil
+	}
+	return newInstanceLock(appID, lock.Close), true, nil
 }
 
 func forwardCurrentLaunch(appID string) error {
 	wd, _ := os.Getwd()
-	payload, err := BuildInstanceMessage(appID, os.Args[1:], wd)
+	return ForwardToFirstInstance(appID, os.Args[1:], wd)
+}
+
+// ForwardToFirstInstance sends a launch payload to the running app's window,
+// waiting up to ten seconds for that window to appear.
+func ForwardToFirstInstance(appID string, args []string, workingDir string) error {
+	if err := validateAppID(appID); err != nil {
+		return err
+	}
+	payload, err := BuildInstanceMessage(appID, args, workingDir)
 	if err != nil {
 		return err
 	}
-	hwnd, err := waitForAppWindow(appID, 2*time.Second)
+	hwnd, err := waitForAppWindow(appID, 10*time.Second)
 	if err != nil {
 		return err
 	}
+	allowTargetForeground(hwnd)
 	return sendCopyData(hwnd, payload)
 }
 
@@ -142,6 +166,15 @@ func (a *windowsApp) handleCopyData(lparam uintptr) bool {
 	if cb != nil {
 		cb(msg)
 	}
+	a.mu.Lock()
+	hwnd := a.hwnd
+	a.mu.Unlock()
+	if hwnd != 0 {
+		minimized, _, _ := procIsIconic.Call(hwnd)
+		if minimized != 0 {
+			showWindowState(hwnd, swRestore)
+		}
+	}
 	_ = a.Focus()
 	return true
 }
@@ -195,4 +228,15 @@ func appWindowPropertyNamePtr(appID string) (*uint16, error) {
 		return nil, err
 	}
 	return syscall.UTF16PtrFromString("GoSX.AppID." + appID)
+}
+
+// allowTargetForeground lets the running instance bring its window to the
+// front. The launching process holds foreground rights (the user just
+// started it); Windows passes them to another process only when asked.
+func allowTargetForeground(hwnd uintptr) {
+	var pid uint32
+	procGetWindowThreadProcessId.Call(hwnd, uintptr(unsafe.Pointer(&pid)))
+	if pid != 0 {
+		procAllowSetForegroundWindow.Call(uintptr(pid))
+	}
 }

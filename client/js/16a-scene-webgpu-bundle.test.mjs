@@ -24,17 +24,20 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const webgpuSource = readSource("16a-scene-webgpu.js");
-const computeSource = readSource("16b-scene-compute.js");
-const computeBridgeSource = readSource("26e1-feature-scene3d-webgpu-compute-bridge.js");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
+const computeSource = readSource("../runtime/scene3d/compute.ts");
+const computeBridgeSource = readSource("26e1-feature-scene3d-webgpu-compute-bridge.ts");
 
 test("pipeline validation helpers cross the gated WebGPU chunk boundary", () => {
   for (const helper of ["sceneReportPipelineFailure", "sceneShaderModuleError"]) {
@@ -106,8 +109,8 @@ function createContext() {
     function sceneProjectPoint() { return null; }
   `;
   vm.runInContext(prelude, context, { filename: "prelude.js" });
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
-  vm.runInContext(readSource("17-scene-input.js"), context, { filename: "17-scene-input.js" });
+  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
   vm.runInContext(webgpuSource, context, { filename: "16a-scene-webgpu.js" });
   return { context, sandbox };
 }
@@ -505,11 +508,16 @@ test("the bundle encoder is created with the same formats the main pass uses", (
   assert.match(body, /colorFormats: \[targetFormat\]/);
   assert.match(body, /depthStencilFormat: "depth24plus"/);
   assert.match(body, /sampleCount: sampleCount/);
-  // The PBR pipelines are keyed on exactly these three values, so a bundle
-  // built from them is compatible with the pass by construction.
+  // The PBR pipelines are keyed on the same render-target values plus the
+  // determinant-selected front-face variant, so a bundle built from them is
+  // compatible with the pass by construction.
   assert.match(
     webgpuSource,
-    /wgpuPipelineKey\("pbr", blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
+    /function sceneWebGPUPipelineKind\(reflected, base\) \{\s*return reflected \? base \+ "-cw" : base;\s*\}/,
+  );
+  assert.match(
+    webgpuSource,
+    /wgpuPipelineKey\(detail \? sceneDetailVariantKey\(sceneWebGPUPipelineKind\(reflected, "pbr"\), true\) : sceneWebGPUPipelineKind\(reflected, "pbr"\), blendMode, depthWrite, targetFormat, "depth24plus", activeSampleCount\)/,
   );
 });
 
@@ -558,4 +566,37 @@ test("the bundle state reaches the diagnostics attributes", () => {
   ]) {
     assert.ok(webgpuSource.includes(name), `${name} must be published`);
   }
+});
+
+test("renderer source reader erases optional parameter types without moving executable source", () => {
+  const fixture = "function probe(value?: number): number { return value ?? 1; }\n";
+  const source = readSceneRendererBackendSrc("webgpu", { readSource: () => fixture });
+  assert.equal(source.indexOf("return value"), fixture.indexOf("return value"));
+  const context = vm.createContext({});
+  vm.runInContext(source, context);
+  assert.equal(context.probe(), 1);
+  assert.equal(context.probe(7), 7);
+});
+
+
+test("alternating Selena bindings stop consecutive bundle re-encodes and recover once stable", () => {
+  const cache = api().createSceneWebGPUBundleCache();
+  const pipeline = { label: "selena" };
+  const groups = [{ label: "storage-A" }, { label: "storage-B" }];
+  let encodes = 0, direct = 0;
+  for (let frame = 0; frame < 20; frame++) {
+    const plan = cache.plan(LAYOUT, target => {
+      target.setPipeline(pipeline);
+      target.setBindGroup(0, groups[frame % 2]);
+      target.draw(3);
+    });
+    if (plan.eligible && !plan.reusable) { cache.adopt(LAYOUT, {}); encodes++; }
+    if (!plan.eligible) { assert.equal(plan.reason, "binding-thrash"); direct++; }
+  }
+  assert.ok(encodes <= 4, `bounded encodes: ${encodes}`);
+  assert.ok(direct >= 16);
+  const stable = target => { target.setPipeline(pipeline); target.setBindGroup(0, groups[0]); target.draw(3); };
+  cache.plan(LAYOUT, stable);
+  const recovered = cache.plan(LAYOUT, stable);
+  assert.ok(recovered.eligible, "stable commands can bundle again");
 });

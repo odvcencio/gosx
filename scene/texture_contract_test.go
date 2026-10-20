@@ -61,7 +61,7 @@ func TestSceneIRCarriesExplicitTextureColorRoles(t *testing.T) {
 	}
 }
 
-func TestSceneIRCarriesNormalizedHDRIBLProductsWithoutCapabilityClaim(t *testing.T) {
+func TestSceneIRCarriesNormalizedHDRIBLProductsWithGPUCapabilities(t *testing.T) {
 	props := Props{
 		Environment: Environment{
 			EnvironmentMap: "/env/studio.hdr",
@@ -105,9 +105,14 @@ func TestSceneIRCarriesNormalizedHDRIBLProductsWithoutCapabilityClaim(t *testing
 		t.Fatalf("canonical IBL contract drifted: %#v", canonical)
 	}
 
-	if capability.Supports(capability.BackendWebGPU, capability.FeatureIBL) ||
-		capability.Supports(capability.BackendWebGL, capability.FeatureIBL) {
-		t.Fatal("carrying IBL descriptors must not advertise renderer capability")
+	// capability.Supports reads the global Matrix, not this scene's authored
+	// descriptors — carrying a well-formed IBL block here must not itself move
+	// the renderer capability. Both GPU backends now consume valid IBL products.
+	if !capability.Supports(capability.BackendWebGPU, capability.FeatureIBL) {
+		t.Fatal("WebGPU must claim ibl capability unconditionally, independent of any one scene's descriptors")
+	}
+	if !capability.Supports(capability.BackendWebGL, capability.FeatureIBL) {
+		t.Fatal("WebGL2 must advertise IBL after depth-array shadows remove the sampler limit")
 	}
 }
 

@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"io"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +13,81 @@ import (
 	"testing"
 	"time"
 )
+
+func TestDevRunnerUsesBackendPortAndPreservesPublicOrigin(t *testing.T) {
+	dir := t.TempDir()
+	writeTempFile(t, dir, "go.mod", "module example.com/dev-listener\ngo 1.25\nrequire m31labs.dev/gosx v0.53.10\n")
+	addLocalGoSXReplace(t, dir)
+	writeTempFile(t, dir, "main.go", `package main
+import (
+    "fmt"
+    "log"
+    "net/http"
+    "os"
+    "m31labs.dev/gosx/server"
+)
+func main() {
+    app := server.New()
+    app.Mount("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        fmt.Fprintf(w, "%s|%s", os.Getenv("PORT"), os.Getenv("PUBLIC_URL"))
+    }))
+    log.Fatal(app.ListenAndServe(":" + os.Getenv("PORT")))
+}
+
+`)
+	tidyModule(t, dir)
+	t.Setenv("PORT", "8080")
+	t.Setenv("GOSX_LISTEN_ADDR", "127.0.0.1:8080")
+	t.Setenv("PUBLIC_URL", "https://public.example.test")
+	port, err := pickFreePort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &devRunner{dir: dir}
+	if err := runner.start(port); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runner.stop() })
+	baseURL := "http://127.0.0.1:" + port
+	if err := waitForAppReady(baseURL, 20*time.Second); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.Get(baseURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := string(body), port+"|https://public.example.test"; got != want {
+		t.Fatalf("backend environment = %q, want %q", got, want)
+	}
+	if os.Getenv("PORT") != "8080" || os.Getenv("GOSX_LISTEN_ADDR") != "127.0.0.1:8080" {
+		t.Fatal("parent listener configuration changed")
+	}
+}
+
+func TestPublicListenAddrSeparatesBindingFromPort(t *testing.T) {
+	for _, tc := range []struct{ port, want string }{
+		{"", defaultDevListenAddr},
+		{"8080", ":8080"},
+		{"127.0.0.1:8080", "127.0.0.1:8080"},
+	} {
+		t.Run(tc.port, func(t *testing.T) {
+			t.Setenv("PORT", tc.port)
+			t.Setenv("GOSX_LISTEN_ADDR", "")
+			if got := publicListenAddr(); got != tc.want {
+				t.Fatalf("without override = %q, want %q", got, tc.want)
+			}
+			t.Setenv("GOSX_LISTEN_ADDR", "127.0.0.1:9000")
+			if got := publicListenAddr(); got != "127.0.0.1:9000" {
+				t.Fatalf("proxy binding = %q", got)
+			}
+		})
+	}
+}
 
 func TestBuildServerBinaryIfPresentBuildsMainPackage(t *testing.T) {
 	dir := t.TempDir()
@@ -33,6 +111,78 @@ func main() {}
 	}
 	if _, err := os.Stat(out); err != nil {
 		t.Fatalf("expected binary at %s: %v", out, err)
+	}
+}
+
+func TestRunDevStrictGateRunsBeforeAssetWritesOrRunnerStart(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "dev-strict-gate")
+	err := RunDev(dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunDev error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Fatalf("strict gate wrote dev assets before failing: %v", statErr)
+	}
+}
+
+func TestRunDevRejectsAmbiguousIslandClosureBeforeGeneratedWritesOrRunnerStart(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, true)
+	err := RunDev(dir)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("RunDev error = %v, want ambiguous island rejection", err)
+	}
+	for _, output := range []string{"build", "modules/modules.go"} {
+		if _, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(output))); !os.IsNotExist(statErr) {
+			t.Fatalf("ambiguous island dev preflight created %s before failing: %v", output, statErr)
+		}
+	}
+}
+
+func TestDevChangeStrictGateRunsBeforeAssetWritesOrRestart(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "dev-change-strict-gate")
+	err := rebuildChangedDevApp(context.Background(), dir, nil, "0", "http://127.0.0.1:0")
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("rebuildChangedDevApp error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Fatalf("strict change gate wrote dev assets before failing: %v", statErr)
+	}
+}
+
+type recordingDevStopper struct {
+	stopped bool
+}
+
+func (s *recordingDevStopper) stop() error {
+	s.stopped = true
+	return nil
+}
+
+func TestDevHotSwapPreflightStopsUnsafeUpstream(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "dev-hotswap-strict-gate")
+	runner := &recordingDevStopper{}
+	err := preflightChangedDevApp(context.Background(), dir, runner)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("preflightChangedDevApp error = %v", err)
+	}
+	if !runner.stopped {
+		t.Fatal("invalid hot swap left the old upstream process running")
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "build")); !os.IsNotExist(statErr) {
+		t.Fatalf("hot-swap preflight wrote assets before failing: %v", statErr)
+	}
+}
+
+func TestDevHotSwapPreflightStopsAmbiguousIslandUpstream(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, false)
+	runner := &recordingDevStopper{}
+
+	err := preflightChangedDevApp(context.Background(), dir, runner)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("preflightChangedDevApp error = %v, want ambiguous island rejection", err)
+	}
+	if !runner.stopped {
+		t.Fatal("ambiguous island hot swap left the old upstream process running")
 	}
 }
 
@@ -185,6 +335,24 @@ var _ = studio.ServerOnlyValue
 	}
 	if !strings.Contains(string(data), `"name": "HomeLayerSelectionIsland"`) {
 		t.Fatalf("unexpected imported island JSON: %s", data)
+	}
+}
+
+func TestCompileDevIslandsRejectsAmbiguousNamesBeforeReplacingAssets(t *testing.T) {
+	appDir, _, _ := newAmbiguousIslandProject(t, false)
+	out := filepath.Join(appDir, "build", "islands")
+	writeTempFile(t, out, "Counter.json", "previous-valid-program")
+
+	err := compileDevIslands(appDir, out)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("compileDevIslands error = %v, want ambiguous island rejection", err)
+	}
+	data, readErr := os.ReadFile(filepath.Join(out, "Counter.json"))
+	if readErr != nil {
+		t.Fatalf("read previous island asset: %v", readErr)
+	}
+	if got := string(data); got != "previous-valid-program" {
+		t.Fatalf("ambiguous discovery replaced previous island asset with %q", got)
 	}
 }
 

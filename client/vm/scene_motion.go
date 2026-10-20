@@ -17,6 +17,11 @@ type spinScratch struct {
 	// are rare, so it is lazily allocated on the first clipped object and reused
 	// across all objects and frames thereafter (zero per-frame alloc once warm).
 	clipBuf *motion.WriteBuf
+	// matMotion caches the decoded SceneIR.MaterialMotionProgram player across
+	// frames. The cache key is an fnv64 hash of the base64 payload, so a
+	// re-serialized identical program hits and a genuinely new program
+	// re-decodes exactly once.
+	matMotion *materialMotionPlayer
 }
 
 // clipWriteBuf returns the lazily-allocated, reusable clip WriteBuf on the
@@ -67,11 +72,11 @@ func newSpinScratch() *spinScratch {
 // sc is nil — the test/standalone path), so the warm path is per-frame alloc-free
 // apart from the timeline build itself (clips are rare; building one short-lived
 // timeline per animated object per frame is acceptable).
-func objectClipTRS(o sceneObject, objIndex int, anims []rootengine.RenderAnimation, t float64, sc *spinScratch) clipTRS {
+func objectClipTRS(o sceneObject, objIndex, nodeIndex int, anims []rootengine.RenderAnimation, t float64, sc *spinScratch) clipTRS {
 	if len(anims) == 0 {
 		return clipTRS{}
 	}
-	tl, duration := buildObjectClipTimeline(anims, o.ID, objIndex)
+	tl, duration := buildObjectClipTimeline(anims, o.ID, objIndex, nodeIndex)
 	if tl == nil {
 		return clipTRS{}
 	}

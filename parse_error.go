@@ -15,16 +15,21 @@ type ParseError struct {
 	Column  int
 	Message string
 	Snippet string
+	Hint    string
 }
 
 func (e *ParseError) Error() string {
 	if e == nil {
 		return ""
 	}
-	if e.Snippet == "" {
-		return fmt.Sprintf("%d:%d: %s", e.Line, e.Column, e.Message)
+	message := fmt.Sprintf("%d:%d: %s", e.Line, e.Column, e.Message)
+	if e.Snippet != "" {
+		message += fmt.Sprintf("\n    %s\n    %s^", e.Snippet, caretPadding(e.Snippet, e.Column))
 	}
-	return fmt.Sprintf("%d:%d: %s\n    %s\n    %s^", e.Line, e.Column, e.Message, e.Snippet, caretPadding(e.Snippet, e.Column))
+	if e.Hint != "" {
+		message += "\n    hint: " + e.Hint
+	}
+	return message
 }
 
 // requirePackageClause rejects a source file that does not open with a
@@ -86,7 +91,12 @@ func DescribeParseError(root *gotreesitter.Node, source []byte, lang *gotreesitt
 
 	node := firstParseProblem(root)
 	if node == nil {
-		return fmt.Errorf("parse error in source")
+		// The tree reports an error but holds no reachable ERROR or MISSING
+		// node. Healthy parse tables do not produce this shape; tables from a
+		// mismatched grammar blob do (gosx#139). Say so, because a bare
+		// "parse error in source" sends people bisecting their markup when
+		// the source is fine.
+		return fmt.Errorf("parse error in source (no error node found — if a grammar blob override is staged, it may not match this gosx version)")
 	}
 
 	point := node.StartPoint()

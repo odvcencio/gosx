@@ -82,12 +82,30 @@ func indexSource(path string, source []byte) (sourceIndex, []Diagnostic) {
 	idx.indexComponents()
 	idx.indexComponentRefs()
 
-	raw := ir.Validate(prog)
-	diags := make([]Diagnostic, 0, len(raw))
-	for _, diag := range raw {
+	// ir.Validate and ir.ValidateWarnings are siblings (see the latter's doc
+	// comment): the LSP is the one caller that always wants both, since an
+	// author benefits from seeing a warning-severity finding (for example a
+	// near-miss data-gosx-* attribute name, gosx#249) as they type just as
+	// much as an error -- neither pass performs file I/O, so running both on
+	// every keystroke keeps the same "no I/O in ir.Lower's synchronous path"
+	// constraint the fast path already holds. A whole-project check that
+	// does need I/O (the stylesheet, the action registry, the route tree)
+	// is out of scope here; see AnalyzeProject for where those land instead.
+	errs := ir.Validate(prog)
+	warnings := ir.ValidateWarnings(prog)
+	diags := make([]Diagnostic, 0, len(errs)+len(warnings))
+	for _, diag := range errs {
 		diags = append(diags, Diagnostic{
 			Range:    rangeFromSpan(diag.Span),
-			Severity: SeverityError,
+			Severity: severityFromIR(diag.Severity),
+			Source:   diagnosticSource(path),
+			Message:  diagnosticMessage(diag),
+		})
+	}
+	for _, diag := range warnings {
+		diags = append(diags, Diagnostic{
+			Range:    rangeFromSpan(diag.Span),
+			Severity: severityFromIR(diag.Severity),
 			Source:   diagnosticSource(path),
 			Message:  diagnosticMessage(diag),
 		})
@@ -102,7 +120,11 @@ func (idx *sourceIndex) indexComponents() {
 	}
 	for _, comp := range idx.program.Components {
 		fullRange := rangeFromSpan(comp.Span)
-		selectionRange := idx.nameRangeInSpan(comp.Span, comp.Name, "func ")
+		prefix := "func "
+		if comp.Syntax == ir.ComponentSyntaxStrict {
+			prefix = "component "
+		}
+		selectionRange := idx.nameRangeInSpan(comp.Span, comp.Name, prefix)
 		sym := componentSymbol{
 			name:           comp.Name,
 			detail:         componentSignature(comp),
@@ -212,6 +234,12 @@ func componentHover(sym componentSymbol) *Hover {
 }
 
 func componentSignature(comp ir.Component) string {
+	if comp.Syntax == ir.ComponentSyntaxStrict {
+		if comp.PropsType == "" {
+			return "component " + comp.Name + "()"
+		}
+		return "component " + comp.Name + "(props: " + comp.PropsType + ")"
+	}
 	if comp.PropsType == "" {
 		return "func " + comp.Name + "() Node"
 	}
@@ -226,6 +254,8 @@ func componentDescription(comp ir.Component) string {
 		return "GoSX engine component"
 	case comp.IsIsland:
 		return "GoSX island component"
+	case comp.Syntax == ir.ComponentSyntaxStrict:
+		return "Strict GoSX server component"
 	default:
 		return "GoSX component"
 	}

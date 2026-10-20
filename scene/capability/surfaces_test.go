@@ -184,7 +184,7 @@ func TestCanvas2DBlanketExclusionIsStated(t *testing.T) {
 	source := mustRead(t, "capability.go")
 	for _, phrase := range []string{
 		"CANVAS2D BLANKET RULE",
-		"18-scene-canvas.js",
+		"18-scene-canvas.ts",
 		"It rasterizes no triangle",
 		"STATED blanket exclusion",
 	} {
@@ -208,7 +208,7 @@ func TestCanvas2DBlanketExclusionIsStated(t *testing.T) {
 	}
 	if keys == 0 {
 		t.Error("Canvas2D carries no Matrix key at all, so the blanket rule covers every feature. " +
-			"18-scene-canvas.js calls setLineDash, so at least line-dashed must be true")
+			"18-scene-canvas.ts calls setLineDash, so at least line-dashed must be true")
 	}
 	if !Matrix[FeatureLineDashed][BackendCanvas2D] {
 		t.Error("line-dashed is the one feature Canvas2D implements; its key must be true")

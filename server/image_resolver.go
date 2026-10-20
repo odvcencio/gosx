@@ -102,3 +102,63 @@ func resolveLocalImageURL(src string, transform ImageTransform) (string, bool) {
 	}
 	return defaultImageEndpoint + "?" + values.Encode(), true
 }
+
+// registerStaticExportImageResolver overrides the "local" image resolver
+// with one bound to a, so a GOSX_STATIC_EXPORT=1 run of this App's own
+// binary (the subprocess gosx build/export starts to prerender static
+// pages) can answer real, build-time-generated image variant URLs instead
+// of resolveLocalImageURL's passthrough (issue #200).
+//
+// This is process-global state -- imageResolvers already was, for every
+// named resolver -- so it assumes the same single-App-per-process
+// convention the rest of this file's package-level state (for example
+// imageTransformSlots) already assumes. Build() calls this once per App it
+// builds; the last App built in a process wins, exactly as a second
+// RegisterImageResolver("local", ...) call already would.
+func registerStaticExportImageResolver(a *App) {
+	_ = RegisterImageResolver("local", ImageResolverFunc(a.resolveLocalImageURL))
+}
+
+// resolveLocalImageURL resolves an <img> URL for a. During a
+// GOSX_STATIC_EXPORT=1 run it first tries staticExportImageVariant; a match
+// there is a real, build-time-generated variant URL, not the plain
+// passthrough src the package-level resolveLocalImageURL always returns in
+// export mode. Every other case -- static export with no matching variant,
+// and ordinary (non-export) resolution -- falls back to the unmodified
+// package-level resolveLocalImageURL, so this method changes nothing about
+// existing behavior beyond adding that one new match.
+func (a *App) resolveLocalImageURL(src string, transform ImageTransform) (string, bool) {
+	if strings.TrimSpace(os.Getenv("GOSX_STATIC_EXPORT")) != "" {
+		if resolved, ok := a.staticExportImageVariant(src, transform); ok {
+			return resolved, true
+		}
+	}
+	return resolveLocalImageURL(src, transform)
+}
+
+// staticExportImageVariant looks up the build-time image variant gosx
+// build's imagepipe stage already generated for src at transform.Width,
+// reading only the buildmanifest.Manifest.Images bucket this App already
+// loaded (via runtimeBuildManifest) for every other hashed asset it serves.
+// It never touches package imagepipe -- build-time only -- or any encoder
+// a project may have registered with it; see
+// TestServerPackageTreeNeverImportsImagepipe at the repo root for the
+// enforced isolation proof.
+func (a *App) staticExportImageVariant(src string, transform ImageTransform) (string, bool) {
+	if a == nil {
+		return "", false
+	}
+	root := a.effectiveRuntimeRoot()
+	if root == "" {
+		return "", false
+	}
+	manifest, ok := a.runtimeBuildManifest(root)
+	if !ok || manifest == nil {
+		return "", false
+	}
+	asset, ok := manifest.ImageVariant(src, transform.Width, transform.Format)
+	if !ok || strings.TrimSpace(asset.File) == "" {
+		return "", false
+	}
+	return manifest.ImageURL("/gosx/assets", asset), true
+}

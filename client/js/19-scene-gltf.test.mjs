@@ -3,7 +3,7 @@
 // The loader had no test coverage before this suite. These tests load two
 // bootstrap fragments into ONE VM context, the way the shipped bundles
 // concatenate them:
-//   - 11-scene-math.js   -> SCENE_IDENTITY_MAT4, sceneMat4Multiply, sceneTRSToMat4
+//   - 11-scene-math.ts   -> SCENE_IDENTITY_MAT4, sceneMat4Multiply, sceneTRSToMat4
 //   - 19-scene-gltf.js   -> the GLB/glTF parser and the extension mapping
 //
 // The fragments declare plain top-level functions, so running them in a VM
@@ -17,6 +17,7 @@
 //   - KHR_materials_unlit selecting the flat shading path
 //   - named errors for the compression extensions the loader cannot decode
 //   - animation channel component width, including morph "weights" channels
+//   - accessor lookup tables staying inert for inherited or unknown keys
 
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -29,10 +30,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-function createLoaderContext() {
+function createLoaderContext(options = {}) {
   const warnings = [];
   const sandbox = {
     console: {
@@ -65,14 +66,32 @@ function createLoaderContext() {
         this.type = options && options.type;
       }
     },
+    fetch: options.fetch || (() => Promise.reject(new Error("fetch not configured"))),
+    location: options.location || { href: "http://localhost:3000/" },
   };
   sandbox.window = sandbox;
   sandbox.globalThis = sandbox;
-  sandbox.URL = { createObjectURL: () => "blob:fake" };
+  sandbox.URL = options.urlAPI || { createObjectURL: () => "blob:fake" };
 
   const context = vm.createContext(sandbox);
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
-  vm.runInContext(readSource("19-scene-gltf.js"), context, { filename: "19-scene-gltf.js" });
+  if (options.sceneRuntime) {
+    for (const name of [
+      "10-runtime-primitives.ts",
+      "10-runtime-scene-utils.ts",
+      "11-scene-math.ts",
+      "12-scene-geometry.ts",
+      "13-scene-material.ts",
+    ]) {
+      vm.runInContext(readSource(name), context, { filename: name });
+    }
+    const core = readSource("10-runtime-scene-core.ts");
+    const marker = core.indexOf("// Scene3D shared API");
+    assert.ok(marker >= 0, "core shared API marker located");
+    vm.runInContext(core.slice(0, marker), context, { filename: "10-runtime-scene-core.ts" });
+  } else {
+    vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  }
+  vm.runInContext(readSource("../runtime/scene3d/gltf.ts"), context, { filename: "gltf.ts" });
   return { context, sandbox, warnings };
 }
 
@@ -128,6 +147,677 @@ function extractTexturedMaterial(context) {
   return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
 }
 
+// One shared image URI feeds both specular slots so the tests can pin the
+// role/transfer split even when the source bytes are identical.
+function extractSpecularTexturedMaterial(context, imageUri) {
+  const doc = {
+    asset: { version: "2.0" },
+    images: [{ uri: imageUri }],
+    textures: [{ source: 0 }],
+    materials: [{
+      pbrMetallicRoughness: { roughnessFactor: 0.4 },
+      extensions: {
+        KHR_materials_specular: {
+          specularFactor: 0.5,
+          specularTexture: { index: 0 },
+          specularColorTexture: { index: 0 },
+        },
+      },
+    }],
+  };
+  return plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
+}
+
+test("GLB PBR factors survive object normalization and material profiling", () => {
+  const { context } = createLoaderContext({ sceneRuntime: true });
+  const document = {
+    asset: { version: "2.0" },
+    images: [{ uri: "normal.png" }, { uri: "occlusion.png" }],
+    textures: [{ source: 0 }, { source: 1 }],
+    materials: [
+      {
+        pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] },
+        emissiveFactor: [0.8, 0.15, 0.05],
+        extensions: { KHR_materials_emissive_strength: { emissiveStrength: 4 } },
+      },
+      { pbrMetallicRoughness: { baseColorFactor: [0.9, 0.7, 0.3, 1] } },
+      { normalTexture: { index: 0, scale: 0 } },
+      { occlusionTexture: { index: 1, strength: 0 } },
+    ],
+  };
+  const raw = document.materials.map((_, index) => plain(call(context,
+    `gltfExtractMaterial(${JSON.stringify(document)}, ${index}, null)`)));
+  const normalized = raw.map((material, index) => plain(call(context,
+    `normalizeSceneObject(${JSON.stringify({ kind: "mesh", material })}, ${index}, null)`)));
+  const profile = (object) => plain(call(context,
+    `sceneObjectMaterialProfile(${JSON.stringify(object)})`));
+
+  assert.deepEqual(raw[0].emissiveColor, [0.8, 0.15, 0.05]);
+  assert.equal(raw[0].emissive, 4);
+  assert.deepEqual(raw[1].emissiveColor, [0, 0, 0]);
+  assert.equal(raw[1].emissive, 1);
+  assert.equal(raw[2].normalScale, 0);
+  assert.equal(raw[3].occlusionStrength, 0);
+
+  assert.deepEqual(normalized[0].emissiveColor, raw[0].emissiveColor);
+  assert.equal(normalized[0].emissive, 4);
+  assert.deepEqual(normalized[1].emissiveColor, [0, 0, 0]);
+  assert.equal(normalized[2].normalScale, 0);
+  assert.equal(normalized[3].occlusionStrength, 0);
+
+  const coloredProfile = profile(normalized[0]);
+  const darkProfile = profile(normalized[1]);
+  assert.deepEqual(coloredProfile.emissiveColor, [0.8, 0.15, 0.05]);
+  assert.equal(coloredProfile.emissive, 4);
+  assert.deepEqual(darkProfile.emissiveColor, [0, 0, 0]);
+  assert.notEqual(coloredProfile.key, darkProfile.key);
+});
+
+// --- KHR_materials_ior ------------------------------------------------------
+
+// The loader owns ior normalization itself: the standalone loader context
+// loads only 11-scene-math.ts + gltf.ts, so the spec contract (finite >= 1
+// valid, explicit 0 = compatibility mode, everything else defaults to 1.5)
+// must not lean on the scene material helpers.
+test("gltfExtractMaterial normalizes KHR_materials_ior to the spec contract", () => {
+  const { context } = createLoaderContext();
+
+  // Omitted extension: no ior field; downstream normalization defaults.
+  assert.equal("ior" in extractMaterial(context, { pbrMetallicRoughness: {} }), false);
+
+  // Finite ior >= 1 is valid without the legacy max=5 truncation.
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 1 } } }).ior, 1);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 1.33 } } }).ior, 1.33);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 1.5 } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 2.42 } } }).ior, 2.42);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 6 } } }).ior, 6);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 40 } } }).ior, 40);
+
+  // Explicit numeric zero is the glTF compatibility mode: preserved as 0,
+  // never defaulted and never clamped to 1.
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 0 } } }).ior, 0);
+
+  // 0<ior<1, negative, null, non-numeric and missing values default to 1.5.
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: 0.5 } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: -1 } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: null } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: { ior: "2.5" } } }).ior, 1.5);
+  assert.equal(extractMaterial(context, { extensions: { KHR_materials_ior: {} } }).ior, 1.5);
+
+  // Non-finite numbers cannot travel through JSON; exercise them directly in
+  // the loader realm.
+  const nonFinite = call(context,
+    "gltfExtractMaterial({asset:{version:'2.0'},materials:[{extensions:{'KHR_materials_ior':{ior: Infinity}}}]}, 0, null)");
+  assert.equal(plain(nonFinite).ior, 1.5);
+});
+
+// --- Effective alpha mode ---------------------------------------------------
+
+test("gltfExtractMaterial: OPAQUE forces opacity 1, other modes preserve alpha", () => {
+  const { context } = createLoaderContext();
+
+  const omitted = extractMaterial(context, { pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } });
+  assert.equal(omitted.alphaMode, "OPAQUE");
+  assert.equal(omitted.opacity, 1);
+  assert.equal(omitted.color, "#ff0000");
+
+  const opaque = extractMaterial(context, { alphaMode: "OPAQUE", pbrMetallicRoughness: { baseColorFactor: [0, 1, 0, 0.25] } });
+  assert.equal(opaque.alphaMode, "OPAQUE");
+  assert.equal(opaque.opacity, 1);
+
+  const blendQuarter = extractMaterial(context, { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [0, 0, 1, 0.25] } });
+  assert.equal(blendQuarter.alphaMode, "BLEND");
+  assert.equal(blendQuarter.opacity, 0.25);
+
+  const blendOne = extractMaterial(context, { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1] } });
+  assert.equal(blendOne.opacity, 1);
+
+  // MASK keeps its authored alpha, gains the glTF default alphaCutoff, and
+  // remains on the opaque/depth-writing route for fragment coverage testing.
+  const mask = extractMaterial(context, { alphaMode: "MASK", pbrMetallicRoughness: { baseColorFactor: [1, 1, 0, 0.4] } });
+  assert.equal(mask.alphaMode, "MASK");
+  assert.equal(mask.opacity, 0.4);
+  assert.equal(mask.alphaCutoff, 0.5);
+
+  // The production gate itself: BLEND is always alpha, otherwise by opacity.
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "BLEND", opacity: 1 })`), true);
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "MASK", opacity: 0.4 })`), false);
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "OPAQUE", opacity: 0.5 })`), true);
+  assert.equal(call(context, `gltfIsAlphaMaterial({ alphaMode: "OPAQUE", opacity: 1 })`), false);
+});
+
+// One shared in-memory scene: three primitives (points mode 0, LINE_STRIP
+// mode 3, triangles mode 4) over a single 3-vertex noncollinear accessor.
+function alphaSceneDoc(material) {
+  return {
+    asset: { version: "2.0" },
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [
+      { attributes: { POSITION: 0 }, mode: 0, material: 0 },
+      { attributes: { POSITION: 0 }, mode: 3, material: 0 },
+      { attributes: { POSITION: 0 }, mode: 4, material: 0 },
+    ] }],
+    materials: [material],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 3, type: "VEC3", min: [0, 0, 0], max: [1, 1, 0] }],
+    bufferViews: [{ buffer: 0, byteLength: 36 }],
+    buffers: [{ byteLength: 36 }],
+  };
+}
+
+test("gltfExtractScene propagates effective alpha to points, lines and meshes", () => {
+  const { context } = createLoaderContext();
+  const cases = [
+    { name: "omitted-a0", material: { pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "omitted-a25", material: { pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "OPAQUE-a0", material: { alphaMode: "OPAQUE", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "OPAQUE-a25", material: { alphaMode: "OPAQUE", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 1, alpha: false, depthWrite: true },
+    { name: "BLEND-a25", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.25] } }, opacity: 0.25, alpha: true, depthWrite: false },
+    { name: "BLEND-a1", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 1] } }, opacity: 1, alpha: true, depthWrite: false },
+    // MASK keeps its authored alpha and depthWrite (points gate on
+    // alphaMode !== "BLEND") and stays out of the blended alpha pass, so the
+    // shared predicate maps it to the opaque pass.
+    { name: "MASK-a04", material: { alphaMode: "MASK", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0.4] } }, opacity: 0.4, alpha: false, depthWrite: true },
+    // BLEND with alpha 0 is still alpha (alphaMode === "BLEND" gate) and disables depthWrite.
+    { name: "BLEND-a0", material: { alphaMode: "BLEND", pbrMetallicRoughness: { baseColorFactor: [1, 0, 0, 0] } }, opacity: 0, alpha: true, depthWrite: false },
+  ];
+  for (const c of cases) {
+    const doc = JSON.stringify(alphaSceneDoc(c.material));
+    // Run extraction against a live VM doc object and serialize the SAME
+    // object before and after, so the mutation check cannot be vacuous.
+    const res = plain(call(context,
+      `(function () {` +
+      `  var docObj = ${doc};` +
+      `  var before = JSON.stringify(docObj);` +
+      `  var scene = gltfExtractScene(docObj, new Float32Array([0,0,0, 1,0,0, 0,1,0]).buffer);` +
+      `  return { before: before, after: JSON.stringify(docObj), scene: scene };` +
+      `})()`));
+    const scene = res.scene;
+    assert.equal(res.before, res.after, `${c.name}: gltfExtractScene mutated the source doc`);
+
+    assert.equal(scene.points.length, 1);
+    assert.equal(scene.points[0].opacity, c.opacity);
+    assert.equal(scene.points[0].blendMode, c.alpha ? "alpha" : "");
+    assert.equal(scene.points[0].depthWrite, c.depthWrite);
+
+    assert.equal(scene.objects.length, 2);
+    const lines = scene.objects.find((o) => o.kind === "lines");
+    const mesh = scene.objects.find((o) => o.kind === "gltf-mesh");
+    assert.ok(lines && mesh);
+    assert.equal(lines.opacity, c.opacity);
+    assert.equal(lines.blendMode, c.alpha ? "alpha" : "");
+    assert.equal(mesh.renderPass, c.alpha ? "alpha" : "opaque");
+    assert.equal(mesh.material.opacity, c.opacity);
+
+    // Extraction never mutates the RGB channels (doc immutability is proven
+    // by the before/after comparison above).
+    assert.equal(mesh.material.color, "#ff0000");
+  }
+});
+
+// --- accessor lookup tables -------------------------------------------------
+
+// A hostile or corrupt componentType or type string must fall through to the
+// pre-table defaults — scalar width 1, a Float32Array view, values copied
+// through normalization unchanged — instead of matching inherited
+// Object.prototype keys. The component/type/normalize tables are built
+// null-prototype at construction; the interleaved row below also pins the
+// second component-format lookup inside gltfReadAccessor, where byte-stride
+// reads resolve both the view record and its DataView reader name from the
+// same table before hitting the Float32 fallback.
+test("accessor lookup tables ignore inherited and unknown keys", () => {
+  const { context } = createLoaderContext();
+  const result = plain(call(context, `
+    var input = new Float32Array([0.25, 0.5]);
+    var interleaved = new Float32Array([0.25, 42, 0.5, 43]);
+    var rows = ["constructor", "toString", "__proto__", "unknown"].map(function(key) {
+      return {
+        key: key,
+        count: gltfAccessorTypeCount(key),
+        view: Array.from(gltfTypedArrayView(input.buffer, 0, key, 2)),
+        normalized: Array.from(gltfNormalizeAccessorValues(input, key)),
+        interleaved: Array.from(gltfReadAccessor({
+          accessors: [{ bufferView: 0, byteOffset: 0, componentType: key, count: 2, type: "SCALAR" }],
+          bufferViews: [{ byteOffset: 0, byteStride: 8 }],
+        }, 0, interleaved.buffer)),
+      };
+    });
+    ({ rows: rows });
+  `));
+  for (const row of result.rows) {
+    assert.equal(row.count, 1, `${row.key} must read as one scalar component`);
+    assert.deepEqual(row.view, [0.25, 0.5], `${row.key} must build a Float32Array view`);
+    assert.deepEqual(row.normalized, [0.25, 0.5], `${row.key} must copy through normalization unchanged`);
+    assert.deepEqual(
+      row.interleaved,
+      [0.25, 0.5],
+      `${row.key} must read interleaved elements through the Float32 fallback`,
+    );
+  }
+});
+
+test("multi-buffer accessors honor buffer indices, interleaving, sparse views, animation and skin data", () => {
+  const { context, sandbox } = createLoaderContext();
+  const positionBuffer = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]).buffer;
+  const interleavedBuffer = new ArrayBuffer(3 * 16);
+  const interleaved = new DataView(interleavedBuffer);
+  for (let i = 0; i < 3; i++) {
+    interleaved.setFloat32(i * 16, 0, true);
+    interleaved.setFloat32(i * 16 + 4, 0, true);
+    interleaved.setFloat32(i * 16 + 8, 1, true);
+    interleaved.setFloat32(i * 16 + 12, 99, true);
+  }
+  const indicesBuffer = new Uint16Array([2, 1, 0]).buffer;
+  const sparseIndexBuffer = new Uint8Array([2]).buffer;
+  const sparseValueBuffer = new Float32Array([9, 8, 7]).buffer;
+  const animationBuffer = new Float32Array([0, 1, 0, 0, 0, 1, 0, 0]).buffer;
+  const inverseBindBuffer = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]).buffer;
+  const buffers = [
+    positionBuffer, interleavedBuffer, indicesBuffer, sparseIndexBuffer,
+    sparseValueBuffer, animationBuffer, inverseBindBuffer,
+  ];
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: buffers.map((buffer) => ({ byteLength: buffer.byteLength })),
+    bufferViews: [
+      { buffer: 0, byteLength: 36 },
+      { buffer: 1, byteLength: 48, byteStride: 16 },
+      { buffer: 2, byteLength: 6 },
+      { buffer: 3, byteLength: 1 },
+      { buffer: 4, byteLength: 12 },
+      { buffer: 5, byteOffset: 0, byteLength: 8 },
+      { buffer: 5, byteOffset: 8, byteLength: 24 },
+      { buffer: 6, byteLength: 64 },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 2, componentType: 5123, count: 3, type: "SCALAR" },
+      {
+        componentType: 5126,
+        count: 3,
+        type: "VEC3",
+        sparse: {
+          count: 1,
+          indices: { bufferView: 3, componentType: 5121 },
+          values: { bufferView: 4 },
+        },
+      },
+      { bufferView: 5, componentType: 5126, count: 2, type: "SCALAR" },
+      { bufferView: 6, componentType: 5126, count: 2, type: "VEC3" },
+      { bufferView: 7, componentType: 5126, count: 1, type: "MAT4" },
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0, NORMAL: 1 }, indices: 2 }] }],
+    nodes: [{ mesh: 0, skin: 0 }],
+    scenes: [{ nodes: [0] }],
+    skins: [{ joints: [0], inverseBindMatrices: 6 }],
+    animations: [{
+      name: "move",
+      samplers: [{ input: 4, output: 5, interpolation: "LINEAR" }],
+      channels: [{ sampler: 0, target: { node: 0, path: "translation" } }],
+    }],
+  };
+  sandbox.__multiDoc = doc;
+  sandbox.__multiBuffers = buffers;
+  const result = plain(call(context, `
+    var sparse = gltfReadAccessor(__multiDoc, 3, __multiBuffers);
+    var scene = gltfExtractScene(__multiDoc, __multiBuffers);
+    ({
+      regular: Array.from(gltfReadAccessor(__multiDoc, 0, __multiBuffers)),
+      interleaved: Array.from(gltfReadAccessor(__multiDoc, 1, __multiBuffers)),
+      indices: Array.from(gltfReadAccessor(__multiDoc, 2, __multiBuffers)),
+      sparse: Array.from(sparse),
+      positions: Array.from(scene.objects[0].vertices.positions),
+      normals: Array.from(scene.objects[0].vertices.normals),
+      animationTimes: Array.from(scene.animations[0].channels[0].times),
+      animationValues: Array.from(scene.animations[0].channels[0].values),
+      inverseBind: Array.from(scene.skins[0].inverseBindMatrices),
+    });
+  `));
+
+  // The normal accessor lives in buffer 1. Reading buffer 0 by mistake would
+  // produce zeros (and the interleaved sentinel would never be observed).
+  assert.deepEqual(result.regular, [0, 0, 0, 1, 0, 0, 0, 1, 0]);
+  assert.deepEqual(result.interleaved, [0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  assert.deepEqual(result.indices, [2, 1, 0]);
+  assert.deepEqual(result.sparse, [0, 0, 0, 0, 0, 0, 9, 8, 7]);
+  assert.deepEqual(result.positions, [0, 1, 0, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(result.normals, [0, 0, 1, 0, 0, 1, 0, 0, 1]);
+  assert.deepEqual(result.animationTimes, [0, 1]);
+  assert.deepEqual(result.animationValues, [0, 0, 0, 1, 0, 0]);
+  assert.equal(result.inverseBind[0], 1);
+  assert.equal(result.inverseBind[5], 1);
+  assert.equal(result.inverseBind[10], 1);
+  assert.equal(result.inverseBind[15], 1);
+});
+
+test("sparse overlays normalize after merging without mutating base bytes", () => {
+  const { context, sandbox } = createLoaderContext();
+  const base = new Uint8Array([10, 20, 30, 40, 50, 60, 70, 80, 90]).buffer;
+  const indices = new Uint8Array([1]).buffer;
+  const values = new Uint8Array([255, 128, 0]).buffer;
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: [
+      { byteLength: base.byteLength },
+      { byteLength: indices.byteLength },
+      { byteLength: values.byteLength },
+    ],
+    bufferViews: [
+      { buffer: 0, byteLength: base.byteLength },
+      { buffer: 1, byteLength: indices.byteLength },
+      { buffer: 2, byteLength: values.byteLength },
+    ],
+    accessors: [{
+      bufferView: 0,
+      componentType: 5121,
+      normalized: true,
+      count: 3,
+      type: "VEC3",
+      sparse: {
+        count: 1,
+        indices: { bufferView: 1, componentType: 5121 },
+        values: { bufferView: 2 },
+      },
+    }],
+  };
+  sandbox.__sparseDoc = doc;
+  sandbox.__sparseBuffers = [base, indices, values];
+  const result = plain(call(context, `
+    var first = gltfReadAccessor(__sparseDoc, 0, __sparseBuffers);
+    var second = gltfReadAccessor(__sparseDoc, 0, __sparseBuffers);
+    ({ first: Array.from(first), second: Array.from(second), base: Array.from(new Uint8Array(__sparseBuffers[0])) });
+  `));
+  const expected = Array.from(new Float32Array([
+    10 / 255, 20 / 255, 30 / 255, 1, 128 / 255, 0,
+    70 / 255, 80 / 255, 90 / 255,
+  ]));
+  assert.deepEqual(result.first, expected);
+  assert.deepEqual(result.second, result.first);
+  assert.deepEqual(result.base, [10, 20, 30, 40, 50, 60, 70, 80, 90]);
+
+  sandbox.__duplicateDoc = {
+    buffers: [{ byteLength: 9 }, { byteLength: 2 }, { byteLength: 6 }],
+    bufferViews: [
+      { buffer: 0, byteLength: 9 },
+      { buffer: 1, byteLength: 2 },
+      { buffer: 2, byteLength: 6 },
+    ],
+    accessors: [{
+      bufferView: 0, componentType: 5121, count: 3, type: "VEC3",
+      sparse: {
+        count: 2,
+        indices: { bufferView: 1, componentType: 5121 },
+        values: { bufferView: 2 },
+      },
+    }],
+  };
+  sandbox.__duplicateBuffers = [base, new Uint8Array([1, 1]).buffer, new Uint8Array(6).buffer];
+  assert.throws(
+    () => call(context, "gltfReadAccessor(__duplicateDoc, 0, __duplicateBuffers)"),
+    /strictly increasing/,
+  );
+});
+
+test("embedded bufferView images resolve the referenced buffer in a multi-buffer source", () => {
+  const { context, sandbox } = createLoaderContext();
+  const payload = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const imageBytes = new Uint8Array(3 + payload.length + 2);
+  imageBytes.fill(0xee, 0, 3);
+  imageBytes.set(payload, 3);
+  imageBytes.fill(0xdd, 3 + payload.length);
+  const buffers = [new ArrayBuffer(1), imageBytes.buffer];
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: buffers.map((buffer) => ({ byteLength: buffer.byteLength })),
+    bufferViews: [{ buffer: 1, byteOffset: 3, byteLength: payload.length }],
+    images: [{ bufferView: 0, mimeType: "image/png" }],
+    textures: [{ source: 0 }],
+    materials: [{ pbrMetallicRoughness: { baseColorTexture: { index: 0 } } }],
+  };
+  const blobs = [];
+  sandbox.URL.createObjectURL = (blob) => {
+    blobs.push(blob);
+    return "blob:multi-image-" + blobs.length;
+  };
+  sandbox.__imageDoc = doc;
+  sandbox.__imageBuffers = buffers;
+  const material = plain(call(context,
+    "gltfExtractMaterial(__imageDoc, 0, __imageBuffers)"));
+  assert.equal(material.texture, "blob:multi-image-1");
+  assert.equal(blobs.length, 1);
+  assert.equal(blobs[0].type, "image/png");
+  assert.deepEqual(Array.from(new Uint8Array(blobs[0].parts[0])), payload);
+});
+
+test("single ArrayBuffer accessor callers remain compatible", () => {
+  const { context, sandbox } = createLoaderContext();
+  const buffer = new Float32Array([4, 5, 6]).buffer;
+  sandbox.__singleDoc = {
+    asset: { version: "2.0" },
+    buffers: [{ byteLength: buffer.byteLength }],
+    bufferViews: [{ buffer: 0, byteLength: buffer.byteLength }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: "VEC3" }],
+  };
+  sandbox.__singleBuffer = buffer;
+  assert.deepEqual(plain(call(context,
+    "Array.from(gltfReadAccessor(__singleDoc, 0, __singleBuffer))")), [4, 5, 6]);
+});
+
+test("invalid buffer indices and declared ranges raise named glTF errors", () => {
+  const { context } = createLoaderContext();
+  assert.throws(() => call(context, `gltfReadAccessor({
+    buffers: [{ byteLength: 4 }],
+    bufferViews: [{ buffer: 9, byteLength: 4 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: "SCALAR" }],
+  }, 0, new ArrayBuffer(4))`), /buffer 9/);
+  assert.throws(() => call(context, `gltfReadAccessor({
+    buffers: [{ byteLength: 4 }],
+    bufferViews: [{ buffer: 0, byteLength: 8 }],
+    accessors: [{ bufferView: 0, componentType: 5126, count: 1, type: "SCALAR" }],
+  }, 0, new ArrayBuffer(8))`), /bufferView 0.*bounds/);
+  assert.throws(() => call(context, `gltfReadAccessor({
+    buffers: [{ byteLength: 16 }],
+    bufferViews: [{ buffer: 0, byteOffset: 4, byteLength: 4 }],
+    accessors: [{ bufferView: 0, byteOffset: 0, componentType: 5126, count: 2, type: "SCALAR" }],
+  }, 0, new ArrayBuffer(16))`), /accessor 0 exceeds bufferView 0 bounds/);
+});
+
+function networkURLAPI() {
+  class LoaderURL extends URL {}
+  LoaderURL.createObjectURL = () => "blob:network";
+  return LoaderURL;
+}
+
+function okJSON(value) {
+  return { ok: true, status: 200, json: async () => value };
+}
+
+function okBytes(bytes) {
+  return { ok: true, status: 200, arrayBuffer: async () => bytes };
+}
+
+function makeTestGLB(json, binary) {
+  let jsonBytes = Buffer.from(JSON.stringify(json));
+  const jsonPadding = (4 - (jsonBytes.length % 4)) % 4;
+  if (jsonPadding) jsonBytes = Buffer.concat([jsonBytes, Buffer.alloc(jsonPadding, 0x20)]);
+  const binaryPadding = (4 - (binary.length % 4)) % 4;
+  const binaryBytes = binaryPadding ? Buffer.concat([binary, Buffer.alloc(binaryPadding)]) : binary;
+  const header = Buffer.alloc(12);
+  header.writeUInt32LE(0x46546c67, 0);
+  header.writeUInt32LE(2, 4);
+  header.writeUInt32LE(12 + 8 + jsonBytes.length + 8 + binaryBytes.length, 8);
+  const jsonHeader = Buffer.alloc(8);
+  jsonHeader.writeUInt32LE(jsonBytes.length, 0);
+  jsonHeader.writeUInt32LE(0x4e4f534a, 4);
+  const binaryHeader = Buffer.alloc(8);
+  binaryHeader.writeUInt32LE(binaryBytes.length, 0);
+  binaryHeader.writeUInt32LE(0x004e4942, 4);
+  return Buffer.concat([header, jsonHeader, jsonBytes, binaryHeader, binaryBytes]);
+}
+
+test(".gltf loading fetches mixed data and relative buffer URIs by index", async () => {
+  const positionBytes = new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]).buffer;
+  const indexBytes = new Uint16Array([2, 1, 0]).buffer;
+  const dataURI = "data:application/octet-stream;base64," + Buffer.from(positionBytes).toString("base64");
+  const modelURL = "/models/multi.gltf";
+  const fetched = [];
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: [
+      { uri: dataURI, byteLength: positionBytes.byteLength },
+      { uri: "mesh/indices.bin", byteLength: indexBytes.byteLength },
+    ],
+    bufferViews: [
+      { buffer: 0, byteLength: positionBytes.byteLength },
+      { buffer: 1, byteLength: indexBytes.byteLength },
+    ],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5123, count: 3, type: "SCALAR" },
+    ],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+    nodes: [{ mesh: 0 }],
+    scenes: [{ nodes: [0] }],
+  };
+  const { context } = createLoaderContext({
+    location: { href: "http://localhost:3000/" },
+    urlAPI: networkURLAPI(),
+    fetch: async (url, init) => {
+      fetched.push({ url, init });
+      if (url === modelURL) return okJSON(doc);
+      if (url === dataURI) return okBytes(positionBytes);
+      if (url === "http://localhost:3000/models/mesh/indices.bin") return okBytes(indexBytes);
+      throw new Error("unexpected fetch: " + url);
+    },
+  });
+  const scene = await call(context,
+    `sceneLoadGLTFModel(${JSON.stringify(modelURL)})`);
+  assert.deepEqual(Array.from(scene.objects[0].vertices.positions), [0, 1, 0, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(fetched.map((entry) => entry.url), [
+    modelURL,
+    dataURI,
+    "http://localhost:3000/models/mesh/indices.bin",
+  ]);
+  assert.ok(fetched.every((entry) => entry.init.credentials === "same-origin"));
+});
+
+test(".gltf buffer fetch failures identify the buffer index and URL", async () => {
+  const dataURI = "data:application/octet-stream;base64,AAAA";
+  const doc = {
+    asset: { version: "2.0" },
+    buffers: [
+      { uri: dataURI, byteLength: 3 },
+      { uri: "missing.bin", byteLength: 4 },
+    ],
+    scenes: [{ nodes: [] }],
+    scene: 0,
+    nodes: [],
+  };
+  const { context } = createLoaderContext({
+    location: { href: "http://localhost:3000/" },
+    urlAPI: networkURLAPI(),
+    fetch: async (url) => {
+      if (url === "/models/failure.gltf") return okJSON(doc);
+      if (url === dataURI) return okBytes(new Uint8Array([1, 2, 3]).buffer);
+      if (url === "http://localhost:3000/models/missing.bin") {
+        return { ok: false, status: 404, arrayBuffer: async () => new ArrayBuffer(0) };
+      }
+      throw new Error("unexpected fetch: " + url);
+    },
+  });
+  await assert.rejects(
+    call(context, "sceneLoadGLTFModel('/models/failure.gltf')"),
+    /Failed to fetch glTF buffer 1: http:\/\/localhost:3000\/models\/missing\.bin \(HTTP 404\)/,
+  );
+});
+
+test("GLB BIN buffer 0 can share a document with external buffer 1", async () => {
+  const positionBytes = Buffer.from(new Float32Array([
+    0, 0, 0,
+    1, 0, 0,
+    0, 1, 0,
+  ]).buffer);
+  const indexBytes = Buffer.from(new Uint16Array([2, 1, 0]).buffer);
+  const glbBinary = Buffer.concat([positionBytes, Buffer.alloc(1)]);
+  const doc = {
+    asset: { version: "2.0" },
+    scene: 0,
+    scenes: [{ nodes: [0] }],
+    nodes: [{ mesh: 0 }],
+    meshes: [{ primitives: [{ attributes: { POSITION: 0 }, indices: 1 }] }],
+    accessors: [
+      { bufferView: 0, componentType: 5126, count: 3, type: "VEC3" },
+      { bufferView: 1, componentType: 5123, count: 3, type: "SCALAR" },
+    ],
+    buffers: [
+      // The BIN chunk is padded from 37 declared bytes to 40, exercising the
+      // allowed three-byte GLB padding while the accessor reads 36 bytes.
+      { byteLength: positionBytes.length + 1 },
+      { uri: "indices.bin", byteLength: indexBytes.length },
+    ],
+    bufferViews: [
+      { buffer: 0, byteLength: positionBytes.length },
+      { buffer: 1, byteLength: indexBytes.length },
+    ],
+  };
+  const glb = makeTestGLB(doc, glbBinary);
+  const shortGlb = makeTestGLB(doc, positionBytes.subarray(0, 32));
+  const overpaddedGlb = makeTestGLB(doc, Buffer.concat([positionBytes, Buffer.alloc(8)]));
+  const glbArrayBuffer = glb.buffer.slice(glb.byteOffset, glb.byteOffset + glb.byteLength);
+  const shortGlbArrayBuffer = shortGlb.buffer.slice(shortGlb.byteOffset, shortGlb.byteOffset + shortGlb.byteLength);
+  const overpaddedGlbArrayBuffer = overpaddedGlb.buffer.slice(
+    overpaddedGlb.byteOffset, overpaddedGlb.byteOffset + overpaddedGlb.byteLength,
+  );
+  const paddedIndices = Buffer.concat([indexBytes, Buffer.alloc(3)]);
+  const paddedIndicesArrayBuffer = paddedIndices.buffer.slice(
+    paddedIndices.byteOffset, paddedIndices.byteOffset + paddedIndices.byteLength,
+  );
+  const fetched = [];
+  const { context } = createLoaderContext({
+    location: { href: "http://localhost:3000/" },
+    urlAPI: networkURLAPI(),
+    fetch: async (url, init) => {
+      fetched.push({ url, init });
+      if (url === "/models/mixed.glb") return okBytes(glbArrayBuffer);
+      if (url === "/models/short.glb") return okBytes(shortGlbArrayBuffer);
+      if (url === "/models/overpadded.glb") return okBytes(overpaddedGlbArrayBuffer);
+      if (url === "http://localhost:3000/models/indices.bin") {
+        return okBytes(paddedIndicesArrayBuffer);
+      }
+      throw new Error("unexpected fetch: " + url);
+    },
+  });
+  const scene = await call(context, "sceneLoadGLTFModel('/models/mixed.glb')");
+  assert.deepEqual(Array.from(scene.objects[0].vertices.positions), [0, 1, 0, 1, 0, 0, 0, 0, 0]);
+  assert.deepEqual(fetched.map((entry) => entry.url), [
+    "/models/mixed.glb",
+    "http://localhost:3000/models/indices.bin",
+  ]);
+  assert.ok(fetched.every((entry) => entry.init.credentials === "same-origin"));
+  await assert.rejects(
+    call(context, "sceneLoadGLTFModel('/models/short.glb')"),
+    /glTF buffer 0 is shorter than declared byteLength 37/,
+  );
+  await assert.rejects(
+    call(context, "sceneLoadGLTFModel('/models/overpadded.glb')"),
+    /glTF buffer 0 embedded BIN has more than 3 padding bytes/,
+  );
+});
+
 // --- KHR_materials_* factor mapping ----------------------------------------
 
 test("gltf material without extensions keeps the base PBR mapping", () => {
@@ -143,6 +833,51 @@ test("gltf material without extensions keeps the base PBR mapping", () => {
   assert.equal(material.unlit, undefined);
 });
 
+test("omitted metallicFactor and roughnessFactor default to the spec value of 1.0", () => {
+  const { context } = createLoaderContext();
+  // pbrMetallicRoughness present but empty: an author who wants the fully
+  // rough, fully metallic default look omits both factors. The old fallback
+  // of 0.0 silently turned every such asset into plastic (metalness 0).
+  const empty = extractMaterial(context, { pbrMetallicRoughness: {} });
+  assert.equal(empty.roughness, 1.0);
+  assert.equal(empty.metalness, 1.0);
+
+  // No pbrMetallicRoughness block at all takes the same default path.
+  const none = extractMaterial(context, {});
+  assert.equal(none.roughness, 1.0);
+  assert.equal(none.metalness, 1.0);
+
+  // An explicit zero must still be preserved (never re-defaulted).
+  const zero = extractMaterial(context, {
+    pbrMetallicRoughness: { roughnessFactor: 0, metallicFactor: 0 },
+  });
+  assert.equal(zero.roughness, 0);
+  assert.equal(zero.metalness, 0);
+});
+
+test("normalTexture.scale and occlusionTexture.strength default to 1.0 and pass through", () => {
+  const { context } = createLoaderContext();
+  const defaults = extractMaterial(context, {
+    normalTexture: { index: 0 },
+    occlusionTexture: { index: 0 },
+  });
+  assert.equal(defaults.normalScale, 1.0);
+  assert.equal(defaults.occlusionStrength, 1.0);
+
+  const authored = extractMaterial(context, {
+    normalTexture: { index: 0, scale: 0.5 },
+    occlusionTexture: { index: 0, strength: 0.25 },
+  });
+  assert.equal(authored.normalScale, 0.5);
+  assert.equal(authored.occlusionStrength, 0.25);
+
+  // Materials with neither texture still get the neutral default so the
+  // renderer never uploads NaN/undefined uniforms.
+  const untextured = extractMaterial(context, {});
+  assert.equal(untextured.normalScale, 1.0);
+  assert.equal(untextured.occlusionStrength, 1.0);
+});
+
 test("glTF texture slots carry explicit color roles and transfer functions", () => {
   const { context } = createLoaderContext();
   const material = extractTexturedMaterial(context);
@@ -155,13 +890,163 @@ test("glTF texture slots carry explicit color roles and transfer functions", () 
   assert.equal(material.emissiveMap, "emissive.png");
 
   assert.deepEqual(material.textureDescriptors, {
-    baseColor: { uri: "base.png", role: "base-color", colorSpace: "srgb", channels: "rgba", view: "2d" },
-    normal: { uri: "normal.png", role: "normal", colorSpace: "linear", channels: "rgb", view: "2d" },
-    roughness: { uri: "metal-rough.png", role: "roughness", colorSpace: "linear", channels: "g", view: "2d" },
-    metalness: { uri: "metal-rough.png", role: "metalness", colorSpace: "linear", channels: "b", view: "2d" },
-    occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d" },
-    emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d" },
+    baseColor: { uri: "base.png", role: "base-color", colorSpace: "srgb", channels: "rgba", view: "2d", wrapS: 10497, wrapT: 10497 },
+    normal: { uri: "normal.png", role: "normal", colorSpace: "linear", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497 },
+    roughness: { uri: "metal-rough.png", role: "roughness", colorSpace: "linear", channels: "g", view: "2d", wrapS: 10497, wrapT: 10497 },
+    metalness: { uri: "metal-rough.png", role: "metalness", colorSpace: "linear", channels: "b", view: "2d", wrapS: 10497, wrapT: 10497 },
+    occlusion: { uri: "ao.png", role: "ambient-occlusion", colorSpace: "linear", channels: "r", view: "2d", wrapS: 10497, wrapT: 10497 },
+    emissive: { uri: "emissive.png", role: "emissive", colorSpace: "srgb", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497 },
   });
+});
+
+test("KHR_materials_specular textures resolve through the shared descriptor path", () => {
+  const { context } = createLoaderContext();
+  const material = extractSpecularTexturedMaterial(context, "spec.png");
+
+  // Factors survive beside the textures.
+  assert.equal(material.specularIntensity, 0.5);
+  assert.deepEqual(material.specularColor, [1, 1, 1]);
+  assert.equal(material.roughness, 0.4);
+
+  // Intensity is the linear alpha mask; the colour is the sRGB F0 tint.
+  assert.deepEqual(material.textureDescriptors.specularIntensity, {
+    uri: "spec.png", role: "specular-intensity", colorSpace: "linear", channels: "a", view: "2d", wrapS: 10497, wrapT: 10497,
+  });
+  assert.deepEqual(material.textureDescriptors.specularColor, {
+    uri: "spec.png", role: "specular-color", colorSpace: "srgb", channels: "rgb", view: "2d", wrapS: 10497, wrapT: 10497,
+  });
+
+  // The SAME source URI must produce two distinct roles, never a merged slot.
+  assert.notEqual(
+    material.textureDescriptors.specularIntensity.role,
+    material.textureDescriptors.specularColor.role,
+  );
+  assert.equal(material.textureDescriptors.specularIntensity.uri, material.textureDescriptors.specularColor.uri);
+
+  // Standard slots stay untouched by the specular additions.
+  assert.equal("baseColor" in material.textureDescriptors, false);
+});
+
+test("KHR_materials_specular resolves data URI strings", () => {
+  const { context } = createLoaderContext();
+  const material = extractSpecularTexturedMaterial(context, "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(material.textureDescriptors.specularIntensity.uri, "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(material.textureDescriptors.specularColor.uri, "data:image/png;base64,iVBORw0KGgo=");
+  assert.equal(material.textureDescriptors.specularIntensity.role, "specular-intensity");
+  assert.equal(material.textureDescriptors.specularColor.role, "specular-color");
+});
+
+test("KHR_materials_specular resolves bufferView-embedded images from one ArrayBuffer", () => {
+  const { context, sandbox } = createLoaderContext();
+
+  // Sentinel bytes surround the payload; the bufferView starts at a nonzero
+  // offset so the extracted bytes must be an exact slice, not the whole
+  // buffer. No image decoder runs here: this is URI-resolution coverage.
+  const payload = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+  const bytes = new Uint8Array(7 + payload.length + 5);
+  bytes.fill(0xee, 0, 7);
+  bytes.set(payload, 7);
+  bytes.fill(0xdd, 7 + payload.length);
+  const buffer = bytes.buffer;
+
+  const doc = materialDoc({
+    extensions: {
+      KHR_materials_specular: {
+        specularFactor: 0.5,
+        specularTexture: { index: 0 },
+        specularColorTexture: { index: 1 },
+      },
+    },
+  });
+  doc.buffers = [{ byteLength: buffer.byteLength }];
+  doc.bufferViews = [{ buffer: 0, byteOffset: 7, byteLength: payload.length }];
+  doc.images = [
+    { bufferView: 0, mimeType: "image/png" },
+    { bufferView: 0, mimeType: "image/png" },
+  ];
+  doc.textures = [{ source: 0 }, { source: 1 }];
+
+  // A Node-local variable is invisible inside vm.runInContext: bind the real
+  // ArrayBuffer into the sandbox explicitly before the call.
+  sandbox.__embeddedSpecBuffer = buffer;
+
+  // Observe the Blob objects handed to URL.createObjectURL; never treat the
+  // stub's return value alone as the assertion.
+  const blobs = [];
+  sandbox.URL.createObjectURL = (blob) => {
+    blobs.push(blob);
+    return "blob:fake-" + blobs.length;
+  };
+
+  const material = plain(call(context,
+    `gltfExtractMaterial(${JSON.stringify(doc)}, 0, __embeddedSpecBuffer)`));
+
+  // Both slots resolve to their own blob URL with distinct roles over the
+  // same embedded bytes.
+  assert.equal(material.textureDescriptors.specularIntensity.uri, "blob:fake-1");
+  assert.equal(material.textureDescriptors.specularColor.uri, "blob:fake-2");
+  assert.equal(material.textureDescriptors.specularIntensity.role, "specular-intensity");
+  assert.equal(material.textureDescriptors.specularColor.role, "specular-color");
+  assert.equal(material.textureDescriptors.specularIntensity.colorSpace, "linear");
+  assert.equal(material.textureDescriptors.specularColor.colorSpace, "srgb");
+  assert.equal(material.textureDescriptors.specularIntensity.channels, "a");
+  assert.equal(material.textureDescriptors.specularColor.channels, "rgb");
+  assert.equal(material.specularIntensity, 0.5);
+
+  // Each captured Blob carries the expected MIME type and exactly the sliced
+  // payload bytes, excluding the surrounding sentinels.
+  assert.equal(blobs.length, 2);
+  for (const blob of blobs) {
+    assert.equal(blob.type, "image/png");
+    assert.equal(blob.parts.length, 1);
+    assert.deepEqual(Array.from(new Uint8Array(blob.parts[0])), payload);
+  }
+});
+
+test("KHR_materials_specular keeps texture slots absent when references do not resolve", () => {
+  const { context } = createLoaderContext();
+
+  // No extension at all: neither slot nor factor field appears.
+  const bare = extractMaterial(context, { pbrMetallicRoughness: {} });
+  assert.equal(bare.textureDescriptors, undefined);
+  assert.equal("specularIntensity" in bare, false);
+
+  // Extension present but without texture references: factors only.
+  const factorsOnly = extractMaterial(context, {
+    extensions: { KHR_materials_specular: { specularFactor: 0.25 } },
+  });
+  assert.equal(factorsOnly.specularIntensity, 0.25);
+  assert.equal(factorsOnly.textureDescriptors, undefined);
+
+  // Out-of-range texture indices resolve to nothing and leave no slot.
+  const badIndex = extractMaterial(context, {
+    extensions: {
+      KHR_materials_specular: {
+        specularTexture: { index: 9 },
+        specularColorTexture: { index: 9 },
+      },
+    },
+  });
+  assert.equal(badIndex.textureDescriptors, undefined);
+
+  // One broken reference must not suppress the other, resolvable slot.
+  const doc = {
+    asset: { version: "2.0" },
+    images: [{ uri: "spec-color.png" }],
+    textures: [{ source: 0 }],
+    materials: [{
+      extensions: {
+        KHR_materials_specular: {
+          specularTexture: { index: 5 },
+          specularColorTexture: { index: 0 },
+        },
+      },
+    }],
+  };
+  const partial = plain(call(context, `gltfExtractMaterial(${JSON.stringify(doc)}, 0, null)`));
+  assert.equal("specularIntensity" in partial.textureDescriptors, false);
+  assert.equal(partial.textureDescriptors.specularColor.uri, "spec-color.png");
+  assert.equal(partial.textureDescriptors.specularColor.role, "specular-color");
 });
 
 test("KHR_materials_clearcoat maps clearcoatFactor onto clearcoat", () => {
@@ -223,16 +1108,46 @@ test("KHR_materials_anisotropy projects rotation onto the signed tangent axis", 
   assert.ok(Math.abs(between.anisotropy) < 1e-12, `expected 0, got ${between.anisotropy}`);
 });
 
-test("KHR_materials_emissive_strength scales the emissive factor above 1", () => {
+test("emissiveFactor maps to a colour, not a scalar dropped onto emissive", () => {
   const { context } = createLoaderContext();
+  // A red-only emissive on a material with no base colour texture must
+  // glow red, not the grey placeholder colour: emissiveColor carries the
+  // full triple, and emissive stays a pure strength multiplier (1 with no
+  // KHR_materials_emissive_strength extension).
   const base = extractMaterial(context, { emissiveFactor: [0.5, 0.25, 0] });
-  assert.equal(base.emissive, 0.5);
+  assert.deepEqual(base.emissiveColor, [0.5, 0.25, 0]);
+  assert.equal(base.emissive, 1);
 
+  // A material with no emissiveFactor at all still gets an explicit black
+  // triple (not undefined), so the renderer can tell "authored, zero" from
+  // "never set" without a truthiness check on a maybe-undefined field.
+  const none = extractMaterial(context, {});
+  assert.deepEqual(none.emissiveColor, [0, 0, 0]);
+  assert.equal(none.emissive, 1);
+});
+
+test("KHR_materials_emissive_strength sets the strength multiplier directly", () => {
+  const { context } = createLoaderContext();
+  // The strength extension no longer folds through max(emissiveFactor); it
+  // is carried as its own multiplier the shader applies to emissiveColor.
   const boosted = extractMaterial(context, {
     emissiveFactor: [0.5, 0.25, 0],
     extensions: { KHR_materials_emissive_strength: { emissiveStrength: 6 } },
   });
-  assert.equal(boosted.emissive, 3);
+  assert.deepEqual(boosted.emissiveColor, [0.5, 0.25, 0]);
+  assert.equal(boosted.emissive, 6);
+});
+
+test("emissiveFactor clamps malformed or out-of-range components independently", () => {
+  const { context } = createLoaderContext();
+  // A negative or non-finite component falls back to black in that channel
+  // alone; the other two valid channels still come through.
+  const clamped = extractMaterial(context, { emissiveFactor: [1.5, -1, "bad"] });
+  assert.deepEqual(clamped.emissiveColor, [1, 0, 0]);
+
+  // A malformed (too-short, non-array) factor falls back to black entirely.
+  assert.deepEqual(extractMaterial(context, { emissiveFactor: [0.2] }).emissiveColor, [0, 0, 0]);
+  assert.deepEqual(extractMaterial(context, { emissiveFactor: "red" }).emissiveColor, [0, 0, 0]);
 });
 
 test("KHR_materials_ior records the index of refraction", () => {
@@ -249,9 +1164,8 @@ test("KHR_materials_unlit selects the flat shading path", () => {
   assert.equal(extractMaterial(context, { extensions: { KHR_materials_unlit: {} } }).unlit, true);
 });
 
-test("KHR_materials_volume and KHR_materials_specular are ignored, not guessed", () => {
-  // Neither extension maps onto an existing StandardMaterial field, so the
-  // loader must leave the material untouched rather than invent a value.
+test("KHR_materials_volume keeps scalar controls alongside specular factors", () => {
+  // Volume and specular controls must coexist; omitted attenuation tint is white.
   const { context } = createLoaderContext();
   const material = extractMaterial(context, {
     extensions: {
@@ -259,8 +1173,242 @@ test("KHR_materials_volume and KHR_materials_specular are ignored, not guessed",
       KHR_materials_specular: { specularFactor: 0.3 },
     },
   });
-  assert.equal(material.thickness, undefined);
-  assert.equal(material.specular, undefined);
+  assert.equal(material.thickness, 0.5);
+  assert.equal(material.attenuationDistance, 2);
+  assert.deepEqual(material.attenuationColor, [1, 1, 1]);
+  assert.equal(material.specularIntensity, 0.3);
+  assert.deepEqual(material.specularColor, [1, 1, 1]);
+});
+
+// --- KHR_materials_specular factor contract --------------------------------
+
+// Only the factors map in this slice: the specular texture inputs are a later
+// one, so the extension deliberately stays off GLTF_SUPPORTED_EXTENSIONS.
+// specularIntensity and specularColor are the existing StandardMaterial
+// fields the browser pipeline already renders.
+test("KHR_materials_specular omission leaves both factor fields unset", () => {
+  const { context } = createLoaderContext();
+  const bare = extractMaterial(context, { pbrMetallicRoughness: { roughnessFactor: 0.4 } });
+  assert.equal("specularIntensity" in bare, false);
+  assert.equal("specularColor" in bare, false);
+
+  // Default materials — missing or out-of-range index — omit them as well.
+  const fallback = plain(call(context, `gltfExtractMaterial({ asset: { version: "2.0" } }, 7, null)`));
+  assert.equal("specularIntensity" in fallback, false);
+  assert.equal("specularColor" in fallback, false);
+});
+
+test("KHR_materials_specular defaults the intensity to 1 and the colour to white", () => {
+  const { context } = createLoaderContext();
+
+  // An empty extension object takes both spec defaults.
+  const empty = extractMaterial(context, { extensions: { KHR_materials_specular: {} } });
+  assert.equal(empty.specularIntensity, 1);
+  assert.deepEqual(empty.specularColor, [1, 1, 1]);
+
+  // Each factor defaults independently while the other is present.
+  const factorOnly = extractMaterial(context, {
+    extensions: { KHR_materials_specular: { specularFactor: 0.4 } },
+  });
+  assert.equal(factorOnly.specularIntensity, 0.4);
+  assert.deepEqual(factorOnly.specularColor, [1, 1, 1]);
+
+  const colourOnly = extractMaterial(context, {
+    extensions: { KHR_materials_specular: { specularColorFactor: [0.2, 0.4, 0.6] } },
+  });
+  assert.equal(colourOnly.specularIntensity, 1);
+  assert.deepEqual(colourOnly.specularColor, [0.2, 0.4, 0.6]);
+});
+
+test("KHR_materials_specular preserves an explicit zero intensity and black colour", () => {
+  const { context } = createLoaderContext();
+  const matte = extractMaterial(context, {
+    extensions: {
+      KHR_materials_specular: { specularFactor: 0, specularColorFactor: [0, 0, 0] },
+    },
+  });
+  assert.equal(matte.specularIntensity, 0);
+  assert.deepEqual(matte.specularColor, [0, 0, 0]);
+});
+
+test("KHR_materials_specular clamps the intensity but never the colour", () => {
+  const { context } = createLoaderContext();
+  // The intensity saturates over 0..1; an explicit zero survives the clamp.
+  assert.equal(extractMaterial(context, {
+    extensions: { KHR_materials_specular: { specularFactor: 2 } },
+  }).specularIntensity, 1);
+  assert.equal(extractMaterial(context, {
+    extensions: { KHR_materials_specular: { specularFactor: -0.5 } },
+  }).specularIntensity, 0);
+
+  // The colour is linear RGB with no colour-space conversion and no upper
+  // clamp: HDR components above 1 pass through untouched.
+  const hdr = extractMaterial(context, {
+    extensions: { KHR_materials_specular: { specularColorFactor: [0.5, 1, 2.5] } },
+  });
+  assert.deepEqual(hdr.specularColor, [0.5, 1, 2.5]);
+});
+
+test("KHR_materials_specular never coerces malformed factors", () => {
+  const { context } = createLoaderContext();
+  // Strings, booleans, nulls, objects and arrays must not become numbers.
+  for (const bad of ["0.5", true, false, null, { factor: 0.5 }, [0.5]]) {
+    const material = extractMaterial(context, {
+      extensions: { KHR_materials_specular: { specularFactor: bad } },
+    });
+    assert.equal(
+      material.specularIntensity, 1,
+      `specularFactor ${JSON.stringify(bad)} must default to 1, not coerce`,
+    );
+  }
+});
+
+test("KHR_materials_specular rejects malformed colour triples wholesale", () => {
+  const { context } = createLoaderContext();
+  const badTriples = [
+    null,
+    "0.5,0.5,0.5",
+    { r: 1, g: 1, b: 1 },
+    [0.5, 0.5],
+    [0.5, 0.5, 0.5, 0.5],
+    [0.5, "0.5", 0.5],
+    [0.5, true, 0.5],
+    [0.5, null, 0.5],
+    [0.5, -0.25, 0.5],
+  ];
+  for (const triple of badTriples) {
+    const material = extractMaterial(context, {
+      extensions: { KHR_materials_specular: { specularColorFactor: triple } },
+    });
+    assert.deepEqual(
+      material.specularColor, [1, 1, 1],
+      `triple ${JSON.stringify(triple)} must default whole to white`,
+    );
+  }
+
+  // A malformed colour must not disturb a valid intensity beside it.
+  const mixed = extractMaterial(context, {
+    extensions: {
+      KHR_materials_specular: { specularFactor: 0.25, specularColorFactor: [1, 2, 3, 4] },
+    },
+  });
+  assert.equal(mixed.specularIntensity, 0.25);
+  assert.deepEqual(mixed.specularColor, [1, 1, 1]);
+});
+
+test("KHR_materials_specular treats non-finite inputs as malformed", () => {
+  const { context } = createLoaderContext();
+  // Infinity and NaN cannot travel through JSON; exercise them in the VM.
+  const nonFinite = plain(call(context, `
+    gltfExtractMaterial({
+      asset: { version: "2.0" },
+      materials: [{
+        extensions: {
+          KHR_materials_specular: {
+            specularFactor: Infinity,
+            specularColorFactor: [0.25, NaN, 4]
+          }
+        }
+      }]
+    }, 0, null)
+  `));
+  assert.equal(nonFinite.specularIntensity, 1);
+  assert.deepEqual(nonFinite.specularColor, [1, 1, 1]);
+});
+
+test("KHR_materials_specular colour copies never alias", () => {
+  const { context } = createLoaderContext();
+  const copies = plain(call(context, `
+    var doc = {
+      asset: { version: "2.0" },
+      materials: [{
+        extensions: { KHR_materials_specular: { specularColorFactor: [0.25, 0.5, 0.75] } }
+      }]
+    };
+    var first = gltfExtractMaterial(doc, 0, null);
+    var second = gltfExtractMaterial(doc, 0, null);
+    var source = doc.materials[0].extensions.KHR_materials_specular.specularColorFactor;
+    first.specularColor[0] = 9;
+    ({
+      second0: second.specularColor[0],
+      source0: source[0],
+      distinctCopies: first.specularColor !== second.specularColor,
+      copyNotView: first.specularColor !== source
+    });
+  `));
+  assert.equal(copies.second0, 0.25, "a second extraction must not see the mutated copy");
+  assert.equal(copies.source0, 0.25, "the input document must stay untouched");
+  assert.equal(copies.distinctCopies, true);
+  assert.equal(copies.copyNotView, true);
+
+  // Even the [1, 1, 1] default must be a fresh array per material.
+  const defaults = plain(call(context, `
+    var doc = {
+      asset: { version: "2.0" },
+      materials: [
+        { extensions: { KHR_materials_specular: {} } },
+        { extensions: { KHR_materials_specular: {} } }
+      ]
+    };
+    var left = gltfExtractMaterial(doc, 0, null);
+    var right = gltfExtractMaterial(doc, 1, null);
+    left.specularColor[1] = 7;
+    ({ right1: right.specularColor[1], distinct: left.specularColor !== right.specularColor });
+  `));
+  assert.equal(defaults.right1, 1);
+  assert.equal(defaults.distinct, true);
+});
+
+test("KHR_materials_specular keeps its fields beside a non-default KHR_materials_ior", () => {
+  const { context } = createLoaderContext();
+  const material = extractMaterial(context, {
+    extensions: {
+      KHR_materials_ior: { ior: 1.33 },
+      KHR_materials_specular: { specularFactor: 0.4, specularColorFactor: [0.8, 0.6, 0.4] },
+    },
+  });
+  assert.equal(material.ior, 1.33);
+  assert.equal(material.specularIntensity, 0.4);
+  assert.deepEqual(material.specularColor, [0.8, 0.6, 0.4]);
+});
+
+test("gltfExtractScene propagates specular factors from a triangle material", () => {
+  const { context } = createLoaderContext();
+  const result = plain(call(context, `
+    // One indexed triangle with a specular material, the same shape as the
+    // instancing fixtures.
+    var buffer = new ArrayBuffer(4 * 9 + 8);
+    var floats = new Float32Array(buffer, 0, 9);
+    floats.set([0, 0, 0, 1, 0, 0, 0, 1, 0]);
+    var u16 = new Uint16Array(buffer, 36, 4);
+    u16.set([0, 1, 2, 0]);
+    var doc = {
+      accessors: [
+        { bufferView: 0, byteOffset: 0, componentType: 5126, count: 3, type: "VEC3" },
+        { bufferView: 0, byteOffset: 36, componentType: 5123, count: 3, type: "SCALAR" }
+      ],
+      bufferViews: [{ buffer: 0, byteOffset: 0, byteLength: buffer.byteLength }],
+      materials: [{
+        extensions: {
+          KHR_materials_specular: { specularFactor: 0.25, specularColorFactor: [0.1, 0.2, 0.3] }
+        }
+      }],
+      meshes: [{ name: "tri", primitives: [{ attributes: { POSITION: 0 }, indices: 1, material: 0, mode: 4 }] }],
+      nodes: [{ mesh: 0 }],
+      scenes: [{ nodes: [0] }]
+    };
+    var scene = gltfExtractScene(doc, buffer);
+    ({
+      objects: scene.objects.length,
+      materials: scene.materials.length,
+      intensity: scene.materials[0] ? scene.materials[0].specularIntensity : null,
+      colour: scene.materials[0] ? scene.materials[0].specularColor : null
+    });
+  `));
+  assert.equal(result.objects, 1);
+  assert.equal(result.materials, 1);
+  assert.equal(result.intensity, 0.25);
+  assert.deepEqual(result.colour, [0.1, 0.2, 0.3]);
 });
 
 // --- KHR_texture_transform --------------------------------------------------
@@ -316,6 +1464,21 @@ test("KHR_texture_transform on the base colour texture reaches the material", ()
     },
   });
   assert.deepEqual(material.uvTransform, { m00: 2, m01: 0, m02: 0, m10: 0, m11: 2, m12: 0 });
+});
+
+test("a scale on the normal texture alone becomes normalUVScale (a tiling detail map)", () => {
+  const { context } = createLoaderContext();
+  const detail = extractMaterial(context, {
+    pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+    normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [60, 45] } } },
+  });
+  assert.deepEqual(Array.from(detail.normalUVScale), [60, 45]);
+  assert.equal(detail.uvTransform, undefined, "base colour UVs stay untransformed");
+  const shared = extractMaterial(context, {
+    pbrMetallicRoughness: { baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 2] } } } },
+    normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [2, 2] } } },
+  });
+  assert.equal(shared.normalUVScale, undefined, "a transform shared with base colour is baked once, not applied twice");
 });
 
 test("KHR_texture_transform never writes into the shared GLB buffer", () => {
@@ -444,6 +1607,13 @@ test("gltfExtractAnimations records the true component count per channel", () =>
     });
   `));
   assert.deepEqual(animations, [{ name: "wave", widths: [3, 4, 5] }]);
+});
+
+test('CUBICSPLINE weights channel yields componentCount 5, not 15', () => {
+  const { context } = createLoaderContext();
+  context.gltfReadAccessor = (gltfDocument, accessorIndex, binaryBuffer) => accessorIndex === 0 ? new Float32Array([0, 1]) : new Float32Array(30);
+  const [anim] = call(context, `gltfExtractAnimations(${JSON.stringify({ animations: [{ samplers: [{ input: 0, output: 1, interpolation: 'CUBICSPLINE' }], channels: [{ sampler: 0, target: { node: 2, path: 'weights' } }] }] })})`);
+  assert.equal(anim.channels[0].componentCount, 5);
 });
 
 // --- KHR_mesh_quantization --------------------------------------------------
@@ -602,12 +1772,14 @@ test("EXT_mesh_gpu_instancing draws one object per instance", () => {
     ({
       objects: scene.objects.length,
       ids: scene.objects.map(function(o) { return o.id; }),
+      wireframe: scene.objects.map(function(o) { return o.wireframe; }),
       firstCorners: scene.objects.map(function(o) {
         return [o.vertices.positions[0], o.vertices.positions[1], o.vertices.positions[2]];
       })
     });
   `));
   assert.equal(result.objects, 3, "three instance translations must draw three objects");
+  assert.deepEqual(result.wireframe, [false, false, false], "untextured imported triangles stay solid");
   assert.deepEqual(result.ids, ["tri-prim-0-inst-0", "tri-prim-0-inst-1", "tri-prim-0-inst-2"]);
   assert.deepEqual(result.firstCorners, [[0, 0, 0], [10, 0, 0], [0, 0, 10]]);
 });

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"html"
 	"strings"
+
+	"m31labs.dev/gosx/internal/htmlattr"
 )
 
 // Node is the runtime representation of a GoSX component tree node.
@@ -27,8 +29,10 @@ const (
 )
 
 type nodeAttr struct {
-	name  string
-	value any
+	name     string
+	value    any
+	presence bool
+	dispatch bool
 }
 
 // El creates an element node. The variadic args can be AttrList or Node children.
@@ -40,6 +44,9 @@ type nodeAttr struct {
 // each entry — AttrList instances are built per-call by Attrs() so there's
 // no sharing concern.
 func El(tag string, args ...any) Node {
+	if !htmlattr.ValidTag(tag) {
+		return Text("")
+	}
 	n := Node{kind: kindElement, tag: tag}
 	if len(args) > 0 {
 		n.children = make([]Node, 0, len(args))
@@ -117,18 +124,59 @@ func Attr(name string, value any) nodeAttr {
 	return nodeAttr{name: name, value: value}
 }
 
+// DispatchAttr explicitly binds a trusted handler to a DOM event in handwritten
+// RenderIsland content. Use event types such as "click", "input", or
+// "document-keydown". Unlike Attr
+// and Spread, this constructor can emit framework dispatch metadata.
+func DispatchAttr(event, handler string) nodeAttr {
+	if event == "" {
+		return nodeAttr{}
+	}
+	for _, c := range event {
+		if c == '-' && (event == "document-keydown" || event == "document-keyup" || event == "window-resize") {
+			continue
+		}
+		if c < 'a' || c > 'z' {
+			return nodeAttr{}
+		}
+	}
+	return nodeAttr{name: "data-gosx-on-" + event, value: handler, dispatch: true}
+}
+
 // BoolAttr creates a boolean attribute (e.g., disabled, checked).
 func BoolAttr(name string) nodeAttr {
-	return nodeAttr{name: name, value: true}
+	return nodeAttr{name: name, value: true, presence: true}
 }
 
 // Spread merges attributes from a map.
 func Spread(attrs map[string]any) AttrList {
 	var list AttrList
 	for k, v := range attrs {
-		list = append(list, nodeAttr{name: k, value: v})
+		if htmlattr.SafeSpreadName(k) {
+			list = append(list, nodeAttr{name: k, value: v})
+		}
 	}
 	return list
+}
+
+// RenderAttrs renders an attribute list the same way El renders an
+// element's own attributes: the same escaping, and the same boolean and
+// presence-attribute rules renderAttrHTML applies everywhere else. It is
+// for a caller that builds an HTML tag's opening angle bracket directly, as
+// a string, instead of through a Node tree — for example gosx/server's
+// document shell, which writes the <html> and <body> tags by hand for
+// performance (see server/document_attrs.go) and uses RenderAttrs to fold
+// in app-supplied attributes (Context.BodyAttrs) without a second,
+// divergent escaping rule.
+func RenderAttrs(attrs AttrList) string {
+	if len(attrs) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	for _, attr := range attrs {
+		renderAttrHTML(&b, attr)
+	}
+	return b.String()
 }
 
 // Props is an alias for Attrs used when passing props to components.
@@ -146,6 +194,9 @@ func Props(pairs ...any) AttrList {
 // is to eliminate the 3-5 doublings a typical page would otherwise trigger
 // during renderNodeHTML.
 func RenderHTML(n Node) string {
+	if n.kind == kindRawHTML {
+		return n.text
+	}
 	var b strings.Builder
 	b.Grow(estimateRenderSize(n))
 	renderNodeHTML(&b, n)
@@ -199,10 +250,17 @@ func PlainText(n Node) string {
 func renderNodeHTML(b *strings.Builder, n Node) {
 	switch n.kind {
 	case kindElement:
+		if !htmlattr.ValidTag(n.tag) {
+			return
+		}
 		safeTag := html.EscapeString(n.tag)
 		b.WriteByte('<')
 		b.WriteString(safeTag)
-		for _, attr := range n.attrs {
+		attrs := n.attrs
+		if strings.EqualFold(n.tag, "form") {
+			attrs = expandManagedFormAttrs(attrs)
+		}
+		for _, attr := range attrs {
 			renderAttrHTML(b, attr)
 		}
 		if isVoidElement(n.tag) && len(n.children) == 0 {
@@ -233,12 +291,79 @@ func renderNodeHTML(b *strings.Builder, n Node) {
 	}
 }
 
+// expandManagedFormAttrs replaces a truthy ManagedFormShorthandAttr on a
+// <form> element's attribute list with the ManagedFormAttrs default set
+// (state idle, layer bootstrap, fallback native-form). The HTML method
+// attribute, if present on the same element, stays authoritative for the
+// navigation runtime; the shorthand does not add ManagedFormModeAttr.
+//
+// Merge rule: any contract attribute the author already wrote (for example
+// an explicit data-gosx-form-state) is left exactly as authored, in its
+// original position — only the missing contract attributes are inserted,
+// in place of the shorthand attribute. Attribute order and values outside
+// the contract are untouched. If the shorthand attribute is absent, or
+// present but not truthy, attrs is returned unchanged.
+func expandManagedFormAttrs(attrs []nodeAttr) []nodeAttr {
+	idx := -1
+	for i, attr := range attrs {
+		if attr.name == ManagedFormShorthandAttr {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 || !managedFormShorthandTruthy(attrs[idx]) {
+		return attrs
+	}
+
+	have := make(map[string]bool, len(attrs))
+	for _, attr := range attrs {
+		have[attr.name] = true
+	}
+
+	var fill []nodeAttr
+	for _, d := range ManagedFormAttrs(ManagedFormOptions{}) {
+		if !have[d.name] {
+			fill = append(fill, d)
+		}
+	}
+
+	out := make([]nodeAttr, 0, len(attrs)-1+len(fill))
+	out = append(out, attrs[:idx]...)
+	out = append(out, fill...)
+	out = append(out, attrs[idx+1:]...)
+	return out
+}
+
+// managedFormShorthandTruthy reports whether a ManagedFormShorthandAttr
+// value opts the element in. It delegates to ManagedFormShorthandTruthy
+// (runtime_contract.go), the single shared definition of the truthy rule
+// used by both this Node render path and the route package's .gsx render
+// path, so `data-gosx-managed` and `data-gosx-managed="true"` opt in and
+// `data-gosx-managed="false"` opts out the same way in either surface.
+func managedFormShorthandTruthy(attr nodeAttr) bool {
+	return ManagedFormShorthandTruthy(attr.presence, attr.value)
+}
+
 func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
+	if !attr.dispatch && !htmlattr.SafeAuthoredName(attr.name) {
+		return
+	}
 	switch v := attr.value.(type) {
 	case bool:
-		if v {
+		if attr.presence || htmlattr.IsBoolean(attr.name) {
+			if !v {
+				return
+			}
 			b.WriteByte(' ')
 			b.WriteString(html.EscapeString(attr.name))
+			return
+		}
+		b.WriteByte(' ')
+		b.WriteString(html.EscapeString(attr.name))
+		if v {
+			b.WriteString(`="true"`)
+		} else {
+			b.WriteString(`="false"`)
 		}
 	case string:
 		// Direct byte writes instead of fmt.Fprintf — each Fprintf boxes
@@ -252,7 +377,7 @@ func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
 		b.WriteByte(' ')
 		b.WriteString(html.EscapeString(attr.name))
 		b.WriteString(`="`)
-		b.WriteString(html.EscapeString(v))
+		b.WriteString(html.EscapeString(htmlattr.FilterURL(attr.name, v)))
 		b.WriteByte('"')
 	default:
 		// Non-string / non-bool values still go through fmt.Sprint for
@@ -262,7 +387,7 @@ func renderAttrHTML(b *strings.Builder, attr nodeAttr) {
 		b.WriteByte(' ')
 		b.WriteString(html.EscapeString(attr.name))
 		b.WriteString(`="`)
-		b.WriteString(html.EscapeString(fmt.Sprint(v)))
+		b.WriteString(html.EscapeString(htmlattr.FilterURL(attr.name, fmt.Sprint(v))))
 		b.WriteByte('"')
 	}
 }

@@ -64,11 +64,12 @@ func (vm *VM) makeSlice(e *program.Expr) Value {
 		return ArrayVal([]Value{})
 	}
 	lenVal := vm.Eval(e.Operands[0])
-	n := int(lenVal.num)
-	if n < 0 {
+	n64 := lenVal.integer()
+	n := int(n64)
+	if n64 < 0 || int64(n) != n64 {
 		vm.recordExprDiagnostic(
 			"invalid_make",
-			fmt.Sprintf("OpMake(slice) length must be non-negative, got %d", n),
+			fmt.Sprintf("OpMake(slice) length must fit a non-negative host integer, got %d", n64),
 			e.Op,
 			e.Value,
 		)

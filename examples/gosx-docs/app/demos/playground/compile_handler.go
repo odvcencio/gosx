@@ -7,11 +7,11 @@ import (
 	"fmt"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/action"
+	clientvm "m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/examples/gosx-docs/app/demos/democtl"
 	"m31labs.dev/gosx/ir"
 	"m31labs.dev/gosx/island/program"
@@ -30,6 +30,7 @@ const (
 	defaultCacheTTL       = 5 * time.Minute
 	defaultRateLimitRate  = 5
 	defaultRateLimitBurst = 20
+	defaultMaxConcurrent  = 4
 )
 
 // ---------------------------------------------------------------------------
@@ -50,9 +51,14 @@ type CompileResult struct {
 	// "Page".
 	Component string `json:"component"`
 
-	// HTML is the SSR placeholder the client runtime hydrates. In this task
-	// it is a static hydration target; future tasks may enrich it.
+	// HTML is a static hydration target kept for API compatibility. Authored
+	// markup never enters this string; Preview carries the initial DOM as data.
 	HTML string `json:"html"`
+
+	// Preview is the program's resolved initial tree. The browser materializes
+	// it with createElement/createTextNode after enforcing the same constrained
+	// tag and attribute policy used before program encoding.
+	Preview PlaygroundPreviewTree `json:"preview"`
 
 	// Program is the binary-encoded island VM program. Callers are expected
 	// to base64 the bytes when they travel over JSON.
@@ -91,6 +97,10 @@ var ErrSourceTooLarge = errors.New("playground: source exceeds max bytes")
 
 // ErrRateLimited is returned when the caller's token bucket is exhausted.
 var ErrRateLimited = errors.New("playground: rate limited")
+
+// ErrCompilerBusy is returned when all bounded compile workers are occupied.
+// A timed-out compile keeps its worker slot until the underlying work exits.
+var ErrCompilerBusy = errors.New("playground: compiler busy")
 
 // ErrParseTimeout is returned when the compile pipeline does not finish within
 // the configured wall-clock budget.
@@ -144,15 +154,24 @@ func compileSourceWithCountsImpl(source []byte) (CompileResult, int, int, error)
 
 	nNodes := len(island.Nodes)
 	nExprs := len(island.Exprs)
+	if err := validatePlaygroundProgram(island); err != nil {
+		return CompileResult{
+			Diagnostics: []Diagnostic{{Message: err.Error()}},
+			NodeCount:   nNodes,
+			ExprCount:   nExprs,
+		}, nNodes, nExprs, nil
+	}
 
 	bin, err := program.EncodeBinary(island)
 	if err != nil {
 		return CompileResult{}, nNodes, nExprs, fmt.Errorf("encode island program: %w", err)
 	}
 
+	preview := makePlaygroundPreview(clientvm.ResolveInitialTree(island, `{}`))
 	return CompileResult{
 		Component: prog.Components[0].Name,
 		HTML:      renderPlaygroundSSR(prog.Components[0].Name),
+		Preview:   preview,
 		Program:   bin,
 		NodeCount: nNodes,
 		ExprCount: nExprs,
@@ -168,9 +187,8 @@ func CompileSource(source []byte) (CompileResult, error) {
 	return result, err
 }
 
-// renderPlaygroundSSR emits the minimal hydration target element. The client
-// replaces its children when the new program is hydrated. We keep the element
-// slot stable across recompiles so the hydrator can find it.
+// renderPlaygroundSSR emits only a static hydration target. Authored markup is
+// transported in Preview as structured data and never parsed as HTML.
 func renderPlaygroundSSR(componentName string) string {
 	return `<div data-gosx-island="playground-preview" data-component="` + componentName + `"></div>`
 }
@@ -189,6 +207,7 @@ type CompileConfig struct {
 	CacheCapacity  int              // 0 = default 256
 	CacheTTL       time.Duration    // 0 = default 5 min
 	Clock          democtl.Clock    // nil = real clock
+	MaxConcurrent  int              // simultaneous cache-miss compiles; 0 = default 4
 }
 
 // DefaultCompileConfig returns a CompileConfig with production-sane defaults
@@ -203,9 +222,10 @@ func DefaultCompileConfig() CompileConfig {
 // Compiler owns the per-process mitigation state (rate limiter, cache).
 // It is concurrency-safe.
 type Compiler struct {
-	cfg   CompileConfig
-	cache *compileCache
-	clock democtl.Clock
+	cfg          CompileConfig
+	cache        *compileCache
+	clock        democtl.Clock
+	compileSlots chan struct{}
 }
 
 // NewCompiler returns a Compiler validated against cfg. Returns an error if
@@ -226,14 +246,18 @@ func NewCompiler(cfg CompileConfig) (*Compiler, error) {
 	if cfg.ParseTimeout <= 0 {
 		cfg.ParseTimeout = defaultParseTimeout
 	}
+	if cfg.MaxConcurrent <= 0 {
+		cfg.MaxConcurrent = defaultMaxConcurrent
+	}
 	clk := cfg.Clock
 	if clk == nil {
 		clk = realClock{}
 	}
 	return &Compiler{
-		cfg:   cfg,
-		cache: newCompileCache(cfg.CacheCapacity, cfg.CacheTTL, clk),
-		clock: clk,
+		cfg:          cfg,
+		cache:        newCompileCache(cfg.CacheCapacity, cfg.CacheTTL, clk),
+		clock:        clk,
+		compileSlots: make(chan struct{}, cfg.MaxConcurrent),
 	}, nil
 }
 
@@ -260,7 +284,16 @@ func (c *Compiler) Compile(rateKey string, source []byte) (CompileResult, error)
 		return cached, nil
 	}
 
-	// 4. Run the core pipeline under a timeout.
+	// 4. Bound cache-miss compile work process-wide. The worker itself releases
+	// the slot, so returning a timeout does not make room for another goroutine
+	// while the timed-out work is still running.
+	select {
+	case c.compileSlots <- struct{}{}:
+	default:
+		return CompileResult{}, ErrCompilerBusy
+	}
+
+	// 5. Run the core pipeline under a timeout.
 	// Capture the function value before spawning the goroutine so that test
 	// swaps of compileSourceWithCountsFn (restored via defer) don't race with
 	// the orphan goroutine that may outlive the select.
@@ -273,16 +306,19 @@ func (c *Compiler) Compile(rateKey string, source []byte) (CompileResult, error)
 	}
 	done := make(chan compileOutcome, 1)
 	go func() {
+		defer func() { <-c.compileSlots }()
 		r, n, e, err := compileFn(source)
 		done <- compileOutcome{result: r, nNodes: n, nExprs: e, err: err}
 	}()
 
+	timer := time.NewTimer(c.cfg.ParseTimeout)
+	defer timer.Stop()
 	select {
 	case outcome := <-done:
 		if outcome.err != nil {
 			return outcome.result, outcome.err
 		}
-		// 5. Node/expr caps — only enforce on successful compiles (non-nil
+		// 6. Node/expr caps — only enforce on successful compiles (non-nil
 		// Program). Diagnostics results (parse errors) have zero counts; we
 		// cache them as deterministic failures so the user gets instant
 		// feedback on retry without re-parsing. See design note in task spec.
@@ -294,14 +330,14 @@ func (c *Compiler) Compile(rateKey string, source []byte) (CompileResult, error)
 				return CompileResult{}, ErrTooManyExprs
 			}
 		}
-		// 6. Cache the result (including diagnostic-only results — they are
+		// 7. Cache the result (including diagnostic-only results — they are
 		// deterministic for a given source).
 		c.cache.Put(key, outcome.result)
 		return outcome.result, nil
 
-	case <-time.After(c.cfg.ParseTimeout):
-		// The orphan goroutine will complete eventually. Because rate-limiting
-		// bounds the worst-case orphan accumulation rate, this is acceptable.
+	case <-timer.C:
+		// The worker may complete later, but it remains counted against the
+		// concurrency cap until its goroutine exits.
 		return CompileResult{}, ErrParseTimeout
 	}
 }
@@ -355,6 +391,7 @@ func NewCompileAction(compiler *Compiler) func(*action.Context) error {
 		return ctx.Success("", map[string]any{
 			"component":   result.Component,
 			"html":        result.HTML,
+			"preview":     result.Preview,
 			"program":     base64.StdEncoding.EncodeToString(result.Program),
 			"diagnostics": result.Diagnostics,
 			"nodeCount":   result.NodeCount,
@@ -395,6 +432,7 @@ func CompileAction(ctx *action.Context) error {
 	return ctx.Success("", map[string]any{
 		"component":   result.Component,
 		"html":        result.HTML,
+		"preview":     result.Preview,
 		"program":     base64.StdEncoding.EncodeToString(result.Program),
 		"diagnostics": result.Diagnostics,
 		"nodeCount":   result.NodeCount,
@@ -403,8 +441,9 @@ func CompileAction(ctx *action.Context) error {
 }
 
 // clientIPFromRequest extracts a stable rate-limiting key from the HTTP
-// request. It prefers the first entry of X-Forwarded-For (set by reverse
-// proxies) and falls back to the host part of RemoteAddr.
+// server's RemoteAddr. It intentionally ignores forwarding headers: this
+// public demo does not own a trusted-proxy boundary, so X-Forwarded-For is
+// client-controlled input and cannot safely select rate-limit buckets.
 //
 // RemoteAddr comes from net/http in the form "host:port" where port is the
 // client's ephemeral port. Using it verbatim would give every new connection
@@ -414,15 +453,11 @@ func clientIPFromRequest(r *http.Request) string {
 	if r == nil {
 		return "playground"
 	}
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		// X-Forwarded-For may be "client, proxy1, proxy2" — take the first.
-		if comma := strings.IndexByte(fwd, ','); comma >= 0 {
-			fwd = fwd[:comma]
-		}
-		return strings.TrimSpace(fwd)
-	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
+	}
+	if r.RemoteAddr == "" {
+		return "playground"
 	}
 	return r.RemoteAddr
 }
@@ -435,6 +470,8 @@ func sentinelMessage(err error) string {
 		return "source too long — 16 KB max"
 	case errors.Is(err, ErrRateLimited):
 		return "too many requests — slow down"
+	case errors.Is(err, ErrCompilerBusy):
+		return "compiler is busy — try again in a moment"
 	case errors.Is(err, ErrParseTimeout):
 		return "parser timed out — source is too complex"
 	case errors.Is(err, ErrTooManyNodes):

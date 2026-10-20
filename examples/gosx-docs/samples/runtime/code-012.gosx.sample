@@ -1,0 +1,4 @@
+<button data-gosx-cue-toggle
+	    data-gosx-cue-label-on="Sound on" data-gosx-cue-label-off="Sound off">
+	    Sound on
+	</button>

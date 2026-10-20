@@ -1,0 +1,16 @@
+package profile
+
+type BadgeProps struct {
+	Label string
+	Count int
+}
+
+component Badge(props: BadgeProps) {
+	return <span className="badge">
+		{props.Label}: {props.Count}
+	</span>
+}
+
+component Page() {
+	return <main><Badge label="Inbox" count={0} /></main>
+}

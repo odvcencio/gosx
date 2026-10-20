@@ -3,23 +3,52 @@
 // Actions are explicit, named event handlers that can be client-callable
 // or server-callable. They replace arbitrary closure serialization with
 // a tractable binding model.
+//
+// # Error handling
+//
+// A handler that wants full control over the client-facing result and
+// status code returns a *ResultError (see Error and Validation). GoSX
+// sends that result unchanged.
+//
+// A handler that returns any other error gets a fail-closed default: GoSX
+// logs the error through ErrorLogger and sends UnsafeErrorMessage to the
+// client instead of the error's own text. To choose the text a client
+// sees, implement SafeMessager on the error type.
 package action
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log"
+	"mime/multipart"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
+	"m31labs.dev/gosx/internal/basepath"
 	"m31labs.dev/gosx/session"
 )
 
+// maxActionBodyBytes is the default request-body cap enforced by
+// [ServeHandler]. A caller that needs a larger cap (for example, an action
+// that accepts file uploads) calls [ServeHandlerWithOptions] with a
+// [ServeHandlerOptions.MaxBodyBytes] value instead; the default never
+// changes.
 const maxActionBodyBytes = 1024 * 1024
 
 const actionFlashKey = "__gosx_action_state"
+
+// ReturnTargetField is the reserved progressive-enhancement field that lets
+// a native form preserve its authored same-origin return path, query, and
+// fragment across a POST redirect.
+const ReturnTargetField = "__gosx_return_to"
+
+type returnTargetContextKey struct{}
 
 func isBodyTooLarge(err error) bool {
 	var maxErr *http.MaxBytesError
@@ -36,7 +65,10 @@ type Result struct {
 	Data        json.RawMessage   `json:"data,omitempty"`
 	FieldErrors map[string]string `json:"fieldErrors,omitempty"`
 	Values      map[string]string `json:"values,omitempty"`
-	Redirect    string            `json:"redirect,omitempty"`
+	// Redirect is emitted as a same-origin, root-relative target. Non-empty
+	// values that do not satisfy that contract are deterministically replaced
+	// with "/" before a native Location header or managed JSON is written.
+	Redirect string `json:"redirect,omitempty"`
 }
 
 // ResultError is a structured action error with an explicit HTTP status code.
@@ -98,7 +130,9 @@ func Validation(message string, fieldErrors map[string]string, values map[string
 	}
 }
 
-// Redirect constructs a successful redirect result.
+// Redirect constructs a successful redirect result. Redirect targets are
+// sanitized to same-origin, root-relative paths when the result is emitted;
+// an unsafe non-empty target resolves to "/".
 func Redirect(url string) *ResultError {
 	return &ResultError{
 		Status: http.StatusSeeOther,
@@ -114,6 +148,38 @@ type resultProvider interface {
 	StatusCode() int
 }
 
+// SafeMessager marks an error whose text is safe to show an end user. An
+// application error type satisfies this interface the same way it already
+// satisfies the package's other structural contracts: implement the method,
+// with no import of this package required.
+//
+// GoSX checks for SafeMessager only on an error that does not already carry
+// a structured result (see resultFromError). Wrap an internal error with a
+// type that implements SafeMessage to choose the text a browser sees.
+type SafeMessager interface {
+	// SafeMessage returns the text GoSX may send to a browser in
+	// Result.Message. Return only text that is safe for an end user to
+	// read; GoSX does not sanitize this string further.
+	SafeMessage() string
+}
+
+// UnsafeErrorMessage is the Result.Message text GoSX sends to a browser for
+// a handler error that carries no structured result (see resultProvider)
+// and does not implement SafeMessager. Replace it to change the wording for
+// your application. Do not set it to an error's own text, because GoSX
+// cannot verify that text is safe to expose.
+var UnsafeErrorMessage = "Something went wrong. Please try again."
+
+// ErrorLogger receives every error that resultFromError suppresses because
+// the error carries no structured result and does not implement
+// SafeMessager. It defaults to the standard library log package, matching
+// the convention the session package already uses for its own errors.
+// Replace it to route suppressed action errors to your own logging system;
+// set it to a no-op func to silence them.
+var ErrorLogger = func(err error) {
+	log.Printf("[gosx] action: %v", err)
+}
+
 // Context provides action execution context.
 type Context struct {
 	// Request is the originating HTTP request (for server actions).
@@ -127,6 +193,35 @@ type Context struct {
 
 	status int
 	result *Result
+}
+
+// Files returns the uploaded file headers submitted under the given
+// multipart form field name.
+//
+// [ServeHandler] and [ServeHandlerWithOptions] populate the backing form by
+// calling [http.Request.ParseMultipartForm] with the configured body-size
+// limit (1 MiB by default; see [ServeHandlerOptions.MaxBodyBytes]). Parts up
+// to that limit are held in memory; parts beyond it spill to temporary files
+// on disk for the life of the request, per the standard library's own
+// ParseMultipartForm behavior. Files is nil-safe: a non-multipart request, a
+// nil Context, or a field name absent from the form all return nil.
+func (c *Context) Files(name string) []*multipart.FileHeader {
+	if c == nil || c.Request == nil || c.Request.MultipartForm == nil {
+		return nil
+	}
+	return c.Request.MultipartForm.File[name]
+}
+
+// File returns the first uploaded file header submitted under the given
+// multipart form field name, or nil if the request carried none. It is a
+// singular convenience over [Context.Files]; see that method's doc comment
+// for the parse limit and memory/disk-spill behavior.
+func (c *Context) File(name string) *multipart.FileHeader {
+	files := c.Files(name)
+	if len(files) == 0 {
+		return nil
+	}
+	return files[0]
 }
 
 // View is the browser-facing action state surfaced back to HTML pages after a
@@ -206,11 +301,54 @@ func (c *Context) Success(message string, data any) error {
 	return nil
 }
 
-// Redirect sends a browser-friendly redirect after a successful action.
+// Redirect sends a browser-friendly redirect after a successful action. The
+// explicit destination remains authoritative, but is sanitized to a
+// same-origin, root-relative path when the response is emitted.
 func (c *Context) Redirect(url string) {
 	c.result = &Result{
 		OK:       true,
 		Redirect: url,
+		Values:   cloneStrings(c.FormData),
+	}
+	if c.status == 0 {
+		c.status = http.StatusSeeOther
+	}
+}
+
+// RedirectWithMessage sends a browser-friendly redirect after a successful
+// action and carries a human-readable completion message through both
+// progressive-enhancement paths. Native form submissions flash the structured
+// result before redirecting; managed forms receive the same message in their
+// JSON result and can project it without a page reload. The explicit
+// destination remains authoritative; unsafe non-empty destinations resolve to
+// "/" when the response is emitted.
+func (c *Context) RedirectWithMessage(url, message string) {
+	c.result = &Result{
+		OK:       true,
+		Message:  strings.TrimSpace(message),
+		Redirect: url,
+		Values:   cloneStrings(c.FormData),
+	}
+	if c.status == 0 {
+		c.status = http.StatusSeeOther
+	}
+}
+
+// RedirectBackWithMessage sends a successful action result to the submitted
+// same-origin return target when one was provided through ReturnTargetField.
+// When the submitted target is absent or invalid, fallback is used if it is a
+// valid root-relative target; otherwise the safe root path "/" is used.
+// Query strings and fragments are preserved. The completion message follows
+// the same native POST-redirect-GET and managed JSON semantics as
+// RedirectWithMessage.
+//
+// This method is opt-in: RedirectWithMessage remains the explicit-destination
+// API for workflows that intentionally choose a different destination.
+func (c *Context) RedirectBackWithMessage(fallback, message string) {
+	c.result = &Result{
+		OK:       true,
+		Message:  strings.TrimSpace(message),
+		Redirect: redirectBackTarget(c.Request, fallback),
 		Values:   cloneStrings(c.FormData),
 	}
 	if c.status == 0 {
@@ -314,15 +452,155 @@ func (r *Registry) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	ServeHandler(w, req, handler)
 }
 
+// ServeHandlerOptions configures [ServeHandlerWithOptions].
+type ServeHandlerOptions struct {
+	// MaxBodyBytes caps the request body accepted for this action, enforced
+	// with [http.MaxBytesReader] semantics: a request over the cap fails
+	// with 413 Request Entity Too Large rather than being silently
+	// truncated. Zero or a negative value falls back to the package default
+	// of 1 MiB (the same default [ServeHandler] uses).
+	MaxBodyBytes int64
+}
+
 // ServeHandler handles a single action handler over HTTP using the same form,
-// JSON, redirect, and validation semantics as Registry.ServeHTTP.
+// JSON, redirect, and validation semantics as Registry.ServeHTTP. The request
+// body is capped at 1 MiB; call [ServeHandlerWithOptions] to raise that cap,
+// for example for an action that accepts file uploads.
 func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
+	serveHandler(w, req, handler, maxActionBodyBytes)
+}
+
+// ServeHandlerWithOptions is [ServeHandler] with a configurable request-body
+// cap. It is the seam a file-routed app reaches through
+// `route.FileModuleOptions.MaxActionBodyBytes` to accept uploads larger than
+// the 1 MiB default.
+func ServeHandlerWithOptions(w http.ResponseWriter, req *http.Request, handler Handler, opts ServeHandlerOptions) {
+	maxBodyBytes := opts.MaxBodyBytes
+	if maxBodyBytes <= 0 {
+		maxBodyBytes = maxActionBodyBytes
+	}
+	serveHandler(w, req, handler, maxBodyBytes)
+}
+
+func requestWithReturnTarget(req *http.Request, target string) *http.Request {
+	if req == nil || target == "" {
+		return req
+	}
+	return req.WithContext(context.WithValue(req.Context(), returnTargetContextKey{}, target))
+}
+
+func requestReturnTarget(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	target, _ := req.Context().Value(returnTargetContextKey{}).(string)
+	return target
+}
+
+func hasForbiddenTargetByte(value string) bool {
+	for _, r := range value {
+		if r <= 0x1f || r == 0x7f || r == '\\' {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEncodedBackslash(value string) bool {
+	return strings.Contains(strings.ToLower(value), "%5c")
+}
+
+func safeTargetComponent(value string) bool {
+	if !utf8.ValidString(value) || hasForbiddenTargetByte(value) || hasEncodedBackslash(value) {
+		return false
+	}
+	decoded, err := url.QueryUnescape(value)
+	return err == nil && utf8.ValidString(decoded) && !hasForbiddenTargetByte(decoded) && !hasEncodedBackslash(decoded)
+}
+
+func hasEffectiveLeadingDoubleSlash(path string) bool {
+	if strings.HasPrefix(path, "//") {
+		return true
+	}
+	decoded, err := url.PathUnescape(path)
+	return err == nil && strings.HasPrefix(decoded, "//")
+}
+
+func rootRelativeTarget(raw string, includeFragment bool) (string, bool) {
+	if raw == "" || !utf8.ValidString(raw) || hasForbiddenTargetByte(raw) || hasEncodedBackslash(raw) {
+		return "", false
+	}
+	target := strings.TrimSpace(raw)
+	if target == "" || target != raw || !strings.HasPrefix(target, "/") || strings.HasPrefix(target, "//") {
+		return "", false
+	}
+	parsed, err := url.Parse(target)
+	if err != nil || parsed.Scheme != "" || parsed.Host != "" || parsed.Opaque != "" || parsed.User != nil {
+		return "", false
+	}
+	if parsed.Path == "" || !strings.HasPrefix(parsed.Path, "/") {
+		return "", false
+	}
+	if hasEffectiveLeadingDoubleSlash(parsed.Path) {
+		return "", false
+	}
+	if !safeTargetComponent(parsed.Path) || !safeTargetComponent(parsed.RawQuery) || !safeTargetComponent(parsed.Fragment) {
+		return "", false
+	}
+	escapedPath := parsed.EscapedPath()
+	if escapedPath == "" || !strings.HasPrefix(escapedPath, "/") {
+		return "", false
+	}
+	result := escapedPath
+	if parsed.ForceQuery || parsed.RawQuery != "" {
+		result += "?" + parsed.RawQuery
+	}
+	if includeFragment && parsed.Fragment != "" {
+		result += "#" + parsed.EscapedFragment()
+	}
+	return result, true
+}
+
+// NormalizeReturnTarget validates and normalizes a root-relative return
+// target. It preserves the target's query encoding, force-query marker,
+// fragment, dot segments, and embedded escaped path separators while
+// rejecting malformed, ambiguous, or cross-origin URL forms. The result is
+// pure: it applies no application-route policy, fallback, or length limit.
+func NormalizeReturnTarget(raw string) (string, bool) {
+	return rootRelativeTarget(raw, true)
+}
+
+func normalizedReturnTarget(raw string) string {
+	target, ok := NormalizeReturnTarget(raw)
+	if !ok {
+		return ""
+	}
+	return target
+}
+
+func extractReturnTarget(req *http.Request) string {
+	if req == nil || req.Method != http.MethodPost {
+		return ""
+	}
+	var raw string
+	if values := req.PostForm[ReturnTargetField]; len(values) > 0 {
+		raw = values[0]
+	}
+	delete(req.PostForm, ReturnTargetField)
+	delete(req.Form, ReturnTargetField)
+	if req.MultipartForm != nil {
+		delete(req.MultipartForm.Value, ReturnTargetField)
+	}
+	return normalizedReturnTarget(raw)
+}
+
+func serveHandler(w http.ResponseWriter, req *http.Request, handler Handler, maxBodyBytes int64) {
 	if handler == nil {
 		http.Error(w, "action handler required", http.StatusNotFound)
 		return
 	}
 
-	req.Body = http.MaxBytesReader(w, req.Body, maxActionBodyBytes)
+	req.Body = http.MaxBytesReader(w, req.Body, maxBodyBytes)
 	defer req.Body.Close()
 
 	ctx := &Context{
@@ -332,6 +610,7 @@ func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
 
 	// Parse form data or JSON body
 	contentType := req.Header.Get("Content-Type")
+	returnTarget := ""
 	if strings.HasPrefix(contentType, "application/json") {
 		var payload json.RawMessage
 		decoder := json.NewDecoder(req.Body)
@@ -347,7 +626,7 @@ func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
 	} else {
 		var err error
 		if strings.HasPrefix(contentType, "multipart/form-data") {
-			err = req.ParseMultipartForm(maxActionBodyBytes)
+			err = req.ParseMultipartForm(maxBodyBytes)
 		} else {
 			err = req.ParseForm()
 		}
@@ -360,11 +639,16 @@ func ServeHandler(w http.ResponseWriter, req *http.Request, handler Handler) {
 			return
 		}
 
+		returnTarget = extractReturnTarget(req)
 		for k, v := range req.Form {
 			if len(v) > 0 {
 				ctx.FormData[k] = v[0]
 			}
 		}
+	}
+	if returnTarget != "" {
+		req = requestWithReturnTarget(req, returnTarget)
+		ctx.Request = req
 	}
 
 	if err := handler(ctx); err != nil {
@@ -407,14 +691,42 @@ func (f FormValues) All() map[string]string {
 	return cp
 }
 
+// resultFromError converts a handler error into the HTTP status and Result
+// a browser receives.
+//
+// An error that implements resultProvider (for example, one built with
+// Error or Validation) keeps full control: its own ActionResult and
+// StatusCode reach the client unchanged.
+//
+// Every other error is fail-closed by default. GoSX logs the error through
+// ErrorLogger and sends UnsafeErrorMessage instead of the error's own text,
+// because that text may hold a file path, a driver message, or another
+// internal detail no application meant to expose.
+//
+// To show your own wording for a specific error, implement SafeMessager on
+// that error type, directly or through a type errors.As can reach by
+// unwrapping. GoSX then sends SafeMessage() in place of UnsafeErrorMessage
+// and does not log the error.
 func resultFromError(err error) (Result, int) {
 	var structured resultProvider
 	if errors.As(err, &structured) {
 		return structured.ActionResult(), structured.StatusCode()
 	}
+
+	var safe SafeMessager
+	if errors.As(err, &safe) {
+		return Result{
+			OK:      false,
+			Message: safe.SafeMessage(),
+		}, http.StatusInternalServerError
+	}
+
+	if ErrorLogger != nil {
+		ErrorLogger(err)
+	}
 	return Result{
 		OK:      false,
-		Message: err.Error(),
+		Message: UnsafeErrorMessage,
 	}, http.StatusInternalServerError
 }
 
@@ -442,7 +754,34 @@ func resultFromContext(ctx *Context) (Result, int) {
 	return result, http.StatusOK
 }
 
+func sanitizeResult(result Result) Result {
+	result.Redirect = sanitizeExplicitRedirect(result.Redirect)
+	if len(result.Values) == 0 {
+		return result
+	}
+	values := make(map[string]string, len(result.Values))
+	for key, value := range result.Values {
+		if key == ReturnTargetField {
+			continue
+		}
+		values[key] = value
+	}
+	result.Values = cloneStrings(values)
+	return result
+}
+
+func sanitizeExplicitRedirect(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	if target := normalizedReturnTarget(raw); target != "" {
+		return target
+	}
+	return "/"
+}
+
 func writeResponse(w http.ResponseWriter, req *http.Request, status int, result Result) {
+	result = sanitizeResult(result)
 	if status == 0 {
 		status = http.StatusOK
 	}
@@ -462,11 +801,12 @@ func writeResponse(w http.ResponseWriter, req *http.Request, status int, result 
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
+	result.Redirect = basepath.URL(basepath.FromRequest(req), result.Redirect)
 	_ = json.NewEncoder(w).Encode(result)
 }
 
 func shouldRedirect(req *http.Request, status int, result Result) bool {
-	if wantsJSON(req) {
+	if WantsJSON(req) {
 		return false
 	}
 	if result.Redirect != "" {
@@ -479,26 +819,120 @@ func shouldRedirect(req *http.Request, status int, result Result) bool {
 }
 
 func shouldFlashRedirect(req *http.Request) bool {
-	return !wantsJSON(req) && session.Current(req) != nil
+	return !WantsJSON(req) && session.Current(req) != nil
+}
+
+func requestHost(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	if req.Host != "" {
+		return req.Host
+	}
+	if req.URL != nil {
+		return req.URL.Host
+	}
+	return ""
+}
+
+func requestScheme(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	if req.URL != nil && req.URL.Scheme != "" {
+		return strings.ToLower(req.URL.Scheme)
+	}
+	if req.TLS != nil {
+		return "https"
+	}
+	return ""
+}
+
+func sanitizedReferer(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	raw := req.Header.Get("Referer")
+	trimmed := strings.TrimSpace(raw)
+	if raw == "" || trimmed != raw || hasForbiddenTargetByte(raw) || hasEncodedBackslash(raw) {
+		return ""
+	}
+	referer, err := url.Parse(trimmed)
+	if err != nil || referer.User != nil || referer.Opaque != "" {
+		return ""
+	}
+	if referer.IsAbs() || referer.Host != "" {
+		if referer.Scheme == "" || referer.Host == "" || !strings.EqualFold(referer.Host, requestHost(req)) {
+			return ""
+		}
+		if scheme := requestScheme(req); scheme != "" && !strings.EqualFold(referer.Scheme, scheme) {
+			return ""
+		}
+	} else if referer.Scheme != "" {
+		return ""
+	}
+	if referer.Path == "" || !strings.HasPrefix(referer.Path, "/") || strings.HasPrefix(referer.Path, "//") {
+		return ""
+	}
+	if !safeTargetComponent(referer.Path) || !safeTargetComponent(referer.RawQuery) || !safeTargetComponent(referer.Fragment) {
+		return ""
+	}
+	escapedPath := referer.EscapedPath()
+	if escapedPath == "" || !strings.HasPrefix(escapedPath, "/") {
+		return ""
+	}
+	// A browser Referer is already public. Convert it to an internal path
+	// before the response writer applies the app's mount to the redirect.
+	if prefix := basepath.FromRequest(req); prefix != "" {
+		if escapedPath == prefix {
+			escapedPath = "/"
+		} else if strings.HasPrefix(escapedPath, prefix+"/") {
+			escapedPath = strings.TrimPrefix(escapedPath, prefix)
+		} else {
+			return ""
+		}
+	}
+	target := escapedPath
+	if referer.ForceQuery || referer.RawQuery != "" {
+		target += "?" + referer.RawQuery
+	}
+	return target
 }
 
 func redirectTarget(req *http.Request, result Result) string {
 	if result.Redirect != "" {
-		return result.Redirect
+		return sanitizeExplicitRedirect(result.Redirect)
 	}
 	if req == nil {
 		return ""
 	}
-	if target := strings.TrimSpace(req.Header.Get("Referer")); target != "" {
+	if target := requestReturnTarget(req); target != "" {
+		return target
+	}
+	if target := sanitizedReferer(req); target != "" {
 		return target
 	}
 	if actionTarget := stripActionPath(req.URL.Path); actionTarget != "" {
 		return actionTarget
 	}
-	return req.Header.Get("Referer")
+	return ""
 }
 
-func wantsJSON(req *http.Request) bool {
+func redirectBackTarget(req *http.Request, fallback string) string {
+	if target := normalizedReturnTarget(requestReturnTarget(req)); target != "" {
+		return target
+	}
+	if target := normalizedReturnTarget(fallback); target != "" {
+		return target
+	}
+	return "/"
+}
+
+// WantsJSON reports whether req negotiated GoSX's managed-action JSON
+// response contract. Applications that branch around progressive enhancement
+// should use this function instead of duplicating Accept, Content-Type, or
+// X-Requested-With parsing. A nil request is treated as managed.
+func WantsJSON(req *http.Request) bool {
 	if req == nil {
 		return true
 	}

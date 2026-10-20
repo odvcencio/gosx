@@ -1,0 +1,21 @@
+//go:build js && wasm
+
+package main
+
+import (
+	"m31labs.dev/gosx/engine/wasm"
+)
+
+func main() {
+	err := wasm.Register("Chart", func(ctx wasm.Context) (wasm.Handle, error) {
+		mount := ctx.Mount()
+		_ = mount
+		return wasm.HandleFunc(func() {
+			// Release listeners and browser resources here.
+		}), nil
+	})
+	if err != nil {
+		panic(err)
+	}
+	select {}
+}

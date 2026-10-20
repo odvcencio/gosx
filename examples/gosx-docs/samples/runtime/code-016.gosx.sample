@@ -1,0 +1,4 @@
+<div data-gosx-live-src="/api/live/week" data-gosx-live-interval="10s">
+	    <span data-gosx-live-bind="score:t42" data-gosx-live-flash-class="score-flash">0.0</span>
+	    <span data-gosx-live-bind="status.mode">SCHEDULED</span>
+	</div>

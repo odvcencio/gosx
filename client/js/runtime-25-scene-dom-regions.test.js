@@ -12,6 +12,7 @@ const {
   bootstrapFeatureScene3DSource,
   bootstrapScene3DMountSourceFile,
   bootstrapScene3DDOMRegionsSourceFile,
+  freshFeatureBundleSource,
   FakeElement,
   createContext,
   installManualRAF,
@@ -62,6 +63,10 @@ function createDOMRegionTrackerHarness(options = {}) {
       const effect = state.postEffects.find((candidate) => candidate.name === entry.name);
       if (effect) {
         effect.uniforms = Object.assign({}, effect.uniforms, entry.uniforms);
+        if (Object.prototype.hasOwnProperty.call(entry, "domRegionBounds")) {
+          if (entry.domRegionBounds) effect._domRegionBounds = entry.domRegionBounds;
+          else delete effect._domRegionBounds;
+        }
       }
     }
   };
@@ -74,6 +79,7 @@ function createDOMRegionTrackerHarness(options = {}) {
         selector: ".glass-card",
         max: options.max,
         uniforms: options.uniforms || { count: "uCount", aspect: "uAspect", rect: "uRegion%dRect", meta: "uRegion%dMeta" },
+        bounds: options.bounds,
       },
     }];
   const state = {
@@ -148,6 +154,49 @@ test("CustomPost DOMRegions normalizes unsafe slot patterns", () => {
   assert.equal(config.uniforms.rect, "region%dRect");
   assert.equal(config.uniforms.meta, "region%dMeta");
   harness.tracker.dispose();
+});
+
+test("CustomPost DOMRegions computes padded clipped union bounds", async () => {
+  const harness = createDOMRegionTrackerHarness({ targetCount: 2, max: 2, bounds: { mode: "union", paddingPx: 20 } });
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  assert.deepEqual(JSON.parse(JSON.stringify(harness.state.postEffects[0]._domRegionBounds)), {
+    mode: "union",
+    active: true,
+    left: 0.2,
+    top: 0.15,
+    right: 0.6,
+    bottom: 0.65,
+    paddingPx: 20,
+  });
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-region-bounds"), "1");
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-region-bounds-area"), "0.2");
+});
+
+test("CustomPost DOMRegions emits inactive bounds for hidden targets", async () => {
+  const harness = createDOMRegionTrackerHarness({ bounds: { mode: "union", paddingPx: 12 } });
+  harness.targets[0].computedStyle.opacity = "0";
+  harness.raf.flush(16);
+  await flushAsyncWork();
+
+  assert.equal(harness.state.postEffects[0]._domRegionBounds.mode, "union");
+  assert.equal(harness.state.postEffects[0]._domRegionBounds.active, false);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-dom-region-bounds"), "0");
+});
+
+test("CustomPost DOMRegions source includes runtime bounds merge and backend scissors", () => {
+  const sceneSource = freshFeatureBundleSource("scene3d");
+  const webgpuSource = freshFeatureBundleSource("scene3d-webgpu");
+  const webglSource = freshFeatureBundleSource("scene3d-webgl");
+  assert.match(sceneSource, /scenePostDOMRegionPixelBounds/);
+  assert.match(sceneSource, /domRegionBounds/);
+  assert.match(sceneSource, /_domRegionBounds/);
+  assert.match(webgpuSource, /setScissorRect/);
+  assert.match(webglSource, /\.scissor\(/);
+  assert.match(webglSource, /SCISSOR_TEST/);
+  assert.match(webgpuSource, /postDOMRegionBoundedSkips/);
+  assert.match(webglSource, /postDOMRegionBoundedSkips/);
 });
 
 test("CustomPost DOMRegions coalesces unchanged keys and disposes listeners", async () => {

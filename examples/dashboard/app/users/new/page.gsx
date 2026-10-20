@@ -1,15 +1,22 @@
 package new
 
 func Page() Node {
-	return <div>
+	return <>
 		<h1>New User</h1>
 		<div class="card">
 			<form method="post" action={actionPath("createUser")}>
-				<input type="hidden" name="csrf_token" value={csrf.token}></input>
 				<div class="form-group">
 					<label>Name</label>
-					<input type="text" name="name" placeholder="Full name" value={actions.createUser.values.name}></input>
-					<p class="form-error">{actions.createUser.fieldErrors.name}</p>
+					<input
+						type="text"
+						name="name"
+						placeholder="Full name"
+						required
+						value={actions.createUser.values.name}
+					></input>
+					<If cond={actions.createUser.fieldErrors.name != ""}>
+						<p class="form-error">{actions.createUser.fieldErrors.name}</p>
+					</If>
 				</div>
 				<div class="form-group">
 					<label>Email</label>
@@ -17,9 +24,12 @@ func Page() Node {
 						type="email"
 						name="email"
 						placeholder="email@example.com"
+						required
 						value={actions.createUser.values.email}
 					></input>
-					<p class="form-error">{actions.createUser.fieldErrors.email}</p>
+					<If cond={actions.createUser.fieldErrors.email != ""}>
+						<p class="form-error">{actions.createUser.fieldErrors.email}</p>
+					</If>
 				</div>
 				<div class="form-group">
 					<label>Role</label>
@@ -29,10 +39,12 @@ func Page() Node {
 						<option value="admin">Admin</option>
 					</select>
 				</div>
-				<p class="form-status">{action.message}</p>
+				<If cond={action.message != ""}>
+					<p class="form-status">{action.message}</p>
+				</If>
 				<button type="submit" class="btn btn-primary">Create User</button>
-				<a href="/users" data-gosx-link class="btn btn-cancel">Cancel</a>
+				<a href="/users" class="btn btn-cancel">Cancel</a>
 			</form>
 		</div>
-	</div>
+	</>
 }

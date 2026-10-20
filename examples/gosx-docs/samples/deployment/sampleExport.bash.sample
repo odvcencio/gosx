@@ -1,0 +1,4 @@
+gosx export .
+
+# Publish this directory as the static site root:
+dist/static/

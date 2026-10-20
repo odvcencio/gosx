@@ -1,8 +1,10 @@
 package route
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -338,6 +340,8 @@ func Page() Node {
 	return <nav>
 		<Link href="/docs">Docs</Link>
 		<Link href="/docs/forms">Forms</Link>
+		<Link href="/docs/forms?tab=posting">Posting</Link>
+		<Link href="/docs/forms?tab=history">History</Link>
 		<Link href="/blog">Blog</Link>
 		<Link href="/docs/api" prefetch="render">API</Link>
 	</nav>
@@ -347,7 +351,7 @@ func Page() Node {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/docs/forms", nil)
+	req := httptest.NewRequest(http.MethodGet, "/docs/forms?tab=posting", nil)
 	ctx := &RouteContext{Request: req}
 	node, err := DefaultFileRenderer(ctx, FilePage{FilePath: path, Pattern: "/docs/forms"})
 	if err != nil {
@@ -358,6 +362,8 @@ func Page() Node {
 	for _, snippet := range []string{
 		`href="/docs" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="ancestor" data-gosx-prefetch-state="idle"`,
 		`href="/docs/forms" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
+		`href="/docs/forms?tab=posting" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="page" data-gosx-prefetch-state="idle" aria-current="page" data-gosx-aria-current-managed="true"`,
+		`href="/docs/forms?tab=history" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
 		`href="/blog" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle"`,
 		`href="/docs/api" data-gosx-link data-gosx-link-state="idle" data-gosx-enhance="navigation" data-gosx-enhance-layer="bootstrap" data-gosx-fallback="native-link" data-gosx-link-current-policy="auto" data-gosx-link-current="none" data-gosx-prefetch-state="idle" data-gosx-prefetch="render"`,
 	} {
@@ -621,8 +627,17 @@ func Page() Node {
 	html := gosx.RenderHTML(node)
 	for _, snippet := range []string{
 		`class="demo-image"`,
+		// The bare "src" fallback keeps the full requested box (width and
+		// height together): it is the single non-srcset URL a browser
+		// without srcset support loads, so it renders exactly the declared
+		// width x height.
 		`src="/_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=960"`,
-		`srcset="/_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=320 320w, /_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=640 640w, /_gosx/image?h=624&amp;src=%2Fpaper-card.png&amp;w=960 960w"`,
+		// Ladder entries carry width only (gosx#199): copying h=624 into the
+		// 320w and 640w candidates would request that height at every
+		// narrower width and distort the image, since the source is not
+		// 960x624 at those widths. Height is left to derive proportionally
+		// at request time.
+		`srcset="/_gosx/image?src=%2Fpaper-card.png&amp;w=320 320w, /_gosx/image?src=%2Fpaper-card.png&amp;w=640 640w, /_gosx/image?src=%2Fpaper-card.png&amp;w=960 960w"`,
 		`width="960"`,
 		`height="624"`,
 		`alt="Sample artwork"`,
@@ -706,8 +721,8 @@ func Page() Node {
 	for _, snippet := range []string{
 		`gosx-manifest`,
 		`bootstrap-runtime.js`,
-		`"audioTrack": "jpn"`,
-		`"audioTracks": [`,
+		`"audioTrack":"jpn"`,
+		`"audioTracks":[`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in video runtime head %q", snippet, head)
@@ -803,13 +818,8 @@ func Page() Node {
 		`Whiteboard`,
 		`SearchIndexer`,
 		`GoSXScene3D`,
-		`"requiredCapabilities": [
-        "canvas"
-      ]`,
-		`"requiredCapabilities": [
-        "canvas",
-        "webgl"
-      ]`,
+		`"requiredCapabilities":["canvas"]`,
+		`"requiredCapabilities":["canvas","webgl"]`,
 		`bootstrap-runtime.js`,
 	} {
 		if !strings.Contains(head, snippet) {
@@ -918,70 +928,70 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"camera": {`,
-		`"z": 7`,
-		`"fov": 64`,
-		`"environment": {`,
-		`"ambientColor": "#f4fbff"`,
-		`"lights": [`,
-		`"kind": "directional"`,
-		`"id": "sun"`,
-		`"id": "softbox"`,
-		`"kind": "rect-area"`,
-		`"width": 2.5`,
-		`"id": "probe"`,
-		`"kind": "light-probe"`,
-		`"postEffects": [`,
-		`"kind": "ssao"`,
-		`"kind": "dof"`,
-		`"focusDistance": 7`,
-		`"kind": "bloom"`,
-		`"kind": "customPost"`,
-		`"name": "lens"`,
-		`"vertexWGSL": "vertex wgsl"`,
-		`"fragmentWGSL": "fragment wgsl"`,
-		`"vertexGLSL": "vertex glsl"`,
-		`"fragmentGLSL": "fragment glsl"`,
-		`"shaderBackend": "selena"`,
-		`"kind": "tonemap"`,
-		`"materials": [`,
-		`"kind": "line-basic"`,
-		`"kind": "line-dashed"`,
-		`"lineDash": true`,
-		`"kind": "custom"`,
-		`"customFragment": "color *= 0.5;"`,
-		`"clearcoat": 0.4`,
-		`"objects": [`,
-		`"id": "hero"`,
-		`"id": "badge"`,
-		`"texture": "/textures/badge.png"`,
-		`"depthWrite": false`,
-		`"id": "custom-hero"`,
-		`"selected": true`,
-		`"outlineColor": "#ffcc00"`,
-		`"id": "axes-x"`,
-		`"id": "grid"`,
-		`"id": "box-helper"`,
-		`"id": "bounds-helper"`,
-		`"id": "bones-helper"`,
-		`"id": "gizmo-ring"`,
-		`"materialKind": "line-basic"`,
-		`"id": "dynamic-hero"`,
-		`"kind": "box"`,
-		`"models": [`,
-		`"id": "ship"`,
-		`"src": "/models/ship.glb"`,
-		`"animation": "idle"`,
-		`"static": true`,
-		`"points": [`,
-		`"id": "stars"`,
-		`"id": "extra-stars"`,
-		`"positions": [`,
-		`"blendMode": "additive"`,
-		`"html": [`,
-		`"id": "hud-card"`,
-		`"class": "scene-hud"`,
-		`"pointerEvents": "auto"`,
+		`"camera":{`,
+		`"z":7`,
+		`"fov":64`,
+		`"environment":{`,
+		`"ambientColor":"#f4fbff"`,
+		`"lights":[`,
+		`"kind":"directional"`,
+		`"id":"sun"`,
+		`"id":"softbox"`,
+		`"kind":"rect-area"`,
+		`"width":2.5`,
+		`"id":"probe"`,
+		`"kind":"light-probe"`,
+		`"postEffects":[`,
+		`"kind":"ssao"`,
+		`"kind":"dof"`,
+		`"focusDistance":7`,
+		`"kind":"bloom"`,
+		`"kind":"customPost"`,
+		`"name":"lens"`,
+		`"vertexWGSL":"vertex wgsl"`,
+		`"fragmentWGSL":"fragment wgsl"`,
+		`"vertexGLSL":"vertex glsl"`,
+		`"fragmentGLSL":"fragment glsl"`,
+		`"shaderBackend":"selena"`,
+		`"kind":"tonemap"`,
+		`"materials":[`,
+		`"kind":"line-basic"`,
+		`"kind":"line-dashed"`,
+		`"lineDash":true`,
+		`"kind":"custom"`,
+		`"customFragment":"color *= 0.5;"`,
+		`"clearcoat":0.4`,
+		`"objects":[`,
+		`"id":"hero"`,
+		`"id":"badge"`,
+		`"texture":"/textures/badge.png"`,
+		`"depthWrite":false`,
+		`"id":"custom-hero"`,
+		`"selected":true`,
+		`"outlineColor":"#ffcc00"`,
+		`"id":"axes-x"`,
+		`"id":"grid"`,
+		`"id":"box-helper"`,
+		`"id":"bounds-helper"`,
+		`"id":"bones-helper"`,
+		`"id":"gizmo-ring"`,
+		`"materialKind":"line-basic"`,
+		`"id":"dynamic-hero"`,
+		`"kind":"box"`,
+		`"models":[`,
+		`"id":"ship"`,
+		`"src":"/models/ship.glb"`,
+		`"animation":"idle"`,
+		`"static":true`,
+		`"points":[`,
+		`"id":"stars"`,
+		`"id":"extra-stars"`,
+		`"positions":[`,
+		`"blendMode":"additive"`,
+		`"html":[`,
+		`"id":"hud-card"`,
+		`"class":"scene-hud"`,
+		`"pointerEvents":"auto"`,
 		`scene-hud__card`,
 		`Hull`,
 		`stable`,
@@ -1028,11 +1038,11 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"camera": {`,
-		`"z": 7`,
-		`"fov": 54`,
-		`"far": 96`,
-		`"id": "legacy"`,
+		`"camera":{`,
+		`"z":7`,
+		`"fov":54`,
+		`"far":96`,
+		`"id":"legacy"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in merged Scene3D runtime head %q", snippet, head)
@@ -1062,10 +1072,10 @@ func Page() Node {
 	}
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
-	if !strings.Contains(head, `"id": "solo"`) {
+	if !strings.Contains(head, `"id":"solo"`) {
 		t.Fatalf("expected solo mesh in Scene3D runtime head %q", head)
 	}
-	if strings.Contains(head, `"kind": "cube"`) || strings.Contains(head, `#ffd48f`) {
+	if strings.Contains(head, `"kind":"cube"`) || strings.Contains(head, `#ffd48f`) {
 		t.Fatalf("expected no injected demo scene objects in %q", head)
 	}
 }
@@ -1090,7 +1100,7 @@ func Page() Node {
 	}
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
-	if !strings.Contains(head, `"kind": "cube"`) {
+	if !strings.Contains(head, `"kind":"cube"`) {
 		t.Fatalf("expected default Scene3D demo objects in %q", head)
 	}
 	for _, snippet := range []string{
@@ -1199,8 +1209,8 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`"webgpu"`,
-		`"computeParticles": [`,
-		`"id": "spark-field"`,
+		`"computeParticles":[`,
+		`"id":"spark-field"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1237,18 +1247,18 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`"webgpu"`,
-		`"backendCaps": {`,
-		`"capable": [`,
+		`"backendCaps":{`,
+		`"capable":[`,
 		`"water-object-texture-pass"`,
 		`"water-simulation"`,
-		`"waterSystems": [`,
-		`"id": "pool-water"`,
-		`"objectKind": "sphere"`,
-		`"objectRadius": 0.44`,
-		`"objectTextureResolution": 512`,
-		`"objectTextureResolutionMode": "viewport"`,
-		`"computeBackend": "elio"`,
-		`"materialBackend": "selena"`,
+		`"waterSystems":[`,
+		`"id":"pool-water"`,
+		`"objectKind":"sphere"`,
+		`"objectRadius":0.44`,
+		`"objectTextureResolution":512`,
+		`"objectTextureResolutionMode":"viewport"`,
+		`"computeBackend":"elio"`,
+		`"materialBackend":"selena"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1282,7 +1292,7 @@ func Page() Node {
 		`"water-object-mesh-shadow-pass"`,
 		`"water-object-texture-pass"`,
 		`"water-simulation"`,
-		`"objectMeshShadowVertexWGSL": "vertex"`,
+		`"objectMeshShadowVertexWGSL":"vertex"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1345,7 +1355,7 @@ func Page() Node {
 		`"webgpu"`,
 		`"webgpu:timestamp-query"`,
 		`"webgpu:adapter-limit:maxTextureDimension2D\u003e=8192"`,
-		`"computeParticles": [`,
+		`"computeParticles":[`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -1397,7 +1407,7 @@ func Page() Node {
 		t.Fatalf("expected typed compute Scene3D to declare webgpu capability in runtime head %q", head)
 	}
 	for _, snippet := range []string{
-		`"requiredCapabilities": [`,
+		`"requiredCapabilities":[`,
 		`"webgpu:timestamp-query"`,
 		`"webgpu:limit:maxTextureDimension2D\u003e=4096"`,
 	} {
@@ -1473,28 +1483,28 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"background": "#101820"`,
-		`"ambientIntensity": 0.33`,
-		`"kind": "bloom"`,
-		`"threshold": 0.8`,
-		`"intensity": 0.7`,
-		`"kind": "vignette"`,
-		`"id": "hero"`,
-		`"color": "#8de1ff"`,
-		`"roughness": 0.42`,
-		`"castShadow": true`,
-		`"x": 1.5`,
-		`"models": [`,
-		`"id": "ship"`,
-		`"src": "/models/ship.glb"`,
-		`"x": 2`,
-		`"id": "stars"`,
-		`"size": 0.5`,
-		`"blendMode": "additive"`,
-		`"spinY": 0.04`,
-		`"id": "sun"`,
-		`"color": "#fff4cc"`,
-		`"intensity": 2`,
+		`"background":"#101820"`,
+		`"ambientIntensity":0.33`,
+		`"kind":"bloom"`,
+		`"threshold":0.8`,
+		`"intensity":0.7`,
+		`"kind":"vignette"`,
+		`"id":"hero"`,
+		`"color":"#8de1ff"`,
+		`"roughness":0.42`,
+		`"castShadow":true`,
+		`"x":1.5`,
+		`"models":[`,
+		`"id":"ship"`,
+		`"src":"/models/ship.glb"`,
+		`"x":2`,
+		`"id":"stars"`,
+		`"size":0.5`,
+		`"blendMode":"additive"`,
+		`"spinY":0.04`,
+		`"id":"sun"`,
+		`"color":"#fff4cc"`,
+		`"intensity":2`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D styled runtime head %q", snippet, head)
@@ -1636,24 +1646,24 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`/api/runtime/scene-program`,
-		`"maxFrameRate": 48`,
-		`"near": 0.15`,
-		`"far": 64`,
+		`"maxFrameRate":48`,
+		`"near":0.15`,
+		`"far":64`,
 		`"$scene.demo.pick"`,
 		`"$scene.demo.event"`,
-		`"lights": [`,
-		`"kind": "directional"`,
-		`"ambientIntensity": 0.22`,
-		`"models": [`,
+		`"lights":[`,
+		`"kind":"directional"`,
+		`"ambientIntensity":0.22`,
+		`"models":[`,
 		`"/models/runner.gosx3d.json"`,
-		`"sprites": [`,
+		`"sprites":[`,
 		`"/paper-card.png"`,
-		`"pickable": true`,
-		`"kind": "box"`,
-		`"kind": "lines"`,
-		`"pickable": false`,
-		`"text": "Typed spread"`,
-		`"driftSpeed": 0.8`,
+		`"pickable":true`,
+		`"kind":"box"`,
+		`"kind":"lines"`,
+		`"pickable":false`,
+		`"text":"Typed spread"`,
+		`"driftSpeed":0.8`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in typed Scene3D runtime head %q", snippet, head)
@@ -1711,13 +1721,13 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"background": "#08151f"`,
-		`"camera": {`,
-		`"near": 0.15`,
-		`"far": 64`,
-		`"scene": {`,
-		`"objects": [`,
-		`"kind": "box"`,
+		`"background":"#08151f"`,
+		`"camera":{`,
+		`"near":0.15`,
+		`"far":64`,
+		`"scene":{`,
+		`"objects":[`,
+		`"kind":"box"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in canonical Scene3D runtime head %q", snippet, head)
@@ -1811,26 +1821,26 @@ func Page() Node {
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
 		`/api/runtime/scene-program`,
-		`"capabilities": [`,
+		`"capabilities":[`,
 		`"pointer"`,
-		`"controls": "orbit"`,
-		`"controlTarget": {`,
-		`"controlRotateMode": "pixel-degrees"`,
-		`"controlRotateSpeed": 1.25`,
-		`"controlZoomSpeed": 0.9`,
-		`"controlMinDistance": 2`,
-		`"controlMaxDistance": 10`,
-		`"controlPitchLimit": 1.5707788735`,
-		`"rotationX": 0.18`,
-		`"rotationY": -0.3`,
-		`"near": 0.15`,
-		`"far": 64`,
-		`"kind": "box"`,
-		`"materialKind": "glass"`,
-		`"opacity": 0.45`,
-		`"emissive": 0.08`,
-		`"blendMode": "alpha"`,
-		`"renderPass": "alpha"`,
+		`"controls":"orbit"`,
+		`"controlTarget":{`,
+		`"controlRotateMode":"pixel-degrees"`,
+		`"controlRotateSpeed":1.25`,
+		`"controlZoomSpeed":0.9`,
+		`"controlMinDistance":2`,
+		`"controlMaxDistance":10`,
+		`"controlPitchLimit":1.5707788735`,
+		`"rotationX":0.18`,
+		`"rotationY":-0.3`,
+		`"near":0.15`,
+		`"far":64`,
+		`"kind":"box"`,
+		`"materialKind":"glass"`,
+		`"opacity":0.45`,
+		`"emissive":0.08`,
+		`"blendMode":"alpha"`,
+		`"renderPass":"alpha"`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in typed Scene3D props runtime head %q", snippet, head)
@@ -1872,14 +1882,14 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"controls": "orbit"`,
-		`"controlTarget": {`,
-		`"x": 0.25`,
-		`"y": -0.5`,
-		`"z": 1.75`,
-		`"fov": 45`,
-		`"near": 0.01`,
-		`"far": 100`,
+		`"controls":"orbit"`,
+		`"controlTarget":{`,
+		`"x":0.25`,
+		`"y":-0.5`,
+		`"z":1.75`,
+		`"fov":45`,
+		`"near":0.01`,
+		`"far":100`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in Scene3D runtime head %q", snippet, head)
@@ -2130,7 +2140,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("TextBlock", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("TextBlock", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2252,7 +2262,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Docs"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2281,6 +2291,65 @@ func Page() Node {
 	}
 }
 
+// TestRouterAddDirServesPageWithManagedFormShorthand is the httptest
+// end-to-end assertion gosx#179 F7 asks for: a real page file, served over
+// the same file-based router a dev/prod server uses, whose form carries
+// only the data-gosx-managed shorthand. This closes the exact wrong-layer
+// loop that produced #179 — earlier server-render tests in this package
+// call RenderProgramComponent directly, which proved the file-program
+// renderer expands the shorthand but not that a request through the full
+// file router actually reaches that code path.
+func TestRouterAddDirServesPageWithManagedFormShorthand(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package docs
+
+func Page() Node {
+	return <main>
+		<form method="post" action="/save" data-gosx-managed>
+			<input name="q"></input>
+		</form>
+	</main>
+}
+`)
+
+	router := NewRouter()
+	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
+		return server.HTMLDocument(ctx.Document("Docs", body))
+	})
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	handler := router.Build()
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+
+	body := w.Body.String()
+	for _, want := range []string{
+		`method="post"`,
+		`action="/save"`,
+		gosx.ManagedFormStateAttr + `="idle"`,
+		gosx.EnhancementAttr + `="form"`,
+		gosx.EnhancementLayerAttr + `="bootstrap"`,
+		gosx.RuntimeFallbackAttr + `="native-form"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected %q in served page html, got %q", want, body)
+		}
+	}
+	if !strings.Contains(body, " "+gosx.ManagedFormAttr+" ") && !strings.Contains(body, " "+gosx.ManagedFormAttr+">") {
+		t.Fatalf("expected the bare %s attribute in served page html, got %q", gosx.ManagedFormAttr, body)
+	}
+	if strings.Contains(body, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected shorthand attribute stripped from served html, got %q", body)
+	}
+}
+
 func TestRouterAddDirComposesDefaultAndNestedFileLayoutsWithRouteGroups(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs
@@ -2299,7 +2368,7 @@ func Layout() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2359,7 +2428,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2433,7 +2502,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Fallback"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Fallback", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2522,7 +2591,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2595,7 +2664,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(ctx.Title("Docs"), ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2669,7 +2738,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Crew", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Crew", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2715,7 +2784,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Demo", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Demo", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
 		t.Fatal(err)
@@ -2792,7 +2861,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Crew", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Crew", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -2858,7 +2927,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Docs", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Docs", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -3158,6 +3227,134 @@ func Page() Node {
 	}
 }
 
+func buildMultipartUpload(t *testing.T, fieldName, filename string, size int) (*bytes.Buffer, string) {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile(fieldName, filename)
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(bytes.Repeat([]byte("a"), size)); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+	return &body, writer.FormDataContentType()
+}
+
+func registerUploadModule(t *testing.T, root string, opts FileModuleOptions) *FileModuleRegistry {
+	t.Helper()
+	writeRouteFile(t, root, "upload/page.gsx", `package docs
+
+func Page() Node {
+	return <main>Upload</main>
+}
+`)
+
+	opts.Actions = FileActions{
+		"upload": func(ctx *action.Context) error {
+			return ctx.Success("saved", nil)
+		},
+	}
+
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("upload/page.gsx", opts)); err != nil {
+		t.Fatal(err)
+	}
+	return modules
+}
+
+func TestRouterAddDirFileModuleMaxActionBodyBytesRejectsOversizedUpload(t *testing.T) {
+	root := t.TempDir()
+	modules := registerUploadModule(t, root, FileModuleOptions{
+		MaxActionBodyBytes: 2048,
+	})
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	body, contentType := buildMultipartUpload(t, "avatar", "avatar.png", 8*1024)
+	req := httptest.NewRequest(http.MethodPost, "/upload/__actions/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 for an upload over the configured module cap, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestRouterAddDirFileModuleMaxActionBodyBytesAllowsUploadUnderConfiguredLimit(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "upload/page.gsx", `package docs
+
+func Page() Node {
+	return <main>Upload</main>
+}
+`)
+
+	var uploaded *multipart.FileHeader
+	modules := NewFileModuleRegistry()
+	if err := modules.Register(FileModuleFor("upload/page.gsx", FileModuleOptions{
+		// The payload below sits over the 1 MiB package default and under
+		// this 2 MiB module cap, proving the knob raises the ceiling.
+		MaxActionBodyBytes: 2 * 1024 * 1024,
+		Actions: FileActions{
+			"upload": func(ctx *action.Context) error {
+				uploaded = ctx.File("avatar")
+				return ctx.Success("saved", nil)
+			},
+		},
+	})); err != nil {
+		t.Fatal(err)
+	}
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	const oneMiB = 1024 * 1024
+	body, contentType := buildMultipartUpload(t, "avatar", "avatar.png", oneMiB+512*1024)
+	req := httptest.NewRequest(http.MethodPost, "/upload/__actions/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("Accept", "application/json")
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 for an upload under the configured module cap, got %d: %s", w.Code, w.Body.String())
+	}
+	if uploaded == nil || uploaded.Filename != "avatar.png" {
+		t.Fatalf("expected uploaded avatar.png, got %#v", uploaded)
+	}
+}
+
+func TestRouterAddDirFileModuleDefaultMaxActionBodyBytesRejectsOversizedUpload(t *testing.T) {
+	root := t.TempDir()
+	modules := registerUploadModule(t, root, FileModuleOptions{})
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
+		t.Fatal(err)
+	}
+
+	const oneMiB = 1024 * 1024
+	body, contentType := buildMultipartUpload(t, "avatar", "avatar.png", oneMiB+512*1024)
+	req := httptest.NewRequest(http.MethodPost, "/upload/__actions/upload", body)
+	req.Header.Set("Content-Type", contentType)
+	w := httptest.NewRecorder()
+	router.Build().ServeHTTP(w, req)
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 from the unchanged 1 MiB default, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestFileLayoutWrapsRouteContent(t *testing.T) {
 	root := t.TempDir()
 	writeRouteFile(t, root, "layout.gsx", `package docs
@@ -3292,7 +3489,7 @@ func Page() Node {
 
 	router := NewRouter()
 	router.SetLayout(func(ctx *RouteContext, body gosx.Node) gosx.Node {
-		return server.HTMLDocument("Demo", ctx.Head(), body)
+		return server.HTMLDocument(ctx.Document("Demo", body))
 	})
 	if err := router.AddDir(root, FileRoutesOptions{Modules: modules}); err != nil {
 		t.Fatal(err)
@@ -3380,14 +3577,13 @@ func Page() Node {
 	}
 
 	csrf := findInputValue(t, body, "csrf_token")
-	if csrf == "" {
-		t.Fatalf("expected csrf token in %q", body)
+	if csrf != "" || len(getRes.Result().Cookies()) != 0 {
+		t.Fatalf("anonymous form created session state in %q", body)
 	}
-	cookie := getRes.Result().Cookies()[0]
 
 	postReq := httptest.NewRequest(http.MethodPost, "/account/draco/__actions/save", strings.NewReader("name=Ada&email=&csrf_token="+csrf))
 	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	postReq.AddCookie(cookie)
+	postReq.Header.Set("Sec-Fetch-Site", "same-origin")
 	postRes := httptest.NewRecorder()
 	handler.ServeHTTP(postRes, postReq)
 	if postRes.Code != http.StatusSeeOther {
@@ -3397,7 +3593,7 @@ func Page() Node {
 		t.Fatalf("expected redirect to page path, got %q", location)
 	}
 
-	cookie = postRes.Result().Cookies()[0]
+	cookie := postRes.Result().Cookies()[0]
 	reloadReq := httptest.NewRequest(http.MethodGet, "/account/draco", nil)
 	reloadReq.AddCookie(cookie)
 	reloadRes := httptest.NewRecorder()
@@ -3415,6 +3611,44 @@ func Page() Node {
 		if !strings.Contains(reloaded, snippet) {
 			t.Fatalf("expected %q in %q", snippet, reloaded)
 		}
+	}
+}
+
+// TestRouterFilePagesSkipCSRFMintWithoutTemplateUse proves the lazy-mint
+// fix: a page whose template never reads csrf.token or csrf.field must not
+// mint one, so its GET response carries no Set-Cookie header and stays
+// publicly cacheable. TestRouterFilePagesSupportRequestDataActionsAndCSRF
+// above also proves that reading csrf.token on an anonymous form stays empty
+// and that its first same-origin action succeeds without a session cookie.
+func TestRouterFilePagesSkipCSRFMintWithoutTemplateUse(t *testing.T) {
+	root := t.TempDir()
+	writeRouteFile(t, root, "page.gsx", `package docs
+
+func Page() Node {
+	return <main><h1>No form here</h1></main>
+}
+`)
+
+	router := NewRouter()
+	if err := router.AddDir(root, FileRoutesOptions{}); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions := session.MustNew("route-render-session-secret", session.Options{})
+	handler := sessions.Middleware(router.Build())
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", res.Code, res.Body.String())
+	}
+	if !strings.Contains(res.Body.String(), "No form here") {
+		t.Fatalf("unexpected body %q", res.Body.String())
+	}
+	if cookies := res.Result().Cookies(); len(cookies) != 0 {
+		t.Fatalf("expected no Set-Cookie for a page that never reads csrf, got %v", cookies)
 	}
 }
 

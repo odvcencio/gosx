@@ -1,0 +1,3 @@
+<main data-gosx-revalidate-interval="4s" data-gosx-revalidate-src="/api/league/version">
+	<p>Server-rendered draft data appears here.</p>
+</main>

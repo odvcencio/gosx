@@ -81,10 +81,38 @@ func lowerFileExpr(expr ast.Expr) fileExprFunc {
 		target := lowerFileExpr(node.X)
 		index := lowerFileExpr(node.Index)
 		return func(env fileRenderEnv) any {
-			return indexValue(target(env), index(env))
+			value := target(env)
+			key := index(env)
+			if env.propsFrame == propsFrameStrict {
+				if values, ok := value.(map[string]string); ok {
+					if name, ok := key.(string); ok {
+						return values[name]
+					}
+				}
+			}
+			return indexValue(value, key)
 		}
 
 	case *ast.CallExpr:
+		// len(x) is a language builtin on every other evaluator — transpile
+		// compiles to Go's real len(), and the island DSL's own parser
+		// (ir/exprparse.go) lowers it to OpLen — never a registered
+		// function. Route used to resolve the bare identifier "len" through
+		// evalIdent like any other call target, which only found a callable
+		// when the caller's fileRenderEnv had registered one itself (see
+		// registerBaseFileFuncs, which only newFileRenderEnv's callers
+		// reach — RenderProgramComponent, and any other bare-env caller,
+		// silently rendered every len(...) hole empty). Special-casing it
+		// here, before the generic identifier/funcs lookup below, makes
+		// len(x) behave identically on every fileRenderEnv, matching the
+		// other two evaluators and closing the gap
+		// docs/expression-support-matrix.md pinned as string_len_builtin.
+		if id, ok := node.Fun.(*ast.Ident); ok && id.Name == "len" && len(node.Args) == 1 {
+			arg := lowerFileExpr(node.Args[0])
+			return func(env fileRenderEnv) any {
+				return fileEvalLen(arg(env))
+			}
+		}
 		fn := lowerFileExpr(node.Fun)
 		args := make([]fileExprFunc, len(node.Args))
 		for i, arg := range node.Args {
@@ -109,11 +137,17 @@ func lowerFileExpr(expr ast.Expr) fileExprFunc {
 }
 
 func applyFileBinaryOp(op token.Token, left, right any) any {
+	if op == token.ADD && (isStringLike(left) || isStringLike(right)) {
+		return stringifyValue(left) + stringifyValue(right)
+	}
+	switch op {
+	case token.ADD, token.SUB, token.MUL, token.QUO, token.REM:
+		if result, ok := fileIntegerBinary(op, left, right); ok {
+			return result
+		}
+	}
 	switch op {
 	case token.ADD:
-		if isStringLike(left) || isStringLike(right) {
-			return stringifyValue(left) + stringifyValue(right)
-		}
 		return numericValue(left) + numericValue(right)
 	case token.SUB:
 		return numericValue(left) - numericValue(right)
@@ -153,6 +187,11 @@ func applyFileBinaryOp(op token.Token, left, right any) any {
 }
 
 func applyFileUnaryOp(op token.Token, value any) any {
+	if op == token.ADD || op == token.SUB {
+		if result, ok := fileIntegerUnary(op, value); ok {
+			return result
+		}
+	}
 	switch op {
 	case token.NOT:
 		return !truthy(value)

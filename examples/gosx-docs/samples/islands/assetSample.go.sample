@@ -1,0 +1,7 @@
+node := ctx.Runtime().IslandWithProgramAsset(
+	counterProgram,
+	map[string]int{"initial": 2},
+	"/islands/Counter.bin",
+	"bin",
+	counterHash,
+)

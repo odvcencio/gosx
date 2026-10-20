@@ -1,22 +1,22 @@
-// Slice Y.D.1 — failing-first tests for user-defined function call
+// Failing-first tests for user-defined function call
 // lowering.
 //
-// Pre-Y.D the lowerer rejects every bare-identifier call with
+// Before this, the lowerer rejects every bare-identifier call with
 // "calls to user-defined function %q are not supported" (from
-// expr.go's lowerCallExpr). Y.D's plan covers:
+// expr.go's lowerCallExpr). Covers:
 //
 //   1. Same-package zero-arg call:       greet()                 -> string
 //   2. Single-arg call w/ composite arg: makeNode(id) -> Node{...}
 //   3. Multi-arg call with return:       add(a, b) -> int
-//   4. Multi-return user fn:             a, b := splitVec(v)     (Y.B handoff)
+//   4. Multi-return user fn:             a, b := splitVec(v)
 //   5. Recursive call:                   fact(n) -> int
 //   6. Call returning composite:         node := makeNode(id) -> Node
 //   7. Call with composite literal arg:  f(vec2{x, y}) -> int
 //
-// At Y.D.1 each lowering call still fails: expr.go's lowerCallExpr's
+// Before this, each lowering call still fails: expr.go's lowerCallExpr's
 // `default` branch produces the "user-defined function ... not
-// supported" diagnostic. Y.D.2 adds OpIndirectCall, Y.D.3 the
-// function-registry pass, Y.D.4 the VM eval. Y.D.5 marks PASS.
+// supported" diagnostic. OpIndirectCall, the
+// function-registry pass, and the VM eval make these tests PASS.
 
 package golower
 
@@ -189,8 +189,8 @@ func F() int {
 	}
 }
 
-// TestLowerUserFnCallMultiReturn verifies the multi-return form Y.B
-// deferred. Mirrors `wx, wy := screenToWorld(sx, sy)` from
+// TestLowerUserFnCallMultiReturn verifies the multi-return form.
+// Mirrors `wx, wy := screenToWorld(sx, sy)` from
 // graph_surface.go's OnMove handler.
 func TestLowerUserFnCallMultiReturn(t *testing.T) {
 	src := []byte(`package handlers
@@ -248,7 +248,7 @@ func F() int {
 }
 
 // TestLowerUserFnCallFailureDiagnosticGoneAtY_D is a meta-check that
-// once Y.D ships the supported subset stops emitting the
+// the supported subset stops emitting the
 // "calls to user-defined function" diagnostic for in-package callees.
 // This is the test that flips green when the diagnostic is removed.
 func TestLowerUserFnCallNoFailureDiagnosticForInPackageCallee(t *testing.T) {

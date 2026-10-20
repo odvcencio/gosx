@@ -1,9 +1,14 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 )
 
 func TestResolveWASMCompilerRequiresTinyGoForProduction(t *testing.T) {
@@ -89,6 +94,125 @@ func TestTinyGoBuildArgsAppendVariantTags(t *testing.T) {
 	if !stringSliceContains(args, "-tags=tinygo gosx_tiny_runtime gosx_tiny_islands_only") {
 		t.Fatalf("expected combined TinyGo runtime tags in args: %v", args)
 	}
+}
+
+func TestAdvertisedRuntimeVariantBuildArgsUseExplicitProfiles(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+	tests := []struct {
+		variant runtimewasm.Variant
+		want    string
+	}{
+		{runtimewasm.VariantCore, "gosx_tiny_runtime gosx_runtime_core"},
+		{runtimewasm.VariantEngine, "gosx_tiny_runtime gosx_runtime_engine"},
+		{runtimewasm.VariantCollab, "gosx_runtime_collab"},
+		{runtimewasm.VariantFull, "gosx_runtime_full"},
+	}
+	for _, test := range tests {
+		t.Run(string(test.variant), func(t *testing.T) {
+			profile := runtimeVariantBuildTags(test.variant)
+			goArgs := goWASMBuildArgs("runtime.wasm", profile...)
+			if !stringSliceContains(goArgs, "-tags="+test.want) {
+				t.Fatalf("standard-Go %s args = %v, want profile %q", test.variant, goArgs, test.want)
+			}
+
+			tinyArgs := tinyGoBuildArgs("runtime.wasm", profile...)
+			if !stringSliceContains(tinyArgs, "-tags=tinygo "+test.want) {
+				t.Fatalf("TinyGo %s args = %v, want profile %q", test.variant, tinyArgs, test.want)
+			}
+		})
+	}
+}
+
+func TestRuntimeVariantProfilesMatchCompiledSourceFamiliesAndMasks(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+	tests := []struct {
+		variant runtimewasm.Variant
+		mask    runtimewasm.FeatureMask
+		want    []string
+		reject  []string
+	}{
+		{
+			variant: runtimewasm.VariantCore,
+			mask:    runtimewasm.FeatureCore | runtimewasm.FeatureIslands,
+			want:    []string{"runtime_variant_core.go", "engine_islands_only.go", "crdt_tiny.go", "highlight_tiny.go", "textlayout_tiny.go"},
+			reject:  []string{"engine_full.go", "crdt_full.go", "highlight_full.go", "textlayout_full.go"},
+		},
+		{
+			variant: runtimewasm.VariantEngine,
+			mask:    runtimewasm.FeatureCore | runtimewasm.FeatureEngine | runtimewasm.FeatureScene3D | runtimewasm.FeatureIslands,
+			want:    []string{"runtime_variant_engine.go", "engine_full.go", "crdt_tiny.go", "highlight_tiny.go", "textlayout_tiny.go"},
+			reject:  []string{"engine_islands_only.go", "crdt_full.go", "highlight_full.go", "textlayout_full.go"},
+		},
+		{
+			variant: runtimewasm.VariantCollab,
+			mask:    runtimewasm.FeatureCore | runtimewasm.FeatureCollab | runtimewasm.FeatureIslands,
+			want:    []string{"runtime_variant_collab.go", "engine_islands_only.go", "crdt_full.go", "highlight_tiny.go", "textlayout_tiny.go"},
+			reject:  []string{"engine_full.go", "crdt_tiny.go", "highlight_full.go", "textlayout_full.go"},
+		},
+		{
+			variant: runtimewasm.VariantFull,
+			mask:    runtimewasm.FeatureCore | runtimewasm.FeatureEngine | runtimewasm.FeatureCollab | runtimewasm.FeatureScene3D | runtimewasm.FeatureIslands,
+			want:    []string{"runtime_variant_full.go", "engine_full.go", "crdt_full.go", "highlight_full.go", "textlayout_full.go"},
+			reject:  []string{"engine_islands_only.go", "crdt_tiny.go", "highlight_tiny.go", "textlayout_tiny.go"},
+		},
+	}
+
+	for _, compiler := range []wasmCompiler{wasmCompilerGo, wasmCompilerTinyGo} {
+		for _, test := range tests {
+			t.Run(string(compiler)+"/"+string(test.variant), func(t *testing.T) {
+				if got := runtimewasm.FeatureMaskForVariant(test.variant); got != test.mask {
+					t.Fatalf("%s mask = 0x%x, want 0x%x", test.variant, got, test.mask)
+				}
+				tags := runtimeVariantBuildTags(test.variant)
+				if compiler == wasmCompilerTinyGo {
+					tags = tinyGoWASMTags(tags...)
+				}
+				files := goListRuntimeVariantFiles(t, tags)
+				for _, name := range test.want {
+					if !files[name] {
+						t.Errorf("%s %s profile omitted %s (tags %v)", compiler, test.variant, name, tags)
+					}
+				}
+				for _, name := range test.reject {
+					if files[name] {
+						t.Errorf("%s %s profile included incompatible %s (tags %v)", compiler, test.variant, name, tags)
+					}
+				}
+			})
+		}
+	}
+}
+
+func goListRuntimeVariantFiles(t *testing.T, tags []string) map[string]bool {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("go", "list", "-json", "-tags="+strings.Join(tags, " "), gosxModuleImportPath+"/client/wasm")
+	cmd.Dir = root
+	cmd.Env = setEnv(execEnvWithoutGoFlags(), "GOOS", "js")
+	cmd.Env = setEnv(cmd.Env, "GOARCH", "wasm")
+	cmd.Env = setEnv(cmd.Env, "GOWORK", "off")
+	cmd.Env = setEnv(cmd.Env, "GOFLAGS", goModuleCommandFlags)
+	body, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			t.Fatalf("go list runtime profile: %v\n%s", err, exitErr.Stderr)
+		}
+		t.Fatal(err)
+	}
+	var pkg struct {
+		GoFiles []string
+	}
+	if err := json.Unmarshal(body, &pkg); err != nil {
+		t.Fatalf("decode go list runtime profile: %v", err)
+	}
+	files := make(map[string]bool, len(pkg.GoFiles))
+	for _, file := range pkg.GoFiles {
+		files[file] = true
+	}
+	return files
 }
 
 func TestGoWASMBuildArgsAppendVariantTags(t *testing.T) {

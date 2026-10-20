@@ -98,9 +98,10 @@ func TestPolygonGeometryEarcutAlwaysWindsCounterClockwise(t *testing.T) {
 
 // TestPolygonGeometryWindingSurvivesLowering proves the corrected order reaches
 // the browser. There is no triangulator in the client: PolygonGeometry lowers to
-// kind "gltf-mesh" and bufferGeometryVertices expands the index list into a flat
-// triangle soup, so the browser draws whatever order Go emitted. A fix that
-// stopped at BufferGeometry.Indices would leave the browser unchanged.
+// kind "gltf-mesh" and bufferGeometryVertices keeps the authored index list over
+// the unique vertex streams, so the browser draws whatever order Go emitted —
+// both on the CPU pick path and when the runtime dereferences the indices while
+// baking wire segments or triangle soup.
 func TestPolygonGeometryWindingSurvivesLowering(t *testing.T) {
 	props := Props{Graph: NewGraph(Mesh{
 		ID:       "polygon-floor",
@@ -108,16 +109,19 @@ func TestPolygonGeometryWindingSurvivesLowering(t *testing.T) {
 		Material: StandardMaterial{Color: "#ffffff"},
 	})}
 	vertices := props.SceneIR().Objects[0].Vertices
-	if vertices == nil || vertices.Count != 6 {
-		t.Fatalf("expected 6 expanded vertices, got %+v", vertices)
+	if vertices == nil {
+		t.Fatal("expected lowered vertices")
 	}
 	soup := BufferGeometry{Positions: vertices.Positions, Normals: vertices.Normals}
-	for i := 0; i+3 <= vertices.Count; i += 3 {
-		gx, gy, gz, ok := polygonTriangleNormal(soup, i, i+1, i+2)
+	for i := 0; i+2 < len(vertices.Indices); i += 3 {
+		a := int(vertices.Indices[i])
+		b := int(vertices.Indices[i+1])
+		c := int(vertices.Indices[i+2])
+		gx, gy, gz, ok := polygonTriangleNormal(soup, a, b, c)
 		if !ok {
 			t.Fatalf("lowered triangle %d is degenerate", i/3)
 		}
-		sx, sy, sz := polygonShadedNormal(soup, i, i+1, i+2)
+		sx, sy, sz := polygonShadedNormal(soup, a, b, c)
 		if dot := gx*sx + gy*sy + gz*sz; dot <= 0 {
 			t.Fatalf("lowered triangle %d is wound against its own normals (dot %.4f)", i/3, dot)
 		}

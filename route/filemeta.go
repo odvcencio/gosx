@@ -2,6 +2,7 @@ package route
 
 import (
 	"encoding/json"
+	"m31labs.dev/gosx/internal/filepolicy"
 	"os"
 	"path/filepath"
 	"strings"
@@ -50,7 +51,21 @@ func fileMetadata(file string) (server.Metadata, bool) {
 	return meta, !isZeroMetadata(meta)
 }
 
+var productionMetadataPaths sync.Map
+
 func sidecarMetadataPath(file string) string {
+	if !filepolicy.Immutable() {
+		return sidecarMetadataPathFresh(file)
+	}
+	if entry, ok := productionMetadataPaths.Load(file); ok {
+		return entry.(string)
+	}
+	path := sidecarMetadataPathFresh(file)
+	entry, _ := productionMetadataPaths.LoadOrStore(file, path)
+	return entry.(string)
+}
+
+func sidecarMetadataPathFresh(file string) string {
 	file = strings.TrimSpace(file)
 	if file == "" {
 		return ""

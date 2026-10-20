@@ -389,6 +389,12 @@ func newAllocator(ctx context.Context) (context.Context, context.CancelFunc, err
 		chromedp.Flag("enable-webgl", true),
 		chromedp.Flag("ignore-gpu-blocklist", true),
 		chromedp.Flag("no-sandbox", true),
+		// WebGPU on SwiftShader. Without these a headless capture can never
+		// satisfy --require-backend webgpu: navigator.gpu.requestAdapter()
+		// resolves null and every Scene3D page silently exercises the WebGL
+		// fallback instead of the pipeline real visitors run.
+		chromedp.Flag("enable-unsafe-webgpu", true),
+		chromedp.Flag("use-webgpu-adapter", "swiftshader"),
 	)
 	allocCtx, cancel := chromedp.NewExecAllocator(ctx, opts...)
 	return allocCtx, cancel, nil

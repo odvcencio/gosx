@@ -1,9 +1,9 @@
-// Slice Y.C.5 — edge-case and failure-mode tests for LHS lowering.
+// Edge-case and failure-mode tests for LHS lowering.
 //
-// These tests pin behaviors the Y.C plan calls out as "must work" but
+// These tests pin behaviors that "must work" but
 // that aren't obvious from the simple-case tests:
 //
-//   - selector-on-index LHS (`nodes[i].Y = 3`) — chained Y.A struct
+//   - selector-on-index LHS (`nodes[i].Y = 3`) — chained struct
 //     literals inside a slice
 //   - map index compound-assign that creates a brand-new key
 //     (`m["new"] += 1` should treat the missing key as zero and
@@ -82,10 +82,10 @@ func F() float64 {
 
 // TestLowerLHSStarUnsupported pins the failure mode for `*p = v`.
 //
-// Slice Y.E.3 update: pre-Y.E this test relied on `p := &x` being
-// rejected at the `&` operator. Y.E now lowers `&x` cleanly (treats
+// This test once relied on `p := &x` being
+// rejected at the `&` operator. `&x` now lowers cleanly (treats
 // it as a pass-through for the underlying Value because composite
-// values are reference-shared via Value.Map()/Items per Y.C/Y.D).
+// values are reference-shared via Value.Map()/Items).
 // The test now reaches the `*p` LHS rejection, which surfaces as
 // "left-hand side must be a simple identifier" — the dispatcher in
 // lowerAssignStmt's bare-ident branch is the gatekeeper.
@@ -104,8 +104,8 @@ func F() {
 	if err == nil {
 		t.Fatalf("LowerFile: expected an issue for *p = 5, got nil")
 	}
-	// Y.E: accept either the legacy "unsupported" diagnostic or the
-	// post-Y.E "left-hand side must be a simple identifier" rejection
+	// Accept either the legacy "unsupported" diagnostic or the
+	// "left-hand side must be a simple identifier" rejection
 	// that surfaces after `&` lowers as a pass-through.
 	msg := err.Error()
 	if !strings.Contains(msg, "unsupported") && !strings.Contains(msg, "left-hand side") {
@@ -116,8 +116,8 @@ func F() {
 // TestLowerLHSDefineWithSelectorRejected pins that `:=` on a selector
 // LHS surfaces a clear error. Go's parser actually rejects this at
 // the syntax level, but our lowerer's defensive path catches it for
-// future plan robustness (e.g., if a Y.D dispatcher fabricates a
-// selector LHS via a refactor and accidentally drops the bare-ident
+// future robustness (e.g., if a dispatcher refactor fabricates a
+// selector LHS and accidentally drops the bare-ident
 // requirement).
 func TestLowerLHSDefineWithSelectorRejected(t *testing.T) {
 	// We can't easily craft `:=` on a selector through go/parser, so

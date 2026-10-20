@@ -549,3 +549,53 @@ test("patch applier recreates missing empty text targets", async () => {
   assert.equal(chip.childNodes[0].nodeType, TEXT_NODE);
   assert.equal(env.consoleLogs.warn.length, 0);
 });
+
+test("bootstrap reconnects hubs whose sockets died while the page was frozen", async () => {
+  // A page restored from the back-forward cache resumes with its WebSockets
+  // already torn down (Chrome logs "WebSocket connection failed: Page entered
+  // Back-Forward Cache" on freeze). Only the socket's close event schedules a
+  // reconnect, and a frozen page is not guaranteed to deliver it — the hub
+  // then stays dead and every hub-bound signal stops updating until the
+  // reader reloads by hand. pageshow must repair the connection from the
+  // socket's actual state.
+  function makeSocket(url) {
+    return {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      onmessage: null,
+      onclose: null,
+      onerror: null,
+      close() { this.closeCalled = true; },
+    };
+  }
+
+  const env = createContext({
+    createWebSocket: makeSocket,
+    fetchRoutes: { "/runtime.wasm": { bytes: [0, 97, 115, 109] } },
+    manifest: {
+      hubs: [
+        { id: "gosx-hub-0", name: "presence", path: "/gosx/hub/presence", bindings: [] },
+      ],
+    },
+  });
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  assert.equal(env.sockets.length, 1);
+
+  // Live socket: pageshow must not churn the connection.
+  env.context.dispatchEvent({ type: "pageshow", persisted: false });
+  await flushAsyncWork();
+  assert.equal(env.sockets.length, 1, "a live hub socket must not be reconnected");
+
+  // Freeze/restore: the browser closed the socket without dispatching close.
+  env.sockets[0].readyState = 3;
+  env.context.dispatchEvent({ type: "pageshow", persisted: true });
+  await flushAsyncWork();
+
+  assert.equal(env.sockets.length, 2, "a closed hub socket must be reconnected on pageshow");
+  assert.equal(env.context.__gosx.hubs.size, 1, "the reconnect replaces the record, never duplicates it");
+  assert.equal(env.context.__gosx.hubs.get("gosx-hub-0").socket, env.sockets[1]);
+  assert.equal(env.sockets[1].url, "ws://localhost:3000/gosx/hub/presence");
+});

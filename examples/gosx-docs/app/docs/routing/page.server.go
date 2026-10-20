@@ -1,26 +1,40 @@
 package docs
 
 import (
-	docs "m31labs.dev/gosx/examples/gosx-docs/app"
+	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
 
 func init() {
-	docs.RegisterDocsPage("Routing", "File-based routing with nested layouts, dynamic params, and server-side data loading.", route.FileModuleOptions{
+	docsapp.RegisterDocsPage("Routing", "File routes, layouts, dynamic parameters, loader modules, actions, and route configuration.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
 				"mode":        "light",
 				"title":       "Routing",
-				"description": "File-based routing with nested layouts, dynamic params, and server-side data loading.",
-				"tags":        []string{"routes", "layouts", "params", "navigation"},
+				"description": "File routes, layouts, dynamic parameters, loader modules, actions, and route configuration.",
+				"tags":        []string{"routes", "layouts", "params", "loaders", "navigation"},
 				"toc": []map[string]string{
 					{"href": "#file-routes", "label": "File Routes"},
-					{"href": "#dynamic-params", "label": "Dynamic Params"},
+					{"href": "#params", "label": "Parameters"},
 					{"href": "#layouts", "label": "Layouts"},
-					{"href": "#data-loading", "label": "Data Loading"},
-					{"href": "#redirects-and-rewrites", "label": "Redirects & Rewrites"},
-					{"href": "#client-navigation", "label": "Client Navigation"},
+					{"href": "#modules", "label": "Server Modules"},
+					{"href": "#configuration", "label": "Configuration"},
+					{"href": "#navigation", "label": "Navigation"},
 				},
+				"treeSample":   docsapp.DocSample("routing/treeSample.text.sample"),
+				"moduleSample": docsapp.DocSample("routing/moduleSample.go.sample"),
+				"pageSample":   docsapp.DocSample("routing/pageSample.gosx.sample"),
+				"configSample": docsapp.DocSample("routing/configSample.json.sample"),
+			}, nil
+		},
+	})
+	docsapp.RegisterDocsPageAt("docs/routing/examples/[slug]/page.gsx", "Dynamic route example", "A live file route that reads a value from a named path segment.", route.FileModuleOptions{
+		Load: func(_ *route.RouteContext, _ route.FilePage) (any, error) {
+			return map[string]any{
+				"mode":        "light",
+				"title":       "Dynamic route example",
+				"description": "See how a GoSX file route reads a value from a named path segment.",
+				"tags":        []string{"routes", "parameters", "file router"},
 			}, nil
 		},
 	})

@@ -1,0 +1,39 @@
+package app
+
+import (
+	"log"
+
+	"m31labs.dev/gosx/hydrate"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/scene"
+)
+
+func init() {
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
+		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			ctx.Runtime().BindHub("tutorial-tabs", "/ws", []hydrate.HubBinding{
+				{Event: "presence", Signal: "$tutorial.openTabs"},
+			})
+			return map[string]any{
+				"greeting":     "Hello from Go",
+				"visitors":     1,
+				"counterProps": CounterPropsData{Initial: 0},
+				"openTabs":     TabHub.Presence().Count(),
+				"scene": scene.Props{
+					Width: 720, Height: 360, Background: "#111318",
+					Responsive: scene.Bool(true),
+					Camera: scene.PerspectiveCamera{Position: scene.Vec3(0, 0, 4), FOV: 45},
+					Graph: scene.NewGraph(
+						scene.DirectionalLight{Color: "#fff2d5", Intensity: 1.8, Direction: scene.Vec3(-0.4, -0.8, -0.6)},
+						scene.Mesh{
+							Geometry: scene.SphereGeometry{Radius: 0.9, Segments: 32},
+							Material: scene.StandardMaterial{Color: "#d4af37", Roughness: 0.35, Metalness: 0.2},
+						},
+					),
+				},
+			}, nil
+		},
+	}); err != nil {
+		log.Fatal(err)
+	}
+}

@@ -1,0 +1,2 @@
+<input name="email" value={props.Form.Values["email"]} />
+<p class="form-error">{props.Form.FieldErrors["email"]}</p>

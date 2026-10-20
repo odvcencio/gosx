@@ -312,6 +312,10 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 				Rect:   "uRegion%dRect",
 				Meta:   "uRegionMeta",
 			},
+			Bounds: CustomPostDOMRegionBounds{
+				Mode:      CustomPostDOMRegionBoundsUnion,
+				PaddingPx: 96,
+			},
 		},
 	}}}
 	irs := pfx.sceneIR()
@@ -343,6 +347,15 @@ func TestCustomPostDOMRegionsIRLowering(t *testing.T) {
 	if cp.DOMRegions.Uniforms.Meta != "region%dMeta" {
 		t.Errorf("Meta uniform = %q, want fallback", cp.DOMRegions.Uniforms.Meta)
 	}
+	if cp.DOMRegions.Bounds == nil {
+		t.Fatal("Bounds = nil")
+	}
+	if cp.DOMRegions.Bounds.Mode != "union" {
+		t.Errorf("Bounds.Mode = %q, want union", cp.DOMRegions.Bounds.Mode)
+	}
+	if cp.DOMRegions.Bounds.PaddingPx != 96 {
+		t.Errorf("Bounds.PaddingPx = %v, want 96", cp.DOMRegions.Bounds.PaddingPx)
+	}
 }
 
 func TestCustomPostDOMRegionsJSONDefaults(t *testing.T) {
@@ -373,12 +386,37 @@ func TestCustomPostDOMRegionsJSONDefaults(t *testing.T) {
 	if rawDOM["max"] != float64(8) {
 		t.Errorf("max = %v, want 8", rawDOM["max"])
 	}
+	if _, ok := rawDOM["bounds"]; ok {
+		t.Fatalf("bounds present for zero-value bounds: %#v", rawDOM["bounds"])
+	}
 	rawUniforms, ok := rawDOM["uniforms"].(map[string]any)
 	if !ok {
 		t.Fatalf("uniforms = %T", rawDOM["uniforms"])
 	}
 	if rawUniforms["rect"] != "region%dRect" || rawUniforms["meta"] != "region%dMeta" {
 		t.Errorf("uniforms = %#v", rawUniforms)
+	}
+}
+
+func TestCustomPostDOMRegionBoundsClamp(t *testing.T) {
+	mat := &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"}
+	pfx := PostFX{Effects: []PostEffect{CustomPost{
+		Name:     "Glass",
+		Material: mat,
+		DOMRegions: CustomPostDOMRegions{
+			Selector: "[data-glass]",
+			Bounds: CustomPostDOMRegionBounds{
+				Mode:      CustomPostDOMRegionBoundsUnion,
+				PaddingPx: 4096,
+			},
+		},
+	}}}
+	cp := pfx.sceneIR()[0].(CustomPostIR)
+	if cp.DOMRegions == nil || cp.DOMRegions.Bounds == nil {
+		t.Fatal("Bounds = nil")
+	}
+	if cp.DOMRegions.Bounds.PaddingPx != 2048 {
+		t.Errorf("PaddingPx = %v, want 2048", cp.DOMRegions.Bounds.PaddingPx)
 	}
 }
 
@@ -811,5 +849,59 @@ func TestCompressorSkipsPostFXFields(t *testing.T) {
 	if got := bag["postFXMaxPixels"]; got != PostFXMaxPixels720p {
 		t.Errorf("legacy props postFXMaxPixels after compression = %v, want %d",
 			got, PostFXMaxPixels720p)
+	}
+}
+
+func TestBloomModeIR(t *testing.T) {
+	for _, mode := range []string{"", "mip", "unknown"} {
+		t.Run(mode, func(t *testing.T) {
+			irs := (PostFX{Effects: []PostEffect{Bloom{Mode: mode}}}).sceneIR()
+			ir := irs[0].(BloomIR)
+			data, err := json.Marshal(ir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var props map[string]any
+			if err := json.Unmarshal(data, &props); err != nil {
+				t.Fatal(err)
+			}
+			if mode == "mip" {
+				if props["mode"] != "mip" || ir.legacyProps()["mode"] != "mip" {
+					t.Fatalf("missing mip mode: %s", data)
+				}
+			} else if _, ok := props["mode"]; ok {
+				t.Fatalf("unexpected mode: %s", data)
+			}
+			var roundTrip BloomIR
+			if err := json.Unmarshal(data, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			want := ""
+			if mode == "mip" {
+				want = mode
+			}
+			if ir.Mode != want {
+				t.Fatalf("lowered mode = %q, want %q", ir.Mode, want)
+			}
+			if _, ok := ir.legacyProps()["mode"]; ok != (mode == "mip") {
+				t.Fatalf("legacy props retained unsupported mode %q", mode)
+			}
+			if roundTrip.Mode != want {
+				t.Fatalf("mode = %q, want %q", roundTrip.Mode, want)
+			}
+			if mode != "mip" {
+				legacy, _ := json.Marshal(BloomIR{})
+				if string(data) != string(legacy) {
+					t.Fatalf("legacy wire changed: %s", data)
+				}
+			}
+		})
+	}
+	var ir BloomIR
+	if err := json.Unmarshal([]byte(`{"kind":"bloom","mode":"unknown"}`), &ir); err != nil {
+		t.Fatal(err)
+	}
+	if ir.Mode != "" {
+		t.Fatalf("unknown mode retained: %q", ir.Mode)
 	}
 }

@@ -28,7 +28,8 @@ func init() {
 				if len(fieldErrors) > 0 {
 					return action.Validation("Please correct the highlighted fields.", fieldErrors, ctx.FormData)
 				}
-				return ctx.Success("User created.", nil)
+				ctx.Redirect("/users")
+				return nil
 			},
 		},
 	}); err != nil {

@@ -1,3 +1,5 @@
+//go:build !gosx_tiny_islands_only && !gosx_runtime_core && !gosx_runtime_collab
+
 package vm
 
 import (
@@ -90,7 +92,11 @@ func NewCanvasBoardAdapter(prog *rootengine.Program, propsJSON string) *CanvasBo
 		prog.Surface = islandprogram.SurfaceCanvas2D
 	}
 	rawProps := parseRawProps(propsJSON)
-	vmProg := &islandprogram.Program{Exprs: prog.Exprs}
+	vmProg := &islandprogram.Program{
+		Exprs:     prog.Exprs,
+		Signals:   prog.Signals,
+		Computeds: prog.Computeds,
+	}
 	rt := &CanvasBoardAdapter{
 		program:    prog,
 		props:      rawProps,
@@ -166,6 +172,7 @@ func (rt *CanvasBoardAdapter) Dispose() {
 		unsub()
 		delete(rt.unsubs, name)
 	}
+	rt.vm.stopComputeds()
 	rt.prev = nil
 }
 

@@ -22,24 +22,37 @@ import (
 
 // DesktopRunOptions configures the native desktop development host.
 type DesktopRunOptions struct {
-	Title          string
-	Width          int
-	Height         int
-	AppID          string
-	Addr           string
-	URL            string
-	HTML           string
-	BundleDir      string
-	BundleURL      string
-	UserDataDir    string
-	Debug          bool
-	DevTools       bool
-	NativeBridge   bool
-	SingleInstance bool
-	NativeSmoke    bool
+	Title                      string
+	Width                      int
+	Height                     int
+	AppID                      string
+	Addr                       string
+	URL                        string
+	HTML                       string
+	BundleDir                  string
+	BundleURL                  string
+	UserDataDir                string
+	BrowserExecutableFolder    string
+	AdditionalBrowserArguments string
+	Debug                      bool
+	DevTools                   bool
+	NativeBridge               bool
+	SingleInstance             bool
+	NativeSmoke                bool
+	WebView2RuntimeVersion     bool
+	MuteAudio                  bool
+	GPUPreference              string
 }
 
 func cmdDesktop() {
+	if len(os.Args) > 2 && os.Args[2] == "verify-signature" {
+		cmdDesktopVerifySignature()
+		return
+	}
+	if len(os.Args) > 2 && os.Args[2] == "package" {
+		cmdDesktopPackage()
+		return
+	}
 	var options DesktopRunOptions
 	fs := flag.NewFlagSet("desktop", flag.ExitOnError)
 	fs.SetOutput(os.Stderr)
@@ -53,11 +66,16 @@ func cmdDesktop() {
 	fs.StringVar(&options.BundleDir, "bundle", "", "open a built GoSX offline/static bundle through app://gosx")
 	fs.StringVar(&options.BundleURL, "bundle-url", "", "entry URL for --bundle (default app://gosx/static/)")
 	fs.StringVar(&options.UserDataDir, "user-data-dir", "", "WebView2 user data directory")
+	fs.StringVar(&options.BrowserExecutableFolder, "browser-executable-folder", "", "Fixed Version WebView2 runtime directory")
+	fs.StringVar(&options.AdditionalBrowserArguments, "additional-browser-arguments", "", "extra Chromium arguments (process-wide WebView2 setting)")
 	fs.BoolVar(&options.Debug, "debug", false, "enable backend debug mode where supported")
 	fs.BoolVar(&options.DevTools, "devtools", false, "enable Chromium devtools and the F12 inspector shortcut")
 	fs.BoolVar(&options.NativeBridge, "native-bridge", false, "enable built-in desktop native APIs on window.gosxDesktop")
 	fs.BoolVar(&options.SingleInstance, "single-instance", false, "forward later launches to the first instance")
 	fs.BoolVar(&options.NativeSmoke, "native-smoke", false, "enable tray, notification, menu, and file-drop smoke hooks")
+	fs.BoolVar(&options.MuteAudio, "mute-audio", false, "mute HTML audio and video in the desktop window")
+	fs.StringVar(&options.GPUPreference, "gpu", "", "GPU for WebView2: high-performance or low-power (default: system choice)")
+	fs.BoolVar(&options.WebView2RuntimeVersion, "webview2-runtime-version", false, "print the selected WebView2 runtime version and exit")
 	parseArgs, devAlias := desktopArgsBeforeParse(os.Args[2:])
 	if err := fs.Parse(parseArgs); err != nil {
 		os.Exit(2)
@@ -71,6 +89,15 @@ func cmdDesktop() {
 	if desktopDirectModeConflictCount(options) > 1 {
 		fmt.Fprintln(os.Stderr, "gosx desktop: --url, --html, and --bundle are mutually exclusive")
 		os.Exit(1)
+	}
+	if options.WebView2RuntimeVersion {
+		version, err := desktop.WebView2RuntimeVersion(options.BrowserExecutableFolder)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "gosx desktop: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Println(version)
+		return
 	}
 	dir := "."
 	if len(args) == 1 {
@@ -100,16 +127,20 @@ func desktopArgsAfterParse(args []string) ([]string, bool) {
 // desktop host. The first backend is Windows WebView2; unsupported platforms
 // return desktop.ErrUnsupported before doing build work.
 func RunDesktop(dir string, options DesktopRunOptions) error {
-	if err := desktop.Available(); err != nil {
+	if _, err := desktop.WebView2RuntimeVersion(options.BrowserExecutableFolder); err != nil {
 		return err
 	}
 	if desktopDirectMode(options) {
 		return runDesktopHost(options)
 	}
 
-	absDir, err := filepath.Abs(dir)
+	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
+	}
+	discovery, err := collectProjectIslandDiscovery(absDir)
+	if err != nil {
+		return err
 	}
 	isMain, err := isMainPackage(absDir)
 	if err != nil {
@@ -118,16 +149,7 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	if !isMain {
 		return fmt.Errorf("gosx desktop requires a runnable app directory (package main): %s", absDir)
 	}
-	if err := syncModulesPackage(absDir); err != nil {
-		return err
-	}
-	if err := ensureModuleDependencies(absDir); err != nil {
-		return err
-	}
-	if err := env.LoadDir(absDir, ""); err != nil {
-		return fmt.Errorf("load env: %w", err)
-	}
-	if err := prepareDevAssets(absDir); err != nil {
+	if err := prepareDesktopDevProjectAfterDiscovery(context.Background(), absDir, discovery); err != nil {
 		return err
 	}
 
@@ -168,27 +190,30 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	publicURL := displayListenURL(publicAddr)
 	buildDir := filepath.Join(absDir, "build")
 	devServer := &dev.Server{
-		Dir:         absDir,
-		BuildDir:    buildDir,
-		ProxyTarget: internalBaseURL,
+		Dir:          absDir,
+		BuildDir:     buildDir,
+		WatchDirs:    discovery.WatchDirs,
+		WatchFiles:   discovery.WatchFiles,
+		WatchGoFiles: discovery.WatchGoFiles,
+		ProxyTarget:  internalBaseURL,
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "gosx desktop: "+format+"\n", args...)
 		},
+		PreflightChange: func(_ []string) error {
+			return preflightChangedDesktopApp(context.Background(), absDir, runner)
+		},
 		OnChange: func() error {
 			fmt.Fprintln(os.Stderr, "gosx desktop: change detected, rebuilding assets and restarting app")
-			if err := prepareDevAssets(absDir); err != nil {
-				return fmt.Errorf("build assets: %w", err)
-			}
-			if err := runner.restart(internalPort); err != nil {
-				return fmt.Errorf("restart app: %w", err)
-			}
-			if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
-				return fmt.Errorf("wait for app ready: %w", err)
+			if err := rebuildChangedDevApp(context.Background(), absDir, runner, internalPort, internalBaseURL); err != nil {
+				return err
 			}
 			if err := emitDesktopDevReload(getDesktopApp(), "file_change"); err != nil {
 				fmt.Fprintf(os.Stderr, "gosx desktop: host reload notification failed: %v\n", err)
 			}
 			return nil
+		},
+		RefreshWatchTargets: func() ([]string, []string, []string, error) {
+			return collectProjectIslandWatchTargets(absDir)
 		},
 	}
 
@@ -202,18 +227,21 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	}
 
 	desktopOptions := desktop.Options{
-		Title:            options.Title,
-		Width:            options.Width,
-		Height:           options.Height,
-		AppID:            options.AppID,
-		URL:              publicURL,
-		Debug:            options.Debug,
-		DevTools:         options.DevTools,
-		NativeBridge:     options.NativeBridge,
-		UserDataDir:      options.UserDataDir,
-		SingleInstance:   options.SingleInstance,
-		OnSecondInstance: desktopSecondInstanceCallback(getDesktopApp),
-	}
+		Title:                      options.Title,
+		Width:                      options.Width,
+		Height:                     options.Height,
+		AppID:                      options.AppID,
+		URL:                        publicURL,
+		Debug:                      options.Debug,
+		DevTools:                   options.DevTools,
+		NativeBridge:               options.NativeBridge,
+		UserDataDir:                options.UserDataDir,
+		MuteAudio:                  options.MuteAudio,
+		GPU:                        desktop.GPUOptions{Preference: desktop.GPUPreference(options.GPUPreference)},
+		BrowserExecutableFolder:    options.BrowserExecutableFolder,
+		AdditionalBrowserArguments: options.AdditionalBrowserArguments,
+		SingleInstance:             options.SingleInstance,
+		OnSecondInstance:           desktopSecondInstanceCallback(getDesktopApp)}
 	if options.NativeSmoke {
 		configureDesktopNativeSmokeOptions(&desktopOptions, getDesktopApp)
 	}
@@ -272,6 +300,50 @@ func RunDesktop(dir string, options DesktopRunOptions) error {
 	return appErr
 }
 
+func prepareDesktopDevProject(ctx context.Context, dir string) error {
+	_, err := prepareDesktopDevProjectWithDiscovery(ctx, dir)
+	return err
+}
+
+func prepareDesktopDevProjectWithDiscovery(ctx context.Context, dir string) (*islandDiscoveryResult, error) {
+	canonicalDir, err := canonicalExistingDir(dir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project dir: %w", err)
+	}
+	dir = canonicalDir
+	discovery, err := collectProjectIslandDiscovery(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := prepareDesktopDevProjectAfterDiscovery(ctx, dir, discovery); err != nil {
+		return nil, err
+	}
+	return discovery, nil
+}
+
+func prepareDesktopDevProjectAfterDiscovery(ctx context.Context, dir string, discovery *islandDiscoveryResult) error {
+	if err := syncModulesPackage(dir); err != nil {
+		return err
+	}
+	if err := ensureModuleDependencies(dir); err != nil {
+		return err
+	}
+	if err := env.LoadDir(dir, ""); err != nil {
+		return fmt.Errorf("load env: %w", err)
+	}
+	if err := checkStrictProject(ctx, dir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	if err := prepareDevAssetsWithPrograms(dir, discovery.Programs); err != nil {
+		return err
+	}
+	return nil
+}
+
+func preflightChangedDesktopApp(ctx context.Context, dir string, runner devProcessStopper) error {
+	return preflightChangedDevApp(ctx, dir, runner)
+}
+
 func runDesktopHost(options DesktopRunOptions) error {
 	var app *desktop.App
 	getApp := func() *desktop.App { return app }
@@ -284,19 +356,22 @@ func runDesktopHost(options DesktopRunOptions) error {
 		url = bundleURL
 	}
 	desktopOptions := desktop.Options{
-		Title:            options.Title,
-		Width:            options.Width,
-		Height:           options.Height,
-		AppID:            options.AppID,
-		URL:              url,
-		HTML:             options.HTML,
-		Debug:            options.Debug,
-		DevTools:         options.DevTools,
-		NativeBridge:     options.NativeBridge || bundleRoot != "",
-		UserDataDir:      options.UserDataDir,
-		SingleInstance:   options.SingleInstance,
-		OnSecondInstance: desktopSecondInstanceCallback(getApp),
-	}
+		Title:                      options.Title,
+		Width:                      options.Width,
+		Height:                     options.Height,
+		AppID:                      options.AppID,
+		URL:                        url,
+		HTML:                       options.HTML,
+		Debug:                      options.Debug,
+		DevTools:                   options.DevTools,
+		NativeBridge:               options.NativeBridge || bundleRoot != "",
+		UserDataDir:                options.UserDataDir,
+		MuteAudio:                  options.MuteAudio,
+		GPU:                        desktop.GPUOptions{Preference: desktop.GPUPreference(options.GPUPreference)},
+		BrowserExecutableFolder:    options.BrowserExecutableFolder,
+		AdditionalBrowserArguments: options.AdditionalBrowserArguments,
+		SingleInstance:             options.SingleInstance,
+		OnSecondInstance:           desktopSecondInstanceCallback(getApp)}
 	if options.NativeSmoke {
 		configureDesktopNativeSmokeOptions(&desktopOptions, getApp)
 	}

@@ -59,6 +59,7 @@ type MaterialTextureDescriptors struct {
 	Metalness TextureDescriptor            `json:"metalness,omitzero"`
 	Occlusion TextureDescriptor            `json:"occlusion,omitzero"`
 	Emissive  TextureDescriptor            `json:"emissive,omitzero"`
+	Thickness TextureDescriptor            `json:"thickness,omitzero"`
 	Data      map[string]TextureDescriptor `json:"data,omitempty"`
 }
 
@@ -70,6 +71,7 @@ func (d MaterialTextureDescriptors) IsZero() bool {
 		d.Metalness.IsZero() &&
 		d.Occlusion.IsZero() &&
 		d.Emissive.IsZero() &&
+		d.Thickness.IsZero() &&
 		len(d.Data) == 0
 }
 
@@ -113,8 +115,9 @@ func textureDescriptor(uri string, role TextureRole, colorSpace TextureColorSpac
 	}
 }
 
-func materialTextureDescriptors(texture, normal, roughness, metalness, occlusion, emissive string) MaterialTextureDescriptors {
+func materialTextureDescriptors(texture, normal, roughness, metalness, occlusion, emissive, thickness string) MaterialTextureDescriptors {
 	return MaterialTextureDescriptors{
+		Thickness: textureDescriptor(thickness, TextureRoleData, TextureColorSpaceLinear, "g"),
 		BaseColor: textureDescriptor(texture, TextureRoleBaseColor, TextureColorSpaceSRGB, "rgba"),
 		Normal:    textureDescriptor(normal, TextureRoleNormal, TextureColorSpaceLinear, "rgb"),
 		Roughness: textureDescriptor(roughness, TextureRoleRoughness, TextureColorSpaceLinear, "g"),
@@ -137,6 +140,7 @@ func populateSceneTextureDescriptors(ir *SceneIR) {
 			object.MetalnessMap,
 			object.OcclusionMap,
 			object.EmissiveMap,
+			object.ThicknessMap,
 		)
 	}
 	for i := range ir.Models {
@@ -148,6 +152,7 @@ func populateSceneTextureDescriptors(ir *SceneIR) {
 			model.MetalnessMap,
 			model.OcclusionMap,
 			model.EmissiveMap,
+			model.ThicknessMap,
 		)
 	}
 	for i := range ir.InstancedMeshes {
@@ -159,6 +164,7 @@ func populateSceneTextureDescriptors(ir *SceneIR) {
 			mesh.MetalnessMap,
 			mesh.OcclusionMap,
 			mesh.EmissiveMap,
+			mesh.ThicknessMap,
 		)
 	}
 }
@@ -179,6 +185,7 @@ func legacyTextureDescriptors(value MaterialTextureDescriptors) map[string]any {
 	add("metalness", value.Metalness)
 	add("occlusion", value.Occlusion)
 	add("emissive", value.Emissive)
+	add("thickness", value.Thickness)
 	if len(value.Data) > 0 {
 		out["data"] = value.Data
 	}

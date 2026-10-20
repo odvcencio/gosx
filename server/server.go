@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"log"
 	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,6 +30,10 @@ import (
 	"time"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/basepath"
+	"m31labs.dev/gosx/internal/bundlepolicy"
+	"m31labs.dev/gosx/internal/httpcache"
+	"m31labs.dev/gosx/internal/telemetryerr"
 	"m31labs.dev/gosx/scheduled"
 )
 
@@ -75,36 +81,55 @@ type statusCoder interface {
 
 // App is the GoSX server application.
 type App struct {
-	pageRoutes         map[string]registeredPageRoute
-	apiRoutes          map[string]registeredAPIRoute
-	layout             func(title string, body gosx.Node) gosx.Node
-	document           DocumentFunc
-	mux                *http.ServeMux
-	middleware         []Middleware
-	edgeMiddleware     []EdgeMiddleware
-	notFound           PageHandler
-	errorPage          ErrorHandler
-	publicDir          string
-	imageDir           string
-	runtimeRoot        string
-	runtimeMeta        *runtimeManifestCache
-	isr                *isrConfig
-	isrStore           ISRStore
-	navigation         bool
-	observers          []RequestObserver
-	readyChecks        []namedReadyCheck
-	redirects          map[string]registeredRedirectRoute
-	rewrites           map[string]registeredRewriteRoute
-	mounts             map[string]registeredMountedRoute
-	revalidator        *Revalidator
-	operations         []OperationObserver
-	clientEventsLogger *slog.Logger
-	headDecorators     []HeadDecorator
-	securityPolicy     SecurityPolicy
+	basePath            string
+	basePathOptions     BasePathOptions
+	pageRoutes          map[string]registeredPageRoute
+	apiRoutes           map[string]registeredAPIRoute
+	layout              func(title string, body gosx.Node) gosx.Node
+	document            DocumentFunc
+	mux                 *http.ServeMux
+	middleware          []Middleware
+	edgeMiddleware      []EdgeMiddleware
+	notFound            PageHandler
+	errorPage           ErrorHandler
+	publicDir           string
+	publicPolicy        bundlepolicy.PolicyFile
+	imageDir            string
+	runtimeRoot         string
+	runtimeMeta         *runtimeManifestCache
+	isr                 *isrConfig
+	isrStore            ISRStore
+	navigation          bool
+	observers           []RequestObserver
+	readyChecks         []*namedReadyCheck
+	readiness           readinessState
+	trustedProxies      *compiledProxyPolicy
+	redirects           map[string]registeredRedirectRoute
+	rewrites            map[string]registeredRewriteRoute
+	mounts              map[string]registeredMountedRoute
+	revalidator         *Revalidator
+	operations          []OperationObserver
+	clientEventsLogger  *slog.Logger
+	headDecorators      []HeadDecorator
+	catalogObservers    []ObservationCatalogObserver
+	catalogOnce         sync.Once
+	securityPolicy      SecurityPolicy
+	compressionOff      bool
+	legacyGzip          bool
+	configurationClosed atomic.Bool
+	draining            atomic.Bool
+	shutdown            appShutdown
 
-	schedulerOnce sync.Once
-	scheduler     *scheduled.Scheduler
-	srv           *http.Server
+	schedulerOnce         sync.Once
+	scheduler             *scheduled.Scheduler
+	publicScheduledStatus bool
+	srv                   *http.Server
+
+	// staleIslandsOnce guards warnStaleIslands, so hashing every island's
+	// source runs at most once per App even if Build() runs more than once
+	// (a test harness may call it directly, more than once, without ever
+	// calling ListenAndServe).
+	staleIslandsOnce sync.Once
 }
 
 // New creates a new GoSX server app.
@@ -120,7 +145,7 @@ func New() *App {
 		revalidator: NewRevalidator(),
 	}
 	app.middleware = []Middleware{
-		requestIDMiddleware(),
+		app.requestIDMiddleware(),
 		app.securityHeaders(),
 		recoveryMiddleware(),
 	}
@@ -151,6 +176,35 @@ func (a *App) SetErrorPage(handler ErrorHandler) {
 // SetPublicDir sets the public asset directory served at the site root.
 // An empty directory disables automatic public asset serving.
 func (a *App) SetPublicDir(dir string) {
+	a.publicDir = ""
+	a.publicPolicy = bundlepolicy.PolicyFile{}
+	if strings.TrimSpace(dir) == "" {
+		return
+	}
+	sidecar := filepath.Join(filepath.Dir(dir), "bundle-policy.json")
+	if info, statErr := os.Lstat(sidecar); statErr == nil {
+		if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
+			return
+		}
+		data, readErr := os.ReadFile(sidecar)
+		if readErr != nil {
+			return
+		}
+		policy, decodeErr := bundlepolicy.DecodePolicyFile(data)
+		if decodeErr != nil {
+			return
+		}
+		a.publicPolicy = policy
+		a.publicDir = dir
+		return
+	} else if !os.IsNotExist(statErr) {
+		return
+	}
+	policy, policyErr := bundlepolicy.LoadProjectPolicy(filepath.Dir(dir))
+	if policyErr != nil {
+		return
+	}
+	a.publicPolicy = policy
 	a.publicDir = dir
 }
 
@@ -285,7 +339,14 @@ func (a *App) HandleAPI(route APIRoute) {
 }
 
 // EnableNavigation injects the built-in client-side page navigation runtime
-// into document/head-aware responses.
+// into document/head-aware responses. Its external script is deferred and runs
+// before the framework bootstrap. Inline scripts that call the navigation API
+// should wait for DOMContentLoaded.
+//
+// Call it any time before Build(): Build() is what wires the navigation-runtime
+// head builder into every mounted NavigationConfigurable handler (see Mount and
+// registerMountRoutes), so EnableNavigation, Mount, and MountApp may run in any
+// order relative to each other as long as all of them run before Build().
 func (a *App) EnableNavigation() {
 	a.navigation = true
 }
@@ -337,7 +398,22 @@ func (a *App) HandleRewrite(route RewriteRoute) {
 	}
 }
 
-// Mount registers an arbitrary HTTP handler under the given pattern.
+// NavigationConfigurable is implemented by mountable handlers — such as the
+// value route.Router.Build/BuildChecked returns — that keep a live reference
+// to their own document assembly and can accept the navigation-runtime head
+// builder. Mount uses this to carry EnableNavigation through to a file-routed
+// app: server cannot import route (route already imports server), so the seam
+// is a structural interface rather than a route.Router type check.
+type NavigationConfigurable interface {
+	SetNavigationHead(fn func(nonce string) gosx.Node)
+}
+
+// Mount registers an arbitrary HTTP handler under the given pattern. When
+// EnableNavigation is set and handler implements NavigationConfigurable, Build
+// wires the navigation-runtime head builder into it (see registerMountRoutes),
+// so a file-routed app built with route.NewRouter and mounted here needs only
+// app.EnableNavigation() in the composition root. EnableNavigation and Mount may run in either order; only
+// Build reads a.navigation, so both must run before Build.
 func (a *App) Mount(pattern string, handler http.Handler) {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" || handler == nil {
@@ -403,11 +479,20 @@ func (a *App) MountApp(prefix string, child *App) {
 	a.Mount(pattern, lazy)
 }
 
-// EnableGzip adds gzip compression middleware. It compresses all responses
-// when the client advertises gzip support, skipping WebSocket upgrades and
-// pre-compressed responses. Call this before Use() calls that write responses.
+// DisableCompression opts out of the default negotiated text compression.
+// Call it before Build or ListenAndServe.
+func (a *App) DisableCompression() {
+	a.compressionOff = true
+	a.legacyGzip = false
+}
+
+// EnableGzip retains the legacy gzip-only opt-in when default compression is
+// disabled. With default compression enabled it is a no-op. Call before Build.
 func (a *App) EnableGzip() {
-	a.Use(GzipMiddleware())
+	if !a.compressionOff {
+		return
+	}
+	a.legacyGzip = true
 }
 
 // Use appends middleware to the handler chain.
@@ -439,9 +524,9 @@ func (a *App) UseReadyCheck(name string, check ReadyCheck) {
 	if check == nil {
 		return
 	}
-	a.readyChecks = append(a.readyChecks, namedReadyCheck{
-		name:  normalizeReadyCheckName(name),
-		check: check,
+	name = normalizeReadyCheckName(name)
+	a.readyChecks = append(a.readyChecks, &namedReadyCheck{
+		name: name, snapshotName: readinessSnapshotName(name), check: check,
 	})
 }
 
@@ -467,7 +552,11 @@ func (a *App) preloadGrammarBlob() {
 }
 
 func (a *App) Build() http.Handler {
+	a.shutdown.mu.Lock()
+	a.configurationClosed.Store(true)
+	a.shutdown.mu.Unlock()
 	a.preloadGrammarBlob()
+	a.warnStaleIslands()
 	mux := http.NewServeMux()
 	redirectMux := http.NewServeMux()
 	rewriteMux := http.NewServeMux()
@@ -483,13 +572,22 @@ func (a *App) Build() http.Handler {
 	a.mux = mux
 	dispatch = a.buildDispatcher(mux, redirectMux, rewriteMux, mountMux)
 	a.registerRewriteRoutes(rewriteMux, dispatch)
+	a.notifyObservationCatalog()
+	// Regeneration must observe the same auth/session and cache boundaries as
+	// a normal request. It never calls the ISR lookup recursively.
+	regeneration := basepath.Handler(a.basePath, true, a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dispatch(w, r, true)
+	})))
+	regenerate := func(w http.ResponseWriter, r *http.Request, _ bool) {
+		regeneration.ServeHTTP(w, r)
+	}
 
-	return a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if a.maybeServeISR(w, r, dispatch) {
+	return basepath.Handler(a.basePath, a.basePathOptions.ProxyStripsPrefix, a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if a.maybeServeISR(w, r, regenerate) {
 			return
 		}
-		dispatch(w, r, true)
-	}))
+		dispatch(w, a.isrOriginRequest(r), true)
+	})))
 }
 
 func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
@@ -502,6 +600,8 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 	if !a.hasRoute("GET /gosx/") {
 		mux.Handle("GET /gosx/", http.HandlerFunc(a.serveRuntimeAsset))
 	}
+	registerStaticExportImageResolver(a)
+	registerImageManifestLookup(a)
 	if imageDir := a.effectiveImageDir(); imageDir != "" && !a.hasRoute(defaultImageEndpoint) {
 		mux.Handle("GET "+defaultImageEndpoint, ImageHandler(imageDir))
 	}
@@ -513,9 +613,26 @@ func (a *App) registerBuiltinRoutes(mux *http.ServeMux) {
 			Logger: a.clientEventsLogger,
 		}))
 	}
-	if !a.hasRoute("GET /_gosx/scheduled") {
-		mux.Handle("GET /_gosx/scheduled", ScheduledStatusHandler(a.Scheduler()))
+	if a.publicScheduledStatus && !a.hasRoute("GET /_gosx/scheduled") {
+		mux.Handle("GET /_gosx/scheduled", a.ScheduledStatusHandler())
 	}
+}
+
+// EnablePublicScheduledStatus exposes bounded, redacted task status on the
+// public listener. Call it before Build and protect the route with application
+// authentication.
+//
+// Deprecated: this compatibility opt-in lasts one minor release. Use the
+// authenticated internal telemetry listener when available instead.
+func (a *App) EnablePublicScheduledStatus() error {
+	if a == nil {
+		return &telemetryerr.ConfigError{Field: "app", Code: "required"}
+	}
+	if a.configurationClosed.Load() {
+		return telemetryerr.ErrAfterBuild
+	}
+	a.publicScheduledStatus = true
+	return nil
 }
 
 // SetClientEventsLogger overrides the slog.Logger used by the
@@ -531,21 +648,14 @@ func (a *App) SetClientEventsLogger(logger *slog.Logger) {
 // default options. Callers that never invoke Scheduler pay no overhead.
 func (a *App) Scheduler() *scheduled.Scheduler {
 	a.schedulerOnce.Do(func() {
+		a.shutdown.mu.Lock()
+		defer a.shutdown.mu.Unlock()
 		a.scheduler = scheduled.New(scheduled.Options{})
+		if a.draining.Load() {
+			_ = a.scheduler.StopContext(context.Background())
+		}
 	})
 	return a.scheduler
-}
-
-// Shutdown stops the scheduler (if one was created) and then gracefully shuts
-// down the HTTP server using the provided context.
-func (a *App) Shutdown(ctx context.Context) error {
-	if a.scheduler != nil {
-		a.scheduler.Stop(30 * time.Second)
-	}
-	if a.srv != nil {
-		return a.srv.Shutdown(ctx)
-	}
-	return nil
 }
 
 func (a *App) registerPageRoutes(mux *http.ServeMux) {
@@ -563,10 +673,11 @@ func (a *App) pageRouteHandler(route registeredPageRoute) http.Handler {
 			if recovered := recover(); recovered != nil {
 				err := panicError(recovered)
 				log.Printf("[gosx] page render panic on %s: %v", r.URL.Path, err)
-				a.renderError(w, r, err)
+				a.renderErrorPattern(w, r, err, pattern)
 			}
 		}()
 		ctx := newContext(r)
+		ctx.Pattern = pattern
 		node := handler(ctx)
 		a.renderPage(w, ctx, pattern, node, "GoSX")
 	})
@@ -585,13 +696,14 @@ func (a *App) apiRouteHandler(route registeredAPIRoute) http.Handler {
 		MarkObservedRequest(r, "api", pattern)
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				writeJSONError(w, http.StatusInternalServerError, panicError(recovered), nil)
+				writeJSONError(w, r, http.StatusInternalServerError, panicError(recovered), nil)
 			}
 		}()
 		ctx := newContext(r)
+		ctx.Pattern = pattern
 		payload, err := handler(ctx)
 		if err != nil {
-			writeJSONError(w, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.Header())
+			writeJSONError(w, r, errorStatus(err, ctx.status, http.StatusInternalServerError), err, ctx.Header())
 			return
 		}
 		status := statusWithDefault(ctx.status, payload)
@@ -633,6 +745,18 @@ func (a *App) registerMountRoutes(mux *http.ServeMux) {
 	for _, route := range a.mounts {
 		pattern := route.pattern
 		handler := route.handler
+		if configurable, ok := handler.(HeadConfigurable); ok {
+			configurable.SetHeadDecorators(append([]HeadDecorator(nil), a.headDecorators...))
+		}
+		// Wired here, at Build time, rather than back in Mount — see the N3
+		// ordering note on EnableNavigation and Mount. This makes
+		// EnableNavigation order-independent relative to Mount: it only has
+		// to run before Build.
+		if a.navigation {
+			if configurable, ok := handler.(NavigationConfigurable); ok {
+				configurable.SetNavigationHead(navigationScriptWithNonce)
+			}
+		}
 		mux.Handle(pattern, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			MarkObservedRequest(r, "mount", pattern)
 			handler.ServeHTTP(w, r)
@@ -672,7 +796,8 @@ func (a *App) registerRewriteRoutes(mux *http.ServeMux, dispatch func(http.Respo
 	}
 }
 
-// ListenAndServe starts the HTTP server.
+// ListenAndServe starts the HTTP server. GOSX_LISTEN_ADDR overrides the listen
+// address separately from PORT and PUBLIC_URL, for example for local prerendering.
 func (a *App) ListenAndServe(addr string) error {
 	handler := a.Build()
 	srv := &http.Server{
@@ -683,12 +808,21 @@ func (a *App) ListenAndServe(addr string) error {
 		WriteTimeout:      45 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
+	a.shutdown.mu.Lock()
+	if a.draining.Load() {
+		a.shutdown.mu.Unlock()
+		return http.ErrServerClosed
+	}
 	a.srv = srv
+	a.shutdown.mu.Unlock()
 	a.Scheduler().Start(context.Background())
 	return srv.ListenAndServe()
 }
 
 func resolveListenAddr(addr string) string {
+	if listenAddr := strings.TrimSpace(os.Getenv("GOSX_LISTEN_ADDR")); listenAddr != "" {
+		return listenAddr
+	}
 	port := strings.TrimSpace(os.Getenv("PORT"))
 	if port == "" {
 		return addr
@@ -740,37 +874,56 @@ func listenAddrHost(addr string) (string, bool) {
 	return addr, true
 }
 
-// HTMLDocument wraps content in a full HTML5 document.
-func HTMLDocument(title string, head gosx.Node, body gosx.Node) gosx.Node {
-	return HTMLDocumentWithNonce(title, "", head, body)
+// HTMLDocument renders one complete HTML5 document from a document context.
+//
+// The context is treated as immutable. A nonzero request-prepared Head carries
+// the framework contract and remains authoritative; direct or structurally
+// empty contexts receive exactly one framework-owned contract on a private
+// copy. This keeps custom document wrappers composable without teaching the
+// renderer to inspect or rewrite arbitrary RawHTML supplied by an application.
+func HTMLDocument(doc *DocumentContext) gosx.Node {
+	prepared := prepareDocumentContext(doc)
+	return gosx.RawHTML(renderDocumentHTML(&prepared))
 }
 
-// HTMLDocumentWithNonce wraps content in a full HTML5 document, threading a
-// per-request CSP nonce through GoSX-owned document shell scripts.
-func HTMLDocumentWithNonce(title string, nonce string, head gosx.Node, body gosx.Node) gosx.Node {
-	return gosx.RawHTML(renderDocument(title, nonce, head, body))
-}
-
-func renderDocument(title string, nonce string, head gosx.Node, body gosx.Node) string {
-	return renderDocumentWithContext(&DocumentContext{
-		Title: title,
-		Nonce: nonce,
-		Head:  head,
-		Body:  body,
-	})
-}
-
-func renderDocumentWithContext(doc *DocumentContext) string {
-	title := ""
-	head := gosx.Text("")
-	body := gosx.Text("")
-	if doc != nil {
-		title = doc.Title
-		head = doc.Head
-		body = doc.Body
+func prepareDocumentContext(doc *DocumentContext) DocumentContext {
+	if doc == nil {
+		doc = &DocumentContext{}
 	}
+	prepared := *doc
+	headWasZero := prepared.Head.IsZero()
+	prepared.Head = normalizedDocumentNode(prepared.Head)
+	if !doc.documentContractPrepared || headWasZero {
+		contract := documentContractNode(&prepared)
+		if headWasZero {
+			prepared.Head = contract
+		} else {
+			prepared.Head = gosx.Fragment(prepared.Head, contract)
+		}
+		prepared.documentContractPrepared = true
+	}
+	return prepared
+}
+
+func normalizedDocumentNode(node gosx.Node) gosx.Node {
+	if node.IsZero() {
+		return gosx.Text("")
+	}
+	return node
+}
+
+func renderDocumentHTML(doc *DocumentContext) string {
+	if doc == nil {
+		doc = &DocumentContext{}
+	}
+	title := doc.Title
+	head := normalizedDocumentNode(doc.Head)
+	body := normalizedDocumentNode(doc.Body)
 	htmlAttrs := documentHTMLAttrs(doc)
 	bodyAttrs := documentBodyAttrs(doc)
+	// The viewport is owned and emitted by this document shell. Head remains an
+	// authoritative application-owned node tree; RawHTML is an explicit
+	// structure/trust escape hatch and is never parsed or rewritten here.
 	headHTML := gosx.RenderHTML(HeadOutlet(head))
 	bodyHTML := gosx.RenderHTML(body)
 
@@ -786,7 +939,7 @@ func renderDocumentWithContext(doc *DocumentContext) string {
 	b.WriteString("<meta charset=\"utf-8\">\n")
 	b.WriteString("<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	b.WriteString("<title>")
-	b.WriteString(title)
+	b.WriteString(html.EscapeString(title))
 	b.WriteString("</title>\n")
 	b.WriteString(headHTML)
 	b.WriteString("\n</head>\n<body")
@@ -804,6 +957,9 @@ func RequestID(r *http.Request) string {
 	if r == nil {
 		return ""
 	}
+	if metadata := cachedRequestMetadata(r); metadata != nil {
+		return metadata.id
+	}
 	if id, ok := r.Context().Value(requestIDContextKey).(string); ok {
 		return id
 	}
@@ -814,6 +970,11 @@ func (a *App) wrap(handler http.Handler) http.Handler {
 	wrapped := handler
 	for i := len(a.middleware) - 1; i >= 0; i-- {
 		wrapped = a.middleware[i](wrapped)
+	}
+	if !a.compressionOff {
+		wrapped = CompressionMiddleware()(wrapped)
+	} else if a.legacyGzip {
+		wrapped = GzipMiddleware()(wrapped)
 	}
 	if len(a.observers) > 0 {
 		wrapped = ObserveHandler(wrapped, append([]RequestObserver(nil), a.observers...))
@@ -834,10 +995,13 @@ func (a *App) observeOperation(event OperationEvent) {
 
 func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, body gosx.Node, defaultTitle string) {
 	ctx = ensurePageContext(ctx)
+	ctx.PrepareCache(ctx.Request)
+	requestNonce := ctx.Nonce()
 	// Drop the nonce before the render when a shared cache may store the body.
 	// One stored copy reaches many clients, so a per-request nonce in that copy
 	// would name a value the next client never received. documentContext drops
-	// the request ID on the same rule.
+	// the request ID on the same rule. Keep requestNonce separately so WriteHTML
+	// can also remove nonce attributes already baked into handler-created nodes.
 	if ctx.cache.SharedCacheable() {
 		ctx.SetNonce("")
 	}
@@ -856,8 +1020,8 @@ func (a *App) renderPage(w http.ResponseWriter, ctx *Context, pattern string, bo
 		Request:            ctx.Request,
 		Cache:              ctx.cache,
 		Revalidator:        a.Revalidator(),
-		CacheDigestExclude: []string{ctx.Nonce()},
-		Nonce:              ctx.Nonce(),
+		CacheDigestExclude: []string{requestNonce},
+		Nonce:              requestNonce,
 	})
 }
 
@@ -878,18 +1042,17 @@ func ensurePageContext(ctx *Context) *Context {
 // nothing for this request. Decorators run in registration order, after the
 // runtime/navigation head assets (see decoratePageContext), for every page
 // rendered through App.renderPage — islands, engines, hubs, and the
-// navigation script all reach <head> the same way (ctx.runtime.Head() /
-// NavigationScript()); AddHeadDecorator is the same mechanism for
+// framework-owned navigation runtime all reach <head> the same way
+// (ctx.runtime.Head() / App.EnableNavigation()); AddHeadDecorator is the same mechanism for
 // app-supplied content.
 //
 // This exists so an app-level concern that must appear on every page (e.g. a
 // CSRF meta tag mirroring the session's token so client JS can echo it back
 // on mutating requests — see m31labs.dev/gosx/session.Manager.Protect) can be
 // wired ONCE at the composition root instead of edited into every page
-// render function. server intentionally does not import session (route is
-// the layer that already glues server + session + auth together — see
-// route/fileeval.go's csrf template binding); callers that need
-// session-derived head content close over their own *session.Manager, as in:
+// render function. Anonymous Token reads return empty, so this contributes no
+// token to prerendered or shared HTML. Session-derived head content makes the
+// response private; callers close over their own *session.Manager, as in:
 //
 //	app.AddHeadDecorator(func(ctx *server.Context) (gosx.Node, bool) {
 //		token := sessions.Token(ctx.Request)
@@ -913,7 +1076,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 	// Runtime head emission moved into PageState.Head() (lazy, at document
 	// render) so layout-registered engines reach the manifest.
 	if a.navigation {
-		ctx.AddHead(NavigationScriptWithNonce(ctx.Nonce()))
+		ctx.SetNavigationHead(navigationScriptWithNonce)
 	}
 	for _, decorate := range a.headDecorators {
 		if decorate == nil {
@@ -926,6 +1089,7 @@ func (a *App) decoratePageContext(ctx *Context) {
 }
 
 func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defaultTitle string) gosx.Node {
+	ctx.Pattern = pattern
 	// Render the body once up front so islands/engines/hubs register with the
 	// page runtime before we finalize managed head assets.
 	bodyHTML := gosx.RenderHTML(body)
@@ -938,7 +1102,7 @@ func (a *App) renderPageNode(ctx *Context, pattern string, body gosx.Node, defau
 	case a.layout != nil:
 		return renderLegacyLayout(a.layout(pageTitle(ctx, pattern, defaultTitle), renderedBody), ctx.Head())
 	default:
-		return gosx.RawHTML(renderDocumentWithContext(doc))
+		return HTMLDocument(doc)
 	}
 }
 
@@ -967,7 +1131,7 @@ func pageTitle(ctx *Context, pattern string, defaultTitle string) string {
 func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 	MarkObservedRequest(r, "not_found", "")
 	if wantsJSON(r) {
-		writeJSONError(w, http.StatusNotFound, fmt.Errorf("not found"), nil)
+		writeJSONError(w, r, http.StatusNotFound, fmt.Errorf("not found"), nil)
 		return
 	}
 
@@ -985,13 +1149,21 @@ func (a *App) renderNotFound(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
-	MarkObservedRequest(r, "error", "")
+	a.renderErrorPattern(w, r, err, "")
+}
+
+func (a *App) renderErrorPattern(w http.ResponseWriter, r *http.Request, err error, pattern string) {
+	MarkObservedRequest(r, "error", pattern)
+	if WriteDevelopmentError(w, r, err) {
+		return
+	}
 	if wantsJSON(r) {
-		writeJSONError(w, errorStatus(err, 0, http.StatusInternalServerError), err, nil)
+		writeJSONError(w, r, errorStatus(err, 0, http.StatusInternalServerError), err, nil)
 		return
 	}
 
 	ctx := newContext(r)
+	ctx.Pattern = pattern
 	ctx.SetStatus(errorStatus(err, 0, http.StatusInternalServerError))
 
 	var node gosx.Node
@@ -1005,7 +1177,7 @@ func (a *App) renderError(w http.ResponseWriter, r *http.Request, err error) {
 		ctx.SetMetadata(Metadata{Title: Title{Absolute: title}})
 		node = defaultStatusBody(title, defaultErrorMessage(err, r))
 	}
-	a.renderPage(w, ctx, "", node, http.StatusText(ctx.status))
+	a.renderPage(w, ctx, pattern, node, http.StatusText(ctx.status))
 }
 
 func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
@@ -1016,20 +1188,37 @@ func (a *App) servePublic(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 
-	cleanPath := path.Clean("/" + r.URL.Path)
-	if cleanPath == "/" {
+	if r.URL.Path == "" || r.URL.Path == "/" {
 		return false
 	}
 
-	name := strings.TrimPrefix(cleanPath, "/")
-	fsPath := filepath.Join(a.publicDir, filepath.FromSlash(name))
-	info, err := os.Stat(fsPath)
-	if err != nil || info.IsDir() {
+	fsPath, ok := bundlepolicy.PublicPath(a.publicDir, r.URL.Path, a.publicPolicy.AllowPublic, a.publicPolicy.Exclude)
+	if !ok {
 		return false
 	}
+	cleanPath := path.Clean("/" + r.URL.Path)
 
 	MarkObservedRequest(r, "public", cleanPath)
-	w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	// A version query marks the URL as content-addressed by the app (the
+	// scaffold's publicAsset helper stamps mtime+size), so the response for
+	// that exact URL never changes and a year of immutable caching is safe.
+	// Unversioned URLs keep revalidation: the app may overwrite the file in
+	// place and the next view must see it.
+	if strings.EqualFold(filepath.Ext(fsPath), ".webmanifest") {
+		w.Header().Set("Content-Type", "application/manifest+json; charset=utf-8")
+	} else if contentType := mime.TypeByExtension(filepath.Ext(fsPath)); contentType != "" {
+		w.Header().Set("Content-Type", contentType)
+	}
+	if r.URL.Query().Get("v") != "" {
+		httpcache.MarkImmutableAsset(w, r)
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+	}
+	if !a.compressionOff && serveCompressedFile(w, r, fsPath, func(ext string) (string, bool) {
+		return bundlepolicy.PublicPath(a.publicDir, r.URL.Path+ext, a.publicPolicy.AllowPublic, a.publicPolicy.Exclude)
+	}) {
+		return true
+	}
 	http.ServeFile(w, r, fsPath)
 	return true
 }
@@ -1058,6 +1247,13 @@ func healthHandler(w http.ResponseWriter, _ *http.Request) {
 func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	report := ReadinessReport{OK: true}
+	if a.draining.Load() {
+		report.OK = false
+		a.cacheReadiness(false, nil)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(report)
+		return
+	}
 	for _, entry := range a.readyChecks {
 		if entry.check == nil {
 			continue
@@ -1066,29 +1262,43 @@ func (a *App) readyHandler(w http.ResponseWriter, r *http.Request) {
 			Name: normalizeReadyCheckName(entry.name),
 			OK:   true,
 		}
-		if err := entry.check.CheckReady(r.Context()); err != nil {
+		if err := entry.evaluate(r.Context()); err != nil {
 			report.OK = false
 			result.OK = false
-			result.Error = err.Error()
+			result.Error = http.StatusText(http.StatusServiceUnavailable)
+			report.RequestID = RequestID(r)
+			if err != errReadyCheckPanicked {
+				log.Printf("[gosx] readiness check %s failed (request %s): %v", result.Name, report.RequestID, err)
+			}
 		}
 		report.Checks = append(report.Checks, result)
 	}
+	a.cacheReadiness(report.OK, report.Checks)
 	if !report.OK {
 		w.WriteHeader(http.StatusServiceUnavailable)
 	}
 	_ = json.NewEncoder(w).Encode(report)
 }
 
-func requestIDMiddleware() Middleware {
+func (a *App) requestIDMiddleware() Middleware {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			id := r.Header.Get(requestIDHeader)
-			if id == "" {
-				id = nextRequestID()
+			metadata := cachedRequestMetadata(r)
+			if metadata == nil {
+				id := r.Header.Get(requestIDHeader)
+				if id == "" {
+					id = nextRequestID()
+				}
+				peer := requestPeer(r.RemoteAddr)
+				metadata = &requestMetadata{id: id, peer: peer, client: a.trustedProxies.resolve(peer, r.Header)}
+				if state, ok := r.Context().Value(requestObservationContextKey).(*requestObservation); ok {
+					state.metadata = metadata
+				}
+				ctx := context.WithValue(r.Context(), requestIDContextKey, metadata)
+				r = r.WithContext(ctx)
 			}
-			w.Header().Set(requestIDHeader, id)
-			ctx := context.WithValue(r.Context(), requestIDContextKey, id)
-			next.ServeHTTP(w, r.WithContext(ctx))
+			w.Header().Set(requestIDHeader, metadata.id)
+			next.ServeHTTP(w, r)
 		})
 	}
 }
@@ -1194,14 +1404,18 @@ func writeJSONBody(w http.ResponseWriter, status int, payload any, body []byte, 
 	_, _ = w.Write([]byte{'\n'})
 }
 
-func writeJSONError(w http.ResponseWriter, status int, err error, headers http.Header) {
+func writeJSONError(w http.ResponseWriter, r *http.Request, status int, err error, headers http.Header) {
 	message := http.StatusText(status)
-	if err != nil && err.Error() != "" {
-		message = err.Error()
+	payload := map[string]any{"error": message}
+	if status >= 500 {
+		log.Printf("[gosx] request %s failed (%d): %v", RequestID(r), status, err)
+		if id := RequestID(r); id != "" {
+			payload["requestID"] = id
+		}
+	} else if err != nil && err.Error() != "" {
+		payload["error"] = err.Error()
 	}
-	writeJSON(w, status, map[string]any{
-		"error": message,
-	}, headers)
+	writeJSON(w, status, payload, headers)
 }
 
 func writePanic(w http.ResponseWriter, r *http.Request, recovered any) {
@@ -1433,11 +1647,18 @@ func routeHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bo
 }
 
 func mountHandled(mux *http.ServeMux, w http.ResponseWriter, r *http.Request) bool {
-	handler, pattern := mux.Handler(r)
-	if pattern == "" || handler == nil {
+	if !muxMatched(mux, r) {
 		return false
 	}
-	handler.ServeHTTP(w, r)
+	// Dispatch through mux.ServeHTTP, not the handler pulled off mux.Handler:
+	// Handler's own doc comment says it "does not populate named path
+	// wildcards, so r.PathValue will always return the empty string." A
+	// mount pattern with a wildcard segment, e.g. "GET /avatars/{teamID}.png",
+	// needs ServeHTTP's internal findHandler call, which sets r.pat and
+	// r.matches before invoking the handler. muxMatched still does the
+	// match/no-match check via Handler(r), matching the no-match fall-through
+	// contract used by routeHandled, redirectHandled and rewriteHandled.
+	mux.ServeHTTP(w, r)
 	return true
 }
 

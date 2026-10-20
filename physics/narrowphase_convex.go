@@ -32,6 +32,119 @@ func isSupportShape(c *Collider) bool {
 	}
 }
 
+// cylinderParallelTolerance bounds how far two cylinder axes may tilt from
+// parallel (or anti-parallel) before collideCylinderCylinder falls back to
+// GJK. 1 - cos(angle) below this threshold means the axes agree to within
+// about 0.08 degrees, tight enough that the parallel-axis shortcut below
+// introduces no visible error even for a very tall cylinder.
+const cylinderParallelTolerance = 1e-6
+
+// cylinderAxialMarginFactor sets how deep into each cylinder's axial extent
+// the overlap between the two axial ranges must reach before the side-contact
+// formula below applies. Right at the boundary the true closest feature can
+// be the rim instead of the round side, so the margin -- scaled by the
+// smaller radius, which is the size of that rim region -- keeps the shortcut
+// away from the case it cannot answer.
+const cylinderAxialMarginFactor = 0.01
+
+// cylinderRadialMarginFactor guards the other degenerate case: two axes close
+// enough to coincident that the cross-section circles are nested rather than
+// crossing. "Radial offset minus combined radius" is the two-circle
+// penetration formula for crossing circles; it does not hold when one circle
+// sits inside the other, where the true gap is close to the radius
+// difference instead. Requiring the radial offset to clear |rA - rB| by a
+// margin keeps the shortcut on the crossing side of that boundary.
+const cylinderRadialMarginFactor = 0.01
+
+// collideCylinderCylinder resolves the common case of two cylinders whose
+// axes run parallel (or anti-parallel) and whose axial extents overlap by a
+// safe margin: for an infinite parallel-cylinder pair the separation between
+// the round sides is the same at every point along the shared direction, so
+// as long as some of that direction lies inside both finite extents, the
+// radial-offset-minus-combined-radius answer is exact, not an approximation,
+// and there is no need to iterate toward it the way EPA does for a general
+// pair. Any other configuration -- tilted axes, or axial ranges that do not
+// overlap enough, which means a flat cap is the true closest feature -- falls
+// back to collideConvexGJK, which handles every cylinder configuration
+// correctly, just slower.
+func collideCylinderCylinder(a, b *Collider) (ContactManifold, bool) {
+	axis := a.WorldAxis()
+	cos := axis.Dot(b.WorldAxis())
+	if math.Abs(cos) < 1-cylinderParallelTolerance {
+		return collideConvexGJK(a, b)
+	}
+
+	radiusA := math.Abs(a.Radius)
+	radiusB := math.Abs(b.Radius)
+	halfA := math.Abs(a.Height) * 0.5
+	halfB := math.Abs(b.Height) * 0.5
+	centerA := a.WorldCenter()
+	centerB := b.WorldCenter()
+
+	// perp is the (axis-direction-independent) offset between the two axis
+	// lines. Because the axes are parallel, perp is the same at every axial
+	// position, so any point in the overlap below gives the true separation.
+	toB := centerB.Sub(centerA)
+	axialB := toB.Dot(axis)
+	perp := toB.Sub(axis.Mul(axialB))
+
+	aMin, aMax := -halfA, halfA
+	bMin, bMax := axialB-halfB, axialB+halfB
+	overlap := minFloat(aMax, bMax) - maxFloat(aMin, bMin)
+	margin := cylinderAxialMarginFactor * minFloat(radiusA, radiusB)
+	if margin <= 0 {
+		margin = epsilon
+	}
+	if overlap < margin {
+		return collideConvexGJK(a, b)
+	}
+
+	radialMargin := cylinderRadialMarginFactor * minFloat(radiusA, radiusB)
+	if radialMargin <= 0 {
+		radialMargin = epsilon
+	}
+	nestedBound := math.Abs(radiusA-radiusB) + radialMargin
+	distance2 := perp.Len2()
+	if distance2 < nestedBound*nestedBound {
+		// The cross-section circles are nested rather than crossing: "radial
+		// offset minus combined radius" is not the two-circle penetration
+		// formula there. GJK handles it correctly.
+		return collideConvexGJK(a, b)
+	}
+
+	radii := radiusA + radiusB
+	if distance2 > (radii+contactTolerance)*(radii+contactTolerance) {
+		return ContactManifold{}, false
+	}
+	distance := math.Sqrt(distance2)
+	penetration := maxFloat(radii-distance, 0)
+
+	// The radial push is not the only way to separate two finite cylinders:
+	// sliding one along the shared axis until the axial ranges stop
+	// overlapping is a second, always-valid separating translation, of
+	// length overlap. When the radial penetration is not comfortably the
+	// smaller of the two, a corner near the rim could beat both, which is
+	// exactly the case GJK's real support function already resolves
+	// correctly. Requiring the radial push to be less than half the axial
+	// one keeps the shortcut inside the regime -- shallow penetration, deep
+	// axial overlap -- that is a real resting or rolling contact, and that a
+	// two-circle MTV is provably the global minimum for.
+	if penetration >= overlap*0.5 {
+		return collideConvexGJK(a, b)
+	}
+
+	normal := perp.Div(distance)
+	// Witness points sit at the middle of the shared axial band, which keeps
+	// the reported contact point away from either rim.
+	mid := maxFloat(aMin, bMin) + overlap*0.5
+	pa := centerA.Add(axis.Mul(mid))
+	pb := pa.Add(perp)
+	contactPoint := pa.Add(pb).Mul(0.5)
+	return makeContactManifold(a, b, normal, []ContactPoint{
+		makeContactPoint(a, b, contactPoint, penetration),
+	}), true
+}
+
 // collideConvexGJK builds a manifold from the GJK and EPA penetration of two
 // support-mapped shapes.
 //

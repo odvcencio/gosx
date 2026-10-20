@@ -1,7 +1,7 @@
-// Pick parity tests for the shared CPU raycast in 17-scene-input.js.
+// Pick parity tests for the shared CPU raycast in 17-scene-input.ts.
 //
 // The pick contract is backend independent by design: setupScenePickInteractions
-// takes no renderer argument, 17-scene-input.js names neither WebGL nor WebGPU,
+// takes no renderer argument, 17-scene-input.ts names neither WebGL nor WebGPU,
 // and the WebGPU picker resolves identity on the GPU and then calls these same
 // helpers for every geometric field. A backend branch in this file would break
 // the property the capability matrix relies on, so these tests load the input
@@ -26,7 +26,7 @@ const srcDir = path.join(__dirname, "bootstrap-src");
 
 // The world-space hit radius both languages use for a primitive with no extent.
 // scene.DefaultPointThreshold in scene/raycast.go and SCENE_POINT_PICK_RADIUS in
-// 17-scene-input.js must equal this.
+// 17-scene-input.ts must equal this.
 const POINT_THRESHOLD = 0.1;
 
 function createContext() {
@@ -92,11 +92,11 @@ function createContext() {
     context,
     { filename: "prelude.js" },
   );
-  vm.runInContext(fs.readFileSync(path.join(srcDir, "11-scene-math.js"), "utf8"), context, {
-    filename: "11-scene-math.js",
+  vm.runInContext(fs.readFileSync(path.join(srcDir, "11-scene-math.ts"), "utf8"), context, {
+    filename: "11-scene-math.ts",
   });
-  vm.runInContext(fs.readFileSync(path.join(srcDir, "17-scene-input.js"), "utf8"), context, {
-    filename: "17-scene-input.js",
+  vm.runInContext(fs.readFileSync(path.join(srcDir, "17-scene-input.ts"), "utf8"), context, {
+    filename: "17-scene-input.ts",
   });
   return context;
 }
@@ -198,6 +198,23 @@ test("a Points layer honors its position offset and its rotation", () => {
     })],
   }));
   assert.ok(hit, "expected the rotated particle on the ray");
+  assert.ok(Math.abs(hit.distance - (7 - POINT_THRESHOLD)) < 1e-9, `distance ${hit.distance}`);
+});
+
+test("a Points layer pick applies its exact affine parent after local rotation and offset", () => {
+  const context = createContext();
+  const hit = pick(context, baseBundle({
+    points: [pointsLayer({
+      positions: [1, 0, 0],
+      rotationZ: Math.PI / 2,
+      x: 1,
+      y: 2,
+      z: 3,
+      // Maps local world (1,3,3) to (0,0,-3), with non-uniform scale and shear.
+      parentMatrix: [2, 0, 0, 0, 1, 3, 0, 0, 0, 0, 4, 0, -5, -9, -15, 1],
+    })],
+  }));
+  assert.ok(hit, "expected the affine-transformed particle on the ray");
   assert.ok(Math.abs(hit.distance - (7 - POINT_THRESHOLD)) < 1e-9, `distance ${hit.distance}`);
 });
 
@@ -340,7 +357,7 @@ test("the pick path branches on no render backend", () => {
   // Strip comments before the scan. A comment may name a backend to explain why
   // the code does not, and the difference between naming one and branching on one
   // is the whole point.
-  const source = fs.readFileSync(path.join(srcDir, "17-scene-input.js"), "utf8");
+  const source = fs.readFileSync(path.join(srcDir, "17-scene-input.ts"), "utf8");
   const code = source
     .replace(/\/\*[\s\S]*?\*\//g, " ")
     .split("\n")
@@ -348,10 +365,12 @@ test("the pick path branches on no render backend", () => {
     .join("\n")
     .toLowerCase();
   for (const term of ["webgl", "webgpu", "readpixels", "getcontext", "gl.", "gpudevice"]) {
-    assert.equal(code.includes(term), false, `the code in 17-scene-input.js must not mention ${term}`);
+    assert.equal(code.includes(term), false, `the code in 17-scene-input.ts must not mention ${term}`);
   }
   // Prove the stripper still sees code: the two helpers this suite drives must
   // survive it, or the scan above would pass on an empty string.
   assert.ok(code.includes("function sceneraycastpickpoints"));
   assert.ok(code.includes("function sceneraycastpick("));
 });
+
+export { createContext, baseBundle, quad };

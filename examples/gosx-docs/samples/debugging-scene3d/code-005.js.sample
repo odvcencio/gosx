@@ -1,0 +1,4 @@
+const mount = document.querySelector("[data-gosx-scene3d-mounted]")
+	mount.addEventListener("gosx:scene3d:model-hydration-status", ({ detail }) => {
+	    console.log(detail.status, detail.generation, detail.counts, detail.error)
+	})

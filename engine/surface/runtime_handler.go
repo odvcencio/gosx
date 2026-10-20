@@ -13,12 +13,12 @@ import (
 	"sync"
 )
 
-// bootstrapJS is the hand-authored JS bootstrap served at /gosx/surface/runtime.js.
+// bootstrapJS is the typed browser bootstrap served at /gosx/surface/runtime.js.
 // It walks the DOM for data-gosx-engine-component placeholders, loads each
 // component's WASM, instantiates it, and bridges DOM events into the canonical
 // __gosx_surface_event payload shape (see runtime/runtime.go for the kind table).
 //
-//go:embed runtime/bootstrap.js
+//go:embed runtime/bootstrap.ts
 var bootstrapJS []byte
 
 // wasmExecOnce guards the lazy resolution of wasm_exec.js.

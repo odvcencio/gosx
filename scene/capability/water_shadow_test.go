@@ -8,7 +8,7 @@ import (
 // webglWaterShadowPath and webgpuWaterShadowPath name the two renderers that
 // own the water shadow passes. webglRendererPath and webgpuRendererPath come
 // from lights_test.go, and readRenderer reads either one.
-const (
+var (
 	webglWaterShadowPath  = webglRendererPath
 	webgpuWaterShadowPath = webgpuRendererPath
 )
@@ -144,19 +144,14 @@ func TestWaterSimAndTexturePassStayTrueOnWebGL(t *testing.T) {
 	}
 }
 
-// TestIBLIsFalseOnBothBackends pins the intentionally staged capability cell.
-//
-// Both renderers now consume assetpipe's radiance cube, irradiance cube and
-// split-sum BRDF LUT. The matrix remains false until that path is universally
-// available on both backends: WebGL2 must compile a bounded legacy variant on
-// the spec-minimum 16-fragment-sampler devices because the full material + CSM
-// + IBL layout needs 18. Claiming the feature at the matrix level would hide
-// that deterministic degradation.
-func TestIBLIsFalseOnBothBackends(t *testing.T) {
-	for _, b := range []Backend{BackendWebGPU, BackendWebGL} {
-		if Matrix[FeatureIBL][b] {
-			t.Errorf("the ibl cell for %s must be false until a renderer consumes the prefiltered products", b)
-		}
+// TestIBLTruthMatchesRuntimeConsumers pins split-sum IBL on both backends.
+func TestIBLTruthMatchesRuntimeConsumers(t *testing.T) {
+	if !Matrix[FeatureIBL][BackendWebGPU] {
+		t.Error("the ibl cell for webgpu must be true: syncEnvironmentIBL consumes the prefiltered " +
+			"products unconditionally, with no texture-unit budget to negotiate")
+	}
+	if !Matrix[FeatureIBL][BackendWebGL] {
+		t.Error("WebGL2 IBL fits the core minimum with depth-array shadows")
 	}
 
 	webgl := readRenderer(t, webglWaterShadowPath)
@@ -169,7 +164,7 @@ func TestIBLIsFalseOnBothBackends(t *testing.T) {
 		"u_iblRadiance",
 		"u_iblBRDFLUT",
 		"textureLod(u_iblRadiance",
-		"prefiltered * (F0 * brdf.x + brdf.y)",
+		"prefiltered * (F0 * brdf.x + vec3(F90) * brdf.y)",
 		"scenePBRLinearHDRPixels",
 	} {
 		if !strings.Contains(webgl, marker) {
@@ -181,16 +176,19 @@ func TestIBLIsFalseOnBothBackends(t *testing.T) {
 		"iblRadiance: texture_cube<f32>",
 		"iblBRDFLUT: texture_2d<f32>",
 		"textureSampleLevel(iblRadiance",
-		"prefiltered * (F0 * brdf.x + brdf.y)",
+		"prefiltered * (F0 * brdf.x + vec3f(F90) * brdf.y)",
 	} {
 		if !strings.Contains(webgpu, marker) {
 			t.Errorf("expected real WebGPU IBL marker %q in 16a-scene-webgpu.js", marker)
 		}
 	}
 
-	// This explicit resource gate is why FeatureIBL stays false despite the real
-	// capable-device path above. Keep the matrix and diagnostic coupled.
-	for _, marker := range []string{"maxUnits >= 18", "fragment-texture-units<18"} {
+	// Base IBL fits the core minimum; detail HDR requires one more sampler.
+	for _, marker := range []string{
+		"function scenePBRHDRIBLTextureMinimum(detail) { return detail ? 17 : 16; }",
+		"maxUnits >= scenePBRHDRIBLTextureMinimum(detail)",
+		`"fragment-texture-units<" + scenePBRHDRIBLTextureMinimum(Boolean(uniforms.detail))`,
+	} {
 		if !strings.Contains(webgl, marker) {
 			t.Errorf("expected staged WebGL2 IBL resource gate %q", marker)
 		}

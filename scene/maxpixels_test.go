@@ -18,9 +18,16 @@ func TestPropsMaxPixelsSerializes(t *testing.T) {
 		t.Fatalf("maxPixels = %v, want 3000000", got)
 	}
 
-	// Zero must stay absent so existing scenes keep their exact behaviour.
+	// Zero stays absent so the browser applies its default budget.
 	var zero Props
 	if _, ok := zero.LegacyProps()["maxPixels"]; ok {
 		t.Fatal("maxPixels must be omitted when unset")
+	}
+}
+
+func TestPropsMaxPixelsUnboundedSerializes(t *testing.T) {
+	t.Parallel()
+	if got := (Props{MaxPixels: MaxPixelsUnbounded}).LegacyProps()["maxPixels"]; got != -1 {
+		t.Fatalf("unbounded maxPixels = %v, want -1", got)
 	}
 }

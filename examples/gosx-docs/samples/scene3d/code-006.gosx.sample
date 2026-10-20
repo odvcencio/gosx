@@ -1,0 +1,6 @@
+<Scene3D
+	  {...data.scene}
+	  requiredCapabilities="webgpu webgpu:timestamp-query"
+	  webgpuAlphaMode="opaque"
+	  webgpuColorSpace="display-p3"
+	/>

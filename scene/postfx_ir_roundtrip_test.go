@@ -45,6 +45,8 @@ const (
 // PostEffect type has no entry here, so a new effect cannot ship without a
 // decoder and a round-trip proof.
 var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
+	"GodRays": {effect: GodRays{Intensity: 0.5, Decay: 0.75, Density: 0.5, Samples: 24}, wantIR: GodRaysIR{Intensity: 0.5, Decay: 0.75, Density: 0.5, Samples: 24}},
+	"Grain":   {effect: Grain{Intensity: 0.03125}, wantIR: GrainIR{Intensity: 0.03125}},
 	"Tonemap": {
 		effect: Tonemap{Mode: TonemapFilmic, Exposure: rtExposure},
 		wantIR: TonemapIR{Mode: "filmic", Exposure: float64(rtExposure)},
@@ -69,6 +71,11 @@ var postEffectRoundTripCases = map[string]postEffectRoundTripCase{
 			Contrast:   float64(rtContrast),
 			Saturation: float64(rtSaturation),
 		},
+	},
+	"TAA": {effect: TAA{HistoryWeight: 0.875, ClampGamma: 1.25, DepthThreshold: 0.015625}, wantIR: TAAIR{HistoryWeight: 0.875, ClampGamma: 1.25, DepthThreshold: 0.015625}},
+	"ContactShadows": {
+		effect: ContactShadows{Distance: 1.5, Thickness: 0.125, Bias: 0.015625, Intensity: 0.5, Direction: Vec3(-1, -1, 0)},
+		wantIR: ContactShadowsIR{Distance: 1.5, Thickness: 0.125, Bias: 0.015625, Intensity: 0.5, Direction: &Vector3{X: -1, Y: -1}},
 	},
 	"SSAO": {
 		effect: SSAO{Radius: rtSSAORadius, Intensity: rtSSAOIntensity, Bias: rtSSAOBias},

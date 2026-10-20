@@ -4,8 +4,11 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
+	"unicode"
 )
 
 // NoncePlaceholder marks the spot in a Content-Security-Policy value where GoSX
@@ -15,9 +18,9 @@ const NoncePlaceholder = "{nonce}"
 
 // SecurityPolicy configures the optional security response headers.
 //
-// The policy is opt-in. A default Content-Security-Policy would block the
-// inline scripts that existing apps already ship, so New leaves it off and
-// EnableSecurityPolicy turns it on.
+// The default policy restricts framing to the same origin. Script and other
+// content restrictions are opt-in through EnableSecurityPolicy. Apps that
+// permit embedding can supply an explicit frame-ancestors directive.
 //
 // A shared-cacheable response carries no nonce, because a shared cache would
 // replay one client's nonce to the next client. GoSX drops the nonce from the
@@ -26,6 +29,11 @@ const NoncePlaceholder = "{nonce}"
 // 'strict-dynamic'. Leave it empty to let GoSX remove the nonce source from
 // ContentSecurityPolicy, which then blocks the inline scripts on that page.
 type SecurityPolicy struct {
+	// FrameAncestors explicitly permits these CSP sources to embed the app.
+	// Empty retains the existing default policy. Sources must be HTTP(S) origins
+	// (optionally a wildcard subdomain), 'self', or 'none'.
+	FrameAncestors []string
+
 	// ContentSecurityPolicy is the policy value. GoSX replaces every
 	// NoncePlaceholder with a fresh nonce and attaches the same nonce to the
 	// script elements it emits.
@@ -75,17 +83,33 @@ func withSecurityPolicyState(ctx context.Context, state securityPolicyState) con
 // EnableSecurityPolicy turns on the optional security response headers,
 // including a Content-Security-Policy with a generated per-request nonce.
 //
-// Call it before Build. Passing a zero SecurityPolicy turns the feature off
-// again and restores the default headers alone.
-func (a *App) EnableSecurityPolicy(policy SecurityPolicy) {
+// Call it before Build. Passing a zero SecurityPolicy restores the default framing policy
+// again and restores the default headers alone. Invalid frame ancestors or
+// conflicting X-Frame-Options return an error, but still apply the other policy
+// settings with framing denied, even when the caller ignores the error.
+func (a *App) EnableSecurityPolicy(policy SecurityPolicy) error {
 	if a == nil {
-		return
+		return nil
 	}
+	err := validateFrameAncestors(policy)
+	if err != nil {
+		policy.FrameAncestors = []string{"'none'"}
+		policy.FrameOptions = "DENY"
+	}
+	policy.FrameAncestors = append([]string(nil), policy.FrameAncestors...)
 	a.securityPolicy = normalizeSecurityPolicy(policy)
+	return err
 }
 
 func normalizeSecurityPolicy(policy SecurityPolicy) SecurityPolicy {
 	policy.ContentSecurityPolicy = strings.TrimSpace(policy.ContentSecurityPolicy)
+	if len(policy.FrameAncestors) > 0 {
+		directive := "frame-ancestors " + strings.Join(policy.FrameAncestors, " ")
+		policy.ContentSecurityPolicy = withFrameAncestors(policy.ContentSecurityPolicy, directive)
+		if strings.TrimSpace(policy.SharedContentSecurityPolicy) != "" {
+			policy.SharedContentSecurityPolicy = withFrameAncestors(policy.SharedContentSecurityPolicy, directive)
+		}
+	}
 	policy.SharedContentSecurityPolicy = strings.TrimSpace(policy.SharedContentSecurityPolicy)
 	policy.FrameOptions = strings.TrimSpace(policy.FrameOptions)
 	policy.StrictTransportSecurity = strings.TrimSpace(policy.StrictTransportSecurity)
@@ -96,23 +120,57 @@ func normalizeSecurityPolicy(policy SecurityPolicy) SecurityPolicy {
 	}
 	if policy.SharedContentSecurityPolicy == "" && policy.ContentSecurityPolicy != "" {
 		policy.SharedContentSecurityPolicy = removeNonceSources(policy.ContentSecurityPolicy)
+		if policy.SharedContentSecurityPolicy == "" {
+			// A shared response cannot carry a request nonce. If removing the
+			// nonce leaves no usable policy, fail closed instead of emitting a
+			// header that browsers will ignore or pretending the cached body has
+			// a nonce it does not carry.
+			policy.SharedContentSecurityPolicy = "default-src 'none'"
+		}
 	}
 	return policy
 }
 
-// removeNonceSources strips every quoted nonce source from a policy value. It
-// runs when the caller supplies no shared policy and the response cannot carry
-// a nonce.
+// removeNonceSources strips every quoted nonce source from a policy value while
+// retaining the directive grammar. strings.Fields alone is not sufficient:
+// CSP uses semicolons as directive boundaries, and collapsing the whole value
+// can accidentally turn the first source of the next directive into a source
+// of the previous one when callers omit whitespace around a semicolon.
 func removeNonceSources(policy string) string {
-	fields := strings.Fields(policy)
-	kept := make([]string, 0, len(fields))
-	for _, field := range fields {
-		if strings.HasPrefix(field, "'nonce-") {
+	trimmed := strings.TrimSpace(policy)
+	if trimmed == "" {
+		return ""
+	}
+	trailingSemicolon := strings.HasSuffix(trimmed, ";")
+	directives := strings.Split(trimmed, ";")
+	kept := make([]string, 0, len(directives))
+	for _, directive := range directives {
+		fields := strings.Fields(directive)
+		if len(fields) == 0 {
 			continue
 		}
-		kept = append(kept, field)
+		filtered := fields[:0]
+		removedNonce := false
+		for _, field := range fields {
+			if strings.HasPrefix(strings.ToLower(field), "'nonce-") {
+				removedNonce = true
+				continue
+			}
+			filtered = append(filtered, field)
+		}
+		// A source directive containing only its name after nonce removal must
+		// remain present and fail closed. Dropping it would make script-src fall
+		// back to a potentially broader default-src on the shared response.
+		if removedNonce && len(filtered) <= 1 {
+			filtered = append(filtered, "'none'")
+		}
+		kept = append(kept, strings.Join(filtered, " "))
 	}
-	return strings.Join(kept, " ")
+	result := strings.Join(kept, "; ")
+	if trailingSemicolon && result != "" {
+		result += ";"
+	}
+	return result
 }
 
 // securityHeaders resolves the configured policy when Build wraps the handler.
@@ -125,6 +183,12 @@ func (a *App) securityHeaders() Middleware {
 }
 
 func securityHeadersMiddleware(policy SecurityPolicy) Middleware {
+	if policy.ContentSecurityPolicy == "" {
+		policy.ContentSecurityPolicy = "frame-ancestors 'self'"
+		if strings.EqualFold(strings.TrimSpace(policy.FrameOptions), "DENY") {
+			policy.ContentSecurityPolicy = "frame-ancestors 'none'"
+		}
+	}
 	referrer := policy.ReferrerPolicy
 	if referrer == "" {
 		referrer = "strict-origin-when-cross-origin"
@@ -161,6 +225,16 @@ func securityHeadersMiddleware(policy SecurityPolicy) Middleware {
 				state.policy = strings.ReplaceAll(policy.ContentSecurityPolicy, NoncePlaceholder, state.nonce)
 			}
 			w.Header().Set(headerName, state.policy)
+			if policy.ReportOnly {
+				framing := "frame-ancestors 'self'"
+				if len(policy.FrameAncestors) > 0 {
+					framing = "frame-ancestors " + strings.Join(policy.FrameAncestors, " ")
+				}
+				if strings.EqualFold(policy.FrameOptions, "DENY") {
+					framing = "frame-ancestors 'none'"
+				}
+				w.Header().Set("Content-Security-Policy", framing)
+			}
 			next.ServeHTTP(w, r.WithContext(withSecurityPolicyState(r.Context(), state)))
 		})
 	}
@@ -206,8 +280,45 @@ func applySharedCacheSecurityHeaders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if state.sharedPolicy == "" {
-		w.Header().Del(state.headerName)
+		w.Header().Set(state.headerName, "default-src 'none'")
 		return
 	}
 	w.Header().Set(state.headerName, state.sharedPolicy)
+}
+
+func validateFrameAncestors(policy SecurityPolicy) error {
+	if len(policy.FrameAncestors) == 0 {
+		return nil
+	}
+	if strings.TrimSpace(policy.FrameOptions) != "" {
+		return fmt.Errorf("gosx: frame ancestors cannot be combined with X-Frame-Options")
+	}
+	for _, source := range policy.FrameAncestors {
+		if source == "'self'" {
+			continue
+		}
+		if source == "'none'" && len(policy.FrameAncestors) == 1 {
+			continue
+		}
+		u, err := url.Parse(source)
+		if err != nil || u == nil || (u.Scheme != "https" && u.Scheme != "http") || u.Hostname() == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || (strings.ContainsAny(source, "\\;#") || strings.IndexFunc(source, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) >= 0) {
+			return fmt.Errorf("gosx: invalid frame ancestor %q", source)
+		}
+		host := strings.TrimPrefix(u.Hostname(), "*.")
+		if host == "" || strings.Contains(host, "*") {
+			return fmt.Errorf("gosx: invalid frame ancestor %q", source)
+		}
+	}
+	return nil
+}
+
+func withFrameAncestors(policy, directive string) string {
+	var kept []string
+	for _, part := range strings.Split(policy, ";") {
+		fields := strings.Fields(part)
+		if len(fields) > 0 && !strings.EqualFold(fields[0], "frame-ancestors") {
+			kept = append(kept, strings.TrimSpace(part))
+		}
+	}
+	return strings.Join(append(kept, directive), "; ")
 }

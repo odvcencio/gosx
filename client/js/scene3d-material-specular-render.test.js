@@ -1,0 +1,1876 @@
+"use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+// Scene3D authored specular render slice: the KHR specularIntensity /
+// specularColor factors must actually shade, not just normalize. This file
+// drives the production WebGL uploadMaterial and the production WebGPU
+// materialUniformData through recording GPU boundaries, and pins the
+// production shader strings that consume the uploaded factors.
+//
+// Effective dielectric F0 = min(IOR F0 * linear color, 1) * intensity,
+// F90 = intensity, clamp BEFORE intensity. The diffuse weight is the scalar
+// (1 - maxRGB(dielectric Fresnel)) * (1 - metalness), never an inverse RGB
+// tint, and the fully-metal branch must be independent of the dielectric
+// settings.
+
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
+const vm = require("node:vm");
+
+const srcDir = path.join(__dirname, "bootstrap-src");
+const SHARED_API_EXPORT_MARKER = "// Scene3D shared API";
+
+function readBootstrapSource(name) {
+  return fs.readFileSync(path.join(srcDir, name), "utf8");
+}
+
+function readSceneRuntimeSource(name) {
+  return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
+}
+
+function trimBeforeSharedApiExport(source) {
+  const at = source.indexOf(SHARED_API_EXPORT_MARKER);
+  assert.ok(at >= 0, "core '// Scene3D shared API' export marker located");
+  return source.slice(0, at);
+}
+
+function runFragment(context, source, filename) {
+  vm.runInContext(source, context, { filename });
+}
+
+function sliceBetween(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  assert.ok(start >= 0, "start marker located: " + startMarker);
+  const end = source.indexOf(endMarker, start + startMarker.length);
+  assert.ok(end > start, "end marker located after start: " + endMarker);
+  return source.slice(start, end);
+}
+
+const SCENE_FRAGMENT_FILES = [
+  "10-runtime-primitives.ts",
+  "10-runtime-scene-utils.ts",
+  "11-scene-math.ts",
+  "12-scene-geometry.ts",
+  "13-scene-material.ts",
+];
+
+function createSceneCoreContext() {
+  const context = vm.createContext({ console, window: {} });
+  for (const name of SCENE_FRAGMENT_FILES) {
+    runFragment(context, readBootstrapSource(name), name);
+  }
+  runFragment(context,
+    trimBeforeSharedApiExport(readBootstrapSource("10-runtime-scene-core.ts")),
+    "10-runtime-scene-core.ts");
+  return context;
+}
+
+function callIn(context, expression) {
+  return vm.runInContext(expression, context, { filename: "scene-specular-expression.js" });
+}
+
+const close6 = (actual, expected) => Math.abs(actual - expected) <= 1e-6;
+
+// Spec formula used only to compute expectations: F0 = ((ior-1)/(ior+1))^2,
+// with ior 0 pinning the dielectric Fresnel to 1. The functions under test
+// are the production implementations.
+function expectedDielectricF0(ior) {
+  return ior === 0 ? 1 : Math.fround(((ior - 1) / (ior + 1)) ** 2);
+}
+
+// --- WebGL -------------------------------------------------------------------
+
+function setupWebGLRenderer() {
+  const source = readSceneRendererBackendSrc("webgl");
+  const context = createSceneCoreContext();
+  runFragment(context, [
+    "function sceneFiniteNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }",
+    sliceBetween(readBootstrapSource("15a1-scene-texture-budget.ts"),
+      "var SCENE_TEXTURE_UNIT_MATERIALS", "function sceneTextureMipBytes"),
+    sliceBetween(source, "function scenePBRSRGBChannelToLinear", "const SCENE_PBR_VERTEX_SOURCE"),
+    sliceBetween(source, "function scenePBRDielectricF0", "function scenePBRCacheBaseUniforms"),
+    sliceBetween(source, "function scenePBRTextureLive", "// scenePBRUploadKTX2Texture"),
+    sliceBetween(source, "function scenePBRUploadImageTexture", "function scenePBRTextureDescriptor"),
+    sliceBetween(source, "var sceneGLConstantCache", "function scenePBRHDRIBLAvailable"),
+    sliceBetween(source, "function scenePBRHDRIBLTextureMinimum", "function scenePBRFragmentSourceForContext"),
+    sliceBetween(source, "function scenePBRMaxTextureUnits", "function scenePBRTextureLayoutForFrame"),
+    sliceBetween(source, "function scenePBRTextureLayoutForFrame", "// Upload both array samplers"),
+    sliceBetween(source, "function uploadCustomUniforms", "function uploadMaterial"),
+    sliceBetween(source, "function uploadMaterial", "function applyBlendMode"),
+    [
+      "function recordingGL() {",
+      "  const floats = new Map();",
+      "  const ints = new Map();",
+      "  const binds = new Map();",
+      "  let activeUnit = -1;",
+      "  return {",
+      "    floats, ints, binds,",
+      "    TEXTURE0: 0, TEXTURE_2D: 1, TEXTURE_CUBE_MAP: 2,",
+      "    uniform1f(loc, v) { floats.set(loc && loc.name, v); },",
+      "    uniform2f(loc, a, b) { floats.set(loc && loc.name, [a, b]); },",
+      "    uniform3f(loc, a, b, c) { floats.set(loc && loc.name, [a, b, c]); },",
+      "    uniform4f(loc, a, b, c, d) { floats.set(loc && loc.name, [a, b, c, d]); },",
+      "    uniform1i(loc, v) { ints.set(loc && loc.name, v); },",
+      "    activeTexture(unit) { activeUnit = unit; },",
+      "    bindTexture(target, texture) { binds.set(activeUnit, { target, texture }); },",
+      "  };",
+      "}",
+      "function uniformSlots() {",
+      "  const slots = { customUniforms: null };",
+      "  const names = ['albedo', 'roughness', 'metalness', 'clearcoat', 'sheen',",
+      "    'transmission', 'iridescence', 'anisotropy', 'specularF0', 'specularF90',",
+      "    'specularColorLog',",
+      "    'emissive', 'emissiveColor', 'hasEmissiveColor', 'normalScale', 'normalUVScale', 'occlusionStrength',",
+      "    'opacity', 'unlit', 'alphaCutoff',",
+      "    'albedoMap', 'normalMap', 'roughnessMap', 'metalnessMap', 'occlusionMap',",
+      "    'emissiveMap', 'specularIntensityMap',",
+      "    'specularColorMap',",
+      "    'hasAlbedoMap', 'hasNormalMap', 'hasRoughnessMap', 'hasMetalnessMap',",
+      "    'hasOcclusionMap', 'hasEmissiveMap', 'hasSpecularIntensityMap',",
+      "    'hasSpecularColorMap'];",
+      "  for (const name of names) slots[name] = { name };",
+      "  return slots;",
+      "}",
+      "const __textureStates = new Map();",
+      "const __textureLoads = [];",
+      "const __textureRecords = new Map();",
+      "function setTextureState(url, state) { __textureStates.set(url, state); }",
+      "function textureLoads() { return __textureLoads; }",
+      "function textureRecords() { return __textureRecords; }",
+      "function scenePBRLoadTexture(gl, url, cache, descriptor, role, colorSpace) {",
+      "  let entry = __textureRecords.get(url);",
+      "  if (!entry) {",
+      "    entry = { url: url, texture: { gosxTestName: url } };",
+      "    __textureRecords.set(url, entry);",
+      "  }",
+      "  const load = { url: url, role: role, colorSpace: colorSpace,",
+      "    descriptor: descriptor === undefined ? null : descriptor, texture: entry.texture };",
+      "  __textureLoads.push(load);",
+      "  const state = __textureStates.get(url) || 'missing';",
+      "  if (state === 'missing') return null;",
+      "  const record = { texture: entry.texture, target: gl.TEXTURE_2D,",
+      "    loaded: state === 'loaded', failed: state === 'failed' };",
+      "  entry.record = record;",
+      "  return record;",
+      "}",
+      sliceBetween(source, "function scenePBRBindTexture", "function scenePBRDielectricF0"),
+      "function glWithUnits(count) {",
+      "  return { MAX_TEXTURE_IMAGE_UNITS: 34930,",
+      "    getParameter: function(p) { if (p !== 34930) throw new Error('unexpected query'); return count; } };",
+      "}",
+    ].join("\n"),
+  ].join("\n"), "webgl-specular-extract.js");
+  return { source, context };
+}
+
+function webglUpload(context, literal) {
+  return callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, " + literal + ", null);" +
+    "return { f0: gl.floats.get('specularF0'), f90: gl.floats.get('specularF90') }; })()");
+}
+
+test("imported PBR factors reach single-skin and GPU palette crowd uniforms", () => {
+  const { source, context } = setupWebGLRenderer();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const document = {
+    asset: { version: "2.0" },
+    materials: [
+      { pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] } },
+      {
+        pbrMetallicRoughness: { baseColorFactor: [0.2, 0.4, 0.8, 1] },
+        emissiveFactor: [0.8, 0.15, 0.05],
+        extensions: { KHR_materials_emissive_strength: { emissiveStrength: 4 } },
+        normalTexture: { scale: 0 },
+        occlusionTexture: { strength: 0 },
+      },
+    ],
+  };
+  const documentLiteral = JSON.stringify(document);
+  const importAndUpload = (index, skinKind) => callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + documentLiteral + ', ' + index + ', null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported' +
+        (skinKind === "single" ? ', skin: { joints: [] }' : "") + ' }, 0, null);' +
+      (skinKind === "palette" ? 'object._crowdSkin = { atlas: { width: 1 } };' : "") +
+      'const material = sceneObjectMaterialProfile(object);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'uploadMaterial(gl, uniforms, material, null);' +
+      'return {' +
+        'profile: material,' +
+        'emissive: gl.floats.get("emissive"),' +
+        'emissiveColor: gl.floats.get("emissiveColor"),' +
+        'hasEmissiveColor: gl.ints.get("hasEmissiveColor"),' +
+        'normalScale: gl.floats.get("normalScale"),' +
+        'occlusionStrength: gl.floats.get("occlusionStrength")' +
+      '};' +
+    '})()');
+
+  assert.match(source, /if \(u_hasEmissiveColor\) \{/);
+  assert.match(source, /vec3 emission = emissiveColor \* emissiveStrength;/);
+  assert.ok(source.includes("uploadMaterial(gl, currentUniforms, mat, textureCache);"),
+    "single skinned meshes upload the resolved material profile");
+  assert.ok(source.includes("uploadMaterial(gl, ip.uniforms, mat, textureCache);"),
+    "GPU palette crowd batches upload the same resolved material profile");
+
+  for (const skinKind of ["single", "palette"]) {
+    const noEmission = importAndUpload(0, skinKind);
+    assert.strictEqual(noEmission.hasEmissiveColor, 1,
+      skinKind + ": imported black emission uses the explicit color branch");
+    assert.deepStrictEqual(Array.from(noEmission.emissiveColor), [0, 0, 0],
+      skinKind + ": a non-emissive GLB material cannot fall back to albedo glow");
+    assert.strictEqual(noEmission.emissive, 1);
+
+    const colored = importAndUpload(1, skinKind);
+    assert.strictEqual(colored.hasEmissiveColor, 1);
+    assert.deepStrictEqual(Array.from(colored.emissiveColor), [0.8, 0.15, 0.05]);
+    assert.strictEqual(colored.emissive, 4,
+      skinKind + ": KHR emissive strength above 1 reaches the uniform");
+    assert.strictEqual(colored.normalScale, 0);
+    assert.strictEqual(colored.occlusionStrength, 0);
+  }
+
+  const cacheEdit = callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + documentLiteral + ', 1, null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported, skin: { joints: [] } }, 0, null);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'const first = sceneObjectMaterialProfile(object); uploadMaterial(gl, uniforms, first, null);' +
+      'const oldStrength = gl.floats.get("emissive"); const oldColor = gl.floats.get("emissiveColor").slice();' +
+      'object.emissiveColor[0] = 0.4; object.emissive = 2; object.normalScale = 0.5; object.occlusionStrength = 0.25;' +
+      'const second = sceneObjectMaterialProfile(object); uploadMaterial(gl, uniforms, second, null);' +
+      'return {' +
+        'sameProfile: first === second, changedKey: first.key !== second.key,' +
+        'oldStrength, oldColor, nextStrength: gl.floats.get("emissive"),' +
+        'nextColor: gl.floats.get("emissiveColor"),' +
+        'nextNormalScale: gl.floats.get("normalScale"),' +
+        'nextOcclusionStrength: gl.floats.get("occlusionStrength")' +
+      '};' +
+    '})()');
+  assert.strictEqual(cacheEdit.sameProfile, false);
+  assert.strictEqual(cacheEdit.changedKey, true);
+  assert.strictEqual(cacheEdit.oldStrength, 4);
+  assert.deepStrictEqual(Array.from(cacheEdit.oldColor), [0.8, 0.15, 0.05]);
+  assert.strictEqual(cacheEdit.nextStrength, 2);
+  assert.deepStrictEqual(Array.from(cacheEdit.nextColor), [0.4, 0.15, 0.05]);
+  assert.strictEqual(cacheEdit.nextNormalScale, 0.5);
+  assert.strictEqual(cacheEdit.nextOcclusionStrength, 0.25);
+
+  const gpu = setupWebGPURenderer();
+  const packProfile = (profile) => callIn(gpu.context,
+    "materialUniformData(" + JSON.stringify(JSON.parse(JSON.stringify(profile))) + ", false, null, null)");
+  const gpuBlack = packProfile(importAndUpload(0, "single").profile);
+  assert.strictEqual(gpuBlack.u[54], 1);
+  assert.deepStrictEqual([gpuBlack.data[56], gpuBlack.data[57], gpuBlack.data[58]], [0, 0, 0]);
+  const gpuColored = packProfile(importAndUpload(1, "palette").profile);
+  assert.strictEqual(gpuColored.data[5], 4);
+  assert.strictEqual(gpuColored.data[52], 0);
+  assert.strictEqual(gpuColored.data[53], 0);
+  assert.strictEqual(gpuColored.u[54], 1);
+  [0.8, 0.15, 0.05].forEach((value, index) => {
+    assert.ok(close6(gpuColored.data[56 + index], value),
+      "WebGPU emissiveColor[" + index + "] = " + gpuColored.data[56 + index] + ", want " + value);
+  });
+});
+
+test("a normal-texture-only KHR_texture_transform scale reaches the WebGL normalUVScale uniform", () => {
+  const { context } = setupWebGLRenderer();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const document = JSON.stringify({
+    asset: { version: "2.0" },
+    materials: [
+      { pbrMetallicRoughness: { baseColorTexture: { index: 0 } },
+        normalTexture: { index: 1, extensions: { KHR_texture_transform: { scale: [60, 45] } } } },
+      { pbrMetallicRoughness: { baseColorFactor: [1, 1, 1, 1] } },
+    ],
+  });
+  const upload = index => callIn(context,
+    '(() => {' +
+      'const imported = gltfExtractMaterial(' + document + ', ' + index + ', null);' +
+      'const object = normalizeSceneObject({ kind: "mesh", material: imported }, 0, null);' +
+      'const gl = recordingGL(); const uniforms = uniformSlots();' +
+      'uploadMaterial(gl, uniforms, sceneObjectMaterialProfile(object), null);' +
+      'return gl.floats.get("normalUVScale");' +
+    '})()');
+  assert.deepStrictEqual(Array.from(upload(0)), [60, 45], "the detail scale survives normalization and the material profile");
+  assert.deepStrictEqual(Array.from(upload(1)), [1, 1], "no transform uploads scale 1");
+});
+
+test("WebGL uploadMaterial uploads the effective specular factors", () => {
+  const { context } = setupWebGLRenderer();
+  const upload = (literal) => webglUpload(context, literal);
+  const f0Is = (result, expected) => {
+    assert.ok(Array.isArray(result.f0) && result.f0.length === 3, "specularF0 uploaded as a vec3");
+    for (let c = 0; c < 3; c++) {
+      assert.ok(close6(result.f0[c], expected[c]),
+        "f0[" + c + "] = " + result.f0[c] + ", want " + expected[c]);
+    }
+  };
+
+  // Valid defaults: omitted intensity = 1, omitted color = white, so the
+  // effective F0 is exactly the legacy IOR F0 and F90 is 1.
+  const def = upload("{}");
+  f0Is(def, [0.04, 0.04, 0.04]);
+  assert.strictEqual(def.f90, 1);
+
+  // An explicit 0 intensity is valid and zeroes the whole lobe.
+  const zero = upload("{ specularIntensity: 0 }");
+  f0Is(zero, [0, 0, 0]);
+  assert.strictEqual(zero.f90, 0);
+
+  // A black tint zeroes F0 while the intensity stays 1: the lobe is not
+  // gone, F90 still produces a grazing response. Only intensity 0 removes
+  // the lobe entirely.
+  const black = upload("{ specularColor: [0, 0, 0] }");
+  f0Is(black, [0, 0, 0]);
+  assert.strictEqual(black.f90, 1);
+
+  // A tint scales the clamped IOR F0 per channel.
+  f0Is(upload("{ specularColor: [4, 1, 1] }"), [0.16, 0.04, 0.04]);
+
+  // Clamp BEFORE intensity: min(0.04 * 100, 1) = 1, then * 0.5 = 0.5. The
+  // wrong order (intensity inside the min) would upload 1 in red.
+  const clampOrder = upload("{ specularColor: [100, 1, 1], specularIntensity: 0.5 }");
+  f0Is(clampOrder, [0.5, 0.02, 0.02]);
+  assert.strictEqual(clampOrder.f90, 0.5);
+
+  // IOR interaction: ior 0 maps the base F0 to 1, so the tint passes through
+  // the clamp unattenuated; ior 1 maps the base F0 to 0; a finite ior scales.
+  f0Is(upload("{ ior: 0, specularColor: [0.5, 0.5, 0.5] }"), [0.5, 0.5, 0.5]);
+  f0Is(upload("{ ior: 1, specularColor: [3, 3, 3] }"), [0, 0, 0]);
+  const ior2 = Math.pow((2 - 1) / (2 + 1), 2);
+  f0Is(upload("{ ior: 2, specularColor: [3, 3, 3] }"),
+    [Math.min(ior2 * 3, 1), Math.min(ior2 * 3, 1), Math.min(ior2 * 3, 1)]);
+
+  // Invalid inputs fall back: intensity outside [0, 1] or non-finite means 1;
+  // a color that is not exactly three finite non-negative components means
+  // white. Nothing uploads NaN or Infinity.
+  const nan = upload("{ specularIntensity: NaN }");
+  f0Is(nan, [0.04, 0.04, 0.04]);
+  assert.strictEqual(nan.f90, 1);
+  const over = upload("{ specularIntensity: 2 }");
+  assert.strictEqual(over.f90, 1);
+  const negative = upload("{ specularIntensity: -0.5 }");
+  assert.strictEqual(negative.f90, 1);
+  const inf = upload("{ specularIntensity: Infinity }");
+  assert.strictEqual(inf.f90, 1);
+  for (const badColor of ["[1, 2]", "[-1, 0, 0]", "[Infinity, 1, 1]", '[1, 2, NaN]', '"junk"', "[0, 0, 0, 0]"]) {
+    const bad = upload("{ specularColor: " + badColor + " }");
+    f0Is(bad, [0.04, 0.04, 0.04]);
+    assert.ok(Number.isFinite(bad.f90));
+  }
+
+  // Bounded finite uploads at the extremes: a float64-huge tint clamps to 1
+  // before the intensity, and an IOR of 1 + Number.EPSILON yields a tiny but
+  // finite base F0.
+  const huge = upload("{ specularColor: [Number.MAX_VALUE, 1, 1] }");
+  f0Is(huge, [1, 0.04, 0.04]);
+  assert.ok(Number.isFinite(huge.f90));
+  const epsIor = upload("{ ior: 1 + Number.EPSILON }");
+  const epsF0 = Math.pow(Number.EPSILON / (2 + Number.EPSILON), 2);
+  f0Is(epsIor, [epsF0, epsF0, epsF0]);
+  assert.strictEqual(epsIor.f90, 1);
+
+  // Number.MAX_VALUE IOR: (MAX-1)/(MAX+1) collapses to exactly 1 in float64
+  // (MAX-1 === MAX and MAX+1 === MAX), so the base F0 is 1 in every channel.
+  const maxIor = upload("{ ior: Number.MAX_VALUE }");
+  f0Is(maxIor, [1, 1, 1]);
+  assert.strictEqual(maxIor.f90, 1);
+
+  // Combined extreme: a 1+eps base F0 with a float64-huge tint. The clamp
+  // runs in float64 BEFORE any f32 packing, so red clamps to exactly 1 and
+  // the untouched channels stay at the tiny finite base F0 instead of
+  // underflowing.
+  const combined = upload("{ ior: 1 + Number.EPSILON, specularColor: [Number.MAX_VALUE, 1, 1] }");
+  f0Is(combined, [1, epsF0, epsF0]);
+  assert.strictEqual(combined.f90, 1);
+
+  // Neighbouring scalars still ride the same upload call.
+  const untouched = upload("{ ior: 2.42, specularColor: [1, 1, 1] }");
+  assert.strictEqual(untouched.f90, 1);
+});
+
+test("WebGL specular-intensity map is neutral when missing, pending or failed", () => {
+  const { context } = setupWebGLRenderer();
+  const upload = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, " + literal + ", null);" +
+    "return { gl, uniforms }; })()");
+
+  // Missing: no flag, no sampler unit, no bind, fast path stays ready.
+  let result = upload("{}");
+  assert.equal(result.gl.ints.get("hasSpecularIntensityMap"), 0);
+  assert.equal(result.gl.ints.get("specularIntensityMap"), undefined);
+  assert.equal(result.gl.binds.size, 0);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, true);
+
+  // Pending: neutral now, but the material fast-path must be blocked so a
+  // later frame can still observe the settled texture.
+  callIn(context, "setTextureState('pending.png', 'pending')");
+  result = upload("{ specularIntensityMap: 'pending.png' }");
+  assert.equal(result.gl.ints.get("hasSpecularIntensityMap"), 0);
+  assert.equal(result.gl.binds.size, 0);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, false);
+  const pendingRecord = callIn(context, "textureRecords().get('pending.png').record");
+  assert.equal(pendingRecord.loaded, false);
+  assert.equal(pendingRecord.failed, false);
+  assert.strictEqual(pendingRecord.texture,
+    callIn(context, "textureRecords().get('pending.png').texture"));
+
+  // Failed: neutral, and it must not block the ready cache.
+  callIn(context, "setTextureState('failed.png', 'failed')");
+  result = upload("{ specularIntensityMap: 'failed.png' }");
+  assert.equal(result.gl.ints.get("hasSpecularIntensityMap"), 0);
+  assert.equal(result.gl.binds.size, 0);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, true);
+  const failedRecord = callIn(context, "textureRecords().get('failed.png').record");
+  assert.equal(failedRecord.loaded, false);
+  assert.equal(failedRecord.failed, true);
+});
+
+test("WebGL specular-intensity map binds its reserved material unit with the exact texture", () => {
+  const { context } = setupWebGLRenderer();
+  const specUnit = callIn(context, "SCENE_TEXTURE_UNIT_MATERIALS.specularIntensity");
+  assert.equal(specUnit, 6);
+  callIn(context, "setTextureState('spec.png', 'loaded')");
+  const result = callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, { specularIntensityMap: 'spec.png' }, null);" +
+    "return gl; })()");
+  assert.equal(result.ints.get("hasSpecularIntensityMap"), 1);
+  assert.equal(result.ints.get("specularIntensityMap"), specUnit);
+  const bind = result.binds.get(specUnit);
+  assert.ok(bind, "specular intensity texture bound on its own unit");
+  assert.equal(bind.target, result.TEXTURE_2D);
+  assert.equal(bind.texture.gosxTestName, "spec.png");
+  assert.strictEqual(bind.texture,
+    callIn(context, "textureRecords().get('spec.png').texture"));
+  // Loaded through the production role-aware path as linear data.
+  const load = callIn(context, "textureLoads()[textureLoads().length - 1]");
+  assert.equal(load.url, "spec.png");
+  assert.equal(load.role, "specular-intensity");
+  assert.equal(load.colorSpace, "linear");
+});
+
+test("WebGL specular-intensity descriptor wins over the legacy map path", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context, "var specDescriptor = { uri: 'descriptor.png' };");
+  callIn(context, "setTextureState('descriptor.png', 'loaded')");
+  let gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularIntensityMap: 'legacy.png', textureDescriptors: { specularIntensity: specDescriptor } }, null);" +
+    "return g; })()");
+  const descriptorLoad = callIn(context, "textureLoads()[textureLoads().length - 1]");
+  assert.equal(descriptorLoad.url, "descriptor.png");
+  assert.strictEqual(descriptorLoad.descriptor, callIn(context, "specDescriptor"));
+  assert.equal(descriptorLoad.role, "specular-intensity");
+  assert.equal(descriptorLoad.colorSpace, "linear");
+  const descriptorTexture = callIn(context, "textureRecords().get('descriptor.png').texture");
+  assert.strictEqual(gl.binds.get(6).texture, descriptorTexture);
+
+  callIn(context, "setTextureState('legacy.png', 'loaded')");
+  gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularIntensityMap: 'legacy.png' }, null); return g; })()");
+  const legacyLoad = callIn(context, "textureLoads()[textureLoads().length - 1]");
+  assert.equal(legacyLoad.role, "specular-intensity");
+  assert.equal(legacyLoad.colorSpace, "linear");
+  const legacyTexture = callIn(context, "textureRecords().get('legacy.png').texture");
+  assert.strictEqual(gl.binds.get(6).texture, legacyTexture);
+  assert.equal(gl.ints.get("specularIntensityMap"), 6);
+});
+
+test("WebGL pending specular-intensity map blocks the fast path and a late load takes effect", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context,
+    "var persistMaterial = { specularIntensityMap: 'late.png' }; var persistUniforms = uniformSlots();");
+  const uploadPersisted = () => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, persistUniforms, persistMaterial, null);" +
+    "return gl; })()");
+
+  callIn(context, "setTextureState('late.png', 'pending')");
+  let gl = uploadPersisted();
+  assert.equal(callIn(context, "persistUniforms._lastMaterialTexturesReady"), false);
+  assert.equal(gl.ints.get("hasSpecularIntensityMap"), 0);
+  assert.equal(gl.binds.size, 0);
+
+  // Repeating the same material still re-issues the readiness work while
+  // the texture is pending.
+  uploadPersisted();
+  assert.equal(callIn(context, "persistUniforms._lastMaterialTexturesReady"), false);
+
+  callIn(context, "setTextureState('late.png', 'loaded')");
+  gl = uploadPersisted();
+  assert.equal(callIn(context, "persistUniforms._lastMaterialTexturesReady"), true);
+  assert.equal(gl.ints.get("hasSpecularIntensityMap"), 1);
+  assert.equal(gl.ints.get("specularIntensityMap"), 6);
+  assert.strictEqual(gl.binds.get(6).texture,
+    callIn(context, "textureRecords().get('late.png').texture"));
+
+  // Same-material ready caching: the next upload of the identical reference
+  // short-circuits and issues no uniform or bind work.
+  gl = uploadPersisted();
+  assert.equal(callIn(context, "persistUniforms._lastMaterialTexturesReady"), true);
+  assert.equal(gl.ints.size, 0);
+  assert.equal(gl.binds.size, 0);
+});
+
+test("WebGL uploadMaterial normalizes alphaCutoff through the shared normalizer", () => {
+  const { context } = setupWebGLRenderer();
+  const cutoffOf = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, uniformSlots(), { alphaCutoff: " + literal + " }, null);" +
+    "return gl.floats.get('alphaCutoff'); })()");
+  // Disabled: missing, null, false, negative, non-finite, non-numeric text.
+  assert.equal(cutoffOf("undefined"), -1);
+  assert.equal(cutoffOf("null"), -1);
+  assert.equal(cutoffOf("false"), -1);
+  assert.equal(cutoffOf("-0.5"), -1);
+  assert.equal(cutoffOf("NaN"), -1);
+  assert.equal(cutoffOf("Infinity"), -1);
+  assert.equal(cutoffOf("'var(--cut)'"), -1);
+  assert.equal(cutoffOf("'nope'"), -1);
+  // Enabled: numeric strings and numbers pack exactly via fround.
+  assert.ok(close6(cutoffOf("'.5'"), 0.5));
+  assert.ok(close6(cutoffOf("0.5"), 0.5));
+  assert.equal(cutoffOf("0"), 0);
+  assert.equal(cutoffOf("1"), 1);
+  // Above 1 packs the float32-exact sentinel 2.
+  assert.equal(cutoffOf("1.5"), 2);
+  assert.equal(cutoffOf("Number.MAX_VALUE"), 2);
+});
+
+test("WebGL alphaCutoff resets to disabled on the same uniforms after a masked material", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context, "var seqUniforms = uniformSlots();");
+  const cutoffOf = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, seqUniforms, " + literal + ", null);" +
+    "return gl.floats.get('alphaCutoff'); })()");
+  assert.ok(close6(cutoffOf("{ alphaCutoff: 0.5 }"), 0.5));
+  // Different material identities on the same uniform slots: the disabled
+  // sentinel must come back, not the previous material's cutoff.
+  assert.equal(cutoffOf("{}"), -1);
+  assert.equal(cutoffOf("{ alphaCutoff: null }"), -1);
+  assert.ok(close6(cutoffOf("{ alphaCutoff: '0.25' }"), 0.25));
+});
+
+test("WebGL pending albedo texture keeps alphaCutoff and updates hasAlbedoMap on load", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context,
+    "var maskMaterial = { alphaCutoff: 0.25, texture: 'late-albedo.png' };" +
+    "var maskUniforms = uniformSlots();");
+  const uploadMasked = () => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, maskUniforms, maskMaterial, null); return gl; })()");
+
+  callIn(context, "setTextureState('late-albedo.png', 'pending')");
+  let gl = uploadMasked();
+  assert.ok(close6(gl.floats.get("alphaCutoff"), 0.25));
+  assert.equal(gl.ints.get("hasAlbedoMap"), 0);
+
+  callIn(context, "setTextureState('late-albedo.png', 'loaded')");
+  gl = uploadMasked();
+  // Same material identity, so the cutoff must survive the texture load and
+  // the albedo map must flip on without losing the masked state.
+  assert.ok(close6(gl.floats.get("alphaCutoff"), 0.25));
+  assert.equal(gl.ints.get("hasAlbedoMap"), 1);
+  assert.equal(gl.ints.get("albedoMap"), 0);
+  assert.strictEqual(gl.binds.get(0).texture,
+    callIn(context, "textureRecords().get('late-albedo.png').texture"));
+});
+
+test("WebGL alpha-mask shader wiring: coverage discard precedes unlit, alpha forced only at output", () => {
+  const source = readSceneRendererBackendSrc("webgl");
+  assert.match(source, /alphaCutoff: gl\.getUniformLocation\(program, "u_alphaCutoff"\),/);
+  assert.match(source, /gl\.uniform1f\(uniforms\.alphaCutoff, cutoffValue\);/);
+  const coverageAt = source.indexOf('"    if (masked && coverage < u_alphaCutoff) {",');
+  const discardAt = source.indexOf('"        discard;",');
+  const unlitAt = source.indexOf('"    if (u_unlit) {",');
+  assert.ok(coverageAt >= 0 && discardAt > coverageAt, "coverage discard block present");
+  assert.ok(unlitAt > discardAt, "coverage discard runs before the unlit branch");
+  // Both branches force masked output alpha to 1, and neither clobbers the
+  // authored opacity handed to gosxApplyCustomFragment.
+  const forcedAlpha = "masked ? 1.0 : opacity * v_instanceColor.a";
+  assert.equal(source.split(forcedAlpha).length - 1, 2, "both shader branches force masked alpha at output");
+  assert.doesNotMatch(source, /"        if \(masked\) \{",\s*\n\s*"            opacity = 1\.0;",/);
+  assert.doesNotMatch(source, /"    if \(masked\) \{",\s*\n\s*"        opacity = 1\.0;",/);
+  assert.match(source,
+    /"    float opacity = u_opacity;",\s*\n\s*"    gosxApplyCustomFragment\(color, opacity, N, v_worldPosition, v_uv\);",/);
+});
+
+test("sceneNormalizeMaterialAlphaCutoff bridges from the base chunk into the WebGL chunk", () => {
+  // Chunk 1: the base scene3d bundle. 13-scene-material.ts defines the
+  // production normalizer; the real 16d fragment must publish it.
+  const baseContext = createSceneCoreContext();
+  runFragment(baseContext, "window.__gosx_scene3d_api = {};", "init-api.js");
+  runFragment(baseContext, readBootstrapSource("16d-scene-webgl-bridge.ts"), "16d-scene-webgl-bridge.ts");
+  const bridgeApi = callIn(baseContext, "window.__gosx_scene3d_api");
+  assert.strictEqual(bridgeApi.sceneNormalizeMaterialAlphaCutoff,
+    callIn(baseContext, "sceneNormalizeMaterialAlphaCutoff"));
+  assert.equal(callIn(baseContext,
+    "window.__gosx_scene3d_api.sceneNormalizeMaterialAlphaCutoff(0, null)"), 0);
+  assert.ok(close6(callIn(baseContext,
+    "window.__gosx_scene3d_api.sceneNormalizeMaterialAlphaCutoff('.5', null)"), 0.5));
+
+  // Chunk 2: a different VM holding only the bridged API. The real lazy
+  // prefix is an open IIFE; close it here and probe the lexical alias.
+  const webglContext = vm.createContext({
+    console,
+    window: { __gosx_scene3d_api: bridgeApi },
+  });
+  runFragment(webglContext, [
+    readBootstrapSource("26j-feature-scene3d-webgl-prefix.ts"),
+    "globalThis.__alphaCutoffProbe = {",
+    "  fn: sceneNormalizeMaterialAlphaCutoff,",
+    "  zero: sceneNormalizeMaterialAlphaCutoff(0, null),",
+    "  half: sceneNormalizeMaterialAlphaCutoff('.5', null),",
+    "  missing: sceneNormalizeMaterialAlphaCutoff(null, null),",
+    "};",
+    "})();",
+  ].join("\n"), "26j-scene-webgl-prefix-probe.js");
+  const probe = vm.runInContext("globalThis.__alphaCutoffProbe", webglContext);
+  assert.equal(typeof probe.fn, "function", "lazy prefix resolved the bridged normalizer");
+  assert.strictEqual(probe.zero, 0);
+  assert.ok(close6(probe.half, 0.5));
+  assert.strictEqual(probe.missing, null);
+});
+
+test("WebGL texture-unit allocator reserves the specular material slots", () => {
+  const { context } = setupWebGLRenderer();
+  const layout = callIn(context,
+    "sceneAllocateTextureUnits({ shadowCount: 2, ibl: true, maxUnits: 16 })");
+  assert.equal(layout.material.specularIntensity, 6);
+  assert.equal(layout.material.specularColor, 7);
+  assert.deepEqual(Array.from(layout.shadows), [9, 10]);
+  assert.deepEqual({ ...layout.ibl }, { irradiance: 11, radiance: 12, brdfLUT: 13 });
+  // Every returned slot is distinct: no material map collides with another
+  // material map, a shadow cascade or an IBL unit.
+  const materialUnits = Object.values(layout.material);
+  assert.equal(new Set(materialUnits).size, materialUnits.length);
+  assert.equal(new Set([...materialUnits, ...layout.shadows,
+    layout.ibl.irradiance, layout.ibl.radiance, layout.ibl.brdfLUT]).size,
+    materialUnits.length + layout.shadows.length + 3);
+});
+
+test("WebGL guarded max-texture-unit query falls back conservatively", () => {
+  const { context } = setupWebGLRenderer();
+  assert.equal(callIn(context, "scenePBRMaxTextureUnits(glWithUnits(32))"), 32);
+  assert.equal(callIn(context, "scenePBRMaxTextureUnits(glWithUnits(16))"), 16);
+  assert.equal(callIn(context, "scenePBRMaxTextureUnits({})"), 16);
+  assert.equal(callIn(context, "scenePBRMaxTextureUnits(null)"), 16);
+  assert.equal(callIn(context,
+    "scenePBRMaxTextureUnits({ MAX_TEXTURE_IMAGE_UNITS: 34930, getParameter() { throw new Error('lost'); } })"), 16);
+});
+
+test("WebGL frame layout fits both shadow arrays and IBL at 16 units", () => {
+  const { context } = setupWebGLRenderer();
+  for (const max of [16, 32]) {
+    const layout = callIn(context, `scenePBRTextureLayoutForFrame([], [], { ibl: {} }, ${max})`);
+    assert.deepEqual(Array.from(layout.shadows), [9, 10]);
+    assert.deepEqual({ ...layout.ibl }, { irradiance: 11, radiance: 12, brdfLUT: 13 });
+    assert.equal(layout.warnings.length, 0);
+  }
+});
+
+test("WebGL HDR IBL fits the core sampler minimum", () => {
+  const { context } = setupWebGLRenderer();
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(15))"), false);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16))"), true);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(32))"), true);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(16), true)"), false);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(17), true)"), true);
+  assert.equal(callIn(context, "scenePBRHDRIBLAvailable(glWithUnits(32), true)"), true);
+});
+
+test("WebGL PBR shader consumes the uploaded factors in direct and IBL paths", () => {
+  const source = readSceneRendererBackendSrc("webgl");
+  // The dedicated uniforms are declared, cached and uploaded.
+  assert.match(source, /uniform vec3 u_specularF0;/);
+  assert.match(source, /uniform float u_specularF90;/);
+  assert.match(source, /specularF0: gl\.getUniformLocation\(program, "u_specularF0"\),/);
+  assert.match(source, /specularF90: gl\.getUniformLocation\(program, "u_specularF90"\),/);
+  assert.match(source, /gl\.uniform3f\(uniforms\.specularF0, specularFactors\.f0\[0\], specularFactors\.f0\[1\], specularFactors\.f0\[2\]\);/);
+  assert.match(source, /gl\.uniform1f\(uniforms\.specularF90, specularFactors\.f90\);/);
+  // Specular-intensity texture: declared, cached, loaded via the role-aware
+  // table entry and sampled on the alpha channel only.
+  assert.match(source, /uniform sampler2D u_specularIntensityMap;/);
+  assert.match(source, /uniform bool u_hasSpecularIntensityMap;/);
+  assert.match(source, /specularIntensityMap: gl\.getUniformLocation\(program, "u_specularIntensityMap"\),/);
+  assert.match(source, /hasSpecularIntensityMap: gl\.getUniformLocation\(program, "u_hasSpecularIntensityMap"\),/);
+  assert.match(source, /descriptor: "specularIntensity", role: "specular-intensity"/);
+  assert.match(source, /unit: SCENE_TEXTURE_UNIT_MATERIALS\.specularIntensity\s*\}/);
+  assert.match(source, /float specTex = texture\(u_specularIntensityMap, v_uv\)\.a;/);
+  assert.match(source, /specF0 \*= specTex;/);
+  assert.match(source, /specF90 \*= specTex;/);
+  assert.doesNotMatch(source, /texture\(u_specularIntensityMap, v_uv\)\.rgb/);
+  // Direct Schlick carries F90: an omitted intensity must scale the lobe.
+  assert.match(source, /vec3 fresnelSchlick\(float cosTheta, vec3 F0, float F90\) \{/);
+  assert.match(source, /return F0 \+ \(vec3\(F90\) - F0\) \* pow/);
+  assert.match(source, /vec3 F = fresnelSchlick\(max\(dot\(H, V\), 0\.0\), F0, F90\);/);
+  // The implicit-F90 Schlick form must not come back anywhere.
+  assert.doesNotMatch(source, /return F0 \+ \(1\.0 - F0\) \* pow/);
+  // Scalar dielectric diffuse, never the inverse RGB tint.
+  assert.match(source, /float kD = \(1\.0 - max\(Fdiel\.x, max\(Fdiel\.y, Fdiel\.z\)\)\) \* \(1\.0 - metalness\);/);
+  assert.doesNotMatch(source, /vec3 kD = \(vec3\(1\.0\) - F\) \* \(1\.0 - metalness\);/);
+  // Split-sum IBL weights brdf.y by the mixed F90.
+  assert.match(source, /vec3\(F90\) \* brdf\.y/);
+  assert.doesNotMatch(source, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
+  // Roughness-adjusted environment Fresnel honours F90.
+  assert.match(source, /vec3 fresnelSchlickRoughness\(float cosTheta, vec3 F0, float F90, float roughness\) \{/);
+  // Fully-metal branch keeps dielectric settings out of a metal.
+  // The source is quoted GLSL, so match the quoted lines.
+  assert.match(source, /"    if \(metalness >= 1\.0\) \{",\s*\n\s*"        F0 = albedo;",\s*\n\s*"        F90 = 1\.0;",/);
+  // The effective-F0 clamp happens before the intensity, never inside it.
+  const helper = sliceBetween(source, "function scenePBRSpecularFactors", "  // Cache the base uniform locations");
+  assert.match(helper, /Math\.min\(iorF0 \* color\[0\], 1\) \* intensity/);
+  assert.doesNotMatch(helper, /Math\.min\(iorF0 \* intensity/);
+  assert.doesNotMatch(helper, /color\[0\] \* intensity, 1\)/);
+  // The alpha multiply sits between the uniform initializers and the
+  // metallic mix.
+  const multiplyAt = source.indexOf('"        specF0 *= specTex;",');
+  const mixAt = source.indexOf('"    vec3 F0 = mix(specF0, albedo, metalness);",');
+  assert.ok(multiplyAt >= 0 && mixAt > multiplyAt, "alpha multiply precedes the metallic mix");
+});
+
+test("WebGL specular-color log coefficients stay finite at the extremes", () => {
+  const { context } = setupWebGLRenderer();
+  const logs = (literal) => callIn(context, "scenePBRSpecularColorLogs(" + literal + ")");
+  const defaultLog = Math.log2(0.04);
+
+  // Omitted colour falls back to white: the log is exactly log2(IOR F0).
+  const def = logs("{}");
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(def[c]), "default log coefficient finite");
+    assert.ok(Math.abs(def[c] - defaultLog) <= 1e-6);
+  }
+
+  // Exact-zero channels (black tint or ior 1) use the finite -1e30 sentinel.
+  const black = logs("{ specularColor: [0, 0, 0] }");
+  for (let c = 0; c < 3; c++) assert.strictEqual(black[c], -1e30);
+  const iorOne = logs("{ ior: 1, specularColor: [3, 3, 3] }");
+  for (let c = 0; c < 3; c++) assert.strictEqual(iorOne[c], -1e30);
+
+  // tinyIOR * hugeColor keeps a huge but finite positive log: no ceiling.
+  const extreme = logs("{ ior: 1 + Number.EPSILON, specularColor: [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE] }");
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(extreme[c]) && extreme[c] > 0, "extreme log stays finite and positive");
+  }
+
+  // Invalid colour arrays (wrong shape, negative, non-finite) fall back to
+  // white and never produce NaN or Infinity.
+  for (const bad of ["[1, 2]", "[-1, 0, 0]", "[Infinity, 1, 1]", '"junk"']) {
+    const invalid = logs("{ specularColor: " + bad + " }");
+    for (let c = 0; c < 3; c++) {
+      assert.ok(Number.isFinite(invalid[c]));
+      assert.ok(Math.abs(invalid[c] - defaultLog) <= 1e-6);
+    }
+  }
+});
+
+test("WebGL uploadMaterial uploads finite float32 specular-color log coefficients", () => {
+  const { context } = setupWebGLRenderer();
+  const upload = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, " + literal + ", null);" +
+    "return gl.floats.get('specularColorLog'); })()");
+  const expect = (literal) => callIn(context, "scenePBRSpecularColorLogs(" + literal + ")");
+  const checkVec3 = (logs, label) => {
+    assert.ok(Array.isArray(logs) && logs.length === 3, label + " uploaded as a vec3");
+    for (let c = 0; c < 3; c++) assert.ok(Number.isFinite(logs[c]), label + " log coefficient finite");
+  };
+  const defaultLog = Math.log2(0.04);
+
+  // Default (omitted colour): exactly log2(IOR F0) on every channel.
+  const def = upload("{}");
+  checkVec3(def, "default");
+  for (let c = 0; c < 3; c++) assert.ok(Math.abs(def[c] - defaultLog) <= 1e-6);
+
+  // Invalid colour arrays fall back to white through the real upload path.
+  for (const bad of ["[1, 2]", "[-1, 0, 0]", "[Infinity, 1, 1]", '"junk"']) {
+    const invalid = upload("{ specularColor: " + bad + " }");
+    checkVec3(invalid, "invalid " + bad);
+    for (let c = 0; c < 3; c++) assert.ok(Math.abs(invalid[c] - defaultLog) <= 1e-6);
+  }
+
+  // The zero sentinel survives the upload as a finite number.
+  const black = upload("{ specularColor: [0, 0, 0] }");
+  checkVec3(black, "black sentinel");
+  for (let c = 0; c < 3; c++) assert.strictEqual(black[c], expect("{ specularColor: [0, 0, 0] }")[c]);
+
+  // tinyIOR * MAX_VALUE colour: used channels get the huge positive log,
+  // the unused (small) channel keeps the tinyIOR log, and everything the
+  // recorder captured is float32-representable where the magnitude allows.
+  const literal = "{ ior: 1 + Number.EPSILON, specularColor: [Number.MAX_VALUE, Number.MAX_VALUE, 1] }";
+  const extreme = upload(literal);
+  const expectedExtreme = expect(literal);
+  checkVec3(extreme, "extreme");
+  for (let c = 0; c < 3; c++) {
+    assert.strictEqual(extreme[c], expectedExtreme[c], "channel " + c + " matches the helper");
+    if (Math.abs(extreme[c]) < 1e29) {
+      assert.strictEqual(extreme[c], Math.fround(extreme[c]), "channel " + c + " float32-representable");
+    }
+  }
+  assert.ok(extreme[0] > 0 && extreme[1] > 0, "MAX_VALUE channels yield a positive log");
+  assert.ok(extreme[2] < 0 && Number.isFinite(extreme[2]), "unused channel retains the finite tinyIOR log");
+});
+
+test("WebGL specular-color map stays neutral when missing, pending or failed", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context, "setTextureState('pending-color.png', 'pending')");
+  callIn(context, "setTextureState('failed-color.png', 'failed')");
+  const upload = (literal) => callIn(context,
+    "(() => { const gl = recordingGL(); const uniforms = uniformSlots();" +
+    "uploadMaterial(gl, uniforms, " + literal + ", null);" +
+    "return { gl, uniforms }; })()");
+
+  // Missing: no flag, no sampler unit, no bind, fast path stays ready.
+  let result = upload("{}");
+  assert.equal(result.gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(result.gl.ints.get("specularColorMap"), undefined);
+  assert.equal(result.gl.binds.size, 0);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, true);
+
+  // Pending: neutral now, fast path blocked so a late load takes effect.
+  result = upload("{ specularColorMap: 'pending-color.png' }");
+  assert.equal(result.gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(result.gl.binds.get(7), undefined);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, false);
+
+  // Failed: neutral, and it must not block the ready cache.
+  result = upload("{ specularColorMap: 'failed-color.png' }");
+  assert.equal(result.gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(result.gl.binds.get(7), undefined);
+  assert.equal(result.uniforms._lastMaterialTexturesReady, true);
+});
+
+test("WebGL specular-color map binds unit 7 as sRGB with descriptor priority", () => {
+  const { context } = setupWebGLRenderer();
+  const colorUnit = callIn(context, "SCENE_TEXTURE_UNIT_MATERIALS.specularColor");
+  assert.equal(colorUnit, 7);
+
+  callIn(context, "setTextureState('color.png', 'loaded')");
+  let gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularColorMap: 'color.png' }, null); return g; })()");
+  assert.equal(gl.ints.get("hasSpecularColorMap"), 1);
+  assert.equal(gl.ints.get("specularColorMap"), colorUnit);
+  const bind = gl.binds.get(colorUnit);
+  assert.ok(bind, "specular colour texture bound on its own unit");
+  assert.equal(bind.target, gl.TEXTURE_2D);
+  assert.strictEqual(bind.texture,
+    callIn(context, "textureRecords().get('color.png').texture"));
+  let load = callIn(context, "textureLoads()[textureLoads().length - 1]");
+  assert.equal(load.url, "color.png");
+  assert.equal(load.role, "specular-color");
+  assert.equal(load.colorSpace, "srgb");
+
+  // The descriptor wins over the legacy prop.
+  callIn(context, "var colorDescriptor = { uri: 'color-descriptor.png' };");
+  callIn(context, "setTextureState('color-descriptor.png', 'loaded')");
+  gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularColorMap: 'color.png', textureDescriptors: { specularColor: colorDescriptor } }, null);" +
+    "return g; })()");
+  load = callIn(context, "textureLoads()[textureLoads().length - 1]");
+  assert.equal(load.url, "color-descriptor.png");
+  assert.strictEqual(load.descriptor, callIn(context, "colorDescriptor"));
+  assert.equal(load.role, "specular-color");
+  assert.equal(load.colorSpace, "srgb");
+  assert.strictEqual(gl.binds.get(colorUnit).texture,
+    callIn(context, "textureRecords().get('color-descriptor.png').texture"));
+});
+
+test("WebGL paired intensity and color maps bind distinct units without collisions", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context, "setTextureState('pair-i.png', 'loaded')");
+  callIn(context, "setTextureState('pair-c.png', 'loaded')");
+  const gl = callIn(context,
+    "(() => { const g = recordingGL(); uploadMaterial(g, uniformSlots()," +
+    " { specularIntensityMap: 'pair-i.png', specularColorMap: 'pair-c.png' }, null); return g; })()");
+  assert.equal(gl.ints.get("specularIntensityMap"), 6);
+  assert.equal(gl.ints.get("specularColorMap"), 7);
+  assert.equal(gl.binds.get(6).texture.gosxTestName, "pair-i.png");
+  assert.equal(gl.binds.get(7).texture.gosxTestName, "pair-c.png");
+  assert.equal(gl.binds.size, 2);
+});
+
+test("WebGL specular-color late load takes effect and the loaded cache short-circuits", () => {
+  const { context } = setupWebGLRenderer();
+  callIn(context,
+    "var colorMaterial = { specularColorMap: 'late-color.png' }; var colorUniforms = uniformSlots();");
+  const uploadPersisted = () => callIn(context,
+    "(() => { const gl = recordingGL(); uploadMaterial(gl, colorUniforms, colorMaterial, null);" +
+    "return gl; })()");
+
+  callIn(context, "setTextureState('late-color.png', 'pending')");
+  let gl = uploadPersisted();
+  assert.equal(callIn(context, "colorUniforms._lastMaterialTexturesReady"), false);
+  assert.equal(gl.ints.get("hasSpecularColorMap"), 0);
+  assert.equal(gl.binds.size, 0);
+
+  callIn(context, "setTextureState('late-color.png', 'loaded')");
+  gl = uploadPersisted();
+  assert.equal(callIn(context, "colorUniforms._lastMaterialTexturesReady"), true);
+  assert.equal(gl.ints.get("hasSpecularColorMap"), 1);
+  assert.equal(gl.ints.get("specularColorMap"), 7);
+  assert.strictEqual(gl.binds.get(7).texture,
+    callIn(context, "textureRecords().get('late-color.png').texture"));
+
+  // Same-material ready caching: the identical reference short-circuits.
+  gl = uploadPersisted();
+  assert.equal(gl.ints.size, 0);
+  assert.equal(gl.binds.size, 0);
+});
+
+test("WebGL PBR shader samples the specular-color map RGB-only before the metallic mix", () => {
+  const source = readSceneRendererBackendSrc("webgl");
+  assert.match(source, /uniform sampler2D u_specularColorMap;/);
+  assert.match(source, /uniform bool u_hasSpecularColorMap;/);
+  assert.match(source, /uniform vec3 u_specularColorLog;/);
+  assert.match(source, /specularColorMap: gl\.getUniformLocation\(program, "u_specularColorMap"\),/);
+  assert.match(source, /hasSpecularColorMap: gl\.getUniformLocation\(program, "u_hasSpecularColorMap"\),/);
+  assert.match(source, /specularColorLog: gl\.getUniformLocation\(program, "u_specularColorLog"\),/);
+  assert.match(source, /descriptor: "specularColor", role: "specular-color"/);
+  assert.match(source, /unit: SCENE_TEXTURE_UNIT_MATERIALS\.specularColor\s*\}/);
+  assert.match(source,
+    /gl\.uniform3f\(uniforms\.specularColorLog, specularColorLogs\[0\], specularColorLogs\[1\], specularColorLogs\[2\]\);/);
+  // Linear RGB only; alpha is never read.
+  const colorSample = source.match(/texture\(u_specularColorMap, v_uv\)[^;]*;/);
+  assert.ok(colorSample && /\.rgb\s*;/.test(colorSample[0]) && !/\.a\s*;/.test(colorSample[0]),
+    "specular-color sample reads RGB only");
+  // Per-channel reconstruction with the finite sentinel guard and the
+  // clamp-to-0-before-exp2 product scaled by the combined F90.
+  assert.match(source, /texColor\.r > 0\.0 && u_specularColorLog\.r > -1e29/);
+  assert.match(source,
+    /exp2\(min\(u_specularColorLog\.r \+ log2\(texColor\.r\), 0\.0\)\) \* specF90/);
+  // The colour-textured F0 lands in specF0 BEFORE the metallic mix, and the
+  // block never reassigns specF90.
+  const colorPos = source.indexOf('"    if (u_hasSpecularColorMap) {",');
+  const assignPos = source.indexOf('"        specF0 = texF0;",', colorPos);
+  const mixPos = source.indexOf('"    vec3 F0 = mix(specF0, albedo, metalness);",');
+  assert.ok(colorPos >= 0 && assignPos > colorPos && assignPos < mixPos,
+    "colour-textured specF0 is assigned before the metallic mix");
+  assert.doesNotMatch(source.slice(colorPos, mixPos), /specF90\s*=/);
+  // The fully-metal branch after the mix is untouched by the colour texture.
+  assert.match(source, /"    if \(metalness >= 1\.0\) \{",\s*\n\s*"        F0 = albedo;",\s*\n\s*"        F90 = 1\.0;",/);
+});
+
+// --- WebGPU ------------------------------------------------------------------
+
+function setupWebGPURenderer() {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
+  const context = createSceneCoreContext();
+  runFragment(context, [
+    bufferDecls,
+    sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
+  ].join("\n"), "webgpu-specular-extract.js");
+  return { source, context };
+}
+
+test("sceneNormalizeMaterialAlphaCutoff bridges from the base chunk into the WebGPU chunk", () => {
+  // Chunk 1: the base scene3d bundle publishing the normalizer via 16d.
+  const baseContext = createSceneCoreContext();
+  runFragment(baseContext, "window.__gosx_scene3d_api = {};", "init-api.js");
+  runFragment(baseContext, readBootstrapSource("16d-scene-webgl-bridge.ts"), "16d-scene-webgl-bridge.ts");
+  const bridgeApi = callIn(baseContext, "window.__gosx_scene3d_api");
+  assert.strictEqual(bridgeApi.sceneNormalizeMaterialAlphaCutoff,
+    callIn(baseContext, "sceneNormalizeMaterialAlphaCutoff"));
+  assert.equal(callIn(baseContext,
+    "window.__gosx_scene3d_api.sceneNormalizeMaterialAlphaCutoff(0, null)"), 0);
+
+  // Chunk 2: a different VM holding only the bridged API. The real lazy 26e
+  // WebGPU prefix is an open IIFE; close it here and probe the lexical
+  // alias materialUniformData resolves in the concatenated runtime.
+  const webgpuContext = vm.createContext({
+    console,
+    window: { __gosx_scene3d_api: bridgeApi },
+    navigator: { gpu: undefined },
+  });
+  runFragment(webgpuContext, [
+    readBootstrapSource("26e-feature-scene3d-webgpu-prefix.ts"),
+    "globalThis.__alphaCutoffProbe = {",
+    "  fn: sceneNormalizeMaterialAlphaCutoff,",
+    "  zero: sceneNormalizeMaterialAlphaCutoff(0, null),",
+    "  half: sceneNormalizeMaterialAlphaCutoff('.5', null),",
+    "  missing: sceneNormalizeMaterialAlphaCutoff(null, null),",
+    "};",
+    "})();",
+  ].join("\n"), "26e-scene-webgpu-prefix-probe.js");
+  const probe = vm.runInContext("globalThis.__alphaCutoffProbe", webgpuContext);
+  assert.equal(typeof probe.fn, "function", "lazy WebGPU prefix resolved the bridged normalizer");
+  assert.strictEqual(probe.zero, 0);
+  assert.ok(close6(probe.half, 0.5));
+  assert.strictEqual(probe.missing, null);
+});
+
+test("WebGPU materialUniformData normalizes alphaCutoff into slot 42", () => {
+  const { context } = setupWebGPURenderer();
+  const pack = (literal) => callIn(context,
+    "materialUniformData(" + literal + ", false, null, null)");
+  const cutoff = (literal) => pack("{ alphaCutoff: " + literal + " }").data[42];
+  for (const bad of ["undefined", "null", "-0.25", "NaN", "Infinity", "false",
+    "'oops'", "'var(--accent)'"]) {
+    assert.strictEqual(cutoff(bad), -1, "alphaCutoff " + bad + " normalizes to -1");
+  }
+  assert.strictEqual(cutoff("0"), 0);
+  assert.ok(close6(cutoff("'0.25'"), 0.25));
+  assert.ok(close6(cutoff("'.5'"), 0.5));
+  assert.strictEqual(cutoff("1"), 1);
+  // Above 1 clamps to the finite sentinel 2, matching the WebGL renderer.
+  assert.strictEqual(cutoff("Number.MAX_VALUE"), 2);
+});
+
+test("WebGPU material scratch buffer resets and neighbor slots stay put", () => {
+  const { context } = setupWebGPURenderer();
+  const pack = (literal) => callIn(context,
+    "materialUniformData(" + literal + ", false, null, null)");
+  const dirty = pack("{ alphaCutoff: 0.5, specularIntensity: 0.75 }");
+  assert.ok(close6(dirty.data[42], 0.5));
+  const clean = pack("{}");
+  assert.strictEqual(clean.data[42], -1, "stale cutoff must not survive a repack");
+  assert.strictEqual(clean.data[41], 0);
+  assert.strictEqual(clean.data[43], 1);
+  assert.strictEqual(clean.data.length, 72);
+  for (let c = 0; c < 3; c++) assert.ok(close6(clean.data[44 + c], 0.04));
+  assert.strictEqual(clean.data[47], 1);
+  assert.strictEqual(clean.u[51], 0);
+  // Trailing glTF material-parity slots (52..63) reset to their neutral
+  // defaults on every repack, same as every other scratch-buffer field.
+  assert.strictEqual(clean.data[52], 1, "normalScale resets to 1");
+  assert.strictEqual(clean.data[53], 1, "occlusionStrength resets to 1");
+  assert.strictEqual(clean.u[54], 0, "hasEmissiveColor resets to unset");
+  assert.strictEqual(clean.data[59], 0, "rimStrength resets to off");
+  const edge = pack("{ alphaCutoff: 1 }");
+  assert.strictEqual(edge.data[41], 0);
+  assert.strictEqual(edge.data[43], 1);
+  for (let c = 0; c < 3; c++) assert.ok(close6(edge.data[44 + c], 0.04));
+  const expectedLog = Math.log2(0.04);
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(edge.data[48 + c]));
+    assert.ok(Math.abs(edge.data[48 + c] - expectedLog) <= 1e-6);
+  }
+  assert.strictEqual(edge.data.buffer.byteLength, 288);
+});
+
+test("WebGPU fragment shaders pin coverage discard and corrected alpha selects", () => {
+  const { source } = setupWebGPURenderer();
+  assert.match(source, /texAlpha = texAlbedo\.a;/);
+  assert.ok((source.match(/coverage < cutoff/g) || []).length >= 3,
+    "strictly-less discard in unlit, main, and water paths");
+  assert.doesNotMatch(source, /coverage <= cutoff/);
+  assert.strictEqual(
+    (source.match(/select\(blendOpacity, 1\.0, alphaEnabled\)/g) || []).length, 3,
+    "unlit, main and water cutout survivors emit full opacity");
+  assert.match(source, /select\(blendOpacity, 1\.0, alphaEnabled\)/);
+  assert.doesNotMatch(source, /select\(\w+, coverage, alphaEnabled\)/);
+  assert.match(source, /select\(finalOpacity, coverage, cutoff < -1\.5\)/);
+  assert.match(source, /select\(unmaskedOpacity, coverage, cutoff < -1\.5\)/);
+});
+
+test("WebGPU instanceColor varyings are flat (primitive-constant, no interpolation drift)", () => {
+  // Every producer writes a primitive constant (ordinary vec4f(1), cull
+  // vec4f(1), instanced per-instance constants), and every consumer (PBR,
+  // water) reads it back. Perspective-correct interpolation of a constant 1
+  // can round just below 1 and discard a fragment at cutoff equality.
+  // @interpolate(flat) keeps the primitive-constant alpha exact.
+  const { source } = setupWebGPURenderer();
+  assert.strictEqual(
+    (source.match(/@location\(5\) @interpolate\(flat\) instanceColor: vec4f,/g) || []).length,
+    4,
+    "ordinary/instanced vertex outputs + PBR/water fragment inputs all flat");
+  assert.match(source,
+    /WGSL_PBR_INSTANCED_CULL_VERTEX = WGSL_PBR_INSTANCED_VERTEX[\s\S]*\.replace\("instanceColor: vec4f,", "pickData: vec4u,"\)/,
+    "the cull vertex variant derives from the already-flat instanced source");
+  assert.strictEqual(
+    (source.match(/@location\(5\) instanceColor: vec4f,/g) || []).length, 0,
+    "no smooth instanceColor declaration remains on either side");
+  // Genuinely per-vertex varyings keep smooth (default) interpolation.
+  assert.doesNotMatch(source,
+    /@interpolate\(flat\)[^\n]*(uv|normal|worldPos|tangent|bitangent)/,
+    "uv/normal/worldPos/tangent/bitangent must stay perspective-correct");
+});
+
+test("WebGPU materialUniformData packs finite effective specular factors", () => {
+  const { source, context } = setupWebGPURenderer();
+  // The material buffer grew for the aligned vec3f plus the F90 scalar; the
+  // earlier 176-byte layout must be gone.
+  assert.match(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(288\);/);
+  assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(192\);/);
+  assert.doesNotMatch(source, /var\s+_materialUniformBuf\s*=\s*new ArrayBuffer\(176\);/);
+
+  const pack = (literal) => callIn(context,
+    "materialUniformData(" + literal + ", false, null, null)");
+
+  const def = pack("{}");
+  assert.strictEqual(def.data.length, 72);
+  for (let c = 0; c < 3; c++) assert.ok(close6(def.data[44 + c], 0.04));
+  assert.strictEqual(def.data[47], 1);
+  // Finite pre-clamp log coefficients at 48..50, neutral loaded-color flag at 51.
+  const defaultLog = Math.log2(0.04);
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(def.data[48 + c]), "log coefficient finite");
+    assert.ok(Math.abs(def.data[48 + c] - defaultLog) <= 1e-6);
+  }
+  assert.strictEqual(def.u[51], 0);
+  // Legacy slots keep their offsets: dielectric F0 at 40, the specular
+  // flag word at 41, the normalized alpha cutoff at 42 (-1 when unset),
+  // and padding at 43.
+  assert.ok(close6(def.data[40], expectedDielectricF0(1.5)));
+  assert.strictEqual(def.data[41], 0);
+  assert.strictEqual(def.data[42], -1);
+  assert.strictEqual(def.data[43], 1);
+
+  // Explicit 0 intensity is valid and zeroes the lobe; black tints too.
+  const zero = pack("{ specularIntensity: 0 }");
+  for (let c = 0; c < 3; c++) assert.strictEqual(zero.data[44 + c], 0);
+  assert.strictEqual(zero.data[47], 0);
+  const black = pack("{ specularColor: [0, 0, 0] }");
+  for (let c = 0; c < 3; c++) assert.strictEqual(black.data[44 + c], 0);
+  assert.strictEqual(black.data[47], 1);
+  // Exact-zero channels use the finite -1e30 sentinel.
+  // The sentinel is stored through the f32 buffer view, so it compares as
+  // the packed Math.fround(-1e30) value, not the float64 -1e30.
+  for (let c = 0; c < 3; c++) assert.strictEqual(black.data[48 + c], Math.fround(-1e30));
+
+  // Clamp BEFORE intensity: min(0.04 * 100, 1) * 0.5 = 0.5 in red; the wrong
+  // order would pack 1 in red.
+  const clampOrder = pack("{ specularColor: [100, 1, 1], specularIntensity: 0.5 }");
+  assert.ok(close6(clampOrder.data[44], 0.5));
+  assert.ok(close6(clampOrder.data[45], 0.02));
+  assert.ok(close6(clampOrder.data[46], 0.02));
+  assert.strictEqual(clampOrder.data[47], 0.5);
+
+  // IOR interaction: ior 0 maps the base F0 to 1; ior 1 maps it to 0.
+  const iorZero = pack("{ ior: 0, specularColor: [0.5, 0.5, 0.5] }");
+  for (let c = 0; c < 3; c++) assert.ok(close6(iorZero.data[44 + c], 0.5));
+  const iorOne = pack("{ ior: 1, specularColor: [3, 3, 3] }");
+  for (let c = 0; c < 3; c++) assert.strictEqual(iorOne.data[44 + c], 0);
+  for (let c = 0; c < 3; c++) assert.strictEqual(iorOne.data[48 + c], Math.fround(-1e30));
+
+  // Invalid inputs fall back to intensity 1 and white, never NaN/Infinity.
+  const invalid = pack("{ specularIntensity: NaN, specularColor: [-1, 0, 0] }");
+  for (let c = 0; c < 3; c++) assert.ok(close6(invalid.data[44 + c], 0.04));
+  assert.strictEqual(invalid.data[47], 1);
+  const badShape = pack("{ specularColor: [1, 2] }");
+  for (let c = 0; c < 3; c++) assert.ok(close6(badShape.data[44 + c], 0.04));
+
+  // Bounded finite uploads at the extremes.
+  const huge = pack("{ specularColor: [Number.MAX_VALUE, 1, 1] }");
+  for (let c = 0; c < 3; c++) assert.ok(Number.isFinite(huge.data[44 + c]));
+  assert.ok(close6(huge.data[44], 1));
+  assert.ok(close6(huge.data[45], 0.04));
+  assert.ok(Number.isFinite(huge.data[48]) && huge.data[48] > 0, "huge tint keeps a finite positive log");
+  const epsIor = pack("{ ior: 1 + Number.EPSILON }");
+  const epsF0 = Math.pow(Number.EPSILON / (2 + Number.EPSILON), 2);
+  for (let c = 0; c < 3; c++) {
+    assert.ok(Number.isFinite(epsIor.data[44 + c]));
+    assert.ok(close6(epsIor.data[44 + c], epsF0));
+  }
+  assert.strictEqual(epsIor.data[47], 1);
+
+  // Number.MAX_VALUE IOR packs an F0 of exactly 1 in every channel.
+  const maxIor = pack("{ ior: Number.MAX_VALUE }");
+  for (let c = 0; c < 3; c++) assert.ok(close6(maxIor.data[44 + c], 1));
+  assert.strictEqual(maxIor.data[47], 1);
+
+  // Combined extreme: the float64 clamp lands red on exactly 1 and never
+  // underflows the tiny eps base F0 on the untouched channels.
+  const combined = pack("{ ior: 1 + Number.EPSILON, specularColor: [Number.MAX_VALUE, 1, 1] }");
+  assert.ok(close6(combined.data[44], 1));
+  assert.ok(close6(combined.data[45], epsF0));
+  assert.ok(close6(combined.data[46], epsF0));
+  assert.strictEqual(combined.data[47], 1);
+  // IOR 1+EPS with MAX_VALUE colour: the log sum is huge but finite; no 1e32
+  // ceiling is applied (a ceiling would corrupt the reconstruction below).
+  assert.ok(Number.isFinite(combined.data[48]) && combined.data[48] > 0);
+});
+
+test("WebGPU WGSL consumes the uploaded factors in direct and IBL paths", () => {
+  const source = readSceneRendererBackendSrc("webgpu");
+  assert.match(source, /"    specularF0: vec3f,",/);
+  assert.match(source, /"    specularF90: f32,",/);
+  // Production uses a mutable var because the color-texture slice updates
+  // specF0 before the metallic mix; the guards below cover the diffuse and
+  // environment consumers and the before-mix assignment.
+  assert.match(source, /var specF0 = material\.specularF0( \* specIntensity)?;/);
+  assert.match(source, /var F0 = mix\(specF0, albedo, metalness\);/);
+  assert.match(source, /var F90 = mix\(specF90, 1\.0, metalness\);/);
+  // Direct Schlick carries F90: an omitted intensity must scale the lobe.
+  assert.match(source, /fn fresnelSchlick\(cosTheta: f32, F0: vec3f, F90: f32\) -> vec3f \{/);
+  assert.match(source, /return F0 \+ \(vec3f\(F90\) - F0\) \* pow/);
+  assert.match(source, /let F = fresnelSchlick\(max\(dot\(H, V\), 0\.0\), F0, F90\);/);
+  // The implicit-F90 Schlick form must not come back anywhere.
+  assert.doesNotMatch(source, /return F0 \+ \(1\.0 - F0\) \* pow/);
+  // Scalar dielectric diffuse, never the inverse RGB tint.
+  assert.match(source, /let kD = \(1\.0 - max\(Fdiel\.x, max\(Fdiel\.y, Fdiel\.z\)\)\) \* \(1\.0 - metalness\);/);
+  assert.doesNotMatch(source, /let kD = \(vec3f\(1\.0\) - F\) \* \(1\.0 - metalness\);/);
+  // Split-sum IBL weights brdf.y by the mixed F90.
+  assert.match(source, /vec3f\(F90\) \* brdf\.y/);
+  assert.doesNotMatch(source, /prefiltered \* \(F0 \* brdf\.x \+ brdf\.y\)/);
+  // Roughness-adjusted environment Fresnel honours F90.
+  assert.match(source, /fn fresnelSchlickRoughness\(cosTheta: f32, F0: vec3f, F90: f32, roughness: f32\) -> vec3f \{/);
+  // The rect-area approximate specular path takes the mixed factors too.
+  assert.match(source, /fn rectAreaLightRadiance\(light: Light, P: vec3f, N: vec3f, V: vec3f, albedo: vec3f, roughness: f32, metalness: f32, F0: vec3f, F90: f32, NoV: f32\)/);
+  assert.match(source, /rectAreaLightRadiance\(light, in\.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV\)/);
+  // Fully-metal branch keeps dielectric settings out of a metal.
+  assert.match(source, /"    if \(metalness >= 1\.0\) \{",\s*\n\s*"        F0 = albedo;",\s*\n\s*"        F90 = 1\.0;",/);
+  // Specular-intensity texture slice: group1 bindings 13/14 exist, the flag
+  // reuses the alignment word, and the linear ALPHA channel multiplies BOTH
+  // shared factors BEFORE the metallic mix.
+  assert.match(source, /"@group\(1\) @binding\(13\) var specularIntensityTex: texture_2d<f32>;"/);
+  assert.match(source, /"@group\(1\) @binding\(14\) var specularIntensitySamp: sampler;"/);
+  assert.match(source, /"    hasSpecularIntensityMap: u32,",/);
+  assert.match(source, /var specF0 = material\.specularF0 \* specIntensity;/);
+  assert.match(source, /let specF90 = material\.specularF90 \* specIntensity;/);
+  const specSample = source.match(/specIntensity = textureSample\(specularIntensityTex[^;]*;/);
+  assert.ok(specSample && /\.a\s*;/.test(specSample[0]) && !/\.rgb/.test(specSample[0]),
+    "specular-intensity sample reads the alpha channel only");
+  assert.match(source, /\{ prop: "specularIntensityMap", descriptor: "specularIntensity", role: "specular-intensity", colorSpace: "linear", index: 41 \}/);
+  // Specular-color slice: bindings 15/16, RGB-only sampling, loaded-color
+  // flag at u32 51, exact-white/zero/sentinel guards and the
+  // clamp-to-0-before-exp2 reconstruction scaled by the combined F90.
+  assert.match(source, /"@group\(1\) @binding\(15\) var specularColorTex: texture_2d<f32>;"/);
+  assert.match(source, /"@group\(1\) @binding\(16\) var specularColorSamp: sampler;"/);
+  assert.match(source, /"    hasSpecularColorMap: u32,",/);
+  assert.match(source, /\{ prop: "specularColorMap", descriptor: "specularColor", role: "specular-color", colorSpace: "srgb", index: 51 \}/);
+  const colorSample = source.match(/textureSample\(specularColorTex[^;]*;/);
+  assert.ok(colorSample && /\.rgb\s*;/.test(colorSample[0]) && !/\.a\s*;/.test(colorSample[0]),
+    "specular-color sample reads RGB only");
+  assert.match(source, /texColor\.r == 1\.0/);
+  assert.match(source, /texColor\.r > 0\.0 && material\.specularColorLog\.r > -1e29/);
+  assert.match(source, /exp2\(min\(material\.specularColorLog\.r \+ log2\(texColor\.r\), 0\.0\)\) \* specF90/);
+  const colorMapPos = source.indexOf('if (material.hasSpecularColorMap != 0u) {');
+  const sharedAssignPos = source.indexOf('specF0 = texF0;', colorMapPos);
+  const mixPos = source.indexOf('var F0 = mix(specF0, albedo, metalness);');
+  assert.ok(colorMapPos >= 0 && sharedAssignPos > colorMapPos && sharedAssignPos < mixPos,
+    "shared specF0 is assigned before the F0 mix");
+  assert.doesNotMatch(source.slice(colorMapPos, mixPos), /specF90\s*=/);
+  // The effective-F0 clamp happens before the intensity, never inside it.
+  const helper = sliceBetween(source, "function sceneWebGPUSpecularFactors", "    function materialUniformData");
+  assert.match(helper, /Math\.min\(iorF0 \* color\[0\], 1\) \* intensity/);
+  assert.doesNotMatch(helper, /Math\.min\(iorF0 \* intensity/);
+  assert.doesNotMatch(helper, /color\[0\] \* intensity, 1\)/);
+});
+
+// --- WebGPU recording-boundary material binding ------------------------------
+
+function setupWebGPUMaterialBinding() {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const context = createSceneCoreContext();
+  context.materialFrame = { buffer: null };
+  const bufferDecls = (source.match(/var\s+_materialUniform\w+\s*=\s*[^;\n]+;/g) || []).join("\n");
+  runFragment(context, [
+    bufferDecls,
+    sliceBetween(source, "function wgpuTextureDescriptor", "function wgpuLoadTexture"),
+    sliceBetween(source, "function sceneWebGPUSRGBChannelToLinear", "var WGSL_COMMON_CONSTANTS"),
+    sliceBetween(source, "function sceneWebGPUDielectricF0", "function materialUniformData"),
+    sliceBetween(source, "function materialUniformData", "function wgpuCachedBindGroup"),
+    sliceBetween(source, "function wgpuCachedBindGroup", "function createMaterialBindGroup"),
+    sliceBetween(source, "function createMaterialBindGroup", "    // _frameBindGroupCache memoizes"),
+  ].join("\n"), "webgpu-material-bind-extract.js");
+  return { source, context };
+}
+
+// Stubs only the GPU resource and texture-loader boundaries; the production
+// materialUniformData, createMaterialBindGroup and bind-group cache execute
+// for real against the real 256-byte shared buffer.
+function makeGPUHarness(context, textureStates) {
+  const calls = { loads: [], bindGroups: [], buffers: [], samplers: [] };
+  context.GPUBufferUsage = { UNIFORM: 0x40, COPY_DST: 0x8 };
+  context.placeholderView = { __view: "placeholder" };
+  context.linearSampler = { __sampler: "linear", descriptor: { addressModeU: "clamp-to-edge", addressModeV: "clamp-to-edge" } };
+  context.textureCache = {};
+  context.defaultMaterialOwner = {};
+  context.materialBindGroupLayout = { __layout: "material" };
+  context.wgpuLoadTexture = function (device, url, cache, descriptor, role, colorSpace) {
+    calls.loads.push({ url, role, colorSpace });
+    const state = textureStates[url];
+    if (!state || !state.loaded) {
+      return state ? { loaded: false, pending: !!state.pending, failed: !!state.failed } : null;
+    }
+    if (!state.view) state.view = { __view: url };
+    return { loaded: true, view: state.view };
+  };
+  context.wgpuCachedTrackedBuffer = function (owner, slot) {
+    if (!owner[slot]) {
+      const buffer = { __buffer: slot };
+      owner[slot] = buffer;
+      calls.buffers.push(buffer);
+    }
+    return owner[slot];
+  };
+  context.device = {
+    createSampler: (descriptor) => { calls.samplers.push(descriptor); return { descriptor }; },
+    createBindGroup: (desc) => {
+      calls.bindGroups.push(desc);
+      return { __bg: calls.bindGroups.length };
+    },
+  };
+  // Capture the shared uniform views the production function mutates; a
+  // second materialUniformData call would re-zero the flags.
+  const realPack = context.materialUniformData;
+  context.__lastUniform = null;
+  context.materialUniformData = function (...args) {
+    const packed = realPack(...args);
+    context.__lastUniform = packed;
+    return packed;
+  };
+  return calls;
+}
+
+function lastBoundResource(calls, binding) {
+  const last = calls.bindGroups[calls.bindGroups.length - 1];
+  assert.ok(last, "a bind group was created");
+  const entry = last.entries.find((candidate) => candidate.binding === binding);
+  assert.ok(entry, "binding " + binding + " present in the created bind group");
+  return entry.resource;
+}
+
+test("WebGPU specular-intensity map stays neutral while missing, pending or failed", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const calls = makeGPUHarness(context, {
+    "pending.png": { pending: true },
+    "failed.png": { failed: true },
+  });
+  context.owner = {};
+
+  // No map at all: flag 0, placeholder bound.
+  context.material = {};
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
+
+  // Pending load: pending flag consumed, hasSpecularIntensityMap stays 0 and
+  // the neutral placeholder is bound.
+  context.material = { textureDescriptors: { specularIntensity: { uri: "pending.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
+  assert.strictEqual(calls.loads[calls.loads.length - 1].role, "specular-intensity");
+  assert.strictEqual(calls.loads[calls.loads.length - 1].colorSpace, "linear");
+
+  // Failed load: identical neutral treatment.
+  context.material = { textureDescriptors: { specularIntensity: { uri: "failed.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(lastBoundResource(calls, 13), context.placeholderView);
+});
+
+test("WebGPU specular-intensity loaded map binds the real view and reuses the bind group", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const view = { __view: "spec-intensity" };
+  const calls = makeGPUHarness(context, { "spec.png": { loaded: true, view } });
+  context.material = { textureDescriptors: { specularIntensity: { uri: "spec.png" } } };
+  context.owner = {};
+
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 1);
+  assert.strictEqual(lastBoundResource(calls, 13), view);
+  assert.strictEqual(lastBoundResource(calls, 14), context.linearSampler);
+  const load = calls.loads[calls.loads.length - 1];
+  assert.strictEqual(load.url, "spec.png");
+  assert.strictEqual(load.role, "specular-intensity");
+  assert.strictEqual(load.colorSpace, "linear");
+
+  // Same view again: the bind group is reused, not recreated.
+  const created = calls.bindGroups.length;
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, created);
+  // The created bind group carries exactly the group1 uniform/texture/sampler
+  // pairs, including the new specular-intensity texture and sampler.
+  // entries is a VM-created array; Array.from copies it into a host array so
+  // deepStrictEqual compares primitive numbers rather than foreign prototypes.
+  const bindings = Array.from(calls.bindGroups[0].entries, (entry) => entry.binding);
+  assert.deepStrictEqual(bindings, [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18]);
+});
+
+test("WebGPU specular-intensity late load and new view invalidate the cached bind group", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const state = { loaded: false };
+  const calls = makeGPUHarness(context, { "late.png": state });
+  context.material = { textureDescriptors: { specularIntensity: { uri: "late.png" } } };
+  context.owner = {};
+
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 0);
+  assert.strictEqual(calls.bindGroups.length, 1);
+
+  // Late load: the cache must invalidate and bind the actual view.
+  const lateView = { __view: "late-loaded" };
+  state.loaded = true;
+  state.view = lateView;
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 1);
+  assert.strictEqual(calls.bindGroups.length, 2);
+  assert.strictEqual(lastBoundResource(calls, 13), lateView);
+
+  // Same view: reuse, no new bind group.
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, 2);
+
+  // A different view for the same URL invalidates again.
+  const otherView = { __view: "late-loaded-2" };
+  state.view = otherView;
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, 3);
+  assert.strictEqual(lastBoundResource(calls, 13), otherView);
+});
+
+test("WebGPU material bind group layout declares specular-intensity texture and sampler at 13/14", () => {
+  const source = readSceneRendererBackendSrc("webgpu");
+  const context = createSceneCoreContext();
+  context.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2 };
+  runFragment(context,
+    sliceBetween(source, "function wgpuCreateMaterialBindGroupLayout", "function wgpuCreatePointsBindGroupLayout"),
+    "webgpu-layout-extract.js");
+  context.device = { createBindGroupLayout: (desc) => desc };
+  const desc = callIn(context, "wgpuCreateMaterialBindGroupLayout(device)");
+  assert.strictEqual(desc.entries.length, 19);
+  // The found entry objects were created inside the VM with foreign Object
+  // prototypes; compare JSON roundtrips so only the values matter.
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(
+    desc.entries.find((entry) => entry.binding === 13))),
+    { binding: 13, visibility: 2, texture: { sampleType: "float" } });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(
+    desc.entries.find((entry) => entry.binding === 14))),
+    { binding: 14, visibility: 2, sampler: {} });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(
+    desc.entries.find((entry) => entry.binding === 15))),
+    { binding: 15, visibility: 2, texture: { sampleType: "float" } });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(
+    desc.entries.find((entry) => entry.binding === 16))),
+    { binding: 16, visibility: 2, sampler: {} });
+});
+
+test("WebGPU packed log coefficients reconstruct clamped reflectance numerically", () => {
+  const { context } = setupWebGPURenderer();
+  const pack = (literal) => callIn(context, "materialUniformData(" + literal + ", false, null, null)");
+  const TOL = 1e-6;
+
+  // JS reconstruction of the production WGSL expression
+  // exp2(min(logCoef + log2(texel), 0)) * specF90 for a positive texel.
+  // Math.fround models the f32 shader math; this validates the PACKED f32
+  // coefficients and is NOT real GPU execution (browser tests follow).
+  const reconstruct = (texel, logCoef, f90) => {
+    if (texel === 1) return null; // exact white takes the specF0 branch
+    if (!(texel > 0) || logCoef <= -1e29) return 0;
+    const sum = Math.fround(logCoef + Math.fround(Math.log2(texel)));
+    // JavaScript has no Math.exp2; 2 ** sum is the actual exponentiation
+    // operation matching the WGSL exp2, with the same fround sequence.
+    return Math.fround(Math.fround(2 ** Math.min(sum, 0)) * Math.fround(f90));
+  };
+
+  const def = pack("{}");
+  // Fractional 0.1 texel: unclamped 0.04 * 0.1.
+  const frac = reconstruct(0.1, def.data[48], def.data[47]);
+  assert.ok(Math.abs(frac - 0.04 * 0.1) <= TOL, "0.1 texel reconstructs 0.004, got " + frac);
+  // Exact white retains the old effective F0 (the specF0 branch value).
+  assert.ok(close6(def.data[44], 0.04));
+  // Sentinel reconstructs to exact zero for any positive texel.
+  assert.strictEqual(reconstruct(0.5, -1e30, 1), 0);
+
+  // Intensity 0.5 with a 128/255 linear intensity-map alpha: F90 combines
+  // both before scaling the color-textured F0.
+  const half = pack("{ specularIntensity: 0.5 }");
+  const alpha = 128 / 255;
+  const halfFrac = reconstruct(0.1, half.data[48], Math.fround(half.data[47] * Math.fround(alpha)));
+  assert.ok(Math.abs(halfFrac - 0.04 * 0.1 * (0.5 * alpha)) <= TOL,
+    "intensity-map alpha scales the color-textured F0, got " + halfFrac);
+
+  // Real counterexample: IOR 1+EPS with a Number.MAX_VALUE colour keeps a
+  // huge finite log (the rejected 1e32 ceiling returned 0.1232595 here).
+  const extreme = pack("{ ior: 1 + Number.EPSILON, specularColor: [Number.MAX_VALUE, Number.MAX_VALUE, Number.MAX_VALUE] }");
+  assert.ok(Number.isFinite(extreme.data[48]) && extreme.data[48] > 0);
+  assert.ok(Math.abs(reconstruct(0.1, extreme.data[48], extreme.data[47]) - 1) <= TOL,
+    "0.1 texel with a huge coefficient clamps to 1 before intensity");
+  // Zero texel with the same huge coefficient stays exactly 0, never 1.
+  assert.strictEqual(reconstruct(0, extreme.data[48], extreme.data[47]), 0);
+});
+
+test("WebGPU specular-color map binds at 15/16 with srgb role and flags 41/51 independent", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const iView = { __view: "intensity" };
+  const cView = { __view: "color" };
+  const calls = makeGPUHarness(context, {
+    "i.png": { loaded: true, view: iView },
+    "c.png": { loaded: true, view: cView },
+    "pending-c.png": { pending: true },
+    "failed-c.png": { failed: true },
+  });
+  context.owner = {};
+
+  // Both maps together: independent flags and views.
+  context.material = { textureDescriptors: {
+    specularIntensity: { uri: "i.png" }, specularColor: { uri: "c.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[41], 1);
+  assert.strictEqual(context.__lastUniform.u[51], 1);
+  assert.strictEqual(lastBoundResource(calls, 13), iView);
+  assert.strictEqual(lastBoundResource(calls, 15), cView);
+  assert.strictEqual(lastBoundResource(calls, 16), context.linearSampler);
+  const bothLoads = calls.loads.slice(-2);
+  assert.ok(bothLoads.some((l) => l.role === "specular-intensity" && l.colorSpace === "linear"));
+  assert.ok(bothLoads.some((l) => l.role === "specular-color" && l.colorSpace === "srgb"));
+
+  // Descriptor URI wins over the legacy prop.
+  context.material = { specularColorMap: "legacy.png",
+    textureDescriptors: { specularColor: { uri: "c.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  const lastLoad = calls.loads[calls.loads.length - 1];
+  assert.strictEqual(lastLoad.url, "c.png");
+  assert.strictEqual(lastLoad.role, "specular-color");
+  assert.strictEqual(lastLoad.colorSpace, "srgb");
+  assert.strictEqual(context.__lastUniform.u[51], 1);
+
+  // Legacy prop alone works.
+  context.material = { specularColorMap: "c.png" };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[51], 1);
+  assert.strictEqual(lastBoundResource(calls, 15), cView);
+
+  // Missing / pending / failed stay neutral: flag 0, placeholder view at 15.
+  context.material = {};
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[51], 0);
+  assert.strictEqual(lastBoundResource(calls, 15), context.placeholderView);
+  context.material = { textureDescriptors: { specularColor: { uri: "pending-c.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[51], 0);
+  context.material = { textureDescriptors: { specularColor: { uri: "failed-c.png" } } };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[51], 0);
+  assert.strictEqual(lastBoundResource(calls, 15), context.placeholderView);
+});
+
+test("WebGPU specular-color late load and new view invalidate the cached bind group", () => {
+  const { context } = setupWebGPUMaterialBinding();
+  const state = { loaded: false };
+  const calls = makeGPUHarness(context, { "late-c.png": state });
+  context.material = { textureDescriptors: { specularColor: { uri: "late-c.png" } } };
+  context.owner = {};
+
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[51], 0);
+  assert.strictEqual(calls.bindGroups.length, 1);
+
+  const lateView = { __view: "late-color" };
+  state.loaded = true;
+  state.view = lateView;
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(context.__lastUniform.u[51], 1);
+  assert.strictEqual(calls.bindGroups.length, 2);
+  assert.strictEqual(lastBoundResource(calls, 15), lateView);
+
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, 2);
+
+  state.view = { __view: "late-color-2" };
+  callIn(context, "createMaterialBindGroup(material, false, owner, null, null)");
+  assert.strictEqual(calls.bindGroups.length, 3);
+  assert.strictEqual(lastBoundResource(calls, 15), state.view);
+});
+
+test("signed and zero normal scales survive glTF, object profiles and both renderer uploads", () => {
+  const glBackend = setupWebGLRenderer();
+  runFragment(glBackend.context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const gpuBackend = setupWebGPUMaterialBinding();
+  const calls = makeGPUHarness(gpuBackend.context, {});
+  for (const scale of [[60, 45], [-60, 45], [0, 45], [60, 0], [0, 0], [1, 1], null]) {
+    const doc = { asset: { version: "2.0" }, images: [{ uri: "normal.png" }], textures: [{ source: 0 }],
+      materials: [{ normalTexture: { index: 0, ...(scale ? { extensions: { KHR_texture_transform: { scale } } } : {}) } }] };
+    glBackend.context.doc = doc;
+    const result = callIn(glBackend.context, `(() => {
+      const material = gltfExtractMaterial(doc, 0, null);
+      const object = normalizeSceneObject({ kind: "mesh", material }, 0, null);
+      const profile = sceneObjectMaterialProfile(object);
+      const gl = recordingGL();
+      uploadMaterial(gl, uniformSlots(), profile, null);
+      return { profile, scale: gl.floats.get("normalUVScale") };
+    })()`);
+    const expected = scale || [1, 1];
+    assert.deepEqual(Array.from(result.scale), expected);
+    gpuBackend.context.material = JSON.parse(JSON.stringify(result.profile));
+    callIn(gpuBackend.context, "createMaterialBindGroup(material, false, material, null)");
+    const packed = gpuBackend.context.__lastUniform.data;
+    assert.deepEqual([packed[39], packed[43]], expected);
+    assert.deepEqual(JSON.parse(JSON.stringify(lastBoundResource(calls, 4).descriptor)), {
+      addressModeU: "repeat", addressModeV: "repeat",
+      magFilter: "linear", minFilter: "linear", mipmapFilter: "linear",
+    });
+    // Numeric sampling oracle for the production shader expressions and uploaded
+    // scales: periodic coordinates select the same texel without an image capture.
+    assert.match(glBackend.source, /texture\(u_normalMap, v_uv \* u_normalUVScale\)/);
+    assert.match(gpuBackend.source, /textureSample\(normalTex, normalSamp, in.uv \* vec2f\(material.modelScaleSigns.w, material.normalUVScaleV\)\)/);
+    for (const actual of [Array.from(result.scale), [packed[39], packed[43]]]) {
+      const uv = [0.123, 0.234];
+      const repeat = x => x - Math.floor(x);
+      const sampled = uv.map((x, i) => repeat(x * actual[i]));
+      const want = expected.map((x, i) => repeat(uv[i] * x));
+      assert.deepEqual(sampled, want);
+      if (scale && Math.abs(scale[0]) === 60) assert.ok(Math.abs(sampled[0] - (scale[0] < 0 ? 0.62 : 0.38)) < 1e-6, "tiling selects the expected interior texel beyond UV 1");
+      if (scale && scale[0] === 0) assert.equal(sampled[0], 0, "zero collapses U");
+    }
+  }
+});
+
+test("glTF wrap modes reach WebGL NPOT uploads and WebGPU bindings and invalidate caches", () => {
+  const { context } = setupWebGLRenderer();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  const source = readSceneRendererBackendSrc("webgl");
+  runFragment(context, sliceBetween(source, "function scenePBRTextureDescriptor", "// Bind a texture record"), "texture-loader.js");
+  const images = [];
+  context.Image = class { constructor() { this.width = 63; this.height = 45; images.push(this); } };
+  context.scenePBRTextureLooksHDR = () => false;
+  context.scenePBRIsKTX2URL = () => false;
+  context.scenePBRNotifyTextureSettled = () => {};
+  const parameters = [];
+  let mipmaps = 0;
+  context.gl = { TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067, TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243, CLAMP_TO_EDGE: 33071,
+    LINEAR: 9729, LINEAR_MIPMAP_LINEAR: 9987, RGBA: 6408, UNSIGNED_BYTE: 5121,
+    createTexture: () => ({}), bindTexture() {}, texImage2D() {},
+    getParameter() { return null; }, activeTexture() {},
+    texParameteri: (target, axis, value) => parameters.push([axis, value]),
+    generateMipmap: () => mipmaps++, };
+  context.cache = new Map();
+  const gpu = setupWebGPUMaterialBinding();
+  const calls = makeGPUHarness(gpu.context, { "shared.png": { loaded: true } });
+  const owner = {};
+  let previousGroup;
+  for (const [wrapS, wrapT, u, v] of [[10497, 10497, "repeat", "repeat"], [33071, 33071, "clamp-to-edge", "clamp-to-edge"], [33071, 33648, "clamp-to-edge", "mirror-repeat"], [33648, 33071, "mirror-repeat", "clamp-to-edge"]]) {
+    context.doc = { asset: { version: "2.0" }, images: [{ uri: "shared.png" }], textures: [{ source: 0, sampler: 0 }],
+      samplers: [{ wrapS, wrapT }], materials: [{ normalTexture: { index: 0 },
+        pbrMetallicRoughness: { baseColorTexture: { index: 0, extensions: { KHR_texture_transform: { scale: [2, 3] } } } } }] };
+    const profile = callIn(context, `sceneObjectMaterialProfile(normalizeSceneObject({ kind: "mesh", material: gltfExtractMaterial(doc, 0, null) }, 0, null))`);
+    assert.equal(profile.textureDescriptors.normal.wrapS, wrapS);
+    assert.equal(profile.textureDescriptors.baseColor.wrapT, wrapT, "baked transforms keep sampler modes");
+    context.descriptor = profile.textureDescriptors.normal;
+    parameters.length = 0;
+    const record = callIn(context, 'scenePBRLoadTexture(gl, "shared.png", cache, descriptor, "normal", "linear")');
+    images.at(-1).onload();
+    assert.equal(record.loaded, true);
+    assert.equal(record.width, 63);
+    assert.equal(record.height, 45);
+    assert.ok(parameters.some(([axis, value]) => axis === 10242 && value === wrapS));
+    assert.ok(parameters.some(([axis, value]) => axis === 10243 && value === wrapT));
+    assert.ok(parameters.some(([axis, value]) => axis === 10241 && value === 9987));
+    gpu.context.material = JSON.parse(JSON.stringify(profile));
+    gpu.context.owner = owner;
+    const group = callIn(gpu.context, 'createMaterialBindGroup(material, false, owner, null)');
+    assert.notEqual(group, previousGroup, "sampler changes invalidate the bind group even with the same views");
+    previousGroup = group;
+    for (const binding of [2, 4]) {
+      const sampler = lastBoundResource(calls, binding);
+      assert.equal(sampler.descriptor.addressModeU, u);
+      assert.equal(sampler.descriptor.addressModeV, v);
+    }
+    assert.equal(callIn(gpu.context, 'createMaterialBindGroup(material, false, owner, null)'), group, "unchanged samplers reuse the bind group");
+  }
+  assert.equal(context.cache.size, 4, "one URI with different wrap modes needs distinct WebGL textures");
+  assert.equal(mipmaps, 4, "NPOT mipmaps stay enabled in WebGL2");
+});
+
+
+test("KTX2 material uploads restore the declared wrap modes after decoder defaults", async () => {
+  const source = readSceneRendererBackendSrc("webgl");
+  const context = createSceneCoreContext();
+  runFragment(context, sliceBetween(source, "function scenePBRTextureLive", "function scenePBRLinearHDRPixels"), "ktx2-upload.js");
+  runFragment(context, sliceBetween(source, "function scenePBRTextureParameters", "function scenePBRTextureMap"), "texture-parameters.js");
+  const parameters = new Map();
+  const gl = { TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067, TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243,
+    getParameter() { return null; }, activeTexture() {}, bindTexture() {},
+    TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240, LINEAR: 9729,
+    texParameteri: (target, axis, value) => parameters.set(axis, value) };
+  context.scenePBRKTX2API = () => ({ load: async () => ({ faces: 1, levels: [{}], width: 63, height: 45 }),
+    uploadWebGL2: () => { parameters.set(10242, 33071); parameters.set(10243, 33071); } });
+  context.scenePBRNotifyTextureSettled = () => {};
+  for (const [wrapS, wrapT] of [[10497, 10497], [33071, 33648]]) {
+    const record = { descriptor: { wrapS, wrapT } };
+    await context.scenePBRUploadKTX2Texture(gl, "normal.ktx2", record);
+    assert.equal(record.loaded, true);
+    assert.equal(parameters.get(10242), wrapS);
+    assert.equal(parameters.get(10243), wrapT);
+  }
+});
+
+
+test("glTF volume thickness texture keeps linear green data and authored wrapping", () => {
+  const context = createSceneCoreContext();
+  runFragment(context, readSceneRuntimeSource("gltf.ts"), "gltf.ts");
+  context.volumeDocument = {
+    asset: { version: "2.0" }, images: [{ uri: "thickness.png" }],
+    textures: [{ source: 0, sampler: 0 }],
+    samplers: [{ wrapS: 33071, wrapT: 33648, minFilter: 9729, magFilter: 9728 }],
+    materials: [{ extensions: { KHR_materials_volume: {
+      thicknessFactor: 2.5, thicknessTexture: { index: 0 },
+      attenuationColor: [0.25, 0.5, 1], attenuationDistance: 3,
+    } } }],
+  };
+  const profile = callIn(context, `sceneObjectMaterialProfile(normalizeSceneObject({ kind: "mesh", material: gltfExtractMaterial(volumeDocument, 0, null) }, 0, null))`);
+  assert.equal(profile.thickness, 2.5);
+  assert.equal(profile.thicknessMap, "thickness.png");
+  const descriptor = profile.textureDescriptors.thickness;
+  assert.equal(descriptor.role, "data");
+  assert.equal(descriptor.colorSpace, "linear");
+  assert.equal(descriptor.channels, "g");
+  assert.equal(descriptor.wrapS, 33071);
+  assert.equal(descriptor.wrapT, 33648);
+});
+
+// Execute the production loaders and uploadMaterial together: a texture that
+// arrives after another material is cached must not replace its live sampler.
+function setupTextureUploadHarness() {
+  const { context } = setupWebGLRenderer();
+  const source = readSceneRendererBackendSrc("webgl");
+  runFragment(context, sliceBetween(source, "function scenePBRTextureLive", "// Bind a texture record"), "texture-upload.js");
+  const images = [];
+  context.Image = class { constructor() { this.width = 4; this.height = 4; images.push(this); } };
+  context.scenePBRTextureLooksHDR = url => url.endsWith(".hdr");
+  context.scenePBRIsKTX2URL = url => url.endsWith(".ktx2");
+  context.scenePBRKTX2API = () => null;
+  context.sceneParseRadianceHDR = () => ({ width: 1, height: 1, data: [1, 2, 3] });
+  const gl = callIn(context, "recordingGL()");
+  Object.assign(gl, {
+    TEXTURE0: 33984, TEXTURE_2D: 3553, TEXTURE_CUBE_MAP: 34067,
+    TEXTURE_CUBE_MAP_POSITIVE_X: 34069, ACTIVE_TEXTURE: 34016,
+    TEXTURE_BINDING_2D: 32873, TEXTURE_BINDING_CUBE_MAP: 34068,
+    TEXTURE_MIN_FILTER: 10241, TEXTURE_MAG_FILTER: 10240,
+    TEXTURE_WRAP_S: 10242, TEXTURE_WRAP_T: 10243, TEXTURE_WRAP_R: 32882,
+    CLAMP_TO_EDGE: 33071, LINEAR: 9729, LINEAR_MIPMAP_LINEAR: 9987,
+    RGBA: 6408, RGBA8: 32856, SRGB8_ALPHA8: 35907, RGBA16F: 34842,
+    FLOAT: 5126, UNSIGNED_BYTE: 5121,
+    activeUnit: 33984, bindings: new Map(), bindingCalls: 0, uploads: 0,
+    createTexture: () => ({}), getExtension: () => ({}),
+    getParameter(name) {
+      if (name === this.ACTIVE_TEXTURE) return this.activeUnit;
+      const target = name === this.TEXTURE_BINDING_2D ? this.TEXTURE_2D : this.TEXTURE_CUBE_MAP;
+      return this.bindings.get(`${this.activeUnit}:${target}`) || null;
+    },
+    activeTexture(unit) { this.activeUnit = unit; },
+    bindTexture(target, texture) {
+      this.bindingCalls++;
+      this.bindings.set(`${this.activeUnit}:${target}`, texture);
+    },
+    texImage2D() { this.uploads++; }, texParameteri() {}, generateMipmap() {},
+  });
+  let notifications = 0;
+  context.canvas = { dispatchEvent() { notifications++; } };
+  runFragment(context, sliceBetween(source, "const textureCache = Object.assign(new Map()", "// Persistent shadow pass state"), "renderer-texture-generation.js");
+  const cache = callIn(context, "textureCache");
+  const uniforms = callIn(context, "uniformSlots()");
+  const load = (url, descriptor) => context.scenePBRLoadTexture(gl, url, cache, descriptor, "base-color", "srgb");
+  const resident = load("resident.png");
+  images.at(-1).onload();
+  const material = { color: "#ffffff", texture: "resident.png" };
+  context.uploadMaterial(gl, uniforms, material, cache);
+  const draw = () => context.uploadMaterial(gl, uniforms, material, cache);
+  const binding = target => gl.getParameter(target === gl.TEXTURE_CUBE_MAP ? gl.TEXTURE_BINDING_CUBE_MAP : gl.TEXTURE_BINDING_2D);
+  return { context, gl, cache, images, uniforms, resident, load, draw, binding,
+    notifications: () => notifications };
+}
+
+test("creating a pending texture preserves the current material's 2D and cube samplers", () => {
+  const h = setupTextureUploadHarness();
+  const cube = {};
+  h.gl.bindTexture(h.gl.TEXTURE_CUBE_MAP, cube);
+  h.load("pending.png");
+  assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+  assert.equal(h.binding(h.gl.TEXTURE_CUBE_MAP), cube);
+  h.load("pending-cube.ktx2", { uri: "pending-cube.ktx2", view: "cube" });
+  assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+  assert.equal(h.binding(h.gl.TEXTURE_CUBE_MAP), cube);
+});
+
+test("a delayed PNG preserves cached samplers and invalidates exactly one material epoch", () => {
+  const h = setupTextureUploadHarness();
+  const delayed = h.load("delayed.png");
+  const image = h.images.at(-1);
+  // The currently active unit can belong to a different, settled material.
+  h.gl.activeTexture(h.gl.TEXTURE0 + 5);
+  const other = {};
+  h.gl.bindTexture(h.gl.TEXTURE_2D, other);
+  const epoch = h.cache._sceneTextureEpoch, notices = h.notifications();
+  image.onload();
+  assert.equal(delayed.loaded, true);
+  assert.equal(h.gl.activeUnit, h.gl.TEXTURE0 + 5);
+  assert.equal(h.binding(h.gl.TEXTURE_2D), other);
+  assert.equal(h.cache._sceneTextureEpoch, epoch + 1);
+  assert.equal(h.notifications(), notices + 1);
+  const before = h.gl.bindingCalls;
+  h.draw();
+  assert.ok(h.gl.bindingCalls > before, "a settled cached material rebinds after resource arrival");
+  assert.equal(h.gl.bindings.get(`${h.gl.TEXTURE0}:${h.gl.TEXTURE_2D}`), h.resident.texture);
+  const cached = h.gl.bindingCalls;
+  h.draw();
+  assert.equal(h.gl.bindingCalls, cached, "ordinary draws still reuse settled material bindings");
+});
+
+test("HDR settlement restores samplers on successful and throwing uploads", async () => {
+  for (const fails of [false, true]) {
+    const h = setupTextureUploadHarness();
+    let resolve;
+    h.context.fetch = () => new Promise(r => { resolve = r; });
+    const record = h.load("environment.hdr");
+    h.gl.bindTexture(h.gl.TEXTURE_2D, h.resident.texture);
+    const epoch = h.cache._sceneTextureEpoch;
+    if (fails) h.gl.texImage2D = () => { throw new Error("upload refused"); };
+    resolve({ ok: true, arrayBuffer: async () => new ArrayBuffer(4) });
+    await new Promise(r => setImmediate(r));
+    assert.equal(record.loaded, !fails);
+    assert.equal(record.failed, fails);
+    assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+    assert.equal(h.cache._sceneTextureEpoch, epoch + 1);
+  }
+});
+
+test("KTX2 settlement preserves 2D and cube samplers, including decoder failures", async () => {
+  for (const faces of [1, 6]) {
+    for (const fails of [false, true]) {
+      const h = setupTextureUploadHarness();
+      const target = faces === 6 ? h.gl.TEXTURE_CUBE_MAP : h.gl.TEXTURE_2D;
+      const original = {};
+      h.gl.bindTexture(target, original);
+      h.context.scenePBRKTX2API = () => ({
+        load: async () => ({ faces, width: 4, height: 4, levels: [{}] }),
+        uploadWebGL2(gl, _image, opts) {
+          gl.bindTexture(target, opts.texture);
+          if (fails) throw new Error("decode refused");
+        },
+      });
+      const record = { texture: {}, generation: h.cache._gosxGeneration,
+        descriptor: { wrapS: 10497, wrapT: 33648 }, loaded: false, failed: false };
+      const epoch = h.cache._sceneTextureEpoch;
+      await h.context.scenePBRUploadKTX2Texture(h.gl, "delayed.ktx2", record);
+      assert.equal(record.loaded, !fails);
+      assert.equal(record.failed, fails);
+      assert.equal(h.binding(target), original);
+      assert.equal(h.cache._sceneTextureEpoch, epoch + 1);
+    }
+  }
+});
+
+test("PNG load and upload failures invalidate caches while disposed callbacks stay inert", () => {
+  for (const failure of ["load", "upload", "disposed"]) {
+    const h = setupTextureUploadHarness();
+    const record = h.load("delayed.png"), image = h.images.at(-1);
+    h.gl.bindTexture(h.gl.TEXTURE_2D, h.resident.texture);
+    const epoch = h.cache._sceneTextureEpoch, uploads = h.gl.uploads, notices = h.notifications();
+    if (failure === "load") image.onerror();
+    if (failure === "upload") {
+      h.gl.texImage2D = () => { throw new Error("upload refused"); };
+      assert.doesNotThrow(() => image.onload());
+    }
+    if (failure === "disposed") {
+      h.cache._gosxGeneration.disposed = true;
+      image.onload(); image.onerror();
+    }
+    assert.equal(h.binding(h.gl.TEXTURE_2D), h.resident.texture);
+    assert.equal(record.failed, failure !== "disposed");
+    assert.equal(h.cache._sceneTextureEpoch, epoch + (failure === "disposed" ? 0 : 1));
+    assert.equal(h.notifications(), notices + (failure === "disposed" ? 0 : 1));
+    assert.equal(h.gl.uploads, uploads);
+  }
+});

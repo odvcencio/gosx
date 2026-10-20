@@ -16,7 +16,7 @@ const sceneChunkSize = 4096
 // span a wide world-space range.
 //
 // The returned map's "compressedTransforms" key is consumed by the browser
-// 11a-scene-decompress.js hydration pass (both the scene.instancedMeshes and
+// 11a-scene-decompress.ts hydration pass (both the scene.instancedMeshes and
 // props.instancedMeshes paths) before the renderer sees the data — so the ring
 // renders identically to the raw-transform path in the browser.
 //
@@ -265,7 +265,7 @@ func deinterleaveFloat64(data []float64, stride int) []float64 {
 
 // reinterleaveFloat64 is the inverse of deinterleaveFloat64: it rearranges
 // [a0,a1,...,b0,b1,...,c0,c1,...] back into [a0,b0,c0,a1,b1,c1,...]. It mirrors
-// the JS sceneReinterleave in 11a-scene-decompress.js so the Go round-trip
+// the JS sceneReinterleave in 11a-scene-decompress.ts so the Go round-trip
 // matches what the browser reconstructs.
 func reinterleaveFloat64(data []float64, stride int) []float64 {
 	n := len(data) / stride

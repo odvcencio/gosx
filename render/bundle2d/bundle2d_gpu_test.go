@@ -145,7 +145,7 @@ func TestComputeCanvasGPUBundle_AttachesBoardFillSelena(t *testing.T) {
 // TestComputeCanvasGPUBundle_AttachesBoardFillSelena above and the golden test.
 
 // ---------------------------------------------------------------------------
-// M1 slice 2A: board LINE and SPRITE quads on the GPU bundle.
+// Board LINE and SPRITE quads on the GPU bundle.
 // ---------------------------------------------------------------------------
 
 // lineBundle builds a minimal ortho-2D bundle carrying only the given lines —
@@ -441,7 +441,7 @@ func TestAttachBoardGPUZOrder(t *testing.T) {
 	if b.ObjectCount != 3 {
 		t.Errorf("ObjectCount = %d, want 3 (kept in sync with appended Objects)", b.ObjectCount)
 	}
-	// Labels stay wire-only (M1 slice 2C renders them as a DOM overlay).
+	// Labels stay wire-only (they render as a DOM overlay).
 	if len(b.Labels) != 1 {
 		t.Errorf("labels must stay on the wire: got %d", len(b.Labels))
 	}

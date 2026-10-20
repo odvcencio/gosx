@@ -12,7 +12,107 @@ import (
 
 	rootengine "m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/motion"
+	"m31labs.dev/gosx/scene/geom"
 )
+
+func appendSolidSceneObject(bundle *rootengine.RenderBundle, camera sceneCamera, width, height int, object sceneObject, objIndex, nodeIndex, materialIndex int, material rootengine.RenderMaterial, lights []sceneLight, animations []rootengine.RenderAnimation, timeSeconds float64, camTrig rotTrig, litCtx lightingContext, spinSc *spinScratch) (sceneAppendResult, bool) {
+	var result sceneAppendResult
+	if material.Wireframe || sceneObjectHasTexturedSurface(object, material) {
+		return result, false
+	}
+
+	var params geom.Params
+	switch object.Kind {
+	case "cube":
+		params = geom.Params{Kind: geom.KindCube, Size: object.Size}
+	case "box":
+		params = geom.Params{Kind: geom.KindBox, Width: object.Width, Height: object.Height, Depth: object.Depth}
+	case "plane":
+		params = geom.Params{Kind: geom.KindPlane, Width: object.Width, Height: object.Depth}
+	case "pyramid":
+		params = geom.Params{Kind: geom.KindPyramid, Width: object.Width, Height: object.Height, Depth: object.Depth}
+	case "sphere":
+		params = geom.Params{Kind: geom.KindSphere, Radius: object.Radius, Segments: object.Segments}
+	default:
+		return result, false
+	}
+
+	mesh := geom.Build(params, geom.AllAttributes)
+	if mesh == nil {
+		return result, false
+	}
+	expanded := mesh.Expanded()
+	if expanded == nil {
+		return result, false
+	}
+
+	spinQ := spinQuatWithScratch(object, timeSeconds, spinSc)
+	clip := objectClipTRS(object, objIndex, nodeIndex, animations, timeSeconds, spinSc)
+	baseRGBA := sceneColorRGBA(material.Color, [4]float64{1, 1, 1, 1})
+	vertexOffset := len(bundle.WorldMeshPositions) / 3
+	orientation := sceneObjectTransformOrientation(object, clip)
+
+	for i := 0; i+2 < len(expanded.Positions); i += 3 {
+		source := i
+		if orientation < 0 {
+			switch (i / 3) % 3 {
+			case 1:
+				source += 3
+			case 2:
+				source -= 3
+			}
+		}
+		localPoint := point3{X: expanded.Positions[source], Y: expanded.Positions[source+1], Z: expanded.Positions[source+2]}
+		world := translatePoint(localPoint, object, spinQ, clip, timeSeconds)
+		bundle.WorldMeshPositions = append(bundle.WorldMeshPositions, world.X, world.Y, world.Z)
+		result.Bounds, result.HasBounds = expandRenderBounds(result.Bounds, result.HasBounds, world)
+
+		normal := sceneObjectWorldNormal(object, localPoint, spinQ, clip)
+		if source+2 < len(expanded.Normals) {
+			normal = sceneObjectLocalNormalToWorld(object, point3{
+				X: expanded.Normals[source], Y: expanded.Normals[source+1], Z: expanded.Normals[source+2],
+			}, spinQ, clip)
+		}
+		bundle.WorldMeshNormals = append(bundle.WorldMeshNormals, normal.X, normal.Y, normal.Z)
+
+		uvIndex := (source / 3) * 2
+		if uvIndex+1 < len(expanded.UVs) {
+			bundle.WorldMeshUVs = append(bundle.WorldMeshUVs, expanded.UVs[uvIndex], expanded.UVs[uvIndex+1])
+		} else {
+			bundle.WorldMeshUVs = append(bundle.WorldMeshUVs, 0, 0)
+		}
+
+		lit := sceneLitColorRGBAResolved(baseRGBA, material, world, normal, lights, litCtx)
+		alpha := clamp(lit[3]*material.Opacity, 0, 1)
+		bundle.WorldMeshColors = append(bundle.WorldMeshColors, lit[0], lit[1], lit[2], alpha)
+	}
+
+	vertexCount := len(bundle.WorldMeshPositions)/3 - vertexOffset
+	if vertexCount <= 0 {
+		return result, false
+	}
+
+	depthNear, depthFar, depthCenter := renderBoundsDepthMetricsTrig(result.Bounds, camera, camTrig)
+	result.ViewCulled = result.HasBounds && renderBoundsOutsideFrustumTrig(result.Bounds, camera, width, height, camTrig)
+	bundle.MeshObjects = append(bundle.MeshObjects, rootengine.RenderObject{
+		ID:            object.ID,
+		Kind:          object.Kind,
+		Pickable:      object.Pickable,
+		MaterialIndex: materialIndex,
+		RenderPass:    material.RenderPass,
+		VertexOffset:  vertexOffset,
+		VertexCount:   vertexCount,
+		Static:        object.Static,
+		Bounds:        result.Bounds,
+		DepthNear:     depthNear,
+		DepthFar:      depthFar,
+		DepthCenter:   depthCenter,
+		ViewCulled:    result.ViewCulled,
+	})
+	result.SpinQ = spinQ
+	result.ClipTRS = clip
+	return result, true
+}
 
 func buildRenderBundle(props map[string]any, nodes []resolvedNode, width, height int, timeSeconds float64, spinSc *spinScratch) rootengine.RenderBundle {
 	return buildRenderBundleCached(props, nodes, width, height, timeSeconds, spinSc, nil)
@@ -185,11 +285,22 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 	// materialIndexByKey deduplicates materials by their identity Key so the
 	// per-object lookup is O(1) instead of an O(materials) DeepEqual scan.
 	materialIndexByKey := make(map[string]int, len(objects))
+	// Material-uniform motion (SceneIR.MaterialMotionProgram) is evaluated once
+	// per frame and its writes are applied to the matching objects' material
+	// fields BEFORE the per-object material packing below, so both render
+	// backends observe declared MaterialAnims choreography through this single
+	// shared path. No-op when the scene ships no program.
+	if matMotion := materialMotionForFrame(props, spinSc); matMotion != nil {
+		applyMaterialMotionFrame(matMotion, objects, timeSeconds)
+	}
 	for objectIdx := range objects {
 		object := objects[objectIdx]
-		vertexOffset := len(bundle.WorldPositions) / 3
 		materialIndex := ensureRenderMaterial(&bundle, materialIndexByKey, object)
 		material := bundle.Materials[materialIndex]
+		if _, ok := appendSolidSceneObject(&bundle, camera, width, height, object, objectIdx, objectNodeIndex[objectIdx], materialIndex, material, lights, animations, timeSeconds, camTrig, litCtx, spinSc); ok {
+			continue
+		}
+		vertexOffset := len(bundle.WorldPositions) / 3
 		appendResult := appendSceneObjectCached(&bundle, camera, width, height, &object, objectIdx, material, lights, environment, animations, timeSeconds, camTrig, litCtx, bakeStore, objectNodeIndex[objectIdx], litSig, spinSc)
 		vertexCount := (len(bundle.WorldPositions) / 3) - vertexOffset
 		if vertexCount > 0 || appendResult.HasBounds || appendResult.ViewCulled {
@@ -223,9 +334,10 @@ func buildRenderBundleCached(props map[string]any, nodes []resolvedNode, width, 
 	for _, sprite := range sprites {
 		appendSceneSprite(&bundle, camera, width, height, sprite, timeSeconds)
 	}
-	bundle.ObjectCount = len(bundle.Objects)
+	bundle.ObjectCount = len(bundle.Objects) + len(bundle.MeshObjects)
 	bundle.VertexCount = len(bundle.Positions) / 2
 	bundle.WorldVertexCount = len(bundle.WorldPositions) / 3
+	bundle.WorldMeshVertexCount = len(bundle.WorldMeshPositions) / 3
 	bundle.Passes = buildRenderPassBundles(bundle)
 	return bundle
 }
@@ -261,7 +373,7 @@ func appendSceneObjectCached(bundle *rootengine.RenderBundle, camera sceneCamera
 	result := sceneAppendResult{}
 	spinQ := spinQuatWithScratch(*object, timeSeconds, spinSc)
 	result.SpinQ = spinQ
-	clip := objectClipTRS(*object, objIndex, animations, timeSeconds, spinSc)
+	clip := objectClipTRS(*object, objIndex, nodeIndex, animations, timeSeconds, spinSc)
 	result.ClipTRS = clip
 	// Textured plane surfaces emit no world line segments; bake/cache only applies
 	// to the line-geometry path, so handle the textured case using motion semantics.
@@ -1386,27 +1498,21 @@ func sceneLightingActive(lights []sceneLight, environment sceneEnvironment) bool
 }
 
 func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat, clip clipTRS) point3 {
-	normal := sceneObjectLocalNormal(object, point)
+	return sceneObjectLocalNormalToWorld(object, sceneObjectLocalNormal(object, point), spinQ, clip)
+}
+
+func sceneObjectLocalNormalToWorld(object sceneObject, normal point3, spinQ motion.Quat, clip clipTRS) point3 {
 	// Base orientation, then clip rotation, then spin quaternion. Normals are
 	// directions: static leaf scale applies as the inverse-scale (then
 	// renormalized) so non-uniform scale keeps lighting correct; no translation
 	// and no drift offset is applied. Rotation composition mirrors translatePoint
 	// (base -> clipR -> spin) so lit normals stay consistent with vertex positions.
-	if object.ScaleX != 0 || object.ScaleY != 0 || object.ScaleZ != 0 {
-		sx, sy, sz := object.ScaleX, object.ScaleY, object.ScaleZ
-		if sx == 0 {
-			sx = 1
-		}
-		if sy == 0 {
-			sy = 1
-		}
-		if sz == 0 {
-			sz = 1
-		}
-		normal = point3{X: normal.X / sx, Y: normal.Y / sy, Z: normal.Z / sz}
-		length := math.Sqrt(normal.X*normal.X + normal.Y*normal.Y + normal.Z*normal.Z)
-		if length > 0 {
-			normal = point3{X: normal.X / length, Y: normal.Y / length, Z: normal.Z / length}
+	normal = applySceneObjectInverseScaleToNormal(object, normal)
+	if clip.HasS {
+		if clip.S[0] == 0 || clip.S[1] == 0 || clip.S[2] == 0 {
+			normal = normalizePoint3(normal)
+		} else {
+			normal = normalizePoint3(point3{X: normal.X / clip.S[0], Y: normal.Y / clip.S[1], Z: normal.Z / clip.S[2]})
 		}
 	}
 	rotated := rotatePoint(normal, object.RotationX, object.RotationY, object.RotationZ)
@@ -1415,7 +1521,7 @@ func sceneObjectWorldNormal(object sceneObject, point point3, spinQ motion.Quat,
 		rotated = point3{X: cx, Y: cy, Z: cz}
 	}
 	nx, ny, nz := motion.RotateVec3(spinQ, rotated.X, rotated.Y, rotated.Z)
-	return normalizePoint3(point3{X: nx, Y: ny, Z: nz})
+	return applySceneParentNormal(object, point3{X: nx, Y: ny, Z: nz})
 }
 
 // lightingContext holds all light and environment colors pre-resolved from
@@ -1524,8 +1630,8 @@ func sceneLitColorRGBAResolved(base [4]float64, material rootengine.RenderMateri
 // (the static/cache path). It uses the object's combined (rotation+spin*time) trig
 // for the same result as the identity-spin case of sceneObjectWorldNormal.
 func sceneObjectWorldNormalTrig(object sceneObject, point point3, objTrig rotTrig) point3 {
-	normal := sceneObjectLocalNormal(object, point)
-	return normalizePoint3(rotatePointTrig(normal, objTrig))
+	normal := applySceneObjectInverseScaleToNormal(object, sceneObjectLocalNormal(object, point))
+	return applySceneParentNormal(object, rotatePointTrig(normal, objTrig))
 }
 
 func sceneObjectLocalNormal(object sceneObject, point point3) point3 {
@@ -1841,11 +1947,11 @@ func sceneObjectRotTrig(object sceneObject, timeSeconds float64) rotTrig {
 func translatePointTrig(point point3, object sceneObject, timeSeconds float64, objTrig rotTrig) point3 {
 	rotated := rotatePointTrig(applySceneObjectScale(point, object), objTrig)
 	offset := sceneMotionOffset(object, timeSeconds)
-	return point3{
+	return applySceneParentPoint(object, point3{
 		X: rotated.X + object.X + offset.X,
 		Y: rotated.Y + object.Y + offset.Y,
 		Z: rotated.Z + object.Z + offset.Z,
-	}
+	})
 }
 
 // NOTE: The clip composition here (base→clipR→spin, translation in world space)
@@ -1864,7 +1970,7 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	// value (all Has* false) and this path is byte-identical to the pre-clip code.
 	local = applySceneObjectScale(local, object)
 	if clip.HasS {
-		local = point3{X: point.X * clip.S[0], Y: point.Y * clip.S[1], Z: point.Z * clip.S[2]}
+		local = point3{X: local.X * clip.S[0], Y: local.Y * clip.S[1], Z: local.Z * clip.S[2]}
 	}
 	// Base orientation via the existing intrinsic Euler rotation.
 	rotated := rotatePoint(local, object.RotationX, object.RotationY, object.RotationZ)
@@ -1882,11 +1988,93 @@ func translatePoint(point point3, object sceneObject, spinQ motion.Quat, clip cl
 	if clip.HasT {
 		tx, ty, tz = clip.T[0], clip.T[1], clip.T[2]
 	}
-	return point3{
+	return applySceneParentPoint(object, point3{
 		X: sx + object.X + offset.X + tx,
 		Y: sy + object.Y + offset.Y + ty,
 		Z: sz + object.Z + offset.Z + tz,
+	})
+}
+
+func applySceneObjectInverseScaleToNormal(object sceneObject, normal point3) point3 {
+	sx, sy, sz := object.ScaleX, object.ScaleY, object.ScaleZ
+	if sx == 0 {
+		sx = 1
 	}
+	if sy == 0 {
+		sy = 1
+	}
+	if sz == 0 {
+		sz = 1
+	}
+	return normalizePoint3(point3{X: normal.X / sx, Y: normal.Y / sy, Z: normal.Z / sz})
+}
+
+func applySceneParentPoint(object sceneObject, point point3) point3 {
+	if !object.HasParentMatrix {
+		return point
+	}
+	matrix := object.ParentMatrix
+	return point3{
+		X: matrix[0]*point.X + matrix[4]*point.Y + matrix[8]*point.Z + matrix[12],
+		Y: matrix[1]*point.X + matrix[5]*point.Y + matrix[9]*point.Z + matrix[13],
+		Z: matrix[2]*point.X + matrix[6]*point.Y + matrix[10]*point.Z + matrix[14],
+	}
+}
+
+func applySceneParentNormal(object sceneObject, normal point3) point3 {
+	if !object.HasParentMatrix {
+		return normalizePoint3(normal)
+	}
+	matrix := object.ParentMatrix
+	scale := sceneParentLinearMaxAbs(matrix)
+	if scale == 0 || math.IsInf(1/scale, 0) {
+		return normalizePoint3(normal)
+	}
+	a, b, c := matrix[0]/scale, matrix[4]/scale, matrix[8]/scale
+	d, e, f := matrix[1]/scale, matrix[5]/scale, matrix[9]/scale
+	g, h, i := matrix[2]/scale, matrix[6]/scale, matrix[10]/scale
+	c00, c01, c02 := e*i-f*h, f*g-d*i, d*h-e*g
+	c10, c11, c12 := c*h-b*i, a*i-c*g, b*g-a*h
+	c20, c21, c22 := b*f-c*e, c*d-a*f, a*e-b*d
+	determinant := a*c00 + b*c01 + c*c02
+	if math.Abs(determinant) <= 1e-12 {
+		return normalizePoint3(normal)
+	}
+	orientation := math.Copysign(1, determinant)
+	return normalizePoint3(point3{
+		X: orientation * (c00*normal.X + c01*normal.Y + c02*normal.Z),
+		Y: orientation * (c10*normal.X + c11*normal.Y + c12*normal.Z),
+		Z: orientation * (c20*normal.X + c21*normal.Y + c22*normal.Z),
+	})
+}
+
+func sceneObjectTransformOrientation(object sceneObject, clip clipTRS) float64 {
+	determinant := resolvedSceneObjectScale(object.ScaleX) * resolvedSceneObjectScale(object.ScaleY) * resolvedSceneObjectScale(object.ScaleZ)
+	if clip.HasS {
+		determinant *= clip.S[0] * clip.S[1] * clip.S[2]
+	}
+	if object.HasParentMatrix {
+		matrix := object.ParentMatrix
+		determinant *= matrix[0]*(matrix[5]*matrix[10]-matrix[9]*matrix[6]) +
+			matrix[4]*(matrix[9]*matrix[2]-matrix[1]*matrix[10]) +
+			matrix[8]*(matrix[1]*matrix[6]-matrix[5]*matrix[2])
+	}
+	return math.Copysign(1, determinant)
+}
+
+func resolvedSceneObjectScale(value float64) float64 {
+	if value == 0 {
+		return 1
+	}
+	return value
+}
+
+func sceneParentLinearMaxAbs(matrix [16]float64) float64 {
+	maximum := 0.0
+	for _, index := range [...]int{0, 1, 2, 4, 5, 6, 8, 9, 10} {
+		maximum = math.Max(maximum, math.Abs(matrix[index]))
+	}
+	return maximum
 }
 
 // applySceneObjectScale applies the static leaf scale (ObjectIR scaleX/Y/Z)

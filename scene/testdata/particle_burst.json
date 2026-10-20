@@ -1,0 +1,1 @@
+{"version":1,"id":"impact","delay":0.19,"duration":0.894,"particles":{"id":"gosx-burst/impact","count":6,"emitter":{"kind":"point","x":1,"y":0.05,"z":2,"lifetime":0.4,"once":true},"material":{"color":"#cfbd89","size":0.08,"opacity":0.65,"sizeEnd":0,"opacityEnd":0}}}

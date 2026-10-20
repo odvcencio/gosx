@@ -1,0 +1,4 @@
+protected := authn.Require(adminHandler)
+
+adminOnly := authn.RequireRole("admin")
+protectedAdmin := adminOnly(adminHandler)

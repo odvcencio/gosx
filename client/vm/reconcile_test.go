@@ -334,8 +334,8 @@ func TestReconcileEventAttrsMaterializeFromResolvedNode(t *testing.T) {
 	foundDelegated := false
 	foundLegacy := false
 	for _, op := range ops {
-		if op.Kind != PatchSetAttr {
-			t.Fatalf("expected PatchSetAttr, got %+v", op)
+		if op.Kind != PatchSetDispatch {
+			t.Fatalf("expected PatchSetDispatch, got %+v", op)
 		}
 		if op.AttrName == "data-gosx-on-click" && op.Text == "increment" {
 			foundDelegated = true

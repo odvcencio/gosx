@@ -77,7 +77,7 @@ type RenderHTML struct {
 // Mode selects the projection pipeline. The empty string is the default
 // (perspective 3D, Scene3D's path). The constant bundle.OrthoCamera2DMode
 // switches to the 2D pipeline (orthographic projection, depth + lighting
-// + post-FX disabled) per ADR 0004. For ortho2d cameras, X/Y are reused
+// + post-FX disabled). For ortho2d cameras, X/Y are reused
 // as pan offsets and Z is the zoom factor (1 = 1 world unit per pixel).
 type RenderCamera struct {
 	Mode      string  `json:"mode,omitempty"`
@@ -179,6 +179,9 @@ type RenderMaterial struct {
 	Transmission       float64        `json:"transmission,omitempty"`
 	Iridescence        float64        `json:"iridescence,omitempty"`
 	Anisotropy         float64        `json:"anisotropy,omitempty"`
+	SpecularIntensity  *float64       `json:"specularIntensity,omitempty"`
+	SpecularColor      *[3]float64    `json:"specularColor,omitempty"`
+	IOR                *float64       `json:"ior,omitempty"`
 	NormalMap          string         `json:"normalMap,omitempty"`
 	RoughnessMap       string         `json:"roughnessMap,omitempty"`
 	MetalnessMap       string         `json:"metalnessMap,omitempty"`
@@ -287,6 +290,7 @@ type RenderAnimationChannel struct {
 type RenderPostEffect struct {
 	Kind      string             `json:"kind"`
 	Mode      string             `json:"mode,omitempty"`
+	Source    string             `json:"source,omitempty"`
 	Intensity float64            `json:"intensity,omitempty"`
 	Threshold float64            `json:"threshold,omitempty"`
 	Radius    float64            `json:"radius,omitempty"`
@@ -429,11 +433,23 @@ type RenderBundle struct {
 	WorldNormals     []float64                `json:"worldNormals,omitempty"`
 	WorldUVs         []float64                `json:"worldUVs,omitempty"`
 	WorldTangents    []float64                `json:"worldTangents,omitempty"`
-	ObjectCount      int                      `json:"objectCount,omitempty"`
-	Animations       []RenderAnimation        `json:"animations,omitempty"`
-	PostEffects      []RenderPostEffect       `json:"postEffects,omitempty"`
-	PostFXMaxPixels  int                      `json:"postFXMaxPixels,omitempty"`
-	Diagnostics      []RenderDiagnostic       `json:"diagnostics,omitempty"`
+	// Triangle/PBR bundle streams for typed primitive meshes. Objects that
+	// carry solid shaded geometry land here; line-only wireframes keep using
+	// the worldPositions/worldColors path above. MeshObjects entries point at
+	// vertices in WorldMeshPositions with VertexOffset/VertexCount exactly like
+	// Objects do for WorldPositions, so pickers and cullers can treat both
+	// uniformly.
+	MeshObjects          []RenderObject     `json:"meshObjects,omitempty"`
+	WorldMeshPositions   []float64          `json:"worldMeshPositions,omitempty"`
+	WorldMeshNormals     []float64          `json:"worldMeshNormals,omitempty"`
+	WorldMeshUVs         []float64          `json:"worldMeshUVs,omitempty"`
+	WorldMeshColors      []float64          `json:"worldMeshColors,omitempty"`
+	WorldMeshVertexCount int                `json:"worldMeshVertexCount,omitempty"`
+	ObjectCount          int                `json:"objectCount,omitempty"`
+	Animations           []RenderAnimation  `json:"animations,omitempty"`
+	PostEffects          []RenderPostEffect `json:"postEffects,omitempty"`
+	PostFXMaxPixels      int                `json:"postFXMaxPixels,omitempty"`
+	Diagnostics          []RenderDiagnostic `json:"diagnostics,omitempty"`
 	// ShaderLib carries deduplicated shader sources forwarded from the scene IR
 	// payload. The native renderer receives kernels via Config override and may
 	// ignore this field; server-side bundle consumers that read ComputeWGSL

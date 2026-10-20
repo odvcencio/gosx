@@ -33,7 +33,6 @@ async function loadAcorn() {
   const candidates = [
     process.env.ACORN_PATH,
     "acorn",
-    "/home/draco/work/gotreesitter-gophercon26/node_modules/acorn/dist/acorn.mjs",
   ].filter(Boolean);
   for (const candidate of candidates) {
     try {
@@ -308,7 +307,7 @@ const global = newScope(null, "global");
 walk(ast, global);
 
 // Report guarded names separately. They are not crashes, but a guard can hide
-// a real loss: 16z-scene-webgpu-probe.js reads loadManifest behind a guard, so
+// a real loss: 16z-scene-webgpu-probe.ts reads loadManifest behind a guard, so
 // dropping the file that declares it turned a crash into a silently wrong
 // WebGPU adapter request.
 const all = [...misses.keys()].sort();

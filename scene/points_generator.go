@@ -22,7 +22,7 @@ import "math"
 // canonicalExp are ports of Go's own pure-Go implementations (src/math),
 // restricted to the finite branches a point generator can reach, and written
 // so that every floating-point step is individually rounded. The matching
-// JavaScript lives in client/js/bootstrap-src/11b-scene-points-generate.js.
+// JavaScript lives in client/js/bootstrap-src/11b-scene-points-generate.ts.
 // Both sides use only +, -, *, / and comparisons, all of which IEEE-754
 // specifies exactly and both languages mandate. The result is bit-identical
 // output, verified over the full seed range by TestPointsGeneratorGoldenBits

@@ -5,7 +5,20 @@ on:
     branches:
       - main
       - master
+  # Draft pull requests run only the fast lanes: release-gate, go-tests
+  # (format, unit, editor vet, fuzz smoke) and js-tests (runtime contracts and
+  # bootstrap size budgets). Every other lane runs when the PR is not a draft,
+  # and ready_for_review starts that full run when a draft is marked ready.
+  # Owner decision 2026-10-08: stacked draft slices each reran the full matrix
+  # on every carried-up fix and queued about 1,000 jobs ahead of merge runs.
+  # The required `test` aggregate fails closed on drafts (see that job), so a
+  # draft run can never satisfy branch protection.
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   release-gate:
@@ -16,7 +29,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          # Shallow checkout: the release gate only needs the checked-out
+          # tree. Exact event base/head commits missing from the shallow
+          # history are fetched individually by the whitespace-check step.
+          fetch-depth: 1
 
       - name: Patch whitespace check
         env:
@@ -29,6 +45,12 @@ jobs:
           base_sha="$EVENT_BASE_SHA"
           if [ -z "$base_sha" ] || [ "$base_sha" = "$zero_sha" ]; then
             base_sha="$(git hash-object -t tree /dev/null)"
+          elif ! git cat-file -e "${base_sha}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$base_sha"
+          fi
+          # The event head may also be absent from the shallow history.
+          if ! git cat-file -e "${EVENT_HEAD_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$EVENT_HEAD_SHA"
           fi
           echo "checking whitespace in ${EVENT_NAME} patch ${base_sha}..${EVENT_HEAD_SHA}"
           git diff --check "$base_sha" "$EVENT_HEAD_SHA"
@@ -45,13 +67,15 @@ jobs:
   # go-tests: every root package except cmd/gosx, plus the editor, fuzz and
   # desktop gates. The production-build CLI suite runs in go-cli-tests beside
   # this job, so its ~6 minute TinyGo integration tests no longer serialize all
-  # other Go checks. PR117 measured the superseded serial lane at 6m31s for
-  # unit tests plus 10m48s for race tests (BC7 alone took 504.697s), which is
-  # why it temporarily needed 30 minutes. This lane needs neither TinyGo nor
-  # Node and returns to a 15-minute fail-safe.
+  # other Go checks. The go-race-tests job now runs the race detector in
+  # parallel, so this lane needs neither TinyGo nor Node. A main-path run
+  # measured 14m10s (run 33836750032, job 100910735401), and a PR run reached
+  # its final test gate at 14m59 before the 15-minute ceiling cancelled teardown
+  # (run 33853282910, job 100960713148). A 20-minute fail-safe stays bounded
+  # while allowing normal runner variance and post-step cleanup.
   go-tests:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
 
     steps:
       - name: Check out repository
@@ -64,7 +88,19 @@ jobs:
           cache: true
 
       - name: Install Danmuji
-        run: go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2
+        # Bounded retry for transient module-proxy errors; pinned args and
+        # checksum validation are unchanged, and exhaustion fails the step.
+        run: |
+          set -eu
+          attempt=1
+          until go install github.com/odvcencio/danmuji/cmd/danmuji@v0.3.2; do
+            echo "danmuji install attempt ${attempt}/3 failed" >&2
+            if [ "$attempt" -ge 3 ]; then
+              exit 1
+            fi
+            sleep $((attempt * 5))
+            attempt=$((attempt + 1))
+          done
 
       - name: Format check
         run: make fmt-check
@@ -78,8 +114,22 @@ jobs:
       - name: CI package partition validation
         run: make test-ci-partitions
 
+      # Named convergence gate: validates the v1 boundary, case inventory,
+      # CI ownership labels, and every evidence anchor before broad Go tests.
+      - name: Scene3D v1 corpus contract
+        run: go test ./scene/harness -run '^TestV1CorpusContract' -count=1
+
       - name: Non-CLI unit and integration tests
         run: make test-unit
+
+      - name: Telemetry contract tests
+        run: make test-telemetry
+
+      - name: Island scalar contract tests
+        run: make test-island-aot
+
+      - name: WebAssembly encoder tests
+        run: make test-wasmgen
 
       # editor/ is a nested Go module, so nothing above reaches it: `go list
       # ./editor/...` fails from the root and `make test` never compiles it.
@@ -88,33 +138,161 @@ jobs:
       - name: Editor module tests
         run: make test-editor
 
-      - name: Focused shared-state race tests
-        if: github.event_name == 'pull_request'
-        run: make test-race-pr
-
-      # Pushes reaching main/master retain the exhaustive race gate, including
-      # the expensive BC7 and vector-search kernels omitted from the PR lane.
-      - name: Full repository race tests
-        if: github.event_name == 'push'
-        run: make test-race
-
       - name: Fuzz smoke tests
         run: make test-fuzz-smoke
 
       # The desktop host holds 3520 lines behind a windows build tag against 62
-      # lines of windows-gated test, and this runner is Linux. release.yml
+      # lines of windows-gated test, and this runner is Linux. release-governed.yml
       # cross-compiles the binary, but nothing compiled the windows TEST
       # binaries, so a broken desktop test could not fail anywhere. This runs the
       # portable tests and links both windows test binaries.
       - name: Desktop tests and Windows cross-compile gate
         run: make test-desktop
 
-  # cmd/gosx/build_test.go runs real production builds and therefore requires
-  # TinyGo. Isolating it gives PRs a ~6 minute Go critical path while preserving
-  # every production-build assertion and the standalone CLI build gate.
-  go-cli-tests:
-    runs-on: ubuntu-latest
+      - name: Desktop Artifact Signing provider with fake tool
+        run: GOWORK=off GOFLAGS=-p=1 go test -count=1 ./cmd/gosx -run '^TestDesktopPackageAzureFakeTool$'
+
+  desktop-macos:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    name: Native desktop (${{ matrix.runner }})
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [macos-15, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 15
+    env:
+      GOWORK: "off"
+      GOSX_DARWIN_INTERACTIVE: "0"
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Safe cgo-free desktop and sidecar tests
+        shell: bash
+        run: |
+          mkdir -p artifacts/desktop-macos
+          CGO_ENABLED=0 go test -count=1 -short ./desktop ./desktop/sidecar 2>&1 | tee artifacts/desktop-macos/short.log
+
+      # The race detector requires cgo; the shipped GUI binary below does not.
+      - name: Safe desktop and sidecar race tests
+        shell: bash
+        run: CGO_ENABLED=1 go test -count=1 -race -short ./desktop ./desktop/sidecar 2>&1 | tee artifacts/desktop-macos/race-short.log
+
+      - name: Native panels, Finder delivery and WebKit messages through LaunchServices
+        run: python3 scripts/test-desktop-macos-gui.py --artifacts artifacts/desktop-macos
+
+      - name: Retain native desktop reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: desktop-macos-${{ matrix.runner }}
+          path: artifacts/desktop-macos
+          if-no-files-found: error
+
+  # go-race-tests: the race detector gates split out of go-tests so they run
+  # in parallel instead of serializing after the unit lane. Pushes need TinyGo
+  # for cmd/gosx production-build tests; neither path needs Node. Pull requests
+  # run the focused test-race-pr suite within the shared job ceiling. Pushes
+  # race-build every package and run the full package set except nine named,
+  # validated perf/ouroboros tests whose real-repository evidence scans spend
+  # tens of minutes in deterministic parsing/Brotli work under instrumentation.
+  # Ordinary tests still gate all nine. A second scoped perf/ouroboros race run
+  # retains every fixture-sized test plus direct concurrent coverage of its
+  # mutex-protected network capture. The broad lane includes the expensive BC7
+  # and vector-search kernels omitted from pull requests and keeps a bounded
+  # 60-minute per-package alarm. perf/wire took 2388.913 seconds in main run
+  # 38175972851, then exhausted the 40-minute package alarm in 38182172138
+  # while starting another short loader-reference test. Main run 38170524231
+  # spent 28.5 minutes in CLI tests
+  # before the 50-minute job ceiling cancelled active IR, budget, and wire
+  # tests. Pushes get 90 minutes for the full suite and scoped second phase;
+  # pull requests keep their 50-minute ceiling.
+  go-race-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ github.event_name == 'push' && 90 || 50 }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        if: github.event_name == 'push'
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Focused shared-state race tests
+        if: github.event_name == 'pull_request'
+        run: make test-race-pr
+
+      # Pushes reaching main/master retain exhaustive package coverage, with
+      # only the validated deterministic evidence recomputations split out.
+      - name: Full repository race tests
+        if: github.event_name == 'push'
+        run: make test-race
+
+  # The full CLI package approaches its unchanged 25-minute test timeout.
+  # Two exhaustive partitions assign tests by name, including examples and
+  # fuzz seeds. Both jobs are required; documentation gates run once in job 0.
+  go-cli-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Node.js for documentation sample checks
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: CLI production-build integration tests
+        run: make test-cli CLI_SHARD=0
+
+      - name: Documentation example tests
+        run: GOWORK=off nice -n 10 go test ./examples/gosx-docs/...
+
+      - name: Build and serve each first-app tutorial step
+        run: GOWORK=off nice -n 10 go test -tags docs_tutorial -run '^TestFirstAppTutorialBuildsAndServesEveryStep$' -timeout 40m ./examples/gosx-docs
+
+      - name: Build CLI
+        run: make build-cli
+
+      - name: Compile documentation site pages and server
+        run: GOWORK=off nice -n 10 ./gosx build --dev ./examples/gosx-docs
+
+  go-cli-tests-b:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
 
     steps:
       - name: Check out repository
@@ -129,18 +307,33 @@ jobs:
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
-        run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
-          tinygo version
+        run: scripts/install-ci-tinygo.sh
 
       - name: CLI production-build integration tests
-        run: make test-cli
+        run: make test-cli CLI_SHARD=1
 
-      - name: Build CLI
-        run: make build-cli
+  go-cli-tests-c:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: CLI production-build integration tests
+        run: make test-cli CLI_SHARD=2
 
   # js-tests: Node for `node --test`, plus Go — `make test-js` also runs the
   # unit tests of cmd/buildbootstrap and then `go run . --check` (the bundle
@@ -162,15 +355,89 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # Node is only needed as a bare runtime for `node --test` (stdlib-only
-      # JS unit tests). There are no npm dependencies to install.
+      # Node also runs the pinned TypeScript compiler: strict mode for the
+      # generated ABI contract, plus tsconfig.scene3d.json, which type-checks
+      # every client/runtime/scene3d/*.ts source with a noImplicitAny ratchet.
+      # make test-js performs the reproducible npm ci.
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '22'
 
+      - name: Install CPU rasterizer for TAA shader regression
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libosmesa6
+
       - name: JavaScript runtime contract tests
-        run: make test-js
+        run: make test-js NODE_TEST_GROUP=runtime
+
+      # Match the wire gate's fail-closed base fetch. The startup allowlist
+      # may only shrink; unreadable or unfetched base revisions fail the test.
+      - name: Fetch base branch for startup asset hint ratchet
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          echo "PERF_STARTUP_BASE_REF=$BASE_SHA" >>"$GITHUB_ENV"
+
+      - name: Performance asset graph tests
+        run: make test-perf-graph
+
+      # Use the same verified base-tree comparison as wire-gates. Work
+      # budgets reuse wire.Ratchet without a raise map, so they only fall.
+      - name: Fetch base branch for Scene3D work ratchet
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          echo "PERF_BUDGET_BASE_REF=$BASE_SHA" >>"$GITHUB_ENV"
+
+      - name: Scene3D work budget fixture and down-only ratchet
+        run: GOWORK=off go test -count=1 ./perf/budgets
+
+  # js-tests-b: the Node suite's `other` group (`make test-js-node
+  # NODE_TEST_GROUP=other`, every file except the runtime-NN suites, which
+  # js-tests runs after its bundle and type checks). Groups are fixed by file
+  # name, so a test's job never moves when files are added. It needs Node,
+  # client/runtime's npm dependencies (the test harness loads the pinned
+  # TypeScript compiler) and the CPU rasterizer for the TAA shader regression.
+  # Like js-tests it also runs on draft pull requests.
+  js-tests-b:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install CPU rasterizer for TAA shader regression
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libosmesa6
+
+      - name: Install runtime test dependencies
+        run: cd client/runtime && npm ci
+
+      - name: JavaScript runtime contract tests (other suites)
+        run: make test-js-node NODE_TEST_GROUP=other
 
   # wasm-tests: Go + TinyGo. Also needs Node, because `go test -exec
   # go_js_wasm_exec` (used by test-wasm / test-wasm-islands) shells out to
@@ -178,6 +445,7 @@ jobs:
   # Pinning Node 22 here (same as js-tests) preserves exact prior behavior
   # instead of relying on whatever Node ships by default on the runner image.
   wasm-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -199,22 +467,20 @@ jobs:
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
-        run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
-          tinygo version
+        run: scripts/install-ci-tinygo.sh
 
       # Guards the zero-CGo portability claim: README states every package
       # compiles to WASM. It had stopped being true and nothing noticed,
-      # because `make test` builds for the host and test-wasm below builds
-      # only ./client/wasm. This builds every package.
+      # because `make test` builds for the host and test-wasm below tests
+      # selected packages. This builds every package.
       - name: Every package builds for js/wasm
         run: make build-wasm-all
 
       - name: WASM runtime tests
         run: make test-wasm
+
+      - name: Portable telemetry tests
+        run: make test-telemetry-wasm
 
       - name: Island-only WASM runtime tests
         run: make test-wasm-islands
@@ -245,11 +511,225 @@ jobs:
       - name: Build WASM runtime
         run: make build-runtime
 
-  # browser-tests: Go + Chrome + TinyGo. No Node install — the browser
-  # executes the WASM itself; nothing here shells out to `node`.
-  browser-tests:
+  # wire-gates: deterministic per-route network budgets. It builds a fresh
+  # `gosx init` app with one counter island and the docs site for production,
+  # serves both, and checks each route in perf/budgets/wire.json: bytes on the
+  # wire by type, request count, largest inline script, and the compression,
+  # cache and cookie policies. No browser runs, so a failure is a real change
+  # in what the page ships, not scheduler noise. The ratchet step fails when a
+  # limit rises or a required policy is dropped without a reason in the
+  # route's raise map. CPU time and LCP are measured by paired A/B runs
+  # outside this gate.
+  wire-gates:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Install production WASM optimizer
+        run: scripts/install-ci-binaryen.sh
+
+      # The ratchet compares with the base branch's budget. A failed fetch
+      # fails this step; only a base tree verified to lack the budget file
+      # skips the ratchet (the PR that introduces the file).
+      - name: Fetch the base-branch budget
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          set -eu
+          mkdir -p build/wire-gate
+          if [ -z "$BASE_SHA" ] || [ "$BASE_SHA" = "0000000000000000000000000000000000000000" ]; then
+            echo "WIRE_GATE_BASE_BUDGET=none" >>"$GITHUB_ENV"
+            exit 0
+          fi
+          if ! git cat-file -e "${BASE_SHA}^{commit}" 2>/dev/null; then
+            git fetch --quiet --no-tags --depth=1 origin "$BASE_SHA"
+          fi
+          if [ -z "$(git ls-tree "$BASE_SHA" -- perf/budgets/wire.json)" ]; then
+            echo "base $BASE_SHA has no perf/budgets/wire.json"
+            echo "WIRE_GATE_BASE_BUDGET=none" >>"$GITHUB_ENV"
+          else
+            git show "$BASE_SHA:perf/budgets/wire.json" >build/wire-gate/base-budget.json
+            echo "WIRE_GATE_BASE_BUDGET=build/wire-gate/base-budget.json" >>"$GITHUB_ENV"
+          fi
+
+      - name: Wire budget gate
+        run: make wire-gate
+
+      - name: Upload wire report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wire-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/wire-gate/wire-report.json
+            build/wire-gate/wire-report.md
+            build/wire-gate/*.log
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # scene3d-v1-browser-renderer-proof: one bounded five-mode renderer-contract
+  # matrix. Hosted WebGPU uses a private target; canvas presentation remains a
+  # release-pinned hardware obligation. Successful runs trap-clean artifacts;
+  # failed runs upload every mode before the always cleanup step.
+  scene3d-v1-browser-renderer-proof:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up stable Chrome for Testing
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Scene3D CUBICSPLINE browser renderer proof
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_EXPECTED_CHROME_VERSION: ${{ steps.chrome.outputs.chrome-version }}
+          GOSX_SCENE3D_CUBIC_WEBGPU_TARGET: private-texture
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          artifact_dir="${RUNNER_TEMP}/gosx-cubic-proof"
+          rm -rf -- "$artifact_dir"
+          mkdir -p "$artifact_dir"
+          proof_status=0
+          trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
+          set +e
+          node client/js/testdata/scene3d-cubic-spline-browser-matrix.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+          proof_status=$?
+          set -e
+          if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/matrix-report.json" ]; then
+            cat "$artifact_dir/matrix-report.json"
+          fi
+          exit "$proof_status"
+
+      - name: Upload Scene3D proof diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scene3d-v1-cubic-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gosx-cubic-proof
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean Scene3D proof artifacts
+        if: ${{ always() }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          rm -rf -- "${RUNNER_TEMP}/gosx-cubic-proof"
+
+  # scene3d-v1-adapter-proof: the real standard-Go WASM generic-hydrate seam,
+  # native WebGL2 plus requested-WebGPU/native-or-typed-fallback evidence,
+  # same-ID stale suppression, and the targeted hub-command/remount contract.
+  # Success removes artifacts immediately; failure retains the report and
+  # screenshots for seven days.
+  scene3d-v1-adapter-proof:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up stable Chrome for adapter proof
+        id: chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: stable
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Run Scene3D adapter hydrate browser proof
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+          GOSX_EXPECTED_CHROME_VERSION: ${{ steps.chrome.outputs.chrome-version }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          artifact_dir="${RUNNER_TEMP}/gosx-adapter-proof"
+          rm -rf -- "$artifact_dir"
+          mkdir -p "$artifact_dir"
+          proof_status=0
+          trap 'if [ "$proof_status" -eq 0 ]; then rm -rf -- "$artifact_dir"; fi' EXIT
+          set +e
+          node client/js/testdata/scene3d-adapter-hydrate-browser.cjs "$GITHUB_WORKSPACE" "$artifact_dir"
+          proof_status=$?
+          set -e
+          if [ "$proof_status" -ne 0 ] && [ -f "$artifact_dir/report.json" ]; then
+            cat "$artifact_dir/report.json"
+          fi
+          exit "$proof_status"
+
+      - name: Upload Scene3D adapter proof diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: scene3d-v1-adapter-proof-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/gosx-adapter-proof
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Clean Scene3D adapter proof artifacts
+        if: ${{ always() }}
+        run: |
+          set -eu
+          if [ -z "${RUNNER_TEMP:-}" ] || [ "$RUNNER_TEMP" = "/" ]; then
+            echo "unsafe RUNNER_TEMP" >&2
+            exit 2
+          fi
+          rm -rf -- "${RUNNER_TEMP}/gosx-adapter-proof"
+
+  # browser-tests: Go + Chrome + TinyGo. The wider browser suite executes WASM
+  # directly; the bounded Scene3D proof runs in its separately named job.
+  browser-tests:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
 
     steps:
       - name: Check out repository
@@ -265,23 +745,38 @@ jobs:
         id: chrome
         uses: browser-actions/setup-chrome@v1
 
+      - name: WebAssembly encoder browser validation
+        env:
+          GOSX_CHROME_BIN: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          test -x "$GOSX_CHROME_BIN"
+          make test-wasmgen
+
       # TinyGo is required: TestProductionBuildRunsMixedTinyGoAndStandardGoWASM
       # (e2e/go_wasm_mixed_prod_e2e_test.go) runs a real production GoSX build
       # (`go run ./cmd/gosx build --prod`), which requires TinyGo on PATH.
       - name: Install TinyGo
         env:
           TINYGO_VERSION: 0.41.1
-        run: |
-          curl -fsSL -o tinygo.deb "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
-          sudo dpkg -i tinygo.deb
-          go install golang.org/dl/go1.25.5@latest
-          go1.25.5 download
-          tinygo version
+        run: scripts/install-ci-tinygo.sh
 
       - name: Browser docs E2E gate
         env:
           GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
-        run: make test-e2e
+        run: make test-e2e E2E_SHARD=0
+
+      # This fixture test validates that the committed MP4 has browser-readable
+      # metadata. It deliberately requires an explicit browser so a Chrome
+      # binary that merely happens to exist on the generic unit runner cannot
+      # turn the unit partition into a flaky browser lane.
+      - name: Ouroboros media metadata browser smoke
+        # setup-chrome supplies Chromium, whose Linux build omits the MP4
+        # codec exercised by this fixture. GitHub's Ubuntu image also ships
+        # codec-capable Google Chrome; resolve it explicitly so this remains
+        # a browser-lane proof instead of silently skipping the media check.
+        run: |
+          chrome_bin="$(command -v google-chrome-stable || command -v google-chrome)"
+          GOSX_CHROME_BIN="$chrome_bin" go test ./examples/ouroboros-corpus -run '^TestFixtureMP4BrowserLoadsMetadata$' -count=1
 
       # The perf driver's own browser tests. They sit behind `//go:build
       # browser` and nothing passed that tag before this step existed, so 11
@@ -296,37 +791,208 @@ jobs:
           GOSX_CHROME_NO_SANDBOX: "1"
         run: make test-perf-browser
 
+      # Perf budgets are release measurements, so their browser is a governed
+      # fixture rather than the floating snapshot used by the compatibility
+      # tests above. Run 33305212196 measured this exact snapshot green on the
+      # same runtime/perf sources. Renew the pin only with a reviewed hosted
+      # receipt; latest-browser coverage remains in the earlier steps.
+      - name: Set up pinned Chromium for perf budget
+        id: perf-chrome
+        uses: browser-actions/setup-chrome@v2
+        with:
+          chrome-version: '1688711'
+
+      - name: Verify pinned perf browser identity
+        env:
+          PERF_CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}
+          PERF_CHROME_VERSION: ${{ steps.perf-chrome.outputs.chrome-version }}
+        run: |
+          sh scripts/verify-perf-browser-identity.sh \
+            "$PERF_CHROME_PATH" \
+            "$PERF_CHROME_VERSION" \
+            build/perf-browser-identity.txt
+
       - name: Perf budget gate
         env:
-          CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          CHROME_PATH: ${{ steps.perf-chrome.outputs.chrome-path }}
         run: make perf-budget-ci
 
-  # test: kept as a lightweight aggregate so the `test` check name still
-  # exists for any external required-check configuration that references it
-  # by name. As of this split, `main` branch protection on this repo has no
-  # required_status_checks configured (verified via `gh api
-  # repos/odvcencio/gosx/branches/main/protection`), so nothing currently
-  # depends on this name — this job is defensive insurance, not a fix for a
-  # known break.
+      - name: Upload perf budget failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-budget-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/perf-report.json
+            build/perf-server.log
+            build/perf-browser-identity.txt
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # test: kept as the lightweight aggregate required-check surface. It must
+  # include release-gate so branch protection on the aggregate `test` check also
+  # gates release policy and governed workflow topology. `always()` makes the
+  # aggregate run after a failed/skipped dependency; the step then fails closed
+  # unless every required dependency reports success. On a draft PR the full
+  # lanes are skipped, and GitHub counts a skipped required check as passed, so
+  # this job must not skip: it reports the fast lanes and then fails closed.
   test:
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     needs:
+      - release-gate
       - go-tests
+      - go-race-tests
+      - desktop-macos
       - go-cli-tests
+      - go-cli-tests-b
+      - go-cli-tests-c
       - js-tests
+      - js-tests-b
+      - wire-gates
       - wasm-tests
+      - scene3d-v1-browser-renderer-proof
+      - scene3d-v1-adapter-proof
       - browser-tests
+      - browser-tests-b
+      - browser-tests-c
     timeout-minutes: 5
 
     steps:
       - name: All test jobs passed
-        run: echo "go-tests, go-cli-tests, js-tests, wasm-tests, and browser-tests all passed"
+        env:
+          DRAFT_PULL_REQUEST: ${{ github.event_name == 'pull_request' && github.event.pull_request.draft }}
+          RELEASE_GATE_RESULT: ${{ needs.release-gate.result }}
+          GO_TESTS_RESULT: ${{ needs.go-tests.result }}
+          GO_RACE_TESTS_RESULT: ${{ needs.go-race-tests.result }}
+          DESKTOP_MACOS_RESULT: ${{ needs.desktop-macos.result }}
+          GO_CLI_TESTS_RESULT: ${{ needs.go-cli-tests.result }}
+          GO_CLI_TESTS_B_RESULT: ${{ needs.go-cli-tests-b.result }}
+          GO_CLI_TESTS_C_RESULT: ${{ needs.go-cli-tests-c.result }}
+          JS_TESTS_RESULT: ${{ needs.js-tests.result }}
+          JS_TESTS_B_RESULT: ${{ needs.js-tests-b.result }}
+          WIRE_GATES_RESULT: ${{ needs.wire-gates.result }}
+          WASM_TESTS_RESULT: ${{ needs.wasm-tests.result }}
+          SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT: ${{ needs.scene3d-v1-browser-renderer-proof.result }}
+          SCENE3D_V1_ADAPTER_PROOF_RESULT: ${{ needs.scene3d-v1-adapter-proof.result }}
+          BROWSER_TESTS_RESULT: ${{ needs.browser-tests.result }}
+          BROWSER_TESTS_B_RESULT: ${{ needs.browser-tests-b.result }}
+          BROWSER_TESTS_C_RESULT: ${{ needs.browser-tests-c.result }}
+        run: |
+          set -eu
+          if [ "$DRAFT_PULL_REQUEST" = true ]; then
+            for result in \
+              "release-gate=$RELEASE_GATE_RESULT" \
+              "go-tests=$GO_TESTS_RESULT" \
+              "js-tests=$JS_TESTS_RESULT" \
+              "js-tests-b=$JS_TESTS_B_RESULT"
+            do
+              case "$result" in
+                *=success) ;;
+                *)
+                  echo "draft fast check did not succeed: $result" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            echo "::error title=Draft pull request::release-gate, go-tests, js-tests and js-tests-b passed. The full suite runs when the PR is marked ready for review; until then this required check fails closed."
+            exit 1
+          fi
+          for result in \
+            "release-gate=$RELEASE_GATE_RESULT" \
+            "go-tests=$GO_TESTS_RESULT" \
+            "go-race-tests=$GO_RACE_TESTS_RESULT" \
+            "desktop-macos=$DESKTOP_MACOS_RESULT" \
+            "go-cli-tests=$GO_CLI_TESTS_RESULT" \
+            "go-cli-tests-b=$GO_CLI_TESTS_B_RESULT" \
+            "go-cli-tests-c=$GO_CLI_TESTS_C_RESULT" \
+            "js-tests=$JS_TESTS_RESULT" \
+            "js-tests-b=$JS_TESTS_B_RESULT" \
+            "wire-gates=$WIRE_GATES_RESULT" \
+            "wasm-tests=$WASM_TESTS_RESULT" \
+            "scene3d-v1-browser-renderer-proof=$SCENE3D_V1_BROWSER_RENDERER_PROOF_RESULT" \
+            "scene3d-v1-adapter-proof=$SCENE3D_V1_ADAPTER_PROOF_RESULT" \
+            "browser-tests=$BROWSER_TESTS_RESULT" \
+            "browser-tests-b=$BROWSER_TESTS_B_RESULT" \
+            "browser-tests-c=$BROWSER_TESTS_C_RESULT"
+          do
+            case "$result" in
+              *=success) ;;
+              *)
+                echo "required test job did not succeed: $result" >&2
+                exit 1
+                ;;
+            esac
+          done
+          echo "release-gate, go-tests, go-race-tests, desktop-macos, go-cli-tests, go-cli-tests-b, go-cli-tests-c, js-tests, js-tests-b, wire-gates, wasm-tests, scene3d-v1-browser-renderer-proof, scene3d-v1-adapter-proof, browser-tests, browser-tests-b, and browser-tests-c all passed"
+
+  # browser-tests-b and browser-tests-c: the other two shares of the e2e browser
+  # suite (`citest browser 1` and `citest browser 2`). browser-tests runs share 0
+  # plus the perf and media steps. Each share installs its own tools, so the
+  # three run in parallel on separate runners.
+  browser-tests-b:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Browser docs E2E gate
+        env:
+          GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: make test-e2e E2E_SHARD=1
+
+  browser-tests-c:
+    if: ${{ github.event_name != 'pull_request' || !github.event.pull_request.draft }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Set up Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Browser docs E2E gate
+        env:
+          GOSX_E2E_CHROME: ${{ steps.chrome.outputs.chrome-path }}
+        run: make test-e2e E2E_SHARD=2
 
   # Opt-in certification for a self-hosted runner with a real GPU. Generic
   # GitHub runners use SwiftShader and cannot produce meaningful WebGPU frame
   # timing. Set WATER_WEBGPU_RUNNER to the runner label to enable this job.
   water-webgpu-certification:
-    if: ${{ vars.WATER_WEBGPU_RUNNER != '' }}
+    if: ${{ vars.WATER_WEBGPU_RUNNER != '' && (github.event_name != 'pull_request' || !github.event.pull_request.draft) }}
     runs-on: ${{ vars.WATER_WEBGPU_RUNNER }}
     timeout-minutes: 15
 

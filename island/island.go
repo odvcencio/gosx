@@ -10,20 +10,30 @@ package island
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"html"
+	"m31labs.dev/gosx/internal/filepolicy"
+	"m31labs.dev/gosx/internal/htmlattr"
+	"m31labs.dev/gosx/internal/sceneprobe"
+	"maps"
 	neturl "net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 
 	"m31labs.dev/gosx"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/vm"
+	"m31labs.dev/gosx/command"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
@@ -32,25 +42,40 @@ import (
 
 // Renderer handles island-aware rendering of GoSX component trees.
 type Renderer struct {
-	manifest                           *hydrate.Manifest
-	counter                            int
-	bundleID                           string
-	programDir                         string // directory where island programs are stored
-	programFormat                      string // "json" or "bin"
-	programAssets                      map[string]programAsset
-	wasmExecPath                       string
-	standardGoWASMExecPath             string
-	patchPath                          string
-	bootstrapPath                      string
-	bootstrapLitePath                  string
-	bootstrapRuntimePath               string
-	bootstrapFeatureIslandsPath        string
-	bootstrapFeatureEnginesPath        string
-	bootstrapFeatureHubsPath           string
-	bootstrapFeatureControllersPath    string
-	bootstrapFeatureScene3dPath        string
-	bootstrapFeatureScene3dCommandPath string
-	bootstrapFeatureScene3dWebGPUPath  string
+	fixturePreview                        bool
+	basePath                              string
+	manifest                              *hydrate.Manifest
+	counter                               int
+	bundleID                              string
+	releaseManifestText                   bool
+	programDir                            string // directory where island programs are stored
+	programFormat                         string // "json" or "bin"
+	programAssets                         map[string]programAsset
+	wasmExecPath                          string
+	standardGoWASMExecPath                string
+	patchPath                             string
+	bootstrapPath                         string
+	bootstrapLitePath                     string
+	bootstrapRuntimePath                  string
+	bootstrapRuntimeConfigured            bool
+	bootstrapFeatureIslandsPath           string
+	bootstrapFeatureEnginesPath           string
+	bootstrapFeatureHubsPath              string
+	bootstrapFeatureControllersPath       string
+	bootstrapControllerInputPath          string
+	bootstrapFeatureScene3dPath           string
+	bootstrapFeatureScene3dCommandPath    string
+	bootstrapFeatureScene3dExperiencePath string
+	// bootstrapFeatureScene3dInstanceStreamPath serves the opt-in binary
+	// instance-transform fast path. Advertised unconditionally, exactly like
+	// bootstrapFeatureScene3dCommandPath above: instance-stream-bridge.ts
+	// (in the always-loaded base scene3d bundle) lazy-loads the chunk on a
+	// caller's first handle.applyInstanceStream(bytes) call, so the URL
+	// must be on the page before any scene-content heuristic could ever
+	// decide the page "needs" it — there is no such heuristic.
+	bootstrapFeatureScene3dInstanceStreamPath string
+	bootstrapFeatureScene3dHydratePath        string
+	bootstrapFeatureScene3dWebGPUPath         string
 	// bootstrapFeatureScene3dWebGLPath serves the WebGL2 renderer, which now
 	// loads on demand. A WebGPU-capable browser never fetches it. The mount
 	// code also fetches it when a WebGPU device is lost, so the fallback
@@ -69,6 +94,14 @@ type Renderer struct {
 	// carries a compressed array, a generator descriptor or a compression
 	// policy.
 	bootstrapFeatureScene3dDecompressPath string
+	// Walk is advertised only when a Scene3D engine carries walk props.
+	bootstrapFeatureScene3dWalkPath             string
+	bootstrapFeatureScene3dModelPreparationPath string
+	bootstrapFeatureScene3dTimelinePath         string
+	bootstrapFeatureScene3dZoomPath             string
+	bootstrapFeatureScene3dVesselPath           string
+	bootstrapFeatureScene3dOceanQueryPath       string
+	bootstrapFeatureScene3dParticleBurstPath    string
 	// bootstrapFeatureTextlayoutPath serves the demand-loaded text-layout
 	// engine. The client decides when to fetch it, so the server never
 	// emits a script tag or a preload hint for it. A preload would download
@@ -77,8 +110,14 @@ type Renderer struct {
 	videoHLSPath                   string
 	relayPath                      string
 	islandRuntime                  hydrate.RuntimeRef
+	runtimeVariants                map[string]hydrate.RuntimeRef
 	runtimeAssets                  buildmanifest.RuntimeAssets
-	bootstrapOnly                  bool
+	perfAssets                     *buildmanifest.PerfAssetUses
+	perfAssetBaseURL               string
+	// featureChunkPaths maps an opt-in feature name (hydrate.Manifest.Features)
+	// to its hashed public chunk URL, filled by ApplyBuildManifest.
+	featureChunkPaths map[string]string
+	bootstrapOnly     bool
 }
 
 type programAsset struct {
@@ -101,13 +140,19 @@ type Summary struct {
 	BootstrapFeatureEnginesPath     string
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
+	BootstrapControllerInputPath    string
 	BootstrapFeatureScene3DPath     string
-	HLSPath                         string
-	Islands                         int
-	ComputeIslands                  int
-	Engines                         int
-	Hubs                            int
-	Controllers                     int
+	// BootstrapFeatureTextLayoutPath is the content-hashed text-layout chunk
+	// URL, set on Scene3D pages. The client fetches that chunk on demand for
+	// a scene label; without this URL the loader falls back to an unhashed
+	// /gosx/ URL.
+	BootstrapFeatureTextLayoutPath string
+	HLSPath                        string
+	Islands                        int
+	ComputeIslands                 int
+	Engines                        int
+	Hubs                           int
+	Controllers                    int
 }
 
 type clientRuntimePlan struct {
@@ -122,7 +167,7 @@ type clientRuntimePlan struct {
 	// PreviewRelay is true when the page should emit the cross-frame relay
 	// script (gosx/relay.js) alongside the standard bootstrap. Driven by
 	// the process-level previewBootstrapEnabled flag — see
-	// island/preview_bootstrap.go and ADR 0009. Independent of Mode: a
+	// island/preview_bootstrap.go. Independent of Mode: a
 	// page may emit relay.js with mode="preview" (no islands, no engines)
 	// or with mode="full" (islands present AND preview enabled).
 	PreviewRelay bool
@@ -159,50 +204,87 @@ func enhancementFallbackForNode(node gosx.Node, fallback string) string {
 }
 
 // NewRenderer creates an island renderer.
+type rendererTemplateEntry struct {
+	manifest *buildmanifest.Manifest
+	renderer *Renderer
+}
+
+var rendererTemplateCache atomic.Pointer[rendererTemplateEntry]
+var rendererTemplateMu sync.Mutex
+
+// NewRenderer copies immutable runtime configuration, with fresh request state.
 func NewRenderer(bundleID string) *Renderer {
-	// Load the manifest once. NewRenderer used to call
-	// loadDefaultBuildManifest twice — once through loadDefaultRuntimeAssets
-	// and once for ApplyBuildManifest — and each call tried up to two
-	// buildmanifest.Load disk reads. The measured fixed cost was 419
-	// allocations and 47.4 KB per request.
-	//
-	// The per-request caller is server.NewPageRuntime, which page_state.go
-	// runs once for every page response. An earlier version of this comment
-	// named route/fileeval.go, and that file names neither this package nor
-	// this function. Both claims below fail when the chain moves again.
-	//
-	// gosx:claim has server/runtime.go `island.NewRenderer\("gosx-page"\)`
-	// gosx:claim has server/page_state.go `s.runtime = NewPageRuntime\(\)`
 	manifest := loadDefaultBuildManifest()
+	entry := rendererTemplateCache.Load()
+	if entry == nil || entry.manifest != manifest {
+		rendererTemplateMu.Lock()
+		entry = rendererTemplateCache.Load()
+		if entry == nil || entry.manifest != manifest {
+			entry = &rendererTemplateEntry{manifest: manifest, renderer: newRendererTemplate(manifest)}
+			rendererTemplateCache.Store(entry)
+		}
+		rendererTemplateMu.Unlock()
+	}
+	template := entry.renderer
+	r := *template
+	r.bundleID = bundleID
+	r.manifest = hydrate.NewManifest()
+	r.manifest.Runtime = template.manifest.Runtime
+	r.manifest.Bundles = maps.Clone(template.manifest.Bundles)
+	if bundle, ok := r.manifest.Bundles[""]; ok {
+		delete(r.manifest.Bundles, "")
+		r.manifest.Bundles[bundleID] = bundle
+	}
+	r.programAssets = maps.Clone(template.programAssets)
+	r.runtimeVariants = maps.Clone(template.runtimeVariants)
+	r.featureChunkPaths = maps.Clone(template.featureChunkPaths)
+	return &r
+}
+
+func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
+	bundleID := ""
 	runtimeAssets := buildmanifest.RuntimeAssets{}
 	if manifest != nil {
 		runtimeAssets = manifest.Runtime
 	}
 	renderer := &Renderer{
-		manifest:      hydrate.NewManifest(),
-		bundleID:      bundleID,
-		programFormat: "json", // default to dev mode
-		programAssets: make(map[string]programAsset),
-		runtimeAssets: runtimeAssets,
+		manifest:        hydrate.NewManifest(),
+		bundleID:        bundleID,
+		programFormat:   "json", // default to dev mode
+		programAssets:   make(map[string]programAsset),
+		runtimeVariants: make(map[string]hydrate.RuntimeRef),
+		runtimeAssets:   runtimeAssets,
 	}
 	renderer.wasmExecPath = renderer.versionCompatRuntimePath("/gosx/wasm_exec.js", strings.TrimSpace(runtimeAssets.WASMExec.Hash))
 	renderer.standardGoWASMExecPath = renderer.versionCompatRuntimePath("/gosx/standard-go-wasm_exec.js", strings.TrimSpace(runtimeAssets.StandardGoWASMExec.Hash))
 	renderer.patchPath = renderer.versionCompatRuntimePath("/gosx/patch.js", strings.TrimSpace(runtimeAssets.Patch.Hash))
 	renderer.bootstrapPath = renderer.versionCompatRuntimePath("/gosx/bootstrap.js", strings.TrimSpace(runtimeAssets.Bootstrap.Hash))
 	renderer.bootstrapLitePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-lite.js", strings.TrimSpace(runtimeAssets.BootstrapLite.Hash))
+	renderer.bootstrapRuntimeConfigured = true
 	renderer.bootstrapRuntimePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-runtime.js", strings.TrimSpace(runtimeAssets.BootstrapRuntime.Hash))
 	renderer.bootstrapFeatureIslandsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-islands.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureIslands.Hash))
 	renderer.bootstrapFeatureEnginesPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-engines.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureEngines.Hash))
 	renderer.bootstrapFeatureHubsPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-hubs.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureHubs.Hash))
 	renderer.bootstrapFeatureControllersPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-controllers.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureControllers.Hash))
+	renderer.bootstrapControllerInputPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-controller-input.js", strings.TrimSpace(runtimeAssets.BootstrapControllerInput.Hash))
 	renderer.bootstrapFeatureScene3dPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3D.Hash))
 	renderer.bootstrapFeatureScene3dCommandPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-command.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCommand.Hash))
+	renderer.bootstrapFeatureScene3dExperiencePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-experience.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DExperience.Hash))
+	renderer.bootstrapFeatureScene3dInstanceStreamPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-instance-stream.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DInstanceStream.Hash))
+	renderer.bootstrapFeatureScene3dHydratePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-hydrate.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DHydrate.Hash))
 	renderer.bootstrapFeatureScene3dWebGPUPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgpu.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash))
 	renderer.bootstrapFeatureScene3dWebGLPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-webgl.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWebGL.Hash))
 	renderer.bootstrapFeatureScene3dGLTFPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-gltf.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DGLTF.Hash))
 	renderer.bootstrapFeatureScene3dAnimationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-animation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DAnimation.Hash))
 	renderer.bootstrapFeatureScene3dComputePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-compute.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DCompute.Hash))
 	renderer.bootstrapFeatureScene3dDecompressPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-decompress.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DDecompress.Hash))
+	renderer.bootstrapFeatureScene3dWalkPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-walk.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DWalk.Hash))
+	renderer.bootstrapFeatureScene3dModelPreparationPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-model-preparation.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DModelPreparation.Hash))
+	renderer.bootstrapFeatureScene3dZoomPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-zoom.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DZoom.Hash))
+	renderer.bootstrapFeatureScene3dParticleBurstPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-particle-burst.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DParticleBurst.Hash))
+	renderer.bootstrapFeatureScene3dTimelinePath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-timeline.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DTimeline.Hash))
+	renderer.bootstrapFeatureScene3dVesselPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-vessel.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DVessel.Hash))
+	renderer.bootstrapFeatureScene3dOceanQueryPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-scene3d-ocean-query.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureScene3DOceanQuery.Hash))
 	renderer.bootstrapFeatureTextlayoutPath = renderer.versionCompatRuntimePath("/gosx/bootstrap-feature-textlayout.js", strings.TrimSpace(runtimeAssets.BootstrapFeatureTextlayout.Hash))
 	renderer.videoHLSPath = renderer.versionCompatRuntimePath("/gosx/hls.min.js", strings.TrimSpace(runtimeAssets.VideoHLS.Hash))
 	// Cross-frame relay script. Default unversioned; SetRelayPath can
@@ -305,8 +387,22 @@ var (
 // copy the read-then-write-without-lock pattern in
 // server/runtime_assets.go:395-425 — it races.
 func loadCachedBuildManifest(path string) *buildmanifest.Manifest {
+	immutable := filepolicy.Immutable()
+	if immutable {
+		buildManifestCacheMu.Lock()
+		entry, ok := buildManifestCache[path]
+		buildManifestCacheMu.Unlock()
+		if ok {
+			return entry.manifest
+		}
+	}
 	info, err := os.Stat(path)
 	if err != nil || info.IsDir() {
+		if immutable {
+			buildManifestCacheMu.Lock()
+			buildManifestCache[path] = buildManifestCacheEntry{}
+			buildManifestCacheMu.Unlock()
+		}
 		return nil
 	}
 	modTimeNano := info.ModTime().UnixNano()
@@ -369,10 +465,14 @@ func (r *Renderer) SetRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.manifest.Runtime = hydrate.RuntimeRef{
-		Path: path,
-		Hash: hash,
-		Size: size,
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantFull),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantFull)),
 	}
+	r.setRuntimeVariant(r.manifest.Runtime)
 }
 
 // SetIslandRuntime registers the smaller shared WASM runtime used by pages
@@ -386,10 +486,28 @@ func (r *Renderer) SetIslandRuntime(path string, hash string, size int64) {
 	}
 	path = r.versionCompatRuntimePath(path, hash)
 	r.islandRuntime = hydrate.RuntimeRef{
-		Path: path,
-		Hash: hash,
-		Size: size,
+		Path:         path,
+		Hash:         hash,
+		ManifestHash: runtimewasm.ManifestIdentity(),
+		Size:         size,
+		Variant:      string(runtimewasm.VariantIslands),
+		FeatureMask:  uint32(runtimewasm.FeatureMaskForVariant(runtimewasm.VariantIslands)),
 	}
+	r.setRuntimeVariant(r.islandRuntime)
+}
+
+func (r *Renderer) setRuntimeVariant(ref hydrate.RuntimeRef) {
+	if r == nil || strings.TrimSpace(ref.Path) == "" {
+		return
+	}
+	if r.runtimeVariants == nil {
+		r.runtimeVariants = make(map[string]hydrate.RuntimeRef)
+	}
+	variant := strings.TrimSpace(ref.Variant)
+	if variant == "" {
+		variant = string(runtimewasm.VariantFull)
+	}
+	r.runtimeVariants[variant] = ref
 }
 
 // SetBundle registers a WASM bundle in the manifest.
@@ -437,6 +555,7 @@ func (r *Renderer) SetBootstrapRuntimePath(path string) {
 		return
 	}
 	r.bootstrapRuntimePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+	r.bootstrapRuntimeConfigured = true
 }
 
 // SetBootstrapFeaturePaths overrides the selective runtime feature chunk URLs.
@@ -459,6 +578,14 @@ func (r *Renderer) SetBootstrapFeatureControllersPath(path string) {
 		return
 	}
 	r.bootstrapFeatureControllersPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapControllerInputPath overrides the demand-loaded input chunk URL.
+func (r *Renderer) SetBootstrapControllerInputPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapControllerInputPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
 // SetBootstrapFeatureTextlayoutPath overrides the demand-loaded text-layout
@@ -494,6 +621,36 @@ func (r *Renderer) SetBootstrapFeatureScene3DCommandPath(path string) {
 	r.bootstrapFeatureScene3dCommandPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DExperiencePath overrides the optional experience chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DExperiencePath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dExperiencePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DInstanceStreamPath overrides the lazy Scene3D
+// instance-stream sub-feature chunk URL. Emitted unconditionally as a
+// data-* attribute, the same as SetBootstrapFeatureScene3DCommandPath: there
+// is no scene-content signal that predicts whether a page will ever call
+// handle.applyInstanceStream, so (unlike Compute/Decompress below) this
+// cannot be gated on one.
+func (r *Renderer) SetBootstrapFeatureScene3DInstanceStreamPath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dInstanceStreamPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DHydratePath overrides the strict initial-hydrate
+// chunk URL. The renderer emits it only for a shared Scene3D program.
+func (r *Renderer) SetBootstrapFeatureScene3DHydratePath(path string) {
+	if strings.TrimSpace(path) == "" {
+		return
+	}
+	r.bootstrapFeatureScene3dHydratePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DWebGLPath overrides the demand-loaded Scene3D
 // WebGL2 renderer chunk URL.
 func (r *Renderer) SetBootstrapFeatureScene3DWebGLPath(path string) {
@@ -505,7 +662,7 @@ func (r *Renderer) SetBootstrapFeatureScene3DWebGLPath(path string) {
 
 // SetBootstrapFeatureScene3DWebGPUPath overrides the async Scene3D WebGPU
 // sub-feature chunk URL. Emitted inline after the main scene3d script tag,
-// gated on navigator.gpu so non-WebGPU browsers skip the download.
+// loaded on demand after Scene3D selects a usable WebGPU backend.
 func (r *Renderer) SetBootstrapFeatureScene3DWebGPUPath(path string) {
 	if strings.TrimSpace(path) == "" {
 		return
@@ -549,6 +706,61 @@ func (r *Renderer) SetBootstrapFeatureScene3DComputePath(path string) {
 	r.bootstrapFeatureScene3dComputePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
 }
 
+// SetBootstrapFeatureScene3DWalkPath overrides the optional walking chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DWalkPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dWalkPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DModelPreparationPath overrides the opt-in preparation chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DModelPreparationPath(path string) {
+	if r != nil {
+		r.bootstrapFeatureScene3dModelPreparationPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+	}
+}
+
+// SetBootstrapFeatureScene3DZoomPath overrides the optional zoom chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DZoomPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dZoomPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DParticleBurstPath overrides the demand-loaded burst URL.
+func (r *Renderer) SetBootstrapFeatureScene3DParticleBurstPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dParticleBurstPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DTimelinePath overrides the demand-loaded timeline chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DTimelinePath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dTimelinePath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DVesselPath overrides the optional sailing chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DVesselPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dVesselPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
+// SetBootstrapFeatureScene3DOceanQueryPath overrides the optional ocean query chunk URL.
+func (r *Renderer) SetBootstrapFeatureScene3DOceanQueryPath(path string) {
+	if r == nil {
+		return
+	}
+	r.bootstrapFeatureScene3dOceanQueryPath = r.versionCompatRuntimePath(path, r.compatRuntimeHash(path))
+}
+
 // SetBootstrapFeatureScene3DDecompressPath overrides the lazy Scene3D
 // decompress sub-feature chunk URL. NOT emitted as a static <script> tag: the
 // base scene3d bundle inserts a script with this URL before it builds the
@@ -571,54 +783,118 @@ func (r *Renderer) SetVideoHLSPath(path string) {
 }
 
 func (r *Renderer) compatRuntimeHash(path string) string {
+	if asset, ok := r.runtimeScriptAsset(path); ok {
+		return strings.TrimSpace(asset.Hash)
+	}
 	switch compatRuntimePath(path) {
 	case "/gosx/runtime.wasm":
 		return strings.TrimSpace(r.runtimeAssets.WASM.Hash)
 	case "/gosx/runtime-islands.wasm":
 		return strings.TrimSpace(r.runtimeAssets.WASMIslands.Hash)
-	case "/gosx/wasm_exec.js":
-		return strings.TrimSpace(r.runtimeAssets.WASMExec.Hash)
-	case "/gosx/standard-go-wasm_exec.js":
-		return strings.TrimSpace(r.runtimeAssets.StandardGoWASMExec.Hash)
-	case "/gosx/bootstrap.js":
-		return strings.TrimSpace(r.runtimeAssets.Bootstrap.Hash)
-	case "/gosx/bootstrap-lite.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapLite.Hash)
-	case "/gosx/bootstrap-runtime.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapRuntime.Hash)
-	case "/gosx/bootstrap-feature-islands.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureIslands.Hash)
-	case "/gosx/bootstrap-feature-engines.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureEngines.Hash)
-	case "/gosx/bootstrap-feature-hubs.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureHubs.Hash)
-	case "/gosx/bootstrap-feature-controllers.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureControllers.Hash)
-	case "/gosx/bootstrap-feature-scene3d.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3D.Hash)
-	case "/gosx/bootstrap-feature-scene3d-command.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCommand.Hash)
-	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGPU.Hash)
-	case "/gosx/bootstrap-feature-scene3d-webgl.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DWebGL.Hash)
-	case "/gosx/bootstrap-feature-scene3d-gltf.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DGLTF.Hash)
-	case "/gosx/bootstrap-feature-scene3d-animation.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DAnimation.Hash)
-	case "/gosx/bootstrap-feature-scene3d-compute.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DCompute.Hash)
-	case "/gosx/bootstrap-feature-scene3d-decompress.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureScene3DDecompress.Hash)
-	case "/gosx/bootstrap-feature-textlayout.js":
-		return strings.TrimSpace(r.runtimeAssets.BootstrapFeatureTextlayout.Hash)
-	case "/gosx/patch.js":
-		return strings.TrimSpace(r.runtimeAssets.Patch.Hash)
-	case "/gosx/hls.min.js":
-		return strings.TrimSpace(r.runtimeAssets.VideoHLS.Hash)
 	default:
 		return ""
 	}
+}
+
+func (r *Renderer) compatRuntimeIntegrity(path string) string {
+	asset, ok := r.runtimeScriptAsset(path)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(asset.Integrity)
+}
+
+// runtimeScriptAsset resolves both stable compatibility URLs and the hashed
+// production URLs installed by ApplyBuildManifest. A resolved path is trusted
+// to carry an asset's digest only when it still ends in that manifest file;
+// a later caller that points a setter at unrelated bytes must not inherit stale
+// SRI metadata merely because it occupies the same renderer field.
+func (r *Renderer) runtimeScriptAsset(path string) (buildmanifest.HashedAsset, bool) {
+	target := compatRuntimePath(path)
+	switch {
+	case runtimeScriptAssetPathMatches(target, "/gosx/wasm_exec.js", r.wasmExecPath, r.runtimeAssets.WASMExec):
+		return r.runtimeAssets.WASMExec, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/standard-go-wasm_exec.js", r.standardGoWASMExecPath, r.runtimeAssets.StandardGoWASMExec):
+		return r.runtimeAssets.StandardGoWASMExec, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap.js", r.bootstrapPath, r.runtimeAssets.Bootstrap):
+		return r.runtimeAssets.Bootstrap, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-lite.js", r.bootstrapLitePath, r.runtimeAssets.BootstrapLite):
+		return r.runtimeAssets.BootstrapLite, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-runtime.js", r.bootstrapRuntimePath, r.runtimeAssets.BootstrapRuntime):
+		return r.runtimeAssets.BootstrapRuntime, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-islands.js", r.bootstrapFeatureIslandsPath, r.runtimeAssets.BootstrapFeatureIslands):
+		return r.runtimeAssets.BootstrapFeatureIslands, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-engines.js", r.bootstrapFeatureEnginesPath, r.runtimeAssets.BootstrapFeatureEngines):
+		return r.runtimeAssets.BootstrapFeatureEngines, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-hubs.js", r.bootstrapFeatureHubsPath, r.runtimeAssets.BootstrapFeatureHubs):
+		return r.runtimeAssets.BootstrapFeatureHubs, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-controllers.js", r.bootstrapFeatureControllersPath, r.runtimeAssets.BootstrapFeatureControllers):
+		return r.runtimeAssets.BootstrapFeatureControllers, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-controller-input.js", r.bootstrapControllerInputPath, r.runtimeAssets.BootstrapControllerInput):
+		return r.runtimeAssets.BootstrapControllerInput, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d.js", r.bootstrapFeatureScene3dPath, r.runtimeAssets.BootstrapFeatureScene3D):
+		return r.runtimeAssets.BootstrapFeatureScene3D, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-command.js", r.bootstrapFeatureScene3dCommandPath, r.runtimeAssets.BootstrapFeatureScene3DCommand):
+		return r.runtimeAssets.BootstrapFeatureScene3DCommand, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-experience.js", r.bootstrapFeatureScene3dExperiencePath, r.runtimeAssets.BootstrapFeatureScene3DExperience):
+		return r.runtimeAssets.BootstrapFeatureScene3DExperience, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-instance-stream.js", r.bootstrapFeatureScene3dInstanceStreamPath, r.runtimeAssets.BootstrapFeatureScene3DInstanceStream):
+		return r.runtimeAssets.BootstrapFeatureScene3DInstanceStream, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-hydrate.js", r.bootstrapFeatureScene3dHydratePath, r.runtimeAssets.BootstrapFeatureScene3DHydrate):
+		return r.runtimeAssets.BootstrapFeatureScene3DHydrate, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgpu.js", r.bootstrapFeatureScene3dWebGPUPath, r.runtimeAssets.BootstrapFeatureScene3DWebGPU):
+		return r.runtimeAssets.BootstrapFeatureScene3DWebGPU, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-webgl.js", r.bootstrapFeatureScene3dWebGLPath, r.runtimeAssets.BootstrapFeatureScene3DWebGL):
+		return r.runtimeAssets.BootstrapFeatureScene3DWebGL, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-gltf.js", r.bootstrapFeatureScene3dGLTFPath, r.runtimeAssets.BootstrapFeatureScene3DGLTF):
+		return r.runtimeAssets.BootstrapFeatureScene3DGLTF, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-animation.js", r.bootstrapFeatureScene3dAnimationPath, r.runtimeAssets.BootstrapFeatureScene3DAnimation):
+		return r.runtimeAssets.BootstrapFeatureScene3DAnimation, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-compute.js", r.bootstrapFeatureScene3dComputePath, r.runtimeAssets.BootstrapFeatureScene3DCompute):
+		return r.runtimeAssets.BootstrapFeatureScene3DCompute, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-decompress.js", r.bootstrapFeatureScene3dDecompressPath, r.runtimeAssets.BootstrapFeatureScene3DDecompress):
+		return r.runtimeAssets.BootstrapFeatureScene3DDecompress, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-walk.js", r.bootstrapFeatureScene3dWalkPath, r.runtimeAssets.BootstrapFeatureScene3DWalk):
+		return r.runtimeAssets.BootstrapFeatureScene3DWalk, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-model-preparation.js", r.bootstrapFeatureScene3dModelPreparationPath, r.runtimeAssets.BootstrapFeatureScene3DModelPreparation):
+		return r.runtimeAssets.BootstrapFeatureScene3DModelPreparation, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-zoom.js", r.bootstrapFeatureScene3dZoomPath, r.runtimeAssets.BootstrapFeatureScene3DZoom):
+		return r.runtimeAssets.BootstrapFeatureScene3DZoom, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-particle-burst.js", r.bootstrapFeatureScene3dParticleBurstPath, r.runtimeAssets.BootstrapFeatureScene3DParticleBurst):
+		return r.runtimeAssets.BootstrapFeatureScene3DParticleBurst, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-timeline.js", r.bootstrapFeatureScene3dTimelinePath, r.runtimeAssets.BootstrapFeatureScene3DTimeline):
+		return r.runtimeAssets.BootstrapFeatureScene3DTimeline, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-vessel.js", r.bootstrapFeatureScene3dVesselPath, r.runtimeAssets.BootstrapFeatureScene3DVessel):
+		return r.runtimeAssets.BootstrapFeatureScene3DVessel, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-scene3d-ocean-query.js", r.bootstrapFeatureScene3dOceanQueryPath, r.runtimeAssets.BootstrapFeatureScene3DOceanQuery):
+		return r.runtimeAssets.BootstrapFeatureScene3DOceanQuery, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-textlayout.js", r.bootstrapFeatureTextlayoutPath, r.runtimeAssets.BootstrapFeatureTextlayout):
+		return r.runtimeAssets.BootstrapFeatureTextlayout, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/patch.js", r.patchPath, r.runtimeAssets.Patch):
+		return r.runtimeAssets.Patch, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/hls.min.js", r.videoHLSPath, r.runtimeAssets.VideoHLS):
+		return r.runtimeAssets.VideoHLS, true
+	case runtimeScriptAssetPathMatches(target, "/gosx/relay.js", r.relayPath, r.runtimeAssets.Relay):
+		return r.runtimeAssets.Relay, true
+	default:
+		for name, asset := range r.runtimeAssets.Features {
+			if runtimeScriptAssetPathMatches(target, "/gosx/bootstrap-feature-"+name+".js", r.featureChunkPaths[name], asset) {
+				return asset, true
+			}
+		}
+		return buildmanifest.HashedAsset{}, false
+	}
+}
+
+func runtimeScriptAssetPathMatches(target, canonical, resolved string, asset buildmanifest.HashedAsset) bool {
+	if target == canonical {
+		return true
+	}
+	file := strings.TrimLeft(strings.TrimSpace(asset.File), "/")
+	if target == "" || file == "" || (target != "/"+file && !strings.HasSuffix(target, "/"+file)) {
+		return false
+	}
+	return target == compatRuntimePath(resolved)
 }
 
 func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
@@ -626,12 +902,16 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 	if hash == "" {
 		return path
 	}
-	parsed, err := neturl.Parse(path)
-	if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
-		return path
-	}
-	switch compatRuntimePath(path) {
-	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js":
+	target := compatRuntimePath(path)
+	switch target {
+	case "/gosx/runtime.wasm", "/gosx/runtime-islands.wasm", "/gosx/wasm_exec.js", "/gosx/standard-go-wasm_exec.js", "/gosx/bootstrap.js", "/gosx/bootstrap-lite.js", "/gosx/bootstrap-runtime.js", "/gosx/bootstrap-feature-islands.js", "/gosx/bootstrap-feature-engines.js", "/gosx/bootstrap-feature-hubs.js", "/gosx/bootstrap-feature-controllers.js", "/gosx/bootstrap-feature-scene3d.js", "/gosx/bootstrap-feature-scene3d-command.js", "/gosx/bootstrap-feature-scene3d-experience.js", "/gosx/bootstrap-feature-scene3d-instance-stream.js", "/gosx/bootstrap-feature-scene3d-hydrate.js", "/gosx/bootstrap-feature-scene3d-webgpu.js", "/gosx/bootstrap-feature-scene3d-webgl.js", "/gosx/bootstrap-feature-scene3d-gltf.js", "/gosx/bootstrap-feature-scene3d-animation.js", "/gosx/bootstrap-feature-scene3d-compute.js", "/gosx/bootstrap-feature-scene3d-decompress.js", "/gosx/bootstrap-feature-textlayout.js", "/gosx/patch.js", "/gosx/hls.min.js", "/gosx/relay.js":
+		if path == target {
+			return path + "?v=" + neturl.QueryEscape(hash)
+		}
+		parsed, err := neturl.Parse(path)
+		if err != nil || parsed == nil || parsed.Scheme != "" || parsed.Host != "" {
+			return path
+		}
 		query := parsed.Query()
 		if query.Get("v") == "" {
 			query.Set("v", hash)
@@ -644,11 +924,47 @@ func (r *Renderer) versionCompatRuntimePath(path, hash string) string {
 }
 
 func compatRuntimePath(path string) string {
+	// Manifest asset URLs are normally plain absolute paths. Their URL path
+	// is already available, so avoid allocating a URL for every candidate in
+	// runtimeScriptAsset. Keep parsing authority, escaped path, query, and
+	// fragment forms so their matching semantics stay the same.
+	if path == "" || (strings.HasPrefix(path, "/") && !strings.HasPrefix(path, "//") && !strings.ContainsAny(path, "%?#")) {
+		return strings.TrimSpace(path)
+	}
 	parsed, err := neturl.Parse(path)
 	if err != nil || parsed == nil {
 		return strings.TrimSpace(path)
 	}
 	return strings.TrimSpace(parsed.Path)
+}
+
+// runtimeScriptAttrs returns the browser policy attributes shared by every
+// GoSX-owned external script. Runtime scripts are always DOM scripts during a
+// soft navigation; explicit type/cross-origin/referrer policy values keep the
+// browser's behavior deterministic instead of inheriting page defaults.
+//
+// Build manifests store content hashes as hex. Convert a complete SHA-256 hash
+// to the SRI form when one is available; compatibility/test hashes that are not
+// complete digests deliberately omit integrity rather than emitting a value the
+// browser would reject.
+func (r *Renderer) runtimeScriptAttrs(path string, nonce string) string {
+	attrs := ` type="text/javascript" crossorigin="anonymous" referrerpolicy="no-referrer"`
+	integrity := r.compatRuntimeIntegrity(path)
+	if integrity == "" {
+		integrity = sriIntegrity(r.compatRuntimeHash(path))
+	}
+	if integrity != "" {
+		attrs += ` integrity="` + html.EscapeString(integrity) + `"`
+	}
+	return attrs + cspNonceAttr(nonce)
+}
+
+func sriIntegrity(hash string) string {
+	raw, err := hex.DecodeString(strings.TrimSpace(hash))
+	if err != nil || len(raw) != sha256.Size {
+		return ""
+	}
+	return "sha256-" + base64.StdEncoding.EncodeToString(raw)
 }
 
 // ApplyBuildManifest wires hashed runtime and island asset URLs into the renderer.
@@ -657,14 +973,67 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	if manifest == nil {
 		return fmt.Errorf("build manifest is nil")
 	}
+	if err := manifest.ValidateIslandAssets(); err != nil {
+		return fmt.Errorf("apply build manifest: %w", err)
+	}
+	if err := manifest.ValidatePerfAssetUses(); err != nil {
+		return err
+	}
+	r.perfAssets = clonePerfAssetUses(manifest.PerfAssetUses)
+	r.perfAssetBaseURL = assetBaseURL
 
 	runtime := manifest.RuntimeURLs(assetBaseURL)
+	r.bootstrapRuntimeConfigured = runtime.BootstrapRuntime != ""
+	r.runtimeAssets = manifest.Runtime
 	if runtime.WASM != "" {
 		r.SetRuntime(runtime.WASM, manifest.Runtime.WASM.Hash, manifest.Runtime.WASM.Size)
+		r.manifest.Runtime.GzipSize = manifest.Runtime.WASM.GzipSize
+		r.manifest.Runtime.BrotliSize = manifest.Runtime.WASM.BrotliSize
+		r.setRuntimeVariant(r.manifest.Runtime)
 		r.SetBundle(r.bundleID, runtime.WASM)
 	}
 	if runtime.WASMIslands != "" {
 		r.SetIslandRuntime(runtime.WASMIslands, manifest.Runtime.WASMIslands.Hash, manifest.Runtime.WASMIslands.Size)
+		r.islandRuntime.GzipSize = manifest.Runtime.WASMIslands.GzipSize
+		r.islandRuntime.BrotliSize = manifest.Runtime.WASMIslands.BrotliSize
+		r.setRuntimeVariant(r.islandRuntime)
+	}
+	for id, asset := range manifest.Runtime.WASMVariants {
+		path := runtime.WASMVariants[id]
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		variant := strings.TrimSpace(asset.Variant)
+		if variant == "" {
+			variant = strings.TrimSpace(id)
+		}
+		mask := asset.FeatureMask
+		if mask == 0 {
+			mask = uint32(runtimewasm.RequiredFeaturesForVariant(runtimewasm.Variant(variant)))
+		}
+		r.setRuntimeVariant(hydrate.RuntimeRef{
+			Path:         path,
+			Hash:         asset.Hash,
+			ManifestHash: firstNonEmptyRuntimeManifestHash(asset.ManifestHash),
+			Size:         asset.Size,
+			GzipSize:     asset.GzipSize,
+			BrotliSize:   asset.BrotliSize,
+			Variant:      variant,
+			FeatureMask:  mask,
+		})
+	}
+	// WASMIslands remains a compatibility artifact for manifests that predate
+	// capability-linked profiles. Once a manifest advertises variants, the
+	// alias must not compete with core as an independent fifth profile.
+	if len(manifest.Runtime.WASMVariants) > 0 {
+		delete(r.runtimeVariants, string(runtimewasm.VariantIslands))
+	}
+	r.featureChunkPaths = nil
+	if len(runtime.Features) > 0 {
+		r.featureChunkPaths = make(map[string]string, len(runtime.Features))
+		for name, url := range runtime.Features {
+			r.featureChunkPaths[name] = url
+		}
 	}
 	r.SetClientAssetPaths(runtime.WASMExec, runtime.Patch, runtime.Bootstrap)
 	r.SetStandardGoWASMExecPath(runtime.StandardGoWASMExec)
@@ -672,15 +1041,26 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	r.SetBootstrapRuntimePath(runtime.BootstrapRuntime)
 	r.SetBootstrapFeaturePaths(runtime.BootstrapFeatureIslands, runtime.BootstrapFeatureEngines, runtime.BootstrapFeatureHubs)
 	r.SetBootstrapFeatureControllersPath(runtime.BootstrapFeatureControllers)
+	r.SetBootstrapControllerInputPath(runtime.BootstrapControllerInput)
 	r.SetBootstrapFeatureTextlayoutPath(runtime.BootstrapFeatureTextlayout)
 	r.SetBootstrapFeatureScene3DPath(runtime.BootstrapFeatureScene3D)
 	r.SetBootstrapFeatureScene3DCommandPath(runtime.BootstrapFeatureScene3DCommand)
+	r.SetBootstrapFeatureScene3DExperiencePath(runtime.BootstrapFeatureScene3DExperience)
+	r.SetBootstrapFeatureScene3DInstanceStreamPath(runtime.BootstrapFeatureScene3DInstanceStream)
+	r.SetBootstrapFeatureScene3DHydratePath(runtime.BootstrapFeatureScene3DHydrate)
 	r.SetBootstrapFeatureScene3DWebGPUPath(runtime.BootstrapFeatureScene3DWebGPU)
 	r.SetBootstrapFeatureScene3DWebGLPath(runtime.BootstrapFeatureScene3DWebGL)
 	r.SetBootstrapFeatureScene3DGLTFPath(runtime.BootstrapFeatureScene3DGLTF)
 	r.SetBootstrapFeatureScene3DAnimationPath(runtime.BootstrapFeatureScene3DAnimation)
 	r.SetBootstrapFeatureScene3DComputePath(runtime.BootstrapFeatureScene3DCompute)
 	r.SetBootstrapFeatureScene3DDecompressPath(runtime.BootstrapFeatureScene3DDecompress)
+	r.SetBootstrapFeatureScene3DWalkPath(runtime.BootstrapFeatureScene3DWalk)
+	r.SetBootstrapFeatureScene3DModelPreparationPath(runtime.BootstrapFeatureScene3DModelPreparation)
+	r.SetBootstrapFeatureScene3DZoomPath(runtime.BootstrapFeatureScene3DZoom)
+	r.SetBootstrapFeatureScene3DParticleBurstPath(runtime.BootstrapFeatureScene3DParticleBurst)
+	r.SetBootstrapFeatureScene3DTimelinePath(runtime.BootstrapFeatureScene3DTimeline)
+	r.SetBootstrapFeatureScene3DVesselPath(runtime.BootstrapFeatureScene3DVessel)
+	r.SetBootstrapFeatureScene3DOceanQueryPath(runtime.BootstrapFeatureScene3DOceanQuery)
 	r.SetVideoHLSPath(runtime.VideoHLS)
 
 	for _, asset := range manifest.Islands {
@@ -688,6 +1068,13 @@ func (r *Renderer) ApplyBuildManifest(manifest *buildmanifest.Manifest, assetBas
 	}
 
 	return nil
+}
+
+func firstNonEmptyRuntimeManifestHash(value string) string {
+	if value = strings.TrimSpace(value); value != "" {
+		return value
+	}
+	return runtimewasm.ManifestIdentity()
 }
 
 // LoadBuildManifest reads a build manifest from disk and applies its asset URLs.
@@ -737,7 +1124,7 @@ func (r *Renderer) RenderIslandWithEvents(componentName string, props any, event
 
 	// Add events and program ref to the last island entry
 	lastIdx := len(r.manifest.Islands) - 1
-	r.manifest.Islands[lastIdx].Events = events
+	r.manifest.Islands[lastIdx].Events = append([]hydrate.EventSlot{}, events...)
 	r.applyProgramRef(&r.manifest.Islands[lastIdx], componentName)
 
 	r.counter++
@@ -767,11 +1154,21 @@ func (r *Renderer) RegisterController(config controller.Config) string {
 	return r.manifest.AddController(config)
 }
 
+// AddCommands registers named page actions in the hydration manifest.
+func (r *Renderer) AddCommands(cmds ...command.Command) error {
+	if r == nil || r.manifest == nil {
+		return nil
+	}
+	return r.manifest.AddCommands(cmds...)
+}
+
 func (r *Renderer) clientManifest() *hydrate.Manifest {
 	if r == nil || r.manifest == nil {
 		return nil
 	}
 	manifest := *r.manifest
+	manifest.Features = r.explicitFeatures()
+	manifest.Preview = r.clientRuntimePlan().Mode == "preview"
 	if len(r.manifest.Bundles) > 0 {
 		manifest.Bundles = make(map[string]hydrate.BundleRef, len(r.manifest.Bundles))
 		for id, bundle := range r.manifest.Bundles {
@@ -790,8 +1187,130 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 			}
 		}
 	}
-	return &manifest
+	return manifest.WithBasePath(r.basePath)
 }
+
+// RequireFeature asks the browser loader to fetch the opt-in runtime chunk
+// bootstrap-feature-<name>.js for this page. The name must be lowercase words
+// joined by dashes. Required features select the selective runtime even when
+// the page has no engines, islands, hubs or controllers.
+func (r *Renderer) RequireFeature(name string) error {
+	if r == nil {
+		return fmt.Errorf("island renderer is nil")
+	}
+	return r.manifest.RequireFeature(name)
+}
+
+// FeaturePaths maps each runtime feature chunk the page can load to its public
+// URL: the six legacy chunks the page uses (islands, engines, hubs,
+// controllers, scene3d, textlayout) plus every feature the page requires
+// through RequireFeature. The document contract publishes a flat
+// bootstrapFeature<Name>Path key for each non-legacy entry. It returns nil
+// when the page loads no chunk. It lives beside Summary, not in it, so Summary
+// stays comparable with ==.
+func (r *Renderer) FeaturePaths() map[string]string {
+	if r == nil || !r.clientRuntimePlan().Selective {
+		return nil
+	}
+	summary := r.Summary()
+	paths := map[string]string{}
+	for name, path := range map[string]string{
+		"islands":     summary.BootstrapFeatureIslandsPath,
+		"engines":     summary.BootstrapFeatureEnginesPath,
+		"hubs":        summary.BootstrapFeatureHubsPath,
+		"controllers": summary.BootstrapFeatureControllersPath,
+		"scene3d":     summary.BootstrapFeatureScene3DPath,
+		"textlayout":  summary.BootstrapFeatureTextLayoutPath,
+	} {
+		if strings.TrimSpace(path) != "" {
+			paths[name] = path
+		}
+	}
+	for _, name := range r.requiredFeatureNames() {
+		paths[name] = r.requiredFeaturePath(name)
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	return paths
+}
+
+// legacyFeatureNames are the chunks that predate manifest.features. Their
+// contract keys and Summary fields keep their original names.
+var legacyFeatureNames = map[string]bool{
+	"islands": true, "engines": true, "hubs": true,
+	"controllers": true, "scene3d": true, "textlayout": true,
+}
+
+// requiredFeaturePath returns the public URL for a non-legacy required
+// feature: the hashed manifest URL when the build recorded one, otherwise the
+// unversioned /gosx/ compatibility URL the server resolves at request time.
+func (r *Renderer) requiredFeaturePath(name string) string {
+	if path := r.featureChunkPaths[name]; path != "" {
+		return path
+	}
+	return "/gosx/bootstrap-feature-" + name + ".js"
+}
+
+// explicitFeatures returns the features the page named with RequireFeature,
+// without scene3d. scene3d is entry-driven: the loader waits on a signal from a
+// script the renderer emits only for a GoSXScene3D engine, so an explicit
+// requirement (a caller can assign the exported field) must never reach the
+// page.
+func (r *Renderer) explicitFeatures() []string {
+	var names []string
+	for _, name := range r.manifest.Features {
+		if name != "scene3d" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
+// pageFeatures is the one place that decides which runtime feature chunks a
+// page loads: the chunks its manifest entries imply, plus the explicit
+// requirements, minus the rejected scene3d. The client contract fields,
+// preload links, summary and FeaturePaths all read it, and static export finds
+// chunks through the URLs those publish.
+func (r *Renderer) pageFeatures() map[string]bool {
+	set := map[string]bool{}
+	if len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0 {
+		set["islands"] = true
+	}
+	if len(r.manifest.Engines) > 0 {
+		set["engines"] = true
+	}
+	if len(r.manifest.Hubs) > 0 {
+		set["hubs"] = true
+	}
+	if len(r.manifest.Controllers) > 0 {
+		set["controllers"] = true
+	}
+	if r.hasSceneEngines() {
+		set["scene3d"] = true
+		set["textlayout"] = true
+	}
+	for _, name := range r.explicitFeatures() {
+		set[name] = true
+	}
+	return set
+}
+
+// requiredFeatureNames returns the sorted non-legacy feature names the page
+// loads.
+func (r *Renderer) requiredFeatureNames() []string {
+	var names []string
+	for name := range r.pageFeatures() {
+		if !legacyFeatureNames[name] {
+			names = append(names, name)
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// SetBasePath selects the public prefix for client manifest URLs.
+func (r *Renderer) SetBasePath(prefix string) { r.basePath = prefix }
 
 // ManifestJSON returns the manifest as a JSON string.
 func (r *Renderer) ManifestJSON() (string, error) {
@@ -822,11 +1341,31 @@ func (r *Renderer) ManifestScriptWithNonce(nonce string) gosx.Node {
 	if err != nil {
 		return gosx.Text("")
 	}
+	// data-gosx-release tells the bootstrap runtime it may drop the JSON text
+	// from the DOM after its one memoized parse; without the attribute the text
+	// is retained for the page's lifetime. The manifest can reach hundreds of
+	// kilobytes, so the drop is a per-tab memory saving, but it is opt-in: an
+	// app whose own inline scripts read the element's text later must not set
+	// it until those readers consume window.__gosx_manifest instead.
+	release := ""
+	if r.releaseManifestText || os.Getenv("GOSX_RELEASE_MANIFEST_TEXT") == "1" {
+		release = ` data-gosx-release`
+	}
 	return gosx.RawHTML(fmt.Sprintf(
-		`<script id="gosx-manifest" type="application/json"%s>%s</script>`,
+		`<script id="gosx-manifest" type="application/json"%s%s>%s</script>`,
 		cspNonceAttr(nonce),
+		release,
 		string(data),
 	))
+}
+
+// ReleaseManifestText marks the emitted manifest script tag with
+// data-gosx-release, allowing the browser runtime to drop the manifest JSON
+// text from the DOM once it has been parsed. Opt in only when no script on the
+// page reads the element's textContent after boot; late consumers must use the
+// published window.__gosx_manifest parse instead.
+func (r *Renderer) ReleaseManifestText() {
+	r.releaseManifestText = true
 }
 
 // BootstrapScript returns the script tags needed for island hydration.
@@ -843,120 +1382,52 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 
 	var b strings.Builder
 	plan := r.clientRuntimePlan()
-	nonceAttr := cspNonceAttr(nonce)
-	// Preview-mode relay (ADR 0009) emits an additional script that wires
+	// Preview-mode relay emits an additional script that wires
 	// window.__gosx_relay_* before the bootstrap runs. Emitted FIRST so
 	// the relay's message listener is installed before any cross-frame
-	// signals arrive — see plan section C and client/js/relay.js.
+	// signals arrive — see client/js/relay.js.
 	if plan.PreviewRelay && r.relayPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="relay" src="%s"%s></script>`, html.EscapeString(r.relayPath), r.runtimeScriptAttrs(r.relayPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.StandardGoWASMExec && r.standardGoWASMExecPath != "" {
 		// wasm_exec.js declares globals that must execute as a real script. Mark
 		// the wrapped standard-Go shim for DOM loading during managed navigation
 		// so strict-CSP pages never fall back to indirect eval.
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom" src="%s"%s></script>`, html.EscapeString(r.standardGoWASMExecPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="standard-go-wasm-exec" data-gosx-script-load="dom" src="%s"%s></script>`, html.EscapeString(r.standardGoWASMExecPath), r.runtimeScriptAttrs(r.standardGoWASMExecPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.WASMExec && r.wasmExecPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"%s></script>`, html.EscapeString(r.wasmExecPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="wasm-exec" src="%s"%s></script>`, html.EscapeString(r.wasmExecPath), r.runtimeScriptAttrs(r.wasmExecPath, nonce)))
 		b.WriteByte('\n')
 	}
 	if plan.Patch && r.patchPath != "" {
-		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), nonceAttr))
+		b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="patch" src="%s"%s></script>`, html.EscapeString(r.patchPath), r.runtimeScriptAttrs(r.patchPath, nonce)))
 		b.WriteByte('\n')
 	}
-	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s" src="%s"%s></script>`, plan.Mode, html.EscapeString(r.selectedBootstrapPath()), nonceAttr))
+	bootstrapPath := r.selectedBootstrapPath()
+	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s"`, plan.Mode))
+	if r.hasSceneEngines() && bootstrapPath == r.bootstrapPath {
+		r.writeScene3DChunkURLs(&b)
+	}
+	b.WriteString(fmt.Sprintf(` src="%s"%s></script>`, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+		// The strict hydrate decoder is not part of the initial Scene3D route.
+		// Emit it only for a shared-runtime Scene3D program, ordered before the
+		// main deferred scene bundle so the factory observes its published API.
+		if hydratePath := r.bootstrapFeatureScene3dHydratePath; r.scene3DNeedsHydrateChunk() && hydratePath != "" {
+			b.WriteByte('\n')
+			b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="feature-scene3d-hydrate" src="%s"%s></script>`, html.EscapeString(hydratePath), r.runtimeScriptAttrs(hydratePath, nonce)))
+		}
 		b.WriteByte('\n')
 		b.WriteString(`<script defer data-gosx-script="feature-scene3d"`)
-		// Embed hashed URLs for lazy sub-feature chunks as data-* attributes
-		// so the main scene3d bundle can use immutable hashed URLs at first
-		// dynamic-load time instead of the unhashed compat URL. Lets the
-		// browser cache the sub-feature forever, keyed on its content hash.
-		if gltfPath := r.bootstrapFeatureScene3dGLTFPath; gltfPath != "" {
-			b.WriteString(` data-gosx-scene3d-gltf-url="`)
-			b.WriteString(html.EscapeString(gltfPath))
-			b.WriteByte('"')
-		}
-		if commandPath := r.bootstrapFeatureScene3dCommandPath; commandPath != "" {
-			b.WriteString(` data-gosx-scene3d-command-url="`)
-			b.WriteString(html.EscapeString(commandPath))
-			b.WriteByte('"')
-		}
-		if animPath := r.bootstrapFeatureScene3dAnimationPath; animPath != "" {
-			b.WriteString(` data-gosx-scene3d-animation-url="`)
-			b.WriteString(html.EscapeString(animPath))
-			b.WriteByte('"')
-		}
-		if webgpuPath := r.bootstrapFeatureScene3dWebGPUPath; webgpuPath != "" {
-			b.WriteString(` data-gosx-scene3d-webgpu-url="`)
-			b.WriteString(html.EscapeString(webgpuPath))
-			b.WriteByte('"')
-		}
-		if webglPath := r.bootstrapFeatureScene3dWebGLPath; webglPath != "" {
-			b.WriteString(` data-gosx-scene3d-webgl-url="`)
-			b.WriteString(html.EscapeString(webglPath))
-			b.WriteByte('"')
-		}
-		// The compute and decompress chunks are gated on the scene itself, not
-		// on the browser. Advertise a URL only when a scene on this page reaches
-		// the chunk. The runtime refuses to guess a path, so a scene with one
-		// cube and one directional light cannot fetch either chunk, and the
-		// bytes stay on the server.
-		needsCompute, needsDecompress := r.scene3DChunkNeeds()
-		if computePath := r.bootstrapFeatureScene3dComputePath; needsCompute && computePath != "" {
-			b.WriteString(` data-gosx-scene3d-compute-url="`)
-			b.WriteString(html.EscapeString(computePath))
-			b.WriteByte('"')
-		}
-		if decompressPath := r.bootstrapFeatureScene3dDecompressPath; needsDecompress && decompressPath != "" {
-			b.WriteString(` data-gosx-scene3d-decompress-url="`)
-			b.WriteString(html.EscapeString(decompressPath))
-			b.WriteByte('"')
-		}
+		r.writeScene3DChunkURLs(&b)
 		b.WriteString(` src="`)
 		b.WriteString(html.EscapeString(scene3dPath))
 		b.WriteString(`"`)
-		b.WriteString(nonceAttr)
+		b.WriteString(r.runtimeScriptAttrs(scene3dPath, nonce))
 		b.WriteString(">\x3c/script>")
 
-		// WebGPU sub-feature: lazy-load only when navigator.gpu exists.
-		// Safari and Firefox-on-most-platforms skip the download
-		// entirely, saving ~55KB gzip / 120KB raw per load. Chromium
-		// browsers fetch it in parallel with the main scene3d chunk so
-		// the scene mount can pick webgpu on the first render. Inlined
-		// rather than added to a manifest loader to keep the HTML byte
-		// cost minimal — the script body is ~190 bytes before gzip.
-		if webgpuPath := r.selectedBootstrapFeaturePath("scene3d-webgpu"); webgpuPath != "" {
-			b.WriteByte('\n')
-			// Gate the sub-chunk load behind DOMContentLoaded so it runs
-			// AFTER the parser-inserted defer scripts (which include the
-			// main bootstrap-feature-scene3d.js). Trying s.async = false
-			// on the dynamically-inserted script element doesn't work
-			// reliably in every Chromium build — the sub-chunk still
-			// races the main bundle and usually wins, firing the
-			// IIFE's early-return guard because __gosx_scene3d_api
-			// isn't defined yet. Waiting for DCL sidesteps the ordering
-			// problem entirely: by the time DCL fires, all parser-
-			// inserted defer scripts have already executed, so the main
-			// scene3d bundle has published its API.
-			//
-			// NB: Go raw-string (backticks) doesn't process \x escapes,
-			// so the closing </script> must come from a double-quoted
-			// string — hence the split. Historical bug from v0.17.16:
-			// using `\x3c/script>` inside a raw-string literal produced
-			// a literal "\x3c/script>" in the HTML, which JS parsed as
-			// a syntax error, silently dropping the entire inline loader.
-			b.WriteString(`<script data-gosx-script="feature-scene3d-webgpu-loader"`)
-			b.WriteString(nonceAttr)
-			b.WriteString(`>if(navigator.gpu&&!window.__gosx_scene3d_webgpu_api&&!window.__gosx_scene3d_webgpu_feature_promise){var _n=document.currentScript&&(document.currentScript.nonce||document.currentScript.getAttribute('nonce'))||'';var _w=function(){if(window.__gosx_scene3d_webgpu_api||window.__gosx_scene3d_webgpu_feature_promise)return;window.__gosx_scene3d_webgpu_feature_promise=new Promise(function(r,j){var s=document.createElement('script');s.async=false;s.dataset.gosxScript='feature-scene3d-webgpu';if(_n){s.nonce=_n;}s.onload=function(){if(window.__gosx_scene3d_webgpu_api){r(window.__gosx_scene3d_webgpu_api)}else{window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('scene3d-webgpu chunk loaded but did not publish API'))}};s.onerror=function(){window.__gosx_scene3d_webgpu_feature_promise=null;j(new Error('failed to load scene3d-webgpu chunk'))};s.src=`)
-			b.WriteString(htmlJSStringLiteral(webgpuPath))
-			b.WriteString(";document.head.appendChild(s);});};")
-			b.WriteString("if(document.readyState==='loading'){document.addEventListener('DOMContentLoaded',_w);}else{_w();}}")
-			b.WriteString("\x3c/script>")
-		}
 	}
 	return gosx.RawHTML(b.String())
 }
@@ -1013,6 +1484,13 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		return renderEngineError(err)
 	}
 
+	// Preserve the existing sorted JSON wire form for engines outside Scene3D.
+	if !strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") && len(cfg.Props) > 0 {
+		if err := json.Unmarshal(cfg.Props, &props); err != nil {
+			return renderEngineError(err)
+		}
+	}
+
 	mountID := cfg.MountID
 	if engine.KindNeedsMount(cfg.Kind) && mountID == "" {
 		mountID = fmt.Sprintf("gosx-engine-mount-%d", len(r.manifest.Engines))
@@ -1031,6 +1509,12 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	)
 	if err != nil {
 		return renderEngineError(err)
+	}
+
+	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
+		entry := &r.manifest.Engines[len(r.manifest.Engines)-1]
+		entry.Scene3DProbe = cfg.Scene3DProbe
+		cfg.Scene3DProbe = sceneProbe(entry)
 	}
 
 	if !engine.KindNeedsMount(cfg.Kind) {
@@ -1054,7 +1538,20 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-poster", poster.Poster))
 	}
 	mountStyle := ""
-	for name, value := range cfg.MountAttrs {
+	// mountNames iterates in sorted order (gosx#204, mirroring gosx#188): Go's
+	// map iteration order is randomized per run, so two renders of the same
+	// cfg.MountAttrs previously emitted the data-gosx-engine-* mount
+	// attributes in a different order each time — byte-identity goldens and
+	// exports (gosx export on examples/gosx-docs) churned on unchanged
+	// content. Sorting names before emission makes the output deterministic
+	// across runs and processes.
+	mountNames := make([]string, 0, len(cfg.MountAttrs))
+	for name := range cfg.MountAttrs {
+		mountNames = append(mountNames, name)
+	}
+	sort.Strings(mountNames)
+	for _, name := range mountNames {
+		value := cfg.MountAttrs[name]
 		name = strings.TrimSpace(name)
 		if name == "" {
 			continue
@@ -1106,10 +1603,25 @@ func (r *Renderer) BindHub(name, path string, bindings []hydrate.HubBinding) str
 	return r.manifest.AddHub(name, path, bindings)
 }
 
+// BindHubDocument binds a server-rendered text view to a Hub document protocol.
+// The opt-in browser host owns editing, presence, cursors and page disposal.
+func (r *Renderer) BindHubDocument(name, path string, config hydrate.HubDocumentConfig) (string, error) {
+	if r == nil || r.manifest == nil {
+		return "", fmt.Errorf("island renderer is nil")
+	}
+	return r.manifest.AddHubDocument(name, path, config)
+}
+
 // BindHubInput registers a realtime hub connection with bootstrap-owned input
 // forwarding.
 func (r *Renderer) BindHubInput(name, path string, bindings []hydrate.HubBinding, input hydrate.HubInputConfig) string {
 	return r.manifest.AddHubWithInput(name, path, bindings, &input)
+}
+
+// BindHubWithRoundTrip registers a hub connection with a bootstrap-owned RTT
+// heartbeat. The server hub echoes ping data using the configured pong event.
+func (r *Renderer) BindHubWithRoundTrip(name, path string, bindings []hydrate.HubBinding, roundTrip hydrate.HubRoundTripConfig) string {
+	return r.manifest.AddHubWithRoundTrip(name, path, bindings, roundTrip)
 }
 
 // SetClientIdentity configures bootstrap-owned client identity state for the
@@ -1221,10 +1733,10 @@ func (r *Renderer) RenderIslandFromProgram(prog *program.Program, props any) gos
 // Each slot gets a stable path-derived ID and selector relative to the island root.
 func extractEventSlots(prog *program.Program) []hydrate.EventSlot {
 	if len(prog.Nodes) == 0 {
-		return nil
+		return []hydrate.EventSlot{}
 	}
 
-	var slots []hydrate.EventSlot
+	slots := make([]hydrate.EventSlot, 0)
 
 	var walk func(nodeID program.NodeID, path string)
 	walk = func(nodeID program.NodeID, path string) {
@@ -1273,10 +1785,36 @@ func eventNameToType(name string) string {
 		return "focus"
 	case "onBlur":
 		return "blur"
+	case "onDragStart":
+		return "dragstart"
+	case "onDragEnd":
+		return "dragend"
+	case "onDragOver":
+		return "dragover"
+	case "onDragLeave":
+		return "dragleave"
+	case "onDrop":
+		return "drop"
+	case "onPointerDown":
+		return "pointerdown"
+	case "onPointerMove":
+		return "pointermove"
+	case "onPointerUp":
+		return "pointerup"
+	case "onPointerCancel":
+		return "pointercancel"
+	case "onDocumentKeyDown":
+		return "document-keydown"
+	case "onDocumentKeyUp":
+		return "document-keyup"
+	case "onWindowResize":
+		return "window-resize"
 	default:
-		// Strip "on" prefix and lowercase
+		// DOM event names are case-insensitive but addEventListener strings are
+		// conventionally lowercase. Lower the entire suffix so multiword event
+		// names do not leak source spelling such as pointerDown into the manifest.
 		if len(name) > 2 && name[:2] == "on" {
-			return strings.ToLower(name[2:3]) + name[3:]
+			return strings.ToLower(name[2:])
 		}
 		return name
 	}
@@ -1335,11 +1873,21 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 		return
 	}
 
+	if !htmlattr.ValidTag(node.Tag) {
+		return
+	}
 	safeTag := html.EscapeString(node.Tag)
 	b.WriteByte('<')
 	b.WriteString(safeTag)
 
-	for _, attr := range renderResolvedAttrs(&node, path) {
+	attrs := renderResolvedAttrs(&node, path)
+	if strings.EqualFold(node.Tag, "form") {
+		attrs = expandIslandManagedFormAttrs(attrs)
+	}
+	for _, attr := range attrs {
+		if !htmlattr.ValidName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on") {
+			continue
+		}
 		safeName := html.EscapeString(attr.Name)
 		if attr.Bool {
 			b.WriteByte(' ')
@@ -1349,7 +1897,7 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 		b.WriteByte(' ')
 		b.WriteString(safeName)
 		b.WriteString(`="`)
-		b.WriteString(html.EscapeString(attr.Value))
+		b.WriteString(html.EscapeString(htmlattr.FilterURL(attr.Name, attr.Value)))
 		b.WriteByte('"')
 	}
 
@@ -1365,6 +1913,71 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 	b.WriteByte('>')
 }
 
+// expandIslandManagedFormAttrs applies the data-gosx-managed shorthand
+// expansion to a resolved <form> element's attributes (gosx#179 F2). Before
+// this, the island renderer was a third form-rendering surface that never
+// expanded the shorthand: it copied a resolved node's attributes straight
+// through, so a served island form kept the raw shorthand attribute
+// instead of the managed-form contract. The browser navigation runtime
+// still intercepted it — see managedFormShorthandTruthy in
+// client/runtime/host/navigation.ts — so the form was never left both
+// un-expanded and un-managed, but the server HTML did not match the other
+// two render paths' output.
+//
+// This mirrors node.go's expandManagedFormAttrs: it calls the same shared
+// truthy rule (gosx.ManagedFormShorthandTruthy) and inserts the same
+// default contract attributes in place of the shorthand attribute, only
+// filling in a contract attribute the author has not already written.
+// Like the other two render paths, it does not add
+// gosx.ManagedFormModeAttr — the HTML method attribute, if present, stays
+// authoritative for the navigation runtime. If the shorthand attribute is
+// absent, or present but not truthy, attrs is returned unchanged.
+func expandIslandManagedFormAttrs(attrs []vm.ResolvedAttr) []vm.ResolvedAttr {
+	idx := -1
+	for i, attr := range attrs {
+		if attr.Name == gosx.ManagedFormShorthandAttr {
+			idx = i
+			break
+		}
+	}
+	if idx < 0 {
+		return attrs
+	}
+	shorthand := attrs[idx]
+	var value any
+	if !shorthand.Bool {
+		value = shorthand.Value
+	}
+	if !gosx.ManagedFormShorthandTruthy(shorthand.Bool, value) {
+		return attrs
+	}
+
+	have := make(map[string]bool, len(attrs))
+	for _, attr := range attrs {
+		have[attr.Name] = true
+	}
+
+	defaults := []vm.ResolvedAttr{
+		{Name: gosx.ManagedFormAttr, Bool: true},
+		{Name: gosx.ManagedFormStateAttr, Value: "idle"},
+		{Name: gosx.EnhancementAttr, Value: "form"},
+		{Name: gosx.EnhancementLayerAttr, Value: "bootstrap"},
+		{Name: gosx.RuntimeFallbackAttr, Value: "native-form"},
+	}
+	var fill []vm.ResolvedAttr
+	for _, d := range defaults {
+		if !have[d.Name] {
+			fill = append(fill, d)
+		}
+	}
+
+	out := make([]vm.ResolvedAttr, 0, len(attrs)-1+len(fill))
+	out = append(out, attrs[:idx]...)
+	out = append(out, fill...)
+	out = append(out, attrs[idx+1:]...)
+	return out
+}
+
 func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
 	if node == nil {
 		return nil
@@ -1372,8 +1985,28 @@ func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
 	// Fast path: no events → return the static attrs directly (no alloc).
 	// Only elements with event handlers need the synthesized data-gosx-on-*
 	// markers and the data-gosx-path attribute appended.
+	//
+	// An authored attribute named like a synthesized marker is dropped on
+	// both paths: HTML keeps the first of two duplicate attributes, so an
+	// authored data-gosx-on-click would otherwise beat the real marker. The
+	// scan allocates nothing; the copy happens only when something must go.
+	reserved := 0
+	for i := range node.Attrs {
+		if htmlattr.ReservedDispatchName(node.Attrs[i].Name) {
+			reserved++
+		}
+	}
 	if len(node.Events) == 0 {
-		return node.Attrs
+		if reserved == 0 {
+			return node.Attrs
+		}
+		kept := make([]vm.ResolvedAttr, 0, len(node.Attrs)-reserved)
+		for _, attr := range node.Attrs {
+			if !htmlattr.ReservedDispatchName(attr.Name) {
+				kept = append(kept, attr)
+			}
+		}
+		return kept
 	}
 
 	// Pre-size: static attrs + 1 marker per event + 1 extra for each click
@@ -1385,8 +2018,12 @@ func renderResolvedAttrs(node *vm.ResolvedNode, path string) []vm.ResolvedAttr {
 			extra++
 		}
 	}
-	attrs := make([]vm.ResolvedAttr, 0, len(node.Attrs)+extra)
-	attrs = append(attrs, node.Attrs...)
+	attrs := make([]vm.ResolvedAttr, 0, len(node.Attrs)-reserved+extra)
+	for _, attr := range node.Attrs {
+		if !htmlattr.ReservedDispatchName(attr.Name) {
+			attrs = append(attrs, attr)
+		}
+	}
 	for _, event := range node.Events {
 		eventType := eventNameToType(event.Name)
 		attrs = append(attrs, vm.ResolvedAttr{
@@ -1481,8 +2118,9 @@ func (r *Renderer) PreloadHints() gosx.Node {
 	var b strings.Builder
 
 	// Preload the shared WASM runtime only when the page declares islands or a
-	// shared-runtime engine bridge.
-	if r.needsSharedRuntime() {
+	// shared-runtime engine bridge. Preview-only pages wait for the browser to
+	// confirm preview context before downloading WASM.
+	if r.needsSharedRuntime() && r.clientRuntimePlan().Mode != "preview" {
 		runtime := r.selectedRuntimeRef()
 		if runtime.Path != "" {
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="fetch" type="application/wasm" crossorigin>`, runtime.Path))
@@ -1543,12 +2181,66 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
 				continue
 			}
-			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script">`, path))
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
+			b.WriteByte('\n')
+		}
+		// Required opt-in chunks are fetched by the loader, never by a script
+		// tag, so a preload hint is the only server-side signal they get.
+		for _, name := range r.requiredFeatureNames() {
+			path := r.requiredFeaturePath(name)
+			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
+				continue
+			}
+			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
 			b.WriteByte('\n')
 		}
 	}
 
+	r.writeScene3DPreloads(&b)
 	return gosx.RawHTML(b.String())
+}
+
+// writeScene3DChunkURLs advertises the same lazy URLs for split and embedded scenes.
+func (r *Renderer) writeScene3DChunkURLs(b *strings.Builder) {
+	needsCompute, needsDecompress := r.scene3DChunkNeeds()
+	// Command, streaming and animation are demand-loaded by public calls.
+	// Content-gated chunks receive a URL only when a scene opts into them.
+	for _, chunk := range []struct {
+		name, path string
+		enabled    bool
+	}{
+		{"gltf", r.bootstrapFeatureScene3dGLTFPath, true},
+		{"command", r.bootstrapFeatureScene3dCommandPath, true},
+		{"experience", r.bootstrapFeatureScene3dExperiencePath, r.scene3DNeedsExperienceChunk()},
+		{"instance-stream", r.bootstrapFeatureScene3dInstanceStreamPath, true},
+		{"particle-burst", r.bootstrapFeatureScene3dParticleBurstPath, r.scene3DNeedsParticleBurstChunk()},
+		{"timeline", r.bootstrapFeatureScene3dTimelinePath, r.scene3DNeedsTimelineChunk()},
+		{"animation", r.bootstrapFeatureScene3dAnimationPath, true},
+		{"webgpu", r.bootstrapFeatureScene3dWebGPUPath, true},
+		{"webgl", r.bootstrapFeatureScene3dWebGLPath, true},
+		{"walk", r.bootstrapFeatureScene3dWalkPath, r.scene3DNeedsWalkChunk()},
+		{"model-preparation", r.bootstrapFeatureScene3dModelPreparationPath, r.scene3DNeedsModelPreparationChunk()},
+		{"zoom", r.bootstrapFeatureScene3dZoomPath, r.scene3DNeedsZoomChunk()},
+		{"vessel", r.bootstrapFeatureScene3dVesselPath, r.scene3DNeedsVesselChunk()},
+		{"ocean-query", r.bootstrapFeatureScene3dOceanQueryPath, r.scene3DNeedsVesselChunk()},
+		{"compute", r.bootstrapFeatureScene3dComputePath, needsCompute},
+		{"decompress", r.bootstrapFeatureScene3dDecompressPath, needsDecompress},
+	} {
+		if chunk.enabled && chunk.path != "" {
+			b.WriteString(` data-gosx-scene3d-` + chunk.name + `-url="`)
+			b.WriteString(html.EscapeString(chunk.path))
+			b.WriteByte('"')
+			integrity := r.compatRuntimeIntegrity(chunk.path)
+			if integrity == "" {
+				integrity = sriIntegrity(r.compatRuntimeHash(chunk.path))
+			}
+			if integrity != "" {
+				b.WriteString(` data-gosx-scene3d-` + chunk.name + `-integrity="`)
+				b.WriteString(html.EscapeString(integrity))
+				b.WriteByte('"')
+			}
+		}
+	}
 }
 
 // bootstrapScriptSrcs returns the set of URLs BootstrapScript() emits as
@@ -1644,34 +2336,41 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 	engines := len(r.manifest.Engines)
 	hubs := len(r.manifest.Hubs)
 	controllers := len(r.manifest.Controllers)
-	previewRelay := PreviewBootstrapEnabled()
-	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0 || controllers > 0
+	// Required chunks need the core loader even on a page with no entries.
+	// explicitFeatures excludes scene3d, which must remain engine-driven.
+	features := len(r.explicitFeatures())
+	previewRelay := PreviewBootstrapEnabled() || r.fixturePreview
+	bootstrap := r.bootstrapOnly || previewRelay || islands > 0 || computeIslands > 0 || engines > 0 || hubs > 0 || controllers > 0 || features > 0
 	mode := "none"
 	if bootstrap {
 		mode = "full"
 	}
-	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
+	if r.bootstrapOnly && !previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 && features == 0 {
 		mode = "lite"
 	}
-	// Preview-relay-only pages (no islands, no engines, no hubs, just the
-	// cross-frame relay) get a dedicated "preview" mode. They emit
-	// wasm_exec + the tiny islands runtime + relay.js, but no manifest
-	// (no islands to hydrate yet — the storefront subscriber island is
-	// added by slice 6's downstream consumer).
-	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 {
+	// Preview-only pages need the shared signal bridge without island programs.
+	if previewRelay && islands == 0 && computeIslands == 0 && engines == 0 && hubs == 0 && controllers == 0 && features == 0 {
 		mode = "preview"
 	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()
 	// In preview mode, the bridge is required even without islands —
 	// otherwise the iframe has no Bridge.DispatchInboundSignal target.
 	previewNeedsRuntime := previewRelay && mode == "preview"
+	selective := bootstrap && mode != "lite"
+	if previewNeedsRuntime {
+		// Older asset configurations can keep using the compatibility bootstrap.
+		selective = selective && r.bootstrapRuntimeConfigured && strings.TrimSpace(r.bootstrapRuntimePath) != ""
+	}
+	// The legacy monolith's hub and video factories require its WASM bridge.
+	monolithBridge := r.bootstrapRuntimePath == "" && mode == "full" && (hubs > 0 || r.hasVideoEngines())
+
 	return clientRuntimePlan{
 		Bootstrap:          bootstrap,
 		Mode:               mode,
-		Manifest:           bootstrap && mode != "lite" && mode != "preview",
-		Selective:          bootstrap && mode != "lite" && mode != "preview",
-		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
-		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine,
+		Manifest:           bootstrap && mode != "lite",
+		Selective:          selective,
+		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
+		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
 		StandardGoWASMExec: r.hasGoWASMEngines(),
 		Patch:              islands > 0,
 		PreviewRelay:       previewRelay,
@@ -1704,12 +2403,28 @@ func (r *Renderer) Summary() Summary {
 	if r.hasVideoEngines() {
 		summary.HLSPath = r.videoHLSPath
 	}
+	if plan.Bootstrap && r.pageFeatures()["textlayout"] {
+		// A Scene3D label lays out through the text-layout chunk, and the
+		// client decides whether a scene needs it, so a scene page names the
+		// hashed URL. No preload: that would fetch the chunk on every page.
+		summary.BootstrapFeatureTextLayoutPath = r.bootstrapFeatureTextlayoutPath
+	}
 	if plan.Selective {
 		summary.BootstrapFeatureIslandsPath = r.selectedBootstrapFeaturePath("islands")
 		summary.BootstrapFeatureEnginesPath = r.selectedBootstrapFeaturePath("engines")
 		summary.BootstrapFeatureHubsPath = r.selectedBootstrapFeaturePath("hubs")
 		summary.BootstrapFeatureControllersPath = r.selectedBootstrapFeaturePath("controllers")
 		summary.BootstrapFeatureScene3DPath = r.selectedBootstrapFeaturePath("scene3d")
+	}
+	for _, entry := range r.manifest.Controllers {
+		if entry.Config.NeedsInputRuntime() {
+			summary.BootstrapControllerInputPath = r.bootstrapControllerInputPath
+			break
+		}
+	}
+	// Workbench handles need the hashed input URL even on pages without controllers.
+	if summary.BootstrapControllerInputPath == "" && slices.Contains(r.manifest.Features, "workbench") {
+		summary.BootstrapControllerInputPath = r.bootstrapControllerInputPath
 	}
 	if plan.Mode == "lite" {
 		summary.PatchPath = ""
@@ -1739,36 +2454,35 @@ func (r *Renderer) selectedBootstrapFeaturePath(name string) string {
 	}
 	switch name {
 	case "islands":
-		if len(r.manifest.Islands) == 0 && len(r.manifest.ComputeIslands) == 0 {
+		if !r.pageFeatures()["islands"] {
 			return ""
 		}
 		return r.bootstrapFeatureIslandsPath
 	case "engines":
-		if len(r.manifest.Engines) == 0 {
+		if !r.pageFeatures()["engines"] {
 			return ""
 		}
 		return r.bootstrapFeatureEnginesPath
 	case "hubs":
-		if len(r.manifest.Hubs) == 0 {
+		if !r.pageFeatures()["hubs"] {
 			return ""
 		}
 		return r.bootstrapFeatureHubsPath
 	case "controllers":
-		if len(r.manifest.Controllers) == 0 {
+		if !r.pageFeatures()["controllers"] {
 			return ""
 		}
 		return r.bootstrapFeatureControllersPath
 	case "scene3d":
-		if !r.hasSceneEngines() {
+		if !r.pageFeatures()["scene3d"] {
 			return ""
 		}
 		return r.bootstrapFeatureScene3dPath
 	case "scene3d-webgpu":
 		// Paired with "scene3d" — emitted only when the page has a
 		// Scene3D engine AND the WebGPU sub-feature bundle exists.
-		// The inline loader in RenderEntrypoints gates the actual
-		// download on navigator.gpu so Safari / Firefox skip it.
-		if !r.hasSceneEngines() {
+		// The Scene3D mount selects and loads a usable backend on demand.
+		if !r.scene3DCanUseWebGPU() {
 			return ""
 		}
 		return r.bootstrapFeatureScene3dWebGPUPath
@@ -1788,10 +2502,97 @@ func (r *Renderer) selectedRuntimeRef() hydrate.RuntimeRef {
 	if r == nil {
 		return hydrate.RuntimeRef{}
 	}
+	if required := r.requiredRuntimeFeatures(); required != 0 {
+		if ref, ok := r.smallestCompatibleRuntimeRef(required); ok {
+			return ref
+		}
+	}
 	if (len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0) && !r.needsSharedRuntimeEngineBridge() && strings.TrimSpace(r.islandRuntime.Path) != "" {
 		return r.islandRuntime
 	}
 	return r.manifest.Runtime
+}
+
+func (r *Renderer) smallestCompatibleRuntimeRef(required runtimewasm.FeatureMask) (hydrate.RuntimeRef, bool) {
+	var best hydrate.RuntimeRef
+	for _, ref := range r.runtimeVariants {
+		if strings.TrimSpace(ref.Path) == "" {
+			continue
+		}
+		features := runtimewasm.FeatureMask(ref.FeatureMask)
+		if features == 0 {
+			features = runtimewasm.FeatureMaskForVariant(runtimewasm.Variant(ref.Variant))
+		}
+		if features&required != required {
+			continue
+		}
+		if strings.TrimSpace(best.Path) == "" || runtimeRefIsSmaller(ref, best) {
+			best = ref
+		}
+	}
+	return best, strings.TrimSpace(best.Path) != ""
+}
+
+func runtimeRefIsSmaller(candidate, current hydrate.RuntimeRef) bool {
+	candidateCost, currentCost := runtimeRefTransferCost(candidate), runtimeRefTransferCost(current)
+	if candidateCost > 0 && currentCost <= 0 {
+		return true
+	}
+	if candidateCost <= 0 {
+		return currentCost <= 0 && candidate.Path < current.Path
+	}
+	if candidateCost != currentCost {
+		return candidateCost < currentCost
+	}
+	if candidate.Size > 0 && current.Size <= 0 {
+		return true
+	}
+	if candidate.Size <= 0 {
+		return current.Size <= 0 && candidate.Path < current.Path
+	}
+	if candidate.Size != current.Size {
+		return candidate.Size < current.Size
+	}
+	return candidate.Path < current.Path
+}
+
+// runtimeRefTransferCost uses the best recorded representation for each asset.
+// Mixed metadata can compare one ref's Brotli size with another's raw size,
+// favoring refs with compressed sidecars rather than estimating missing sizes.
+func runtimeRefTransferCost(ref hydrate.RuntimeRef) int64 {
+	if ref.BrotliSize > 0 {
+		return ref.BrotliSize
+	}
+	if ref.GzipSize > 0 {
+		return ref.GzipSize
+	}
+	return ref.Size
+}
+
+func (r *Renderer) requiredRuntimeFeatures() runtimewasm.FeatureMask {
+	if r == nil || r.manifest == nil || !r.clientRuntimePlan().SharedRuntime {
+		return 0
+	}
+	var required runtimewasm.FeatureMask
+	if len(r.manifest.Islands) > 0 || len(r.manifest.ComputeIslands) > 0 {
+		required |= runtimewasm.FeatureIslands
+	}
+	if r.needsSharedRuntimeEngineBridge() {
+		required |= runtimewasm.FeatureEngine
+		if r.hasSceneEngines() {
+			required |= runtimewasm.FeatureScene3D
+		}
+	}
+	if r.bootstrapRuntimePath == "" && r.hasVideoEngines() {
+		required |= runtimewasm.FeatureEngine
+	}
+	if len(r.manifest.Hubs) > 0 {
+		required |= runtimewasm.FeatureCollab
+	}
+	if required == 0 {
+		required = runtimewasm.FeatureCore
+	}
+	return runtimewasm.FeatureCore | required
 }
 
 func (r *Renderer) selectedWASMExecPath() string {
@@ -1834,109 +2635,15 @@ func (r *Renderer) hasVideoEngines() bool {
 	return false
 }
 
-// scene3DChunkRecord is the narrow view of one points, instanced-mesh or
-// animation-channel record that decides whether a page needs the decompress
-// chunk. Only the keys named here are decoded, so a large scene costs a scan
-// and a few slice headers, not a full generic decode.
-//
-// The field names match the readers in
-// client/js/bootstrap-src/11a-scene-decompress.js and
-// 11b-scene-points-generate.js. Add a field here whenever one of those files
-// learns to read a new key, or the page will not advertise the chunk that
-// reads it.
-type scene3DChunkRecord struct {
-	Generator            json.RawMessage `json:"generator"`
-	CompressedPositions  json.RawMessage `json:"compressedPositions"`
-	CompressedSizes      json.RawMessage `json:"compressedSizes"`
-	CompressedTransforms json.RawMessage `json:"compressedTransforms"`
-	CompressedTimes      json.RawMessage `json:"compressedTimes"`
-	CompressedValues     json.RawMessage `json:"compressedValues"`
-	PreviewPositions     json.RawMessage `json:"previewPositions"`
-	PreviewSizes         json.RawMessage `json:"previewSizes"`
-	PreviewTransforms    json.RawMessage `json:"previewTransforms"`
-	PreviewTimes         json.RawMessage `json:"previewTimes"`
-	PreviewValues        json.RawMessage `json:"previewValues"`
+// sceneProbe also supports entries registered directly through Manifest.
+func sceneProbe(entry *hydrate.EngineEntry) *sceneprobe.Probe {
+	if entry.Scene3DProbe == nil {
+		entry.Scene3DProbe = sceneprobe.Decode(entry.Props)
+	}
+	return entry.Scene3DProbe
 }
 
-func (rec scene3DChunkRecord) needsDecompress() bool {
-	return len(rec.Generator) > 0 ||
-		len(rec.CompressedPositions) > 0 ||
-		len(rec.CompressedSizes) > 0 ||
-		len(rec.CompressedTransforms) > 0 ||
-		len(rec.CompressedTimes) > 0 ||
-		len(rec.CompressedValues) > 0 ||
-		len(rec.PreviewPositions) > 0 ||
-		len(rec.PreviewSizes) > 0 ||
-		len(rec.PreviewTransforms) > 0 ||
-		len(rec.PreviewTimes) > 0 ||
-		len(rec.PreviewValues) > 0
-}
-
-type scene3DChunkClip struct {
-	Channels []scene3DChunkRecord `json:"channels"`
-}
-
-// scene3DChunkProbe reads the two shapes a Scene3D engine can carry: the wire
-// IR under props.scene, and the flat props form the runtime also accepts.
-type scene3DChunkProbe struct {
-	Scene            *scene3DChunkProbe   `json:"scene"`
-	Compression      json.RawMessage      `json:"compression"`
-	ComputeParticles []json.RawMessage    `json:"computeParticles"`
-	InstancedMeshes  []scene3DChunkRecord `json:"instancedMeshes"`
-	Points           []scene3DChunkRecord `json:"points"`
-	Animations       []scene3DChunkClip   `json:"animations"`
-}
-
-// needsComputeChunk reports whether the scene reaches
-// bootstrap-feature-scene3d-compute.js. Two paths do: a compute particle
-// system, which both renderers build through createSceneParticleSystem, and an
-// instanced mesh, which the WebGPU renderer culls on the GPU with a kernel from
-// the same file.
-//
-// Be permissive on purpose. A URL the runtime never uses costs about sixty
-// bytes of HTML; a missing URL drops a particle system the author asked for.
-func (p *scene3DChunkProbe) needsComputeChunk() bool {
-	if p == nil {
-		return false
-	}
-	if len(p.ComputeParticles) > 0 || len(p.InstancedMeshes) > 0 {
-		return true
-	}
-	return p.Scene.needsComputeChunk()
-}
-
-// needsDecompressChunk reports whether the scene reaches
-// bootstrap-feature-scene3d-decompress.js. A compression policy alone is
-// enough: progressive and level-of-detail mode both drive the chunk after the
-// first frame, even when the first payload arrives plain.
-func (p *scene3DChunkProbe) needsDecompressChunk() bool {
-	if p == nil {
-		return false
-	}
-	if len(p.Compression) > 0 && string(p.Compression) != "null" {
-		return true
-	}
-	for i := range p.Points {
-		if p.Points[i].needsDecompress() {
-			return true
-		}
-	}
-	for i := range p.InstancedMeshes {
-		if p.InstancedMeshes[i].needsDecompress() {
-			return true
-		}
-	}
-	for i := range p.Animations {
-		for j := range p.Animations[i].Channels {
-			if p.Animations[i].Channels[j].needsDecompress() {
-				return true
-			}
-		}
-	}
-	return p.Scene.needsDecompressChunk()
-}
-
-// scene3DChunkNeeds decodes every Scene3D engine on the page once and reports
+// scene3DChunkNeeds reuses the Scene3D snapshots and reports
 // which gated sub-feature chunks the page must advertise. A page with several
 // scenes advertises a chunk when any one scene needs it.
 func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool) {
@@ -1948,18 +2655,18 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		if len(entry.Props) == 0 {
 			continue
 		}
-		var probe scene3DChunkProbe
-		if err := json.Unmarshal(entry.Props, &probe); err != nil {
+		probe := sceneProbe(entry)
+		if probe.ChunkErr != nil {
 			// A scene whose props do not decode is a scene this renderer cannot
 			// reason about. Advertise both chunks rather than drop a feature the
 			// author declared: a wrong URL costs bytes, a missing one costs the
 			// feature.
 			return true, true
 		}
-		if probe.needsComputeChunk() {
+		if probe.ComputeChunk {
 			needsCompute = true
 		}
-		if probe.needsDecompressChunk() {
+		if probe.DecompressChunk {
 			needsDecompress = true
 		}
 		if needsCompute && needsDecompress {
@@ -1969,9 +2676,98 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 	return needsCompute, needsDecompress
 }
 
+// Timelines are advertised only for scenes that opt into finite playback.
+func (r *Renderer) scene3DNeedsTimelineChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if props.Timelines {
+			return true
+		}
+	}
+	return false
+}
+
+// Particle bursts are advertised only for scenes that opt into event effects.
+func (r *Renderer) scene3DNeedsParticleBurstChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if props.ParticleBursts {
+			return true
+		}
+	}
+	return false
+}
+
+// Zoom is downloaded only for an explicit camera control opt-in.
+func (r *Renderer) scene3DNeedsZoomChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if props.ControlZoom || props.HasOptics() || strings.TrimSpace(props.ExperienceRef) != "" {
+			return true
+		}
+	}
+	return false
+}
+
+// Preparation is advertised only for mounts that opt in through typed props.
+func (r *Renderer) scene3DNeedsModelPreparationChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if props.ModelPreparation {
+			return true
+		}
+	}
+	return false
+}
+
+// Walking depends on an object-valued top-level prop, not on SceneIR contents.
+func (r *Renderer) scene3DNeedsWalkChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if props.Walk != nil {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *Renderer) hasSceneEngines() bool {
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			return true
+		}
+	}
+	return false
+}
+
+// scene3DNeedsHydrateChunk reports whether this page can cross the strict
+// initial-hydrate boundary. Static Scene3D props, non-shared runtimes, and
+// shared entries without code never cause the browser to request the chunk.
+func (r *Renderer) scene3DNeedsHydrateChunk() bool {
+	for _, entry := range r.manifest.Engines {
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") &&
+			strings.EqualFold(strings.TrimSpace(entry.Runtime), string(engine.RuntimeShared)) &&
+			strings.TrimSpace(entry.ProgramRef) != "" {
 			return true
 		}
 	}
@@ -1991,12 +2787,12 @@ func engineProps(raw json.RawMessage) (any, error) {
 	if len(raw) == 0 {
 		return nil, nil
 	}
-
-	var props any
-	if err := json.Unmarshal(raw, &props); err != nil {
+	if !json.Valid(raw) {
+		var value any
+		err := json.Unmarshal(raw, &value)
 		return nil, fmt.Errorf("invalid engine props JSON: %w", err)
 	}
-	return props, nil
+	return raw, nil
 }
 
 func engineCapabilities(caps []engine.Capability) []string {
@@ -2104,10 +2900,14 @@ func scenePosterFromEngine(cfg engine.Config) (scenePosterProps, bool) {
 	if !strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") || len(cfg.Props) == 0 {
 		return scenePosterProps{}, false
 	}
-	var props scenePosterProps
-	if err := json.Unmarshal(cfg.Props, &props); err != nil {
+	probe := cfg.Scene3DProbe
+	if probe == nil {
+		probe = sceneprobe.Decode(cfg.Props)
+	}
+	if probe.PosterErr != nil {
 		return scenePosterProps{}, false
 	}
+	props := scenePosterProps{probe.Poster, probe.PosterWidth, probe.PosterHeight, probe.PosterAlt}
 	props.Poster = strings.TrimSpace(props.Poster)
 	if props.Poster == "" {
 		return scenePosterProps{}, false
@@ -2190,4 +2990,30 @@ func scenePosterCSSURL(value string) string {
 		"</", `<\/`,
 	)
 	return `"` + replacer.Replace(value) + `"`
+}
+
+// A named model is required before advertising either sailing authority.
+func (r *Renderer) scene3DNeedsVesselChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
+			continue
+		}
+		props := sceneProbe(entry)
+		if strings.TrimSpace(props.ExperienceRef) != "" || (props.Vessel != nil && props.Vessel.NodeID != "") {
+			return true
+		}
+	}
+	return false
+}
+
+// Descriptor-backed worlds resolve their controls before client mounting.
+func (r *Renderer) scene3DNeedsExperienceChunk() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && sceneProbe(entry).HasExperience() {
+			return true
+		}
+	}
+	return false
 }

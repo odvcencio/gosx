@@ -17,8 +17,8 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
-const sceneMathSource = fs.readFileSync(path.join(srcDir, "11-scene-math.js"), "utf8");
-const gltfSource = fs.readFileSync(path.join(srcDir, "19-scene-gltf.js"), "utf8");
+const sceneMathSource = fs.readFileSync(path.join(srcDir, "11-scene-math.ts"), "utf8");
+const gltfSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "gltf.ts"), "utf8");
 
 const BASE = "https://example.test/models/city.gltf";
 
@@ -381,6 +381,7 @@ test("GLB external image URIs use the explicit renderer context before extractio
     colorSpace: "srgb",
     channels: "rgba",
     view: "2d",
+    wrapS: 10497, wrapT: 10497,
   });
 });
 
@@ -446,4 +447,12 @@ test("an early external-buffer failure stays handled while renderer context sett
   } finally {
     process.removeListener("unhandledRejection", onUnhandled);
   }
+});
+
+test("prefixed model-relative textures match public manifest keys", () => {
+  const variants = woodVariants().map((variant) => ({...variant, uri: "/.proxy/game" + variant.uri}));
+  const loader = loadLoader({tokens: BC_TOKENS, manifest: {textureVariants: {"/.proxy/game/assets/wood.png": variants}}});
+  const doc = {images: [{uri: "../assets/wood.png"}]};
+  loader.gltfResolveExternalImageURIs(doc, "https://example.test/.proxy/game/models/city.gltf", loader.context);
+  assert.equal(doc.images[0].uri, "https://example.test/.proxy/game/assets/wood.bc7.ktx2");
 });

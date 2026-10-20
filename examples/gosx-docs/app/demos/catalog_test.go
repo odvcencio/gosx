@@ -1,16 +1,26 @@
 package docs
 
 import (
+	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"golang.org/x/net/html"
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
 )
 
 func TestDemoCatalogContracts(t *testing.T) {
-	if len(Demos()) != 11 {
-		t.Fatalf("Demos() length = %d, want 11", len(Demos()))
+	if len(Demos()) != 13 {
+		t.Fatalf("Demos() length = %d, want 13", len(Demos()))
+	}
+	if _, ok := FindDemo("showreel"); !ok {
+		t.Fatal("the showreel route must have catalog metadata for the dock and details panel")
 	}
 	seen := make(map[string]bool, len(Demos()))
 	validStatus := map[string]bool{"featured": true, "live": true, "lab": true, "prototype": true}
@@ -28,11 +38,29 @@ func TestDemoCatalogContracts(t *testing.T) {
 		if len(demo.Facets) == 0 || len(demo.Packages) == 0 || demo.SourcePath == "" {
 			t.Errorf("demo %q lacks proof metadata", demo.Slug)
 		}
+		if demo.Summary == "" || demo.PosterPath != "/demos/posters/"+demo.Slug+".webp" {
+			t.Errorf("demo %q lacks its gallery summary or poster path", demo.Slug)
+		}
+		posterPath := repoPath(t, "examples/gosx-docs/public"+demo.PosterPath)
+		poster, err := os.Stat(posterPath)
+		if err != nil {
+			t.Errorf("demo %q poster %q: %v", demo.Slug, demo.PosterPath, err)
+		} else if poster.Size() == 0 || poster.Size() > 60*1024 {
+			t.Errorf("demo %q poster size = %d bytes, want 1–61440", demo.Slug, poster.Size())
+		}
+		if content, readErr := os.ReadFile(posterPath); readErr == nil && (len(content) < 12 || !bytes.Equal(content[:4], []byte("RIFF")) || !bytes.Equal(content[8:12], []byte("WEBP"))) {
+			t.Errorf("demo %q poster is not a WebP image", demo.Slug)
+		}
+		if len(demo.SourcePaths) == 0 || !contains(demo.SourcePaths, demo.SourcePath) {
+			t.Errorf("demo %q source links must include its primary source %q", demo.Slug, demo.SourcePath)
+		}
 		if demo.RenderMode == "" || demo.Limitations == "" {
 			t.Errorf("demo %q lacks honest runtime metadata", demo.Slug)
 		}
-		if _, err := os.Stat(repoPath(t, demo.SourcePath)); err != nil {
-			t.Errorf("demo %q source path %q: %v", demo.Slug, demo.SourcePath, err)
+		for _, sourcePath := range demo.SourcePaths {
+			if _, err := os.Stat(repoPath(t, sourcePath)); err != nil {
+				t.Errorf("demo %q source path %q: %v", demo.Slug, sourcePath, err)
+			}
 		}
 	}
 	// CMS earned "live" once block adding, live preview, and full-draft publish
@@ -63,35 +91,100 @@ func TestDemoCatalogContracts(t *testing.T) {
 }
 
 func TestShowcaseDemosHaveStableTruthfulPromotion(t *testing.T) {
-	want := []struct {
-		slug   string
-		status string
-	}{
-		{slug: "beacon", status: "featured"},
-		{slug: "water", status: "featured"},
-		{slug: "checkers", status: "live"},
-		{slug: "scene3d-bench", status: "lab"},
+	wantSlug := "water"
+	for _, demo := range Demos() {
+		if demo.Status == "featured" && demo.ShowcaseRank == 0 {
+			wantSlug = demo.Slug
+			break
+		}
 	}
 	got := ShowcaseDemos()
-	if len(got) != len(want) {
-		t.Fatalf("ShowcaseDemos() length = %d, want %d", len(got), len(want))
+	if len(got) != 1 {
+		t.Fatalf("ShowcaseDemos() length = %d, want one flagship", len(got))
 	}
-	for i, demo := range got {
-		if demo.Slug != want[i].slug || demo.Status != want[i].status {
-			t.Errorf("ShowcaseDemos()[%d] = %q (%s), want %q (%s)", i, demo.Slug, demo.Status, want[i].slug, want[i].status)
-		}
-		if demo.ShowcaseRank != i+1 {
-			t.Errorf("ShowcaseDemos()[%d].ShowcaseRank = %d, want %d", i, demo.ShowcaseRank, i+1)
-		}
-		if !strings.HasPrefix(demoSourceURL(demo.SourcePath), "https://github.com/odvcencio/gosx/blob/main/") {
-			t.Errorf("showcase demo %q does not resolve to a source link", demo.Slug)
-		}
+	demo := got[0]
+	if demo.Slug != wantSlug || demo.Status != "featured" {
+		t.Errorf("ShowcaseDemos()[0] = %q (%s), want %q (featured)", demo.Slug, demo.Status, wantSlug)
 	}
-	if got[3].Status == "featured" {
-		t.Error("the benchmark must remain labelled lab even when editorially promoted")
+	if demo.ShowcaseRank != 0 && demo.ShowcaseRank != 1 {
+		t.Errorf("ShowcaseDemos()[0].ShowcaseRank = %d, want 0 for unranked flagship or 1 for current Water", demo.ShowcaseRank)
+	}
+	if !strings.HasPrefix(demoSourceURL(demo.SourcePath), "https://github.com/odvcencio/gosx/blob/main/") {
+		t.Errorf("showcase demo %q does not resolve to a source link", demo.Slug)
+	}
+	bench, ok := FindDemo("scene3d-bench")
+	if !ok || bench.Status != "lab" || bench.ShowcaseRank != 0 {
+		t.Error("the benchmark must remain a lab outside the featured row")
 	}
 	if len(AdditionalDemos())+len(got) != len(Demos()) {
 		t.Error("showcase and additional catalog slices must partition Demos()")
+	}
+	groups := GroupedGalleryDemos(Demos())
+	var blackglassGroup string
+	for _, group := range groups {
+		for _, demo := range group.Demos {
+			if demo.Slug == "beacon" {
+				blackglassGroup = group.Title
+			}
+		}
+	}
+	if blackglassGroup != "Engine studies" {
+		t.Errorf("Blackglass Coast gallery group = %q, want Engine studies", blackglassGroup)
+	}
+}
+
+func TestUnrankedFeaturedDemoReplacesRankedFlagship(t *testing.T) {
+	demos := []DemoDefinition{
+		{Slug: "water", Title: "Water", Group: "Live systems", Status: "featured", ShowcaseRank: 1},
+		{Slug: "tabletop", Title: "Tabletop", Group: "Live systems", Status: "featured"},
+	}
+
+	featured := FeaturedGalleryDemos(demos)
+	if len(featured) != 1 || featured[0].Slug != "tabletop" {
+		t.Fatalf("featured gallery = %+v, want only tabletop", featured)
+	}
+	additional := galleryAdditionalDemos(demos)
+	if len(additional) != 1 || additional[0].Slug != "water" || additional[0].Status != "live" {
+		t.Fatalf("additional demos = %+v, want Water as a live demo", additional)
+	}
+	groups := GroupedGalleryDemos(demos)
+	if len(groups) != 1 || len(groups[0].Demos) != 1 || groups[0].Demos[0].Slug != "water" || groups[0].Demos[0].Status != "live" {
+		t.Fatalf("demo groups = %+v, want Water in its group with live status", groups)
+	}
+}
+
+func TestGalleryBackendsMatchSceneCapabilityVerdicts(t *testing.T) {
+	demos, err := GalleryDemos()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, demo := range demos {
+		props, isScene := scenePropsForDemo(demo.Slug)
+		if !isScene {
+			if len(demo.Backends) == 0 {
+				t.Errorf("non-Scene3D demo %q lacks a renderer description", demo.Slug)
+			}
+			continue
+		}
+		verdict := props.SceneIR().BackendCaps
+		var want []string
+		for _, backend := range verdict.Capable {
+			if label := backendLabel(backend); label != "" {
+				want = append(want, label)
+			}
+		}
+		if strings.Join(demo.Backends, ",") != strings.Join(want, ",") {
+			t.Errorf("demo %q backends = %v, want Go capability verdict %v", demo.Slug, demo.Backends, want)
+		}
+	}
+}
+
+func TestGalleryLabelsReadAsPlainCopy(t *testing.T) {
+	if got := demoBackendSummary([]string{"WebGPU", "WebGL2"}); got != "WebGPU or WebGL2" {
+		t.Errorf("demoBackendSummary = %q, want %q", got, "WebGPU or WebGL2")
+	}
+	if got := demoStatusLabel("lab"); got != "Lab" {
+		t.Errorf("demoStatusLabel = %q, want Lab", got)
 	}
 }
 
@@ -112,7 +205,6 @@ func TestDemoShellUsesGoSXManagedInteractions(t *testing.T) {
 	source := string(layout)
 	for _, required := range []string{
 		`data-gosx-bind-source`,
-		`data-gosx-toggle-target`,
 		`data-gosx-disclosure-target`,
 		`data-gosx-disclosure-close`,
 	} {
@@ -125,6 +217,237 @@ func TestDemoShellUsesGoSXManagedInteractions(t *testing.T) {
 	}
 }
 
+func TestDemoLayoutRendersDockWithoutSecondMobileMenu(t *testing.T) {
+	layoutPath := repoPath(t, "examples/gosx-docs/app/demos/layout.gsx")
+	layout, err := route.FileLayout(layoutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx := &route.RouteContext{Request: httptest.NewRequest(http.MethodGet, "/demos/playground", nil)}
+	rendered := gosx.RenderHTML(layout(ctx, gosx.El("main", gosx.Attrs(gosx.Attr("data-test-slot", "playground")))))
+	if status := ctx.StatusCode(); status != 0 && status != http.StatusOK {
+		t.Fatalf("layout render status = %d; body=%s", status, rendered)
+	}
+
+	doc, err := html.Parse(strings.NewReader(rendered))
+	if err != nil {
+		t.Fatalf("parse rendered layout: %v", err)
+	}
+
+	links := make(map[string]map[string]string, len(Demos()))
+	var hasDock, hasDemoMenu, hasSlot bool
+	var visit func(*html.Node)
+	visit = func(node *html.Node) {
+		if node.Type == html.ElementNode {
+			attrs := htmlAttributes(node)
+			classes := strings.Fields(attrs["class"])
+			switch {
+			case node.Data == "nav" && attrs["id"] == "demo-dock":
+				hasDock = attrs["aria-label"] == "Demos"
+			case node.Data == "summary" && attrs["aria-controls"] == "demo-dock":
+				hasDemoMenu = true
+			case node.Data == "a" && contains(classes, "demo-dock__link"):
+				links[attrs["href"]] = attrs
+			case node.Data == "main" && attrs["data-test-slot"] == "playground":
+				hasSlot = true
+			}
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(doc)
+
+	if !hasDock || hasDemoMenu {
+		t.Fatalf("rendered demo shell must keep its dock without adding a second mobile menu: %s", rendered)
+	}
+	if !hasSlot {
+		t.Fatalf("rendered demo layout dropped its page slot: %s", rendered)
+	}
+	if len(links) != len(Demos()) {
+		t.Fatalf("rendered dock links = %d, want %d; body=%s", len(links), len(Demos()), rendered)
+	}
+	for _, demo := range Demos() {
+		href := "/demos/" + demo.Slug
+		attrs, ok := links[href]
+		if !ok {
+			t.Errorf("rendered dock missing %s", href)
+			continue
+		}
+		if attrs["data-demo"] != demo.Slug || attrs["data-demo-title"] != demo.Title || attrs["data-demo-source-path"] != demo.SourcePath {
+			t.Errorf("rendered dock metadata for %s = %#v", href, attrs)
+		}
+	}
+}
+
+func TestDemoLayoutDirectLoadsRenderCurrentProofMetadata(t *testing.T) {
+	layoutPath := repoPath(t, "examples/gosx-docs/app/demos/layout.gsx")
+	layout, err := route.FileLayout(layoutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, want := range Demos() {
+		want := want
+		t.Run(want.Slug, func(t *testing.T) {
+			ctx := &route.RouteContext{Request: httptest.NewRequest(http.MethodGet, "/demos/"+want.Slug, nil)}
+			rendered := gosx.RenderHTML(layout(ctx, gosx.El("main", gosx.Text(want.Title))))
+			if status := ctx.StatusCode(); status != 0 && status != http.StatusOK {
+				t.Fatalf("layout render status = %d; body=%s", status, rendered)
+			}
+
+			doc, parseErr := html.Parse(strings.NewReader(rendered))
+			if parseErr != nil {
+				t.Fatalf("parse rendered layout: %v", parseErr)
+			}
+
+			currentHrefs := []string{}
+			currentManaged := []string{}
+			sourceLinks := map[string]string{}
+			facts := map[string]string{}
+			var shellSlug, title, lesson, sourceHref, sourcePath string
+			var visit func(*html.Node)
+			visit = func(node *html.Node) {
+				if node.Type == html.ElementNode {
+					attrs := htmlAttributes(node)
+					classes := strings.Fields(attrs["class"])
+					switch {
+					case contains(classes, "demos-shell"):
+						shellSlug = attrs["data-demo-slug"]
+					case node.Data == "a" && contains(classes, "demo-dock__link") && attrs["aria-current"] == "page":
+						currentHrefs = append(currentHrefs, attrs["href"])
+						currentManaged = append(currentManaged, attrs["data-gosx-aria-current-managed"])
+					case node.Data == "h2" && attrs["id"] == "demo-details-title":
+						title = normalizedNodeText(node)
+					case node.Data == "p" && contains(classes, "demo-details__lesson"):
+						lesson = normalizedNodeText(node)
+					case node.Data == "dd" && attrs["data-gosx-bind-text"] != "":
+						facts[attrs["data-gosx-bind-text"]] = normalizedNodeText(node)
+					case node.Data == "a" && contains(classes, "demo-details__source"):
+						sourceHref = attrs["href"]
+					case node.Data == "a" && contains(classes, "demo-details__source-link"):
+						sourceLinks[normalizedNodeText(node)] = attrs["href"]
+					case node.Data == "code" && contains(classes, "demo-details__path"):
+						sourcePath = normalizedNodeText(node)
+					}
+				}
+				for child := node.FirstChild; child != nil; child = child.NextSibling {
+					visit(child)
+				}
+			}
+			visit(doc)
+
+			if want.Slug == "beacon" {
+				if shellSlug != want.Slug || len(currentHrefs) != 0 || title != "" || !strings.Contains(rendered, "<main>") {
+					t.Fatal("full-window Beach must retain its content without hidden dock or details")
+				}
+				return
+			}
+
+			if len(currentHrefs) != 1 || currentHrefs[0] != "/demos/"+want.Slug {
+				t.Fatalf("server-rendered current links = %#v, want only /demos/%s", currentHrefs, want.Slug)
+			}
+			if len(currentManaged) != 1 || currentManaged[0] != "true" {
+				t.Fatalf("server-rendered current link ownership = %#v, want managed current state", currentManaged)
+			}
+			if shellSlug != want.Slug {
+				t.Errorf("server-rendered shell slug = %q, want %q", shellSlug, want.Slug)
+			}
+			if title != want.Title || lesson != want.Lesson {
+				t.Errorf("server-rendered details = title %q, lesson %q", title, lesson)
+			}
+			wantFacts := map[string]string{
+				"data-demo-facets":      demoValues(want.Facets),
+				"data-demo-packages":    demoValues(want.Packages),
+				"data-demo-render-mode": want.RenderMode,
+				"data-demo-limitations": want.Limitations,
+			}
+			for binding, wantValue := range wantFacts {
+				if facts[binding] != wantValue {
+					t.Errorf("server-rendered %s = %q, want %q", binding, facts[binding], wantValue)
+				}
+			}
+			if sourceHref != demoSourceURL(want.SourcePath) || sourcePath != want.SourcePath {
+				t.Errorf("server-rendered source = (%q, %q), want (%q, %q)", sourceHref, sourcePath, demoSourceURL(want.SourcePath), want.SourcePath)
+			}
+			if len(sourceLinks) != len(want.SourcePaths) {
+				t.Errorf("server-rendered source links = %d, want %d", len(sourceLinks), len(want.SourcePaths))
+			}
+			for _, source := range want.SourcePaths {
+				if got := sourceLinks[source]; got != demoSourceURL(source) {
+					t.Errorf("source link %q = %q, want %q", source, got, demoSourceURL(source))
+				}
+			}
+		})
+	}
+}
+
+func TestDemoOverviewOmitsThePerDemoDockAndDetailDrawer(t *testing.T) {
+	layoutPath := repoPath(t, "examples/gosx-docs/app/demos/layout.gsx")
+	layout, err := route.FileLayout(layoutPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := &route.RouteContext{Request: httptest.NewRequest(http.MethodGet, "/demos/", nil)}
+	rendered := gosx.RenderHTML(layout(ctx, gosx.El("main", gosx.Text("Demos"))))
+	for _, marker := range []string{`id="demo-dock"`, `id="demo-details"`, `data-gosx-bind-source`} {
+		if strings.Contains(rendered, marker) {
+			t.Errorf("demo overview should not render per-demo chrome marker %q", marker)
+		}
+	}
+	doc, err := html.Parse(strings.NewReader(rendered))
+	if err != nil {
+		t.Fatalf("parse demo overview: %v", err)
+	}
+	var hasEmptySlug bool
+	var findOverviewShell func(*html.Node)
+	findOverviewShell = func(node *html.Node) {
+		if node.Type == html.ElementNode && contains(strings.Fields(htmlAttributes(node)["class"]), "demos-shell") {
+			attrs := htmlAttributes(node)
+			value, exists := attrs["data-demo-slug"]
+			hasEmptySlug = exists && value == ""
+		}
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
+			findOverviewShell(child)
+		}
+	}
+	findOverviewShell(doc)
+	if !hasEmptySlug {
+		t.Fatal("demo overview must render an empty slug so its no-:has single-column fallback applies")
+	}
+	css, err := os.ReadFile(repoPath(t, "examples/gosx-docs/app/demos/layout.css"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(css), `.demos-shell[data-demo-slug=""] .demos-body { grid-template-columns: minmax(0, 1fr); }`) {
+		t.Fatal("demo overview must retain a single-column fallback for browsers without :has")
+	}
+}
+
+func normalizedNodeText(node *html.Node) string {
+	parts := []string{}
+	var visit func(*html.Node)
+	visit = func(current *html.Node) {
+		if current.Type == html.TextNode {
+			parts = append(parts, current.Data)
+		}
+		for child := current.FirstChild; child != nil; child = child.NextSibling {
+			visit(child)
+		}
+	}
+	visit(node)
+	return strings.Join(strings.Fields(strings.Join(parts, " ")), " ")
+}
+
+func htmlAttributes(node *html.Node) map[string]string {
+	attrs := make(map[string]string, len(node.Attr))
+	for _, attr := range node.Attr {
+		attrs[attr.Key] = attr.Val
+	}
+	return attrs
+}
+
 func TestBespokeDemoScriptDebtDoesNotGrow(t *testing.T) {
 	// These predate the no-escape-hatch invariant. Keep the list exact: a new
 	// script fails immediately, and deleting one requires deleting its entry so
@@ -132,11 +455,9 @@ func TestBespokeDemoScriptDebtDoesNotGrow(t *testing.T) {
 	legacy := map[string]bool{
 		"checkers/page.gsx":      true,
 		"cms/page.gsx":           true,
-		"collab/page.gsx":        true,
 		"fluid/page.gsx":         true,
 		"livesim/page.gsx":       true,
 		"playground/page.gsx":    true,
-		"scene3d/page.gsx":       true,
 		"scene3d-bench/page.gsx": true,
 	}
 	root := repoPath(t, "examples/gosx-docs/app/demos")

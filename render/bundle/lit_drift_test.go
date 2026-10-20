@@ -86,11 +86,44 @@ type sharedTerm struct {
 // difference stays visible instead of hiding inside a passing test.
 var litSharedTerms = []sharedTerm{
 	{
-		id:     "dielectric-f0",
+		id:     "dielectric-f0-authored",
 		effect: "Every non-metal highlight changes brightness.",
-		goPat:  `mix\(vec3f\(([0-9.]+)\), baseColor, metalness\)`,
-		jsPat:  `mix\(vec3f\(([0-9.]+)\), albedo, metalness\)`,
-		want:   "0.04",
+		// The dielectric F0 is authored (derived from the optional IOR) and
+		// dynamic, so no literal can be pinned. This row is a presence check:
+		// the native copy must read the prepared effective F0 the material
+		// uploaded (specularParams.xyz), and the negative mutation below
+		// proves that reverting it fails this row.
+		goPat: `mix\(material\.specularParams\.xyz, baseColor, metalness\)`,
+		jsPat: `mix\(specF0, albedo, metalness\)`,
+		want:  "",
+	},
+	{
+		// Both copies weight the diffuse lobe by the scalar max-RGB of the
+		// dielectric Fresnel term, so the diffuse tint never carries the
+		// inverse of a per-channel Fresnel colour and never borrows the
+		// metallic Fresnel. The row pins the direct-loop form on each side;
+		// the environment paths carry the same shape.
+		id:     "diffuse-weight-scalar-dielectric",
+		effect: "Diffuse brightness for a mixed-metal material shifts between the backends.",
+		goPat:  `let kD = \(1\.0 - max\(FdielL\.x, max\(FdielL\.y, FdielL\.z\)\)\) \* \(1\.0 - metalness\);`,
+		jsPat:  `let kD = \(1\.0 - max\(Fdiel\.x, max\(Fdiel\.y, Fdiel\.z\)\)\) \* \(1\.0 - metalness\);`,
+	},
+	{
+		// Both copies take F90 from the authored specular intensity, so a
+		// sub-1 intensity dims the whole specular lobe on both backends.
+		id:     "specular-f90-authored",
+		effect: "An authored specular intensity below 1 dims the specular lobe on one backend only.",
+		goPat:  `var F90 = mix\(material\.specularParams\.w, 1\.0, metalness\);`,
+		jsPat:  `var F90 = mix\(specF90, 1\.0, metalness\);`,
+	},
+	{
+		// A fully metallic surface takes the base colour exactly on both
+		// sides, so no dielectric specular setting can leak into a metal
+		// through a rounding of the mix.
+		id:     "fully-metal-specular-branch",
+		effect: "A fully metallic surface picks up dielectric specular settings on one backend.",
+		goPat:  `if \(metalness >= 1\.0\) \{\nF0 = baseColor;\nF90 = 1\.0;\n\}`,
+		jsPat:  `if \(metalness >= 1\.0\) \{\nF0 = albedo;\nF90 = 1\.0;\n\}`,
 	},
 	{
 		id:     "roughness-floor",
@@ -132,16 +165,10 @@ var litSharedTerms = []sharedTerm{
 		want:   "5.0",
 	},
 	{
-		id:     "energy-conserving-diffuse-weight",
-		effect: "A metal picks up a diffuse term, or a dielectric loses one.",
-		goPat:  `\(vec3f\(1\.0\) - kS\) \* \(1\.0 - metalness\)`,
-		jsPat:  `\(vec3f\(1\.0\) - F\) \* \(1\.0 - metalness\)`,
-	},
-	{
 		id:     "lambert-diffuse-normalization",
 		effect: "Diffuse brightness shifts by a factor of pi.",
 		goPat:  `kD \* baseColor / 3\.141592653589793`,
-		jsPat:  `kD \* albedo / PI`,
+		jsPat:  `kD \* albedo \* \(1\.0 - transmission\) / PI`,
 	},
 	{
 		id:     "clearcoat-power-range",
@@ -181,13 +208,6 @@ var litSharedTerms = []sharedTerm{
 		effect: "A metal becomes translucent on one backend.",
 		goPat:  `clamp\(material\.physicalParams\.z, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
 		jsPat:  `clamp\(material\.transmission, 0\.0, 1\.0\) \* \(1\.0 - metalness\)`,
-	},
-	{
-		id:     "transmission-mix-weights",
-		effect: "Glass reads more or less opaque between backends.",
-		goPat:  `mix\(color, ambient \+ baseColor \* ([0-9.]+), transmission \* ([0-9.]+)\)`,
-		jsPat:  `mix\(color, ambient \+ albedo \* ([0-9.]+), transmission \* ([0-9.]+)\)`,
-		want:   "0.1|0.55",
 	},
 	{
 		id:     "hemisphere-normal-blend",
@@ -299,7 +319,7 @@ var litSharedTerms = []sharedTerm{
 		id:     "ambient-scaled-by-base-colour",
 		effect: "Ambient light stops taking the surface colour, so every shadowed face turns grey.",
 		goPat:  `let ambient = envDiffuse \* baseColor;`,
-		jsPat:  `ambient = envDiffuse \* albedo;`,
+		jsPat:  `ambient = envDiffuse \* albedo \* \(1\.0 - transmission\);`,
 	},
 
 	// The rows below arrived with the scene light array. The native copy read
@@ -455,6 +475,20 @@ func TestLitAmbientIntensityReachesTheShaderOnce(t *testing.T) {
 	}
 
 	goSrc, jsSrc := litShaderCopies(t)
+	// The fragment and the environment transmission fallback each apply the
+	// raw intensity once. Count them separately so a duplicate in either path
+	// cannot hide behind the other path's reference.
+	fragmentStart := strings.Index(jsSrc, "@fragment")
+	if fragmentStart < 0 {
+		t.Fatal("browser fragment entry point missing")
+	}
+	// Both ordinary and MRT entry points share the same shading function.
+	colorStart := strings.Index(jsSrc, "fn gosxPBRColor(")
+	if colorStart < 0 || colorStart >= fragmentStart || !strings.Contains(jsSrc[fragmentStart:], "return gosxPBRColor(in);") {
+		t.Fatal("browser entry point no longer delegates to shared PBR color")
+	}
+	jsFragment := jsSrc[colorStart:fragmentStart]
+	jsTransmission := jsShaderSource(t, readJSWebGPURenderer(t), "WGSL_TRANSMISSION")
 	for _, once := range []struct {
 		where  string
 		src    string
@@ -464,9 +498,12 @@ func TestLitAmbientIntensityReachesTheShaderOnce(t *testing.T) {
 		{goLitWhere, goSrc, "scene.skyColor", "the sky intensity is already inside .rgb, so a second mention risks a second factor"},
 		{goLitWhere, goSrc, "scene.groundColor", "the ground intensity is already inside .rgb, so a second mention risks a second factor"},
 		{goLitWhere, goSrc, "scene.ambientColor.a", "the ambient intensity belongs in the ambient term only"},
-		{jsLitWhere, jsSrc, "env.skyIntensity", "the browser holds the raw colour, so the shader must scale it once"},
-		{jsLitWhere, jsSrc, "env.groundIntensity", "the browser holds the raw colour, so the shader must scale it once"},
-		{jsLitWhere, jsSrc, "env.ambientIntensity", "the browser holds the raw colour, so the shader must scale it once"},
+		{jsLitWhere, jsFragment, "env.skyIntensity", "the fragment scales the raw sky colour once"},
+		{jsLitWhere, jsFragment, "env.groundIntensity", "the fragment scales the raw ground colour once"},
+		{jsLitWhere, jsFragment, "env.ambientIntensity", "the fragment scales the raw ambient colour once"},
+		{"WGSL_TRANSMISSION", jsTransmission, "env.skyIntensity", "the transmission fallback scales the raw sky colour once"},
+		{"WGSL_TRANSMISSION", jsTransmission, "env.groundIntensity", "the transmission fallback scales the raw ground colour once"},
+		{"WGSL_TRANSMISSION", jsTransmission, "env.ambientIntensity", "the transmission fallback scales the raw ambient colour once"},
 	} {
 		if got := strings.Count(once.src, once.needle); got != 1 {
 			t.Errorf("%s names %s %d times, want once: %s", once.where, once.needle, got, once.why)
@@ -758,6 +795,13 @@ type divergentTerm struct {
 // stopped guarding.
 var litDivergentTerms = []divergentTerm{
 	{
+		id:      "volume-transmission",
+		effect:  "Browser glass refracts the captured opaque scene with Fresnel and spatial thickness absorption; native glass still mixes a surface tint.",
+		verdict: "Keep browser screen-space volume transmission. Native rendering has no opaque-scene capture or volume material carrier yet; it needs a separate implementation before this gap can close.",
+		goLine:  "color = mix(color, ambient + baseColor * 0.1, transmission * 0.55);",
+		jsLine:  "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness, volumePathLength);",
+	},
+	{
 		// This row stayed open on purpose. The audit of 2026-07-26 moved the
 		// native copy to the browser form on seven numeric terms. In each of
 		// those the native copy broke a specification, or carried an arbitrary
@@ -860,7 +904,7 @@ var litDivergentTerms = []divergentTerm{
 		effect:  "A rect-area light lights the scene in the browser under WebGPU and contributes nothing under server side rendering, on the desktop, or in a poster.",
 		verdict: "Keep the native copy silent. The browser evaluates the exact three.js diffuse form factor plus a representative-point specular lobe. The native path has no rectangle to integrate, because engine.RenderLight carries no width and no height, so any native answer would be invented. scene/preview/coverage.go reports the drop to the author.",
 		goLine:  "if (kind == 5u) {",
-		jsLine:  "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
+		jsLine:  "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV);",
 	},
 }
 
@@ -1005,11 +1049,46 @@ var litSharedGuardMutations = []litGuardMutation{
 		wantRow: "anisotropy-roughness-gain",
 	},
 	{
-		name:    "native renderer raises the dielectric F0",
+		name:    "native renderer replaces the authored F0 with the fixed default",
 		side:    "go",
-		from:    "mix(vec3f(0.04), baseColor, metalness)",
-		to:      "mix(vec3f(0.05), baseColor, metalness)",
-		wantRow: "dielectric-f0",
+		from:    "mix(material.specularParams.xyz, baseColor, metalness)",
+		to:      "mix(vec3f(0.04), baseColor, metalness)",
+		wantRow: "dielectric-f0-authored",
+	},
+	{
+		name:    "browser replaces the authored F0 with the fixed default",
+		side:    "js",
+		from:    "mix(specF0, albedo, metalness)",
+		to:      "mix(vec3f(0.04), albedo, metalness)",
+		wantRow: "dielectric-f0-authored",
+	},
+	{
+		name:    "browser drops the authored F90 from the specular mix",
+		side:    "js",
+		from:    "var F90 = mix(specF90, 1.0, metalness);",
+		to:      "var F90 = 1.0;",
+		wantRow: "specular-f90-authored",
+	},
+	{
+		name:    "native renderer drops the authored F90 from the specular mix",
+		side:    "go",
+		from:    "var F90 = mix(material.specularParams.w, 1.0, metalness);",
+		to:      "var F90 = 1.0;",
+		wantRow: "specular-f90-authored",
+	},
+	{
+		name:    "browser reverts the scalar diffuse weight to the componentwise form",
+		side:    "js",
+		from:    "let Fdiel = fresnelSchlick(max(dot(H, V), 0.0), specF0, specF90);\nlet kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
+		to:      "let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+		wantRow: "diffuse-weight-scalar-dielectric",
+	},
+	{
+		name:    "native renderer reverts the scalar diffuse weight to the componentwise form",
+		side:    "go",
+		from:    "let FdielL = fresnelSchlick(specF0, specF90, VdotH);\nlet kD = (1.0 - max(FdielL.x, max(FdielL.y, FdielL.z))) * (1.0 - metalness);",
+		to:      "let kD = (vec3f(1.0) - F) * (1.0 - metalness);",
+		wantRow: "diffuse-weight-scalar-dielectric",
 	},
 	{
 		name:    "browser widens the clear coat power range",
@@ -1208,6 +1287,13 @@ var litSharedGuardMutations = []litGuardMutation{
 // divergence on one backend only, or move it further apart.
 var litDivergentGuardMutations = []litGuardMutation{
 	{
+		name:    "browser reverts volume transmission to a colour mix",
+		side:    "js",
+		from:    "color = color + transmission * ( vec3f(1.0) - Ft) * volumeTransmission(in.worldPos, N, V, roughness, volumePathLength);",
+		to:      "color = mix(color, ambient + albedo * 0.1, transmission * 0.55);",
+		wantRow: "volume-transmission",
+	},
+	{
 		name:    "native renderer adopts the browser specular visibility without updating the ledger",
 		side:    "go",
 		from:    "return 0.5 / max(ggxV + ggxL, 1e-5);",
@@ -1273,7 +1359,7 @@ var litDivergentGuardMutations = []litGuardMutation{
 	{
 		name:    "browser stops shading a rect-area light without updating the ledger",
 		side:    "js",
-		from:    "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, NoV);",
+		from:    "Lo = Lo + rectAreaLightRadiance(light, in.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV);",
 		to:      "Lo = Lo + vec3f(0.0);",
 		wantRow: "rect-area-light",
 	},

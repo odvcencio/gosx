@@ -8,10 +8,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
+	"time"
 
 	"github.com/andybalholm/brotli"
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	"m31labs.dev/gosx/internal/assetmeasure"
+	"m31labs.dev/gosx/perf/ouroboros"
 )
 
 type sizeReport struct {
@@ -36,14 +41,20 @@ type sizeProfile struct {
 }
 
 type sizeReportFile struct {
-	Name        string `json:"name"`
-	File        string `json:"file"`
-	Role        string `json:"role"`
-	Bytes       int64  `json:"bytes"`
-	GzipBytes   int64  `json:"gzipBytes"`
-	BrotliBytes int64  `json:"brotliBytes"`
-	ColdStart   bool   `json:"coldStart"`
+	Name            string `json:"name"`
+	File            string `json:"file"`
+	Role            string `json:"role"`
+	SHA256          string `json:"sha256,omitempty"`
+	Bytes           int64  `json:"bytes"`
+	GzipBytes       int64  `json:"gzipBytes"`
+	BrotliBytes     int64  `json:"brotliBytes"`
+	ColdStart       bool   `json:"coldStart"`
+	GzipWireBytes   *int64 `json:"gzipWireBytes,omitempty"`
+	BrotliWireBytes *int64 `json:"brotliWireBytes,omitempty"`
 }
+
+var measureSizeAsset = assetmeasure.Measure
+var canonicalSizePin = assetmeasure.CompressorPin{GoVersion: "1.26.0", BrotliVersion: "v1.2.1", GzipLevel: 9, BrotliQuality: 11, BrotliWindow: 0}
 
 func cmdSizeReport() {
 	if len(os.Args) < 3 {
@@ -51,11 +62,45 @@ func cmdSizeReport() {
 		os.Exit(1)
 	}
 	jsonOut := false
+	ouroborosOut := ""
+	inventoryPath := ""
+	repoRoot := "."
+	canonicalR10Target := ""
 	target := ""
-	for _, arg := range os.Args[2:] {
+	args := os.Args[2:]
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
 		switch arg {
 		case "--json":
 			jsonOut = true
+		case "--ouroboros-out":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --ouroboros-out requires a directory")
+				os.Exit(1)
+			}
+			ouroborosOut = args[i]
+		case "--inventory":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --inventory requires a file")
+				os.Exit(1)
+			}
+			inventoryPath = args[i]
+		case "--root":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --root requires a directory")
+				os.Exit(1)
+			}
+			repoRoot = args[i]
+		case "--canonical-r10":
+			i++
+			if i >= len(args) {
+				fmt.Fprintln(os.Stderr, "size error: --canonical-r10 requires a dist directory or build.json")
+				os.Exit(1)
+			}
+			canonicalR10Target = args[i]
 		default:
 			if strings.HasPrefix(arg, "--") {
 				fmt.Fprintf(os.Stderr, "size error: unknown flag %s\n", arg)
@@ -67,6 +112,17 @@ func cmdSizeReport() {
 	if target == "" {
 		fmt.Fprintln(os.Stderr, "size error: missing dist directory or build.json")
 		os.Exit(1)
+	}
+	if canonicalR10Target != "" && ouroborosOut == "" {
+		fmt.Fprintln(os.Stderr, "size error: --canonical-r10 requires --ouroboros-out")
+		os.Exit(1)
+	}
+	if ouroborosOut != "" {
+		outPath := filepath.Join(ouroborosOut, "size", "route-assets.json")
+		if err := ouroboros.EnsureNewJSONFilePath(outPath); err != nil {
+			fmt.Fprintf(os.Stderr, "size error: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	report, err := buildSizeReport(target)
 	if err != nil {
@@ -80,18 +136,60 @@ func cmdSizeReport() {
 			os.Exit(1)
 		}
 		fmt.Println(string(data))
-		return
+	} else {
+		printSizeReport(report)
 	}
-	printSizeReport(report)
+	if ouroborosOut != "" {
+		evidence, err := buildSizeEvidence(target, canonicalR10Target, ouroborosOut, inventoryPath, repoRoot)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "size error: build Ouroboros evidence: %v\n", err)
+			os.Exit(1)
+		}
+		outPath := filepath.Join(ouroborosOut, "size", "route-assets.json")
+		if err := ouroboros.WriteNewCanonicalSizeEvidence(outPath, evidence); err != nil {
+			fmt.Fprintf(os.Stderr, "size error: write Ouroboros evidence: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Fprintf(os.Stderr, "Ouroboros size evidence: %s\n", outPath)
+	}
 }
 
 func sizeUsage(w io.Writer) {
 	fmt.Fprintf(w, `gosx size - Report runtime bundle sizes
 
 Usage:
-  gosx size [--json] <dist|build.json>
+  gosx size [--json] [--ouroboros-out dir] [--inventory file] [--root repo] [--canonical-r10 dist|build.json] <dist|build.json>
+
+  --canonical-r10 combines the external examples/gosx-docs R10 export with
+  the primary Ouroboros corpus export. It is valid only with canonical evidence.
 
 `)
+}
+
+func buildSizeEvidence(target, canonicalR10Target, artifactRoot, inventoryPath, repoRoot string) (*ouroboros.SizeEvidence, error) {
+	manifestPath, distDir, err := resolveSizeReportTarget(target)
+	if err != nil {
+		return nil, err
+	}
+	r10ManifestPath := ""
+	r10DistDir := ""
+	if strings.TrimSpace(canonicalR10Target) != "" {
+		r10ManifestPath, r10DistDir, err = resolveSizeReportTarget(canonicalR10Target)
+		if err != nil {
+			return nil, fmt.Errorf("resolve canonical R10 target: %w", err)
+		}
+	}
+	return ouroboros.BuildSizeEvidenceWithOptions(ouroboros.SizeEvidenceOptions{
+		ManifestPath:    manifestPath,
+		DistDir:         distDir,
+		GeneratedAt:     time.Now().UTC().Format(time.RFC3339),
+		RepoRoot:        repoRoot,
+		ArtifactRoot:    artifactRoot,
+		InventoryPath:   inventoryPath,
+		R10ManifestPath: r10ManifestPath,
+		R10DistDir:      r10DistDir,
+		Canonical:       true,
+	})
 }
 
 func buildSizeReport(target string) (sizeReport, error) {
@@ -108,6 +206,7 @@ func buildSizeReport(target string) (sizeReport, error) {
 		Manifest:   manifestPath,
 		RuntimeDir: runtimeDir,
 	}
+	seen := make(map[string]bool)
 	for _, asset := range runtimeSizeAssets(manifest) {
 		if asset.file == "" {
 			continue
@@ -117,6 +216,11 @@ func buildSizeReport(target string) (sizeReport, error) {
 			return sizeReport{}, err
 		}
 		report.Assets = append(report.Assets, entry)
+		// Capability aliases remain visible; inventory totals count one file once.
+		if seen[entry.File] {
+			continue
+		}
+		seen[entry.File] = true
 		report.TotalBytes += entry.Bytes
 		report.TotalGzip += entry.GzipBytes
 		report.TotalBrotli += entry.BrotliBytes
@@ -125,6 +229,27 @@ func buildSizeReport(target string) (sizeReport, error) {
 			report.ColdStartGzip += entry.GzipBytes
 			report.ColdStartBrotli += entry.BrotliBytes
 		}
+	}
+	names := make([]string, 0, len(manifest.GoWASM))
+	for name := range manifest.GoWASM {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		asset := manifest.GoWASM[name]
+		entry, err := sizeReportEntry(filepath.Join(distDir, "assets", "go-wasm"), runtimeSizeAsset{
+			name: "go-wasm:" + name, file: asset.File, role: "application Go WASM",
+		})
+		if err != nil {
+			return sizeReport{}, err
+		}
+		// Read within the module asset root; only the reported path is relative
+		// to RuntimeDir, preserving the reader's confinement checks.
+		entry.File = "../go-wasm/" + asset.File
+		report.Assets = append(report.Assets, entry)
+		report.TotalBytes += entry.Bytes
+		report.TotalGzip += entry.GzipBytes
+		report.TotalBrotli += entry.BrotliBytes
 	}
 	report.Profiles = sizeProfiles(report.Assets)
 	return report, nil
@@ -142,10 +267,12 @@ func resolveSizeReportTarget(target string) (manifestPath string, distDir string
 }
 
 type runtimeSizeAsset struct {
-	name      string
-	file      string
-	role      string
-	coldStart bool
+	name                       string
+	file                       string
+	role                       string
+	coldStart                  bool
+	embedded                   []byte
+	gzipSidecar, brotliSidecar []byte
 }
 
 func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
@@ -153,7 +280,7 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		return nil
 	}
 	rt := manifest.Runtime
-	return []runtimeSizeAsset{
+	assets := []runtimeSizeAsset{
 		{name: "runtime.wasm", file: rt.WASM.File, role: "core wasm", coldStart: true},
 		{name: "runtime-islands.wasm", file: rt.WASMIslands.File, role: "islands wasm"},
 		{name: "wasm_exec.js", file: rt.WASMExec.File, role: "wasm loader", coldStart: true},
@@ -165,45 +292,182 @@ func runtimeSizeAssets(manifest *buildmanifest.Manifest) []runtimeSizeAsset {
 		{name: "bootstrap-feature-engines.js", file: rt.BootstrapFeatureEngines.File, role: "feature chunk"},
 		{name: "bootstrap-feature-hubs.js", file: rt.BootstrapFeatureHubs.File, role: "feature chunk"},
 		{name: "bootstrap-feature-controllers.js", file: rt.BootstrapFeatureControllers.File, role: "feature chunk"},
+		{name: "bootstrap-controller-input.js", file: rt.BootstrapControllerInput.File, role: "feature chunk"},
 		{name: "bootstrap-feature-textlayout.js", file: rt.BootstrapFeatureTextlayout.File, role: "feature chunk"},
 		{name: "bootstrap-feature-scene3d.js", file: rt.BootstrapFeatureScene3D.File, role: "scene3d chunk"},
 		{name: "bootstrap-feature-scene3d-command.js", file: rt.BootstrapFeatureScene3DCommand.File, role: "scene3d command chunk"},
+		{name: "bootstrap-feature-scene3d-experience.js", file: rt.BootstrapFeatureScene3DExperience.File, role: "scene3d command chunk"},
+		{name: "bootstrap-feature-scene3d-hydrate.js", file: rt.BootstrapFeatureScene3DHydrate.File, role: "scene3d hydrate chunk"},
 		{name: "bootstrap-feature-scene3d-webgpu.js", file: rt.BootstrapFeatureScene3DWebGPU.File, role: "scene3d webgpu chunk"},
 		{name: "bootstrap-feature-scene3d-webgl.js", file: rt.BootstrapFeatureScene3DWebGL.File, role: "scene3d webgl chunk"},
 		{name: "bootstrap-feature-scene3d-gltf.js", file: rt.BootstrapFeatureScene3DGLTF.File, role: "scene3d gltf chunk"},
 		{name: "bootstrap-feature-scene3d-animation.js", file: rt.BootstrapFeatureScene3DAnimation.File, role: "scene3d animation chunk"},
 		{name: "bootstrap-feature-scene3d-compute.js", file: rt.BootstrapFeatureScene3DCompute.File, role: "scene3d compute chunk"},
 		{name: "bootstrap-feature-scene3d-decompress.js", file: rt.BootstrapFeatureScene3DDecompress.File, role: "scene3d decompress chunk"},
+		{name: "bootstrap-feature-scene3d-walk.js", file: rt.BootstrapFeatureScene3DWalk.File, role: "scene3d walk chunk"},
+		{name: "bootstrap-feature-scene3d-model-preparation.js", file: rt.BootstrapFeatureScene3DModelPreparation.File, role: "scene3d model preparation chunk"},
+		{name: "bootstrap-feature-scene3d-zoom.js", file: rt.BootstrapFeatureScene3DZoom.File, role: "scene3d zoom chunk"},
+		{name: "bootstrap-feature-scene3d-particle-burst.js", file: rt.BootstrapFeatureScene3DParticleBurst.File, role: "scene3d particle burst chunk"},
+		{name: "bootstrap-feature-scene3d-timeline.js", file: rt.BootstrapFeatureScene3DTimeline.File, role: "scene3d timeline chunk"},
+		{name: "bootstrap-feature-scene3d-vessel.js", file: rt.BootstrapFeatureScene3DVessel.File, role: "scene3d vessel chunk"},
+		{name: "bootstrap-feature-scene3d-ocean-query.js", file: rt.BootstrapFeatureScene3DOceanQuery.File, role: "scene3d ocean-query chunk"},
+		{name: "bootstrap-feature-scene3d-instance-stream.js", file: rt.BootstrapFeatureScene3DInstanceStream.File, role: "scene3d instance-stream chunk"},
 		{name: "patch.js", file: rt.Patch.File, role: "navigation patch"},
 		{name: "hls.min.js", file: rt.VideoHLS.File, role: "video hls chunk"},
 		{name: "stripe-bridge.js", file: rt.StripeBridge.File, role: "stripe bridge chunk"},
 		{name: "relay.js", file: rt.Relay.File, role: "cross-frame preview relay"},
 	}
+	featureNames := make([]string, 0, len(rt.Features))
+	for name := range rt.Features {
+		featureNames = append(featureNames, name)
+	}
+	sort.Strings(featureNames)
+	for _, name := range featureNames {
+		assets = append(assets, runtimeSizeAsset{name: "bootstrap-feature-" + name + ".js", file: rt.Features[name].File, role: "feature chunk"})
+	}
+	assets = append(assets, runtimeSizeAsset{name: "navigation.js", file: filepath.Base(runtimehost.NavigationRuntimePath), role: "navigation runtime",
+		embedded: []byte(runtimehost.NavigationRuntime), gzipSidecar: runtimehost.NavigationRuntimeGzip, brotliSidecar: runtimehost.NavigationRuntimeBrotli})
+	ids := make([]string, 0, len(rt.WASMVariants))
+	for id := range rt.WASMVariants {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		assets = append(assets, runtimeSizeAsset{name: "runtime-variant/" + id, file: rt.WASMVariants[id].File, role: "capability wasm"})
+	}
+	return assets
+}
+
+// runtimeExcludableAssetRoles maps each build.runtime.exclude role (also
+// used to tag the runtime JS payloads cmd/gosx/build.go stages) to the
+// runtimeSizeAssets() entries it covers. It is the same runtime asset
+// vocabulary this size report already renders per-asset "role" text for —
+// grouped here into the short, project-facing tokens gosx.config.json
+// accepts. The core loader chain (bootstrap.js, bootstrap-lite.js,
+// bootstrap-runtime.js, wasm_exec.js, patch.js) and every WASM artifact are
+// deliberately absent: they are never excludable in this lane. A future
+// build.runtime.features allow-list that also skips WASM compiles is v2,
+// not this vocabulary.
+var runtimeExcludableAssetRoles = map[string][]string{
+	"islands":     {"bootstrap-feature-islands.js"},
+	"engines":     {"bootstrap-feature-engines.js"},
+	"hubs":        {"bootstrap-feature-hubs.js", "bootstrap-feature-hub-document.js"},
+	"controllers": {"bootstrap-feature-controllers.js", "bootstrap-controller-input.js"},
+	"workbench":   {"bootstrap-feature-workbench.js"},
+	"motion":      {"bootstrap-feature-motion-transport.js", "bootstrap-feature-motion-svg.js", "bootstrap-feature-motion-scene.js", "bootstrap-feature-motion-track.js"},
+	"textlayout":  {"bootstrap-feature-textlayout.js"},
+	"scene3d": {
+		"bootstrap-feature-scene3d.js",
+		"bootstrap-feature-scene3d-command.js",
+		"bootstrap-feature-scene3d-experience.js",
+		"bootstrap-feature-scene3d-hydrate.js",
+		"bootstrap-feature-scene3d-webgpu.js",
+		"bootstrap-feature-scene3d-webgl.js",
+		"bootstrap-feature-scene3d-gltf.js",
+		"bootstrap-feature-scene3d-animation.js",
+		"bootstrap-feature-scene3d-compute.js",
+		"bootstrap-feature-scene3d-decompress.js",
+		"bootstrap-feature-scene3d-walk.js",
+		"bootstrap-feature-scene3d-model-preparation.js",
+		"bootstrap-feature-scene3d-zoom.js",
+		"bootstrap-feature-scene3d-particle-burst.js",
+		"bootstrap-feature-scene3d-timeline.js",
+		"bootstrap-feature-scene3d-vessel.js",
+		"bootstrap-feature-scene3d-ocean-query.js",
+		"bootstrap-feature-scene3d-instance-stream.js",
+	},
+	"video":    {"hls.min.js"},
+	"payments": {"stripe-bridge.js"},
+	"relay":    {"relay.js"},
+	// edits and morph are filled by the milestone that adds their chunks
+	// (they ship through runtimeFeatureChunks, not a fixed field).
+	"edits": {},
+	"morph": {},
+}
+
+// runtimeAssetRoles returns the sorted, valid build.runtime.exclude role
+// names — the runtime asset role vocabulary cmd/gosx/config.go validates
+// gosx.config.json against.
+func runtimeAssetRoles() []string {
+	names := make([]string, 0, len(runtimeExcludableAssetRoles))
+	for name := range runtimeExcludableAssetRoles {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// runtimeAssetRoleSet is runtimeAssetRoles() as a lookup set.
+func runtimeAssetRoleSet() map[string]struct{} {
+	set := make(map[string]struct{}, len(runtimeExcludableAssetRoles))
+	for name := range runtimeExcludableAssetRoles {
+		set[name] = struct{}{}
+	}
+	return set
 }
 
 func sizeReportEntry(runtimeDir string, asset runtimeSizeAsset) (sizeReportFile, error) {
-	path := filepath.Join(runtimeDir, asset.file)
-	data, err := os.ReadFile(path)
+	data := asset.embedded
+	gz, br := asset.gzipSidecar, asset.brotliSidecar
+	if data == nil {
+		if filepath.Base(asset.file) != asset.file || filepath.IsAbs(asset.file) || strings.Contains(asset.file, "\\") {
+			return sizeReportFile{}, fmt.Errorf("invalid runtime asset file")
+		}
+		root, err := os.OpenRoot(runtimeDir)
+		if err != nil {
+			return sizeReportFile{}, err
+		}
+		defer root.Close()
+		read := func(name string) ([]byte, error) {
+			f, err := root.Open(name)
+			if err != nil {
+				return nil, err
+			}
+			defer f.Close()
+			return io.ReadAll(f)
+		}
+		data, err = read(asset.file)
+		if err != nil {
+			return sizeReportFile{}, err
+		}
+		gz, err = read(asset.file + ".gz")
+		if err != nil && !os.IsNotExist(err) {
+			return sizeReportFile{}, err
+		}
+		br, err = read(asset.file + ".br")
+		if err != nil && !os.IsNotExist(err) {
+			return sizeReportFile{}, err
+		}
+	}
+	sizes, err := measureSizeAsset(data, canonicalSizePin)
 	if err != nil {
-		return sizeReportFile{}, fmt.Errorf("read runtime asset %s: %w", path, err)
+		return sizeReportFile{}, err
 	}
-	gzipBytes := gzipLength(data)
-	if sidecar, err := os.ReadFile(path + ".gz"); err == nil && int64(len(sidecar)) < gzipBytes {
-		gzipBytes = int64(len(sidecar))
-	}
-	brotliBytes := brotliLength(data)
-	if sidecar, err := os.ReadFile(path + ".br"); err == nil && int64(len(sidecar)) < brotliBytes {
-		brotliBytes = int64(len(sidecar))
-	}
-	return sizeReportFile{
+	entry := sizeReportFile{
 		Name:        asset.name,
 		File:        asset.file,
 		Role:        asset.role,
-		Bytes:       int64(len(data)),
-		GzipBytes:   gzipBytes,
-		BrotliBytes: brotliBytes,
+		SHA256:      sizes.SHA256,
+		Bytes:       sizes.Raw,
+		GzipBytes:   sizes.Gzip,
+		BrotliBytes: sizes.Brotli,
 		ColdStart:   asset.coldStart,
-	}, nil
+	}
+	for _, sidecar := range []struct {
+		encoding string
+		data     []byte
+		out      **int64
+	}{{"gzip", gz, &entry.GzipWireBytes}, {"br", br, &entry.BrotliWireBytes}} {
+		if sidecar.data == nil {
+			continue
+		}
+		if err := assetmeasure.VerifySidecar(data, sidecar.data, sidecar.encoding); err != nil {
+			return sizeReportFile{}, err
+		}
+		n := int64(len(sidecar.data))
+		*sidecar.out = &n
+	}
+	return entry, nil
 }
 
 func gzipLength(data []byte) int64 {
@@ -234,6 +498,15 @@ func sizeProfiles(assets []sizeReportFile) []sizeProfile {
 		{name: "full-runtime", names: []string{"runtime.wasm", "wasm_exec.js", "bootstrap-runtime.js"}},
 		{name: "islands-runtime", names: []string{"runtime-islands.wasm", "wasm_exec.js", "bootstrap-runtime.js", "bootstrap-feature-islands.js"}},
 		{name: "go-wasm-engine", names: []string{"standard-go-wasm_exec.js", "bootstrap-runtime.js", "bootstrap-feature-engines.js"}},
+		{name: "navigation", names: []string{"navigation.js"}},
+	}
+	for _, asset := range assets {
+		if id, ok := strings.CutPrefix(asset.Name, "runtime-variant/"); ok {
+			candidates = append(candidates, struct {
+				name  string
+				names []string
+			}{name: "capability-" + id, names: []string{asset.Name, "wasm_exec.js", "bootstrap-runtime.js"}})
+		}
 	}
 	profiles := make([]sizeProfile, 0, len(candidates))
 	for _, candidate := range candidates {

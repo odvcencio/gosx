@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // WebGPU buffer packing, point rendering, post-effect passes, custom Selena
 // materials and the WebGPU / WebGL2 water renderers.
 //
@@ -22,15 +24,14 @@ const {
   loadSceneWaterClockAPI,
   createAdaptiveQualityHarness,
   readSceneMountSrc,
-  readWebGPUBackendSrc,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /function ensurePointsUniformGPUBuffer\(owner, uniformData\)/);
-  assert.match(source, /function ensurePointsParticleGPUBuffer\(entry, particleData\)/);
   assert.match(source, /function ensurePointsParticleVertexGPUBuffer\(entry, particleData\)/);
+  assert.doesNotMatch(source, /function ensurePointsParticleGPUBuffer\(/);
   assert.match(source, /sceneCachedBuffer\(owner,\s*typedArray/);
   assert.match(source, /ensurePointsUniformGPUBuffer\(entry,\s*puF\)/);
   assert.match(source, /ensurePointsParticleVertexGPUBuffer\(entry,\s*particleData\)/);
@@ -40,11 +41,12 @@ test("bootstrap keeps WebGPU Scene3D points on per-entry cached GPU buffers", ()
 });
 
 test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buffers", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
   const sceneBuffers = source.slice(source.indexOf("function ensurePBRSceneAttributeBuffers"), source.indexOf("function webGPUBindSceneMeshVertexBuffer"));
   const bindSceneBuffer = source.slice(source.indexOf("function webGPUBindSceneMeshVertexBuffer"), source.indexOf("// -----------------------------------------------------------------------\n    // Draw list construction"));
   const shadowPass = source.slice(source.indexOf("function renderShadowPass"), source.indexOf("// -----------------------------------------------------------------------\n    // PBR object drawing"));
   const drawPBR = source.slice(source.indexOf("function drawPBRObjects"), source.indexOf("function instancedMeshCount"));
+  const bindWorld = source.slice(source.indexOf("function wgpuBindWorldMeshBuffers"), source.indexOf("function createSceneWebGPURenderer"));
   const skinnedBind = source.slice(source.indexOf("function webGPUBindElioSkinnedBuffers"), source.indexOf("// -----------------------------------------------------------------------\n    // Shadow Pass"));
 
   // wgpuStablePBRAttributeBuffer caches each attribute on a renderer-scoped,
@@ -63,25 +65,30 @@ test("bootstrap keeps WebGPU Scene3D PBR mesh attributes on packed scene GPU buf
   assert.doesNotMatch(shadowPass, /shadowPositionBuffer\s*=\s*wgpuEnsureBufferData/);
   assert.doesNotMatch(shadowPass, /sliceToFloat32/);
 
-  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*0,\s*pbrBuffers && pbrBuffers\.positions/);
-  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*1,\s*pbrBuffers && pbrBuffers\.normals/);
-  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*2,\s*pbrBuffers && pbrBuffers\.uvs/);
-  assert.match(drawPBR, /webGPUBindSceneMeshVertexBuffer\(pass,\s*3,\s*pbrBuffers && pbrBuffers\.tangents/);
+  assert.match(drawPBR, /wgpuBindWorldMeshBuffers\(pass,\s*pbrBuffers\)/);
+  assert.match(drawPBR, /pass\.draw\(count,\s*1,\s*offset\)/);
+  assert.match(bindWorld, /\[buffers\.positions, buffers\.normals, buffers\.uvs, buffers\.tangents\]/);
+  assert.match(bindWorld, /pass\.setVertexBuffer\(slot,\s*record\.buffer,\s*0\)/);
   assert.doesNotMatch(drawPBR, /sliceToFloat32/);
   assert.doesNotMatch(drawPBR, /positionBuffer\s*=\s*wgpuEnsureBufferData/);
   assert.doesNotMatch(drawPBR, /normalBuffer\s*=\s*wgpuEnsureBufferData/);
   assert.doesNotMatch(drawPBR, /uvBuffer\s*=\s*wgpuEnsureBufferData/);
   assert.doesNotMatch(drawPBR, /tangentBuffer\s*=\s*wgpuEnsureBufferData/);
 
-  assert.match(skinnedBind, /pass\.setVertexBuffer\(0,\s*outputBuffer\)/);
-  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedNormals"/);
+  // One tracked output buffer backs slots 0/1/3: positions at offset 0,
+  // normals at paddedCount * 12, tangents at paddedCount * 24, each bound
+  // with its logical draw size; only slot 2 keeps a cached UV buffer.
+  assert.match(skinnedBind, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
+  assert.match(skinnedBind, /pass\.setVertexBuffer\(1,\s*outputBuffer,\s*paddedCount \* 12,\s*vec3Bytes\)/);
   assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedUVs"/);
-  assert.match(skinnedBind, /wgpuCachedTrackedBuffer\(obj,\s*"_gosxWGPUSkinnedTangents"/);
+  assert.match(skinnedBind, /pass\.setVertexBuffer\(3,\s*outputBuffer,\s*paddedCount \* 24,\s*Math\.max\(4,\s*count \* 4 \* 4\)\)/);
+  assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedNormals"/);
+  assert.doesNotMatch(skinnedBind, /"_gosxWGPUSkinnedTangents"/);
   assert.doesNotMatch(skinnedBind, /wgpuEnsureBufferData/);
 });
 
 test("bootstrap renders WebGPU Scene3D static points from instanced vertex buffers", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /var WGSL_POINTS_INSTANCED_VERTEX = \[/);
   assert.match(source, /var WGPU_POINTS_INSTANCE_VERTEX_LAYOUT = \[/);
@@ -95,7 +102,7 @@ test("bootstrap renders WebGPU Scene3D static points from instanced vertex buffe
 });
 
 test("bootstrap renders WebGPU Scene3D glow points with radial alpha", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /points\.flags\.w == 2u/);
   assert.match(source, /let radial = length\(centered\) \* 2\.0/);
@@ -107,7 +114,7 @@ test("bootstrap renders WebGPU Scene3D glow points with radial alpha", () => {
 });
 
 test("bootstrap keeps WebGPU Scene3D point uniforms vec4-aligned", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /defaultColorAndSize: vec4f/);
   assert.match(source, /flags: vec4u/);
@@ -127,8 +134,8 @@ test("bootstrap keeps WebGPU Scene3D point uniforms vec4-aligned", () => {
 });
 
 test("bootstrap keeps WebGL and WebGPU Scene3D point size clamps in parity", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgl, /uniform float u_minPixelSize;/);
   assert.match(webgl, /uniform float u_maxPixelSize;/);
@@ -195,25 +202,25 @@ test("bootstrap uploads Scene3D point pixel clamps to WebGL", async () => {
 });
 
 test("bootstrap preserves Scene3D point maxPixelSize from GLB extras", () => {
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const gltf = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19-scene-gltf.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
+  const gltf = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "gltf.ts"), "utf8");
 
   assert.match(core, /maxPixelSize: sceneClampNumberOrCSSVar\(item\.maxPixelSize/);
   assert.match(gltf, /"maxPixelSize"/);
 });
 
 test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(source, /function publishWebGPUFrameStats\(stats\)/);
+  assert.match(source, /function publishWebGPUFrameStats\(stats\s*\)/);
   assert.match(source, /var webGPUFrameSeq = 0/);
   assert.match(source, /data-gosx-scene3d-webgpu-frame-seq/);
   assert.match(source, /data-gosx-scene3d-webgpu-frame-at/);
   assert.match(source, /__gosxScene3DWebGPUStats = published/);
-  assert.match(source, /__gosxScene3DWebGPUProof = \{/);
+  assert.match(source, /__gosxScene3DWebGPUProof = webGPUFrameProof/);
   assert.match(source, /WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS = 250/);
-  assert.match(source, /var mirrorDiagnostics = verboseTelemetry \|\| diagnosticElapsed < 0 \|\| diagnosticElapsed >= WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS/);
-  assert.match(source, /if \(!mirrorDiagnostics\) return/);
+  assert.match(source, /var mirrorDiagnostics = verboseTelemetry \|\| webGPUAttributeMount !== mount \|\| diagnosticElapsed < 0 \|\| diagnosticElapsed >= WEBGPU_DIAGNOSTIC_ATTRIBUTE_INTERVAL_MS/);
+  assert.match(source, /if \(!mirrorDiagnostics\) \{ scheduleWebGPUAttributeMirror\(\); return; \}/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-entries/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-instances/);
   assert.match(source, /data-gosx-scene3d-webgpu-point-draw-instances/);
@@ -238,7 +245,7 @@ test("bootstrap exposes WebGPU Scene3D planned draw stats on the mount", () => {
 });
 
 test("Scene3D WebGPU ignores popErrorScope lifecycle drops", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /function isWebGPUErrorScopeLifecycleMessage\(message\)/);
   assert.match(source, /function wgpuPopScopedErrorScope\(scopedDevice\)/);
@@ -249,24 +256,24 @@ test("Scene3D WebGPU ignores popErrorScope lifecycle drops", () => {
 });
 
 test("Scene3D WebGPU skinning is driven by Elio compute output buffers", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
 
   assert.match(source, /SCENE_ELIO_SKIN_LBS_SOURCE/);
   assert.match(source, /Emitted by m31labs\.dev\/elio\/emit\/wgsl from stdlib\.Skin\(\)/);
   assert.match(source, /@compute @workgroup_size\(64\)/);
-  assert.match(source, /device\.createComputePipeline\(\{[\s\S]*label: "gosx-elio-skin-lbs"/);
+  assert.match(source, /wgpuCreateValidatedPipeline\(device, "compute", \{[\s\S]*label: "gosx-elio-skin-lbs"/);
   assert.match(source, /updateElioSkinnedMeshes\(bundle, encoder\)/);
   assert.match(source, /pass\.dispatchWorkgroups\(record\.workgroups\)/);
   assert.match(source, /GPUBufferUsage\.STORAGE \| GPUBufferUsage\.VERTEX \| GPUBufferUsage\.COPY_DST/);
   assert.match(source, /webGPUBindElioSkinnedBuffers\(pass, obj, count\)/);
-  assert.match(source, /pass\.setVertexBuffer\(0, outputBuffer\)/);
+  assert.match(source, /pass\.setVertexBuffer\(0,\s*outputBuffer,\s*0,\s*vec3Bytes\)/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-dispatches/);
   assert.match(source, /data-gosx-scene3d-webgpu-elio-skinning-kernel/);
 });
 
 test("Scene3D WebGPU water supports compound sphere object displacement", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
 
   // The hand-written data-prop-authored compute pipeline tier
   // (sceneWaterAuthoredComputePipeline and its sceneWaterAuthoredComputeField/
@@ -335,7 +342,7 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-dispatches/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-dispatch-total/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-drop-event/);
-  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
   assert.match(math, /function sceneRayIntersectYPlane/);
   assert.match(math, /function sceneRayIntersectPlane/);
   assert.match(math, /function sceneRayIntersectSphere/);
@@ -382,7 +389,7 @@ test("Scene3D WebGPU water supports compound sphere object displacement", () => 
 });
 
 test("Scene3D WebGPU water clips rounded box surfaces with a shader SDF", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /cornerRadius: f32/);
   assert.match(webgpu, /poolShape: f32/);
@@ -401,7 +408,7 @@ test("Scene3D WebGPU water clips rounded box surfaces with a shader SDF", () => 
 });
 
 test("Scene3D WebGPU water renders upstream-style above and below surface passes", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /SCENE_WATER_RENDER_FRAGMENT_SOURCE/);
   assert.match(webgpu, /SCENE_WATER_RENDER_BELOW_FRAGMENT_SOURCE/);
@@ -476,7 +483,7 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
   assert.match(webgpu, /waterAuthoredSurfacePipelineLastError = ""/);
   assert.doesNotMatch(webgpu, /var validationDevice = authored \? device : null/);
   assert.doesNotMatch(webgpu, /validationDevice\.pushErrorScope\("validation"\)/);
-  assert.match(webgpu, /var pipeline = device\.createRenderPipeline\(descriptor\)/);
+  assert.match(webgpu, /var pipeline = wgpuCreateValidatedPipeline\(device, "render", descriptor\)/);
   assert.match(webgpu, /pending: false/);
   assert.doesNotMatch(webgpu, /wgpuPopScopedErrorScope\(validationDevice\)\.then/);
   assert.doesNotMatch(webgpu, /waterAuthoredSurfacePipelineLastError = String\(error && error\.message \|\| error \|\| "validation failed"\)/);
@@ -514,7 +521,7 @@ test("Scene3D WebGPU water renders upstream-style above and below surface passes
 });
 
 test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and tile texture", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /SCENE_WATER_POOL_VERTEX_SOURCE/);
   assert.match(webgpu, /SCENE_WATER_POOL_FRAGMENT_SOURCE/);
@@ -564,13 +571,13 @@ test("Scene3D WebGPU water renders an upstream-style pool pass with caustics and
 
 test("Scene3D managed control forms replace the route water-controls bridge", () => {
   const build = fs.readFileSync(path.join(__dirname, "..", "..", "cmd", "buildbootstrap", "main.go"), "utf8");
-  const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.js"), "utf8");
-  const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.js"), "utf8");
+  const controls = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19b-scene-control-forms.ts"), "utf8");
+  const strictSchema = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15-scene-ir-schema-strict.ts"), "utf8");
   const mount = readSceneMountSrc();
   const waterDir = path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water");
   const waterPage = fs.readFileSync(path.join(waterDir, "page.gsx"), "utf8");
 
-  assert.match(build, /bootstrap-src\/19b-scene-control-forms\.js/);
+  assert.match(build, /bootstrap-src\/19b-scene-control-forms\.ts/);
   assert.match(controls, /function bindSceneManagedControlForms/);
   assert.match(controls, /function registerSceneManagedControlProfile/);
   assert.match(controls, /function publishSceneManagedControlProfiles/);
@@ -832,12 +839,12 @@ test("Scene3D managed control forms replace the route water-controls bridge", ()
   assert.match(waterPage, /Water, in motion\./);
   assert.match(waterPage, /jeantimex\/threejs-water/);
   assert.match(waterPage, /Press SPACEBAR to pause and unpause/);
-  assert.match(waterPage, /controlTargetY=\{-0\.5\}/);
+  assert.match(waterPage, /controlTargetY=\{0\}/);
   // gosx fmt renders the <Camera> tag with one attribute per line, so match
   // the camera-position contract per attribute rather than as a single line.
-  assert.match(waterPage, /x=\{1\.38\}/);
-  assert.match(waterPage, /y=\{1\.52\}/);
-  assert.match(waterPage, /z=\{2\.87\}/);
+  assert.match(waterPage, /x=\{1\.55\}/);
+  assert.match(waterPage, /y=\{2\.8\}/);
+  assert.match(waterPage, /z=\{2\.1\}/);
   assert.match(waterPage, /interactionProfile="water-object-drop-orbit"/);
   assert.match(waterPage, /interactionTarget="water-main"/);
   assert.match(waterPage, /interactionObject="Sphere"/);
@@ -926,8 +933,24 @@ test("Scene3D orbit controls keep upstream-style release inertia", () => {
   assert.match(bootstrapFeatureScene3DSource, /controls-inertia/);
 });
 
+test("Scene3D orbit controls expose focused keyboard exploration and authored reset", () => {
+  const mount = readSceneMountSrc();
+
+  assert.match(mount, /function sceneOrbitKeyCode\(event\)/);
+  assert.match(mount, /case "arrowleft":/);
+  assert.match(mount, /case "home":\s+return "reset";/);
+  assert.match(mount, /function sceneOrbitApplyKey\(controls, readSourceCamera, key\)/);
+  assert.match(mount, /applySceneControlsCamera\(controls, sourceCamera\);/);
+  assert.match(mount, /canvas\.setAttribute\("tabindex", "0"\);/);
+  assert.match(mount, /canvas\.setAttribute\("aria-keyshortcuts", "ArrowLeft ArrowRight ArrowUp ArrowDown Home \+ -"\);/);
+  assert.match(mount, /document\.activeElement !== canvas/);
+  assert.match(mount, /scheduleRender\(orbitKey === "reset" \? "controls-reset" : "controls-keyboard"\);/);
+  assert.match(mount, /document\.addEventListener\("keydown", onKeyDown\);/);
+  assert.match(mount, /document\.removeEventListener\("keydown", onKeyDown\);/);
+});
+
 test("Scene3D WebGPU water consumes caustic reflection refraction optics flags", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /opticsFlags: vec4f/);
   assert.match(webgpu, /function sceneWaterOpticsFlags/);
@@ -950,8 +973,8 @@ test("Scene3D WebGPU water consumes caustic reflection refraction optics flags",
 });
 
 test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /SCENE_WATER_CAUSTICS_VERTEX_SOURCE/);
@@ -960,7 +983,7 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
   assert.match(webgpu, /WATER_CAUSTICS_TEXTURE_SIZE = 1024/);
   assert.match(webgpu, /waterCausticsBindGroupLayout = device\.createBindGroupLayout/);
   assert.match(webgpu, /waterCausticsPipelineLayout = device\.createPipelineLayout/);
-  assert.match(webgpu, /waterCausticsPipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /waterCausticsPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
   assert.match(webgpu, /label: "gosx-water-caustics-pass"/);
   assert.match(webgpu, /format: WATER_CAUSTICS_TEXTURE_FORMAT/);
   assert.match(webgpu, /function sceneWaterCausticsResolution/);
@@ -1003,9 +1026,9 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
   assert.match(webgpu, /waterAuthoredCausticFallbackReason/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-caustic-fallback-reason/);
   assert.match(webgpu, /waterAuthoredCausticSourceBytes/);
-  assert.match(webgpu, /waterAuthoredCausticSourceBytes: waterUpdateStats\.waterAuthoredCausticSourceBytes/);
-  assert.match(webgpu, /waterResolvedCausticSourceBytes: waterUpdateStats\.waterResolvedCausticSourceBytes/);
-  assert.match(webgpu, /waterBundleCausticSourceBytes: waterUpdateStats\.waterBundleCausticSourceBytes/);
+  assert.match(webgpu, /frameStats\.waterAuthoredCausticSourceBytes = waterUpdateStats\.waterAuthoredCausticSourceBytes/);
+  assert.match(webgpu, /frameStats\.waterResolvedCausticSourceBytes = waterUpdateStats\.waterResolvedCausticSourceBytes/);
+  assert.match(webgpu, /frameStats\.waterBundleCausticSourceBytes = waterUpdateStats\.waterBundleCausticSourceBytes/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-caustic-passes/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-caustic-texture-pixels/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-authored-caustic-passes/);
@@ -1040,10 +1063,10 @@ test("Scene3D WebGPU water renders dynamic caustics to a sampled texture", () =>
 });
 
 test("Scene3D WebGPU water renders upstream-style object texture targets", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const mount = readSceneMountSrc();
-  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.js"), "utf8");
+  const geometry = fs.readFileSync(path.join(__dirname, "bootstrap-src", "12-scene-geometry.ts"), "utf8");
   const waterPage = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "page.gsx"), "utf8");
   const waterProgram = fs.readFileSync(path.join(__dirname, "..", "..", "examples", "gosx-docs", "app", "demos", "water", "program.go"), "utf8");
 
@@ -1068,9 +1091,9 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /waterObjectMeshShadowBindGroupLayout = device\.createBindGroupLayout/);
   assert.match(webgpu, /waterObjectTexturePipelineLayout = device\.createPipelineLayout/);
   assert.match(webgpu, /waterObjectMeshShadowPipelineLayout = device\.createPipelineLayout/);
-  assert.match(webgpu, /waterObjectTexturePipeline = device\.createRenderPipeline/);
-  assert.match(webgpu, /waterObjectShadowPipeline = device\.createRenderPipeline/);
-  assert.match(webgpu, /waterObjectMeshShadowPipeline = device\.createRenderPipeline/);
+  assert.match(webgpu, /waterObjectTexturePipeline = wgpuCreateValidatedPipeline\(device, "render",/);
+  assert.match(webgpu, /waterObjectShadowPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
+  assert.match(webgpu, /waterObjectMeshShadowPipeline = wgpuCreateValidatedPipeline\(device, "render",/);
   // The hand-written data-prop-authored object-shadow/object-mesh-shadow
   // pipeline tier has been retired: both passes resolve Selena-primary
   // falling through directly to the builtin waterObjectShadowPipeline/
@@ -1083,8 +1106,8 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectShadowWGSL"\)/);
   assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowVertexWGSL"\)/);
   assert.doesNotMatch(webgpu, /sceneWaterAuthoredShaderSource\(entry, "objectMeshShadowFragmentWGSL"\)/);
-  assert.match(webgpu, /pass\.setPipeline\(waterObjectShadowPipeline\)/);
-  assert.match(webgpu, /pass\.setPipeline\(waterObjectMeshShadowPipeline\)/);
+  assert.match(webgpu, /pass\.setPipeline\(wgpuRequirePipeline\(waterObjectShadowPipeline\)\)/);
+  assert.match(webgpu, /pass\.setPipeline\(wgpuRequirePipeline\(waterObjectMeshShadowPipeline\)\)/);
   assert.match(webgpu, /waterObjectMeshRefractionFragmentModule = device\.createShaderModule/);
   assert.match(webgpu, /waterObjectMeshClippedFragmentModule = device\.createShaderModule/);
   assert.match(webgpu, /waterObjectMeshShadowVertexModule = device\.createShaderModule/);
@@ -1134,7 +1157,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-sky-cube-texture-failed/);
   assert.match(webgpu, /function sceneWaterLightVector\(entry, fallback\)/);
   assert.match(webgpu, /entry\.lightDirectionX/);
-  assert.match(webgpu, /waterLightDirX: waterUpdateStats\.waterLightDirX/);
+  assert.match(webgpu, /frameStats\.waterLightDirX = waterUpdateStats\.waterLightDirX/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-x/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-y/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-light-dir-z/);
@@ -1226,12 +1249,7 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
   assert.match(webgpu, /function sceneWaterCameraWorldDirection/);
   assert.match(webgpu, /return sceneWaterNormalizeReflectionDirection\(\{ x: -forward\.x, y: -forward\.y, z: -forward\.z \}\)/);
   assert.match(webgpu, /function sceneWaterMirrorWaterPoint/);
-  assert.match(webgpu, /function sceneWaterReflectionCamera/);
-  assert.match(webgpu, /var forward = sceneWaterReflectionCameraForward\(cam\)/);
-  assert.match(webgpu, /y: -forward\.y/);
-  assert.match(webgpu, /var horizontal = Math\.sqrt/);
-  assert.match(webgpu, /rotationX: -Math\.atan2\(reflectedForward\.y, horizontal\)/);
-  assert.match(webgpu, /rotationY: Math\.atan2\(reflectedForward\.x, reflectedForward\.z\)/);
+  assert.doesNotMatch(webgpu, /function sceneWaterReflectionCamera\(/);
   assert.match(webgpu, /function sceneWaterReflectionCameraUp/);
   assert.match(webgpu, /return \{ x: up\.x, y: -up\.y, z: up\.z \}/);
   assert.match(webgpu, /function sceneWaterLookAtViewMatrix/);
@@ -1358,14 +1376,14 @@ test("Scene3D WebGPU water renders upstream-style object texture targets", () =>
 });
 
 test("Scene3D planner hashes inline mesh vertex payloads", () => {
-  const planner = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.js"), "utf8");
+  const planner = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15b-scene-planner.ts"), "utf8");
 
   assert.match(planner, /function scenePlannerHashFloatArray/);
   assert.match(planner, /function scenePlannerHashMeshVertices/);
   assert.match(planner, /scenePlannerHashMeshVertices\(hash, object && object\.vertices\)/);
-  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.positions, 0\)/);
-  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.normals, 0\)/);
-  assert.match(planner, /scenePlannerHashFloatArray\(hash, vertices\.uvs, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(contentHash, vertices\.positions, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(contentHash, vertices\.normals, 0\)/);
+  assert.match(planner, /scenePlannerHashFloatArray\(contentHash, vertices\.uvs, 0\)/);
 });
 
 test("Scene3D static GLB models can receive live motion patches", () => {
@@ -1376,14 +1394,33 @@ test("Scene3D static GLB models can receive live motion patches", () => {
   assert.match(source, /_modelLocalVertices/);
   assert.match(source, /function sceneApplyStaticModelObjectTransform\(state, record\)/);
   assert.match(source, /object\.vertices\.positions = sceneModelTransformMeshFloats\(local\.positions/);
-  assert.match(source, /if \(sceneModelHasSkins\(skinInstances\)\) \{/);
-  assert.match(source, /sceneRegisterStaticModelLiveRecord\(state, instanceModel, objectIDs\)/);
+  assert.match(
+    source,
+    /if \(sceneModelHasSkins\(skinInstances\) \|\| sceneModelHasWeightAnimations\(asset\) \|\| sceneModelHasNodeAnimations\(asset\)\) \{/
+  );
+  assert.match(
+    source,
+    /await scenePrepareModelSkinPlayback\(stageState, asset, instanceModel, skinInstances, objectIDs, staged\.objects, staged\.points\)/
+  );
+  assert.match(
+    source,
+    /else \{\s*sceneRegisterStaticModelLiveRecord\(stageState, instanceModel, objectIDs\);/
+  );
+});
+
+test("Scene3D publishes smoothed camera proximity on both render paths", () => {
+  const source = readSceneMountSrc();
+
+  assert.match(source, /function sceneCameraProximityValue\(scrollCamera\)/);
+  assert.match(source, /sceneNumber\(scrollCamera\._smoothProgress,\s*sceneNumber\(scrollCamera\._progress, 0\)\)/);
+  assert.match(source, /effectiveBundle\.cameraProximity = sceneCameraProximityValue\(sceneState\._scrollCamera\);/);
+  assert.match(source, /latestBundle\.cameraProximity = sceneCameraProximityValue\(sceneState\._scrollCamera\);/);
 });
 
 test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
-  const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.js"), "utf8");
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
-  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+  const prefix = fs.readFileSync(path.join(__dirname, "bootstrap-src", "26e-feature-scene3d-webgpu-prefix.ts"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
+  const math = fs.readFileSync(path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   assert.match(prefix, /var clamp01 = sceneApi\.clamp01/);
   assert.match(prefix, /var sceneMat4MultiplyInto = sceneApi\.sceneMat4MultiplyInto/);
@@ -1397,7 +1434,7 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
   assert.match(prefix, /var generateInstancedGeometry = sceneApi\.generateInstancedGeometry/);
   assert.match(prefix, /var normalizeInstancedGeometryKind = sceneApi\.normalizeInstancedGeometryKind/);
   assert.match(prefix, /var buildSceneWorldDrawPlan = sceneApi\.buildSceneWorldDrawPlan/);
-  // extractFrustumPlanesJS lives in 11-scene-math.js (base bundle) but is called
+  // extractFrustumPlanesJS lives in 11-scene-math.ts (base bundle) but is called
   // by 16a's instanced GPU cull in the webgpu chunk — must be bridged here.
   assert.match(prefix, /var extractFrustumPlanesJS = sceneApi\.extractFrustumPlanesJS/);
   assert.match(prefix, /var createSceneWorldDrawScratch = sceneApi\.createSceneWorldDrawScratch/);
@@ -1422,8 +1459,8 @@ test("bootstrap bridges clamp01 into the WebGPU Scene3D sub-feature", () => {
 });
 
 test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgl, /uniform int u_toneMapMode/);
   assert.match(webgl, /u_toneMapMode == 2[\s\S]*reinhard\(color\)/);
@@ -1437,15 +1474,15 @@ test("Scene3D postfx tonemap modes are honored by WebGL and WebGPU", () => {
 });
 
 test("Scene3D WebGPU bloom blur avoids sparse radius tap grids", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /let radiusStep = clamp\(params\.radius \* 0\.35, 1\.0, 4\.0\)/);
-  assert.match(webgpu, /offsets\[i\] \* radiusStep/);
-  assert.doesNotMatch(webgpu, /offsets\[i\] \* params\.radius/);
+  assert.match(webgpu, /f32\(i \+ 1u\) \* radiusStep/);
+  assert.doesNotMatch(webgpu, /f32\(i \+ 1u\) \* params\.radius/);
 });
 
 test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /var WGSL_POST_SSAO_FRAGMENT = \[/);
   assert.match(webgpu, /var WGSL_POST_DOF_FRAGMENT = \[/);
@@ -1462,9 +1499,9 @@ test("Scene3D WebGPU SSAO uses a depth-backed post pass", () => {
 });
 
 test("Scene3D FXAA is wired as the chain-end postfx pass in WebGL and WebGPU", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const shared = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16c-scene-shared-pbr.ts"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // WebGL: GLSL fullscreen pass, dedicated program, wired into the effect switch.
   // The SCENE_POST_* kind constants live in 16c because 10-runtime-scene-core.js
@@ -1486,11 +1523,11 @@ test("Scene3D FXAA is wired as the chain-end postfx pass in WebGL and WebGPU", (
   assert.match(webgpu, /var WGSL_POST_FXAA_FRAGMENT_F16 = sceneWebGPUPostShaderSource\(WGSL_POST_FXAA_BODY, true\);/);
   assert.match(webgpu, /fn greenLuma\(c: pf3\) -> pf \{/);
   assert.match(webgpu, /case SCENE_POST_FXAA: \{/);
-  assert.match(webgpu, /getPipeline\("fxaa", postUsesF16 \? WGSL_POST_FXAA_FRAGMENT_F16 : WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout\(\)\)/);
+  assert.match(webgpu, /getPipeline\("fxaa", postUsesF16 \? WGSL_POST_FXAA_FRAGMENT_F16 : WGSL_POST_FXAA_FRAGMENT, getPostBlitLayout\(\), outputFormat\)/);
 });
 
 test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   for (const field of ["clearcoat", "sheen", "transmission", "iridescence", "anisotropy"]) {
     assert.match(webgpu, new RegExp(`${field}: f32`));
@@ -1499,7 +1536,6 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
   assert.match(webgpu, /new ArrayBuffer\(160\)/);
   assert.match(webgpu, /modelMatrix: mat4x4f/);
   assert.match(webgpu, /modelScaleSigns: vec4f/);
-  assert.match(webgpu, /f\[20 \+ mi\] = model/);
   assert.match(webgpu, /f\[7\] = clamp01\(sceneNumber\(mat\.clearcoat, 0\)\)/);
   assert.match(webgpu, /f\[8\] = clamp01\(sceneNumber\(mat\.sheen, 0\)\)/);
   assert.match(webgpu, /f\[9\] = clamp01\(sceneNumber\(mat\.transmission, 0\)\)/);
@@ -1513,25 +1549,28 @@ test("Scene3D WebGPU material uniforms cover physical PBR fields", () => {
 });
 
 test("Scene3D WebGPU reports custom material fallback diagnostics", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(webgpu, /function webGPUCustomMaterialStats\(materials\)/);
+  assert.match(webgpu, /function webGPUCustomMaterialStats\(materials\s*(?::\s*any\s*)?\)/);
   assert.match(webgpu, /material\.customVertexWGSL/);
   assert.match(webgpu, /material\.customFragmentWGSL/);
   assert.match(webgpu, /material\.customUniforms/);
-  assert.match(webgpu, /customMaterialFallbacks: customMaterialStats\.customMaterialFallbacks/);
+  assert.match(webgpu, /frameStats\.customMaterialFallbacks = customMaterialStats\.customMaterialFallbacks/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-custom-material-fallbacks/);
   assert.match(webgpu, /custom-wgsl-hooks-unsupported/);
 });
 
 test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = readWebGPUBackendSrc();
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
-  assert.match(webgl, /function createSceneSelenaProgram\(gl, material, skinned\)/);
+  assert.match(webgl, /function createSceneSelenaProgram\(gl, material, skinned, selective = false\)/);
   assert.match(webgl, /ensureSelenaProgram\(mat, isSkinned\)/);
+  assert.match(webgl, /selective \? material\.specularFragmentGLSL : material\.customFragment/);
+  assert.match(webgpu, /selective \? material\.specularFragmentWGSL : sceneSelenaWGSLSource\(material\)/);
+  assert.match(webgpu, /fragment: sceneWebGPUColorFragment\(module, sceneWebGPUColorTarget\(pipelineTargetFormat, selective\), wgpuBlendState\(blendMode\)\)/);
   assert.match(webgl, /uploadSelenaUniforms\(gl, selenaProgram, mat, obj\)/);
-  assert.match(webgl, /bindSelenaTextures\(gl, selenaProgram, mat\)/);
+  assert.match(webgl, /sceneWebGLBindSelenaTextures\(gl, selenaProgram, mat, textureCache, selenaPlaceholderTexture\)/);
   assert.match(webgl, /bindSelenaMeshAttribute\(gl, selenaProgram, "position"/);
   assert.match(webgl, /function webGLSelenaObjectModelMatrix\(obj\)/);
   assert.match(webgl, /obj && obj\.directVertices === true[\s\S]{0,120}return obj\.modelMatrix \|\| identityModelMatrix/);
@@ -1546,46 +1585,66 @@ test("Scene3D executes Selena custom shader materials in WebGL and WebGPU", () =
   assert.match(webgpu, /function sceneSelenaUniformBufferSlot/);
   assert.match(webgpu, /var vectorValue = Array\.isArray\(value\) \|\| \(value && typeof value\.length === "number"\)/);
   assert.match(webgpu, /if \(!vectorValue\) \{[\s\S]{0,180}f32\[base\] = sceneSelenaScalar\(value\)/);
-  assert.match(webgpu, /if \(sceneSelenaIsMaterial\(material\)\) \{\n          continue;/);
+  assert.match(webgpu, /if \(sceneWebGPUIsSelenaMaterial\(material\)\) continue;/);
 });
 
 test("Scene3D selena time auto-uniform: both backends declare the clock var and assign it before draws", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = readWebGPUBackendSrc();
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // WebGL keeps the per-frame clock in its renderer closure. WebGPU keeps the
   // same value on selenaFrame, the object it hands to the module-scope uniform
-  // packer in 16a1-scene-webgpu-selena-uniforms.js.
-  assert.match(webgl, /var sceneSelenaFrameTime = 0;/);
-  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0 \};/);
+  // packer in 16a1-scene-webgpu-selena-uniforms.ts.
+  assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
+  assert.match(webgpu, /var selenaFrame = \{ viewProjection: scratchSelenaViewProjection, time: 0, cameraProximity: 0, environmentInfo: \[0, 0, 0, 0\] \};/);
 
   // time is a forced reserved auto-uniform: both resolvers return the clock for
   // name === "time" before user values can shadow it.
-  assert.match(webgl, /if \(name === "time"\) return sceneSelenaFrameTime;[\s\S]{0,900}hasOwnProperty\.call\(values, name\)/);
-  assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,240}sceneSelenaMaterialValue\(material, name\)/);
+  assert.match(webgl, /function sceneSelenaAutoUniformValue\(name, time, proximity\)/);
+  assert.match(webgl, /var autoUniform = sceneSelenaAutoUniformValue\(name, sceneSelenaFrameTime, sceneSelenaFrameProximity\);[\s\S]*?hasOwnProperty\.call\(values, name\)/);
+  assert.match(webgpu, /if \(name === "time"\) return sceneNumber\(frame && frame\.time, 0\);[\s\S]{0,500}sceneSelenaMaterialValue\(material, name\)/);
 
-  // WebGPU: clock is set from frameTimeSeconds immediately after it is computed,
-  // before any render-pass encoder draw commands.
-  assert.match(webgpu, /var frameTimeSeconds = frameNowMS \/ 1000;\s*\n\s*selenaFrame\.time = frameTimeSeconds;/);
+  // Shader time and wall time are distinct. Stateful water retains the wall
+  // clock, while declarative materials receive the mounted scene playhead.
+  assert.match(webgpu, /selenaFrame\.time = frameMeta\?\.sceneTime \?\?/);
+  assert.match(webgl, /sceneSelenaFrameTime = frameMeta\?\.sceneTime \?\?/);
+});
 
-  // WebGL: clock is set right after scratchSelenaViewProjection is populated
-  // (sceneMat4MultiplyInto), before the shadow pass and before drawPBRObjectList.
-  assert.match(webgl, /sceneMat4MultiplyInto\(scratchSelenaViewProjection, projMatrix, viewMatrix\);\s*\n\s*sceneSelenaFrameTime = performance\.now\(\) \/ 1000;/);
+test("Scene3D selena camera proximity auto-uniform is renderer-owned on both backends", () => {
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
+
+  assert.match(webgl, /var sceneSelenaFrameTime = 0, sceneSelenaFrameProximity = 0;/);
+  assert.match(webgpu, /cameraProximity: 0/);
+  assert.match(webgl, /sceneSelenaFrameProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
+  assert.match(webgpu, /selenaFrame\.cameraProximity = Math\.max\(0, Math\.min\(1, sceneNumber\(bundle\.cameraProximity, 0\)\)\);/);
+
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]*?\n    }/)[0];
+  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]*?\n  }/)[0];
+  const webglCustomIdx = webglResolver.indexOf('return values[name]');
+  const webgpuProximityIdx = webgpuResolver.indexOf('if (name === "cameraProximity")');
+  const webgpuCustomIdx = webgpuResolver.indexOf('sceneSelenaMaterialValue(material, name)');
+  const webglAutoIdx = webglResolver.indexOf('var autoUniform = sceneSelenaAutoUniformValue');
+  assert.ok(webglAutoIdx >= 0 && webglAutoIdx < webglCustomIdx,
+    "WebGL camera proximity must be resolved before customUniforms");
+  assert.match(webgl, /function sceneSelenaAutoUniformValue\(name, time, proximity\)\s*\{[\s\S]{0,180}if \(name === "time"\) return time;[\s\S]{0,120}if \(name === "cameraProximity"\) return proximity;/);
+  assert.ok(webgpuProximityIdx >= 0 && webgpuProximityIdx < webgpuCustomIdx,
+    "WebGPU camera proximity must be forced before material values");
 });
 
 test("Scene3D selena time auto-uniform: time is forced before customUniforms (reserved name)", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = readWebGPUBackendSrc();
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The time branch must appear BEFORE the customUniforms early-return in both
   // resolvers (mirrors mvp/normalMatrix), so a compiled `param time` default
   // shipped in customUniforms cannot shadow the per-frame clock.
-  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]{0,2200}/)[0];
-  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,1400}/)[0];
+  const webglResolver = webgl.match(/function selenaUniformValue[\s\S]*?\n    }/)[0];
+  const webgpuResolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]*?\n  }/)[0];
 
   const webglCustomIdx = webglResolver.indexOf('return values[name]');
-  const webglTimeIdx = webglResolver.indexOf('if (name === "time")');
-  assert.ok(webglTimeIdx !== -1, 'WebGL resolver must have time branch');
+  const webglTimeIdx = webglResolver.indexOf('sceneSelenaAutoUniformValue(name, sceneSelenaFrameTime, sceneSelenaFrameProximity)');
+  assert.ok(webglTimeIdx !== -1, 'WebGL resolver must have reserved auto-uniform lookup');
   assert.ok(webglCustomIdx !== -1, 'WebGL resolver must have customUniforms return');
   assert.ok(webglTimeIdx < webglCustomIdx, 'WebGL time must be forced before customUniforms');
 
@@ -1597,7 +1656,7 @@ test("Scene3D selena time auto-uniform: time is forced before customUniforms (re
 });
 
 test("Scene3D WebGL2 water renderer wires the compound-object shadow pass", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   // The compound-shadow program (compound-shadow.sel GLES) is compiled
   // alongside the sphere/cube object-shadow program, and both are disposed on
@@ -1618,14 +1677,14 @@ test("Scene3D WebGL2 water renderer wires the compound-object shadow pass", () =
   // Pre-pass B picks compoundShadowProgram over the analytic shadowProgram
   // when the active object is compound (isMeshObject) and it has live proxy
   // spheres; both write into the same shadowTarget RTT.
-  assert.match(webgl, /var compoundSphereCount = isMeshObject && compoundShadowProgram\s*\n\s*\? fillCompoundShadowSpheres\(liveEntry\.objectDisplacementSpheres\)\s*\n\s*: 0;/);
+  assert.match(webgl, /var compoundSphereCount = isMeshObject && scenePBRProgramReady\(gl, compoundShadowProgram\)\s*\n\s*\? fillCompoundShadowSpheres\(liveEntry\.objectDisplacementSpheres\)\s*\n\s*: 0;/);
   assert.match(webgl, /var useCompoundShadow = compoundSphereCount > 0;/);
   assert.match(webgl, /sceneWaterRenderSetUniforms\(gl, compoundShadowProgram, compoundShadowDesc, \{\s*\n\s*spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,/);
 });
 
 test("Scene3D water renderers use one scheduler and bounded balanced-quality work", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // The mount owns animation. A backend-private rAF doubles WebGL work when
   // the mount also animates a WaterSystem and bypasses pause/offscreen policy.
@@ -1708,8 +1767,8 @@ test("Scene3D shared water clock is fixed-rate across display cadence and lifecy
 });
 
 test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event IDs while paused", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const mount = readSceneMountSrc();
 
   assert.match(webgl, /var pendingDropEvents = new Map\(\)/);
@@ -1740,14 +1799,32 @@ test("Scene3D fixed-clock backend contracts skip zero-tick work and retain event
   assert.doesNotMatch(webgpu, /if \(hasSimulationTick && runWaterSim\) \{\s*var normalResult/);
   assert.match(webgpu, /Math\.floor\(Math\.max\(0, waterClock\.tickSeq \|\| 0\) \/ expensivePassCadence\)/);
 
-  assert.equal((mount.match(/renderer\.render\([^;]*createSceneRenderFrameMeta\(/g) || []).length, 3,
-    "every mount render seam must pass frame metadata");
+  function frameSeam(name, next) {
+    const start = mount.indexOf(`function ${name}(`);
+    const end = mount.indexOf(`function ${next}(`, start);
+    assert.ok(start >= 0 && end > start, `${name} must have an inspectable render seam`);
+    return mount.slice(start, end);
+  }
+  const sharedFrame = frameSeam("renderMountedFrame", "renderFrame");
+  assert.match(sharedFrame, /const frameMeta = createSceneRenderFrameMeta\(now\);\s*const frameOutcome = sceneRenderWithTiming\(renderer, bundle, viewport, frameMeta, renderTiming\);/,
+    "shared completion captures current owning metadata for the exact bundle renderer attempt");
+  assert.match(sharedFrame, /finishSceneSubmission\(frameOutcome, frameMeta\)/,
+    "submission admission uses the same renderer outcome and captured metadata");
+  const normalFrame = frameSeam("renderFrame", "maybeEmitRenderEmpty");
+  assert.match(normalFrame, /latestBundle = effectiveBundle;[\s\S]*renderMountedFrame\(effectiveBundle, now, frameStart\);/,
+    "runtime frames preserve their effective bundle snapshot through shared completion");
+  assert.match(normalFrame, /renderMountedFrame\(latestBundle, now, frameStart, true\);/,
+    "ordinary frames pass their latest bundle and retain the native empty-frame diagnostic");
+  const restoredFrame = frameSeam("renderLatestSceneBundle", "emitRendererWarmup");
+  assert.match(restoredFrame, /const frameMeta = createSceneRenderFrameMeta\(null\);\s*const frameOutcome = sceneRenderWithTiming\(renderer, latestBundle, viewport, frameMeta, renderTiming\);\s*finishSceneSubmission\(frameOutcome, frameMeta\);/,
+    "restore captures independent owning metadata before rendering and admitting its retained bundle");
+  assert.match(fs.readFileSync(path.join(__dirname, "../runtime/scene3d/mount-telemetry.ts"), "utf8"), /renderer\.render\(bundle, viewport, meta\)/);
   assert.match(mount, /renderer\.setLifecycle\(\{\s*nowMS:[\s\S]*active:[\s\S]*paused:[\s\S]*disposed:[\s\S]*reason:/);
   assert.match(mount, /if \(!active \|\| paused \|\| disposing\) lastSceneRenderNowMS = null/);
 });
 
 test("Scene3D WebGPU timing initialization failure unlocks CPU-rAF fallback", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const timingInit = webgpu.match(/function ensureGPUTiming\(\) \{[\s\S]*?\n    \}/);
   assert.ok(timingInit, "WebGPU timing initialization seam should exist");
   assert.match(timingInit[0], /catch \(error\) \{[\s\S]*candidateQuerySet\.destroy\(\)[\s\S]*candidateBuffer\.destroy\(\)[\s\S]*gpuTiming = false;\s*gpuTimingFailed = true;/);
@@ -1764,20 +1841,21 @@ test("Scene3D WebGPU timing initialization failure unlocks CPU-rAF fallback", ()
 });
 
 test("Scene3D WebGPU quality allocation retries with bounded backoff and publishes telemetry", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const applyQuality = webgpu.match(/function applySceneWaterQualityProfile\([\s\S]*?\n    \}\n\n    function retireWaterSystem/);
   assert.ok(applyQuality, "WebGPU quality allocation seam should exist");
   assert.match(applyQuality[0], /system\.qualityAllocationPending && webGPUFrameSeq < system\.qualityAllocationNextFrame/);
   assert.match(applyQuality[0], /system\.qualityAllocationFailures \+= 1;[\s\S]*system\.qualityAllocationConsecutiveFailures \+= 1;/);
   assert.match(applyQuality[0], /system\.qualityAllocationNextFrame = webGPUFrameSeq \+ Math\.min\(60,\s*Math\.pow\(2, Math\.min\(6, system\.qualityAllocationConsecutiveFailures - 1\)\)\)/);
-  assert.match(webgpu, /waterQualityAllocationPending: published\.waterQualityAllocationPending \|\| 0,[\s\S]*waterQualityAllocationFailures: published\.waterQualityAllocationFailures \|\| 0,[\s\S]*waterQualityAllocationRetryFrame: published\.waterQualityAllocationRetryFrame \|\| 0/);
+  assert.match(webgpu, /proof\.waterQualityAllocationPending = stats\.waterQualityAllocationPending \|\| 0;[\s\S]*proof\.waterQualityAllocationFailures = stats\.waterQualityAllocationFailures \|\| 0;[\s\S]*proof\.waterQualityAllocationRetryFrame = stats\.waterQualityAllocationRetryFrame \|\| 0;/);
+  assert.match(webgpu, /wgpuUpdateFrameProof\(published, webGPUFrameProof\)/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-pending/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-failures/);
   assert.match(webgpu, /data-gosx-scene3d-webgpu-water-quality-allocation-retry-frame/);
 });
 
 test("Scene3D WebGL2 water caches uniform locations and bounds retained-pass work", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   // Cache hits and misses per WebGLProgram. Weak keys plus explicit disposal
   // keep renderer replacement from retaining deleted programs.
@@ -1796,7 +1874,7 @@ test("Scene3D WebGL2 water caches uniform locations and bounds retained-pass wor
   assert.match(webgl, /var causticsCadenceDue = clockFrame\.ticks > 0 &&[\s\S]*Math\.floor\(logicalCausticsTickSeq \/ expensivePassCadence\)/);
   assert.match(webgl, /var shadowSignature = waterShadowSignature\(/);
   assert.match(webgl, /var refreshShadowPass = shadowSignature !== lastShadowSignature/);
-  assert.match(webgl, /shadowTarget && \(useCompoundShadow \? compoundShadowProgram : shadowProgram\) && refreshShadowPass/);
+  assert.match(webgl, /shadowTarget && scenePBRProgramReady\(gl, useCompoundShadow \? compoundShadowProgram : shadowProgram\) && refreshShadowPass/);
   assert.match(webgl, /lastShadowSignature = shadowSignature;\s*\n\s*shadowRefreshCount\+\+/);
 
   // Match WebGPU's retained object-texture strategy: one mesh target update per
@@ -1814,7 +1892,7 @@ test("Scene3D WebGL2 water caches uniform locations and bounds retained-pass wor
 });
 
 test("Scene3D WebGL2 water seeds only the authored initial ripples", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
   const primeRipples = webgl.match(/function primeRipples\(\) \{[\s\S]*?\n    \}/);
   assert.ok(primeRipples, "forced WebGL water renderer should prime authored state");
 
@@ -1824,7 +1902,7 @@ test("Scene3D WebGL2 water seeds only the authored initial ripples", () => {
 });
 
 test("Scene3D WebGL2 water consumes live events and renderer inputs", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
   const forcedWater = webgl.match(/function createSceneWaterRendererWebGL[\s\S]*?return \{\s*\n\s*kind: "webgl"/);
   assert.ok(forcedWater, "forced WebGL water renderer should exist");
 
@@ -1840,14 +1918,14 @@ test("Scene3D WebGL2 water consumes live events and renderer inputs", () => {
 });
 
 test("Scene3D WebGL2 water refreshes analytic meshes by live transform signature", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
   assert.match(webgl, /function refreshAnalyticMesh\(kind, center, radius, half, livePoolWidth, livePoolLength\)/);
   assert.match(webgl, /signature !== analyticMeshSignature[\s\S]{0,220}deleteAnalyticMesh\(sphereMesh\);[\s\S]{0,120}deleteAnalyticMesh\(boxMesh\);/);
   assert.match(webgl, /objectMesh = refreshAnalyticMesh\(liveKindNum, liveCenter, liveRadius, liveHalf, livePoolWidth, livePoolLength\)/);
 });
 
 test("Scene3D WebGL2 water pool pass wires the rounded-corner pool geometry (mirrors WebGPU)", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
 
   // Mirrors 16a-scene-webgpu.js's sceneWaterPoolShapeRounded verbatim, keyed
   // off entry.poolShape ("Rounded Box" / "rounded" / "roundbox").
@@ -1893,7 +1971,7 @@ test("Scene3D WebGL2 water pool pass wires the rounded-corner pool geometry (mir
 });
 
 test("Scene3D WebGPU Selena materials can bind live water resources", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /function sceneSelenaResourceRef\(material, descriptor\)/);
   assert.match(webgpu, /trimmed\.indexOf\("gosx:"\) === 0/);
@@ -1906,12 +1984,14 @@ test("Scene3D WebGPU Selena materials can bind live water resources", () => {
   assert.match(webgpu, /case "heightfield":[\s\S]{0,180}resolved\.system\.activeIndex === 0 \? resolved\.system\.bufferA : resolved\.system\.bufferB/);
   assert.match(webgpu, /function sceneSelenaStorageBufferDescriptors\(layout\)/);
   assert.match(webgpu, /buffer: \{ type: "read-only-storage" \}/);
-  assert.match(webgpu, /var liveView = sceneSelenaLiveTextureView\(material, tex\)/);
+  assert.match(webgpu, /liveView: sceneSelenaLiveTextureView, url: sceneSelenaTextureURL/);
+  assert.match(webgpu, /var liveView = environmentSlot \? \(environmentRecord && environmentRecord\.view\) : context\.liveView\(material, tex\)/);
+  assert.match(webgpu, /sceneWebGPUAppendSelenaTextures\(selenaTextureContext, material, textures, entries, cacheViews\)/);
   assert.match(webgpu, /var buffer = sceneSelenaLiveBuffer\(material, bufferDescriptor\)/);
 });
 
 test("Scene3D WebGPU Selena materials expose object matrices as auto-uniforms", () => {
-  const webgpu = readWebGPUBackendSrc();
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const resolver = webgpu.match(/function sceneSelenaUniformValue[\s\S]{0,900}/)[0];
 
   // mvp and viewProjectionMatrix read the live matrix off selenaFrame, which

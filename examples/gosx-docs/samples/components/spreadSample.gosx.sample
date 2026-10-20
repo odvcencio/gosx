@@ -1,0 +1,18 @@
+package profile
+
+type BadgeProps struct {
+	Label string
+	Count int
+}
+
+component Badge(props: BadgeProps) {
+	return <span>{props.Label}: {props.Count}</span>
+}
+
+component Panel(props: BadgeProps) {
+	return <div class="panel"><Badge {...props} /></div>
+}
+
+func Page() Node {
+	return <main><Panel {...data.loaderRow} /></main>
+}

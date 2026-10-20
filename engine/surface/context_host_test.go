@@ -11,7 +11,7 @@ func TestContextHostReceiver_PropsIntoPopulatesFields(t *testing.T) {
 	propsJSON := `{"Name":"hello","Count":42,"Active":true}`
 	recv := NewContextHostReceiver([]byte(propsJSON))
 
-	// Mirror Y.G's eager zero-init: a struct local arrives with non-nil
+	// Mirror the eager zero-init: a struct local arrives with non-nil
 	// Fields but no entries. PropsInto must populate it by reference.
 	target := vm.ObjectVal(map[string]vm.Value{})
 
@@ -129,7 +129,7 @@ func TestContextHostReceiver_UnknownMethodRejects(t *testing.T) {
 func TestContextHostReceiver_MutationPropagatesByReference(t *testing.T) {
 	// Critical: PropsInto mutates target.Fields in place. The caller's
 	// Value (passed by Go value semantics) must see the writes because
-	// Fields is a reference type. This pins Y.C's in-place-mutation
+	// Fields is a reference type. This pins the in-place-mutation
 	// contract — if it ever regresses, hyphae's graph_surface.go Mount
 	// will see empty props and the whole bytecode hydration arc breaks.
 	recv := NewContextHostReceiver([]byte(`{"NodeCount":7}`))

@@ -24,11 +24,13 @@ import (
 )
 
 var (
-	ErrWebAuthnChallengeInvalid   = errors.New("webauthn challenge is invalid")
-	ErrWebAuthnChallengeExpired   = errors.New("webauthn challenge expired")
-	ErrWebAuthnCredentialNotFound = errors.New("webauthn credential not found")
-	ErrWebAuthnVerificationFailed = errors.New("webauthn verification failed")
-	ErrWebAuthnCounterInvalid     = errors.New("webauthn counter is invalid")
+	ErrWebAuthnChallengeInvalid         = errors.New("webauthn challenge is invalid")
+	ErrWebAuthnChallengeExpired         = errors.New("webauthn challenge expired")
+	ErrWebAuthnCredentialNotFound       = errors.New("webauthn credential not found")
+	ErrWebAuthnCredentialExists         = errors.New("webauthn credential already exists")
+	ErrWebAuthnRegistrationUnauthorized = errors.New("webauthn registration requires an authorized user")
+	ErrWebAuthnVerificationFailed       = errors.New("webauthn verification failed")
+	ErrWebAuthnCounterInvalid           = errors.New("webauthn counter is invalid")
 
 	// ErrWebAuthnOriginRequired reports a WebAuthn flow with no configured
 	// origin. The origin check is the anti-phishing control of WebAuthn, so
@@ -39,7 +41,8 @@ var (
 type webAuthnStateKind string
 
 const (
-	webAuthnStateRegister webAuthnStateKind = "register"
+	// Invalidate registration state issued before enrollment authorization.
+	webAuthnStateRegister webAuthnStateKind = "register.v2"
 	webAuthnStateLogin    webAuthnStateKind = "login"
 )
 
@@ -57,6 +60,9 @@ type WebAuthnCredential struct {
 
 // WebAuthnStore persists registered credentials.
 type WebAuthnStore interface {
+	// SaveCredential inserts a new credential. It must atomically reject an
+	// existing ID with ErrWebAuthnCredentialExists without changing its owner,
+	// public key, counters, or user index.
 	SaveCredential(WebAuthnCredential) error
 	Credential(string) (WebAuthnCredential, error)
 	Credentials(string) ([]WebAuthnCredential, error)
@@ -94,7 +100,7 @@ func NewMemoryWebAuthnStore() *MemoryWebAuthnStore {
 	}
 }
 
-// SaveCredential stores or replaces a credential.
+// SaveCredential inserts a credential and rejects an existing ID.
 func (s *MemoryWebAuthnStore) SaveCredential(credential WebAuthnCredential) error {
 	if s == nil {
 		return fmt.Errorf("webauthn store is nil")
@@ -111,6 +117,9 @@ func (s *MemoryWebAuthnStore) SaveCredential(credential WebAuthnCredential) erro
 		s.userIndex = make(map[string][]string)
 	}
 	credential.ID = normalizeCredentialID(credential.ID)
+	if _, exists := s.credentials[credential.ID]; exists {
+		return ErrWebAuthnCredentialExists
+	}
 	s.credentials[credential.ID] = credential
 	if credential.User.ID != "" && !containsString(s.userIndex[credential.User.ID], credential.ID) {
 		s.userIndex[credential.User.ID] = append(s.userIndex[credential.User.ID], credential.ID)
@@ -190,6 +199,16 @@ type WebAuthnOptions struct {
 	Store            WebAuthnStore
 	Resolver         WebAuthnResolver
 	Now              func() time.Time
+
+	// RegistrationUser explicitly enables registration for anonymous sign-up
+	// requests. The application must create or resolve the user from verified
+	// server-side enrollment state and authorize credential enrollment for that
+	// account. Do not copy an identity, Roles, or Meta from the request, or
+	// resolve an existing account using only a client-supplied ID or email.
+	// The callback runs before options are decoded and must leave Body readable.
+	// It is ignored for authenticated requests. Registration never signs in;
+	// sign-up apps must authenticate separately after enrollment.
+	RegistrationUser func(*http.Request) (User, error)
 }
 
 // WebAuthn drives session-backed registration and authentication ceremonies.
@@ -206,17 +225,19 @@ type WebAuthn struct {
 	userVerification string
 	store            WebAuthnStore
 	resolver         WebAuthnResolver
+	registrationUser func(*http.Request) (User, error)
 	now              func() time.Time
 	configErr        error
 }
 
 type webAuthnState struct {
-	Kind      webAuthnStateKind `json:"kind"`
-	Challenge string            `json:"challenge"`
-	User      User              `json:"user"`
-	Allowed   []string          `json:"allowed,omitempty"`
-	Next      string            `json:"next,omitempty"`
-	ExpiresAt time.Time         `json:"expiresAt"`
+	Kind                webAuthnStateKind `json:"kind"`
+	Challenge           string            `json:"challenge"`
+	User                User              `json:"user"`
+	Allowed             []string          `json:"allowed,omitempty"`
+	Next                string            `json:"next,omitempty"`
+	ExpiresAt           time.Time         `json:"expiresAt"`
+	AuthenticatedUserID string            `json:"authenticatedUserId,omitempty"`
 }
 
 // WebAuthnCredentialDescriptor identifies a browser credential.
@@ -366,6 +387,7 @@ func NewWebAuthn(manager *Manager, opts WebAuthnOptions) *WebAuthn {
 		userVerification: opts.UserVerification,
 		store:            opts.Store,
 		resolver:         opts.Resolver,
+		registrationUser: opts.RegistrationUser,
 		now:              opts.Now,
 	}
 }
@@ -375,7 +397,10 @@ func (m *Manager) WebAuthn(opts WebAuthnOptions) *WebAuthn {
 	return NewWebAuthn(m, opts)
 }
 
-// BeginRegistration starts a registration ceremony for a user.
+// BeginRegistration starts a registration ceremony for a trusted, server-side
+// user. The caller must authorize enrollment for this account. Never pass a User
+// decoded from a client request. Authenticated requests may enroll only their
+// current user; anonymous calls support application-controlled sign-up.
 func (w *WebAuthn) BeginRegistration(r *http.Request, user User, next string) (WebAuthnCreationOptions, error) {
 	if w == nil {
 		return WebAuthnCreationOptions{}, fmt.Errorf("webauthn manager is nil")
@@ -388,6 +413,14 @@ func (w *WebAuthn) BeginRegistration(r *http.Request, user User, next string) (W
 	if user.ID == "" {
 		return WebAuthnCreationOptions{}, fmt.Errorf("webauthn registration requires a user id")
 	}
+	var authenticatedUserID string
+	if current, ok := Current(r); ok {
+		if current.ID == "" || current.ID != user.ID {
+			return WebAuthnCreationOptions{}, ErrWebAuthnRegistrationUnauthorized
+		}
+		user = current
+		authenticatedUserID = current.ID
+	}
 	creds, err := w.store.Credentials(user.ID)
 	if err != nil {
 		return WebAuthnCreationOptions{}, err
@@ -397,11 +430,12 @@ func (w *WebAuthn) BeginRegistration(r *http.Request, user User, next string) (W
 		return WebAuthnCreationOptions{}, err
 	}
 	if err := w.saveState(r, webAuthnState{
-		Kind:      webAuthnStateRegister,
-		Challenge: challenge,
-		User:      user,
-		Next:      sanitizeRedirectTarget(next),
-		ExpiresAt: w.now().Add(w.ttl),
+		Kind:                webAuthnStateRegister,
+		Challenge:           challenge,
+		User:                user,
+		Next:                sanitizeRedirectTarget(next),
+		ExpiresAt:           w.now().Add(w.ttl),
+		AuthenticatedUserID: authenticatedUserID,
 	}); err != nil {
 		return WebAuthnCreationOptions{}, err
 	}
@@ -423,7 +457,7 @@ func (w *WebAuthn) BeginRegistration(r *http.Request, user User, next string) (W
 		Timeout:     int(w.ttl / time.Millisecond),
 		Attestation: "none",
 		AuthenticatorSelection: WebAuthnAuthenticatorSelection{
-			ResidentKey:      "preferred",
+			ResidentKey:      "required",
 			UserVerification: w.userVerification,
 		},
 		ExcludeCredentials: make([]WebAuthnCredentialDescriptor, 0, len(creds)),
@@ -438,11 +472,22 @@ func (w *WebAuthn) BeginRegistration(r *http.Request, user User, next string) (W
 	return options, nil
 }
 
-// FinishRegistration verifies and stores a new passkey credential.
+// FinishRegistration verifies and stores a new passkey credential. It does not
+// sign in or change the session's identity or privileges. A ceremony begun by
+// an authenticated user requires that same user to remain authenticated.
 func (w *WebAuthn) FinishRegistration(r *http.Request, payload WebAuthnRegistrationResponse) (WebAuthnCredential, string, error) {
 	state, err := w.consumeState(r, webAuthnStateRegister)
 	if err != nil {
 		return WebAuthnCredential{}, "", err
+	}
+	if state.AuthenticatedUserID != "" {
+		current, ok := Current(r)
+		if !ok || current.ID != state.AuthenticatedUserID || current.ID != state.User.ID {
+			return WebAuthnCredential{}, "", ErrWebAuthnRegistrationUnauthorized
+		}
+		// Store current claims rather than restoring a snapshot from before
+		// the ceremony; an application's authorization may have changed.
+		state.User = current
 	}
 	if payload.Type != "" && payload.Type != "public-key" {
 		return WebAuthnCredential{}, "", ErrWebAuthnVerificationFailed
@@ -495,9 +540,6 @@ func (w *WebAuthn) FinishRegistration(r *http.Request, payload WebAuthnRegistrat
 	if err := w.store.SaveCredential(credential); err != nil {
 		return WebAuthnCredential{}, "", err
 	}
-	if w.manager != nil {
-		_ = w.manager.SignIn(r, state.User)
-	}
 	target := state.Next
 	if target == "" {
 		target = w.successPath
@@ -505,7 +547,10 @@ func (w *WebAuthn) FinishRegistration(r *http.Request, payload WebAuthnRegistrat
 	return credential, target, nil
 }
 
-// BeginAuthentication starts a passkey authentication ceremony.
+// BeginAuthentication starts a passkey authentication ceremony. Anonymous
+// requests use discoverable credentials and ignore login hints, so options and
+// session state do not reveal another account's credential IDs. Authenticated
+// requests may receive allowCredentials only for their own account.
 func (w *WebAuthn) BeginAuthentication(r *http.Request, login string, next string) (WebAuthnRequestOptions, error) {
 	if w == nil {
 		return WebAuthnRequestOptions{}, fmt.Errorf("webauthn manager is nil")
@@ -514,12 +559,21 @@ func (w *WebAuthn) BeginAuthentication(r *http.Request, login string, next strin
 	if _, err := w.effectiveOrigin(); err != nil {
 		return WebAuthnRequestOptions{}, err
 	}
-	user, err := w.resolveUser(r.Context(), login)
-	if err != nil {
-		return WebAuthnRequestOptions{}, err
-	}
+	var user User
 	var credentials []WebAuthnCredential
-	if user.ID != "" {
+	current, signedIn := Current(r)
+	if signedIn && current.ID != "" {
+		user = current
+		if strings.TrimSpace(login) != "" {
+			var err error
+			user, err = w.resolveUser(r.Context(), login)
+			if err != nil {
+				return WebAuthnRequestOptions{}, err
+			}
+		}
+	}
+	if user.ID != "" && user.ID == current.ID {
+		var err error
 		credentials, err = w.store.Credentials(user.ID)
 		if err != nil {
 			return WebAuthnRequestOptions{}, err
@@ -642,16 +696,27 @@ func (w *WebAuthn) FinishAuthentication(r *http.Request, payload WebAuthnAuthent
 }
 
 // RegisterOptionsHandler returns creation options for navigator.credentials.create.
+// It requires Current(r), unless RegistrationUser explicitly authorizes sign-up.
+// Request bodies can supply next, but never the registering identity.
 func (w *WebAuthn) RegisterOptionsHandler() http.Handler {
 	return http.HandlerFunc(func(wr http.ResponseWriter, r *http.Request) {
+		user, ok := Current(r)
+		if !ok || user.ID == "" {
+			if w == nil || w.registrationUser == nil {
+				writeWebAuthnError(wr, http.StatusUnauthorized, ErrWebAuthnRegistrationUnauthorized)
+				return
+			}
+			var err error
+			user, err = w.registrationUser(r)
+			if err != nil || strings.TrimSpace(user.ID) == "" {
+				writeWebAuthnError(wr, http.StatusUnauthorized, ErrWebAuthnRegistrationUnauthorized)
+				return
+			}
+		}
 		payload, err := readWebAuthnUserRequest(r)
 		if err != nil {
 			writeWebAuthnError(wr, http.StatusBadRequest, err)
 			return
-		}
-		user, ok := Current(r)
-		if !ok {
-			user = payload.User
 		}
 		options, err := w.BeginRegistration(r, user, payload.Next)
 		if err != nil {
@@ -980,7 +1045,6 @@ func writeWebAuthnError(w http.ResponseWriter, status int, err error) {
 }
 
 type webAuthnUserRequest struct {
-	User User   `json:"user"`
 	Next string `json:"next"`
 }
 
@@ -1002,11 +1066,6 @@ func readWebAuthnUserRequest(r *http.Request) (webAuthnUserRequest, error) {
 	}
 	if err := r.ParseForm(); err != nil {
 		return webAuthnUserRequest{}, err
-	}
-	payload.User = User{
-		ID:    r.Form.Get("id"),
-		Email: r.Form.Get("email"),
-		Name:  r.Form.Get("name"),
 	}
 	payload.Next = r.Form.Get("next")
 	return payload, nil

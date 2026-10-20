@@ -18,20 +18,35 @@ const (
 	clipPropScale       = "scale"
 )
 
-// objectMatchesTarget reports whether a channel TargetID resolves to this object
-// via the native 3-way fallback used by render/bundle (animationStateForMesh):
-//   - the object's string ID, then
-//   - strconv(index), then
-//   - strconv(index+1).
+// objectMatchesTarget reports whether a channel target resolves to this object.
+// Resolution order (each step is position-stable):
+//  1. exact match on the lowering-resolved TargetID (the authored node ID);
+//  2. numeric targets equal to the channel's AUTHORED program-node index —
+//     the index space AnimationChannel.TargetNode documents, which interleaves
+//     lights/points/other kinds and therefore never lines up with a flattened
+//     renderable-array position;
+//  3. the legacy native fallback used by render/bundle
+//     (animationStateForMesh): strconv(objectsIndex), then
+//     strconv(objectsIndex+1) — kept for backward wire compatibility with
+//     payloads authored against that convention.
 //
 // Empty targetID never matches.
-func objectMatchesTarget(targetID, objectID string, objectIndex int) bool {
+func objectMatchesTarget(targetID, objectID string, objectIndex, nodeIndex int) bool {
 	tid := strings.TrimSpace(targetID)
 	if tid == "" {
 		return false
 	}
 	if oid := strings.TrimSpace(objectID); oid != "" && tid == oid {
 		return true
+	}
+	if parsed, err := strconv.Atoi(tid); err == nil {
+		// A resolved authored node index is authoritative for numeric targets.
+		// Do not continue into the flattened-object fallback when it is known:
+		// a light/point/helper before two meshes can otherwise make the same
+		// numeric target animate both meshes.
+		if nodeIndex >= 0 {
+			return parsed == nodeIndex
+		}
 	}
 	if tid == strconv.Itoa(objectIndex) {
 		return true
@@ -108,7 +123,7 @@ func clipInterp(s string) motion.Interp {
 // (animation.go:70-77). Non-zero authored duration means the clip loops.
 //
 // Returns (tl, duration) or (nil, 0) if no channels target this object.
-func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string, objectIndex int) (*motion.Timeline, float64) {
+func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string, objectIndex, nodeIndex int) (*motion.Timeline, float64) {
 	ref := objectID
 	if strings.TrimSpace(ref) == "" {
 		ref = strconv.Itoa(objectIndex)
@@ -122,7 +137,7 @@ func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string
 	anyMatch := false
 	for _, anim := range anims {
 		for _, ch := range anim.Channels {
-			if objectMatchesTarget(ch.TargetID, objectID, objectIndex) {
+			if objectMatchesTarget(ch.TargetID, objectID, objectIndex, nodeIndex) {
 				anyMatch = true
 				break
 			}
@@ -150,7 +165,7 @@ func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string
 	for _, anim := range anims {
 		hasMatchInClip := false
 		for _, ch := range anim.Channels {
-			if objectMatchesTarget(ch.TargetID, objectID, objectIndex) {
+			if objectMatchesTarget(ch.TargetID, objectID, objectIndex, nodeIndex) {
 				hasMatchInClip = true
 				break
 			}
@@ -165,7 +180,7 @@ func buildObjectClipTimeline(anims []rootengine.RenderAnimation, objectID string
 			authoredDuration = anim.Duration
 		}
 		for _, ch := range anim.Channels {
-			if !objectMatchesTarget(ch.TargetID, objectID, objectIndex) {
+			if !objectMatchesTarget(ch.TargetID, objectID, objectIndex, nodeIndex) {
 				continue
 			}
 			if len(ch.Times) == 0 || len(ch.Values) == 0 {

@@ -11,6 +11,8 @@ package server
 import (
     "net/http/httptest"
     "testing"
+
+    "m31labs.dev/gosx"
 )
 
 benchmark "render document simple" {
@@ -18,7 +20,7 @@ benchmark "render document simple" {
         ctx := benchSimplePageContext()
     }
     measure {
-        _ = renderDocumentWithContext(ctx)
+        _ = gosx.RenderHTML(HTMLDocument(ctx))
     }
     report_allocs
 }
@@ -28,7 +30,7 @@ benchmark "render document complex" {
         ctx := benchComplexPageContext()
     }
     measure {
-        _ = renderDocumentWithContext(ctx)
+        _ = gosx.RenderHTML(HTMLDocument(ctx))
     }
     report_allocs
 }

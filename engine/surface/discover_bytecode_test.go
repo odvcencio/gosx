@@ -1,6 +1,6 @@
 // Confirm Discover correctly detects (and rejects) the obsolete
 // `//gosx:engine surface=wasm` escape-hatch annotation after the
-// buildsurface deletion (ADR 0005).
+// buildsurface deletion.
 
 package surface
 

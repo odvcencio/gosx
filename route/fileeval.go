@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"math"
+	"math/big"
 	"net/http"
 	"net/url"
 	"reflect"
@@ -29,7 +31,81 @@ type fileRenderEnv struct {
 	renderEngine    func(engine.Config, gosx.Node) gosx.Node
 	renderIsland    func(*islandprogram.Program, any) gosx.Node
 	enableBootstrap func()
+	// islandPreloadHints and islandPageHead compute the two framework-filled
+	// named slots a strict component may declare — {slotPreloadHints} and
+	// {slotPageHead} (gosx#249) — from the same page runtime renderIsland
+	// already mutates as island children render. Nil unless the caller
+	// wired an island-capable env (see newFileRenderEnv), in which case
+	// writeLocalComponentWithChildren calls them only after the call
+	// site's own children have fully rendered, so the values they return
+	// reflect every island those children registered.
+	//
+	// Neither is a caller-suppliable named slot the way Slots (gosx.Slots
+	// map[string]gosx.Node on ProgramRenderEnv) is: no author writes a
+	// value for these anywhere, at any call site, in any .gsx expression.
+	// The renderer computes them itself and binds them the same way it
+	// binds children — the "framework-filled slot" that lets a pure
+	// .gsx-to-.gsx layout composition place an end-of-body island manifest
+	// without a strict expression ever computing a value that depends on a
+	// sibling's render order (strict expressions still admit no function
+	// calls; this is the renderer filling a reserved hole, not the .gsx
+	// author computing one).
+	islandPreloadHints func() gosx.Node
+	islandPageHead     func() gosx.Node
+	// strictSpreadSource is the raw, already-boundary-proved value that
+	// localComponentProps used to build the CURRENT strict component
+	// render frame's own "props" binding — set only when that frame came
+	// from the single-spread call shape (nil for an explicit-attrs call).
+	// writeLocalComponent resets it on every strict-component call, so it
+	// is never stale across an unrelated nested component, and it survives
+	// unchanged through any HTML/If/Each nodes in between, the same way
+	// the "props" scope binding itself does.
+	//
+	// It exists only to make a BARE {...props} spread forward, from
+	// inside a strict body, work at the map-backed file renderer boundary
+	// (gosx#182/#184 M-1): "props" in scope is always the reduced
+	// map[string]any localComponentProps builds for the current frame
+	// (never a real Go struct, even when every field it needs was proved
+	// from one), so re-spreading it verbatim into strictSpreadProps always
+	// fails the struct-kind check there — the same struct-kind check that
+	// correctly rejects an arbitrary map. Re-running that same proof
+	// against strictSpreadSource instead is sound unconditionally, not
+	// just for a statically-proven tier-1 chain: strictSpreadProps always
+	// re-proves every field the callee needs against the concrete runtime
+	// value, so a mismatched shape still fails closed, just against the
+	// right value instead of an artificially reduced map. See
+	// localComponentProps' single-spread branch.
+	strictSpreadSource any
+
+	// propsFrame records which component category owns the "props" binding
+	// currently in scope (gosx#240). strictSpreadSource alone no longer
+	// answers that: a typed legacy frame now carries a raw source too, and
+	// a nil source means "this frame came from named attributes" for both
+	// categories. writeLocalComponent overwrites it on every local
+	// component call, exactly as it overwrites strictSpreadSource, so it is
+	// never stale.
+	propsFrame propsFrameKind
 }
+
+// propsFrameKind names the component category that built the "props"
+// binding in scope. It exists so the strict spread boundary can tell a
+// typed legacy frame's flattened map (which its own declared schema makes
+// provable) from an untyped one (which nothing makes provable), and from a
+// strict frame's reduced map.
+type propsFrameKind uint8
+
+const (
+	// propsFrameNone is a page or layout entry, an untyped legacy frame, or
+	// any scope outside a local component call. Its props binding carries
+	// no declared schema.
+	propsFrameNone propsFrameKind = iota
+	// propsFrameStrict is a strict component's own render frame.
+	propsFrameStrict
+	// propsFrameTypedLegacy is a typed legacy component's render frame:
+	// a flattened map like every legacy frame, but backed by a props
+	// struct declared in the same .gsx file.
+	propsFrameTypedLegacy
+)
 
 // fileRenderScope is one copy-on-write binding in the render environment.
 //
@@ -110,6 +186,7 @@ func (env fileRenderEnv) flattenedValues() map[string]any {
 
 type fileRequestBindings struct {
 	requestPath   string
+	requestTarget string
 	method        string
 	requestID     string
 	query         map[string]string
@@ -119,7 +196,28 @@ type fileRequestBindings struct {
 	actions       map[string]any
 	currentAction map[string]any
 	user          any
-	csrf          map[string]any
+	csrf          any
+}
+
+// csrfBinding reads the current session token only when a template needs it.
+// Anonymous csrf.token reads return empty and never create a cookie, including
+// during static export. Existing sessions keep their per-session form token.
+type csrfBinding struct {
+	request *http.Request
+}
+
+// selectField answers the two names a `.gsx` template reads off csrf:
+// csrf.token (empty for anonymous requests) and csrf.field (the form field name it
+// posts under). Any other name misses, matching the old map's behavior.
+func (c csrfBinding) selectField(name string) (any, bool) {
+	switch name {
+	case "token":
+		return session.Token(c.request), true
+	case "field":
+		return defaultCSRFFieldName(), true
+	default:
+		return nil, false
+	}
 }
 
 // withValue returns an env that binds name to value.
@@ -135,12 +233,14 @@ func (env fileRenderEnv) withValue(name string, value any) fileRenderEnv {
 // request, not per node, so it may pay the full map copy.
 func (env fileRenderEnv) withBindings(bindings FileTemplateBindings) fileRenderEnv {
 	next := fileRenderEnv{
-		values:          env.flattenedValues(),
-		funcs:           make(map[string]any, len(env.funcs)+len(bindings.Funcs)),
-		components:      make(map[string]any, len(env.components)+len(bindings.Components)),
-		renderEngine:    env.renderEngine,
-		renderIsland:    env.renderIsland,
-		enableBootstrap: env.enableBootstrap,
+		values:             env.flattenedValues(),
+		funcs:              make(map[string]any, len(env.funcs)+len(bindings.Funcs)),
+		components:         make(map[string]any, len(env.components)+len(bindings.Components)),
+		renderEngine:       env.renderEngine,
+		renderIsland:       env.renderIsland,
+		enableBootstrap:    env.enableBootstrap,
+		islandPreloadHints: env.islandPreloadHints,
+		islandPageHead:     env.islandPageHead,
 	}
 	for key, value := range env.funcs {
 		next.funcs[key] = value
@@ -217,6 +317,8 @@ func newFileRenderEnv(ctx *RouteContext, page FilePage) fileRenderEnv {
 		env.renderEngine = ctx.Engine
 		env.renderIsland = ctx.Runtime().Island
 		env.enableBootstrap = ctx.Runtime().EnableBootstrap
+		env.islandPreloadHints = ctx.Runtime().PreloadHints
+		env.islandPageHead = func() gosx.Node { return ctx.Runtime().PageHeadWithNonce(ctx.Nonce()) }
 		env.funcs["actionPath"] = func(name string) string {
 			return ctx.ActionPath(name)
 		}
@@ -239,6 +341,10 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	}
 
 	bindings.requestPath = ctx.Request.URL.Path
+	bindings.requestTarget = bindings.requestPath
+	if ctx.Request.URL.RawQuery != "" {
+		bindings.requestTarget += "?" + ctx.Request.URL.RawQuery
+	}
 	bindings.method = ctx.Request.Method
 	bindings.requestID = serverRequestID(ctx.Request)
 	bindings.query = flattenQueryValues(ctx.Request.URL.Query())
@@ -250,11 +356,10 @@ func buildFileRequestBindings(ctx *RouteContext) fileRequestBindings {
 	if resolvedUser, ok := auth.Current(ctx.Request); ok {
 		bindings.user = templateUser(resolvedUser)
 	}
-	if token := session.Token(ctx.Request); token != "" {
-		bindings.csrf = map[string]any{
-			"token": token,
-			"field": defaultCSRFFieldName(),
-		}
+	// Bind csrf whenever Middleware ran. Anonymous reads stay empty; existing
+	// sessions expose their token and are kept out of shared caches.
+	if session.Current(ctx.Request) != nil {
+		bindings.csrf = csrfBinding{request: ctx.Request}
 	}
 	return bindings
 }
@@ -276,11 +381,13 @@ func baseFileRenderValues(page FilePage, bindings fileRequestBindings) map[strin
 			"route":   page.RoutePath,
 			"source":  page.Source,
 			"path":    bindings.requestPath,
+			"target":  bindings.requestTarget,
 		},
 		"request": map[string]any{
 			"id":     bindings.requestID,
 			"method": bindings.method,
 			"path":   bindings.requestPath,
+			"target": bindings.requestTarget,
 		},
 	}
 }
@@ -352,6 +459,10 @@ func selectValue(target any, name string) any {
 	if target == nil {
 		return nil
 	}
+	if cb, ok := target.(csrfBinding); ok {
+		value, _ := cb.selectField(name)
+		return value
+	}
 	if value, ok := selectMappedValue(target, name); ok {
 		return value
 	}
@@ -365,7 +476,7 @@ func selectValue(target any, name string) any {
 }
 
 func indexValue(target any, index any) any {
-	if target == nil || index == nil {
+	if target == nil {
 		return nil
 	}
 
@@ -378,6 +489,9 @@ func indexValue(target any, index any) any {
 	case reflect.Map:
 		return indexMapValue(rv, index)
 	case reflect.Array, reflect.Slice, reflect.String:
+		if index == nil {
+			return nil
+		}
 		return indexSequentialValue(rv, index)
 	default:
 		return nil
@@ -409,15 +523,44 @@ func selectStructValue(target any, name string) (any, bool) {
 }
 
 func indexMapValue(rv reflect.Value, index any) any {
-	key, ok := reflectValue(index, rv.Type().Key())
+	key, ok := mapIndexKey(index, rv.Type().Key())
 	if !ok {
 		return nil
 	}
 	value := rv.MapIndex(key)
-	if !value.IsValid() || !value.CanInterface() {
+	if !value.IsValid() {
+		return reflect.Zero(rv.Type().Elem()).Interface()
+	}
+	if !value.CanInterface() {
 		return nil
 	}
 	return value.Interface()
+}
+
+func mapIndexKey(index any, target reflect.Type) (reflect.Value, bool) {
+	if index == nil {
+		switch target.Kind() {
+		case reflect.Interface, reflect.Pointer, reflect.Chan, reflect.UnsafePointer:
+			return reflect.Zero(target), true
+		default:
+			return reflect.Value{}, false
+		}
+	}
+	// Try direct assignment/conversion before the general props coercion, which
+	// allocates fresh pointers and would change the identity of pointer keys.
+	raw := reflect.ValueOf(index)
+	// Slice-to-array conversions also depend on the slice's runtime length.
+	if raw.Type().ConvertibleTo(target) && !raw.CanConvert(target) {
+		return reflect.Value{}, false
+	}
+	key, ok := reflectDirectValue(raw, target)
+	if !ok {
+		key, ok = reflectValue(index, target)
+	}
+	if !ok || !key.IsValid() || !key.Type().AssignableTo(target) || !key.Comparable() {
+		return reflect.Value{}, false
+	}
+	return key, true
 }
 
 func indexSequentialValue(rv reflect.Value, index any) any {
@@ -829,6 +972,8 @@ func numericValue(value any) float64 {
 		return float64(v)
 	case uint64:
 		return float64(v)
+	case uintptr:
+		return float64(v)
 	case float32:
 		return float64(v)
 	case float64:
@@ -852,7 +997,7 @@ func numericValue(value any) float64 {
 	switch rv.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
 		return float64(rv.Int())
-	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
 		return float64(rv.Uint())
 	case reflect.Float32, reflect.Float64:
 		return rv.Float()
@@ -865,9 +1010,10 @@ func numericValue(value any) float64 {
 }
 
 func stringifyValue(value any) string {
-	switch v := value.(type) {
-	case nil:
+	if isNilFileValue(value) {
 		return ""
+	}
+	switch v := value.(type) {
 	case string:
 		return v
 	case fmt.Stringer:
@@ -876,6 +1022,19 @@ func stringifyValue(value any) string {
 		return gosx.RenderHTML(v)
 	default:
 		return fmt.Sprint(v)
+	}
+}
+
+func isNilFileValue(value any) bool {
+	if value == nil {
+		return true
+	}
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		return rv.IsNil()
+	default:
+		return false
 	}
 }
 
@@ -905,24 +1064,141 @@ func equalValues(left, right any) bool {
 		return stringifyValue(left) == ""
 	}
 	if left == nil || right == nil {
-		return false
+		return isNilFileValue(left) && isNilFileValue(right)
 	}
 	if isNumeric(left) || isNumeric(right) {
-		return numericValue(left) == numericValue(right)
+		if lnegative, lmagnitude, lok := equalityInteger(left); lok {
+			if rnegative, rmagnitude, rok := equalityInteger(right); rok {
+				return lnegative == rnegative && lmagnitude == rmagnitude
+			}
+		}
+		if equal, handled := equalityFloatString(left, right); handled {
+			return equal
+		}
+		if equal, handled := equalityFloatString(right, left); handled {
+			return equal
+		}
+		// Reject failed string conversions and preserve mixed numeric precision.
+		ln, lok := equalityNumber(left)
+		rn, rok := equalityNumber(right)
+		return lok && rok && ln.Cmp(rn) == 0
 	}
 	return reflect.DeepEqual(left, right)
 }
 
+// Float/string comparisons use the float's precision, so fractional request
+// values compare like a complete conversion to the corresponding Go float.
+// Integer/string comparisons continue through equalityNumber without rounding.
+func equalityFloatString(number, text any) (equal, handled bool) {
+	n, ok := indirectValueOf(number)
+	if !ok || (n.Kind() != reflect.Float32 && n.Kind() != reflect.Float64) {
+		return false, false
+	}
+	s, ok := indirectValueOf(text)
+	if !ok || s.Kind() != reflect.String {
+		return false, false
+	}
+	_, parsed, ok := parseEqualityNumericString(s.String(), n.Type().Bits())
+	return ok && n.Float() == parsed, true
+}
+
+// equalityInteger uses the sign and magnitude so signed and unsigned IDs
+// can compare without overflow, rounding, or allocating a big number.
+func equalityInteger(value any) (negative bool, magnitude uint64, ok bool) {
+	n, ok := integerOperand(value)
+	if !ok {
+		return false, 0, false
+	}
+	if !n.unsigned && int64(n.bits) < 0 {
+		return true, -n.bits, true
+	}
+	return false, n.bits, true
+}
+
+// equalityNumber preserves the exact value rather than rounding identifiers
+// through float64. Numeric strings must parse completely; invalid strings,
+// booleans and non-finite floats never compare equal to a number.
+func equalityNumber(value any) (*big.Rat, bool) {
+	rv, ok := indirectValueOf(value)
+	if !ok {
+		return nil, false
+	}
+	n := new(big.Rat)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
+		return n.SetInt64(rv.Int()), true
+	case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr:
+		return n.SetInt(new(big.Int).SetUint64(rv.Uint())), true
+	case reflect.Float32, reflect.Float64:
+		n = n.SetFloat64(rv.Float())
+		return n, n != nil
+	case reflect.String:
+		text, _, ok := parseEqualityNumericString(rv.String(), 64)
+		if !ok {
+			return nil, false
+		}
+		return n.SetString(text)
+	default:
+		return nil, false
+	}
+}
+
+// Bound request-data parsing before either floating-point conversion or
+// rational exponent expansion. Hexadecimal mantissas can contain e/E digits;
+// their exponent marker is p/P rather than the decimal e/E marker.
+func parseEqualityNumericString(value string, bitSize int) (text string, number float64, ok bool) {
+	text = strings.TrimSpace(value)
+	if len(text) == 0 || len(text) > 128 {
+		return "", 0, false
+	}
+	markers := "eE"
+	unsigned := strings.TrimLeft(text, "+-")
+	if strings.HasPrefix(unsigned, "0x") || strings.HasPrefix(unsigned, "0X") {
+		markers = "pP"
+	}
+	if i := strings.IndexAny(text, markers); i >= 0 {
+		exponent, err := strconv.ParseInt(text[i+1:], 10, 32)
+		if err != nil || exponent < -4096 || exponent > 4096 {
+			return "", 0, false
+		}
+	}
+	number, err := strconv.ParseFloat(text, bitSize)
+	if err != nil || math.IsInf(number, 0) || math.IsNaN(number) {
+		return "", 0, false
+	}
+	return text, number, true
+}
+
 func compareValues(left, right any) int {
+	ln, lm, lok := equalityInteger(left)
+	rn, rm, rok := equalityInteger(right)
+	if lok && rok {
+		if ln != rn {
+			if ln {
+				return -1
+			}
+			return 1
+		}
+		result := 0
+		if lm < rm {
+			result = -1
+		} else if lm > rm {
+			result = 1
+		}
+		if ln {
+			return -result
+		}
+		return result
+	}
 	if isStringLike(left) || isStringLike(right) {
 		return strings.Compare(stringifyValue(left), stringifyValue(right))
 	}
-	ln := numericValue(left)
-	rn := numericValue(right)
+	lf := numericValue(left)
+	rf := numericValue(right)
 	switch {
-	case ln < rn:
+	case lf < rf:
 		return -1
-	case ln > rn:
+	case lf > rf:
 		return 1
 	default:
 		return 0
@@ -931,7 +1207,7 @@ func compareValues(left, right any) int {
 
 func isNumeric(value any) bool {
 	switch value.(type) {
-	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, float32, float64:
+	case int, int8, int16, int32, int64, uint, uint8, uint16, uint32, uint64, uintptr, float32, float64:
 		return true
 	}
 	rv, ok := indirectValueOf(value)
@@ -939,7 +1215,7 @@ func isNumeric(value any) bool {
 		return false
 	}
 	switch rv.Kind() {
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Float32, reflect.Float64:
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64, reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr, reflect.Float32, reflect.Float64:
 		return true
 	default:
 		return false

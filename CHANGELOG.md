@@ -1,5 +1,3940 @@
 # Changelog
 
+## Unreleased
+
+- Accept Go's `append(slice, first, second)` spelling with individual element
+  arguments in island expressions. Lower to existing immutable VM operations,
+  preserve handler shadowing, and demonstrate a live collection in the docs.
+  Preserve slice element types in strict island loops and project typed implicit
+  event values into server Go handlers without adding runtime instructions.
+
+- Apply `browser.Focus` after native event defaults so disabling the clicked
+  control cannot steal the requested focus. Cancel queued focus when its island
+  has been replaced during navigation.
+
+- Add typed Hub document views with debounced editing, server-rendered previews,
+  presence, UTF-16 remote carets, reconnect recovery and navigation cleanup in an
+  optional browser host. Replace the collaboration demo's application script
+  with the GoSX binding and keep preview parsing on the server.
+
+- Enforce `content.MDPPOptions.Sanitize` in the GoSX content renderer. Preserve
+  Markdown formatting and source positions while removing executable URL
+  schemes, active embeds, active form controls and framework dispatch attributes.
+
+- Compose static `func()` callback props inside islands. Same-file views forward
+  parent-owned handlers without another VM or runtime instructions. Check
+  callback ownership and signatures, keep callbacks out of serialized data, and
+  prove forwarded bindings during scalar AOT admission.
+
+- Lower VM engine-surface packages together so Go helpers, struct layouts and
+  file-local import aliases work across source files. Preserve source locations
+  in compiler diagnostics, retain callable functions from every file, and reject
+  packages that exceed the VM expression limit before IDs can wrap.
+
+- Keep declarative action buttons disabled while reading the response body,
+  including failed responses, and restore them before the result updates focus.
+  Slow response bodies no longer invite an early second click.
+
+- Reuse TinyGo package caches across production rebuilds with stable runtime
+  source directories. Each build stages current sources, with process locks
+  and temporary-directory fallback for concurrent or unavailable workspaces.
+
+- Add adapter details to native Scene3D status bindings, including backend
+  fallback updates. Motion docs use these bindings without a page script.
+
+- Make copy controls ready before engine startup completes and restore their
+  readiness after navigation. Docs use the framework handler directly.
+
+- Reduce steady WebGPU uploads by sharing material uniforms and batching
+  retained mesh transforms. Skip settled transforms, bound changed matrices
+  to one upload span, and preserve exact command validation during bundle replay.
+
+- Send enhanced GET and HEAD form fields in the URL query. Preserve repeated
+  controls, unrelated query parameters and the clicked submit button's value.
+
+- Add `command.Action.Submit`, a CSS selector for a managed form or its submit
+  button. The workbench calls `requestSubmit` on it, so a chord submits through
+  the page's managed form path. `commands.list()` rows carry `submit`.
+- Add opt-in workbench drag handles with pointer capture, cancellation, fine
+  adjustment, reset, keyboard controls and synchronized ARIA values. Share the
+  input chunk's pointer gesture helper with controller drag-and-drop.
+- Bind CSS custom properties to shared signals and data attributes, upgrade plain
+  tab links to accessible tabs, and mirror native details to shared open state.
+  Bind new elements after region swaps and publish the hashed input URL on
+  workbench pages without controllers.
+- Add splitpane, dock, tabs and collapsible UI recipes. Layout signals can persist
+  through controller storage; document the controls in `docs/workbench.md`.
+
+- Keep the entire `data-gosx-*` framework namespace, style and `srcdoc` out of
+  attribute spreads, including Scene3D mount attributes. Write trusted framework
+  attributes explicitly; unresolved component fallbacks preserve them.
+  Declarative attribute bindings now allow only inert text, boolean, application
+  data and ARIA attributes, plus safe HTTP(S) and relative `href` values. They
+  cannot write framework attributes, CSRF tokens, HTML documents or SVG animation
+  targets, or introduce executable URLs through ASCII control characters.
+
+- Reuse template, CSS, metadata, and runtime-manifest lookups in production
+  mode (`GOSX_ENV=production` or `prod`). Restart after replacing build files;
+  `GOSX_DEV=1` keeps file-change checks active.
+
+- Preserve integer JSON literals in Scene3D props during hydration, including
+  values above the exact float64 integer range.
+
+- Make `sky.blur` take effect on WebGPU image environment maps, matching
+  WebGL. Scenes tuned on WebGPU now look blurrier where blur is set.
+
+- Add pre-Build trusted proxy policies and one cached `ClientIP` resolver.
+  Normalize genuine peers and bounded X-Forwarded-For chains without changing
+  RemoteAddr or origin policies. Nested handlers and completion observers share
+  the result; malformed or repeated headers fall back to the peer.
+
+- Reject authored `data-gosx-on-*`, `data-gosx-handler` and `data-gosx-path`
+  attributes (any letter case) on HTML elements inside a `//gosx:island`
+  component: `gosx check` and the build now report the attribute as reserved
+  and suggest a `data-app-*` name. The island renderer also drops any such
+  attribute from a resolved node before it appends its own dispatch markers.
+  Before this, HTML kept the first duplicate, so an authored
+  `data-gosx-on-click={expr}` beat the real marker and a runtime value could
+  choose which handler fired. Other authored `data-gosx-*` names (`data-gosx-link`,
+  `data-gosx-region`) are unchanged. Island components reject `{...spread}`
+  at compile time; server renderers also filter reserved names from spreads.
+  Server component renderers and the WASM
+  VM also discard these names. Browser attribute patches, navigation and
+  declarative bindings cannot change dispatch markers; generated event
+  bindings use dedicated dispatch patch operations. Regenerate the browser
+  runtime and WASM together when updating. ABI version 4 rejects older WASM;
+  the current WASM also negotiates dispatch op support with the separately
+  loaded patch chunk and falls back to legacy attribute ops when needed.
+  Current patch chunks also accept legacy marker ops from an ABI-3 bootstrap.
+  Handwritten `RenderIsland` content can bind trusted handlers with
+  `gosx.DispatchAttr("click", "handler")`; ordinary attributes and spreads
+  cannot manufacture these markers.
+- Cap Scene3D main canvases at 2,073,600 backing pixels and ambient animation
+  at 60 fps by default. Input and transitions follow the display. Set
+  `Props.MaxPixels` to another positive budget or `scene.MaxPixelsUnbounded`,
+  an explicit `Props.MinDevicePixelRatio` overrides the default pixel budget.
+  Set `Props.MaxFrameRate` above 60 or use `FramePacing: "vsync-divisor"`
+  to opt out of the ambient cap.
+
+- Upgrade gotreesitter to v0.56.0. Explicit generic signal constructors that
+  were silently dropped now lower correctly, and valid Go that previously
+  produced ERROR nodes now parses. Parse allocations are about 98% lower.
+- Disable unused WebGL canvas MSAA for initial, undeferred Scene3D post
+  effects by default, and remove depth buffers from color-only post targets.
+  If the post chain turns off, FXAA retains edge filtering. Explicit
+  `Props.MSAASamples` preserves the authored canvas multisampling request.
+
+## v0.57.17
+
+- Add the macOS desktop backend on darwin/amd64 and darwin/arm64: an `NSWindow`
+  hosting `WKWebView`, built with `CGO_ENABLED=0`. Support navigation, HTML,
+  scripts, lifecycle callbacks, native menus and Edit responder roles, window
+  size limits, URL opening and message alerts. Call `App.Run` from the main
+  goroutine.
+- Add native macOS open/save panels, Finder document delivery and Go/WKWebView
+  messaging. HTML file inputs support single/multiple files and directories;
+  JavaScript alert, confirm and prompt dialogs use native panels.
+- Fit the initial macOS web view to the window's actual content bounds after
+  AppKit constrains an oversized window. Keep the web view fitted on resize.
+- Report typed desktop service and window availability from synchronous
+  registered-method metadata. Partial or unbound service proxies no longer
+  advertise privacy or diagnostics support; Bind/Unbind updates current and
+  future pages. Hosts without metadata report availability as false while
+  explicit service operations and raw bridge calls remain usable.
+- Replace superseded Windows document-start scripts instead of retaining a
+  script for every service update, and wait for initial bootstrap registration
+  before navigation. Immediate preload errors preserve the prior binding and
+  metadata.
+- Share a Go-authored motion transport across DOM, Scene3D and Selena shader
+  surfaces, with play, pause, seek, reverse, replay and named labels. Shader
+  clocks follow absolute scene time on WebGL and WebGPU; semantic playback
+  controls and capture use the same transport.
+- Add optional Go-authored SVG morphs and prepared Scene3D command transitions
+  on the shared motion lifecycle. Compatible SVG geometry and prepared scene
+  poses support absolute forward and reverse sampling; incompatible SVG
+  geometry falls back to a valid destination path and fade.
+- Add `Program.SampleTrack` for per-key easing, anticipation, overshoot, holds
+  and stepped timing from a playhead or scalar input. Compose same-element DOM
+  bindings, apply scene overrides before geometry baking and material interning,
+  and preserve finite timelines without the optional scalar-track adapter.
+- Reuse canonical WebGL authored shader program keys across frames and retain
+  dense immutable Scene3D world geometry within an 8 MiB shared cache. Preserve
+  layout invalidation, exact geometry, disposal and stale-owner cleanup.
+- Simplify Blackglass mobile controls into compact, exclusive GoSX panels while
+  preserving touch steering, keyboard support and the mounted scene.
+
+## v0.57.16
+
+- Keep typed browser audio worklet contracts independent of server HTTP asset
+  delivery. JS/WASM imports exclude the HTTP handler and its TLS dependencies;
+  unused worklets no longer initialize or retain the processor asset. Portable
+  `Path` and `Source` APIs retain the same content-addressed processor, while
+  native `Handler` serving, HEAD, cache policy and ETags remain unchanged.
+
+## v0.57.15
+
+- Add opt-in Scene3D frame requests to atomic command batches and typed
+  `scene.Surface.OnFrameSubmitted` receipts. A receipt requires the current
+  owning renderer and hydration generation, a complete submitted composition,
+  and every requested live model primitive in the color pass. Pending shaders,
+  stale owners and shadow-only draws cannot acknowledge the request. Submission
+  does not certify GPU completion or display presentation.
+- Preserve renderer outcomes through water-only and combined world/water
+  composition. Scene readiness now follows successful full-frame submission;
+  shader preparation continues to schedule retries.
+- Charge crowd bounds preprocessing for actual vertex influences and active
+  joint corners, sharing immutable source work across primitives while retaining
+  the bounded-work guard. Full imported rigs can use native crowd rendering
+  without an inflated preprocessing estimate forcing fallback.
+- Apply packed pose frames only to their requested actor batches. Unrelated
+  props and effects retain their committed transforms and playback state;
+  membership validation and atomic declaration replacement remain intact.
+
+## v0.57.14
+
+- Preserve live WebGL sampler bindings when PNG, HDR and KTX2 textures upload
+  asynchronously. Settled texture resources invalidate the retained material
+  cache; failed uploads restore bindings and report terminal failure.
+- Add opt-in `scene.Surface.PrepareModels` to decode selected models and upload
+  their material maps in the mounted renderer's cache. Context cancellation,
+  disposal and renderer replacement terminate preparation. Shader and vertex
+  buffer warming, and scene-generation commit, remain separate steps.
+
+## v0.57.13
+
+- Keep browser telemetry fetches pending until the native response body has
+  completed, including bodyless 204 responses. Failed body reads follow the
+  existing failure accounting instead of being counted as accepted delivery.
+- Fracture the Blackglass demo coastline and refine its shore materials and
+  authored coastal assets.
+
+## v0.57.12
+
+- Add `Hub.BroadcastBinarySnapshot(epoch, baseline, delta)` for application
+  state that can replace older pending updates. Each client retains at most a
+  pending keyframe baseline and the newest independently decodable delta;
+  baseline ordering, stale epoch handling and fair reliable traffic remain
+  explicit. Existing text, ordinary binary and CRDT queues keep their behavior.
+- Report intentional snapshot replacements through `SnapshotStats` and
+  `TrafficEvent.Snapshot` / `Replaced`, separately from full-queue drops and
+  slow-client eviction. Document immutable payload ownership and socket
+  buffering limits in `docs/hub-snapshots.md`.
+
+## v0.57.11
+
+- Reset additive blending before WebGL post-processing so retained intermediate
+  targets replace prior pixels and preserve authored effects across frames.
+- Keep detail derivatives in the shared WebGPU PBR color function. WebGL detail uses the existing reflection fallback on 16-slot contexts and retains HDR IBL when 17 or more slots are available.
+
+- WebGPU requests the 17 sampled-texture slots needed by rich PBR detail layouts on capable adapters, while preserving stricter manifest limits and baseline-adapter defaults.
+- Retain immutable imported skeletal bind geometry across animation frames.
+  Ordinary GPU-skinned meshes update joint matrices without rescanning or
+  reuploading unchanged vertex attributes. Morph and node-rebaked geometry
+  remain mutable; revision changes and owner disposal invalidate retained buffers.
+- Add spatial transmission thickness, geometric specular antialiasing and
+  selective specular bloom to typed Scene3D materials on WebGL2 and WebGPU.
+  Unsupported selective-bloom paths report a diagnostic and skip the effect.
+
+- Match controller key chords exactly by default: Ctrl+Shift+Z no longer fires a
+  Ctrl+Z binding. Add a second binding or set `AnyModifiers: true` to retain
+  subset matching. Unlisted Shift remains allowed for single symbol keys such
+  as `?` and `+`; letters, digits and Space retain exact matching.
+- Add the `command` package, `hydrate.Manifest.Commands` and
+  `server.PageRuntime.Commands`. The opt-in workbench chunk dispatches exact
+  platform-aware chords, checks shared signal conditions, handles reserved
+  commands, and connects command buttons to actions and `aria-keyshortcuts`.
+- Bootstrap pages that require feature chunks even without islands, engines,
+  hubs or controllers, using the selective core loader and required chunks.
+- Add `desktop.MenuItem.Accelerator` as a menu shortcut display label. Page
+  commands handle keystrokes; the label installs no native accelerator table.
+
+## v0.57.10
+
+- Preserve rendered text, authored whitespace, adjacent children, multiline
+  expressions and preformatted content when running `gosx fmt`. Attribute
+  normalization and wrapping remain available without changing child content.
+- Add `browser.Document.InstantiateTemplate` for detached deep copies of a
+  server-authored HTML template's single element root. Engines can retain child
+  handles and update text or attributes without rebuilding markup. Missing IDs,
+  unsupported templates and native builds return an invalid element.
+
+## v0.57.9
+
+- Keep presentation-only browser engines dependency-light: finite scene
+  playback uses `game/host` directly, and geometry asset HTTP serving compiles
+  only for native targets. This removes unintended game-driver and HTTP/TLS
+  dependencies from authored browser WASM modules. Native geometry handler
+  behavior is unchanged; browser code should use the geometry asset data APIs.
+- Add a transitive browser import-graph test that prevents game-driver and
+  server dependencies from returning through engine adapters.
+
+## v0.57.8
+
+- Add typed browser DOM, lazy event access, timers, attribute observers,
+  cancellable fetch, navigation, clipboard, fullscreen, telemetry consent and
+  desktop services in `client/browser`. `engine/wasm.Context.MountElement`
+  exposes a typed engine mount. Owned listeners and timers have explicit
+  disposal; native request guards do not call Go on every network request.
+- Add explicit local/session storage with denied-access and bounded-key
+  snapshot handling, plus a dependency-light `hub/socket` browser transport
+  shared by `hub/client`. Binary message bytes are borrowed during callbacks
+  and reuse receive storage; callers must copy before retaining them.
+- Add dependency-light `game/audio/host` with typed gain/filter/panner/delay
+  automation and offset playback. Existing `game/audio` constructors remain
+  compatible. Closing a host cancels asynchronous waits and releases owned
+  voices without changing scheduled loop boundaries.
+- Add typed server telemetry preloads and desktop host startup/recovery
+  bootstraps. Applications supply consent, message names and presentation as
+  data. GoSX owns origin checks, single-flight polling, retry/navigation,
+  safe script encoding and unload cleanup.
+- Add `scene.Surface` and `scene.StreamWriter` for retained browser mounts.
+  Instance streams reuse Go and JavaScript buffers, reject reentrant writes,
+  refresh mount handles after recovery, and preload the shared codec without
+  fabricated geometry. `InstanceStreamFrame.EncodeInto` preserves the existing
+  wire format with zero steady-state allocations.
+- Build configured standard-Go application WASM modules with production
+  stripping, hashed artifacts, compression sidecars and a matching loader.
+  `gosx build --prod --go-wasm-only --output <dir>` runs this module pipeline
+  without rebuilding the framework runtime, server or unrelated assets.
+
+## v0.57.7
+
+- Stop the shared gamepad provider's idle polling when controllers are absent
+  or the document is hidden. Clear stale button and axis signals on disconnect,
+  visibility loss, and disposal; connection and visibility events wake polling.
+
+- Retain WebGPU detail resources while atlas pipelines validate. Scenes with
+  detailed materials now resume rendering after validation instead of allocating
+  a new atlas and pipeline on every frame without presenting to the canvas.
+
+- Add dependency-light `game/host` browser frame and gamepad adapters for
+  presentation-only WASM engines. Existing `game/loop` and `game/gamepad`
+  adapters remain compatible aliases; using the host adapters directly avoids
+  importing the server game runtime and compiler into browser modules.
+
+- Add manifest-driven runtime feature chunks. A page names an opt-in chunk with
+  `hydrate.Manifest.RequireFeature`, `island.Renderer.RequireFeature` or
+  `server.PageRuntime.RequireFeature`; the manifest carries it in `features`,
+  `build.json` records it under `runtime.features`, and the document contract
+  publishes a flat `bootstrapFeature<Name>Path` key for it (`engine-bridge`
+  becomes `bootstrapFeatureEngineBridgePath`; the six existing chunk keys are
+  unchanged). The browser loader derives the key from the name, fetches the
+  chunk once, and hands it the feature API, which now includes
+  `ensureBootstrapFeature`. `gosx build`, `gosx export`, `gosx dev` and the
+  runtime asset server serve any `bootstrap-feature-<name>.js` listed in
+  `runtime.features`. `island.Renderer.FeaturePaths()`,
+  `server.PageRuntime.FeaturePaths()` and `server.DocumentContext.FeaturePaths`
+  expose the chunk URLs; `island.Summary` and `server.PageRuntimeSummary` are
+  unchanged and stay comparable with `==`.
+- Add `api.registerCapabilityProbe(name, fn)` to the feature API. A feature chunk
+  can answer a `requiredCapabilities` name the runtime does not know. An unknown
+  name with no probe stays unsupported and is not cached, so a probe that
+  registers later takes effect.
+- Add inert core seams that later chunks switch on: `window.__gosx.editQueue`
+  (used for `data-gosx-queue` forms and actions, and the `queue` option of
+  `submitAction`), `window.__gosx.editConflict` (a hook for 409 responses to
+  managed forms), `window.__gosx.goWASMBootToken` (set only while a Go-WASM
+  module runs its registration phase), and an engine `toolchain` pick of
+  `window.__gosx.tinyGoWASMCtor`. Without those hooks, behavior does not change.
+- Owner-approved one-time M0 core change: `bootstrap-runtime.js` grows by 403 B
+  raw, `bootstrap-lite.js` by 155 B and `navigation-runtime.min.js` by 318 B.
+  The video selective runtime route budget rises from 288,689 to 289,289 raw and
+  from 73,139 to 73,439 brotli, and the `/demos/scene3d/` `jsWireBytes` wire
+  budget rises from 258,118 to 260,973 and the scaffold `/counter/` `jsWireBytes`
+  wire budget from 87,617 to 87,942; no other size budget changes.
+- `RequireFeature` rejects a name whose contract key collides with another
+  required feature or a legacy chunk's key (`a1` and `a-1`, or `text-layout`
+  and `textlayout`), and the error names both. `hydrate.FeatureContractKey`
+  returns the key for a name.
+- A page that names `islands`, `engines`, `hubs`, `controllers` or `textlayout`
+  with `RequireFeature` now publishes that chunk's contract field and preload
+  link even when it has no matching entry, so static export copies the chunk.
+  One renderer function decides each page's chunk set for every consumer.
+- `RequireFeature("scene3d")` is rejected: the Scene3D chunk loads only for a
+  `GoSXScene3D` engine, and the loader would wait for a script the renderer does
+  not emit. The other legacy names (`islands`, `engines`, `hubs`, `controllers`,
+  `textlayout`) stay accepted and load by fetch.
+- A failed or missing feature chunk now disables only that feature instead of
+  blocking every mount; the loader logs one error naming the feature and its URL.
+  Queued form submits count as in
+  flight, so refresh ticks do not swap the DOM under them. The Go-WASM boot token
+  is cleared even when `go.run` throws.
+
+- Islands: `onWheel` (non-passive), `onDblClick`, `onContextMenu` and
+  `onLostPointerCapture`; event fields `offsetX`, `offsetY` (viewport position
+  minus the handler element's bounding box, borders included, transforms not
+  undone), `elementWidth`, `elementHeight`, `deltaX`, `deltaY` and `deltaMode`;
+  and `browser.CapturePointer(id)` and `browser.ReleasePointer(id)`. A capture ends
+  as the Pointer Events specification defines (after `pointerup` or
+  `pointercancel`, on `ReleasePointer`, or when the element leaves the
+  document); disposing an island does not release it early. On islands built without event metadata, a
+  wheel handler present at hydration is non-passive; one added later still
+  fires, but `browser.PreventDefault()` cannot block scrolling. Rebuilding with
+  the current `gosx` gives full wheel support. See
+  `docs/island-events.md`.
+- Diagnostics: an island handler attribute that no runtime name mapper resolves
+  (`onMouseDown`, `onScroll`, `onKey`) now produces a warning with a source
+  position and a "did you mean" suggestion. It does not fail the build, and the
+  spellings that already resolved (`onKeydown`, `onPointerdown`, `onDragstart`)
+  stay accepted. Nothing breaks, so there is no migration step.
+- Size budgets (decision 0014 exception, owner-approved 2026-10-08 at +536 raw
+  for `bootstrap-feature-islands.js` and +539 raw for the legacy `bootstrap.js`
+  monolith): the gesture events grow the islands chunk by 390 raw bytes (18,766
+  to 19,156) and the monolith by 390 (1,910,682 to 1,911,072).
+- Cache bounded readiness snapshots without rerunning checks or retaining request
+  IDs and errors. LastReadiness reports unknown before a probe, UTC completion
+  time, and completeness when more than 64 checks exist. Panicking checks fail
+  readiness and are disabled with a fixed log class.
+
+- Attach built-in request aggregates once at the App observer owner. Route
+  labels use the admitted catalog, response bytes come from its writer, and
+  the in-flight gauge covers application middleware. RequestStartObserver
+  adds an optional bounded entry callback without another request context.
+
+- Request observers report accepted response body bytes and successful hijacks.
+  The first final status wins; interim responses, ReaderFrom and response
+  controller operations retain their HTTP behavior. Nested observers share
+  route metadata, and file actions mark their registered dispatch pattern.
+
+- Expose typed activity kind registration and Begin after the lifecycle,
+  participant and event owners are complete. Enable accepts memory activities,
+  and receipts explicitly distinguish memory acknowledgement from durability.
+  A bounded catalog retains 256 acknowledged parent IDs without final records.
+
+- Queue copied activity events through one fixed count and byte budget on the
+  existing telemetry worker. In-flight records keep their reservations, event
+  caps and rejected writes preserve truthful terminal totals, and accepted
+  sequence order follows queue admission. No event history or sink is implicit.
+
+- Add bounded activity seats with revision-checked field replacement, one
+  active connection reference, idempotent joins and leaves, monotonic presence
+  time and frozen final totals. Consented human links are copied and trimmed
+  to preserve final capacity; bots and unconsented refs persist no client data.
+
+- Add the activity lifecycle owner with copied revision-checked projections,
+  reserved immutable finals, monotonic duration, frozen loop health and shared
+  memory receipts. Source drain preserves admitted work; idle and shutdown
+  finals run on the existing worker without application encoders. Public
+  construction follows the participant and event owners.
+
+- Reserve finite activity kind and codec declarations before route admission.
+  Dimensions share fixed metric labels, complete-kind admission is atomic,
+  and metadata/staging capacity shares one bounded arena with hub attachments
+  and route tables. Public activity lifecycles follow in the next slice.
+
+- Add a portable, bounded MemorySink test helper with synchronized record and
+  byte admission, copied readers and one injected failure per operation.
+  Its zero value uses 128 records and 1 MiB. Memory acceptance makes no local
+  durability promise. The sink contract precedes the bounded worker slice.
+
+- Add immutable typed telemetry records with a schema-1 JSONL envelope,
+  deterministic field order, UTC observations, CRC-32C and copied payload
+  views. Framework-only constructors reject invalid identities and finite
+  field, record and retained-memory cap violations. Unknown optional tick
+  health is omitted. Record writers preserve wrapped error identities while
+  exposing fixed error text.
+
+- Reserve default telemetry aggregate families before route admission, with
+  whole page/error reservations and shared page duration histograms. Operation
+  and explicitly attached auth observers use finite startup labels; degradation
+  accepts declared components. Request writer, runtime, readiness, scheduler
+  and client ingress attachment follow their owner seams.
+
+- Add typed telemetry domain codecs and copied field views with finite enum,
+  array, nesting and byte limits. Eight staging leases isolate synchronous
+  encoders; invalid fields and encoder failures discard the whole projection.
+  Domain JSON sorts keys, preserves finite numbers and uses milliseconds for
+  duration values. Activity registration and records follow separately.
+
+- Add optional whole-tick simulation and visible-frame observers at the existing
+  ticker and animation owners. Simulation lag uses elapsed scheduled deadlines;
+  timing includes the existing single snapshot and state broadcast. Nil observers
+  skip timing reads. Frame observers are fixed before Start and run outside locks.
+
+- Add finite loop kinds and a shared arena for 256 lifetime health meters.
+  Observe records whole ticks with zero warm allocations. Health copies bins
+  under the instance lock and scans outside it; scoped tokens end once.
+  Closing a meter leaves the application's runtime owner in control.
+
+- Start the telemetry close deadline at Flush or Close, after source drain.
+  Shutdown Signal stops admission; collector wakes keep source subscriptions
+  alive until the flush phase starts.
+
+- Register bounded hub telemetry groups with finite event and disconnect labels,
+  exact logical payload counts, sampled queue depths, control RTT, and slow-client
+  counters. Attachments release automatically when pumps finish, and telemetry
+  shutdown preserves source-drain callbacks before removing its subscriptions.
+  Counted histogram observations preserve coalesced broadcast samples atomically.
+
+- Keep observed hub control pings on a fixed 54-second schedule, using the
+  existing writer timer with a cadence that divides the ping period. Ping
+  sequences start from cryptographic per-connection randomness. Invalid
+  slow-client policy logs a fixed class at most once per minute.
+- Slow-client checks follow the shared hub tick and scale the drop threshold to
+  the elapsed window.
+- Hub Close waits for application enqueue callbacks as well as pumps. Release
+  locks that callbacks may acquire before Close. The framework-only telemetry
+  observer slot requires an internal authority key; observer conflicts match
+  the telemetry conflict class. Queue samples describe depth before an accepted
+  enqueue, including zero. TrafficEvent.Dropped/Count and nil-client Message
+  callbacks extend the observer contract: Message accounts for all drops, so
+  Broadcast's drop summary must not be added again. SlowClientPolicy.Validate
+  and ErrInvalidSlowClient are explicit policy-validation API extensions.
+
+- Keep peer-controlled WebSocket close text out of hub read diagnostics. Normal
+  peer closes are quiet; other failures report only a fixed transport class.
+
+- Add measured WebSocket control-ping RTT with matching sequence payloads and
+  once-only timeouts. Queue sampling reports text and binary depth independently,
+  and all full-buffer drops remain visible. Broadcast samples coalesce by depth
+  and preserve counts outside fanout locks, with no additional recipient scan.
+  One optional telemetry subscriber has its own reservation and sampling policy.
+  Opt-in slow-client eviction uses interval drop deltas and the existing pump
+  timer; it does not increase the 54-second ping frequency or add a scanner.
+- Stage `gosx init` before publishing files with no-clobber writes. Existing
+  files and symlinks below the destination cause a conflict; root symlinks work.
+  Late failures roll back files still owned by the invocation on a best-effort
+  basis. The app template uses component syntax for `Page`, `NotFoundPage` and
+  `ErrorPage`. Dependency resolution runs in staging; offline failures and
+  destinations containing any existing Go files prompt a final `go mod tidy`,
+  because existing packages outside `app/` are not staged.
+- Add `gosx deploy check [--json] dist` to validate server launch files, bundle
+  policy, asset checksums and compressed sidecars, and exported pages before
+  uploading a production bundle. Accept `server/app.exe` for Windows bundles.
+  Exit codes are 0 for success, 1 for failed checks and 2 for usage errors.
+  The check never starts the application.
+
+- Selena `CustomMaterial.VertexGLSL` and `FragmentGLSL` now contain GLSL ES 3.00
+  for WebGL2 instead of ES 1.00. `bindings.Layout` no longer lists WebGL1
+  extensions or `GLSceneSizeUniform`; post shaders use the quad and bottom-left
+  texture origin. Hosts supplying these fields to WebGL1 must switch to WebGL2
+  or supply separately compiled ES 1.00 shaders and their own binding layout.
+- Add `SelenaMaterialOptions.Targets`, `SelenaTargetRequirements` and the
+  `ShaderProgram(target)` accessors on `CustomMaterial`, `IRMaterial` and
+  `engine.RenderMaterial`. Requested artifacts travel through both browser scene
+  payloads and native bundles. `FrameStats.MaterialFallbacks` and native preview
+  diagnostics report custom mesh programs replaced by the standard shader.
+- Report skipped optional `wasm-opt` passes instead of silently keeping the
+  compiled WASM. Missing tools warn once per build; failed passes include
+  optimizer output in one complete warning and remove temporary output.
+- Clean up the unused, unreleased Scene3D recovery asset, setter, and
+  `buildmanifest.RuntimeAssets` and `RuntimePaths` fields.
+
+
+- Add transactional aggregate telemetry setup with one maintenance worker and
+  one named application shutdown hook. Disabled handles own no resources;
+  failed setup removes its reservation. Shared close deadlines retain unfinished
+  owners, and clock or logger panics expose fixed error classes. The shared close
+  work keeps the earlier of the first caller's deadline and a 20-second limit;
+  caller cancellation ends only that caller's wait. Catalog admission is private
+  to the server callback, which also seals inactive registries at Build. Process
+  start time is captured once during initialization, independently of Enable;
+  clock failures have their own fixed drop reason.
+  Native features remain unavailable on WebAssembly. Listener, subsystem and record adapters
+  follow in their own slices; selecting them returns a fixed unsupported class.
+
+- Accept telemetry listener `off` case-insensitively, reject Unix paths that
+  exceed the platform address limit, and allow a nonempty environment credential
+  to replace its code-configured token or file source. Two environment sources
+  for the same credential remain an error.
+
+- Add pure telemetry defaults and bounded, redacted option validation, plus
+  portable wall/elapsed clock types and a deterministic fake clock. Wall jumps
+  do not advance elapsed deadlines, and tickers need no conversion goroutine.
+  Native attachment and feature implementations follow in separate slices.
+  Unimplemented opt-in features return a fixed unsupported configuration error.
+  Listener validation rejects short, malformed and shared credentials, requires
+  authentication for non-loopback IPs, and rejects DNS listener names. Empty
+  environment variables preserve code settings; environment enables cannot
+  override an explicit Disabled flag. Credential files are read at startup.
+- Catalog observer configuration errors use the `server:` namespace while
+  retaining their configuration identities for error inspection.
+
+- Expose bounded, copied catalogs of registered observation patterns, merging
+  method sets across mounts without expanding router-relative paths. App head
+  decorators now reach mounted router pages and errors through their existing
+  page state and document render; `Context.Pattern` identifies the registered
+  owner pattern before decoration. Catalog limits count registered routes;
+  page error rows are derived without displacing pages. Selection orders paths
+  before kind priority and retains at most twice the route limit. Page-panic
+  errors retain the registered page pattern in request and document metadata.
+- Independently check retained gauge and histogram heap, including their
+  leased snapshot storage, against the existing byte reservations.
+
+- Export bounded, copied metric snapshots and deterministic Prometheus text
+  with shared admission, consistent histogram buckets, and a 2 MiB output cap.
+  Snapshot adapters can retain an explicit clone within their own capacity.
+  Snapshot labels, histogram scratch and series slices reserve their actual
+  bounded capacity; the default request inventory fits the unchanged budget.
+  Network adapters must render into their own buffer and release the snapshot
+  lease before writing a response.
+- Insert single metric tuple admissions into their sorted position instead of
+  sorting the whole family. Retained-heap checks cover counters, gauges and
+  histograms under the existing memory reservations.
+
+- Add a bounded metric registry with finite label domains, atomic tuple batches,
+  scalar sample and byte reservations, sealed registration, and consistent
+  counter, gauge, and histogram instruments. Application families cannot use
+  the framework's reserved `gosx_` prefix, or labels starting with `__`.
+  Batch admission sorts once and reserves measured object and slice capacity;
+  counters and gauges retain no unused histogram state. The default request
+  metric inventory fits the unchanged sample and byte budgets.
+- App shutdown is terminal. The HTTP server drains before scheduled work,
+  followed by resource Drain and Flush hooks. Scheduled cancellation preserves
+  `context.Canceled`; deadline shutdowns reserve time for hooks even when a
+  cancelled task is still stopping.
+- `scheduled.Scheduler.ShutdownGrace` exposes the configured cooperative window
+  so the server can honor it when coordinating a deadline shutdown.
+
+- Add named App shutdown hooks: drain HTTP and scheduled work before source
+  drains, then flush in reverse registration order. Concurrent shutdown callers
+  share one terminal pipeline and respect their own deadlines; `/readyz` reports
+  draining. Scheduled runs cancel after 30 seconds without a deadline. With a
+  deadline, cancellation uses a reserve of five seconds or a quarter of the
+  remaining time, whichever is greater. Scheduler joining leaves half the
+  smaller of that reserve and the time remaining after HTTP drains for hooks.
+  Every Drain and Flush is then attempted with
+  the shared context. Lifecycle configuration errors use the server namespace.
+  `Scheduler.StopContext` stops admission and cancels on its context deadline
+  without allocating waiter goroutines. The legacy `Stop(grace)` also bounds
+  its cancellation wait to one additional grace window and preserves Canceled
+  as the task cancellation cause.
+  `UseShutdownSource` registers an existing resource owner through a structural
+  signal/drain contract. Hub shutdown integration stays in the hub package, so
+  ordinary server imports do not acquire a WebSocket dependency.
+- Hub closing retires every observer and drains admitted callbacks before
+  delivering Closed. Closed is the final callback, including after Close returns;
+  callbacks must remain bounded and cannot wait for that same hub to close.
+
+- Add additive hub observers configured before the first connection, with
+  logical payload bytes, broadcast drops, handler timing, and fixed lifecycle
+  classifications. Connection rejections are separate from malformed and
+  rate-limited messages; observers preserve existing hub panic diagnostics.
+  Embed `NoopObserver` for future callbacks. Closing detaches subscriptions
+  before `Closed` and drains admitted callbacks before completion.
+  `Hub.Close(ctx)` rejects upgrades and waits for connection
+  pumps within each caller's deadline; unfinished owners retain subscriptions.
+- Record `gzipSize` and `brotliSize` for compressed assets in `build.json`.
+  Choose compatible WASM runtimes by Brotli size, then gzip or raw size when
+  metadata is absent, with raw size and path as deterministic tie-breaks.
+
+- Serve page navigation as a content-hashed, immutable runtime asset with
+  precompressed gzip and Brotli representations, reducing HTML bytes and
+  request-time compression. Static exports include the asset. Defer execution
+  until parsing finishes, before bootstrap, so it does not delay first paint.
+  Each page makes one more script request. Proxies, CDNs and auth middleware
+  must allow `/gosx/assets/runtime/navigation.*.js`.
+  **Migration:** code running while HTML is parsed (inline body scripts and
+  `ctx.ManagedScript`/`ctx.LifecycleScript` without `defer`) must wait for
+  `DOMContentLoaded` before calling `window.__gosx.navigation`,
+  `window.__gosx_page_nav`, `window.__gosx_submit_action` or `window.__gosx.cues`.
+  For example: `document.addEventListener("DOMContentLoaded", () => window.__gosx.navigation.revalidate(), { once: true });`.
+  On streamed pages, the runtime waits for the last fragment and parsing to
+  finish; links and managed forms use native behavior until then.
+
+- Add controller payload projections and named intent events, pointer drag/drop
+  with correlated Scene3D/native ray hits, and modal
+  focus owners with inert backgrounds and return focus. The input runtime loads
+  only for configured input or storage contracts and releases its state on page disposal. Go-WASM
+  engines can consume typed requests with `wasm.SubscribeSignal[T]` and publish
+  native hits with `Context.SetSignal`.
+
+- Ship the controller input chunk in dev servers and static exports as well as
+  production builds. Cancel pending controller mounts on page disposal, end
+  tap gestures with a cancellation phase, and wrap modal Tab navigation to
+  the first or last control independently of initial focus.
+
+- Define controller-local pick ray and hit types, preserving the scene JSON
+  shape without linking scene rendering dependencies into ordinary servers.
+
+- Use the selective bootstrap and relay for preview pages without loading the
+  islands feature chunk. Island-free previews now start the WASM signal bridge
+  inside an iframe or with `gosx-preview=1`; preview context persists for the
+  tab session across navigation. Public visitors do not start the preview bridge
+  or preload its WASM. Older assets without the selective bootstrap retain the
+  compatibility path.
+
+## v0.57.6
+
+- Apply Scene3D `SetTransformCommand` to a `Model` root ID. Retained rigid
+  models update their parent matrices while preserving imported primitive
+  materials, immutable geometry, and GPU residency. Commands during asset
+  loading supersede stale hydration; fitted models retain their fit scale.
+- Keep compatible committed actors moving while newcomers load; failed or
+  superseded hydration cannot restore an older pose or retain retired wrappers.
+  Cache explicit instanced CPU skin/node/morph playback owners across pose and
+  membership updates, retain zero-scale nonnegative instances, defer early
+  binary pose frames until hydration commits, and bound playback ownership to
+  the current scene membership.
+
+- Preserve public immutable caching for framework runtime JS/WASM, emitted
+  assets, hashed images and versioned public assets when global auth middleware
+  reads the session on every request. Classify resolved assets explicitly;
+  cookies, session writes, HTML/data, session variance and private policies
+  still force private caching.
+- Stop exposing `GET /_gosx/scheduled` on the public listener by default.
+  Building an app no longer creates a scheduler. The deprecated
+  `App.EnablePublicScheduledStatus()` opt-in lasts one minor release; protect
+  it with application authentication. Scheduled status handlers now return at
+  most 64 tasks, omit progress/error text, and report the fixed `task_failed`
+  error class. The response header `X-GoSX-Snapshot-Complete` reports truncation.
+
+- Compare projects against the CLI binary's compiled GoSX module version,
+  including pseudo-versions. Development builds retain the release fallback;
+  mismatched versions still report the matching install command.
+
+- Export `signal.NewShared[T]` and `signal.Shared[T]` for typed native Go and
+  island authoring. Native calls create independent values; browser lowering
+  retains the existing shared `$name` contract.
+- Keep `gosx perf` runtime-ready wrappers stable across bootstrap chaining and
+  reassignment. Saved callbacks retain their original handler, preventing
+  recursion and recording readiness once.
+- Skip the prerender subprocess when there are no static routes. Set
+  `build.prerender.enabled` to `false` to build production assets and a server
+  without starting an app that requires authentication or database setup.
+
+- Keep file pages with `Load` or `Actions` dynamic unless their route config
+  explicitly enables prerendering. Warn when an opted-in loader page has no
+  revalidation window. Cookie and authorization bypasses now render the origin
+  route at exported trailing-slash URLs. Dynamic file pages also accept exact
+  trailing-slash URLs.
+
+## v0.57.5
+
+### Security: passkey enrollment and magic-link delivery (auth)
+
+This release fixes two account-takeover flaws in the optional `auth` package
+(advisory GHSA-847f-9jr3-mfqp). Upgrade if your application mounts the WebAuthn
+or magic-link handlers.
+
+- Passkey enrollment resolves the user from trusted server state (the signed-in
+  session, or `WebAuthnOptions.RegistrationUser` for authorized sign-up) and
+  never from the request body. Registration no longer signs users in and keeps
+  existing session privileges ([#451](https://github.com/odvcencio/gosx/pull/451)).
+- Memory and Redis credential stores reject duplicate credential IDs atomically.
+  Anonymous login no longer discloses a user's credential IDs and uses
+  discoverable credentials.
+- Magic links fail closed without a configured `Sender`; responses never include
+  the sign-in link.
+
+**Breaking:** configure `MagicLinkOptions.Sender`, mount session, auth and CSRF
+middleware before the auth handlers, use `WebAuthnOptions.RegistrationUser` for
+sign-up flows, and make custom credential stores reject duplicate IDs atomically.
+The docs app's local magic-link demo now prints its link to the server log.
+
+### Security: safe session secrets in new apps
+
+- The scaffold refuses to start outside development with a missing or
+  placeholder `SESSION_SECRET`, generates a random development secret, and
+  ignores `.env`. Export and prerender give local child processes a fresh random
+  secret and bind them to loopback, keeping numeric `PORT` values working
+  ([#447](https://github.com/odvcencio/gosx/pull/447)).
+
+### Fixed
+
+- Compression honors explicit encoding exclusions and preserves output that was
+  already committed before a connection is hijacked
+  ([#448](https://github.com/odvcencio/gosx/pull/448)).
+- Scene3D glass keeps transparent canvases, explicit pixel caps, background
+  colors across quality tiers, additive blending and volume settings on
+  instanced and imported meshes ([#449](https://github.com/odvcencio/gosx/pull/449)).
+- Scene3D ocean and water: removing an ocean through Go diffs or typed
+  commands, adding one after mount, paused water systems, horizon fog over dry
+  bathymetry, failed water shaders blanking the renderer, a leaked readiness
+  listener on abandoned mounts, and drifting clouds keeping the render loop
+  active ([#450](https://github.com/odvcencio/gosx/pull/450)).
+- Push CI installs TinyGo for the race tests that need it, so push and PR runs
+  cover the same tests ([#446](https://github.com/odvcencio/gosx/pull/446)).
+
+### Added
+
+- Scene3D ambient occlusion, contact shadows and TAA with safe fallbacks
+  ([#438](https://github.com/odvcencio/gosx/pull/438)).
+- The Blackglass Beach walkable demo in the docs app, with open ocean,
+  bathymetry and glass refraction ([#440](https://github.com/odvcencio/gosx/pull/440)).
+
+## v0.57.4
+
+### Fixed: responsive scenes inside scaled containers
+
+- Measure responsive Scene3D canvases in local CSS coordinates. Fitted slides
+  no longer shrink projected labels or clip a fill-height canvas when an
+  ancestor is scaled.
+- Position the label layer relative to the canvas in the mount's coordinate
+  system, preserving padding, borders and the backing-pixel budget.
+- Cover scaled containers with viewport regression tests and refresh the
+  published performance receipts for this runtime.
+
+## v0.57.3
+
+### Fixed: shader shapes beside retained meshes on WebGPU
+
+- Size shared world-baked vertex streams independently of retained meshes.
+  Large retained geometry no longer replaces smaller custom shader geometry
+  with default positions and UVs, restoring the API box in GoSX Slides scenes.
+- Verify exact shared vertex uploads in both mesh orders and visible shader
+  pixels in the Slides browser regression.
+
+## v0.57.2
+
+### Added: default response compression
+
+- Enable negotiated Brotli and gzip delivery for eligible text responses, with
+  shared encoding policy for generated sidecars, servers and edge workers.
+- Document deployment behavior and opt-out; compressed wire budgets track the
+  new default.
+
+### Added: controllable Scene3D animation clock
+
+- Mounted Scene3D handles expose `getAnimationClock` and `setAnimationClock`
+  for absolute declarative animation and shader time, including backward seeks.
+- Resume starts from the new frame baseline without adding paused wall time.
+  Stateful simulations and event-driven glTF mixers require their own replay state.
+- Refresh the docs performance receipt with hardware WebGPU/WebGL measurements
+  and update the reviewed runtime size allocations for the clock controls.
+
+### Fixed: tiling normal maps from glTF
+
+- A `KHR_texture_transform` scale on `normalTexture` alone (a detail map that
+  tiles while base colour spans the mesh) now reaches the WebGL2 and WebGPU
+  shaders as `normalUVScale`. Before, the loader baked only the base colour
+  transform, so such normal maps stretched across the whole mesh. A transform
+  shared with base colour is still baked into the UVs once.
+
+### Added: opt-in Scene3D walking
+
+- Add `scene.Walk` and `scene.NewWalkGround` for ground following, collider
+  sliding, world bounds, slope and wading limits, sprint, and optional head bob.
+- Support pointer lock, focused keyboard navigation, simultaneous touch movement
+  and look, optional gamepads, and declarative camera reset buttons. Walking
+  loads a separate chunk only for scenes with walk props; existing controls keep
+  their behavior and browser defaults stay out of Go's JSON output.
+
+### Added: desktop update prompt
+
+- Add `App.OfferSignedUpdate` to check signed updates, prompt before opening
+  allowlisted download pages, and avoid host-specific check/confirm/open code.
+### Added: Scene3D material detail layers
+
+- Add opt-in detail layers to standard materials and glTF models on WebGL2 and
+  WebGPU, with world-space stochastic tiling, slope-selected layers, triplanar
+  projection, distance fading, and adaptive quality controls. Existing materials
+  retain their shaders and base maps.
+- Add opt-in height haze, depth-occluded sun shafts, AgX tone mapping and stable film grain on both Scene3D GPU backends. Shafts and haze compose before bloom; adaptive quality reduces shaft samples before shedding atmosphere targets.
+
+- Add optional drifting, physically lit clouds to Scene3D physical skies and ocean sky reflections on both GPU backends, with filtered noise and adaptive shedding.
+
+- Add opt-in ocean geometry reflections on WebGL2 and WebGPU: bounded SSR, a reduced mirrored PBR fallback, an anisotropic sun path, and adaptive quality shedding.
+
+### Added: desktop rotating log files
+
+- Add `desktop/applog.Open` and `applog.Options` for hosts that need a standard
+  rotating log file.
+- Rotate before writes exceed the configured size, keeping the newest rotated
+  files as `Name.1.log` through `Name.<Keep>.log`.
+### Added: Azure Artifact Signing for desktop packages
+
+- Add `gosx desktop package --sign-provider azure-artifact-signing` with
+  SignTool or jsign, non-secret configuration, Authenticode verification, and
+  signing metadata. Sign staged PE files, the uninstaller, and per-user Setup.
+- Add `gosx desktop verify-signature`, a fake-tool CI packaging test, a gated
+  Azure release signing check, and [desktop code-signing documentation](docs/desktop-code-signing.md).
+
+### Added: desktop app template
+
+- Add `examples/desktop-app`, a copyable desktop app: a WebView2 window with
+  `BackgroundColor` and `GPU`, a sidecar engine process, native menus and file
+  dialogs, a bound Go service called from the page, single instance, focus
+  events, startup timings, and `ShowMessage` for startup errors. The page is
+  responsive, so it works in narrow windows too.
+### Added: desktop window placement
+
+- Add `Options.InitialPlacement` and `App.WindowPlacement()` to restore normal
+  bounds and maximized state across launches.
+- Clamp restored bounds to the available monitor work areas; `Options.OnBeforeClose`
+  provides the placement before the window is destroyed.
+### Added: opt-in Scene3D mip bloom
+
+- Set `scene.Bloom.Mode` to `"mip"` for soft-knee extraction, a bounded HDR
+  input, and up to six filtered bloom levels on WebGL2 and WebGPU. Additive
+  tent upsampling avoids the spaced blur copies around bright edges.
+- Empty and unknown modes preserve the existing bloom output and wire shape.
+  `Bloom.Scale` still controls prefilter resolution; resize and disposal free
+  the full level chain.
+
+### Added: desktop window handle, focus events, message box
+
+- Add `App.Window()` and `Window.Handle()`, so hosts no longer find their
+  own window by title to call Win32 APIs.
+- Add `Options.OnFocusChanged(focused bool)`, fired from `WM_ACTIVATE` when
+  focus changes. With `NativeBridge`, the page also receives a
+  `gosx.window.focus` event with `{focused}`.
+- Add `desktop.ShowMessage` (works before `New`) and `App.ShowMessage`
+  (owned by the app window): info, warning, error, and question icons;
+  OK, OK/Cancel, Yes/No, and Retry/Cancel buttons. The native bridge exposes
+  it as `gosxDesktop.dialog.message`.
+### Added: open ocean for Scene3D
+
+- `Environment.Ocean` draws an open sea to the horizon on WebGPU and WebGL2:
+  Gerstner swell, sky reflection with Fresnel, sun glint, crest scatter,
+  whitecaps and horizon fade. An optional bathymetry heightmap adds shallow
+  water over the terrain, shoaling, shore and rock foam, and a run-up surge.
+  Capability `ocean`; the mount reports `data-gosx-scene3d-ocean`.
+
+### Added: physical sky for Scene3D
+
+- `Sky{Mode: "physical"}` draws an analytic daylight sky (Rayleigh and Mie
+  scattering with a sun disk) on WebGPU and WebGL2. Set `SunDirection`
+  (`scene.SunDirectionFromAngles` helps), `Turbidity`, `Rayleigh`,
+  `MieCoefficient`, `MieDirectionalG` and `SunDiskRadius`; zero means the
+  default. `Sky.PhysicalRadiance` evaluates the same model in Go, and
+  `ibl.CubeFromRadiance` bakes it into IBL so reflections match the sky.
+  Canvas2D gets gradient stops computed from the model. Capability
+  `sky-physical`.
+
+
+### Added: Scene3D rendering before models
+
+- Add `scene.Props.RenderBeforeModels` to draw the first frame while model
+  assets load. Sky, water, lights, and other scene nodes can render first;
+  loaded models appear in a later render. Unset or false keeps the existing
+  wait for models.
+- Report the selected path in `data-gosx-scene3d-first-frame` as
+  `before-models` or `after-models`. Disposing a scene while models load
+  prevents late hydration from rendering it again.
+### Fixed: tiling normal maps from glTF
+
+- A `KHR_texture_transform` scale on `normalTexture` alone (a detail map that
+  tiles while base colour spans the mesh) now reaches the WebGL2 and WebGPU
+  shaders as `normalUVScale`. Before, the loader baked only the base colour
+  transform, so such normal maps stretched across the whole mesh. A transform
+  shared with base colour is still baked into the UVs once.
+
+### Fixed and added: desktop single instance
+
+- Fix: the single-instance mutex was `Global\gosx-<appID>`, shared by every
+  Windows session, so a second user signed in to the same PC could not start
+  the app. It is now `Local\gosx-<appID>` (one per session).
+- Add `desktop.AcquireSingleInstance(appID)` and `desktop.InstanceLock`, so an
+  app can reserve its ID at the top of `main`, before its own startup work,
+  and `desktop.ForwardToFirstInstance(appID, args, workingDir)`, which hands a
+  later launch to the running window (waiting up to 10 s for it to appear).
+  `Options.SingleInstance` reuses a lock the process already holds.
+- The running instance now restores its window if it is minimized, and the
+  forwarding process grants it foreground rights (`AllowSetForegroundWindow`)
+  so the window can come to the front.
+### Added: desktop sidecar processes
+
+- Add `desktop/sidecar`: `sidecar.Start` runs a helper process (a local game
+  server, an audio engine) without a console window, copies its output to a
+  writer, and returns once a stdout line matches `ReadyLine` (the first
+  submatch, such as a listen address, is returned by `Ready`) or `ReadyURL`
+  answers. On Windows the process starts suspended, joins a Job Object, and
+  then resumes, so it and anything it starts end when the app exits or
+  crashes. On Linux a crashed app's sidecar gets SIGKILL, but processes the
+  sidecar started do not (no unprivileged Job Object equivalent). `Stop` sends SIGTERM first on Unix, then kills the job or
+  process group after the grace period, including children that ignored
+  SIGTERM after the main process exited. On Unix, children left behind when
+  the sidecar exits on its own are killed too, as the Job Object does on
+  Windows.
+### Added: desktop permission requests
+
+- Add `Options.OnPermissionRequested`. It receives each browser permission
+  request (kind, origin, and whether a user gesture started it) and returns
+  `PermissionAllow`, `PermissionDeny`, or `PermissionAsk` (WebView2's own
+  prompt, the behavior without a handler). WebView2 reports Web MIDI requests,
+  including `requestMIDIAccess({sysex: false})`, as `PermissionMIDISysex`;
+  before this, a desktop app's Web MIDI request waited on a prompt.
+
+### Fixed: desktop WebView calls from goroutines
+
+- `App.Navigate`, `SetHTML`, `Reload`, `PostMessage`, `ExecuteScript`,
+  `OpenDevTools`, `PrependBootstrapScript`, and `Serve` now run on the window
+  thread when called from another goroutine. WebView2 rejects calls from
+  other threads with HRESULT 0x802A000C, so, for example, a host that
+  reloaded the page or pushed an event from a background goroutine failed
+  silently. Calls made on the window thread still run directly. If the
+  window thread cannot be woken, the call returns an error instead of running
+  off-thread. Bursts of calls post one wake message. After the window closes
+  and the WebView is released, calls that need a live WebView (`Reload`,
+  `PostMessage`, `ExecuteScript`, `OpenDevTools`) return "webview not ready";
+  `Navigate`, `SetHTML`, `PrependBootstrapScript`, and `Serve` store their
+  value and return nil.
+### Added: WebView2 GPU selection; fixed: operator browser arguments were dropped
+
+- Add `Options.GPU` (`GPUPreferenceHighPerformance`, `GPUPreferenceLowPower`,
+  or one adapter by `AdapterLUID`) and `desktop.GPUAdapters()`, which lists the
+  hardware DXGI adapters and their LUIDs. `gosx desktop --gpu` sets the
+  preference.
+- Fix: a desktop app that set `AdditionalBrowserArguments` replaced any
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` value already in the environment,
+  so operator and test overrides (for example a GPU adapter) were ignored.
+  The app's switches now come first and the operator's value last; an
+  operator GPU switch replaces the app's GPU switch.
+- `Options.MuteAudio` now also passes `--mute-audio`, which silences Web
+  Audio as well as media elements.
+### Added: desktop startup timeline, navigation event, and background color
+
+- Add `App.StartupTimeline()`, which reports when the window was created and
+  shown, when the WebView2 environment and controller were ready, and when the
+  first navigation finished, measured from `desktop.New`.
+- Add `Options.OnNavigationCompleted` (navigation ID, success, and WebView2
+  web error status).
+- Add `Options.BackgroundColor` (`#RGB` or `#RRGGBB`). It paints the native
+  window before WebView2 covers it, removing the white frame a dark app showed
+  for the first 200-450 ms, and sets the WebView2 controller's default
+  background.
+
+### Added: signed direct-download update checks
+
+- Add `App.CheckSignedUpdate` for the `latest.json` feed produced by
+  `gosx desktop package`. It verifies the detached Ed25519 signature, matches
+  the app and channel, and returns newer-version notes and a download page.
+- Persist check attempts in an app-selected state file and skip checks when
+  disabled, before startup completes, while offline, or within 24 hours of the
+  previous attempt. This path only notifies; players reinstall Setup to
+  upgrade. The existing `App.UpdateCheck()` / `App.UpdateApply()` MSIX feed
+  behavior is unchanged.
+
+### Added: per-user Windows desktop installer and packager
+
+- Add `gosx desktop package` to build a GUI Setup executable, a portable ZIP,
+  per-file SHA-256 manifest, direct-download update manifest and package
+  metadata from Linux without cgo or a third-party installer toolchain.
+- Setup verifies its payload before extraction, stages upgrades beside the
+  current install, creates a per-user Start menu shortcut and HKCU Uninstall
+  entry, and preserves the old version if extraction fails. The uninstaller
+  asks before deleting the app-selected data directory; it keeps player data
+  by default. Setup refuses to replace non-empty folders without a matching
+  app ID record, and each packaged uninstaller only removes its matching
+  install folder outside protected roots.
+- The packager downloads Microsoft's Evergreen WebView2 bootstrapper when no
+  local path is configured and records the downloaded file's SHA-256. Code
+  signing remains a command-template step and unsigned builds say so in
+  `package-metadata.json`.
+- Add `desktop.Options.MuteAudio` and `gosx desktop --mute-audio` for Windows
+  smoke apps that should mute HTML audio and video.
+
+### Added: Windows WebView2 shipping controls
+
+- `WebView2RuntimeVersion` reports the selected Evergreen or Fixed Version
+  runtime. `ErrWebView2LoaderUnavailable` and
+  `ErrWebView2RuntimeUnavailable` distinguish missing dependencies while
+  preserving `errors.Is(err, ErrWebView2Unavailable)`.
+- `Options.BrowserExecutableFolder` selects a Fixed Version runtime.
+  `Options.AdditionalBrowserArguments` sets the documented
+  `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` variable before environment
+  creation. WebView2 environment variables are process-wide and apply to every
+  WebView2 environment in the process.
+- Production mode disables browser accelerator keys, zoom controls, and the
+  status bar; Debug mode keeps them enabled. `Options.OnProcessFailed` reports
+  WebView2 failure kinds, and `App.Reload` lets the app choose a recovery.
+- HTML `requestFullscreen()` switches the window to borderless fullscreen on
+  its monitor and restores the earlier window state when fullscreen ends.
+  The executable's first icon resource supplies the window's large and small
+  icons when one is present.
+### Fixed: Windows WebView2 shuts down before the desktop app closes
+
+- Retain the environment and controller references returned to asynchronous
+  WebView2 callbacks, then release each owned reference during failure cleanup
+  or normal window teardown. Keep event handlers alive for their registered
+  lifetime and unregister them before closing the controller.
+- The Go COM handlers now accept only `IUnknown` and their own WebView2 handler
+  interface IDs. Unsupported queries clear the output pointer and return
+  `E_NOINTERFACE`.
+- Add `make test-desktop-windows-smoke` for a WSL-to-Windows runtime check of
+  WebGL2, `chrome.webview`, the native bridge, WebView2 process lifetime, and
+  clean window shutdown.
+
+### Added: GPU-driven instancing for the WebGPU renderer
+
+- `scene.Props.GPUDriven` hands every opaque `InstancedMesh` without an
+  authored cull kernel to one GPU-driven host. One compute dispatch per view
+  culls every instance (camera, and each shadow light), and each mesh draws
+  with one indirect draw that pulls its instance record from a storage
+  buffer. Per-instance colors now survive GPU culling.
+- `GPUDriven.Occlusion` adds two-phase hierarchical-Z occlusion culling.
+  The cull and Hi-Z kernels are authored once in Elio and embedded as WGSL.
+- The mode changes no pixels. WebGL, Canvas and headless rendering ignore it.
+  The mount publishes `data-gosx-scene3d-webgpu-gpu-driven-*` telemetry, and
+  the Scene3D Bench gains `gpu-driven` and `instanced-classic` workloads.
+
+### Fixed: instanced meshes no longer allocate GPU state every frame
+
+- The render bundle hands the WebGPU renderer a fresh copy of each instanced
+  mesh every frame. The renderer cached its uniform buffer and bind group on
+  that copy, so it created both again every frame and never replayed its
+  render bundle. The cache is now keyed by mesh id.
+
+## v0.57.1 (2026-09-24)
+
+### Fixed: computed-pose morph priors and stale WebGPU output buffers
+
+- Computed-pose morphing now publishes the correct source arrays before
+  each blend, and reuses the existing morph record instead of replacing it
+  on every event.
+- The WebGPU renderer no longer reuses output buffers that belong to a
+  destroyed device, so a scene with computed morphs keeps a valid render
+  cache after a device change.
+
+### Fixed: WebGPU point-sprite flat interpolation
+
+- Mark the point-sprite `color`, `fogFactor`, `alpha`, and `pointSize`
+  varyings `@interpolate(flat)` in the WebGPU shader source. Perspective
+  interpolation of these per-point values produced wrong colors and sizes
+  at the fragment stage; `pointCoord` still interpolates normally.
+
+### Added: custom per-vertex float BufferAttributes for Selena shaders
+
+- Authored Selena shaders can now declare named custom BufferAttributes on
+  scene geometry. The Go scene package validates each stream's name, item
+  size, length, and values, and fails closed on any malformed stream
+  instead of drawing a partial mesh.
+- Both the WebGL2 and WebGPU Selena paths bind the validated streams. A
+  Selena material with an effectively identity model matrix can now reach
+  the retained draw path; other custom-shader materials keep the existing
+  world-baked fallback.
+- A stream named `__proto__` survives normalization: custom attribute
+  names route through a null-prototype map instead of a plain object.
+
+### Added: opt-in hub permessage-deflate compression
+
+- Add `Hub.EnableCompression` to negotiate permessage-deflate (RFC 7692) on
+  WebSocket upgrade, and a matching client-side `Options.EnableCompression`
+  for the native transport. Compression stays off by default, since it
+  trades CPU time for bandwidth on every message.
+- Add `Hub.CompressionLevel` to select the flate level from -2
+  (HuffmanOnly) to 9 (BestCompression). An out-of-range value falls back to
+  the default level and logs a warning instead of failing the connection.
+
+### Added: perspective spot-light shadows
+
+- WebGL2 and WebGPU now render and sample one perspective shadow map per
+  valid shadow-casting spot light. Both backends share two deterministic
+  authored-order shadow-light slots with directional lights.
+- Shadow projection validation fails closed for a non-finite input, a zero
+  direction, a half-angle at or above pi/2, or an ill-conditioned
+  projection, instead of producing an incorrect shadow.
+
+### Fixed: glTF material shading parity between WebGL2 and WebGPU
+
+- `metallicFactor` and `roughnessFactor` now default to the glTF spec
+  value of 1.0, not 0.0. The old default turned every asset that omitted
+  these factors into plastic.
+- `emissiveFactor` carries through as a color, not a scalar tinted by
+  albedo, so a red-only emissive on a blue surface glows red.
+- `normalTexture.scale` and `occlusionTexture.strength` now reach both
+  renderers; previously both fields were ignored.
+- The environment equirect map now decodes as sRGB instead of linear,
+  removing an ambient light level that was about 2.7 times too bright.
+- WebGL2 samples the environment map by mip level for diffuse and specular
+  reflection, so rough surfaces blur into the environment.
+- Exposure now applies exactly once. The WebGL2 shader previously applied
+  exposure again inside an active tone-mapping post-processing pass.
+- Add an opt-in rim-light term (`rimColor`, `rimPower`, `rimStrength`) to
+  `StandardMaterial`, off by default, on both renderers.
+
+### Added: adaptive vsync-divisor frame pacing
+
+- Add the `FramePacing` prop to `scene.Props`, with the recognized value
+  `"vsync-divisor"`. An empty or unknown value keeps the existing
+  fixed-interval pacing, so current scenes render unchanged.
+- A scene with `FramePacing: "vsync-divisor"` renders on every k-th display
+  tick instead of a millisecond threshold, so the paced rate is an exact
+  fraction of the display refresh rate. A fixed millisecond cap cannot
+  divide every refresh rate evenly; on a 100 Hz display, a 50 fps cap
+  produced an uneven 40 to 48 fps.
+- The governor picks an integer divisor from 1 to 4 from an estimated
+  render cost, and commits a new divisor only after a stable streak of 12
+  ticks, so the paced rate does not flap at a divisor boundary.
+- `MaxFrameRate`, `MaxFPS`, and `FrameIntervalMS` still bound the paced
+  rate from above; an authored cap raises the divisor when it needs a
+  larger one.
+
+## v0.57.0 (2026-09-23)
+
+### Breaking: turboquant v0.2.1 changes stored vector output; pre-upgrade values fail closed
+
+- Upgrade `m31labs.dev/turboquant` from v0.2.0 to v0.2.1 and move its import
+  path from `github.com/odvcencio/turboquant` to `m31labs.dev/turboquant`.
+  Version 0.2.1 changes `NewWithSeed`'s default rotation from one
+  Walsh-Hadamard round to three, fixing a codebook defect at dimension 1024
+  and above. The same seed now produces different quantizer output.
+- `crdt.VectorValue` now tags every packed payload with the
+  `vectorQuantFormatV1` format marker. `Value.Vector()` checks that tag and
+  the tagged payload's exact expected length before it decodes, and fails
+  closed to `nil` for a payload that predates the tag, or otherwise does not
+  match, instead of returning a silently wrong vector.
+- A vector value persisted in a `crdt.Doc` snapshot or a
+  `workspace.Workspace.Save` output before this upgrade has no in-place
+  migration. After upgrading past this release, re-embed and re-write each
+  such value (`WriteVector`) from its original source; do not resume it from
+  the stored snapshot.
+
+### Added: opt-in scroll camera cadence and a renderer-owned camera-proximity signal
+
+- Add `ScrollFrameRate` to `scene.Props`. A scene keeps a low idle
+  `MaxFrameRate` and raises the cadence only while scroll input is active.
+  A zero value keeps the authored idle cadence, so existing scenes do not
+  change.
+- Add a renderer-owned `cameraProximity` reserved auto-uniform: the clamped,
+  smoothed scroll progress in `[0,1]`, or `0` with no scroll range. Both the
+  WebGL and WebGPU paths resolve it before material values and custom
+  uniforms, so an authored `param cameraProximity` cannot shadow it.
+
+### Documentation: retroactively record a prior breaking change
+
+- Record in this changelog, next to where it belongs by version, that
+  `server.NavigationScript` and `server.NavigationScriptWithNonce` were
+  removed in favor of `app.EnableNavigation`, and that
+  `ManagedScriptOptions.Load` and its fetch/eval loading mode were removed.
+  The code change shipped in an earlier release; this entry closes the gap
+  in its documentation. Compose the document shell through
+  `server.HTMLDocument(*server.DocumentContext)`, which threads the CSP
+  nonce through navigation, inline helpers, and managed scripts.
+
+## v0.56.10 (2026-09-22)
+
+### Added: retained Scene3D pose frames
+
+- Go/WASM clients can send versioned binary transform and animation frames to mounted InstancedGLBMesh batches. Stable actor membership updates the retained renderer directly, bypassing the JSON actor declaration and Scene3D command planner on those frames.
+- Membership and appearance changes still use ordered typed scene commands. A bounded latest-frame queue carries pending membership declarations forward, reports rejection and supersession through telemetry, and never blocks the animation-frame callback.
+
+### Added: versioned browser runtime release bundle
+
+- Governed releases now publish the complete browser runtime alongside CLI binaries, including all WASM variants, generated JavaScript chunks, compression sidecars, a per-file manifest, and exact tag/commit provenance. The release verifies the bundle and includes its digest in checksums.txt so applications can install an immutable runtime without recompiling TinyGo.
+
+## v0.56.9 (2026-09-21)
+
+### Improved: build world-mesh attributes in typed storage
+
+- World-baked positions, colors, normals, UVs, and tangents are written directly into capacity-managed `Float32Array` builders instead of boxed JavaScript arrays.
+- Completed render bundles retain exact-length owned attribute arrays, with indexed geometry, cache reuse, wire rendering, and picking behavior unchanged.
+
+## v0.56.8 (2026-09-20)
+
+### Improved: reuse stable authored-shader fallback geometry
+
+- Stable, immutable authored-shader fallback meshes reuse their world-baked geometry instead of transforming the same positions, normals, UVs, and tangents every frame.
+- Geometry, transform, parent-transform, shader, material, animation, and time-dependent changes invalidate or bypass the cache, while bounded weak ownership avoids retaining removed scene objects.
+
+## v0.56.7 (2026-09-20)
+
+### Improved: lower fallback mesh allocation pressure
+
+- World-baked fallback meshes reuse invocation-local normal, UV, tangent, and normalization scratch values instead of allocating equivalent objects for every vertex.
+- Existing allocating helper APIs retain their fresh-object behavior, while independent output tests cover indexed geometry, mirrored and nonuniform transforms, degenerate or incomplete attributes, and cross-mesh isolation.
+
+## v0.56.6 (2026-09-20)
+
+### Fixed: bounded rigid InstancedGLB membership updates
+
+- Variable-membership rigid InstancedGLB batches stage only new members while preserving the wrappers, immutable geometry, materials, and poses of surviving instances.
+- Additions, removals, and survivor transforms commit only after full validation. Changed materials, texture scopes, static declarations, animation or lifecycle ownership, and unsupported geometry retain the established full-hydration path.
+- Explicit shared-appearance batches avoid repeated per-instance appearance planning, while immutable rigid vertex streams keep a bounded 48 MiB idle residency window for wave-style churn.
+
+## v0.56.5 (2026-09-19)
+
+### Added: efficient animated crowds and instanced Selena materials
+
+- Instanced GLB batches retain one immutable geometry set while actors carry independent IDs, transforms, animation clips, clocks, material overrides, bounds, and shadow state. Compact instance-only updates reuse hydrated assets and renderer resources with bounded residency.
+- The WebGL renderer shares skinned pose atlases across color and depth draws, keeps per-renderer GPU caches isolated, and conservatively bounds animated actors under affine transforms.
+- Compiled Selena material payloads now survive typed lowering, shader-library hoisting, browser inflation, normalization, and hydration for `InstancedGLBMesh` batches, including skinned variants. Generic custom-material skinning behavior is unchanged.
+
+### Fixed: Scene3D startup, cache, texture, and hub lifecycle safety
+
+- Initial WebGL shader programs can compile in parallel with GLB hydration without crossing context or mount ownership boundaries; cancellation, replacement, link failure, and renderer fallback release every owned resource once.
+- Material profiles, authored-program keys, texture digests, embedded GLB image URLs, and HTML surface textures reuse stable identities while still invalidating on relevant source, uniform declaration, alpha-mask, unlit, and appearance changes.
+- Hub disconnect and slow-writer paths no longer let a stalled client block shared broadcast progress.
+
+## v0.56.4 (2026-09-13)
+
+### Fixed: bounded concurrent cold file-route compilation
+
+- Allocation-heavy cold GSX compiles share one process-wide slot; concurrent requests for identical content reuse the first completed program instead of independently parsing and compiling it.
+- Content-cache hits bypass the cold-compile lock. Waiting requests recheck the content cache before compiling, reducing transient memory pressure during cold starts and simultaneous page loads.
+- Added an eight-caller cold-compilation regression proving that every caller receives the same completed program.
+
+## v0.56.3 (2026-09-10)
+
+### Fixed: ambiguous action return targets fail closed
+
+- Managed action redirects now reject malformed, cross-origin, encoded leading double-slash, and invalid UTF-8 return targets before navigation.
+- Valid same-origin root-relative paths retain their query and fragment components, so post-action flows remain precise without opening an external redirect path.
+
+## v0.56.2 (2026-09-09)
+
+### Changed: managed region polling and regenerated bundles
+
+- Periodic regions continue refreshing when their retained, non-editable root holds GoSX-managed hash-navigation focus; this fixes indefinitely paused updates after section redirects.
+- Focused descendants, editable/native-control roots, active pointers, hidden documents, and in-flight navigation still defer polling.
+- Checked-in runtime bundles and their generated compressed/map siblings were regenerated from the current source so published assets match the release.
+
+## v0.56.1 (2026-09-09)
+
+### Fixed: edge scrolling for fixed-target transfers
+
+- Declarative transfer gestures now scroll the nearest scrollable ancestor or document viewport while a pointer or touch is held near an edge, re-testing live targets at the held coordinates after each scroll increment.
+- Edge scrolling uses deterministic instant increments even when smooth scroll CSS is active and cleans up on release, cancellation, lost pointer capture, Escape, and navigation; no optimistic DOM relocation occurs.
+
+## v0.56.0 (2026-09-08)
+
+### Added: fixed-target transfer gestures
+
+- `data-gosx-transfer` roots declare stable source and destination identities, optional source-specific eligibility, context fields, and a same-origin managed POST action for fixed-slot assignments.
+- Pointer, touch, and keyboard pickup/commit are supported with Space/Enter, arrow keys, Tab/Shift+Tab, and Escape. Touch handling is scoped to the source handle so surrounding board and list surfaces retain native scrolling.
+- Transfer submissions carry CSRF and context fields without optimistic DOM relocation. Authoritative action results, server rejection, unknown transport failures, and region replacement all clear pending gesture state and leave the rendered assignment under server control.
+
+### Added: perspective spot-light shadows
+
+- WebGL2 and WebGPU now render and sample one perspective shadow map for a valid shadow-casting spot light. Directional and spot lights share two deterministic authored-order shadow-light slots; invalid spot projections fail closed before consuming a slot.
+- Typed SceneIR, canonical IR validation and identity, command diffs, and live planner signatures preserve every spot-shadow field. A shadowed spot cone must have a finite half-angle below pi/2 and may request at most one shadow map.
+- Spot shadow targets are retired when lights disappear or become invalid, and are released again during renderer disposal or GPU loss. Receiver shaders reject fragments behind the light or outside the full projected clip volume before sampling.
+- WebGPU keeps each shadow light's base and retained-caster matrices in separate aligned buffer regions through frame submission, including mixed directional/spot pairs.
+- Alpha cutoff remains a visible-surface feature: the shared depth-only shadow passes cast the mesh's closed silhouette rather than a texture-cutout silhouette. Point-light shadows remain unsupported.
+
+### Added: server-first Polar hosted checkout
+
+- `polarui.CheckoutForm` renders a zero-runtime native POST with only a bounded opaque offer ID and GoSX-compatible CSRF token. Root-relative action validation fails closed to a disabled non-form fallback.
+- `polaradapter` resolves the offer to typed server-owned product, customer, locale, billing, and callback inputs, then calls Polar's fixed production or sandbox Checkout API with a private OAT and returns an empty no-store 303.
+- Provider calls and responses are time/size bounded; redirects are disabled; callback URLs derive only from configured `PublicOrigin`; returned checkout URLs require an exact configured HTTPS origin; provider bodies, client secrets, and diagnostics are neither retained nor exposed.
+- This slice intentionally adds no browser runtime, embedded checkout, or webhook handler. Payment fulfillment remains authoritative only after a separately verified Polar webhook or server check.
+
+### Added: consumer-backed image art direction
+
+- `server.ImageProps.Sources` accepts ordered `server.ImageSource` entries with `srcset`, `media`, `sizes`, `type`, and optional positive `width`/`height`. A non-empty source list opts the existing fallback `<img>` into native `<picture>` markup; source order is preserved because the browser's first matching source wins, while per-source dimensions reserve the correct box for crops with a different aspect ratio.
+- `server.ImageProps.PictureAttrs` applies a distinct `gosx.AttrList` to the `<picture>` wrapper. Existing variadic attributes remain on the fallback `<img>`, and wrapper attributes alone do not create a wrapper. The file-routed `<Image>` builtin maps `pictureAttrs={...}` from an `AttrList` or a deterministically ordered string-keyed map and consumes the prop instead of leaking it onto the image.
+- The file-routed `<Image>` builtin accepts the source contract through `sources={...}`. Authored art-direction sources precede any generic format source generated from the build manifest, so a media-specific crop cannot be shadowed by an unconditional WebP source.
+- Source candidates remain author-owned: GoSX escapes them into HTML but does not fetch, cache, or rewrite remote media, and no client JavaScript is added. This slice follows the real Muddy Noni storefront layout that already had to hand-author mobile `<source media>` candidates.
+
+### Added: strict pure-view composition inside islands
+
+- A `//gosx:island` component may call same-file strict pure-view components. The compiler inlines each invocation into the parent island program, including direct typed scalar props, caller children, and named slots; the browser still hydrates one root with one VM and no component-call opcode.
+- The boundary fails closed for nested islands, engines, legacy or imported callees, callee-owned reactive behavior, handler-valued props, nested/slice props, spreads, cycles, more than 32 component frames, and programs beyond the VM's 65,535-node/expression limits.
+- Root island call-site children and slots now fail explicitly instead of being omitted from the per-component `.gxi` program. Put a slot-bearing pure-view component inside the island instead.
+
+### Changed: Stripe integrations are server-first and secret-safe
+
+- `stripeui.HostedCheckoutForm` is now the default Checkout path: a native POST to an app-owned same-origin endpoint, followed by the app's server-side Stripe API call and 303 redirect. It requires no Stripe.js or GoSX client runtime.
+- Elements, embedded Checkout, and custom Checkout now use GoSX runtime surfaces and a fixed `SessionAction`. The shared scoped transport owns same-origin enforcement, CSRF headers, cancellation, and disposal; query-bearing and external action targets fail closed.
+- Stripe.js is always loaded directly from `js.stripe.com`. The bridge emits only bounded `ready`, `status`, `complete`, and `error` UX events; webhook/server state remains authoritative.
+- The pre-1.0 `ClientSecret`, `FetchRequest`, arbitrary request headers/body, raw provider event forwarding, custom Stripe.js URL, and ambient lifecycle-wrapper APIs were removed. See `docs/stripe.md` for migration examples.
+- Managed Stripe scripts now register through the nonce-aware page runtime after bootstrap, repeated `Require`/bridge execution is idempotent, Elements confirmation binds only an explicit accessible button, and every serialized provider option is a typed allowlisted field rather than an arbitrary map.
+
+## v0.55.2 (2026-09-04)
+
+### Fixed: comments inside GSX markup compile away
+- A `//` line inside GSX element children now compiles away, instead of rendering as page text. Text with `//` after other content on a line, and URLs, stay untouched.
+- `{/* a comment */}` and `{// a comment}` now compile away too, instead of failing to parse.
+- A `//` line inside `<script>`, `<style>`, `<pre>`, or `<textarea>` still renders verbatim; none of this applies inside an attribute value.
+
+## v0.55.1 (2026-09-02)
+
+### Fixed: responsive Scene3D canvases honor fill-height layout bounds
+
+- `fillHeight` scenes now derive their responsive height from the mount's layout box instead of feeding the canvas's stale intrinsic aspect ratio back into each resize pass.
+- Grid- and flex-bound Scene3D canvases remain inside their viewport during initial hydration and soft navigation instead of growing beneath adjacent panels or docks.
+
+## v0.55.0 (2026-09-02)
+
+### Changed: soft navigation preserves the interactive page shell
+
+- Managed navigation now reconciles safe body elements in place instead of deleting and cloning the complete body. Unique `id` and `data-gosx-key` elements retain identity across sibling moves; compatible unkeyed wrappers reconcile positionally so keyed panels and forms nested under the page shell remain stable.
+- Incoming server attributes and content still apply. Dirty or focused stable controls retain their live value, selection, and focus, while untouched controls adopt the new server value. Runtime-owned islands, non-reused engines, runtime surfaces, scripts, media, and opaque custom elements are replaced through their existing dispose/bootstrap lifecycle.
+- With `app.EnableNavigation()`, safe same-origin anchors, GET forms, and same-origin GoSX `POST .../__actions/<name>` forms are managed automatically. Add `data-gosx-native` to a link or form to require native browser navigation/submission. Existing `data-gosx-link`, `data-gosx-form`, and `data-gosx-managed` contracts remain compatible.
+- Scene3D reuse decisions may now complete asynchronously before page disposal, allowing a compatible changed scene to apply a command diff while retaining its live mount and canvas. A stale navigation re-checks supersession after that decision and cannot dispose a newer page.
+
+### Changed: procedural Scene3D meshes stay on the retained fast path
+
+- Procedural solid geometry now carries complete finite tangent frames, so normal-mapped PBR materials do not require a later repair pass.
+- Static, finite procedural meshes with safe positive transforms remain in retained WebGL and WebGPU shadow passes. Dynamic, reflected, skinned, morphed, water, wireframe, and custom-shader cases keep their conservative world-baked fallback.
+
+### Changed: bundle budgets govern meaningful growth
+
+- Generated-runtime size targets are reviewed baselines with bounded warning and failure bands instead of byte-perfect tripwires. Compression noise stays quiet while dependency-sized regressions still fail.
+- CI route payloads use rounded product ceilings, and the checked-in default budget now has a production-loader contract test covering every profile, route, assertion, and configured metric.
+
+## v0.54.2 (2026-09-02)
+
+### Fixed: selected PBR meshes keep their authored solid finish
+- Selecting an ordinary solid mesh now applies a restrained emissive lift instead of drawing every triangle edge as a yellow overlay. High-segment cylinders and spheres therefore keep their material surface instead of exposing cap fans and tessellation as a wire cage.
+- Explicit `outlineColor` / positive `outlineWidth` authoring and explicit `wireframe: true` continue to use the generated-edge path.
+- Custom non-Selena shaders retain their historical edge fallback, while Selena materials continue to own their selection treatment without generated topology lines.
+
+## v0.54.1 (2026-09-02)
+
+### Fixed: typed standard materials render as solid PBR surfaces by default
+- `scene.StandardMaterial` now lowers an omitted `Wireframe` value as an explicit `false`, so untextured spheres, cylinders, boxes, and other typed PBR primitives generate filled triangle geometry instead of silently falling back to edge-only rendering.
+- `Wireframe: scene.Bool(true)` remains an explicit opt-in, and raw hand-authored SceneIR that omits `wireframe` keeps its historical compatibility behavior.
+- Typed SceneIR and `LegacyProps` now carry the same solid-default contract across ordinary meshes, models, and instanced meshes without changing other material kinds.
+
+## v0.54.0 (2026-08-31)
+
+### Added: selective runtime asset emission
+- `gosx.config.json` accepts a `build.runtime` object with two fields. `sourceMaps` (default true) gates every `.js.map` sidecar copy. `exclude` names asset roles that the build must not emit.
+- Valid roles: `islands`, `engines`, `hubs`, `controllers`, `textlayout`, `scene3d`, `video`, `payments`, `relay`. An unknown, blank, or duplicate role fails the build with a clear error.
+- An excluded asset is never read, never written, and never appears in `build.json`, so the renderer emits no tag and no preload hint for it. The core loader chain and the WASM artifacts are not excludable.
+- A server-rendered application that excludes `scene3d`, `video`, `payments`, `relay`, and `textlayout` and disables source maps writes about 14 MB less per build.
+- With no `build.runtime` block, emission is byte-identical to v0.53.10.
+
+### Changed
+- `buildmanifest` optional runtime-asset fields use `omitzero`, so an absent asset is absent from `build.json` instead of an empty object.
+- This release also carries the scene3d and CI maintenance commits that landed on `main` after v0.53.10.
+
+## v0.53.10 (2026-08-29)
+
+### Added: live binds that need no fetch, attributes and classes, and regions that grow
+- `data-gosx-live-bind-attr` sets a named attribute from a bind key; `data-gosx-live-bind-class` toggles a named class from a boolean. An attribute bind passes a POSITIVE allowlist: never an `on*` handler, `style`, `srcdoc`, a script or data URL, or a runtime `data-gosx-*` attribute other than `data-gosx-countdown` (refused on a node that also declares `data-gosx-countdown-then`). `hidden` and `disabled` toggle by attribute presence, not by writing the text `"true"`/`"false"`.
+- `data-gosx-live-mode="event"` applies a hub event's object payload to `data-gosx-live-bind` keys without a fetch; `data-gosx-live-src` is optional in that mode.
+- `data-gosx-region-mode="append|prepend"` inserts a fetched fragment beside existing children; `data-gosx-region-key` drops duplicates; `data-gosx-region-cursor` fills `{cursor}` in the URL.
+- A countdown re-reads a changed `data-gosx-countdown`; `window.__gosx.countdown.retarget(root)` restarts the shared timer after an expiry.
+- `data-gosx-cue-toggle` and `window.__gosx.cues` mute every countdown and watcher cue; the state persists under `gosx:cues:muted`; `gosx:cue:muted` announces a change.
+
+### Changed: hub reconnect uses exponential backoff
+- 500 ms to 15 s with 25 percent jitter, reset on a successful open.
+
+## v0.53.9 (2026-08-29)
+
+### Fixed: countdowns, watchers, and filters keep working after a region swap
+
+- A `data-gosx-countdown`, `data-gosx-watch`, or `data-gosx-filter`
+  element swapped in by a `data-gosx-region` refresh now registers
+  correctly. The navigation runtime re-scans the document on
+  `gosx:region:after`, the event a region already dispatches after every
+  successful swap.
+- The shared countdown interval keeps its own phase across a rescan
+  instead of being torn down and recreated, so two region swaps under
+  1000ms apart no longer freeze every countdown on the page.
+- A title flash (`data-gosx-watch-effect="title"`) keeps its current
+  on/off phase across a rescan, and `data-gosx-filter-announce` never
+  re-announces an unchanged "N of M shown" count on a rescan. A real page
+  navigation still announces exactly as before.
+- The rescan never restarts periodic revalidation, the heartbeat ping, or
+  a live region's own connection; those keep their own independent timer
+  or connection across every swap.
+
+### Changed: the declarative heartbeat pings while hidden, at a slower marked rate
+
+- `data-gosx-heartbeat` no longer pauses entirely while the document is
+  hidden. A hidden document used to produce the same silence
+  as a closed browser. A server that acted on that silence — for example
+  by shortening a timer or marking a player absent — could not tell a
+  backgrounded tab from a departed visitor.
+- The runtime now keeps pinging while hidden, on a separate, slower
+  interval: `data-gosx-heartbeat-hidden-interval`. This attribute uses
+  the same whole-second or whole-minute grammar as
+  `data-gosx-heartbeat-interval`. It is optional and defaults to 60s.
+- Every ping the hidden interval starts carries one request header:
+  `X-GoSX-Heartbeat-Visibility: hidden`. A ping the visible interval
+  starts carries no such header. A server that ignores the header keeps
+  seeing the same pings, at the same pace, while a tab stays visible.
+- A tab that returns to visible switches back to the normal interval at
+  once. It does not wait out the remaining time on the hidden interval.
+- Each ping's marker reflects the document's real visibility state at
+  the moment the ping fires. It does not depend on which of the two
+  timers the runtime believes started it. A background tab's timers are
+  already throttled by the browser, often to about once a minute, so a
+  tick can land after visibility already changed.
+- This removes the earlier "one immediate catch-up ping on visibility
+  return" behavior. That behavior compensated for a heartbeat that
+  stopped while hidden. The heartbeat no longer stops, so no gap remains
+  to catch up on.
+
+## v0.53.8 (2026-08-24)
+
+### Added: strict bundle boundary and safe staged artifacts
+
+- Production, offline, static, and image stages now consume a freshly staged
+  dist/ tree rather than copying source roots directly.
+- gosx.config.json accepts strict build.bundle allowances for immutable
+  app/ or content/ data, exact anonymous public/ files, and exclusions.
+  Secrets, symlinks, special files, and mutable database/state sidecars are
+  denied by default and cannot be smuggled through exclusions.
+- Existing mutable application state should live outside app/, content/, and
+  public/; configure an explicit runtime volume or external state path instead
+  of placing it in a deployable bundle.
+
+## v0.53.7 (2026-08-23)
+
+### Added: opt-in action redirects can return to the submitted page
+
+- `action.Context.RedirectBackWithMessage` selects the already-sanitized
+  `__gosx_return_to` target when present, otherwise a sanitized root-relative
+  fallback, while carrying the same completion message through native
+  POST-redirect-GET and managed JSON responses. Query strings and fragments are
+  preserved, and invalid or empty targets resolve to the safe root path `/`.
+- The reserved return-target field remains private: it is removed before
+  application handlers observe `Context.FormData` and before values are
+  flashed or emitted in managed JSON.
+
+### Fixed: action redirect output is fail-closed
+
+- Explicit `Result.Redirect` values now pass through the same root-relative
+  sanitizer before native `Location` headers and managed JSON are emitted.
+  Unsafe non-empty redirects deterministically resolve to `/`, preventing an
+  open redirect while preserving valid explicit destinations.
+
+## v0.53.6 (2026-08-23)
+
+### Fixed: relocated production bundles load their own app files
+
+- Generated Go server binaries now use `-trimpath`, so moving a production bundle away from its source checkout does not leave runtime file loading pointed at the build machine.
+- End-to-end coverage proves page and sibling-fragment rendering after relocation, and the component-rendering docs clarify structural props compatibility.
+
+## v0.53.5 (2026-08-23)
+
+### Fixed: layout data contracts follow every real render context
+
+- Strict checking now validates a layout's `data.*` reads against the literal
+  keys returned by the descendant page loader that actually renders through
+  that layout. Nested layouts remain scoped to their own route subtree, and a
+  layout's loader cannot accidentally satisfy its own descendant contract.
+- Error and not-found views are checked with their real layout chains and
+  route patterns, including scoped, nested, per-page, `.gsx`, and `.html`
+  variants. Diagnostics are deterministic and deduplicated by source, route,
+  and render kind.
+- Layouts that author a `Bindings` expression deliberately abstain from this
+  static contract because the binding may replace the inherited page data at
+  runtime. Direct page data checks keep their existing behavior.
+
+## v0.53.4 (2026-08-23)
+
+### Added: native actions can preserve an exact same-origin return target
+
+- `action.ReturnTargetField` exposes the reserved `__gosx_return_to` form
+  field for progressively enhanced mutations that should return to a specific
+  path, query, and fragment. The server accepts only a root-relative,
+  same-origin target, removes the private field before application handlers or
+  feedback can observe it, and uses it ahead of a safe same-site referrer or
+  the action route fallback. Explicit handler redirects remain authoritative.
+
+### Fixed: managed navigation preserves and applies URL fragments
+
+- Authored fragments now survive fetch responses whose `Response.url` omits
+  them, including same-origin HTTP redirects that change the path or query.
+- Same-document fragment changes update history, focus, and scroll without a
+  redundant page fetch. Redirect-backed managed actions invalidate the target
+  page cache and scroll to their destination fragment instead of retaining the
+  outgoing scroll position.
+
+## v0.53.3 (2026-08-23)
+
+### Fixed: typed legacy `<Each>` preserves dynamic selector boundaries
+
+- The v0.53.2 selector guard incorrectly continued static field resolution
+  through map, interface, and `any` projections, treating valid legacy dynamic
+  keys as Go struct selectors and rejecting those views before rendering.
+- Resolution now stops at the dynamic boundary and keeps the projected selector
+  path opaque. Known struct hops before that boundary and real struct-backed
+  item fields remain strict. Focused lowering and strict-check coverage plus an
+  actual Gridiron Draft Room production build verify the corrected contract.
+
+## v0.53.2 (2026-08-23)
+
+### Fixed: typed legacy `<Each>` selectors honor strict field visibility
+
+- Legacy `<Each>` loops whose collection is statically resolvable to a declared
+  struct slice now validate item selectors against the same visible-field rules
+  as strict components. Go-invisible lowercase and snake-case selectors are
+  diagnosed before runtime instead of being silently lost by reflective
+  rendering. This covers expressions and attributes, including default `item`
+  bindings and nested loops.
+- Slice-preserving `.filter(...)` receivers are peeled structurally, so the
+  collection schema remains authoritative even when a predicate references
+  multiple roots or uses comments and spacing. Unresolved expressions,
+  map-like transforms, pointer-backed collections, custom `<Each>` components,
+  and other dynamic legacy shapes retain their existing runtime contract.
+
+## v0.53.1 (2026-08-22)
+
+### Fixed: declarative regions retain the last good DOM on HTTP errors
+
+- A `data-gosx-region` refresh that receives a 4xx or 5xx response now moves
+  from `pending` to `error` without replacing its server-rendered or last
+  successful fragment. Busy and request markers clear when the request settles,
+  and a later successful refresh recovers the region to `ready` normally.
+- `gosx:region:error` reports the region element, request URL, and numeric HTTP
+  status without exposing the response, response body, headers, or status text.
+  Authored-source and generated-minified runtime suites hold the contract.
+
+## v0.53.0 (2026-08-22)
+
+### Added: one structured result can drive redirects and visible action feedback
+
+- `action.Context.RedirectWithMessage` carries the same completion message
+  through native POST-redirect-GET and managed-form JSON responses. Apps no
+  longer need a separate session flash merely to explain a successful redirect.
+- Pages can render a `data-gosx-toast-host` to opt into visible managed-action
+  feedback. Success notices dismiss automatically after six seconds, errors
+  remain until dismissed, both use accessible status semantics, and stable
+  `gosx-toast*` classes let the application own presentation.
+- Redirect-backed managed actions project their toast only after soft
+  navigation settles, so feedback lands in the destination page instead of an
+  outgoing DOM tree that is about to be replaced.
+
+- `action.WantsJSON` is now the public authority for managed-action request
+  negotiation. Applications that genuinely need to branch can share GoSX's
+  `Accept`, `Content-Type`, and `X-Requested-With` interpretation instead of
+  reimplementing it.
+
+### Fixed: structured action failures stay failures across HTTP redirects
+
+- Managed navigation now treats a structured result's `ok` field as
+  authoritative even when the fetch followed an HTTP redirect to a successful
+  page response. Validation and action failures therefore cannot be silently
+  promoted to success by transport status.
+
+## v0.52.1 (2026-08-22)
+
+### Added: a screen-space pixel floor for compute particles and named materials
+
+Attenuation scales a point sprite by distance, so any moving system sweeps
+each sprite's projected size every frame. A sprite that dips below one pixel
+stops covering a pixel and winks on and off against the pixel grid. That
+scintillation reads as flicker, and viewers describe it as a render error
+rather than as motion.
+
+Point layers have always had `Points.MinPixelSize` for this. Two paths had
+no equivalent:
+
+- **Compute particles.** `scene.ParticleMaterial` carried no floor, so the
+  only way to steady a scintillating particle system was to switch
+  `Attenuation` off and lose the depth cue with it. It now carries
+  `MinPixelSize` and `MaxPixelSize`, lowered through the IR to the runtime.
+  The WebGPU backend already read `material.minPixelSize`; it was waiting on
+  a field the Go API never exposed, so that path needed no change.
+- **Named materials.** A GLB-derived point layer has no `Points` struct of
+  its own — its render properties come from the `<Material>` it binds to —
+  and neither the material normalizer nor named-material application carried
+  `minPixelSize`. Such a layer therefore could not be floored at all. Both
+  now carry it.
+
+Neither field changes existing scenes: zero means unfloored, the previous
+behaviour.
+
+## v0.52.0 (2026-08-22)
+
+### Added: accessible disclosure is framework substrate
+
+- Disclosure and modal behavior now ships in both the lean
+  `App.EnableNavigation()` payload and fetched bootstrap bundles, guarded by
+  one idempotent `window.__gosx.disclosure` authority. Loading both paths does
+  not install duplicate document listeners.
+- `data-gosx-disclosure-*` owns topmost Escape handling independent of current
+  focus, initial/first/panel focus fallback, a wrapping Tab trap, connected
+  focus return, and exact restoration of background `inert` state for modal
+  panels. Soft navigation closes and cleans active disclosures without
+  returning focus into disconnected markup.
+- Core attribute constants and IR typo recognition cover the disclosure,
+  target, close, backdrop, initial-focus, and modal contracts.
+
+### Fixed: route links remain current while the query changes
+
+- A queryless managed link now marks its same-path route current even when the
+  current URL has a query string. An explicitly authored query remains exact,
+  while ancestor and root behavior is unchanged. Client refreshes and
+  server-rendered file routes use the same rule.
+
+## v0.51.1 (2026-08-21)
+
+### Fixed: a version-pinned golden broke every release
+
+The dashboard strict-props conversion test normalized the footer's live
+clock to TIME but pinned the framework version the same footer stamps, so
+the golden stopped matching the moment the version was bumped and the
+v0.51.0 release failed its own test-unit gate. The version is incidental
+to what that golden proves — that the conversion renders identical BYTES —
+so it is now normalized to VERSION exactly like the clock. Releases no
+longer require hand-editing a golden.
+
+Carries the same client fixes as v0.51.0, whose release never published.
+
+## v0.51.0 (2026-08-21)
+
+### Fixed: four client fixes were lost when main was squashed
+
+main was reset to a single orphan commit on 2026-08-18, detaching 1744
+commits of history and every release tag. v0.50.x was then built on that
+snapshot, which predates four client fixes, so releases regressed. This
+release reattaches the history — every tag from v0.45.2 through v0.50.1 is
+reachable from main again — and restores the two fixes the snapshot never
+carried.
+
+- **An inline authored material on a points layer never reached the GPU.**
+  Points normalization rebuilt each layer from a whitelist that carried only
+  a named `material` string, while the mesh, instanced-mesh and model
+  normalizers carried the authored shader through. A layer authoring its
+  shader inline arrived stripped, and both backends silently drew it with the
+  builtin points program. Nothing failed loudly: the shader was never handed
+  to the GPU to fail, and the render loop still ran because the animation gate
+  reads the raw props scene. Measured on the affected page: 531 draw calls,
+  zero authored shader uploads, zero `time` uniform uploads.
+- **Soft navigation re-executed runtime chunks over a config change.**
+  Managed head scripts were matched by full `outerHTML`, so the same module
+  carrying different per-route configuration looked like a different script
+  and was re-fetched and re-executed. Managed scripts now match on module URL,
+  and the retained node receives the incoming route's configuration, which the
+  scene runtime reads lazily off the live tag.
+- **Hubs stayed dead after a back-forward-cache restore.** Only the socket's
+  close event scheduled a reconnect, and a frozen page is not guaranteed to
+  deliver it. `pageshow` now revalidates from the socket's actual state.
+
+### Known: the bootstrap TypeScript migration is unfinished
+
+31 of the 70 `bootstrap-src` sources are still `.js`. They are all
+deliberately unbalanced prefix/suffix fragments that are concatenated into a
+chunk, so no TypeScript parser can read them standalone; the 39 already
+migrated were exactly the balanced ones. Finishing the migration requires
+moving the bundler's transpile boundary from per-source to per-chunk, which
+changes source-map generation, and is tracked separately.
+
+## v0.50.1 (2026-08-22)
+
+### Added: static CSRF coverage for mutating file actions
+
+- **Check 1a — a mutating file-action form must carry a CSRF control
+  (error).** The same check now recognizes a static POST, PUT, PATCH, or
+  DELETE `<form action={actionPath("name")}>` and requires a descendant
+  form control named `csrf_token` when the complete tree is statically
+  visible. Plain elements and fragments may sit between the form and the
+  control. Component calls, expression holes, spreads, raw HTML, and dynamic
+  control names produce a warning instead of an error because they may render
+  the token at runtime.
+  GET forms and native/external actions remain outside this file-action
+  contract. The diagnostic mirrors `session.Manager.Protect`'s form-field
+  fallback so a deployed action cannot silently fail solely because its
+  page omitted the token.
+- Authentication and forms documentation plus the docs templates now explain
+  the session.Manager.Protect pairing and the csrf_token control contract.
+
+### Fixed: duplicate form attributes follow browser behavior
+
+- Strict form-action analysis now uses the first direct action and method
+  attributes, so later duplicates cannot hide a mutating file action or change
+  a native/GET classification.
+- Regression coverage now exercises duplicate attributes and every unsafe
+  method.
+
+## v0.50.0 (2026-08-21)
+
+### Added: static bearer token middleware
+
+- `auth.RequireBearerToken` protects internal and service-to-service handlers
+  with one configured RFC 6750 bearer token. It requires exactly one
+  `Authorization` header, parses the token68 credential, and compares its
+  SHA-256 digest in constant time.
+- `auth.BearerOptions` controls the escaped `WWW-Authenticate` realm and can
+  hide an unconfigured optional route as a 404. Empty configuration never
+  authenticates, and rejected credentials are never logged or echoed.
+
+### Changed: document composition has one explicit renderer
+
+- `server.HTMLDocument` now accepts a `*server.DocumentContext`, which is the
+  single document-shell entry point for titles, language, head content, body
+  content, body attributes, status, request metadata, and CSP nonce threading.
+- Titles are escaped as text, language values are trimmed and escaped, body
+  attributes compose with GoSX's framework attributes, and the framework owns
+  exactly one responsive viewport meta tag.
+- `HTMLDocument` treats its input context as immutable and retains a
+  request-prepared head. Direct contexts receive one framework-owned document
+  contract on a private copy, so custom renderers can delegate to
+  `HTMLDocument` without duplicating the contract or rewriting arbitrary
+  `RawHTML`.
+- The pre-v1 clean break removes the overloaded
+  `HTMLDocumentWithLanguage`, `HTMLDocumentWithNonce`, and
+  `HTMLDocumentWithBodyAttrs` helpers. Existing layouts should populate a
+  `server.DocumentContext` and call `server.HTMLDocument`.
+- `PageState.SetLanguage` / `Language` make the document locale explicit, and
+  `route.RouteContext.Document(defaultTitle, body)` is the native route seam
+  that composes the full request-scoped context without dropping route or
+  runtime state. Generated scaffolds opt into English explicitly.
+
+### Breaking — removed navigation and managed-script loading helpers
+
+- **`server.NavigationScript` and `server.NavigationScriptWithNonce` are
+  removed.** Call `app.EnableNavigation` instead. It owns navigation-runtime
+  injection and threads the request's CSP (Content Security Policy) nonce for
+  you, so you no longer add the navigation script by hand.
+- **`ManagedScriptOptions.Load` is removed**, together with the fetch/eval
+  loading mode it selected. A managed script now always loads through a real
+  DOM `<script>` element, with an explicit type, cross-origin policy, and
+  referrer policy.
+- Compose the document shell through
+  `server.HTMLDocument(*server.DocumentContext)` (see "Changed: document
+  composition has one explicit renderer" above). It threads the CSP nonce
+  through navigation, inline helpers, and managed scripts, and strips nonces
+  from shared-cacheable responses.
+
+### Added: a shared component call executes end to end for a strict caller
+
+- **A strict caller's shared component call now renders.** WP4 (v0.49.0)
+  proved the Go projection type-checks a call through a relative import
+  (`import ui "./ui"`; `<ui.TeamMark Tone={props.Tone}/>`), but `ir.Lower`
+  still refused the call outright for a strict caller, and the file
+  renderer had no way to execute one even where it compiled. Both gaps are
+  closed. `TeamMark`, the app that motivated this work, no longer needs a
+  separate, already-drifted copy in every page directory that renders it.
+- **`ir.Lower` accepts the call by SHAPE alone**, never by field: a dotted
+  tag whose alias names a relative (`./` or `../`) import in the file's own
+  `Program.Imports` is admitted, and only its spread-versus-named-attribute
+  shape is checked (`ir.SplitMemberTag`, `ir.IsSharedImportPath`). Lower
+  performs no file I/O — the LSP runs it on every keystroke with no
+  debounce — so it cannot and does not check whether the target directory
+  declares a matching component; that proof belongs to `gosx check`.
+- **`gosx check` (strictcheck) resolves a shared import through the real Go
+  compiler.** It loads the target directory (`transpile.LoadPackageDir`),
+  builds its component map (`transpile.CollectSharedComponents`), and adds
+  the target's own projected Go to `goCheck`'s overlay at a virtual path
+  inside the target's real directory, so `go list` resolves its true Go
+  import path and the caller's rewritten import statement resolves against
+  real declarations. A shared import that resolves outside the project's
+  `app/` directory is rejected with a diagnostic naming the import and both
+  directories: `gosx build` stages only `app/`, `content/`, and `public/`
+  into the deployment bundle, so a shared component elsewhere would
+  type-check locally and then not ship.
+- **The file renderer loads and executes the target component.**
+  `route.fileProgramRenderer.writeSharedComponent` resolves the target
+  directory relative to the rendering `.gsx` file's own directory
+  (`fileRenderOptions.SourceDir`, threaded from the file router's existing
+  path), compiles every `.gsx` file there through the same stat-keyed cache
+  a page renders through, and renders the resolved component on a second
+  renderer bound to its own `ir.Program` — `writeLocalComponentWithChildren`
+  requires this, because a node ID means nothing outside the `Nodes` slice
+  that owns it. Following PR #246's contract, children render on the
+  PARENT renderer (which owns the call node) before the finished node
+  crosses to the child renderer. A shared call carrying children into a
+  component that does not place `{children}` fails closed with the same
+  message a same-file call gives, rather than silently dropping the
+  content — `ir.Lower` cannot prove this for a shared call (no I/O), and
+  the Go compiler cannot catch it either (every strict component projects
+  a variadic `children` parameter that accepts any number of arguments), so
+  this is the one point that ever proves it.
+- **`transpile.TranspilePackageWithSharedImports`** and
+  **`transpile.LoadPackageDir`** are new exported entry points; every
+  existing exported function keeps its old signature and behavior
+  unchanged with a nil or absent shared-imports argument.
+- Known, accepted limitation: an editor's live diagnostics can lag `gosx
+  check` for a field typo at a shared call site, because resolving the
+  target directory on every keystroke (the LSP's synchronous, no-debounce
+  loop) is worse than a brief lag. `gosx check` and the build gate remain
+  authoritative.
+
+### Changed: examples/gosx-docs's StatCard, CapabilityTag, and Tooltip move to `.gsx`
+
+- **`StatCard` and `CapabilityTag` are now shared `.gsx` components** in
+  `examples/gosx-docs/app/ui/`, reached the same way `<ui.TeamMark/>` is:
+  an ordinary relative import. `StatCard`'s 7 existing call sites moved
+  from `{StatCard(value, label)}` to `<ui.StatCard Value={value}
+  Label={label}/>`; `CapabilityTag` had no call sites to move.
+- **`Tooltip` also moved**, and keeps no Go-callable form: its trigger
+  content only has a channel through `{children}`, which binds at a
+  nested call site inside another component's body, never at a Go-side
+  render entry.
+- **`CodeBlock` stays hand-built in Go.** Its job is embedding
+  already-rendered, syntax-highlighted HTML as raw markup, and a strict
+  component has no channel for that: a typed props field may only be a
+  scalar or a same-file struct, never a `gosx.Node`, and `{children}` binds
+  only at a nested call site, never at a Go-side render entry
+  (`route.ProgramRenderEnv` carries no `Children` field). `CodeBlock`'s 103
+  call sites all render it as an entry, so neither channel is open to it.
+  `examples/gosx-docs/app/components.go`'s own raw (`gosx.El`-family)
+  element-building call count drops from 13 to 7 as a result: 6 eliminated
+  (`StatCard` 3, `CapabilityTag` 1, `Tooltip` 2), `CodeBlock`'s 7 remain.
+### Added: a strict file-routed Page/not-found/error entry can declare typed root props
+
+- **`component Page(props: PageProps)` now renders its file module's own
+  `Load` return value as typed, proven props** (gosx#248). Before this
+  change, a strict render entry that declared props always failed to
+  render: the file renderer had no root props binding. A zero-props strict
+  entry could compile, but could not read its own loader's data either —
+  `data`, `request`, and `params` stay legacy-only reflective bindings, so a
+  strict page had no supported way to use `Load`'s result at all.
+- `renderFilePage` (`route/filesystem.go`) now passes `ctx.Data` — set from
+  this page's own `Load` hook before it renders — as `EntryProps` to
+  `renderFileNode`. A legacy (non-strict) entry never reads `EntryProps`, so
+  this changes nothing for it: it stays byte-identical.
+- The typed value is proved through `strictSpreadProps`, the exact boundary
+  a nested `<Component {...props}/>` call already runs on every render: the
+  reflect kind must be exactly `Struct`, and every rendered field is
+  re-checked against its declared leaf type.
+- A `Load` hook that returns `map[string]any` — every existing app's
+  shape — now fails closed with a message naming the component, its
+  declared props type, and what to return instead of a map. It never
+  silently coerces the map into a struct. A `Load` hook that returns the
+  wrong struct type, or one missing a rendered field, also fails closed,
+  and the message names the file and the component, not just the mismatch.
+- `strictcheck.CheckFile`'s blanket refusal of a props-bearing strict
+  render entry is narrowed to what the render path actually cannot bind: a
+  `layout.gsx` entry. No code path calls a layout's own module's `Load`
+  hook, so a layout's `EntryProps` is always `nil`; a Page, index,
+  not-found, or error entry can bind them and now passes this check.
+- `examples/dashboard/app/page.gsx`'s root page converts to
+  `component Page(props: PageProps)`, reading its existing `Load` hook's
+  data through typed props instead of the `data` binding. Its rendered
+  output is byte-identical to the pre-conversion legacy page (see
+  `TestDashboardRootPageStrictPropsMatchLegacyBytes`).
+### Fixed: a strict body calling a typed legacy component failed `gosx check`
+
+- **The strict projection now carries a typed legacy component as a signature
+  with a stub body** (gosx#240). That change made the composition legal at
+  lower time and correct at render time, but the projection retained only
+  strict declarations, so the projected Go named a function it did not carry
+  and the Go compiler reported `undefined: <Name>` against the author's own
+  component. Two seams accepted the composition and the third refused it.
+- **The body stays a stub on purpose.** `emitStrictSourceFile` omits legacy
+  bodies because they name `data`, `request`, and application helpers that
+  ordinary Go cannot resolve, and the legacy runtime interprets them later.
+  Only the caller's reference must resolve during the package type check, and
+  a signature carries that. Emitting the real body would reintroduce the
+  unresolvable identifiers the projection exists to avoid.
+- **An untyped legacy component stays omitted.** A strict body cannot call one
+  at all, so no projected reference to it can exist. That call still fails at
+  lower time with the diagnostic that names the remedy, never with a bare
+  undefined-symbol error from the Go compiler.
+### Added: `gosx check` warns on an untyped legacy component
+
+- **`gosx check` now warns on a `func Name(props any) Node` declaration.**
+  This is step one of retiring legacy component syntax. GoSX has three
+  component shapes today: strict, typed legacy, and untyped legacy. The
+  plan collapses them to one. The warning names the component and states
+  that this form is deprecated and removed before v1.0. It also names the
+  strict replacement: `component Name(props: NameProps)`, with the struct
+  declared in the same file.
+- The warning does not fail the check. Every existing untyped legacy
+  component keeps compiling, checking, and rendering exactly as before.
+  `gosx check` still exits 0 on a file that declares one.
+- `ir.Diagnostic` gains a `Severity` field (`SeverityError`, the zero
+  value, or `SeverityWarning`). The new `ir.ValidateWarnings` function
+  returns advisory findings that never block `gosx.Compile` or `gosx
+  check`, unlike `ir.Validate`'s diagnostics. The Language Server Protocol
+  (LSP) server maps `SeverityWarning` onto the LSP `Warning` severity, so
+  an editor renders it as a warning, not an error.
+- A zero-props legacy function (`func Page() Node`, with no props
+  parameter at all) does not warn. It is the dominant page and layout
+  entry shape today, with about 72 declarations in this repository alone.
+  Most of them read route-loader data or route parameters, which a
+  zero-props strict component cannot reach yet. Warning on it now would
+  bury the untyped legacy signal this change targets.
+- `README.md` and the `examples/gosx-docs` docs site now teach the strict
+  `component Name(props: Type)` form as the one way to declare a
+  component. The legacy Go-function form appears only in a clearly marked
+  deprecation note with conversion guidance. It also appears in the pages
+  that document islands and engines, which still require it.
+
+### Added: whole-application static correctness checks, before build and in the editor (gosx#249)
+
+- **A new warning severity channel.** `ir.Diagnostic` carries a `Severity`
+  field (`SeverityError`, the zero value, or `SeverityWarning`).
+  `ir.ValidateWarnings` is a sibling of `ir.Validate`: it runs the same
+  no-I/O pass over one `*ir.Program`, but returns only warnings. Nothing in
+  the fatal compile path (`gosx.Compile`) calls it. `strictcheck.Options`
+  gains a `Warnings *[]ir.Diagnostic` field; a whole-project check appends
+  its warning-severity findings there instead of failing the build.
+  `cmd/gosx check` and the build gate (`gosx build`) both print collected
+  warnings to stderr and still exit 0. `lsp` maps a warning to LSP
+  `SeverityWarning` (2) and reports it beside every error.
+- **Check 1 — a form action must resolve to a registered action (error).**
+  `strictcheck.validateFormActionContract` (`strictcheck/formaction.go`)
+  reads a static `action`/`formaction` attribute holding
+  `actionPath("name")` and confirms `"name"` is a key in the page's
+  `route.FileActions`, read from a composite literal in a `*.server.go`
+  file. An unresolved name is a guaranteed 404: `route.RouteContext.
+  ActionPath` builds the URL with no such lookup. This is the
+  `examples/dashboard` defect from the framework owner's premise: a form
+  posting to an action nothing ever registered.
+- **Check 2 — a required control must stay reachable (warning, heuristic).**
+  `strictcheck.validateRequiredReachabilityContract`
+  (`strictcheck/requiredreach.go`) cross-references a `required` control's
+  class and id against every `*.css` file under the project's `public/`
+  directory for a rule this scan recognizes as hiding it (`display: none`,
+  `visibility: hidden`, `opacity: 0`, or the `position: absolute` plus
+  zero/1px clip-box "visually-hidden" idiom). A browser refuses to submit a
+  form holding a required control it cannot focus — silently, with no
+  request and no console error. Every message states plainly that the
+  match ignores the cascade, specificity, and ancestor combinators, and
+  says so is a heuristic to verify by hand.
+- **Check 3 — every routable page must be mounted (warning).** `strict
+  check.validateRouteMountContract` (`strictcheck/routemount.go`) resolves
+  every `router.AddDir` call in the project (the `runtime.Caller(0)` +
+  `filepath.Dir`/`filepath.Join` idiom, and `server.ResolveAppRoot`) to an
+  absolute directory, asks `route.ScanDir` — the framework's own
+  file-route discovery — what each one actually mounts, and flags a
+  `page.gsx`/`index.gsx` outside every mounted tree. If any `AddDir` call's
+  target cannot be resolved with confidence, the whole run stays silent
+  rather than risk a false positive: an unresolvable call could mount
+  anywhere.
+- **Check 4 — a template's `data.X` read must resolve to a loader key
+  (warning, heuristic).** `strictcheck.validateDataLoaderKeysContract`
+  (`strictcheck/dataloader.go`) reads a page's `Load` hook (also matched
+  across a `route.FileModuleFor(source, opts)` registration one directory
+  up, for a shared parent server file registering a dynamic child route),
+  and — only when every return path is a fully literal
+  `map[string]any{...}` — flags a `data.X` read whose `X` never appears.
+  A page with no `Load` hook at all resolves to a confidently empty key
+  set: `data` is never assigned, so every read is certain, always nil. A
+  `Load` built through a helper call, a merge, or a `Bindings` hook that
+  might overwrite `data` abstains instead of guessing.
+- **Check 5 — a `data-gosx-*` attribute must name a real primitive with a
+  well-formed value.** `ir.ValidateWarnings` flags a name within edit
+  distance 1 of a known declarative navigation primitive (`data-gosx-
+  reorder`, `-heartbeat`, `-filter`, `-link`, and the rest of the
+  `server/navigation_contract.go` and `runtime_contract.go` family) as a
+  likely typo (warning) — scoped to that one closed family, not every
+  `data-gosx-*` name in the framework, so an unrelated attribute (`data-
+  gosx-motion`, `-scene3d-*`) stays out of scope. `ir.Validate` gains
+  error-severity value-shape checks for `data-gosx-heartbeat-interval` and
+  `-revalidate-interval` (the shared whole-seconds/whole-minutes grammar),
+  `data-gosx-link-current-policy`, and `data-gosx-prefetch` (each a fixed
+  enum two existing normalizer functions already silently coerce an
+  unrecognized value into).
+- **Every check accumulates I/O-heavy work in `strictcheck`
+  (`gosx check`, the build gate), never in `ir.Lower`'s per-keystroke
+  path.** The LSP runs `ir.Validate`/`ir.ValidateWarnings` — no file I/O —
+  on every keystroke, unchanged: this covers check 5 in full. `lsp` gains
+  a second cadence for the checks that do need file I/O: `textDocument/
+  didSave` now runs `lsp.AnalyzeProject` (checks 1, 2, and 4 — the ones
+  scoped to one package directory) and republishes the combined
+  diagnostic set; the server's `initialize` response now advertises save
+  support (`textDocumentSync.save`) so a real client actually sends the
+  notification. Check 3 (route mount) still needs every `.gsx` file and
+  every `router.AddDir` call in the whole project tree, a cost this
+  package does not ask an editor to pay on every save, so it remains
+  `gosx check`/build-gate only.
+- **A `*.gotmpl` sibling abstains a check the same way an unresolvable
+  registration call does.** `cmd/gosx/templates/docs/` — the scaffold
+  `gosx init` copies into a new project — ships `page.server.gotmpl`
+  beside every `page.gsx` that needs one, `main.gotmpl` at its root, and
+  no live `*.server.go` or `main.go` at all: `gosx init` renders each
+  template into a real file only when scaffolding a new project, never
+  before. Checks 1 and 4 (`strictcheck.hasUnrenderedServerGoTemplate`,
+  `strictcheck/servergo.go`) abstain when a `*.server.gotmpl` sits where
+  the expected `*.server.go` would; check 3
+  (`strictcheck.hasUnrenderedMainTemplate`, `strictcheck/routemount.go`)
+  abstains for a page below a directory holding an unrendered
+  `main.gotmpl`. Before this existed, the first `gosx check` run across
+  this repository reported 3 errors and 11 warnings, every one inside
+  that same scaffold, all false — the framework's own tooling reporting
+  its own scaffold as broken, which is exactly the "first impression is
+  noise" outcome a check that stays trustworthy must avoid. Run again
+  after fixing it, all five checks produce zero findings across this
+  entire repository; the checks landing beside this one (`ir.
+  ValidateWarnings`' own untyped-legacy-component check) are unaffected
+  and continue reporting normally.
+
+### Added: a Go caller can place a Go-computed node in a .gsx render entry's children slot
+
+- **`RenderProgramComponent` takes a new `children ...gosx.Node` parameter**
+  (gosx#226, gosx#246). A Go handler that renders a `.gsx`-authored component
+  through `RenderProgramComponent` can now pass one or more Go-computed
+  nodes — an island's rendered HTML, most often — for the component to place
+  wherever its body writes `{children}`. Before this, only a nested
+  `<Component>...</Component>` call inside another component's body could
+  reach that hole; a Go caller rendering the entry component itself had no
+  way in, and built the surrounding markup by hand with `gosx.El` instead.
+- **The added parameter is variadic, so no existing call changes.** A call
+  that passes no children reproduces the exact prior behavior: an
+  unresolved `children` identifier still fails soft to empty. Passing
+  children against a legacy (non-strict) component fails closed with an
+  error, since a legacy render entry has no `{children}` hole to bind them
+  to.
+- **Children stay unproven by design, exactly as gosx#246 defined them at a
+  nested call site.** They never enter `PropsFields`, `PropsPaths`, or
+  `PropsSlices`, and `setStrictComponentChildren`'s refusal to overwrite a
+  proved props field still holds — the render entry proves `Props` through
+  `strictSpreadProps` directly against the caller's struct, never through a
+  map `EntryChildren` could write into, so a declared `Children` props
+  field and Go-supplied entry children coexist without conflict.
+- **`RenderProgramComponentNode` returns a `gosx.Node` instead of a
+  string**, so the result composes directly into a `gosx.El(...)` tree
+  instead of forcing a caller to wrap the rendered string in `gosx.RawHTML`
+  by hand. It wraps the render with `gosx.RawHTML` exactly once; nothing
+  re-renders or re-escapes the result.
+- **`examples/dashboard`'s chrome.gsx gains a `Card` component**, and
+  `main.go`'s `chromeCard` helper calls `RenderProgramComponentNode` to
+  splice a chrome header, an island node, and (for the counter page) a
+  no-JS fallback into it. This converts the 9 `gosx.El("div", class="card",
+  ...)` call sites the framework's own examples audit attributed to this
+  gap, dropping `examples/dashboard`'s raw element-building call count from
+  58 to 49.
+- **This does not close the remaining 7 call sites the same audit
+  attributed to "layout chrome needing head and body injection hooks."**
+  `Layout` in `examples/dashboard/main.go` needs three separate injection
+  points — a per-route title and a per-request preload-hints node inside
+  `<head>`, the page content inside `<body>`, and an island manifest script
+  at the end of `<body>`, after content the file renderer has not finished
+  writing when `<head>` closes. `RenderProgramComponent` and
+  `RenderProgramComponentNode` bind one `children` slot, repeatable but
+  always the same content on each repeat (gosx#246's own two-holes test
+  pins this). One slot cannot address three distinct injection points.
+  Named, multiple slots are a separate, unimplemented capability; `Layout`,
+  `Sidebar`, and `Footer` still build their markup with `gosx.El`.
+
+### Added: named slots close the gap one `{children}` hole left (gosx#249)
+
+- **A strict component may now declare any number of named slots**, each a
+  bare reserved identifier `slot<Name>` (`{slotTitle}`, `{slotPageHead}`),
+  parallel to `children` but distinct from it and from every other named
+  slot. `internal/strictcomponent.IsSlotBindingName` names the one shape
+  every seam recognizes: `slot` followed by an upper-case-initial name. A
+  layout-shaped component can now express the three-plus injection points
+  one `{children}` hole could not — a per-route title, an island
+  preload-hints node, the page body, and an end-of-body hydration
+  manifest — each with its own name, none of them the same content
+  repeated (see `TestMultipleNamedSlotsAddressDistinctInjectionPoints`).
+- **A Go caller supplies a named slot through `ProgramRenderEnv.Slots
+  map[string]gosx.Node`**, keyed by slot name (`"Title"`, not
+  `"slotTitle"`), threaded to `fileRenderOptions.EntrySlots` the same way
+  `Children` reaches `EntryChildren`. A key naming a slot the render
+  entry's body never declares fails closed with a descriptive error,
+  following `validateStrictCalleeChildren`'s arity-rule precedent
+  (ir/lower.go) — supplying content a callee cannot place is a caller
+  error, not a silent no-op. A slot the body declares but `Slots` does not
+  supply stays an unresolved scope identifier and renders empty, exactly
+  the way an unsupplied `{children}` already does.
+- **Slots stay unproven, exactly as `{children}` already is.** A slot
+  value never enters `PropsFields`, `PropsPaths`, or `PropsSlices`; the
+  render entry proves `Props` directly against the caller's struct,
+  independent of any slot supplied beside it. A slot value is also
+  restricted to child-expression position, the same restriction
+  `{children}` already has (`class={slotFoo}` fails to check, for the same
+  reason `class={children}` does): a slot carries one opaque `gosx.Node`
+  the caller already rendered, not scalar data a caller could read a field
+  of.
+- **The end-of-body ordering case is closed for a pure `.gsx`-to-`.gsx`
+  nested call, with no Go glue and no relaxation of the no-function-calls
+  rule in strict expressions.** Two slot names, `PreloadHints` and
+  `PageHead`, are framework-filled: no caller writes a `.gsx` expression
+  or a `Slots` entry for them anywhere. `writeLocalComponentWithChildren`
+  (route/fileprogram.go) computes and binds them itself, immediately after
+  the call site's own children have fully rendered (any island those
+  children registered is already reflected) and before the callee's own
+  body walks — the identical two-step order `writeLocalComponent` already
+  used for `children` (render children first, walk the callee body
+  second), just with two more values computed in that same window. The
+  renderer fills a reserved hole; the `.gsx` author only writes a
+  placement, never a computation. `TestFrameworkFilledSlotReflectsIslandsRegisteredByChildren`
+  (route/named_slots_test.go) proves it end to end: the manifest script
+  placed at the very end of the body names the island the children
+  registered, and a snapshot taken before those children render proves the
+  two values genuinely differ — the ordering guarantee is load-bearing,
+  not incidental.
+- **`emitStrictComponent`'s Go projection places each slot parameter
+  before the variadic `children ...gosx.Node`** (transpile/transpile.go)
+  — Go forbids any parameter after `...T`, so a slot parameter can never
+  follow it. `strictcheck.CheckFile` transpiles through this path, so
+  `gosx check` depends on the ordering. `emitComponentCall`'s nested-call
+  projection supplies a zero `gosx.Node{}` for each declared slot a call
+  site does not otherwise resolve — this projection has no `slot="Name"`
+  call-site syntax yet, so every nested call takes the "declared but not
+  supplied" branch (see the next point). Fixing this exposed a latent
+  instance of a pre-existing, unrelated bug (confirmed present on `main`
+  before this change): a propless strict component's nested call site
+  wrongly received a `gosx.Props()` `AttrList` argument whenever the call
+  passed slots or children. This change closes the slots-only instance of
+  that bug; the pre-existing children-only instance is closed separately,
+  below ("Fixed: a propless strict component's nested call site rejected
+  children and slots").
+- **A caller-side `slot="Name"` attribute for a `.gsx`-to-`.gsx` nested
+  call is implemented separately, below** ("Added: a `.gsx` page can fill
+  a named slot on a `.gsx`-to-`.gsx` nested call, with no Go glue").
+- **`examples/dashboard`'s `Layout`, `Sidebar`, and `Footer` convert to a
+  new `layout.gsx`**, dropping the raw `gosx.El` call count from 49 to 42
+  (all 7 of the layout-chrome sites the prior entry named). `Sidebar` and
+  `Footer` are now plain strict components — `Footer` takes a `Message`
+  prop rather than a slot, since its per-request value (built with
+  `time.Now()`, which a strict expression cannot call) is scalar data, not
+  markup a slot's element-content-only contract could carry. `Layout`
+  declares `{slotTitle}`, `{slotPreloadHints}`, `{children}`, and
+  `{slotPageHead}`; `main.go`'s `chromeLayout` supplies all four in one
+  `RenderProgramComponent` call, since `/counter` and `/kitchen-sink`'s
+  own page content is deliberately hand-written Go (it needs real
+  signals, handlers, and island VM opcodes a strict `.gsx` body cannot
+  express) — the same "content built first, then the layout wraps it"
+  order every `route.LayoutFunc` already guarantees, not a new ordering
+  arrangement this conversion had to invent.
+- **The converted layout's rendered `/counter` and `/kitchen-sink`
+  responses were diffed against the pre-conversion output.** After
+  masking the wall-clock timestamp and normalizing insignificant
+  inter-tag whitespace and void-element self-closing (`<meta ... />` vs
+  `<meta ...>` — HTML5 parses both identically), the two are
+  byte-identical: same doctype, same tags, same attributes, same nesting,
+  same text, same island manifest content, in the same order. The
+  unnormalized diff is whitespace-only, a side effect of `gosx fmt`'s
+  canonical multi-line formatting (each `.gsx` grammar collapses a
+  whitespace-only text node between tags to one space — ir/lower.go's
+  `lowerText`) against a pre-conversion hand-written compact HTML string;
+  no document structure changed.
+
+### Fixed: a propless strict component's nested call site rejected children and slots
+
+- **`emitComponentCall`'s Go projection (transpile/transpile.go) no longer
+  passes a stray `gosx.Props()` argument to a propless strict callee.**
+  `emitStrictComponent` emits no leading props parameter for a strict
+  component that declares none, but `emitComponentCall` unconditionally
+  supplied a `gosx.Props()` `AttrList` value as the first argument at any
+  nested call site whose children (or, after the named-slots change
+  above, named slots) were non-empty — a type error `gosx check` reported
+  as `cannot use gosx.Props() ... as gosx.Node value`. This predates named
+  slots and is independent of them:
+  `TestCheckFileAllowsProplessStrictCalleeWithChildren`
+  (strictcheck/check_test.go) reproduces it with no slots at all, fails on
+  unmodified `origin/main`, and passes with this fix.
+- **The fix distinguishes a propless strict callee from an untyped legacy
+  one** (`isProplessStrictComponent`): only the latter's declared
+  parameter (`props any` or `props gosx.AttrList`) can receive a
+  `gosx.Props()` value, so only it still receives one. A strict callee
+  with a declared props type never reaches this code path at all
+  (`emitGSXElement` routes it through `emitTypedComponentCall`), so this
+  narrows an existing rule rather than adding a new one.
+
+### Added: a `.gsx` page can fill a named slot on a `.gsx`-to-`.gsx` nested call, with no Go glue
+
+- **A static `slot="Name"` attribute on a direct child of a nested
+  component call fills that named slot** — `<Layout><div
+  slot="Title">Standings</div><p>page content</p></Layout>` places
+  `<div>Standings</div>` (the whole tagged element, not just its inner
+  text — the same "one opaque `gosx.Node`" contract every other slot
+  supply already keeps) in Layout's `{slotTitle}` hole, and folds `<p>page
+  content</p>` into the ordinary `{children}` group. This is the `.gsx`
+  page composing a `.gsx` layout the owner named when this task was
+  redirected: before this change, a named slot was reachable only from a
+  Go caller through `ProgramRenderEnv.Slots`, so a pure `.gsx`-to-`.gsx`
+  composition could hand a layout its default children and nothing more.
+- **The child's own `slot` attribute is stripped before it renders** —
+  `ir/lower.go`'s `partitionCallSlots` removes it from the element's
+  `Attrs` whether the slot supply is valid or not, so it never leaks into
+  the output as a stray HTML attribute.
+- **A slot name must be a static string literal.** `slot={someExpr}` fails
+  to compile: "slot must be a static string literal... a computed slot
+  name... would have to be evaluated before the callee's children are
+  known, which reintroduces the ordering problem named slots close." A
+  computed name would need its value at partition time, before the
+  callee's children (and therefore its render order) are settled — exactly
+  the ordering problem the framework-filled `slotPreloadHints`/
+  `slotPageHead` slots (the prior entry) close by keeping that computation
+  inside the renderer, never inside a `.gsx` expression. No case surfaced
+  during this work where a literal name was insufficient; if one exists,
+  it is not in this codebase's own examples or test suite.
+- **`slot="Name"` is meaningful only on a DIRECT child of a component
+  call.** Two mistakes both fail closed with the same diagnostic instead
+  of silently joining the default children group: a slot on a plain HTML
+  element's own child (`<div><span slot="Title">x</span></div>`, no
+  enclosing component call at all), and a slot buried one level too deep
+  — wrapped in a plain HTML element or a Fragment before it ever reaches
+  the component call (`<Layout><div><span
+  slot="Title">x</span></div></Layout>`). An author who mistypes the
+  nesting is told so, at the exact element the mistake is on
+  (`partitionCallSlots` reports the child's own span, not the enclosing
+  call's).
+- **A slot supplied but not declared by the callee fails closed at
+  compile time** (`validateStrictCalleeSlots`, ir/lower.go) — the same
+  arity precedent `validateStrictCalleeChildren` already sets for
+  children, now provable statically here because `ir.Lower` has full
+  visibility into both the caller's supply and the callee's declared set
+  within one compiled program. A slot the callee declares but the call
+  site does not tag stays an unresolved scope identifier and renders
+  empty, exactly like an unsupplied `{children}` does today.
+- **Order at the call site never matters.** A slot-tagged child binds by
+  name, not by position among its siblings —
+  `TestCallerSideSlotOrderIndependent` (route/named_slots_test.go) proves
+  placing the tagged child first or last produces byte-identical output.
+  This matters because the OLD, unpartitioned children projection did not
+  have this property (see the next two points): `transpile.go`'s call-site
+  emission had to change to make it true.
+- **Fixed a second, closely related bug this feature's own implementation
+  surfaced: `emitTypedComponentCall`'s Go projection (a strict callee WITH
+  a declared props type) appended every child — slot-tagged or not — to
+  its call positionally, with no awareness that a slot-tagged child
+  belonged in an earlier, named parameter position.** That call still
+  compiled whenever the argument count matched (a slot count of N plus the
+  true children count still fills N-plus-variadic parameters), so a
+  caller's markup ORDER, not its `slot="Name"` tags, silently decided
+  which child filled which slot — confirmed with a reproduction where
+  swapping two children's order silently swapped which one bound to
+  `slotTitle`.
+  `TestTranspileTypedComponentCallRoutesSlotByName`
+  (transpile/named_slots_test.go) is the regression test.
+  `emitComponentCall` (the propless-strict / untyped-legacy call shape)
+  had the identical defect; `TestTranspileEmitComponentCallRoutesSlotByName`
+  covers it too. Both are fixed together, in `emitChildrenAndSlots`
+  (transpile.go): it partitions a statically slot-tagged direct child's
+  own projection out of the children list at the CST level, mirroring
+  `partitionCallSlots`, and `orderedSlotArgs` places each one in the exact
+  parameter position `emitStrictComponent` declared it in — a
+  declared-but-unsupplied slot still gets its zero `gosx.Node{}`, in
+  position, the same as before this feature added call-site syntax.
+  Neither call-site emitter duplicates `ir.Lower`'s validation
+  (non-static, non-direct-descendant, undeclared): `strictcheck.CheckFile`
+  always lowers before it transpiles (`checkPackage`'s builtin stage
+  order), so a program that reaches either emitter has already passed
+  those checks.
+- **`examples/dashboard/chrome.gsx` converts `CounterHowItWorksCard` to
+  this mechanism** — the proof this entry is checked against. It is a
+  same-file, same-program nested `<HeaderCard>` call with no
+  `RenderProgramComponent` anywhere in that specific path: `HeaderCard` is
+  a new component (`<div class="card">{slotHeader}{children}</div>`), left
+  separate from the existing `Card` component on purpose — adding a second
+  hole to `Card` itself and letting `gosx fmt` reformat its body onto
+  separate lines would have put a stray whitespace-only text node around
+  every existing `chromeCard` call's content (`ir/lower.go`'s `lowerText`
+  collapses one to a space), a real behavior change for markup this
+  conversion had no reason to touch. `CounterHowItWorksCard`'s own `<h3>`
+  heading moves to `slot="Header"`; its five `<p>` steps stay ordinary
+  children. The raw `gosx.El(` count in `examples/dashboard` does not
+  move: `chrome.gsx` was already `.gsx`, not `gosx.El`-based, before this
+  conversion — it stays at 42 (see the prior entry for the 49-to-42 move).
+- **The converted component's rendered output was diffed against the
+  pre-conversion output**, both in isolation (`CounterHowItWorksCard`
+  rendered alone through `RenderProgramComponent`) and for the full
+  `/counter` and `/kitchen-sink` page responses (a second worktree at the
+  pre-conversion commit, both dashboard servers run, both pages captured).
+  After masking the wall-clock timestamp and normalizing insignificant
+  whitespace runs to a single space, both diffs are empty: same tags, same
+  attributes, same text, same nesting, same order, everywhere on the page,
+  not only around the converted card. The unnormalized diff is two spots
+  of extra whitespace (three collapsed spaces where the pre-conversion
+  output had one, in two places) — `gosx fmt`'s canonical formatting of
+  `HeaderCard`'s new `{slotHeader}{children}` body onto separate lines,
+  and of the call site's own slot-tagged child onto its own line, each
+  adding one more whitespace-only text node than the pre-conversion
+  single-`<div class="card">` version had. No document structure changed.
+### Added: a strict island now compiles, checks, renders, and hydrates
+
+- **`component Name(props: NameProps)` now compiles with a `//gosx:island`
+  directive.** Lowering no longer rejects it. The v0.39-era refusal was
+  stale: the island lowerer, the client virtual machine (VM), and the
+  render boundary already supported it.
+- Two real gaps blocked it, not the whole pipeline. `ir/lower.go` rejected
+  the declaration outright. `route/fileprogram.go` also dispatched every
+  strict component through the same-file inline renderer before the island
+  branch could ever run.
+- Typed props cross the client boundary as plain JSON, the same as a legacy
+  island. The server proves field coverage and leaf types through
+  `localComponentProps`, the same boundary an ordinary strict component
+  uses.
+- The client VM needed no change. It already exposes every serialized prop
+  key as a flat name and as a field of a reserved `props` object
+  (`client/vm/island.go`'s `parseProps`). A strict island's `props.Field`
+  reads resolve through that existing binding.
+- `gosx check` proves a strict island exactly as it proves a legacy one. It
+  runs `ir.LowerIsland` for every island component, regardless of syntax.
+- `examples/hotswap/counter.gsx` now uses the strict spelling. It renders
+  HTML byte-identical to its legacy-syntax predecessor.
+- A new browser test, `e2e/strict_island_prod_e2e_test.go`, builds a strict
+  island with `gosx build --prod` and serves the production bundle. It
+  drives a real Chrome browser through a click that increments the
+  hydrated counter, proving hydration, not just compilation.
+- **`//gosx:engine` stays rejected.** The file renderer has no typed
+  dispatch for an engine surface's per-frame host calls. A strict engine
+  body cannot execute faithfully yet. The refusal message no longer cites
+  v0.39. It names the real, current reason.
+- Every existing legacy island and engine keeps working unchanged. No
+  exported API was removed or altered; this release only adds a new,
+  previously-rejected declaration shape.
+
+## v0.49.0 (2026-08-18)
+
+### Fixed: LoadFileProgram's documented fragment pattern broke under a `-trimpath` build
+
+- **`route.LoadFileProgramHere` resolves a page's sibling `.gsx` file without
+  depending on `runtime.Caller`'s raw path** (gosx#239). A `-trimpath` build
+  replaces that path with the calling module's declared path, which does not
+  exist on the machine that runs the binary. `gosx build` passes `-trimpath`
+  on every build, so the documented "Rendering a fragment from a Go handler"
+  pattern broke in every production build, not only some.
+- `RegisterFileModuleHere` carried the same weakness in its `.gsx`/`.html`
+  extension guess: it called `os.Stat` on the same unreachable path and
+  silently fell back to `.gsx`. A `.gsx` page kept working by coincidence; an
+  `.html` page lost its registered `Load`, `Render`, and `Actions` hooks
+  under `-trimpath`. Both now resolve through the same trimpath-safe path.
+- `LoadFileProgram` is unchanged and still takes an absolute path. Its doc
+  comment now states plainly why building that path from `runtime.Caller`
+  breaks under `-trimpath`, and points callers to `LoadFileProgramHere`
+  instead.
+- The fragment-handler docs page and the `examples/dashboard` chrome pattern
+  now use `route.LoadFileProgramHere`.
+
+### Added: a typed legacy component is treated as strict instead of flattened
+
+- **`func Name(props T) Node`, where `T` is a struct declared in the same
+  `.gsx` file, is now a TYPED legacy component** (gosx#240). It carries the
+  same `PropsFields` and `PropsPaths` schema a strict component carries, and
+  it takes part in strict spread boundaries in both directions: it may
+  forward its whole `props` into a strict callee, and a strict body may call
+  it, by one spread or by named attributes. Every one of those compositions
+  was a compile error before this release, so the change only widens what
+  compiles.
+- There are now three component categories, not two. A strict
+  `component Name(props: T)`, a typed legacy `func Name(props T) Node`, and
+  an UNTYPED legacy component — `props any`, an attribute list, a props type
+  declared in another file, a props parameter spelled something other than
+  `props`, or no parameter at all. The untyped category keeps every v0.48
+  rule, including gosx#229's rejection: there is no declared type to recover,
+  so nothing about its props can be proved.
+- **A whole-`props` forward is proved at the DECLARATION, not at the call
+  site.** The caller's props struct must declare every field the strict
+  callee renders, with the same declared type; the diagnostic names the
+  field, its type, and the read that needs it. Because the proof does not
+  depend on how any caller invokes the component, the same body renders from
+  every one of its call sites — a struct spread, a map spread, named
+  attributes, or named attributes with one omitted, where the boundary
+  supplies the Go zero value generated Go would supply.
+- **A typed legacy component keeps the legacy render frame's flattened map
+  binding.** Its body observes its props exactly as it did in v0.48:
+  `props.Children` still arrives, an attribute the struct does not name
+  still arrives, and a caller may still spread a map into it. Writing the
+  props type down widens what the component may compose with; it does not
+  change what the component sees. Binding the struct instead would have
+  broken all three.
+- gosx#229's diagnostic now reads `untyped legacy component X cannot spread
+  props into strict component Y`, because that is what it now means. Its
+  hint names the new remedy first: declare the props parameter with a struct
+  type declared in this file. The strict-calls-legacy ban reads `strict
+  component cannot call untyped legacy component X` for the same reason.
+- One residual gap, and it fails closed with a message that names the field
+  and the remedy: a typed legacy frame entered by named attributes cannot
+  synthesize a zero value for a forwarded field whose declared type is a
+  struct or a slice, only for a builtin scalar.
+
+### Added: a body-attribute surface, so a body-level primitive needs no wrapper div
+
+- **`Context.BodyAttrs` / `PageState.BodyAttrs` set attributes on the
+  rendered `<body>` element** (gosx#236). `data-gosx-heartbeat` is
+  documented as settable on `<body>` itself, but `HTMLDocument` had no way
+  to reach it, so an app wrapped its whole page body in a `gosx.El("div",
+  ...)` carrying the attributes, plus a `display:contents` CSS rule to keep
+  the div out of layout. `BodyAttrs` accumulates across calls, the same
+  rule `AddHead` follows, and escapes values through `gosx.RenderAttrs` —
+  the same helper `gosx.El` uses for every other element's attributes.
+- **`HTMLDocumentWithBodyAttrs`** is the direct-call sibling for a page that
+  builds its document by calling `HTMLDocument` itself (for example a
+  `router.SetLayout` callback), rather than through `App.renderPage`'s
+  `DocumentContext` pipeline, which picks up `BodyAttrs` automatically.
+- **`DocumentBodyAttrs`** — the existing helper for a custom `App.SetDocument`
+  function building `<body>` through `gosx.El` — now includes app-supplied
+  body attributes alongside the framework's own, so custom document
+  functions get the same body attributes the built-in renderer does.
+- See `NavigationHeartbeatAttr`'s doc comment (`server/navigation_contract.go`)
+  for the wrapper-div-to-`BodyAttrs` migration.
+
+### Added: a strict component accepts children
+
+- **A strict component can now place the markup its caller wrote.** Write
+  `{children}` in the body, and pass child content at the call site:
+
+  ```go
+  component Panel(props: PanelProps) {
+      return <section class={"panel tone-" + props.Tone}>
+          <h2 class="panel__title">{props.Title}</h2>
+          <div class="panel__body">{children}</div>
+      </section>
+  }
+
+  component Dashboard(props: DashboardProps) {
+      return <Panel Title={props.Heading} Tone={props.Tone}>
+          <p>{props.Summary}</p>
+      </Panel>
+  }
+  ```
+
+  All three call shapes accept children: a strict caller's named attributes,
+  a strict caller's single spread, and a legacy caller's single spread. This
+  is a same-file capability. It needs no import and no shared directory.
+
+- **Children are not a prop, and this is exact.** They never enter
+  `PropsFields`, `PropsPaths`, or `PropsSlices`. No boundary proof reads
+  them, and the explicit-supply rule does not cover them. The renderer binds
+  them beside `props`, never inside it.
+
+- **Children arrive already rendered and already proved.** By the time the
+  callee sees them they are one opaque `gosx.Node`. The CALLER rendered
+  them, in the caller's scope, so every element and every props read inside
+  them already passed the caller's own compile, check, and render proofs.
+  Nothing is deferred across the call, because nothing is left to prove.
+
+- **The one operation on children is emission.** A body may write
+  `{children}` more than once, and each hole emits the markup again, exactly
+  as `gosx.Expr(children)` does in generated Go. Every other use stays
+  refused: `{children.Field}`, `{"prefix " + children}`,
+  `<If cond={children}>`, `<Each of={children}>`, `<Each as="children">`,
+  and `class={children}`. The last one matters most — an attribute value is
+  written inside quotes, so rendered markup there would produce broken HTML.
+  The attribute position uses a separate validator entry point and reports
+  "children renders as element content, not as an attribute value".
+
+- **A callee that renders no children rejects child content**, instead of
+  truncating it silently: "strict component Panel renders no children;
+  remove the child content or render `{children}` in Panel's body". The
+  predicate has one owner, `ir.Component.AcceptsChildren`, computed from the
+  body before any call site is checked, so the answer does not depend on
+  declaration order.
+
+- **A typed legacy callee answers the same rule**, because a strict body may
+  call one (gosx#240). Its body places children through the same
+  `{children}` hole, and the file renderer binds the name for every same-file
+  callee whatever its category. That hole is separate from the older
+  `props.Children` channel a legacy body may also read: the channel carries
+  the children whether or not the props struct declares the field, and it is
+  unchanged. A legacy caller invoking a legacy callee is unconstrained, as
+  before.
+
+### Changed: every strict component projects a variadic children parameter
+
+- **`emitStrictComponent` now emits
+  `func Name(props NameProps, children ...gosx.Node) gosx.Node`** for every
+  strict component, whether or not its body places children. A variadic
+  parameter accepts zero arguments, so every existing call site keeps
+  compiling and every existing render is byte-identical. Emitting it
+  conditionally would need `transpile` to decide "renders children" for
+  itself — it walks the CST with no `ir.Program` in hand — and two
+  implementations of one predicate drift. Arity stays a gosx-level rule with
+  a single owner and a diagnostic better than Go's "too many arguments".
+- A consumer that asserts on the projected signature text must update it.
+
+### Added: a shared component projects across a directory boundary
+
+- **`transpile` resolves a call to a strict component declared in another
+  directory**, reached through an ordinary relative import (`./ui` or
+  `../ui`). `SharedImport` carries one such import's projection facts: the Go
+  import path substituted for the relative source text, and the props shape of
+  every strict component the target directory declares.
+  `CollectSharedComponents` builds that map from the target's already-loaded
+  package files, using the identical extraction a same-file typed call runs,
+  so a shared call and a same-file call resolve through one set of rules and
+  the two projections cannot drift apart.
+- **A shared call is held to the same boundary as a same-file call.** The
+  existing strict-spread refusal applies unchanged at a shared call site, and
+  attribute names resolve to exported Go fields through the same lower-camel
+  aliasing. A legacy component is not a valid shared call target: only a
+  strict component carries the schema the boundary proves against.
+- This is the projection half. `gosx check` is the intended producer of
+  `SharedImport`, and until that lands a strict caller's shared call still
+  meets the compiler's existing same-file constraint.
+
+### Changed: the bundled examples author pages in .gsx, not raw element calls
+
+- **`examples/basic` and `examples/dashboard` now build their pages from
+  file-routed `.gsx`** rather than composing `gosx.El` trees by hand
+  (gosx#238). The examples are where the framework's own habits are read, and
+  they had been demonstrating the escape hatch.
+- The dashboard example was doing worse than that: it already shipped five
+  file-routed `.gsx` pages that `main.go` never mounted, so it hand-built the
+  same pages beside them and the `.gsx` versions were unreachable. Wiring the
+  router removed 52 element-building call sites outright. Running the
+  example's own routes also surfaced a settings form posting to an
+  unregistered action, which returned 404, and a create-user form missing its
+  field-error and value-preservation bindings. Both are fixed.
+
+## v0.48.0 (2026-08-18)
+
+### Fixed: a strict spread from a non-strict component is rejected at compile time
+
+- **A legacy component that spreads its own `props` into a strict component
+  is now a compile error** (gosx#229). The composition can never render: a
+  legacy render frame binds `props` to the `map[string]any` the file
+  renderer builds from the call site's attributes, and the strict spread
+  boundary proves field coverage on struct values only, so every execution
+  of that path failed with `render strict component X: spread source has
+  type map[string]interface {}`. Full transpile refused the same call
+  outright, so no execution path ever accepted it. The rule lives in the IR
+  validation pass, so one implementation lights it up in `gosx check`, in
+  the build gate, and in the editor through the LSP. The diagnostic names
+  the legacy caller, the strict callee, and the spread site, and its hint
+  names both remedies.
+- The rule is narrow by construction. It fires only on the bare `props`
+  identifier of the enclosing legacy component. A struct-typed FIELD of
+  those props (`{...props.Away}`) keeps compiling and rendering, because the
+  field value survives the shallow flatten with its own type; so does a
+  legacy-to-legacy spread, a page entry spreading a loader value, a strict
+  caller's named attributes, and a strict caller's own `{...props}` forward.
+- One acceptance fixture changed. `strict_each_spread_integration_test.go`
+  carried a legacy `StandingRow(props TeamMarkProps)` bare-spreading into a
+  strict `TeamMark`, blessed as a supported call shape. That shape compiled
+  and checked clean and could never render; the fixture now carries the
+  strict spelling and renders it, so the claim is proved rather than
+  asserted.
+
+### Changed: a spread proves nested struct fields structurally
+
+- **A nested struct-typed field inside a spread is now proved by the fields
+  the callee renders under it, not by the declared type's name**
+  (gosx#230). Consumers can rely on this relaxation: a sibling `.go`
+  converter may build its own type and spread it into a strict component
+  whose `.gsx` file declares a differently named nested struct. Two rules
+  used to contradict each other — a nested type had to be declared in the
+  `.gsx` file, and had to be identical to the type the `.go` converter
+  built — which forced authors to flatten nested models into scalar fields
+  purely to avoid the second rule.
+- The relaxation applies to a spread only. A named attribute at a strict
+  call site keeps the exact-type rule, because transpile emits a composite
+  literal whose field type the Go compiler proves; keeping the two in step
+  costs nothing there. A legacy caller's spread has no generated-Go twin at
+  all, so the renderer boundary is its only authority, and the type name
+  proves nothing about the value. Nothing is accepted unproved: every read
+  path under the root must still resolve to its exact declared scalar type,
+  a map is still rejected, and a root the callee forwards on is re-proved by
+  the strict callee that consumes it.
+
+### Added: a positioned diagnostic for a .gsx/.go name collision
+
+- **`gosx check` reports a package-level name that a strict `.gsx` file and
+  a sibling `.go` file both declare** (gosx#230), instead of letting the Go
+  compiler report `redeclared in this block` against a temporary projection
+  file the author never wrote. A strict `component MatchupCard` compiles to
+  a package-level `func MatchupCard`, and a `.gsx` `type` declaration
+  compiles to itself, so both collide with a same-named `.go` declaration.
+  The diagnostic names both declarations with their own source positions.
+  It skips a sibling file the build never compiles: a `_test.go` file, a
+  file of another package, and a file whose build constraint excludes it.
+
+### Changed: the same-file schema rule says why
+
+- **The two diagnostics that require a strict component's props struct, and
+  every struct its body reaches, to be declared in the same `.gsx` file now
+  carry the reason** (gosx#230). The `.gsx` file compiles into the sibling
+  `.go` file's package, so a same-package type looks like it should be
+  reachable. It is not, because the Go compiler is not the only reader: the
+  file renderer executes the IR and never compiles Go, so it resolves every
+  rendered field from schema data the compiler writes into the IR, and the
+  compiler builds that data from the one `.gsx` file it is given. The rule
+  itself is unchanged.
+### Fixed: data-gosx-action-signal no longer requires a WASM engine
+
+- **`data-gosx-set` and `data-gosx-action-signal` now write a shared signal
+  even when the page loads no WASM engine** (gosx#233). `actions.ts`'s
+  `setSignal` wrote through `window.__gosx_set_shared_signal` only — the
+  setter a WASM engine installs — and did nothing when that hook was
+  absent: no error, no warning, and every `window.__gosx_subscribe_shared_signal`
+  listener stayed silent. With `data-gosx-live-signal` (gosx#228) and the
+  pre-existing `data-gosx-region-signal`, that meant a documented refresh
+  trigger could do nothing at all on a page with no engine. `setSignal` now
+  falls back to `window.__gosx_notify_shared_signal` — the same JS-only
+  writer `client/js/bootstrap-src/00-textlayout.js` already uses for its
+  own shared-signal store — whenever the engine hook is absent or reports
+  an error. An installed engine still wins and is called exactly once; the
+  fallback never runs alongside it, so a subscriber never sees a write
+  twice.
+
+### Added: render a page's own component from a Go handler
+
+- **`route.RenderProgramComponent` renders a strict component as the render
+  entry, with typed props** (gosx#226). A `component Foo(props: FooProps)`
+  declaration compiles to an `ir.Component` the file-program renderer only
+  reaches by name inside a compiled `*ir.Program` — not a linkable Go
+  symbol — so a hand-written `http.Handler` in the same package as a
+  `page.gsx` file had no supported way to render one of that page's own
+  components into a fragment. `ProgramRenderEnv.Props` now supplies the
+  typed props value; the renderer proves it at the exact boundary a nested
+  `<Foo {...props}/>` call already runs on every render (`strictSpreadProps`):
+  a `nil` Props value still fails closed with the original "no root props
+  binding" error, and a `map[string]any` — however it is shaped — still
+  cannot prove field coverage. Rendering a strict component this way
+  produces byte-for-byte the same markup a nested call to it produces.
+- **`route.LoadFileProgram` loads a `.gsx` file's compiled program through
+  the file router's own stat-keyed cache** (gosx#226), the same cache a
+  file-routed page or layout renders through. A fragment handler that
+  calls it renders through the identical cached program the page itself
+  uses — an edit to the `.gsx` file reaches both the same way, with no
+  second, independently-stale compile path to drift out of sync.
+- This closes the fragment-endpoint gap `data-gosx-region` needs: a
+  `data-gosx-region-url` handler can now render the page's own component
+  instead of hand-mirroring its markup with the low-level `El`/`Attrs`/
+  `Text` API. See the runtime docs' "Rendering a fragment from a Go
+  handler" section, beside `data-gosx-region`.
+
+## v0.47.1 (2026-08-18)
+
+### Fixed: the release version constant
+
+- `internal/version.Current` and `Number` were left at `v0.45.2` through the
+  v0.46.0 and v0.47.0 releases. Both releases therefore shipped a CLI that
+  refused to operate on a project pinned to its own version, and downstream
+  projects had to set `GOSX_SKIP_VERSION_CHECK` to build. The constants now
+  read `v0.47.1`, and the README advertises the same tag.
+- `TestREADMEDeclaresCurrentRelease` pins the README against `Current` and
+  fails on any stale release string, so a bump that misses one file can no
+  longer pass silently.
+## v0.47.1 (2026-08-17)
+
+### Fixed: authored point materials never received the frame clock on WebGL
+
+- **`time` is now a reserved auto-uniform on the WebGL authored-points
+  path.** The WGSL packer has always resolved `time` from the per-frame
+  clock and ignored the authored value; the WebGL path uploaded
+  `entry.customUniforms` verbatim instead — the wire's `time: 0`
+  declaration placeholder, on every frame. Every shader-clock effect
+  (twinkle, depth wrap, per-star impulses) was frozen on WebGL while the
+  identical material animated on WebGPU. The render loop itself ran
+  (material-clock), so the scene re-rendered an unchanged frame at full
+  frame rate.
+- Observed in production as the m31labs.dev content-route starfield
+  (ForceWebGL) showing no twinkle and no motion while the homepage
+  (WebGPU) animated with the same material constants.
+
+## v0.47.0 (2026-08-18)
+
+### Added: live-bound regions
+
+- **`data-gosx-live-src` and `data-gosx-live-interval` declare a live-bound
+  text region** (gosx#217): the runtime polls a same-origin JSON object on
+  the given interval and patches the text of every descendant carrying
+  `data-gosx-live-bind`, a top-level key or a `.`-separated chain through
+  nested objects into that object. Only a string, number, or boolean value
+  is bindable; a missing key, a null value, or an object or array value
+  leaves the element's current text untouched. `data-gosx-live-flash-class`
+  retriggers a CSS animation class whenever a bound element's resolved text
+  actually changes. Many independent live regions can exist on one page,
+  each on its own timer; each fires an immediate first tick at setup,
+  subject to the same hidden-tab, in-flight-navigation, and
+  interaction guards periodic revalidation already uses, extended here with
+  a region-scoped check: a tick skips, and retries next tick, while the
+  region contains the document's focused element or an element under an
+  active pointer.
+- **`data-gosx-region-interval` adds periodic polling to the existing
+  `data-gosx-region` fragment-swap primitive** (gosx#217), composing with
+  its signal- and hub-event-driven triggers rather than replacing them. The
+  interval trigger alone observes the interaction guard above; a signal or
+  hub-event refresh still answers its own discrete, user-caused event
+  immediately. Every trigger now sends `If-None-Match` once a response has
+  carried an `ETag`, treats a 304 as unchanged, and restores the region
+  element's own `scrollTop`/`scrollLeft` across a swap.
+- **`gosx check` rejects a static `data-gosx-live-interval` or
+  `data-gosx-region-interval` value outside the whole-seconds/whole-minutes
+  duration subset, and a static `data-gosx-live-bind` value with an empty
+  or whitespace-containing key segment**, before the page ever serves.
+### Added: declarative list filter and a visibility-aware heartbeat ping
+
+- **`data-gosx-filter` filters a list from a single input**, with no
+  bespoke JavaScript (gosx#215). The value names the list: an element
+  `id`, or — when no element has that `id` — a CSS selector. Each row
+  carries `data-gosx-filter-text`, the text the runtime searches; it
+  never reads a row's own rendered text, so the server can normalize
+  case and fold in search terms that never render visibly. Filtering is
+  a case-insensitive substring match against the input's trimmed value,
+  applied 150ms after the last keystroke; an empty input shows every
+  row. A row is never hidden while it holds the focused control or the
+  pointer sits over it. `gosx-filter-row--hidden` is the class hook the
+  application's own CSS styles; `data-gosx-filter-announce` opts an
+  input into an "N of M shown" live-region announcement. A filter is
+  rebuilt, and its typed query re-applied, at page boot and after every
+  soft navigation or revalidation swap — the same rescan lifecycle
+  `data-gosx-watch` follows.
+- **`data-gosx-heartbeat` sends a periodic, visibility-aware presence
+  ping**, with no bespoke timer (gosx#216). `data-gosx-heartbeat`, on an
+  element or on `body` itself, names a same-origin endpoint;
+  `data-gosx-heartbeat-interval` sets the period, the same whole-second
+  or whole-minute grammar `data-gosx-revalidate-interval` accepts. The
+  runtime sends a same-origin `GET`, with credentials, on that interval
+  while the document is visible: it pauses entirely while hidden, fires
+  one immediate catch-up ping on visibility return if a full interval
+  elapsed while hidden, and never runs a second ping while one is
+  already in flight. Both a network failure and a non-2xx response are
+  silent.
+### Fixed: minify the embedded navigation runtime script
+
+- **The inline navigation runtime now ships minified, not raw** (gosx#221).
+  the framework-owned navigation runtime writes straight into every page's
+  `<head>`. Its two sources, `client/runtime/host/compatibility.ts` and
+  `client/runtime/host/navigation.ts`, grew to about 198 KB raw across
+  gosx#212 through gosx#216, which pushed `/docs/getting-started` past the
+  perf-budget ceiling (`js_total_kb` 1617 KB against 1550 KB).
+  `cmd/buildbootstrap` now builds a committed artifact,
+  `client/runtime/host/navigation-runtime.min.js`, from those two sources
+  with esbuild (already a `cmd/buildbootstrap` dependency; no new
+  dependency reaches the `gosx` module). `navigation_asset.go` embeds that
+  artifact instead of the raw sources. The minified artifact is about
+  63 KB, a 68% cut. `cmd/buildbootstrap --check` now also verifies this
+  artifact and fails the build when it drifts from its sources.
+  Regenerate it with `go generate ./client/runtime/host` or
+  `make build-bootstrap`.
+
+## v0.46.0 (2026-08-17)
+
+### Added: countdown urgency tiers, synthesized audio cues, and an attention watcher
+
+- **`data-gosx-countdown-warn` now takes a comma-separated list of
+  `threshold:class` pairs** (gosx#213), for example
+  `"30s:is-warn,10s:is-critical"`. Each tier toggles its own class
+  independently, at or below its own threshold, recomputed every tick — a
+  countdown that resets to a later target re-arms every tier for free.
+  This replaces the old single-duration form that always toggled one
+  fixed class (`gosx-countdown--warn`); a bare duration with no class is
+  no longer valid. `NavigationCountdownWarnClass` is removed from
+  `server/navigation_contract.go`.
+- **`data-gosx-countdown-cue` plays a short synthesized WebAudio tone**
+  the first time the remaining time crosses at or below a threshold, using
+  the same comma-separated `threshold:cue` pair grammar, with a cue name
+  from a fixed, tiny vocabulary: `"beep"` or `"chime"`. Every tone is
+  synthesized — there are no audio asset files. The runtime shares one
+  `AudioContext` for the whole page, constructed on the visitor's first
+  pointerdown or keydown and never before, so a threshold crossed before
+  that first gesture stays silent. Each threshold fires its cue exactly
+  once per downward crossing, and a countdown that resets re-arms it.
+- **`data-gosx-watch` declares a condition over one of its own attributes**
+  (gosx#214): `"<attrName>=<value>"` compares that attribute's live value
+  against a literal, or against another element's trimmed text content
+  (`"<attrName>=@<selector>"`) or named attribute
+  (`"<attrName>=@<selector>[<attrName>]"`). `data-gosx-watch-effect`
+  declares a comma-separated effect list run on a false-to-true
+  transition: `"class:<name>"` (optionally targeting another element with
+  `"class:<name>@<selector>"`) and `"title"` (flashing `document.title`
+  with the message from `data-gosx-watch-title`, until window focus or
+  the condition clears) are level-tied and re-evaluated on every rescan;
+  `"cue:<name>"` shares the countdown cue machinery above and is
+  edge-triggered, firing exactly once per false-to-true transition. A
+  watch condition is evaluated at page boot and after every soft
+  navigation or revalidation swap — the same rescan lifecycle
+  `data-gosx-countdown` follows — not through a live DOM observer.
+  Cross-swap transition memory is keyed by the watch element's `id` when
+  it has one, or by its position among `data-gosx-watch` elements in
+  document order otherwise; a watcher with no `id` whose position can
+  shift between renders can have its memory misattributed.
+- **`gosx check` now rejects a static `data-gosx-countdown-warn` or
+  `data-gosx-countdown-cue` value outside the threshold:token pairs
+  grammar, a static `data-gosx-watch` value with no `"="`, and a static
+  `data-gosx-watch-effect` value with an unrecognized token**, before the
+  page ever serves.
+## v0.45.2 (2026-08-17)
+
+### Fixed: a WebGL scene stayed dead after an unrecovered context loss
+
+- **The render watchdog now rebuilds WebGL renderers.** Chrome does not
+  guarantee `webglcontextrestored` after an involuntary context loss; a page
+  is expected to rebuild on its own. Scene3D waited for the event forever.
+  Two paths ended permanently degraded:
+  - The "lost" stub renderer stayed installed with a black canvas.
+  - The loss ladder swapped in the Canvas2D stand-in on a replacement canvas
+    (a context-tainted canvas cannot hand back a 2d context), which detached
+    the original canvas's listeners — so a later restored event had no
+    audience, and nothing retried WebGL.
+  The watchdog poll now retries a real WebGL renderer for WebGL-preferring
+  scenes stuck on the "lost" stub or the Canvas2D stand-in: capped at 4
+  attempts with 4s→32s backoff, spent only while the tab is visible and the
+  scene can render. A still-lost context on the current canvas forces the
+  replacement-canvas path — building on a lost context would "succeed" into
+  a renderer that draws nothing. Also recovers a transient failure of the
+  INITIAL WebGL context creation, which used to settle on Canvas2D for the
+  life of the page.
+- Observed in production as the m31labs.dev content-route starfield loading
+  into a dead background that never came back without a hard reload.
+
+## v0.45.1 (2026-08-17)
+
+### Fixed: the WebGPU render watchdog counted hidden-tab time as a stall
+
+- **Hidden time resets the stall baseline.** A hidden tab stalls
+  requestAnimationFrame by design, and the watchdog's own poll interval is
+  throttled while hidden. Counting that time toward the 6.5s stall threshold
+  meant a tab return could fire the watchdog before the first resumed frame
+  presented — swapping in a fresh renderer and replaying the scene's entry
+  reveal from opacity zero. Observed in production as the m31labs galaxy
+  cyclically "re-loading" on every return to the tab. A genuine stall must
+  now accumulate entirely while the tab is visible; real visible-tab stalls
+  still recover exactly as before, pinned by a new backend-selection test.
+
+## v0.45.0 (2026-08-16)
+
+The module graph goes pure. gosx ships no wasm runtimes and no FFI shims:
+the wazero-backed WebP encoder leaves the tree, replaced by a pluggable
+encoder registry on imagepipe (JPEG and PNG stay built in), and a
+regression test keeps foreign runtimes out of the graph permanently. A
+pure-Go VP8 encoder is in development as its own constellation project
+(m31labs.dev/tqwebp) and will fill the registry when it lands.
+
+### Remove the WebP encoder dependency: no wasm runtime, no FFI shim
+
+gosx ships no wasm runtimes and no FFI shims. WebP encoding is now an
+external-encoder extension point, not a built-in dependency. This policy
+also covers every future codec: a foreign runtime or an FFI shim does not
+enter this module's build graph for one, ever, by default.
+
+- **`imagepipe` no longer depends on `github.com/gen2brain/webp`.** That
+  package pulled in `tetratelabs/wazero` (a wasm runtime) and
+  `ebitengine/purego` (an FFI shim) as transitive dependencies. Neither
+  module now appears anywhere in `go mod graph`; a new repo-root test,
+  `TestModuleGraphExcludesForeignRuntimes`, checks this on every run.
+- **`imagepipe.Encode` builds in only JPEG and PNG.** A new
+  `imagepipe.Encoder` interface, together with `imagepipe.RegisterEncoder`
+  and `imagepipe.EncoderRegistered`, adds any other output format —
+  including WebP — as an opt-in registration, not a built-in. `Encode`
+  returns a clear error for a format with no registered `Encoder`; the
+  error names `RegisterEncoder` as the way to add one.
+- **The WebP decoder stays.** `golang.org/x/image/webp` is a `golang.org`
+  module: pure Go, decode-only, with no wasm runtime and no FFI shim. A
+  project's existing WebP source images still probe, decode, and resize
+  the same way they always did.
+- **`gosx build`'s image variant stage generates native-format ladders by
+  default.** A JPEG source now gets a JPEG ladder; a PNG source gets a PNG
+  ladder. `cmd/gosx` registers no WebP `Encoder` in-tree, so a stock build
+  produces no WebP variant at all. A project that registers its own WebP
+  `Encoder` before the build stage runs gets WebP variants back
+  automatically, with no change to `cmd/gosx` itself.
+- **The `<Image>` renderer keeps working with no WebP variant present.** A
+  manifest entry that carries only native-format variants renders a plain
+  `<img>` with a real `srcset` — never a `<picture>` wrapped around an
+  empty WebP `<source>`.
+- **`strictcheck` still rejects `format="webp"`, with an honest message.**
+  The check-time and render-time messages both name the real cause — gosx
+  ships no built-in WebP encoder — and point at
+  `imagepipe.RegisterEncoder` as the extension point, instead of treating
+  `webp` as just another unrecognized format string.
+- **The `gosx` CLI binary shrinks by roughly 2.9 to 3.6 MB**, depending on
+  link flags (measured against v0.44.0 with `go build`: 63,240,864 bytes
+  before this change, 59,485,208 bytes after; stripped with `-ldflags
+  "-s -w"`: 50,411,880 bytes before, 47,386,889 bytes after).
+
+## v0.44.0 (2026-08-16)
+
+Images become a first-class citizen, and the fail-open hunt reaches the
+renderer's corners. The <Image> builtin gains a check-time contract (alt
+required, local files probed for intrinsic dimensions, external sources
+declare theirs) and manifest-driven <picture> output with build-time WebP
+variants from the new imagepipe package. Actions gain first-class file
+uploads with a configurable body cap. Renderer output is now deterministic
+(sorted attribute emission, twice over), spread map keys cannot smuggle
+attributes, Mount routes populate path wildcards, and the last hop-0
+selector deferrals fail closed.
+
+### `<Image>`: a check-time contract and `<picture>` output (gosx#201)
+
+- **`strictcheck` gains a check-time `<Image>` contract, on top of the
+  #199/#200 pipeline.** `validateImageContract` runs beside
+  `validateStrictRenderEntries` in `runBuiltinChecks`, before the
+  `packageHasStrict` early return — the same placement, for the same
+  reason: the real consumer surface (gridiron-2000) compiles as legacy
+  syntax, so a check placed after that return would never run for it.
+  Four rules, each independently testable:
+  - Missing or empty `alt` errors.
+  - A local (root-relative) static `src` naming no readable image file
+    under `public/` errors. The check reads the file with
+    `imagepipe.Probe` (SVG is checked for existence only, since gosx never
+    optimizes SVG), the same way the renderer will at request time.
+  - An external (`http`/`https`, or protocol-relative `//`) or dynamic
+    (non-literal, or unresolvable through a spread) `src` missing an
+    explicit `width` or `height` errors. A local `src` needs neither: the
+    renderer injects intrinsic (or ladder-derived) dimensions
+    automatically — the one step next/image still asks an author to
+    perform, deleted for a local, build-time-known source.
+  - A `format` value outside the producible set errors, reusing
+    `server.ValidateProducibleImageFormat`'s exact allowlist and message
+    (newly exported for this purpose) so check-time and render-time can
+    never disagree.
+  - A node carrying a spread attribute (`{...props}`) is exempt from the
+    alt and dimension requirements by name: the spread might supply
+    either in a way this check cannot see (the real, already-tested
+    `route/filesystem_test.go` fixture pattern this exception exists to
+    keep passing).
+- **`route`'s file-router `<Image>` builtin now emits a manifest-backed
+  `<picture>` when gosx build has generated variants for its `src`.** A
+  new `route/image_picture.go` reads `buildmanifest.Manifest.Images`
+  through a new `server.LookupImageManifestAsset` (a process-global lookup
+  an `App` registers on `Build()`, mirroring the existing "local"
+  `ImageResolver` registry's convention) and, when variants exist, emits a
+  WebP `<source>` with `srcset`+`sizes` and an `<img>` fallback in the
+  source's own format with its own `srcset`, injected width/height
+  (intrinsic by default; an explicit `width` or `height` derives the
+  other proportionally; both explicit wins verbatim), `loading="lazy"
+  decoding="async"`, and priority flipping to `eager`+`fetchpriority="high"`
+  per #199's existing semantics. A WebP-native source (no redundant
+  same-format fallback ever exists for one) renders a plain `<img>`, no
+  `<picture>` wrapper. **This is new behavior for the `<Image>` JSX tag
+  only** — `server.Image`, the Go helper a `page.server.go` file calls
+  directly, keeps its existing single-`<img>` contract unchanged.
+  - **Fails open, never blocks a render.** No manifest registered (dev
+    mode with no prior `gosx build`), no entry for this `src`, or an
+    explicit `Format`/`Quality` prop naming an encode parameter a
+    pre-built variant cannot honor — every one of these falls straight
+    through, unmodified, to the existing #199-fixed `server.Image` path
+    (the runtime optimizer URL, or plain passthrough). A page under
+    active development always renders.
+- **`<Image>` is rejected inside island components, not silently
+  downgraded to a plain `<img>`.** `ir/island.go`'s `islandElementAlias`
+  no longer maps `"Image"` to `"img"`; `LowerIsland` now returns a
+  dedicated error, and `ir.Validate`'s
+  `unsupportedIslandComponentDiagnostic` reports the same message as a
+  `Diagnostic` — reachable from `gosx.Compile` itself (see `compile.go`),
+  so the rejection surfaces at check time, before `strictcheck` or any
+  other stage even sees the program. One tag name must not mean two
+  contracts: an island re-renders client-side from its own program and
+  cannot rebuild `<Image>`'s manifest-driven `<picture>` markup without
+  shipping the whole manifest to the client — out of scope this release.
+  The message points at the escape hatch: a plain `<img>` inside the
+  island, with `width` and `height` set explicitly.
+- **Docs.** The images docs page
+  (`examples/gosx-docs/app/docs/images/`) gains a `<Image>` builtin
+  section stating the local/external rule plainly: external images are
+  never proxied or resized this release, and require explicit `width` and
+  `height`. The page's own responsive example previously omitted
+  `Height`, leaving the emitted `<img>` with no `height` attribute at
+  all — a layout-shift-prone example this fix corrects, in both the code
+  sample and the live rendered image.
+- New tests: `strictcheck/image_test.go` (accept/reject tables covering
+  every rule and exact message, plus an island-nested `<Image>`
+  end-to-end through `CheckFile`), `route/image_picture_test.go`
+  (`<picture>` markup shape, the no-manifest and explicit-format/quality
+  fallbacks, priority semantics, external `src`, extra-attribute
+  placement), and `ir/island_test.go` /
+  `TestValidateIslandRejectsImage` (the island rejection, at both the
+  `ir.Validate` and `LowerIsland` layers).
+
+### Strict components: `<Each of>` and tier-1 spread-forward hop-0 fields now fail closed (gosx#206)
+
+- **`resolveStrictEachSourceType` no longer defers a hop-0 unknown field
+  on an `<Each of>` loop source.** Before the fix, `gosx.Compile` accepted
+  a promoted or unexported field used as a loop source with no
+  diagnostic. The function returned `""` for the unresolved element type,
+  so the transpiled loop callback fell back to an `any`-typed binding.
+  Every field read on the loop variable then failed the later `go build`
+  of the generated program with a confusing `row.Label undefined (type
+  any has no field or method Label)`, not a clear gosx diagnostic — the
+  same file-renderer/generated-Go divergence class gosx#195 fixed for a
+  direct props read. The lowerer now reports the field at `gosx.Compile`
+  time, with the same B1-style message: `struct %s declares no visible
+  field %s; promoted, unexported, and unknown fields cannot cross the
+  file renderer boundary`.
+- **`resolveStrictSpreadForwardType` no longer defers a hop-0 unknown
+  field on a tier-1 (`{...props.Field}`) spread-forward source.** Every
+  reachable spread-forward read is also a tier-1 spread call, so
+  `validateStrictToStrictSpreadCall`'s own type check already rejected a
+  promoted or unexported source with a generic "is not renderable"
+  diagnostic — this deferral never let the component compile clean. It
+  did leave the function silently reporting nothing of its own for a
+  shape the B1-style message exists to name. It now names the field too,
+  so the diagnostic no longer depends on a sibling check.
+- Both functions carried the identical `case strictHopUnknownField:
+  return` gosx#195 removed from `resolveStrictSelectorPath` — gosx#195's
+  own scope note named them as the remaining deferral. Doc comments on
+  `strictHopUnknownField`, `walkStrictHops`, and `strictHopMessage` are
+  corrected: every `walkStrictHops` caller now reports a hop-0 unknown
+  field; none defer to the package checker.
+- New tests cover both field shapes at both positions:
+  - `TestCompileStrictEachRejectsPromotedSourceHopZeroField`
+  - `TestCompileStrictEachRejectsUnexportedSourceHopZeroField`
+  - `TestCompileStrictSpreadForwardRejectsPromotedSourceHopZeroField`
+  - `TestCompileStrictSpreadForwardRejectsUnexportedSourceHopZeroField`
+  - `TestStrictcheckRejectsPromotedEachSourceHopZeroField` and
+    `TestStrictcheckRejectsUnexportedEachSourceHopZeroField`
+    (real-Go-compiler-backed)
+  - `TestStrictcheckRejectsPromotedSpreadForwardSourceHopZeroField` and
+    `TestStrictcheckRejectsUnexportedSpreadForwardSourceHopZeroField`
+    (real-Go-compiler-backed)
+
+  Fixes #206.
+
+### `route`: engine-mount attribute order is now deterministic (gosx#204)
+
+- **`island.Renderer.RenderEngine` no longer emits `data-gosx-engine-*`
+  mount attributes in Go's randomized map order.** `RenderEngine` iterated
+  `cfg.MountAttrs` (a `map[string]any` `engineComponentProps`, in
+  `route/fileprogram.go`, builds from a component's static attributes and
+  spread props) directly when writing the mount `<div>`'s attributes. Two
+  renders of the same `<Scene3D>` or `<Surface>` tag could emit the same
+  attributes in a different order — the same class of bug gosx#188 fixed
+  for `defaultRenderedComponent`, in the engine-mount path instead of the
+  unresolved-component-reference fallback. Attribute names now sort
+  before emission, mirroring gosx#188's fix exactly. Output is
+  byte-identical across repeated exports.
+- `route/corpus_determinism_test.go`'s existing corpus test cannot reach
+  this path: `RenderProgramComponent`'s bare env leaves `renderEngine`
+  nil, so every engine tag in the corpus degrades to its DOM fallback. A
+  new test, `TestScene3DMountAttrsRenderDeterministically`, renders a
+  Scene3D page through `DefaultFileRenderer` — the file-based path `gosx
+  export` drives — twenty times and byte-compares every render against
+  the first.
+
+  Fixes #204.
+
+### Added: build-time image variant pipeline (`imagepipe`)
+
+- **A new build-only package, `m31labs.dev/gosx/imagepipe`, probes,
+  resizes, and encodes responsive image variants.** `Probe` reads
+  intrinsic dimensions through `image.DecodeConfig` (JPEG, PNG, GIF, and
+  WebP, the last via a blank import of `golang.org/x/image/webp`).
+  `Resize` scales with `golang.org/x/image/draw`'s Catmull-Rom
+  resampler — the same one `server/image.go`'s request-time optimizer
+  uses — and refuses to upscale. `Encode` writes WebP (lossy, via
+  `github.com/gen2brain/webp`, libwebp under wazero), JPEG, or PNG.
+  `Ladder` caps `server.AutoImageWidths`' candidate widths at a source's
+  own intrinsic width, matching what the runtime `<img>` srcset already
+  asks for. `Process` ties every stage together for one source path.
+  Refs #200.
+- **`github.com/gen2brain/webp` is pinned to v0.5.5, not v0.6.x.**
+  v0.6.x's 2.69 MB wasm2go-transpiled source drives the arm64 Go
+  compiler to 14.4 GB resident and an OOM kill; v0.5.5 cross-compiles to
+  linux/arm64, darwin/arm64, windows/amd64, and js/wasm in roughly 5s
+  each under 235 MB. Hugo made the same wazero call
+  (`internal/warpc`). The only new transitive dependencies are
+  `github.com/tetratelabs/wazero` (the WASM runtime) and
+  `github.com/ebitengine/purego` (the encoder's optional dynamic-library
+  fast path).
+- **`buildmanifest.Manifest` grows an `Images` bucket.** Each
+  `ImageAsset` records a source image's root-relative public URL and
+  intrinsic width/height, plus one hashed `ImageVariantAsset` per
+  (width, format) rung `gosx build` generated. The field is additive —
+  `json:"images,omitempty"` — so a manifest written before this change
+  decodes with `Images == nil`. `Manifest.ImageVariant` looks up a
+  variant by source, width, and format (an empty format defaults to
+  `"webp"`).
+- **`gosx build` generates variants for every image under `public/`.**
+  The new stage runs beside the existing `public/` copy in
+  `stageDeploymentBundle`: it walks `public/`, resizes each image down
+  its own `AutoImageWidths`-derived ladder (never past its intrinsic
+  width), encodes WebP plus the source's native format at every rung,
+  and writes the hashed results into `dist/assets/images` through the
+  same `writeHashedWithoutCompressedSidecars` helper every other build
+  output already uses — gzip/brotli sidecars would waste build time
+  recompressing already-compressed image bytes. A source `gosx build`
+  cannot probe is skipped with a warning, not a failed build.
+- **Static exports serve real image variants instead of the original
+  file repeated at every width.** During `GOSX_STATIC_EXPORT=1`,
+  `server`'s image resolver now looks up a matching build-time variant
+  in the already-loaded `buildmanifest.Manifest.Images` bucket before
+  falling back to its previous passthrough behavior. This is a pure
+  addition — the previous passthrough function is unmodified and still
+  the fallback — reading only plain manifest data, never `imagepipe` or
+  its encoder.
+- **`server` still never imports `imagepipe` or its WebP encoder.**
+  Every gosx app imports `server`; the encoder measured roughly 4.2 MB
+  added to a linked `cmd/gosx` binary, a cost a deployed application
+  binary must never pay for a build-time-only feature.
+  `TestServerPackageTreeNeverImportsImagepipe` (repo root) enforces the
+  boundary with a `go list -json` direct-import check over the `server`
+  package tree, mirroring gsxmail's `structural_isolation_test.go`
+  pattern for the same kind of encoder/render-path boundary.
+
+### Strict components: props-root hop-0 promoted and unexported fields now fail closed (gosx#195)
+
+- **`resolveStrictSelectorPath` no longer defers a hop-0 unknown field on
+  the props root.** The generated check program compiles in the same
+  package as the `.gsx` file, so Go resolved a promoted or unexported
+  props field there without complaint. The component compiled, checked
+  clean, and rendered differently between the map-backed file renderer
+  and the generated Go. The lowerer now reports the field with the same
+  B1-style message an `<Each>` binding root already used (gosx#182/#184):
+  `struct %s declares no visible field %s; promoted, unexported, and
+  unknown fields cannot cross the file renderer boundary`. Fixes #195.
+- **The old deferral covered two cases; only one still needs it.**
+  `validateStrictRenderedProps` already refuses a component when the
+  props struct's schema is not declared in the same file, before it calls
+  `resolveStrictSelectorPath` for any path. A genuinely absent field still
+  fails at the package checker, as before. A promoted or unexported field
+  on an already-known struct now fails at compile time, instead of
+  passing silently.
+- New tests cover both field shapes, plus an accept case for a legitimate
+  direct field and a mixed read set:
+  - `TestCompileStrictServerRejectsPromotedPropsHopZeroField`
+  - `TestCompileStrictServerRejectsUnexportedPropsHopZeroField`
+  - `TestCompileStrictServerAcceptsDirectScalarPropsHopZeroField`
+  - `TestCompileStrictServerRejectsMixedValidAndPromotedPropsReads`
+  - `TestStrictcheckRejectsPromotedPropsHopZeroField` and
+    `TestStrictcheckRejectsUnexportedPropsHopZeroField`
+    (real-Go-compiler-backed, mirroring
+    `TestStrictcheckRejectsPromotedEachBindingHopZeroField`)
+- **Scope note.** This fix covers a direct props read
+  (`resolveStrictSelectorPath`, including a concat or `<If cond>`
+  operand). `resolveStrictEachSourceType` (an `<Each of>` loop source) and
+  `resolveStrictSpreadForwardType` (an E2 spread source) still defer a
+  hop-0 unknown props field the same old way. They share the same guard
+  and the same latent gap; gosx#195 names only the direct-read case. A
+  follow-up issue should track the other two. (Both now fail closed too;
+  see gosx#206 above.)
+
+### Fixes
+
+- **`route`: deterministic attribute order for an unresolved component
+  reference.** `defaultRenderedComponent` renders the
+  `<div data-gosx-component="Tag" ...>` fallback for a `<Component/>`
+  reference gosx does not resolve locally. It iterated its attribute map
+  in Go's randomized map order. Two renders of the same compiled program
+  could emit the same attributes in a different order. This broke
+  byte-identity goldens and churned HTTP caches and ETags on unchanged
+  content. Attribute names now sort before emission. Output is
+  byte-identical across repeated renders. Fixes #188.
+- **`route`: drop an attribute name smuggled through a `{...spread}` map
+  key.** `html.EscapeString` does not escape a space or an `=`. A spread
+  map key such as `x onmouseover=alert(1) y` rendered as three attributes —
+  `x`, `onmouseover=alert(1)`, and `y` — from one map entry, because
+  `normalizeFileAttrName` only trimmed whitespace and mapped `className`
+  to `class`. Every `{...spread}` call site now validates each key with
+  `validRenderAttrName`, the same helper #185's render-profile
+  `AttrWriter` path already uses, and drops an invalid key instead of
+  emitting it. This is inert, not fail-closed: the render-profile path
+  still fails closed on an invalid name, because a profile is trusted
+  code and a bad name there is a bug in it. A spread commonly carries
+  request or database data an author never wrote. One bad key must not
+  fail an otherwise-valid render. Fixes #189.
+
+### Added: first-class file uploads through the action layer
+
+- **`ctx.Files(name)` and `ctx.File(name)` read uploaded files from an
+  action request.** Before this, an uploaded file sat in
+  `req.MultipartForm` behind `ctx.Request`, and every consumer wrote the
+  same lookup by hand. `Files` returns `[]*multipart.FileHeader` for a
+  form field name. `File` returns the first header, or nil. Both stay
+  nil-safe: a non-multipart request, a nil `Context`, or an absent field
+  name all return nil. Fixes #187.
+- **The 1 MiB action body cap is now configurable.** `ServeHandler`
+  keeps the 1 MiB default. A caller with a larger upload calls the new
+  `ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: n})`
+  instead. `route.FileModuleOptions.MaxActionBodyBytes` carries the same
+  cap through file-routed actions registered with
+  `route.RegisterFileModuleHere` and its sibling constructors, so a
+  consumer raises the limit per module without touching the action
+  package directly. An oversized request still fails with 413 through
+  `http.MaxBytesReader` semantics, never a silent truncation.
+- **A pinned test proves the navigation runtime's managed form
+  submission already carries a selected file.** `serializeForm()`
+  builds a real `FormData` from the form element and passes it straight
+  through to `fetch` as the request body, with no intermediate
+  stringification. The first consumer of this ask, gridiron-2000's team
+  avatar upload, needed the accessor and the raised cap. The runtime
+  half of the ask needed only this test.
+
+### Fixed
+
+- **`App.Mount` now populates named path wildcards.** A mounted pattern
+  with a wildcard segment, for example `GET /avatars/{teamID}`, dispatched
+  through `(*http.ServeMux).Handler(r)`, which the stdlib documents as
+  never populating `r.PathValue` — every wildcard silently read back as
+  the empty string. The dispatcher now serves a matched mount through
+  `mux.ServeHTTP`, which runs the same lookup internally and sets the
+  wildcard values on the request before the handler runs. Detecting a
+  non-match still uses `Handler(r)`, so an unmounted request falls through
+  to the page router exactly as before. Non-wildcard mounts, subtree
+  mounts, and the 404 fall-through keep their existing behavior. Refs
+  #194.
+- **`<Image priority />` and `<Image responsive />` now reach
+  `server.ImageProps` instead of leaking as literal HTML attributes.**
+  The file-program renderer's consumed-attribute set for `<Image>`
+  omitted `priority` and `responsive`, so both fell through to
+  `imageExtraAttrs` and rendered as bare `priority`/`responsive`
+  attributes on the `<img>` tag. `priority` never flipped
+  `loading="eager"` or `fetchpriority="high"`; `responsive` never
+  triggered the automatic width ladder or the `sizes="100vw"` default.
+  Both attributes now wire into `ImageProps.Priority` and
+  `ImageProps.Responsive` and no longer appear in the rendered markup.
+  Refs #199.
+- **A responsive `<Image>` srcset no longer distorts every entry
+  narrower than the full box.** The srcset ladder copied
+  `ImageProps.Height` into every candidate width, so a 320w entry cut
+  from a 1200x800 source requested a literal 320x800 variant instead of
+  a proportional one. Ladder entries now carry width only; height
+  derives proportionally at request time. The `<img>` tag's own
+  `width`/`height` attributes are unaffected. Refs #199.
+- **`Image` rejects an output format the optimizer handler cannot
+  produce at render time, not at request time.** `format="webp"`
+  previously rendered a `fmt=webp` URL that only failed once a browser
+  requested it, since the handler allows only jpeg, png, and gif as
+  output. `Image` now validates `Format` against that same allowlist
+  before it builds any URL and panics with a clear message on a bad
+  value, so the mistake surfaces at render time. Refs #199.
+- **The image optimizer's error responses no longer leak the host
+  filesystem path.** A missing or unreadable source wrapped the
+  resolved absolute path in the `os.Open`/`os.Stat` error and wrote it
+  straight into the HTTP response body. The handler now returns a
+  generic message (`image not found` or `image optimizer failed to
+  process image`) and logs the real error, path included, through
+  `server.Logger()`. Refs #199.
+- **The image optimizer decodes WebP sources and resizes them.**
+  `golang.org/x/image/webp` is now blank-imported, registering the
+  decoder with the standard `image` package, so `image.Decode` and
+  `image.DecodeConfig` both handle `.webp` sources. `.webp` is added to
+  the optimizer's resize-eligible extensions. WebP still has no Go
+  encoder, so a WebP source with no explicit `format` falls back to
+  png output, the same way a gif source already does; `format="webp"`
+  stays rejected as an output format. Refs #199.
+
+## v0.43.0 (2026-08-16)
+
+The strict surface grows loops and spreads, and the runtime grows time. Seven
+issues ship in this release: nested prop reads (#183), typed <Each> loops
+(#182), spread props at strict call sites (#184), the declarative countdown
+attribute (#178), an experimental render-profile hook (#185), an experimental
+strictcheck extension point (#186), and the ir compatibility statement (#181).
+Every extension keeps the house rule: fail closed at check time, re-prove at
+the renderer boundary, and let the Go compiler backstop what it can.
+
+### `strictcheck.Options.ExtraLints`: an extension point for third-party per-file lints (experimental)
+
+- **`strictcheck` accepts registered third-party lints and reports their
+  findings through its existing error channel.** A consumer such as
+  gsxmail (an email-template lint catalog) previously had to run its own
+  checker beside `gosx check` in CI — two commands, two diagnostic
+  streams. `Options.ExtraLints []strictcheck.Lint` now lets a consumer
+  pass its own per-file checks straight into `CheckFile`, `CheckPackage`,
+  and `CheckTree`; their diagnostics come back on the same `error` as
+  strictcheck's own findings, one channel end to end. Refs #186.
+- **EXPERIMENTAL, library-level, in-process only.** There is no plugin
+  loading, no CLI flag, and no global registry: a consumer imports
+  `strictcheck`, builds `[]strictcheck.Lint` values, and passes them
+  through `Options` on every call. **The shipped `gosx` binary cannot
+  register a lint** — this is a library API only a Go program that
+  imports `strictcheck` directly can use; `gosx check` on the command line
+  gets no new rules from this. `Lint.Check` receives a `LintFile` (the
+  file path and its compiled `*ir.Program`) and a `report` sink; a panic
+  inside `Check` is recovered and turned into one diagnostic naming the
+  lint rather than crashing the check run, and checking continues over
+  the remaining files and lints. The shape may still change in a later
+  minor version; pin an exact gosx version until it settles.
+- **Honest limits, today.** A `Lint`'s position granularity is
+  element-level: `ir.Attr` carries no `Span`, so a finding about one
+  attribute is reported at its owning element's position, not the
+  attribute's own. CSS-declaration positions and rendered-output rules
+  (an EM-style catalog's EM101–EM103, EM120/EM121, for example) are out
+  of scope — this extension point sees the compiled `*ir.Program`, not
+  rendered HTML or CSS. Props typing is strict-syntax-only; a legacy
+  component's props stay untyped `any`. Roughly two thirds of an
+  EM-style catalog fits what this extension point can see today.
+- **`ir.Diagnostic` gains an additive `Code` field** so a third-party
+  lint's own rule codes (for example `EM001`) surface distinctly in the
+  shared diagnostic stream. Every built-in gosx and strictcheck diagnostic
+  leaves `Code` empty, and `Diagnostic.String()` only changes output when
+  `Code` is set, so existing callers see no difference. This field is
+  additive for a caller that builds an `ir.Diagnostic` with a keyed struct
+  literal (`ir.Diagnostic{Span: ..., Message: ...}`, the only form gosx
+  itself uses); it is source-breaking for a positional literal
+  (`ir.Diagnostic{span, msg, hint}` with no field names), since the field
+  count changed.
+- **`ir.Diagnostic.String()` now prints a `Span.File` prefix when
+  `Span.File` is set** (`path:line:col: ...` instead of `line:col: ...`),
+  so a multi-file check run can attribute each finding to its file. Every
+  built-in gosx and strictcheck diagnostic still leaves `Span.File` empty
+  and is unaffected; a third-party `Lint` finding gets its file filled in
+  automatically when it leaves `Span.File` unset.
+- Registering no lints (the field left absent, set to `nil`, or set to an
+  empty slice) leaves `strictcheck`'s behavior byte-for-byte identical to
+  a build with no extension point at all.
+
+### `route`: an EXPERIMENTAL render-profile hook (gosx#185)
+
+- **`route.RenderProfile`, `RenderAttr`, `AttrWriter`, and `RenderProfileError`
+  are new, and marked EXPERIMENTAL.** A profile installs an attribute-writer
+  hook plus a pre-render validation pass on `RenderProgramComponent`, via a
+  new `Profile *RenderProfile` field on `ProgramRenderEnv`. This is the
+  Architecture C convergence path named in the gsxmail design spec (§5, §14
+  U5): a downstream renderer that needs a different HTML dialect — for
+  example an email target that swaps classes for inline styles and rejects
+  `<script>` — can now do so through this hook instead of owning a full
+  writer over `ir.Program`. Following the `ir` package's compatibility
+  policy below, this surface may change or be removed in a future minor
+  release; pin an exact gosx version if you depend on it directly.
+- **`AttrWriter` runs once per rendered element**, after `{expr}` attributes
+  evaluate, `{...spread}` attributes expand and flatten, and any managed-form
+  shorthand attribute is removed — the hook never sees the shorthand itself,
+  or the runtime-contract attributes it expands into — and before HTML
+  escaping. It receives the tag name and the element's resolved attributes
+  (`[]RenderAttr`) and returns the attributes to emit: change a `Value` to
+  rewrite one, omit an entry to veto it, or append a new `RenderAttr` to add
+  one.
+- **`AttrWriter` cannot weaken the gosx#179 managed-form runtime contract.**
+  A hook may see an author-written copy of a contract attribute
+  (`data-gosx-form` and its `-state`/`-mode`/`-project` variants, the
+  client-runtime `-form-error-describedby` attribute, the shared
+  `-enhance`/`-enhance-layer`/`-fallback` attributes, and the
+  `data-gosx-managed` shorthand), but the renderer discards any add, change,
+  or removal its returned copy makes to one of those names and restores the
+  original, then computes the contract's own presence check from that same
+  reconciled list — a vetoing profile can no longer make a contract
+  attribute disappear from the output, and an appending profile can no
+  longer make its own forged copy render ahead of, or instead of, the real
+  one.
+- **A returned attribute `Name` is validated.** `html.EscapeString` does not
+  escape a space or an `=`, so an `AttrWriter` that returned, for example,
+  `RenderAttr{Name: "x onmouseover=alert(1) y"}` could smuggle three
+  attributes past one `Name` field. A `Name` that is empty, whitespace-only,
+  or contains a character that would end an HTML5 attribute-name token early
+  now fails the whole render with a `*RenderProfileError` naming the
+  offending tag and `Name`, instead of being escaped and emitted as-is. The
+  identical hole in `{...spread}`'s attribute-name path is a separate,
+  already-filed issue (gosx#189), not fixed by this change.
+- **Escaping cannot be bypassed through the hook.** `RenderAttr` is a plain
+  `{Name, Value, Boolean}` value type with no raw-HTML or pre-escaped
+  variant; the renderer escapes every returned `Name` and `Value`
+  unconditionally, after `AttrWriter` runs, so nothing a profile returns can
+  reach output unescaped.
+- **`AttrWriter` reaches every plain element, nested component's own
+  elements, `If`/`Show`/`When` subtree, and `Each`/`For` iteration — it does
+  NOT reach a builtin component's own markup** (`Link`'s `<a>`, `Image`'s
+  `<img>`, and every other builtin), **an unknown, engine, or bound
+  component's markup** (rendered through `defaultRenderedComponent`, which
+  emits the author's own attributes verbatim — this one is different in
+  kind from the other builtins, since it has no escaping or contract logic
+  of its own for the hook to stand in for), **an `ir.NodeRawHTML` node or a
+  runtime `gosx.RawHTML` value** (both opaque strings `Validate` cannot see
+  inside either, any more than `AttrWriter` can), **or an island subtree**
+  (rendered by a separate renderer, through `ProgramRenderEnv.RenderIsland`).
+  Only `RenderProgramComponent` sets this hook; a file-routed page or layout
+  has no field to install one from.
+- **`Validate` runs once per render, over the whole compiled `*ir.Program`,
+  before any output is written** — including before the "component not
+  found" check for the component this call names. A non-empty
+  `[]ir.Diagnostic` return aborts the render: `RenderProgramComponent`
+  returns a `*RenderProfileError` and an empty string, never partial HTML —
+  the render is fail closed. `Validate` must not modify the program (the
+  renderer may run concurrently over the same one), and it walks the WHOLE
+  program, not only the component being rendered: a component this call
+  never reaches still gets checked and can still refuse the render, which
+  is both a safety net and a cost every render pays.
+- **A panic inside `AttrWriter` or `Validate` is recovered**, and becomes an
+  ordinary `*RenderProfileError` naming the hook, instead of crashing the
+  calling process. A profile is trusted code, but a bug in it should fail
+  one render closed, not the whole program.
+- **A nil `*RenderProfile` reproduces today's rendering exactly, byte for
+  byte**, and so does a non-nil `*RenderProfile{}` with both hooks left
+  unset: every profile-aware branch is gated on a non-nil `AttrWriter` or
+  `Validate` field specifically. Managed-form shorthand expansion, strict-
+  component boundary checks, and text-node escaping all run unconditionally
+  regardless of any profile.
+- **Known gaps, left for a follow-up.** Fail-soft expression evaluation is
+  unchanged: a missing key still renders empty with a nil error, so a
+  profile cannot make evaluation itself fail closed. Builtins and unknown
+  components bypass `AttrWriter` entirely (see the reach/no-reach list
+  above). There is no text-node hook — a text twin needs its own walk to
+  reach it. There is no node context passed to `AttrWriter` (parent,
+  siblings, or ancestry), so a CSS-cascade-style inlining profile cannot see
+  enough to compute one. Duplicate-attribute-name merging is the profile's
+  own problem — `AttrWriter` does no by-name merging on its return, the same
+  as two `ir.Attr`s sharing a name today; the shipped "email-ish" demo in
+  `route/renderprofile_test.go` now merges a class-derived style declaration
+  into any style attribute already on the element, rather than emitting two,
+  since that demo is the example people are expected to copy. There is no
+  diagnostic severity — every `Validate` diagnostic is fatal to the render,
+  there is no warn-and-continue tier.
+- **What the two hooks measurably cover, in gsx-email-spec.md's own
+  diagnostic vocabulary:** `Validate` covers the EM001-EM006 and EM020-EM033
+  shape checks with usable spans; `AttrWriter` covers EM004,
+  EM110-EM112, and role-injection detection for plain elements.
+
+### Added: a declarative countdown attribute for the enhancer layer
+
+- **`data-gosx-countdown="<RFC3339 instant>"` renders a live countdown
+  with no bespoke JavaScript.** Write the element's initial text (or each
+  segment's initial value) yourself, so the page shows a correct value
+  even with no JavaScript at all. The runtime takes over at the first
+  1-second tick after the page loads. To compute that initial text from
+  the server's own clock instead of a hand-typed guess, format it in the
+  page's loader and render the result as the element's text — see the
+  runtime guide's declarative countdown section for the recipe. One
+  shared 1-second timer drives every countdown on the page. The timer is
+  generation-guarded across navigations, the same way the revalidate poll
+  is. Fixes #178.
+- Two render modes are available:
+  - **Compact.** `data-gosx-countdown-format="dhms"` or `"mm:ss"` on the
+    countdown element itself. The runtime writes the element's own text.
+  - **Segment.** A child element carries
+    `data-gosx-countdown-segment="days"`, `"hours"`, `"minutes"`, or
+    `"seconds"`. The runtime fills only that child's text. The app owns
+    the surrounding markup. A segment set missing one or more of the four
+    names still renders, but each present segment shows only its own
+    remainder modulo its own unit (a seconds-only segment on a 5 minute
+    countdown shows "59", not "299") — the runtime logs one console
+    warning for an incomplete set.
+- `data-gosx-countdown-warn="30s"` adds the class `gosx-countdown--warn`
+  once the remaining time drops to the threshold or below. This is a
+  small declarative duration subset, not a general Go duration parser:
+  whole hour/minute/second components combined in one value, such as
+  `"30s"` or `"1m30s"`, or a bare non-negative integer as whole seconds.
+- `data-gosx-countdown-then="revalidate"` fires one revalidation of the
+  page's revalidate root the first time the countdown reaches zero. It
+  never fires a second time, and it does nothing while the page has no
+  active revalidation poll (no `data-gosx-revalidate-interval` element,
+  or one whose value failed validation).
+- The countdown clamps a passed target to zero. It never shows a
+  negative value or the text "NaN".
+- `gosx check` now rejects a static `data-gosx-countdown` value that is
+  not a valid RFC3339 instant, a static `data-gosx-countdown-format`
+  value outside `"dhms"` and `"mm:ss"`, a static
+  `data-gosx-countdown-segment` value outside the four supported names, a
+  static `data-gosx-countdown-warn` value outside the duration subset
+  above, and a static `data-gosx-countdown-then` value other than
+  `"revalidate"`. A dynamic expression value is exempt from this check.
+  The runtime checks it at render time instead, and leaves the element
+  untouched on a bad value.
+
+### Strict components: typed `<Each>` loops and checked spread call sites
+
+- **`<Each of={props.Field} as="row">` in a strict body.** A strict
+  component may now loop, when the `of` source's declared type reads
+  exactly `[]T` and `T` is a value struct declared in the same file. The
+  binding (`row`) resolves selectors the same way `props` does, against
+  `T`'s fields, up to three hops deep (`row.Stat.Label`), and composes
+  with a concat operand and `<If cond>` under the same exact-type rules.
+  An optional `index="i"` attribute binds the loop index as a plain
+  `int`; it renders bare but admits no selector. `[]*T`, `[]string`,
+  `map[K]V`, `[N]T` arrays, and a named slice type (`type Rows []T`) all
+  fail closed with a diagnostic naming the field and its declared type.
+  Fixes #182.
+- **A strict call site may spread one value.** `<Callee {...source}>` is
+  admitted at exactly one shape: a single spread attribute and nothing
+  else. A strict caller's spread source must have a declared type,
+  resolved against the caller's own schema, that is exactly the callee's
+  props type — proved by the lowerer and the Go compiler, and emitted
+  verbatim (`Callee(source)`) with zero synthesis. A legacy caller's
+  single spread is provable only at the file-renderer boundary (legacy
+  expressions carry no declared type); the boundary re-proves it
+  structurally: the source must be a non-nil struct — never a
+  `map[string]any`, which can omit a key where a typed call would supply
+  a zero value — with every field the callee renders present at its
+  exact declared type. Spread plus named attributes, and more than one
+  spread, stay rejected at every call site. Fixes #184.
+- **`ir.Component.PropsSlices`** records, per `<Each of>` loop-source
+  read, the element struct name and the binding-relative fields the loop
+  body reads with their leaf types — the render boundary's
+  `requireStrictSliceValue` checks the runtime value's reflect *type*
+  once per call (not once per element), so a well-typed slice's elements
+  are all provably safe to select through. Additive; absent decodes to
+  `nil` for a program serialized before this field existed, matching
+  `ComponentSyntax` and `PropsPaths`' zero-value convention.
+- **The cross-style call ban narrows in one direction.** A legacy body
+  may now call a same-file strict component through the single-spread
+  shape; every other legacy-to-strict shape, and every strict-to-legacy
+  call regardless of shape, keep failing closed with their existing
+  messages (the legacy-to-strict named-attributes message now names the
+  supported spread spelling instead).
+- **`internal/strictcomponent`'s validator functions gain scope-aware
+  variants** (`ValidateServerExpressionScope`, `ServerSelectorPath`,
+  `ServerExpressionRootedPaths`, `ServerConcatRootedPaths`,
+  `ValidateServerCondExpressionScope`), admitting a selector rooted at an
+  `<Each>` item binding alongside `props`. The pre-#182/#184 signatures
+  remain as empty-scope wrappers and behave byte-identically to v0.42.2
+  for every existing case.
+- This closes issue #182 (gsxmail upstream ask U2's loop half) and #184
+  (the gridiron-2000 adoption stall at zero spread-blocked components);
+  together they convert RosterRow (`<Each>` body plus a legacy `{...player}`
+  call), DraftTeam, and TeamMark (both call sites) end to end.
+
+### Strict components: nested prop reads
+
+- **`props.A.B` and `props.A.B.C` in strict expressions.** A strict
+  component may now read a field through a same-file value struct, up to
+  three fields deep: `props.Player.Name`, `props.Player.Team.City`. The
+  rule is enforced at all three gates — the syntactic validator accepts a
+  props-rooted field chain of any depth as a shape (`ServerPropPath`
+  generalizes `ServerPropField`), the lowerer resolves each accepted path
+  against the same-file struct schema and reports the three-hop cap there
+  with full component context, and the generated check program proves
+  every field exists with its declared Go type through the real Go
+  compiler. The check program proves field existence and struct-literal
+  types; it does not re-prove the renderer's own scalar-leaf rule (exact
+  `string`, `bool`, integer, or floating-point builtins only) — the
+  lowerer alone enforces that.
+- **Pointer fields stay out of the strict surface.** A nested selector
+  through a pointer intermediate (`*Player`) still fails closed: the
+  map-backed file renderer dissolves a nil pointer to an empty string
+  where generated Go would panic, so admitting pointers would let a
+  strict component type-check one way and render another. Same for a
+  struct this `.gsx` file does not declare, an embedded (promoted) field,
+  and a chain deeper than three hops — each fails closed with a
+  diagnostic naming the component and the exact selector.
+- **The widened selector rule applies everywhere a selector is admitted.**
+  A concat operand (`"player-" + props.Player.Name`) and an `<If
+  cond={props.Player.Ready}>` selector both accept a nested path in this
+  same change, with the same type rules (concat still requires an exact
+  `string` leaf; `cond` still requires an exact `bool` leaf).
+- **`ir.Component.PropsPaths`** carries the resolved leaf type for every
+  nested read, alongside the existing `PropsFields`. It is additive and
+  absent-decodes to `nil` for a program serialized before this field
+  existed, matching `ComponentSyntax`'s zero-value convention — an
+  existing `.gsx` file's projection and render output are unchanged.
+- **The file renderer gained `requireStrictStructValue`**,
+  `requireStrictScalarType`'s counterpart for a nested-selector root: it
+  verifies an incoming struct is exactly the declared same-file type (not
+  a pointer, not an anonymous struct, not a map) and that every path the
+  component reads under it resolves to its declared scalar type, before
+  the component's body observes the value.
+- Re-audit of GitHub issue #171's motivating app: BoardRow now qualifies
+  (nested `props.player.*` combined with the v0.42.0 concatenation
+  extension), alongside TeamMark, RosterRow, and DraftTeam.
+- **A `.gsx` file cannot forward a struct prop to a nested-read component
+  yet.** Nested reads work today for a generated-Go caller and for a
+  hand-built `ir.Program` that supplies the struct value directly. A
+  strict `.gsx` parent cannot pass one:
+  - it rejects rendering a struct-typed prop itself;
+  - a legacy (non-strict) component cannot call a strict component at
+    all; and
+  - a strict entry point cannot bind root props at all (file routes have
+    no way to supply one), so a struct prop cannot arrive from routing
+    either.
+
+  That composition — one `.gsx`-authored component forwarding another's
+  struct prop — arrives with the spread work (#184).
+
+### The `ir` package's compatibility contract is now written down
+
+- **`ir` is documented as experimental while gosx is pre-1.0.** A
+  breaking change to an exported `ir` type is called out in this
+  changelog with a migration note; a consumer that compiles against `ir`
+  directly (for example `gsxmail`, or any tool built against `ir` instead
+  of gosx's higher-level entry points) should pin an exact gosx version
+  rather than a version range. No behavior changes with this entry —
+  it states the policy the project already followed.
+
+## v0.42.3 (2026-08-16)
+
+### Fixed: the adaptive frame budget ignored maxFrameRate
+
+- **`cpuRAFBudgetMS` now honors the same key precedence as the frame
+  limiter** (frameIntervalMS, then maxFrameRate, then maxFPS). It read only
+  maxFPS, so a scene authored with `MaxFrameRate: 30` produced ~33.3ms rAF
+  intervals by design and was judged against its 28ms adaptive target: every
+  measured frame "missed budget", sustained-miss demotion fired within a
+  second, and the quality ladder walked to the floor rung — re-partitioning
+  point layers at every step. On the m31labs galaxy that staircase replayed
+  after each rung reset and read as the gas bodies flickering; it survived
+  three shader-side fixes because it was never the shader.
+
+## v0.42.2 (2026-08-16)
+
+### Fixed: the managed-form shorthand did not expand consistently across server render surfaces
+
+- **`data-gosx-managed` now expands the same way on all three server
+  render surfaces.** v0.42.0 added the shorthand and expanded it only in
+  `RenderHTML`, the Go Node API path. A `.gsx`-authored form using the
+  shorthand served unmanaged: the file-program renderer wrote form
+  attributes through a separate path that never called the expansion. The
+  browser fell back to a native full-page POST. `gosx check` gave the
+  author no warning. Fixes #179.
+- All three server render surfaces now call the same shared rule,
+  `gosx.ManagedFormShorthandTruthy`:
+  - `RenderHTML` (`node.go`), the Go Node API path, for a `gosx.Node` tree
+    built directly in Go.
+  - The route package's file-program renderer, for a `.gsx` page or
+    component served through the file-based router.
+  - The island package's resolved-tree renderer, for a `<form>` inside a
+    server-rendered island's initial HTML.
+
+  A bare attribute, `"true"`, and an empty string (`data-gosx-managed=""`)
+  all expand the form; only `"false"` opts out. An author-written
+  `data-gosx-form*` attribute next to the shorthand — including
+  `data-gosx-form-mode` — keeps its authored value; the expansion fills in
+  only the contract attributes the author did not already write.
+- The navigation runtime now also accepts `data-gosx-managed` on a
+  `<form>` element at the same delegation point it already used for
+  `data-gosx-form`. This covers a form a page builds after the initial
+  render — for example, inside an island's client-side re-render — which
+  no server render surface ever sees. That form is still discovered and
+  intercepted.
+
+## v0.42.1 (2026-08-16)
+
+### The render loop runs for time-driven materials
+
+- **A material that declares a `time` uniform now counts as an animation
+  source.** `sceneAnimationState` enumerated transitions, autoRotate, compute
+  particles, water, model animations, and spin — but not the per-frame clock
+  fed to authored materials. A scene whose motion lives entirely in the
+  shader clock (a starfield whose layer spin was removed, with twinkle and
+  depth-wrap driven by `user.time`) reported "static" after one frame and
+  froze on screen. Detection is structural — a `customUniforms` map or a
+  `shaderLayout` uniform field named `time` on the raw wire scene — and the
+  loop reports the new reason `material-clock`. Reduced-motion still stops
+  the loop, and genuinely static scenes still rest.
+
+- **The visual harness's local Chrome launch carries the WebGPU-on-
+  SwiftShader flags**, so `--require-backend webgpu` can pass on a headless
+  box instead of silently exercising the WebGL fallback.
+
+## v0.42.0 (2026-08-16)
+
+Fail closed, everywhere. Every change in this release either catches a
+failure that used to be silent or widens a strict surface without giving up
+its guarantee. The batch began as an audit from one production app
+(gridiron-2000); all eight filed issues land here.
+
+### Strict components: concatenation, boolean If, and a fail-open fix
+
+- **String concatenation in strict expressions.** A strict component may now
+  write `class={"team-mark tone-" + props.Tone}`: chains of string literals
+  and string-typed props fields, enforced at the validator, the lowerer, and
+  the generated check program. Non-string operands and every other binary
+  operator still fail closed with dedicated diagnostics.
+- **`<If cond={props.Ready}>` in strict bodies**, plus the negated
+  `== false` form, restricted to exact bool props fields. The transpiler
+  emits `gosx.If`; no renderer change was needed.
+- **Fixed: attribute-position prop reads were invisible to strict
+  tracking.** Since v0.39, `collectStrictPropReads` never saw a `props.X`
+  read inside an attribute expression, so a wrong-typed or omitted prop in
+  `class={props.Tone}` passed every check. The tracking now covers
+  attribute expressions; one fixture that accidentally relied on the gap
+  was corrected. Re-audit of the motivating app: three of eight server
+  components now qualify for the strict form.
+
+### Declarative periodic revalidation
+
+- **`data-gosx-revalidate-interval` / `data-gosx-revalidate-src`.** A page
+  element may declare a poll interval (and optionally a same-origin source
+  URL); the navigation runtime revalidates the page when the source body
+  changes, skipping hidden tabs, focused form controls, and in-flight
+  navigations. Live pages need zero app JavaScript. Cross-origin sources
+  and sub-second intervals disable the feature with one console warning.
+
+### Silent failures now speak
+
+- **CLI/module version skew fails with the fix in the message.** A gosx CLI
+  operating on a project pinned to a different m31labs.dev/gosx version
+  stops before building: `gosx vX cannot operate on a project pinned to
+  m31labs.dev/gosx vY. Run: go install m31labs.dev/gosx/cmd/gosx@vY`.
+  Local replace directives skip the check.
+- **Stale island programs are reported at startup.** `gosx build` stores a
+  source hash per island in the manifest; the server compares at boot and
+  logs `gosx islands: <Name> program in dist is stale ... run gosx build`.
+  Old manifests without the field skip the check.
+- **Unregistered file modules are reported at router build.** A routed
+  directory with a page.server.go but no registered module logs
+  `regenerate modules.go (gosx build)` instead of serving pages with empty
+  data and 403 actions.
+- **`.length` in legacy template conditions is rejected at check time.**
+  `<If cond={data.picks.length == 0}>` rendered neither branch silently;
+  `gosx check` now names the expression and suggests shipping a boolean.
+
+### EnableNavigation reaches file-routed apps
+
+- **`App.EnableNavigation()` now injects the navigation runtime for
+  route.NewRouter apps.** The flag was a silent no-op for the file-routed
+  path. Injection de-duplicates against a manually added script, so the
+  documented workaround keeps working unchanged. The starter template's
+  export test had encoded the missing injection as expected behavior; it
+  now asserts the runtime is present.
+
+### Behavior changes to note when upgrading
+
+- **`.length` in a legacy template now fails at render time too, not only
+  at check time.** File-routed templates compile at request time, so a
+  deployed page that still carries `.length` in a condition returns an
+  error page instead of silently rendering neither branch. Run
+  `gosx check` before deploying this upgrade.
+- **Strict components: three source patterns that v0.41.0 accepted now
+  fail closed.** All three follow from fixing the attribute-read tracking
+  hole: (1) a strict call site may no longer omit a prop that the
+  component reads in attribute position — v0.41.0 rendered the file-route
+  path with the value present and the generated-Go path with `class=""`,
+  a real divergence; (2) a non-scalar props field read in attribute
+  position is rejected; (3) local strict calls must pass every
+  attribute-read field explicitly. Each failure names the prop and the
+  fix in its diagnostic.
+
+### Managed-form shorthand
+
+- **`data-gosx-managed` on a form** expands at render time into the full
+  five-attribute managed-form contract, with author-specified attributes
+  winning over defaults. Templates no longer copy the attribute block onto
+  every form, and a typo can no longer silently downgrade a form to
+  full-reload behavior.
+
+## v0.41.0 (2026-08-15)
+
+Client resource cost. Every change in this release reduces what a GoSX page
+asks of the visitor's browser: fewer bytes shipped, fewer bytes parsed, fewer
+bytes retained.
+
+### Shader deduplication now covers JSX-authored scenes
+
+- **`marshalEngineProps` runs the shader-lib hoisting pass.** Scenes written as
+  `.gsx` children never reach the typed SceneIR collections, so the existing
+  hoisting pass could not see them and every repeated shader string shipped in
+  full, once per element. The m31labs.dev home page carried one 1,385-byte
+  fragment shader twelve times over. The pass now runs on the canonicalized
+  engine props map; the browser side already inflated `*Ref` fields, so wire
+  output shrinks with no runtime change. On that page the manifest lost 46 KB
+  (7.2% of the HTML) and repeated shader text fell 87%.
+
+### Split scene loading for GLB models
+
+- **A GLB can name an immutable geometry base and ship only what rotates.** A
+  scene whose point colors change on a schedule no longer re-downloads its
+  unchanged geometry: the overlay GLB names its base in root extras
+  (`gosx.baseSrc`), and the loader fetches the base (served content-addressed
+  and immutable), patches point colors, positions, and sizes by layer id, and
+  appends any layer that exists only in the overlay. A count mismatch refuses
+  the patch and keeps the base attributes, so server-side skew degrades to
+  stale colors instead of corrupt buffers.
+
+- **`_POINT_SIZE` accepts quantized storage.** A builder may write point sizes
+  as a normalized integer accessor with the dequantization factor in primitive
+  extras (`gosx.pointSizeScale`); the loader multiplies it back. Halves the
+  size stream against float32 at a worst-case error of scale/65535.
+
+### Manifest parse memoized, DOM text releasable
+
+- **`#gosx-manifest` is parsed once per element.** The WebGPU probe and the
+  runtime tail each ran a full `JSON.parse` of the manifest during one boot —
+  hundreds of kilobytes parsed twice. The parse is now memoized per element
+  and published as `window.__gosx_manifest`; the scene3d water shader readers
+  reuse it instead of re-parsing DOM text.
+
+- **Opt-in `data-gosx-release` drops the manifest text after boot.** The JSON
+  string is dead weight once the object graph exists. A server opts in per
+  renderer with `ReleaseManifestText()`; the default remains retention because
+  app scripts may read the element's text after boot. Late consumers must use
+  `window.__gosx_manifest`.
+
+## v0.40.1 (2026-08-14)
+
+v0.40.0 was tagged and is present on the module proxy, but it is not usable:
+its `go.mod` carried a local `replace` directive for `gotreesitter` pointing at
+a scratch path, so the module does not resolve anywhere else. The release job
+caught it and published nothing. v0.40.1 is the same work with that directive
+removed. Do not depend on v0.40.0.
+
+
+### Browser runtime sources move to TypeScript
+
+- **39 of the 70 `bootstrap-src` sources are now TypeScript.** `buildbootstrap`
+  classifies each source by its own extension and transpiles it with its own
+  esbuild loader, so a `.ts` source must parse on its own. The 31 sources left
+  as JavaScript are the concatenation fragments: the `26*-prefix` and
+  `26*-suffix` wrapper pairs open a scope in one file and close it in another,
+  which no single-file parse can accept. Converting those needs the wrapper
+  architecture dissolved into modules, and is not attempted here.
+
+- **The shipped bundles are unchanged in behaviour.** Total bundle growth is 8
+  bytes across 1.69 MB, and every byte of it is esbuild choosing different
+  short names for minified locals after the transpile step. The Scene3D
+  decompress bundle is byte-identical. The full browser runtime suite passes,
+  1078 of 1078.
+
+- **`perf/ouroboros` reads TypeScript sources.** `collectFiles` walked
+  `bootstrap-src` for `.js` only, so every migrated source silently dropped out
+  of the global-symbol inventory and read as unexplained anchor drift. The walk
+  now accepts both extensions and `parseBrowserSource` selects the grammar from
+  the file extension.
+
+- **Upgraded gotreesitter to v0.50.1 and selena to v0.5.2.** gotreesitter
+  v0.50.x carries the fix for TypeScript and TSX splitting a signed right-shift
+  operator into two generic closers, which blocked `11a-scene-decompress` from
+  migrating at all. Taking it also required selena v0.5.2: gotreesitter v0.49.0
+  added a leaf-tiling invariant that declines a subtree whose span contains
+  bytes no child covers, and selena declared its `//` comment rule hidden, so
+  comment bytes belonged to no node. Every `.sel` source containing a comment
+  failed to parse on gotreesitter v0.49.0 and later until selena made the rule
+  visible.
+
+## v0.39.0 (2026-08-12)
+
+### Typed GoSX grammar and fail-closed browser runtime contracts
+
+- **Strict typed components, alongside the original style.** `.gsx` files can
+  declare `component Name(props: GoType) { ... }`. The prop contract is an
+  ordinary Go type and the declaration has an implicit `Node` result, while
+  the body still uses an explicit `return`. Strict server components currently
+  use one top-level GSX return and a deliberately small renderer-safe
+  expression surface: quoted strings, `true`/`false`, ungrouped non-negative
+  base-10 integers in the `int64` range, finite ungrouped decimal floats, or
+  one direct, parity-safe built-in scalar field on `props`;
+  unsupported Go control flow, locals, helpers, and cross-file component calls
+  fail closed instead of type-checking one program and rendering another.
+  `gosx check`, build, dev, export, and render ask the Go compiler to reject
+  unknown fields and incompatible values. Existing
+  `func Name(props GoType) Node` components remain supported, and both styles
+  can coexist in a file; component calls stay within one declaration style in
+  v0.39 so legacy dynamic calls cannot bypass the strict prop contract.
+  Same-file strict calls accept exact Go field names or unambiguous TSX-like
+  lower-camel aliases, and explicitly require every rendered prop even when
+  its value is `0`, `false`, or `""`. Islands, engines, renderer builtins,
+  element spreads, and nested Node composition retain the legacy declaration
+  style in this release.
+- **Ouroboros O0.2 evidence infrastructure.** Runtime inventory, browser,
+  comparison, and pixel evidence now carries source identity, uses portable
+  artifact references, and fails closed on missing or mismatched receipts.
+  Monotonic ceilings and pixel tolerances are policy-owned rather than trusted
+  from a self-reported result. A canonical hardware/browser baseline and the
+  final CI evidence gate remain deliberately deferred; this release does not
+  claim that either one is committed.
+- **Typed browser runtime authorities.** Hand-written TypeScript sources own
+  the browser build and host lifecycle, with generated bundles checked for
+  source and diagnostic parity. Framework internals are grouped beneath
+  `window.__gosx.host` and `window.__gosx.runtime` instead of adding new
+  ambient `window.__gosx_*` names.
+- **Versioned WASM boundary and capability-linked profiles.** The browser
+  validates ABI version 2, mailbox version 1, manifest identity, feature mask,
+  and runtime variant before hydration. Production manifests publish `core`,
+  `engine`, `collab`, and `full` artifacts; `islands` remains a read-compatible
+  alias for older manifests, not a fifth advertised profile.
+- **Breaking relay hardening.** URL-driven preview relay no longer defaults to
+  a wildcard origin. `?gosx-preview=1` must be paired with a canonical absolute
+  HTTP(S) `gosx-preview-origin`. The programmatic Bridge API still accepts an
+  explicitly requested `"*"` for local development and warns when it is used.
+- **Scene3D browser migration and rendering additions.** Scene3D host authority
+  moved into the TypeScript browser pipeline, with source-owned WebGPU/WebGL
+  environment handling, water taps, embers, FXAA, and compatibility evidence.
+- **Boolean-attribute and reconciliation hardening.** Browser patching keeps
+  HTML presence semantics (including `hidden="until-found"` and value-bearing
+  attributes), while TinyGo reconciliation retains its compiler-safe path.
+
+## v0.38.1 (2026-08-10)
+
+### Patch: TinyGo island-reconciler fix, attribute-value fix, gzip passthrough fix
+
+- **TinyGo subtree-reuse miscompile.** `appendResolvedNode` assigned a
+  resolved node's `Children` through a pre-fetched slice index while the
+  right-hand call could grow and reallocate the same tree's backing array.
+  Standard Go's copy-on-grow keeps the old and new arrays byte-identical at
+  that index, so the stale write still landed correctly; TinyGo does not
+  honour that, and the write landed in the abandoned array instead. The
+  visible symptom: a multi-child island with a reactive `Each` or a
+  signal-driven boolean/empty attribute dropped its first re-render, then
+  appended a duplicate subtree on the next one. Binding the result to a
+  local variable before the indexed assignment removes the stale address.
+  `client/vm/island.go` additionally forces the spare-buffer recycle, the
+  subtree-diff skip, and the subtree-reuse plan itself off under a TinyGo
+  build tag, so production keeps the pre-optimisation evaluation path while
+  native/standard-Go builds keep the fast path the fuzz targets cover.
+- **Attribute-value fix.** `client/js/patch.js` renders an empty attribute
+  value as `setAttribute(name, "")` and never writes the string
+  `"undefined"` into a boolean attribute (`value`, `required`, `hidden`,
+  and the rest of the presence-attribute set now go through one
+  `BOOL_ATTRS` path instead of a narrower property-only list).
+- **Gzip double-encode fix.** `server/gzip.go` now passes pre-encoded
+  upstream responses straight through (`Content-Encoding` already set)
+  instead of compressing them a second time under the gzip writer, for
+  both direct writes and flushed streaming responses.
+
+## v0.38.0 (2026-08-09)
+
+### Island-VM core: capability-scoped browser handlers, computed signals, hub refresh
+
+- **Browser host receiver.** A framework-owned, root-scoped capability
+  surface (`browser` receiver) for island handler effects: microtask-isolated
+  dialogs and focus movement, deferred activation, clipboard access, managed
+  navigation and refresh, deferred form submission, event control, and
+  scrolling. Handlers author against `browser.Activate(...)` and similar
+  calls; the framework lowers each to a host call and resolves it through a
+  registered `HostReceiverFactory` (`client/bridge.RegisterIslandHostFactory`)
+  at hydration, keeping host objects out of serialized island programs.
+- **Typed event payloads.** Compact, typed keyboard, pointer, drag/drop,
+  dataset, and timing payloads reach handlers instead of raw DOM event
+  objects, with lifecycle-safe document/window event conventions.
+- **Manifest-selective delegated listeners.** Hydration manifests select
+  which delegated listeners an island needs, with legacy-manifest
+  compatibility, explicit zero-listener eventless manifests, and ownership
+  boundaries that keep nested islands from claiming a parent's events.
+- **Chained computed signals.** Island programs run reactive computed
+  definitions (`signal.Derive`) that chain across DOM, Scene3D, and Canvas2D
+  surfaces, with shared-signal rebinding, prop invalidation, and
+  hot-reload/disposal cleanup. Dispatch is guarded against reentrancy; reload
+  binds new shared and computed inputs before its single DOM reconcile.
+- **Boolean HTML attributes.** A shared `internal/htmlattr` helper normalizes
+  boolean attribute rendering and hydration (for example `disabled`,
+  `checked`) so island VM state and server-rendered markup agree.
+- **Navigation and hub refresh.** Forced soft-route refresh with mutation
+  revalidation, debounced hub-triggered refresh bindings, and direct JSON
+  storage-to-signal hydration.
+- **Accessible managed forms.** Scoped managed-form result projection,
+  including stale-error cleanup, status announcement on submit, and
+  invalid-field focus.
+
+## v0.37.1 (2026-08-09)
+
+### Patch: grammar-blob authority and parser diagnostics
+
+- **Grammar override integrity.** Compilation refuses an override grammar blob
+  that is not byte-identical to GoSX's embedded grammar, closing the stale
+  parse-table mismatch that caused issue #139.
+- **Self-closing SVG parsing.** Regression coverage preserves nested and
+  self-closing SVG markup through the corrected grammar path.
+- **Parse diagnostics.** Invalid source now reports a useful parser failure
+  even when the syntax tree contains no explicit error node.
+
 ## v0.37.0 (2026-08-09)
 
 ### New framework surfaces that retire app-authored scripts
@@ -2665,7 +6600,7 @@ For the current runtime, that trims the external graph to `github.com/odvcencio/
 
 When the active `go` binary is too new for TinyGo, `gosx build` now retries the TinyGo compile against compatible installed Go SDKs. It checks `GOSX_TINYGO_GOROOT`, `$HOME/sdk/go1.*`, and `/usr/local/go`, filters to Go 1.19 through Go 1.25, picks the newest compatible root, and runs TinyGo with that root first on `PATH` plus `GOTOOLCHAIN=local`.
 
-On the release machine, the build used Go 1.25.9 at `/home/draco/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
+On the release machine, the build used Go 1.25.9 at `$HOME/sdk/go1.25.9`, then applied `wasm-opt -Oz`.
 
 Measured release output:
 

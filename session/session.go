@@ -16,10 +16,15 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"mime"
+	"mime/multipart"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
+
+	"m31labs.dev/gosx/internal/httpcache"
 )
 
 type contextKey string
@@ -85,6 +90,10 @@ type Options struct {
 	// only when you serve plain HTTP on purpose.
 	AllowInsecure bool
 
+	// Partitioned enables CHIPS storage scoped to the top-level site. It requires
+	// SameSite=None and Secure, including when the session is deleted.
+	Partitioned bool
+
 	HTTPOnly        bool
 	SameSite        http.SameSite
 	Encrypt         bool
@@ -99,6 +108,24 @@ type Options struct {
 	// OnError receives cookie write failures, such as an oversized session.
 	// The manager logs the failure when OnError is nil.
 	OnError func(error)
+
+	// MaxCSRFBodyBytes bounds form bodies read to find a CSRF field. The
+	// default is 1 MiB. Set this to the action upload limit for larger native
+	// multipart forms. A header token avoids this read; downstream action
+	// limits still apply because Protect restores the unparsed body.
+	MaxCSRFBodyBytes int64
+
+	// TrustedOrigins permits explicitly trusted browser origins in Protect.
+	// Values must be absolute HTTP(S) origins without a path.
+	TrustedOrigins []string
+
+	// AllowedHosts restricts the request hosts accepted by Protect. When empty,
+	// Protect compares Origin with the direct request's host and scheme.
+	AllowedHosts []string
+
+	// ForwardedTrust reads forwarded headers only from listed proxies and only
+	// for AllowedHosts. Proxies must replace client-supplied forwarded headers.
+	ForwardedTrust ForwardedTrust
 }
 
 // Manager loads and persists signed cookie sessions.
@@ -108,6 +135,7 @@ type Manager struct {
 	opts            Options
 	now             func() time.Time
 	startedAt       time.Time
+	origin          *originPolicy
 }
 
 type sessionEnvelope struct {
@@ -131,6 +159,15 @@ type Store struct {
 	dirty           bool
 	destroyed       bool
 	writeErr        error
+	existing        bool
+	cookiePresent   bool
+	// accessed records that the handler read or wrote session state, so the
+	// response can depend on the visitor's session. Only such responses get
+	// Vary: Cookie and private caching; a handler that never touches the
+	// session (static and runtime assets) keeps its own cache headers.
+	accessed          bool
+	responseCSRFToken string
+	csrfRotated       bool
 }
 
 // New creates a new cookie-backed session manager.
@@ -143,6 +180,9 @@ func New(secret string, opts Options) (*Manager, error) {
 	}
 	if opts.Path == "" {
 		opts.Path = "/"
+	}
+	if opts.MaxCSRFBodyBytes <= 0 {
+		opts.MaxCSRFBodyBytes = 1 << 20
 	}
 	if opts.MaxAge == 0 {
 		opts.MaxAge = DefaultMaxAge
@@ -165,7 +205,17 @@ func New(secret string, opts Options) (*Manager, error) {
 	if opts.SameSite == 0 {
 		opts.SameSite = http.SameSiteLaxMode
 	}
+	if opts.SameSite == http.SameSiteNoneMode && !opts.Secure {
+		return nil, fmt.Errorf("session: SameSite=None requires Secure")
+	}
+	if opts.Partitioned && (!opts.Secure || opts.SameSite != http.SameSiteNoneMode) {
+		return nil, fmt.Errorf("session: partitioned cookies require SameSite=None and Secure")
+	}
 	if err := validateHostPrefix(opts); err != nil {
+		return nil, err
+	}
+	origin, err := newOriginPolicy(opts)
+	if err != nil {
 		return nil, err
 	}
 	return &Manager{
@@ -174,6 +224,7 @@ func New(secret string, opts Options) (*Manager, error) {
 		opts:            opts,
 		now:             time.Now,
 		startedAt:       time.Now(),
+		origin:          origin,
 	}, nil
 }
 
@@ -221,16 +272,23 @@ func (m *Manager) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		store := m.load(r)
 		ctx := context.WithValue(r.Context(), storeContextKey, store)
+		request, cachePolicy := httpcache.WithPolicy(r.WithContext(ctx))
 		writer := &responseWriter{
 			ResponseWriter: w,
 			store:          store,
+			cachePolicy:    cachePolicy,
+			status:         http.StatusOK,
 		}
-		next.ServeHTTP(writer, r.WithContext(ctx))
+		next.ServeHTTP(writer, request)
 		writer.commitCookie()
 	})
 }
 
-// Protect enforces CSRF validation on unsafe requests.
+// Protect checks browser origins on unsafe requests and also requires a token
+// whenever a session exists. Anonymous browser forms can submit without first
+// creating a cookie. Clients with neither Sec-Fetch-Site nor Origin must still
+// supply a session token. Origin checks never replace an existing session's
+// token check, and a valid token never overrides a rejected browser origin.
 func (m *Manager) Protect(next http.Handler) http.Handler {
 	if next == nil {
 		next = http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})
@@ -250,23 +308,72 @@ func (m *Manager) Protect(next http.Handler) http.Handler {
 			http.Error(w, "session middleware required before csrf protection", http.StatusInternalServerError)
 			return
 		}
-		expected := store.ensureCSRFToken()
-		actual := r.Header.Get("X-CSRF-Token")
-		if actual == "" && !requestWantsJSON(r) {
-			// FormValue parses multipart/form-data (via ParseMultipartForm)
-			// as well as urlencoded bodies and query params, so it reads the
-			// csrf_token whether the form was submitted as multipart (e.g. the
-			// studio workbench's FormData fetch) or urlencoded. The parsed form
-			// is cached on the request, so downstream handlers reusing it are
-			// unaffected.
-			actual = r.FormValue(defaultCSRFField)
+		browserOrigin, err := m.origin.check(r)
+		if err != nil {
+			writeCSRFFailure(w, r)
+			return
 		}
-		if !constantTimeSessionStringEqual(expected, actual) {
+		if browserOrigin && !store.existing && !store.dirty {
+			next.ServeHTTP(w, r)
+			return
+		}
+		expected := store.String(defaultCSRFKey)
+		actual := r.Header.Get("X-CSRF-Token")
+		if expected == "" {
+			writeCSRFFailure(w, r)
+			return
+		}
+		if actual == "" && !requestWantsJSON(r) {
+			contentType, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+			if contentType == "application/x-www-form-urlencoded" || contentType == "multipart/form-data" {
+				if r.PostForm != nil && (contentType != "multipart/form-data" || r.MultipartForm != nil) {
+					// An upstream form handler has already consumed the body.
+					// Use its parsed fields instead of rereading an empty stream.
+					actual = r.PostForm.Get(defaultCSRFField)
+				} else {
+					body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, m.opts.MaxCSRFBodyBytes))
+					if err != nil {
+						http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
+						return
+					}
+					r.Body = io.NopCloser(bytes.NewReader(body))
+					if contentType == "multipart/form-data" {
+						actual = multipartCSRFToken(body, params["boundary"])
+					} else if form, err := url.ParseQuery(string(body)); err == nil {
+						actual = form.Get(defaultCSRFField)
+					}
+				}
+			}
+			if actual == "" && contentType != "multipart/form-data" {
+				actual = r.URL.Query().Get(defaultCSRFField)
+			}
+		}
+		if !constantTimeSessionStringEqual(expected, unmaskCSRFToken(actual)) {
 			writeCSRFFailure(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// Read only the CSRF field, without populating Request.MultipartForm or
+// bypassing the action's own parser and body limit.
+func multipartCSRFToken(body []byte, boundary string) string {
+	reader := multipart.NewReader(bytes.NewReader(body), boundary)
+	for {
+		part, err := reader.NextPart()
+		if err != nil {
+			return ""
+		}
+		if part.FormName() == defaultCSRFField && part.FileName() == "" {
+			token, err := io.ReadAll(io.LimitReader(part, 256))
+			if err == nil {
+				return string(token)
+			}
+			return ""
+		}
+		part.Close()
+	}
 }
 
 // Get returns the request-scoped store for the manager.
@@ -281,17 +388,29 @@ func (m *Manager) Get(r *http.Request) *Store {
 	return store
 }
 
-// Token returns the request CSRF token, generating one if needed.
+// Token returns a CSRF token only when the request already has session state.
+// Reading it on an anonymous request returns empty without creating a cookie.
 func (m *Manager) Token(r *http.Request) string {
 	store := m.Get(r)
 	if store == nil {
 		return ""
 	}
-	return store.ensureCSRFToken()
+	return store.responseToken()
 }
 
 // Current returns the request-scoped session store loaded by Middleware.
+// Calling it marks the response as session-dependent (Vary: Cookie, and
+// private caching when the visitor has a session). Framework handlers serving
+// explicitly classified immutable assets can ignore reads, but never writes.
 func Current(r *http.Request) *Store {
+	store := currentStore(r)
+	if store != nil {
+		store.accessed = true
+	}
+	return store
+}
+
+func currentStore(r *http.Request) *Store {
 	if r == nil {
 		return nil
 	}
@@ -299,13 +418,33 @@ func Current(r *http.Request) *Store {
 	return store
 }
 
-// Token returns the request CSRF token from the current session store.
+// HasState reports whether the response can depend on a visitor's session.
+// Invalid cookies also bypass shared HTML so stale or forged cookies cannot
+// select a public representation while middleware handles their replacement.
+func HasState(r *http.Request) bool {
+	store := Current(r)
+	return store != nil && (store.cookiePresent || store.dirty || store.existing)
+}
+
+func addCookieVary(headers http.Header) {
+	for _, value := range headers.Values("Vary") {
+		for _, field := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(field), "Cookie") || strings.TrimSpace(field) == "*" {
+				return
+			}
+		}
+	}
+	headers.Add("Vary", "Cookie")
+}
+
+// Token returns the current session's CSRF token. An anonymous read returns
+// empty; writing session data first enables the token on the same request.
 func Token(r *http.Request) string {
 	store := Current(r)
 	if store == nil {
 		return ""
 	}
-	return store.ensureCSRFToken()
+	return store.responseToken()
 }
 
 // Values returns a shallow copy of the current session values.
@@ -397,6 +536,7 @@ func (s *Store) Set(key string, value any) {
 	if s == nil {
 		return
 	}
+	s.destroyed = false
 	if s.values == nil {
 		s.values = make(map[string]any)
 	}
@@ -430,6 +570,7 @@ func (s *Store) AddFlash(key string, value any) {
 	if s == nil {
 		return
 	}
+	s.destroyed = false
 	if key == "" {
 		key = defaultFlashKey
 	}
@@ -468,6 +609,18 @@ func (s *Store) AllFlashes() map[string][]any {
 	return out
 }
 
+// Renew clears prior session state and rotates the CSRF token at an
+// authentication boundary. Cookie sessions require an application-managed
+// server-side session version when previously issued cookies must be revoked.
+func (s *Store) Renew() {
+	if s == nil {
+		return
+	}
+	s.Destroy()
+	s.destroyed = false
+	s.ensureCSRFToken()
+}
+
 // Destroy deletes the current session cookie.
 func (s *Store) Destroy() {
 	if s == nil {
@@ -478,10 +631,57 @@ func (s *Store) Destroy() {
 	s.outgoingFlashes = map[string][]any{}
 	s.dirty = true
 	s.destroyed = true
+	s.responseCSRFToken = ""
+	s.csrfRotated = true
+}
+
+// Mask the stored token with a fresh random pad for each response. The prefix
+// distinguishes masked tokens from legacy raw tokens during rolling upgrades.
+func (s *Store) responseToken() string {
+	token := s.ensureCSRFToken()
+	if token == "" {
+		return ""
+	}
+	if s.responseCSRFToken == "" {
+		s.responseCSRFToken = maskCSRFToken(token)
+	}
+	return s.responseCSRFToken
+}
+
+func maskCSRFToken(token string) string {
+	pad := make([]byte, len(token))
+	if _, err := rand.Read(pad); err != nil {
+		panic("session: crypto/rand failed")
+	}
+	masked := make([]byte, len(token)*2)
+	copy(masked, pad)
+	for i := range token {
+		masked[len(token)+i] = pad[i] ^ token[i]
+	}
+	return "masked:" + base64.RawURLEncoding.EncodeToString(masked)
+}
+
+func unmaskCSRFToken(token string) string {
+	if !strings.HasPrefix(token, "masked:") {
+		return token
+	}
+	rawSize := base64.RawURLEncoding.EncodedLen(32)
+	if len(token) != len("masked:")+base64.RawURLEncoding.EncodedLen(rawSize*2) {
+		return ""
+	}
+	masked, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(token, "masked:"))
+	if err != nil || len(masked) != rawSize*2 {
+		return ""
+	}
+	n := len(masked) / 2
+	for i := 0; i < n; i++ {
+		masked[i] ^= masked[n+i]
+	}
+	return string(masked[:n])
 }
 
 func (s *Store) ensureCSRFToken() string {
-	if s == nil {
+	if s == nil || s.destroyed || (!s.existing && !s.dirty) {
 		return ""
 	}
 	if token, ok := s.values[defaultCSRFKey].(string); ok && token != "" {
@@ -504,7 +704,11 @@ func (m *Manager) load(r *http.Request) *Store {
 		return store
 	}
 	cookie, err := r.Cookie(m.opts.CookieName)
-	if err != nil || cookie.Value == "" {
+	if err != nil {
+		return store
+	}
+	store.cookiePresent = true
+	if cookie.Value == "" {
 		return store
 	}
 
@@ -512,6 +716,7 @@ func (m *Manager) load(r *http.Request) *Store {
 	if err != nil {
 		return store
 	}
+	store.existing = true
 	store.values = envelope.Values
 	if store.values == nil {
 		store.values = make(map[string]any)
@@ -774,32 +979,37 @@ func (m *Manager) writeCookie(w http.ResponseWriter, store *Store) error {
 	}
 	if store.destroyed || sessionEmpty(store) {
 		http.SetCookie(w, &http.Cookie{
-			Name:     m.opts.CookieName,
-			Value:    "",
-			Path:     m.opts.Path,
-			Domain:   m.opts.Domain,
-			MaxAge:   -1,
-			Expires:  time.Unix(0, 0),
-			Secure:   m.opts.Secure,
-			HttpOnly: m.opts.HTTPOnly,
-			SameSite: m.opts.SameSite,
+			Name:        m.opts.CookieName,
+			Value:       "",
+			Path:        m.opts.Path,
+			Domain:      m.opts.Domain,
+			MaxAge:      -1,
+			Expires:     time.Unix(0, 0),
+			Secure:      m.opts.Secure,
+			HttpOnly:    m.opts.HTTPOnly,
+			SameSite:    m.opts.SameSite,
+			Partitioned: m.opts.Partitioned,
 		})
 		return nil
 	}
+	// Every persisted session carries a token, including a session first
+	// created by an anonymous form's flash or validation state.
+	store.ensureCSRFToken()
 	encoded, err := m.encode(store)
 	if err != nil {
 		return err
 	}
 	cookie := &http.Cookie{
-		Name:     m.opts.CookieName,
-		Value:    encoded,
-		Path:     m.opts.Path,
-		Domain:   m.opts.Domain,
-		MaxAge:   int(m.opts.MaxAge / time.Second),
-		Expires:  m.clock().Add(m.opts.MaxAge),
-		Secure:   m.opts.Secure,
-		HttpOnly: m.opts.HTTPOnly,
-		SameSite: m.opts.SameSite,
+		Name:        m.opts.CookieName,
+		Value:       encoded,
+		Path:        m.opts.Path,
+		Domain:      m.opts.Domain,
+		MaxAge:      int(m.opts.MaxAge / time.Second),
+		Expires:     m.clock().Add(m.opts.MaxAge),
+		Secure:      m.opts.Secure,
+		HttpOnly:    m.opts.HTTPOnly,
+		SameSite:    m.opts.SameSite,
+		Partitioned: m.opts.Partitioned,
 	}
 	// Report an oversized cookie. A browser drops a cookie above the RFC 6265
 	// budget without any signal, so the session would vanish at random.
@@ -839,11 +1049,20 @@ func sessionEmpty(store *Store) bool {
 
 type responseWriter struct {
 	http.ResponseWriter
-	store     *Store
-	committed bool
+	store       *Store
+	cachePolicy *httpcache.Policy
+	status      int
+	committed   bool
 }
 
 func (w *responseWriter) WriteHeader(status int) {
+	if status >= 100 && status < 200 && status != http.StatusSwitchingProtocols {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	if !w.committed {
+		w.status = status
+	}
 	w.commitCookie()
 	w.ResponseWriter.WriteHeader(status)
 }
@@ -889,22 +1108,42 @@ func (w *responseWriter) commitCookie() {
 		return
 	}
 	w.committed = true
+	// Classification comes from the handler that resolved immutable bytes,
+	// never from the URL or a public cache header. Reads in global middleware
+	// do not personalize these bytes; writes and unsafe final headers still do.
+	dirty := w.store != nil && w.store.dirty
+	publicAsset := !dirty && w.cachePolicy.AllowsImmutable(w.Header(), w.status)
+	private := dirty || len(w.Header().Values("Set-Cookie")) > 0 ||
+		(w.cachePolicy.IsImmutableAsset() && !publicAsset)
+	if publicAsset {
+		w.Header().Set("Cache-Control", httpcache.Immutable)
+	} else if w.store != nil && (w.store.accessed || dirty) {
+		addCookieVary(w.Header())
+		private = private || w.store.cookiePresent
+	}
+	if private {
+		w.Header().Set("Cache-Control", httpcache.Private)
+	}
 	if w.store == nil || !w.store.dirty {
 		return
 	}
 	if err := w.store.manager.writeCookie(w.ResponseWriter, w.store); err != nil {
 		w.store.writeErr = err
 		w.store.manager.reportError(err)
+	} else if w.store.csrfRotated {
+		// Enhanced actions can continue after authentication changes without
+		// retaining a token from the previous cookie session.
+		w.Header().Set("X-CSRF-Token", w.store.responseToken())
 	}
 	w.store.dirty = false
 }
 
 func csrfProtectedMethod(method string) bool {
 	switch method {
-	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
-		return true
-	default:
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return false
+	default:
+		return true
 	}
 }
 

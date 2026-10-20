@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Selective feature-bundle loading, browser capability gates, the engine
 // factory contract, backend honesty gating and the video sync parity vector.
 //
@@ -219,7 +221,7 @@ test("selective runtime mounts native JS engines without loading the shared wasm
 // normalizeSceneLabelWhiteSpace, normalizeSceneLabelAlign,
 // normalizeSceneHTMLMode, normalizeSceneHTMLPointerEvents, and clamp01 — all
 // of which live in 00-textlayout.js / 10-runtime-scene-core.js /
-// 11-scene-math.js, none of which bootstrap-feature-engines.js carries.
+// 11-scene-math.ts, none of which bootstrap-feature-engines.js carries.
 //
 // Before the fix, a page whose ONLY shared-runtime engine is a non-Scene3D
 // surface (so bootstrap-feature-scene3d.js never loads — manifestFeatureNames
@@ -451,9 +453,15 @@ window.Hls.Events = {};`,
   );
 });
 
-test("bootstrap blocks engines when required browser capabilities are missing", async () => {
+for (const fallbackKind of ["text", "svg", "empty", "hidden", "metadata"]) {
+test(`bootstrap missing capability preserves ${fallbackKind} fallback semantics`, async () => {
   const mount = new FakeElement("div", null);
   mount.id = "strict-engine-root";
+  const authored = new FakeElement(fallbackKind === "svg" ? "svg" : fallbackKind === "metadata" ? "script" : "p", null);
+  if (fallbackKind !== "empty" && fallbackKind !== "svg") authored.textContent = "Playable server fallback";
+  if (fallbackKind === "hidden") authored.setAttribute("hidden", "");
+  mount.appendChild(authored);
+  const usefulFallback = fallbackKind === "text" || fallbackKind === "svg";
   let factoryCalls = 0;
 
   const env = createContext({
@@ -488,14 +496,23 @@ test("bootstrap blocks engines when required browser capabilities are missing", 
   assert.equal(mount.getAttribute("data-gosx-engine-required-capabilities"), "webgl");
   assert.equal(mount.getAttribute("data-gosx-engine-missing-capabilities"), "webgl");
   assert.equal(mount.getAttribute("data-gosx-runtime-issue"), "capability");
-  assert.equal(mount.getAttribute("data-gosx-fallback-active"), "unsupported");
-  assert.equal(mount.children.length, 1);
-  assert.equal(mount.children[0].getAttribute("data-gosx-engine-unsupported"), "true");
-  assert.ok(mount.children[0].textContent.includes("current browser"));
+  assert.equal(mount.getAttribute("data-gosx-fallback-active"), usefulFallback ? "authored" : "unsupported");
+  assert.equal(mount.children.length, 2);
+  assert.equal(mount.children[0], authored);
+  assert.equal(mount.children[1].getAttribute("data-gosx-engine-unsupported"), "true");
+  assert.equal(mount.children[1].hasAttribute("hidden"), usefulFallback);
+  assert.equal(mount.children[1].textContent.includes("current browser"), !usefulFallback);
+  assert.equal(mount.children[1].getAttribute("role"), usefulFallback ? null : "alert");
+  assert.equal(env.consoleLogs.error.length, usefulFallback ? 0 : 1);
+  if (usefulFallback) assert.ok(env.consoleLogs.warn.some(message => message.includes("missing required engine capabilities")));
 
   const issues = env.context.__gosx.listIssues();
-  assert.equal(issues.some((issue) => issue.scope === "engine" && issue.type === "capability" && issue.source === "gosx-engine-strict"), true);
+  const issue = issues.find(issue => issue.scope === "engine" && issue.type === "capability" && issue.source === "gosx-engine-strict");
+  assert.ok(issue);
+  assert.equal(issue.severity, usefulFallback ? "warning" : "error");
 });
+}
+
 
 test("bootstrap exposes required capability status to mounted engines", async () => {
   const mount = new FakeElement("div", null);
@@ -743,7 +760,8 @@ test("engine factory context does not receive activateInputProviders even with i
   await flushAsyncWork();
 
   assert.equal(env.context.__gosx.engines.size, 1);
-  assert.equal(raf.count(), 1, "gamepad input provider should poll while the engine is mounted");
+  raf.flush(16); // Deliver the provider's initial neutral signals once.
+  assert.equal(raf.count(), 0, "gamepad capability alone must not keep disconnected polling alive");
   assert.deepEqual(capturedCtx.capabilities, ["keyboard", "pointer", "gamepad"]);
   assert.equal(capturedCtx.hasActivateInputProviders, false, "ctx must not expose activateInputProviders even with input capabilities");
   await env.context.__gosx_dispose_page();
@@ -809,7 +827,7 @@ test("chooseSceneBackend falls back to webgl when webgpu is capable but unavaila
 
   const backendCaps = {
     capable: ["webgpu", "webgl"],
-    degraded: {},
+    degraded: { webgl: ["ibl", "compute-particles"] },
     reasons: [],
   };
   const prefs = { preferWebGPU: true, requireWebGL: false, forceWebGL: false, preferCanvas: false };
@@ -820,6 +838,7 @@ test("chooseSceneBackend falls back to webgl when webgpu is capable but unavaila
   assert.ok(result !== null, "result should not be null");
   assert.equal(result.backend, "webgl", "backend should be webgl when webgpu is unavailable at runtime");
   assert.equal(result.fallbackReason, "webgpu-unavailable", "fallbackReason should be webgpu-unavailable");
+  assert.deepEqual(result.degraded, ["ibl", "compute-particles"], "WebGL2 must publish the declared feature loss");
 });
 
 test("chooseSceneBackend does not invent webgl for webgpu-only backendCaps", () => {
@@ -854,7 +873,7 @@ test("Scene3D renderer recovery respects backendCaps fallbacks", () => {
 });
 
 test("Scene3D fallbackSceneRenderer honors window.__gosx_scene3d_require_gpu without touching the WebGL fallback", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "20-scene-mount.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "mount.ts"), "utf8");
   // The gate is read once, right where allowCanvasFallback is computed, and
   // only that Canvas2D swap is disallowed -- the WebGL fallback attempt keeps
   // its own, unmodified allowWebGLFallback condition.
@@ -864,7 +883,7 @@ test("Scene3D fallbackSceneRenderer honors window.__gosx_scene3d_require_gpu wit
 });
 
 test("Scene3D WebGPU water debug gates isolate update and draw stages", () => {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const source = readSceneRendererBackendSrc("webgpu");
   assert.match(source, /new URLSearchParams\(window\.location\.search\)\.get\("gosx-water-debug"\)/);
   assert.match(source, /function sceneWebGPUWaterDebugSkipsUpdate\(mode\) \{[\s\S]*no-water[\s\S]*no-update/);
   assert.match(source, /function sceneWebGPUWaterDebugSkipsDraw\(mode\) \{[\s\S]*compute-only[\s\S]*no-draw/);

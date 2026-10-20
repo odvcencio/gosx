@@ -1,0 +1,10 @@
+count := signal.New(0)
+
+unsubscribe := count.Subscribe(func() {
+	log.Printf("count = %d", count.Get())
+})
+defer unsubscribe()
+
+count.Set(1)
+count.Update(func(value int) int { return value + 1 })
+revision := count.Revision()

@@ -6,7 +6,7 @@
 // browser path constructs a vm.CanvasBoardAdapter and calls RenderBundle, a
 // server (or any non-wasm Go) calls ComputeCanvasBundle to produce the IDENTICAL
 // bundle, then MarshalCanvasBundle to emit the exact JSON the JS canvas2d
-// painter (client/js .../26b1-canvas2d-painter.js) consumes. Emitting that JSON
+// painter (client/js .../26b1-canvas2d-painter.ts) consumes. Emitting that JSON
 // inline on the canvas placeholder lets a client paint the board with no WASM.
 //
 // Byte-identity with the WASM path is the contract (see the parity test): both
@@ -33,7 +33,7 @@ import (
 // it reuses the very same vm helpers. nodes are projected: "rect" → an unlit
 // instanced quad whose fill color lives in Materials, "line" → Lines, "label"
 // → Labels, "image"/"sprite" → Sprites; unknown kinds are dropped. Lighting and
-// post-FX are stripped (ADR 0004's 2D-mode gate).
+// post-FX are stripped (the 2D-mode gate).
 //
 //   - width,height : framebuffer size in CSS pixels (≤0 falls back to 1280x720,
 //     matching the WASM path).

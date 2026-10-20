@@ -70,6 +70,12 @@ type didCloseParams struct {
 	} `json:"textDocument"`
 }
 
+type didSaveParams struct {
+	TextDocument struct {
+		URI string `json:"uri"`
+	} `json:"textDocument"`
+}
+
 type formattingParams struct {
 	TextDocument struct {
 		URI string `json:"uri"`
@@ -129,7 +135,24 @@ func (s *server) handle(req request) error {
 	case "initialize":
 		return s.respond(req.ID, map[string]any{
 			"capabilities": map[string]any{
-				"textDocumentSync":           textDocumentSyncFull,
+				// An object, not the bare TextDocumentSyncKind int this used
+				// to be: a client only ever sends textDocument/didSave when
+				// the server's own capabilities advertise "save" support
+				// (gosx#249) -- the whole-project checks (form action,
+				// required-control reachability, data-loader keys; see
+				// AnalyzeProject) need file I/O the per-keystroke didChange
+				// path must never pay, so didSave is their one cadence into
+				// the editor. "includeText: false" is deliberate:
+				// AnalyzeProject reads the file back off disk itself (it
+				// already needs disk access for the *.server.go siblings and
+				// public/*.css a save-time check reads), so the save
+				// notification's own body does not need to carry the text
+				// too.
+				"textDocumentSync": map[string]any{
+					"openClose": true,
+					"change":    textDocumentSyncFull,
+					"save":      map[string]any{"includeText": false},
+				},
 				"documentFormattingProvider": true,
 				"documentSymbolProvider":     true,
 				"hoverProvider":              true,
@@ -164,6 +187,12 @@ func (s *server) handle(req request) error {
 			s.docs[params.TextDocument.URI] = params.ContentChanges[len(params.ContentChanges)-1].Text
 		}
 		return s.publishDiagnostics(params.TextDocument.URI)
+	case "textDocument/didSave":
+		var params didSaveParams
+		if err := json.Unmarshal(req.Params, &params); err != nil {
+			return s.respondError(req.ID, -32602, err.Error())
+		}
+		return s.publishProjectDiagnostics(params.TextDocument.URI)
 	case "textDocument/didClose":
 		var params didCloseParams
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -235,6 +264,26 @@ func (s *server) handle(req request) error {
 func (s *server) publishDiagnostics(uri string) error {
 	source := s.docs[uri]
 	diags := Analyze(URIToPath(uri), []byte(source))
+	return s.notify("textDocument/publishDiagnostics", map[string]any{
+		"uri":         uri,
+		"diagnostics": diags,
+	})
+}
+
+// publishProjectDiagnostics republishes uri's full diagnostic set on save:
+// the same fast, no-I/O pass publishDiagnostics already runs on every
+// keystroke, plus AnalyzeProject's whole-project findings (gosx#249),
+// which read the file back off disk (the just-written save, not the
+// in-memory buffer) since they also need its "*.server.go" siblings and
+// the project's public/*.css. A publishDiagnostics call from a later
+// keystroke replaces this combined set with the fast half alone -- the
+// project findings go stale until the next save, a deliberate trade
+// against re-running file I/O on every keystroke.
+func (s *server) publishProjectDiagnostics(uri string) error {
+	source := s.docs[uri]
+	path := URIToPath(uri)
+	diags := Analyze(path, []byte(source))
+	diags = append(diags, AnalyzeProject(path)...)
 	return s.notify("textDocument/publishDiagnostics", map[string]any{
 		"uri":         uri,
 		"diagnostics": diags,

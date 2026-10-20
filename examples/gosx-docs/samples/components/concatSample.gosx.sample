@@ -1,0 +1,15 @@
+package profile
+
+type BadgeProps struct {
+	Tone string
+}
+
+component Badge(props: BadgeProps) {
+	return <span class={"badge tone-" + props.Tone}>
+		{props.Tone}
+	</span>
+}
+
+component Page() {
+	return <main><Badge tone="alert" /></main>
+}

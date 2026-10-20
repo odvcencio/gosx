@@ -1,0 +1,2 @@
+<div id="viewer" data-seat-id="seat-7"></div>
+	<div data-gosx-watch="data-seat=@#viewer[data-seat-id]" data-seat="seat-7"></div>

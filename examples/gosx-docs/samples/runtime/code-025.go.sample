@@ -1,0 +1,4 @@
+func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    ctx.LifecycleScript(server.AssetURL("scripts/chart-page.js"))
+	    return map[string]any{"title": "Chart"}, nil
+	}

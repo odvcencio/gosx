@@ -12,6 +12,7 @@
 //	Manager.Middleware    wrap the handler tree; Current needs it
 //	Manager.Require       block anonymous visitors
 //	Manager.RequireRole   the same, restricted to one role
+//	RequireBearerToken    protect a handler with one static bearer token
 //	Current(r)            the User for this request, and whether there is one
 //	Manager.SignIn / SignOut  move a User in and out of the session
 //
@@ -39,6 +40,50 @@
 // Begin/Callback, BeginRegistration/FinishRegistration) for an application that
 // wants to own the routes and the responses.
 //
+// # Safe passkey enrollment and login
+//
+// RegisterOptionsHandler requires an authenticated Current(r) and ignores any
+// identity, Roles, or Meta in the request body. Mount both registration handlers
+// behind session and auth middleware, and protect their POST requests with CSRF:
+//
+//	passkeys := authn.WebAuthn(WebAuthnOptions{Origin: "https://app.example"})
+//	mux := http.NewServeMux()
+//	mux.Handle("POST /auth/webauthn/register/options", passkeys.RegisterOptionsHandler())
+//	mux.Handle("POST /auth/webauthn/register", passkeys.RegisterHandler())
+//	mux.Handle("POST /auth/webauthn/login/options", passkeys.LoginOptionsHandler())
+//	mux.Handle("POST /auth/webauthn/login", passkeys.LoginHandler())
+//	handler := sessions.Middleware(authn.Middleware(sessions.Protect(mux)))
+//
+// Applications that support sign-up must explicitly set
+// WebAuthnOptions.RegistrationUser. That callback must create or resolve a user
+// from verified server-side enrollment state and authorize enrollment for that
+// account. Looking up an existing account from a client-supplied ID or email is
+// insufficient. It runs before the options body is decoded and must leave the
+// body readable. Direct BeginRegistration callers have the same responsibility
+// to supply a trusted, authorized User.
+//
+// FinishRegistration stores the credential without signing in or changing
+// session privileges. An authenticated user must remain signed in as the same
+// user through completion. Sign-up applications must authenticate separately
+// after enrollment. Custom WebAuthnStore implementations must atomically reject
+// duplicate credential IDs with ErrWebAuthnCredentialExists.
+//
+// Anonymous login uses discoverable credentials: login hints are ignored and
+// allowCredentials is empty. New registrations require a resident key so they
+// support this flow. Older non-discoverable credentials need an existing
+// authenticated session for account-specific allowCredentials, or migration to
+// a discoverable passkey. Authenticated callers receive credential IDs only for
+// their own account. Authenticators without resident-key support cannot enroll.
+//
+// # Magic-link delivery
+//
+// Configure MagicLinkOptions.Sender before mounting RequestHandler. Without a
+// sender, Send fails before issuing a token and RequestHandler returns a generic
+// 500. Responses and flash state never contain the link or token, including in
+// development. Issue remains a trusted application API for custom delivery;
+// deliver its output through a verified channel and never echo it to the
+// unauthenticated requester.
+//
 // # The memory stores are for development
 //
 // NewMemoryMagicLinkStore and NewMemoryWebAuthnStore hold their state in the
@@ -54,6 +99,18 @@
 // when the middleware did not run, which is indistinguishable from an anonymous
 // visitor.
 //
+// # CSRF-protected mutations
+//
+// Authentication pages commonly mutate a session through a file action. Keep
+// session.Manager.Protect in the middleware chain for those unsafe methods and
+// put the request token in the form as a hidden `csrf_token` control whose
+// value is the file-template `csrf.token` binding. `gosx check` reports a
+// missing token when a mutating `action={actionPath("...")}` form has a
+// complete, statically visible descendant tree. GET and native/external forms
+// stay outside that contract, and component or expression boundaries remain
+// the application's responsibility when their rendered fields cannot be
+// proved at check time.
+//
 // # Watching what happens
 //
 // Manager.UseObserver installs an Observer that receives an AuthEvent.
@@ -64,4 +121,16 @@
 // failure is not a separate event type — it is the same event with Success
 // false and Error naming the cause, so an observer that filters on Type alone
 // still sees the failures.
+//
+// # Static bearer tokens
+//
+// RequireBearerToken is a small fail-closed guard for internal endpoints and
+// service-to-service routes that need one configured token but do not need a
+// user session. It accepts exactly one Authorization header in the form
+// "Bearer token" (the scheme is case-insensitive), compares the token using a
+// constant-time SHA-256 digest, and never logs or echoes credentials. An empty
+// configured token never authenticates. Set BearerOptions.HideWhenUnconfigured
+// when a missing deployment secret should look like a 404; a configured route
+// always answers 401 for missing, malformed, or wrong credentials and includes
+// an escaped WWW-Authenticate realm challenge.
 package auth

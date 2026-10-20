@@ -61,6 +61,8 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
           geometry: "sphere",
           material: "flat",
           props: { x: 0, y: 0, z: 0, radius: 1.2, color: "#8de1ff", spinY: 0.35 },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -129,6 +131,15 @@ test("bootstrap hydrates shared-runtime Scene3D programs", async () => {
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
+  assert.equal(env.hydrateCalls.length, 1);
+  assert.deepEqual(env.hydrateCalls[0], [
+    "scene3d",
+    "gosx-engine-rt",
+    "GoSXScene3D",
+    '{"width":640,"height":360,"background":"#08151f"}',
+    '{"name":"GeometryZoo"}',
+    "json",
+  ]);
   assert.equal(env.engineHydrateCalls.length, 1);
   assert.deepEqual(env.engineHydrateCalls[0].slice(0, 3), [
     "gosx-engine-rt",
@@ -261,7 +272,111 @@ test("Scene3D initial render waits for the second frame boundary", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-mounted"), "true");
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:commands"], 1);
   assert.equal(mount.__gosxScene3DScheduleCounts["schedule:update-props"], 1);
-  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 1);
+  // The scroll request is retained through async Scene3D startup, so the
+  // initial render boundary schedules once more with the same latest reason.
+  assert.equal(mount.__gosxScene3DScheduleCounts["schedule:scroll"], 2);
+});
+
+async function mountSharedRuntimeSceneForFrameRegression(id, props, onRenderEngine) {
+  const mount = new FakeElement("div", null);
+  mount.id = id + "-root";
+  mount.width = 320;
+  const env = createContext({
+    elements: [mount],
+    enableWebGL: true,
+    disableCanvas2D: true,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+      ["/" + id + ".json"]: { text: "{\"name\":\"" + id + "\"}" },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      engines: [{
+        id: id,
+        component: "GoSXScene3D",
+        kind: "surface",
+        mountId: mount.id,
+        runtime: "shared",
+        props: Object.assign({ width: 320, height: 180, background: "#08151f" }, props),
+        programRef: "/" + id + ".json",
+      }],
+    },
+    onHydrateEngine: () => "[]",
+    onRenderEngine,
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  raf.flush(16);
+  await flushAsyncWork();
+  raf.flush(32);
+  await flushAsyncWork();
+  const mounted = env.context.__gosx.engines.get(id);
+  assert.ok(mounted, "shared Scene3D mount should be ready after its two initial frame boundaries");
+  assert.equal(env.engineRenderCalls.length, 1, "initial shared-runtime render should complete once");
+  return { env, mount, mounted, raf };
+}
+
+test("Scene3D eager refresh bypasses maxFrameRate pacing", async () => {
+  const scene = await mountSharedRuntimeSceneForFrameRegression(
+    "gosx-engine-eager-refresh",
+    { maxFrameRate: 1 },
+    () => JSON.stringify({ background: "#08151f", camera: { x: 0, y: 0, z: 6, fov: 72 }, objectCount: 0 }),
+  );
+
+  scene.raf.flush(48);
+  await flushAsyncWork();
+  const rendersAt48 = scene.env.engineRenderCalls.length;
+  scene.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, rendersAt48, "the one-frame animation cap skips the following display tick");
+  const rendersBeforeRefresh = scene.env.engineRenderCalls.length;
+
+  scene.mounted.handle.updateSceneProps({ maxPixelRatio: 1.5 });
+  await flushAsyncWork();
+  scene.raf.flush(80);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, rendersBeforeRefresh + 1, "an eager viewport refresh renders on the next frame despite the animation cap: " + JSON.stringify({
+    raf: scene.raf.count(),
+    loop: scene.mount.getAttribute("data-gosx-scene3d-render-loop"),
+    reason: scene.mount.getAttribute("data-gosx-scene3d-render-loop-reason"),
+    scheduleCounts: scene.mount.__gosxScene3DScheduleCounts,
+    errors: scene.env.consoleLogs.error,
+  }));
+});
+
+test("Scene3D animation resumes after a scene frame throws", async () => {
+  let calls = 0;
+  const scene = await mountSharedRuntimeSceneForFrameRegression(
+    "gosx-engine-frame-recovery",
+    {},
+    () => {
+      calls++;
+      if (calls === 2) throw new Error("intentional frame failure");
+      return JSON.stringify({ background: "#08151f", camera: { x: 0, y: 0, z: 6, fov: 72 }, objectCount: 0 });
+    },
+  );
+
+  scene.raf.flush(48);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, 2, "the next animation frame should reach the injected failure");
+  assert.ok(scene.env.consoleLogs.error.some((entry) => entry.includes("intentional frame failure")));
+
+  scene.mounted.handle.updateSceneProps({ maxPixelRatio: 1.5 });
+  await flushAsyncWork();
+  scene.raf.flush(64);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, 3, "an eager refresh can recover the scene after the failed frame");
+  assert.equal(scene.raf.count(), 1, "the recovered scene must register its next animation frame: " + JSON.stringify({
+    loop: scene.mount.getAttribute("data-gosx-scene3d-render-loop"),
+    reason: scene.mount.getAttribute("data-gosx-scene3d-render-loop-reason"),
+    scheduleCounts: scene.mount.__gosxScene3DScheduleCounts,
+    errors: scene.env.consoleLogs.error,
+  }));
+
+  scene.raf.flush(80);
+  await flushAsyncWork();
+  assert.equal(scene.env.engineRenderCalls.length, 4, "animation continues after the recovery render");
 });
 
 test("Scene3D scroll camera offset moves camera by absolute scroll pixels", async () => {
@@ -571,12 +686,14 @@ test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fa
       { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
       {
         kind: 0,
-        objectId: "cube",
+        objectId: 1,
         data: {
           kind: "box",
           geometry: "box",
           material: "flat",
           props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -584,7 +701,7 @@ test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fa
   });
   // Exports present but the opt-in flag is deliberately NOT set.
   env.context.__gosx_motion_load = () => 1;
-  env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+  env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["rotation"] });
   env.context.__gosx_motion_tick = tick;
   env.context.__gosx_motion_unload = () => {};
 
@@ -606,7 +723,7 @@ test("Scene3D WASM motion seam stays inert when the flag is unset (sceneState fa
 test("Scene3D WASM material-motion seam writes evaluated color into customUniforms (sceneState fall-through path)", async () => {
   const { state, color } = await mountMaterialMotionScene(true);
   assert.ok(state && state.objects && typeof state.objects.get === "function", "expected a live sceneState handle on the mount");
-  const obj = state.objects.get("glow-cube");
+  const obj = state.objects.get("1");
   assert.ok(obj, "expected the glow-cube object in sceneState");
   assert.ok(obj.customUniforms && typeof obj.customUniforms === "object", "expected customUniforms on glow-cube");
   // Decode → customUniforms write: the Color record (arity 5 → width 4) lands
@@ -618,7 +735,7 @@ test("Scene3D WASM material-motion seam writes evaluated color into customUnifor
 test("Scene3D WASM material-motion seam stays inert when the flag is unset (sceneState fall-through path)", async () => {
   const { state, tickCalls } = await mountMaterialMotionScene(false);
   assert.equal(tickCalls(), 0, "material-motion tick must not run when the flag is unset");
-  const obj = state.objects.get("glow-cube");
+  const obj = state.objects.get("1");
   assert.ok(obj, "expected the glow-cube object in sceneState");
   // customUniforms.emissive stays at its hydrated default — proving non-breaking
   // inert behavior with the exports present but the opt-in flag absent.

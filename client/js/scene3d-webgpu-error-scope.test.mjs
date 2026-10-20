@@ -36,17 +36,24 @@ import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSrc(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const computeSource = readSrc("16b-scene-compute.js");
-const webgpuSource = readSrc("16a-scene-webgpu.js");
-const sharedSource = readSrc("15a-scene-postfx-shared.js");
+const computeSource = readSrc("../runtime/scene3d/compute.ts");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
+const sharedSource = ts.transpileModule(readSrc("15a-scene-postfx-shared.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 const GOOD_KERNEL = "@compute @workgroup_size(64) fn simulate() {}";
 const BAD_KERNEL = "@compute @workgroup_size(64) fn simulate() { let x = 10u * 3812015801u; }";
@@ -347,16 +354,18 @@ test("render truth: a rejected authored compute kernel is published, not just lo
 //
 // The three authored-pipeline builders in 16a live inside the renderer
 // closure and are not separately constructible, so their contribution to the
-// shared stack is asserted structurally: only the two scopes that are
-// provably balanced may remain.
+// shared stack is asserted structurally: creation scopes pop in their own
+// synchronous block, and async authored builds validate per object.
 
-test("webgpu: 16a keeps only the two error scopes that cannot interleave", () => {
+test("webgpu: resource scopes pop synchronously and authored async builds use per-object validation", () => {
   const pushes = (webgpuSource.match(/\.pushErrorScope\(/g) || []).length;
   // 1. ensureFBOs' "out-of-memory" allocation guard: pushed and popped in one
   //    synchronous block, so nothing can be pushed between them.
   // 2. beginWebGPUErrorScope's per-frame "validation" scope: guarded against
   //    re-entry by pendingWebGPUErrorScope.
-  assert.equal(pushes, 2, "16a must push exactly the ensureFBOs and per-frame error scopes");
+  // 3. Builtin pipeline and shader-module scopes pop before returning.
+  // 4. Image mip generation pops before awaiting its validation result.
+  assert.equal(pushes, 5, "pipeline, module, mip, allocation and frame scopes must be accounted for");
   assert.match(webgpuSource, /device\.pushErrorScope\("out-of-memory"\)/);
   assert.match(webgpuSource, /device\.pushErrorScope\("validation"\)/);
 

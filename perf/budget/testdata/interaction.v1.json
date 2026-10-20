@@ -1,0 +1,8 @@
+{
+  "sequence": "counter-input",
+  "steps": [
+    "navigation",
+    "increment",
+    "usable-state"
+  ]
+}

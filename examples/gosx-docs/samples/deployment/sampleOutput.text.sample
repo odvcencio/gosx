@@ -1,0 +1,12 @@
+dist/
+  assets/              # content-hashed browser assets
+  app/                 # staged file routes
+  content/             # staged content collections, when present
+  public/              # staged public files, when present
+  server/app           # runnable Go server, when package main
+  run.sh               # sets GOSX_APP_ROOT and starts server/app
+  build.json           # asset manifest
+  static/              # production prerender output
+  export.json          # exported route metadata
+  edge/worker.js       # static-first worker with origin fallback
+  platform/            # deployment descriptors

@@ -18,22 +18,64 @@ func documentHTMLAttrs(doc *DocumentContext) string {
 	return renderDocumentAttrValues(documentHTMLAttrValues(doc))
 }
 
+// documentBodyAttrs renders the framework's own body attributes plus any
+// app-supplied ones from Context.BodyAttrs (gosx#236), in that order, as a
+// single ` name="value"...` string for the hand-written <body> tag in
+// HTMLDocument. App-supplied attributes go through
+// gosx.RenderAttrs — not renderDocumentAttrValues's html.EscapeString-only
+// path — because they may carry non-string values (gosx.BoolAttr, a typed
+// value El would stringify); RenderAttrs is the same escaping renderAttrHTML
+// applies to every other element's attributes, so a value set through
+// BodyAttrs renders exactly as it would on a gosx.El node.
 func documentBodyAttrs(doc *DocumentContext) string {
-	return renderDocumentAttrValues(documentBodyAttrValues(doc))
+	rendered := renderDocumentAttrValues(documentBodyAttrValues(doc))
+	if doc == nil || len(doc.BodyAttrs) == 0 {
+		return rendered
+	}
+	return rendered + gosx.RenderAttrs(doc.BodyAttrs)
 }
 
 func DocumentAttrs(doc *DocumentContext) gosx.AttrList {
 	return documentAttrList(documentHTMLAttrValues(doc))
 }
 
+// DocumentBodyAttrs returns the framework's own body attributes plus any
+// app-supplied ones from Context.BodyAttrs, as a gosx.AttrList — for a
+// custom DocumentFunc (see App.SetDocument) that builds <body> through
+// gosx.El instead of the built-in renderer. Its output stays byte-identical
+// to documentBodyAttrs's raw string (see
+// TestDocumentAttrsShareContractWithRenderedDocumentAttrs), so a
+// BodyAttrs-carrying page renders the same body attributes regardless of
+// which document path handles it.
 func DocumentBodyAttrs(doc *DocumentContext) gosx.AttrList {
-	return documentAttrList(documentBodyAttrValues(doc))
+	attrs := documentAttrList(documentBodyAttrValues(doc))
+	if doc == nil || len(doc.BodyAttrs) == 0 {
+		return attrs
+	}
+	return append(attrs, doc.BodyAttrs...)
 }
 
+// defaultDocumentLanguage is the BCP 47 tag the document shell writes to
+// <html lang> when the app never sets DocumentContext.Language or
+// PageState.SetLanguage. A browser and assistive tech both need a lang
+// attribute to pick the right hyphenation, voice, and spell-check rules;
+// shipping none silently defaulted every reader to "guess the language"
+// (usually the browser's own UI locale, not the page's). An app that serves
+// a known locale still overrides it exactly as before, by setting Language.
+const defaultDocumentLanguage = "en"
+
 func documentHTMLAttrValues(doc *DocumentContext) []documentAttr {
-	return appendDocumentContextAttrs([]documentAttr{
+	attrs := []documentAttr{
 		{name: "data-gosx-document", value: "true"},
-	}, doc, true)
+	}
+	language := defaultDocumentLanguage
+	if doc != nil {
+		if explicit := strings.TrimSpace(doc.Language); explicit != "" {
+			language = explicit
+		}
+	}
+	attrs = append(attrs, documentAttr{name: "lang", value: language})
+	return appendDocumentContextAttrs(attrs, doc, true)
 }
 
 func documentBodyAttrValues(doc *DocumentContext) []documentAttr {

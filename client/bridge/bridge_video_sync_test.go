@@ -1,4 +1,4 @@
-//go:build !gosx_tiny_islands_only
+//go:build !gosx_tiny_islands_only && !gosx_runtime_core && !gosx_runtime_collab
 
 // Host-side tests for the video-sync bridge registry. No syscall/js; runs
 // with plain `go test`. Mirrors the recorder-seam style established by

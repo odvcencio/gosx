@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // The WebGPU adapter and device probe: optional-feature negotiation, retry
 // after an empty or failed device request, and lost-device reacquisition.
 //
@@ -25,18 +27,20 @@ const {
 test("Scene3D animation loop supports foreground frame caps", () => {
   const mount = readSceneMountSrc();
 
-  assert.match(mount, /function sceneAnimationFrameIntervalMS\(\)/);
+  assert.match(mount, /function sceneAnimationFrameIntervalMS\(reason\)/);
   assert.match(mount, /props && props\.frameIntervalMS/);
   assert.match(mount, /props && props\.maxFrameRate/);
   assert.match(mount, /props && props\.maxFPS/);
+  assert.match(mount, /props && props\.scrollFrameRate/);
+  assert.match(mount, /activeInputUntil >= sceneNowMilliseconds\(\)/);
   assert.match(mount, /scheduleNextAnimationFrame\(\);\n\s+return;\n\s+\}/);
   assert.match(mount, /lastAnimationFrameAt = typeof now === "number" \? now : 0;/);
 });
 
 test("Scene3D resource readiness is canvas-scoped and detach-safe", () => {
   const mount = readSceneMountSrc();
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(mount, /target\.addEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
   assert.match(mount, /target\.removeEventListener\("gosx:scene3d:resource-ready", onSceneResourceReady\)/);
@@ -46,7 +50,7 @@ test("Scene3D resource readiness is canvas-scoped and detach-safe", () => {
 });
 
 test("Scene3D instanced meshes are WebGPU-native", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_PBR_INSTANCED_VERTEX = \[/);
@@ -57,36 +61,41 @@ test("Scene3D instanced meshes are WebGPU-native", () => {
   assert.match(webgpu, /function drawInstancedMeshes\(pass, meshList, materials/);
   assert.match(webgpu, /pass\.draw\(geom\.vertexCount,\s*instanceCount\)/);
   assert.match(webgpu, /function getShadowInstancedPipeline/);
-  assert.match(webgpu, /createMaterialBindGroup\(\s*mat,\s*receiveShadow,\s*materialOwner,\s*obj\.retainedGeometry \? webGPUObjectModelMatrix\(obj\) : null,\s*obj\.retainedGeometry \? obj\.modelScaleSigns : null\s*\)/);
+  assert.match(webgpu, /webGPUFrameMaterialGroup\(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup\)/);
   assert.doesNotMatch(webgpu, /bundle\.instancedMeshes[\s\S]{0,140}return false/);
   assert.doesNotMatch(mount, /instanced-meshes/);
 });
 
 test("Scene3D WebGPU PBR meshes do not cull double-sided GLB surfaces", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgpu, /function wgpuCreatePBRPipeline/);
-  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
+  assert.match(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none", frontFace: signedSampleCount < 0 \? "cw" : "ccw" \}/);
+  assert.match(webgpu, /multisample: \{ count: Math\.max\(1, Math\.floor\(Math\.abs\(signedSampleCount\) \|\| 1\)\) \}/);
   assert.match(webgpu, /function wgpuCreatePBRInstancedPipeline/);
   assert.match(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]*primitive: \{ topology: "triangle-list", cullMode: "none" \}/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
   assert.doesNotMatch(webgpu, /label: "gosx-pbr-instanced-" \+ blendMode[\s\S]{0,900}cullMode: "back"/);
+  assert.match(webgpu, /bindPBRPipeline\(reflectedDirect, mat\)/);
+  assert.match(webgpu, /wgpuCreatePBRPipeline\([^\n]+reflected \? -activeSampleCount : activeSampleCount\)/);
+  assert.match(webgpu, /getPBRPipeline\(blendMode, objectDepthWrite, reflected \? "cw" : "ccw", hasDetail\)/);
 });
 
 test("Scene3D WebGPU Selena mesh pipeline honors obj.doubleSided (cullMode: none)", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   // getSelenaPipeline's own default stays "back" (unchanged) when the
   // caller passes no cullMode option -- drawPBRObjects is the caller that
   // now conditions its options argument on obj.doubleSided.
   assert.match(webgpu, /var pipelineCullMode = options && typeof options\.cullMode === "string" && options\.cullMode \? options\.cullMode : "back";/);
-  assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided \? \{ cullMode: "none" \} : null;/);
-  assert.match(webgpu, /getSelenaPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
-  assert.match(webgpu, /getSelenaSkinnedPipeline\(mat, blendMode, depthWrite, selenaPipelineOptions\)/);
+  assert.match(webgpu, /var reflectedDirect = obj\.directVertices && sceneAffineDeterminant\(obj\.modelMatrix, 0\) < 0;/);
+  assert.match(webgpu, /var selenaPipelineOptions = obj\.doubleSided\s*\? \{ cullMode: "none" \}\s*:\s*\(reflectedDirect \? \{ frontFace: "cw" \} : null\);/);
+  assert.match(webgpu, /getSelenaPipeline\(material, blend, depth, options\)/);
+  assert.match(webgpu, /getSelenaSkinnedPipeline\(material, blend, depth, options\)/);
 });
 
 test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const mount = readSceneMountSrc();
 
   assert.match(webgpu, /var WGSL_SCENE_WORLD_COLOR_VERTEX = \[/);
@@ -115,9 +124,9 @@ test("Scene3D world lines and textured surfaces are WebGPU-native", () => {
 });
 
 test("Scene3D WebGPU supports tiered MSAA render targets", () => {
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
   const mount = readSceneMountSrc();
-  const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.js"), "utf8");
+  const probe = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16z-scene-webgpu-probe.ts"), "utf8");
 
   assert.match(webgpu, /function createSceneWebGPURenderer\(canvas, options\)/);
   assert.match(webgpu, /function ensureMSAAColor\(width, height, sampleCount\)/);
@@ -270,7 +279,7 @@ test("Scene3D WebGPU probe negotiates optional features and exposes diagnostics"
   assert.equal(diagnostics.requiredLimits.maxComputeWorkgroupSizeX, 128);
   assert.equal(diagnostics.requiredLimits.maxTextureDimension2D, 4096);
   assert.equal(typeof env.context.__gosx_scene3d_api.sceneWebGPUDiagnostics, "function");
-  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.js
+  // Regression guard: extractFrustumPlanesJS is hoisted into 11-scene-math.ts
   // (base scene3d bundle) but USED by the separate scene3d-webgpu chunk's
   // instanced GPU cull. It MUST be exported on __gosx_scene3d_api so the webgpu
   // chunk's prefix can bridge it; otherwise the webgpu render path throws
@@ -343,25 +352,11 @@ test("Scene3D WebGPU probe keeps optional features opt-in for headless devices",
 
   assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
 
-  // The rule this test pins has TWO halves, and they differ by kind.
-  //
-  // A PERFORMANCE feature stays opt-in. timestamp-query, subgroups and
-  // shader-f16 make an already-correct frame faster or better measured, so a
-  // page that did not ask keeps a lean device and none are requested.
-  //
-  // A BLOCK-TEXTURE feature is NOT optional in the same sense. It is a
-  // prerequisite for content the SERVER may ship: the asset pipeline emits
-  // block-compressed KTX2 variants and the client selects one from the device
-  // token set. A feature cannot be added after requestDevice, so a device
-  // created without texture-compression-bc on a bc-capable adapter throws on
-  // every block upload. Requesting a feature the adapter already reports costs
-  // nothing when the page never uploads a block texture.
-  //
-  // So the descriptor now exists and carries exactly the compression features
-  // the adapter offers, and nothing else.
+  // Compression features permit uploaded assets. The timer permits frame
+  // telemetry on non-adaptive scenes. Other performance features stay opt-in.
   const requested = Array.from((requestedDescriptor && requestedDescriptor.requiredFeatures) || []);
-  assert.deepEqual(requested, ["texture-compression-bc"],
-    "a non-adaptive page must request the adapter's block-texture features and no performance features");
+  assert.deepEqual(requested, ["texture-compression-bc", "timestamp-query"],
+    "non-adaptive scenes can measure complete GPU frames");
 
   const diagnostics = env.context.__gosx_scene3d_webgpu_diagnostics();
   assert.equal(diagnostics.ready, true);
@@ -370,14 +365,56 @@ test("Scene3D WebGPU probe keeps optional features opt-in for headless devices",
   // so its arrays carry the sandbox Array.prototype and deepEqual reports
   // "same structure but not reference-equal" against a literal built here.
   const reported = Array.from(diagnostics.requestedFeatures);
-  assert.deepEqual(reported, ["texture-compression-bc"]);
+  assert.deepEqual(reported, ["texture-compression-bc", "timestamp-query"]);
   // The performance features stay off, which is the half that must not regress.
-  for (const perf of ["timestamp-query", "subgroups", "shader-f16", "indirect-first-instance"]) {
+  for (const perf of ["subgroups", "shader-f16", "indirect-first-instance"]) {
     assert.equal(reported.includes(perf), false,
       perf + " is a performance feature and must stay opt-in");
     assert.equal(env.context.__gosx_runtime_api.browserCapabilitySupported("webgpu:" + perf), false);
   }
 });
+
+for (const { name, supported, required, expected } of [
+  { name: "capable adapter requests the rich-material minimum", supported: 48, expected: 17 },
+  { name: "stricter manifest texture requirement survives", supported: 48, required: 24, expected: 24 },
+  { name: "baseline adapter keeps its default texture limit", supported: 16, expected: undefined },
+]) {
+  test("Scene3D WebGPU " + name, async () => {
+    let descriptor;
+    const adapter = {
+      features: new Set(),
+      limits: { maxSampledTexturesPerShaderStage: supported },
+      requestDevice: async (requested) => {
+        descriptor = requested;
+        const textures = requested?.requiredLimits?.maxSampledTexturesPerShaderStage;
+        assert.ok(textures == null || textures <= supported, "never request an unsupported automatic limit");
+        return {
+          lost: new Promise(() => {}), features: new Set(),
+          limits: { maxSampledTexturesPerShaderStage: textures || 16 },
+        };
+      },
+    };
+    const env = createContext({
+      enableWebGPU: true,
+      fetchRoutes: { "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource } },
+      navigatorGPU: {
+        requestAdapter: async () => adapter,
+        getPreferredCanvasFormat: () => "rgba8unorm",
+      },
+      manifest: { engines: [{
+        id: "gosx-rich-material-probe", component: "GoSXScene3D", kind: "surface",
+        mountId: "probe-scene", props: {},
+        requiredCapabilities: required ? ["webgpu:limit:maxSampledTexturesPerShaderStage>=" + required] : ["webgpu"],
+      }] },
+    });
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    runScript(bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+    await flushAsyncWork();
+    assert.equal(await env.context.__gosx_scene3d_webgpu_probe_ready(), true);
+    assert.equal(descriptor?.requiredLimits?.maxSampledTexturesPerShaderStage, expected);
+    assert.equal(env.context.__gosx_scene3d_webgpu_diagnostics().deviceLimits.maxSampledTexturesPerShaderStage, expected || 16);
+  });
+}
 
 test("Scene3D adaptive WebGPU requests only supported timestamp-query", async () => {
   let descriptor = null;
@@ -413,7 +450,7 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
     },
     requestDevice: async (descriptor) => {
       deviceRequests++;
-      assert.equal(descriptor, undefined);
+      assert.deepEqual(Array.from(descriptor.requiredFeatures), ["timestamp-query"]);
       throw new Error("A valid external Instance reference no longer exists.");
     },
   };
@@ -427,7 +464,7 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
     },
     requestDevice: async (descriptor) => {
       deviceRequests++;
-      assert.equal(descriptor, undefined);
+      assert.equal(descriptor, undefined, "retry keeps the default descriptor");
       return {
         lost: new Promise(() => {}),
         features: new Set(),
@@ -477,7 +514,7 @@ test("Scene3D WebGPU probe retries empty device acquisition with a fresh adapter
   assert.equal(diagnostics.retryCount, 1);
   assert.match(diagnostics.warnings[0], /external Instance/);
   assert.equal(diagnostics.adapterInfo.vendor, "retry-vendor");
-  assert.equal(diagnostics.requestedFeatures.length, 0);
+  assert.deepEqual(Array.from(diagnostics.requestedFeatures), ["timestamp-query"]);
   assert.equal(diagnostics.deviceFeatures.length, 0);
 });
 

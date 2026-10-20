@@ -1,0 +1,26 @@
+{
+  "schema": "gosx.budget-profile/v1",
+  "id": "mid-tier-mobile",
+  "version": 1,
+  "reference": "desktop-cpu-proxy",
+  "width": 412,
+  "height": 823,
+  "dprMilli": 1750,
+  "cpuMultiplierMilli": 4000,
+  "networks": {
+    "slow4g": {
+      "rttMicros": 150000,
+      "downBytesPerSec": 204800,
+      "upBytesPerSec": 96000
+    },
+    "p75": {
+      "rttMicros": 100000,
+      "downBytesPerSec": 1125000,
+      "upBytesPerSec": 375000
+    }
+  },
+  "setupRtts": 3,
+  "firstByteRtts": 1,
+  "initCwndBytes": 14600,
+  "quantumBytes": 1024
+}

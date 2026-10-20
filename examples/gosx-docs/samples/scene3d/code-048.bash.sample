@@ -1,0 +1,2 @@
+gosx assets plan public
+	gosx assets plan --json --write report.json public/assets

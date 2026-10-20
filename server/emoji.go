@@ -14,7 +14,7 @@ import (
 	"m31labs.dev/gosx/internal/emoji"
 )
 
-//go:embed emoji_complete.js
+//go:embed emoji_complete.ts
 var emojiCompleteRuntime string
 
 //go:embed emoji_codes.json
@@ -76,9 +76,16 @@ func emojiCodesGzipped() []byte {
 // autocomplete on any textarea or input with the `data-gosx-emoji-complete`
 // attribute. Type `:` followed by a shortcode character to trigger suggestions.
 //
-// Add to a page via ctx.AddHead(server.EmojiCompleteScript()).
+// It is nonce-free for pages that do not enable CSP; strict-CSP pages should
+// add EmojiCompleteScriptWithNonce(ctx.Nonce()) instead.
 func EmojiCompleteScript() gosx.Node {
-	return gosx.RawHTML(`<script data-gosx-emoji-complete-runtime="true">` + emojiCompleteRuntime + `</script>`)
+	return EmojiCompleteScriptWithNonce("")
+}
+
+// EmojiCompleteScriptWithNonce renders the helper with a request-owned CSP
+// nonce. Use it when the page enables a strict Content-Security-Policy.
+func EmojiCompleteScriptWithNonce(nonce string) gosx.Node {
+	return gosx.InlineScript(emojiCompleteRuntime, nonce, gosx.Attrs(gosx.BoolAttr("data-gosx-emoji-complete-runtime")))
 }
 
 // EmojiCodesHandler serves the emoji shortcode lookup table as JSON.

@@ -1,0 +1,4 @@
+const legacy = window.__gosx_scene3d_telemetry(mount)
+	const first = window.__gosx_scene3d_telemetry(null) // first mounted surface
+	const one = window.__gosx_scene3d_telemetry({ scope: "mount", mount })
+	const page = window.__gosx_scene3d_telemetry({ scope: "page" })

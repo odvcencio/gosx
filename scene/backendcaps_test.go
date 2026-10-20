@@ -24,8 +24,7 @@ func degradedContains(features []capability.Feature, want capability.Feature) bo
 	return false
 }
 
-// Test 1: an IBL scene degrades on webgpu+canvas2d but all backends stay
-// capable (ibl is not a hard-gate feature in DefaultPolicy).
+// IBL and environment maps are supported by both GPU backends.
 func TestSceneIRBackendCapsIBL(t *testing.T) {
 	props := Props{Environment: Environment{EnvironmentMap: "env.hdr"}}
 	ir := props.SceneIR()
@@ -38,8 +37,13 @@ func TestSceneIRBackendCapsIBL(t *testing.T) {
 			t.Fatalf("expected %q to be capable, got Capable=%v", want, ir.BackendCaps.Capable)
 		}
 	}
-	if !degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGPU], capability.FeatureIBL) {
-		t.Fatalf("expected Degraded[webgpu] to contain ibl, got %v", ir.BackendCaps.Degraded)
+	if degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGPU], capability.FeatureIBL) {
+		t.Fatalf("expected Degraded[webgpu] to NOT contain ibl (WebGPU consumes IBL products unconditionally), got %v",
+			ir.BackendCaps.Degraded)
+	}
+	if degradedContains(ir.BackendCaps.Degraded[capability.BackendWebGL], capability.FeatureIBL) {
+		t.Fatalf("expected no WebGL IBL degradation with depth-array shadows, got %v",
+			ir.BackendCaps.Degraded)
 	}
 }
 

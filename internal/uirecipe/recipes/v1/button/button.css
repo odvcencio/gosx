@@ -1,0 +1,93 @@
+.gsx-button {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: var(--gsx-control-md);
+  padding: var(--gsx-space-xs) var(--gsx-space-sm);
+  border: 1px solid var(--gsx-color-border-strong);
+  border-radius: var(--gsx-radius-md);
+  background: var(--gsx-color-surface);
+  color: var(--gsx-color-text);
+  font-family: var(--gsx-font-body);
+  font-size: var(--gsx-type-sm);
+  font-weight: 600;
+  line-height: 1;
+  text-decoration: none;
+  cursor: pointer;
+  transition:
+    transform var(--gsx-duration-fast) var(--gsx-ease-spring),
+    background-color var(--gsx-duration-standard) var(--gsx-ease-out),
+    border-color var(--gsx-duration-standard) var(--gsx-ease-out),
+    color var(--gsx-duration-standard) var(--gsx-ease-out);
+}
+
+.gsx-button:hover:not(:disabled) {
+  border-color: var(--gsx-color-accent);
+  background: var(--gsx-color-surface-hover);
+}
+
+.gsx-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.gsx-button:focus-visible {
+  outline: 2px solid var(--gsx-color-focus);
+  outline-offset: 2px;
+  box-shadow: var(--gsx-shadow-focus);
+}
+
+.gsx-button:disabled {
+  color: var(--gsx-color-text-muted);
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.gsx-button--primary {
+  border-color: var(--gsx-color-accent);
+  background: var(--gsx-color-accent);
+  color: var(--gsx-color-on-accent);
+}
+
+.gsx-button--primary:hover:not(:disabled) {
+  background: var(--gsx-color-accent-hover);
+  color: var(--gsx-color-on-accent);
+}
+
+.gsx-button--secondary {
+  background: var(--gsx-color-surface-raised);
+}
+
+.gsx-button--ghost {
+  border-color: transparent;
+  background: transparent;
+}
+
+.gsx-button--danger {
+  border-color: var(--gsx-color-danger);
+  background: transparent;
+  color: var(--gsx-color-danger);
+}
+
+.gsx-button--danger:hover:not(:disabled) {
+  border-color: var(--gsx-color-danger);
+  background: color-mix(in srgb, var(--gsx-color-danger) 12%, transparent);
+}
+
+.gsx-button--sm {
+  min-height: var(--gsx-control-sm);
+  padding: 0 var(--gsx-space-xs);
+  font-size: var(--gsx-type-xs);
+}
+
+.gsx-button--lg {
+  min-height: var(--gsx-control-lg);
+  padding: var(--gsx-space-xs) var(--gsx-space-md);
+  font-size: var(--gsx-type-md);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gsx-button {
+    transition: none;
+  }
+}

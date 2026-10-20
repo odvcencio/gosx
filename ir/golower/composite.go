@@ -1,11 +1,11 @@
-// Slice Y.A — composite literal lowering. Adds `*ast.CompositeLit`
+// Composite literal lowering. Adds `*ast.CompositeLit`
 // support to expression lowering: struct, slice, and map literals all
 // become OpComposite expressions whose operand pairs are
 // (keyExpr, valueExpr) per the encoding documented on
 // program.OpComposite.
 //
-// The lowerer builds a per-file struct type registry at the start of
-// LowerASTFile so it can map positional struct literals like
+// The lowerer builds a package-wide struct type registry before lowering
+// function bodies so it can map positional struct literals like
 // `vec2{x, y}` to their named-field equivalent (`{X:x, Y:y}`) without
 // requiring the author to spell the names. Named literals
 // (`vec2{X:x, Y:y}`) skip the registry lookup entirely.
@@ -16,7 +16,7 @@
 //
 // Nested composites (`[]Node{Node{ID:"a"}, Node{ID:"b"}}`) recurse
 // through the same lowerExpr path. Elided element types
-// (`[]Node{{ID:"a"}}`) are deferred to Y.B; they're rare in the Y.A
+// (`[]Node{{ID:"a"}}`) are deferred; they're rare in the current
 // fixture set (graph_surface.go uses the explicit form everywhere).
 
 package golower
@@ -69,7 +69,7 @@ func (c *lowerCtx) scanStructTypes(file *ast.File) {
 
 // structInfoFromAST flattens a Go struct type's field list into the
 // positional name list OpComposite needs. Embedded fields are ignored
-// (they would require an EmbeddedFieldName lookup, which the Y.A
+// (they would require an EmbeddedFieldName lookup, which the
 // supported subset doesn't claim to handle).
 func structInfoFromAST(st *ast.StructType) structTypeInfo {
 	var fields []string
@@ -87,12 +87,18 @@ func structInfoFromAST(st *ast.StructType) structTypeInfo {
 // lowerCompositeLit dispatches the three shapes of *ast.CompositeLit
 // (struct, slice, map) by inspecting the literal's Type expression.
 // Element-type elision is rejected with a clear issue pointing at the
-// escape hatch — the Y.A subset requires explicit element types.
+// escape hatch — the supported subset requires explicit element types.
 func (c *lowerCtx) lowerCompositeLit(lit *ast.CompositeLit) program.ExprID {
 	switch t := lit.Type.(type) {
 	case *ast.Ident:
 		// `Name{ ... }` — named struct literal.
 		return c.lowerStructLit(t.Name, lit)
+	case *ast.SelectorExpr:
+		if pkg, ok := t.X.(*ast.Ident); ok {
+			return c.lowerStructLit(pkg.Name+"."+t.Sel.Name, lit)
+		}
+		c.addIssue(lit, "qualified composite type must use a package identifier", escapeHatchSuggestion)
+		return c.addExpr(program.Expr{Op: program.OpLitInt, Value: "0", Type: program.TypeInt})
 	case *ast.ArrayType:
 		// `[]T{ ... }` — slice or array literal.
 		return c.lowerSliceLit(lit)

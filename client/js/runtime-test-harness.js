@@ -22,6 +22,10 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const nodeCrypto = require("node:crypto");
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
+const { createRequire } = require("node:module");
+const runtimeTypescript = createRequire(path.join(__dirname, "..", "runtime", "package.json"))("typescript");
 
 const bootstrapSource = fs.readFileSync(path.join(__dirname, "bootstrap.js"), "utf8");
 const bootstrapLiteSource = fs.readFileSync(path.join(__dirname, "bootstrap-lite.js"), "utf8");
@@ -32,17 +36,44 @@ const bootstrapFeatureEnginesSource = fs.readFileSync(path.join(__dirname, "boot
 const bootstrapFeatureHubsSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-hubs.js"), "utf8");
 const bootstrapFeatureScene3DSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d.js"), "utf8");
 const bootstrapFeatureScene3DCommandSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-command.js"), "utf8");
+const bootstrapFeatureScene3DHydrateSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-hydrate.js"), "utf8");
 const bootstrapFeatureScene3DComputeSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-compute.js"), "utf8");
 const bootstrapFeatureScene3DDecompressSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-decompress.js"), "utf8");
 const bootstrapFeatureScene3DWebGLSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgl.js"), "utf8");
 const bootstrapFeatureScene3DWebGPUSource = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-webgpu.js"), "utf8");
-const bootstrapScene3DWebGPUSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
-const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.js"), "utf8");
+const scene3DWebGPUBackendSource = readSceneRendererBackendSrc("webgpu");
+const bootstrapScene3DInputSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "17-scene-input.ts"), "utf8");
 const bootstrapScene3DMountSourceFile = readSceneMountSrc();
-const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "bootstrap-src", "15d-scene-dom-regions.js"), "utf8");
-const patchSource = fs.readFileSync(path.join(__dirname, "patch.js"), "utf8");
-const stripeBridgeSource = fs.readFileSync(path.join(__dirname, "stripe-bridge.js"), "utf8");
-const navigationSource = fs.readFileSync(path.join(__dirname, "..", "..", "server", "navigation_runtime.js"), "utf8");
+const bootstrapScene3DDOMRegionsSourceFile = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "dom-regions.ts"), "utf8");
+const runtimeContractSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "generated", "runtime-abi.ts"), "utf8");
+const runtimeManifestHashMatch = runtimeContractSource.match(/manifestHash:\s*"([a-f0-9]{64})"/);
+assert.ok(runtimeManifestHashMatch, "generated runtime ABI must publish a manifest hash");
+const runtimeManifestHash = runtimeManifestHashMatch[1];
+const hostCompatibilitySource = fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8");
+const patchSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "patch.ts"), "utf8"),
+].join("\n");
+const stripeBridgeSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "stripe-bridge.ts"), "utf8"),
+].join("\n");
+const navigationSource = [
+  hostCompatibilitySource,
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "navigation.ts"), "utf8"),
+].join("\n");
+// navigationRuntimeMinifiedSource is the generated, committed artifact
+// client/runtime/host/navigation_asset.go go:embeds for app.EnableNavigation
+// serves as a standalone asset. Every behavioral test in this
+// suite exercises navigationSource above (the readable .ts source) — this
+// minified copy exists only so navigation-runtime-minified.test.js can prove
+// it parses and boots (its IIFE installs its globals) the same way
+// navigationSource does. cmd/buildbootstrap --check (make test-js) is the
+// gate that keeps it byte-current with navigationSource.
+const navigationRuntimeMinifiedSource = fs.readFileSync(
+  path.join(__dirname, "..", "runtime", "host", "navigation-runtime.min.js"),
+  "utf8",
+);
 
 function bootstrapSourceMapSource(mapName, sourceName) {
   const sourceMap = JSON.parse(fs.readFileSync(path.join(__dirname, mapName), "utf8"));
@@ -227,6 +258,7 @@ class FakeWebGLContext {
     this._boundArrayBuffer = null;
     this._boundTexture = null;
     this._activeProgram = null;
+    this._enabledCapabilities = new Set();
     this._rejectShaderSources = Array.isArray(options.rejectShaderSources) ? options.rejectShaderSources : [];
     this._vendor = typeof options.vendor === "string" ? options.vendor : "FakeGPU Inc.";
     this._renderer = typeof options.renderer === "string" ? options.renderer : "FakeGPU Renderer";
@@ -255,13 +287,20 @@ class FakeWebGLContext {
     this.LEQUAL = 0x0203;
     this.FRONT = 0x0404;
     this.BACK = 0x0405;
+    this.CW = 0x0900;
+    this.CCW = 0x0901;
     this.ONE = 1;
     this.SRC_ALPHA = 0x0302;
     this.ONE_MINUS_SRC_ALPHA = 0x0303;
+    this.VIEWPORT = 0x0BA2;
+    this._viewport = [0,0,0,0];
     this.TEXTURE_2D = 0x0DE1;
+    this.TEXTURE_2D_ARRAY = 0x8C1A;
+    this.NONE = 0;
     this.TEXTURE0 = 0x84C0;
     this.TEXTURE_MIN_FILTER = 0x2801;
     this.TEXTURE_MAG_FILTER = 0x2800;
+    this.TEXTURE_MAX_LEVEL = 0x813D;
     this.TEXTURE_WRAP_S = 0x2802;
     this.TEXTURE_WRAP_T = 0x2803;
     this.CLAMP_TO_EDGE = 0x812F;
@@ -270,6 +309,7 @@ class FakeWebGLContext {
     this.UNSIGNED_BYTE = 0x1401;
     this.UNSIGNED_INT = 0x1405;
     this.FRAMEBUFFER = 0x8D40;
+    this.FRAMEBUFFER_COMPLETE = 0x8CD5;
     this.DEPTH_ATTACHMENT = 0x8D00;
     this.DEPTH_COMPONENT = 0x1902;
     this.DEPTH_COMPONENT24 = 0x81A6;
@@ -419,6 +459,7 @@ class FakeWebGLContext {
   }
 
   viewport(x, y, width, height) {
+    this._viewport = [x,y,width,height];
     this.ops.push(["viewport", x, y, width, height]);
   }
 
@@ -461,6 +502,16 @@ class FakeWebGLContext {
     this.ops.push(["framebufferTexture2D", target, attachment, textarget, texture && texture.id, level]);
   }
 
+  framebufferTextureLayer(target, attachment, texture, level, layer) {
+    this.ops.push(["framebufferTextureLayer", target, attachment, texture && texture.id, level, layer]);
+  }
+
+  texImage3D(target, level, format, width, height, layers) {
+    this.ops.push(["texImage3D", target, level, format, width, height, layers]);
+  }
+
+  readBuffer(value) { this.ops.push(["readBuffer", value]); }
+
   activeTexture(unit) {
     this.ops.push(["activeTexture", unit]);
   }
@@ -489,6 +540,10 @@ class FakeWebGLContext {
 
   texParameteri(target, pname, param) {
     this.ops.push(["texParameteri", target, pname, param]);
+  }
+
+  generateMipmap(target) {
+    this.ops.push(["generateMipmap", target]);
   }
 
   texImage2D(...args) {
@@ -553,6 +608,9 @@ class FakeWebGLContext {
     this.ops.push(["uniform1i", location && location.name, value]);
   }
 
+  uniform3fv(location, values) { this.ops.push(["uniform3fv", location && location.name, Array.from(values)]); }
+  uniform4fv(location, values) { this.ops.push(["uniform4fv", location && location.name, Array.from(values)]); }
+
   uniform2f(location, x, y) {
     this.ops.push(["uniform2f", location && location.name, x, y]);
   }
@@ -570,15 +628,24 @@ class FakeWebGLContext {
   }
 
   enable(capability) {
+    this._enabledCapabilities.add(capability);
     this.ops.push(["enable", capability]);
   }
 
   disable(capability) {
+    this._enabledCapabilities.delete(capability);
     this.ops.push(["disable", capability]);
+  }
+
+  isEnabled(capability) {
+    return this._enabledCapabilities.has(capability);
   }
 
   blendFunc(src, dst) {
     this.ops.push(["blendFunc", src, dst]);
+  }
+  blendFuncSeparate(srcRGB, dstRGB, srcAlpha, dstAlpha) {
+    this.ops.push(["blendFuncSeparate", srcRGB, dstRGB, srcAlpha, dstAlpha]);
   }
 
   depthFunc(mode) {
@@ -591,6 +658,10 @@ class FakeWebGLContext {
 
   cullFace(face) {
     this.ops.push(["cullFace", face]);
+  }
+
+  frontFace(mode) {
+    this.ops.push(["frontFace", mode]);
   }
 
   deleteBuffer(buffer) {
@@ -643,6 +714,7 @@ class FakeWebGLContext {
   }
 
   getParameter(param) {
+    if (param === this.VIEWPORT) return this._viewport.slice();
     if (param === 0x9245) {
       return this._unmaskedVendor;
     }
@@ -710,9 +782,17 @@ class FakeWebGLContext {
   blitFramebuffer(sx0, sy0, sx1, sy1, dx0, dy0, dx1, dy1, mask, filter) {
     this.ops.push(["blitFramebuffer", mask]);
   }
+  checkFramebufferStatus(target) {
+    this.ops.push(["checkFramebufferStatus", target]);
+    return this.FRAMEBUFFER_COMPLETE;
+  }
   vertexAttribIPointer(location, size, type, stride, offset) {
     this.ops.push(["vertexAttribIPointer", location, size, type, stride, offset]);
   }
+  texStorage3D(target, levels, internalFormat, width, height, depth) {
+    this.ops.push(["texStorage3D", target, levels, internalFormat, width, height, depth]);
+  }
+
   texStorage2D(target, levels, internalFormat, width, height) {
     this.ops.push(["texStorage2D", target, levels, internalFormat, width, height]);
   }
@@ -720,7 +800,7 @@ class FakeWebGLContext {
 
 // FakeWebGPUCanvasContext is a minimal double for the GPUCanvasContext
 // returned by canvas.getContext("webgpu"). It covers exactly what
-// sceneWebGPUProbeCanvasContext (16z-scene-webgpu-probe.js) and the real
+// sceneWebGPUProbeCanvasContext (16z-scene-webgpu-probe.ts) and the real
 // WebGPU renderer (16a-scene-webgpu.js) call on a canvas context: configure(),
 // getCurrentTexture()/createView(), and unconfigure().
 class FakeWebGPUCanvasContext {
@@ -819,6 +899,11 @@ function fakeElementQuerySelectorAll(root, selector, includeSelf = false) {
   return matches;
 }
 
+// DOM semantics: an options object contributes only its capture flag.
+function listenerCaptureFlag(options) {
+  return options !== null && typeof options === "object" ? Boolean(options.capture) : Boolean(options);
+}
+
 class FakeElement {
   constructor(tagName, ownerDocument) {
     this.nodeType = ELEMENT_NODE;
@@ -877,6 +962,21 @@ class FakeElement {
 
   set id(value) {
     this.setAttribute("id", value);
+  }
+
+  get parentElement() {
+    return this.parentNode && this.parentNode.nodeType === ELEMENT_NODE ? this.parentNode : null;
+  }
+
+  closest(selector) {
+    for (let element = this; element; element = element.parentElement) {
+      if (fakeElementMatchesSelector(element, selector)) return element;
+    }
+    return null;
+  }
+
+  remove() {
+    if (this.parentNode) this.parentNode.removeChild(this);
   }
 
   get firstChild() {
@@ -1055,14 +1155,18 @@ class FakeElement {
     if (!this.listeners.has(type)) {
       this.listeners.set(type, []);
     }
-    this.listeners.get(type).push({ listener, capture: Boolean(capture) });
+    this.listeners.get(type).push({
+      listener,
+      capture: listenerCaptureFlag(capture),
+      once: Boolean(capture !== null && typeof capture === "object" && capture.once),
+    });
   }
 
   removeEventListener(type, listener, capture) {
     const current = this.listeners.get(type) || [];
     this.listeners.set(
       type,
-      current.filter((entry) => entry.listener !== listener || entry.capture !== Boolean(capture)),
+      current.filter((entry) => entry.listener !== listener || entry.capture !== listenerCaptureFlag(capture)),
     );
   }
 
@@ -1143,6 +1247,10 @@ class FakeElement {
     this._capturedPointerID = pointerID;
   }
 
+  hasPointerCapture(pointerID) {
+    return this._capturedPointerID === pointerID;
+  }
+
   releasePointerCapture(pointerID) {
     if (this._capturedPointerID === pointerID) {
       this._capturedPointerID = null;
@@ -1150,8 +1258,9 @@ class FakeElement {
   }
 
   dispatchEvent(event) {
-    const listeners = this.listeners.get(event.type) || [];
+    const listeners = (this.listeners.get(event.type) || []).slice();
     for (const entry of listeners) {
+      if (entry.once) this.removeEventListener(event.type, entry.listener, entry.capture);
       entry.listener(event);
     }
     return true;
@@ -1567,6 +1676,16 @@ class FakeResponse {
   }
 }
 
+// Derives the WASM runtime asset hash a manifest fixture should carry from the
+// actual bytes its fetch route serves, mirroring what verifyAssetHash() in
+// client/runtime/wasm/loader.ts computes from the real fetched artifact. This
+// keeps the fixture hash honest instead of pinning it to a constant that
+// would pass regardless of which bytes the route serves.
+function runtimeAssetHashForRoute(route) {
+  const bytes = route && typeof route !== "function" && Array.isArray(route.bytes) ? route.bytes : [];
+  return nodeCrypto.createHash("sha256").update(Buffer.from(Uint8Array.from(bytes))).digest("hex").slice(0, 16);
+}
+
 function buildMinimalGLBBytes() {
   const positions = new Float32Array([
     0, 0.75, 0,
@@ -1940,6 +2059,20 @@ function buildSkinnedGLBBytes() {
   return Array.from(glb);
 }
 
+// FakeFile stands in for a browser File (a Blob subclass) inside the sandbox
+// DOM. It carries only the fields the runtime and its tests inspect — name,
+// MIME type, and byte size — never real bytes, since the fake fetch layer
+// never reads a request body.
+class FakeFile {
+  constructor(name, type, size) {
+    this.name = String(name || "");
+    this.type = String(type || "");
+    this.size = Number.isFinite(size) ? size : 0;
+    this.lastModified = Date.now();
+    this.__isFakeFile = true;
+  }
+}
+
 class FakeFormData {
   constructor(form) {
     this.values = [];
@@ -1949,6 +2082,10 @@ class FakeFormData {
   }
 
   append(name, value) {
+    if (value && typeof value === "object" && value.__isFakeFile) {
+      this.values.push([String(name), value]);
+      return;
+    }
     this.values.push([String(name), String(value == null ? "" : value)]);
   }
 
@@ -1972,7 +2109,12 @@ class FakeFormData {
       return;
     }
     const tag = node.tagName;
-    if ((tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") && node.hasAttribute("name")) {
+    if (tag === "INPUT" && node.getAttribute("type") === "file" && node.hasAttribute("name")) {
+      const files = Array.isArray(node.files) ? node.files : [];
+      for (const file of files) {
+        this.append(node.getAttribute("name"), file);
+      }
+    } else if ((tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") && node.hasAttribute("name")) {
       this.append(node.getAttribute("name"), node.value || node.getAttribute("value") || "");
     }
     for (const child of node.children) {
@@ -2028,12 +2170,12 @@ function createContext(options) {
   if (typeof options.createWebGLContext === "function") {
     document.createWebGLContext = options.createWebGLContext;
   } else if (options.enableWebGL) {
-    document.createWebGLContext = () => new FakeWebGLContext();
+    document.createWebGLContext = () => new FakeWebGLContext(options);
   }
   if (typeof options.createWebGL2Context === "function") {
     document.createWebGL2Context = options.createWebGL2Context;
   } else if (options.enableWebGL2) {
-    document.createWebGL2Context = () => new FakeWebGLContext();
+    document.createWebGL2Context = () => new FakeWebGLContext(options);
   }
   if (typeof options.createWebGPUContext === "function") {
     document.createWebGPUContext = options.createWebGPUContext;
@@ -2073,7 +2215,7 @@ function createContext(options) {
 
   const routes = new Map();
   // The text-layout engine now ships as a lazily fetched chunk instead of
-  // riding in every bundle (see bootstrap-src/00-textlayout.js). Serve it by
+  // riding in every bundle (see bootstrap-src/00-textlayout.ts). Serve it by
   // default: any page with a data-gosx-text-layout element, and any page whose
   // manifest mounts a Scene3D engine, asks for it. A test can still override
   // the route through options.fetchRoutes.
@@ -2102,11 +2244,24 @@ function createContext(options) {
     Uint32Array,
     AbortController: class AbortController {
       constructor() {
-        this.signal = { aborted: false };
+        const listeners = new Set();
+        this.signal = {
+          aborted: false,
+          addEventListener(type, listener) {
+            if (type === "abort" && typeof listener === "function") listeners.add(listener);
+          },
+          removeEventListener(type, listener) {
+            if (type === "abort") listeners.delete(listener);
+          },
+          _listeners: listeners,
+        };
       }
 
       abort() {
+        if (this.signal.aborted) return;
         this.signal.aborted = true;
+        for (const listener of Array.from(this.signal._listeners)) listener({ type: "abort", target: this.signal });
+        this.signal._listeners.clear();
       }
     },
     clearTimeout,
@@ -2118,6 +2273,15 @@ function createContext(options) {
           words[i] = cryptoWord++;
         }
         return words;
+      },
+      subtle: {
+        async digest(algorithm, bytes) {
+          const algoName = typeof algorithm === "string" ? algorithm : algorithm && algorithm.name;
+          const nodeAlgo = { "SHA-1": "sha1", "SHA-256": "sha256", "SHA-384": "sha384", "SHA-512": "sha512" }[algoName] || "sha256";
+          const view = ArrayBuffer.isView(bytes) ? new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength) : new Uint8Array(bytes);
+          const digest = nodeCrypto.createHash(nodeAlgo).update(Buffer.from(view)).digest();
+          return Uint8Array.from(digest).buffer;
+        },
       },
     },
     CustomEvent: class CustomEvent {
@@ -2133,8 +2297,8 @@ function createContext(options) {
         this.onload = null;
         this.onerror = null;
         this.complete = false;
-        this.naturalWidth = 1;
-        this.naturalHeight = 1;
+        this.width = this.naturalWidth = 1;
+        this.height = this.naturalHeight = 1;
         this._src = "";
       }
 
@@ -2155,10 +2319,13 @@ function createContext(options) {
     },
     fetch: async (url, init = {}) => {
       fetchCalls.push({ url, init });
-      if (!routes.has(url)) {
+      // Match same-origin normalized requests to their server route path.
+      const resolved = new URL(url, context.location.href);
+      const routeKey = routes.has(url) ? url : resolved.origin === context.location.origin ? resolved.pathname + resolved.search : url;
+      if (!routes.has(routeKey)) {
         throw new Error("unexpected fetch: " + url);
       }
-      const route = routes.get(url);
+      const route = routes.get(routeKey);
       const response = typeof route === "function" ? await route(url, init, fetchCalls.length) : route;
       return new FakeResponse(Object.assign({ url }, response || {}));
     },
@@ -2234,6 +2401,22 @@ function createContext(options) {
           hydrateCalls.push(args);
           if (typeof options.onHydrate === "function") {
             return options.onHydrate(...args);
+          }
+          if (args[0] === "scene3d") {
+            const legacyArgs = args.slice(1);
+            engineHydrateCalls.push(legacyArgs);
+            const raw = typeof options.onHydrateEngine === "function"
+              ? options.onHydrateEngine(...legacyArgs)
+              : "[]";
+            const commands = typeof raw === "string" ? JSON.parse(raw || "[]") : raw;
+            return {
+              version: 1,
+              surfaceKind: "scene3d",
+              outputKind: "scene3d.commands",
+              targetId: args[1],
+              mode: "initial",
+              commands,
+            };
           }
           return null;
         };
@@ -2381,6 +2564,19 @@ function createContext(options) {
   }
 
   context.window = context;
+  const runtimeABI = {
+    handshake() {
+      const contract = context.__gosx_runtime_contract;
+      return contract ? {
+        abiVersion: contract.abiVersion,
+        mailboxVersion: contract.mailboxVersion,
+        manifestHash: contract.manifestHash,
+        variant: "core",
+        featureMask: contract.variants.core,
+      } : null;
+    },
+  };
+  context.__gosx = { runtime: { abi: runtimeABI } };
   context.__gosx_engine_factories = Object.assign({}, options.engineFactories || {});
   context.__engineMounts = engineMounts;
   context.__engineDisposals = engineDisposals;
@@ -2414,6 +2610,13 @@ function createContext(options) {
   };
 
   if (options.manifest) {
+    const runtime = options.manifest.runtime;
+    if (runtime && runtime.path && !runtime.hash) {
+      runtime.hash = runtimeAssetHashForRoute(routes.get(runtime.path));
+      runtime.manifestHash = runtimeManifestHash;
+      runtime.variant = "core";
+      runtime.featureMask = 17;
+    }
     const manifestScript = document.createElement("script");
     manifestScript.id = "gosx-manifest";
     manifestScript.textContent = JSON.stringify(options.manifest);
@@ -2572,6 +2775,109 @@ function installManualClock(context, startAt) {
   };
 }
 
+// createFakeAudioContextHarness builds a minimal WebAudio double for the
+// shared cue engine navigation.ts's data-gosx-countdown-cue and
+// data-gosx-watch "cue" effect both use (gosx#213 / gosx#214). It tracks
+// every constructed instance (a test passes the returned .AudioContext
+// class through createContext's `AudioContext` option) and every
+// oscillator each one creates, so a test can assert not just that a cue
+// call happened but which tone actually played: its type, its frequency,
+// and how many oscillators one playNamedCue call scheduled.
+//
+// state defaults to "running" — a context constructed synchronously
+// inside a real user-gesture handler, which is the only place
+// primeAudioCueContext ever constructs one, starts running in every
+// browser gosx targets. Pass { state: "suspended" } to model the rarer
+// case (for example a backgrounded tab) a test wants to exercise
+// resumeAudioCueContextIfSuspended against.
+function createFakeAudioContextHarness(options) {
+  const opts = options || {};
+  const instances = [];
+
+  class FakeCueAudioParam {
+    constructor(initial) {
+      this.value = initial;
+      this.calls = [];
+    }
+
+    setValueAtTime(value, time) {
+      this.value = value;
+      this.calls.push({ method: "setValueAtTime", value, time });
+    }
+
+    linearRampToValueAtTime(value, time) {
+      this.value = value;
+      this.calls.push({ method: "linearRampToValueAtTime", value, time });
+    }
+  }
+
+  class FakeCueAudioNode {
+    constructor(kind) {
+      this.kind = kind;
+      this.connections = [];
+    }
+
+    connect(target) {
+      this.connections.push(target);
+      return target;
+    }
+  }
+
+  class FakeCueOscillator extends FakeCueAudioNode {
+    constructor() {
+      super("oscillator");
+      this.type = "";
+      this.frequency = new FakeCueAudioParam(440);
+      this.startCalls = [];
+      this.stopCalls = [];
+    }
+
+    start(at) {
+      this.startCalls.push(at);
+    }
+
+    stop(at) {
+      this.stopCalls.push(at);
+    }
+  }
+
+  class FakeCueGain extends FakeCueAudioNode {
+    constructor() {
+      super("gain");
+      this.gain = new FakeCueAudioParam(1);
+    }
+  }
+
+  class FakeCueAudioContext {
+    constructor() {
+      this.state = opts.state || "running";
+      this.currentTime = 0;
+      this.destination = new FakeCueAudioNode("destination");
+      this.oscillators = [];
+      this.resumeCalls = 0;
+      instances.push(this);
+    }
+
+    createOscillator() {
+      const oscillator = new FakeCueOscillator();
+      this.oscillators.push(oscillator);
+      return oscillator;
+    }
+
+    createGain() {
+      return new FakeCueGain();
+    }
+
+    resume() {
+      this.resumeCalls += 1;
+      this.state = "running";
+      return Promise.resolve();
+    }
+  }
+
+  return { AudioContext: FakeCueAudioContext, instances: instances };
+}
+
 function runScript(source, context, filename) {
   vm.runInContext(source, context, { filename });
 }
@@ -2675,19 +2981,21 @@ async function mountMotionSeamScene(motionFlag, tickFn) {
         },
       ],
     },
-    // Camera + a single long box keyed "cube" (width 3, depth 0.4) so a 90°
+    // Camera + a single long box keyed "1" (width 3, depth 0.4) so a 90°
     // rotation about Y swaps the X/Z extents — a deterministic, camera-
     // independent world-space signal.
     onHydrateEngine: () => JSON.stringify([
       { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
       {
         kind: 0,
-        objectId: "cube",
+        objectId: 1,
         data: {
           kind: "box",
           geometry: "box",
           material: "flat",
           props: { x: 0, y: 0, z: 0, width: 3, height: 0.4, depth: 0.4, color: "#8de1ff" },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -2699,7 +3007,7 @@ async function mountMotionSeamScene(motionFlag, tickFn) {
   if (motionFlag) {
     env.context.__gosx_motion_wasm = true;
     env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["cube"], prop: ["rotation"] });
+    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["rotation"] });
     env.context.__gosx_motion_tick = tickFn;
     env.context.__gosx_motion_unload = () => {};
   }
@@ -2798,17 +3106,18 @@ async function mountMaterialMotionScene(motionFlag) {
         },
       ],
     },
-    // A selena/custom box keyed "glow-cube" carrying an inline customUniforms
+    // A selena/custom box keyed "1" carrying an inline customUniforms
     // bag — so the resolved write target is the object record itself (no named
     // material lookup), which the seam mutates in place.
     onHydrateEngine: () => JSON.stringify([
       { kind: 5, objectId: 0, data: { x: 0, y: 0, z: 8, fov: 75 } },
       {
         kind: 0,
-        objectId: "glow-cube",
+        objectId: 1,
         data: {
           kind: "box",
           geometry: "box",
+          material: "",
           props: {
             x: 0, y: 0, z: 0, size: 1, color: "#8de1ff",
             materialKind: "custom",
@@ -2816,6 +3125,8 @@ async function mountMaterialMotionScene(motionFlag) {
             customFragmentWGSL: "fn gosx_fragment() -> vec4f { return vec4f(1.0); }",
             customUniforms: { emissive: [0, 0, 0, 0] },
           },
+          children: [],
+          static: false,
         },
       },
     ]),
@@ -2825,13 +3136,13 @@ async function mountMaterialMotionScene(motionFlag) {
   if (motionFlag) {
     env.context.__gosx_motion_wasm = true;
     env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
     env.context.__gosx_motion_tick = tick;
     env.context.__gosx_motion_unload = () => {};
   } else {
     // Exports present but the opt-in flag deliberately unset.
     env.context.__gosx_motion_load = () => 1;
-    env.context.__gosx_motion_refs = () => ({ target: ["glow-cube"], prop: ["emissive"] });
+    env.context.__gosx_motion_refs = () => ({ target: ["1"], prop: ["emissive"] });
     env.context.__gosx_motion_tick = tick;
     env.context.__gosx_motion_unload = () => {};
   }
@@ -2931,7 +3242,7 @@ const SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE = {
 function loadSceneWaterClockAPI() {
   // sceneNumber sits in the runtime-utils file and the water clock sits in the
   // scene core file. The bundles load them next to each other, so join them.
-  const core = readBootstrapSrc("10-runtime-scene-utils.js", "10-runtime-scene-core.js");
+  const core = readBootstrapSrc("10-runtime-scene-utils.ts", "10-runtime-scene-core.ts");
   const start = core.indexOf("function sceneNumber(value, fallback)");
   const end = core.indexOf("function sceneNumberOrCSSVar", start);
   assert.notEqual(start, -1, "sceneNumber anchor missing from scene core");
@@ -3023,7 +3334,7 @@ const CUSTOM_POST_TIME_LAYOUT_FIXTURE = {
 // so ladder-driven harness tests exercise the exact same normalization the
 // full bootstrap bundle runs.
 function sceneCoreSourceRange(startAnchor, endAnchor) {
-  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "10-runtime-scene-core.ts"), "utf8");
   const start = source.indexOf(startAnchor);
   const end = source.indexOf(endAnchor, start);
   assert.notEqual(start, -1, "10-runtime-scene-core.js anchor missing: " + startAnchor);
@@ -3037,7 +3348,7 @@ function loadSceneAdaptiveQualityAPI() {
   const end = source.indexOf("function applyScenePostFXState", start);
   assert.notEqual(start, -1, "adaptive controller start anchor missing");
   assert.notEqual(end, -1, "adaptive controller end anchor missing");
-  const sceneProps = sceneCoreSourceRange("function sceneProps(props)", "function sceneObjectList");
+  const sceneProps = sceneCoreSourceRange("function sceneProps(props)", "function sceneCloneData");
   const sceneIsPlainObject = sceneCoreSourceRange("function sceneIsPlainObject(value)", "function normalizeSceneMaterialCapabilityTier");
   const qualityLadderCore = sceneCoreSourceRange(
     "// G2 QualityLadder — bidirectional work-based ABR",
@@ -3062,7 +3373,121 @@ function loadSceneAdaptiveQualityAPI() {
       sceneSyncStatusBindings,
     };
   `, context, { filename: "scene-adaptive-quality.js" });
-  return { api: context.adaptiveAPI, clock };
+  return { api: context.adaptiveAPI, clock, context };
+}
+
+// loadSceneFramePacingAPI exposes mount.ts's sceneFramePacing* pure decision
+// helpers (the "vsync-divisor" adaptive frame pacing governor) for direct,
+// no-DOM unit testing. Every helper is a pure function of primitive
+// arguments with no external dependency (no sceneNumber/setAttrValue/
+// performance), so the loader needs no stub preamble -- it just isolates
+// the trailing section of mount.ts where they live and republishes them by
+// name, exactly like loadSceneAdaptiveQualityAPI does for the quality
+// ladder governor above.
+function loadSceneFramePacingAPI() {
+  const source = readSceneMountSrc();
+  const start = source.indexOf("function sceneFramePacingMedianOf3");
+  assert.notEqual(start, -1, "frame pacing helpers start anchor missing");
+  const context = {};
+  vm.runInNewContext(runtimeTypescript.transpileModule(source.slice(start), { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText + `
+    globalThis.framePacingAPI = {
+      sceneFramePacingMedianOf3, sceneFramePacingBlendVsync, sceneFramePacingBlendCost,
+      sceneFramePacingCandidateK, sceneFramePacingMinKForInterval,
+      sceneFramePacingObserveCandidate, sceneFramePacingCommitK,
+      sceneFramePacingObserveTickGate, sceneFramePacingAdvanceOnTick,
+    };
+  `, context, { filename: "scene-frame-pacing.js" });
+  return { api: context.framePacingAPI };
+}
+
+function loadSceneViewportAPI(options = {}) {
+  const mountSource = readSceneMountSrc();
+  const start = mountSource.indexOf("function scenePhoneDevicePixelRatioCap");
+  const end = mountSource.indexOf("function observeSceneViewport", start);
+  assert.notEqual(start, -1, "viewport start anchor missing");
+  assert.notEqual(end, -1, "viewport end anchor missing");
+  const baseStart = mountSource.indexOf("function sceneViewportBase");
+  const baseEnd = mountSource.indexOf("function scheduleSceneIdleTask", baseStart);
+  assert.notEqual(baseStart, -1, "viewport base start anchor missing");
+  assert.notEqual(baseEnd, -1, "viewport base end anchor missing");
+  const devicePixelRatio = Number.isFinite(Number(options.devicePixelRatio))
+    ? Number(options.devicePixelRatio)
+    : 1;
+  const environment = Object.assign({ devicePixelRatio }, options.environment || {});
+  const context = {
+    window: {
+      devicePixelRatio,
+      getComputedStyle(element) {
+        return element && element.computedStyle || { paddingTop: "0px", paddingBottom: "0px" };
+      },
+    },
+    __environment: environment,
+  };
+  vm.runInNewContext(`
+    function sceneNumber(value, fallback) { const n = Number(value); return Number.isFinite(n) ? n : fallback; }
+    function sceneBool(value, fallback) { return value == null ? fallback : (value === false || value === "false" ? false : Boolean(value)); }
+    function sceneEnvironmentState() { return __environment; }
+    function sceneMediaQueryMatches() { return false; }
+    function setAttrValue(element, name, value) { if (element && typeof element.setAttribute === "function") element.setAttribute(name, String(value)); }
+    function setStyleValue(style, name, value) { if (style) { if (typeof style.setProperty === "function") style.setProperty(name, value); else style[name] = value; } }
+    function defaultSceneMaxDevicePixelRatio(capability) {
+      if (capability && (capability.reducedData || capability.lowPower)) {
+        switch (capability.tier) {
+          case "constrained": return 1.25;
+          case "balanced": return 1.5;
+          default: return 1.75;
+        }
+      }
+      switch (capability && capability.tier) {
+        case "constrained": return 1.5;
+        case "balanced": return 1.75;
+        default: return 2;
+      }
+    }
+  ` + runtimeTypescript.transpileModule(mountSource.slice(baseStart, baseEnd) + mountSource.slice(start, end), { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText + `
+    globalThis.viewportAPI = {
+      sceneViewportBase,
+      sceneViewportDevicePixelRatio,
+      sceneViewportFromMount,
+      applySceneViewport,
+    };
+  `, context, { filename: "scene-viewport.js" });
+  return context.viewportAPI;
+}
+
+function resolveSceneViewportForTest(props, options = {}) {
+  const api = loadSceneViewportAPI(options);
+  const width = Number.isFinite(Number(options.measuredWidth))
+    ? Number(options.measuredWidth)
+    : sceneNumberForTest(props && props.width, 390);
+  const height = Number.isFinite(Number(options.measuredHeight))
+    ? Number(options.measuredHeight)
+    : sceneNumberForTest(props && props.height, 844);
+  const base = api.sceneViewportBase(Object.assign({ responsive: false }, props || {}));
+  if (options.base) Object.assign(base, options.base);
+  const canvasWidth = Number.isFinite(Number(options.canvasMeasuredWidth))
+    ? Number(options.canvasMeasuredWidth)
+    : width;
+  const canvasHeight = Number.isFinite(Number(options.canvasMeasuredHeight))
+    ? Number(options.canvasMeasuredHeight)
+    : height;
+  const mountRect = { width, height, left: 0, top: 0 };
+  const canvasRect = { width: canvasWidth, height: canvasHeight, left: 0, top: 0 };
+  const mount = { getBoundingClientRect() { return mountRect; } };
+  const canvas = { getBoundingClientRect() { return canvasRect; } };
+  return api.sceneViewportFromMount(
+    mount,
+    Object.assign({ responsive: false }, props || {}),
+    base,
+    canvas,
+    options.capability || { tier: "full" },
+    options.adaptiveQuality || null,
+  );
+}
+
+function sceneNumberForTest(value, fallback) {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : fallback;
 }
 
 function createAdaptiveQualityHarness(extraProps) {
@@ -3198,7 +3623,7 @@ const RAW_TO_GLOW_LADDER = [
 
 function telemetryPostBodies(env) {
   return env.fetchCalls
-    .filter((call) => call.url === "/_gosx/client-events" && call.init && call.init.method === "POST")
+    .filter((call) => (call.url === "/_gosx/client-events" || call.url === env.context.location.origin + "/_gosx/client-events") && call.init && call.init.method === "POST")
     .map((call) => JSON.parse(call.init.body));
 }
 
@@ -3260,7 +3685,7 @@ window.Hls.Events = {
 // ---------------------------------------------------------------------------
 // Video drift engine: JS fallback ↔ Go golden parity.
 //
-// 28-video-sync-fallback.js is a pure-JS port of the Go videosync engine
+// 28-video-sync-fallback.ts is a pure-JS port of the Go videosync engine
 // (client/videosync). The committed golden vector — produced by the Go
 // Engine — is replayed through a fresh JS engine; the decision stream MUST
 // match. kind/preloadPhase/ready/stalled/resetRate are exact; rate/seekTo/
@@ -3272,17 +3697,17 @@ function loadVideoSyncJSEngineFactory() {
   // source-extraction tests read bootstrap-src/*.js directly), eval it in an
   // isolated context whose only global is `window`, and pull the factory off.
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.js"),
+    path.join(__dirname, "bootstrap-src", "28-video-sync-fallback.ts"),
     "utf8",
   );
   const sandbox = { window: {} };
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.js" });
+  vm.runInContext(source, sandbox, { filename: "28-video-sync-fallback.ts" });
   const factory = sandbox.window.__gosx_video_sync_js_create;
   assert.equal(
     typeof factory,
     "function",
-    "28-video-sync-fallback.js must install window.__gosx_video_sync_js_create",
+    "28-video-sync-fallback.ts must install window.__gosx_video_sync_js_create",
   );
   return factory;
 }
@@ -3307,13 +3732,13 @@ function loadVideoSyncJSEngineFactory() {
 // sandbox and returns the exposed window.__gosx_paint_canvas_bundle function.
 function loadCanvasPainter() {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b1-canvas2d-painter.js"),
+    path.join(__dirname, "bootstrap-src", "26b1-canvas2d-painter.ts"),
     "utf8",
   );
   const sandbox = {};
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "26b1-canvas2d-painter.js" });
+  vm.runInContext(source, sandbox, { filename: "26b1-canvas2d-painter.ts" });
   const fn = sandbox.window.__gosx_paint_canvas_bundle;
   assert.equal(typeof fn, "function", "painter must expose window.__gosx_paint_canvas_bundle");
   return fn;
@@ -3366,7 +3791,7 @@ function nodeFillRects(ctx, cssWidth, cssHeight) {
 
 // -----------------------------------------------------------------------------
 // Ortho-2D WebGPU camera math — sceneMat4Ortho2DView/Proj/ViewProj
-// (bootstrap-src/11-scene-math.js, exported through window.__gosx_scene3d_api).
+// (bootstrap-src/11-scene-math.ts, exported through window.__gosx_scene3d_api).
 //
 // sceneMat4Ortho2DViewProj is the JS half of the pinned cross-language golden
 // contract with the native 2D board camera: render/bundle/math.go
@@ -3696,6 +4121,7 @@ function makeFakeGPUDevice(options) {
       kind,
       descriptor,
       draws: [],
+      dispatches: [],
       drawIndirects: [],
       drawIndexeds: [],
       indexBuffers: [],
@@ -3706,8 +4132,12 @@ function makeFakeGPUDevice(options) {
       setPipeline(pipeline) {
         pass.pipelines.push(pipeline);
       },
-      setBindGroup(slot, group) {
-        pass.bindGroups.push({ slot, group });
+      setBindGroup(slot, group, dynamicOffsets) {
+        const record = { slot, group };
+        if (dynamicOffsets && typeof dynamicOffsets.length === "number") {
+          record.dynamicOffsets = Array.from(dynamicOffsets);
+        }
+        pass.bindGroups.push(record);
       },
       setVertexBuffer(slot, buffer, offset, size) {
         pass.vertexBuffers.push({ slot, buffer, offset, size });
@@ -3755,7 +4185,20 @@ function makeFakeGPUDevice(options) {
           pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
         });
       },
-      dispatchWorkgroups() {},
+      // dispatchWorkgroups: mirrors draw() recording for the compute path.
+      // Records the workgroup counts + the currently-bound pipeline so tests
+      // can assert WHICH compute path ran without GPU execution.
+      dispatchWorkgroups(workgroupCountX, workgroupCountY, workgroupCountZ) {
+        pass.dispatches.push({
+          workgroupCountX,
+          workgroupCountY: workgroupCountY == null ? 1 : workgroupCountY,
+          workgroupCountZ: workgroupCountZ == null ? 1 : workgroupCountZ,
+          // The pipeline bound when the dispatch was issued — lets tests
+          // assert WHICH path dispatched without coupling to setPipeline
+          // call ordering.
+          pipeline: pass.pipelines.length ? pass.pipelines[pass.pipelines.length - 1] : null,
+        });
+      },
       // executeBundles records a render-bundle replay. Tests assert on
       // executedBundles to prove the renderer replayed rather than re-encoded.
       executeBundles(bundles) {
@@ -3818,11 +4261,25 @@ function makeFakeGPUDevice(options) {
       return pipeline;
     },
     createComputePipelineAsync(desc) {
-      return Promise.resolve({ __kind: "computePipeline", label: desc && desc.label });
+      return Promise.resolve().then(() => device.createComputePipeline(desc));
     },
     createRenderPipeline(desc) {
       validateRenderPipelineDesc(desc);
-      const pipeline = { __kind: "renderPipeline", desc };
+      const pipeline = { __kind: "renderPipeline", desc, getBindGroupLayout(index) {
+        if (desc.layout !== "auto") return desc.layout.desc.bindGroupLayouts[index];
+        const declarations = parseWGSLBindingKinds([desc.vertex?.module?.code, desc.fragment?.module?.code].join("\n"));
+        const entries = [];
+        for (const [key, kind] of declarations) {
+          const [group, binding] = key.split(":").map(Number);
+          if (group !== index) continue;
+          const entry = { binding, visibility: 3 };
+          if (kind === "texture") entry.texture = {};
+          else if (kind === "sampler") entry.sampler = {};
+          else entry.buffer = { type: kind === "uniform" ? "uniform" : kind === "storage-read" ? "read-only-storage" : "storage" };
+          entries.push(entry);
+        }
+        return device.createBindGroupLayout({ entries });
+      } };
       state.renderPipelines.push(pipeline);
       return pipeline;
     },
@@ -3924,7 +4381,7 @@ function makeFakeGPUDevice(options) {
     },
     pushErrorScope() {},
     popErrorScope() {
-      return Promise.resolve(null);
+      return { then(resolve) { return Promise.resolve(resolve(null)); }, catch() { return Promise.resolve(null); } };
     },
   };
   // Render bundles are opt-in. Without createRenderBundleEncoder the renderer
@@ -3975,29 +4432,31 @@ function bootstrapChunkSources(bundleName) {
 // it when a test inspects source text that one file no longer holds alone.
 function readBootstrapSrc(...names) {
   return names
-    .map((name) => fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8"))
+    .map((name) => fs.readFileSync(
+      name.startsWith("../") ? path.join(__dirname, name) : path.join(__dirname, "bootstrap-src", name),
+      "utf8",
+    ))
     .join("\n");
 }
 
-// readSceneMountSrc joins every 20x-scene-mount*.js file in build order. The
+// readSceneMountSrc joins the Scene3D mount authorities in build order. The
 // old single 20-scene-mount.js was 10_127 lines and 43 percent of the base
-// Scene3D chunk; it is now nine files. A source assertion about the mount path
-// must read them all.
+// Scene3D chunk; its mount path plus lazy initial-hydrate boundary is split into
+// governed sources. A source assertion about that path must read them all.
 function readSceneMountSrc() {
-  const srcDir = path.join(__dirname, "bootstrap-src");
-  const parts = fs.readdirSync(srcDir).filter((n) => /^20[a-z]?-scene-mount.*\.js$/.test(n));
-  // Build order: 20a..20h first, then the engine factory in 20-scene-mount.js.
-  parts.sort();
-  const factory = parts.indexOf("20-scene-mount.js");
-  if (factory !== -1) parts.push(parts.splice(factory, 1)[0]);
-  return parts.map((n) => fs.readFileSync(path.join(srcDir, n), "utf8")).join("\n");
-}
-
-// readWebGPUBackendSrc joins the WebGPU backend source files. The Selena
-// uniform packer moved out of createSceneWebGPURenderer into 16a1, so a source
-// assertion about the backend must read both files.
-function readWebGPUBackendSrc() {
-  return readBootstrapSrc("16a-scene-webgpu.js", "16a1-scene-webgpu-selena-uniforms.js");
+  return readBootstrapSrc(
+    "../runtime/scene3d/mount-backend.ts",
+    "../runtime/scene3d/mount-webgl.ts",
+    "../runtime/scene3d/mount-quality.ts",
+    "../runtime/scene3d/overlays.ts",
+    "../runtime/scene3d/mount-viewport.ts",
+    "../runtime/scene3d/overlay-dom.ts",
+    "../runtime/scene3d/mount-controls.ts",
+    "../runtime/scene3d/mount-telemetry.ts",
+    "../runtime/scene3d/hydrate-input.ts",
+    "../runtime/scene3d/mount-lifecycle.ts",
+    "../runtime/scene3d/mount.ts",
+  );
 }
 
 // readBootstrapTailSrc joins every 30x-tail-*.js file in build order. The old
@@ -4005,7 +4464,9 @@ function readWebGPUBackendSrc() {
 function readBootstrapTailSrc() {
   const srcDir = path.join(__dirname, "bootstrap-src");
   return readBootstrapSrc(
-    ...fs.readdirSync(srcDir).filter((n) => /^30[a-z]-tail-.*\.js$/.test(n)).sort(),
+    // bootstrap-src is mixed: standalone-parseable sources are TypeScript,
+    // concatenation fragments stay JavaScript. Match both extensions.
+    ...fs.readdirSync(srcDir).filter((n) => /^30[a-z]-tail-.*\.(js|ts)$/.test(n)).sort(),
   );
 }
 
@@ -4019,17 +4480,37 @@ function readBootstrapTailSrc() {
 // exercise a bootstrap-src edit BEFORE the bundles are regenerated (for
 // example this file's pool-pass Selena-routing test) can opt into a bundle
 // built fresh from bootstrap-src via this helper.
+const freshFeatureTranspilationCache = new Map();
 function freshFeatureBundleSource(name, options) {
   const clientJS = __dirname;
   const opts = options || {};
   function read(rel) {
     const source = fs.readFileSync(path.join(clientJS, rel), "utf8");
-    if (rel.endsWith("16-scene-webgl.js") && opts.exportWaterRendererForTest) {
-      return source + "\nwindow.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n";
-    }
-    return source;
+    if (!rel.startsWith("../runtime/") || !rel.endsWith(".ts")) return source;
+    // The live source path now includes typed post-effect modules. Use the
+    // same TypeScript syntax contract as the bundle builder before VM execution.
+    const ts = require("../runtime/node_modules/typescript");
+    return ts.transpileModule(source, { compilerOptions: {
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None,
+    } }).outputText;
   }
-  return bootstrapChunkSources("bootstrap-feature-" + name + ".js").map(read).join("\n");
+  const sourceParts = bootstrapChunkSources("bootstrap-feature-" + name + ".js").map(read);
+  let source = sourceParts.join("\n");
+  if (name === "scene3d-webgl" && opts.exportWaterRendererForTest) {
+    // Inject at the joined chunk's final-source boundary. The final source is
+    // the feature suffix that closes the registry factory, so the export stays
+    // in lexical scope without depending on which renderer file owns it.
+    const finalSourceStart = source.length - sourceParts[sourceParts.length - 1].length;
+    source = source.slice(0, finalSourceStart)
+      + "window.__gosx_test_create_water_webgl = createSceneWaterRendererWebGL;\n"
+      + source.slice(finalSourceStart);
+  }
+  const cacheKey = name + ":" + Boolean(opts.exportWaterRendererForTest);
+  const cached = freshFeatureTranspilationCache.get(cacheKey);
+  if (cached && cached.source === source) return cached.output;
+  const output = runtimeTypescript.transpileModule(source, { compilerOptions: { target: runtimeTypescript.ScriptTarget.ES2022 } }).outputText;
+  freshFeatureTranspilationCache.set(cacheKey, { source, output });
+  return output;
 }
 
 // createBoardWebGPUHarness boots the runtime + scene3d + scene3d-webgpu chunks
@@ -4045,7 +4526,7 @@ function freshFeatureBundleSource(name, options) {
 // options.fakeDeviceOptions is forwarded to makeFakeGPUDevice().
 async function createBoardWebGPUHarness(options) {
   const opts = options || {};
-  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow });
+  const env = createContext({ enableWebGPU: true, performanceNow: opts.performanceNow, fetchRoutes: opts.fetchRoutes });
   // Most renderer harnesses assert the complete diagnostic attribute surface.
   // Production defaults to throttled telemetry; tests opt out only when they
   // are specifically verifying that production behavior.
@@ -4088,6 +4569,7 @@ async function createBoardWebGPUHarness(options) {
   assert.ok(env.context.__gosx_scene3d_api, "scene3d chunk must publish __gosx_scene3d_api");
 
   const fake = makeFakeGPUDevice(opts.fakeDeviceOptions);
+  if (opts.configureDevice) opts.configureDevice(fake.device, fake.state, env);
   // The 16a factory consumes the probed adapter+device through the 16z
   // bridge global — point it at the fake before loading the webgpu chunk.
   env.context.__gosx_scene3d_webgpu_probe = function() {
@@ -4365,6 +4847,17 @@ function deviceCallDelta(before, after) {
   };
 }
 
+// Retry the same frame after builtin pipeline compilation settles. Authored
+// shader fallback/recovery remains visible to tests after the first submission.
+async function renderPreparedFrame(renderer, ...args) {
+  for (let attempt = 0; attempt < 20; attempt++) {
+    const result = renderer.render(...args);
+    if (result !== "pending") return result;
+    await flushAsyncWork();
+  }
+  assert.fail("frame stayed pending after pipeline preparation");
+}
+
 // renderWaterPerfShapeFrames renders N consecutive frames of one scenario
 // (`duck` true/false) against a FRESH harness (fresh device + renderer), and
 // returns the per-frame device-call delta array. Each frame rebuilds the
@@ -4394,7 +4887,7 @@ async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
       objects, [], [], [], [], {}, frame * 0.016, [], [], [], state.waterSystems, [], 0, false,
     );
     const before = deviceCallSnapshot(harness.fake);
-    harness.renderer.render(bundle, { width: 64, height: 64 }, {
+    await renderPreparedFrame(harness.renderer, bundle, { width: 64, height: 64 }, {
       nowMS: frame * 17,
       displayDeltaMS: frame === 0 ? 0 : 17,
       active: true,
@@ -4437,7 +4930,7 @@ function assertWaterComputeKernelBindings(fake, materialName, wantBindings) {
 // -----------------------------------------------------------------------------
 // DOM CanvasBoard overlays — labels/html sync + dispose
 //
-// 26b2-canvas-board-labels.js positions real HTML <span> elements over the
+// 26b2-canvas-board-labels.ts positions real HTML <span> elements over the
 // canvas board so text renders in the DOM rather than via GPU fillText. The
 // tests below exercise the OrthoCamera2D transform parity, index-keyed label
 // reconciliation, keyed HTML reconciliation, culling, defaults, dispose, and
@@ -4454,7 +4947,7 @@ function assertWaterComputeKernelBindings(fake, materialName, wantBindings) {
 // elements can be created.
 function loadBoardLabels() {
   const source = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.js"),
+    path.join(__dirname, "bootstrap-src", "26b2-canvas-board-labels.ts"),
     "utf8",
   );
   const fakeDoc = new FakeDocument();
@@ -4463,7 +4956,7 @@ function loadBoardLabels() {
   };
   sandbox.window = sandbox;
   vm.createContext(sandbox);
-  vm.runInContext(source, sandbox, { filename: "26b2-canvas-board-labels.js" });
+  vm.runInContext(source, sandbox, { filename: "26b2-canvas-board-labels.ts" });
   assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_sync, "function",
     "26b2 must expose __gosx_canvas_board_labels_sync");
   assert.equal(typeof sandbox.window.__gosx_canvas_board_labels_dispose, "function",
@@ -4741,6 +5234,13 @@ function makeFakeGPUDeviceForCompute(options) {
 // createBoardWebGPUHarness but injects a caller-supplied fake device instead
 // of the default makeFakeGPUDevice(), enabling per-test async pipeline control.
 async function createComputeParticleHarness(fakeDevice, options) {
+  // Callers inject authored-shader failures. Builtin parallel preparation has
+  // its own coverage in scene3d-webgpu-first-frame.test.js.
+  const authoredRenderAsync = fakeDevice.createRenderPipelineAsync;
+  if (typeof authoredRenderAsync === "function") fakeDevice.createRenderPipelineAsync = function(desc) {
+    if (/^gosx-(?:points-authored|particle-render-authored|selena-post)/.test(desc.label || "")) return authoredRenderAsync.call(fakeDevice, desc);
+    return Promise.resolve().then(() => fakeDevice.createRenderPipeline(desc));
+  };
   const opts = options || {};
   const env = createContext({
     enableWebGPU: true,
@@ -4842,6 +5342,9 @@ function makeFakeGPUDeviceForPoints(options) {
     return Promise.resolve(null);
   };
   device.createRenderPipelineAsync = function(desc) {
+    if (!/^gosx-(?:points-authored|particle-render-authored|selena-post)/.test(desc.label || "")) {
+      return Promise.resolve().then(() => device.createRenderPipeline(desc));
+    }
     renderPipelineAsyncCalls.push(desc);
     if (typeof opts.pipelineAsyncBehavior === "function") {
       return opts.pipelineAsyncBehavior(desc);
@@ -5025,7 +5528,8 @@ function makeBundleWithCustomPost(options) {
 // pattern as other WebGL2 renderer tests in this file).
 function createWebGLRendererForPost(options) {
   const opts = options || {};
-  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true,
+    rejectShaderSources: opts.rejectShaderSources });
   env.context.WebGL2RenderingContext = FakeWebGLContext;
   if (opts.fresh) {
     runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
@@ -5041,7 +5545,7 @@ function createWebGLRendererForPost(options) {
   const canvas = env.document.createElement("canvas");
   canvas.width = 320;
   canvas.height = 180;
-  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  const renderer = backend.create(canvas, opts.props || { background: "#000000" }, { tier: "full" });
   const warnLog = [];
   const orig = env.context.console.warn;
   env.context.console.warn = function() {
@@ -5171,7 +5675,7 @@ async function createCullSystemHarness(fakeDevice) {
 
 // bundleMeshScene builds a mesh-only scene. Mesh-only matters: water, points,
 // labels, screen lines, surfaces and world lines all keep the direct path.
-function bundleMeshScene(api, objects) {
+function bundleMeshScene(api, objects, rendererCapabilities) {
   const state = api.createSceneState({
     scene: {
       materials: [{ id: "m", color: "#8de1ff", roughness: 0.4, metalness: 0.1 }],
@@ -5182,7 +5686,7 @@ function bundleMeshScene(api, objects) {
   return api.createSceneRenderBundle(
     64, 64, "#000000",
     { x: 0, y: 0, z: 4, fov: 60, near: 0.05, far: 128 },
-    withMaterials, [], [], [], [], {}, 0, [], [], [], [], [], 0, false,
+    withMaterials, [], [], [], [], {}, 0, [], [], [], [], [], 0, false, rendererCapabilities,
   );
 }
 
@@ -5263,22 +5767,22 @@ function makeInstancedBundle(meshOverrides) {
 // =========================================================================
 
 // Helper: extract and compile extractFrustumPlanesJS + instancePassesCullTest
-// from 11-scene-math.js for headless unit testing.
+// from 11-scene-math.ts for headless unit testing.
 function loadCullFunctions() {
   const mathSrc = fs.readFileSync(
-    path.join(__dirname, "bootstrap-src", "11-scene-math.js"), "utf8");
+    path.join(__dirname, "bootstrap-src", "11-scene-math.ts"), "utf8");
 
   // Extract extractFrustumPlanesJS (indented 2 spaces inside the IIFE).
   const extractMatch = mathSrc.match(
     /function extractFrustumPlanesJS\(vp\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(extractMatch, "extractFrustumPlanesJS must be extractable from 11-scene-math.js");
+  assert.ok(extractMatch, "extractFrustumPlanesJS must be extractable from 11-scene-math.ts");
   const extractFn = new Function(
     "return (function extractFrustumPlanesJS(vp) {" + extractMatch[1] + "\n  })")();
 
   // Extract instancePassesCullTest (indented 2 spaces).
   const passMatch = mathSrc.match(
     /function instancePassesCullTest\(transforms, instanceIndex, planes, radius\)\s*\{([\s\S]*?)\n  \}/);
-  assert.ok(passMatch, "instancePassesCullTest must be extractable from 11-scene-math.js");
+  assert.ok(passMatch, "instancePassesCullTest must be extractable from 11-scene-math.ts");
   const passFn = new Function(
     "return (function instancePassesCullTest(transforms, instanceIndex, planes, radius) {" +
     passMatch[1] + "\n  })")();
@@ -5345,17 +5849,19 @@ module.exports = {
   bootstrapFeatureHubsSource,
   bootstrapFeatureScene3DSource,
   bootstrapFeatureScene3DCommandSource,
+  bootstrapFeatureScene3DHydrateSource,
   bootstrapFeatureScene3DComputeSource,
   bootstrapFeatureScene3DDecompressSource,
   bootstrapFeatureScene3DWebGLSource,
   bootstrapFeatureScene3DWebGPUSource,
-  bootstrapScene3DWebGPUSourceFile,
+  scene3DWebGPUBackendSource,
   bootstrapScene3DInputSourceFile,
   bootstrapScene3DMountSourceFile,
   bootstrapScene3DDOMRegionsSourceFile,
   patchSource,
   stripeBridgeSource,
   navigationSource,
+  navigationRuntimeMinifiedSource,
   bootstrapSourceMapSource,
   ELEMENT_NODE,
   TEXT_NODE,
@@ -5386,6 +5892,7 @@ module.exports = {
   buildPointLineGLBBytes,
   buildSkinnedGLBBytes,
   FakeFormData,
+  FakeFile,
   createConsoleSpy,
   numberOr,
   createComputedStyleSnapshot,
@@ -5394,6 +5901,7 @@ module.exports = {
   flushSceneInitialFrameBoundary,
   installManualTimers,
   installManualClock,
+  createFakeAudioContextHarness,
   runScript,
   flushAsyncWork,
   sharedSignalValue,
@@ -5412,6 +5920,9 @@ module.exports = {
   CUSTOM_POST_TIME_LAYOUT_FIXTURE,
   sceneCoreSourceRange,
   loadSceneAdaptiveQualityAPI,
+  loadSceneFramePacingAPI,
+  loadSceneViewportAPI,
+  resolveSceneViewportForTest,
   createAdaptiveQualityHarness,
   createQualityLadderHarness,
   THREE_RUNG_LADDER,
@@ -5438,7 +5949,6 @@ module.exports = {
   bootstrapChunkSources,
   readBootstrapSrc,
   readSceneMountSrc,
-  readWebGPUBackendSrc,
   readBootstrapTailSrc,
   freshFeatureBundleSource,
   createBoardWebGPUHarness,
@@ -5466,6 +5976,7 @@ module.exports = {
   deviceCallSnapshot,
   deviceCallDelta,
   renderWaterPerfShapeFrames,
+  renderPreparedFrame,
   waterComputeKernelPipeline,
   assertWaterComputeKernelBindings,
   loadBoardLabels,

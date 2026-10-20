@@ -1,0 +1,22 @@
+// Wrong: Group has no Scale field. This does not compile.
+	// scene.Group{Scale: scene.Vec3(2, 2, 2), Children: ...}
+
+	// Right: scale each leaf mesh.
+	scene.Group{
+	    ID:       "cluster",
+	    Position: scene.Vec3(0, 1, 0),
+	    Rotation: scene.Rotate(0, 0.4, 0),
+	    Children: []scene.Node{
+	        scene.Mesh{
+	            Geometry: scene.CubeGeometry{Size: 1},
+	            Material: scene.StandardMaterial{Color: "#d4af37"},
+	            Scale:    scene.Vec3(2, 2, 2),
+	        },
+	        scene.Mesh{
+	            Geometry: scene.SphereGeometry{Radius: 0.5, Segments: 32},
+	            Material: scene.StandardMaterial{Color: "#e8e8e8"},
+	            Position: scene.Vec3(2, 0, 0),
+	            Scale:    scene.Vec3(2, 2, 2),
+	        },
+	    },
+	}

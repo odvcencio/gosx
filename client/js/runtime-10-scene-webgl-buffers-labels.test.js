@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // WebGL2 buffer reuse and invalidation, pass caches, native Scene3D engines,
 // projected labels, renderer preference and the custom post-effect passes.
 //
@@ -550,7 +552,7 @@ test("bootstrap prefers engine-batched Scene3D pass payloads when present", asyn
 });
 
 test("legacy WebGL pass cache uploads first static pass when cacheKey is empty", () => {
-  const legacyWebGL = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
+  const legacyWebGL = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.ts"), "utf8");
   assert.match(legacyWebGL, /key:\s*null,\s*\n\s*vertexCount:\s*0/);
   assert.match(legacyWebGL, /record\.key !== pass\.cacheKey \|\|/);
   assert.match(legacyWebGL, /record\.vertexCount !== vertexCount \|\|/);
@@ -969,7 +971,8 @@ test("bootstrap honors engine-side Scene3D view-cull metadata", async () => {
 test("bootstrap mounts native Scene3D engines without extra scripts", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-root";
-  mount.appendChild(new FakeElement("p", null));
+  const fallback = new FakeElement("p", null);
+  mount.appendChild(fallback);
 
   const env = createContext({
     elements: [mount],
@@ -997,21 +1000,31 @@ test("bootstrap mounts native Scene3D engines without extra scripts", async () =
     },
   });
 
+  env.context.__gosx_scene3d_assets = {
+    resolveObjects() { throw new Error("inline geometry must not enter the async asset path"); },
+    resolveCommands() { throw new Error("inline commands must not enter the async asset path"); },
+  };
   runScript(bootstrapSource, env.context, "bootstrap.js");
   await flushAsyncWork();
 
   assert.equal(env.context.__gosx.ready, true);
   assert.equal(env.context.__gosx.engines.size, 1);
-  assert.equal(mount.children.length, 2);
+  assert.equal(mount.children.length, 3);
   assert.equal(mount.firstElementChild.tagName, "CANVAS");
   assert.equal(mount.firstElementChild.getAttribute("width"), "640");
   assert.equal(mount.firstElementChild.getAttribute("height"), "360");
   assert.equal(mount.children[1].getAttribute("data-gosx-scene3d-label-layer"), "true");
   assert.equal(mount.children[1].children.length, 0);
 
+  const fallbackHolder = mount.children[2];
+  assert.equal(fallbackHolder.getAttribute("data-gosx-scene3d-fallback"), "");
+  assert.equal(fallbackHolder.hidden, true);
+  assert.strictEqual(fallbackHolder.firstElementChild, fallback);
+
   env.context.__gosx_dispose_engine("gosx-engine-2");
   assert.equal(env.context.__gosx.engines.size, 0);
-  assert.equal(mount.children.length, 0);
+  assert.equal(mount.children.length, 1);
+  assert.strictEqual(mount.firstElementChild, fallback);
   assert.equal(env.consoleLogs.warn.length, 0);
   assert.equal(env.consoleLogs.error.length, 0);
 });
@@ -1953,11 +1966,11 @@ test("Scene3D defers postfx until idle delay", async () => {
   assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "enabled");
 });
 
-test("WebGL customPost receives reserved auto-uniforms: time is nonzero and advances with the clock", async () => {
+test("WebGL customPost receives mounted scene time when paused and rewound", async () => {
   const mount = new FakeElement("div", null);
   mount.id = "scene-webgl-custompost-reserved-uniforms";
 
-  let fakeNowMS = 4000; // a real page never starts its clock at exactly 0
+  let fakeNowMS = 4000; // Wall time is independent of the mounted scene clock.
   const env = createContext({
     elements: [mount],
     enableWebGL: true,
@@ -2015,11 +2028,11 @@ test("WebGL customPost receives reserved auto-uniforms: time is nonzero and adva
   const firstTimes = uniform1fValues("time");
   assert.ok(firstTimes.length > 0,
     "the custom post pass must upload the reserved `time` uniform at least once");
-  // THE REGRESSION: before the fix every one of these was 0, because
-  // applyCustomPost only ever read effect.uniforms and `time` is not in it.
-  assert.ok(firstTimes.every((value) => value > 0),
-    "reserved `time` must resolve to the engine clock, got: " + JSON.stringify(firstTimes));
-  assert.ok(firstTimes.includes(4), "time must be performance.now()/1000, expected 4, got: " + JSON.stringify(firstTimes));
+  assert.ok(firstTimes.every(value => value === 0), "a mounted scene starts at zero, independently of wall time");
+  const handle = mount.__gosxScene3DHandle;
+  handle.setAnimationClock({timeSeconds: 4});
+  await flushAsyncWork(); await flushAsyncWork();
+  assert.equal(uniform1fValues("time").at(-1), 4, "the uploaded uniform must follow the mounted scene clock");
 
   // Author-supplied non-reserved params keep working.
   assert.ok(uniform1fValues("amount").includes(0.75),
@@ -2030,30 +2043,23 @@ test("WebGL customPost receives reserved auto-uniforms: time is nonzero and adva
       && entry[2] === 0.25 && entry[3] === 0.5 && entry[4] === 0.75),
     "compiled layout default for `tint` must upload as a vec3");
 
-  // Advance the clock and drive more frames: `time` must track it, which is
-  // what makes an animated post effect animate at all.
   const opsBefore = gl.ops.length;
   fakeNowMS = 9000;
-  await flushAsyncWork();
-  await flushAsyncWork();
-
-  const laterTimes = gl.ops
-    .slice(opsBefore)
-    .filter((entry) => entry[0] === "uniform1f" && entry[1] === "time")
-    .map((entry) => entry[2]);
-  assert.ok(laterTimes.length > 0, "expected further frames to re-upload `time`");
-  assert.ok(laterTimes.includes(9),
-    "reserved `time` must advance with the clock, got: " + JSON.stringify(laterTimes));
+  handle.setAnimationClock({timeSeconds: 1.25});
+  await flushAsyncWork(); await flushAsyncWork();
+  const laterTimes = gl.ops.slice(opsBefore).filter(entry => entry[0] === "uniform1f" && entry[1] === "time").map(entry => entry[2]);
+  assert.equal(laterTimes.at(-1), 1.25, "rewinding must upload scene time while wall time advances");
   assert.equal(env.consoleLogs.error.length, 0);
 });
 
 test("WebGL post processor is constructed with the Selena uniform resolver injected", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
   // The injection is what supplies reserved auto-uniforms to custom post
   // passes; without it applyCustomPost silently falls back to author values
   // only. Mirrors the WebGPU side's wgpuCreatePostProcessor(..., sceneSelenaUniformData).
   assert.match(webgl, /function createScenePostProcessor\(gl, resolveSelenaUniform\)/);
-  assert.match(webgl, /postProcessor = createScenePostProcessor\(gl, selenaUniformValue\);/);
+  assert.match(webgl, /hooks.postProcessor = createScenePostProcessor\(gl, hooks.resolveUniform\);/);
+  assert.match(webgl, /resolveUniform: selenaUniformValue, postProcessor: null/);
   assert.match(webgl, /resolveSelenaUniform\(material, layout, field, null\)/);
   // applyCustomPost must NOT go back to reading the author map directly.
   assert.doesNotMatch(webgl, /hasOwnProperty\.call\(uniforms, field\.name\) \? uniforms\[field\.name\] : null/);

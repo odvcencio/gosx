@@ -1,0 +1,278 @@
+{
+  "schema": "gosx.wire-budget/v1",
+  "note": "Per-route wire budgets checked by scripts/wire-gate.sh on every pull request. Regenerate with make wire-gate-update: byte limits include half the stale tolerance as headroom (2.5%, minimum 256 B); request counts stay exact. A raise needs a route-level raiseReason or a reason in the route's raise map. Interim relief: decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+  "tolerance": {
+    "bytesPercent": 5,
+    "bytesMin": 512
+  },
+  "apps": {
+    "docs": {
+      "/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 946915,
+          "htmlWireBytes": 12831,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 283738,
+          "lazyJsWireBytes": 203162,
+          "requests": 10,
+          "totalWireBytes": 1018650,
+          "wasmWireBytes": 662965
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/capabilities/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 28780,
+          "htmlWireBytes": 11098,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 1620,
+          "jsWireBytes": 28620,
+          "lazyJsWireBytes": 256,
+          "requests": 5,
+          "totalWireBytes": 98832,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/demos/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 28620,
+          "htmlWireBytes": 15235,
+          "imageWireBytes": 26270,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 28620,
+          "lazyJsWireBytes": 256,
+          "requests": 4,
+          "totalWireBytes": 91823,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/demos/scene3d/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 930294,
+          "htmlWireBytes": 17910,
+          "imageWireBytes": 8404,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 267128,
+          "lazyJsWireBytes": 203162,
+          "requests": 8,
+          "totalWireBytes": 978053,
+          "wasmWireBytes": 662965
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/demos/water": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 930204,
+          "htmlWireBytes": 54354,
+          "imageWireBytes": 193942,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 271525,
+          "lazyJsWireBytes": 203162,
+          "requests": 15,
+          "totalWireBytes": 1204485,
+          "wasmWireBytes": 662965
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/docs/getting-started/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 67514,
+          "htmlWireBytes": 12817,
+          "imageWireBytes": 48647,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 67514,
+          "lazyJsWireBytes": 256,
+          "requests": 7,
+          "totalWireBytes": 188161,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-19 native docs controls: static docs explicitly enable the existing lite framework bootstrap so copy works without application JavaScript or WASM. Measured 65,868 JS bytes and 183,572 total bytes on getting-started; retain the unchanged 2.5% byte headroom and original seven requests. Other route limits, required policies and tolerance remain unchanged."
+      },
+      "/docs/islands/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 309732,
+          "htmlWireBytes": 14280,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 91332,
+          "lazyJsWireBytes": 256,
+          "requests": 11,
+          "totalWireBytes": 383937,
+          "wasmWireBytes": 219045
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/performance/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 28620,
+          "htmlWireBytes": 10850,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 28620,
+          "lazyJsWireBytes": 256,
+          "requests": 5,
+          "totalWireBytes": 98584,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      }
+    },
+    "scaffold": {
+      "/": {
+        "limits": {
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 28620,
+          "htmlWireBytes": 1491,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 28620,
+          "lazyJsWireBytes": 256,
+          "requests": 3,
+          "totalWireBytes": 31024,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/counter/": {
+        "limits": {
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 309727,
+          "htmlWireBytes": 1516,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 90521,
+          "lazyJsWireBytes": 256,
+          "requests": 9,
+          "totalWireBytes": 312157,
+          "wasmWireBytes": 219045
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/stack/": {
+        "limits": {
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 28620,
+          "htmlWireBytes": 999,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 28620,
+          "lazyJsWireBytes": 256,
+          "requests": 3,
+          "totalWireBytes": 30520,
+          "wasmWireBytes": 256
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      }
+    }
+  }
+}

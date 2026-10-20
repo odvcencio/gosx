@@ -175,21 +175,26 @@ const benchManifestJSON = `{
   "css": []
 }`
 
+func setupRuntimeConstructionManifest(tb testing.TB) {
+	tb.Helper()
+	dir := tb.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "build.json"), []byte(benchManifestJSON), 0o644); err != nil {
+		tb.Fatal(err)
+	}
+	island.ResetBuildManifestCache()
+	island.SetManifestRoot(dir)
+	tb.Cleanup(func() {
+		island.ResetManifestRoot()
+		island.ResetBuildManifestCache()
+	})
+}
+
 // BenchmarkIslandRendererConstruction measures the per-request fixed cost that
 // server.NewPageRuntime pays. NewRenderer used to call
 // loadDefaultBuildManifest twice, and each call re-read and re-decoded
 // build.json. The measured cost was 419 allocations and 47.4 KB per request.
 func BenchmarkIslandRendererConstruction(b *testing.B) {
-	dir := b.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "build.json"), []byte(benchManifestJSON), 0o644); err != nil {
-		b.Fatal(err)
-	}
-	island.ResetBuildManifestCache()
-	island.SetManifestRoot(dir)
-	b.Cleanup(func() {
-		island.ResetManifestRoot()
-		island.ResetBuildManifestCache()
-	})
+	setupRuntimeConstructionManifest(b)
 
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -203,16 +208,7 @@ func BenchmarkIslandRendererConstruction(b *testing.B) {
 // BenchmarkPageRuntimeConstruction measures the whole per-request runtime
 // registry, which wraps island.NewRenderer.
 func BenchmarkPageRuntimeConstruction(b *testing.B) {
-	dir := b.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "build.json"), []byte(benchManifestJSON), 0o644); err != nil {
-		b.Fatal(err)
-	}
-	island.ResetBuildManifestCache()
-	island.SetManifestRoot(dir)
-	b.Cleanup(func() {
-		island.ResetManifestRoot()
-		island.ResetBuildManifestCache()
-	})
+	setupRuntimeConstructionManifest(b)
 
 	b.ReportAllocs()
 	b.ResetTimer()

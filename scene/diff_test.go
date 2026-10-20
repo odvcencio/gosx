@@ -297,10 +297,11 @@ func TestDiffCommandsReplacesModelGLBAndAnimationCollections(t *testing.T) {
 			AnimationSpeed: &speed,
 		}},
 		InstancedGLBMeshes: []InstancedGLBMeshIR{{
-			ID:           "parts",
-			Src:          "/part.glb",
-			MaterialKind: "standard",
-			Roughness:    0.32,
+			ID:               "parts",
+			Src:              "/part.glb",
+			MaterialKind:     "standard",
+			Roughness:        0.32,
+			SharedAppearance: true,
 			Instances: []MeshInstanceIR{
 				{ID: "a", X: 1, ScaleX: 1, ScaleY: 1, ScaleZ: 1},
 				{ID: "b", X: 2, ScaleX: 1, ScaleY: 1, ScaleZ: 1},
@@ -347,12 +348,24 @@ func TestDiffCommandsReplacesModelGLBAndAnimationCollections(t *testing.T) {
 		t.Fatalf("instanced GLB payload = %#v", glbPayload["instancedGLBMeshes"])
 	}
 	batch := batches[0].(map[string]any)
-	if batch["src"] != "/part.glb" || batch["roughness"] != 0.32 {
+	if batch["src"] != "/part.glb" || batch["roughness"] != 0.32 || batch["sharedAppearance"] != true {
 		t.Fatalf("instanced GLB batch = %#v", batch)
 	}
 	instances, ok := batch["instances"].([]any)
 	if !ok || len(instances) != 2 {
 		t.Fatalf("instanced GLB instances = %#v", batch["instances"])
+	}
+	cleared := next
+	cleared.InstancedGLBMeshes = append([]InstancedGLBMeshIR(nil), next.InstancedGLBMeshes...)
+	cleared.InstancedGLBMeshes[0].SharedAppearance = false
+	clearCommands := DiffCommands(next, cleared)
+	if len(clearCommands) != 1 || clearCommands[0].Kind != CommandSetInstancedGLBMeshes {
+		t.Fatalf("shared appearance clear commands = %#v", clearCommands)
+	}
+	clearPayload := commandPayloadMap(t, clearCommands[0])
+	clearBatch := clearPayload["instancedGLBMeshes"].([]any)[0].(map[string]any)
+	if _, exists := clearBatch["sharedAppearance"]; exists {
+		t.Fatalf("cleared shared appearance must use omitted false wire form: %#v", clearBatch)
 	}
 	animationPayload := commandPayloadMap(t, commands[2])
 	animations, ok := animationPayload["animations"].([]any)

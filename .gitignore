@@ -1,7 +1,30 @@
 /dashboard
 build/
 .canopy/
-/docs/
+/docs/*
+!/docs/docs-site-operations.md
+!/docs/docs-site-spec.md
+!/docs/polar.md
+!/docs/scene3d-v1-support.md
+!/docs/scene3d-particle-bursts.md
+!/docs/scene3d-model-preparation.md
+!/docs/scene3d-timeline.md
+!/docs/motion-transport.md
+!/docs/performance-metrics.md
+!/docs/scene3d-text.md
+!/docs/stripe.md
+!/docs/embedded-apps.md
+!/docs/ui-recipes.md
+!/docs/controllers.md
+!/docs/commands.md
+!/docs/workbench.md
+!/docs/browser-services.md
+!/docs/island-events.md
+!/docs/desktop-code-signing.md
+!/docs/expression-support-matrix.md
+!/docs/immutable-asset-caching.md
+!/docs/shutdown-hooks.md
+!/docs/hub-snapshots.md
 /gosx
 node_modules/
 
@@ -29,3 +52,18 @@ go.work.sum
 # cmd/gosx source directory.
 /gosx
 /gosx.exe
+/gosx-docs
+/gosx-docs.exe
+
+# Compiled bootstrap helper. Build it from cmd/buildbootstrap when needed; do
+# not track the local binary.
+/cmd/buildbootstrap/buildbootstrap
+/cmd/buildbootstrap/buildbootstrap.exe
+
+# Compiled binary from 'go build ./examples/ouroboros-corpus' run at the
+# repository root. Anchored with a leading slash to keep the source
+# directory examples/ouroboros-corpus/ tracked.
+/ouroboros-corpus
+
+# Local scratch and verification artifacts belong outside the repository index.
+/tmp/

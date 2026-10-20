@@ -20,6 +20,7 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 	for _, rel := range []string{
 		"go.mod",
 		"main.go",
+		"session_secret.go",
 		".env",
 		".gitignore",
 		"app/layout.gsx",
@@ -49,7 +50,8 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		`_, thisFile, _, _ := runtime.Caller(0)`,
 		`root := server.ResolveAppRoot(thisFile)`,
 		`env.LoadDir(root, "")`,
-		`sessions, err := session.New(getenv("SESSION_SECRET", "gosx-app-session-secret"), session.Options{`,
+		`secret, err := sessionSecret()`,
+		`sessions, err := session.New(secret, session.Options{`,
 		`AllowInsecure: strings.HasPrefix(publicBase, "http://"),`,
 		`router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{})`,
 		`app.EnableNavigation()`,
@@ -59,7 +61,8 @@ func TestRunInitCreatesStarterProject(t *testing.T) {
 		`app.API("GET /api/health"`,
 		`rootHandler, err := router.BuildChecked()`,
 		`app.Mount("/", rootHandler)`,
-		`server.HTMLDocument(ctx.Title(appName), ctx.Head(), body)`,
+		`ctx.SetLanguage("en")`,
+		`server.HTMLDocument(ctx.Document(appName, body))`,
 	} {
 		if !strings.Contains(mainGo, snippet) {
 			t.Fatalf("expected scaffold to contain %q", snippet)
@@ -154,6 +157,7 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		".env",
 		".gitignore",
 		"main.go",
+		"session_secret.go",
 		"app/layout.gsx",
 		"app/modules.go",
 		"app/page.server.go",
@@ -190,11 +194,13 @@ func TestRunInitCreatesDocsTemplate(t *testing.T) {
 		`_ "example.com/docs/modules"`,
 		`_, thisFile, _, _ := runtime.Caller(0)`,
 		`root := server.ResolveAppRoot(thisFile)`,
-		`sessions, err := session.New(getenv("SESSION_SECRET", "gosx-docs-session-secret"), session.Options{`,
+		`secret, err := sessionSecret()`,
+		`sessions, err := session.New(secret, session.Options{`,
 		`AllowInsecure: strings.HasPrefix(publicBase, "http://"),`,
 		`docsapp.BindAuth(authn)`,
 		`route.FileLayout(filepath.Join(root, "app", "layout.gsx"))`,
-		`return server.HTMLDocument(ctx.Title("GoSX Docs"), ctx.Head(), body)`,
+		`ctx.SetLanguage("en")`,
+		`return server.HTMLDocument(ctx.Document("GoSX Docs", body))`,
 		`router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{})`,
 		`app.Use(sessions.Middleware)`,
 		`app.Use(authn.Middleware)`,
@@ -260,6 +266,9 @@ func TestRunInitRejectsUnknownTemplate(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "unknown")
 	if err := RunInit(dir, "example.com/unknown", "wat"); err == nil {
 		t.Fatal("expected unknown template error")
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("invalid template created a destination: %v", err)
 	}
 }
 

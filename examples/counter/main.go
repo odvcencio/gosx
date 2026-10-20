@@ -74,13 +74,12 @@ func counterPage(counterProgram *program.Program, count int) gosx.Node {
 		),
 	)
 
-	return server.HTMLDocument(
-		"GoSX Counter",
-		gosx.Fragment(
-			gosx.RawHTML(`<meta name="viewport" content="width=device-width, initial-scale=1">`),
+	return server.HTMLDocument(&server.DocumentContext{
+		Title: "GoSX Counter",
+		Head: gosx.Fragment(
 			gosx.RawHTML(`<link rel="stylesheet" href="/counter.css">`),
 			islands.PageHead(),
 		),
-		body,
-	)
+		Body: body,
+	})
 }

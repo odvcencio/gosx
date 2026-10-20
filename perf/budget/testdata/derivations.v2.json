@@ -1,0 +1,74 @@
+{
+  "static": {
+    "Total": 124928,
+    "Reserve": 0,
+    "App": 124928,
+    "Framework": 0
+  },
+  "enhanced": {
+    "Total": 148480,
+    "Reserve": 51200,
+    "App": 49152,
+    "Framework": 48128
+  },
+  "island": {
+    "Total": 438272,
+    "Reserve": 51200,
+    "App": 193536,
+    "Framework": 193536
+  },
+  "engine/js": {
+    "Total": 771072,
+    "Reserve": 51200,
+    "App": 360448,
+    "Framework": 359424
+  },
+  "engine/shared": {
+    "Total": 1241088,
+    "Reserve": 51200,
+    "App": 594944,
+    "Framework": 594944
+  },
+  "go-wasm": {
+    "Total": 1872896,
+    "Reserve": 51200,
+    "App": 911360,
+    "Framework": 910336
+  },
+  "video": {
+    "Total": 1470464,
+    "Reserve": 51200,
+    "App": 709632,
+    "Framework": 709632
+  },
+  "scene3d/shared": {
+    "Total": 860160,
+    "Reserve": 51200,
+    "App": 404480,
+    "Framework": 404480
+  },
+  "game/shared": {
+    "Total": 1252352,
+    "Reserve": 51200,
+    "App": 601088,
+    "Framework": 600064
+  },
+  "preview": {
+    "Total": 1042432,
+    "Reserve": 51200,
+    "App": 495616,
+    "Framework": 495616
+  },
+  "scene3d/js": {
+    "Total": 563200,
+    "Reserve": 51200,
+    "App": 256000,
+    "Framework": 256000
+  },
+  "game/js": {
+    "Total": 820224,
+    "Reserve": 51200,
+    "App": 385024,
+    "Framework": 384000
+  }
+}

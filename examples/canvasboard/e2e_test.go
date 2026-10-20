@@ -19,7 +19,7 @@ import (
 func TestCanvasBoardExampleRendersCanvasPlaceholder(t *testing.T) {
 	app := server.New()
 	app.SetLayout(func(title string, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(title, gosx.Node{}, body)
+		return server.HTMLDocument(&server.DocumentContext{Title: title, Body: body})
 	})
 	app.Route("/", func(r *http.Request) gosx.Node {
 		return HomePage()

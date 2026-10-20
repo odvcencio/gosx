@@ -14,7 +14,7 @@ func TestRunFmtFormatsSingleGSXFile(t *testing.T) {
 	writeTempFile(t, dir, "page.gsx", `package main
 
 func Page() Node {
-	return <main><section><h1>Hi</h1></section></main>
+	return <main  class="page"><section  class="card"><h1>Hi</h1></section></main>
 }
 `)
 	path := filepath.Join(dir, "page.gsx")
@@ -29,11 +29,11 @@ func Page() Node {
 	}
 
 	formatted := readFile(t, path)
-	if !strings.Contains(formatted, "<section>") || !strings.Contains(formatted, "<h1>Hi</h1>") {
+	if !strings.Contains(formatted, `<section class="card">`) || !strings.Contains(formatted, "<h1>Hi</h1>") {
 		t.Fatalf("unexpected formatted output %q", formatted)
 	}
-	if strings.Contains(formatted, "<main><section>") {
-		t.Fatalf("expected formatter to expand nested GSX elements, got %q", formatted)
+	if !strings.Contains(formatted, `<main class="page"><section class="card">`) {
+		t.Fatalf("expected canonical attributes and adjacent children, got %q", formatted)
 	}
 }
 
@@ -42,7 +42,7 @@ func TestRunFmtFormatsOnlyGSXFilesInDirectory(t *testing.T) {
 	writeTempFile(t, dir, "app/page.gsx", `package main
 
 func Page() Node {
-	return <div><span>Hi</span></div>
+	return <div  class="page"><span>Hi</span></div>
 }
 `)
 	writeTempFile(t, dir, "app/page.server.go", `package main
@@ -63,7 +63,7 @@ func Loader() string { return "ok" }
 	}
 
 	formatted := readFile(t, filepath.Join(dir, "app", "page.gsx"))
-	if strings.Contains(formatted, "<div><span>") {
+	if !strings.Contains(formatted, `<div class="page"><span>`) {
 		t.Fatalf("expected formatted GSX output, got %q", formatted)
 	}
 	goFile := readFile(t, filepath.Join(dir, "app", "page.server.go"))
@@ -124,7 +124,7 @@ func TestRunFmtCheckReportsUnformattedGSXFile(t *testing.T) {
 	writeTempFile(t, dir, "page.gsx", `package main
 
 func Page() Node {
-	return <main><section><h1>Hi</h1></section></main>
+	return <main  class="page"><section><h1>Hi</h1></section></main>
 }
 `)
 	path := filepath.Join(dir, "page.gsx")
@@ -196,11 +196,8 @@ func Page() Node {
 	}
 
 	formatted := readFile(t, path)
-	if strings.Contains(formatted, "\n\t\t\t\t\t\t") {
-		t.Fatalf("expected wrapped text indentation drift to be removed, got:\n%s", formatted)
-	}
-	if !strings.Contains(formatted, "Routes, server actions, auth, client navigation, and Scene3D all live in the same codebase.") {
-		t.Fatalf("expected wrapped text to normalize to a single logical line, got:\n%s", formatted)
+	if !strings.Contains(formatted, "same\n\t\t\t\t\t\t\tcodebase.") {
+		t.Fatalf("expected authored multiline text to remain exact, got:\n%s", formatted)
 	}
 }
 
@@ -223,13 +220,8 @@ func TestRunFmtCheckLeavesRawStringCodeExamplesStable(t *testing.T) {
 	if strings.Count(formatted, `    return <Scene3D ariaLabel={title}>`) != 1 {
 		t.Fatalf("expected raw string example indentation to stay stable, got:\n%s", formatted)
 	}
-	if !strings.Contains(formatted, "title := \"Scene\"\n\n\n") {
-		t.Fatalf("expected empty and whitespace-only raw-string lines to normalize to zero width, got:\n%s", formatted)
-	}
-	for lineNumber, line := range strings.Split(formatted, "\n") {
-		if line != "" && strings.Trim(line, " \t\r") == "" {
-			t.Fatalf("line %d contains whitespace-only blank content %q:\n%s", lineNumber+1, line, formatted)
-		}
+	if !strings.Contains(formatted, "title := \"Scene\"\n\n\t\t    \t\n") {
+		t.Fatalf("expected empty and whitespace-only raw-string lines to remain exact, got:\n%s", formatted)
 	}
 
 	beforeSecondPass := formatted

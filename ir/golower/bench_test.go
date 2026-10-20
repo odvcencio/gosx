@@ -1,4 +1,4 @@
-// Slice X.C.10: lowering benchmarks. The plan asks for "<100 ms to
+// Lowering benchmarks. The target is "<100 ms to
 // lower a 450-line file". This bench builds a synthetic 450-line source
 // of mixed-complexity handlers and measures the lowerer end-to-end.
 
@@ -24,7 +24,7 @@ func BenchmarkLowerLargeFile(b *testing.B) {
 
 // buildLargeSource synthesizes a package whose source is approximately
 // `lines` lines tall, containing a mix of pure functions, for-loops,
-// and intrinsic calls — covering the patterns the X.C lowerer actually
+// and intrinsic calls — covering the patterns the lowerer actually
 // sees in production engine-surface handlers.
 func buildLargeSource(lines int) []byte {
 	var b strings.Builder
@@ -44,8 +44,8 @@ func buildLargeSource(lines int) []byte {
 
 // makeBenchFunc produces one function. Four shapes rotate so the
 // benchmarked code matches the diversity of real engine-surface files.
-// Slice Y.C added the fourth shape (LHS selector / indexed-set) so the
-// bench picks up the lowering cost of OpFieldSet / OpIndexSet handlers
+// The fourth shape (LHS selector / indexed-set) makes the
+// bench pick up the lowering cost of OpFieldSet / OpIndexSet handlers
 // — the actual shape graph_surface.go uses for state mutations.
 func makeBenchFunc(i int) string {
 	switch i % 6 {
@@ -64,11 +64,11 @@ func makeBenchFunc(i int) string {
 	}
 }
 
-// funcHostMake produces a Y.E-shaped handler that exercises both
+// funcHostMake produces a handler that exercises both
 // OpHostCall (`c.MoveTo(...)`, `c.LineTo(...)`) and OpMake (a
 // per-call force-table map) in a loop. Mirrors graph_surface.go's
-// draw + stepLayout shapes more faithfully than the Y.A-Y.D
-// fixtures, which kept canvas dispatch out of scope.
+// draw + stepLayout shapes more faithfully than the other
+// fixtures in this file, which kept canvas dispatch out of scope.
 func funcHostMake(i int) string {
 	idx := itoa(i)
 	return `func HostMake` + idx + `(n int) int {
@@ -80,7 +80,7 @@ func funcHostMake(i int) string {
 }`
 }
 
-// funcUserFn produces a Y.D-shaped handler that exercises the user-
+// funcUserFn produces a handler that exercises the user-
 // function call registry: a helper declared in the same package is
 // called from the handler with multiple arguments and a composite
 // return. Mirrors the `makeNode(id, x, y)` / `screenToWorld(sx, sy)`
@@ -104,7 +104,7 @@ func UserFn` + idx + `(n float64) float64 {
 }`
 }
 
-// funcLHS produces a Y.C-shaped handler that exercises both
+// funcLHS produces a handler that exercises both
 // OpFieldSet (`p.X = ...`) and OpIndexSet (`m[k] += ...` and
 // `s[i] *= ...`) in a tight loop — the kind of body stepLayout
 // and the force-accumulator passes generate in graph_surface.go.

@@ -75,6 +75,36 @@ func TestRegionAttrsNormalizeEvents(t *testing.T) {
 	}
 }
 
+// TestRegionAttrsIncludeInterval covers gosx#217's periodic-polling
+// addition to the existing declarative region: RegionIntervalAttr composes
+// with the signal-driven attributes above rather than replacing them.
+func TestRegionAttrsIncludeInterval(t *testing.T) {
+	html := RenderHTML(Region("ul", RegionOptions{
+		URL:      "/api/wire/events",
+		Interval: "20s",
+	}, Text("server fallback")))
+	for _, want := range []string{
+		`data-gosx-region`,
+		`data-gosx-region-url="/api/wire/events"`,
+		`data-gosx-region-interval="20s"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("region markup missing %q: %s", want, html)
+		}
+	}
+}
+
+// TestRegionIntervalAttrConstant pins RegionIntervalAttr (gosx#217) against
+// its identical literal value in client/runtime/host/regions.ts and
+// ir/validate.go — a rename or a typo in any one of the three places would
+// otherwise only surface as a silently inert periodic region refresh in a
+// browser, not a test failure.
+func TestRegionIntervalAttrConstant(t *testing.T) {
+	if got, want := RegionIntervalAttr, "data-gosx-region-interval"; got != want {
+		t.Fatalf("RegionIntervalAttr = %q, want %q", got, want)
+	}
+}
+
 func TestProgressiveEnhancementAttrsDescribeFallback(t *testing.T) {
 	html := RenderHTML(El("article", ProgressiveEnhancementAttrs(ProgressiveEnhancementOptions{
 		Kind:     "motion",

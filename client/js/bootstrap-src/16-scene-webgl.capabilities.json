@@ -1,6 +1,6 @@
 {
   "skinning": true,
-  "ibl": false,
+  "ibl": true,
   "environment-map": true,
   "gpu-picking": true,
   "line-dashed": false,
@@ -11,5 +11,10 @@
   "water-object-mesh-shadow-pass": false,
   "rect-area-light": false,
   "rect-area-specular": false,
-  "light-probe-sh": false
+  "light-probe-sh": false,
+  "sky-environment": true,
+  "sky-gradient": true,
+  "sky-physical": true,
+  "ocean": true,
+  "transmission": true
 }

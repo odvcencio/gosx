@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	rootengine "m31labs.dev/gosx/engine"
+	"m31labs.dev/gosx/internal/sceneaffine"
 	"m31labs.dev/gosx/motion"
 )
 
@@ -52,6 +53,8 @@ type sceneObject struct {
 	ScaleX             float64
 	ScaleY             float64
 	ScaleZ             float64
+	ParentMatrix       [16]float64
+	HasParentMatrix    bool
 	SpinX              float64
 	SpinY              float64
 	SpinZ              float64
@@ -595,6 +598,43 @@ func numberSliceFromAny(value any) []float64 {
 	}
 }
 
+func sceneParentMatrixFromAny(value any) ([16]float64, bool) {
+	var matrix [16]float64
+	if values, ok := value.([]float64); ok {
+		if len(values) != 16 {
+			return matrix, false
+		}
+		copy(matrix[:], values)
+		return matrix, sceneaffine.ValidParentMatrix(matrix[:])
+	}
+	items, ok := value.([]any)
+	if !ok || len(items) != 16 {
+		return matrix, false
+	}
+	for index, item := range items {
+		var number float64
+		switch typed := item.(type) {
+		case float64:
+			number = typed
+		case float32:
+			number = float64(typed)
+		case int:
+			number = float64(typed)
+		case int32:
+			number = float64(typed)
+		case int64:
+			number = float64(typed)
+		default:
+			return [16]float64{}, false
+		}
+		if math.IsNaN(number) || math.IsInf(number, 0) {
+			return [16]float64{}, false
+		}
+		matrix[index] = number
+	}
+	return matrix, sceneaffine.ValidParentMatrix(matrix[:])
+}
+
 func sceneCameraFromProps(props map[string]any) sceneCamera {
 	camera := sceneCamera{Z: 6, FOV: 75, Near: 0.05, Far: 128}
 	if props == nil {
@@ -901,6 +941,7 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 	rawMetalnessMap := propValue(node.Props, "metalnessMap")
 	rawEmissiveMap := propValue(node.Props, "emissiveMap")
 	rawPickable := propValue(node.Props, "pickable")
+	parentMatrix, hasParentMatrix := sceneParentMatrixFromAny(propValue(node.Props, "parentMatrix"))
 	kind := normalizeSceneKind(stringFromAny(propValue(node.Props, "kind"), node.Geometry))
 	points := scenePointList(propValue(node.Props, "points"))
 	lineMetrics := sceneLineGeometryMetrics(points)
@@ -927,6 +968,8 @@ func sceneObjectFromResolvedNode(index int, node resolvedNode) sceneObject {
 		ScaleX:             numberFromAny(propValue(node.Props, "scaleX"), 0),
 		ScaleY:             numberFromAny(propValue(node.Props, "scaleY"), 0),
 		ScaleZ:             numberFromAny(propValue(node.Props, "scaleZ"), 0),
+		ParentMatrix:       parentMatrix,
+		HasParentMatrix:    hasParentMatrix,
 		SpinX:              numberFromAny(propValue(node.Props, "spinX"), 0),
 		SpinY:              numberFromAny(propValue(node.Props, "spinY"), 0),
 		SpinZ:              numberFromAny(propValue(node.Props, "spinZ"), 0),

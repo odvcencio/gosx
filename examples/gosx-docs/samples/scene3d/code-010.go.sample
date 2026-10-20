@@ -1,0 +1,19 @@
+// A torus with smooth tessellation.
+	scene.Mesh{
+	    Geometry: scene.TorusGeometry{
+	        Radius:          2.5,
+	        Tube:            0.08,
+	        RadialSegments:  64,
+	        TubularSegments: 128,
+	    },
+	    Material: scene.StandardMaterial{Color: "#D4AF37", Roughness: 0.2, Metalness: 0.9},
+	    Position: scene.Vec3(0, 1.5, 0),
+	}
+
+	// A cone: a cylinder with a zero top radius.
+	scene.Mesh{
+	    Geometry: scene.CylinderGeometry{
+	        RadiusTop: 0, RadiusBottom: 1, Height: 2, Segments: 24,
+	    },
+	    Material: scene.StandardMaterial{Color: "#C0C0C0", Roughness: 0.3, Metalness: 0.8},
+	}

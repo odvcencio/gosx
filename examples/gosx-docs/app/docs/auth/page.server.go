@@ -16,6 +16,7 @@ func init() {
 		"Magic links, passkeys, and session management built into the framework.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+				currentUser, signedIn := auth.Current(ctx.Request)
 				return map[string]any{
 					"mode":        "light",
 					"title":       "Auth",
@@ -23,10 +24,22 @@ func init() {
 					"tags":        []string{"auth", "sessions", "magic-links", "passkeys"},
 					"toc": []map[string]string{
 						{"href": "#sessions", "label": "Sessions"},
+						{"href": "#session-demo", "label": "Live Session Demo"},
 						{"href": "#magic-links", "label": "Magic Links"},
 						{"href": "#passkeys", "label": "WebAuthn / Passkeys"},
+						{"href": "#oauth", "label": "OAuth"},
 						{"href": "#protected-routes", "label": "Protected Routes"},
 						{"href": "#csrf", "label": "CSRF"},
+					},
+					"sessionSample": docsapp.DocSample("auth/sessionSample.go.sample"),
+					"magicSample":   docsapp.DocSample("auth/magicSample.go.sample"),
+					"passkeySample": docsapp.DocSample("auth/passkeySample.go.sample"),
+					"oauthSample":   docsapp.DocSample("auth/oauthSample.go.sample"),
+					"guardSample":   docsapp.DocSample("auth/guardSample.go.sample"),
+					"csrfSample":    docsapp.DocSample("auth/csrfSample.gosx.sample"),
+					"currentUser": map[string]any{
+						"signedIn": signedIn,
+						"name":     currentUser.Name,
 					},
 					"authFlows": map[string]any{
 						"magicLinkEnabled":        docsapp.MagicLinks() != nil,

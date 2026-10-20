@@ -76,14 +76,35 @@ type Menu struct {
 // MenuItem is one native menu entry. Separator entries ignore Label, ID, and
 // Submenu. Submenu entries ignore OnClick.
 type MenuItem struct {
-	ID        string
-	Label     string
-	Disabled  bool
-	Checked   bool
-	Separator bool
-	Submenu   *Menu
-	OnClick   func()
+	// Role routes a standard editing action through the macOS responder chain.
+	// Other platforms use OnClick as the fallback when one is supplied.
+	Role MenuRole
+	// Accelerator is a display label in the shortcut column (after a tab on
+	// Windows). It installs no native accelerator table; the page command
+	// registry handles keystrokes, so its chord and this label must agree. On
+	// macOS a label that reads as a chord, such as "Cmd+N", also becomes the
+	// item's key equivalent (see the package documentation).
+	Accelerator string
+	ID          string
+	Label       string
+	Disabled    bool
+	Checked     bool
+	Separator   bool
+	Submenu     *Menu
+	OnClick     func()
 }
+
+// MenuRole names standard editing actions performed by the focused native view.
+type MenuRole string
+
+const (
+	MenuRoleUndo      MenuRole = "undo"
+	MenuRoleRedo      MenuRole = "redo"
+	MenuRoleCut       MenuRole = "cut"
+	MenuRoleCopy      MenuRole = "copy"
+	MenuRolePaste     MenuRole = "paste"
+	MenuRoleSelectAll MenuRole = "selectAll"
+)
 
 // MenuPlan is the platform-neutral menu payload produced for tests and native
 // backends. Command IDs are assigned to actionable leaf items.
@@ -94,13 +115,15 @@ type MenuPlan struct {
 
 // MenuPlanItem is one validated menu entry in a MenuPlan.
 type MenuPlanItem struct {
-	ID        string
-	Label     string
-	CommandID uint16
-	Disabled  bool
-	Checked   bool
-	Separator bool
-	Items     []MenuPlanItem
+	Role        MenuRole
+	Accelerator string
+	ID          string
+	Label       string
+	CommandID   uint16
+	Disabled    bool
+	Checked     bool
+	Separator   bool
+	Items       []MenuPlanItem
 }
 
 // TrayOptions configures a shell tray icon. Icon is an optional path to a
@@ -189,18 +212,28 @@ func buildMenuPlanItems(items []MenuItem, next *uint16, depth int) ([]MenuPlanIt
 	}
 	out := make([]MenuPlanItem, 0, len(items))
 	for i, item := range items {
+		switch item.Role {
+		case "", MenuRoleUndo, MenuRoleRedo, MenuRoleCut, MenuRoleCopy, MenuRolePaste, MenuRoleSelectAll:
+		default:
+			return nil, fmt.Errorf("%w: menu item %d has unknown role %q", ErrInvalidOptions, i, item.Role)
+		}
 		if strings.ContainsRune(item.ID, '\x00') {
 			return nil, fmt.Errorf("%w: menu item %d id contains NUL", ErrInvalidOptions, i)
 		}
 		if strings.ContainsRune(item.Label, '\x00') {
 			return nil, fmt.Errorf("%w: menu item %d label contains NUL", ErrInvalidOptions, i)
 		}
+		if strings.ContainsAny(item.Accelerator, "\x00\t") {
+			return nil, fmt.Errorf("%w: menu item %d accelerator contains NUL or tab", ErrInvalidOptions, i)
+		}
 		planItem := MenuPlanItem{
-			ID:        strings.TrimSpace(item.ID),
-			Label:     strings.TrimSpace(item.Label),
-			Disabled:  item.Disabled,
-			Checked:   item.Checked,
-			Separator: item.Separator,
+			Role:        item.Role,
+			Accelerator: strings.TrimSpace(item.Accelerator),
+			ID:          strings.TrimSpace(item.ID),
+			Label:       strings.TrimSpace(item.Label),
+			Disabled:    item.Disabled,
+			Checked:     item.Checked,
+			Separator:   item.Separator,
 		}
 		switch {
 		case item.Separator:
@@ -218,6 +251,9 @@ func buildMenuPlanItems(items []MenuItem, next *uint16, depth int) ([]MenuPlanIt
 			}
 			planItem.Items = children
 		default:
+			if planItem.Accelerator != "" {
+				planItem.Label += "\t" + planItem.Accelerator
+			}
 			if *next == 0 || *next > maxNativeCommandID {
 				return nil, fmt.Errorf("%w: menu command id space exhausted", ErrInvalidOptions)
 			}

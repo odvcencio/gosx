@@ -1,0 +1,9 @@
+<Image
+	src={data.hero}
+	alt="Potter shaping clay at the wheel"
+	width={1600}
+	height={900}
+	sources={data.sources}
+	pictureAttrs={data.pictureAttrs}
+	class="hero-image"
+/>

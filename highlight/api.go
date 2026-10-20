@@ -15,7 +15,7 @@ const (
 
 var keywords = map[string]bool{
 	"async": true, "await": true, "break": true, "case": true, "chan": true,
-	"class": true, "const": true, "continue": true, "default": true, "defer": true,
+	"class": true, "component": true, "const": true, "continue": true, "default": true, "defer": true,
 	"else": true, "export": true, "fallthrough": true, "for": true, "func": true,
 	"function": true, "go": true, "goto": true, "if": true, "import": true,
 	"interface": true, "let": true, "map": true, "new": true, "package": true,
@@ -44,7 +44,7 @@ var builtins = map[string]bool{
 //
 // Unknown languages fall back to escaped plain text.
 func HTML(lang, source string) string {
-	return renderHTML(NormalizeLanguage(lang), source)
+	return cachedHTML(NormalizeLanguage(lang), source)
 }
 
 // Go returns syntax-highlighted HTML for Go source.

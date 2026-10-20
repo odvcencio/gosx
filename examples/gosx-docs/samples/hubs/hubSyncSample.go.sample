@@ -1,0 +1,5 @@
+room.SyncDoc("workspace", doc)
+room.SetBinaryAuthorizer(func(client *hub.Client, name string) bool {
+	role, ok := client.Metadata("role")
+	return ok && name == "workspace" && role == "editor"
+})

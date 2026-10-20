@@ -75,3 +75,67 @@ func Slide() Node {
 		t.Fatalf("pure exprs not evaluated: %s", html)
 	}
 }
+
+// TestRenderProgramComponentEvaluatesLenBuiltin proves the string_len_builtin
+// gap (docs/expression-support-matrix.md) is closed: len(...) must work on a
+// BARE ProgramRenderEnv, exactly the shape internal/evalparity's route
+// backend uses and the shape any RenderProgramComponent caller starts from
+// when it never calls newFileRenderEnv's registerBaseFileFuncs (only
+// file-page rendering does). Before route/exprlower.go special-cased "len",
+// the identifier resolved to nil on this env and the hole rendered empty.
+func TestRenderProgramComponentEvaluatesLenBuiltin(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package main
+
+func Slide() Node {
+	return <section><p>{len("hello")}</p></section>
+}
+`))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+	html, err := RenderProgramComponent(prog, "Slide", ProgramRenderEnv{})
+	if err != nil {
+		t.Fatalf("render: %v", err)
+	}
+	if !strings.Contains(html, ">5<") {
+		t.Fatalf("len(\"hello\") not evaluated to 5 on a bare env: %s", html)
+	}
+}
+
+// TestRenderProgramComponentEvaluatesPlainValueTernary proves the
+// ternary_plain_value gap (docs/expression-support-matrix.md) is closed:
+// `cond ? cons : alt` on a plain (non-JSX) value is not valid Go syntax, so
+// go/parser.ParseExpr always rejected the hole; compiledFileExpr used to
+// cache that rejection as "render empty" instead of trying the GSX-only
+// ternary fallback in route/exprternary.go.
+func TestRenderProgramComponentEvaluatesPlainValueTernary(t *testing.T) {
+	prog, err := gosx.Compile([]byte(`package main
+
+func Slide() Node {
+	return <section><p>{flag ? "yes" : "no"}</p></section>
+}
+`))
+	if err != nil {
+		t.Fatalf("compile: %v", err)
+	}
+
+	trueHTML, err := RenderProgramComponent(prog, "Slide", ProgramRenderEnv{
+		Values: map[string]any{"flag": true},
+	})
+	if err != nil {
+		t.Fatalf("render (flag=true): %v", err)
+	}
+	if !strings.Contains(trueHTML, ">yes<") {
+		t.Fatalf("ternary true branch not evaluated: %s", trueHTML)
+	}
+
+	falseHTML, err := RenderProgramComponent(prog, "Slide", ProgramRenderEnv{
+		Values: map[string]any{"flag": false},
+	})
+	if err != nil {
+		t.Fatalf("render (flag=false): %v", err)
+	}
+	if !strings.Contains(falseHTML, ">no<") {
+		t.Fatalf("ternary false branch not evaluated: %s", falseHTML)
+	}
+}

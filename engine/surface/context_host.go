@@ -15,8 +15,8 @@
 //     OpHostCall("ctx.PropsInto", [&props]). The VM dispatches into
 //     ContextHostReceiver.Call("PropsInto", [target]).
 //  4. PropsInto unmarshals the propsJSON and writes each top-level
-//     key into target.Fields by reference (Y.C in-place mutation +
-//     Y.G eager struct zero-init guarantees target.Fields is non-nil).
+//     key into target.Fields by reference (in-place mutation +
+//     eager struct zero-init guarantees target.Fields is non-nil).
 
 package surface
 
@@ -73,7 +73,7 @@ func BindContext(machine *vm.VM, name string, propsJSON []byte, ctx *Context) *C
 }
 
 // Call satisfies vm.HostReceiver. Method name comes from the
-// source-level `ctx.<Method>` call as lowered by Y.E's host-call path.
+// source-level `ctx.<Method>` call as lowered by the host-call path.
 //
 // Today only PropsInto is dispatched. Future ctx.* methods (logging,
 // time, RNG seeding) add one case each in the switch.
@@ -85,8 +85,8 @@ func (r *ContextHostReceiver) Call(method string, args []vm.Value) (vm.Value, er
 }
 
 // propsInto unmarshals propsJSON and writes top-level keys into the
-// target ObjectVal's Fields map by reference. Y.E's `&x` pass-through +
-// Y.G's eager struct zero-init contract means target.Fields is a
+// target ObjectVal's Fields map by reference. The `&x` pass-through +
+// eager struct zero-init contract means target.Fields is a
 // non-nil map shared by reference with the caller's local — writes
 // here propagate to the handler's `props` variable directly.
 //

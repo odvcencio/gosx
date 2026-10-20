@@ -35,3 +35,23 @@ func TestMountCommandBatchEncodesEmptyCommandsAsArray(t *testing.T) {
 		t.Fatalf("unexpected payload: %s", data)
 	}
 }
+
+func TestMountFrameRequestWireContract(t *testing.T) {
+	batch := MountCommandBatch{Revision: 9, FrameRequest: &MountFrameRequest{ID: "drop-3", ModelIDs: []string{"tacet-lod/slot-0"}}}
+	raw, err := batch.Marshal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got MountCommandBatch
+	if err = json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.FrameRequest == nil || got.FrameRequest.ID != "drop-3" || got.FrameRequest.ModelIDs[0] != "tacet-lod/slot-0" {
+		t.Fatalf("request lost: %s", raw)
+	}
+	for _, request := range []*MountFrameRequest{{}, {ID: "drop"}, {ID: "drop", ModelIDs: []string{""}}, {ID: "drop", ModelIDs: make([]string, 65)}} {
+		if _, err := (MountCommandBatch{Revision: 1, FrameRequest: request}).Marshal(); err == nil {
+			t.Fatalf("accepted invalid request: %#v", request)
+		}
+	}
+}

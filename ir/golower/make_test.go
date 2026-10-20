@@ -1,11 +1,11 @@
-// Slice Y.E.1.1 — failing-first tests for the `make(...)` builtin.
+// Failing-first tests for the `make(...)` builtin.
 //
-// Pre-Y.E the lowerer treats `make` as a bare-identifier function call
+// Before this, the lowerer treats `make` as a bare-identifier function call
 // and falls through to the user-fn registry probe — which fails with
 // "calls to user-defined function \"make\" are not supported" because
 // no FuncDef ever registers under that name. graph_surface.go's
 // stepLayout uses two `make(map[string]float64, len(gNodes))` calls
-// (lines 231-232), which is the dominant Y.E.1 motivating shape.
+// (lines 231-232), which is the dominant motivating shape.
 //
 // The patterns pinned here cover the three forms graph_surface.go and
 // the broader engine-surface authoring contract actually use:
@@ -16,10 +16,9 @@
 //   4. make([]T, n)             — pre-sized slice (n zero-values)
 //   5. make([]T, 0, cap)        — explicit cap argument (cap ignored)
 //
-// At Y.E.1.1 each lowering call still fails. Y.E.1.2 adds the OpMake
-// opcode, Y.E.1.3 the VM evaluator, Y.E.1.4 the lowerCallExpr dispatch
-// (`case "make":` BEFORE the user-fn registry probe per Y.D's handoff),
-// Y.E.1.5 marks these tests PASS.
+// The OpMake opcode, its VM evaluator, and the lowerCallExpr dispatch
+// (`case "make":` BEFORE the user-fn registry probe) make these tests
+// PASS.
 
 package golower
 
@@ -30,8 +29,8 @@ import (
 )
 
 // TestLowerMakeEmptyMap verifies `make(map[string]float64)` allocates
-// an empty map that can be read + written through the normal Y.B / Y.C
-// dispatchers.
+// an empty map that can be read + written through the normal map-
+// lookup and LHS-selector dispatchers.
 func TestLowerMakeEmptyMap(t *testing.T) {
 	src := []byte(`package handlers
 

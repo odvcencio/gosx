@@ -3,9 +3,7 @@ package island
 import "sync/atomic"
 
 // previewBootstrapEnabled is the process-level flag controlling whether
-// pages opt into the cross-frame relay's "preview-mode" bootstrap. See
-// ADR 0009 (decisions/0009-iframe-transport-postmessage-relay.md) and plan
-// section C of plans/2026-05-26-iframe-cross-frame-signal-transport.md.
+// pages opt into the cross-frame relay's "preview-mode" bootstrap.
 //
 // The flag is process-level (not per-Renderer) because the storefront
 // layout opts in via a single init() call (`island.EnablePreviewBootstrap()`),
@@ -16,11 +14,10 @@ import "sync/atomic"
 var previewBootstrapEnabled int32
 
 // EnablePreviewBootstrap opts every Renderer constructed thereafter into
-// emitting a minimal cross-frame relay bootstrap (islands runtime + the
-// relay.js JS module), even when the page registers no islands. The
-// runtime activates only when the storefront detects it's loaded inside
-// a preview iframe (query param `gosx-preview=1` or `window.parent !==
-// window` with a matching editor origin).
+// emitting the selective bootstrap and cross-frame relay, even when the page
+// registers no islands. The preview bridge activates only inside an iframe or
+// with the query parameter `gosx-preview=1`. Preview context persists for the
+// tab session across navigation; relay delivery still requires an allowed origin.
 //
 // Idempotent — safe to call multiple times. Storefront layouts should call
 // this once in init() if they want to be previewable.

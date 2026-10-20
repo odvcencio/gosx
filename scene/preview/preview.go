@@ -375,6 +375,7 @@ func BundleIR(ir scene.SceneIR, opts Options) engine.RenderBundle {
 		frame.Diagnostics = append(frame.Diagnostics, unsupported("html", html.ID, "native PNG previews do not rasterize HTML surfaces yet"))
 	}
 	frame.Diagnostics = append(frame.Diagnostics, textures.diagnostics()...)
+	frame.Diagnostics = append(frame.Diagnostics, bundle.MaterialDiagnostics(frame)...)
 	frame.ObjectCount = len(ir.Objects) + len(ir.InstancedMeshes)
 	return frame
 }
@@ -430,7 +431,8 @@ func materialFromObject(o scene.ObjectIR) engine.RenderMaterial {
 	return newMaterial(o.MaterialKind, o.Color, o.Texture, o.Opacity, o.Emissive, o.BlendMode, o.RenderPass,
 		boolValue(o.Wireframe), o.Roughness, o.Metalness, o.Clearcoat, o.Sheen, o.Transmission,
 		o.Iridescence, o.Anisotropy, o.NormalMap, o.RoughnessMap, o.MetalnessMap, o.EmissiveMap,
-		o.CustomVertex, o.CustomFragment, o.CustomVertexWGSL, o.CustomFragmentWGSL, o.CustomUniforms, o.ShaderBackend, o.ShaderLayout)
+		o.CustomVertex, o.CustomFragment, o.CustomVertexWGSL, o.CustomFragmentWGSL, o.CustomUniforms, o.ShaderBackend, o.ShaderLayout, previewIOR(o.IOR),
+		previewSpecularIntensity(o.SpecularIntensity), previewSpecularColor(o.SpecularColor))
 }
 
 func materialFromInstance(m scene.InstancedMeshIR) engine.RenderMaterial {
@@ -438,13 +440,74 @@ func materialFromInstance(m scene.InstancedMeshIR) engine.RenderMaterial {
 		boolValue(m.Wireframe), m.Roughness, m.Metalness, m.Clearcoat, m.Sheen, m.Transmission,
 		m.Iridescence, m.Anisotropy, m.NormalMap, m.RoughnessMap, m.MetalnessMap, m.EmissiveMap,
 		m.CustomVertex, m.CustomFragment, m.CustomVertexWGSL, m.CustomFragmentWGSL,
-		m.CustomUniforms, m.ShaderBackend, m.ShaderLayout)
+		m.CustomUniforms, m.ShaderBackend, m.ShaderLayout, previewIOR(m.IOR),
+		previewSpecularIntensity(m.SpecularIntensity), previewSpecularColor(m.SpecularColor))
+}
+
+// previewSpecularIntensity passes an authored specular intensity through only
+// when the native runtime can honour it verbatim: finite and within [0, 1],
+// with an explicit zero preserved. Anything else is dropped so the renderer
+// falls back to its own default of 1, and the JSON material key stays
+// marshallable and stable. The value is snapshotted into a fresh pointer so
+// later mutation of the IR field cannot retroactively invalidate a material
+// that was already keyed.
+func previewSpecularIntensity(v *float64) *float64 {
+	if v == nil {
+		return nil
+	}
+	f := *v
+	if math.IsNaN(f) || math.IsInf(f, 0) || f < 0 || f > 1 {
+		return nil
+	}
+	return &f
+}
+
+// previewSpecularColor passes an authored linear RGB specular colour through
+// only when every channel is finite and non-negative; zero and HDR values
+// above 1 are honoured. Any invalid channel drops the whole pointer so the
+// renderer falls back to linear white. Like previewSpecularIntensity the
+// array is snapshotted, so later mutation of the IR cannot change a material
+// after its key was minted.
+func previewSpecularColor(c *[3]float64) *[3]float64 {
+	if c == nil {
+		return nil
+	}
+	out := [3]float64{}
+	for i, ch := range c {
+		if math.IsNaN(ch) || math.IsInf(ch, 0) || ch < 0 {
+			return nil
+		}
+		out[i] = ch
+	}
+	return &out
+}
+
+// previewIOR passes an authored IOR through only when the native runtime can
+// honor it verbatim. Non-finite, negative, or strictly sub-unity values
+// normalize to the default at the shader boundary; dropping them here keeps
+// the JSON material key marshallable and stable instead of letting a NaN
+// empty it. An explicit zero is honored (it derives F0 = 1), and absence is
+// preserved so an override boundary never synthesizes a default over an
+// asset's own authored IOR.
+func previewIOR(ior *float64) *float64 {
+	if ior == nil {
+		return nil
+	}
+	v := *ior
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return nil
+	}
+	if v < 1 && v != 0 {
+		return nil
+	}
+	return ior
 }
 
 func newMaterial(kind, color, texture string, opacity, emissive *float64, blend, pass string, wire bool,
 	roughness, metalness, clearcoat, sheen, transmission, iridescence, anisotropy float64,
 	normalMap, roughnessMap, metalnessMap, emissiveMap, vertex, fragment, vertexWGSL, fragmentWGSL string,
-	uniforms map[string]any, backend string, layout map[string]any) engine.RenderMaterial {
+	uniforms map[string]any, backend string, layout map[string]any, ior *float64,
+	specularIntensity *float64, specularColor *[3]float64) engine.RenderMaterial {
 	if kind == "" {
 		kind = "standard"
 	}
@@ -466,6 +529,15 @@ func newMaterial(kind, color, texture string, opacity, emissive *float64, blend,
 		MetalnessMap: metalnessMap, EmissiveMap: emissiveMap, CustomVertex: vertex,
 		CustomFragment: fragment, CustomVertexWGSL: vertexWGSL, CustomFragmentWGSL: fragmentWGSL,
 		CustomUniforms: uniforms, ShaderBackend: backend, ShaderLayout: layout}
+	if ior != nil {
+		m.IOR = ior
+	}
+	if specularIntensity != nil {
+		m.SpecularIntensity = specularIntensity
+	}
+	if specularColor != nil {
+		m.SpecularColor = specularColor
+	}
 	keyBytes, _ := json.Marshal(m)
 	m.Key = string(keyBytes)
 	return m
@@ -482,7 +554,37 @@ func ensureMaterial(frame *engine.RenderBundle, indexes map[string]int, material
 }
 
 func objectMatrix(o scene.ObjectIR) []float64 {
-	return trsMatrix(o.X, o.Y, o.Z, o.RotationX, o.RotationY, o.RotationZ, 1, 1, 1)
+	sx, sy, sz := resolvedScaleComponents(o.ScaleX, o.ScaleY, o.ScaleZ)
+	return composeParentMatrix(o.ParentMatrix, trsMatrix(o.X, o.Y, o.Z, o.RotationX, o.RotationY, o.RotationZ, sx, sy, sz))
+}
+
+func resolvedScaleComponents(x, y, z float64) (float64, float64, float64) {
+	if x == 0 {
+		x = 1
+	}
+	if y == 0 {
+		y = 1
+	}
+	if z == 0 {
+		z = 1
+	}
+	return x, y, z
+}
+
+func composeParentMatrix(parent, local []float64) []float64 {
+	if len(parent) != 16 {
+		return local
+	}
+	out := make([]float64, 16)
+	for column := 0; column < 4; column++ {
+		for row := 0; row < 4; row++ {
+			out[column*4+row] = parent[row]*local[column*4] +
+				parent[4+row]*local[column*4+1] +
+				parent[8+row]*local[column*4+2] +
+				parent[12+row]*local[column*4+3]
+		}
+	}
+	return out
 }
 
 func trsMatrix(x, y, z, rx, ry, rz, sx, sy, sz float64) []float64 {
@@ -502,7 +604,7 @@ func transformPointPositions(points scene.PointsIR) []float64 {
 	if len(points.Positions) == 0 {
 		return nil
 	}
-	matrix := trsMatrix(points.X, points.Y, points.Z, points.RotationX, points.RotationY, points.RotationZ, 1, 1, 1)
+	matrix := composeParentMatrix(points.ParentMatrix, trsMatrix(points.X, points.Y, points.Z, points.RotationX, points.RotationY, points.RotationZ, 1, 1, 1))
 	out := make([]float64, len(points.Positions))
 	copy(out, points.Positions)
 	for index := 0; index+2 < len(out); index += 3 {

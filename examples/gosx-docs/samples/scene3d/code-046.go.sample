@@ -1,0 +1,22 @@
+result, err := preview.Render(props, preview.Options{
+	    Width:       1280,
+	    Height:      720,
+	    Time:        0,
+	    MaxSegments: 24,   // cap curved tessellation for fast thumbnails
+	    DisablePostFX: true,
+	})
+	if err != nil {
+	    return err
+	}
+
+	file, err := os.Create("scene.png")
+	if err != nil {
+	    return err
+	}
+	defer file.Close()
+	if err := preview.WritePNG(file, result); err != nil {
+	    return err
+	}
+
+	// result.Bundle and result.Stats expose the exact renderer payload:
+	// draw batches, instance counts, materials, and native fallback diagnostics.

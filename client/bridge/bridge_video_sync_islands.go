@@ -1,4 +1,4 @@
-//go:build gosx_tiny_islands_only
+//go:build gosx_tiny_islands_only || gosx_runtime_core || gosx_runtime_collab
 
 // Video-sync bridge stubs — islands-only build.
 //

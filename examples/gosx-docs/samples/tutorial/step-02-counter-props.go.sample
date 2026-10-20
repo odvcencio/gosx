@@ -1,0 +1,5 @@
+package app
+
+type CounterPropsData struct {
+	Initial int
+}

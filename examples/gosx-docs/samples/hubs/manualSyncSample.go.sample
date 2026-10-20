@@ -1,0 +1,8 @@
+leftState := crdtsync.NewState()
+rightState := crdtsync.NewState()
+
+if msg, ok := left.GenerateSyncMessage(leftState); ok {
+	if err := right.ReceiveSyncMessage(rightState, msg); err != nil {
+		return err
+	}
+}

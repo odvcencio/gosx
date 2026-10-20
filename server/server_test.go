@@ -295,7 +295,7 @@ func TestAppHeadDecoratorsRunInRegistrationOrder(t *testing.T) {
 }
 
 func TestHTMLDocument(t *testing.T) {
-	doc := HTMLDocument("Test Page", gosx.Text(""), gosx.Text("hello"))
+	doc := HTMLDocument(&DocumentContext{Title: "Test Page", Body: gosx.Text("hello")})
 	html := gosx.RenderHTML(doc)
 
 	if !strings.Contains(html, "<!DOCTYPE html>") {
@@ -308,12 +308,43 @@ func TestHTMLDocument(t *testing.T) {
 		t.Fatal("missing body content")
 	}
 	for _, snippet := range []string{
-		`<html data-gosx-document="true">`,
+		`<html data-gosx-document="true" lang="en">`,
 		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html">`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected %q in %q", snippet, html)
 		}
+	}
+}
+
+func TestHTMLDocumentLanguageComposition(t *testing.T) {
+	doc := HTMLDocument(&DocumentContext{Title: "English Docs", Language: " en-US ", Body: gosx.Text("hello")})
+	html := gosx.RenderHTML(doc)
+
+	if !strings.Contains(html, `<html data-gosx-document="true" lang="en-US">`) {
+		t.Fatalf("expected language on the html element, got %q", html)
+	}
+	if withEmpty, plain := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Body: gosx.Text("body")})), gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Language: " \t", Body: gosx.Text("body")})); withEmpty != plain {
+		t.Fatalf("expected empty language document to match plain output")
+	}
+}
+
+// TestHTMLDocumentDefaultsLanguageToEnglish proves the <html lang> default:
+// a document that never sets Language still ships a lang attribute (browsers
+// and assistive tech both need one to pick the right locale), and an app
+// that does set Language keeps its own value untouched.
+func TestHTMLDocumentDefaultsLanguageToEnglish(t *testing.T) {
+	unset := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Body: gosx.Text("body")}))
+	if !strings.Contains(unset, `<html data-gosx-document="true" lang="en">`) {
+		t.Fatalf("expected default lang=\"en\" when Language is unset, got %q", unset)
+	}
+
+	explicit := gosx.RenderHTML(HTMLDocument(&DocumentContext{Title: "Docs", Language: "fr", Body: gosx.Text("body")}))
+	if !strings.Contains(explicit, `<html data-gosx-document="true" lang="fr">`) {
+		t.Fatalf("expected explicit lang=\"fr\" to survive untouched, got %q", explicit)
+	}
+	if strings.Contains(explicit, `lang="en"`) {
+		t.Fatalf("did not expect the default to override an explicit language, got %q", explicit)
 	}
 }
 
@@ -344,6 +375,35 @@ func TestResolveListenAddrUsesPortEnv(t *testing.T) {
 		if got := resolveListenAddr(input); got != want {
 			t.Fatalf("resolveListenAddr(%q) = %q, want %q", input, got, want)
 		}
+	}
+}
+
+func TestResolveListenAddrSeparatesLocalBindingFromPort(t *testing.T) {
+	for _, tc := range []struct {
+		name, port, want string
+	}{
+		{"unset", "", "localhost:3000"},
+		{"numeric", "38177", "localhost:38177"},
+		{"host-port", "127.0.0.1:38177", "127.0.0.1:38177"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("PORT", tc.port)
+			t.Setenv("PUBLIC_URL", "https://example.test")
+			t.Setenv("GOSX_LISTEN_ADDR", "")
+			if got := resolveListenAddr("localhost:3000"); got != tc.want {
+				t.Fatalf("without override = %q, want %q", got, tc.want)
+			}
+			t.Setenv("GOSX_LISTEN_ADDR", "127.0.0.1:9000")
+			if got := resolveListenAddr("localhost:3000"); got != "127.0.0.1:9000" {
+				t.Fatalf("local binding = %q", got)
+			}
+			if got := os.Getenv("PORT"); got != tc.port {
+				t.Fatalf("PORT changed to %q", got)
+			}
+			if got := os.Getenv("PUBLIC_URL"); got != "https://example.test" {
+				t.Fatalf("PUBLIC_URL changed to %q", got)
+			}
+		})
 	}
 }
 
@@ -599,7 +659,7 @@ func TestAppReadinessChecksCanFail(t *testing.T) {
 	if len(report.Checks) != 1 {
 		t.Fatalf("expected one readiness check, got %+v", report)
 	}
-	if report.Checks[0].Name != "cache" || report.Checks[0].OK || !strings.Contains(report.Checks[0].Error, "redis unavailable") {
+	if report.Checks[0].Name != "cache" || report.Checks[0].OK || report.Checks[0].Error != http.StatusText(http.StatusServiceUnavailable) {
 		t.Fatalf("unexpected readiness check %+v", report.Checks[0])
 	}
 }
@@ -1088,7 +1148,7 @@ func TestAppSeedsInitialNavigationDocumentState(t *testing.T) {
 
 	body := w.Body.String()
 	for _, snippet := range []string{
-		`<html data-gosx-document="true" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
+		`<html data-gosx-document="true" lang="en" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 	} {
 		if !strings.Contains(body, snippet) {
@@ -1126,7 +1186,7 @@ func TestCustomDocumentCanReuseDocumentContractAttrs(t *testing.T) {
 
 	body := w.Body.String()
 	for _, snippet := range []string{
-		`<html data-gosx-document="true" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
+		`<html data-gosx-document="true" lang="en" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-document-path="/docs/forms?tab=posting" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 		`<body data-gosx-document-body="true" data-gosx-enhancement-layer="html" data-gosx-document-id="gosx-doc-get-docs-forms" data-gosx-navigation-state="idle" data-gosx-navigation-current-path="/docs/forms">`,
 	} {
 		if !strings.Contains(body, snippet) {
@@ -1344,6 +1404,9 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap-feature-scene3d-command.5555.js"), []byte("window.__gosx_scene3d_command_bridge = {};"), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(assetsDir, "bootstrap-feature-scene3d-hydrate.6666.js"), []byte("window.__gosx_runtime_api.scene3DHydrateInitialProgram = function() {};"), 0644); err != nil {
+		t.Fatal(err)
+	}
 	if err := os.WriteFile(filepath.Join(assetsDir, "standard-go-wasm_exec.4444.js"), []byte("window.__gosx_standard_go_wasm_ctor = class {};"), 0644); err != nil {
 		t.Fatal(err)
 	}
@@ -1363,6 +1426,11 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 				File: "bootstrap-feature-scene3d-command.5555.js",
 				Hash: "5555",
 				Size: 38,
+			},
+			BootstrapFeatureScene3DHydrate: buildmanifest.HashedAsset{
+				File: "bootstrap-feature-scene3d-hydrate.6666.js",
+				Hash: "6666",
+				Size: 47,
 			},
 		},
 	}
@@ -1413,6 +1481,16 @@ func TestAppServesCompatRuntimeAssetsFromBuildManifest(t *testing.T) {
 	}
 	if body := w.Body.String(); !strings.Contains(body, "__gosx_scene3d_command_bridge") {
 		t.Fatalf("unexpected scene3d command runtime body %q", body)
+	}
+
+	req = httptest.NewRequest(http.MethodGet, "/gosx/bootstrap-feature-scene3d-hydrate.js?v=6666", nil)
+	w = httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected scene3d hydrate runtime 200, got %d", w.Code)
+	}
+	if body := w.Body.String(); !strings.Contains(body, "scene3DHydrateInitialProgram") {
+		t.Fatalf("unexpected scene3d hydrate runtime body %q", body)
 	}
 }
 
@@ -2338,6 +2416,24 @@ func TestAppServesPublicFilesAtRoot(t *testing.T) {
 	}
 }
 
+func TestAppServesWebManifestWithStandardContentType(t *testing.T) {
+	publicDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(publicDir, "site.webmanifest"), []byte(`{"name":"GoSX"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	app := New()
+	app.SetPublicDir(publicDir)
+	w := httptest.NewRecorder()
+	app.Build().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/site.webmanifest", nil))
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	if got := w.Header().Get("Content-Type"); got != "application/manifest+json; charset=utf-8" {
+		t.Fatalf("Content-Type = %q", got)
+	}
+}
+
 func TestAppCustomNotFoundWinsOverRootRouteCatchall(t *testing.T) {
 	app := New()
 	app.Route("/", func(r *http.Request) gosx.Node {
@@ -2719,6 +2815,25 @@ func TestHandleAPIAppliesRouteMiddleware(t *testing.T) {
 	}
 }
 
+func TestResolveNavigationLinkCurrentQuerySemantics(t *testing.T) {
+	for _, test := range []struct {
+		name, href, current, want string
+	}{
+		{name: "queryless same path", href: "/docs/forms", current: "/docs/forms?tab=posting", want: "page"},
+		{name: "authored query exact", href: "/docs/forms?tab=posting", current: "/docs/forms?tab=posting", want: "page"},
+		{name: "authored query differs", href: "/docs/forms?tab=history", current: "/docs/forms?tab=posting", want: "none"},
+		{name: "path ancestor ignores current query", href: "/docs", current: "/docs/forms?tab=posting", want: "ancestor"},
+		{name: "root is not ancestor", href: "/", current: "/docs/forms?tab=posting", want: "none"},
+		{name: "queryless root same path", href: "/", current: "/?tab=posting", want: "page"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ResolveNavigationLinkCurrent(test.href, test.current, "auto"); got != test.want {
+				t.Fatalf("ResolveNavigationLinkCurrent(%q, %q) = %q, want %q", test.href, test.current, got, test.want)
+			}
+		})
+	}
+}
+
 func TestEnableNavigationInjectsRuntimeIntoDefaultDocument(t *testing.T) {
 	app := New()
 	app.EnableNavigation()
@@ -3079,6 +3194,100 @@ func TestMountAppIncludesRoutesRegisteredAfterMount(t *testing.T) {
 	}
 	if childSawPath != "/late" {
 		t.Fatalf("expected child to see /late after prefix strip, got %q", childSawPath)
+	}
+}
+
+func TestMountWildcardPatternPopulatesPathValue(t *testing.T) {
+	app := New()
+	var sawTeamID string
+	app.Mount("GET /avatars/{teamID}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawTeamID = r.PathValue("teamID")
+		_, _ = w.Write([]byte("avatar-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/avatars/broncos.png", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if sawTeamID != "broncos.png" {
+		t.Fatalf("expected PathValue(teamID) to be %q, got %q", "broncos.png", sawTeamID)
+	}
+}
+
+func TestMountPatternWithMultipleWildcardsPopulatesEach(t *testing.T) {
+	app := New()
+	var sawLeague, sawTeamID string
+	app.Mount("GET /leagues/{league}/teams/{teamID}", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawLeague = r.PathValue("league")
+		sawTeamID = r.PathValue("teamID")
+		_, _ = w.Write([]byte("team-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/leagues/nfl/teams/broncos", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if sawLeague != "nfl" {
+		t.Fatalf("expected PathValue(league) to be %q, got %q", "nfl", sawLeague)
+	}
+	if sawTeamID != "broncos" {
+		t.Fatalf("expected PathValue(teamID) to be %q, got %q", "broncos", sawTeamID)
+	}
+}
+
+func TestMountUnmatchedRequestFallsThroughToPageRouter(t *testing.T) {
+	app := New()
+	app.Mount("GET /avatars/{teamID}/logo", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("avatar-ok"))
+	}))
+	app.SetNotFound(func(ctx *Context) gosx.Node {
+		return gosx.Text("custom-not-found")
+	})
+
+	handler := app.Build()
+	// One path segment short of the mounted pattern: no mount match, so
+	// dispatch must still fall through to the page router's 404 handler.
+	req := httptest.NewRequest(http.MethodGet, "/avatars/broncos", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "custom-not-found") {
+		t.Fatalf("expected custom-not-found body, got %q", body)
+	}
+}
+
+func TestMountSubtreePatternStillMatches(t *testing.T) {
+	app := New()
+	var sawPath string
+	app.Mount("/legacy/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawPath = r.URL.Path
+		_, _ = w.Write([]byte("legacy-ok"))
+	}))
+
+	handler := app.Build()
+	req := httptest.NewRequest(http.MethodGet, "/legacy/reports/2024.csv", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d (body=%q)", w.Code, w.Body.String())
+	}
+	if body := w.Body.String(); !strings.Contains(body, "legacy-ok") {
+		t.Fatalf("expected legacy-ok body, got %q", body)
+	}
+	if sawPath != "/legacy/reports/2024.csv" {
+		t.Fatalf("expected subtree handler to see full path, got %q", sawPath)
 	}
 }
 

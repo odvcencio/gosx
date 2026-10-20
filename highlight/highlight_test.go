@@ -59,6 +59,18 @@ func TestGoSXHighlighting(t *testing.T) {
 	}
 }
 
+func TestGoSXStrictComponentHighlighting(t *testing.T) {
+	result := GoSX(`component Card(props: CardProps) {
+	return <article>{props.Title}</article>
+}`)
+	if !strings.Contains(result, `ts-keyword">component</span>`) {
+		t.Fatalf("expected strict component keyword highlighting, got %q", result)
+	}
+	if !strings.Contains(result, `ts-tag">article</span>`) {
+		t.Fatalf("expected strict component tag highlighting, got %q", result)
+	}
+}
+
 func TestJavaScriptHighlighting(t *testing.T) {
 	result := JavaScript(`await page.goto("/docs/runtime")`)
 	if !strings.Contains(result, "ts-keyword") {

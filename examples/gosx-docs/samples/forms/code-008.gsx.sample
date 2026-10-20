@@ -1,0 +1,1 @@
+<p class="flash-notice">{props.Form.Flash["notice"]}</p>

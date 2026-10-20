@@ -40,6 +40,7 @@ func scaffoldFilesForTemplate(module, template string) ([]scaffoldFile, error) {
 		return []scaffoldFile{
 			{Path: "go.mod", Contents: goModTemplate(module)},
 			{Path: "main.go", Contents: mainTemplate(module)},
+			{Path: "session_secret.go", Contents: sessionSecretTemplate()},
 			{Path: ".env", Contents: envTemplate()},
 			{Path: ".gitignore", Contents: gitignoreTemplate()},
 			{Path: "app/layout.gsx", Contents: appLayoutTemplate()},
@@ -63,6 +64,7 @@ func scaffoldFilesForTemplate(module, template string) ([]scaffoldFile, error) {
 func docsTemplateFiles(module string) ([]scaffoldFile, error) {
 	files := []scaffoldFile{
 		{Path: "go.mod", Contents: goModTemplate(module)},
+		{Path: "session_secret.go", Contents: sessionSecretTemplate()},
 		{Path: ".env", Contents: docsEnvTemplate()},
 		{Path: ".gitignore", Contents: gitignoreTemplate()},
 	}

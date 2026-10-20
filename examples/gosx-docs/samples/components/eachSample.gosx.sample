@@ -1,0 +1,22 @@
+package profile
+
+type Stat struct {
+	Label string
+	Value string
+}
+
+type CardProps struct {
+	Stats []Stat
+}
+
+component Card(props: CardProps) {
+	return <ul>
+		<Each of={props.Stats} as="stat" index="i">
+			<li>{i}: {stat.Label} = {stat.Value}</li>
+		</Each>
+	</ul>
+}
+
+func Page() Node {
+	return <main><Card {...loaderCard} /></main>
+}

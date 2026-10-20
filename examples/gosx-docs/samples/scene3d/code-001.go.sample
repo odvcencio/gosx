@@ -1,0 +1,23 @@
+import "m31labs.dev/gosx/scene"
+
+	props := scene.Props{
+	    Width:      1280,
+	    Height:     720,
+	    Background: "#08151f",
+	    Responsive: scene.Bool(true),
+	    Controls:   scene.ControlOrbit,
+	    AriaLabel:  "Product configurator",
+	    Camera: scene.PerspectiveCamera{
+	        Position: scene.Vec3(0, 2, 8),
+	        FOV:      65,
+	    },
+	    Environment: scene.Environment{
+	        AmbientColor:     "#ffffff",
+	        AmbientIntensity: 0.15,
+	        Exposure:         1.2,
+	        ToneMapping:      "aces",
+	    },
+	    Graph: scene.NewGraph(
+	        // lights, meshes, models, particles, helpers ...
+	    ),
+	}

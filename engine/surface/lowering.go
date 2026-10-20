@@ -1,9 +1,8 @@
 //go:build !js
 
-// Bytecode lowering for engine surfaces (Slice X.D — AST-compiler
-// initiative). Wraps ir/golower so engine/surface/discover.go can route
-// annotation-free surface declarations to the shared-VM bytecode path
-// per ADR 0003.
+// Bytecode lowering for engine surfaces. Wraps ir/golower so
+// engine/surface/discover.go can route annotation-free surface
+// declarations to the shared-VM bytecode path.
 //
 // Host-only (like discover.go, its sole caller): LowerToBytecode compiles
 // .gsx source into bytecode at build time via ir/golower, which pulls in
@@ -48,9 +47,9 @@
 //     never serialized, so the cached JSON stays clean.
 //
 // Surface kind is derived from the component's runtime context: today
-// the engine-surface authoring contract only ships Canvas2D (Slice X.E
-// targets the hyphae graph dogfood). Scene3D wiring stays the door open
-// for the meta-plan's future 3D handlers.
+// the engine-surface authoring contract only ships Canvas2D (targeting
+// the hyphae graph dogfood). Scene3D wiring stays the door open
+// for future 3D handlers.
 
 package surface
 
@@ -59,6 +58,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 
@@ -109,20 +111,20 @@ func LowerToBytecode(sp *ir.SurfaceProgram, cacheDir string) (LoweringResult, er
 		return LoweringResult{}, fmt.Errorf("surface.LowerToBytecode: %s has no source files (Dir was empty during LowerEngineSurface)", sp.Name)
 	}
 
-	// Lower each .go file in the package, then merge their Programs.
-	// Engine-surface packages today are single-file, but multi-file
-	// packages are valid Go so the merge keeps that door open.
-	var merged *program.Program
+	// Compile one package so cross-file calls share the function and struct
+	// registries. The lowerer still resolves imports separately for each file.
+	fset := token.NewFileSet()
+	files := make([]*ast.File, 0, len(sp.SourceFiles))
 	for _, sf := range sp.SourceFiles {
-		prog, err := golower.LowerFile(sf.Content)
+		file, err := parser.ParseFile(fset, sf.Path, sf.Content, parser.AllErrors)
 		if err != nil {
-			return LoweringResult{}, fmt.Errorf("lower %s: %w", sf.Path, err)
+			return LoweringResult{}, fmt.Errorf("parse %s: %w", sf.Path, err)
 		}
-		if merged == nil {
-			merged = prog
-			continue
-		}
-		mergePrograms(merged, prog)
+		files = append(files, file)
+	}
+	merged, err := golower.LowerASTFiles(fset, files)
+	if err != nil {
+		return LoweringResult{}, fmt.Errorf("lower %s: %w", sp.Name, err)
 	}
 
 	// Surface kind: canvas-rooted surfaces are Canvas2D. The IR will
@@ -151,33 +153,4 @@ func LowerToBytecode(sp *ir.SurfaceProgram, cacheDir string) (LoweringResult, er
 		Hash:        hash,
 		SurfaceKind: merged.Surface,
 	}, nil
-}
-
-// mergePrograms appends b's handlers/signals/exprs to a, rewriting b's
-// expression IDs so they don't collide with a's. The Surface and Name
-// fields stay on a.
-//
-// Because Handler.Body and SignalDef.Init reference ExprIDs, the
-// rewrite walks both lists and adds a fixed offset.
-func mergePrograms(a, b *program.Program) {
-	offset := program.ExprID(len(a.Exprs))
-
-	// Rewrite b's expression operand references.
-	for i := range b.Exprs {
-		for j := range b.Exprs[i].Operands {
-			b.Exprs[i].Operands[j] += offset
-		}
-	}
-	a.Exprs = append(a.Exprs, b.Exprs...)
-
-	for _, sig := range b.Signals {
-		sig.Init += offset
-		a.Signals = append(a.Signals, sig)
-	}
-	for _, h := range b.Handlers {
-		for i := range h.Body {
-			h.Body[i] += offset
-		}
-		a.Handlers = append(a.Handlers, h)
-	}
 }

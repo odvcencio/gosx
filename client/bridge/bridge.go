@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
 	"m31labs.dev/gosx/client/videosync"
 	"m31labs.dev/gosx/client/vm"
 	rootengine "m31labs.dev/gosx/engine"
@@ -29,12 +30,16 @@ type Bridge struct {
 	// it is a DOM island or a scene engine. Surface-specific dispatch
 	// (Hydrate*, Dispatch*, Tick*, Render*) still goes through the typed
 	// maps — collapsing those is Phase 1d work.
-	reconcilers map[string]vm.Reconciler
-	store       *Store
-	patchFn     func(islandID, patchJSON string) // callback to push patches to JS
-	signalFn    func(name, valueJSON string)     // callback to notify JS of shared signal changes
-	dispatching string                           // ID of the island currently dispatching
-	unsubs      map[string][]func()              // per-island unsubscribe handles for shared signals
+	reconcilers    map[string]vm.Reconciler
+	store          *Store
+	patchFn        func(islandID, patchJSON string)      // compatibility callback to push JSON patches to JS
+	patchMailboxFn func(islandID string, mailbox []byte) // direct binary patch callback
+	patchRequestID uint32                                // monotonically increasing id for direct mailbox frames
+	signalFn       func(name, valueJSON string)          // callback to notify JS of shared signal changes
+	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
+	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
+	hostFactories  map[string]HostReceiverFactory        // receiver name -> per-island capability factory
+	hostReceivers  map[string]map[string]vm.HostReceiver // island id -> live receiver bindings
 
 	// engineSurfaces holds live engine-surface VM+canvas+receiver
 	// triples keyed by mount id. Populated by HydrateEngineSurface
@@ -50,7 +55,7 @@ type Bridge struct {
 	videoSyncEngines map[string]*videosync.Engine
 
 	// crossFrameRelays records the prefix → allowed-origin bindings opted-in
-	// via EnableCrossFrameRelay. See cross_frame.go and ADR 0009. Both the
+	// via EnableCrossFrameRelay. See cross_frame.go. Both the
 	// outbound observer path (relaySharedSignal) and the inbound message
 	// listener (DispatchInboundSignal) consult these.
 	crossFrameRelays []CrossFrameRelayConfig
@@ -67,6 +72,21 @@ type Bridge struct {
 // trigger a re-render on an island. In WASM, this calls __gosx_apply_patches.
 func (b *Bridge) SetPatchCallback(fn func(islandID, patchJSON string)) {
 	b.patchFn = fn
+}
+
+// SetPatchMailboxCallback registers the direct binary patch channel. When it
+// is present, shared-signal reconciliation and action results use the mailbox
+// instead of allocating a JSON string. The JSON callback remains available as
+// an explicit compatibility fallback for older patch.js assets.
+func (b *Bridge) SetPatchMailboxCallback(fn func(islandID string, mailbox []byte)) {
+	b.patchMailboxFn = fn
+}
+
+// EmitPatches sends an already-reconciled patch list through the selected
+// browser boundary. It is exported for WASM action adapters that receive the
+// list synchronously rather than through a shared-signal observer.
+func (b *Bridge) EmitPatches(islandID string, patches []vm.PatchOp) {
+	b.pushPatches(islandID, patches)
 }
 
 // Store is a shared signal store that enables cross-island state.
@@ -89,7 +109,7 @@ func (s *Store) SetObserver(fn func(name string, value vm.Value)) {
 
 // Set creates or updates a shared signal.
 //
-// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// name is run through signal.ResolveAlias so legacy
 // $scene.event.* writes are redirected to the canonical $surface.event.*
 // target. Renderer-driven writes already use the canonical names; the alias
 // pass here is defensive for hand-rolled callers that haven't migrated.
@@ -125,7 +145,7 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 
 // Get reads a shared signal value.
 //
-// Per ADR 0007, name is run through signal.ResolveAlias so legacy
+// name is run through signal.ResolveAlias so legacy
 // $scene.event.* reads transparently forward to the canonical
 // $surface.event.* target. A subscriber reading $scene.event.selectedID
 // after a renderer-driven write to $surface.event.selectedID gets the
@@ -142,7 +162,7 @@ func (s *Store) Get(name string) (vm.Value, bool) {
 // if it doesn't exist yet. If it already exists, the init value is ignored
 // (first island to declare wins).
 //
-// Per ADR 0007 the name is run through signal.ResolveAlias before lookup, so
+// The name is run through signal.ResolveAlias before lookup, so
 // an island declaring a dependency on the legacy $scene.event.X automatically
 // hooks into the canonical $surface.event.X signal.
 func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
@@ -171,6 +191,8 @@ func New() *Bridge {
 		engineSurfaces: make(map[string]any),
 		store:          NewStore(),
 		unsubs:         make(map[string][]func()),
+		hostFactories:  make(map[string]HostReceiverFactory),
+		hostReceivers:  make(map[string]map[string]vm.HostReceiver),
 	}
 	b.store.SetObserver(func(name string, value vm.Value) {
 		b.notifySharedSignal(name, value)
@@ -196,32 +218,22 @@ const (
 	SurfaceKindCanvas2D = "canvas2d"
 )
 
-// HydrateReconciler is the unified hydrate entry point introduced in Phase 1d.
-// It dispatches by surfaceKind to the appropriate adapter constructor:
+// HydrateReconciler is the compatibility, error-only generic hydrate entry
+// point. It dispatches DOM and Canvas2D through HydrateReconcilerOutput.
 //
 //   - "dom"      → existing island path (DOM patches via HydrateIsland)
-//   - "scene3d"  → existing scene-engine path (engine commands via HydrateEngine)
+//   - "scene3d"  → rejected before mutation because its output is required
 //   - "canvas2d" → CanvasBoardAdapter path (Phase 2 — <CanvasBoard> primitive)
 //
 // The scene3d and canvas2d paths are gated by build tag — in islands-only
 // builds they return an error rather than pulling in the engine reconciler.
 // See bridge_reconciler_full.go vs bridge_reconciler_islands.go.
-//
-// Engine commands produced by the scene3d / canvas2d paths are discarded
-// here; the legacy HydrateEngine remains for callers that need the initial
-// command stream. Phase 2 will widen the return shape if needed.
 func (b *Bridge) HydrateReconciler(surfaceKind, id, componentName, propsJSON string, programData []byte, format string) error {
-	switch surfaceKind {
-	case SurfaceKindDOM:
-		return b.HydrateIsland(id, componentName, propsJSON, programData, format)
-	case SurfaceKindScene3D:
-		return b.hydrateScene3D(id, componentName, propsJSON, programData, format)
-	case SurfaceKindCanvas2D:
-		return b.hydrateCanvas2D(id, componentName, propsJSON, programData, format)
-	default:
-		return fmt.Errorf("unknown surfaceKind %q (expected one of: %q, %q, %q)",
-			surfaceKind, SurfaceKindDOM, SurfaceKindScene3D, SurfaceKindCanvas2D)
+	if surfaceKind == SurfaceKindScene3D {
+		return fmt.Errorf("scene3d hydration requires HydrateReconcilerOutput")
 	}
+	_, err := b.HydrateReconcilerOutput(surfaceKind, id, componentName, propsJSON, programData, format)
+	return err
 }
 
 // HydrateIsland creates and registers an island from a program and props.
@@ -250,8 +262,17 @@ func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData 
 	}
 
 	island := vm.NewIsland(prog, propsJSON)
+	b.bindIslandHosts(id, island, prog)
 	defs := sharedSignalDefs(prog)
-	b.connectSharedSignals(island, defs)
+	var hydrationPatches []vm.PatchOp
+	if len(defs) > 0 {
+		// Keep NewIsland's local-init tree as the SSR/DOM baseline, bind every
+		// live store instance, then reconcile once against the final shared and
+		// computed values. Overwriting prev during binding would make an
+		// existing store value invisible to the browser until a later write.
+		b.bindSharedSignals(island, defs)
+		hydrationPatches = island.Reconcile()
+	}
 	b.unsubs[id] = b.subscribeSharedSignals(id, defs)
 
 	b.islands[id] = island
@@ -261,6 +282,7 @@ func (b *Bridge) hydrateIsland(id, componentName, propsJSON string, programData 
 	} else {
 		delete(b.computeIslands, id)
 	}
+	b.pushPatches(id, hydrationPatches)
 	return nil
 }
 
@@ -294,11 +316,19 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 	if !ok {
 		return nil, fmt.Errorf("island %q not found", islandID)
 	}
+	if b.dispatching[islandID] > 0 {
+		return nil, fmt.Errorf("island %q is already dispatching", islandID)
+	}
+	if b.dispatching == nil {
+		b.dispatching = make(map[string]uint32)
+	}
 
-	b.dispatching = islandID
+	b.dispatching[islandID]++
 	defer func() {
-		if b.dispatching == islandID {
-			b.dispatching = ""
+		if b.dispatching[islandID] <= 1 {
+			delete(b.dispatching, islandID)
+		} else {
+			b.dispatching[islandID]--
 		}
 	}()
 
@@ -394,6 +424,7 @@ func (b *Bridge) DisposeIsland(id string) {
 	}
 
 	if island, ok := b.islands[id]; ok {
+		b.disposeIslandHosts(id, island)
 		island.Dispose()
 		delete(b.islands, id)
 	}
@@ -502,11 +533,11 @@ func isSharedSignal(name string) bool {
 	return len(name) > 0 && name[0] == '$'
 }
 
-func (b *Bridge) connectSharedSignals(island *vm.Island, defs []program.SignalDef) {
+func (b *Bridge) bindSharedSignals(island *vm.Island, defs []program.SignalDef) {
 	for _, def := range defs {
 		initVal := island.EvalExpr(def.Init)
 		sharedSig := b.store.Signal(def.Name, initVal)
-		island.SetSharedSignal(def.Name, sharedSig)
+		island.BindSharedSignal(def.Name, sharedSig)
 	}
 }
 
@@ -526,7 +557,7 @@ func (b *Bridge) subscribeSharedSignal(islandID string, def program.SignalDef) f
 }
 
 func (b *Bridge) reconcileSharedIsland(islandID string) {
-	if b.dispatching == islandID {
+	if b.dispatching[islandID] > 0 {
 		return
 	}
 	island, ok := b.islands[islandID]
@@ -540,7 +571,18 @@ func (b *Bridge) pushPatches(islandID string, patches []vm.PatchOp) {
 	if _, compute := b.computeIslands[islandID]; compute {
 		return
 	}
-	if len(patches) == 0 || b.patchFn == nil {
+	if len(patches) == 0 {
+		return
+	}
+	if b.patchMailboxFn != nil {
+		b.patchRequestID++
+		mailbox, err := runtimewasm.EncodePatchMailbox(islandID, b.patchRequestID, patches)
+		if err == nil {
+			b.patchMailboxFn(islandID, mailbox)
+		}
+		return
+	}
+	if b.patchFn == nil {
 		return
 	}
 	patchJSON, err := MarshalPatches(patches)
@@ -562,7 +604,7 @@ func (b *Bridge) notifySharedSignal(name string, value vm.Value) {
 	}
 	// Outbound cross-frame relay fans out for matching prefixes only.
 	// Separate from the JS notify path so single-frame consumers are
-	// unaffected; see ADR 0009 and cross_frame.go.
+	// unaffected; see cross_frame.go.
 	b.relaySharedSignal(name, valueJSON)
 }
 

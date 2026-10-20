@@ -35,9 +35,16 @@ func RunDev(dir string) error {
 // RunDevWithOptions stages local runtime assets, runs the target app on an
 // internal port, and fronts it with the GoSX dev proxy for live reload.
 func RunDevWithOptions(dir string, options DevOptions) error {
-	absDir, err := filepath.Abs(dir)
+	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
+	}
+	discovery, err := collectProjectIslandDiscovery(absDir)
+	if err != nil {
+		return err
+	}
+	if err := checkVersionSkew(absDir); err != nil {
+		return err
 	}
 
 	isMain, err := isMainPackage(absDir)
@@ -57,7 +64,10 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
-	if err := prepareDevAssets(absDir); err != nil {
+	if err := checkStrictProject(context.Background(), absDir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	if err := prepareDevAssetsWithPrograms(absDir, discovery.Programs); err != nil {
 		return err
 	}
 
@@ -84,23 +94,23 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	devServer := &dev.Server{
 		Dir:            absDir,
 		BuildDir:       buildDir,
+		WatchDirs:      discovery.WatchDirs,
+		WatchFiles:     discovery.WatchFiles,
+		WatchGoFiles:   discovery.WatchGoFiles,
 		ProxyTarget:    internalBaseURL,
 		SceneInspector: options.SceneInspector,
 		Logf: func(format string, args ...any) {
 			fmt.Fprintf(os.Stderr, "gosx dev: "+format+"\n", args...)
 		},
+		PreflightChange: func(_ []string) error {
+			return preflightChangedDevApp(context.Background(), absDir, runner)
+		},
 		OnChange: func() error {
 			fmt.Fprintln(os.Stderr, "gosx dev: change detected, rebuilding assets and restarting app")
-			if err := prepareDevAssets(absDir); err != nil {
-				return fmt.Errorf("build assets: %w", err)
-			}
-			if err := runner.restart(internalPort); err != nil {
-				return fmt.Errorf("restart app: %w", err)
-			}
-			if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
-				return fmt.Errorf("wait for app ready: %w", err)
-			}
-			return nil
+			return rebuildChangedDevApp(context.Background(), absDir, runner, internalPort, internalBaseURL)
+		},
+		RefreshWatchTargets: func() ([]string, []string, []string, error) {
+			return collectProjectIslandWatchTargets(absDir)
 		},
 	}
 
@@ -133,7 +143,61 @@ func RunDevWithOptions(dir string, options DevOptions) error {
 	}
 }
 
+type devProcessStopper interface {
+	stop() error
+}
+
+// preflightChangedDevApp validates every watched batch, including island-only
+// hot swaps. When source is invalid it stops the old app process so the proxy
+// cannot keep serving newly mutated files through a previously valid binary.
+func preflightChangedDevApp(ctx context.Context, dir string, runner devProcessStopper) error {
+	if _, _, err := collectProjectIslandPrograms(dir); err != nil {
+		if runner != nil {
+			if stopErr := runner.stop(); stopErr != nil {
+				return fmt.Errorf("check island programs: %w (also stop invalid app: %v)", err, stopErr)
+			}
+		}
+		return fmt.Errorf("check island programs: %w", err)
+	}
+	if err := checkStrictProject(ctx, dir); err != nil {
+		if runner != nil {
+			if stopErr := runner.stop(); stopErr != nil {
+				return fmt.Errorf("check strict components: %w (also stop invalid app: %v)", err, stopErr)
+			}
+		}
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	return nil
+}
+
+func rebuildChangedDevApp(ctx context.Context, dir string, runner *devRunner, internalPort, internalBaseURL string) error {
+	if err := checkStrictProject(ctx, dir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	if err := prepareDevAssets(dir); err != nil {
+		return fmt.Errorf("build assets: %w", err)
+	}
+	if err := runner.restart(internalPort); err != nil {
+		return fmt.Errorf("restart app: %w", err)
+	}
+	if err := waitForAppReady(internalBaseURL, 20*time.Second); err != nil {
+		return fmt.Errorf("wait for app ready: %w", err)
+	}
+	return nil
+}
+
 func prepareDevAssets(dir string) error {
+	islands, _, err := collectProjectIslandPrograms(dir)
+	if err != nil {
+		return err
+	}
+	return prepareDevAssetsWithPrograms(dir, islands)
+}
+
+func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) error {
+	if err := validateUniqueIslandProgramNames(islands); err != nil {
+		return err
+	}
 	buildDir := filepath.Join(dir, "build")
 	islandDir := filepath.Join(buildDir, "islands")
 	cssDir := filepath.Join(buildDir, "css")
@@ -195,18 +259,24 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-controllers.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js")); err != nil {
 		return fmt.Errorf("stage bootstrap-feature-controllers.js: %w", err)
 	}
+	if err := copyFile(filepath.Join(buildDir, "bootstrap-controller-input.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-controller-input.js")); err != nil {
+		return fmt.Errorf("stage bootstrap-controller-input.js: %w", err)
+	}
 	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-textlayout.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js")); err != nil {
 		return fmt.Errorf("stage bootstrap-feature-textlayout.js: %w", err)
 	}
 	for _, chunk := range []string{
 		"bootstrap-feature-scene3d.js",
 		"bootstrap-feature-scene3d-command.js",
+		"bootstrap-feature-scene3d-model-preparation.js",
+		"bootstrap-feature-scene3d-hydrate.js",
 		"bootstrap-feature-scene3d-webgpu.js",
 		"bootstrap-feature-scene3d-webgl.js",
 		"bootstrap-feature-scene3d-gltf.js",
 		"bootstrap-feature-scene3d-animation.js",
 		"bootstrap-feature-scene3d-compute.js",
 		"bootstrap-feature-scene3d-decompress.js",
+		"bootstrap-feature-scene3d-instance-stream.js",
 	} {
 		if err := copyFile(filepath.Join(buildDir, chunk), filepath.Join(gosxRoot, "client", "js", chunk)); err != nil {
 			return fmt.Errorf("stage %s: %w", chunk, err)
@@ -228,20 +298,37 @@ func prepareDevAssets(dir string) error {
 	if err := copyFile(filepath.Join(buildDir, "relay.js"), filepath.Join(gosxRoot, "client", "js", "relay.js")); err != nil {
 		return fmt.Errorf("stage relay.js: %w", err)
 	}
+	for _, chunk := range runtimeFeatureChunks {
+		file := "bootstrap-feature-" + chunk.name + ".js"
+		if err := copyFile(filepath.Join(buildDir, file), filepath.Join(gosxRoot, "client", "js", file)); err != nil {
+			return fmt.Errorf("stage %s: %w", file, err)
+		}
+	}
 
-	if err := compileDevIslands(dir, islandDir); err != nil {
+	if err := writeDevIslandPrograms(islandDir, islands); err != nil {
 		return err
 	}
 	if err := stageSidecarCSS(dir, cssDir); err != nil {
 		return err
 	}
-	// Engine surfaces are no longer pre-compiled in dev. The server-side
-	// engine/surface.Discover lowers them to shared-VM bytecode at start.
-	// See ADR 0003 (supersedure) and ADR 0005 (buildsurface deletion).
+	// Automatic .gsx engine-surface discovery is preview/post-v1 and is not
+	// part of dev asset staging. The v1 engine surface is programmatic
+	// engine.Config, whose runtime assets are staged above.
 	return nil
 }
 
 func compileDevIslands(dir, islandDir string) error {
+	islands, _, err := collectProjectIslandPrograms(dir)
+	if err != nil {
+		return err
+	}
+	return writeDevIslandPrograms(islandDir, islands)
+}
+
+func writeDevIslandPrograms(islandDir string, islands []*IslandProgramSource) error {
+	if err := validateUniqueIslandProgramNames(islands); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(islandDir, 0755); err != nil {
 		return fmt.Errorf("create island dir: %w", err)
 	}
@@ -255,13 +342,8 @@ func compileDevIslands(dir, islandDir string) error {
 		}
 	}
 
-	islands, _, err := collectProjectIslandPrograms(dir)
-	if err != nil {
-		return err
-	}
-
 	for _, isl := range islands {
-		data, err := program.EncodeJSON(isl)
+		data, err := program.EncodeJSON(isl.Program)
 		if err != nil {
 			return fmt.Errorf("encode island %s: %w", isl.Name, err)
 		}
@@ -367,6 +449,7 @@ func (r *devRunner) start(port string) error {
 		"GOSX_DEV=1",
 		"GOSX_APP_ROOT="+r.dir,
 		"PORT="+port,
+		"GOSX_LISTEN_ADDR="+net.JoinHostPort("127.0.0.1", port),
 	)
 	done := make(chan error, 1)
 	if err := cmd.Start(); err != nil {
@@ -472,6 +555,9 @@ func waitForAppReady(baseURL string, timeout time.Duration) error {
 }
 
 func publicListenAddr() string {
+	if addr := strings.TrimSpace(os.Getenv("GOSX_LISTEN_ADDR")); addr != "" {
+		return addr
+	}
 	raw := strings.TrimSpace(os.Getenv("PORT"))
 	if raw == "" {
 		return defaultDevListenAddr

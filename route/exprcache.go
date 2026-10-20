@@ -42,7 +42,8 @@ var (
 )
 
 // compiledFileExpr returns the lowered form of a `{expr}` hole, or nil when
-// go/parser rejects the source.
+// neither go/parser nor the GSX plain-value-ternary fallback (see
+// exprternary.go) can make sense of the source.
 func compiledFileExpr(src string) fileExprFunc {
 	src = strings.TrimSpace(src)
 	if src == "" {
@@ -56,10 +57,7 @@ func compiledFileExpr(src string) fileExprFunc {
 		return cached
 	}
 
-	var lowered fileExprFunc
-	if parsed, err := parser.ParseExpr(src); err == nil {
-		lowered = lowerFileExpr(parsed)
-	}
+	lowered := lowerFileExprSource(src)
 
 	fileExprCacheMu.Lock()
 	if len(fileExprCache) < fileExprCacheMaxEntries {
@@ -68,6 +66,23 @@ func compiledFileExpr(src string) fileExprFunc {
 	fileExprCacheMu.Unlock()
 
 	return lowered
+}
+
+// lowerFileExprSource parses and lowers one `{expr}` hole's source.
+// go/parser.ParseExpr handles every ordinary Go expression — the
+// overwhelming majority of holes, and the fast path, since a ternary's "?"
+// makes the scanner fail immediately without walking the rest of src. A
+// source go/parser rejects gets one more try as a GSX-only plain-value
+// ternary before this gives up and returns nil, matching go/parser's
+// original "malformed hole renders empty" contract.
+func lowerFileExprSource(src string) fileExprFunc {
+	if parsed, err := parser.ParseExpr(src); err == nil {
+		return lowerFileExpr(parsed)
+	}
+	if lowered, ok := lowerTernaryExprSource(src); ok {
+		return lowered
+	}
+	return nil
 }
 
 // prewarmFileProgramExprs lowers every expression a program can evaluate.

@@ -159,11 +159,11 @@ func TestLowerEngineSurfaceRejectNonCanvas(t *testing.T) {
 	// Simulate what the lowering pass would do: call lowerEngineSurface
 	// directly via the lowerer, using a fake lowerer.
 	l := &lowerer{
-		src:           nil,
-		srcStr:        "",
-		lang:          nil,
-		prog:          prog,
-		signalImports: make(map[string]struct{}),
+		src:     nil,
+		srcStr:  "",
+		lang:    nil,
+		prog:    prog,
+		imports: NewImportTable(),
 	}
 	comp := &prog.Components[0]
 	l.lowerEngineSurface(comp)
@@ -210,8 +210,8 @@ func TestLowerEngineSurfaceRejectUnknownHandler(t *testing.T) {
 	prog.Components = append(prog.Components, comp)
 
 	l := &lowerer{
-		prog:          prog,
-		signalImports: make(map[string]struct{}),
+		prog:    prog,
+		imports: NewImportTable(),
 	}
 	c := &prog.Components[0]
 	l.lowerEngineSurface(c)

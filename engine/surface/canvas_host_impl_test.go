@@ -1,4 +1,4 @@
-// Slice Y.F — coverage for the HostCanvasImpl exported seam.
+// Coverage for the HostCanvasImpl exported seam.
 
 package surface
 

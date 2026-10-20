@@ -34,6 +34,25 @@ func TestEvalHostCallZeroArg(t *testing.T) {
 	}
 }
 
+func TestIslandBindHostForwardsAndDisposeClearsBinding(t *testing.T) {
+	prog := &program.Program{
+		Nodes:    []program.Node{{Kind: program.NodeElement, Tag: "div"}},
+		Exprs:    []program.Expr{{Op: program.OpHostCall, Value: "browser.Focus"}},
+		Handlers: []program.Handler{{Name: "focus", Body: []program.ExprID{0}}},
+	}
+	island := NewIsland(prog, `{}`)
+	recorder := NewHostRecorder()
+	island.BindHost("browser", recorder)
+	island.Dispatch("focus", `{}`)
+	if len(recorder.Calls) != 1 || recorder.Calls[0].Method != "Focus" {
+		t.Fatalf("calls = %+v", recorder.Calls)
+	}
+	island.Dispose()
+	if _, ok := island.vm.LookupHost("browser"); ok {
+		t.Fatal("host binding survived Island.Dispose")
+	}
+}
+
 // TestEvalHostCallEvaluatesArgsInSourceOrder verifies that operand
 // evaluation runs left-to-right and the result Values reach the host
 // in the same order.

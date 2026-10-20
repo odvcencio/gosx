@@ -1,0 +1,22 @@
+scene.Mesh{
+	    Geometry: scene.SphereGeometry{Radius: 1, Segments: 48},
+	    Material: scene.StandardMaterial{Color: "#d4af37", Emissive: 0.2},
+	    MaterialAnims: []scene.MaterialUniformAnim{
+	        {
+	            Uniform: "emissive",
+	            Arity:   1,
+	            Oscillator: &scene.MaterialOscillatorAnim{
+	                Base:      []float64{0.4},
+	                Amplitude: []float64{0.3},
+	                Freq:      []float64{0.8},
+	            },
+	        },
+	        {
+	            Uniform: "roughness",
+	            Arity:   1,
+	            Spring: &scene.MaterialSpringAnim{
+	                From: 0.8, To: 0.15, Stiffness: 120, Damping: 14,
+	            },
+	        },
+	    },
+	}

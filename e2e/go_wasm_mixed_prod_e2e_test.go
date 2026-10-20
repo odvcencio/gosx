@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"m31labs.dev/gosx/internal/localapp"
 )
 
 type mixedBuildManifest struct {
@@ -301,7 +302,11 @@ func startBuiltFixture(t *testing.T, dist string, port int) *logBuffer {
 	logs := &logBuffer{}
 	cmd := exec.Command(filepath.Join(dist, "run.sh"))
 	cmd.Dir = dist
-	cmd.Env = append(os.Environ(), fmt.Sprintf("PORT=%d", port))
+	localEnv, err := localapp.Environment(os.Environ(), fmt.Sprint(port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(localEnv, fmt.Sprintf("PUBLIC_URL=http://127.0.0.1:%d", port))
 	cmd.Stdout = logs
 	cmd.Stderr = logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}

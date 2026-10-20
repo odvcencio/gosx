@@ -53,6 +53,50 @@ func readLitShader(t *testing.T) string {
 	return strings.Join(lines, "\n")
 }
 
+// authoredF0ShaderTerm is the litWGSL expression that reads the prepared
+// effective dielectric F0 (specularParams.xyz) out of the material uniform.
+const authoredF0ShaderTerm = "mix(material.specularParams.xyz, baseColor, metalness)"
+
+// pinnedF0ShaderTerm is the legacy IOR-only mix that must never return as the
+// shading F0. Byte 100 keeps the legacy lane for provenance, but the shader
+// must read the prepared specular vec4.
+const pinnedF0ShaderTerm = "mix(vec3<f32>(material.physicalParams2.y), baseColor, metalness)"
+
+// checkLitAuthoredF0 fails when litWGSL stops consuming the prepared effective
+// dielectric F0 (specularParams.xyz) or reverts to reading only the legacy IOR
+// lane at byte 100. The CPU constant table cannot pin a runtime value, so this
+// dedicated guard replaces the old dielectric-f0 row; the mutation test below
+// proves the guard can fail.
+func checkLitAuthoredF0(shader string) error {
+	if !strings.Contains(shader, authoredF0ShaderTerm) {
+		return fmt.Errorf("litWGSL no longer reads the prepared effective dielectric F0 from material.specularParams")
+	}
+	if strings.Contains(shader, pinnedF0ShaderTerm) {
+		return fmt.Errorf("litWGSL reverted the shading F0 to the legacy IOR lane at byte 100")
+	}
+	return nil
+}
+
+func TestLitShaderConsumesAuthoredDielectricF0(t *testing.T) {
+	if err := checkLitAuthoredF0(readLitShader(t)); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLitShaderAuthoredF0GuardDetectsMutation(t *testing.T) {
+	shader := readLitShader(t)
+	if err := checkLitAuthoredF0(shader); err != nil {
+		t.Fatalf("guard must pass on the shipped shader: %v", err)
+	}
+	mutated := strings.Replace(shader, authoredF0ShaderTerm, pinnedF0ShaderTerm, 1)
+	if mutated == shader {
+		t.Fatal("mutation did not apply; the authored F0 term moved")
+	}
+	if err := checkLitAuthoredF0(mutated); err == nil {
+		t.Fatal("guard must fail when the shading F0 reverts to the legacy IOR lane")
+	}
+}
+
 // litConstantRow is one number this package shares with litWGSL.
 //
 // value is what the rasterizer really computes with. pattern must capture the
@@ -71,12 +115,6 @@ type litConstantRow struct {
 // Add a row when this copy starts using a number the shader also uses. Do not add
 // a row for a number only one copy has.
 var litSharedConstants = []litConstantRow{
-	{
-		id:      "dielectric-f0",
-		effect:  "Every non-metal highlight changes brightness.",
-		value:   dielectricF0,
-		pattern: `mix\(vec3<f32>\(([0-9.]+)\), baseColor, metalness\)`,
-	},
 	{
 		id:      "roughness-floor",
 		effect:  "A polished material turns into a pinpoint mirror on one backend only.",
@@ -242,7 +280,7 @@ func TestLitProgramStructureMatchesTheShader(t *testing.T) {
 		{
 			id:     "energy-conserving-diffuse",
 			effect: "A metal picks up a diffuse term, or a dielectric loses one.",
-			needle: "let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);",
+			needle: "let kD = (1.0 - max(FdielL.x, max(FdielL.y, FdielL.z))) * (1.0 - metalness);",
 		},
 		{
 			id:     "lambert-diffuse-normalization",
@@ -253,6 +291,21 @@ func TestLitProgramStructureMatchesTheShader(t *testing.T) {
 			id:     "specular-is-d-times-g-times-f",
 			effect: "The specular lobe gains or loses the 1/(4 NdotL NdotV) factor.",
 			needle: "let specular = D * G * F;",
+		},
+		{
+			id:     "scalar-diffuse-weight-native",
+			effect: "The diffuse lobe regains the componentwise mixed metallic Fresnel tint.",
+			needle: "let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);",
+		},
+		{
+			id:     "specular-f90-schlick-native",
+			effect: "Grazing highlights saturate toward white instead of the authored F90. The browser copy has no F90 lane; this row is native only until it does.",
+			needle: "let F = fresnelSchlick(F0, F90, VdotH);",
+		},
+		{
+			id:     "prepared-specular-uniform",
+			effect: "The shader reads a lane the material never uploaded, or the F90 lane silently vanishes.",
+			needle: "specularParams : vec4<f32>, // xyz = effective dielectric F0, w = F90",
 		},
 		{
 			id:     "correlated-smith-visibility",
@@ -399,12 +452,6 @@ func TestLitProgramConstantGuardsDetectMutation(t *testing.T) {
 		to      string
 		wantRow string
 	}{
-		{
-			name:    "the shader raises the dielectric F0",
-			from:    "mix(vec3<f32>(0.04), baseColor, metalness)",
-			to:      "mix(vec3<f32>(0.08), baseColor, metalness)",
-			wantRow: "dielectric-f0",
-		},
 		{
 			name:    "the shader widens the clear coat power range",
 			from:    "mix(12.0, 96.0, 1.0 - roughness)",

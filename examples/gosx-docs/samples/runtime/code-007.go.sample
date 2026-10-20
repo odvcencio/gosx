@@ -1,0 +1,6 @@
+heartbeatShell := gosx.El("div", gosx.Attrs(
+	    gosx.Attr("class", "gosx-heartbeat-shell"),
+	    gosx.Attr(server.NavigationHeartbeatAttr, "/api/presence/ping"),
+	    gosx.Attr(server.NavigationHeartbeatIntervalAttr, "30s"),
+	), body)
+	return server.HTMLDocument(ctx.Document(appName, heartbeatShell))

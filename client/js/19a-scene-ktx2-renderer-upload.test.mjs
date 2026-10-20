@@ -13,7 +13,7 @@
 // The tests load the BUILT chunks, not the sources, because the gate global is
 // what a browser really sees. Both renderers publish their uploader on
 // window.__gosx_scene3d_ktx2_texture_loader with the same (context, url,
-// record) signature, and sceneKTX2UploadPathReady in 19a-scene-ktx2.js reads
+// record) signature, and sceneKTX2UploadPathReady in 19a-scene-ktx2.ts reads
 // that global before 19-scene-gltf.js swaps an image URI for a block variant.
 
 import test from "node:test";
@@ -26,11 +26,11 @@ import { createRequire } from "node:module";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
-const { freshFeatureBundleSource } = require("./runtime-test-harness.js");
+const { freshFeatureBundleSource, makeFakeGPUDevice } = require("./runtime-test-harness.js");
 const webglChunk = freshFeatureBundleSource("scene3d-webgl");
 const webgpuChunk = freshFeatureBundleSource("scene3d-webgpu");
 const gltfChunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-gltf.js"), "utf8");
-const ktx2Source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19a-scene-ktx2.js"), "utf8");
+const ktx2Source = fs.readFileSync(path.join(__dirname, "bootstrap-src", "19a-scene-ktx2.ts"), "utf8");
 
 async function settle(turns = 8) {
   for (let i = 0; i < turns; i += 1) {
@@ -277,6 +277,7 @@ test("late ordinary WebGL image completion is fenced before touching a disposed 
     RGBA8: 0x8058, SRGB8_ALPHA8: 0x8C43,
     createTexture() { return {}; },
     bindTexture() {},
+    getParameter() { return null; }, activeTexture() {},
     texImage2D() { uploads += 1; },
     texParameteri() {},
     generateMipmap() {},
@@ -313,6 +314,7 @@ test("ordinary WebGL image completion notifies a live renderer generation", () =
     RGBA8: 0x8058, SRGB8_ALPHA8: 0x8C43,
     createTexture() { return {}; },
     bindTexture() {},
+    getParameter() { return null; }, activeTexture() {},
     texImage2D() {},
     texParameteri() {},
     generateMipmap() {},
@@ -377,6 +379,114 @@ test("late ordinary WebGPU bitmap completion destroys its replacement texture", 
   assert.equal(copyCalls, 0);
   assert.equal(record.loaded, false);
   assert.equal(notifications, 0, "a disposed WebGPU bitmap completion must not request another frame");
+});
+
+test("specular-color and base-color WebGPU uploads decode unpremultiplied; other roles keep prior decode", async () => {
+  const { win, context, loader } = loadInternalTextureLoader(webgpuChunk, "wgpuLoadTexture");
+  win.GPUTextureUsage = {
+    COPY_DST: 0x02,
+    TEXTURE_BINDING: 0x04,
+    RENDER_ATTACHMENT: 0x10,
+  };
+  const images = [];
+  win.Image = class {
+    constructor() { images.push(this); this.width = 4; this.height = 4; }
+    set src(value) { this._src = value; }
+  };
+  const bitmapOptionCalls = [];
+  win.createImageBitmap = (image, options) => {
+    bitmapOptionCalls.push(options);
+    return Promise.resolve({ close() {} });
+  };
+  const copies = [];
+  const formats = [];
+  win.GPUShaderStage = { VERTEX: 1, FRAGMENT: 2 };
+  const device = {
+    ...makeFakeGPUDevice({}).device,
+    queue: {
+      submit() {},
+      writeTexture() {},
+      copyExternalImageToTexture(source, destination, size) {
+        copies.push({ destination, size });
+      },
+    },
+    createTexture(descriptor) {
+      formats.push(descriptor.format);
+      return {
+        createView() { return {}; },
+        destroy() {},
+      };
+    },
+  };
+  const cache = vm.runInContext("new Map()", context);
+  const specRecord = loader(device, "/spec.png", cache, {
+    uri: "/spec.png", role: "specular-color", colorSpace: "srgb", view: "2d",
+  });
+  images[0].onload();
+  await settle();
+  assert.equal(specRecord.loaded, true, "the specular-color texture must still load");
+  // The options object is built inside the loader's vm realm, so deepEqual
+  // against a host-realm literal fails on prototype mismatch. Assert the
+  // primitive property instead; the exact option value is still pinned.
+  assert.equal(bitmapOptionCalls[0]?.premultiplyAlpha, "none",
+    "specular-color decode must request unpremultiplied pixels so RGB survives alpha=0");
+  assert.equal(copies[0].destination.premultipliedAlpha, false,
+    "specular-color copy must not premultiply at upload time");
+  assert.equal(formats[0], "rgba8unorm",
+    "the placeholder texture is still created with the unswapped format");
+  assert.equal(formats[1], "rgba8unorm-srgb",
+    "the uploaded replacement texture must use the srgb format");
+
+  const baseOptionCalls = [];
+  win.createImageBitmap = (image, options) => {
+    baseOptionCalls.push(options);
+    return Promise.resolve({ close() {} });
+  };
+  const baseCopies = [];
+  device.queue.copyExternalImageToTexture = (source, destination, size) => {
+    baseCopies.push({ destination, size });
+  };
+  const baseFormats = [];
+  device.createTexture = (descriptor) => {
+    baseFormats.push(descriptor.format);
+    return { createView() { return {}; }, destroy() {} };
+  };
+  const baseRecord = loader(device, "/base.png", cache, {
+    uri: "/base.png", role: "base-color", colorSpace: "linear", view: "2d",
+  });
+  images[1].onload();
+  await settle();
+  assert.equal(baseRecord.loaded, true, "the base-color texture must still load");
+  assert.equal(baseOptionCalls[0]?.premultiplyAlpha, "none",
+    "base-color decode must request unpremultiplied pixels so RGB survives alpha=0");
+  assert.equal(baseCopies[0].destination.premultipliedAlpha, false,
+    "base-color copy must not premultiply at upload time");
+  assert.equal(baseFormats[0], "rgba8unorm",
+    "the base-color placeholder texture keeps the linear format");
+  assert.equal(baseFormats[1], "rgba8unorm",
+    "the base-color uploaded replacement texture keeps the linear format");
+
+  const intensityCopies = [];
+  device.queue.copyExternalImageToTexture = (source, destination, size) => {
+    intensityCopies.push({ destination, size });
+  };
+  const intensityFormats = [];
+  device.createTexture = (descriptor) => {
+    intensityFormats.push(descriptor.format);
+    return { createView() { return {}; }, destroy() {} };
+  };
+  const intensityRecord = loader(device, "/spec-int.png", cache, {
+    uri: "/spec-int.png", role: "specular-intensity", colorSpace: "linear", view: "2d",
+  });
+  images[2].onload();
+  await settle();
+  assert.equal(intensityRecord.loaded, true, "the specular-intensity texture must still load");
+  assert.equal(baseOptionCalls[1], undefined,
+    "specular-intensity must keep the default decode, not the specular-color override");
+  assert.equal(intensityCopies[0].destination.premultipliedAlpha, undefined,
+    "specular-intensity copy must keep prior destination options");
+  assert.equal(intensityFormats[1], "rgba8unorm",
+    "specular-intensity linear format must be unchanged");
 });
 
 test("the gate global is what sceneKTX2UploadPathReady reads", () => {

@@ -17,9 +17,11 @@ test -x "${dist_dir}/run.sh"
 test -x "${dist_dir}/server/app"
 test -f "${dist_dir}/build.json"
 
-PORT="$port" \
+local_secret="$(openssl rand -hex 32)"
+PORT="127.0.0.1:$port" \
+GOSX_LISTEN_ADDR="127.0.0.1:$port" \
 PUBLIC_URL="$base_url" \
-SESSION_SECRET="${SESSION_SECRET:-gosx-water-prod-smoke-secret}" \
+SESSION_SECRET="$local_secret" \
 	"${dist_dir}/run.sh" >"$log" 2>&1 &
 server_pid=$!
 
@@ -49,12 +51,17 @@ done
 # Production static routes canonicalize directory-backed pages with a trailing
 # slash. Follow that bounded redirect while retaining curl's loop/error checks.
 page="$(curl -fsSL "${base_url}/demos/water")"
-printf '%s' "$page" | grep -q 'data-gosx-scene3d'
+printf '%s' "$page" | grep 'data-gosx-scene3d' >/dev/null
 
 for asset_name in bootstrap-feature-scene3d bootstrap-feature-scene3d-webgpu; do
-	asset_src="$(printf '%s' "$page" | grep -oE "src=\"[^\"]*${asset_name}\.[^\"]+\.js\"" | head -n 1 | cut -d'"' -f2 || true)"
+	asset_attribute=src
+	if [ "$asset_name" = bootstrap-feature-scene3d-webgpu ]; then
+		# The selected backend is loaded on demand from the advertised URL.
+		asset_attribute=data-gosx-scene3d-webgpu-url
+	fi
+	asset_src="$(printf '%s' "$page" | grep -oE "[[:space:]]${asset_attribute}=\"[^\"]*${asset_name}\.[^\"]+\.js\"" | head -n 1 | cut -d'"' -f2 || true)"
 	if [ -z "$asset_src" ]; then
-		echo "water production smoke: missing hashed ${asset_name} script src" >&2
+		echo "water production smoke: missing hashed ${asset_name} ${asset_attribute}" >&2
 		exit 1
 	fi
 	case "$asset_src" in

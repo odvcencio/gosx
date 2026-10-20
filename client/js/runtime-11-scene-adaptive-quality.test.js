@@ -26,6 +26,25 @@ const {
   readSceneMountSrc,
 } = require("./runtime-test-harness.js");
 
+for (const enabled of [false, true]) {
+  test(`Scene3D ${enabled ? "adaptive" : "fixed"} balanced startup publishes the filtered post-FX state`, () => {
+    const { api, context } = loadSceneAdaptiveQualityAPI();
+    const source = readSceneMountSrc();
+    const start = source.indexOf("function applyScenePostFXState(");
+    assert.notEqual(start, -1);
+    // Use the real publisher rather than the controller harness's stub.
+    vm.runInNewContext(source.slice(start, source.indexOf("\n  }", start) + 4), context);
+    const state = api.createSceneAdaptiveQualityState({ adaptiveQuality: enabled, qualityTier: "balanced" }, {}, { tier: "full" });
+    const mount = new FakeElement("div", null);
+    mount.setAttribute("data-gosx-scene3d-postfx", "enabled");
+    const effects = [{ kind: "ssao" }];
+    const sceneState = { postEffects: effects, _adaptiveSourcePostEffects: effects };
+    api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+    assert.equal(sceneState.postEffects.length, 0, "balanced startup removes SSAO before rendering");
+    assert.equal(mount.getAttribute("data-gosx-scene3d-postfx"), "none");
+  });
+}
+
 test("Scene3D declarative status bindings expose backend fallback and quality without CSS :has()", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const scope = new FakeElement("section", null);
@@ -59,12 +78,81 @@ test("Scene3D declarative status bindings expose backend fallback and quality wi
   assert.equal(fallback.hidden, true);
 });
 
+test("Scene3D adapter status follows live render truth, stays text-only, and skips unchanged writes", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const scope = new FakeElement("section", null);
+  const mount = new FakeElement("div", null);
+  const adapter = new FakeElement("output", null);
+  scope.setAttribute("data-gosx-scene3d-status-scope", "");
+  adapter.setAttribute("data-gosx-scene3d-status", "adapter");
+  scope.appendChild(mount);
+  scope.appendChild(adapter);
+  let text = "Waiting for adapter details";
+  let writes = 0;
+  Object.defineProperty(adapter, "textContent", {
+    get() { return text; },
+    set(value) { text = value; writes++; },
+  });
+  Object.defineProperty(adapter, "innerHTML", {
+    set() { assert.fail("adapter details must never enter an HTML sink"); },
+  });
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(writes, 0, "keep the authored fallback until the renderer publishes truth");
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgpu");
+  const label = '<img src=x onerror="throw 1">';
+  mount.__gosxScene3DRenderBackendTruth = { backend: "webgpu", adapter: label, adapterInfo: { vendor: "other" } };
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(adapter.textContent, label, "preserve the renderer's canonical label as plain text");
+  assert.equal(adapter.getAttribute("data-state"), "ready");
+  api.sceneSyncStatusBindings(mount);
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(writes, 1, "quality refreshes must not keep mutating an unchanged report");
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgl");
+  mount.__gosxScene3DRenderBackendTruth = { backend: "webgl", adapterInfo: { vendor: "Google", device: "SwiftShader" } };
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(adapter.textContent, "Google SwiftShader", "backend fallback keeps software adapter details visible");
+  assert.equal(writes, 2);
+
+  mount.__gosxScene3DRenderBackendTruth = { backend: "webgl" };
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(adapter.textContent, "adapter details unavailable");
+  assert.equal(adapter.getAttribute("data-state"), "unavailable");
+});
+
+test("Scene3D status changes invalidate a keeper ledger texture once per changed value", () => {
+  const { api, context } = loadSceneAdaptiveQualityAPI();
+  const invalidated = [];
+  context.window = { __gosx_scene3d_html: { invalidate: (id) => invalidated.push(id) } };
+  const scope = new FakeElement("section", null);
+  const mount = new FakeElement("div", null);
+  const surface = new FakeElement("div", null);
+  const renderer = new FakeElement("output", null);
+  scope.setAttribute("data-gosx-scene3d-status-scope", "");
+  surface.setAttribute("data-gosx-scene-html", "keeper-ledger");
+  renderer.setAttribute("data-gosx-scene3d-status", "renderer");
+  scope.appendChild(mount);
+  scope.appendChild(surface);
+  surface.appendChild(renderer);
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgpu");
+  api.sceneSyncStatusBindings(mount);
+  api.sceneSyncStatusBindings(mount);
+  assert.deepEqual(invalidated, ["keeper-ledger"]);
+
+  mount.setAttribute("data-gosx-scene3d-renderer", "webgl");
+  api.sceneSyncStatusBindings(mount);
+  assert.equal(renderer.textContent, "WebGL2");
+  assert.deepEqual(invalidated, ["keeper-ledger", "keeper-ledger"]);
+});
+
 test("Scene3D adaptive profiles start balanced and expose exact frame contract", () => {
   const { state, mount } = createAdaptiveQualityHarness();
   assert.equal(state.requestedTier, "balanced");
   assert.equal(state.activeTier, "balanced");
   assert.deepEqual(JSON.parse(JSON.stringify(state.activeProfile)), {
-    tier: "balanced", dprCap: 1.25, surfaceResolution: 128,
+    tier: "balanced", detail: true, dprCap: 1.25, surfaceResolution: 128,
     causticsResolution: 384, objectShadowResolution: 384,
     objectTextureMaxSide: 384, objectTexturePixelBudget: 442368,
     expensivePassCadence: 2,
@@ -105,6 +193,54 @@ test("Scene3D adaptive measurement escapes stale renderer timing and respects au
   for (let i = 0; i < 24; i++) capped.sample(99, 34);
   assert.equal(capped.state.measurement, "cpu-raf");
   assert.equal(capped.state.activeTier, "balanced", "authored 30 FPS rAF cadence must not trigger a false downshift");
+
+  // maxFrameRate is the key the Scene3D frame limiter honors FIRST (see
+  // sceneAnimationFrameIntervalMS), and it is the key real apps author. The
+  // budget derivation once read only maxFPS, so a maxFrameRate-capped scene
+  // measured its own authored ~33ms cadence against the adaptive target and
+  // demoted itself to the floor over and over — on the m31labs galaxy every
+  // rung step re-partitioned the point layers and read as gas-body flicker.
+  const capdRate = createAdaptiveQualityHarness({ maxFrameRate: 30, adaptiveTargetFrameMS: 28 });
+  capdRate.renderer.pollPerformanceSample = function() { return null; };
+  capdRate.renderer.getPerformanceTimingStatus = function() { return { available: false, active: false, pending: false, source: "none" }; };
+  for (let i = 0; i < 60; i++) capdRate.sample(99, 34);
+  assert.equal(capdRate.state.measurement, "cpu-raf");
+  assert.equal(capdRate.state.activeTier, "balanced", "authored maxFrameRate cadence must not trigger a false downshift");
+  assert.ok(capdRate.state.cpuRAFBudgetMS >= 1000 / 30 - 0.1, "cpu-raf budget must honor maxFrameRate, got " + capdRate.state.cpuRAFBudgetMS);
+});
+
+test("Scene3D tier and rung governors shed sustained CPU work even with fast GPU timestamps", () => {
+  for (const h of [createAdaptiveQualityHarness({ qualityTier: "full" }),
+    createQualityLadderHarness(THREE_RUNG_LADDER, { qualityStartRung: 2 })]) {
+    const initial = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    for (let i = 0; i < 24; i++) {
+      h.clock.now += 34;
+      h.renderer.sample = { source: "gpu-timestamp", durationMS: 2, atMS: h.clock.now };
+      h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 30, h.clock.now, h.renderer);
+    }
+    const current = h.state.mode === "ladder" ? h.state.rungIndex : h.state.activeTier;
+    assert.notEqual(current, initial, "CPU frame work must drive a downshift");
+    assert.equal(h.state.measurement, "cpu-work+gpu-timestamp");
+    assert.equal(h.state.lastMeasurement.durationMS, 30);
+    assert.equal(h.state.lastMeasurement.rendererDurationMS, 2, "preserve the actual GPU measurement");
+    assert.equal(h.state.lastMeasurement.cpuDurationMS, 30);
+    h.clock.now += 34;
+    h.renderer.sample = { durationMS: 36, source: "gpu-timestamp" };
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 3, h.clock.now, h.renderer);
+    assert.equal(h.state.lastMeasurement.durationMS, 36, "GPU-bound work still governs");
+    assert.equal(h.state.lastMeasurement.source, "gpu-timestamp");
+  }
+});
+
+test("Scene3D CPU work sampling honors an authored 30 FPS cadence", () => {
+  const h = createAdaptiveQualityHarness({ maxFrameRate: 30 });
+  for (let i = 0; i < 30; i++) {
+    h.clock.now += 34;
+    h.renderer.sample = { source: "gpu-timestamp", durationMS: 2 };
+    h.api.sceneUpdateAdaptiveQuality(h.state, h.mount, h.sceneState, {}, h.clock.now - 25, h.clock.now, h.renderer);
+  }
+  assert.equal(h.state.activeTier, "balanced");
+  assert.equal(h.state.measurement, "cpu-work+gpu-timestamp");
 });
 
 test("Scene3D adaptive controller is hysteretic, cooldown-safe, and recovers one tier", () => {

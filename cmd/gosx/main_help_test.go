@@ -1,12 +1,27 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestTopLevelHelpAdvertisesOnlyImplementedSceneCommands(t *testing.T) {
+	var out bytes.Buffer
+	commandUsage("scene", &out)
+	text := out.String()
+	for _, want := range []string{"gosx scene check", "gosx scene inspect", "gosx scene render"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("scene help missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "scene certify") || strings.Contains(text, "inspect --cert") {
+		t.Fatalf("scene help advertises removed commands:\n%s", text)
+	}
+}
 
 func TestMainHelpProcess(t *testing.T) {
 	if os.Getenv("GOSX_HELP_PROCESS") != "1" {
@@ -33,7 +48,10 @@ func TestSubcommandHelpDoesNotTreatHelpAsOperand(t *testing.T) {
 		{name: "check", args: []string{"check", "--help"}, want: "gosx check"},
 		{name: "render", args: []string{"render", "--help"}, want: "gosx render"},
 		{name: "build", args: []string{"build", "--help"}, want: "gosx build"},
+		{name: "deploy", args: []string{"deploy", "--help"}, want: "gosx deploy check"},
+		{name: "deploy check", args: []string{"deploy", "check", "--help"}, want: "gosx deploy check"},
 		{name: "size", args: []string{"size", "--help"}, want: "gosx size"},
+		{name: "ui", args: []string{"ui", "--help"}, want: "gosx ui"},
 		{name: "assets plan", args: []string{"assets", "plan", "--help"}, want: "gosx assets plan"},
 		{name: "release", args: []string{"release", "--help"}, want: "gosx release"},
 		{name: "release check", args: []string{"release", "check", "--help"}, want: "gosx release check"},

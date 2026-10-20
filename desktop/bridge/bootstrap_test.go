@@ -65,6 +65,7 @@ func TestBootstrapScriptExposesNativeConvenienceMethods(t *testing.T) {
 		`call("gosx.desktop.window.setMinSize"`,
 		`call("gosx.desktop.window.setMaxSize"`,
 		`call("gosx.desktop.dialog.openFile"`,
+		`call("gosx.desktop.dialog.message"`,
 		`call("gosx.desktop.dialog.saveFile"`,
 		`call("gosx.desktop.clipboard.readText"`,
 		`call("gosx.desktop.clipboard.writeText"`,

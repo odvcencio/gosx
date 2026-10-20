@@ -1,4 +1,4 @@
-//go:build js && wasm && !gosx_tiny_islands_only
+//go:build js && wasm && !gosx_tiny_islands_only && !gosx_runtime_core && !gosx_runtime_collab
 
 // Video-sync JS bridge — WASM runtime exports.
 //

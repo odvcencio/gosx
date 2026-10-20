@@ -2,6 +2,8 @@ package transpile
 
 import (
 	"errors"
+	"go/parser"
+	"go/token"
 	"strings"
 	"testing"
 
@@ -84,6 +86,71 @@ func Box(attrs gosx.AttrList) Node {
 	}
 	if !strings.Contains(out, `Box(gosx.Props(gosx.Attr("class", "panel")))`) {
 		t.Fatalf("expected attr-list component to keep gosx.Props, got:\n%s", out)
+	}
+}
+
+// TestTranspileManagedFormShorthandRoundTrips covers issue #168: a .gsx
+// author writes the single data-gosx-managed shorthand on a <form> instead
+// of the five-attribute ManagedFormAttrs block. The .gsx grammar needs no
+// change for this — a bare boolean attribute already parses, per
+// emitAttrValue's nil-value branch — so this test only has to confirm the
+// transpiler carries the attribute through to valid Go source unmangled;
+// node_test.go / managed_form_shorthand_test.go in the root package cover
+// what RenderHTML does with the emitted gosx.BoolAttr call.
+func TestTranspileManagedFormShorthandRoundTrips(t *testing.T) {
+	source := []byte(`package main
+
+type Node = gosx.Node
+
+func LoginForm(action string) Node {
+	return <form method="post" action={action} data-gosx-managed>
+		<button type="submit">Log in</button>
+	</form>
+}
+`)
+
+	out, err := Transpile(source, Options{SourceFile: "managed_form.gsx"})
+	if err != nil {
+		t.Fatalf("transpile: %v", err)
+	}
+	if !strings.Contains(out, `gosx.BoolAttr("data-gosx-managed")`) {
+		t.Fatalf("expected the bare shorthand attribute to transpile to gosx.BoolAttr, got:\n%s", out)
+	}
+	if !strings.Contains(out, `gosx.El("form", gosx.Attrs(`) {
+		t.Fatalf("expected the form element to transpile through gosx.El, got:\n%s", out)
+	}
+
+	if _, err := parser.ParseFile(token.NewFileSet(), "managed_form_out.go", out, parser.AllErrors); err != nil {
+		t.Fatalf("transpiled output is not valid Go: %v\n%s", err, out)
+	}
+}
+
+// TestTranspileManagedFormShorthandExplicitValueRoundTrips covers the
+// data-gosx-managed="true" spelling, documented as the explicit-value form
+// of the shorthand for dialects or authors that prefer not to rely on bare
+// boolean attributes.
+func TestTranspileManagedFormShorthandExplicitValueRoundTrips(t *testing.T) {
+	source := []byte(`package main
+
+type Node = gosx.Node
+
+func LoginForm(action string) Node {
+	return <form method="post" action={action} data-gosx-managed="true">
+		<button type="submit">Log in</button>
+	</form>
+}
+`)
+
+	out, err := Transpile(source, Options{SourceFile: "managed_form_explicit.gsx"})
+	if err != nil {
+		t.Fatalf("transpile: %v", err)
+	}
+	if !strings.Contains(out, `gosx.Attr("data-gosx-managed", "true")`) {
+		t.Fatalf(`expected data-gosx-managed="true" to transpile to gosx.Attr, got:`+"\n%s", out)
+	}
+
+	if _, err := parser.ParseFile(token.NewFileSet(), "managed_form_explicit_out.go", out, parser.AllErrors); err != nil {
+		t.Fatalf("transpiled output is not valid Go: %v\n%s", err, out)
 	}
 }
 

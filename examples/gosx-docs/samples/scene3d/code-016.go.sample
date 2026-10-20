@@ -1,0 +1,13 @@
+type GlowUniforms struct {
+	    Pulse float64   // resolves to "pulse"
+	    Tint  []float64 // resolves to "tint"
+	}
+
+	uniforms, err := scene.SelenaUniforms(GlowUniforms{
+	    Pulse: 0.4,
+	    Tint:  []float64{1, 0.85, 0.4},
+	})
+	if err != nil {
+	    return err
+	}
+	opts := scene.SelenaMaterialOptions{Material: "glow", Uniforms: uniforms}

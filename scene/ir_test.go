@@ -362,6 +362,94 @@ func TestIRMaterialCapabilityVariantsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestCanonicalIRInstancedMaterialParity(t *testing.T) {
+	uniforms := map[string]any{"uTime": 1.5}
+	layout := map[string]any{"uTime": "f32"}
+	sourceFiles := map[string]string{"main": "main.wgsl"}
+	material := CustomMaterial{
+		StandardMaterial: StandardMaterial{
+			Color:        "#ff8800",
+			Texture:      "albedo.png",
+			Roughness:    0.25,
+			Metalness:    0.75,
+			Clearcoat:    0.5,
+			Sheen:        0.3,
+			Transmission: 0.1,
+			Iridescence:  0.2,
+			Anisotropy:   0.4,
+			NormalMap:    "normal.png",
+			RoughnessMap: "roughness.png",
+			MetalnessMap: "metalness.png",
+			OcclusionMap: "occlusion.png",
+			EmissiveMap:  "emissive.png",
+			Emissive:     0.15,
+			Opacity:      Float(0.9),
+			BlendMode:    BlendAlpha,
+			Wireframe:    Bool(true),
+		},
+		ShaderBackend:     "wgsl",
+		ShaderLayout:      layout,
+		ShaderSource:      "fn vs_main() -> void {}",
+		ShaderSourceFiles: sourceFiles,
+		VertexGLSL:        "void main() {}",
+		FragmentGLSL:      "void main() {}",
+		VertexWGSL:        "@vertex fn vs() {}",
+		FragmentWGSL:      "@fragment fn fs() {}",
+		Uniforms:          uniforms,
+	}
+
+	ir := (Props{Graph: NewGraph(
+		Mesh{ID: "mesh", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}, Material: material},
+		InstancedMesh{
+			ID:        "instances",
+			Count:     1,
+			Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+			Material:  material,
+			Positions: []Vector3{Vec3(1, 2, 3)},
+		},
+	)}).CanonicalIR()
+
+	if len(ir.Materials) != 1 {
+		t.Fatalf("equivalent ordinary and instanced materials should deduplicate; got %#v", ir.Materials)
+	}
+	got := ir.Materials[0]
+	if got.Clearcoat != 0.5 || got.Sheen != 0.3 || got.Transmission != 0.1 || got.Iridescence != 0.2 || got.Anisotropy != 0.4 {
+		t.Errorf("physical PBR fields not preserved: %#v", got)
+	}
+	if got.BlendMode != string(BlendAlpha) || got.Wireframe == nil || !*got.Wireframe {
+		t.Errorf("material state not preserved: %#v", got)
+	}
+	if got.CustomVertex != "void main() {}" || got.CustomFragmentWGSL != "@fragment fn fs() {}" || got.ShaderBackend != "wgsl" || got.ShaderSource != "fn vs_main() -> void {}" {
+		t.Errorf("custom shader envelope not preserved: %#v", got)
+	}
+	if !reflect.DeepEqual(got.CustomUniforms, uniforms) || !reflect.DeepEqual(got.ShaderLayout, layout) || !reflect.DeepEqual(got.ShaderSourceFiles, sourceFiles) {
+		t.Errorf("custom shader maps not preserved: %#v", got)
+	}
+}
+
+func TestMaterialFromInstancedIRClonesShaderMaps(t *testing.T) {
+	mesh := InstancedMeshIR{
+		CustomUniforms:    map[string]any{"uTime": 1.5},
+		ShaderLayout:      map[string]any{"uTime": "f32"},
+		ShaderSourceFiles: map[string]string{"main": "main.wgsl"},
+	}
+	material := materialFromInstancedIR(mesh)
+
+	mesh.CustomUniforms["uTime"] = 9.9
+	mesh.ShaderLayout["uTime"] = "vec4f"
+	mesh.ShaderSourceFiles["main"] = "mutated.wgsl"
+
+	if material.CustomUniforms["uTime"] != 1.5 {
+		t.Errorf("CustomUniforms aliased source map: %#v", material.CustomUniforms)
+	}
+	if material.ShaderLayout["uTime"] != "f32" {
+		t.Errorf("ShaderLayout aliased source map: %#v", material.ShaderLayout)
+	}
+	if material.ShaderSourceFiles["main"] != "main.wgsl" {
+		t.Errorf("ShaderSourceFiles aliased source map: %#v", material.ShaderSourceFiles)
+	}
+}
+
 func TestLowerMeshEmitsLeafScaleToObjectIR(t *testing.T) {
 	ir := Props{Graph: NewGraph(Mesh{ID: "scaled", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}, Scale: Vector3{X: 2, Y: 3, Z: 4}})}.SceneIR()
 	if len(ir.Objects) != 1 {

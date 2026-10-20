@@ -95,8 +95,8 @@ func TestPolygonGeometryLowersLikeBufferGeometry(t *testing.T) {
 	if obj.Kind != "gltf-mesh" {
 		t.Fatalf("expected kind gltf-mesh, got %q", obj.Kind)
 	}
-	if obj.Vertices == nil || obj.Vertices.Count != 6 {
-		t.Fatalf("expected 6 expanded (non-indexed) vertices, got %+v", obj.Vertices)
+	if obj.Vertices == nil || obj.Vertices.Count != 4 || len(obj.Vertices.Indices) != 6 {
+		t.Fatalf("expected 4 unique vertices plus 6 authored indices, got %+v", obj.Vertices)
 	}
 }
 

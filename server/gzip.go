@@ -55,14 +55,19 @@ type gzipWriter struct {
 	http.ResponseWriter
 	started     bool
 	headersSent bool
+	passthrough bool
 }
 
 func (w *gzipWriter) WriteHeader(code int) {
 	if w.headersSent {
 		return
 	}
-	// Don't compress if upstream already set encoding (e.g., pre-compressed static files).
+	// Don't compress if upstream already set encoding (e.g., pre-compressed
+	// static files). Record the decision so Write and Flush route bytes past
+	// the gzip.Writer; otherwise the body is re-compressed under the upstream
+	// Content-Encoding header and the client cannot decode it.
 	if w.Header().Get("Content-Encoding") != "" {
+		w.passthrough = true
 		w.headersSent = true
 		w.ResponseWriter.WriteHeader(code)
 		return
@@ -77,6 +82,9 @@ func (w *gzipWriter) WriteHeader(code int) {
 func (w *gzipWriter) Write(b []byte) (int, error) {
 	if !w.headersSent {
 		w.WriteHeader(http.StatusOK)
+	}
+	if w.passthrough {
+		return w.ResponseWriter.Write(b)
 	}
 	w.started = true
 	return w.Writer.Write(b)
@@ -93,7 +101,13 @@ func (w *gzipWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
 
 // Flush supports streaming responses (SSE, chunked transfer).
 func (w *gzipWriter) Flush() {
-	w.Writer.(*gzip.Writer).Flush()
+	if !w.headersSent {
+		w.WriteHeader(http.StatusOK)
+	}
+	if !w.passthrough {
+		w.started = true
+		_ = w.Writer.(*gzip.Writer).Flush()
+	}
 	if f, ok := w.ResponseWriter.(http.Flusher); ok {
 		f.Flush()
 	}

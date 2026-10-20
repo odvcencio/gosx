@@ -1,0 +1,7 @@
+gosx build --prod .
+
+cd dist
+PORT=8080 ./run.sh
+
+# Equivalent direct launch from the bundle root:
+GOSX_APP_ROOT="$PWD" PORT=8080 ./server/app

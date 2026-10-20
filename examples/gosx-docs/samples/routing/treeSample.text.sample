@@ -1,0 +1,11 @@
+app/
+├── layout.gsx
+├── page.gsx
+├── blog/
+│   ├── page.gsx
+│   └── [slug]/
+│       ├── page.gsx
+│       └── page.server.go
+└── docs/
+    └── [...path]/
+        └── page.gsx

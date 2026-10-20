@@ -33,8 +33,9 @@ package server
 // faults look like a server bug, so the claims below point at the browser file
 // that really owns the behaviour.
 //
-//	gosx:claim has client/js/bootstrap-src/20-scene-mount.js `clearChildren\(ctx.mount\);`
-//	gosx:claim has client/js/bootstrap-src/20-scene-mount.js `ctx.mount.style.position = "relative";`
+//	gosx:claim has client/runtime/scene3d/mount.ts `const mount = ctx.mount;`
+//	gosx:claim has client/runtime/scene3d/mount.ts `clearChildren\(mount\);`
+//	gosx:claim has client/runtime/scene3d/mount.ts `mount\.style\.position = "relative";`
 
 import (
 	"fmt"

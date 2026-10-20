@@ -1,6 +1,7 @@
 package vm
 
 import (
+	"encoding/json"
 	"testing"
 
 	"m31labs.dev/gosx/island/program"
@@ -723,6 +724,28 @@ func TestVMOpFilter(t *testing.T) {
 	}
 	if v.List()[0].num != 2 || v.List()[1].num != 4 {
 		t.Fatalf("expected [2, 4], got [%f, %f]", v.List()[0].num, v.List()[1].num)
+	}
+}
+
+func TestVMOpFilterEmptyPreservesListIdentity(t *testing.T) {
+	prog := progFromExprs([]program.Expr{
+		{Op: program.OpPropGet, Value: "items", Type: program.TypeAny},
+		{Op: program.OpLitBool, Value: "false", Type: program.TypeBool},
+		{Op: program.OpFilter, Operands: []program.ExprID{0, 1}, Type: program.TypeAny},
+	})
+	machine := NewVM(prog, map[string]Value{
+		"items": ArrayVal([]Value{StringVal("saved")}),
+	})
+	got := machine.Eval(2)
+	if !got.IsList() || len(got.List()) != 0 {
+		t.Fatalf("filter-empty = %#v, want an empty list", got)
+	}
+	encoded, err := json.Marshal(got.ToAny())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != "[]" {
+		t.Fatalf("filter-empty JSON = %s, want []", encoded)
 	}
 }
 

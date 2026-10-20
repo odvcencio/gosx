@@ -1,11 +1,11 @@
 package bundle
 
 import (
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // This file holds the reader that the *_drift_test.go guards in this package
@@ -21,19 +21,12 @@ import (
 // jsWebGPURendererFile is the browser WebGPU renderer, relative to this package
 // directory. Go runs a test with its package directory as the working
 // directory, so this path is stable.
-var jsWebGPURendererFile = filepath.Join("..", "..", "client", "js", "bootstrap-src", "16a-scene-webgpu.js")
+var jsWebGPURendererFile = scene3drenderersource.BackendLabel("webgpu")
 
 // readJSWebGPURenderer returns the whole browser WebGPU renderer source.
 func readJSWebGPURenderer(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(jsWebGPURendererFile)
-	if err != nil {
-		t.Fatalf("read %s: %v\nThe Go-to-JS shader drift guards in render/bundle need this file. Fix the path; do not skip the guard.", jsWebGPURendererFile, err)
-	}
-	if len(data) == 0 {
-		t.Fatalf("%s is empty; the drift guards cannot compare against nothing", jsWebGPURendererFile)
-	}
-	return string(data)
+	return scene3drenderersource.ReadBackend(t, "webgpu")
 }
 
 // jsWebGLRendererFile is the browser WebGL2 renderer, relative to this package
@@ -41,28 +34,23 @@ func readJSWebGPURenderer(t *testing.T) string {
 // shadow pass decides which face fills the map with a gl.cullFace call rather
 // than with shader text, and the tone-map table guard, because WebGL2 carries
 // two name-to-number tables where WebGPU carries one.
-var jsWebGLRendererFile = filepath.Join("..", "..", "client", "js", "bootstrap-src", "16-scene-webgl.js")
+var jsWebGLRendererFile = scene3drenderersource.BackendLabel("webgl")
 
 // readJSWebGLRenderer returns the whole browser WebGL2 renderer source.
 func readJSWebGLRenderer(t *testing.T) string {
 	t.Helper()
-	data, err := os.ReadFile(jsWebGLRendererFile)
-	if err != nil {
-		t.Fatalf("read %s: %v\nThe Go-to-JS drift guards in render/bundle need this file. Fix the path; do not skip the guard.", jsWebGLRendererFile, err)
-	}
-	if len(data) == 0 {
-		t.Fatalf("%s is empty; the drift guards cannot compare against nothing", jsWebGLRendererFile)
-	}
-	return string(data)
+	return scene3drenderersource.ReadBackend(t, "webgl")
 }
 
 // jsShaderSource resolves one shader constant in the browser WebGPU renderer to
 // the WGSL text the browser compiles.
 //
-// The renderer declares each shader as `var NAME = [ "line", OTHER_NAME, ...
-// ].join("\n")`. This function finds NAME, walks its array, unquotes every
-// string element, and resolves every bare identifier element by recursion. The
-// result is the same string the JS `.join("\n")` produces.
+// The renderer normally declares each shader as `var NAME = [ "line",
+// OTHER_NAME, ... ].join("\n")`. Shared snippets may instead use one compact
+// quoted string or an unescaped template literal. This function
+// resolves these forms to the exact WGSL text the browser compiles. For arrays
+// it walks every element, unquotes string elements, and resolves bare
+// identifier elements by recursion.
 func jsShaderSource(t *testing.T, file, name string) string {
 	t.Helper()
 	return jsShaderSourceAt(t, file, name, 0)
@@ -72,6 +60,9 @@ func jsShaderSourceAt(t *testing.T, file, name string, depth int) string {
 	t.Helper()
 	if depth > 8 {
 		t.Fatalf("shader constant %s in %s nests more than 8 levels; suspect a reference cycle", name, jsWebGPURendererFile)
+	}
+	if source, ok := jsQuotedShaderSource(t, file, name); ok {
+		return source
 	}
 	body := jsArrayBody(t, file, name)
 	parts := make([]string, 0, 256)
@@ -83,6 +74,50 @@ func jsShaderSourceAt(t *testing.T, file, name string, depth int) string {
 		parts = append(parts, elem.text)
 	}
 	return strings.Join(parts, "\n")
+}
+
+// jsQuotedShaderSource resolves quoted strings and plain template literals.
+// It returns false for other declarations so the array reader can try
+// the normal representation.
+func jsQuotedShaderSource(t *testing.T, file, name string) (string, bool) {
+	t.Helper()
+	for _, keyword := range []string{"var ", "const ", "let "} {
+		needle := keyword + name + " = "
+		idx := strings.Index(file, needle)
+		if idx < 0 {
+			continue
+		}
+		start := idx + len(needle)
+		if start >= len(file) || (file[start] != '"' && file[start] != '`') {
+			return "", false
+		}
+		quote := file[start]
+		for i := start + 1; i < len(file); i++ {
+			if file[i] == '\\' {
+				if quote == '`' {
+					t.Fatalf("template shader constant %s contains escapes; extend this reader", name)
+				}
+				i++
+				continue
+			}
+			if quote == '`' && strings.HasPrefix(file[i:], "${") {
+				t.Fatalf("template shader constant %s contains interpolation; extend this reader", name)
+			}
+			if file[i] != quote {
+				continue
+			}
+			if quote == '`' {
+				return file[start+1 : i], true
+			}
+			value, err := strconv.Unquote(file[start : i+1])
+			if err != nil {
+				t.Fatalf("decode quoted shader constant %s in %s: %v", name, jsWebGPURendererFile, err)
+			}
+			return value, true
+		}
+		t.Fatalf("quoted shader constant %s in %s has no closing quote", name, jsWebGPURendererFile)
+	}
+	return "", false
 }
 
 // jsArrayBody returns the text between the brackets of `var NAME = [ ... ]`.

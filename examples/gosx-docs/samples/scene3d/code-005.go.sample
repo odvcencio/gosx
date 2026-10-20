@@ -1,0 +1,11 @@
+props.RequiredCapabilities = scene.RequireWebGPU(
+	    engine.CapWebGPUTimestampQuery,
+	    engine.CapWebGPUShaderF16,
+	    engine.WebGPULimit("maxTextureDimension2D", 4096),
+	    engine.WebGPUAdapterLimit("maxTextureDimension2D", 8192),
+	)
+
+	props.WebGPUAlphaMode = "opaque"
+	props.WebGPUColorSpace = "display-p3"
+	props.WebGPUToneMapping = "extended"
+	props.WebGPUPowerPreference = "high-performance"

@@ -263,6 +263,7 @@
     setFeedback("Publishing…", "");
 
     var body = new URLSearchParams(new FormData(form));
+    var submittedSnapshot = serializeDraft();
     fetch(form.action, {
       method: (form.method || "POST").toUpperCase(),
       headers: {
@@ -287,7 +288,7 @@
         submitting = false;
         setButtonBusy(false);
         if (payload.ok && payload.result.ok) {
-          handleSuccess(payload.result);
+          handleSuccess(payload.result, submittedSnapshot);
         } else {
           handleFailure(payload.result, payload.status);
         }
@@ -303,7 +304,7 @@
     if (publishBtn) publishBtn.disabled = busy;
   }
 
-  function handleSuccess(result) {
+  function handleSuccess(result, submittedSnapshot) {
     var data = result.data || {};
     var count = typeof data.count === "number" ? data.count : blockList.querySelectorAll("[data-block-kind]").length;
     var at = data.at || "";
@@ -326,7 +327,9 @@
     pulse(publishBtn, "cms-btn--pulse");
     swapLabel("Published ✓");
 
-    baselineSnapshot = serializeDraft();
+    // The visitor may keep editing while the publish request is in flight.
+    // Only the submitted draft was saved, not the current contents of the form.
+    baselineSnapshot = submittedSnapshot;
     updateUnsavedState();
     setFeedback(result.message || "Published successfully.", "success");
     announce(result.message || "Published successfully.");

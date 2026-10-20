@@ -376,6 +376,10 @@ func (g *gameSession) runCPU(sourceRevision, generation uint64) {
 
 func init() {
 	Hub = hub.New("checkers")
+	Hub.MaxClients = 24
+	Hub.RequireOrigin = true
+	Hub.MaxMessagesPerSecond = 20
+	Hub.MaxMessageBurst = 40
 	Hub.On("join", func(ctx *hub.Context) { ctx.Hub.Send(ctx.Client.ID, stateEvent, liveGame.snapshot()) })
 	Hub.On("checkers:source", func(ctx *hub.Context) {
 		if h, ok := decodeHole(ctx.Data); ok {
@@ -399,6 +403,7 @@ func init() {
 		}
 	})
 	docsapp.RegisterStaticDocsPage("Chinese Checkers", "A playable Hub-backed Chinese Checkers match with pure-Go authoritative rules.", route.FileModuleOptions{Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+		docsapp.AddScenePosterPreload(ctx, "/demos/posters/checkers.webp")
 		ctx.Runtime().BindHub("checkers", "/demos/checkers/ws", []hydrate.HubBinding{})
 		snapshot := liveGame.snapshot()
 		material := validatedMaterial(ctx.Query("material"))

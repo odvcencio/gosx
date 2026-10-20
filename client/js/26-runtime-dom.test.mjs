@@ -7,10 +7,10 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "26-runtime-dom.js"),
-  "utf8"
-);
+const moduleSrc = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "dom.ts"), "utf8"),
+].join("\n");
 
 test("runtime DOM replacement owns dispose, swap, and enhancement ordering", () => {
   const calls = [];

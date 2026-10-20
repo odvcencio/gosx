@@ -1,0 +1,24 @@
+rt := game.New(game.Config{
+	    Profile: game.Web3DProfile(),
+	    Assets:  assets,
+	    Scene: func(ctx *game.Context) scene.Props {
+	        return ProductScene(ctx.Assets)
+	    },
+	})
+
+	Load := func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    ctx.Runtime().BindHub("inventory", "/ws/inventory", nil)
+	    ctx.Runtime().ComputeIsland(island.ComputeIslandConfig{
+	        Name:         "ProductSceneController",
+	        Props:        map[string]any{"assetManifest": rt.Assets().Manifest()},
+	        Capabilities: []engine.Capability{engine.CapFetch, engine.CapStorage},
+	    })
+	    sceneProps, ok := rt.BuildScene()
+	    if !ok {
+	        return nil, fmt.Errorf("scene runtime did not produce props")
+	    }
+	    return map[string]any{
+	        "scene":  sceneProps,
+	        "assets": rt.Assets().Manifest(),
+	    }, nil
+	}

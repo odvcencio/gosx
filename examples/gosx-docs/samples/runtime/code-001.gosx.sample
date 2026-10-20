@@ -1,0 +1,3 @@
+<a href="/docs/routing">Routing</a>
+	<form method="get" action="/docs"><input name="q" /></form>
+	<a href="/download" data-gosx-native>Use native navigation</a>

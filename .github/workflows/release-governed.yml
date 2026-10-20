@@ -1,0 +1,589 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Stable vMAJOR.MINOR.PATCH tag to create or rerun"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+env:
+  RELEASE_TAG: ${{ inputs.tag }}
+  RELEASE_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+
+# The workflow file and release policy scripts are always evaluated from the
+# repository default branch. The release source is checked out separately under
+# source/ so historical tag reruns do not depend on policy files existing in the
+# historical tree.
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.prepare.outputs.mode }}
+      source_ref: ${{ steps.prepare.outputs.source_ref }}
+      commit: ${{ steps.prepare.outputs.commit }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - name: Require default-branch workflow dispatch
+        run: |
+          set -euo pipefail
+          sh scripts/check-release-workflow-ref.sh \
+            --workflow-ref-type "${GITHUB_REF_TYPE}" \
+            --workflow-ref-name "${GITHUB_REF_NAME}" \
+            --workflow-ref "${GITHUB_REF}" \
+            --default-branch "${RELEASE_DEFAULT_BRANCH}"
+
+      - name: Prepare release source ref
+        id: prepare
+        run: |
+          set -euo pipefail
+          sh scripts/prepare-release-tag.sh \
+            --tag "${RELEASE_TAG}" \
+            --default-branch "${RELEASE_DEFAULT_BRANCH}" \
+            --github-output "${GITHUB_OUTPUT}"
+
+  validate:
+    needs: prepare
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Validate release source truth and vanity module path
+        run: |
+          set -euo pipefail
+          sh scripts/check-release-tag-grammar.sh "${RELEASE_TAG}"
+          sh scripts/check-release-source-truth.sh --root source --tag "${RELEASE_TAG}"
+          cd source
+          GITHUB_REF_TYPE=tag \
+            GITHUB_REF_NAME="${RELEASE_TAG}" \
+            GITHUB_REF="refs/tags/${RELEASE_TAG}" \
+            go run ./cmd/gosx release check --root .
+          test "$(go list -m)" = "m31labs.dev/gosx"
+          curl --fail --silent --show-error 'https://m31labs.dev/gosx?go-get=1' \
+            | grep -F 'm31labs.dev/gosx git https://github.com/odvcencio/gosx'
+
+  test-unit:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      # Keep release verification aligned with the CI package partition.
+      # A release also requires a docs performance receipt measured with the
+      # current inputs (pull requests skip that check; decision 0014).
+      - name: Partition validation and unit tests
+        working-directory: source
+        env:
+          GOSX_REQUIRE_FRESH_RECEIPT: "1"
+        run: |
+          set -euo pipefail
+          make test-ci-partitions
+          make test-unit
+
+  test-cli:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Install TinyGo
+        env:
+          TINYGO_VERSION: 0.41.1
+          TINYGO_GO_VERSION: 1.25.5
+          TINYGO_SHA256: 901fbccffc61adb111656d1f907dfc21b6c499ca841b115866a0d6de2d835fbe
+          TINYGO_GO_SHA256: 9e9b755d63b36acf30c12a9a3fc379243714c1c6d3dd72861da637f336ebb35b
+        run: |
+          set -euo pipefail
+          work_dir="$(mktemp -d)"
+          trap 'rm -rf -- "${work_dir}"' EXIT
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${work_dir}/tinygo.deb" \
+            "https://github.com/tinygo-org/tinygo/releases/download/v${TINYGO_VERSION}/tinygo_${TINYGO_VERSION}_amd64.deb"
+          printf '%s  %s\n' "${TINYGO_SHA256}" "${work_dir}/tinygo.deb" | sha256sum --check --status
+          sudo dpkg -i "${work_dir}/tinygo.deb"
+          compat_root="${HOME}/sdk/go${TINYGO_GO_VERSION}"
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${work_dir}/go.tar.gz" \
+            "https://dl.google.com/go/go${TINYGO_GO_VERSION}.linux-amd64.tar.gz"
+          printf '%s  %s\n' "${TINYGO_GO_SHA256}" "${work_dir}/go.tar.gz" | sha256sum --check --status
+          mkdir -p "${HOME}/sdk"
+          tar -C "${work_dir}" -xzf "${work_dir}/go.tar.gz"
+          mv "${work_dir}/go" "${compat_root}"
+          GOTOOLCHAIN=local "${compat_root}/bin/go" version
+          printf 'GOSX_TINYGO_GOROOT=%s\n' "${compat_root}" >>"${GITHUB_ENV}"
+          tinygo version
+
+      # Run the same exhaustive CLI partitions as CI. Each shard retains
+      # real TinyGo production builds and the 25-minute package timeout;
+      # publish requires every shard, even if another shard fails.
+      - name: CLI partition verification and production-build tests
+        working-directory: source
+        run: |
+          set -euo pipefail
+          make test-ci-partitions
+          make test-cli CLI_SHARD=${{ matrix.shard }}
+          CGO_ENABLED=0 go build ./cmd/gosx
+
+  # build-runtime-release builds this release's prebuilt runtime WASM
+  # variants with a real TinyGo toolchain and publishes them, plus a hashed
+  # integrity manifest, as release assets. cmd/gosx (cmd/gosx/runtime_
+  # prebuilt.go) fetches and verifies these for a consumer with no TinyGo
+  # installed — see docs/deployment or README's "Prebuilt runtime" section.
+  build-runtime-release:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Install TinyGo
+        working-directory: source
+        env:
+          TINYGO_VERSION: 0.41.1
+          TINYGO_GO_VERSION: 1.25.5
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Build runtime WASM variants
+        working-directory: source
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/runtime-dist"
+          go run ./cmd/gosx build-runtime "${RUNNER_TEMP}/runtime-dist"
+
+      - name: Generate runtime release manifest
+        working-directory: source
+        run: |
+          set -euo pipefail
+          python3 scripts/build-runtime-release-manifest.py \
+            "${RUNNER_TEMP}/runtime-dist" \
+            "${RUNNER_TEMP}/runtime-dist/gosx-runtime-artifacts.json"
+
+      - name: Stage runtime release assets
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/runtime-dist-release"
+          cd "${RUNNER_TEMP}/runtime-dist"
+          cp gosx-runtime-core.wasm gosx-runtime-engine.wasm gosx-runtime-collab.wasm \
+            gosx-runtime.wasm gosx-runtime-islands.wasm gosx-runtime-artifacts.json \
+            "${RUNNER_TEMP}/runtime-dist-release/"
+          cp wasm_exec.js "${RUNNER_TEMP}/runtime-dist-release/gosx-runtime-wasm_exec.js"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-runtime
+          retention-days: 7
+          path: ${{ runner.temp }}/runtime-dist-release/
+
+  vet:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      # Generated Danmuji test cases run under go test; vet production files only.
+      - name: Vet production files
+        working-directory: source
+        run: |
+          set -euo pipefail
+          while IFS= read -r pkg; do
+            dir="$(GOFLAGS=-buildvcs=false go list -f '{{.Dir}}' "${pkg}")"
+            files="$(GOFLAGS=-buildvcs=false go list -f '{{range .GoFiles}}{{.}}{{"\n"}}{{end}}' "${pkg}")"
+            if [[ -n "${files}" ]]; then
+              (cd "${dir}" && printf '%s\n' "${files}" | xargs env GOFLAGS=-buildvcs=false go vet)
+            fi
+          done < <(GOFLAGS=-buildvcs=false go list ./...)
+
+  build:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      GOSX_ARTIFACT_SIGNING_ENDPOINT: ${{ secrets.GOSX_ARTIFACT_SIGNING_ENDPOINT || vars.GOSX_ARTIFACT_SIGNING_ENDPOINT }}
+      GOSX_ARTIFACT_SIGNING_ACCOUNT: ${{ secrets.GOSX_ARTIFACT_SIGNING_ACCOUNT || vars.GOSX_ARTIFACT_SIGNING_ACCOUNT }}
+      GOSX_ARTIFACT_SIGNING_PROFILE: ${{ secrets.GOSX_ARTIFACT_SIGNING_PROFILE || vars.GOSX_ARTIFACT_SIGNING_PROFILE }}
+      AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+      AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+      AZURE_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+    strategy:
+      fail-fast: false
+      matrix:
+        goos: [linux, darwin, windows]
+        goarch: [amd64, arm64]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+
+      - name: Build gosx
+        working-directory: source
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          ext=""
+          if [[ "${GOOS}" = "windows" ]]; then ext=".exe"; fi
+          mkdir -p release-artifacts
+          CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" \
+            -o "release-artifacts/gosx-${GOOS}-${GOARCH}${ext}" ./cmd/gosx
+
+      - name: Sign in to Azure for Artifact Signing
+        if: >-
+          matrix.goos == 'windows' &&
+          env.GOSX_ARTIFACT_SIGNING_ENDPOINT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_ACCOUNT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_PROFILE != '' &&
+          env.AZURE_CLIENT_ID != '' &&
+          env.AZURE_TENANT_ID != '' &&
+          env.AZURE_SUBSCRIPTION_ID != ''
+        uses: azure/login@v3
+        env:
+          AZURE_CORE_OUTPUT: none
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Provision jsign and Authenticode verification
+        if: >-
+          matrix.goos == 'windows' &&
+          env.GOSX_ARTIFACT_SIGNING_ENDPOINT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_ACCOUNT != '' &&
+          env.GOSX_ARTIFACT_SIGNING_PROFILE != ''
+        env:
+          JSIGN_VERSION: '7.5'
+          # SHA-256 computed from jsign-7.5.jar at this release:
+          # https://github.com/ebourg/jsign/releases/tag/7.5
+          JSIGN_SHA256: 602a51c3545a6dc4fb99bd2ea7152b26d1345916d0c93ddfbd5936cb735af91c
+        run: |
+          set -euo pipefail
+          # Java is preinstalled on ubuntu-latest:
+          # https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md#java
+          java -version
+          jsign_dir="${RUNNER_TEMP}/gosx-jsign"
+          mkdir -p "${jsign_dir}"
+          curl --fail --location --silent --show-error \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            --output "${jsign_dir}/jsign.jar" \
+            "https://github.com/ebourg/jsign/releases/download/${JSIGN_VERSION}/jsign-${JSIGN_VERSION}.jar"
+          printf '%s  %s\n' "${JSIGN_SHA256}" "${jsign_dir}/jsign.jar" | sha256sum --check --status
+          cat >"${jsign_dir}/jsign" <<'JSIGN'
+          #!/usr/bin/env bash
+          exec java -jar "$(dirname "$0")/jsign.jar" "$@"
+          JSIGN
+          chmod +x "${jsign_dir}/jsign"
+          printf '%s\n' "${jsign_dir}" >>"${GITHUB_PATH}"
+          "${jsign_dir}/jsign" --help
+          # Jsign 7.5 signs but has no verify command; GoSX prefers osslsigncode.
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends osslsigncode ca-certificates
+
+      - name: Package and verify Windows artifacts with Azure Artifact Signing
+        if: matrix.goos == 'windows'
+        working-directory: source
+        env:
+          GOWORK: 'off'
+          GOFLAGS: -p=1
+          GOSX_ARTIFACT_SIGNING_TOOL: jsign
+        run: |
+          set -euo pipefail
+          configured=false
+          if [[ -n "${GOSX_ARTIFACT_SIGNING_ENDPOINT:-}" && -n "${GOSX_ARTIFACT_SIGNING_ACCOUNT:-}" && -n "${GOSX_ARTIFACT_SIGNING_PROFILE:-}" ]]; then
+            configured=true
+          fi
+          # Historical tags predate this script and the signing CLI. Keep
+          # their unsigned rerun path; refuse to publish them unsigned when
+          # signing is configured, so a rerun cannot silently drop signatures.
+          if [[ ! -f scripts/sign-desktop-release.sh ]]; then
+            if [[ "${configured}" == true ]]; then
+              echo "::error::This release source predates Azure Artifact Signing; rebuild from a revision that includes scripts/sign-desktop-release.sh, or clear the signing variables for an unsigned rerun."
+              exit 1
+            fi
+            echo "Azure Artifact Signing skipped: release source predates it and signing is not configured."
+            exit 0
+          fi
+          bash scripts/sign-desktop-release.sh "release-artifacts/gosx-windows-${{ matrix.goarch }}.exe" "${RELEASE_TAG#v}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-${{ matrix.goos }}-${{ matrix.goarch }}
+          retention-days: 7
+          path: source/release-artifacts/
+
+  browser-runtime:
+    needs: [prepare, validate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+          cache: true
+
+      - name: Install pinned TinyGo toolchain
+        run: scripts/install-ci-tinygo.sh
+
+      - name: Build and package browser runtime
+        run: |
+          set -euo pipefail
+          runtime_dir="${RUNNER_TEMP}/gosx-browser-runtime"
+          mkdir -p runtime-release-artifacts
+          (cd source && go run ./cmd/gosx build-runtime "${runtime_dir}")
+          python3 scripts/package-browser-runtime.py pack \
+            --source source \
+            --wasm-dir "${runtime_dir}" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.prepare.outputs.commit }}" \
+            --output "runtime-release-artifacts/gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gosx-browser-runtime-${{ inputs.tag }}
+          retention-days: 7
+          path: runtime-release-artifacts/
+
+  publish:
+    needs: [prepare, validate, test-unit, test-cli, vet, build, browser-runtime, build-runtime-release]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: governed-release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.event.repository.default_branch }}
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          path: source
+          persist-credentials: false
+          ref: ${{ needs.prepare.outputs.source_ref }}
+
+      - name: Ensure release tag exists
+        env:
+          GOSX_RELEASE_TAG_DEPLOY_KEY: ${{ secrets.GOSX_RELEASE_TAG_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${GOSX_RELEASE_TAG_DEPLOY_KEY}" ]]; then
+            echo "release tag deploy key secret is empty" >&2
+            exit 1
+          fi
+          if [[ -z "${RUNNER_TEMP:-}" ]]; then
+            echo "RUNNER_TEMP is required for release SSH material" >&2
+            exit 1
+          fi
+          if [[ -z "${GITHUB_REPOSITORY:-}" ]]; then
+            echo "GITHUB_REPOSITORY is required for release SSH remote" >&2
+            exit 1
+          fi
+          release_ssh_dir="$(mktemp -d "${RUNNER_TEMP}/gosx-release-ssh.XXXXXX")"
+          key_file="${release_ssh_dir}/deploy_key"
+          known_hosts_file="${release_ssh_dir}/known_hosts"
+          cleanup_release_ssh() {
+            git -C source remote remove release-origin >/dev/null 2>&1 || true
+            if [[ -f "${key_file}" ]]; then
+              chmod 600 "${key_file}" >/dev/null 2>&1 || true
+              shred -u "${key_file}" >/dev/null 2>&1 || rm -f "${key_file}"
+            fi
+            rm -f "${known_hosts_file}"
+            rmdir "${release_ssh_dir}" >/dev/null 2>&1 || rm -rf "${release_ssh_dir}"
+          }
+          trap cleanup_release_ssh EXIT
+          chmod 700 "${release_ssh_dir}"
+          umask 077
+          printf '%s\n' "${GOSX_RELEASE_TAG_DEPLOY_KEY}" >"${key_file}"
+          chmod 600 "${key_file}"
+          test -s "${key_file}"
+          curl --fail --silent --show-error --location https://api.github.com/meta \
+            | python3 -c 'import json, sys; data=json.load(sys.stdin); keys=[k.strip() for k in (data.get("ssh_keys") or []) if k.strip()]; sys.exit("github meta response did not include ssh_keys") if not keys else None; print("\n".join("github.com " + key for key in keys))' >"${known_hosts_file}"
+          test -s "${known_hosts_file}"
+          chmod 600 "${known_hosts_file}"
+          git -C source remote add release-origin "git@github.com:${GITHUB_REPOSITORY}.git"
+          git -C source config user.name "github-actions[bot]"
+          git -C source config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          GIT_SSH_COMMAND="ssh -i ${key_file} -o IdentitiesOnly=yes -o UserKnownHostsFile=${known_hosts_file} -o StrictHostKeyChecking=yes" \
+            sh scripts/prepare-release-tag.sh \
+            --root source \
+            --remote release-origin \
+            --tag "${RELEASE_TAG}" \
+            --default-branch "${RELEASE_DEFAULT_BRANCH}" \
+            --expected-commit "${{ needs.prepare.outputs.commit }}" \
+            --create
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: |
+          set -euo pipefail
+          cd artifacts
+          expected=(
+            gosx-linux-amd64
+            gosx-linux-arm64
+            gosx-darwin-amd64
+            gosx-darwin-arm64
+            gosx-windows-amd64.exe
+            gosx-windows-arm64.exe
+            "gosx-browser-runtime-${RELEASE_TAG}.tar.gz"
+            gosx-runtime-core.wasm
+            gosx-runtime-engine.wasm
+            gosx-runtime-collab.wasm
+            gosx-runtime.wasm
+            gosx-runtime-islands.wasm
+            gosx-runtime-wasm_exec.js
+            gosx-runtime-artifacts.json
+          )
+          python3 ../scripts/package-browser-runtime.py verify \
+            --archive "gosx-browser-runtime-${RELEASE_TAG}.tar.gz" \
+            --tag "${RELEASE_TAG}" \
+            --commit "${{ needs.prepare.outputs.commit }}"
+          for artifact in "${expected[@]}"; do
+            test -f "${artifact}"
+          done
+          test "$(find . -maxdepth 1 -type f -name 'gosx-*' | wc -l)" -eq "${#expected[@]}"
+          sha256sum "${expected[@]}" > checksums.txt
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          files: |
+            artifacts/gosx-linux-amd64
+            artifacts/gosx-linux-arm64
+            artifacts/gosx-darwin-amd64
+            artifacts/gosx-darwin-arm64
+            artifacts/gosx-windows-amd64.exe
+            artifacts/gosx-windows-arm64.exe
+            artifacts/gosx-browser-runtime-${{ env.RELEASE_TAG }}.tar.gz
+            artifacts/gosx-runtime-core.wasm
+            artifacts/gosx-runtime-engine.wasm
+            artifacts/gosx-runtime-collab.wasm
+            artifacts/gosx-runtime.wasm
+            artifacts/gosx-runtime-islands.wasm
+            artifacts/gosx-runtime-wasm_exec.js
+            artifacts/gosx-runtime-artifacts.json
+            artifacts/checksums.txt
+          generate_release_notes: true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: source/go.mod
+
+      - name: Verify vanity-path install
+        env:
+          GOPROXY: direct
+          GONOSUMDB: m31labs.dev
+        run: |
+          set -euo pipefail
+          for _attempt in 1 2 3 4 5; do
+            if go install "m31labs.dev/gosx/cmd/gosx@${RELEASE_TAG}"; then
+              gosx version
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1

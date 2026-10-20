@@ -88,6 +88,15 @@ func (vm *VM) LookupHost(name string) (HostReceiver, bool) {
 	return recv, ok
 }
 
+// ClearHosts releases every host receiver reference held by the VM. Bridge
+// disposal invokes receiver-specific cleanup before this table is cleared;
+// direct Island users still get retention-safe teardown through Island.Dispose.
+func (vm *VM) ClearHosts() {
+	vm.hostsMu.Lock()
+	clear(vm.hosts)
+	vm.hostsMu.Unlock()
+}
+
 // evalHostCallExpr dispatches OpHostCall into the bound host receiver.
 // The Value carries "<receiver>.<MethodName>"; we split on the first
 // dot to recover the binding key and the method name. Args are

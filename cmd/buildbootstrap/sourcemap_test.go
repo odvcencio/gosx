@@ -204,6 +204,45 @@ func TestCompactedBundleMapPointsAtTheRightSourceLines(t *testing.T) {
 	}
 }
 
+// TestCompactedBundleMapAccountsForTypeErasureLineShift proves the compacted
+// map still names the correct original .ts line after buildCompactedBundle
+// erases a multi-line type declaration, which shifts every line below it. A
+// map built from pre-erasure line numbers would still claim the interface's
+// own line for the code that follows it.
+func TestCompactedBundleMapAccountsForTypeErasureLineShift(t *testing.T) {
+	f := newFixture(t)
+	rel := f.writeSource("10-typed.ts", "interface Foo {\n  a: number;\n  b: number;\n}\nglobalThis.__gosx_typed_marker = 1;\n")
+
+	built, err := buildCompactedBundle(f.dir, chunk("typed.js", rel))
+	if err != nil {
+		t.Fatalf("buildCompactedBundle: %v", err)
+	}
+	if strings.Contains(built.code, "interface") {
+		t.Fatalf("the compacted bundle kept TypeScript-only syntax: %q", built.code)
+	}
+
+	var parsed struct {
+		SourcesContent []string `json:"sourcesContent"`
+		Mappings       string   `json:"mappings"`
+	}
+	if err := json.Unmarshal([]byte(built.m), &parsed); err != nil {
+		t.Fatalf("the compacted map is not valid JSON: %v", err)
+	}
+	if !strings.Contains(parsed.SourcesContent[0], "interface Foo") {
+		t.Fatalf("sourcesContent lost the original TypeScript source: %v", parsed.SourcesContent)
+	}
+
+	// The interface occupies original lines 0-3 (zero based); the erased
+	// bundle's sole surviving statement was originally line 4.
+	got := decodeVLQMappings(t, parsed.Mappings)
+	if len(got) != 1 || got[0] == nil {
+		t.Fatalf("map holds %v, want exactly one generated line naming a source position", got)
+	}
+	if got[0].originalLine != 4 {
+		t.Errorf("generated line maps to original line %d, want 4 (erasing the interface must not leave a stale line number)", got[0].originalLine)
+	}
+}
+
 // TestJSQuoteMatchesJSONStringify pins the quoter against the JavaScript
 // semantics the bundles need. encoding/json cannot do this job: it escapes
 // U+2028 and U+2029, and it writes \b and \f as \u escapes. Either difference

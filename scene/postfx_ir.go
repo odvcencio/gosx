@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -30,14 +31,18 @@ type PostEffectIR interface {
 // runtime reads the same strings (SCENE_POST_* in 10-runtime-scene-core.js), so
 // treat them as a wire contract and do not rename one without the runtime.
 const (
-	PostEffectKindTonemap    = "toneMapping"
-	PostEffectKindBloom      = "bloom"
-	PostEffectKindVignette   = "vignette"
-	PostEffectKindColorGrade = "colorGrade"
-	PostEffectKindSSAO       = "ssao"
-	PostEffectKindDOF        = "dof"
-	PostEffectKindFXAA       = "fxaa"
-	PostEffectKindCustomPost = "customPost"
+	PostEffectKindTonemap        = "toneMapping"
+	PostEffectKindBloom          = "bloom"
+	PostEffectKindVignette       = "vignette"
+	PostEffectKindColorGrade     = "colorGrade"
+	PostEffectKindSSAO           = "ssao"
+	PostEffectKindContactShadows = "contactShadows"
+	PostEffectKindDOF            = "dof"
+	PostEffectKindFXAA           = "fxaa"
+	PostEffectKindTAA            = "taa"
+	PostEffectKindCustomPost     = "customPost"
+	PostEffectKindGodRays        = "godRays"
+	PostEffectKindGrain          = "grain"
 )
 
 // ErrUnknownPostEffectKind reports a postEffects entry whose "kind" field no
@@ -50,14 +55,18 @@ var ErrUnknownPostEffectKind = errors.New("scene: unknown post effect kind")
 // one entry per concrete PostEffectIR type; TestPostEffectIRRoundTripCoversEveryType
 // fails when a type has no entry.
 var postEffectIRDecoders = map[string]func([]byte) (PostEffectIR, error){
-	PostEffectKindTonemap:    decodePostEffectIRAs[TonemapIR],
-	PostEffectKindBloom:      decodePostEffectIRAs[BloomIR],
-	PostEffectKindVignette:   decodePostEffectIRAs[VignetteIR],
-	PostEffectKindColorGrade: decodePostEffectIRAs[ColorGradeIR],
-	PostEffectKindSSAO:       decodePostEffectIRAs[SSAOIR],
-	PostEffectKindDOF:        decodePostEffectIRAs[DOFIR],
-	PostEffectKindFXAA:       decodePostEffectIRAs[FXAAIR],
-	PostEffectKindCustomPost: decodePostEffectIRAs[CustomPostIR],
+	PostEffectKindTonemap:        decodePostEffectIRAs[TonemapIR],
+	PostEffectKindBloom:          decodePostEffectIRAs[BloomIR],
+	PostEffectKindVignette:       decodePostEffectIRAs[VignetteIR],
+	PostEffectKindColorGrade:     decodePostEffectIRAs[ColorGradeIR],
+	PostEffectKindSSAO:           decodePostEffectIRAs[SSAOIR],
+	PostEffectKindContactShadows: decodePostEffectIRAs[ContactShadowsIR],
+	PostEffectKindDOF:            decodePostEffectIRAs[DOFIR],
+	PostEffectKindFXAA:           decodePostEffectIRAs[FXAAIR],
+	PostEffectKindTAA:            decodePostEffectIRAs[TAAIR],
+	PostEffectKindCustomPost:     decodePostEffectIRAs[CustomPostIR],
+	PostEffectKindGodRays:        decodePostEffectIRAs[GodRaysIR],
+	PostEffectKindGrain:          decodePostEffectIRAs[GrainIR],
 }
 
 // decodePostEffectIRAs decodes one entry into the concrete IR type T. The
@@ -122,7 +131,7 @@ func decodePostEffectIRList(raw []json.RawMessage) ([]PostEffectIR, error) {
 //
 //	{kind: "toneMapping", exposure: 1.0}
 type TonemapIR struct {
-	Mode     string  // "aces" | "reinhard" | "filmic"
+	Mode     string  // "aces" | "reinhard" | "filmic" | "agx"
 	Exposure float64 // multiplier applied before the curve
 }
 
@@ -167,10 +176,26 @@ func (ir TonemapIR) MarshalJSON() ([]byte, error) {
 // u_intensity. We translate at the IR boundary so the public Go API can use
 // the more intuitive name without renaming the shader.
 type BloomIR struct {
+	Source    string // emitted only when "specular"
+	Mode      string // emitted only when "mip"
 	Threshold float64
 	Strength  float64
 	Radius    float64
 	Scale     float64 // emitted only when in (0, 1]
+}
+
+func bloomSource(source BloomSource) string {
+	if source == BloomSourceSpecular {
+		return string(source)
+	}
+	return ""
+}
+
+func bloomMode(mode string) string {
+	if mode == "mip" {
+		return mode
+	}
+	return ""
 }
 
 func (ir BloomIR) legacyProps() map[string]any {
@@ -194,6 +219,12 @@ func (ir BloomIR) legacyProps() map[string]any {
 	}
 	if ir.Scale > 0 && ir.Scale <= 1 {
 		out["scale"] = ir.Scale
+	}
+	if ir.Mode == "mip" {
+		out["mode"] = ir.Mode
+	}
+	if ir.Source == "specular" {
+		out["source"] = ir.Source
 	}
 	return out
 }
@@ -225,6 +256,12 @@ func (ir BloomIR) MarshalJSON() ([]byte, error) {
 		b.WriteString(`,"scale":`)
 		b.WriteString(strconv.FormatFloat(ir.Scale, 'f', -1, 64))
 	}
+	if ir.Mode == "mip" {
+		b.WriteString(`,"mode":"mip"`)
+	}
+	if ir.Source == "specular" {
+		b.WriteString(`,"source":"specular"`)
+	}
 	b.WriteByte('}')
 	return []byte(b.String()), nil
 }
@@ -240,6 +277,8 @@ func (ir BloomIR) MarshalJSON() ([]byte, error) {
 // second marshal reproduces the first one byte for byte.
 func (ir *BloomIR) UnmarshalJSON(data []byte) error {
 	var wire struct {
+		Source    string  `json:"source"`
+		Mode      string  `json:"mode"`
 		Threshold float64 `json:"threshold"`
 		Intensity float64 `json:"intensity"`
 		Radius    float64 `json:"radius"`
@@ -247,6 +286,11 @@ func (ir *BloomIR) UnmarshalJSON(data []byte) error {
 	}
 	if err := json.Unmarshal(data, &wire); err != nil {
 		return err
+	}
+	ir.Source = bloomSource(BloomSource(wire.Source))
+	ir.Mode = ""
+	if wire.Mode == "mip" {
+		ir.Mode = wire.Mode
 	}
 	ir.Threshold = wire.Threshold
 	ir.Strength = wire.Intensity
@@ -390,6 +434,24 @@ func (ir SSAOIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// ContactShadowsIR lowers the opt-in contact shadow pass.
+type ContactShadowsIR struct {
+	Distance  float64  `json:"distance"`
+	Thickness float64  `json:"thickness"`
+	Bias      float64  `json:"bias"`
+	Intensity float64  `json:"intensity"`
+	Direction *Vector3 `json:"direction,omitempty"`
+}
+
+func (ir ContactShadowsIR) legacyProps() map[string]any {
+	out := map[string]any{"kind": PostEffectKindContactShadows, "distance": ir.Distance, "thickness": ir.Thickness, "bias": ir.Bias, "intensity": ir.Intensity}
+	if ir.Direction != nil {
+		out["direction"] = ir.Direction
+	}
+	return out
+}
+func (ir ContactShadowsIR) MarshalJSON() ([]byte, error) { return json.Marshal(ir.legacyProps()) }
+
 // DOFIR lowers DOF.
 type DOFIR struct {
 	FocusDistance float64
@@ -444,6 +506,18 @@ func (ir DOFIR) MarshalJSON() ([]byte, error) {
 	return []byte(b.String()), nil
 }
 
+// TAAIR lowers the opt-in temporal resolve.
+type TAAIR struct {
+	HistoryWeight  float64 `json:"historyWeight"`
+	ClampGamma     float64 `json:"clampGamma"`
+	DepthThreshold float64 `json:"depthThreshold"`
+}
+
+func (ir TAAIR) legacyProps() map[string]any {
+	return map[string]any{"kind": PostEffectKindTAA, "historyWeight": ir.HistoryWeight, "clampGamma": ir.ClampGamma, "depthThreshold": ir.DepthThreshold}
+}
+func (ir TAAIR) MarshalJSON() ([]byte, error) { return json.Marshal(ir.legacyProps()) }
+
 // FXAAIR lowers FXAA into the bundle.postEffects[i] shape:
 //
 //	{kind: "fxaa"}
@@ -492,9 +566,17 @@ type DOMRegionUniformsIR struct {
 
 // CustomPostDOMRegionsIR is the browser CustomPost DOM-region tracker config.
 type CustomPostDOMRegionsIR struct {
-	Selector string              `json:"selector"`
-	Max      int                 `json:"max,omitempty"`
-	Uniforms DOMRegionUniformsIR `json:"uniforms,omitempty"`
+	Selector string                       `json:"selector"`
+	Max      int                          `json:"max,omitempty"`
+	Uniforms DOMRegionUniformsIR          `json:"uniforms,omitempty"`
+	Bounds   *CustomPostDOMRegionBoundsIR `json:"bounds,omitempty"`
+}
+
+// CustomPostDOMRegionBoundsIR describes runtime execution bounds for a
+// CustomPost pass.
+type CustomPostDOMRegionBoundsIR struct {
+	Mode      string  `json:"mode,omitempty"`
+	PaddingPx float64 `json:"paddingPx,omitempty"`
 }
 
 func (ir CustomPostIR) legacyProps() map[string]any {
@@ -556,6 +638,8 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 			})
 		case Bloom:
 			out = append(out, BloomIR{
+				Source:    bloomSource(ev.Source),
+				Mode:      bloomMode(ev.Mode),
 				Threshold: float64(ev.Threshold),
 				Strength:  float64(ev.Strength),
 				Radius:    float64(ev.Radius),
@@ -577,12 +661,51 @@ func (pfx PostFX) sceneIR() []PostEffectIR {
 				Intensity: float64(ev.Intensity),
 				Bias:      float64(ev.Bias),
 			})
+		case ContactShadows:
+			ir := ContactShadowsIR{Distance: float64(ev.Distance), Thickness: float64(ev.Thickness), Bias: float64(ev.Bias), Intensity: float64(ev.Intensity)}
+			if ir.Distance <= 0 {
+				ir.Distance = 1
+			}
+			if ir.Thickness <= 0 {
+				ir.Thickness = 0.15
+			}
+			if ir.Bias <= 0 {
+				ir.Bias = 0.01
+			}
+			if ir.Intensity <= 0 {
+				ir.Intensity = 0.45
+			}
+			if ev.Direction != (Vector3{}) {
+				direction := ev.Direction
+				ir.Direction = &direction
+			}
+			out = append(out, ir)
 		case DOF:
 			out = append(out, DOFIR{
 				FocusDistance: float64(ev.FocusDistance),
 				Aperture:      float64(ev.Aperture),
 				MaxBlur:       float64(ev.MaxBlur),
 			})
+		case GodRays:
+			samples := ev.Samples
+			if samples != 0 {
+				samples = max(8, min(64, samples))
+			}
+			out = append(out, GodRaysIR{Intensity: clampAtmosphereParam(float64(ev.Intensity), 0, 2), Decay: clampAtmosphereParam(float64(ev.Decay), 0, 1), Density: clampAtmosphereParam(float64(ev.Density), 0, 2), Samples: samples})
+		case Grain:
+			out = append(out, GrainIR{Intensity: clampAtmosphereParam(float64(ev.Intensity), 0, 0.1)})
+		case TAA:
+			ir := TAAIR{HistoryWeight: float64(ev.HistoryWeight), ClampGamma: float64(ev.ClampGamma), DepthThreshold: float64(ev.DepthThreshold)}
+			if ir.HistoryWeight <= 0 {
+				ir.HistoryWeight = 0.9
+			}
+			if ir.ClampGamma <= 0 {
+				ir.ClampGamma = 1
+			}
+			if ir.DepthThreshold <= 0 {
+				ir.DepthThreshold = 0.01
+			}
+			out = append(out, ir)
 		case FXAA:
 			out = append(out, FXAAIR{})
 		case CustomPost:
@@ -659,6 +782,25 @@ func lowerCustomPostDOMRegions(dom CustomPostDOMRegions) *CustomPostDOMRegionsIR
 		Selector: selector,
 		Max:      max,
 		Uniforms: uniforms,
+		Bounds:   lowerCustomPostDOMRegionBounds(dom.Bounds),
+	}
+}
+
+func lowerCustomPostDOMRegionBounds(bounds CustomPostDOMRegionBounds) *CustomPostDOMRegionBoundsIR {
+	mode := strings.TrimSpace(string(bounds.Mode))
+	if mode != string(CustomPostDOMRegionBoundsUnion) {
+		return nil
+	}
+	padding := bounds.PaddingPx
+	if math.IsNaN(padding) || math.IsInf(padding, 0) || padding < 0 {
+		padding = 0
+	}
+	if padding > 2048 {
+		padding = 2048
+	}
+	return &CustomPostDOMRegionBoundsIR{
+		Mode:      string(CustomPostDOMRegionBoundsUnion),
+		PaddingPx: padding,
 	}
 }
 
@@ -703,6 +845,8 @@ func tonemapModeString(m TonemapMode) string {
 	switch m {
 	case TonemapReinhard:
 		return "reinhard"
+	case TonemapAgX:
+		return "agx"
 	case TonemapFilmic:
 		return "filmic"
 	case TonemapACES:
@@ -710,4 +854,43 @@ func tonemapModeString(m TonemapMode) string {
 	default:
 		return "aces"
 	}
+}
+
+type GodRaysIR struct {
+	Intensity float64 `json:"intensity,omitempty"`
+	Decay     float64 `json:"decay,omitempty"`
+	Density   float64 `json:"density,omitempty"`
+	Samples   int     `json:"samples,omitempty"`
+}
+
+func (ir GodRaysIR) MarshalJSON() ([]byte, error) {
+	type wire GodRaysIR
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		wire
+	}{PostEffectKindGodRays, wire(ir)})
+}
+func (ir GodRaysIR) legacyProps() map[string]any {
+	b, _ := ir.MarshalJSON()
+	out := map[string]any{}
+	_ = json.Unmarshal(b, &out)
+	return out
+}
+
+type GrainIR struct {
+	Intensity float64 `json:"intensity,omitempty"`
+}
+
+func (ir GrainIR) MarshalJSON() ([]byte, error) {
+	type wire GrainIR
+	return json.Marshal(struct {
+		Kind string `json:"kind"`
+		wire
+	}{PostEffectKindGrain, wire(ir)})
+}
+func (ir GrainIR) legacyProps() map[string]any {
+	b, _ := ir.MarshalJSON()
+	out := map[string]any{}
+	_ = json.Unmarshal(b, &out)
+	return out
 }

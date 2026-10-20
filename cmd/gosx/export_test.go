@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,6 +17,7 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "route.config.json"), `{"prerender":true}`)
 	tidyModule(t, dir)
 
 	if err := RunExport(dir); err != nil {
@@ -33,8 +35,14 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 			t.Fatalf("expected export artifact %s: %v", rel, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(dir, "dist", "static", "gosx")); !os.IsNotExist(err) {
-		t.Fatalf("expected zero-runtime starter export to omit dist/static/gosx, got %v", err)
+	asset := filepath.Join(dir, "dist", "static", filepath.FromSlash(strings.TrimPrefix(runtimehost.NavigationRuntimePath, "/")))
+	if got := readFile(t, asset); got != runtimehost.NavigationRuntime {
+		t.Fatal("exported navigation runtime differs from the embedded runtime")
+	}
+	for _, suffix := range []string{".gz", ".br"} {
+		if _, err := os.Stat(asset + suffix); err != nil {
+			t.Fatalf("missing navigation sidecar %s: %v", suffix, err)
+		}
 	}
 
 	indexHTML := readFile(t, filepath.Join(dir, "dist", "static", "index.html"))
@@ -70,8 +78,39 @@ func TestRunExportWritesStaticBundleForStarterApp(t *testing.T) {
 	if manifest.Routes[0].Path != "/" || manifest.Routes[0].File != "index.html" {
 		t.Fatalf("unexpected root export route %#v", manifest.Routes[0])
 	}
-	if manifest.Routes[0].Capabilities.Navigation || manifest.Routes[0].Capabilities.Bootstrap || manifest.Routes[0].Capabilities.WASM {
-		t.Fatalf("expected exported starter route to stay zero-runtime, got %#v", manifest.Routes[0].Capabilities)
+	// Navigation exports its standalone asset without bootstrap or WASM.
+	if !manifest.Routes[0].Capabilities.Navigation {
+		t.Fatalf("expected exported starter route to report navigation, got %#v", manifest.Routes[0].Capabilities)
+	}
+	if manifest.Routes[0].Capabilities.Bootstrap || manifest.Routes[0].Capabilities.WASM {
+		t.Fatalf("expected exported starter route to stay zero-runtime aside from navigation, got %#v", manifest.Routes[0].Capabilities)
+	}
+}
+
+func TestRunExportStrictGateRunsBeforeAssetOrDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "export-strict-gate")
+	err := RunExport(dir)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunExport error = %v", err)
+	}
+	for _, output := range []string{"build", "dist"} {
+		if _, statErr := os.Stat(filepath.Join(dir, output)); !os.IsNotExist(statErr) {
+			t.Fatalf("strict gate wrote %s before failing: %v", output, statErr)
+		}
+	}
+}
+
+func TestRunExportRejectsAmbiguousImportedIslandNamesBeforeAssetOrDistWrites(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, true)
+
+	err := RunExport(dir)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("RunExport error = %v, want ambiguous island rejection", err)
+	}
+	for _, output := range []string{"build", "dist", "modules/modules.go"} {
+		if _, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(output))); !os.IsNotExist(statErr) {
+			t.Fatalf("ambiguous island gate wrote %s before failing: %v", output, statErr)
+		}
 	}
 }
 
@@ -96,6 +135,7 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"bootstrap-feature-textlayout.js":        "bootstrap-feature-textlayout",
 		"bootstrap-feature-scene3d.js":           "bootstrap-feature-scene3d",
 		"bootstrap-feature-scene3d-command.js":   "bootstrap-feature-scene3d-command",
+		"bootstrap-feature-scene3d-hydrate.js":   "bootstrap-feature-scene3d-hydrate",
 		"bootstrap-feature-scene3d-webgpu.js":    "bootstrap-feature-scene3d-webgpu",
 		"bootstrap-feature-scene3d-webgl.js":     "bootstrap-feature-scene3d-webgl",
 		"bootstrap-feature-scene3d-gltf.js":      "bootstrap-feature-scene3d-gltf",
@@ -114,6 +154,7 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"/gosx/bootstrap-feature-engines.js",
 		"/gosx/bootstrap-feature-textlayout.js",
 		"/gosx/bootstrap-feature-scene3d-command.js",
+		"/gosx/bootstrap-feature-scene3d-hydrate.js",
 		"/gosx/hls.min.js",
 		"/gosx/islands/Counter.gxi",
 		"/gosx/css/counter.css",
@@ -130,6 +171,7 @@ func TestCopyExportRuntimeCopiesOnlyReferencedAssets(t *testing.T) {
 		"gosx/bootstrap-feature-engines.js",
 		"gosx/bootstrap-feature-textlayout.js",
 		"gosx/bootstrap-feature-scene3d-command.js",
+		"gosx/bootstrap-feature-scene3d-hydrate.js",
 		"gosx/hls.min.js",
 		"gosx/islands/Counter.gxi",
 		"gosx/css/counter.css",
@@ -176,7 +218,7 @@ func TestRewriteStaticExportHTMLRewritesRootAssetsAndImageOptimizerURLs(t *testi
 	}
 }
 
-func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing.T) {
+func TestExportHTMLCapabilitiesReadRuntimeManifestAndEnhancements(t *testing.T) {
 	input := `<!DOCTYPE html><html><head>
 <script data-gosx-navigation="true"></script>
 <script defer data-gosx-script="wasm-exec" src="/gosx/wasm_exec.js"></script>
@@ -198,7 +240,10 @@ func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing
 <div data-gosx-engine="GoSXVideo" data-gosx-engine-kind="video"></div>
 </body></html>`
 
-	caps := routeCapabilitiesFromHTML(input)
+	caps, err := routeCapabilitiesFromHTML(input)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !caps.Navigation || !caps.Bootstrap || caps.BootstrapMode != "full" || !caps.WASM {
 		t.Fatalf("unexpected runtime capabilities: %#v", caps)
 	}
@@ -210,8 +255,11 @@ func TestRouteCapabilitiesFromHTMLReadsRuntimeManifestAndEnhancements(t *testing
 	}
 }
 
-func TestRouteCapabilitiesFromStaticHTMLStayZeroCost(t *testing.T) {
-	caps := routeCapabilitiesFromHTML(`<!DOCTYPE html><html><body><main>Static</main></body></html>`)
+func TestExportStaticCapabilitiesStayZeroCost(t *testing.T) {
+	caps, err := routeCapabilitiesFromHTML(`<!DOCTYPE html><html><body><main>Static</main></body></html>`)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if caps.Navigation || caps.Bootstrap || caps.WASM || caps.Islands != 0 || caps.Engines != 0 || caps.Hubs != 0 || caps.Scene3D || caps.Video || caps.Motion {
 		t.Fatalf("expected zero-cost static capabilities, got %#v", caps)
 	}
@@ -355,5 +403,22 @@ func tidyModule(t *testing.T, dir string) {
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("go mod tidy: %v", err)
+	}
+}
+
+func TestExportComputeCapabilitiesRetainRuntime(t *testing.T) {
+	input := "<script id=\"gosx-manifest\" type=\"application/json\">{\"computeIslands\":[{}],\"controllers\":[{}],\"runtime\":{\"path\":\"core.wasm\"}}</script>"
+	caps, err := routeCapabilitiesFromHTML(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if caps.ComputeIslands != 1 || caps.Controllers != 1 || caps.Engines != 0 || !caps.WASM || caps.Runtime != "shared" {
+		t.Fatal("export dropped compute requirements", caps)
+	}
+}
+
+func TestExportCapabilitiesRejectMalformedManifest(t *testing.T) {
+	if _, err := routeCapabilitiesFromHTML("<script id=gosx-manifest type=application/json>{</script>"); err == nil {
+		t.Fatal("invalid manifest became a static export")
 	}
 }

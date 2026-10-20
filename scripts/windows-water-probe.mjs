@@ -21,8 +21,6 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 const DEFAULT_URL = "http://localhost:3000/demos/water?managed=1782462513988";
-const DEFAULT_PLAYWRIGHT_CORE =
-  "C:/Users/odvce/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/.pnpm/playwright-core@1.61.0/node_modules/playwright-core/index.mjs";
 const BROWSER_CANDIDATES = [
   "C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe",
   "C:/Program Files/Microsoft/Edge/Application/msedge.exe",
@@ -665,8 +663,10 @@ async function compositedPixelStats(page) {
 }
 
 function playwrightCoreURL() {
+  // GOSX_PLAYWRIGHT_CORE points at a playwright-core index.mjs. Without it, the
+  // installed `playwright-core` package is resolved by name.
   const override = process.env.GOSX_PLAYWRIGHT_CORE;
-  return pathToFileURL(override || DEFAULT_PLAYWRIGHT_CORE).href;
+  return override ? pathToFileURL(override).href : "playwright-core";
 }
 
 function browserExecutablePath() {

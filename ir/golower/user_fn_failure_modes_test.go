@@ -1,4 +1,4 @@
-// Slice Y.D failure-mode tests — diagnostics for unsupported user-
+// Failure-mode tests — diagnostics for unsupported user-
 // function call shapes. The supported subset is bounded:
 //
 //   - In-package calls to a registered FuncDecl: supported.
@@ -6,12 +6,13 @@
 //     escape-hatch suggestion (so a typo'd callee gets a clear pointer
 //     instead of a silent OpIndirectCall to a nonexistent FuncDef).
 //   - Cross-package calls into unregistered intrinsics: unchanged
-//     "not in the supported intrinsic set" diagnostic from Slice X.B.
+//     "not in the supported intrinsic set" diagnostic from the stdlib
+//     intrinsic registry.
 //   - Method calls on user types: still unsupported (the VM lacks a
 //     receiver-binding contract).
 //
 // Each test asserts the diagnostic still surfaces with the right
-// context after Y.D's registry pre-pass takes effect.
+// context after the registry pre-pass takes effect.
 
 package golower
 
@@ -21,7 +22,7 @@ import "testing"
 // missing callee identifier still produces the legacy
 // "calls to user-defined function" diagnostic, NOT a silent
 // OpIndirectCall to a nonexistent FuncDef. The check is important
-// because Y.D's registry probe is the only thing that distinguishes
+// because the registry probe is the only thing that distinguishes
 // these two paths.
 func TestY_D_UnregisteredCalleeStillDiagnoses(t *testing.T) {
 	src := []byte(`package handlers
@@ -36,9 +37,9 @@ func F() int {
 
 // TestY_D_MethodCallOnUserTypeStillDiagnoses verifies that method
 // receivers remain unsupported even with the user-function registry
-// in place. graph_surface.go itself uses `c.DrawLine(...)` (Y.E
-// territory), but receiver method dispatch in general is not Y.D's
-// scope.
+// in place. graph_surface.go itself uses `c.DrawLine(...)`, which is
+// a host call, but receiver method dispatch in general is out of
+// scope here.
 func TestY_D_MethodCallOnUserTypeStillDiagnoses(t *testing.T) {
 	src := []byte(`package handlers
 

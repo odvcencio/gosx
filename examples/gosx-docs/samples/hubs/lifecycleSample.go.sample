@@ -1,0 +1,6 @@
+room.On("join", func(ctx *hub.Context) {
+	ctx.Hub.Broadcast("presence", ctx.Hub.Presence().List())
+})
+room.On("leave", func(ctx *hub.Context) {
+	ctx.Hub.Broadcast("presence", ctx.Hub.Presence().List())
+})

@@ -12,7 +12,7 @@ import (
 //
 // The defect class these tests hold shut has shipped twice. A marker based split
 // put one function into two chunks, and a free variable scan found
-// 16z-scene-webgpu-probe.js reading loadManifest behind a typeof guard. Dropping
+// 16z-scene-webgpu-probe.ts reading loadManifest behind a typeof guard. Dropping
 // the file that declared loadManifest turned a crash into a silently wrong
 // WebGPU adapter request. Neither a size gate nor a staleness check can see
 // either fault, so the closure check is the only guard, and it needs its own

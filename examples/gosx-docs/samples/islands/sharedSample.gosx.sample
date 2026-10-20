@@ -1,0 +1,8 @@
+//gosx:island
+component ThemeSwitch() {
+	theme := signal.NewShared("theme", "dark")
+	toggle := func() {
+		theme.Set(theme.Get() == "dark" ? "light" : "dark")
+	}
+	return <button onClick={toggle}>{theme.Get()}</button>
+}

@@ -1,0 +1,12 @@
+magic := authn.MagicLinks(auth.MagicLinkOptions{
+	Path:        "/auth/magic-link",
+	BaseURL:     "https://app.example",
+	SuccessPath: "/dashboard",
+	Store:       authredis.NewMagicLinkStore(redisClient, authredis.Options{}),
+	Sender:      mailer,
+	Resolver: auth.MagicLinkResolverFunc(func(ctx context.Context, email string) (auth.User, error) {
+		return lookupUser(ctx, email)
+	}),
+})
+app.Mount("/auth/magic-link/request", magic.RequestHandler())
+app.Mount("/auth/magic-link", magic.CallbackHandler())

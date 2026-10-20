@@ -1,0 +1,4 @@
+/* The scene follows the theme with no scene JavaScript. */
+	.galaxy { --galaxy-core-inner: #5eead4; --scene-core-roughness: 0.30; }
+	.galaxy.is-hot { --galaxy-core-inner: #ff8a5b; --scene-core-roughness: 0.12; }
+	@media (prefers-color-scheme: light) { .galaxy { --galaxy-ambient: #ffffff; } }

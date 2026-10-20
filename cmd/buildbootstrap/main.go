@@ -7,7 +7,10 @@
 // Minification defaults to esbuild's native Go library (esbuild is written in
 // Go; the npm package was only a wrapper around it), which keeps the minified
 // bundles byte-identical to what the retired Node pipeline produced and keeps
-// composed source maps. A pure tdewolff/minify backend is available via
+// composed source maps. The production Scene3D core and renderer chunks also
+// use tdewolff after esbuild. That pass cannot compose maps, so those release
+// chunks omit them; GOSX_BUNDLE_DEBUG=1 emits esbuild's output and matching maps.
+// A pure tdewolff/minify backend is available via
 // -minifier=tdewolff for A/B comparison; as of the migration it produces
 // smaller raw/brotli output on the large bundles but breaches three committed
 // size gates (see docs in the repo history), so it is not the default.
@@ -22,7 +25,7 @@
 // keeping a second hand-written copy of the file lists. --check treats a stale
 // chunks.json the same way it treats a stale bundle.
 //
-// bootstrap-src/15-scene-ir-schema-strict.js is NOT in any bundle. It is a
+// bootstrap-src/15-scene-ir-schema-strict.ts is NOT in any bundle. It is a
 // development tool: it validates a SceneIR document the server already
 // produced, it publishes window.__gosx_validate_scene_ir_strict, and nothing
 // in the runtime, the server, the tests or the examples reads that global. It
@@ -35,7 +38,7 @@
 // to correct.
 //
 //	gosx:claim lacks client/js/bootstrap-src/chunks.json `15-scene-ir-schema-strict`
-//	gosx:claim has client/js/bootstrap-src/15-scene-ir-schema-strict.js `__gosx_validate_scene_ir_strict`
+//	gosx:claim has client/js/bootstrap-src/15-scene-ir-schema-strict.ts `__gosx_validate_scene_ir_strict`
 //
 // Set GOSX_BUNDLE_DEBUG=1 to append sourceMappingURL trailers to the bundles.
 package main
@@ -54,7 +57,7 @@ import (
 
 	"github.com/andybalholm/brotli"
 	esbuild "github.com/evanw/esbuild/pkg/api"
-	"github.com/klauspost/compress/gzip"
+	"github.com/foobaz/go-zopfli/zopfli"
 	"github.com/tdewolff/minify/v2"
 	"github.com/tdewolff/minify/v2/js"
 )
@@ -64,29 +67,36 @@ import (
 // function-declaration strings as markers, so a rename or a re-indent changed
 // what shipped. The former 30-tail.js is now the 30a..30k file set and the
 // runtime-utils head of 10-runtime-scene-core.js is now
-// 10-runtime-scene-utils.js. Each seam is a file, so a chunk manifest names
+// 10-runtime-scene-utils.ts. Each seam is a file, so a chunk manifest names
 // files only.
 const (
-	textLayoutEngineFile     = "bootstrap-src/01-textlayout-engine.js"
-	runtimeSceneUtilsFile    = "bootstrap-src/10-runtime-scene-utils.js"
-	runtimeSceneCoreFile     = "bootstrap-src/10-runtime-scene-core.js"
-	runtimePrimitivesFile    = "bootstrap-src/10-runtime-primitives.js"
-	tailEventDelegationFile  = "bootstrap-src/30a-tail-event-delegation.js"
-	tailEngineMountingFile   = "bootstrap-src/30b-tail-engine-mounting.js"
-	tailHubConnectionsFile   = "bootstrap-src/30c-tail-hub-connections.js"
-	tailHubFightInputFile    = "bootstrap-src/30c1-tail-hub-fight-input.js"
-	tailArcadeAudioFile      = "bootstrap-src/30c2-tail-arcade-audio.js"
-	tailIslandDisposeFile    = "bootstrap-src/30d-tail-island-dispose.js"
-	tailEngineDisposeFile    = "bootstrap-src/30e-tail-engine-dispose.js"
-	tailHubDisconnectFile    = "bootstrap-src/30f-tail-hub-disconnect.js"
-	tailPageDisposeFile      = "bootstrap-src/30g-tail-page-dispose.js"
-	tailCapabilityProbeFile  = "bootstrap-src/30h-tail-capability-probe.js"
-	tailHydrationFile        = "bootstrap-src/30i-tail-hydration.js"
-	tailRuntimeReadyFile     = "bootstrap-src/30j-tail-runtime-ready.js"
-	tailInitFile             = "bootstrap-src/30k-tail-init.js"
-	videoSyncFallbackFile    = "bootstrap-src/28-video-sync-fallback.js"
-	scene3DCommandBridgeFile = "bootstrap-src/09-scene3d-command-bridge.js"
-	controllersFile          = "bootstrap-src/08-controllers.js"
+	textLayoutEngineFile            = "bootstrap-src/01-textlayout-engine.ts"
+	runtimeSceneUtilsFile           = "bootstrap-src/10-runtime-scene-utils.ts"
+	runtimeSceneCoreFile            = "bootstrap-src/10-runtime-scene-core.ts"
+	runtimePrimitivesFile           = "bootstrap-src/10-runtime-primitives.ts"
+	tailEventDelegationFile         = "../runtime/host/events.ts"
+	tailEngineMountingFile          = "bootstrap-src/30b-tail-engine-mounting.ts"
+	tailHubConnectionsFile          = "../runtime/host/hubs.ts"
+	tailHubFightInputFile           = "bootstrap-src/30c1-tail-hub-fight-input.ts"
+	tailArcadeAudioFile             = "bootstrap-src/30c2-tail-arcade-audio.ts"
+	tailIslandDisposeFile           = "../runtime/host/disposal.ts"
+	tailEngineDisposeFile           = "../runtime/host/engine-disposal.ts"
+	tailHubDisconnectFile           = "../runtime/host/hub-disposal.ts"
+	tailPageDisposeFile             = "../runtime/host/page-disposal.ts"
+	tailCapabilityProbeFile         = "bootstrap-src/30h-tail-capability-probe.ts"
+	tailHydrationFile               = "../runtime/host/hydration.ts"
+	tailRuntimeReadyFile            = "bootstrap-src/30j-tail-runtime-ready.ts"
+	tailInitFile                    = "bootstrap-src/30k-tail-init.ts"
+	videoSyncFallbackFile           = "bootstrap-src/28-video-sync-fallback.ts"
+	scene3DCommandBridgeFile        = "../runtime/scene3d/command-bridge.ts"
+	scene3DInstanceStreamBridgeFile = "../runtime/scene3d/instance-stream-bridge.ts"
+	controllersFile                 = "../runtime/host/controllers.ts"
+	hostCompatibilityFile           = "../runtime/host/compatibility.ts"
+	disclosureFile                  = "../runtime/host/disclosure.ts"
+	runtimeContractFile             = "../runtime/generated/runtime-abi.ts"
+	runtimeABISupportFile           = "../runtime/wasm/abi.ts"
+	runtimeMailboxFile              = "../runtime/wasm/mailbox.ts"
+	runtimeLoaderFile               = "../runtime/wasm/loader.ts"
 )
 
 type source struct {
@@ -107,89 +117,132 @@ var outputs = []output{
 	{
 		name: "bootstrap.js",
 		sources: []source{
-			sourceFile("bootstrap-src/00-textlayout.js"),
+			sourceFile("bootstrap-src/00-textlayout.ts"),
 			// The monolith keeps the text-layout engine inline. 01a/01b wrap it
 			// in its own IIFE, exactly like the lazily fetched
 			// bootstrap-feature-textlayout.js chunk, so one engine code path
 			// serves both. The engine reads its shared helpers from
 			// window.__gosx_runtime_api, which 00-textlayout.js assigns last.
-			sourceFile("bootstrap-src/01a-textlayout-inline-prefix.js"),
+			sourceFile("bootstrap-src/01a-textlayout-inline-prefix.ts"),
 			sourceFile(textLayoutEngineFile),
-			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.js"),
-			sourceFile("bootstrap-src/04-telemetry.js"),
-			sourceFile("bootstrap-src/05-document-env.js"),
-			sourceFile("bootstrap-src/06-declarative-actions.js"),
+			sourceFile("bootstrap-src/01b-textlayout-inline-suffix.ts"),
+			sourceFile("bootstrap-src/04-telemetry.ts"),
+			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/06-motion-core.ts"),
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/document-lifecycle.ts"),
+			sourceFile(runtimeContractFile),
+			sourceFile(runtimeABISupportFile),
+			sourceFile(runtimeMailboxFile),
+			sourceFile(runtimeLoaderFile),
+			sourceFile(disclosureFile),
+			sourceFile("../runtime/host/request.ts"),
+			sourceFile("../runtime/host/request-guard.ts"),
+			sourceFile("../runtime/host/actions.ts"),
+			sourceFile("../runtime/scene3d/script-loader.ts"),
 			sourceFile(scene3DCommandBridgeFile),
-			sourceFile("bootstrap-src/07-declarative-regions.js"),
+			sourceFile(scene3DInstanceStreamBridgeFile),
+			sourceFile("../runtime/host/regions.ts"),
 			sourceFile(controllersFile),
-			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
-			sourceFile("bootstrap-src/26-runtime-stream.js"),
-			sourceFile("bootstrap-src/26-runtime-dom.js"),
-			sourceFile("bootstrap-src/26-runtime-blocks.js"),
+			sourceFile("../runtime/host/facade.ts"),
+			sourceFile("../runtime/host/stream.ts"),
+			sourceFile("../runtime/host/dom.ts"),
+			sourceFile("bootstrap-src/26-runtime-blocks.ts"),
 			sourceFile(runtimePrimitivesFile),
 			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimeSceneCoreFile),
-			sourceFile("bootstrap-src/11-scene-math.js"),
-			sourceFile("bootstrap-src/11-scene-base64.js"),
-			sourceFile("bootstrap-src/11a-scene-decompress.js"),
-			sourceFile("bootstrap-src/11b-scene-points-generate.js"),
-			sourceFile("bootstrap-src/12-scene-geometry.js"),
-			sourceFile("bootstrap-src/13-scene-material.js"),
-			sourceFile("bootstrap-src/14-scene-lighting.js"),
-			sourceFile("bootstrap-src/15-scene-ir-schema.js"),
-			sourceFile("bootstrap-src/15-scene-draw-plan.js"),
-			sourceFile("bootstrap-src/15b-scene-planner.js"),
-			sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
-			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
-			sourceFile("bootstrap-src/15d-scene-dom-regions.js"),
-			sourceFile("bootstrap-src/15a1-scene-texture-budget.js"),
-			sourceFile("bootstrap-src/16b-scene-hdr.js"),
+			sourceFile("bootstrap-src/11-scene-math.ts"),
+			sourceFile("bootstrap-src/11-scene-base64.ts"),
+			sourceFile("bootstrap-src/11a-scene-decompress.ts"),
+			sourceFile("bootstrap-src/11b-scene-points-generate.ts"),
+			sourceFile("bootstrap-src/12-scene-geometry.ts"),
+			sourceFile("bootstrap-src/13-scene-material.ts"),
+			sourceFile("bootstrap-src/14-scene-lighting.ts"),
+			sourceFile("bootstrap-src/15-scene-ir-schema.ts"),
+			sourceFile("bootstrap-src/15-scene-draw-plan.ts"),
+			sourceFile("bootstrap-src/15b-scene-planner.ts"),
+			sourceFile("bootstrap-src/15c-scene-backend-registry.ts"),
+			sourceFile("bootstrap-src/15a-scene-postfx-shared.ts"),
+			sourceFile("../runtime/scene3d/dom-regions.ts"),
+			sourceFile("bootstrap-src/15a1-scene-texture-budget.ts"),
+			sourceFile("bootstrap-src/16b-scene-hdr.ts"),
 			// 16c holds the backend-agnostic PBR helpers 16-scene-webgl.js used
 			// to own. The monolith keeps 16-scene-webgl.js inline right after
 			// it, so both files ship here and neither declares a name twice.
-			sourceFile("bootstrap-src/16c-scene-shared-pbr.js"),
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
+			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
+			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
 			// 16e holds the legacy vertex-colour WebGL renderer that
 			// 10-runtime-scene-core.js used to carry. Only a WebGL page runs it,
 			// so it ships beside 16-scene-webgl.js in the WebGL chunk and here.
-			sourceFile("bootstrap-src/16e-scene-webgl-legacy.js"),
-			sourceFile("bootstrap-src/16-scene-webgl.js"),
+			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
+			sourceFile("../runtime/scene3d/webgl.ts"),
+			// The Environment.Ocean passes ship beside the renderer that calls them.
+			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgl-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgl-specular-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
+			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgl-taa.ts"),
 			// 16z provides _externalProbe and window.__gosx_scene3d_webgpu_probe,
 			// which 16a-scene-webgpu.js references at runtime. Without it the
 			// legacy monolithic bootstrap.js throws ReferenceError the first
 			// time the scene3d mount path touches the webgpu probe, which in
 			// turn aborts GoSXScene3D engine registration and kills 38 tests
 			// in the client/js runtime suite that rely on scene3d mount.
-			sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
+			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
 			// 16a1 holds the Selena uniform packer at module scope. 16a calls it
 			// from wgpuCreatePostProcessor, which sits outside the renderer
 			// closure, so the packer cannot live inside that closure. It ships
 			// right after 16a because that placement compresses best.
-			sourceFile("bootstrap-src/16a-scene-webgpu.js"),
-			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.js"),
-			sourceFile("bootstrap-src/16b-scene-compute.js"),
-			sourceFile("bootstrap-src/17-scene-input.js"),
-			sourceFile("bootstrap-src/18-scene-canvas.js"),
-			// 19a-scene-ktx2.js holds the browser KTX2 reader and the block
+			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
+			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
+			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
+			sourceFile("../runtime/scene3d/webgpu.ts"),
+			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
+			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgpu-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgpu-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/compute.ts"),
+			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
+			sourceFile("bootstrap-src/17-scene-input.ts"),
+			sourceFile("bootstrap-src/18-scene-canvas.ts"),
+			// 19a-scene-ktx2.ts holds the browser KTX2 reader and the block
 			// uploader. It must load BEFORE 19-scene-gltf.js, which reads
 			// sceneKTX2UploadPathReady before it swaps an image URI for a block
 			// variant.
-			sourceFile("bootstrap-src/19a-scene-ktx2.js"),
-			sourceFile("bootstrap-src/19-scene-gltf.js"),
-			sourceFile("bootstrap-src/19a-scene-animation.js"),
-			sourceFile("bootstrap-src/19b-scene-control-forms.js"),
+			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
+			sourceFile("../runtime/scene3d/gltf.ts"),
+			sourceFile("../runtime/scene3d/animation.ts"),
+			sourceFile("bootstrap-src/19b-scene-control-forms.ts"),
 			// 16d publishes the base symbols the lazy WebGL chunk reads through
 			// window.__gosx_scene3d_api. The monolith does not need the bridge,
 			// but it costs a few hundred bytes and keeps one source order.
-			sourceFile("bootstrap-src/16d-scene-webgl-bridge.js"),
-			sourceFile("bootstrap-src/20a-scene-mount-backend.js"),
-			sourceFile("bootstrap-src/20b-scene-mount-webgl-chunk.js"),
-			sourceFile("bootstrap-src/20c-scene-mount-quality.js"),
-			sourceFile("bootstrap-src/20d-scene-mount-overlays.js"),
-			sourceFile("bootstrap-src/20e-scene-mount-viewport.js"),
-			sourceFile("bootstrap-src/20f-scene-mount-overlay-dom.js"),
-			sourceFile("bootstrap-src/20g-scene-mount-controls.js"),
-			sourceFile("bootstrap-src/20h-scene-mount-telemetry.js"),
-			sourceFile("bootstrap-src/20-scene-mount.js"),
+			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
+			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/mount-webgl.ts"),
+			sourceFile("../runtime/scene3d/mount-quality.ts"),
+			sourceFile("../runtime/scene3d/overlays.ts"),
+			sourceFile("../runtime/scene3d/mount-viewport.ts"),
+			sourceFile("../runtime/scene3d/overlay-dom.ts"),
+			sourceFile("../runtime/scene3d/mount-controls.ts"),
+			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
+			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
+			sourceFile("../runtime/scene3d/hydrate-input.ts"),
+			sourceFile("../runtime/scene3d/mount-input.ts"),
+			sourceFile("../runtime/scene3d/geometry-assets.ts"),
+			sourceFile("../runtime/scene3d/mount-lifecycle.ts"),
+			sourceFile("../runtime/scene3d/mount-presentation.ts"),
+			sourceFile("../runtime/scene3d/mount.ts"),
 			// 28 installs window.__gosx_video_sync_js_create — the pure-JS drift
 			// engine the video factory (in 30b) uses on the brain-absent path. It
 			// must load before the tail.
@@ -197,6 +250,7 @@ var outputs = []output{
 			// The 30a..30k set replaces the former single 30-tail.js. The
 			// monolith ships every part, in the original order.
 			sourceFile(tailEventDelegationFile),
+			sourceFile("../runtime/host/modules.ts"),
 			sourceFile(tailEngineMountingFile),
 			sourceFile(tailHubConnectionsFile),
 			sourceFile(tailHubFightInputFile),
@@ -214,39 +268,62 @@ var outputs = []output{
 	{
 		name: "bootstrap-lite.js",
 		sources: []source{
-			sourceFile("bootstrap-src/00-textlayout.js"),
-			sourceFile("bootstrap-src/04-telemetry.js"),
-			sourceFile("bootstrap-src/05-document-env.js"),
-			sourceFile("bootstrap-src/06-declarative-actions.js"),
-			sourceFile("bootstrap-src/07-declarative-regions.js"),
-			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
-			sourceFile("bootstrap-src/26-runtime-stream.js"),
-			sourceFile("bootstrap-src/26-runtime-dom.js"),
-			sourceFile("bootstrap-src/26-runtime-blocks.js"),
-			sourceFile("bootstrap-src/25-lite-tail.js"),
+			sourceFile("bootstrap-src/00-textlayout.ts"),
+			sourceFile("bootstrap-src/04-telemetry.ts"),
+			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/06-motion-core.ts"),
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/document-lifecycle.ts"),
+			sourceFile(disclosureFile),
+			sourceFile("../runtime/host/request.ts"),
+			sourceFile("../runtime/host/actions.ts"),
+			sourceFile("../runtime/host/regions.ts"),
+			sourceFile("../runtime/host/facade.ts"),
+			sourceFile("../runtime/host/stream.ts"),
+			sourceFile("../runtime/host/dom.ts"),
+			sourceFile("bootstrap-src/26-runtime-blocks.ts"),
+			sourceFile("bootstrap-src/25-lite-tail.ts"),
 		},
 	},
 	{
 		name: "bootstrap-runtime.js",
 		sources: []source{
-			sourceFile("bootstrap-src/00-textlayout.js"),
-			sourceFile("bootstrap-src/04-telemetry.js"),
-			sourceFile("bootstrap-src/05-document-env.js"),
-			sourceFile("bootstrap-src/06-declarative-actions.js"),
-			sourceFile("bootstrap-src/07-declarative-regions.js"),
-			sourceFile("bootstrap-src/26-runtime-surfaces.js"),
-			sourceFile("bootstrap-src/26-runtime-stream.js"),
-			sourceFile("bootstrap-src/26-runtime-dom.js"),
-			sourceFile("bootstrap-src/26-runtime-blocks.js"),
+			sourceFile("bootstrap-src/00-textlayout.ts"),
+			sourceFile("bootstrap-src/04-telemetry.ts"),
+			sourceFile("bootstrap-src/05-document-env.ts"),
+			sourceFile("bootstrap-src/06-motion-core.ts"),
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/document-lifecycle.ts"),
+			sourceFile(runtimeContractFile),
+			sourceFile(runtimeABISupportFile),
+			sourceFile(runtimeMailboxFile),
+			sourceFile(runtimeLoaderFile),
+			sourceFile(disclosureFile),
+			sourceFile("../runtime/host/request.ts"),
+			sourceFile("../runtime/host/actions.ts"),
+			sourceFile("../runtime/host/regions.ts"),
+			sourceFile("../runtime/host/facade.ts"),
+			sourceFile("../runtime/host/stream.ts"),
+			sourceFile("../runtime/host/dom.ts"),
+			sourceFile("bootstrap-src/26-runtime-blocks.ts"),
 			sourceFile(runtimeSceneUtilsFile),
 			sourceFile(runtimePrimitivesFile),
-			sourceFile("bootstrap-src/26-runtime-tail.js"),
+			sourceFile("bootstrap-src/26-runtime-tail.ts"),
+		},
+	},
+	{
+		name: "bootstrap-feature-browser-services.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26d-feature-browser-services-prefix.ts"),
+			sourceFile("../runtime/host/request-guard.ts"),
+			sourceFile("bootstrap-src/26d-feature-browser-services-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-islands.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26a-feature-islands-prefix.js"),
+			sourceFile("bootstrap-src/26a-feature-islands-prefix.ts"),
+			sourceFile(hostCompatibilityFile),
 			sourceFile(tailEventDelegationFile),
 			sourceFile(tailIslandDisposeFile),
 			// 30h holds entryRequiresAsyncWebGPUProbe. The hydration path calls
@@ -255,38 +332,41 @@ var outputs = []output{
 			// extract range contained the probe extract range.
 			sourceFile(tailCapabilityProbeFile),
 			sourceFile(tailHydrationFile),
-			sourceFile("bootstrap-src/26a-feature-islands-suffix.js"),
+			sourceFile("bootstrap-src/26a-feature-islands-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-engines.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26b-feature-engines-prefix.js"),
+			sourceFile("bootstrap-src/26b-feature-engines-prefix.ts"),
+			sourceFile(hostCompatibilityFile),
 			// 26b1 installs window.__gosx_paint_canvas_bundle — the standalone 2D
 			// painter the canvas2d surface-kind render loop (in 26b-prefix's
 			// _startCanvasSurfaceRAF) calls each frame. Self-contained IIFE; load
 			// order is immaterial since the loop resolves the global at rAF time.
-			sourceFile("bootstrap-src/26b1-canvas2d-painter.js"),
+			sourceFile("bootstrap-src/26b1-canvas2d-painter.ts"),
 			// 26b2 installs window.__gosx_canvas_board_labels_sync — the DOM label
 			// overlay that positions real HTML <span> elements over the WebGPU/canvas
 			// board so text stays in the DOM (subpixel rendering, future editability).
-			// Self-contained IIFE; the slice-4 RAF loop calls sync each frame.
-			sourceFile("bootstrap-src/26b2-canvas-board-labels.js"),
+			// Self-contained IIFE; the RAF loop calls sync each frame.
+			sourceFile("bootstrap-src/26b2-canvas-board-labels.ts"),
 			// 28 installs window.__gosx_video_sync_js_create, the pure-JS drift
 			// engine the video factory uses when the WASM brain is absent. The
 			// engines feature carries the video factory, so it must carry the
 			// fallback engine too.
 			sourceFile(videoSyncFallbackFile),
 			sourceFile(tailCapabilityProbeFile),
+			sourceFile("../runtime/host/modules.ts"),
 			sourceFile(tailEngineMountingFile),
 			sourceFile(tailEngineDisposeFile),
-			sourceFile("bootstrap-src/26b-feature-engines-suffix.js"),
+			sourceFile("bootstrap-src/26b-feature-engines-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-hubs.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26c-feature-hubs-prefix.js"),
+			sourceFile("bootstrap-src/26c-feature-hubs-prefix.ts"),
+			sourceFile(hostCompatibilityFile),
 			sourceFile(tailHubConnectionsFile),
 			// 30c1 is one application's fighting-game controller set. It ships
 			// only because hydrate.HubInputConfig.Mode routes to it. Drop this
@@ -294,17 +374,31 @@ var outputs = []output{
 			sourceFile(tailHubFightInputFile),
 			sourceFile(tailArcadeAudioFile),
 			sourceFile(tailHubDisconnectFile),
-			sourceFile("bootstrap-src/26c-feature-hubs-suffix.js"),
+			sourceFile("bootstrap-src/26c-feature-hubs-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-controllers.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26h-feature-controllers-prefix.js"),
+			sourceFile("bootstrap-src/26h-feature-controllers-prefix.ts"),
+			sourceFile(hostCompatibilityFile),
 			sourceFile(controllersFile),
-			sourceFile("bootstrap-src/26h-feature-controllers-suffix.js"),
+			sourceFile("bootstrap-src/26h-feature-controllers-suffix.ts"),
 		},
 	},
+	{
+		name:    "bootstrap-controller-input.js",
+		sources: []source{sourceFile("../runtime/host/controller-input.ts")},
+	},
+	{
+		name:    "bootstrap-feature-workbench.js",
+		sources: []source{sourceFile("../runtime/host/workbench.ts")},
+	},
+	{
+		name:    "bootstrap-feature-hub-document.js",
+		sources: []source{sourceFile("../runtime/host/hub-document.ts")},
+	},
+
 	{
 		// Text-layout engine chunk. bootstrap-lite.js and bootstrap-runtime.js
 		// carried this engine on every page, even a page with no text block:
@@ -314,47 +408,49 @@ var outputs = []output{
 		// manifest mounts a Scene3D engine, which lays out labels.
 		name: "bootstrap-feature-textlayout.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26i-feature-textlayout-prefix.js"),
+			sourceFile("bootstrap-src/26i-feature-textlayout-prefix.ts"),
 			sourceFile(textLayoutEngineFile),
-			sourceFile("bootstrap-src/26i-feature-textlayout-suffix.js"),
+			sourceFile("bootstrap-src/26i-feature-textlayout-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.js"),
+			sourceFile("bootstrap-src/26d-feature-scene3d-prefix.ts"),
+			sourceFile("../runtime/scene3d/script-loader.ts"),
 			sourceFile(scene3DCommandBridgeFile),
+			sourceFile(scene3DInstanceStreamBridgeFile),
 			sourceFile(runtimePrimitivesFile),
-			// 10-runtime-scene-utils.js is NOT here any more. This chunk
+			// 10-runtime-scene-utils.ts is NOT here any more. This chunk
 			// carried a full copy of it while bootstrap-runtime.js carried
 			// another, so a Chromium Scene3D page downloaded the same helpers
 			// twice. 26d-feature-scene3d-prefix.js now bridges the eight names
 			// this chunk reads from window.__gosx_runtime_api.
 			sourceFile(runtimeSceneCoreFile),
-			sourceFile("bootstrap-src/11-scene-math.js"),
-			// 11-scene-base64.js stays eager. 20-scene-mount.js decodes a motion
+			sourceFile("bootstrap-src/11-scene-math.ts"),
+			// 11-scene-base64.ts stays eager. 20-scene-mount.js decodes a motion
 			// program with it on pages that carry no compressed array at all.
-			sourceFile("bootstrap-src/11-scene-base64.js"),
-			// 11a-scene-decompress.js and 11b-scene-points-generate.js are NOT
+			sourceFile("bootstrap-src/11-scene-base64.ts"),
+			// 11a-scene-decompress.ts and 11b-scene-points-generate.ts are NOT
 			// here any more — they moved to
 			// bootstrap-feature-scene3d-decompress.js. A scene with plain float
 			// arrays and no generator descriptor runs neither, and used to pay
 			// 8_514 raw / 3_164 gzip / 2_602 brotli minified bytes for both.
 			// createSceneState awaits the chunk before it decodes.
-			sourceFile("bootstrap-src/12-scene-geometry.js"),
-			sourceFile("bootstrap-src/13-scene-material.js"),
-			sourceFile("bootstrap-src/14-scene-lighting.js"),
-			sourceFile("bootstrap-src/15-scene-ir-schema.js"),
-			sourceFile("bootstrap-src/15-scene-draw-plan.js"),
-			sourceFile("bootstrap-src/15b-scene-planner.js"),
-			sourceFile("bootstrap-src/15c-scene-backend-registry.js"),
+			sourceFile("bootstrap-src/12-scene-geometry.ts"),
+			sourceFile("bootstrap-src/13-scene-material.ts"),
+			sourceFile("bootstrap-src/14-scene-lighting.ts"),
+			sourceFile("bootstrap-src/15-scene-ir-schema.ts"),
+			sourceFile("bootstrap-src/15-scene-draw-plan.ts"),
+			sourceFile("bootstrap-src/15b-scene-planner.ts"),
+			sourceFile("bootstrap-src/15c-scene-backend-registry.ts"),
 			// 15a keeps only the scalars the scene core and both renderers read.
 			// The texture-unit table and the IBL budget moved to
-			// 15a1-scene-texture-budget.js, which ships in the WebGL chunk.
-			// 16b-scene-hdr.js moved there too: sceneParseRadianceHDR has one
+			// 15a1-scene-texture-budget.ts, which ships in the WebGL chunk.
+			// 16b-scene-hdr.ts moved there too: sceneParseRadianceHDR has one
 			// caller in the tree, and it is 16-scene-webgl.js.
-			sourceFile("bootstrap-src/15a-scene-postfx-shared.js"),
-			sourceFile("bootstrap-src/15d-scene-dom-regions.js"),
+			sourceFile("bootstrap-src/15a-scene-postfx-shared.ts"),
+			sourceFile("../runtime/scene3d/dom-regions.ts"),
 			// 16b-scene-compute.js is NOT here any more — it moved to
 			// bootstrap-feature-scene3d-compute.js. A scene with one cube and one
 			// directional light runs no particle simulation, no CPU particle
@@ -381,10 +477,13 @@ var outputs = []output{
 			// webgpu chunk carried a second copy until v0.35.8, which cost a
 			// Chromium Scene3D page 27_651 duplicate minified bytes. 16z holds
 			// the tiny stub + adapter probe.
-			sourceFile("bootstrap-src/16c-scene-shared-pbr.js"),
-			sourceFile("bootstrap-src/16z-scene-webgpu-probe.js"),
-			sourceFile("bootstrap-src/17-scene-input.js"),
-			sourceFile("bootstrap-src/18-scene-canvas.js"),
+			sourceFile("../runtime/scene3d/ocean-waves.ts"),
+			sourceFile("bootstrap-src/16c-scene-shared-pbr.ts"),
+			sourceFile("bootstrap-src/16c1-scene-detail.ts"),
+			sourceFile("bootstrap-src/16d-scene-atmosphere.ts"),
+			sourceFile("bootstrap-src/16z-scene-webgpu-probe.ts"),
+			sourceFile("bootstrap-src/17-scene-input.ts"),
+			sourceFile("bootstrap-src/18-scene-canvas.ts"),
 			// 19-scene-gltf.js is NOT here — it moved to
 			// bootstrap-feature-scene3d-gltf.js so pages that don't load .glb/
 			// .gltf model assets (galaxies, particle systems, CSS-driven 3D
@@ -397,20 +496,24 @@ var outputs = []output{
 			// keyframe animations or skeletal clips skip ~16KB of bone math
 			// and quaternion slerp. Consumers that DO need the mixer can
 			// lazy-load it via window.__gosx_scene3d_animation_api.
-			sourceFile("bootstrap-src/19b-scene-control-forms.js"),
+			sourceFile("bootstrap-src/19b-scene-control-forms.ts"),
 			// 16d must come after every module it reads, and before the mount
 			// code that may fetch the WebGL chunk.
-			sourceFile("bootstrap-src/16d-scene-webgl-bridge.js"),
-			sourceFile("bootstrap-src/20a-scene-mount-backend.js"),
-			sourceFile("bootstrap-src/20b-scene-mount-webgl-chunk.js"),
-			sourceFile("bootstrap-src/20c-scene-mount-quality.js"),
-			sourceFile("bootstrap-src/20d-scene-mount-overlays.js"),
-			sourceFile("bootstrap-src/20e-scene-mount-viewport.js"),
-			sourceFile("bootstrap-src/20f-scene-mount-overlay-dom.js"),
-			sourceFile("bootstrap-src/20g-scene-mount-controls.js"),
-			sourceFile("bootstrap-src/20h-scene-mount-telemetry.js"),
-			sourceFile("bootstrap-src/20-scene-mount.js"),
-			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.js"),
+			sourceFile("bootstrap-src/16d-scene-webgl-bridge.ts"),
+			sourceFile("../runtime/scene3d/mount-backend.ts"),
+			sourceFile("../runtime/scene3d/mount-webgl.ts"),
+			sourceFile("../runtime/scene3d/mount-quality.ts"),
+			sourceFile("../runtime/scene3d/overlays.ts"),
+			sourceFile("../runtime/scene3d/mount-viewport.ts"),
+			sourceFile("../runtime/scene3d/overlay-dom.ts"),
+			sourceFile("../runtime/scene3d/mount-controls.ts"),
+			sourceFile("../runtime/scene3d/mount-scene-focus.ts"),
+			sourceFile("../runtime/scene3d/mount-telemetry.ts"),
+			sourceFile("../runtime/scene3d/mount-input.ts"),
+			sourceFile("../runtime/scene3d/geometry-assets.ts"),
+			sourceFile("../runtime/scene3d/mount-lifecycle.ts"),
+			sourceFile("../runtime/scene3d/mount.ts"),
+			sourceFile("bootstrap-src/26d-feature-scene3d-suffix.ts"),
 		},
 	},
 	{
@@ -421,44 +524,89 @@ var outputs = []output{
 		// bridged symbols.
 		name: "bootstrap-feature-scene3d-webgl.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-prefix.js"),
-			// 15a1 and 16b-scene-hdr.js follow the renderer that reads them.
+			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-prefix.ts"),
+			// 15a1 and 16b-scene-hdr.ts follow the renderer that reads them.
 			// 16-scene-webgl.js is the only caller of sceneAllocateTextureUnits,
 			// sceneResolveIBLRenderTargetMode and sceneParseRadianceHDR, so a
 			// WebGPU page stops paying for a WebGL2 sampler table, an IBL budget
 			// solver and a Radiance HDR decoder it can never reach.
-			sourceFile("bootstrap-src/15a1-scene-texture-budget.js"),
-			sourceFile("bootstrap-src/16b-scene-hdr.js"),
+			sourceFile("bootstrap-src/15a1-scene-texture-budget.ts"),
+			sourceFile("bootstrap-src/16b-scene-hdr.ts"),
 			// 16e is the legacy vertex-colour renderer. It left
 			// 10-runtime-scene-core.js, where every Scene3D page paid for it,
 			// and joined the renderer it backs up. createSceneWebGLResult in
 			// 20b calls it only after the PBR factory declines, and that
 			// factory ships in this same chunk, so a WebGPU page can never
 			// reach either one.
-			sourceFile("bootstrap-src/16e-scene-webgl-legacy.js"),
-			sourceFile("bootstrap-src/16-scene-webgl.js"),
-			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.js"),
+			sourceFile("bootstrap-src/16e-scene-webgl-legacy.ts"),
+			sourceFile("../runtime/scene3d/webgl-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgl-detail.ts"),
+			sourceFile("../runtime/scene3d/webgl.ts"),
+			sourceFile("../runtime/scene3d/webgl-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgl-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgl-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgl-specular-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgl-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgl-depth-post.ts"),
+			sourceFile("../runtime/scene3d/webgl-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgl-taa.ts"),
+			sourceFile("bootstrap-src/26j-feature-scene3d-webgl-suffix.ts"),
 		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-experience.js",
+		sources: []source{sourceFile("../runtime/scene3d/mount-presentation.ts")},
 	},
 	{
 		name: "bootstrap-feature-scene3d-command.js",
 		sources: []source{
-			sourceFile("bootstrap-src/09a-scene3d-command-runtime.js"),
+			sourceFile("../runtime/scene3d/command-runtime.ts"),
+		},
+	},
+	{
+		// Opt-in binary instance-transform fast path. A page fetches this only
+		// when a caller's first handle.applyInstanceStream(bytes) call makes
+		// instance-stream-bridge.ts (in the base scene3d bundle) lazy-load it;
+		// every other Scene3D page's base bundle stays byte-identical. See
+		// client/runtime/scene3d/instance-stream.ts,
+		// client/runtime/scene3d/instance-stream-bridge.ts and
+		// scene/instance_stream.go.
+		name: "bootstrap-feature-scene3d-instance-stream.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/instance-stream.ts"),
+		},
+	},
+	{
+		// Strict initial-hydrate decoding is fetched only by a shared-runtime
+		// Scene3D mount with a program reference. Static scenes never pay for it.
+		name: "bootstrap-feature-scene3d-hydrate.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/hydrate-input.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d-webgpu.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.js"),
+			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-prefix.ts"),
 			// 16b-scene-compute.js is NOT here any more. It used to ship in
 			// this chunk AND in bootstrap-feature-scene3d.js, so a Chromium
 			// Scene3D page downloaded the same 27_651 minified bytes twice.
 			// It now ships once, in the base scene3d chunk, and this bridge
 			// hands 16a the two symbols it reads lexically.
-			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.js"),
-			sourceFile("bootstrap-src/16a-scene-webgpu.js"),
-			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.js"),
-			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.js"),
+			sourceFile("bootstrap-src/26e1-feature-scene3d-webgpu-compute-bridge.ts"),
+			sourceFile("../runtime/scene3d/webgpu-transmission.ts"),
+			sourceFile("../runtime/scene3d/webgpu-detail.ts"),
+			sourceFile("../runtime/scene3d/pipeline-recovery.ts"),
+			sourceFile("../runtime/scene3d/webgpu-selena-textures.ts"),
+			sourceFile("../runtime/scene3d/webgpu.ts"),
+			sourceFile("bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts"),
+			sourceFile("../runtime/scene3d/webgpu-ocean.ts"),
+			sourceFile("../runtime/scene3d/webgpu-reflect.ts"),
+			sourceFile("../runtime/scene3d/webgpu-atmosphere.ts"),
+			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
+			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
 	},
 	{
@@ -468,10 +616,65 @@ var outputs = []output{
 		// its own chunk rather than a passenger on one backend.
 		name: "bootstrap-feature-scene3d-compute.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26k-feature-scene3d-compute-prefix.js"),
-			sourceFile("bootstrap-src/16b-scene-compute.js"),
-			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.js"),
+			sourceFile("bootstrap-src/26k-feature-scene3d-compute-prefix.ts"),
+			sourceFile("../runtime/scene3d/compute.ts"),
+			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
+			sourceFile("bootstrap-src/26k-feature-scene3d-compute-suffix.ts"),
 		},
+	},
+	{
+		// CPU surface query is optional and independently reusable.
+		name:    "bootstrap-feature-scene3d-ocean-query.js",
+		sources: []source{sourceFile("../runtime/scene3d/ocean-query.ts")},
+	},
+	{
+		name: "bootstrap-feature-scene3d-vessel.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/vessel-instruments.ts"),
+			sourceFile("../runtime/scene3d/vessel-navigation.ts"),
+			sourceFile("../runtime/scene3d/vessel-physics.ts"),
+			sourceFile("../runtime/scene3d/vessel-input.ts"),
+			sourceFile("../runtime/scene3d/vessel-model.ts"),
+			sourceFile("../runtime/scene3d/vessel-wake.ts"),
+			sourceFile("../runtime/scene3d/mount-vessel.ts"),
+		},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-particle-burst.js",
+		sources: []source{sourceFile("../runtime/scene3d/particle-burst.ts")},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-model-preparation.js",
+		sources: []source{sourceFile("../runtime/scene3d/model-preparation.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-transport.js",
+		sources: []source{sourceFile("../runtime/motion/transport.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-track.js",
+		sources: []source{sourceFile("../runtime/motion/track.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-scene.js",
+		sources: []source{sourceFile("../runtime/motion/easing.ts"), sourceFile("../runtime/motion/scene.ts")},
+	},
+	{
+		name:    "bootstrap-feature-motion-svg.js",
+		sources: []source{sourceFile("../runtime/motion/easing.ts"), sourceFile("../runtime/motion/svg.ts")},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-timeline.js",
+		sources: []source{sourceFile("../runtime/scene3d/timeline.ts")},
+	},
+	{
+		name:    "bootstrap-feature-scene3d-zoom.js",
+		sources: []source{sourceFile("../runtime/scene3d/mount-pan.ts"), sourceFile("../runtime/scene3d/mount-zoom.ts")},
+	},
+	{
+		// Grounded controls ship only for scenes with an authored Walk contract.
+		name:    "bootstrap-feature-scene3d-walk.js",
+		sources: []source{sourceFile("../runtime/scene3d/walk-surfaces.ts"), sourceFile("../runtime/scene3d/walk-input.ts"), sourceFile("../runtime/scene3d/mount-walk.ts")},
 	},
 	{
 		// Decompress chunk: the quantized-array decoder, the progressive and
@@ -479,32 +682,72 @@ var outputs = []output{
 		// files call each other, so they share one chunk.
 		name: "bootstrap-feature-scene3d-decompress.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-prefix.js"),
-			sourceFile("bootstrap-src/11a-scene-decompress.js"),
-			sourceFile("bootstrap-src/11b-scene-points-generate.js"),
-			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-suffix.js"),
+			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-prefix.ts"),
+			sourceFile("bootstrap-src/11a-scene-decompress.ts"),
+			sourceFile("bootstrap-src/11b-scene-points-generate.ts"),
+			sourceFile("bootstrap-src/26l-feature-scene3d-decompress-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d-gltf.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-prefix.js"),
+			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-prefix.ts"),
 			// 19a holds the KTX2 reader and the block uploader. It must load
 			// before 19-scene-gltf.js, which reads sceneKTX2UploadPathReady
 			// before it swaps an image URI for a block variant. It ships in
 			// this chunk only: the base scene3d chunk has no lexical reader of
 			// it, and a second copy would be a second download.
-			sourceFile("bootstrap-src/19a-scene-ktx2.js"),
-			sourceFile("bootstrap-src/19-scene-gltf.js"),
-			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.js"),
+			sourceFile("bootstrap-src/19a-scene-ktx2.ts"),
+			sourceFile("../runtime/scene3d/gltf.ts"),
+			sourceFile("bootstrap-src/26f-feature-scene3d-gltf-suffix.ts"),
 		},
 	},
 	{
 		name: "bootstrap-feature-scene3d-animation.js",
 		sources: []source{
-			sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.js"),
-			sourceFile("bootstrap-src/19a-scene-animation.js"),
-			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.js"),
+			sourceFile("bootstrap-src/26g-feature-scene3d-animation-prefix.ts"),
+			sourceFile("../runtime/scene3d/animation.ts"),
+			sourceFile("bootstrap-src/26g-feature-scene3d-animation-suffix.ts"),
+		},
+	},
+	{
+		// Standalone host authorities are part of the build graph now, but their
+		// committed JS/map/compressed artifacts remain a deliberate Stack 07
+		// cutover. Until then --check reports them stale.
+		name: "patch.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/patch.ts"),
+		},
+	},
+	{
+		name: "relay.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/relay.ts"),
+		},
+	},
+	{
+		name: "stripe-bridge.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile("../runtime/host/stripe-bridge.ts"),
+		},
+	},
+}
+
+// inlineAssets lists standalone artifacts embedded in the Go binary rather
+// than staged through the bootstrap chunk graph. The navigation head loads
+// its embedded asset by content hash as a deferred script before bootstrap. Generate
+// compressed sidecars for serving and exporting, without a source map or a
+// chunks.json entry (the server owns the URL).
+var inlineAssets = []output{
+	{
+		name: "../runtime/host/navigation-runtime.min.js",
+		sources: []source{
+			sourceFile(hostCompatibilityFile),
+			sourceFile(disclosureFile),
+			sourceFile("../runtime/host/navigation.ts"),
 		},
 	},
 }
@@ -524,12 +767,20 @@ type compacted struct {
 }
 
 func compactSource(body string) compacted {
-	lines := strings.Split(normalizeNewlines(body), "\n")
+	body = normalizeNewlines(body)
+	literalLines := literalSourceLines(body)
+	lines := strings.Split(body, "\n")
 	var out []string
 	var lineMap []int
 	lastBlank := false
 
 	for index, line := range lines {
+		if literalLines[index] {
+			out = append(out, line)
+			lineMap = append(lineMap, index)
+			lastBlank = false
+			continue
+		}
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "//") {
 			continue
@@ -621,16 +872,17 @@ type sidecar struct {
 	bytes []byte // nil when compression does not beat the raw payload
 }
 
+// Release sidecars use an iterative DEFLATE search to reduce wire bytes.
+// Large compatibility bundles use a longer search; ordinary chunks retain the
+// five-pass build path. Browsers use ordinary gzip decoding in either case.
 func gzipCompress(raw []byte) ([]byte, error) {
 	var buf bytes.Buffer
-	w, err := gzip.NewWriterLevel(&buf, gzip.BestCompression)
-	if err != nil {
-		return nil, err
+	options := zopfli.DefaultOptions()
+	options.NumIterations = 5
+	if len(raw) > 1<<20 {
+		options.NumIterations = 8
 	}
-	if _, err := w.Write(raw); err != nil {
-		return nil, err
-	}
-	if err := w.Close(); err != nil {
+	if err := zopfli.GzipCompress(&options, raw, &buf); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
@@ -794,17 +1046,86 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 		raw       string
 		compacted compacted
 	}
+
+	// An all-TypeScript chunk transpiles as ONE unit. Its sources may then be
+	// FRAGMENTS — the prefix/suffix pairs that wrap a feature chunk are not
+	// parseable alone, which is the only reason they stayed JavaScript — and
+	// the concatenated chunk is what the parser sees. The per-source path
+	// below still runs for any chunk holding a JavaScript source, so a .js
+	// file is never promoted to the TypeScript parser.
+	allTypeScript, err := outputIsAllTypeScript(entry)
+	if err != nil {
+		return builtBundle{}, err
+	}
+	if allTypeScript {
+		return buildCompactedTypeScriptChunk(dir, entry)
+	}
+
 	sections := make([]section, 0, len(entry.sources))
 	for _, src := range entry.sources {
 		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
 		if err != nil {
 			return builtBundle{}, err
 		}
-		body := string(data)
+
+		language, err := languageForSource(src)
+		if err != nil {
+			return builtBundle{}, err
+		}
+
+		raw := normalizeNewlines(string(data))
+		bodyForCompaction := raw
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+			bodyForCompaction = compactBrowserSource(src, raw)
+		}
+		var lineOrigins []int
+		if language == sourceTypeScript {
+			// Validate against the original file before the chunk swallows a
+			// syntax error into one offset in the concatenated bundle: a
+			// tree-sitter diagnostic here still names src.rel and the exact
+			// line and column the author sees in the editor.
+			if err := validateTypedSource(src, data); err != nil {
+				return builtBundle{}, err
+			}
+
+			// Erase this source's own types with its own esbuild loader, never
+			// the whole chunk's. A .js source beside a .ts source must never
+			// reach the TypeScript parser: reparsing `a < b > (c)` as a
+			// generic-argument call silently drops the comparison against b.
+			erased, mappings, err := transpileSource(src, bodyForCompaction)
+			if err != nil {
+				return builtBundle{}, err
+			}
+			origins, err := firstOriginalLinePerGeneratedLine(mappings)
+			if err != nil {
+				return builtBundle{}, fmt.Errorf("decode transpile map for %s: %w", src.rel, err)
+			}
+			bodyForCompaction = erased
+			lineOrigins = origins
+		}
+
+		compactedSection := compactSource(bodyForCompaction)
+		if lineOrigins != nil {
+			// compactedSection.lineMap holds rows in the erased text. Type
+			// erasure can remove whole lines (an erased interface, for
+			// example), so translate each row through the real esbuild map
+			// back to the original .ts row before the section's line map
+			// joins the hand-rolled, line-only compacted map below. A row
+			// esbuild names no source position for (an inserted blank line)
+			// keeps the closest earlier mapped row.
+			lastKnown := 0
+			for i, erasedLine := range compactedSection.lineMap {
+				if erasedLine >= 0 && erasedLine < len(lineOrigins) && lineOrigins[erasedLine] >= 0 {
+					lastKnown = lineOrigins[erasedLine]
+				}
+				compactedSection.lineMap[i] = lastKnown
+			}
+		}
+
 		sections = append(sections, section{
 			label:     src.label,
-			raw:       normalizeNewlines(body),
-			compacted: compactSource(body),
+			raw:       raw,
+			compacted: compactedSection,
 		})
 	}
 
@@ -836,14 +1157,93 @@ func buildCompactedBundle(dir string, entry output) (builtBundle, error) {
 	return builtBundle{code: joined, m: m}, nil
 }
 
+// buildCompactedTypeScriptChunk builds a chunk whose sources are all
+// TypeScript by transpiling the CONCATENATED body once, then attributing
+// every surviving line back to the source that authored it.
+//
+// The per-source path cannot do this: esbuild rejects an unbalanced
+// fragment on its own. Concatenating first is what allows a bootstrap
+// source to be a fragment and still be TypeScript.
+//
+// Source maps keep per-file granularity exactly as before. Each source stays
+// its own sources[]/sourcesContent[] entry; a compacted row resolves through
+// the chunk's erase map to a line in the joined body, and then through the
+// section offsets to (source, line within that source).
+func buildCompactedTypeScriptChunk(dir string, entry output) (builtBundle, error) {
+	labels := make([]string, 0, len(entry.sources))
+	raws := make([]string, 0, len(entry.sources))
+	for _, src := range entry.sources {
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(src.rel)))
+		if err != nil {
+			return builtBundle{}, err
+		}
+		// No per-source parse gate here. A fragment cannot be parsed alone,
+		// and the tree-sitter grammar rejects constructs esbuild accepts
+		// (a computed-member assignment inside a for-of, for one), so gating
+		// on it would fail the build on valid code. esbuild parses the
+		// assembled chunk below and its errors are attributed back to the
+		// authoring file and line by transpileChunkBody.
+		labels = append(labels, src.label)
+		raws = append(raws, normalizeNewlines(string(data)))
+	}
+
+	buildSources := make([]string, len(raws))
+	for i, raw := range raws {
+		buildSources[i] = raw
+		if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+			buildSources[i] = compactBrowserSource(entry.sources[i], raw)
+		}
+	}
+	joinedRaw, sectionStartLines := joinChunkSources(buildSources)
+	erased, mappings, err := transpileChunkBody(entry, joinedRaw, labels, sectionStartLines)
+	if err != nil {
+		return builtBundle{}, err
+	}
+	erasedToJoined, err := firstOriginalLinePerGeneratedLine(mappings)
+	if err != nil {
+		return builtBundle{}, fmt.Errorf("decode transpile map for chunk %s: %w", entry.name, err)
+	}
+
+	compactedChunk := compactSource(erased)
+	lines := make([]*mappingLine, 0, len(compactedChunk.lineMap))
+	lastJoined := 0
+	for _, erasedLine := range compactedChunk.lineMap {
+		if erasedLine >= 0 && erasedLine < len(erasedToJoined) && erasedToJoined[erasedLine] >= 0 {
+			lastJoined = erasedToJoined[erasedLine]
+		}
+		sectionIndex, lineWithin := sectionForJoinedLine(sectionStartLines, lastJoined)
+		lines = append(lines, &mappingLine{source: sectionIndex, originalLine: lineWithin})
+	}
+
+	code := compactedChunk.code
+	if !strings.HasSuffix(code, "\n") {
+		code += "\n"
+	}
+	m := compactedMapJSON(entry.name, labels, raws, encodeMappings(lines))
+	return builtBundle{code: code, m: m}, nil
+}
+
 // minifyESBuild minifies with esbuild's Go library, composing the compacted
 // source map into the final map exactly like the retired mjs pipeline: the
 // compacted map rides in as an inline sourceMappingURL data URL, and esbuild
 // emits the composed external map.
+//
+// built.code is already plain JavaScript: buildCompactedBundle erases every
+// typed source's types on its own, before the chunk is assembled, so this
+// step always reads with the JavaScript loader. It never re-promotes the
+// whole chunk to the TypeScript parser, which used to reparse a neighboring
+// .js source's `a < b > (c)` as a generic-argument call and silently drop
+// the comparison against b.
 func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 	dataURL := "data:application/json;base64," + base64.StdEncoding.EncodeToString([]byte(built.m))
-	input := built.code + "\n//# sourceMappingURL=" + dataURL
-	result := esbuild.Transform(input, esbuild.TransformOptions{
+	code := built.code
+	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+		code = packBuiltinGLSL(code)
+	} else if entry.name == "bootstrap-feature-scene3d-webgpu.js" {
+		code = packBuiltinWGSL(code)
+	}
+	input := code + "\n//# sourceMappingURL=" + dataURL
+	options := esbuild.TransformOptions{
 		Charset:           esbuild.CharsetUTF8,
 		LegalComments:     esbuild.LegalCommentsNone,
 		Loader:            esbuild.LoaderJS,
@@ -853,7 +1253,12 @@ func minifyESBuild(entry output, built builtBundle) (builtBundle, error) {
 		Sourcefile:        entry.name,
 		Sourcemap:         esbuild.SourceMapExternal,
 		Target:            esbuild.ES2020,
-	})
+	}
+	if entry.name == "bootstrap-feature-scene3d-webgl.js" {
+		options.MangleProps = webGLPrivatePropertyPattern
+		options.MangleQuoted = esbuild.MangleQuotedTrue
+	}
+	result := esbuild.Transform(input, options)
 	if len(result.Errors) > 0 {
 		return builtBundle{}, fmt.Errorf("esbuild %s: %s", entry.name, result.Errors[0].Text)
 	}
@@ -921,6 +1326,27 @@ func normalizeGeneratedCode(code, mapName string, debugSourcemaps bool) string {
 	return next
 }
 
+func compactSceneRelease(name string) bool {
+	switch name {
+	case "bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-webgl.js", "bootstrap-feature-scene3d-webgpu.js":
+		return true
+	}
+	return false
+}
+
+// Never leave an earlier source map beside code produced by a pass that cannot
+// update its mappings. Debug builds still write the composed esbuild map.
+func writeBundleMap(path, sourceMap string) error {
+	if sourceMap == "" {
+		err := os.Remove(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	return os.WriteFile(path, []byte(sourceMap), 0o644)
+}
+
 func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool) (builtBundle, error) {
 	built, err := buildCompactedBundle(dir, entry)
 	if err != nil {
@@ -932,25 +1358,50 @@ func buildBundle(dir string, entry output, minifier string, debugSourcemaps bool
 		if err != nil {
 			return builtBundle{}, err
 		}
+		if compactSceneRelease(entry.name) && !debugSourcemaps {
+			// Reuse the WebGL release pass for the core and WebGPU chunks.
+			// Keep accurate maps available through GOSX_BUNDLE_DEBUG=1.
+			minified.code, err = minifyTdewolff(minified.code)
+			if err != nil {
+				return builtBundle{}, fmt.Errorf("compact %s release: %w", entry.name, err)
+			}
+			minified.m = ""
+		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified.code, entry.name+".map", debugSourcemaps),
 			m:    minified.m,
 		}, nil
 	case "tdewolff":
+		// built.code is already plain JavaScript: buildCompactedBundle erases
+		// every typed source's types on its own before it assembles the
+		// chunk, so tdewolff never needs a second, whole-chunk erasure pass.
 		minified, err := minifyTdewolff(built.code)
 		if err != nil {
 			return builtBundle{}, fmt.Errorf("minify %s: %w", entry.name, err)
 		}
 		return builtBundle{
 			code: normalizeGeneratedCode(minified, entry.name+".map", debugSourcemaps),
-			// tdewolff cannot compose source maps; ship the compacted
-			// (pre-minify) map, which still carries accurate sources and
-			// sourcesContent.
+			// tdewolff cannot compose source maps, so the shipped map still
+			// stops before minification: it is the pre-minify compacted map,
+			// which now accounts for type erasure (buildCompactedBundle
+			// erases each typed source before it builds this map), but not
+			// for tdewolff's own line and column shifts. The esbuild path
+			// remains the release default for that reason.
 			m: built.m,
 		}, nil
 	default:
 		return builtBundle{}, fmt.Errorf("unknown minifier %q (want esbuild or tdewolff)", minifier)
 	}
+}
+
+// buildInlineAsset builds an embedded standalone runtime without a source
+// map trailer. Its URL and compressed representations are owned by the server.
+func buildInlineAsset(dir string, entry output, minifier string) (string, error) {
+	built, err := buildBundle(dir, entry, minifier, false)
+	if err != nil {
+		return "", err
+	}
+	return built.code, nil
 }
 
 // findClientJS resolves the client/js directory: an explicit -dir wins,
@@ -994,6 +1445,9 @@ func chunksManifestJSON() string {
 	for i, entry := range outputs {
 		b.WriteString("    {\n      \"name\": ")
 		b.WriteString(jsQuote(entry.name))
+		if compactSceneRelease(entry.name) {
+			b.WriteString(",\n      \"sourceMap\": \"debug-only\"")
+		}
 		b.WriteString(",\n      \"sources\": [\n")
 		for j, src := range entry.sources {
 			b.WriteString("        ")
@@ -1017,11 +1471,15 @@ func run() error {
 	dirFlag := flag.String("dir", "", "path to client/js (default: auto-detect from working directory)")
 	check := flag.Bool("check", false, "verify committed bundles are up to date; exit 1 when stale")
 	closureOnly := flag.Bool("closure", false, "run only the chunk closure check and exit")
+	perfGraphOut := flag.String("perf-graph", "", "write a private whole-asset performance graph")
 	minifier := flag.String("minifier", "esbuild", "JS minifier backend: esbuild (default, byte-stable) or tdewolff (A/B comparison)")
 	flag.Parse()
 
 	dir, err := findClientJS(*dirFlag)
 	if err != nil {
+		return err
+	}
+	if err := generateCloudLibrary(dir, *check); err != nil {
 		return err
 	}
 
@@ -1032,6 +1490,9 @@ func run() error {
 		return err
 	}
 	if *closureOnly {
+		if *perfGraphOut != "" {
+			return perfGraphError("invalid-input")
+		}
 		return nil
 	}
 	debugSourcemaps := os.Getenv("GOSX_BUNDLE_DEBUG") == "1"
@@ -1041,8 +1502,11 @@ func run() error {
 
 	if *check {
 		var stale []string
+		recordStale := func(name string) {
+			stale = append(stale, name)
+		}
 		if current, _ := os.ReadFile(manifestPath); string(current) != manifest {
-			stale = append(stale, chunksManifestRel)
+			recordStale(chunksManifestRel)
 		}
 		for _, entry := range outputs {
 			next, err := buildBundle(dir, entry, *minifier, debugSourcemaps)
@@ -1051,19 +1515,35 @@ func run() error {
 			}
 			bundlePath := filepath.Join(dir, entry.name)
 			currentCode, _ := os.ReadFile(bundlePath)
-			currentMap, _ := os.ReadFile(bundlePath + ".map")
+			currentMap, mapErr := os.ReadFile(bundlePath + ".map")
+			mapMatches := string(currentMap) == next.m && (next.m != "" || errors.Is(mapErr, os.ErrNotExist))
 			match, err := sidecarsMatch(bundlePath, next.code)
 			if err != nil {
 				return err
 			}
-			if string(currentCode) != next.code || string(currentMap) != next.m || !match {
-				stale = append(stale, entry.name)
+			if string(currentCode) != next.code || !mapMatches || !match {
+				recordStale(entry.name)
+			}
+		}
+		for _, entry := range inlineAssets {
+			next, err := buildInlineAsset(dir, entry, *minifier)
+			if err != nil {
+				return err
+			}
+			assetPath := filepath.Join(dir, entry.name)
+			current, _ := os.ReadFile(assetPath)
+			match, err := sidecarsMatch(assetPath, next)
+			if err != nil {
+				return err
+			}
+			if string(current) != next || !match {
+				recordStale(entry.name)
 			}
 		}
 		if len(stale) > 0 {
 			return fmt.Errorf("bootstrap runtime assets are out of date (%s). Run `go run ./cmd/buildbootstrap`", strings.Join(stale, ", "))
 		}
-		return nil
+		return writePerfGraph(dir, *perfGraphOut)
 	}
 
 	if err := os.WriteFile(manifestPath, []byte(manifest), 0o644); err != nil {
@@ -1078,14 +1558,27 @@ func run() error {
 		if err := os.WriteFile(bundlePath, []byte(built.code), 0o644); err != nil {
 			return err
 		}
-		if err := os.WriteFile(bundlePath+".map", []byte(built.m), 0o644); err != nil {
+		if err := writeBundleMap(bundlePath+".map", built.m); err != nil {
 			return err
 		}
 		if err := writeCompressedSidecars(bundlePath, built.code); err != nil {
 			return err
 		}
 	}
-	return nil
+	for _, entry := range inlineAssets {
+		code, err := buildInlineAsset(dir, entry, *minifier)
+		if err != nil {
+			return err
+		}
+		assetPath := filepath.Join(dir, entry.name)
+		if err := os.WriteFile(assetPath, []byte(code), 0o644); err != nil {
+			return err
+		}
+		if err := writeCompressedSidecars(assetPath, code); err != nil {
+			return err
+		}
+	}
+	return writePerfGraph(dir, *perfGraphOut)
 }
 
 func main() {

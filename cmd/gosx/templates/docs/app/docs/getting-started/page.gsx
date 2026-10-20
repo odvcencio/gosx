@@ -86,6 +86,9 @@ func Page() Node {
 				<span class="inline-code">env.LoadDir</span>
 				.
 			</p>
+			<p>
+				The scaffold ignores these files in Git. Development uses a random per-process session secret when SESSION_SECRET is missing or a placeholder; sessions reset on restart. Before deploying, set GOSX_ENV=production and supply a random SESSION_SECRET of at least 16 bytes through your deployment environment. Other modes reject missing or placeholder secrets.
+			</p>
 		</section>
 		<section class="callout">
 			<strong>Default shape</strong>
@@ -95,6 +98,29 @@ func Page() Node {
 				files first, leaving
 				<span class="inline-code">main.go</span>
 				mostly responsible for APIs, middleware, and server concerns.
+			</p>
+		</section>
+		<section id="troubleshooting" class="callout">
+			<h2>Troubleshooting</h2>
+			<p>
+				Run
+				<code>gosx check app/page.gsx</code>
+				for a markup error. Unclosed or mismatched tags report the file, line, column, source excerpt, and fix hint. For example,
+				<code>{"<h2>Next steps</h3>"}</code>
+				reports
+				<code>
+					{"mismatched closing tag </h3>; expected </h2>"}
+				</code>
+				. Add a missing closing tag or change it to match the opening tag. Markup that produces zero components fails the check.
+			</p>
+			<p>
+				Use
+				<code>gosx dev</code>
+				for render failures: the browser shows the error message, source position, and offending expression, even when the app defines an error component. Fix the source and save to reload. Production uses the app's error page or a generic server error page.
+				<code>GOSX_ENV=production</code>
+				disables development details even if
+				<code>GOSX_DEV=1</code>
+				is set.
 			</p>
 		</section>
 		<div class="hero-actions">

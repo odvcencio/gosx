@@ -25,8 +25,8 @@ func (c *lowerCtx) lowerTopLevelDecl(decl ast.Decl) {
 
 // lowerFuncDecl emits a program.Handler whose Body is a single OpSeq
 // expression. Parameters become locals declared in the handler's
-// frame before the body runs; the caller (engine/surface/lowering.go
-// in Slice X.D) is responsible for populating those locals from event
+// frame before the body runs; the caller (engine/surface/lowering.go)
+// is responsible for populating those locals from event
 // data before invoking the handler.
 //
 // Function receivers are rejected — engine-surface handlers are always
@@ -38,13 +38,13 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 		return
 	}
 	c.handler = fn.Name.Name
-	// Slice Y.D: thread the declared return-value count through so
+	// Thread the declared return-value count through so
 	// lowerReturnStmt knows whether to emit the multi-value ObjectVal
 	// carrier or stay on the single-return path.
 	prevResults := c.currentResults
 	prevClosureLocals := c.closureLocals
 	c.currentResults = countResults(fn.Type.Results)
-	// Slice Y.G: populate the per-handler closure-local set so
+	// Populate the per-handler closure-local set so
 	// lowerCallExpr can route `f()` where f is a local holding a
 	// ClosureVal through OpIndirectCall instead of the legacy
 	// "unsupported user function" diagnostic.
@@ -61,8 +61,8 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 	}
 
 	// Parameters are NOT pre-declared as locals. The runtime supplies
-	// parameter values through the props table (Slice X.D's
-	// engine/surface/lowering.go is responsible for populating those
+	// parameter values through the props table (engine/surface/lowering.go
+	// is responsible for populating those
 	// props from event data before invoking the handler). The
 	// OpLocalGet fallback chain (frame → signals → props) then
 	// resolves a bare parameter reference to the prop value.
@@ -81,7 +81,7 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 		Body: []program.ExprID{seqID},
 	})
 
-	// Slice Y.D: every user function is ALSO registered as a FuncDef
+	// Every user function is ALSO registered as a FuncDef
 	// so OpIndirectCall can dispatch into it from another handler.
 	// Reusing the same Body ExprID keeps the lowering single-pass —
 	// edits flow into both call sites and the event-dispatch path
@@ -99,7 +99,7 @@ func (c *lowerCtx) lowerFuncDecl(fn *ast.FuncDecl) {
 
 // lowerGenDecl handles `var` and `const` declarations. `var x = expr`
 // becomes a signal whose init expression is the lowered expr. `const`
-// is treated the same way for the X.B/X.C supported subset: constants
+// is treated the same way for the supported subset: constants
 // participate as initial signal values, which is good enough for the
 // engine-surface authoring contract.
 //

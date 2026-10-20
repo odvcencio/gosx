@@ -1,0 +1,97 @@
+{
+  "schemaVersion": 1,
+  "source": "physical-sky:noon",
+  "radiance": {
+    "uri": "/env/blackglass-beach/noon.ibl.ktx2",
+    "role": "environment-radiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 7,
+    "width": 64,
+    "height": 64,
+    "faces": 6
+  },
+  "irradiance": {
+    "uri": "/env/blackglass-beach/noon.irradiance.ktx2",
+    "role": "environment-irradiance",
+    "colorSpace": "linear",
+    "channels": "rgba",
+    "view": "cube",
+    "format": "rgba16f",
+    "mipLevels": 1,
+    "width": 8,
+    "height": 8,
+    "faces": 6
+  },
+  "brdfLUT": {
+    "uri": "/env/blackglass-beach/noon.brdf-lut.ktx2",
+    "role": "brdf-lut",
+    "colorSpace": "linear",
+    "channels": "rg",
+    "view": "2d",
+    "format": "rg16f",
+    "mipLevels": 1,
+    "width": 64,
+    "height": 64,
+    "faces": 1
+  },
+  "brdfModel": "ggx-split-sum/smith-schlick-k=alpha-over-2/schlick-fresnel",
+  "roughnessPerLevel": [
+    0,
+    0.16666666666666666,
+    0.3333333333333333,
+    0.5,
+    0.6666666666666666,
+    0.8333333333333334,
+    1
+  ],
+  "sphericalHarmonics": [
+    [
+      1.780656,
+      2.653373,
+      3.623167
+    ],
+    [
+      0.918822,
+      1.379551,
+      1.970971
+    ],
+    [
+      -0.042442,
+      -0.113001,
+      -0.183206
+    ],
+    [
+      0.321362,
+      0.417592,
+      0.512661
+    ],
+    [
+      0.346126,
+      0.462488,
+      0.582792
+    ],
+    [
+      0.08796,
+      0.171279,
+      0.264193
+    ],
+    [
+      0.143145,
+      0.164965,
+      0.118268
+    ],
+    [
+      0.065433,
+      0.083905,
+      0.098728
+    ],
+    [
+      0.679588,
+      0.839662,
+      0.857143
+    ]
+  ]
+}

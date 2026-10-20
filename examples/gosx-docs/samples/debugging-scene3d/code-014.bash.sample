@@ -1,0 +1,2 @@
+gosx visual --require-backend webgpu http://localhost:8080/your-scene
+	gosx visual --require-backend any-gpu --update http://localhost:8080/your-scene

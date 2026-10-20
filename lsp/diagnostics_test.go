@@ -13,6 +13,24 @@ func TestAnalyzeParseDiagnostic(t *testing.T) {
 func Broken() Node {
 	return <div>{</div>
 }
+
+func TestAnalyzeMarkupDiagnostic(t *testing.T) {
+	for _, tc := range []struct {
+		markup, message, hint string
+		column                int
+	}{
+		{"<h2>Next steps</h3>", "mismatched closing tag </h3>", "replace </h3> with </h2>", 22},
+		{"<h2>Next steps", "unclosed tag <h2>", "add </h2>", 8},
+	} {
+		diags := Analyze("page.gsx", []byte("package app\n\nfunc Page() Node {\n\treturn "+tc.markup+"\n}\n"))
+		if len(diags) != 1 || diags[0].Severity != SeverityError || diags[0].Range.Start != (Position{Line: 3, Character: tc.column}) {
+			t.Fatalf("diagnostics=%+v", diags)
+		}
+		if !strings.Contains(diags[0].Message, tc.message) || !strings.Contains(diags[0].Message, tc.hint) {
+			t.Fatalf("message=%q", diags[0].Message)
+		}
+	}
+}
 `))
 	if len(diags) == 0 {
 		t.Fatal("expected diagnostics")
@@ -61,6 +79,33 @@ func alsoBroken() Node {
 		if !strings.Contains(diag.Message, "uppercase") {
 			t.Fatalf("unexpected validation message %q", diag.Message)
 		}
+	}
+}
+
+// TestAnalyzeWarnsOnUntypedLegacyComponent covers step one of retiring
+// legacy component syntax: an untyped legacy component (`func Name(props
+// any) Node`) must reach the editor as a SeverityWarning diagnostic, not a
+// SeverityError one — the file itself is otherwise valid, so Analyze must
+// not report it as broken.
+func TestAnalyzeWarnsOnUntypedLegacyComponent(t *testing.T) {
+	diags := Analyze("page.gsx", []byte(`package main
+
+func FeatureCard(props any) Node {
+	return <div class="card">{props}</div>
+}
+`))
+	if len(diags) != 1 {
+		t.Fatalf("expected exactly one diagnostic, got %d: %+v", len(diags), diags)
+	}
+	diag := diags[0]
+	if diag.Severity != SeverityWarning {
+		t.Fatalf("expected warning severity, got %d", diag.Severity)
+	}
+	if !strings.Contains(diag.Message, "FeatureCard") {
+		t.Fatalf("expected the diagnostic to name FeatureCard, got %q", diag.Message)
+	}
+	if !strings.Contains(diag.Message, "component FeatureCard(props: FeatureCardProps)") {
+		t.Fatalf("expected the diagnostic to point at the strict replacement, got %q", diag.Message)
 	}
 }
 

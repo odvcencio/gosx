@@ -1,4 +1,4 @@
-// Slice Y.E.4 — graph_surface-shape integration tests for the VM
+// graph_surface-shape integration tests for the VM
 // side of OpHostCall. Pairs with TestY_E_GraphSurfaceEndToEnd
 // (lowering smoke test) by exercising the *runtime* dispatch shape
 // for the canvas patterns graph_surface.go's draw and stepLayout
@@ -73,7 +73,7 @@ func Draw(c *surface.Canvas, x1 float64, y1 float64, x2 float64, y2 float64, col
 // TestY_E_GraphSurfaceStepLayoutShape exercises the per-tick force
 // table allocation pattern from stepLayout (`make(map[string]float64,
 // len(gNodes))`) plus a host call into the canvas at the end.
-// Demonstrates that Y.E's OpMake and OpHostCall co-evaluate cleanly
+// Demonstrates that OpMake and OpHostCall co-evaluate cleanly
 // in a single handler — the exact pattern stepLayout uses.
 func TestY_E_GraphSurfaceStepLayoutShape(t *testing.T) {
 	src := []byte(`package handlers
@@ -108,9 +108,8 @@ func Step(c *surface.Canvas, n int) int {
 
 // TestY_E_GraphSurfaceUserFnCallsCanvas verifies that a user-defined
 // helper which calls the canvas dispatches through the bound
-// HostReceiver correctly — Y.D's user-fn dispatch composes cleanly
-// with Y.E's host-call dispatch (no special integration needed per
-// Y.D's retrospective handoff).
+// HostReceiver correctly — user-fn dispatch composes cleanly
+// with host-call dispatch (no special integration needed).
 func TestY_E_GraphSurfaceUserFnCallsCanvas(t *testing.T) {
 	src := []byte(`package handlers
 

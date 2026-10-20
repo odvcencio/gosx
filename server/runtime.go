@@ -1,9 +1,12 @@
 package server
 
 import (
+	"fmt"
 	"strings"
 
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/assetpipe"
+	"m31labs.dev/gosx/command"
 	"m31labs.dev/gosx/controller"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/hydrate"
@@ -16,7 +19,19 @@ import (
 type PageRuntime struct {
 	renderer *island.Renderer
 	active   bool
-	head     []gosx.Node
+	head     []pageRuntimeHeadEntry
+	scripts  map[string]struct{}
+}
+
+type pageRuntimeHeadEntry struct {
+	node   gosx.Node
+	script *pageRuntimeManagedScript
+}
+
+type pageRuntimeManagedScript struct {
+	src  string
+	opts ManagedScriptOptions
+	args []any
 }
 
 // PageRuntimeSummary describes the bootstrap/runtime surface declared by a page.
@@ -34,7 +49,9 @@ type PageRuntimeSummary struct {
 	BootstrapFeatureEnginesPath     string
 	BootstrapFeatureHubsPath        string
 	BootstrapFeatureControllersPath string
+	BootstrapControllerInputPath    string
 	BootstrapFeatureScene3DPath     string
+	BootstrapFeatureTextLayoutPath  string
 	HLSPath                         string
 	Islands                         int
 	ComputeIslands                  int
@@ -62,6 +79,29 @@ func (r *PageRuntime) EnableBootstrap() {
 	if r.renderer != nil {
 		r.renderer.EnableBootstrap()
 	}
+}
+
+// RequireFeature asks the browser loader to fetch the opt-in runtime chunk
+// bootstrap-feature-<name>.js (for example "engine-bridge") on this page. It
+// marks the page runtime active. See island.Renderer.RequireFeature.
+func (r *PageRuntime) RequireFeature(name string) error {
+	if r == nil || r.renderer == nil {
+		return fmt.Errorf("page runtime is nil")
+	}
+	if err := r.renderer.RequireFeature(name); err != nil {
+		return err
+	}
+	r.active = true
+	return nil
+}
+
+// FeaturePaths maps the runtime feature chunks the page loads to their public
+// URLs; see island.Renderer.FeaturePaths. It returns nil for an inactive page.
+func (r *PageRuntime) FeaturePaths() map[string]string {
+	if r == nil || r.renderer == nil || !r.active {
+		return nil
+	}
+	return r.renderer.FeaturePaths()
 }
 
 // Engine registers a client engine and returns its server-rendered mount shell.
@@ -129,6 +169,19 @@ func (r *PageRuntime) BindHub(name, path string, bindings []hydrate.HubBinding) 
 	return r.renderer.BindHub(name, path, bindings)
 }
 
+// BindHubDocument declares a framework-owned document view over an ordinary
+// Hub. The page supplies Go-rendered markup and server document handlers.
+func (r *PageRuntime) BindHubDocument(name, path string, config hydrate.HubDocumentConfig) (string, error) {
+	if r == nil || r.renderer == nil {
+		return "", fmt.Errorf("page runtime is nil")
+	}
+	id, err := r.renderer.BindHubDocument(name, path, config)
+	if err == nil {
+		r.active = true
+	}
+	return id, err
+}
+
 // BindHubInput registers a realtime hub and asks the GoSX bootstrap to forward
 // browser input snapshots to it.
 func (r *PageRuntime) BindHubInput(name, path string, bindings []hydrate.HubBinding, input hydrate.HubInputConfig) string {
@@ -137,6 +190,28 @@ func (r *PageRuntime) BindHubInput(name, path string, bindings []hydrate.HubBind
 	}
 	r.active = true
 	return r.renderer.BindHubInput(name, path, bindings, input)
+}
+
+// BindHubWithRoundTrip registers a hub and measures ping/pong time in the
+// browser into a shared island signal.
+func (r *PageRuntime) BindHubWithRoundTrip(name, path string, bindings []hydrate.HubBinding, roundTrip hydrate.HubRoundTripConfig) string {
+	if r == nil || strings.TrimSpace(name) == "" || strings.TrimSpace(path) == "" {
+		return ""
+	}
+	r.active = true
+	return r.renderer.BindHubWithRoundTrip(name, path, bindings, roundTrip)
+}
+
+// SetTextureVariants publishes built assetpipe texture variants to the current
+// page manifest. Scene3D uses them to choose a block-compressed texture only
+// when the selected renderer reports the required device capability; other
+// devices keep the authored PNG or WebP URI.
+func (r *PageRuntime) SetTextureVariants(manifest assetpipe.VariantManifest) {
+	if r == nil || r.renderer == nil {
+		return
+	}
+	r.renderer.Manifest().SetTextureVariants(manifest)
+	r.active = true
 }
 
 // Controller registers a declarative headless browser controller for the
@@ -150,6 +225,19 @@ func (r *PageRuntime) Controller(config controller.Config) string {
 		r.active = true
 	}
 	return id
+}
+
+// Commands registers page commands and requires the workbench runtime chunk.
+// The browser dispatches keystrokes; desktop menu accelerators are labels only.
+func (r *PageRuntime) Commands(cmds ...command.Command) error {
+	if r == nil {
+		return nil
+	}
+	if err := r.renderer.AddCommands(cmds...); err != nil {
+		return err
+	}
+	r.active = true
+	return r.renderer.RequireFeature("workbench")
 }
 
 // ClientIdentity asks the GoSX bootstrap to maintain a stable anonymous client
@@ -215,25 +303,42 @@ func (r *PageRuntime) AddHead(nodes ...gosx.Node) {
 		if node.IsZero() {
 			continue
 		}
-		r.head = append(r.head, node)
+		r.head = append(r.head, pageRuntimeHeadEntry{node: node})
 	}
 }
 
 // ManagedScript appends a GoSX-managed external script to the page runtime.
+// Rendering is deferred until HeadWithNonce so the request nonce reaches the
+// executable tag. Repeated registration of the same normalized role and URL
+// is idempotent; the first registration owns its attributes.
 func (r *PageRuntime) ManagedScript(src string, opts ManagedScriptOptions, args ...any) {
 	if r == nil {
 		return
 	}
-	r.AddHead(ManagedScript(src, opts, args...))
+	src = strings.TrimSpace(src)
+	if src == "" {
+		return
+	}
+	key := normalizeManagedScriptRole(opts.Role) + "\x00" + AssetURL(src)
+	if r.scripts == nil {
+		r.scripts = make(map[string]struct{})
+	}
+	if _, exists := r.scripts[key]; exists {
+		return
+	}
+	r.scripts[key] = struct{}{}
+	r.head = append(r.head, pageRuntimeHeadEntry{script: &pageRuntimeManagedScript{
+		src: src, opts: opts, args: append([]any(nil), args...),
+	}})
 }
 
 // LifecycleScript appends a page lifecycle helper script after the shared
-// runtime assets so it can chain onto bootstrap/dispose hooks safely.
+// runtime assets so it can register with the framework-owned lifecycle facade.
 func (r *PageRuntime) LifecycleScript(src string, args ...any) {
 	if r == nil {
 		return
 	}
-	r.AddHead(LifecycleScript(src, args...))
+	r.ManagedScript(src, ManagedScriptOptions{Role: ManagedScriptRoleLifecycle}, args...)
 }
 
 // Head renders the preload, manifest, and bootstrap tags required by the page runtime.
@@ -254,11 +359,53 @@ func (r *PageRuntime) HeadWithNonce(nonce string) gosx.Node {
 			r.renderer.PageHeadWithNonce(nonce),
 		)
 	}
-	nodes = append(nodes, r.head...)
+	for _, entry := range r.head {
+		if entry.script != nil {
+			nodes = append(nodes, managedScriptWithNonce(
+				entry.script.src,
+				entry.script.opts,
+				nonce,
+				entry.script.args...,
+			))
+			continue
+		}
+		nodes = append(nodes, entry.node)
+	}
 	if len(nodes) == 0 {
 		return gosx.Text("")
 	}
 	return gosx.Fragment(nodes...)
+}
+
+// PreloadHints renders <link rel="preload"/rel="prefetch"> hints for every
+// island, engine, and hub this page runtime has registered so far — the
+// half of Head/HeadWithNonce that belongs in <head>, split out on its own
+// (gosx#249) so a caller that needs to place it separately from the
+// manifest/bootstrap script — a strict .gsx layout's {slotPreloadHints}
+// versus its {slotPageHead}, most often — can bind each to its own named
+// slot without also getting the other's markup bundled in.
+func (r *PageRuntime) PreloadHints() gosx.Node {
+	if r == nil || !r.active {
+		return gosx.Text("")
+	}
+	return r.renderer.PreloadHints()
+}
+
+// PageHead renders the hydration manifest and bootstrap script for every
+// island, engine, and hub this page runtime has registered so far, with no
+// CSP nonce attached. See PageHeadWithNonce and PreloadHints' doc comment
+// for why this is split out from the combined Head/HeadWithNonce.
+func (r *PageRuntime) PageHead() gosx.Node {
+	return r.PageHeadWithNonce("")
+}
+
+// PageHeadWithNonce is PageHead, attaching nonce to GoSX-owned script
+// elements when nonce is non-empty.
+func (r *PageRuntime) PageHeadWithNonce(nonce string) gosx.Node {
+	if r == nil || !r.active {
+		return gosx.Text("")
+	}
+	return r.renderer.PageHeadWithNonce(nonce)
 }
 
 // Active reports whether the page registered any runtime engines.
@@ -286,7 +433,9 @@ func (r *PageRuntime) Summary() PageRuntimeSummary {
 		BootstrapFeatureEnginesPath:     summary.BootstrapFeatureEnginesPath,
 		BootstrapFeatureHubsPath:        summary.BootstrapFeatureHubsPath,
 		BootstrapFeatureControllersPath: summary.BootstrapFeatureControllersPath,
+		BootstrapControllerInputPath:    summary.BootstrapControllerInputPath,
 		BootstrapFeatureScene3DPath:     summary.BootstrapFeatureScene3DPath,
+		BootstrapFeatureTextLayoutPath:  summary.BootstrapFeatureTextLayoutPath,
 		HLSPath:                         summary.HLSPath,
 		Islands:                         summary.Islands,
 		ComputeIslands:                  summary.ComputeIslands,

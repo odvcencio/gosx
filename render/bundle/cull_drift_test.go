@@ -26,7 +26,7 @@ import (
 
 // jsSceneComputeFile is the browser compute-system source, relative to this
 // package directory.
-var jsSceneComputeFile = filepath.Join("..", "..", "client", "js", "bootstrap-src", "16b-scene-compute.js")
+var jsSceneComputeFile = filepath.Join("..", "..", "client", "runtime", "scene3d", "compute.ts")
 
 const (
 	cullJSKernelName = "SCENE_INSTANCED_CULL_BUILTIN_WGSL"
@@ -58,10 +58,10 @@ var cullSharedTerms = []sharedTerm{
 		jsPat:  `planes: array<vec4f, 6>,\nvertexCount: u32,\nradius: f32,\ninstanceCount: u32,`,
 	},
 	{
-		id:     "cull-radius-scaled-by-the-largest-column",
-		effect: "An instance its transform scales up vanishes while it is plainly on screen.",
-		goPat:  `let scale = max\(length\(m\[0\]\.xyz\), max\(length\(m\[1\]\.xyz\), length\(m\[2\]\.xyz\)\)\);`,
-		jsPat:  `let scale = max\(length\(m\[0\]\.xyz\), max\(length\(m\[1\]\.xyz\), length\(m\[2\]\.xyz\)\)\);`,
+		id:     "cull-radius-scaled-by-a-shear-safe-bound",
+		effect: "A sheared instance is culled with an under-sized sphere and vanishes while it is plainly on screen.",
+		goPat:  `let scale = sqrt\(dot\(m\[0\]\.xyz, m\[0\]\.xyz\) \+ dot\(m\[1\]\.xyz, m\[1\]\.xyz\) \+ dot\(m\[2\]\.xyz, m\[2\]\.xyz\)\);`,
+		jsPat:  `let scale = sqrt\(dot\(m\[0\]\.xyz, m\[0\]\.xyz\) \+ dot\(m\[1\]\.xyz, m\[1\]\.xyz\) \+ dot\(m\[2\]\.xyz, m\[2\]\.xyz\)\);`,
 	},
 	{
 		id:     "cull-zero-scale-keeps-the-base-radius",
@@ -152,9 +152,9 @@ var cullGuardMutations = []litGuardMutation{
 	{
 		name:    "browser drops the per-instance scale term",
 		side:    "js",
-		from:    "let scale = max(length(m[0].xyz), max(length(m[1].xyz), length(m[2].xyz)));",
+		from:    "let scale = sqrt(dot(m[0].xyz, m[0].xyz) + dot(m[1].xyz, m[1].xyz) + dot(m[2].xyz, m[2].xyz));",
 		to:      "let scale = 1.0;",
-		wantRow: "cull-radius-scaled-by-the-largest-column",
+		wantRow: "cull-radius-scaled-by-a-shear-safe-bound",
 	},
 	{
 		name:    "native renderer bumps a different draw-args lane",

@@ -63,7 +63,8 @@ struct Material {
   textureParams : vec4<f32>, // x=hasBaseColor, y=hasNormal, z=hasRoughMap, w=hasMetalMap
   textureParams2: vec4<f32>, // x=hasEmissiveMap
   physicalParams : vec4<f32>, // x=clearcoat, y=sheen, z=transmission, w=iridescence
-  physicalParams2: vec4<f32>, // x=anisotropy
+  physicalParams2: vec4<f32>, // x=anisotropy, y=dielectricF0
+  specularParams : vec4<f32>, // xyz = effective dielectric F0, w = F90
 };
 
 @group(0) @binding(0) var<uniform> scene             : Scene;
@@ -84,6 +85,30 @@ struct Material {
 @group(1) @binding(6) var          metalnessMapTex   : texture_2d<f32>;
 @group(1) @binding(7) var          emissiveMapTex    : texture_2d<f32>;
 
+struct AffineNormalResult {
+  normal : vec3<f32>,
+  orientation : f32,
+};
+
+fn affineNormal(model : mat4x4<f32>, localNormal : vec3<f32>) -> AffineNormalResult {
+  let linearScale = max(max(max(abs(model[0].x), abs(model[0].y)), max(abs(model[0].z), abs(model[1].x))), max(max(abs(model[1].y), abs(model[1].z)), max(max(abs(model[2].x), abs(model[2].y)), abs(model[2].z))));
+  if (linearScale == 0.0) {
+    return AffineNormalResult(normalize(localNormal), 1.0);
+  }
+  let c0 = model[0].xyz / linearScale;
+  let c1 = model[1].xyz / linearScale;
+  let c2 = model[2].xyz / linearScale;
+  let co0 = cross(c1, c2);
+  let co1 = cross(c2, c0);
+  let co2 = cross(c0, c1);
+  let determinant = dot(c0, co0);
+  if (abs(determinant) <= 1e-12) {
+    return AffineNormalResult(normalize(localNormal), 1.0);
+  }
+  let orientation = select(-1.0, 1.0, determinant > 0.0);
+  return AffineNormalResult(normalize(mat3x3<f32>(co0, co1, co2) * localNormal * orientation), orientation);
+}
+
 struct VSOut {
   @builtin(position) pos : vec4<f32>,
   @location(0) color    : vec3<f32>,
@@ -92,6 +117,7 @@ struct VSOut {
   @location(3) viewZ    : f32,
   @location(4) uv       : vec2<f32>,
   @location(5) @interpolate(flat) pickId : u32,
+  @location(6) @interpolate(flat) orientation : f32,
 };
 
 struct FSOut {
@@ -113,7 +139,8 @@ fn vs_main(
 ) -> VSOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
-  let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);
+  let affine = affineNormal(model, normal);
+  let worldNormal = affine.normal;
 
   var out : VSOut;
   out.pos      = scene.viewProj * world;
@@ -128,6 +155,7 @@ fn vs_main(
   out.viewZ    = length(toCam);
   out.uv       = uv;
   out.pickId   = pickData.x;
+  out.orientation = affine.orientation;
   return out;
 }
 
@@ -175,9 +203,9 @@ fn geometrySmith(NdotV : f32, NdotL : f32, roughness : f32) -> f32 {
   return 0.5 / max(ggxV + ggxL, 1e-5);
 }
 
-fn fresnelSchlick(F0 : vec3<f32>, VdotH : f32) -> vec3<f32> {
+fn fresnelSchlick(F0 : vec3<f32>, F90 : f32, VdotH : f32) -> vec3<f32> {
   let k = pow(clamp(1.0 - VdotH, 0.0, 1.0), 5.0);
-  return F0 + (vec3<f32>(1.0) - F0) * k;
+  return F0 + (vec3<f32>(F90) - F0) * k;
 }
 
 // Point light distance falloff. A light with a range uses the windowed inverse
@@ -229,7 +257,8 @@ fn perturbNormal(geomN : vec3<f32>, worldPos : vec3<f32>, uv : vec2<f32>) -> vec
 }
 
 @fragment
-fn fs_main(in : VSOut) -> FSOut {
+fn fs_main(in : VSOut, @builtin(front_facing) frontFacing : bool) -> FSOut {
+  if (frontFacing != (in.orientation > 0.0)) { discard; }
   let geomN = normalize(in.worldNrm);
   let mappedN = perturbNormal(geomN, in.worldPos, in.uv);
   let hasNormalMap = step(0.5, material.textureParams.y);
@@ -272,16 +301,35 @@ fn fs_main(in : VSOut) -> FSOut {
   let anisotropy = clamp(material.physicalParams2.x, -1.0, 1.0);
   roughness = clamp(roughness * (1.0 - abs(anisotropy) * 0.28), 0.04, 1.0);
 
-  // F0: 0.04 for dielectrics, baseColor for metals, linearly interpolated.
-  let F0 = mix(vec3<f32>(0.04), baseColor, metalness);
+  // Specular: the prepared material carries the effective dielectric F0 in
+  // linear light in specularParams.xyz (min(IOR F0 * colour, 1) * intensity)
+  // and its grazing reflectance F90 in specularParams.w (= the intensity).
+  // Byte 100 still carries the legacy IOR F0 for readers without the vec4;
+  // this shader reads the prepared one.
+  let specF0 = material.specularParams.xyz;
+  let specF90 = material.specularParams.w;
+
+  // F0: the dielectric F0, the base colour for metals. A fully metallic
+  // surface takes the base colour exactly, so no dielectric lane can leak in
+  // through a rounding of the lerp.
+  var F0 = mix(material.specularParams.xyz, baseColor, metalness);
+  var F90 = mix(material.specularParams.w, 1.0, metalness);
+  if (metalness >= 1.0) {
+    F0 = baseColor;
+    F90 = 1.0;
+  }
 
   // Fresnel at the primary light. The image-based terms below reuse it, so a
   // cubemap keeps the exact response it had before the light array arrived.
-  let F = fresnelSchlick(F0, VdotH);
+  let F = fresnelSchlick(F0, F90, VdotH);
 
-  // Energy-conserving diffuse (kD = (1 - F) * (1 - metalness)).
-  let kS = F;
-  let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
+  // Energy-conserving diffuse. The weight is a scalar built from the
+  // dielectric Fresnel alone: (1 - maxRGB(Fdiel)) * (1 - metalness). The
+  // earlier componentwise mixed form tinted the diffuse by the metallic
+  // Fresnel, double-counting the base colour. The browser copy still uses
+  // that form; see the divergence ledger.
+  let Fdiel = fresnelSchlick(specF0, specF90, VdotH);
+  let kD = (1.0 - max(Fdiel.x, max(Fdiel.y, Fdiel.z))) * (1.0 - metalness);
 
   // Direct light: one Cook-Torrance lobe per scene light.
   //
@@ -350,12 +398,13 @@ fn fs_main(in : VSOut) -> FSOut {
 
     let D = distributionGGX(NdotH, roughness);
     let G = geometrySmith(NdotV, NdotL, roughness);
-    let F = fresnelSchlick(F0, VdotH);
+    let F = fresnelSchlick(F0, F90, VdotH);
+
+    let FdielL = fresnelSchlick(specF0, specF90, VdotH);
+    let kD = (1.0 - max(FdielL.x, max(FdielL.y, FdielL.z))) * (1.0 - metalness);
 
     let specular = D * G * F;
 
-    let kS = F;
-    let kD = (vec3<f32>(1.0) - kS) * (1.0 - metalness);
     let diffuse = kD * baseColor / 3.141592653589793;
 
     let radiance = lightColor * intensity * attenuation;
@@ -459,13 +508,15 @@ func skinnedLitWGSL() string {
 ) -> VSOut {`
 	const rigidTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
   let world = model * vec4<f32>(pos, 1.0);
-  let worldNormal = normalize((model * vec4<f32>(normal, 0.0)).xyz);`
+  let affine = affineNormal(model, normal);
+  let worldNormal = affine.normal;`
 	const skinnedTransform = `  let model = mat4x4<f32>(m0, m1, m2, m3);
   let bindPose = mat4x4<f32>(b0, b1, b2, b3);
   let skinnedLocal = bindPose * applySkinning(pos, joints, weights);
-  let skinnedNormal = normalize((bindPose * vec4<f32>(applySkinningNormal(normal, joints, weights), 0.0)).xyz);
+  let skinnedNormal = affineNormal(bindPose, applySkinningNormal(normal, joints, weights)).normal;
   let world = model * skinnedLocal;
-  let worldNormal = normalize((model * vec4<f32>(skinnedNormal, 0.0)).xyz);`
+  let affine = affineNormal(model, skinnedNormal);
+  let worldNormal = affine.normal;`
 	src := strings.Replace(litWGSL, signature, skinnedSignature, 1)
 	src = strings.Replace(src, rigidTransform, skinnedTransform, 1)
 	return skinningWGSL + "\n" + src
@@ -481,6 +532,11 @@ struct ShadowUniforms {
 
 @group(0) @binding(0) var<uniform> shadowU : ShadowUniforms;
 
+struct ShadowOut {
+  @builtin(position) position : vec4<f32>,
+  @location(0) @interpolate(flat) orientation : f32,
+};
+
 @vertex
 fn vs_main(
   @location(0) pos : vec3<f32>,
@@ -488,8 +544,25 @@ fn vs_main(
   @location(2) m1  : vec4<f32>,
   @location(3) m2  : vec4<f32>,
   @location(4) m3  : vec4<f32>,
-) -> @builtin(position) vec4<f32> {
+) -> ShadowOut {
   let model = mat4x4<f32>(m0, m1, m2, m3);
-  return shadowU.lightViewProj * model * vec4<f32>(pos, 1.0);
+  let linearScale = max(max(max(abs(model[0].x), abs(model[0].y)), max(abs(model[0].z), abs(model[1].x))), max(max(abs(model[1].y), abs(model[1].z)), max(max(abs(model[2].x), abs(model[2].y)), abs(model[2].z))));
+  var orientation = 1.0;
+  if (linearScale > 0.0) {
+    let c0 = model[0].xyz / linearScale;
+    let c1 = model[1].xyz / linearScale;
+    let c2 = model[2].xyz / linearScale;
+    let determinant = dot(c0, cross(c1, c2));
+    if (abs(determinant) > 1e-12) { orientation = select(-1.0, 1.0, determinant > 0.0); }
+  }
+  var out : ShadowOut;
+  out.position = shadowU.lightViewProj * model * vec4<f32>(pos, 1.0);
+  out.orientation = orientation;
+  return out;
+}
+
+@fragment
+fn fs_main(in : ShadowOut, @builtin(front_facing) frontFacing : bool) {
+  if (frontFacing != (in.orientation > 0.0)) { discard; }
 }
 `

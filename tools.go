@@ -19,6 +19,6 @@ package gosx
 
 import (
 	_ "github.com/odvcencio/corkscrewdb"
-	_ "github.com/odvcencio/turboquant"
 	_ "m31labs.dev/eos/runtime"
+	_ "m31labs.dev/turboquant"
 )

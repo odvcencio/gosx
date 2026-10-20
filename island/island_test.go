@@ -74,7 +74,7 @@ func TestManifestScript(t *testing.T) {
 	if strings.Contains(html, "&#34;") {
 		t.Fatalf("manifest script should contain raw JSON, got %q", html)
 	}
-	if !strings.Contains(html, `"component": "Counter"`) {
+	if !strings.Contains(html, `"component":"Counter"`) {
 		t.Fatalf("expected raw manifest JSON in script tag, got %q", html)
 	}
 }
@@ -108,6 +108,65 @@ func TestPageHeadWithBootstrapOnlyUsesLiteRuntime(t *testing.T) {
 	}
 	if strings.Contains(head, "wasm_exec.js") || strings.Contains(head, "patch.js") {
 		t.Fatal("bootstrap-only page should not load wasm_exec or patch runtime assets")
+	}
+}
+
+func TestPageHeadCarriesManifestSRIForRuntimeScripts(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		BootstrapLite: buildmanifest.HashedAsset{
+			File:      "bootstrap-lite.11111111.js",
+			Hash:      "11111111",
+			Integrity: "sha256-lite-integrity",
+		},
+		BootstrapRuntime: buildmanifest.HashedAsset{
+			File:      "bootstrap-runtime.22222222.js",
+			Hash:      "22222222",
+			Integrity: "sha256-runtime-integrity",
+		},
+		BootstrapFeatureEngines: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-engines.33333333.js",
+			Hash:      "33333333",
+			Integrity: "sha256-engines-integrity",
+		},
+		BootstrapFeatureScene3D: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d.44444444.js",
+			Hash:      "44444444",
+			Integrity: "sha256-scene-integrity",
+		},
+		BootstrapFeatureScene3DWebGPU: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d-webgpu.55555555.js",
+			Hash:      "55555555",
+			Integrity: "sha256-webgpu-integrity",
+		},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.EnableBootstrap()
+
+	liteHTML := gosx.RenderHTML(r.PageHead())
+	for _, want := range []string{
+		`src="/gosx/assets/runtime/bootstrap-lite.11111111.js"`,
+		`integrity="sha256-lite-integrity"`,
+	} {
+		if !strings.Contains(liteHTML, want) {
+			t.Fatalf("expected production lite runtime to include %q in %s", want, liteHTML)
+		}
+	}
+
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	runtimeHTML := gosx.RenderHTML(r.BootstrapScript())
+	for _, want := range []string{
+		`src="/gosx/assets/runtime/bootstrap-runtime.22222222.js"`,
+		`integrity="sha256-runtime-integrity"`,
+		`src="/gosx/assets/runtime/bootstrap-feature-scene3d.44444444.js"`,
+		`integrity="sha256-scene-integrity"`,
+		`data-gosx-scene3d-webgpu-integrity="sha256-webgpu-integrity"`,
+	} {
+		if !strings.Contains(runtimeHTML, want) {
+			t.Fatalf("expected production runtime to include %q in %s", want, runtimeHTML)
+		}
 	}
 }
 
@@ -548,6 +607,49 @@ func TestBindHubInputAddsManifestInput(t *testing.T) {
 	}
 }
 
+func TestBindHubWithRoundTripAddsManifestConfig(t *testing.T) {
+	r := NewRenderer("main")
+	r.BindHubWithRoundTrip("tabletop", "/ws/tabletop", []hydrate.HubBinding{
+		{Event: "scene:update", SceneMountID: "scene", SceneCommands: true},
+	}, hydrate.HubRoundTripConfig{Signal: "$rtt", PingEvent: "ping", PongEvent: "pong", IntervalMS: 1000})
+	if len(r.Manifest().Hubs) != 1 || r.Manifest().Hubs[0].RoundTrip == nil {
+		t.Fatalf("expected one hub round trip entry, got %#v", r.Manifest().Hubs)
+	}
+	if r.Manifest().Hubs[0].RoundTrip.Signal != "$rtt" {
+		t.Fatalf("unexpected round trip config %#v", r.Manifest().Hubs[0].RoundTrip)
+	}
+}
+
+func TestRendererSelectsSmallestPublishedRuntimeVariant(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		WASM:        buildmanifest.HashedAsset{File: "gosx-runtime.full.wasm", Hash: "full", Size: 40},
+		WASMIslands: buildmanifest.HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 5},
+		WASMVariants: map[string]buildmanifest.RuntimeVariantAsset{
+			"core":   {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-core.wasm", Hash: "core", Size: 10}, Variant: "core", FeatureMask: 17},
+			"engine": {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-engine.wasm", Hash: "engine", Size: 25}, Variant: "engine", FeatureMask: 27},
+			"collab": {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-collab.wasm", Hash: "collab", Size: 28}, Variant: "collab", FeatureMask: 21},
+			"full":   {HashedAsset: buildmanifest.HashedAsset{File: "gosx-runtime-full.wasm", Hash: "full", Size: 40}, Variant: "full", FeatureMask: 31},
+		},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderIsland("Counter", nil, gosx.Text("counter"))
+	if got := r.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-core.wasm" {
+		t.Fatalf("island runtime = %q, want core", got)
+	}
+	if got := r.selectedRuntimeRef().ManifestHash; got == "" {
+		t.Fatal("selected runtime omitted manifest identity")
+	}
+
+	engineNode := r.RenderEngine(engine.Config{Name: "Board", Kind: engine.KindSurface, Runtime: engine.RuntimeShared}, gosx.Node{})
+	_ = engineNode
+	if got := r.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-engine.wasm" {
+		t.Fatalf("island plus engine runtime = %q, want engine", got)
+	}
+}
+
 func TestSetClientIdentityAddsManifestConfig(t *testing.T) {
 	r := NewRenderer("main")
 	r.SetClientIdentity(hydrate.ClientIdentityConfig{
@@ -675,30 +777,144 @@ func TestApplyBuildManifestUsesHashedRuntimeAndIslandAssets(t *testing.T) {
 	}
 }
 
-func TestScene3DWebGPUFeatureLoaderCarriesGoSXScriptProvenance(t *testing.T) {
+func TestApplyBuildManifestRejectsAmbiguousIslandAssetsBeforeMutation(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Islands: []buildmanifest.IslandAsset{
+		{
+			Name:        "Counter",
+			Format:      "bin",
+			HashedAsset: buildmanifest.HashedAsset{File: "Counter.aaaaaaaa.gxi", Hash: "aaaaaaaa", Size: 1},
+		},
+		{
+			Name:        "Counter",
+			Format:      "bin",
+			HashedAsset: buildmanifest.HashedAsset{File: "Counter.bbbbbbbb.gxi", Hash: "bbbbbbbb", Size: 1},
+		},
+	}}
+
+	err := r.ApplyBuildManifest(manifest, "/gosx/assets")
+	if err == nil || !strings.Contains(err.Error(), "duplicate island asset name \"Counter\"") {
+		t.Fatalf("ApplyBuildManifest error = %v, want ambiguous island rejection", err)
+	}
+	if asset, ok := r.programAssets["Counter"]; ok {
+		t.Fatalf("ApplyBuildManifest partially installed an ambiguous asset: %+v", asset)
+	}
+}
+
+func TestScene3DBackendsLoadOnlyThroughSceneSelection(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
-		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
-		BootstrapRuntime:               buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
-		BootstrapFeatureEngines:        buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
-		BootstrapFeatureScene3D:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
-		BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
-		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                      buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:               buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:               buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DInstanceStream: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-instance-stream.js", Hash: "instream"},
+		BootstrapFeatureScene3DWebGPU:         buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
 	}
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 	html := gosx.RenderHTML(r.BootstrapScript())
-	if !strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
-		t.Fatalf("Scene3D WebGPU loader lacks GoSX provenance: %s", html)
+	if strings.Contains(html, `data-gosx-script="feature-scene3d-webgpu-loader"`) {
+		t.Fatal("independent WebGPU loader bypasses Scene3D backend selection")
+	}
+	if !strings.Contains(html, `data-gosx-scene3d-webgpu-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgpu.js"`) {
+		t.Fatalf("Scene3D script lacks WebGPU chunk URL: %s", html)
 	}
 	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/assets/runtime/bootstrap-feature-scene3d-command.js"`) {
 		t.Fatalf("Scene3D script lacks command chunk URL: %s", html)
 	}
+	if !strings.Contains(html, `data-gosx-scene3d-instance-stream-url="/gosx/assets/runtime/bootstrap-feature-scene3d-instance-stream.js"`) {
+		t.Fatalf("Scene3D script lacks instance-stream chunk URL: %s", html)
+	}
 }
 
-func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) {
+// TestScene3DInstanceStreamURLIsUnconditionalLikeCommand proves the
+// instance-stream sub-feature URL is emitted the same way the command URL
+// is (unconditionally, whenever the manifest carries the asset) rather than
+// gated behind a scene-content heuristic like compute/decompress: there is
+// no scene-content signal that predicts a future handle.applyInstanceStream
+// call, so a page with nothing but a single static engine and no compute
+// particles, no compressed arrays, and no instanced meshes must still carry
+// the URL -- otherwise instance-stream-bridge.ts has nothing to lazy-load
+// from and a caller's first frame fails with no possible recovery.
+func TestScene3DInstanceStreamURLIsUnconditionalLikeCommand(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                      buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:               buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:               buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DInstanceStream: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-instance-stream.js", Hash: "instream"},
+		BootstrapFeatureScene3DCompute:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
+		BootstrapFeatureScene3DDecompress:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	// A plain engine with no compute particles, no compressed arrays, no
+	// generator descriptors and no instanced meshes: scene3DChunkNeeds()
+	// (which gates compute/decompress) must report both false for this
+	// scene, unlike the instance-stream URL.
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	html := gosx.RenderHTML(r.BootstrapScript())
+	if !strings.Contains(html, `data-gosx-scene3d-instance-stream-url=`) {
+		t.Fatalf("plain scene, no compute/decompress content: instance-stream URL must still be present: %s", html)
+	}
+	if strings.Contains(html, `data-gosx-scene3d-compute-url=`) {
+		t.Fatalf("plain scene: compute URL should be gated off (test setup assumption broken): %s", html)
+	}
+	if strings.Contains(html, `data-gosx-scene3d-decompress-url=`) {
+		t.Fatalf("plain scene: decompress URL should be gated off (test setup assumption broken): %s", html)
+	}
+}
+
+// TestSetBootstrapFeatureScene3DInstanceStreamPathAddsVersionQueryLikeCommand
+// covers the compat URL override surface every SetBootstrapFeatureScene3DXPath
+// method exposes: a caller that re-points a chunk at its BARE canonical path
+// (rather than the asset-hashed filename ApplyBuildManifest's own
+// AssetURL-based URLs already carry) gets a "?v=<hash>" query appended, but
+// only when that bare canonical path is listed in versionCompatRuntimePath's
+// switch. Before this fix, the instance-stream chunk's canonical path was
+// absent from that switch, so this override path would have silently
+// dropped the hash and returned an unversioned URL — server-side
+// indistinguishable from a hand-written plain script tag, and cached
+// forever the moment a production deploy changed its bytes.
+func TestSetBootstrapFeatureScene3DInstanceStreamPathAddsVersionQueryLikeCommand(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                             buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapFeatureScene3D:               buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCommand:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.abc123.js", Hash: "commandhash"},
+		BootstrapFeatureScene3DInstanceStream: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-instance-stream.def456.js", Hash: "instreamhash"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	// Re-point both paths at their bare canonical (compat) form explicitly:
+	// the same override a caller that wants the compat "?v=" URL scheme
+	// instead of ApplyBuildManifest's asset-hashed-filename scheme already
+	// has for the command chunk. compatRuntimeHash resolves the hash by
+	// matching against the manifest ApplyBuildManifest already installed
+	// above, regardless of the renderer's current path value.
+	r.SetBootstrapFeatureScene3DCommandPath("/gosx/bootstrap-feature-scene3d-command.js")
+	r.SetBootstrapFeatureScene3DInstanceStreamPath("/gosx/bootstrap-feature-scene3d-instance-stream.js")
+
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
+	html := gosx.RenderHTML(r.BootstrapScript())
+
+	if !strings.Contains(html, `data-gosx-scene3d-command-url="/gosx/bootstrap-feature-scene3d-command.js?v=commandhash"`) {
+		t.Fatalf("command URL should carry ?v=<hash> after an explicit compat-path override (test setup assumption broken): %s", html)
+	}
+	if !strings.Contains(html, `data-gosx-scene3d-instance-stream-url="/gosx/bootstrap-feature-scene3d-instance-stream.js?v=instreamhash"`) {
+		t.Fatalf("instance-stream URL must carry ?v=<hash> too, matching the command URL's shape: %s", html)
+	}
+}
+
+func TestScene3DWebGPULazyLoaderReceivesNonceAndIntegrity(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                      buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -706,7 +922,7 @@ func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) 
 		BootstrapFeatureEngines:        buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
 		BootstrapFeatureScene3D:        buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCommand: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
-		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
+		BootstrapFeatureScene3DWebGPU:  buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: strings.Repeat("00", 32)},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -715,9 +931,9 @@ func TestScene3DWebGPUFeatureLoaderPropagatesNonceToDynamicScript(t *testing.T) 
 
 	html := gosx.RenderHTML(r.BootstrapScriptWithNonce("scene-nonce"))
 	for _, snippet := range []string{
-		`data-gosx-script="feature-scene3d-webgpu-loader" nonce="scene-nonce"`,
-		`document.currentScript.nonce`,
-		`if(_n){s.nonce=_n;}`,
+		`data-gosx-script="feature-scene3d"`,
+		`nonce="scene-nonce"`,
+		`data-gosx-scene3d-webgpu-integrity="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Fatalf("expected Scene3D WebGPU loader to include %q in %s", snippet, html)
@@ -750,11 +966,17 @@ func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 
 	preloads := gosx.RenderHTML(r.PreloadHints())
-	if strings.Contains(preloads, "bootstrap-feature-scene3d") {
+	if strings.Contains(preloads, `href="`+r.selectedBootstrapFeaturePath("scene3d")+`"`) {
 		t.Fatalf("scene3d bundle must not be preloaded — it is already a same-document <script defer> tag: %s", preloads)
 	}
 	if !strings.Contains(preloads, "bootstrap-feature-engines") {
 		t.Fatalf("engines bundle preload must be preserved (client-side fetched, never a same-document script tag): %s", preloads)
+	}
+
+	path := r.selectedBootstrapFeaturePath("engines")
+	expected := `<link rel="preload" href="` + path + `" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`
+	if !strings.Contains(preloads, expected) {
+		t.Fatalf("regression: preload for engines path %q missing exact link tag (needs crossorigin and referrerpolicy in order)\nwant: %s\ngot:  %s", path, expected, preloads)
 	}
 
 	scripts := gosx.RenderHTML(r.BootstrapScript())
@@ -1078,6 +1300,120 @@ func TestRenderIslandFromProgramRendersDynamicAttrs(t *testing.T) {
 	}
 }
 
+// hasIslandManagedFormAttr reports whether html contains the bare
+// gosx.ManagedFormAttr contract attribute as its own attribute, not merely
+// as a prefix of a longer attribute sharing the same name (for example
+// data-gosx-form-state) — see hasManagedFormAttr in
+// route/managed_form_shorthand_test.go for the same rule applied to the
+// file-program renderer's output.
+func hasIslandManagedFormAttr(html string) bool {
+	return strings.Contains(html, " "+gosx.ManagedFormAttr+" ") ||
+		strings.Contains(html, " "+gosx.ManagedFormAttr+">")
+}
+
+// TestRenderIslandFromProgramExpandsManagedFormShorthand covers gosx#179
+// F2: the island renderer was a third form render surface that never
+// expanded data-gosx-managed. renderResolvedNodeInto (called through
+// RenderIslandFromProgram -> renderProgramHTML -> RenderResolvedHTML) used
+// to copy a resolved <form> node's attributes straight through, so an
+// island form authored with the shorthand served with the raw attribute
+// instead of the managed-form contract, unlike the same shorthand on a
+// .gsx page rendered outside an island (route/fileprogram.go) or through
+// the Go Node API (node.go). The navigation runtime still intercepted the
+// unexpanded form client-side, so this was never a fail-open bug — only a
+// mismatch between what the three render surfaces served.
+func TestRenderIslandFromProgramExpandsManagedFormShorthand(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	prog := &program.Program{
+		Name: "ShorthandForm",
+		Nodes: []program.Node{
+			{ // 0: form root, bare shorthand
+				Kind: program.NodeElement,
+				Tag:  "form",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "method", Value: "post"},
+					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrBool, Name: "data-gosx-managed"},
+				},
+				Children: []program.NodeID{1},
+			},
+			{ // 1: input
+				Kind: program.NodeElement,
+				Tag:  "input",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "name", Value: "q"},
+				},
+			},
+		},
+		Root: 0,
+	}
+
+	node := r.RenderIslandFromProgram(prog, nil)
+	html := gosx.RenderHTML(node)
+
+	for _, want := range []string{
+		`method="post"`,
+		`action="/x/__actions/y"`,
+		gosx.ManagedFormStateAttr + `="idle"`,
+		gosx.EnhancementAttr + `="form"`,
+		gosx.EnhancementLayerAttr + `="bootstrap"`,
+		gosx.RuntimeFallbackAttr + `="native-form"`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Fatalf("expected %q in island-rendered managed-shorthand form html %q", want, html)
+		}
+	}
+	if !hasIslandManagedFormAttr(html) {
+		t.Fatalf("expected the bare %s attribute in island-rendered form html %q", gosx.ManagedFormAttr, html)
+	}
+	if strings.Contains(html, gosx.ManagedFormShorthandAttr) {
+		t.Fatalf("expected shorthand attribute removed from island output, got %q", html)
+	}
+	// The shorthand must not add a mode attribute — the HTML method
+	// attribute stays authoritative, matching node.go's and the
+	// file-program renderer's expansion rule.
+	if strings.Contains(html, gosx.ManagedFormModeAttr) {
+		t.Fatalf("expected no %s from the shorthand alone, got %q", gosx.ManagedFormModeAttr, html)
+	}
+}
+
+// TestRenderIslandFromProgramManagedFormShorthandFalseOptsOut is the
+// island-render counterpart to the .gsx and Node-API opt-out tests: a
+// falsy shorthand value must not expand, and must survive unchanged.
+func TestRenderIslandFromProgramManagedFormShorthandFalseOptsOut(t *testing.T) {
+	r := NewRenderer("main")
+	r.SetBundle("main", "/gosx/runtime.wasm")
+	r.SetProgramDir("/gosx/islands")
+
+	prog := &program.Program{
+		Name: "ShorthandFormOptOut",
+		Nodes: []program.Node{
+			{
+				Kind: program.NodeElement,
+				Tag:  "form",
+				Attrs: []program.Attr{
+					{Kind: program.AttrStatic, Name: "action", Value: "/x/__actions/y"},
+					{Kind: program.AttrStatic, Name: "data-gosx-managed", Value: "false"},
+				},
+			},
+		},
+		Root: 0,
+	}
+
+	node := r.RenderIslandFromProgram(prog, nil)
+	html := gosx.RenderHTML(node)
+
+	if !strings.Contains(html, `data-gosx-managed="false"`) {
+		t.Fatalf("expected the literal opt-out attribute in island output, got %q", html)
+	}
+	if hasIslandManagedFormAttr(html) {
+		t.Fatalf("expected no expansion for data-gosx-managed=\"false\" in island output, got %q", html)
+	}
+}
+
 func TestLoadDefaultBuildManifestRespectsSetManifestRoot(t *testing.T) {
 	// Create a temp dir with a build.json
 	dir := t.TempDir()
@@ -1146,6 +1482,7 @@ func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 		BootstrapFeatureEngines:          buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
 		BootstrapFeatureScene3D:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCommand:   buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-command.js", Hash: "command"},
+		BootstrapFeatureScene3DHydrate:   buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-hydrate.js", Hash: "hydrate"},
 		BootstrapFeatureScene3DWebGPU:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgpu.js", Hash: "webgpu"},
 		BootstrapFeatureScene3DWebGL:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-webgl.js", Hash: "webgl"},
 		BootstrapFeatureScene3DGLTF:      buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-gltf.js", Hash: "gltf"},
@@ -1157,6 +1494,12 @@ func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 	html := gosx.RenderHTML(r.BootstrapScript())
 
+	if strings.Contains(html, `data-gosx-script="feature-scene3d-pipeline-recovery"`) {
+		t.Fatal("recovery must load only inside the WebGPU renderer")
+	}
+	if strings.Contains(html, `data-gosx-scene3d-pipeline-recovery-url=`) {
+		t.Fatal("the WebGPU renderer contains recovery and must not advertise a separate dependency")
+	}
 	for _, want := range []string{
 		`data-gosx-scene3d-webgl-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgl.js"`,
 		`data-gosx-scene3d-webgpu-url="/gosx/assets/runtime/bootstrap-feature-scene3d-webgpu.js"`,
@@ -1173,6 +1516,72 @@ func TestScene3DScriptCarriesLazyChunkURLs(t *testing.T) {
 	// demand, and a tag here would defeat the whole saving.
 	if strings.Contains(html, `src="/gosx/assets/runtime/bootstrap-feature-scene3d-webgl.js"`) {
 		t.Errorf("WebGL chunk is eagerly loaded as a script tag: %s", html)
+	}
+	if strings.Contains(html, `feature-scene3d-hydrate`) {
+		t.Errorf("static Scene3D page eagerly loaded the hydrate chunk: %s", html)
+	}
+}
+
+func TestScene3DHydrateChunkIsProgramGatedOrderedAndIntegrityBound(t *testing.T) {
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines: buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DHydrate: buildmanifest.HashedAsset{
+			File:      "bootstrap-feature-scene3d-hydrate.js",
+			Hash:      "hydrate",
+			Integrity: "sha256-hydrate-integrity",
+		},
+	}}
+	r := NewRenderer("main")
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{
+		Name:     "GoSXScene3D",
+		Kind:     engine.KindSurface,
+		Runtime:  engine.RuntimeShared,
+		WASMPath: "/gosx/engines/scene.gxi",
+	}, gosx.Text(""))
+	html := gosx.RenderHTML(r.BootstrapScriptWithNonce("hydrate-nonce"))
+	hydrateTagStart := `<script defer data-gosx-script="feature-scene3d-hydrate" src="/gosx/assets/runtime/bootstrap-feature-scene3d-hydrate.js"`
+	hydrateAt := strings.Index(html, hydrateTagStart)
+	if hydrateAt < 0 {
+		t.Fatalf("shared Scene3D program omitted integrity-bound hydrate chunk: %s", html)
+	}
+	hydrateEnd := strings.Index(html[hydrateAt:], `</script>`)
+	if hydrateEnd < 0 {
+		t.Fatalf("shared Scene3D hydrate script is unterminated: %s", html)
+	}
+	hydrateTag := html[hydrateAt : hydrateAt+hydrateEnd]
+	for _, attribute := range []string{
+		`type="text/javascript"`,
+		`crossorigin="anonymous"`,
+		`referrerpolicy="no-referrer"`,
+		`integrity="sha256-hydrate-integrity"`,
+		`nonce="hydrate-nonce"`,
+	} {
+		if !strings.Contains(hydrateTag, attribute) {
+			t.Fatalf("shared Scene3D hydrate script omitted %s: %s", attribute, hydrateTag)
+		}
+	}
+	sceneAt := strings.Index(html, `data-gosx-script="feature-scene3d"`)
+	if hydrateAt < 0 || sceneAt < 0 || hydrateAt >= sceneAt {
+		t.Fatalf("hydrate chunk must execute before the main deferred Scene3D chunk: %s", html)
+	}
+
+	withoutCode := NewRenderer("main")
+	if err := withoutCode.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	withoutCode.RenderEngine(engine.Config{
+		Name:    "GoSXScene3D",
+		Kind:    engine.KindSurface,
+		Runtime: engine.RuntimeShared,
+	}, gosx.Text(""))
+	if got := gosx.RenderHTML(withoutCode.BootstrapScript()); strings.Contains(got, `feature-scene3d-hydrate`) {
+		t.Fatalf("shared Scene3D entry without code loaded hydrate chunk: %s", got)
 	}
 }
 
@@ -1207,6 +1616,40 @@ func TestTextlayoutChunkIsNeverEmittedEagerly(t *testing.T) {
 	}
 }
 
+// TestScenePageNamesTheTextlayoutChunk guards the black-screen bug of
+// 2026-09-29. A Scene3D page can request the text-layout chunk (a label, or a
+// manifest the client's label test matches), so its summary must carry the
+// hashed URL. Without it the client loads an unhashed /gosx/ URL that a
+// hashed-only deployment does not serve.
+func TestScenePageNamesTheTextlayoutChunk(t *testing.T) {
+	r := NewRenderer("main")
+	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                  buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:           buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:    buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureTextlayout: buildmanifest.HashedAsset{File: "bootstrap-feature-textlayout.c072.js", Hash: "c072"},
+	}}
+	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{
+		Name:  "GoSXScene3D",
+		Kind:  engine.KindSurface,
+		Props: json.RawMessage(`{"label":"A beach","labels":[{"id":"sign","text":"Blackglass"}]}`),
+	}, gosx.Text(""))
+	summary := r.Summary()
+	if summary.BootstrapMode == "none" || !summary.Bootstrap {
+		t.Fatalf("scene page ships no bootstrap: %+v", summary)
+	}
+	if got, want := summary.BootstrapFeatureTextLayoutPath, "/gosx/assets/runtime/bootstrap-feature-textlayout.c072.js"; got != want {
+		t.Fatalf("summary text-layout chunk URL = %q, want %q", got, want)
+	}
+	if hints := gosx.RenderHTML(r.PreloadHints()); strings.Contains(hints, "bootstrap-feature-textlayout") {
+		t.Errorf("text-layout chunk emitted as a preload hint: %s", hints)
+	}
+}
+
 // scene3DChunkGateRenderer builds a renderer with every Scene3D chunk resolved
 // from a manifest, then registers one GoSXScene3D engine with the given props.
 // It returns the rendered bootstrap script markup.
@@ -1214,12 +1657,16 @@ func scene3DChunkGateRenderer(t *testing.T, props any) string {
 	t.Helper()
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
-		Bootstrap:                         buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
-		BootstrapRuntime:                  buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
-		BootstrapFeatureEngines:           buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
-		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
-		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
-		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		Bootstrap:                               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:                 buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:                 buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DCompute:          buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
+		BootstrapFeatureScene3DDecompress:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		BootstrapFeatureScene3DWalk:             buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
+		BootstrapFeatureScene3DModelPreparation: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-model-preparation.js", Hash: "preparation"},
+		BootstrapFeatureScene3DVessel:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-vessel.js", Hash: "vessel"},
+		BootstrapFeatureScene3DOceanQuery:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-query.js", Hash: "query"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1346,11 +1793,9 @@ func TestCompressionPolicyAloneReceivesTheDecompressURL(t *testing.T) {
 	}
 }
 
-// TestGatedScene3DChunksAreNeverEmittedEagerly is the sibling of
-// TestTextlayoutChunkIsNeverEmittedEagerly. An eager script tag or a preload
-// hint would download the chunk on every page and cancel the saving silently:
-// no size budget measures per-page transfer, so nothing else can see it.
-func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
+// Required chunks download through scene-driven hints but execute only when
+// the runtime needs them. Unrelated pages are covered by TestSceneDrivenPreloads.
+func TestRequiredScene3DChunksPreloadWithoutEagerScriptTags(t *testing.T) {
 	r := NewRenderer("main")
 	manifest := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
 		Bootstrap:                         buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
@@ -1359,6 +1804,9 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		BootstrapFeatureScene3D:           buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
 		BootstrapFeatureScene3DCompute:    buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-compute.js", Hash: "compute"},
 		BootstrapFeatureScene3DDecompress: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-decompress.js", Hash: "decompress"},
+		BootstrapFeatureScene3DWalk:       buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-walk.js", Hash: "walk"},
+		BootstrapFeatureScene3DVessel:     buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-vessel.js", Hash: "vessel"},
+		BootstrapFeatureScene3DOceanQuery: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-ocean-query.js", Hash: "query"},
 	}}
 	if err := r.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
 		t.Fatal(err)
@@ -1390,8 +1838,148 @@ func TestGatedScene3DChunksAreNeverEmittedEagerly(t *testing.T) {
 		if strings.Contains(scripts, `src="/gosx/assets/runtime/`+chunk+`"`) {
 			t.Errorf("%s is loaded eagerly as a script tag, which cancels the split:\n%s", chunk, scripts)
 		}
-		if strings.Contains(hints, chunk) {
-			t.Errorf("%s is emitted as a preload hint, which downloads it on every page:\n%s", chunk, hints)
+		if !strings.Contains(hints, chunk) {
+			t.Errorf("%s must be preloaded for this scene:\n%s", chunk, hints)
 		}
+	}
+}
+
+func TestSceneDrivenPreloads(t *testing.T) {
+	cases := []struct {
+		name, props  string
+		scene        bool
+		want, absent []string
+	}{
+		{"no scene", `{}`, false, nil, []string{"bootstrap-feature-scene3d", "as=\"image\"", "as=\"fetch\""}},
+		{"WebGL only", `{"forceWebGL":true,"scene":{"objects":[{"texture":"/albedo.jpg?x=1&y=2"}]}}`, true, []string{"scene3d-webgl.js", `href="/albedo.jpg?x=1&amp;y=2" as="image" crossorigin="anonymous"`}, []string{"scene3d-webgpu.js", "scene3d-gltf.js", "scene3d-compute.js"}},
+		{"WebGPU only", `{"scene":{"backendCaps":{"capable":["webgpu"]}}}`, true, []string{"scene3d-webgpu.js"}, []string{"scene3d-webgl.js", "scene3d-gltf.js"}},
+		// With both backends possible the browser chooses at runtime, so
+		// neither renderer chunk is hinted (each page downloads only the one
+		// it runs).
+		{"GPU fallback", `{"scene":{}}`, true, nil, []string{`scene3d-webgpu.js" as="script"`, `scene3d-webgl.js" as="script"`, "scene3d-gltf.js"}},
+		{"unspecified backend verdict", `{"scene":{"backendCaps":{}}}`, true, nil, []string{`scene3d-webgpu.js" as="script"`, `scene3d-webgl.js" as="script"`}},
+		{"backend aliases", `{"scene":{"backendCaps":{"capable":["WebGL2"]}}}`, true, []string{"scene3d-webgl.js"}, []string{"scene3d-webgpu.js"}},
+		{"glTF preview", `{"scene":{"models":[{"src":"/full.glb","progressive":true,"previewSrc":"/preview.glb","fullSrc":"/full.glb","animation":"walk"},{"src":"/later.glb"}]}}`, true, []string{"scene3d-gltf.js", "scene3d-animation.js", `href="/preview.glb" as="fetch" crossorigin="anonymous"`}, []string{"href=\"/full.glb\"", "href=\"/later.glb\""}},
+		{"compute and decompress", `{"compression":{},"scene":{"computeParticles":[{}]}}`, true, []string{"scene3d-compute.js", "scene3d-decompress.js"}, nil},
+		{"instanced GLB", `{"scene":{"instancedGLBMeshes":[{"src":"/crowd.glb"}]}}`, true, []string{"scene3d-gltf.js", `href="/crowd.glb" as="fetch"`}, nil},
+		{"instanced GLB texture", `{"scene":{"instancedGLBMeshes":[{"src":"/crowd.glb","texture":"/crowd.ktx2"},{"src":"/later.glb","texture":"/later.jpg"}]}}`, true, []string{"scene3d-gltf.js", `href="/crowd.ktx2" as="fetch" crossorigin="anonymous"`}, []string{"href=\"/later.jpg\""}},
+		{"IBL", `{"scene":{"environment":{"ibl":{"radiance":{"uri":"/radiance.ktx2"},"irradiance":{"uri":"/irradiance.ktx2"},"brdfLUT":{"uri":"/brdf.ktx2"}}}}}`, true, []string{"scene3d-gltf.js", `href="/radiance.ktx2" as="fetch"`}, nil},
+		{"texture containers", `{"forceWebGL":true,"scene":{"objects":[{"texture":"/unused.jpg","textureDescriptors":{"baseColor":{"uri":"/albedo.ktx2?v=1"}}}],"environment":{"envMap":"/lighting.hdr"}}}`, true, []string{"scene3d-gltf.js", `href="/albedo.ktx2?v=1" as="fetch"`, `href="/lighting.hdr" as="fetch"`}, []string{"/unused.jpg"}},
+		{"animated crowd", `{"scene":{"instancedGLBMeshes":[{"src":"/crowd.glb","instances":[{"animation":"walk"}]}]}}`, true, []string{"scene3d-animation.js"}, nil},
+		{"water", `{"scene":{"waterSystems":[{"tileTexture":"/tile.jpg","cubeMap":"/sky/{face}.jpg"}]}}`, true, []string{`href="/tile.jpg" as="image"`, `href="/sky/ypos.jpg" as="image"`}, []string{"yneg.jpg"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := NewRenderer("main")
+			r.bootstrapRuntimePath = "/gosx/bootstrap-runtime.js"
+			r.bootstrapFeatureScene3dPath = "/gosx/bootstrap-feature-scene3d.js"
+			r.bootstrapFeatureScene3dWebGPUPath = "/gosx/bootstrap-feature-scene3d-webgpu.js"
+			r.bootstrapFeatureScene3dWebGLPath = "/gosx/bootstrap-feature-scene3d-webgl.js"
+			r.bootstrapFeatureScene3dGLTFPath = "/gosx/bootstrap-feature-scene3d-gltf.js"
+			r.bootstrapFeatureScene3dAnimationPath = "/gosx/bootstrap-feature-scene3d-animation.js"
+			r.bootstrapFeatureScene3dComputePath = "/gosx/bootstrap-feature-scene3d-compute.js"
+			r.bootstrapFeatureScene3dDecompressPath = "/gosx/bootstrap-feature-scene3d-decompress.js"
+			name := "OtherSurface"
+			if tc.scene {
+				name = "GoSXScene3D"
+			}
+			cfg := engine.Config{Name: name, Kind: engine.KindSurface, Props: json.RawMessage(tc.props)}
+			r.RenderEngine(cfg, gosx.Text(""))
+			r.RenderEngine(cfg, gosx.Text(""))
+			hints := gosx.RenderHTML(r.PreloadHints())
+			for _, absent := range tc.absent {
+				if absent == "scene3d-webgpu.js" && strings.Contains(gosx.RenderHTML(r.BootstrapScript()), `data-gosx-script="feature-scene3d-webgpu-loader"`) {
+					t.Error("WebGL-only scene emitted an eager WebGPU loader")
+				}
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(hints, want) {
+					t.Errorf("missing %q: %s", want, hints)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(hints, absent) {
+					t.Errorf("unexpected %q: %s", absent, hints)
+				}
+			}
+			for _, line := range strings.Split(strings.TrimSpace(hints), "\n") {
+				if line != "" && strings.Count(hints, line) > 1 {
+					t.Errorf("duplicate hint: %s", line)
+				}
+			}
+		})
+	}
+}
+
+func TestScene3DWalkURLIsPropGated(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		props map[string]any
+		want  bool
+	}{
+		{"absent", map[string]any{"controls": "first-person"}, false},
+		{"null", map[string]any{"walk": nil}, false},
+		{"object", map[string]any{"controls": "first-person", "walk": map[string]any{}}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			markup := scene3DChunkGateRenderer(t, tc.props)
+			attr := `data-gosx-scene3d-walk-url="/gosx/assets/runtime/bootstrap-feature-scene3d-walk.js"`
+			if strings.Contains(markup, attr) != tc.want {
+				t.Fatalf("walk URL gate: %s", markup)
+			}
+			if strings.Contains(markup, `src="/gosx/assets/runtime/bootstrap-feature-scene3d-walk.js"`) {
+				t.Fatal("walk chunk is eager")
+			}
+		})
+	}
+}
+
+func TestScene3DModelPreparationURLIsAdvertisedWithoutEagerFetch(t *testing.T) {
+	r := NewRenderer("main")
+	m := &buildmanifest.Manifest{Runtime: buildmanifest.RuntimeAssets{
+		Bootstrap:                               buildmanifest.HashedAsset{File: "bootstrap.js", Hash: "boot"},
+		BootstrapRuntime:                        buildmanifest.HashedAsset{File: "bootstrap-runtime.js", Hash: "runtime"},
+		BootstrapFeatureEngines:                 buildmanifest.HashedAsset{File: "bootstrap-feature-engines.js", Hash: "engines"},
+		BootstrapFeatureScene3D:                 buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d.js", Hash: "scene"},
+		BootstrapFeatureScene3DModelPreparation: buildmanifest.HashedAsset{File: "bootstrap-feature-scene3d-model-preparation.hash.js", Hash: "preparation"},
+	}}
+	if err := r.ApplyBuildManifest(m, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"scene":{},"modelPreparation":true}`)}, gosx.Text(""))
+	scripts := gosx.RenderHTML(r.BootstrapScript())
+	url := "/gosx/assets/runtime/bootstrap-feature-scene3d-model-preparation.hash.js"
+	if !strings.Contains(scripts, `data-gosx-scene3d-model-preparation-url="`+url+`"`) {
+		t.Fatal("preparation URL missing")
+	}
+	if strings.Contains(scripts, `src="`+url+`"`) || strings.Contains(gosx.RenderHTML(r.PreloadHints()), url) {
+		t.Fatal("opt-in preparation was eager")
+	}
+	if asset, ok := r.runtimeScriptAsset(url); !ok || asset.Hash != "preparation" {
+		t.Fatal("preparation lost manifest identity")
+	}
+}
+
+func TestScene3DModelPreparationURLRequiresExplicitOptIn(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		props map[string]any
+		want  bool
+	}{
+		{"absent", map[string]any{}, false},
+		{"null", map[string]any{"modelPreparation": nil}, false},
+		{"false", map[string]any{"modelPreparation": false}, false},
+		{"wrong-type", map[string]any{"modelPreparation": "true"}, false},
+		{"true", map[string]any{"modelPreparation": true}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			markup := scene3DChunkGateRenderer(t, tc.props)
+			if strings.Contains(markup, "data-gosx-scene3d-model-preparation-url=") != tc.want {
+				t.Fatalf("preparation gate: %s", markup)
+			}
+			if strings.Contains(markup, `src="/gosx/bootstrap-feature-scene3d-model-preparation`) {
+				t.Fatal("preparation executed eagerly")
+			}
+		})
 	}
 }

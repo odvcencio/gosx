@@ -169,3 +169,5 @@ func isOperator(ch byte) bool {
 		ch == '=' || ch == '!' || ch == '<' || ch == '>' || ch == '&' ||
 		ch == '|' || ch == '^' || ch == '~'
 }
+
+func cachedHTML(lang, source string) string { return renderHTML(lang, source) }

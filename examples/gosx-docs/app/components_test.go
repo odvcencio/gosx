@@ -93,3 +93,36 @@ func TestCodeBlockUsesNormalizedSourceForContentAndGutter(t *testing.T) {
 		t.Fatalf("line-number gutter counted trimmed edge blanks: %q", rendered)
 	}
 }
+
+func TestCodeBlockRendersDeclarativeCopyControl(t *testing.T) {
+	t.Parallel()
+
+	rendered := gosx.RenderHTML(CodeBlock("go", "fmt.Println(\"hello\")"))
+	for _, want := range []string{
+		`data-gosx-copy-scope=""`,
+		`data-gosx-copy-button=""`,
+		`data-gosx-copy-status=""`,
+		`aria-live="polite"`,
+		`fmt`,
+		`Println`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("CodeBlock output is missing %q: %s", want, rendered)
+		}
+	}
+}
+
+func TestCodeBlockUsesKeyboardAccessibleFigureSemantics(t *testing.T) {
+	t.Parallel()
+
+	rendered := gosx.RenderHTML(CodeBlock("go", "fmt.Println(\"hello\")"))
+	if !strings.Contains(rendered, `<figure class="code-sample"`) {
+		t.Fatalf("CodeBlock should retain native figure semantics: %s", rendered)
+	}
+	if strings.Contains(rendered, `role="region"`) {
+		t.Fatalf("CodeBlock figure must not add a duplicate region landmark: %s", rendered)
+	}
+	if !strings.Contains(rendered, `<div class="code-sample__body" tabindex="0">`) {
+		t.Fatalf("scrollable code should be keyboard reachable: %s", rendered)
+	}
+}

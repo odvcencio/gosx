@@ -1,0 +1,3 @@
+gosx scene render scene.json --out scene.png
+	gosx scene render scene.json --out scene.png --width 1920 --height 1080 --time 1.5
+	gosx scene render scene.json --fast --out thumb.png   # skip shadows/post-FX, cap tessellation

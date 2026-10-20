@@ -33,6 +33,14 @@ func (w *Window) Options() WindowOptions {
 	return w.options
 }
 
+// Handle returns the native window handle, or 0 when the window is nil.
+func (w *Window) Handle() uintptr {
+	if w == nil {
+		return 0
+	}
+	return w.handle
+}
+
 // Primary reports whether this is the app's primary window.
 func (w *Window) Primary() bool {
 	return w != nil && w.primary

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"sort"
 	"strings"
 
 	"m31labs.dev/gosx/scene"
@@ -58,6 +59,7 @@ type Document struct {
 	PostEffects        []json.RawMessage          `json:"postEffects,omitempty"`
 	PostFXMaxPixels    int                        `json:"postFXMaxPixels,omitempty"`
 	ShadowMaxPixels    int                        `json:"shadowMaxPixels,omitempty"`
+	GPUDriven          json.RawMessage            `json:"gpuDriven,omitempty"`
 	BackendCaps        *capability.BackendCaps    `json:"backendCaps,omitempty"`
 }
 
@@ -72,9 +74,110 @@ func ValidateJSON(data []byte, opts Options) Report {
 		report.Valid = false
 		return report
 	}
+	validateSpecularRawDocument(&report, data)
+	validateParentMatricesRawDocument(&report, data)
 	validateDocument(&report, doc, opts)
 	report.Valid = !hasError(report.Diagnostics)
 	return report
+}
+
+func validateParentMatricesRawDocument(report *Report, data []byte) {
+	var raw struct {
+		Objects            []json.RawMessage `json:"objects"`
+		Models             []json.RawMessage `json:"models"`
+		Points             []json.RawMessage `json:"points"`
+		InstancedGLBMeshes []struct {
+			ID        string            `json:"id"`
+			Instances []json.RawMessage `json:"instances"`
+		} `json:"instancedGLBMeshes"`
+	}
+	if json.Unmarshal(data, &raw) != nil {
+		return
+	}
+	validateRecords := func(records []json.RawMessage, family string) {
+		for index, record := range records {
+			validateParentMatrixRaw(report, record, fmt.Sprintf("%s[%d].parentMatrix", family, index), "")
+		}
+	}
+	validateRecords(raw.Objects, "objects")
+	validateRecords(raw.Models, "models")
+	validateRecords(raw.Points, "points")
+	for batchIndex, batch := range raw.InstancedGLBMeshes {
+		for instanceIndex, instance := range batch.Instances {
+			validateParentMatrixRaw(report, instance, fmt.Sprintf("instancedGLBMeshes[%d].instances[%d].parentMatrix", batchIndex, instanceIndex), batch.ID)
+		}
+	}
+}
+
+// validateGPUDriven checks the optional gpuDriven renderer mode. The runtime
+// reads two booleans. A value of the wrong type is an error, because the
+// author asked for a mode that will not engage as written. An unknown key is
+// a warning, and so is a mode on a scene with no instanced mesh, because the
+// mode has nothing to act on there.
+func validateGPUDriven(report *Report, raw json.RawMessage, instancedMeshes int) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return
+	}
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(trimmed, &fields) != nil {
+		report.add(Error, "scene.gpu_driven.invalid", "gpuDriven must be an object", "gpuDriven", "", nil)
+		return
+	}
+	keys := make([]string, 0, len(fields))
+	for key := range fields {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		switch key {
+		case "occlusion", "shadowCulling":
+			var value *bool
+			if json.Unmarshal(fields[key], &value) != nil || value == nil {
+				report.add(Error, "scene.gpu_driven.invalid_flag", "gpuDriven."+key+" must be a boolean", "gpuDriven."+key, "", nil)
+			}
+		default:
+			report.add(Warn, "scene.gpu_driven.unknown_field", "gpuDriven field is not recognized", "gpuDriven."+key, "", map[string]any{"field": key})
+		}
+	}
+	if instancedMeshes == 0 {
+		report.add(Warn, "scene.gpu_driven.no_instanced_meshes", "gpuDriven has no effect: the scene declares no instancedMeshes", "gpuDriven", "", nil)
+	}
+}
+
+func validateParentMatrixRaw(report *Report, record json.RawMessage, path, fallbackID string) {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(record, &fields) != nil {
+		return
+	}
+	ownerID := fallbackID
+	if rawID, ok := fields["id"]; ok {
+		_ = json.Unmarshal(rawID, &ownerID)
+	}
+	raw, ok := fields["parentMatrix"]
+	if !ok {
+		return
+	}
+	var values []json.RawMessage
+	if json.Unmarshal(raw, &values) != nil || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix must be an array of 16 finite numbers", path, ownerID, nil)
+		return
+	}
+	for index, encoded := range values {
+		var value any
+		if json.Unmarshal(encoded, &value) != nil {
+			continue
+		}
+		if _, ok := value.(float64); !ok {
+			report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix values must be numbers", fmt.Sprintf("%s[%d]", path, index), ownerID, nil)
+		}
+	}
+}
+
+func validateInteractiveNode(report *Report, interactive bool, label, id, path string) {
+	if interactive && strings.TrimSpace(label) == "" {
+		report.add(Error, "scene.interactive.label_required", "Interactive scene node requires a non-empty Label", path+".label", id, nil)
+	}
 }
 
 func validateDocument(report *Report, doc Document, opts Options) {
@@ -94,9 +197,16 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	if doc.ShadowMaxPixels < 0 {
 		report.add(Error, "scene.shadow.invalid_max_pixels", "shadowMaxPixels must not be negative", "shadowMaxPixels", "", nil)
 	}
+	validateGPUDriven(report, doc.GPUDriven, len(doc.InstancedMeshes))
 
 	ids := map[string]string{}
 	targetIDs := map[string]struct{}{}
+	// animatableIDs collects the IDs a graph AnimationClip channel may target:
+	// every renderable object-like record plus points layers. Channel TargetID
+	// values are validated against this set; TargetNode stays a non-negative
+	// index into the AUTHORED node list, which the IR does not ship, so no
+	// range check against flattened record counts exists here.
+	animatableIDs := map[string]struct{}{}
 	addID := func(id, path string, required bool) {
 		id = strings.TrimSpace(id)
 		if id == "" {
@@ -126,20 +236,24 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		path := fmt.Sprintf("objects[%d]", i)
 		addID(object.ID, path+".id", object.Pickable != nil && *object.Pickable)
 		addTargetID(object.ID)
+		animatableIDs[object.ID] = struct{}{}
 		if strings.TrimSpace(object.Kind) == "" {
 			report.add(Error, "scene.object.kind_missing", "Object scene record requires kind", path+".kind", object.ID, nil)
 		}
 		validateGeometryKind(report, object.Kind, object.ID, path)
 		validateMaterialKind(report, object.MaterialKind, object.ID, path, opts.Strict)
 		validateBlendMode(report, object.BlendMode, object.ID, path)
+		validateInteractiveNode(report, object.Interactive, object.Label, object.ID, path)
 		validateObject(report, object, path)
 	}
 	for i, model := range doc.Models {
 		path := fmt.Sprintf("models[%d]", i)
 		addID(model.ID, path+".id", model.Pickable != nil && *model.Pickable)
 		addTargetID(model.ID)
+		animatableIDs[model.ID] = struct{}{}
+		validateInteractiveNode(report, model.Interactive, model.Label, model.ID, path)
 		validateObject(report, model.ObjectIR, path)
-		if strings.TrimSpace(model.Src) == "" {
+		if !modelHasValidAssetSource(model) {
 			report.add(Error, "scene.asset.missing", "Model scene record requires src", path+".src", model.ID, nil)
 		}
 		validateModel(report, model, path)
@@ -147,12 +261,14 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	for i, points := range doc.Points {
 		path := fmt.Sprintf("points[%d]", i)
 		addID(points.ID, path+".id", true)
+		animatableIDs[points.ID] = struct{}{}
 		validatePoints(report, points, path)
 	}
 	for i, mesh := range doc.InstancedMeshes {
 		path := fmt.Sprintf("instancedMeshes[%d]", i)
 		addID(mesh.ID, path+".id", true)
 		addTargetID(mesh.ID)
+		animatableIDs[mesh.ID] = struct{}{}
 		validateGeometryKind(report, mesh.Kind, mesh.ID, path)
 		validateMaterialKind(report, mesh.MaterialKind, mesh.ID, path, opts.Strict)
 		validateBlendMode(report, mesh.BlendMode, mesh.ID, path)
@@ -162,6 +278,7 @@ func validateDocument(report *Report, doc Document, opts Options) {
 		path := fmt.Sprintf("instancedGLBMeshes[%d]", i)
 		addID(mesh.ID, path+".id", true)
 		addTargetID(mesh.ID)
+		animatableIDs[mesh.ID] = struct{}{}
 		if strings.TrimSpace(mesh.Src) == "" {
 			report.add(Error, "scene.asset.missing", "Instanced GLB mesh requires src", path+".src", mesh.ID, nil)
 		}
@@ -174,15 +291,20 @@ func validateDocument(report *Report, doc Document, opts Options) {
 			validateMeshInstance(report, instance, instancePath, mesh.ID)
 		}
 		validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
+		validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+		validateAlphaCutoff(report, mesh.ID, path+".alphaCutoff", mesh.AlphaCutoff)
+		validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	}
 	for i, particles := range doc.ComputeParticles {
 		path := fmt.Sprintf("computeParticles[%d]", i)
 		addID(particles.ID, path+".id", true)
+		animatableIDs[particles.ID] = struct{}{}
 		validateComputeParticles(report, particles, path)
 	}
 	for i, water := range doc.WaterSystems {
 		path := fmt.Sprintf("waterSystems[%d]", i)
 		addID(water.ID, path+".id", true)
+		animatableIDs[water.ID] = struct{}{}
 		validateWaterSystem(report, water, path)
 	}
 	for i, label := range doc.Labels {
@@ -211,16 +333,26 @@ func validateDocument(report *Report, doc Document, opts Options) {
 	for i, animation := range doc.Animations {
 		path := fmt.Sprintf("animations[%d]", i)
 		addID(animation.Name, path+".name", true)
-		validateAnimation(report, animation, path, len(doc.Objects)+len(doc.Models)+len(doc.InstancedMeshes)+len(doc.InstancedGLBMeshes))
+		validateAnimation(report, animation, path, animatableIDs)
 	}
 	for i, raw := range doc.PostEffects {
 		validatePostEffect(report, raw, fmt.Sprintf("postEffects[%d]", i))
 	}
 }
 
+func modelHasValidAssetSource(model scene.ModelIR) bool {
+	if strings.TrimSpace(model.Src) != "" {
+		return true
+	}
+	return model.Progressive && strings.TrimSpace(model.PreviewSrc) != "" && strings.TrimSpace(model.FullSrc) != ""
+}
+
 func validateObject(report *Report, object scene.ObjectIR, path string) {
 	validatePrimitiveParameters(report, object.Kind, object.ID, path, object.Size, object.Width, object.Height, object.Depth, object.Radius, object.RadiusTop, object.RadiusBottom, object.Tube, object.Segments, object.RadialSegments, object.TubularSegments)
 	validateMaterialScalars(report, object.ID, path, object.Roughness, object.Metalness, object.Clearcoat, object.Sheen, object.Transmission, object.Iridescence, object.Anisotropy)
+	validateIOR(report, object.ID, path+".ior", object.IOR)
+	validateAlphaCutoff(report, object.ID, path+".alphaCutoff", object.AlphaCutoff)
+	validateSpecular(report, object.ID, path, object.SpecularIntensity, object.SpecularColor)
 	validateNumericFields(report, object.ID, path, map[string]float64{
 		"lineWidth":      object.LineWidth,
 		"dashSize":       object.DashSize,
@@ -234,6 +366,9 @@ func validateObject(report *Report, object scene.ObjectIR, path string) {
 		"rotationX":      object.RotationX,
 		"rotationY":      object.RotationY,
 		"rotationZ":      object.RotationZ,
+		"scaleX":         object.ScaleX,
+		"scaleY":         object.ScaleY,
+		"scaleZ":         object.ScaleZ,
 		"spinX":          object.SpinX,
 		"spinY":          object.SpinY,
 		"spinZ":          object.SpinZ,
@@ -243,6 +378,7 @@ func validateObject(report *Report, object scene.ObjectIR, path string) {
 		"driftSpeed":     object.DriftSpeed,
 		"driftPhase":     object.DriftPhase,
 	})
+	validateParentMatrix(report, object.ID, path+".parentMatrix", object.ParentMatrix)
 	validateNonNegativeNumericFields(report, object.ID, path, map[string]float64{
 		"lineWidth":      object.LineWidth,
 		"dashSize":       object.DashSize,
@@ -337,6 +473,7 @@ func validatePoints(report *Report, points scene.PointsIR, path string) {
 		"spinY":        points.SpinY,
 		"spinZ":        points.SpinZ,
 	})
+	validateParentMatrix(report, points.ID, path+".parentMatrix", points.ParentMatrix)
 	validateNonNegativeNumericFields(report, points.ID, path, map[string]float64{
 		"size":         points.Size,
 		"minPixelSize": points.MinPixelSize,
@@ -388,11 +525,15 @@ func validateInstancedMesh(report *Report, mesh scene.InstancedMeshIR, path stri
 	}
 	validateCompressedArrays(report, mesh.ID, path+".previewTransforms", mesh.PreviewTransforms)
 	validateMaterialScalars(report, mesh.ID, path, mesh.Roughness, mesh.Metalness)
+	validateIOR(report, mesh.ID, path+".ior", mesh.IOR)
+	validateAlphaCutoff(report, mesh.ID, path+".alphaCutoff", mesh.AlphaCutoff)
+	validateSpecular(report, mesh.ID, path, mesh.SpecularIntensity, mesh.SpecularColor)
 	validatePrimitiveParameters(report, mesh.Kind, mesh.ID, path, mesh.Size, mesh.Width, mesh.Height, mesh.Depth, mesh.Radius, mesh.RadiusTop, mesh.RadiusBottom, mesh.Tube, mesh.Segments, mesh.RadialSegments, mesh.TubularSegments)
 	validateLive(report, mesh.ID, path, mesh.Live)
 }
 
 func validateMeshInstance(report *Report, instance scene.MeshInstanceIR, path, parentID string) {
+	validateNonNegativeFloat(report, parentID, path+".animationTime", instance.AnimationTime)
 	validateNumericFields(report, parentID, path, map[string]float64{
 		"x":         instance.X,
 		"y":         instance.Y,
@@ -404,6 +545,16 @@ func validateMeshInstance(report *Report, instance scene.MeshInstanceIR, path, p
 		"rotationY": instance.RotationY,
 		"rotationZ": instance.RotationZ,
 	})
+	validateParentMatrix(report, parentID, path+".parentMatrix", instance.ParentMatrix)
+}
+
+func validateParentMatrix(report *Report, ownerID, path string, matrix []float64) {
+	if matrix == nil {
+		return
+	}
+	if !scene.ValidParentMatrix(matrix) {
+		report.add(Error, "scene.transform.invalid_parent_matrix", "parentMatrix must be a finite, nonsingular affine 4x4 matrix", path, ownerID, map[string]any{"values": len(matrix)})
+	}
 }
 
 func validateComputeParticles(report *Report, particles scene.ComputeParticlesIR, path string) {
@@ -659,6 +810,13 @@ func validateHTML(report *Report, html scene.HTMLIR, path string, opts Options, 
 	if mode != "dom" && mode != "texture" && mode != "portal" && mode != "world" && mode != "screen" {
 		report.add(Warn, "scene.html.unknown_mode", "HTML surface mode is not part of the formal mode set", path+".mode", html.ID, map[string]any{"mode": html.Mode})
 	}
+	if html.Perspective {
+		if mode != "dom" {
+			report.add(Warn, "scene.html.perspective_ignored_mode", "Perspective HTML positioning applies only to DOM mode", path+".perspective", html.ID, map[string]any{"mode": mode})
+		} else if html.SurfaceWidth <= 0 || html.SurfaceHeight <= 0 {
+			report.add(Error, "scene.html.perspective_size_missing", "Perspective DOM HTML requires positive surfaceWidth and surfaceHeight", path, html.ID, map[string]any{"surfaceWidth": html.SurfaceWidth, "surfaceHeight": html.SurfaceHeight})
+		}
+	}
 	if mode == "texture" {
 		severity := Warn
 		if opts.Strict {
@@ -763,27 +921,42 @@ func validateLight(report *Report, light scene.LightIR, path string) {
 	if light.ShadowCascades < 0 {
 		report.add(Error, "scene.shadow.invalid_size", "Light shadowCascades must not be negative", path+".shadowCascades", light.ID, nil)
 	}
+	if strings.EqualFold(strings.TrimSpace(light.Kind), "spot") && light.CastShadow {
+		if !math.IsNaN(light.Angle) && !math.IsInf(light.Angle, 0) && light.Angle >= math.Pi/2 {
+			report.add(Error, "scene.shadow.spot_angle_unsupported", "Spot-light shadow angle must be less than pi/2 for one perspective map", path+".angle", light.ID, map[string]any{"angle": light.Angle})
+		}
+		if light.ShadowCascades > 1 {
+			report.add(Error, "scene.shadow.spot_cascades_unsupported", "Spot-light shadows use one perspective map and do not support cascades", path+".shadowCascades", light.ID, map[string]any{"shadowCascades": light.ShadowCascades})
+		}
+	}
 	for i, coefficient := range light.Coefficients {
 		validateVector3(report, light.ID, fmt.Sprintf("%s.coefficients[%d]", path, i), coefficient)
 	}
 	validateLive(report, light.ID, path, light.Live)
 }
 
-func validateAnimation(report *Report, animation scene.AnimationClipIR, path string, nodeCount int) {
+func validateAnimation(report *Report, animation scene.AnimationClipIR, path string, animatableIDs map[string]struct{}) {
 	validateNonNegativeFloat(report, animation.Name, path+".duration", animation.Duration)
 	if len(animation.Channels) == 0 {
 		report.add(Error, "scene.animation.channels_missing", "Animation clip requires at least one channel", path+".channels", animation.Name, nil)
 	}
 	for i, channel := range animation.Channels {
-		validateAnimationChannel(report, animation.Name, channel, fmt.Sprintf("%s.channels[%d]", path, i), nodeCount)
+		validateAnimationChannel(report, animation.Name, channel, fmt.Sprintf("%s.channels[%d]", path, i), animatableIDs)
 	}
 }
 
-func validateAnimationChannel(report *Report, id string, channel scene.AnimationChannelIR, path string, nodeCount int) {
+func validateAnimationChannel(report *Report, id string, channel scene.AnimationChannelIR, path string, animatableIDs map[string]struct{}) {
 	if channel.TargetNode < 0 {
 		report.add(Error, "scene.animation.invalid_target", "Animation targetNode must not be negative", path+".targetNode", id, nil)
-	} else if channel.TargetNode >= nodeCount {
-		report.add(Error, "scene.animation.invalid_target", "Animation targetNode is outside the known scene node range", path+".targetNode", id, map[string]any{"targetNode": channel.TargetNode, "nodeCount": nodeCount})
+	}
+	// TargetNode indexes the AUTHORED node list (which interleaves lights,
+	// points, clips, and helpers). The IR does not ship that list, so no
+	// range check against flattened record counts exists here — consumers
+	// resolve targets through the lowering-time TargetID instead.
+	if targetID := strings.TrimSpace(channel.TargetID); targetID != "" {
+		if _, ok := animatableIDs[targetID]; !ok {
+			report.add(Error, "scene.animation.unknown_target", "Animation targetID does not match any known scene record", path+".targetID", id, map[string]any{"targetID": targetID})
+		}
 	}
 	if strings.TrimSpace(channel.Property) == "" {
 		report.add(Error, "scene.animation.property_missing", "Animation channel requires property", path+".property", id, nil)
@@ -874,6 +1047,30 @@ func validateCustomPostDOMRegions(report *Report, record map[string]any, path st
 			}
 		}
 	}
+	if rawBounds, ok := dom["bounds"]; ok && rawBounds != nil {
+		bounds, ok := rawBounds.(map[string]any)
+		if !ok {
+			report.add(Error, "scene.post_effect.dom_regions.bounds", "CustomPost domRegions bounds must be an object", path+".domRegions.bounds", "", nil)
+			return
+		}
+		if rawMode, ok := bounds["mode"]; ok && rawMode != nil {
+			mode, ok := rawMode.(string)
+			if !ok || !validCustomPostDOMRegionBoundsMode(mode) {
+				report.add(Error, "scene.post_effect.dom_regions.bounds_mode", "CustomPost domRegions bounds mode is invalid", path+".domRegions.bounds.mode", "", nil)
+			}
+		}
+		if rawPadding, ok := bounds["paddingPx"]; ok && rawPadding != nil {
+			padding, ok := rawPadding.(float64)
+			if !ok || math.IsNaN(padding) || math.IsInf(padding, 0) || padding < 0 || padding > 2048 {
+				report.add(Error, "scene.post_effect.dom_regions.bounds_padding", "CustomPost domRegions bounds paddingPx must be finite and between 0 and 2048", path+".domRegions.bounds.paddingPx", "", nil)
+			}
+		}
+	}
+}
+
+func validCustomPostDOMRegionBoundsMode(value string) bool {
+	mode := strings.TrimSpace(value)
+	return mode == "" || mode == "union"
 }
 
 func validCustomPostUniformName(value string) bool {
@@ -919,10 +1116,59 @@ func validateMaterialScalars(report *Report, id, path string, values ...float64)
 	}
 }
 
+// validateIOR diagnoses an explicitly authored index of refraction. Absent
+// (nil) is valid and means the renderer default. Zero is valid and selects the
+// special 1-reflectance case. Any value in (0, 1), any negative value, and any
+// non-finite value violates the authored material contract, which requires 0
+// or a finite value of at least 1.
+func validateIOR(report *Report, id, path string, ior *float64) string {
+	if ior == nil {
+		return ""
+	}
+	value := *ior
+	if !finite(value) {
+		report.add(Error, "scene.material.ior_non_finite", "Material ior must be finite", path, id, nil)
+		return "scene.material.ior_non_finite"
+	}
+	if value < 0 {
+		report.add(Error, "scene.material.ior_negative", "Material ior must not be negative; use 0 or a value of at least 1", path, id, map[string]any{"ior": value})
+		return "scene.material.ior_negative"
+	}
+	if value > 0 && value < 1 {
+		report.add(Error, "scene.material.ior_out_of_range", "Material ior must be 0 or at least 1", path, id, map[string]any{"ior": value})
+		return "scene.material.ior_out_of_range"
+	}
+	return ""
+}
+
 func validateNumericFields(report *Report, id, path string, fields map[string]float64) {
 	for name, value := range fields {
 		validateFiniteFloat(report, id, path+"."+name, value)
 	}
+}
+
+// validateAlphaCutoff diagnoses an explicitly authored alpha cutoff. Omitted
+// and explicitly disabled cutoffs are valid and diagnose nothing. A numeric
+// cutoff must be finite and non-negative; zero and values above 1 are legal.
+// The authored value is retained by the scene constructors precisely so this
+// validator can report it instead of a sanitized substitute.
+func validateAlphaCutoff(report *Report, id, path string, cutoff scene.AlphaCutoff) string {
+	if cutoff.IsZero() {
+		return ""
+	}
+	value, ok := cutoff.Value()
+	if !ok {
+		return ""
+	}
+	if !finite(value) {
+		report.add(Error, "scene.material.alpha_cutoff_non_finite", "Material alphaCutoff must be finite", path, id, nil)
+		return "scene.material.alpha_cutoff_non_finite"
+	}
+	if value < 0 {
+		report.add(Error, "scene.material.alpha_cutoff_negative", "Material alphaCutoff must not be negative", path, id, map[string]any{"alphaCutoff": value})
+		return "scene.material.alpha_cutoff_negative"
+	}
+	return ""
 }
 
 func validateNonNegativeNumericFields(report *Report, id, path string, fields map[string]float64) {

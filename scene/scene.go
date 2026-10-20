@@ -45,6 +45,7 @@ type PerspectiveCamera struct {
 	Position     Vector3
 	Rotation     Euler
 	FOV          float64
+	PortraitFOV  float64 // optional vertical field of view for portrait viewports
 	Near         float64
 	Far          float64
 	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
@@ -78,7 +79,13 @@ type Environment struct {
 	EnvironmentMap   string
 	// IBL carries prefiltered HDR products and their sampling semantics. It is
 	// additive metadata; renderer capability remains governed by capability.Matrix.
-	IBL          EnvironmentIBL
+	IBL EnvironmentIBL
+	// Sky selects the background source drawn behind the scene. A nil Sky
+	// keeps the flat Props.Background clear color. See sky.go.
+	Sky *Sky
+	// Ocean describes the open-ocean surface. See ocean.go.
+	Haze         *Haze
+	Ocean        *Ocean
 	EnvIntensity float64
 	EnvRotation  float64
 	Exposure     float64
@@ -94,6 +101,8 @@ type Environment struct {
 // Props is the typed Go-side Scene3D surface. It lowers into the current
 // Scene3D compatibility prop bag while preserving room for a real scene graph.
 type Props struct {
+	ExperienceRef string `json:"experienceRef,omitempty"`
+
 	ProgramRef           string   `json:"-"`
 	Capabilities         []string `json:"-"`
 	RequiredCapabilities []string `json:"-"`
@@ -103,6 +112,8 @@ type Props struct {
 	AriaLabel            string   `json:"ariaLabel,omitempty"`
 	Background           string   `json:"background,omitempty"`
 	Controls             string   `json:"controls,omitempty"`
+	Walk                 *Walk    `json:"walk,omitempty"`
+	Vessel               *Vessel  `json:"vessel,omitempty"`
 	AutoRotate           *bool    `json:"autoRotate,omitempty"`
 	Responsive           *bool    `json:"responsive,omitempty"`
 	FillHeight           *bool    `json:"fillHeight,omitempty"`
@@ -120,6 +131,10 @@ type Props struct {
 	DragSignalNamespace  string   `json:"dragSignalNamespace,omitempty"`
 	PickSignalNamespace  string   `json:"pickSignalNamespace,omitempty"`
 	EventSignalNamespace string   `json:"eventSignalNamespace,omitempty"`
+	// Timelines advertises the optional runtime for finite object and camera playback.
+	Timelines *bool `json:"timelines,omitempty"`
+	// ParticleBursts advertises the optional runtime and compute support for event effects.
+	ParticleBursts *bool `json:"particleBursts,omitempty"`
 	// CameraInputSignal: when set, the engine applies the camera from this shared
 	// signal (null/absent = user controls). Drives follow-mode without app JS.
 	CameraInputSignal string `json:"cameraInputSignal,omitempty"`
@@ -155,25 +170,77 @@ type Props struct {
 	// "grab" makes the viewport track the pointer like a grabbed scene.
 	ControlRotateDirection string  `json:"controlRotateDirection,omitempty"`
 	ControlRotateSpeed     float64 `json:"controlRotateSpeed,omitempty"`
-	ControlZoomSpeed       float64 `json:"controlZoomSpeed,omitempty"`
-	ControlLookSpeed       float64 `json:"controlLookSpeed,omitempty"`
-	ControlMoveSpeed       float64 `json:"controlMoveSpeed,omitempty"`
-	ControlMinDistance     float64 `json:"controlMinDistance,omitempty"`
-	ControlMaxDistance     float64 `json:"controlMaxDistance,omitempty"`
-	ControlPitchLimit      float64 `json:"controlPitchLimit,omitempty"`
-	ScrollCameraStart      float64 `json:"scrollCameraStart,omitempty"`
-	ScrollCameraEnd        float64 `json:"scrollCameraEnd,omitempty"`
+	// ControlZoom opts into damped wheel, pinch and focused keyboard zoom in all camera modes.
+	// Optics adds a signal-driven instrument without application JavaScript.
+	Optics        *Optics       `json:"optics,omitempty"`
+	Presentation  *Presentation `json:"presentation,omitempty"`
+	DayCycle      *DayCycle     `json:"dayCycle,omitempty"`
+	Exploration   *Exploration  `json:"-"`
+	MetricsSignal string        `json:"metricsSignal,omitempty"`
+	ControlZoom   *bool         `json:"controlZoom,omitempty"`
+	// ControlPan adds two-finger screen-space panning to ControlZoom. A named
+	// handle also supports pointer drag and arrow keys without taking over
+	// single-pointer object interactions on the scene canvas.
+	ControlPan         *bool   `json:"controlPan,omitempty"`
+	ControlPanHandle   string  `json:"controlPanHandle,omitempty"`
+	ControlZoomMinFOV  float64 `json:"controlZoomMinFOV,omitempty"`
+	ControlZoomMaxFOV  float64 `json:"controlZoomMaxFOV,omitempty"`
+	ControlZoomSpeed   float64 `json:"controlZoomSpeed,omitempty"`
+	ControlLookSpeed   float64 `json:"controlLookSpeed,omitempty"`
+	ControlMoveSpeed   float64 `json:"controlMoveSpeed,omitempty"`
+	ControlMinDistance float64 `json:"controlMinDistance,omitempty"`
+	ControlMaxDistance float64 `json:"controlMaxDistance,omitempty"`
+	ControlPitchLimit  float64 `json:"controlPitchLimit,omitempty"`
+	ScrollCameraStart  float64 `json:"scrollCameraStart,omitempty"`
+	ScrollCameraEnd    float64 `json:"scrollCameraEnd,omitempty"`
 	// ScrollCameraOffset applies a camera-position delta per CSS pixel scrolled.
 	// It complements ScrollCameraStart/End, which preserve the legacy z-range
 	// interpolation contract.
-	ScrollCameraOffset  Vector3 `json:"scrollCameraOffset,omitempty"`
-	MaxFrameRate        float64 `json:"maxFrameRate,omitempty"`
-	MaxFPS              float64 `json:"maxFPS,omitempty"`
-	FrameIntervalMS     float64 `json:"frameIntervalMS,omitempty"`
+	ScrollCameraOffset Vector3 `json:"scrollCameraOffset,omitempty"`
+	// ScrollFrameRate temporarily raises the animation cadence while a
+	// scroll-camera scene is receiving input. A scene can keep a conservative
+	// idle MaxFrameRate while matching the display during active wheel or
+	// trackpad movement, then automatically returns to the idle cap after the
+	// input quiets. Zero preserves the authored idle cadence for back-compat.
+	ScrollFrameRate float64 `json:"scrollFrameRate,omitempty"`
+	// MaxFrameRate overrides the default 60 FPS cap for ambient animation.
+	// Input and transitions follow the display unless a rate is authored.
+	MaxFrameRate    float64 `json:"maxFrameRate,omitempty"`
+	MaxFPS          float64 `json:"maxFPS,omitempty"`
+	FrameIntervalMS float64 `json:"frameIntervalMS,omitempty"`
+	// ModelPreparation advertises the opt-in Surface.PrepareModels authority.
+	ModelPreparation *bool `json:"modelPreparation,omitempty"`
+	// RenderBeforeModels lets the scene draw the first frame without waiting for models; models appear when loaded.
+	RenderBeforeModels *bool `json:"renderBeforeModels,omitempty"`
+	// FramePacing selects the render-loop pacing policy.
+	//
+	// The only recognized value is "vsync-divisor". The client measures
+	// the display's vsync interval and the recent render cost. It then
+	// renders on every k-th vsync tick, where k is an integer. The
+	// client picks the smallest k from 1 to 4 for which k vsync
+	// intervals cover the render cost, with margin. This policy does
+	// not skip ticks by a fixed millisecond threshold.
+	//
+	// This paces evenly across refresh rates. A fixed MaxFrameRate of 50
+	// on a 100 Hz display yields an uneven 40 to 48 fps. The
+	// vsync-divisor policy yields an exact 50 fps, with k equal to 2.
+	//
+	// When MaxFrameRate, MaxFPS, or FrameIntervalMS is also set, it
+	// remains an upper bound on the paced rate: k grows past 4 when the
+	// authored cap needs a longer interval than four vsync ticks. An
+	// empty value, or any other string, keeps the existing
+	// fixed-interval behavior. Vsync-divisor replaces the default ambient cap;
+	// only authored frame-rate caps constrain its divisor.
+	FramePacing string `json:"framePacing,omitempty"`
+	// MaxDevicePixelRatio overrides the automatic 1.5 DPR cap on phones
+	// (coarse pointer and a screen short side of at most 600 CSS pixels).
+	// Capability, adaptive-quality and MaxPixels budgets still apply.
 	MaxDevicePixelRatio float64 `json:"maxDevicePixelRatio,omitempty"`
 	// MaxPixels caps the render target by total backing pixels after DPR.
-	// Zero leaves the render target governed by the DPR cap alone.
-	MaxPixels             int     `json:"maxPixels,omitempty"`
+	// Zero defaults to 2,073,600 pixels (1080p). MaxPixelsUnbounded opts out.
+	MaxPixels int `json:"maxPixels,omitempty"`
+	// MinDevicePixelRatio overrides the default pixel budget. An explicit
+	// positive MaxPixels still takes precedence over this minimum.
 	MinDevicePixelRatio   float64 `json:"minDevicePixelRatio,omitempty"`
 	AdaptiveQuality       *bool   `json:"adaptiveQuality,omitempty"`
 	AdaptiveTargetFrameMS float64 `json:"adaptiveTargetFrameMS,omitempty"`
@@ -223,6 +290,10 @@ type Props struct {
 	// window.__gosx.audio.registerManifest — see the Audio type
 	// (scene/audio.go) for the two-engine (gosxAudio/arcadeAudio) model.
 	Audio *Audio
+	// GPUDriven opts the scene into GPU-driven instancing on the WebGPU
+	// backend. Nil (the default) keeps the classic instanced path. See the
+	// GPUDriven type (scene/gpu_driven.go).
+	GPUDriven *GPUDriven
 }
 
 // Compression configures scalar quantization for Scene3D vertex data.
@@ -250,6 +321,9 @@ type Compression struct {
 	LOD          bool    `json:"lod,omitempty"`
 	LODThreshold float64 `json:"lodThreshold,omitempty"` // camera distance threshold; objects farther use preview. Default 20.
 }
+
+// MaxPixelsUnbounded opts out of the main canvas pixel budget.
+const MaxPixelsUnbounded = -1
 
 // ShadowMaxPixelsUnbounded opts out of the shadow map pixel cap entirely.
 // Set Shadows.MaxPixels to this constant when you explicitly need the
@@ -324,6 +398,10 @@ type Group struct {
 	ID       string
 	Position Vector3
 	Rotation Euler
+	// Scale is inherited by descendants. Each zero component means unit scale,
+	// matching the existing Mesh and Model scale defaults. Non-uniform scale is
+	// retained as an exact affine transform so rotated children may carry shear.
+	Scale    Vector3
 	Children []Node
 }
 
@@ -336,11 +414,14 @@ type Mesh struct {
 	Rotation Euler
 	// Scale is a leaf (non-hierarchical) scale applied to this mesh's own
 	// geometry. The zero value means unit scale so existing scenes are
-	// unaffected. Group transforms deliberately remain scale-free.
-	Scale    Vector3
-	Pickable *bool
-	Visible  *bool
-	Selected bool
+	// unaffected. Mesh scale does not propagate to Mesh.Children; Group.Scale
+	// is the hierarchical scale contract.
+	Scale       Vector3
+	Pickable    *bool
+	Interactive bool
+	Label       string
+	Visible     *bool
+	Selected    bool
 	// GizmoRing marks this mesh as a TransformControls rotate-mode ring helper.
 	// When Props.GizmoInputSignal is set, the engine shows GizmoRing meshes only
 	// while the signal reads "rotate" (mirrors how Selected is driven live by
@@ -589,15 +670,23 @@ type InstancedGLBMesh struct {
 	Pickable  *bool
 	Visible   *bool
 	Static    *bool
+	// SharedAppearance allows compatible rigid primitives to share one renderer
+	// record across instances. Corresponding primitives keep their authored GLB
+	// materials, but per-instance scene-node CSS appearance overrides are not
+	// supported for an opted-in batch.
+	SharedAppearance bool
 }
 
 // MeshInstance describes the transform for a single instance within an
 // InstancedGLBMesh batch.
 type MeshInstance struct {
-	ID       string
-	Position Vector3
-	Scale    Vector3
-	Rotation Euler
+	Animation     string
+	AnimationTime float64
+	AnimationLoop bool
+	ID            string
+	Position      Vector3
+	Scale         Vector3
+	Rotation      Euler
 }
 
 // ComputeParticles declares a GPU-computed particle system.
@@ -659,22 +748,25 @@ type WaterSystem struct {
 	PoolWidth             float64
 	PoolHeight            float64
 	PoolLength            float64
-	CornerRadius          float64
-	WaveSpeed             float64
-	Damping               float64
-	NormalScale           float64
-	SeedDrops             int
-	DropRadius            float64
-	DropStrength          float64
-	DropEventID           int
-	DropX                 float64
-	DropZ                 float64
-	DropEventRadius       float64
-	DropEventStrength     float64
-	TileTexture           string
-	CubeMap               string
-	ShallowColor          string
-	DeepColor             string
+	// RenderPool controls the visible basin. A coastal water volume can use
+	// the live surface without drawing the tank walls over surrounding meshes.
+	RenderPool        *bool
+	CornerRadius      float64
+	WaveSpeed         float64
+	Damping           float64
+	NormalScale       float64
+	SeedDrops         int
+	DropRadius        float64
+	DropStrength      float64
+	DropEventID       int
+	DropX             float64
+	DropZ             float64
+	DropEventRadius   float64
+	DropEventStrength float64
+	TileTexture       string
+	CubeMap           string
+	ShallowColor      string
+	DeepColor         string
 	// AboveWaterColor is a linear HDR absorption tint. Components may exceed
 	// one, unlike the display-referred ShallowColor fallback.
 	AboveWaterColor             Vector3
@@ -909,6 +1001,17 @@ type ParticleMaterial struct {
 	OpacityEnd  float64
 	BlendMode   MaterialBlendMode
 	Attenuation bool
+	// MinPixelSize is a screen-space floor for particle sprites, matching
+	// Points.MinPixelSize. Attenuation scales a sprite by distance, so a
+	// moving system sweeps each sprite's projected size every frame; any
+	// sprite that dips below one pixel stops covering a pixel and winks on
+	// and off against the pixel grid. That scintillation reads as flicker,
+	// and until this field existed the only workaround was to disable
+	// Attenuation entirely and lose the depth cue with it.
+	MinPixelSize float64
+	// MaxPixelSize caps sprite growth as particles approach the camera,
+	// matching Points.MaxPixelSize. Zero leaves the size uncapped.
+	MaxPixelSize float64
 }
 
 // Label lowers into one legacy scene label.
@@ -999,9 +1102,15 @@ type HTML struct {
 	SurfaceWidth     float64
 	SurfaceHeight    float64
 	Position         Vector3
+	// Perspective renders a DOM-mode overlay as a flat plane of SurfaceWidth by
+	// SurfaceHeight world units in the local XY plane, positioned and rotated in
+	// world space and drawn with a CSS matrix3d, so real focusable HTML sits on
+	// a 3D plane. Both surface dimensions must be positive when it is set.
+	Perspective bool
 	// Rotation orients a texture surface in world space, in radians, applied
 	// X then Y then Z. The quad starts in the XZ plane; Rotation.X = -math.Pi/2
-	// stands it upright. DOM-mode overlays ignore this field.
+	// stands it upright. DOM-mode overlays use it only when Perspective is true,
+	// and then the plane starts in the XY plane facing +Z.
 	Rotation Euler
 	// Spin adds constant angular velocity in radians per second.
 	Spin          Euler
@@ -1061,8 +1170,13 @@ type HTMLSurface struct {
 // Model instances a framework-owned scene model asset with a transform and
 // optional material/static overrides.
 type Model struct {
+	// Detail augments every imported primitive without replacing its material.
+	Detail             *Detail
 	ID                 string
 	Src                string
+	PreviewSrc         string
+	FullSrc            string
+	Progressive        bool
 	Position           Vector3
 	Rotation           Euler
 	Scale              Vector3
@@ -1073,6 +1187,8 @@ type Model struct {
 	CastShadow         bool
 	ReceiveShadow      bool
 	Pickable           *bool
+	Interactive        bool
+	Label              string
 	Visible            *bool
 	Static             *bool
 	Animation          string
@@ -1223,6 +1339,13 @@ type AnimationClip struct {
 }
 
 // AnimationChannel describes one keyframe track targeting a single node property.
+// TargetNode indexes the AUTHORED node list (which interleaves lights, points,
+// clips, and other node kinds) — never a flattened renderable-array position;
+// lowering resolves it to a stable TargetID for consumers. Translation values
+// are composed by the shared runtime bundle path as offsets from the target
+// node's authored pose (rotation replaces orientation; scale replaces scale),
+// so authoring keys relative to each node's authored pose keeps the opening
+// frame stable.
 type AnimationChannel struct {
 	TargetNode    int       // index of the target node in the scene node list
 	Property      string    // "translation", "rotation", "scale"
@@ -1378,7 +1501,10 @@ type CustomMaterial struct {
 	FragmentGLSL      string
 	VertexWGSL        string
 	FragmentWGSL      string
-	Uniforms          map[string]any
+	// SpecularFragment variants preserve coverage while writing color0/specular1.
+	SpecularFragmentGLSL string
+	SpecularFragmentWGSL string
+	Uniforms             map[string]any
 }
 
 type CubeGeometry struct {
@@ -1449,6 +1575,7 @@ type MatteMaterial MaterialStyle
 
 // StandardMaterial is a PBR material using the roughness/metalness workflow.
 type StandardMaterial struct {
+	Detail       *Detail
 	Color        string
 	Texture      string
 	Roughness    float64
@@ -1456,17 +1583,53 @@ type StandardMaterial struct {
 	Clearcoat    float64
 	Sheen        float64
 	Transmission float64
-	Iridescence  float64
-	Anisotropy   float64
-	NormalMap    string
-	RoughnessMap string
-	MetalnessMap string
-	OcclusionMap string
-	EmissiveMap  string
-	Emissive     float64
-	Opacity      *float64
-	BlendMode    MaterialBlendMode
-	Wireframe    *bool
+	// Thickness is the refraction path length in world units. Zero is a thin sheet.
+	Thickness float64
+	// ThicknessMap multiplies Thickness by its linear green channel (KHR volume).
+	ThicknessMap string
+	// SpecularAA filters geometric normal variance into GGX roughness. Nil disables it.
+	SpecularAA *GeometricSpecularAA
+	// AttenuationDistance is the Beer-Lambert reference distance; zero means no absorption.
+	AttenuationDistance float64
+	// AttenuationColor is linear RGB transmittance at AttenuationDistance; nil is white.
+	AttenuationColor  *[3]float64
+	Iridescence       float64
+	Anisotropy        float64
+	SpecularIntensity *float64
+	SpecularColor     *[3]float64
+	IOR               *float64
+	// EmissiveColor is the optional glTF emissiveFactor linear RGB triple.
+	// Nil keeps the legacy scalar-emission shader behavior; an explicit black
+	// value stays present and disables that fallback.
+	EmissiveColor     *[3]float64
+	NormalScale       *float64
+	OcclusionStrength *float64
+	NormalMap         string
+	RoughnessMap      string
+	MetalnessMap      string
+	OcclusionMap      string
+	EmissiveMap       string
+	Emissive          float64
+	Opacity           *float64
+	BlendMode         MaterialBlendMode
+	// Wireframe opts a standard PBR surface into edge-only rendering. A nil
+	// value is solid; use Bool(true) to request the compatibility wireframe
+	// presentation explicitly.
+	Wireframe   *bool
+	AlphaCutoff AlphaCutoff `json:"alphaCutoff,omitzero"`
+	// RimColor, RimPower and RimStrength add an optional fresnel-style
+	// glancing-angle highlight, additive on top of the lit surface. The term
+	// is off by default: RimStrength 0 (the zero value) disables it entirely,
+	// so existing materials render unchanged. RimColor defaults to white
+	// [1,1,1] when nil. RimPower controls the falloff exponent (higher values
+	// narrow the highlight toward the silhouette); the renderer floors it at
+	// 0.0001 to avoid a pow() domain error, so RimPower 0 (the zero value)
+	// still renders a very wide, nearly full-hemisphere highlight rather than
+	// a divide-by-zero — set an explicit RimPower (2 is a common choice) when
+	// enabling the term.
+	RimColor    *[3]float64
+	RimPower    float64
+	RimStrength float64
 }
 
 type quaternion struct {
@@ -1477,8 +1640,10 @@ type quaternion struct {
 }
 
 type worldTransform struct {
-	Position Vector3
-	Rotation quaternion
+	Position  Vector3
+	Rotation  quaternion
+	Matrix    affineMatrix
+	HasMatrix bool
 }
 
 type pendingLabel struct {
@@ -1505,21 +1670,28 @@ type graphLowerer struct {
 	computeParticles   []ComputeParticlesIR
 	waterSystems       []WaterSystemIR
 	animations         []AnimationClipIR
-	pending            []pendingLabel
-	pendingSprites     []pendingSprite
-	pendingHTML        []pendingHTML
-	lights             []LightIR
-	anchors            map[string]worldTransform
-	nextObjectID       int
-	nextLabelID        int
-	nextSpriteID       int
-	nextHTMLID         int
-	nextLightID        int
-	nextModelID        int
-	nextPointsID       int
-	nextInstancedID    int
-	nextInstancedGLBID int
-	nextParticlesID    int
+	// rootNodes is the AUTHORED top-level node list being lowered. Animation
+	// channels address targets by index into this list (the index space authors
+	// write, which interleaves lights, points, clips, and other node kinds), so
+	// lowerAnimationClip resolves each TargetNode back to its stable node ID
+	// here instead of letting consumers guess from flattened renderable arrays.
+	rootNodes            []Node
+	pending              []pendingLabel
+	pendingSprites       []pendingSprite
+	pendingHTML          []pendingHTML
+	lights               []LightIR
+	anchors              map[string]worldTransform
+	nextObjectID         int
+	nextLabelID          int
+	nextSpriteID         int
+	nextInteractiveOrder int
+	nextHTMLID           int
+	nextLightID          int
+	nextModelID          int
+	nextPointsID         int
+	nextInstancedID      int
+	nextInstancedGLBID   int
+	nextParticlesID      int
 	// spinTracks accumulates one GenSpin MotionIR Track per spinning node;
 	// surfaced via SceneIR.SpinTracks (json:"-") as an in-memory facade.
 	spinTracks []motion.Track
@@ -1758,7 +1930,15 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "ariaLabel", p.AriaLabel)
 	setString(out, "background", p.Background)
 	setString(out, "controls", p.Controls)
+	setBool(out, "timelines", p.Timelines)
+	if p.Walk != nil {
+		out["walk"] = p.Walk
+	}
+	if p.Vessel != nil {
+		out["vessel"] = p.Vessel
+	}
 	setBool(out, "autoRotate", p.AutoRotate)
+	setBool(out, "particleBursts", p.ParticleBursts)
 	setBool(out, "responsive", p.Responsive)
 	setBool(out, "fillHeight", p.FillHeight)
 	setBool(out, "preferWebGPU", p.PreferWebGPU)
@@ -1792,6 +1972,29 @@ func (p Props) legacyBaseProps() map[string]any {
 	setString(out, "controlRotateMode", p.ControlRotateMode)
 	setString(out, "controlRotateDirection", p.ControlRotateDirection)
 	setNumeric(out, "controlRotateSpeed", p.ControlRotateSpeed)
+	if p.ControlZoom != nil {
+		out["controlZoom"] = *p.ControlZoom
+	}
+	if p.Optics != nil {
+		out["optics"] = p.Optics
+	}
+	if p.Presentation != nil {
+		out["presentation"] = p.Presentation
+	}
+	if p.DayCycle != nil {
+		out["dayCycle"] = p.DayCycle
+	}
+	if p.Exploration != nil {
+		out["exploration"] = p.Exploration.GoSXProps()
+	}
+	setString(out, "metricsSignal", p.MetricsSignal)
+	setString(out, "experienceRef", p.ExperienceRef)
+	if p.ControlPan != nil {
+		out["controlPan"] = *p.ControlPan
+	}
+	setString(out, "controlPanHandle", p.ControlPanHandle)
+	setNumeric(out, "controlZoomMinFOV", p.ControlZoomMinFOV)
+	setNumeric(out, "controlZoomMaxFOV", p.ControlZoomMaxFOV)
 	setNumeric(out, "controlZoomSpeed", p.ControlZoomSpeed)
 	setNumeric(out, "controlLookSpeed", p.ControlLookSpeed)
 	setNumeric(out, "controlMoveSpeed", p.ControlMoveSpeed)
@@ -1807,11 +2010,15 @@ func (p Props) legacyBaseProps() map[string]any {
 			"z": p.ScrollCameraOffset.Z,
 		}
 	}
+	setNumeric(out, "scrollFrameRate", p.ScrollFrameRate)
 	setNumeric(out, "maxFrameRate", p.MaxFrameRate)
 	setNumeric(out, "maxFPS", p.MaxFPS)
 	setNumeric(out, "frameIntervalMS", p.FrameIntervalMS)
+	setBool(out, "renderBeforeModels", p.RenderBeforeModels)
+	setBool(out, "modelPreparation", p.ModelPreparation)
+	setString(out, "framePacing", p.FramePacing)
 	setNumeric(out, "maxDevicePixelRatio", p.MaxDevicePixelRatio)
-	if p.MaxPixels > 0 {
+	if p.MaxPixels > 0 || p.MaxPixels == MaxPixelsUnbounded {
 		out["maxPixels"] = p.MaxPixels
 	}
 	setNumeric(out, "minDevicePixelRatio", p.MinDevicePixelRatio)
@@ -2042,6 +2249,9 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 	if c.FOV != 0 {
 		out["fov"] = c.FOV
 	}
+	if c.PortraitFOV != 0 {
+		out["portraitFOV"] = c.PortraitFOV
+	}
 	if c.Near != 0 {
 		out["near"] = c.Near
 	}
@@ -2055,7 +2265,7 @@ func (c PerspectiveCamera) legacyProps() map[string]any {
 }
 
 func (c PerspectiveCamera) isZero() bool {
-	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
+	return c.Position == (Vector3{}) && c.Rotation == (Euler{}) && c.FOV == 0 && c.PortraitFOV == 0 && c.Near == 0 && c.Far == 0 && c.TransitionMS == 0
 }
 
 func (c OrthographicCamera) legacyProps() map[string]any {
@@ -2189,6 +2399,17 @@ func (l *graphLowerer) lowerNode(node Node, parent worldTransform) {
 		}
 	case HTML:
 		l.pendingHTML = append(l.pendingHTML, pendingHTML{html: current, parent: parent})
+	case Text3D:
+		if surface, err := current.Surface(); err == nil {
+			if parent.Rotation != (quaternion{W: 1}) {
+				surface.Rotation = eulerFromQuaternion(parent.Rotation.mul(quaternionFromEuler(surface.Rotation)).normalized())
+			}
+			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: surface, parent: parent})
+		}
+	case *Text3D:
+		if current != nil {
+			l.lowerNode(*current, parent)
+		}
 	case *HTML:
 		if current != nil {
 			l.pendingHTML = append(l.pendingHTML, pendingHTML{html: *current, parent: parent})
@@ -2380,7 +2601,7 @@ func htmlSurfaceWorldSize(surface HTMLSurface, textureWidth, textureHeight int) 
 }
 
 func (l *graphLowerer) lowerGroup(group Group, parent worldTransform) {
-	world := combineTransforms(parent, localTransform(group.Position, group.Rotation))
+	world := combineTransforms(parent, localScaledTransform(group.Position, group.Rotation, group.Scale))
 	if id := strings.TrimSpace(group.ID); id != "" {
 		l.anchors[id] = world
 	}
@@ -2711,6 +2932,30 @@ func (l *graphLowerer) lowerGizmoScaleHandles(id string, position Vector3, rotat
 	lowerHandle("z", "#3b82f6", Vector3{Z: size})
 }
 
+func applyLoweredObjectTransform(record *ObjectIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.HasMatrix {
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		record.ParentMatrix = affineSlice(parent.Matrix)
+		return
+	}
+	record.X, record.Y, record.Z = world.Position.X, world.Position.Y, world.Position.Z
+	rotation := eulerFromQuaternion(world.Rotation)
+	record.RotationX, record.RotationY, record.RotationZ = rotation.X, rotation.Y, rotation.Z
+}
+
+func applyLoweredPointsTransform(record *PointsIR, parent, world worldTransform, localPosition Vector3, localRotation Euler) {
+	if parent.HasMatrix {
+		record.X, record.Y, record.Z = localPosition.X, localPosition.Y, localPosition.Z
+		record.RotationX, record.RotationY, record.RotationZ = localRotation.X, localRotation.Y, localRotation.Z
+		record.ParentMatrix = affineSlice(parent.Matrix)
+		return
+	}
+	record.X, record.Y, record.Z = world.Position.X, world.Position.Y, world.Position.Z
+	rotation := eulerFromQuaternion(world.Rotation)
+	record.RotationX, record.RotationY, record.RotationZ = rotation.X, rotation.Y, rotation.Z
+}
+
 func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(mesh.Position, mesh.Rotation))
 	id := strings.TrimSpace(mesh.ID)
@@ -2723,13 +2968,7 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	}
 	record.Kind = applyGeometryToObjectIR(&record, mesh.Geometry)
 	applyMaterialToObjectIR(&record, mesh.Material)
-	record.X = world.Position.X
-	record.Y = world.Position.Y
-	record.Z = world.Position.Z
-	rotation := eulerFromQuaternion(world.Rotation)
-	record.RotationX = rotation.X
-	record.RotationY = rotation.Y
-	record.RotationZ = rotation.Z
+	applyLoweredObjectTransform(&record, parent, world, mesh.Position, mesh.Rotation)
 	if mesh.Scale != (Vector3{}) && mesh.Scale != (Vector3{X: 1, Y: 1, Z: 1}) {
 		record.ScaleX = mesh.Scale.X
 		record.ScaleY = mesh.Scale.Y
@@ -2746,6 +2985,15 @@ func (l *graphLowerer) lowerMesh(mesh Mesh, parent worldTransform) {
 	// by this mesh's id (per-mesh material). Malformed specs are skipped.
 	l.materialTracks = append(l.materialTracks, materialMotionTracks(mesh.MaterialAnims, id)...)
 	record.Pickable = mesh.Pickable
+	if mesh.Interactive {
+		record.Pickable = Bool(true)
+	}
+	record.Interactive = mesh.Interactive
+	if mesh.Interactive {
+		l.nextInteractiveOrder++
+		record.InteractiveOrder = l.nextInteractiveOrder
+	}
+	record.Label = strings.TrimSpace(mesh.Label)
 	record.Visible = mesh.Visible
 	record.Selected = mesh.Selected
 	record.GizmoRing = mesh.GizmoRing
@@ -2792,19 +3040,13 @@ func (l *graphLowerer) lowerPoints(pts Points, parent worldTransform) {
 		BlendMode:    strings.TrimSpace(string(pts.BlendMode)),
 		DepthWrite:   Bool(pts.DepthWrite),
 		Attenuation:  pts.Attenuation,
-		X:            world.Position.X,
-		Y:            world.Position.Y,
-		Z:            world.Position.Z,
 		Transition:   lowerTransition(pts.Transition),
 		InState:      pts.InState.legacyProps(),
 		OutState:     pts.OutState.legacyProps(),
 		Live:         normalizeLive(pts.Live),
 		QualityGroup: strings.TrimSpace(pts.QualityGroup),
 	}
-	rotation := eulerFromQuaternion(world.Rotation)
-	record.RotationX = rotation.X
-	record.RotationY = rotation.Y
-	record.RotationZ = rotation.Z
+	applyLoweredPointsTransform(&record, parent, world, pts.Position, pts.Rotation)
 	record.SpinX = pts.Spin.X
 	record.SpinY = pts.Spin.Y
 	record.SpinZ = pts.Spin.Z
@@ -2887,6 +3129,9 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if mk, ok := mapStringValue(materialProps["materialKind"]); ok {
 			record.MaterialKind = mk
 		}
+		if detail, ok := materialProps["detail"].(*Detail); ok {
+			record.Detail = cloneDetail(detail)
+		}
 		if c, ok := materialProps["color"].(string); ok {
 			record.Color = strings.TrimSpace(c)
 		}
@@ -2908,13 +3153,41 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		if wireframe, ok := mapBool(materialProps["wireframe"]); ok {
 			record.Wireframe = Bool(wireframe)
 		}
+		if v, ok := materialProps["alphaCutoff"]; ok {
+			record.AlphaCutoff = alphaCutoffFromAny(v, true)
+		}
 		record.Roughness = mapFloat64(materialProps["roughness"])
 		record.Metalness = mapFloat64(materialProps["metalness"])
 		record.Clearcoat = mapFloat64(materialProps["clearcoat"])
 		record.Sheen = mapFloat64(materialProps["sheen"])
 		record.Transmission = mapFloat64(materialProps["transmission"])
+		record.Thickness = mapFloat64(materialProps["thickness"])
+		record.ThicknessMap, _ = mapStringValue(materialProps["thicknessMap"])
+		record.SpecularAA = specularAAFromValue(materialProps["specularAA"])
+		record.AttenuationDistance = mapFloat64(materialProps["attenuationDistance"])
+		if color, ok := specularColorFromAny(materialProps["attenuationColor"]); ok {
+			record.AttenuationColor = &color
+		}
 		record.Iridescence = mapFloat64(materialProps["iridescence"])
 		record.Anisotropy = mapFloat64(materialProps["anisotropy"])
+		if ior, ok := mapFloat64OK(materialProps["ior"]); ok {
+			record.IOR = Float(ior)
+		}
+		if si, ok := mapFloat64OK(materialProps["specularIntensity"]); ok {
+			record.SpecularIntensity = Float(si)
+		}
+		if sc, ok := specularColorFromAny(materialProps["specularColor"]); ok {
+			record.SpecularColor = &sc
+		}
+		if ec, ok := specularColorFromAny(materialProps["emissiveColor"]); ok {
+			record.EmissiveColor = &ec
+		}
+		if normalScale, ok := mapFloat64OK(materialProps["normalScale"]); ok {
+			record.NormalScale = Float(normalScale)
+		}
+		if occlusionStrength, ok := mapFloat64OK(materialProps["occlusionStrength"]); ok {
+			record.OcclusionStrength = Float(occlusionStrength)
+		}
 		if normalMap, ok := mapStringValue(materialProps["normalMap"]); ok {
 			record.NormalMap = normalMap
 		}
@@ -2941,6 +3214,12 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		}
 		if customFragmentWGSL, ok := mapStringValue(materialProps["customFragmentWGSL"]); ok {
 			record.CustomFragmentWGSL = customFragmentWGSL
+		}
+		if specularFragmentGLSL, ok := mapStringValue(materialProps["specularFragmentGLSL"]); ok {
+			record.SpecularFragmentGLSL = specularFragmentGLSL
+		}
+		if specularFragmentWGSL, ok := mapStringValue(materialProps["specularFragmentWGSL"]); ok {
+			record.SpecularFragmentWGSL = specularFragmentWGSL
 		}
 		if uniforms, ok := materialProps["customUniforms"].(map[string]any); ok {
 			record.CustomUniforms = cloneSceneAnyMap(uniforms)
@@ -2973,11 +3252,16 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		}
 		var scl Vector3
 		if i < len(im.Scales) {
-			scl = im.Scales[i]
+			scl = resolvedSceneScale(im.Scales[i])
 		} else {
 			scl = Vector3{X: 1, Y: 1, Z: 1}
 		}
-		// Apply parent world transform to instance position.
+		if parent.HasMatrix {
+			matrix := multiplyAffine(parent.Matrix, affineFromTRS(pos, quaternionFromEuler(rot), scl))
+			transforms = append(transforms, matrix[:]...)
+			continue
+		}
+		// Preserve the legacy flattened matrix when no scaled group is present.
 		worldPos := addVectors(world.Position, world.Rotation.rotate(pos))
 		instanceRot := world.Rotation.mul(quaternionFromEuler(rot)).normalized()
 		transforms = append(transforms, mat4FromTRS(worldPos, instanceRot, scl)...)
@@ -3030,15 +3314,17 @@ func (l *graphLowerer) lowerComputeParticles(cp ComputeParticles, parent worldTr
 		},
 		Forces: forces,
 		Material: ParticleMaterialIR{
-			Color:       strings.TrimSpace(cp.Material.Color),
-			ColorEnd:    strings.TrimSpace(cp.Material.ColorEnd),
-			Style:       strings.TrimSpace(string(cp.Material.Style)),
-			Size:        cp.Material.Size,
-			SizeEnd:     cp.Material.SizeEnd,
-			Opacity:     cp.Material.Opacity,
-			OpacityEnd:  cp.Material.OpacityEnd,
-			BlendMode:   strings.TrimSpace(string(cp.Material.BlendMode)),
-			Attenuation: cp.Material.Attenuation,
+			Color:        strings.TrimSpace(cp.Material.Color),
+			ColorEnd:     strings.TrimSpace(cp.Material.ColorEnd),
+			Style:        strings.TrimSpace(string(cp.Material.Style)),
+			Size:         cp.Material.Size,
+			SizeEnd:      cp.Material.SizeEnd,
+			Opacity:      cp.Material.Opacity,
+			OpacityEnd:   cp.Material.OpacityEnd,
+			BlendMode:    strings.TrimSpace(string(cp.Material.BlendMode)),
+			Attenuation:  cp.Material.Attenuation,
+			MinPixelSize: cp.Material.MinPixelSize,
+			MaxPixelSize: cp.Material.MaxPixelSize,
 		},
 		Bounds:         cp.Bounds,
 		Transition:     lowerTransition(cp.Transition),
@@ -3165,6 +3451,7 @@ func (l *graphLowerer) lowerWaterSystem(w WaterSystem) {
 		PoolWidth:                    poolWidth,
 		PoolHeight:                   poolHeight,
 		PoolLength:                   poolLength,
+		RenderPool:                   w.RenderPool,
 		CornerRadius:                 w.CornerRadius,
 		WaveSpeed:                    waveSpeed,
 		Damping:                      damping,
@@ -3329,44 +3616,19 @@ func cloneWaterShaderDescriptors(in map[string]json.RawMessage) map[string]json.
 
 // mat4FromTRS builds a column-major 4x4 matrix from translation, rotation (quaternion), and scale.
 func mat4FromTRS(t Vector3, q quaternion, s Vector3) []float64 {
-	// Rotation matrix from quaternion.
-	xx := q.X * q.X
-	yy := q.Y * q.Y
-	zz := q.Z * q.Z
-	xy := q.X * q.Y
-	xz := q.X * q.Z
-	yz := q.Y * q.Z
-	wx := q.W * q.X
-	wy := q.W * q.Y
-	wz := q.W * q.Z
-
-	// Column-major order: m[col*4 + row]
-	return []float64{
-		// Column 0
-		(1 - 2*(yy+zz)) * s.X,
-		(2 * (xy + wz)) * s.X,
-		(2 * (xz - wy)) * s.X,
-		0,
-		// Column 1
-		(2 * (xy - wz)) * s.Y,
-		(1 - 2*(xx+zz)) * s.Y,
-		(2 * (yz + wx)) * s.Y,
-		0,
-		// Column 2
-		(2 * (xz + wy)) * s.Z,
-		(2 * (yz - wx)) * s.Z,
-		(1 - 2*(xx+yy)) * s.Z,
-		0,
-		// Column 3
-		t.X,
-		t.Y,
-		t.Z,
-		1,
-	}
+	return affineSlice(affineFromTRS(t, q, s))
 }
 
 func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
+	previewSrc := strings.TrimSpace(model.PreviewSrc)
+	fullSrc := strings.TrimSpace(model.FullSrc)
 	src := strings.TrimSpace(model.Src)
+	if src == "" {
+		src = fullSrc
+	}
+	if src == "" {
+		src = previewSrc
+	}
 	if src == "" {
 		return
 	}
@@ -3375,33 +3637,42 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record := ModelIR{
 		ObjectIR: ObjectIR{
 			ID:         id,
-			X:          world.Position.X,
-			Y:          world.Position.Y,
-			Z:          world.Position.Z,
 			Transition: lowerTransition(model.Transition),
 			InState:    model.InState.legacyProps(),
 			OutState:   model.OutState.legacyProps(),
 			Live:       normalizeLive(model.Live),
 		},
-		Src:      src,
-		ScaleX:   model.Scale.X,
-		ScaleY:   model.Scale.Y,
-		ScaleZ:   model.Scale.Z,
-		Bounds:   model.Bounds,
-		Fit:      strings.TrimSpace(model.Fit),
-		FitAlign: strings.TrimSpace(model.FitAlign),
+		Src:         src,
+		PreviewSrc:  previewSrc,
+		FullSrc:     fullSrc,
+		Progressive: model.Progressive,
+		ScaleX:      model.Scale.X,
+		ScaleY:      model.Scale.Y,
+		ScaleZ:      model.Scale.Z,
+		Bounds:      model.Bounds,
+		Fit:         strings.TrimSpace(model.Fit),
+		FitAlign:    strings.TrimSpace(model.FitAlign),
 	}
-	rotation := eulerFromQuaternion(world.Rotation)
-	record.RotationX = rotation.X
-	record.RotationY = rotation.Y
-	record.RotationZ = rotation.Z
+	applyLoweredObjectTransform(&record.ObjectIR, parent, world, model.Position, model.Rotation)
 	applyMaterialProps(&record.ObjectIR, legacyMaterial(model.Material))
+	if model.Detail != nil {
+		record.Detail = cloneDetail(model.Detail)
+	}
 	record.CastShadow = model.CastShadow
 	record.ReceiveShadow = model.ReceiveShadow
 	record.Static = model.Static
 	record.Pickable = model.Pickable
+	if model.Interactive {
+		record.Pickable = Bool(true)
+	}
+	record.Interactive = model.Interactive
+	record.Label = strings.TrimSpace(model.Label)
 	record.Visible = model.Visible
 	record.Animation = strings.TrimSpace(model.Animation)
+	if model.Interactive {
+		l.nextInteractiveOrder++
+		record.InteractiveOrder = l.nextInteractiveOrder
+	}
 	record.AnimationSeq = strings.TrimSpace(model.AnimationSeq)
 	record.AnimationSpeed = nonNegativeFloatPtr(model.AnimationSpeed)
 	record.AnimationWeight = nonNegativeFloatPtr(model.AnimationWeight)
@@ -3422,59 +3693,73 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		l.nextInstancedGLBID += 1
 		id = "scene-instanced-glb-" + intString(l.nextInstancedGLBID)
 	}
-	mat := legacyMaterial(igm.Material)
 	instances := make([]MeshInstanceIR, 0, len(igm.Instances))
 	for _, inst := range igm.Instances {
 		world := combineTransforms(parent, localTransform(inst.Position, inst.Rotation))
-		rotation := eulerFromQuaternion(world.Rotation)
-		instances = append(instances, MeshInstanceIR{
-			ID:        strings.TrimSpace(inst.ID),
-			X:         world.Position.X,
-			Y:         world.Position.Y,
-			Z:         world.Position.Z,
-			ScaleX:    inst.Scale.X,
-			ScaleY:    inst.Scale.Y,
-			ScaleZ:    inst.Scale.Z,
-			RotationX: rotation.X,
-			RotationY: rotation.Y,
-			RotationZ: rotation.Z,
-		})
+		record := MeshInstanceIR{
+			Animation: inst.Animation, AnimationTime: inst.AnimationTime, AnimationLoop: inst.AnimationLoop,
+			ID:     strings.TrimSpace(inst.ID),
+			ScaleX: inst.Scale.X,
+			ScaleY: inst.Scale.Y,
+			ScaleZ: inst.Scale.Z,
+		}
+		if parent.HasMatrix {
+			record.X, record.Y, record.Z = inst.Position.X, inst.Position.Y, inst.Position.Z
+			record.RotationX, record.RotationY, record.RotationZ = inst.Rotation.X, inst.Rotation.Y, inst.Rotation.Z
+			record.ParentMatrix = affineSlice(parent.Matrix)
+		} else {
+			rotation := eulerFromQuaternion(world.Rotation)
+			record.X, record.Y, record.Z = world.Position.X, world.Position.Y, world.Position.Z
+			record.RotationX, record.RotationY, record.RotationZ = rotation.X, rotation.Y, rotation.Z
+		}
+		instances = append(instances, record)
 	}
 	record := InstancedGLBMeshIR{
-		ID:        id,
-		Src:       src,
-		Pickable:  igm.Pickable,
-		Visible:   igm.Visible,
-		Static:    igm.Static,
-		Instances: instances,
+		ID:               id,
+		Src:              src,
+		Pickable:         igm.Pickable,
+		Visible:          igm.Visible,
+		Static:           igm.Static,
+		SharedAppearance: igm.SharedAppearance,
+		Instances:        instances,
 	}
-	if mat != nil {
-		if s, ok := mapStringValue(mat["materialKind"]); ok {
-			record.MaterialKind = s
-		}
-		if s, ok := mapStringValue(mat["color"]); ok {
-			record.Color = s
-		}
-		if s, ok := mapStringValue(mat["texture"]); ok {
-			record.Texture = s
-		}
-		if s, ok := mapStringValue(mat["blendMode"]); ok {
-			record.BlendMode = s
-		}
-		record.Roughness = mapFloat64(mat["roughness"])
-		record.Metalness = mapFloat64(mat["metalness"])
-		if v, ok := mat["opacity"]; ok {
-			if f, ok2 := toFloat64(v); ok2 {
-				record.Opacity = &f
-			}
-		}
-		if v, ok := mat["emissive"]; ok {
-			if f, ok2 := toFloat64(v); ok2 {
-				record.Emissive = &f
-			}
-		}
-	}
+	applyMaterialToInstancedGLBIR(&record, igm.Material)
 	l.instancedGLBMeshes = append(l.instancedGLBMeshes, record)
+}
+
+func applyMaterialToInstancedGLBIR(record *InstancedGLBMeshIR, material Material) {
+	if record == nil || material == nil {
+		return
+	}
+	var object ObjectIR
+	applyMaterialToObjectIR(&object, material)
+	record.Detail = cloneDetail(object.Detail)
+	record.MaterialKind = object.MaterialKind
+	record.Color = object.Color
+	record.Texture = object.Texture
+	record.Opacity = object.Opacity
+	record.Emissive = object.Emissive
+	record.EmissiveColor = object.EmissiveColor
+	record.NormalScale = object.NormalScale
+	record.OcclusionStrength = object.OcclusionStrength
+	record.AlphaCutoff = object.AlphaCutoff
+	record.BlendMode = object.BlendMode
+	record.Roughness = object.Roughness
+	record.Metalness = object.Metalness
+	record.SpecularIntensity = object.SpecularIntensity
+	record.SpecularColor = object.SpecularColor
+	record.IOR = object.IOR
+	record.CustomVertex = object.CustomVertex
+	record.CustomFragment = object.CustomFragment
+	record.CustomVertexWGSL = object.CustomVertexWGSL
+	record.CustomFragmentWGSL = object.CustomFragmentWGSL
+	record.SpecularFragmentGLSL = object.SpecularFragmentGLSL
+	record.SpecularFragmentWGSL = object.SpecularFragmentWGSL
+	record.CustomUniforms = object.CustomUniforms
+	record.ShaderBackend = object.ShaderBackend
+	record.ShaderLayout = object.ShaderLayout
+	record.ShaderSource = object.ShaderSource
+	record.ShaderSourceFiles = object.ShaderSourceFiles
 }
 
 func toFloat64(v any) (float64, bool) {
@@ -3543,7 +3828,7 @@ func (l *graphLowerer) lowerAmbientLight(light AmbientLight) {
 }
 
 func (l *graphLowerer) lowerDirectionalLight(light DirectionalLight, parent worldTransform) {
-	direction := parent.Rotation.rotate(light.Direction)
+	direction := parentDirection(parent, light.Direction)
 	l.lights = append(l.lights, LightIR{
 		ID:             l.nextSceneLightID("directional-light", light.ID),
 		Kind:           "directional",
@@ -3585,7 +3870,7 @@ func (l *graphLowerer) lowerPointLight(light PointLight, parent worldTransform) 
 
 func (l *graphLowerer) lowerSpotLight(light SpotLight, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
-	direction := parent.Rotation.rotate(light.Direction)
+	direction := parentDirection(parent, light.Direction)
 	l.lights = append(l.lights, LightIR{
 		ID:             l.nextSceneLightID("spot-light", light.ID),
 		Kind:           "spot",
@@ -3628,7 +3913,7 @@ func (l *graphLowerer) lowerHemisphereLight(light HemisphereLight) {
 
 func (l *graphLowerer) lowerRectAreaLight(light RectAreaLight, parent worldTransform) {
 	world := combineTransforms(parent, localTransform(light.Position, Euler{}))
-	direction := parent.Rotation.rotate(light.Direction)
+	direction := parentDirection(parent, light.Direction)
 	l.lights = append(l.lights, LightIR{
 		ID:         l.nextSceneLightID("rect-area-light", light.ID),
 		Kind:       "rect-area",
@@ -3682,6 +3967,7 @@ func (l *graphLowerer) lowerAnimationClip(clip AnimationClip) {
 		}
 		channels = append(channels, AnimationChannelIR{
 			TargetNode:    ch.TargetNode,
+			TargetID:      animationTargetIDFor(l.rootNodes, ch.TargetNode),
 			Property:      prop,
 			Interpolation: interp,
 			Times:         append([]float64(nil), ch.Times...),
@@ -3800,6 +4086,7 @@ func (l *graphLowerer) resolveHTMLNode(item pendingHTML) (HTMLIR, bool) {
 		MaxTexturePixels: item.html.MaxTexturePixels,
 		SurfaceWidth:     item.html.SurfaceWidth,
 		SurfaceHeight:    item.html.SurfaceHeight,
+		Perspective:      item.html.Perspective,
 		X:                position.X,
 		Y:                position.Y,
 		Z:                position.Z,
@@ -3843,6 +4130,9 @@ func (l *graphLowerer) resolveAnchoredPosition(parent worldTransform, rawTarget 
 	anchor, ok := l.anchors[target]
 	if !ok {
 		return position
+	}
+	if anchor.HasMatrix {
+		return affinePoint(anchor.Matrix, localPosition)
 	}
 	return addVectors(anchor.Position, anchor.Rotation.rotate(localPosition))
 }
@@ -3925,6 +4215,9 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if record == nil || len(props) == 0 {
 		return
 	}
+	if detail, ok := props["detail"].(*Detail); ok {
+		record.Detail = cloneDetail(detail)
+	}
 	if kind, ok := mapStringValue(props["materialKind"]); ok {
 		record.MaterialKind = kind
 	}
@@ -3949,6 +4242,9 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	if wireframe, ok := mapBool(props["wireframe"]); ok {
 		record.Wireframe = Bool(wireframe)
 	}
+	if v, ok := props["alphaCutoff"]; ok {
+		record.AlphaCutoff = alphaCutoffFromAny(v, true)
+	}
 	if lineDash, ok := mapBool(props["lineDash"]); ok {
 		record.LineDash = Bool(lineDash)
 	}
@@ -3968,6 +4264,12 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	}
 	if customFragmentWGSL, ok := mapStringValue(props["customFragmentWGSL"]); ok {
 		record.CustomFragmentWGSL = customFragmentWGSL
+	}
+	if specularFragmentGLSL, ok := mapStringValue(props["specularFragmentGLSL"]); ok {
+		record.SpecularFragmentGLSL = specularFragmentGLSL
+	}
+	if specularFragmentWGSL, ok := mapStringValue(props["specularFragmentWGSL"]); ok {
+		record.SpecularFragmentWGSL = specularFragmentWGSL
 	}
 	if uniforms, ok := props["customUniforms"].(map[string]any); ok {
 		record.CustomUniforms = cloneSceneAnyMap(uniforms)
@@ -3989,8 +4291,33 @@ func applyMaterialProps(record *ObjectIR, props map[string]any) {
 	record.Clearcoat = mapFloat64(props["clearcoat"])
 	record.Sheen = mapFloat64(props["sheen"])
 	record.Transmission = mapFloat64(props["transmission"])
+	record.Thickness = mapFloat64(props["thickness"])
+	record.ThicknessMap, _ = mapStringValue(props["thicknessMap"])
+	record.SpecularAA = specularAAFromValue(props["specularAA"])
+	record.AttenuationDistance = mapFloat64(props["attenuationDistance"])
+	if color, ok := specularColorFromAny(props["attenuationColor"]); ok {
+		record.AttenuationColor = &color
+	}
 	record.Iridescence = mapFloat64(props["iridescence"])
 	record.Anisotropy = mapFloat64(props["anisotropy"])
+	if ior, ok := mapFloat64OK(props["ior"]); ok {
+		record.IOR = Float(ior)
+	}
+	if si, ok := mapFloat64OK(props["specularIntensity"]); ok {
+		record.SpecularIntensity = Float(si)
+	}
+	if sc, ok := specularColorFromAny(props["specularColor"]); ok {
+		record.SpecularColor = &sc
+	}
+	if ec, ok := specularColorFromAny(props["emissiveColor"]); ok {
+		record.EmissiveColor = &ec
+	}
+	if normalScale, ok := mapFloat64OK(props["normalScale"]); ok {
+		record.NormalScale = Float(normalScale)
+	}
+	if occlusionStrength, ok := mapFloat64OK(props["occlusionStrength"]); ok {
+		record.OcclusionStrength = Float(occlusionStrength)
+	}
 	if normalMap, ok := mapStringValue(props["normalMap"]); ok {
 		record.NormalMap = normalMap
 	}
@@ -4270,7 +4597,52 @@ func legacyMaterial(material Material) map[string]any {
 	if material == nil {
 		return nil
 	}
-	return material.legacyMaterial()
+	if standard, ok := material.(*StandardMaterial); ok && standard == nil {
+		return nil
+	}
+	standard, ok := typedStandardMaterial(material)
+	if !ok {
+		return material.legacyMaterial()
+	}
+	props := standard.legacyMaterial()
+	if props == nil {
+		props = map[string]any{}
+	}
+	setBool(props, "wireframe", standardMaterialWireframe(standard.Wireframe))
+	return props
+}
+
+func typedStandardMaterial(material Material) (StandardMaterial, bool) {
+	switch standard := material.(type) {
+	case StandardMaterial:
+		return standard, true
+	case *StandardMaterial:
+		if standard != nil {
+			return *standard, true
+		}
+	}
+	return StandardMaterial{}, false
+}
+
+// standardMaterialWireframe makes the typed StandardMaterial contract
+// explicit on the wire. The browser runtime keeps its historical default for
+// raw SceneIR records that omit wireframe, but a typed PBR material is a solid
+// surface unless the author deliberately opts into edge-only rendering.
+func standardMaterialWireframe(value *bool) *bool {
+	if value != nil {
+		return value
+	}
+	return Bool(false)
+}
+
+// Compiled Selena materials describe filled surfaces. Preserve that contract
+// even when the caller replaces the embedded StandardMaterial fallback after
+// compilation. Raw custom shaders retain their historical wireframe default.
+func customMaterialWireframe(material CustomMaterial) *bool {
+	if strings.TrimSpace(material.ShaderBackend) == "selena" {
+		return standardMaterialWireframe(material.Wireframe)
+	}
+	return material.Wireframe
 }
 
 // applyMaterialToObjectIR writes typed material fields directly onto
@@ -4293,32 +4665,10 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 	case MatteMaterial:
 		applyMaterialStyleToObjectIR(record, MaterialMatte, MaterialStyle(m))
 	case StandardMaterial:
-		record.MaterialKind = "standard"
-		record.Color = strings.TrimSpace(m.Color)
-		record.Texture = strings.TrimSpace(m.Texture)
-		record.Roughness = m.Roughness
-		record.Metalness = m.Metalness
-		record.Clearcoat = m.Clearcoat
-		record.Sheen = m.Sheen
-		record.Transmission = m.Transmission
-		record.Iridescence = m.Iridescence
-		record.Anisotropy = m.Anisotropy
-		record.NormalMap = strings.TrimSpace(m.NormalMap)
-		record.RoughnessMap = strings.TrimSpace(m.RoughnessMap)
-		record.MetalnessMap = strings.TrimSpace(m.MetalnessMap)
-		record.OcclusionMap = strings.TrimSpace(m.OcclusionMap)
-		record.EmissiveMap = strings.TrimSpace(m.EmissiveMap)
-		if m.Emissive != 0 {
-			record.Emissive = Float(m.Emissive)
-		}
-		if m.Opacity != nil {
-			record.Opacity = m.Opacity
-		}
-		if m.BlendMode != "" {
-			record.BlendMode = string(m.BlendMode)
-		}
-		if m.Wireframe != nil {
-			record.Wireframe = m.Wireframe
+		applyStandardMaterialToObjectIR(record, m)
+	case *StandardMaterial:
+		if m != nil {
+			applyStandardMaterialToObjectIR(record, *m)
 		}
 	case LineBasicMaterial:
 		applyMaterialStyleToObjectIR(record, "line-basic", m.MaterialStyle)
@@ -4342,6 +4692,11 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		record.Clearcoat = m.Clearcoat
 		record.Sheen = m.Sheen
 		record.Transmission = m.Transmission
+		record.Thickness = m.Thickness
+		record.ThicknessMap = m.ThicknessMap
+		record.SpecularAA = copySpecularAA(m.SpecularAA)
+		record.AttenuationDistance = m.AttenuationDistance
+		record.AttenuationColor = copySpecularColor(m.AttenuationColor)
 		record.Iridescence = m.Iridescence
 		record.Anisotropy = m.Anisotropy
 		record.NormalMap = strings.TrimSpace(m.NormalMap)
@@ -4352,19 +4707,25 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		if m.Emissive != 0 {
 			record.Emissive = Float(m.Emissive)
 		}
+		if m.EmissiveColor != nil {
+			record.EmissiveColor = copySpecularColor(m.EmissiveColor)
+		}
+		record.NormalScale = m.NormalScale
+		record.OcclusionStrength = m.OcclusionStrength
 		if m.Opacity != nil {
 			record.Opacity = m.Opacity
 		}
 		if m.BlendMode != "" {
 			record.BlendMode = string(m.BlendMode)
 		}
-		if m.Wireframe != nil {
-			record.Wireframe = m.Wireframe
-		}
+		record.Wireframe = customMaterialWireframe(m)
+		record.AlphaCutoff = m.AlphaCutoff
 		record.CustomVertex = strings.TrimSpace(m.VertexGLSL)
 		record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
 		record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
 		record.CustomFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
+		record.SpecularFragmentGLSL = strings.TrimSpace(m.SpecularFragmentGLSL)
+		record.SpecularFragmentWGSL = strings.TrimSpace(m.SpecularFragmentWGSL)
 		record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
 		record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
 		record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
@@ -4375,6 +4736,60 @@ func applyMaterialToObjectIR(record *ObjectIR, material Material) {
 		// use the legacy map round-trip so correctness is preserved.
 		applyMaterialProps(record, material.legacyMaterial())
 	}
+}
+
+func applyStandardMaterialToObjectIR(record *ObjectIR, material StandardMaterial) {
+	record.Detail = cloneDetail(material.Detail)
+	record.MaterialKind = "standard"
+	record.Color = strings.TrimSpace(material.Color)
+	record.Texture = strings.TrimSpace(material.Texture)
+	record.Roughness = material.Roughness
+	record.Metalness = material.Metalness
+	record.Clearcoat = material.Clearcoat
+	record.Sheen = material.Sheen
+	record.Transmission = material.Transmission
+	record.Thickness = material.Thickness
+	record.ThicknessMap = material.ThicknessMap
+	record.SpecularAA = copySpecularAA(material.SpecularAA)
+	record.AttenuationDistance = material.AttenuationDistance
+	record.AttenuationColor = copySpecularColor(material.AttenuationColor)
+	record.Iridescence = material.Iridescence
+	record.Anisotropy = material.Anisotropy
+	if material.IOR != nil {
+		record.IOR = material.IOR
+	}
+	if material.SpecularIntensity != nil {
+		record.SpecularIntensity = Float(*material.SpecularIntensity)
+	}
+	if material.SpecularColor != nil {
+		record.SpecularColor = copySpecularColor(material.SpecularColor)
+	}
+	if material.EmissiveColor != nil {
+		record.EmissiveColor = copySpecularColor(material.EmissiveColor)
+	}
+	record.NormalScale = material.NormalScale
+	record.OcclusionStrength = material.OcclusionStrength
+	record.NormalMap = strings.TrimSpace(material.NormalMap)
+	record.RoughnessMap = strings.TrimSpace(material.RoughnessMap)
+	record.MetalnessMap = strings.TrimSpace(material.MetalnessMap)
+	record.OcclusionMap = strings.TrimSpace(material.OcclusionMap)
+	record.EmissiveMap = strings.TrimSpace(material.EmissiveMap)
+	if material.Emissive != 0 {
+		record.Emissive = Float(material.Emissive)
+	}
+	if material.Opacity != nil {
+		record.Opacity = material.Opacity
+	}
+	if material.BlendMode != "" {
+		record.BlendMode = string(material.BlendMode)
+	}
+	record.Wireframe = standardMaterialWireframe(material.Wireframe)
+	record.AlphaCutoff = material.AlphaCutoff
+	if material.RimColor != nil {
+		record.RimColor = copySpecularColor(material.RimColor)
+	}
+	record.RimPower = material.RimPower
+	record.RimStrength = material.RimStrength
 }
 
 func applyMaterialStyleToObjectIR(record *ObjectIR, kind MaterialKind, style MaterialStyle) {
@@ -4411,6 +4826,8 @@ func applyMaterialToPointsIR(record *PointsIR, m CustomMaterial) {
 	record.CustomFragment = strings.TrimSpace(m.FragmentGLSL)
 	record.CustomVertexWGSL = strings.TrimSpace(m.VertexWGSL)
 	record.CustomFragmentWGSL = strings.TrimSpace(m.FragmentWGSL)
+	record.SpecularFragmentGLSL = strings.TrimSpace(m.SpecularFragmentGLSL)
+	record.SpecularFragmentWGSL = strings.TrimSpace(m.SpecularFragmentWGSL)
 	record.CustomUniforms = cloneSceneAnyMap(m.Uniforms)
 	record.ShaderBackend = strings.TrimSpace(m.ShaderBackend)
 	record.ShaderLayout = cloneSceneAnyMap(m.ShaderLayout)
@@ -4455,6 +4872,9 @@ func (m MatteMaterial) legacyMaterial() map[string]any {
 
 func (m StandardMaterial) legacyMaterial() map[string]any {
 	out := map[string]any{}
+	if m.Detail != nil {
+		out["detail"] = cloneDetail(m.Detail)
+	}
 	setString(out, "materialKind", "standard")
 	setString(out, "color", m.Color)
 	setString(out, "texture", m.Texture)
@@ -4463,8 +4883,23 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumeric(out, "clearcoat", m.Clearcoat)
 	setNumeric(out, "sheen", m.Sheen)
 	setNumeric(out, "transmission", m.Transmission)
+	setNumeric(out, "thickness", m.Thickness)
+	setString(out, "thicknessMap", m.ThicknessMap)
+	if m.SpecularAA != nil {
+		out["specularAA"] = copySpecularAA(m.SpecularAA)
+	}
+	setNumeric(out, "attenuationDistance", m.AttenuationDistance)
+	if m.AttenuationColor != nil {
+		out["attenuationColor"] = *m.AttenuationColor
+	}
 	setNumeric(out, "iridescence", m.Iridescence)
 	setNumeric(out, "anisotropy", m.Anisotropy)
+	setNumericPtr(out, "ior", m.IOR)
+	setNumericPtr(out, "specularIntensity", m.SpecularIntensity)
+	setColor3Ptr(out, "specularColor", m.SpecularColor)
+	setColor3Ptr(out, "emissiveColor", m.EmissiveColor)
+	setNumericPtr(out, "normalScale", m.NormalScale)
+	setNumericPtr(out, "occlusionStrength", m.OcclusionStrength)
 	setString(out, "normalMap", m.NormalMap)
 	setString(out, "roughnessMap", m.RoughnessMap)
 	setString(out, "metalnessMap", m.MetalnessMap)
@@ -4474,6 +4909,7 @@ func (m StandardMaterial) legacyMaterial() map[string]any {
 	setNumericPtr(out, "opacity", m.Opacity)
 	setString(out, "blendMode", string(m.BlendMode))
 	setBool(out, "wireframe", m.Wireframe)
+	setAlphaCutoff(out, "alphaCutoff", m.AlphaCutoff)
 	if len(out) == 0 {
 		return nil
 	}
@@ -4510,10 +4946,13 @@ func (m CustomMaterial) legacyMaterial() map[string]any {
 		out = map[string]any{}
 	}
 	out["materialKind"] = "custom"
+	setBool(out, "wireframe", customMaterialWireframe(m))
 	setString(out, "customVertex", m.VertexGLSL)
 	setString(out, "customFragment", m.FragmentGLSL)
 	setString(out, "customVertexWGSL", m.VertexWGSL)
 	setString(out, "customFragmentWGSL", m.FragmentWGSL)
+	setString(out, "specularFragmentGLSL", m.SpecularFragmentGLSL)
+	setString(out, "specularFragmentWGSL", m.SpecularFragmentWGSL)
 	if len(m.Uniforms) > 0 {
 		out["customUniforms"] = cloneSceneAnyMap(m.Uniforms)
 	}
@@ -4551,6 +4990,15 @@ func localTransform(position Vector3, rotation Euler) worldTransform {
 	}
 }
 
+func localScaledTransform(position Vector3, rotation Euler, scale Vector3) worldTransform {
+	local := localTransform(position, rotation)
+	if !isUnitSceneScale(scale) {
+		local.Matrix = affineFromTRS(position, local.Rotation, scale)
+		local.HasMatrix = true
+	}
+	return local
+}
+
 func identityTransform() worldTransform {
 	return worldTransform{
 		Rotation: quaternion{W: 1},
@@ -4558,10 +5006,23 @@ func identityTransform() worldTransform {
 }
 
 func combineTransforms(parent, local worldTransform) worldTransform {
-	return worldTransform{
+	combined := worldTransform{
 		Position: addVectors(parent.Position, parent.Rotation.rotate(local.Position)),
 		Rotation: parent.Rotation.mul(local.Rotation).normalized(),
 	}
+	if parent.HasMatrix || local.HasMatrix {
+		combined.Matrix = multiplyAffine(worldAffine(parent), worldAffine(local))
+		combined.HasMatrix = true
+		combined.Position = affinePoint(combined.Matrix, Vector3{})
+	}
+	return combined
+}
+
+func parentDirection(parent worldTransform, direction Vector3) Vector3 {
+	if parent.HasMatrix {
+		return normalizeVector(affineVector(parent.Matrix, direction))
+	}
+	return parent.Rotation.rotate(direction)
 }
 
 func addVectors(left, right Vector3) Vector3 {

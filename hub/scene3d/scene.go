@@ -171,6 +171,29 @@ var patchFieldOrder = []string{fieldTransform, fieldMaterial, fieldLight}
 // to prevent.
 var ErrEmptyObjectID = errors.New("scene3d: command needs a non-empty objectId")
 
+// ErrRemountRequired reports a SceneIR diff that includes fields the command
+// stream cannot carry. The caller must resend the full scene and remount the
+// surface instead of applying a partial command update.
+var ErrRemountRequired = errors.New("scene3d: scene diff requires a full remount")
+
+// RemountRequiredError reports the stable SceneIR field names that changed
+// outside the command protocol. DiffScene returns it before mutating the
+// document, including when the same diff also contains supported commands.
+// The caller must resend the full scene and remount the surface so the update
+// is not applied partially.
+type RemountRequiredError struct {
+	Fields []string
+}
+
+func (e *RemountRequiredError) Error() string {
+	if e == nil || len(e.Fields) == 0 {
+		return ErrRemountRequired.Error()
+	}
+	return fmt.Sprintf("%s: changed fields %s; resend the full scene and remount the surface", ErrRemountRequired, strings.Join(e.Fields, ", "))
+}
+
+func (e *RemountRequiredError) Unwrap() error { return ErrRemountRequired }
+
 // Doc binds one crdt.Doc to one Scene3D namespace inside that document. Bind
 // several namespaces to one document to replicate several scenes over one
 // socket.
@@ -343,12 +366,22 @@ func kindForSlot(slot string) scene.CommandKind {
 // into the document, and commits one change. It returns the commands it wrote
 // so a caller can also push them straight to a mounted surface.
 //
+// If scene.DiffScene reports one or more RemountFields, DiffScene returns a
+// RemountRequiredError before writing anything. It returns no commands or hash
+// in that case; resend the full next scene and remount the surface. A partial
+// command update cannot reproduce the requested scene.
+//
 // An empty diff writes nothing and returns a zero hash. Committing an empty
 // change would grow the history and wake every peer for no reason.
 func (d *Doc) DiffScene(previous, next scene.SceneIR, message string) ([]scene.Command, crdt.ChangeHash, error) {
-	commands := scene.DiffCommands(previous, next)
-	hash, err := d.Apply(commands, message)
-	return commands, hash, err
+	diff := scene.DiffScene(previous, next, scene.DiffOptions{})
+	if len(diff.RemountFields) > 0 {
+		return nil, crdt.ChangeHash{}, &RemountRequiredError{
+			Fields: append([]string(nil), diff.RemountFields...),
+		}
+	}
+	hash, err := d.Apply(diff.Commands, message)
+	return diff.Commands, hash, err
 }
 
 // DiffProps lowers two typed Scene3D props values and applies the diff.
@@ -577,6 +610,7 @@ func decodeData(payload string) any {
 // remove. Use Watch for the incremental stream, which does carry removals.
 func (d *Doc) Commands() ([]scene.Command, error) {
 	var commands []scene.Command
+	var create createDecoder
 	for _, entry := range collectionOrder {
 		payload, ok := d.slotValue(entry.slot)
 		if !ok {
@@ -594,6 +628,9 @@ func (d *Doc) Commands() ([]scene.Command, error) {
 		payload, ok := keys.value(id, fieldCreate)
 		if !ok {
 			continue
+		}
+		if err := create.decodeEnvelope(payload); err != nil {
+			return nil, fmt.Errorf("scene3d: decode create payload for %q: %w", id, err)
 		}
 		commands = append(commands, scene.Command{
 			Kind:     scene.CommandCreateObject,
@@ -696,7 +733,7 @@ func (d *Doc) slotValue(slot string) (string, bool) {
 //
 // A create always arrives as a removal followed by a create. The browser
 // runtime MERGES a create payload into the record it already holds (see
-// applySceneCreateCommand in client/js/bootstrap-src/10-runtime-scene-core.js),
+// applySceneCreateCommand in client/js/bootstrap-src/10-runtime-scene-core.ts),
 // so a field the new record omits would keep its old value. The leading
 // removal clears the record first. Removing an object the peer never had is a
 // no-op in the runtime, which deletes from five maps by key.
@@ -737,6 +774,7 @@ func (d *Doc) Watch(fn func([]scene.Command)) {
 // crdt.Doc.OnChange hook and do not want a second hook.
 func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 	var commands []scene.Command
+	var create createDecoder
 	keys := keyBuf{d: d}
 	for _, patch := range patches {
 		if patch.Obj != crdt.Root {
@@ -753,14 +791,21 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 			}
 			switch patch.Action {
 			case "put":
-				commands = append(commands, scene.Command{Kind: kind, Data: decodeData(patch.Value.Str)})
+				if patch.Value.Kind == crdt.ValueKindString {
+					commands = append(commands, scene.Command{Kind: kind, Data: decodeData(patch.Value.Str)})
+				}
 			}
 			continue
 		}
 		switch key.field {
 		case fieldCreate:
 			if patch.Action != "put" {
-				commands = append(commands, scene.RemoveObjectCommand(key.objectID))
+				if patch.Action == "del" {
+					commands = append(commands, scene.RemoveObjectCommand(key.objectID))
+				}
+				continue
+			}
+			if patch.Value.Kind != crdt.ValueKindString || create.decodeEnvelope(patch.Value.Str) != nil {
 				continue
 			}
 			if keys.removed(key.objectID) {
@@ -778,10 +823,16 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 					Data:     decodeData(patch.Value.Str),
 				})
 		case fieldGone:
+			if patch.Action == "put" && patch.Value.Kind != crdt.ValueKindBool {
+				continue
+			}
 			if patch.Action == "put" && patch.Value.Kind == crdt.ValueKindBool && !patch.Value.Bool {
 				// The object came back. Replay its stored create payload,
 				// because the create itself is older than this patch.
 				if payload, ok := keys.value(key.objectID, fieldCreate); ok && !keys.removed(key.objectID) {
+					if create.decodeEnvelope(payload) != nil {
+						continue
+					}
 					commands = append(commands,
 						scene.RemoveObjectCommand(key.objectID),
 						scene.Command{
@@ -794,7 +845,7 @@ func (d *Doc) CommandsForPatches(patches []crdt.Patch) []scene.Command {
 			}
 			commands = append(commands, scene.RemoveObjectCommand(key.objectID))
 		case fieldTransform, fieldMaterial, fieldLight:
-			if patch.Action != "put" {
+			if patch.Action != "put" || patch.Value.Kind != crdt.ValueKindString {
 				continue
 			}
 			commands = append(commands, scene.Command{
@@ -942,10 +993,9 @@ type createEnvelope struct {
 // createDecoder decodes create payloads through reusable parser state.
 //
 // A View of n objects decodes 2n JSON documents: the envelope that names the
-// record kind, and the record itself. json.Unmarshal builds a fresh parser for
-// every call and throws it away, which measured 14 of the 15 allocations one
-// object cost. A json.Decoder keeps its parser between calls, so the same pair
-// of decodes measured 4 allocations, and those four are the record strings.
+// record kind, and the record itself. The envelope reader validates property
+// names and kinds consistently with authorization and command generation.
+// Both readers reuse their parsers and record buffers between objects.
 //
 // Two rules keep the reuse honest:
 //
@@ -953,13 +1003,14 @@ type createEnvelope struct {
 //     struct field untouched when the input omits it, so a payload that carries
 //     no "kind" would inherit the kind of the object decoded before it, and a
 //     mesh would arrive as a light.
-//   - Drop a decoder that did not consume its whole payload. See decodeValue.
+//   - Drop a decoder that did not consume its whole payload.
 //
 // Do not copy a createDecoder after its first use. Each decoder holds a pointer
 // to the reader beside it.
 type createDecoder struct {
 	payload  []byte
 	envelope createEnvelope
+	ignored  json.RawMessage
 
 	envelopeSrc bytes.Reader
 	envelopeDec *json.Decoder
@@ -968,11 +1019,7 @@ type createDecoder struct {
 }
 
 func (c *createDecoder) addCreate(v *View, objectID, payload string) error {
-	c.payload = append(c.payload[:0], payload...)
-	c.envelope.Kind = ""
-	c.envelope.Geometry = ""
-	c.envelope.Props = c.envelope.Props[:0]
-	if err := c.decodeValue(&c.envelopeSrc, &c.envelopeDec, c.payload, &c.envelope); err != nil {
+	if err := c.decodeEnvelope(payload); err != nil {
 		return fmt.Errorf("scene3d: decode create payload for %q: %w", objectID, err)
 	}
 	// Every record decodes straight into the slice that keeps it. A local

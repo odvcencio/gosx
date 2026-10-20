@@ -6,6 +6,7 @@ import (
 	"html"
 	"sort"
 	"strings"
+	"sync"
 
 	gotreesitter "github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -62,33 +63,31 @@ func parseForHighlight(lang, source string) (*parseResult, error) {
 	}
 }
 
+var goParserPool = sync.OnceValue(func() *gotreesitter.ParserPool {
+	return gotreesitter.NewParserPool(grammars.GoLanguage())
+})
+
 func bestGoParse(source string) (*parseResult, error) {
 	return bestParseAttempt(source, classifyGoNode, func(src string) (*gotreesitter.Tree, *gotreesitter.Language, error) {
 		lang := grammars.GoLanguage()
-		parser := gotreesitter.NewParser(lang)
-		tree, err := parseGoSource(parser, lang, []byte(src))
-		if err != nil {
-			return nil, nil, err
+		pool := goParserPool()
+		data := []byte(src)
+		var tree *gotreesitter.Tree
+		var err error
+		if _, ok := lang.SymbolByName("source_file_token1"); ok {
+			var tokens gotreesitter.TokenSource
+			tokens, err = grammars.NewGoTokenSource(data, lang)
+			if err == nil {
+				tree, err = pool.ParseWithTokenSource(data, tokens)
+			}
+		} else {
+			tree, err = pool.Parse(data)
 		}
-		return tree, lang, nil
+		return tree, lang, err
 	}, []parseAttempt{
 		{source: source},
-		{
-			source: "package demo\n\nfunc _snippet() {\n" + source + "\n}\n",
-			offset: uint32(len("package demo\n\nfunc _snippet() {\n")),
-		},
+		{source: "package demo\n\nfunc _snippet() {\n" + source + "\n}\n", offset: uint32(len("package demo\n\nfunc _snippet() {\n"))},
 	})
-}
-
-func parseGoSource(parser *gotreesitter.Parser, lang *gotreesitter.Language, source []byte) (*gotreesitter.Tree, error) {
-	if _, ok := lang.SymbolByName("source_file_token1"); !ok {
-		return parser.Parse(source)
-	}
-	tokenSource, err := grammars.NewGoTokenSource(source, lang)
-	if err != nil {
-		return nil, err
-	}
-	return parser.ParseWithTokenSource(source, tokenSource)
 }
 
 func bestGoSXParse(source string) (*parseResult, error) {
@@ -116,6 +115,9 @@ func bestParseAttempt(
 	for _, attempt := range attempts {
 		tree, lang, err := parse(attempt.source)
 		if err != nil || tree == nil || lang == nil {
+			if tree != nil {
+				tree.Release()
+			}
 			continue
 		}
 		score := parseProblemCount(tree.RootNode())
@@ -143,7 +145,7 @@ func bestParseAttempt(
 }
 
 func parseGenericSnippet(filename, source string) (*parseResult, error) {
-	boundTree, err := grammars.ParseFile(filename, []byte(source))
+	boundTree, err := grammars.ParseFilePooled(filename, []byte(source))
 	if err != nil || boundTree == nil {
 		return nil, err
 	}

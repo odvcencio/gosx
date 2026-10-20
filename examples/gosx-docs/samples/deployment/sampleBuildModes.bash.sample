@@ -1,0 +1,11 @@
+# Fast development assets (the default)
+gosx build --dev .
+
+# Production assets, server, static export, and edge/platform metadata
+gosx build --prod .
+
+# Add an offline bundle
+gosx build --prod --offline .
+
+# Package a Windows release on a Windows target/host
+gosx build --prod --msix .

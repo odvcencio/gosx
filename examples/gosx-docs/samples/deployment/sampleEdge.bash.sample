@@ -1,0 +1,5 @@
+gosx build --prod .
+
+# Deploy dist/static through the worker's ASSETS binding.
+# Configure the dynamic fallback in the worker environment:
+GOSX_ORIGIN=https://app.example.com

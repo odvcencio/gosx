@@ -1,0 +1,5 @@
+<div data-gosx-region data-gosx-region-url="/tape?since={cursor}"
+	data-gosx-region-mode="prepend" data-gosx-region-key="data-tape-key"
+	data-gosx-region-cursor="data-pick-number">
+	<p>Server-rendered rows appear here, newest first.</p>
+</div>

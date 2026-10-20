@@ -1,4 +1,4 @@
-// Slice Y.C — LHS selector / indexed-set lowering.
+// LHS selector / indexed-set lowering.
 //
 // Engine-surface handlers routinely mutate package-level state through
 // non-trivial LHS expressions:
@@ -9,7 +9,7 @@
 //   - chained selectors:    h.Inner.X = 99    (struct-in-struct)
 //   - chained sel-on-index: nodes[i].Y = 3    (struct-in-slice)
 //
-// Pre-Y.C the lowerer rejected every non-Ident LHS with
+// Before this, the lowerer rejected every non-Ident LHS with
 // "left-hand side must be a simple identifier". The dispatcher below
 // detects the LHS shape and emits one of:
 //
@@ -20,16 +20,16 @@
 // arithmetic expression whose LHS reads back the current value through
 // the same selector/index path; this keeps the LHS evaluation
 // once-and-only-once when reading is cheap (the supported subset has
-// no side-effectful selectors). For a richer expression model that
-// guarantees single-evaluation of the target sub-expressions, Y.D
-// can revisit when user-function calls appear in LHS targets.
+// no side-effectful selectors). A richer expression model that
+// guarantees single-evaluation of the target sub-expressions can
+// revisit this when user-function calls appear in LHS targets.
 //
 // Chained selectors (`h.Inner.X`) work without any special-case in
 // this file: the LHS-set helpers re-use lowerExpr to materialize the
 // inner target, which already turns nested selectors into a chain of
 // OpIndex reads producing a Value whose Fields map is the inner
 // struct. Writing through that Value mutates the shared map (per the
-// Y.C in-place mutation decision documented in client/vm/lhs_set.go).
+// in-place mutation decision documented in client/vm/lhs_set.go).
 //
 // Tok semantics:
 //   - token.DEFINE (`:=`) on a selector/index LHS is invalid Go
@@ -117,7 +117,7 @@ func (c *lowerCtx) emitIndexSet(idx *ast.IndexExpr, valueID program.ExprID) prog
 }
 
 // isLHSSelectorOrIndex reports whether the expression is one of the
-// non-Ident LHS shapes the Y.C dispatcher handles. Used by
+// non-Ident LHS shapes the dispatcher below handles. Used by
 // lowerAssignStmt to route to the selector/index path instead of
 // emitting the legacy "left-hand side must be a simple identifier"
 // diagnostic.
@@ -131,7 +131,7 @@ func isLHSSelectorOrIndex(e ast.Expr) bool {
 }
 
 // isCompoundAssign reports whether tok is one of `+=`, `-=`, `*=`,
-// `/=`, `%=`. These are the compound-assign tokens the Y.C dispatcher
+// `/=`, `%=`. These are the compound-assign tokens the dispatcher
 // reads through the LHS to emit a read+write pair.
 func isCompoundAssign(tok token.Token) bool {
 	switch tok {

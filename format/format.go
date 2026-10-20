@@ -36,10 +36,11 @@ type Options struct {
 }
 
 type formatter struct {
-	src      []byte
-	lang     *gotreesitter.Language
-	indent   string
-	maxWidth int
+	src        []byte
+	lang       *gotreesitter.Language
+	indent     string
+	maxWidth   int
+	baseIndent string
 }
 
 func (f *formatter) text(n *gotreesitter.Node) string {
@@ -67,7 +68,7 @@ func (f *formatter) format(n *gotreesitter.Node, depth int) string {
 	case "jsx_expression_container":
 		return f.formatExprContainer(n)
 	case "jsx_text":
-		return f.formatText(n)
+		return f.text(n)
 	case "raw_string_literal", "interpreted_string_literal":
 		return f.text(n)
 	default:
@@ -83,8 +84,12 @@ func (f *formatter) formatElement(n *gotreesitter.Node, depth int) string {
 	}
 
 	tag := f.extractTagName(openNode)
+	// Preformatted descendants may contain markup, expressions, and literal
+	// whitespace. Preserve the whole span, including their nested text.
+	if tag == "pre" || tag == "textarea" {
+		return f.text(n)
+	}
 	attrs := f.collectAttrs(openNode)
-	children := f.collectChildren(n)
 
 	var b strings.Builder
 
@@ -100,33 +105,14 @@ func (f *formatter) formatElement(n *gotreesitter.Node, depth int) string {
 			b.WriteByte('\n')
 			b.WriteString(attrStr)
 			b.WriteByte('\n')
-			b.WriteString(strings.Repeat(f.indent, depth))
+			b.WriteString(f.indentation(depth))
 		} else {
 			b.WriteString(attrStr)
 		}
 	}
 	b.WriteByte('>')
 
-	// Format children
-	if len(children) == 0 {
-		// Empty: <tag></tag>
-	} else if len(children) == 1 && f.isInlineChild(children[0]) {
-		// Single inline child: <tag>text</tag>
-		b.WriteString(f.format(children[0], depth))
-	} else {
-		// Multi-line children
-		for _, child := range children {
-			childStr := f.format(child, depth+1)
-			if strings.TrimSpace(childStr) == "" {
-				continue
-			}
-			b.WriteByte('\n')
-			b.WriteString(strings.Repeat(f.indent, depth+1))
-			b.WriteString(strings.TrimSpace(childStr))
-		}
-		b.WriteByte('\n')
-		b.WriteString(strings.Repeat(f.indent, depth))
-	}
+	b.WriteString(f.formatChildren(n, openNode.EndByte(), closeNode.StartByte(), depth))
 
 	// Closing tag
 	b.WriteString("</")
@@ -151,7 +137,7 @@ func (f *formatter) formatSelfClosing(n *gotreesitter.Node, depth int) string {
 			b.WriteByte('\n')
 			b.WriteString(attrStr)
 			b.WriteByte('\n')
-			b.WriteString(strings.Repeat(f.indent, depth))
+			b.WriteString(f.indentation(depth))
 		} else {
 			b.WriteString(attrStr)
 		}
@@ -162,46 +148,37 @@ func (f *formatter) formatSelfClosing(n *gotreesitter.Node, depth int) string {
 }
 
 func (f *formatter) formatFragment(n *gotreesitter.Node, depth int) string {
-	children := f.collectChildren(n)
-
-	var b strings.Builder
-	b.WriteString("<>")
-
-	for _, child := range children {
-		childStr := f.format(child, depth+1)
-		if strings.TrimSpace(childStr) == "" {
-			continue
-		}
-		b.WriteByte('\n')
-		b.WriteString(strings.Repeat(f.indent, depth+1))
-		b.WriteString(strings.TrimSpace(childStr))
-	}
-
-	b.WriteByte('\n')
-	b.WriteString(strings.Repeat(f.indent, depth))
-	b.WriteString("</>")
-	return b.String()
+	return "<>" + f.formatChildren(n, n.StartByte()+2, n.EndByte()-3, depth) + "</>"
 }
 
 func (f *formatter) formatExprContainer(n *gotreesitter.Node) string {
-	exprNode := f.childByField(n, "expression")
-	if exprNode == nil {
-		return "{}"
-	}
-	expr := f.text(exprNode)
-	if strings.Contains(expr, "\n") && f.containsStringLiteral(exprNode) {
-		expr = f.normalizeMultilineExpr(expr)
-	}
-	return "{" + expr + "}"
+	return f.text(n)
 }
 
-func (f *formatter) formatText(n *gotreesitter.Node) string {
-	text := f.text(n)
-	fields := strings.Fields(text)
-	if len(fields) == 0 {
-		return ""
+// Child boundaries are content: introducing a newline between adjacent
+// elements adds a text node, and reflowing nonempty text changes its value.
+// Only existing whitespace-only line breaks can be reindented safely:
+// IR collapses those nodes to a space and generated Go omits them.
+func (f *formatter) formatChildren(n *gotreesitter.Node, start, end uint32, depth int) string {
+	var b strings.Builder
+	lastEnd := start
+	for _, child := range f.collectChildren(n) {
+		b.Write(f.src[lastEnd:child.StartByte()])
+		text := f.text(child)
+		if f.nodeType(child) == "jsx_text" && strings.TrimSpace(text) == "" && strings.Contains(text, "\n") {
+			childDepth := depth + 1
+			if child.EndByte() == end {
+				childDepth = depth
+			}
+			b.WriteByte('\n')
+			b.WriteString(f.indentation(childDepth))
+		} else {
+			b.WriteString(f.format(child, depth+1))
+		}
+		lastEnd = child.EndByte()
 	}
-	return strings.Join(fields, " ")
+	b.Write(f.src[lastEnd:end])
+	return b.String()
 }
 
 func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
@@ -220,9 +197,9 @@ func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
 		}
 
 		childType := f.nodeType(child)
-		if childType == "jsx_element" || childType == "jsx_self_closing_element" || childType == "jsx_fragment" {
-			childStr := f.format(child, depth)
-			b.WriteString(f.indentEmbedded(childStr, f.lineLeadingWhitespace(child.StartByte())))
+		if childType == "jsx_element" || childType == "jsx_raw_text_element" || childType == "jsx_self_closing_element" || childType == "jsx_fragment" {
+			f.baseIndent = f.lineLeadingWhitespace(child.StartByte())
+			b.WriteString(f.format(child, depth))
 		} else {
 			b.WriteString(f.formatDefault(child, depth))
 		}
@@ -237,19 +214,8 @@ func (f *formatter) formatDefault(n *gotreesitter.Node, depth int) string {
 	return b.String()
 }
 
-func (f *formatter) indentEmbedded(text string, prefix string) string {
-	if prefix == "" || !strings.Contains(text, "\n") {
-		return text
-	}
-	lines := strings.Split(text, "\n")
-	for i := 1; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) == "" {
-			lines[i] = ""
-			continue
-		}
-		lines[i] = prefix + lines[i]
-	}
-	return strings.Join(lines, "\n")
+func (f *formatter) indentation(depth int) string {
+	return f.baseIndent + strings.Repeat(f.indent, depth)
 }
 
 func (f *formatter) lineLeadingWhitespace(pos uint32) string {
@@ -275,42 +241,6 @@ func (f *formatter) lineLeadingWhitespace(pos uint32) string {
 	return string(f.src[lineStart:lineEnd])
 }
 
-func (f *formatter) normalizeMultilineExpr(expr string) string {
-	lines := strings.Split(expr, "\n")
-	if len(lines) < 2 {
-		return expr
-	}
-
-	changed := false
-	for i := 1; i < len(lines); i++ {
-		line := lines[i]
-		if line == "" {
-			continue
-		}
-		if strings.HasPrefix(line, f.indent) {
-			lines[i] = strings.TrimPrefix(line, f.indent)
-			changed = true
-		}
-	}
-	if !changed {
-		return expr
-	}
-	return strings.Join(lines, "\n")
-}
-
-func (f *formatter) containsStringLiteral(n *gotreesitter.Node) bool {
-	switch f.nodeType(n) {
-	case "raw_string_literal", "interpreted_string_literal":
-		return true
-	}
-	for i := 0; i < int(n.NamedChildCount()); i++ {
-		if f.containsStringLiteral(n.NamedChild(i)) {
-			return true
-		}
-	}
-	return false
-}
-
 func (f *formatter) formatAttrs(attrs []*gotreesitter.Node, depth int) string {
 	// Try single-line first
 	var parts []string
@@ -324,14 +254,14 @@ func (f *formatter) formatAttrs(attrs []*gotreesitter.Node, depth int) string {
 		maxWidth = 100
 	}
 
-	if len(single) < maxWidth-depth*len(f.indent) {
+	if !strings.Contains(single, "\n") && len(single) < maxWidth-depth*len(f.indent) {
 		return single
 	}
 
 	// Multi-line: one attribute per line
 	var b strings.Builder
 	for _, part := range parts {
-		b.WriteString(strings.Repeat(f.indent, depth+1))
+		b.WriteString(f.indentation(depth + 1))
 		b.WriteString(part)
 		b.WriteByte('\n')
 	}
@@ -383,15 +313,4 @@ func (f *formatter) extractTagName(n *gotreesitter.Node) string {
 		return ""
 	}
 	return f.text(nameNode)
-}
-
-func (f *formatter) isInlineChild(n *gotreesitter.Node) bool {
-	typ := f.nodeType(n)
-	if typ == "jsx_text" {
-		return len(strings.TrimSpace(f.text(n))) < 40
-	}
-	if typ == "jsx_expression_container" {
-		return len(f.text(n)) < 40
-	}
-	return false
 }

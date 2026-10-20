@@ -58,9 +58,9 @@ func Page() Node {
 
 	head := gosx.RenderHTML(ctx.Runtime().Head())
 	for _, snippet := range []string{
-		`"persistPrefs": true`,
-		`"persistKey": "channel-42"`,
-		`"lockInput": true`,
+		`"persistPrefs":true`,
+		`"persistKey":"channel-42"`,
+		`"lockInput":true`,
 	} {
 		if !strings.Contains(head, snippet) {
 			t.Fatalf("expected %q in video runtime head %q", snippet, head)

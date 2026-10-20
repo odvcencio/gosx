@@ -165,7 +165,7 @@ func mat4LookAt(eye, center, upHint [3]float32) mat4 {
 // an asymmetric orthographic projection sized to the framebuffer scaled by
 // the camera's zoom (carried in cam.Z), translated by the camera's pan
 // (carried in cam.X/Y). Depth/rotation are ignored — the 2D pipeline runs
-// with depth disabled per ADR 0004.
+// with depth disabled.
 func computeMVP(cam engine.RenderCamera, width, height int) mat4 {
 	if cam.Mode == orthoCamera2DModeString {
 		return computeOrthoCamera2DMVP(cam, width, height)

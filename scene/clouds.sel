@@ -1,0 +1,55 @@
+// Cloud scattering is authored once. GoSX links the emitted surface into both
+// sky and ocean reflection passes; the host supplies a matching horizon color.
+material Clouds kind post {
+    param ray : vec3
+    param eye : vec3
+    param settings : vec4
+    param drift : vec4
+    param ambient : vec3
+    param sunLight : vec3
+    param sun : vec3
+    param horizon : vec3
+    surface(geo) -> color {
+        let origin = eye + vec3f(0.0, 6371000.0, 0.0)
+        let b = dot(origin, ray)
+        let radius = 6371000.0 + settings.y
+        let t = max(-b + sqrt(max(b*b-dot(origin,origin)+radius*radius,0.0)),0.0)
+        var p = (eye.xz + ray.xz*t - drift.xy*drift.z) / settings.z
+        var footprint = length(fwidth(p))
+        var density = 0.0
+        var weight = 0.52
+        var total = 0.0
+        for (var i = 0i; i < 5i; i = i + 1i) {
+            if (float(i) >= drift.w) { break }
+            let filtered = 1.0-smoothstep(0.3,1.0,footprint)
+            let q = floor(p)
+            let f = fract(p)
+            let blend = f*f*(3.0-2.0*f)
+            let a = cloudHash(q)
+            let b0 = cloudHash(q+vec2f(1.0,0.0))
+            let c = cloudHash(q+vec2f(0.0,1.0))
+            let d = cloudHash(q+vec2f(1.0,1.0))
+            density = density + weight*mix(0.5,mix(mix(a,b0,blend.x),mix(c,d,blend.x),blend.y),filtered)
+            total = total + weight
+            p = p*2.03+vec2f(17.1,9.2)
+            footprint = footprint*2.03
+            weight = weight*0.5
+        }
+        let threshold = 1.0-settings.x
+        let shape = smoothstep(threshold-0.12,threshold+0.18,density/max(total,0.1))*smoothstep(0.0,0.025,settings.x)
+        let tau = shape*3.5
+        let beer = exp(-tau)
+        let powder = 1.0-exp(-tau*2.0)
+        let silver = pow(max(dot(ray,sun),0.0),32.0)*exp(-tau*0.7)*(1.0-beer)*2.2
+        let lighting = ambient*(0.45+0.4*beer)+sunLight*(0.35*powder+silver)*smoothstep(-0.04,0.03,sun.y)
+        let color = mix(lighting,horizon,1.0-exp(-t/65000.0))
+        let alpha = (1.0-beer)*settings.w*smoothstep(-0.005,0.025,ray.y)
+        return vec4f(color*alpha,alpha)
+    }
+}
+
+fn cloudHash(q: vec2) -> float {
+    let p = fract(q*vec2f(0.1031,0.1030))
+    let a = p+dot(p,p.yx+33.33)
+    return fract((a.x+a.y)*a.x)
+}

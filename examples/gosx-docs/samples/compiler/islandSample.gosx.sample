@@ -1,0 +1,9 @@
+package counter
+
+//gosx:island
+component Counter() {
+	count := signal.New(0)
+	return <button data-on-click="count.Set(count.Get() + 1)">
+		{count.Get()}
+	</button>
+}

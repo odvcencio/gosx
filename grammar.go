@@ -7,6 +7,8 @@ package gosx
 //
 // Supported syntax:
 //
+//	component Card(props: CardProps) { return <article>{props.Title}</article> }
+//	                                      -> strict, typed component declaration
 //	<div class="counter">...</div>       -> element tags
 //	<Counter count={n} />                -> component tags (capitalized)
 //	{expression}                         -> expression holes
@@ -80,10 +82,23 @@ func GosxGrammar() *Grammar {
 			)))
 
 		// Expression container: {expr}
+		//
+		// The expression field is Optional so {/* comment */} and {// comment}
+		// parse: a comment is an extra (see the "comments are extras" note in
+		// parse_error.go), which can appear anywhere between the braces, but
+		// extras alone cannot satisfy a required _expression symbol. Without
+		// Optional here, a brace pair holding only a comment produced a
+		// "missing identifier" ERROR node instead of a comment authors could
+		// actually leave in GSX markup. transpile.go's emitExprContainer
+		// already returns "" for a nil expression field (previously a
+		// defensive branch that was unreachable, since the field used to be
+		// required), so no transpile.go change was needed once parsing
+		// accepts the empty body — emitChildrenAndSlots already drops a ""
+		// child.
 		g.Define("jsx_expression_container",
 			Seq(
 				Str("{"),
-				Field("expression", Sym("_expression")),
+				Optional(Field("expression", Sym("_expression"))),
 				Str("}"),
 			))
 
@@ -272,6 +287,31 @@ func GosxGrammar() *Grammar {
 		// ---------------------------------------------------------------
 		// Hook into Go grammar
 		// ---------------------------------------------------------------
+
+		// Strict components provide the TSX-like spelling while deliberately
+		// reusing Go's type grammar and block grammar. The result type is implicit
+		// (always gosx.Node); the legacy `func Name(props Props) Node` form remains
+		// a first-class alternative in the same file.
+		g.Define("gosx_component_parameter",
+			Seq(
+				Field("name", Sym("identifier")),
+				Str(":"),
+				Field("type", Sym("_type")),
+			))
+		g.Define("gosx_component_parameters",
+			Seq(
+				Str("("),
+				Choice(Sym("gosx_component_parameter"), Blank()),
+				Str(")"),
+			))
+		g.Define("gosx_component_declaration",
+			PrecRight(1, Seq(
+				Str("component"),
+				Field("name", Sym("identifier")),
+				Field("parameters", Sym("gosx_component_parameters")),
+				Field("body", Sym("block")),
+			)))
+		AppendChoice(g, "_top_level_declaration", Sym("gosx_component_declaration"))
 
 		// GSX tags are valid Go expressions
 		AppendChoice(g, "_expression", Choice(

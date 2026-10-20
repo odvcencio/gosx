@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -11,6 +12,58 @@ import (
 	"github.com/andybalholm/brotli"
 	"github.com/klauspost/compress/gzip"
 )
+
+func TestSceneReleaseRemovesStaleMapsAndDebugRestoresComposedMaps(t *testing.T) {
+	f := newFixture(t)
+	src := f.writeSource("scene.js", "(function () {\n  const scale = 2;\n  window.__gosx_map_test = function(value) { return value * scale; };\n})();\n")
+	entries := []output{
+		chunk("bootstrap-feature-scene3d.js", src),
+		chunk("bootstrap-feature-scene3d-webgl.js", src),
+		chunk("bootstrap-feature-scene3d-webgpu.js", src),
+	}
+	useOutputs(t, entries...)
+	t.Setenv("GOSX_BUNDLE_DEBUG", "1")
+	if err := runTool(t, "-dir", f.dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		var sourceMap struct {
+			Sources  []string `json:"sources"`
+			Mappings string   `json:"mappings"`
+		}
+		if err := json.Unmarshal(f.read(entry.name+".map"), &sourceMap); err != nil {
+			t.Fatal(err)
+		}
+		if len(sourceMap.Sources) != 1 || sourceMap.Sources[0] != src || sourceMap.Mappings == "" {
+			t.Fatalf("debug map for %s lost its authored source: %+v", entry.name, sourceMap)
+		}
+		if !bytes.Contains(f.read(entry.name), []byte("sourceMappingURL="+entry.name+".map")) {
+			t.Fatalf("debug bundle %s does not advertise its map", entry.name)
+		}
+	}
+	t.Setenv("GOSX_BUNDLE_DEBUG", "0")
+	if err := runTool(t, "-dir", f.dir); err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if _, err := os.Stat(f.path(entry.name + ".map")); !os.IsNotExist(err) {
+			t.Fatalf("release left a stale map for %s: %v", entry.name, err)
+		}
+		if bytes.Contains(f.read(entry.name), []byte("sourceMappingURL")) {
+			t.Fatalf("release %s advertises an invalid map", entry.name)
+		}
+	}
+	if err := runTool(t, "-dir", f.dir, "--check"); err != nil {
+		t.Fatal(err)
+	}
+	// An empty map is stale too: --check must require the file to be absent.
+	if err := os.WriteFile(f.path(entries[0].name+".map"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := runTool(t, "-dir", f.dir, "--check"); err == nil {
+		t.Fatal("--check accepted a stale release map")
+	}
+}
 
 // build_test.go covers the build itself: what --check calls stale, what the
 // compressed sidecars must hold, and whether one run of the build is

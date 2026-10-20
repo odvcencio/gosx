@@ -1,10 +1,10 @@
-// Slice Y.D multi-return edge-case tests — pin the behavior of
+// Multi-return edge-case tests — pin the behavior of
 // blank-identifier discards, mixed-type multi-returns, and 3+ return
 // values so future refactors can't silently regress them.
 //
 // graph_surface.go uses `_, ok := gPos[id]` style discards heavily;
-// these tests ensure Y.D's user-function multi-return follows the
-// same blank-identifier convention Y.B established for the comma-ok
+// these tests ensure user-function multi-return follows the
+// same blank-identifier convention established for the comma-ok
 // map index pattern.
 
 package golower
@@ -68,7 +68,7 @@ func F() int {
 }
 
 // TestY_D_MultiReturnThreeValues stretches the carrier scheme past
-// the 2-value case Y.B's failure mode covered. Three return values
+// the 2-value case the earlier failure mode covered. Three return values
 // exercise the `__ret_<i>` key scheme at scale.
 func TestY_D_MultiReturnThreeValues(t *testing.T) {
 	src := []byte(`package handlers

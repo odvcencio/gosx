@@ -1,4 +1,4 @@
-// Slice Y.E.3 — *ast.SliceExpr lowering.
+// *ast.SliceExpr lowering.
 //
 // Go's slice-expression syntax (`s[i:j]`, `s[i:j:k]`) translates to
 // the VM's OpSlice opcode for arrays/slices and OpSubstring for

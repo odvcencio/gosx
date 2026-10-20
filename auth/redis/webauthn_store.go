@@ -21,6 +21,19 @@ type WebAuthnStore struct {
 
 var _ auth.WebAuthnStore = (*WebAuthnStore)(nil)
 
+// Insert the credential and its user index together. The existence check must
+// be atomic across clients so concurrent registrations cannot replace a key.
+var insertCredential = goredis.NewScript(`
+if redis.call('EXISTS', KEYS[1]) ~= 0 then
+    return 0
+end
+redis.call('SET', KEYS[1], ARGV[1])
+if #KEYS == 2 then
+    redis.call('SADD', KEYS[2], ARGV[2])
+end
+return 1
+`)
+
 // NewWebAuthnStore creates a Redis-backed durable WebAuthn credential store.
 func NewWebAuthnStore(client goredis.UniversalClient, opts Options) *WebAuthnStore {
 	return &WebAuthnStore{
@@ -34,7 +47,7 @@ func NewWebAuthnAdapter(client goredis.UniversalClient) *WebAuthnStore {
 	return NewWebAuthnStore(client, Options{})
 }
 
-// SaveCredential stores or replaces a credential.
+// SaveCredential inserts a credential and atomically rejects an existing ID.
 func (s *WebAuthnStore) SaveCredential(credential auth.WebAuthnCredential) error {
 	if s == nil || s.client == nil {
 		return fmt.Errorf("webauthn store is nil")
@@ -43,36 +56,22 @@ func (s *WebAuthnStore) SaveCredential(credential auth.WebAuthnCredential) error
 	if credential.ID == "" {
 		return auth.ErrWebAuthnCredentialNotFound
 	}
-	key := s.opts.webAuthnCredentialKey(credential.ID)
-	ctx := context.Background()
-
-	var previous auth.WebAuthnCredential
-	payload, err := s.client.Get(ctx, key).Bytes()
-	switch {
-	case errors.Is(err, goredis.Nil):
-	case err != nil:
-		return err
-	default:
-		previous, err = decodeCredential(payload)
-		if err != nil {
-			return err
-		}
-	}
-
 	encoded, err := json.Marshal(credential)
 	if err != nil {
 		return err
 	}
-	pipe := s.client.TxPipeline()
-	pipe.Set(ctx, key, encoded, 0)
-	if strings.TrimSpace(previous.User.ID) != "" && previous.User.ID != credential.User.ID {
-		pipe.SRem(ctx, s.opts.webAuthnUserKey(previous.User.ID), credential.ID)
-	}
+	keys := []string{s.opts.webAuthnCredentialKey(credential.ID)}
 	if strings.TrimSpace(credential.User.ID) != "" {
-		pipe.SAdd(ctx, s.opts.webAuthnUserKey(credential.User.ID), credential.ID)
+		keys = append(keys, s.opts.webAuthnUserKey(credential.User.ID))
 	}
-	_, err = pipe.Exec(ctx)
-	return err
+	inserted, err := insertCredential.Run(context.Background(), s.client, keys, encoded, credential.ID).Int()
+	if err != nil {
+		return err
+	}
+	if inserted == 0 {
+		return auth.ErrWebAuthnCredentialExists
+	}
+	return nil
 }
 
 // Credential loads a credential by ID.

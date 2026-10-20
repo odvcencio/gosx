@@ -1,0 +1,39 @@
+// Polished gold.
+	scene.StandardMaterial{
+	    Color:     "#D4AF37",
+	    Roughness: 0.15, // 0 = mirror, 1 = fully diffuse
+	    Metalness: 0.95, // 0 = dielectric, 1 = conductor
+	}
+
+	// Car paint: a clearcoat layer over a coloured base.
+	scene.StandardMaterial{
+	    Color:     "#8f1d2c",
+	    Roughness: 0.35,
+	    Metalness: 0.1,
+	    Clearcoat: 0.9,
+	}
+
+	// Brushed steel with texture maps.
+	scene.StandardMaterial{
+	    Color:        "#9BA0A8",
+	    Roughness:    0.4,
+	    Metalness:    0.9,
+	    RoughnessMap: "/textures/brushed-roughness.png",
+	    NormalMap:    "/textures/brushed-normal.png",
+	}
+
+	// Frosted glass: transmission plus roughness.
+	scene.StandardMaterial{
+	    Color:        "#aaddff",
+	    Roughness:    0.25,
+	    Transmission: 0.85,
+	    Opacity:      scene.Float(0.6),
+	    BlendMode:    scene.BlendAlpha,
+	}
+
+	// Soap bubble: thin-film iridescence.
+	scene.StandardMaterial{
+	    Color:       "#ffffff",
+	    Roughness:   0.05,
+	    Iridescence: 1.0,
+	}

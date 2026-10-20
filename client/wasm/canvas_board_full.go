@@ -1,4 +1,4 @@
-//go:build js && wasm && !gosx_tiny_islands_only
+//go:build js && wasm && !gosx_tiny_islands_only && !gosx_runtime_core && !gosx_runtime_collab
 
 // Canvas2D paint-loop JS bridge — the missing wire between a hydrated
 // gosx.CanvasBoard (a <canvas data-gosx-surface-kind="canvas2d"> placeholder
@@ -8,7 +8,7 @@
 // this file exposes the per-frame surface the JS bootstrap drives:
 //
 //   - __gosx_render_canvas(id, width, height, timeSeconds) → RenderBundle JSON.
-//     The JS painter (bootstrap-src/26b1-canvas2d-painter.js) parses this and
+//     The JS painter (bootstrap-src/26b1-canvas2d-painter.ts) parses this and
 //     replays it onto the canvas's 2D context using the OrthoCamera2D screen
 //     transform. The bundle is marshaled with the same MarshalEngineRenderBundle
 //     helper the scene3d render path uses (engine_full.go), so the wire shape
@@ -30,9 +30,9 @@
 // file still compiles, the board still hydrates, and nothing paints. The
 // claims below fail instead.
 //
-//	gosx:claim has client/js/bootstrap-src/26b1-canvas2d-painter.js `__gosx_render_canvas`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_tick_canvas`
-//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.js `__gosx_dispose_canvas`
+//	gosx:claim has client/js/bootstrap-src/26b1-canvas2d-painter.ts `__gosx_render_canvas`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_tick_canvas`
+//	gosx:claim has client/js/bootstrap-src/26b-feature-engines-prefix.ts `__gosx_dispose_canvas`
 
 package main
 
@@ -52,7 +52,7 @@ func registerCanvasBoardRuntime(b *bridge.Bridge) {
 }
 
 // canvasSetBackendFunc routes the named board's per-frame RenderBundle to a
-// render backend (M1 slice 4). The JS surface calls this once, right after
+// render backend. The JS surface calls this once, right after
 // hydration, only when its canvas2d element opted into WebGPU AND the GPU path
 // is genuinely available (navigator.gpu + the 16a factory present) — so the
 // __gosx_render_canvas frames that follow carry GPU geometry the 16a WebGPU
@@ -97,7 +97,7 @@ func canvasUpdateHTMLFunc(b *bridge.Bridge) js.Func {
 // into the named board's adapter via Bridge.CanvasBoardEvent. Pan and zoom
 // mutate the adapter's runtime camera so the next __gosx_render_canvas frame
 // paints the new view; pick hit-tests through the camera and writes the result
-// into $surface.event.* (ADR 0007). Mirrors __gosx_dispatch_engine_surface_event
+// into $surface.event.*. Mirrors __gosx_dispatch_engine_surface_event
 // for the canvas2d surface — same (id, kind, floats, payloadStr) shape — so the
 // JS bootstrap's canvas2d branch wires its DOM listeners the same way the
 // engine-surface branch does.

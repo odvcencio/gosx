@@ -7,10 +7,10 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const moduleSrc = fs.readFileSync(
-  path.join(__dirname, "bootstrap-src", "26-runtime-stream.js"),
-  "utf8"
-);
+const moduleSrc = [
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "compatibility.ts"), "utf8"),
+  fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "stream.ts"), "utf8"),
+].join("\n");
 
 function makeTarget(id) {
   return {

@@ -1,26 +1,47 @@
 package docs
 
 import (
+	"m31labs.dev/gosx/engine"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
 
 func init() {
-	docsapp.RegisterDocsPage("Engines", "Dedicated compute surfaces for canvas, WebGL, WebGPU, and web workers.", route.FileModuleOptions{
+	docsapp.RegisterDocsPage("Engines", "Managed worker, surface, and video mounts with explicit browser capabilities.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			workerConfig := engine.Config{
+				Name:         "IndexWorker",
+				Kind:         engine.KindWorker,
+				Capabilities: []engine.Capability{engine.CapWorker},
+			}
+			if err := workerConfig.Validate(); err != nil {
+				return nil, err
+			}
 			return map[string]any{
 				"mode":        "",
 				"title":       "Engines",
-				"description": "Dedicated compute surfaces for canvas, WebGL, WebGPU, and web workers.",
-				"tags":        []string{"engines", "canvas", "webgl", "webgpu", "workers", "compute"},
+				"description": "Managed worker, surface, and video mounts with explicit browser capabilities.",
+				"tags":        []string{"engines", "surface", "webgpu", "wasm", "capabilities"},
 				"toc": []map[string]string{
 					{"href": "#engine-model", "label": "Engine Model"},
-					{"href": "#capability-tiers", "label": "Capability Tiers"},
-					{"href": "#canvas-surface", "label": "Canvas Surface"},
-					{"href": "#webgl-webgpu", "label": "WebGL / WebGPU"},
-					{"href": "#workers", "label": "Workers"},
-					{"href": "#engine-programs", "label": "Engine Programs"},
+					{"href": "#mounting", "label": "Mounting"},
+					{"href": "#capabilities", "label": "Capabilities"},
+					{"href": "#runtimes", "label": "Runtimes"},
+					{"href": "#go-wasm", "label": "Go WASM"},
+					{"href": "#lifecycle", "label": "Lifecycle"},
 				},
+				// mountSample is teaching text, rendered through CodeBlock on the
+				// page. It shows a ctx.Engine call site, real Go code that would
+				// live in a Load function. Its fallback argument uses gosx.El on
+				// purpose: a one-node inline fallback is the idiom this same
+				// package already uses in Go glue code, for example in
+				// server.ScenePosterPreload.
+				"mountSample":      docsapp.DocSample("engines/mountSample.go.sample"),
+				"webgpuSample":     docsapp.DocSample("engines/webgpuSample.go.sample"),
+				"wasmConfigSample": docsapp.DocSample("engines/wasmConfigSample.go.sample"),
+				"wasmModuleSample": docsapp.DocSample("engines/wasmModuleSample.go.sample"),
+				"liveWorkerStatus": "IndexWorker config passed engine.Config.Validate.",
+				"liveWorkerSample": docsapp.DocSample("engines/liveWorker.go.sample"),
 			}, nil
 		},
 	})

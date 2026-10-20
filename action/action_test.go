@@ -3,6 +3,8 @@ package action
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -242,6 +244,221 @@ func TestRegistryHTTPMultipartFormData(t *testing.T) {
 	}
 }
 
+func TestContextFilesFromMultipartForm(t *testing.T) {
+	var gotFiles []*multipart.FileHeader
+	var gotFile *multipart.FileHeader
+	var gotMissing []*multipart.FileHeader
+
+	r := NewRegistry()
+	r.Register("upload", func(ctx *Context) error {
+		gotFiles = ctx.Files("avatar")
+		gotFile = ctx.File("avatar")
+		gotMissing = ctx.Files("does-not-exist")
+		return nil
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	if err := writer.WriteField("name", "Ada"); err != nil {
+		t.Fatalf("write name field: %v", err)
+	}
+	part, err := writer.CreateFormFile("avatar", "avatar.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write([]byte("fake-png-bytes")); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.SetPathValue("name", "upload")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	if len(gotFiles) != 1 {
+		t.Fatalf("expected 1 file header, got %d", len(gotFiles))
+	}
+	if gotFiles[0].Filename != "avatar.png" {
+		t.Fatalf("expected avatar.png, got %q", gotFiles[0].Filename)
+	}
+	if gotFile == nil || gotFile.Filename != "avatar.png" {
+		t.Fatalf("expected File convenience accessor to return avatar.png, got %#v", gotFile)
+	}
+	if gotMissing != nil {
+		t.Fatalf("expected nil for an absent field name, got %#v", gotMissing)
+	}
+}
+
+func TestContextFilesNilOnNonMultipartRequest(t *testing.T) {
+	var gotFiles []*multipart.FileHeader
+	var gotFile *multipart.FileHeader
+
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		gotFiles = ctx.Files("avatar")
+		gotFile = ctx.File("avatar")
+		return nil
+	})
+
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader("name=Ada"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetPathValue("name", "submit")
+	w := httptest.NewRecorder()
+
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", w.Code)
+	}
+	if gotFiles != nil {
+		t.Fatalf("expected nil Files on a non-multipart request, got %#v", gotFiles)
+	}
+	if gotFile != nil {
+		t.Fatalf("expected nil File on a non-multipart request, got %#v", gotFile)
+	}
+}
+
+func TestContextFilesNilSafeOnNilContext(t *testing.T) {
+	var ctx *Context
+	if got := ctx.Files("avatar"); got != nil {
+		t.Fatalf("expected nil, got %#v", got)
+	}
+	if got := ctx.File("avatar"); got != nil {
+		t.Fatalf("expected nil, got %#v", got)
+	}
+}
+
+func TestServeHandlerWithOptionsRejectsOversizedMultipartUpload(t *testing.T) {
+	called := false
+	handler := func(ctx *Context) error {
+		called = true
+		return nil
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("avatar", "avatar.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	if _, err := part.Write(bytes.Repeat([]byte("a"), 4096)); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: 1024})
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413, got %d: %s", w.Code, w.Body.String())
+	}
+	if called {
+		t.Fatal("expected the handler not to run once the body exceeds the configured limit")
+	}
+}
+
+func TestServeHandlerWithOptionsAllowsUploadUnderConfiguredLimit(t *testing.T) {
+	var uploaded *multipart.FileHeader
+	handler := func(ctx *Context) error {
+		uploaded = ctx.File("avatar")
+		return ctx.Success("saved", nil)
+	}
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("avatar", "avatar.png")
+	if err != nil {
+		t.Fatalf("create form file: %v", err)
+	}
+	// The payload sits over the package's 1 MiB default cap and under the 2
+	// MiB cap configured below, so this proves the knob raises the ceiling
+	// rather than merely staying under an unrelated limit.
+	payload := bytes.Repeat([]byte("a"), maxActionBodyBytes+512*1024)
+	if _, err := part.Write(payload); err != nil {
+		t.Fatalf("write file bytes: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("close multipart writer: %v", err)
+	}
+
+	req := httptest.NewRequest("POST", "/gosx/action/upload", &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	w := httptest.NewRecorder()
+
+	ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{MaxBodyBytes: 2 * 1024 * 1024})
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if uploaded == nil || uploaded.Filename != "avatar.png" {
+		t.Fatalf("expected uploaded avatar.png, got %#v", uploaded)
+	}
+}
+
+func TestServeHandlerWithOptionsZeroFallsBackToPackageDefault(t *testing.T) {
+	handler := func(ctx *Context) error { return nil }
+
+	body := "name=" + strings.Repeat("a", maxActionBodyBytes+1)
+	req := httptest.NewRequest("POST", "/gosx/action/submit", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+
+	ServeHandlerWithOptions(w, req, handler, ServeHandlerOptions{})
+
+	if w.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("expected 413 from the package default cap, got %d", w.Code)
+	}
+}
+
+func TestWantsJSON(t *testing.T) {
+	tests := []struct {
+		name          string
+		contentType   string
+		accept        string
+		requestedWith string
+		nilRequest    bool
+		want          bool
+	}{
+		{name: "nil request", nilRequest: true, want: true},
+		{name: "JSON Accept", accept: "application/json", want: true},
+		{name: "JSON content type", contentType: "application/json; charset=utf-8", want: true},
+		{name: "managed X-Requested-With", requestedWith: "XMLHttpRequest", want: true},
+		{
+			name:        "native form",
+			contentType: "application/x-www-form-urlencoded",
+			accept:      "text/html,application/xhtml+xml",
+			want:        false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var req *http.Request
+			if !tt.nilRequest {
+				req = httptest.NewRequest(http.MethodPost, "/account/__actions/save", nil)
+				req.Header.Set("Content-Type", tt.contentType)
+				req.Header.Set("Accept", tt.accept)
+				req.Header.Set("X-Requested-With", tt.requestedWith)
+			}
+			if got := WantsJSON(req); got != tt.want {
+				t.Fatalf("WantsJSON() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestRegistryHTTPStructuredValidationError(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {
@@ -335,6 +552,43 @@ func TestRegistryHTTPContextRedirect(t *testing.T) {
 	}
 }
 
+func TestRegistryHTTPContextRedirectWithMessageUsesOneResultForManagedAndNativeForms(t *testing.T) {
+	r := NewRegistry()
+	r.Register("submit", func(ctx *Context) error {
+		ctx.RedirectWithMessage("/users", "  Profile saved.  ")
+		return nil
+	})
+
+	jsonReq := httptest.NewRequest(http.MethodPost, "/gosx/action/submit", strings.NewReader("name=Ada"))
+	jsonReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	jsonReq.Header.Set("Accept", "application/json")
+	jsonReq.SetPathValue("name", "submit")
+	jsonRes := httptest.NewRecorder()
+	r.ServeHTTP(jsonRes, jsonReq)
+	if jsonRes.Code != http.StatusSeeOther {
+		t.Fatalf("managed response status = %d, want %d", jsonRes.Code, http.StatusSeeOther)
+	}
+	var got Result
+	if err := json.NewDecoder(jsonRes.Body).Decode(&got); err != nil {
+		t.Fatalf("decode managed response: %v", err)
+	}
+	if !got.OK || got.Message != "Profile saved." || got.Redirect != "/users" {
+		t.Fatalf("managed response = %+v", got)
+	}
+
+	nativeReq := httptest.NewRequest(http.MethodPost, "/gosx/action/submit", strings.NewReader("name=Ada"))
+	nativeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	nativeReq.SetPathValue("name", "submit")
+	nativeRes := httptest.NewRecorder()
+	r.ServeHTTP(nativeRes, nativeReq)
+	if nativeRes.Code != http.StatusSeeOther {
+		t.Fatalf("native response status = %d, want %d", nativeRes.Code, http.StatusSeeOther)
+	}
+	if got := nativeRes.Header().Get("Location"); got != "/users" {
+		t.Fatalf("native redirect = %q, want /users", got)
+	}
+}
+
 func TestRegistryHTTPFormRedirectsBackOnSuccess(t *testing.T) {
 	r := NewRegistry()
 	r.Register("submit", func(ctx *Context) error {
@@ -381,6 +635,97 @@ func TestRegistryHTTPSuccessResultJSON(t *testing.T) {
 	}
 	if string(result.Data) != `{"id":7}` {
 		t.Fatalf("unexpected data %s", result.Data)
+	}
+}
+
+// safeTestError implements SafeMessager. Error() carries an internal detail
+// that must never reach the client; SafeMessage() carries the text an
+// application has cleared for display.
+type safeTestError struct {
+	internal string
+	safe     string
+}
+
+func (e *safeTestError) Error() string       { return e.internal }
+func (e *safeTestError) SafeMessage() string { return e.safe }
+
+func TestResultFromErrorSuppressesUnmarkedErrorText(t *testing.T) {
+	prevLogger := ErrorLogger
+	prevMessage := UnsafeErrorMessage
+	t.Cleanup(func() {
+		ErrorLogger = prevLogger
+		UnsafeErrorMessage = prevMessage
+	})
+
+	var logged error
+	ErrorLogger = func(err error) { logged = err }
+
+	original := errors.New("open /var/lib/app/data.db: permission denied")
+	result, status := resultFromError(original)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	if result.OK {
+		t.Fatal("expected a failed result")
+	}
+	if strings.Contains(result.Message, "/var/lib/app/data.db") {
+		t.Fatalf("raw error text leaked into Message: %q", result.Message)
+	}
+	if result.Message != UnsafeErrorMessage {
+		t.Fatalf("expected neutral message %q, got %q", UnsafeErrorMessage, result.Message)
+	}
+	if logged == nil || logged.Error() != original.Error() {
+		t.Fatalf("expected the original error to reach ErrorLogger, got %v", logged)
+	}
+}
+
+func TestResultFromErrorUsesSafeMessagerText(t *testing.T) {
+	err := &safeTestError{
+		internal: "pq: duplicate key value violates unique constraint \"users_email_key\"",
+		safe:     "That email address is already registered.",
+	}
+
+	result, status := resultFromError(err)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	if result.Message != err.safe {
+		t.Fatalf("expected safe message %q, got %q", err.safe, result.Message)
+	}
+}
+
+func TestResultFromErrorPreservesResultProviderPath(t *testing.T) {
+	verr := Validation("name is required", map[string]string{"name": "required"}, map[string]string{"name": ""})
+
+	result, status := resultFromError(verr)
+
+	if status != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422, got %d", status)
+	}
+	if result.Message != "name is required" {
+		t.Fatalf("expected the validation message unchanged, got %q", result.Message)
+	}
+	if result.FieldErrors["name"] != "required" {
+		t.Fatalf("expected field errors unchanged, got %#v", result.FieldErrors)
+	}
+}
+
+func TestResultFromErrorFindsSafeMessagerThroughWrap(t *testing.T) {
+	inner := &safeTestError{
+		internal: "sqlite: UNIQUE constraint failed: pages.slug",
+		safe:     "That page slug is already in use.",
+	}
+	wrapped := fmt.Errorf("save page: %w", inner)
+
+	result, status := resultFromError(wrapped)
+
+	if status != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", status)
+	}
+	if result.Message != inner.safe {
+		t.Fatalf("expected errors.As to find the wrapped SafeMessager text, got %q", result.Message)
 	}
 }
 

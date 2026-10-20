@@ -110,7 +110,9 @@ func TestMaterialUniformEncodesPhysicalMaterialFields(t *testing.T) {
 		t.Fatalf("physicalParams bytes = %v, want %v", gotPhysical, wantPhysical)
 	}
 	gotPhysical2 := materialUniformBytes(fp)[96:112]
-	wantPhysical2 := float32sToBytes([]float32{dequantizeSignedUnit(quantizeSignedUnit(-0.25)), 0, 0, 0})
+	// physicalParams2.y now carries the derived dielectric F0; this material
+	// has no authored IOR, so it takes the exact default float32 0.04.
+	wantPhysical2 := float32sToBytes([]float32{dequantizeSignedUnit(quantizeSignedUnit(-0.25)), 0.04, 0, 0})
 	if string(gotPhysical2) != string(wantPhysical2) {
 		t.Fatalf("physicalParams2 bytes = %v, want %v", gotPhysical2, wantPhysical2)
 	}

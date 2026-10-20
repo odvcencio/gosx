@@ -1,0 +1,12 @@
+window.__gosx_scene3d_debug.listSurfaces();
+	// [{ id, backend, ready, fallbackReason, counts, ... }, ...]
+
+	window.__gosx_scene3d_debug.inspect("scene-mount");
+	// renderer kind, fallbackReason, node counts, feature matrix,
+	// camera, GPU resources, webgpuStats, renderer diagnostics
+
+	window.__gosx_scene3d_debug.captureFrame("scene-mount");
+	// { surfaceID, mimeType: "image/png", dataURL }
+
+	window.__gosx_scene3d_debug.getDiagnostics("scene-mount");
+	window.__gosx_scene3d_debug.getLastPick("scene-mount");

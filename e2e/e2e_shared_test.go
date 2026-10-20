@@ -10,12 +10,14 @@ package e2e
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"syscall"
@@ -26,6 +28,8 @@ import (
 	cdppage "github.com/chromedp/cdproto/page"
 	cdpruntime "github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
+	"m31labs.dev/gosx/internal/chrometest"
+	"m31labs.dev/gosx/internal/localapp"
 )
 
 // e2eChromePath resolves the browser binary: GOSX_E2E_CHROME first,
@@ -83,10 +87,11 @@ func startDocsApp(t *testing.T, baseURL string) *docsApp {
 	logs := &logBuffer{}
 	cmd := exec.Command("go", "run", "./cmd/gosx", "dev", "./examples/gosx-docs")
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(),
-		"PORT="+port,
-		"SESSION_SECRET=gosx-e2e-session-secret",
-	)
+	localEnv, err := localapp.Environment(os.Environ(), port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd.Env = append(localEnv, "PUBLIC_URL="+baseURL)
 	cmd.Stdout = logs
 	cmd.Stderr = logs
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -119,19 +124,74 @@ func startDocsApp(t *testing.T, baseURL string) *docsApp {
 	return app
 }
 
+// startProductionDocsApp builds the docs application with the same hashed
+// runtime contract used in production, then starts the generated server on a
+// free local port. Interactive island regressions must use this path: dev-mode
+// compatibility URLs intentionally do not prove immutable runtime metadata.
+func startProductionDocsApp(t *testing.T) *docsApp {
+	t.Helper()
+	root := e2eRepoRoot(t)
+	dist := os.Getenv("GOSX_E2E_DOCS_DIST")
+	if dist == "" {
+		build := exec.Command("go", "run", "./cmd/gosx", "build", "--prod", "./examples/gosx-docs")
+		build.Dir = root
+		build.Env = os.Environ()
+		if output, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("build production docs: %v\n%s", err, output)
+		}
+		dist = filepath.Join(root, "examples", "gosx-docs", "dist")
+	}
+	if !filepath.IsAbs(dist) {
+		dist = filepath.Join(root, dist)
+	}
+
+	port := freeE2EPort(t)
+	baseURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	logs := startBuiltFixture(t, dist, port)
+	app := &docsApp{baseURL: baseURL, logs: logs}
+	if err := waitForHealthy(baseURL+"/readyz", 45*time.Second); err != nil {
+		t.Fatalf("%v\n\nLogs:\n%s", err, logs.String())
+	}
+	return app
+}
+
 func waitForHealthy(url string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	lastError := ""
-	client := &http.Client{Timeout: 2 * time.Second}
+	client := &http.Client{
+		Timeout: 2 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	requested, parseErr := http.NewRequest(http.MethodGet, url, nil)
+	if parseErr != nil {
+		return fmt.Errorf("invalid health URL %q: %w", url, parseErr)
+	}
+	probePath := requested.URL.Path
 	for time.Now().Before(deadline) {
 		resp, err := client.Get(url)
 		if err == nil {
 			status := resp.StatusCode
-			resp.Body.Close()
-			if status < 500 {
-				return nil
+			if status >= http.StatusOK && status < http.StatusMultipleChoices {
+				if strings.HasSuffix(probePath, "/healthz") || strings.HasSuffix(probePath, "/readyz") {
+					var payload struct {
+						OK bool `json:"ok"`
+					}
+					decodeErr := json.NewDecoder(resp.Body).Decode(&payload)
+					resp.Body.Close()
+					if decodeErr == nil && payload.OK {
+						return nil
+					}
+					lastError = fmt.Sprintf("status %d without an ok readiness payload", status)
+				} else {
+					resp.Body.Close()
+					return nil
+				}
+			} else {
+				resp.Body.Close()
+				lastError = fmt.Sprintf("status %d", status)
 			}
-			lastError = fmt.Sprintf("status %d", status)
 		} else {
 			lastError = err.Error()
 		}
@@ -197,24 +257,33 @@ func (p *browserPage) anyRequest(match func(string) bool) bool {
 // before every document in the tab (playwright addInitScript equivalent).
 func newBrowserPage(t *testing.T, chrome string, extraFlags map[string]any, width, height int, initScript string, timeout time.Duration) *browserPage {
 	t.Helper()
-	allocOpts := append(chromedp.DefaultExecAllocatorOptions[:],
-		chromedp.ExecPath(chrome),
-		chromedp.NoFirstRun,
-		chromedp.NoDefaultBrowserCheck,
-		chromedp.Headless,
-		chromedp.Flag("no-sandbox", true),
-		chromedp.WindowSize(width, height),
-	)
-	for name, value := range extraFlags {
-		allocOpts = append(allocOpts, chromedp.Flag(name, value))
+	args := []string{"--no-sandbox", "--mute-audio", fmt.Sprintf("--window-size=%d,%d", width, height)}
+	names := make([]string, 0, len(extraFlags))
+	for name := range extraFlags {
+		names = append(names, name)
 	}
-	allocCtx, allocCancel := chromedp.NewExecAllocator(context.Background(), allocOpts...)
-	browserCtx, browserCancel := chromedp.NewContext(allocCtx)
-	ctx, timeoutCancel := context.WithTimeout(browserCtx, timeout)
+	sort.Strings(names)
+	for _, name := range names {
+		switch value := extraFlags[name].(type) {
+		case string:
+			args = append(args, "--"+name+"="+value)
+		case bool:
+			if !value {
+				t.Fatalf("unsupported disabled Chrome flag %q", name)
+			}
+			args = append(args, "--"+name)
+		default:
+			t.Fatalf("unsupported Chrome flag %q", name)
+		}
+	}
+	browser, err := chrometest.Start(t.Context(), chrome, args...)
+	if err != nil {
+		t.Fatalf("start Chrome: %v", err)
+	}
+	ctx, timeoutCancel := context.WithTimeout(browser.Context, timeout)
 	t.Cleanup(func() {
 		timeoutCancel()
-		browserCancel()
-		allocCancel()
+		browser.Close()
 	})
 
 	page := &browserPage{ctx: ctx}

@@ -1,4 +1,4 @@
-//go:build !gosx_tiny_islands_only
+//go:build !gosx_tiny_islands_only && !gosx_runtime_core && !gosx_runtime_collab
 
 // Engine-surface hydration — Bridge entry point.
 //
@@ -12,7 +12,7 @@
 //  1. Decodes a Program JSON the JS bootstrap fetched from
 //     data-gosx-engine-bytecode (surface.Renderer.Mount emits this).
 //  2. Constructs a fresh vm.VM bound to that Program.
-//  3. Wires the SignalDefs into reactive signals (Y.B/Y.C local-write +
+//  3. Wires the SignalDefs into reactive signals (local-write +
 //     OpAssign reads/writes through the signal layer).
 //  4. Binds a CanvasHostReceiver under "c" — the convention every
 //     `//gosx:engine surface` author writes against.
@@ -46,7 +46,6 @@ import (
 	"m31labs.dev/gosx/client/vm"
 	"m31labs.dev/gosx/engine/surface"
 	"m31labs.dev/gosx/island/program"
-	"m31labs.dev/gosx/signal"
 )
 
 // EngineSurfaceEventKind identifies which handler the dispatcher should
@@ -148,24 +147,24 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 
 	machine := vm.NewVM(prog, nil)
 
-	// Initialize package-level signals from their Init exprs. This is the
-	// equivalent of how vm.NewIsland constructs signals — we keep the
-	// shape narrow (no shared-signal wiring yet) because engine-surface
-	// authors today consume signals as in-VM mutable package vars per
-	// the Y.D / Y.E / Y.F / Y.G lowering convention.
-	initializeEngineSurfaceSignals(machine, prog)
-
 	recv := surface.NewCanvasHostReceiver(machine, canvas)
 	machine.BindHost("c", recv)
 
 	// "ctx" is the other half of the surface author contract. The
 	// ContextHostReceiver decodes propsJSON into the surface's typed
-	// props struct via OpHostCall("ctx.PropsInto", [&props]) — Y.G's
+	// props struct via OpHostCall("ctx.PropsInto", [&props]) — the
 	// eager struct zero-init guarantees props.Fields is non-nil at the
-	// call site, and Y.C's in-place mutation propagates the writes
+	// call site, and in-place mutation propagates the writes
 	// back to the handler's local.
 	ctxRecv := surface.NewContextHostReceiver([]byte(propsJSON))
 	machine.BindHost("ctx", ctxRecv)
+
+	// Initialize mutable and computed definitions after binding the surface
+	// hosts. InitSignals fills every mutable slot directly and constructs the
+	// complete computed graph once; the former per-definition SetSignal loop
+	// never created an initial computed graph and rebuilt repeatedly once one
+	// happened to exist.
+	vm.InitSignals(machine, prog)
 
 	inst := &engineSurfaceInstance{
 		machine:       machine,
@@ -177,7 +176,7 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 	b.engineSurfaces[id] = inst
 
 	// Invoke Mount with a fresh frame so OpLocalDecl / OpAssign land in
-	// per-handler locals (per X.A's EvalWithFrame contract). Missing
+	// per-handler locals (per EvalWithFrame's contract). Missing
 	// Mount handler is OK — some surfaces only react to events.
 	if mountID, ok := inst.handlerByName["Mount"]; ok {
 		machine.EvalWithFrame(mountID)
@@ -194,7 +193,7 @@ func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, progr
 //
 // Event coords land in props named "ev.X" / "ev.Y" / "ev.button" / … so
 // handlers wired by the lowerer can read them via OpPropGet. The naming
-// matches what Y.E's `ev.X` + `ev.Y` lowering already produces.
+// matches what the `ev.X` + `ev.Y` lowering already produces.
 //
 // Missing instance / missing handler are silent no-ops — surfaces are
 // allowed to omit any handler they don't need (per the Surface struct's
@@ -272,7 +271,7 @@ func (b *Bridge) EngineSurfaceCount() int {
 // decodeEngineSurfaceProgram parses the program emitted by
 // engine/surface.LowerToBytecode. Format mirrors HydrateIsland's
 // accepted set (json + bin) with "" defaulting to json. Surface kind
-// is set to Canvas2D per ADR 0003 — every engine surface today is a
+// is set to Canvas2D — every engine surface today is a
 // Canvas2D root. Future Scene3D-root surfaces will bump the
 // discriminator.
 func decodeEngineSurfaceProgram(data []byte, format string) (*program.Program, error) {
@@ -318,11 +317,7 @@ type engineSurfacePropSnapshot struct {
 // surface.PointerEvent / WheelEvent / KeyEvent / ResizeEvent struct
 // fields (see engine/surface/surface.go).
 func stageEngineSurfaceEventProps(machine *vm.VM, kind EngineSurfaceEventKind, floats []float64, payloadStr string) []engineSurfacePropSnapshot {
-	type assignment struct {
-		name  string
-		value vm.Value
-	}
-	var assignments []assignment
+	var assignments []vm.PropMutation
 	switch kind {
 	case EngineSurfaceEventClick,
 		EngineSurfaceEventDblClick,
@@ -331,56 +326,58 @@ func stageEngineSurfaceEventProps(machine *vm.VM, kind EngineSurfaceEventKind, f
 		EngineSurfaceEventPointerUp,
 		EngineSurfaceEventPointerCancel:
 		// [x, y, button, buttons, modifier]
-		assignments = []assignment{
-			{"ev.X", floatAt(floats, 0)},
-			{"ev.Y", floatAt(floats, 1)},
-			{"ev.Button", floatAt(floats, 2)},
-			{"ev.Buttons", floatAt(floats, 3)},
-			{"ev.Modifier", floatAt(floats, 4)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.X", Value: floatAt(floats, 0)},
+			{Name: "ev.Y", Value: floatAt(floats, 1)},
+			{Name: "ev.Button", Value: floatAt(floats, 2)},
+			{Name: "ev.Buttons", Value: floatAt(floats, 3)},
+			{Name: "ev.Modifier", Value: floatAt(floats, 4)},
 		}
 	case EngineSurfaceEventWheel:
 		// [x, y, deltaX, deltaY, modifier]
-		assignments = []assignment{
-			{"ev.X", floatAt(floats, 0)},
-			{"ev.Y", floatAt(floats, 1)},
-			{"ev.DeltaX", floatAt(floats, 2)},
-			{"ev.DeltaY", floatAt(floats, 3)},
-			{"ev.Modifier", floatAt(floats, 4)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.X", Value: floatAt(floats, 0)},
+			{Name: "ev.Y", Value: floatAt(floats, 1)},
+			{Name: "ev.DeltaX", Value: floatAt(floats, 2)},
+			{Name: "ev.DeltaY", Value: floatAt(floats, 3)},
+			{Name: "ev.Modifier", Value: floatAt(floats, 4)},
 		}
 	case EngineSurfaceEventKeyDown, EngineSurfaceEventKeyUp:
 		// [modifier]; payloadStr is "key\tcode"
 		key, code := splitKeyPayload(payloadStr)
-		assignments = []assignment{
-			{"ev.Key", vm.StringVal(key)},
-			{"ev.Code", vm.StringVal(code)},
-			{"ev.Modifier", floatAt(floats, 0)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.Key", Value: vm.StringVal(key)},
+			{Name: "ev.Code", Value: vm.StringVal(code)},
+			{Name: "ev.Modifier", Value: floatAt(floats, 0)},
 		}
 	case EngineSurfaceEventResize:
 		// [width, height, dpr]
-		assignments = []assignment{
-			{"ev.Width", floatAt(floats, 0)},
-			{"ev.Height", floatAt(floats, 1)},
-			{"ev.DPR", floatAt(floats, 2)},
+		assignments = []vm.PropMutation{
+			{Name: "ev.Width", Value: floatAt(floats, 0)},
+			{Name: "ev.Height", Value: floatAt(floats, 1)},
+			{Name: "ev.DPR", Value: floatAt(floats, 2)},
 		}
 	}
 
 	snapshots := make([]engineSurfacePropSnapshot, 0, len(assignments))
 	for _, a := range assignments {
-		prev, ok := machine.GetProp(a.name)
-		snapshots = append(snapshots, engineSurfacePropSnapshot{name: a.name, value: prev, present: ok})
-		machine.SetProp(a.name, a.value)
+		prev, ok := machine.GetProp(a.Name)
+		snapshots = append(snapshots, engineSurfacePropSnapshot{name: a.Name, value: prev, present: ok})
 	}
+	machine.ApplyPropMutations(assignments)
 	return snapshots
 }
 
 func restoreEngineSurfaceProps(machine *vm.VM, snapshots []engineSurfacePropSnapshot) {
-	for _, s := range snapshots {
-		if s.present {
-			machine.SetProp(s.name, s.value)
-			continue
+	mutations := make([]vm.PropMutation, len(snapshots))
+	for i, snapshot := range snapshots {
+		mutations[i] = vm.PropMutation{
+			Name:   snapshot.name,
+			Value:  snapshot.value,
+			Delete: !snapshot.present,
 		}
-		machine.DeleteProp(s.name)
 	}
+	machine.ApplyPropMutations(mutations)
 }
 
 func floatAt(xs []float64, i int) vm.Value {
@@ -397,15 +394,4 @@ func splitKeyPayload(s string) (key, code string) {
 		}
 	}
 	return s, ""
-}
-
-// initializeEngineSurfaceSignals registers each SignalDef as a fresh
-// signal on the VM, seeded with the eval'd Init expression. This is
-// what makes `gName = props.Name` in a Mount handler actually persist
-// across handler invocations.
-func initializeEngineSurfaceSignals(machine *vm.VM, prog *program.Program) {
-	for _, def := range prog.Signals {
-		initVal := machine.Eval(def.Init)
-		machine.SetSignal(def.Name, signal.New(initVal))
-	}
 }

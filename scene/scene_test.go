@@ -145,6 +145,41 @@ func TestPropsLegacyPropsLowerNestedGraph(t *testing.T) {
 	}
 }
 
+func TestPropsLegacyPropsLowerScrollFrameRate(t *testing.T) {
+	props := Props{
+		ScrollCameraStart: 500,
+		ScrollCameraEnd:   -200,
+		ScrollFrameRate:   60,
+		MaxFrameRate:      30,
+	}
+	legacy := props.LegacyProps()
+	if got := legacy["scrollFrameRate"]; got != float64(60) {
+		t.Fatalf("scrollFrameRate = %#v, want 60", got)
+	}
+	if got := legacy["maxFrameRate"]; got != float64(30) {
+		t.Fatalf("maxFrameRate = %#v, want 30", got)
+	}
+}
+
+func TestPropsLegacyPropsLowerFramePacing(t *testing.T) {
+	props := Props{
+		FramePacing:  "vsync-divisor",
+		MaxFrameRate: 50,
+	}
+	legacy := props.LegacyProps()
+	if got := legacy["framePacing"]; got != "vsync-divisor" {
+		t.Fatalf("framePacing = %#v, want vsync-divisor", got)
+	}
+	if got := legacy["maxFrameRate"]; got != float64(50) {
+		t.Fatalf("maxFrameRate = %#v, want 50", got)
+	}
+
+	empty := Props{}.LegacyProps()
+	if _, ok := empty["framePacing"]; ok {
+		t.Fatalf("framePacing = %#v, want absent when unset", empty["framePacing"])
+	}
+}
+
 func TestPropsSceneIRLowerNestedGraph(t *testing.T) {
 	props := Props{
 		Graph: NewGraph(
@@ -767,6 +802,11 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 		ControlRotateDirection: "grab",
 		ControlRotateSpeed:     1.4,
 		ControlZoomSpeed:       0.85,
+		ControlZoom:            Bool(true),
+		ControlPan:             Bool(true),
+		ControlPanHandle:       "#pan",
+		ControlZoomMinFOV:      15,
+		ControlZoomMaxFOV:      75,
 		ControlLookSpeed:       1.2,
 		ControlMoveSpeed:       6.5,
 		ControlMinDistance:     2,
@@ -808,6 +848,11 @@ func TestPropsLegacyPropsLowerCameraRotationAndControls(t *testing.T) {
 	}
 	if got := legacy["controlZoomSpeed"]; got != 0.85 {
 		t.Fatalf("expected zoom speed 0.85, got %#v", got)
+	}
+	for key, want := range map[string]any{"controlZoom": true, "controlPan": true, "controlPanHandle": "#pan", "controlZoomMinFOV": float64(15), "controlZoomMaxFOV": float64(75)} {
+		if got := legacy[key]; got != want {
+			t.Errorf("%s = %v, want %v", key, got, want)
+		}
 	}
 	if got := legacy["controlLookSpeed"]; got != 1.2 {
 		t.Fatalf("expected look speed 1.2, got %#v", got)
@@ -1233,7 +1278,6 @@ func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 					Emissive:     0.15,
 					Opacity:      Float(0.88),
 					BlendMode:    BlendAlpha,
-					Wireframe:    Bool(false),
 				},
 				Position: Vec3(1, 2, 3),
 			},
@@ -1285,7 +1329,14 @@ func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 		t.Fatalf("expected alpha blend mode, got %q", obj.BlendMode)
 	}
 	if obj.Wireframe == nil || *obj.Wireframe {
-		t.Fatalf("expected wireframe false, got %v", obj.Wireframe)
+		t.Fatalf("expected standard material to lower with wireframe=false by default, got %v", obj.Wireframe)
+	}
+	encoded, err := json.Marshal(ir)
+	if err != nil {
+		t.Fatalf("marshal SceneIR: %v", err)
+	}
+	if !strings.Contains(string(encoded), `"wireframe":false`) {
+		t.Fatalf("standard material did not carry its solid default on the wire: %s", encoded)
 	}
 
 	legacy := props.LegacyProps()
@@ -1324,6 +1375,153 @@ func TestPropsSceneIRLowersStandardMaterial(t *testing.T) {
 	}
 	if got := record["normalMap"]; got != "/maps/normal.png" {
 		t.Fatalf("expected normalMap in legacy props, got %#v", got)
+	}
+	if got := record["wireframe"]; got != false {
+		t.Fatalf("expected standard material solid default in legacy props, got %#v", got)
+	}
+}
+
+func TestStandardMaterialPreservesExplicitWireframeOptIn(t *testing.T) {
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "wire-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: StandardMaterial{Color: "#60a8dc", Wireframe: Bool(true)},
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 || ir.Objects[0].Wireframe == nil || !*ir.Objects[0].Wireframe {
+		t.Fatalf("explicit standard-material wireframe opt-in was not preserved: %#v", ir.Objects)
+	}
+	legacy := props.LegacyProps()["scene"].(map[string]any)["objects"].([]map[string]any)[0]
+	if got := legacy["wireframe"]; got != true {
+		t.Fatalf("explicit wireframe opt-in missing from legacy props: %#v", got)
+	}
+}
+
+func TestStandardMaterialPointerUsesSolidDefault(t *testing.T) {
+	material := &StandardMaterial{Color: "#60a8dc", Roughness: 0.4}
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "solid-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: material,
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 || ir.Objects[0].Wireframe == nil || *ir.Objects[0].Wireframe {
+		t.Fatalf("standard-material pointer did not lower with wireframe=false: %#v", ir.Objects)
+	}
+	legacy := props.LegacyProps()["scene"].(map[string]any)["objects"].([]map[string]any)[0]
+	if got := legacy["wireframe"]; got != false {
+		t.Fatalf("standard-material pointer solid default missing from legacy props: %#v", got)
+	}
+	if got := legacyMaterial((*StandardMaterial)(nil)); got != nil {
+		t.Fatalf("nil standard-material pointer lowered as %#v, want nil", got)
+	}
+}
+
+func TestStandardMaterialRimTermOffByDefault(t *testing.T) {
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "plain-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: StandardMaterial{Color: "#60a8dc"},
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected exactly one object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.RimColor != nil {
+		t.Fatalf("rim term must stay off by default: RimColor = %#v, want nil", object.RimColor)
+	}
+	if object.RimStrength != 0 {
+		t.Fatalf("rim term must stay off by default: RimStrength = %v, want 0", object.RimStrength)
+	}
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("marshal ObjectIR: %v", err)
+	}
+	for _, key := range []string{`"rimColor"`, `"rimPower"`, `"rimStrength"`} {
+		if strings.Contains(string(raw), key) {
+			t.Fatalf("rim term must be omitted from JSON when unset, found %s in %s", key, raw)
+		}
+	}
+}
+
+func TestStandardMaterialRimTermOptInPreserved(t *testing.T) {
+	rimColor := [3]float64{0.2, 0.6, 1}
+	props := Props{Graph: NewGraph(Mesh{
+		ID:       "rim-sphere",
+		Geometry: SphereGeometry{Radius: 1, Segments: 16},
+		Material: StandardMaterial{
+			Color:       "#60a8dc",
+			RimColor:    &rimColor,
+			RimPower:    3,
+			RimStrength: 0.75,
+		},
+	})}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 1 {
+		t.Fatalf("expected exactly one object, got %#v", ir.Objects)
+	}
+	object := ir.Objects[0]
+	if object.RimColor == nil || *object.RimColor != rimColor {
+		t.Fatalf("rim colour was not preserved: got %#v, want %#v", object.RimColor, rimColor)
+	}
+	if object.RimPower != 3 {
+		t.Fatalf("rim power was not preserved: got %v, want 3", object.RimPower)
+	}
+	if object.RimStrength != 0.75 {
+		t.Fatalf("rim strength was not preserved: got %v, want 0.75", object.RimStrength)
+	}
+
+	raw, err := json.Marshal(object)
+	if err != nil {
+		t.Fatalf("marshal ObjectIR: %v", err)
+	}
+	var back ObjectIR
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal ObjectIR: %v", err)
+	}
+	if back.RimColor == nil || *back.RimColor != rimColor {
+		t.Fatalf("rim colour did not round-trip through JSON: got %#v, want %#v", back.RimColor, rimColor)
+	}
+	if back.RimPower != 3 || back.RimStrength != 0.75 {
+		t.Fatalf("rim power/strength did not round-trip through JSON: got %v/%v", back.RimPower, back.RimStrength)
+	}
+}
+
+func TestStandardMaterialSolidDefaultDoesNotRewriteOtherMaterialKinds(t *testing.T) {
+	props := Props{Graph: NewGraph(
+		Mesh{
+			ID:       "flat-box",
+			Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
+			Material: FlatMaterial{Color: "#ffffff"},
+		},
+		Mesh{
+			ID:       "custom-box",
+			Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1},
+			Material: CustomMaterial{StandardMaterial: StandardMaterial{Color: "#ffffff"}},
+		},
+	)}
+
+	ir := props.SceneIR()
+	if len(ir.Objects) != 2 {
+		t.Fatalf("objects = %d, want 2", len(ir.Objects))
+	}
+	for _, object := range ir.Objects {
+		if object.Wireframe != nil {
+			t.Fatalf("%s wireframe = %#v, want historical omission", object.ID, object.Wireframe)
+		}
+	}
+	legacyFlat := legacyMaterial(FlatMaterial{Color: "#ffffff"})
+	if _, exists := legacyFlat["wireframe"]; exists {
+		t.Fatalf("flat material unexpectedly gained a wireframe default: %#v", legacyFlat)
+	}
+	legacyCustom := legacyMaterial(CustomMaterial{StandardMaterial: StandardMaterial{Color: "#ffffff"}})
+	if _, exists := legacyCustom["wireframe"]; exists {
+		t.Fatalf("custom material unexpectedly gained a wireframe default: %#v", legacyCustom)
 	}
 }
 
@@ -2062,6 +2260,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 				Markup:        `<button>Inspect</button>`,
 				ClassName:     "scene-card",
 				Position:      Vec3(0, 1.05, 0.2),
+				Perspective:   true,
+				SurfaceWidth:  1.4,
+				SurfaceHeight: 0.6,
 				Width:         220,
 				Height:        88,
 				Priority:      5,
@@ -2101,6 +2302,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	if card.PointerEvents != "auto" || !card.Occlude {
 		t.Fatalf("expected html interaction fields, got %#v", card)
 	}
+	if !card.Perspective || card.SurfaceWidth != 1.4 || card.SurfaceHeight != 0.6 {
+		t.Fatalf("expected perspective plane dimensions to lower, got %#v", card)
+	}
 	if ir.HTML[1].Mode != string(HTMLTexture) {
 		t.Fatalf("expected html surface texture mode marker, got %#v", ir.HTML[1].Mode)
 	}
@@ -2133,6 +2337,9 @@ func TestPropsSceneIRLowersHTMLOverlays(t *testing.T) {
 	}
 	if got := html[0]["target"]; got != "hero" {
 		t.Fatalf("expected target in legacy props, got %#v", got)
+	}
+	if got := html[0]["perspective"]; got != true {
+		t.Fatalf("expected perspective in legacy props, got %#v", got)
 	}
 	if got := html[1]["mode"]; got != string(HTMLTexture) {
 		t.Fatalf("expected texture mode in legacy props, got %#v", got)
@@ -3919,8 +4126,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 					{ID: "robot-1", Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)},
 					{ID: "robot-2", Position: Vec3(3, 0, 4), Scale: Vec3(1.2, 1.2, 1.2)},
 				},
-				Pickable: Bool(true),
-				Static:   Bool(false),
+				Pickable:         Bool(true),
+				Static:           Bool(false),
+				SharedAppearance: true,
 			},
 		),
 	}
@@ -3951,6 +4159,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	if batch.Color != "#ff6600" {
 		t.Fatalf("expected color #ff6600, got %q", batch.Color)
 	}
+	if !batch.SharedAppearance {
+		t.Fatal("expected shared appearance opt-in to survive lowering")
+	}
 
 	// Verify legacyProps wire shape.
 	legacy := ir.legacyProps()
@@ -3964,6 +4175,9 @@ func TestInstancedGLBMeshLowersToSceneIR(t *testing.T) {
 	}
 	if got := batchMap["src"]; got != "/models/robot-scout.glb" {
 		t.Fatalf("expected batch src, got %#v", got)
+	}
+	if got := batchMap["sharedAppearance"]; got != true {
+		t.Fatalf("expected sharedAppearance=true, got %#v", got)
 	}
 	instances, ok := batchMap["instances"].([]map[string]any)
 	if !ok || len(instances) != 2 {

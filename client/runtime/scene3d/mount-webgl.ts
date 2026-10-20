@@ -1,0 +1,5381 @@
+// mount-webgl.ts — WebGL renderer factory resolution and the lazy WebGL chunk loader.
+// @ts-check
+//
+// A WebGPU-capable browser never runs the loader. It fetches
+// bootstrap-feature-scene3d-webgl.js when the selection order in 20a puts
+// WebGL first, and again when the WebGPU fallback ladder steps down to WebGL
+// after a device loss.
+//
+// Depends on 20a for the selection verdict.
+
+/**
+ * @typedef {object} GoSXSceneWebGLMountHost
+ * @property {(canvas: HTMLCanvasElement, props: object, capability: object) => object|null} create
+ * @property {() => Promise<object|null>} load
+ */
+
+
+  // --------------------------------------------------------------------------
+  // WebGL renderer factory resolution
+  // --------------------------------------------------------------------------
+  //
+  // 16-scene-webgl.js moved into the lazily fetched
+  // bootstrap-feature-scene3d-webgl.js chunk, so its factories are no longer
+  // lexically in scope here. Two resolutions exist, and both must keep
+  // working:
+  //
+  //   1. bootstrap.js (the monolith) keeps 16-scene-webgl.js inline, so the
+  //      lexical binding is present and wins.
+  //   2. The split scene3d chunk reads the factory the WebGL chunk published
+  //      on window.__gosx_scene3d_webgl_api. It is null until the chunk lands.
+  //
+  // Use sceneWebGLRendererFactory as the readiness test. Never test
+  // sceneLegacyWebGLRendererFactory: that returns the legacy vertex-colour
+  // renderer, and treating it as "WebGL is ready" would silently downgrade a
+  // PBR scene.
+  function sceneWebGLChunkAPI() {
+    return typeof window !== "undefined" && window.__gosx_scene3d_webgl_api
+      ? window.__gosx_scene3d_webgl_api
+      : null;
+  }
+
+  function sceneWebGLChunkFunction(name: string) {
+    const api = sceneWebGLChunkAPI();
+    return api && typeof api[name] === "function" ? api[name] : null;
+  }
+
+  // sceneLegacyWebGLRendererFactory resolves the legacy vertex-colour
+  // renderer. It lived in 10-runtime-scene-core.js, so this file used to call
+  // it lexically. It now ships in 16e-scene-webgl-legacy.ts inside the WebGL
+  // chunk, which lands after this file, so the lookup must happen at call
+  // time. 16e assigns the function onto window.__gosx_scene3d_api when it
+  // runs; bootstrap.js keeps the lexical binding and wins first.
+  function sceneLegacyWebGLRendererFactory() {
+    if (typeof createSceneWebGLRenderer === "function") {
+      return createSceneWebGLRenderer;
+    }
+    const api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
+    return api && typeof api.createSceneWebGLRenderer === "function"
+      ? api.createSceneWebGLRenderer
+      : null;
+  }
+
+  function sceneWebGLRendererFactory() {
+    if (typeof createScenePBRRendererOrFallback === "function") {
+      return createScenePBRRendererOrFallback;
+    }
+    return sceneWebGLChunkFunction("createScenePBRRendererOrFallback");
+  }
+
+  function sceneWaterWebGLRendererFactory() {
+    if (typeof createSceneWaterRendererWebGL === "function") {
+      return createSceneWaterRendererWebGL;
+    }
+    return sceneWebGLChunkFunction("createSceneWaterRendererWebGL");
+  }
+
+  function sceneWebGLInitialProgramAPI() {
+    return {
+      createContext: typeof createScenePBRContext === "function"
+        ? createScenePBRContext
+        : sceneWebGLChunkFunction("createScenePBRContext"),
+      prepare: typeof prepareScenePBRInitialRenderer === "function"
+        ? prepareScenePBRInitialRenderer
+        : sceneWebGLChunkFunction("prepareScenePBRInitialRenderer"),
+      discard: typeof discardScenePBRInitialPrograms === "function"
+        ? discardScenePBRInitialPrograms
+        : sceneWebGLChunkFunction("discardScenePBRInitialPrograms"),
+    };
+  }
+
+  function createSceneWebGLResult(canvas, props, capability, fallbackReason) {
+    // Water scenes that land on WebGL (e.g. after a WebGPU device loss /
+    // watchdog fallback, or any inline webgl selection) must render via the
+    // WebGL2 water runtime, not the generic PBR path which cannot draw the
+    // simulation.
+    if (sceneFirstWaterEntry(props)) {
+      var waterResult = createSceneWaterWebGLResult(canvas, props, capability, fallbackReason);
+      if (waterResult) {
+        return waterResult;
+      }
+      // A generic PBR/WebGL renderer cannot draw the water simulation. Return
+      // an explicit unsupported result so callers never mistake a valid GL
+      // context and a blank generic scene for a working water backend.
+      return {
+        renderer: null,
+        fallbackReason: fallbackReason || "",
+        unsupportedReason: "water-webgl2-unavailable",
+      };
+    }
+    const pbrFactory = fallbackReason === "webgl-shader-failed" ? null : sceneWebGLRendererFactory();
+    if (pbrFactory) {
+      const initialAPI = sceneWebGLInitialProgramAPI();
+      const gl = initialAPI.createContext
+        ? initialAPI.createContext(canvas, props, capability)
+        : (typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+            alpha: sceneCanvasAlpha(props),
+            premultipliedAlpha: sceneCanvasAlpha(props),
+            antialias: sceneWebGLAntialias(props, capability),
+            depth: true,
+            powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+          }) : null);
+      if (gl) {
+        const pbrRenderer = pbrFactory(gl, canvas, {});
+        if (pbrRenderer) { return { renderer: pbrRenderer, fallbackReason: fallbackReason, degraded: [] }; }
+      }
+    }
+    const legacyFactory = sceneLegacyWebGLRendererFactory();
+    if (!legacyFactory) {
+      return null;
+    }
+    const webglRenderer = legacyFactory(canvas, {
+      antialias: sceneWebGLAntialias(props, capability, true),
+      powerPreference: capability.lowPower || capability.tier === "constrained" ? "low-power" : "high-performance",
+    });
+    return webglRenderer ? { renderer: webglRenderer, fallbackReason: fallbackReason, degraded: [] } : null;
+  }
+
+  function sceneFirstWaterEntry(props) {
+    var scene = props && props.scene && typeof props.scene === "object" ? props.scene : null;
+    var systems = scene && Array.isArray(scene.waterSystems) ? scene.waterSystems : null;
+    if (!systems || !systems.length) return null;
+    return systems[0] || null;
+  }
+
+  async function prepareSceneInitialWebGLRenderer(canvas, props, capability, state, isCurrent) {
+    if (sceneFirstWaterEntry(props) || !sceneMountWantsWebGLFirst(props, capability)) return null;
+    const api = sceneWebGLInitialProgramAPI();
+    if (!api.prepare) return null;
+    try {
+      return await api.prepare(canvas, props, capability, {
+        state,
+        isCurrent,
+      });
+    } catch (error) {
+      console.warn("[gosx] failed to prepare initial Scene3D shaders:", error && error.message ? error.message : error);
+      return null;
+    }
+  }
+
+  function discardSceneInitialWebGLRenderer(preparation) {
+    if (!preparation || !preparation.gl || !preparation.owner) return;
+    const api = sceneWebGLInitialProgramAPI();
+    if (api.discard) api.discard(preparation.gl, preparation.owner);
+  }
+
+  function sceneWebGLAntialias(props, capability, ignorePost = false) {
+    var caps = capability || {};
+    var requestedSamples = Math.max(0, Math.floor(sceneNumber(props && props.msaaSamples, 0)));
+    if (requestedSamples > 1) return true;
+    if (requestedSamples === 1) return false;
+    var tierDefault = caps.tier === "full" && !caps.lowPower && !caps.reducedData;
+    var scene = props && props.scene || {};
+    var effects = scene.postEffects || scene.postFX || props && (props.postEffects || props.postFX);
+    if (!ignorePost && Array.isArray(effects) && effects.length && !sceneBool(props && props.deferPostFX, sceneBool(props && props.progressivePostFX, false))) return false;
+    return sceneBool(props && props.antialias, tierDefault);
+  }
+
+  // Build water after capability fallback or device loss.
+  function createSceneWaterWebGLResult(canvas, props, capability, fallbackReason) {
+    var waterFactory = sceneWaterWebGLRendererFactory();
+    if (!waterFactory) return null;
+    var entry = sceneFirstWaterEntry(props);
+    if (!entry) return null;
+    var initialAPI = sceneWebGLInitialProgramAPI();
+    var sceneDoc = props?.scene;
+    var environment = sceneDoc?.environment || props?.environment;
+    var waterOnly = !(Array.isArray(sceneDoc?.models) && sceneDoc.models.length || environment && (environment.sky || environment.ocean));
+    var gl = initialAPI.createContext ? initialAPI.createContext(canvas, props, capability, false, waterOnly) : typeof canvas.getContext === "function" ? canvas.getContext("webgl2", {
+      alpha: false, premultipliedAlpha: false, antialias: sceneWebGLAntialias(props, capability, waterOnly), depth: true,
+      powerPreference: capability && (capability.lowPower || capability.tier === "constrained") ? "low-power" : "high-performance",
+    }) : null;
+    if (!gl) return null;
+    var renderer = null;
+    try {
+      renderer = waterFactory(gl, canvas, entry);
+    } catch (e) {
+      try { console.warn("[gosx] WebGL water renderer failed:", e); } catch (_e) {}
+      return null;
+    }
+    if (!renderer) return null;
+    // Create the shared world target when either initial or live scene state
+    // needs it. Keeping the water renderer alone is sufficient until then.
+    var waterRenderer = renderer, worldRenderer: any = null, worldFailed = false;
+    function ensureWorld() {
+      if (worldRenderer || worldFailed) return;
+      worldRenderer = sceneWebGLRendererFactory()?.(gl, canvas, {});
+      if (!worldRenderer || typeof worldRenderer.renderSurfaces !== "function") {
+        if (worldRenderer) worldRenderer.dispose();
+        worldRenderer = null; worldFailed = true;
+        return;
+      }
+      Object.assign(waterRenderer, {
+        pollPerformanceSample: worldRenderer.pollPerformanceSample,
+        getPerformanceTimingStatus: worldRenderer.getPerformanceTimingStatus,
+        getFrameTiming: worldRenderer.getFrameTiming,
+      });
+    }
+    if (Array.isArray(sceneDoc?.models) && sceneDoc.models.length || environment && (environment.sky || environment.ocean)) ensureWorld();
+    var compositeMS = 0;
+    renderer = {
+      __proto__: waterRenderer,
+      get isWaterWorldComposite() { return Boolean(worldRenderer); },
+      getFailureReason: function() {
+        return worldFailed ? "webgl-unavailable" : waterRenderer.getFailureReason?.() || worldRenderer?.getFailureReason?.() || "";
+      },
+      // @ts-ignore TS7006 -- bundles and frame metadata follow the runtime ABI.
+      render: function(bundle, viewport, frameMeta) {
+        if (bundle.environment && (bundle.environment.sky || bundle.environment.ocean)) ensureWorld();
+        if (!worldRenderer) return worldFailed ? "failed" : waterRenderer.render(bundle, viewport, frameMeta);
+        var started = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+        var waterOutcome = "pending";
+        var worldOutcome = worldRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+          compositeOverWater: false,
+          // @ts-ignore TS7006 -- the shared target follows the renderer ABI.
+          compositeBeforePost: function(target) {
+            waterOutcome = waterRenderer.render(bundle, viewport, Object.assign({}, frameMeta, {
+              compositeWorld: true, clearComposite: false, background: bundle.background, renderTarget: target,
+            }));
+            worldRenderer.renderSurfaces(bundle, target);
+          },
+        }));
+        compositeMS = Math.max(0.01, (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now()) - started);
+        // The outer renderer owns the complete composition. A submitted world
+        // pass cannot acknowledge a missing/pending water pass, nor vice versa.
+        return worldOutcome === "submitted" ? waterOutcome : worldOutcome;
+      },
+      diagnostics: function() {
+        var world = worldRenderer?.diagnostics?.() || {};
+        return Object.assign({}, waterRenderer.diagnostics?.() || {}, {
+          world: world, ibl: world.ibl || null, compositeCPUFrameMS: compositeMS,
+        });
+      },
+      resize: function(viewport: any) {
+        worldRenderer?.resize?.(viewport);
+        waterRenderer.resize?.(viewport);
+      },
+      dispose: function() { waterRenderer.dispose(); worldRenderer?.dispose(); },
+    };
+    try {
+      if (typeof window !== "undefined") {
+        window.__gosx_scene3d_webgl_water = true;
+      }
+    } catch (_e) {}
+    // @ts-ignore TS7018 -- an empty degradation list has no inferred element type.
+    return { renderer: renderer, fallbackReason: fallbackReason || "", degraded: [] };
+  }
+
+  // sceneWaterWebGLAutoResult is the real A3 capability-gate selection: for a
+  // water scene whose active backend resolves to WebGL (because WebGPU is
+  // unavailable, failed the probe, or its device was lost), render the water on
+  // the WebGL2 water runtime instead of the generic PBR path (which cannot draw
+  // the simulation). Returns null when WebGPU will render the scene — WebGPU
+  // stays primary — or when this is not a water scene.
+  function sceneWaterWebGLAutoResult(canvas, props, capability) {
+    if (!sceneFirstWaterEntry(props)) return null;
+    var webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    var backendCaps = sceneBackendCapsOf(props);
+    var verdict = chooseSceneBackend(backendCaps, {
+      requireWebGL: sceneRequiresWebGL(props),
+      forceWebGL: sceneForcesWebGL(props),
+      preferCanvas: sceneBool(props && props.preferCanvas, false),
+      preferWebGPU: sceneCapabilityWebGPUPreference(props, capability) === "prefer",
+    }, { webgpu: webgpuAvail, webgl: true });
+    if (!verdict) return null;
+    // WebGPU stays primary: defer to the normal path when WebGPU is the
+    // resolved + available backend.
+    if (verdict.backend === "webgpu" && webgpuAvail) return null;
+    // Only intercept when WebGL2 is the active backend for this water scene.
+    if (verdict.backend !== "webgl") return null;
+    var result = createSceneWaterWebGLResult(canvas, props, capability, verdict.fallbackReason || "webgpu-unavailable");
+    if (result) {
+      result.degraded = (verdict.degraded || []).concat(result.degraded || []);
+      return result;
+    }
+    return {
+      renderer: null,
+      fallbackReason: verdict.fallbackReason || "webgpu-unavailable",
+      unsupportedReason: "water-webgl2-unavailable",
+    };
+  }
+
+  function createSceneRenderer(canvas, props, capability) {
+    // A3: real capability-gate fallback. For a water scene whose backend
+    // resolves to WebGL (WebGPU unavailable / probe-failed / device lost), use
+    // the WebGL2 water runtime up front so the registry/inline paths don't grab
+    // the generic PBR renderer. WebGPU-capable sessions skip this (returns null)
+    // and keep WebGPU primary.
+    const autoWater = sceneWaterWebGLAutoResult(canvas, props, capability);
+    if (autoWater) {
+      return autoWater;
+    }
+    const registryResult = createSceneRendererFromRegistry(canvas, props, capability);
+    if (registryResult) {
+      return registryResult;
+    }
+
+    const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
+    const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    const prefs = {
+      requireWebGL: sceneRequiresWebGL(props),
+      forceWebGL: sceneForcesWebGL(props),
+      preferCanvas: sceneBool(props && props.preferCanvas, false),
+      preferWebGPU: webgpuPreference === "prefer",
+    };
+    const backendCaps = sceneBackendCapsOf(props);
+    const verdict = chooseSceneBackend(backendCaps, prefs, { webgpu: webgpuAvail, webgl: true });
+    if (verdict) {
+      if (verdict.backend === "webgpu" && webgpuAvail && typeof createSceneWebGPURendererOrFallback === "function") {
+        const gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
+        if (gpuRenderer) {
+          return { renderer: gpuRenderer, fallbackReason: verdict.fallbackReason || "", degraded: verdict.degraded || [] };
+        }
+      }
+      if (verdict.backend === "webgl" || (verdict.backend === "webgpu" && !webgpuAvail)) {
+        const fallback = verdict.backend === "webgpu" ? "webgpu-unavailable" : (verdict.fallbackReason || "");
+        const result = createSceneWebGLResult(canvas, props, capability, fallback);
+        return result ? Object.assign({}, result, { degraded: verdict.degraded || [] }) : null;
+      }
+      if (verdict.backend === "canvas2d") {
+        if (sceneRequiresWebGL(props)) { return null; }
+        const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+        if (!ctx2d) { return null; }
+        return { renderer: createSceneCanvasRenderer(ctx2d, canvas), fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"), degraded: [] };
+      }
+      return null;
+    }
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
+    if (webgpuPreference === "prefer" && !webgpuFeatureGap && webgpuAvail && typeof createSceneWebGPURendererOrFallback === "function") {
+      var gpuRenderer = createSceneWebGPURendererOrFallback(canvas, sceneWebGPUOptions(props, capability));
+      if (gpuRenderer) {
+        return {
+          renderer: gpuRenderer,
+          fallbackReason: "",
+        };
+      }
+    }
+    if (webglPreference === "prefer" || webglPreference === "force") {
+      const webglResult = createSceneWebGLResult(canvas, props, capability, webgpuFeatureGap ? "webgpu-feature-gap" : "");
+      if (webglResult) { return webglResult; }
+    }
+    if (sceneRequiresWebGL(props)) {
+      return null;
+    }
+    const ctx2d = typeof canvas.getContext === "function" ? canvas.getContext("2d") : null;
+    if (!ctx2d) {
+      return null;
+    }
+    return {
+      renderer: createSceneCanvasRenderer(ctx2d, canvas),
+      fallbackReason: sceneRendererFallbackReason(props, capability, "canvas"),
+    };
+  }
+
+  function createSceneRendererFromRegistry(canvas, props, capability) {
+    if (typeof sceneBackendRegistry === "undefined" || !sceneBackendRegistry || typeof sceneBackendRegistry.candidates !== "function") {
+      return null;
+    }
+    const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
+    const requireWebGL = sceneRequiresWebGL(props);
+    const webgpuFeatureGap = sceneNeedsWebGLForWebGPUCoverage(props);
+    const backendCaps = sceneBackendCapsOf(props);
+    const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    const verdict = chooseSceneBackend(backendCaps, {
+      requireWebGL, forceWebGL: sceneForcesWebGL(props),
+      preferCanvas: sceneBool(props && props.preferCanvas, false), preferWebGPU: webgpuPreference === "prefer",
+    }, { webgpu: webgpuAvail, webgl: true });
+    const preferWebGPU = verdict ? verdict.backend === "webgpu" : (webgpuPreference === "prefer" && !webgpuFeatureGap);
+    const verdictFallback = verdict ? verdict.fallbackReason : "";
+    // Same fix as sceneWebGLBackendRequest above: trust the verdict over the
+    // raw avoid/prefer/force preference when backendCaps gave chooseSceneBackend
+    // enough to resolve one. See that function for the full incident note.
+    const wantsWebGL = verdict
+      ? verdict.backend === "webgl"
+      : (webglPreference === "prefer" || webglPreference === "force");
+    const allowWebGL = wantsWebGL && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    const request = {
+      props,
+      capability,
+      webgpu: preferWebGPU && sceneBackendCapsAllowsKind(backendCaps, "webgpu"),
+      webgl: allowWebGL,
+      webgl2: allowWebGL,
+      canvas2d: !requireWebGL && sceneBackendCapsAllowsKind(backendCaps, "canvas2d"),
+      preferWebGPU: preferWebGPU && sceneBackendCapsAllowsKind(backendCaps, "webgpu"),
+      forceWebGL: webglPreference === "force" && sceneBackendCapsAllowsKind(backendCaps, "webgl"),
+    };
+    const candidates = sceneBackendRegistry.candidates(request);
+    for (const entry of candidates) {
+      if (!entry || typeof entry.create !== "function") {
+        continue;
+      }
+      try {
+        if (typeof window !== "undefined") {
+          window.__gosx_scene3d_backend_attempts = window.__gosx_scene3d_backend_attempts || [];
+          window.__gosx_scene3d_backend_attempts.push({
+            kind: String(entry.kind || ""),
+            webgpuAvailable: webgpuAvail,
+            preferWebGPU: preferWebGPU,
+            webglPreference: webglPreference,
+            webgpuFactoryErrorBefore: String(window.__gosx_scene3d_webgpu_factory_error || ""),
+          });
+        }
+      } catch (_err) {}
+      const renderer = entry.create(canvas, props, capability);
+      try {
+        if (typeof window !== "undefined" && Array.isArray(window.__gosx_scene3d_backend_attempts)) {
+          const last = window.__gosx_scene3d_backend_attempts[window.__gosx_scene3d_backend_attempts.length - 1];
+          if (last) {
+            last.result = renderer ? String(renderer.kind || renderer.type || "renderer") : "";
+            last.webgpuFactoryErrorAfter = String(window.__gosx_scene3d_webgpu_factory_error || "");
+          }
+        }
+      } catch (_err) {}
+      if (renderer) {
+        const isCanvas = entry.kind === "canvas2d" || renderer.kind === "canvas";
+        let fallbackReason = isCanvas
+          ? sceneRendererFallbackReason(props, capability, "canvas")
+          : (verdictFallback || (webgpuFeatureGap && renderer.kind === "webgl" ? "webgpu-feature-gap" : ""));
+        return {
+          renderer,
+          fallbackReason,
+          degraded: verdict ? (verdict.degraded || []) : [],
+        };
+      }
+    }
+    return null;
+  }
+
+  const sceneModelAssetCache = new Map();
+  const sceneModelAssetReady = new Set();
+  let sceneModelTextureVariantScopeSequence = 0;
+
+  function normalizeSceneModelTextureVariantContext(value, fallbackBackend) {
+    const source = value && typeof value === "object" ? value : {};
+    const backend = String(source.backend || fallbackBackend || "").trim().toLowerCase();
+    const seen = {};
+    const tokens = [];
+    const input = Array.isArray(source.tokens) ? source.tokens : [];
+    for (let index = 0; index < input.length; index += 1) {
+      const token = String(input[index] || "").trim().toLowerCase();
+      if (!token || seen[token]) continue;
+      seen[token] = true;
+      tokens.push(token);
+    }
+    tokens.sort();
+    return {
+      backend: backend === "canvas" ? "canvas2d" : backend,
+      uploadReady: source.uploadReady === true,
+      tokens,
+    };
+  }
+
+  function sceneModelTextureVariantFingerprint(context) {
+    const normalized = normalizeSceneModelTextureVariantContext(context, "");
+    return [
+      normalized.backend,
+      normalized.uploadReady ? "ready" : "authored",
+      normalized.tokens.join(","),
+    ].join("|");
+  }
+
+  function sceneModelTextureVariantContextForRenderer(renderer) {
+    const kind = renderer && renderer.kind ? renderer.kind : "";
+    return normalizeSceneModelTextureVariantContext(
+      renderer && renderer.textureVariantContext,
+      kind === "canvas" ? "canvas2d" : kind
+    );
+  }
+
+  function createSceneModelTextureVariantScope(context) {
+    const scope = {
+      key: "scene-model-variant-" + String(++sceneModelTextureVariantScopeSequence),
+      context: null,
+      fingerprint: "",
+      settled: false,
+      ready: null,
+      _resolve: null,
+    };
+    scope.ready = new Promise(function(resolve) {
+      scope._resolve = resolve;
+    });
+    if (arguments.length > 0) {
+      settleSceneModelTextureVariantScope(scope, context);
+    }
+    return scope;
+  }
+
+  function settleSceneModelTextureVariantScope(scope, context) {
+    if (!scope || scope.settled) {
+      return scope && scope.context;
+    }
+    const normalized = normalizeSceneModelTextureVariantContext(context, "");
+    scope.context = normalized;
+    scope.fingerprint = sceneModelTextureVariantFingerprint(normalized);
+    scope.settled = true;
+    const resolve = scope._resolve;
+    scope._resolve = null;
+    if (typeof resolve === "function") {
+      resolve(normalized);
+    }
+    return normalized;
+  }
+
+  function replaceSceneModelTextureVariantScope(state, renderer) {
+    if (!state) {
+      return { changed: false, scope: null };
+    }
+    const context = sceneModelTextureVariantContextForRenderer(renderer);
+    const fingerprint = sceneModelTextureVariantFingerprint(context);
+    const current = state._modelTextureVariantScope;
+    if (current && current.settled && current.fingerprint === fingerprint) {
+      return { changed: false, scope: current };
+    }
+    const scope = createSceneModelTextureVariantScope(context);
+    state._modelTextureVariantScope = scope;
+    return { changed: true, scope };
+  }
+
+  function publishSceneModelTextureVariantContext(mount, scope) {
+    if (!mount) return;
+    const context = scope && scope.context
+      ? normalizeSceneModelTextureVariantContext(scope.context, "")
+      : normalizeSceneModelTextureVariantContext(null, "");
+    const snapshot = {
+      scope: scope && scope.key ? String(scope.key) : "",
+      fingerprint: scope && scope.fingerprint ? String(scope.fingerprint) : "",
+      backend: context.backend,
+      uploadReady: context.uploadReady,
+      tokens: context.tokens.slice(),
+    };
+    mount.__gosxScene3DTextureVariantContext = snapshot;
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-backend", snapshot.backend);
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-upload-ready", snapshot.uploadReady ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-token-count", String(snapshot.tokens.length));
+    setAttrValue(mount, "data-gosx-scene3d-texture-variant-scope", snapshot.scope);
+  }
+
+  function resolveSceneModelAssetURL(baseSrc, value) {
+    const raw = typeof value === "string" ? value.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    try {
+      const baseURL = new URL(baseSrc || "", window.location.href).toString();
+      return new URL(raw, baseURL).toString();
+    } catch (_error) {
+      return raw;
+    }
+  }
+
+  function resolveSceneModelObjectURLs(baseSrc, rawObject) {
+    if (!rawObject || typeof rawObject !== "object") {
+      return rawObject;
+    }
+    const resolved = Object.assign({}, rawObject);
+    if (typeof resolved.texture === "string" && resolved.texture.trim()) {
+      resolved.texture = resolveSceneModelAssetURL(baseSrc, resolved.texture);
+    }
+    if (resolved.material && typeof resolved.material === "object") {
+      const material = Object.assign({}, resolved.material);
+      if (typeof material.texture === "string" && material.texture.trim()) {
+        material.texture = resolveSceneModelAssetURL(baseSrc, material.texture);
+      }
+      resolved.material = material;
+    }
+    return resolved;
+  }
+
+  function sceneModelTransform(point, model, mode) {
+    const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    const matrix = sceneModelTransformMatrix(model);
+    const out = sceneMatrixTransformInto({}, matrix, local.x, local.y, local.z, 4, false);
+    if (!mode) {
+      out.x += matrix[12]; out.y += matrix[13]; out.z += matrix[14];
+    }
+    return out;
+  }
+
+  function sceneModelLocalTransformVector(point, model) {
+    const local = point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 };
+    return sceneRotatePoint(
+      {
+        x: local.x * sceneNumber(model && model.scaleX, 1),
+        y: local.y * sceneNumber(model && model.scaleY, 1),
+        z: local.z * sceneNumber(model && model.scaleZ, 1),
+      },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+  }
+
+  function sceneModelMaxScale(model) {
+    const sx = Math.abs(sceneNumber(model && model.scaleX, 1)), sy = Math.abs(sceneNumber(model && model.scaleY, 1)), sz = Math.abs(sceneNumber(model && model.scaleZ, 1));
+    return Math.max(sx, sy, sz);
+  }
+
+  function sceneModelZeroOpacityHidesObject(model, object) {
+    const opacity = object && Object.prototype.hasOwnProperty.call(object, "opacity")
+      ? sceneNumber(object.opacity, sceneNumber(model && model.opacity, 1))
+      : sceneNumber(model && model.opacity, 1);
+    if (opacity > 0.0001) {
+      return false;
+    }
+    const material = sceneObjectMaterialProfile(object);
+    // Zero authored opacity only hides the draw when the material cannot
+    // mask its own fill: authored mesh shaders and materials carrying an
+    // enabled numeric alpha cutoff (0 included) keep rendering the masked
+    // fill, so the hide gate spares them alongside the shader exemption.
+    return !sceneMaterialUsesAuthoredMeshShader(material) &&
+      !sceneMaterialHasEnabledNumericAlphaCutoff(material);
+  }
+
+  function sceneModelEffectivelyHidden(model, object) {
+    return Boolean(model && model.visible === false)
+      || sceneModelMaxScale(model) <= 0.0015
+      || sceneModelZeroOpacityHidesObject(model, object);
+  }
+
+  function sceneApplyModelObjectHiddenState(object, model) {
+    if (!object) {
+      return;
+    }
+    object._modelHidden = sceneModelEffectivelyHidden(model, object);
+  }
+
+  function sceneModelRotateDirection(point, model) {
+    const rotated = sceneRotatePoint(
+      point && typeof point === "object" ? point : { x: 0, y: 0, z: 0 },
+      sceneNumber(model && model.rotationX, 0),
+      sceneNumber(model && model.rotationY, 0),
+      sceneNumber(model && model.rotationZ, 0),
+    );
+    const parent = model && model.parentMatrix;
+    return !parent ? rotated : sceneNormalizeDirection(
+      sceneMatrixTransformInto({}, parent, rotated.x, rotated.y, rotated.z, 4, false),
+    );
+  }
+
+  function sceneModelTransformMatrix(model) {
+    return sceneObjectModelMatrix(model, 0);
+  }
+
+  function sceneModelFitMode(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "bounds":
+      case "bound":
+      case "contain":
+      case "fit":
+      case "max-dimension":
+        return "contain";
+      default:
+        return "";
+    }
+  }
+
+  function sceneModelFitAlign(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "none":
+        return "none";
+      case "bottom":
+      case "center-bottom":
+        return "center-bottom";
+      case "center-min-y":
+      case "center-min":
+      case "water-center-min-y":
+        return "center-min-y";
+      case "center":
+      default:
+        return "center";
+    }
+  }
+
+  function sceneModelWithAssetFit(model, asset) {
+    const mode = sceneModelFitMode(model && model.fit);
+    const target = Math.max(0, sceneNumber(model && model.bounds, 0));
+    const bounds = sceneModelNormalizeAssetBounds(asset && asset.bounds);
+    if (!mode || target <= 0 || !bounds || !(bounds.maxDimension > 0)) {
+      return model;
+    }
+    const fitScale = target / bounds.maxDimension;
+    if (!Number.isFinite(fitScale) || fitScale <= 0) {
+      return model;
+    }
+    const align = sceneModelFitAlign(model && model.fitAlign);
+    const offset = { x: 0, y: 0, z: 0 };
+    if (align !== "none") {
+      offset.x = -bounds.centerX * fitScale;
+      offset.z = -bounds.centerZ * fitScale;
+      if (align === "center-bottom") {
+        offset.y = -bounds.minY * fitScale;
+      } else {
+        offset.y = -bounds.centerY * fitScale;
+        if (align === "center-min-y") {
+          offset.y -= bounds.minY * fitScale;
+        }
+      }
+    }
+    const translated = sceneModelLocalTransformVector(offset, model);
+    const fitted = Object.assign({}, model, {
+      x: sceneNumber(model && model.x, 0) + translated.x,
+      y: sceneNumber(model && model.y, 0) + translated.y,
+      z: sceneNumber(model && model.z, 0) + translated.z,
+      scaleX: sceneNumber(model && model.scaleX, 1) * fitScale,
+      scaleY: sceneNumber(model && model.scaleY, 1) * fitScale,
+      scaleZ: sceneNumber(model && model.scaleZ, 1) * fitScale,
+    });
+    fitted._fitScale = fitScale;
+    fitted._fitBounds = bounds;
+    fitted._fitAlign = align;
+    return fitted;
+  }
+
+  function sceneModelIdentityBindMatrices(jointCount) {
+    const matrices = new Float32Array(Math.max(0, jointCount) * 16);
+    for (let index = 0; index < jointCount; index += 1) {
+      matrices[index * 16] = 1;
+      matrices[index * 16 + 5] = 1;
+      matrices[index * 16 + 10] = 1;
+      matrices[index * 16 + 15] = 1;
+    }
+    return matrices;
+  }
+
+  function sceneCloneModelSkin(skin) {
+    if (!skin || typeof skin !== "object") {
+      return null;
+    }
+    const joints = Array.isArray(skin.joints) ? skin.joints.slice() : [];
+    if (!joints.length || joints.length > 64) {
+      return null;
+    }
+    let inverseBindMatrices = skin.inverseBindMatrices instanceof Float32Array
+      ? new Float32Array(skin.inverseBindMatrices)
+      : sceneTypedFloatArray(skin.inverseBindMatrices);
+    if (inverseBindMatrices.length < joints.length * 16) {
+      inverseBindMatrices = sceneModelIdentityBindMatrices(joints.length);
+    } else if (inverseBindMatrices.length !== joints.length * 16) {
+      inverseBindMatrices = inverseBindMatrices.slice(0, joints.length * 16);
+    }
+    return {
+      index: typeof skin.index === "number" ? skin.index : null,
+      name: typeof skin.name === "string" ? skin.name : "",
+      joints,
+      inverseBindMatrices,
+      skeleton: skin.skeleton != null ? skin.skeleton : null,
+    };
+  }
+
+  function sceneCloneModelSkins(skins) {
+    return Array.isArray(skins) ? skins.map(sceneCloneModelSkin) : [];
+  }
+
+  function sceneCloneModelAnimations(animations) {
+    if (!Array.isArray(animations)) {
+      return [];
+    }
+    return animations.map(function(clip, index) {
+      const source = clip && typeof clip === "object" ? clip : {};
+      const channels = Array.isArray(source.channels) ? source.channels.map(function(channel) {
+        const ch = channel && typeof channel === "object" ? channel : {};
+        return {
+          targetID: ch.targetID != null ? ch.targetID : ch.targetNode,
+          targetNode: ch.targetNode != null ? ch.targetNode : ch.targetID,
+          property: typeof ch.property === "string" ? ch.property : "translation",
+          componentCount: sceneNumber(ch.componentCount, 0),
+          interpolation: typeof ch.interpolation === "string" && ch.interpolation ? ch.interpolation : "LINEAR",
+          times: ch.times instanceof Float32Array ? new Float32Array(ch.times) : sceneTypedFloatArray(ch.times),
+          values: ch.values instanceof Float32Array ? new Float32Array(ch.values) : sceneTypedFloatArray(ch.values),
+        };
+      }) : [];
+      return {
+        name: typeof source.name === "string" && source.name ? source.name : ("clip-" + index),
+        duration: sceneNumber(source.duration, 0),
+        channels,
+      };
+    });
+  }
+
+  function sceneModelMaterialOverrideSource(model) {
+    if (!model || typeof model !== "object") {
+      return null;
+    }
+    if (model.materialOverride && typeof model.materialOverride === "object") {
+      return model.materialOverride;
+    }
+    const keys = ["material", "materialKind", "detail", "color", "texture", "opacity", "emissive", "emissiveColor", "normalScale", "occlusionStrength", "blendMode", "renderPass", "wireframe", "roughness", "metalness", "ior", "specularIntensity", "specularColor", "alphaCutoff", "unlit", "clearcoat", "sheen", "thickness", "thicknessMap", "specularAA", "attenuationDistance", "attenuationColor", "transmission", "iridescence", "anisotropy", "rimColor", "rimPower", "rimStrength", "customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "customUniforms", "shaderBackend", "shaderLayout", "shaderSource", "shaderSourceFiles"];
+    for (let index = 0; index < keys.length; index += 1) {
+      if (Object.prototype.hasOwnProperty.call(model, keys[index])) {
+        return model;
+      }
+    }
+    return null;
+  }
+
+  // The specular/emissive/rim tints are freshly authored RGB arrays on the
+  // override bag; snapshot per target so later mutation of the override RGB
+  // (or of one copied target) can never alias through to the other copy.
+  function sceneSnapshotSpecularOverrideColor(value) {
+    if (Array.isArray(value)) return value.slice();
+    /* @ts-expect-error TS2351 -- ArrayBuffer.isView narrows value to ArrayBufferView, whose .constructor loses its concrete construct signature */ if (ArrayBuffer.isView(value) && !(value instanceof DataView)) {
+      return new value.constructor(value);
+    }
+    return value;
+  }
+
+  const SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS = new Set(["specularColor", "emissiveColor", "rimColor"]);
+
+  function sceneAssignMaterialOverride(next, material, sourceKey, targetKey, override) {
+    if (!override || !Object.prototype.hasOwnProperty.call(override, sourceKey)) {
+      return;
+    }
+    const key = targetKey || sourceKey;
+    if (SCENE_MATERIAL_OVERRIDE_COLOR3_KEYS.has(sourceKey)) {
+      next[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
+      if (material) {
+        material[key] = sceneSnapshotSpecularOverrideColor(override[sourceKey]);
+      }
+      return;
+    }
+    next[key] = override[sourceKey];
+    if (material) {
+      material[key] = override[sourceKey];
+    }
+  }
+
+  function sceneApplyMaterialOverride(raw, model) {
+    const override = sceneModelMaterialOverrideSource(model);
+    if (!override) {
+      return raw && typeof raw === "object" ? Object.assign({}, raw) : {};
+    }
+    const next = raw && typeof raw === "object" ? Object.assign({}, raw) : {};
+    const material = next.material && typeof next.material === "object"
+      ? Object.assign({}, next.material)
+      : null;
+    const namedMaterialOverride = typeof override.material === "string" && override.material.trim();
+    if (typeof override.materialKind === "string" && override.materialKind) {
+      next.materialKind = override.materialKind;
+      if (typeof next.material === "string") {
+        next.material = override.materialKind;
+      }
+      if (material) {
+        material.kind = override.materialKind;
+      }
+    }
+    if (namedMaterialOverride) {
+      next.material = override.material.trim();
+    }
+    sceneAssignMaterialOverride(next, material, "detail", "detail", override);
+    sceneAssignMaterialOverride(next, material, "color", "color", override);
+    sceneAssignMaterialOverride(next, material, "texture", "texture", override);
+    sceneAssignMaterialOverride(next, material, "opacity", "opacity", override);
+    sceneAssignMaterialOverride(next, material, "emissive", "emissive", override);
+    sceneAssignMaterialOverride(next, material, "emissiveColor", "emissiveColor", override);
+    sceneAssignMaterialOverride(next, material, "normalScale", "normalScale", override);
+    sceneAssignMaterialOverride(next, material, "occlusionStrength", "occlusionStrength", override);
+    sceneAssignMaterialOverride(next, material, "blendMode", "blendMode", override);
+    sceneAssignMaterialOverride(next, material, "renderPass", "renderPass", override);
+    sceneAssignMaterialOverride(next, material, "wireframe", "wireframe", override);
+    sceneAssignMaterialOverride(next, material, "roughness", "roughness", override);
+    sceneAssignMaterialOverride(next, material, "metalness", "metalness", override);
+    sceneAssignMaterialOverride(next, material, "ior", "ior", override);
+    sceneAssignMaterialOverride(next, material, "specularIntensity", "specularIntensity", override);
+    sceneAssignMaterialOverride(next, material, "specularColor", "specularColor", override);
+    // An explicit null cutoff (masking disabled) is copied as-is; genuine
+    // absence — including an own { alphaCutoff: undefined } — in the
+    // override never touches the asset's authored masking.
+    if (override.alphaCutoff !== undefined) {
+      sceneAssignMaterialOverride(next, material, "alphaCutoff", "alphaCutoff", override);
+    }
+    // Unlit flag: normalize via sceneBool without mutating the override
+    // source; undefined (absent) leaves the asset's authored lighting as-is,
+    // an explicit false clears any inherited unlit flag.
+    const unlitOverride = sceneBool(override.unlit, undefined);
+    if (unlitOverride !== undefined) {
+      sceneAssignMaterialOverride(next, material, "unlit", "unlit", { unlit: unlitOverride });
+    }
+    sceneAssignMaterialOverride(next, material, "clearcoat", "clearcoat", override);
+    sceneAssignMaterialOverride(next, material, "sheen", "sheen", override);
+    sceneAssignMaterialOverride(next, material, "transmission", "transmission", override);
+    sceneAssignMaterialOverride(next, material, "thickness", "thickness", override);
+    sceneAssignMaterialOverride(next, material, "thicknessMap", "thicknessMap", override);
+    sceneAssignMaterialOverride(next, material, "specularAA", "specularAA", override);
+    sceneAssignMaterialOverride(next, material, "attenuationDistance", "attenuationDistance", override);
+    sceneAssignMaterialOverride(next, material, "attenuationColor", "attenuationColor", override);
+    sceneAssignMaterialOverride(next, material, "iridescence", "iridescence", override);
+    sceneAssignMaterialOverride(next, material, "anisotropy", "anisotropy", override);
+    sceneAssignMaterialOverride(next, material, "rimColor", "rimColor", override);
+    sceneAssignMaterialOverride(next, material, "rimPower", "rimPower", override);
+    sceneAssignMaterialOverride(next, material, "rimStrength", "rimStrength", override);
+    sceneAssignMaterialOverride(next, material, "customVertex", "customVertex", override);
+    sceneAssignMaterialOverride(next, material, "customFragment", "customFragment", override);
+    sceneAssignMaterialOverride(next, material, "customVertexWGSL", "customVertexWGSL", override);
+    sceneAssignMaterialOverride(next, material, "customFragmentWGSL", "customFragmentWGSL", override);
+    sceneAssignMaterialOverride(next, material, "customUniforms", "customUniforms", override);
+    sceneAssignMaterialOverride(next, material, "shaderBackend", "shaderBackend", override);
+    sceneAssignMaterialOverride(next, material, "shaderLayout", "shaderLayout", override);
+    sceneAssignMaterialOverride(next, material, "shaderSource", "shaderSource", override);
+    sceneAssignMaterialOverride(next, material, "shaderSourceFiles", "shaderSourceFiles", override);
+    if (material && !namedMaterialOverride) {
+      next.material = material;
+    }
+    return next;
+  }
+
+  function sceneApplyModelLOD(instanced, model) {
+    if (!instanced || !model || !model.lodGroup) {
+      return;
+    }
+    instanced.lodGroup = model.lodGroup;
+    instanced.lodLevel = model.lodLevel;
+    instanced.lodMinDistance = model.lodMinDistance;
+    instanced.lodMaxDistance = model.lodMaxDistance;
+  }
+
+  function sceneApplyModelRenderFlags(instanced, model) {
+    if (!instanced || !model) {
+      return;
+    }
+    if (typeof model.castShadow === "boolean") {
+      instanced.castShadow = model.castShadow;
+    }
+    if (typeof model.receiveShadow === "boolean") {
+      instanced.receiveShadow = model.receiveShadow;
+    }
+  }
+
+  function sceneApplyModelMaterialName(instanced, model) {
+    if (!instanced || !model || typeof model.material !== "string" || !model.material.trim()) {
+      return;
+    }
+    instanced.material = model.material.trim();
+  }
+
+  function sceneModelPrimitiveObject(object, model, prefix) {
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationX: sceneNumber(object.rotationX, 0) + sceneNumber(model && model.rotationX, 0),
+      rotationY: sceneNumber(object.rotationY, 0) + sceneNumber(model && model.rotationY, 0),
+      rotationZ: sceneNumber(object.rotationZ, 0) + sceneNumber(model && model.rotationZ, 0),
+    });
+    const positioned = sceneModelTransform({ x: object.x, y: object.y, z: object.z }, model, 0);
+    instanced.x = positioned.x;
+    instanced.y = positioned.y;
+    instanced.z = positioned.z;
+    const scaleX = Math.abs(sceneNumber(model && model.scaleX, 1));
+    const scaleY = Math.abs(sceneNumber(model && model.scaleY, 1));
+    const scaleZ = Math.abs(sceneNumber(model && model.scaleZ, 1));
+    switch (object.kind) {
+      case "cube":
+        if (Math.abs(scaleX - scaleY) > 0.0001 || Math.abs(scaleX - scaleZ) > 0.0001) {
+          instanced.kind = "box";
+          instanced.width = sceneNumber(object.size, 1.2) * scaleX;
+          instanced.height = sceneNumber(object.size, 1.2) * scaleY;
+          instanced.depth = sceneNumber(object.size, 1.2) * scaleZ;
+        } else {
+          instanced.size = sceneNumber(object.size, 1.2) * scaleX;
+        }
+        break;
+      case "sphere":
+        instanced.radius = sceneNumber(object.radius, sceneNumber(object.size, 1.2) / 2) * Math.max(scaleX, scaleY, scaleZ);
+        break;
+      default:
+        instanced.width = sceneNumber(object.width, sceneNumber(object.size, 1.2)) * scaleX;
+        instanced.height = sceneNumber(object.height, sceneNumber(object.size, 1.2)) * scaleY;
+        instanced.depth = sceneNumber(object.depth, sceneNumber(object.size, 1.2)) * scaleZ;
+        break;
+    }
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    sceneApplyModelObjectHiddenState(instanced, model);
+    sceneApplyModelMaterialName(instanced, model);
+    sceneApplyModelRenderFlags(instanced, model);
+    sceneApplyModelLOD(instanced, model);
+    return normalizeSceneObject(instanced, prefix);
+  }
+
+  function sceneModelLineObject(object, model, prefix, nodeAnimSource) {
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      points: object.points,
+      lineSegments: sceneCloneModelLineSegments(object.lineSegments),
+      parentMatrix: sceneModelTransformMatrix(model),
+    });
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (nodeAnimSource) {
+      // Rigid node TRS playback changes geometry every pose tick; a static
+      // bake would freeze the first frame even when model.static was true.
+      instanced.static = false;
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    sceneApplyModelObjectHiddenState(instanced, model);
+    sceneApplyModelMaterialName(instanced, model);
+    sceneApplyModelRenderFlags(instanced, model);
+    sceneApplyModelLOD(instanced, model);
+    const normalized = normalizeSceneObject(instanced, prefix);
+    if (nodeAnimSource && nodeAnimSource.basePositions) {
+      normalized._nodeAnimLive = {
+        kind: "lines",
+        nodeIndex: nodeAnimSource.nodeIndex,
+        instanceMatrix: nodeAnimSource.instanceMatrix || null,
+        nodeMatrix: nodeAnimSource.nodeMatrix || null,
+        basePositions: nodeAnimSource.basePositions,
+        object: normalized,
+        modelBase: {
+          x: object.x,
+          y: object.y,
+          z: object.z,
+          rotationX: object.rotationX,
+          rotationY: object.rotationY,
+          rotationZ: object.rotationZ,
+        },
+        modelMatrix: null,
+        model: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
+      };
+    }
+    return normalized;
+  }
+
+  function sceneCloneModelLineSegments(segments) {
+    return Array.isArray(segments) ? segments.map(function(pair) {
+      return Array.isArray(pair) ? pair.slice(0, 2) : pair;
+    }) : [];
+  }
+
+  function sceneApplyModelPointOverride(point, model) {
+    const override = Object.assign({}, point);
+    if (!model || typeof model !== "object") {
+      return override;
+    }
+    if (typeof model.material === "string" && model.material.trim()) {
+      override.material = model.material.trim();
+    }
+    if (typeof model.color === "string" && model.color) {
+      override.color = model.color;
+    }
+    if (typeof model.style === "string" && model.style) {
+      override.style = model.style;
+    }
+    if (model.size != null) {
+      override.size = model.size;
+    }
+    if (model.opacity != null) {
+      override.opacity = model.opacity;
+    }
+    if (typeof model.blendMode === "string" && model.blendMode) {
+      override.blendMode = model.blendMode;
+    }
+    if (model.depthWrite != null) {
+      override.depthWrite = model.depthWrite;
+    }
+    if (model.attenuation != null) {
+      override.attenuation = model.attenuation;
+    }
+    return override;
+  }
+
+  function sceneInstantiateModelPointsEntry(rawPoint, model, prefix, index) {
+    const source = sceneApplyModelPointOverride(rawPoint, model);
+    const nodeAnimSource = rawPoint && rawPoint._nodeAnim ? rawPoint._nodeAnim : null;
+    const normalized = normalizeScenePointsEntry(source, index, null);
+    const positions = normalized._cachedPos || normalized.positions;
+    const instanced = Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      positions,
+      parentMatrix: sceneModelTransformMatrix(model),
+    });
+    if (positions instanceof Float32Array) {
+      instanced._cachedPos = positions;
+    }
+    if (normalized._cachedSizes) {
+      instanced._cachedSizes = normalized._cachedSizes;
+    }
+    if (normalized._cachedColors) {
+      instanced._cachedColors = normalized._cachedColors;
+    }
+    const result = normalizeScenePointsEntry(instanced, instanced.id, normalized);
+    if (nodeAnimSource && nodeAnimSource.basePositions) {
+      result._nodeAnimLive = {
+        kind: "points",
+        nodeIndex: nodeAnimSource.nodeIndex,
+        instanceMatrix: nodeAnimSource.instanceMatrix || null,
+        nodeMatrix: nodeAnimSource.nodeMatrix || null,
+        basePositions: nodeAnimSource.basePositions,
+        object: result,
+        modelBase: {
+          x: normalized.x,
+          y: normalized.y,
+          z: normalized.z,
+          rotationX: normalized.rotationX,
+          rotationY: normalized.rotationY,
+          rotationZ: normalized.rotationZ,
+        },
+        modelMatrix: null,
+        model: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
+      };
+    }
+    return result;
+  }
+
+  function sceneInstantiateModelObject(rawObject, model, prefix, index, skinInstances) {
+    // Read morph metadata off the pristine asset object BEFORE any override
+    // copy or normalization: the normalizer whitelist drops unknown fields.
+    const morphSource = rawObject && rawObject._morphAnim ? rawObject._morphAnim : null;
+    const morphNodeMatrix = morphSource && rawObject.transform && rawObject.transform.length === 16
+      ? rawObject.transform
+      : null;
+    const nodeAnimSource = rawObject && rawObject._nodeAnim ? rawObject._nodeAnim : null;
+    let source = sceneApplyMaterialOverride(rawObject, model);
+    if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
+      source.skin = skinInstances[source.skinIndex];
+    }
+    const sharedGeometry = model && model._shareRigidGeometry && !morphSource && !nodeAnimSource &&
+      !(source && source.skin) && rawObject && rawObject.vertices
+      ? sceneRigidPrimitiveGeometry.get(rawObject.vertices) : null;
+    // The shared primitive was already normalized and validated on first
+    // hydration. Normalize only instance metadata; cloning its normal/UV/
+    // tangent arrays again is proportional to the whole incoming swarm.
+    const normalized = sharedGeometry
+      ? normalizeSceneObject(Object.assign({}, source, {vertices: null}), index, {vertices: sharedGeometry})
+      : normalizeSceneObject(source, index);
+    if (normalized.vertices && normalized.vertices.positions && normalized.vertices.count > 0) {
+      // Normalization creates a new vertices wrapper. The cache belongs to
+      // the decoded asset's original primitive, not that temporary wrapper.
+      // Looking up the latter rebakes every new actor before throwing its
+      // geometry away in favor of the shared stream during staging.
+      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry);
+    }
+    if (normalized.kind === "lines") {
+      return sceneModelLineObject(normalized, model, prefix, nodeAnimSource);
+    }
+    return sceneModelPrimitiveObject(normalized, model, prefix);
+  }
+
+  function sceneModelTransformMeshFloats(values, tupleSize, mapper) {
+    const source = values instanceof Float32Array ? values : sceneTypedFloatArray(values);
+    const typed = new Float32Array(source.length);
+    const safeTupleSize = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
+    for (let index = 0; index + safeTupleSize - 1 < source.length; index += safeTupleSize) {
+      const mapped = mapper(
+        sceneNumber(source[index], 0),
+        sceneNumber(source[index + 1], 0),
+        sceneNumber(source[index + 2], 0),
+        safeTupleSize > 3 ? sceneNumber(source[index + 3], 1) : undefined
+      );
+      typed[index] = sceneNumber(mapped && mapped.x, 0);
+      typed[index + 1] = sceneNumber(mapped && mapped.y, 0);
+      typed[index + 2] = sceneNumber(mapped && mapped.z, 0);
+      if (safeTupleSize > 3) {
+        typed[index + 3] = sceneNumber(mapped && mapped.w, 1);
+      }
+    }
+    return typed;
+  }
+
+  function sceneCloneModelMeshIndices(indices, reverseTriangles, count) {
+    let out = indices instanceof Uint32Array ? new Uint32Array(indices) : null;
+    if (!out && reverseTriangles) {
+      out = new Uint32Array(count);
+      for (let i = 0; i < out.length; i += 1) out[i] = i;
+    }
+    if (out && reverseTriangles) for (let i = 0; i + 2 < out.length; i += 3) {
+      const swap = out[i + 1]; out[i + 1] = out[i + 2]; out[i + 2] = swap;
+    }
+    return out;
+  }
+
+  function sceneModelTransformTangents(values, normals, model, orientation) {
+    const modelMatrix = sceneModelTransformMatrix(model);
+    const out = sceneModelTransformMeshFloats(values, 4, function(x, y, z, w) {
+      const tangent = sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, false);
+      return { x: tangent.x, y: tangent.y, z: tangent.z, w: sceneNumber(w, 1) * orientation };
+    });
+    for (let i = 0; i + 3 < out.length; i += 4) {
+      const n = i / 4 * 3;
+      const dot = out[i] * normals[n] + out[i + 1] * normals[n + 1] + out[i + 2] * normals[n + 2];
+      const tangent = sceneNormalizeDirection({ x: out[i] - normals[n] * dot, y: out[i + 1] - normals[n + 1] * dot, z: out[i + 2] - normals[n + 2] * dot });
+      out[i] = tangent.x; out[i + 1] = tangent.y; out[i + 2] = tangent.z;
+    }
+    return out;
+  }
+
+  function sceneModelMeshObject(object, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry) {
+    const vertices = object && object.vertices && typeof object.vertices === "object" ? object.vertices : null;
+    if (!vertices || !vertices.positions || !vertices.count) {
+      return null;
+    }
+    const morphMeta = morphSource || null;
+    const instanced = Object.assign({}, object, {
+      id: prefix + "/" + (object.id || "object"),
+      x: 0,
+      y: 0,
+      z: 0,
+      rotationX: 0,
+      rotationY: 0,
+      rotationZ: 0,
+      spinX: 0,
+      spinY: 0,
+      spinZ: 0,
+      shiftX: 0,
+      shiftY: 0,
+      shiftZ: 0,
+      driftSpeed: 0,
+      driftPhase: 0,
+    });
+    const hasSkin = instanced.skin && typeof instanced.skin === "object";
+    const vertexCount = Math.max(0, Math.floor(sceneNumber(vertices.count, 0)));
+    // Model TRS and its inverse-transpose are constant across this snapshot.
+    // Rebuilding them inside the attribute mapper paid trigonometry and a
+    // matrix inversion for every corner of every imported triangle.
+    const modelMatrix = sceneModelTransformMatrix(model);
+    const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
+    const modelOrientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
+    const sharedRigidGeometry = !hasSkin && !morphMeta && !nodeAnimSource && model && model._shareRigidGeometry
+      ? sharedGeometry || sceneRigidPrimitiveGeometry.get(vertices) : null;
+    if (sharedRigidGeometry) {
+      instanced.vertices = sharedRigidGeometry;
+    } else if (hasSkin) {
+      instanced.vertices = {
+        count: vertexCount,
+        positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
+        normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+        indices: sceneCloneModelMeshIndices(vertices.indices),
+      };
+    } else {
+      const transformedNormals = sceneModelTransformMeshFloats(vertices.normals, 3, function(x, y, z) {
+        return sceneNormalizeDirection(sceneMatrixTransformInto({}, normalMatrix, x, y, z, 3, false));
+      });
+      instanced.vertices = {
+        count: vertexCount,
+        positions: sceneModelTransformMeshFloats(vertices.positions, 3, function(x, y, z) {
+          return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
+        }),
+        normals: transformedNormals,
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        tangents: sceneModelTransformTangents(vertices.tangents, transformedNormals, model, modelOrientation),
+        joints: vertices.joints instanceof Float32Array ? new Float32Array(vertices.joints) : sceneTypedFloatArray(vertices.joints),
+        weights: vertices.weights instanceof Float32Array ? new Float32Array(vertices.weights) : sceneTypedFloatArray(vertices.weights),
+        indices: sceneCloneModelMeshIndices(vertices.indices, modelOrientation < 0, vertexCount),
+      };
+    }
+    if (model && model.static !== null) {
+      instanced.static = Boolean(model.static);
+    }
+    if (model && Array.isArray(model._live) && model._live.length > 0) {
+      instanced.static = false;
+    }
+    if (hasSkin && model && model.animation) {
+      instanced.static = false;
+    }
+    if (morphMeta) {
+      // Animated morph geometry changes on every pose tick; a static bake
+      // would freeze the first folded frame into the render bundle.
+      instanced.static = false;
+    }
+    if (nodeAnimSource) {
+      // Rigid node TRS playback: same reasoning — never bake a static frame,
+      // even when model.static was authored true.
+      instanced.static = false;
+    }
+    if (model && typeof model.pickable === "boolean") {
+      instanced.pickable = model.pickable;
+    }
+    sceneApplyModelObjectHiddenState(instanced, model);
+    sceneApplyModelMaterialName(instanced, model);
+    sceneApplyModelRenderFlags(instanced, model);
+    sceneApplyModelLOD(instanced, model);
+    const normalized = sharedRigidGeometry
+      ? normalizeSceneObject(Object.assign({}, instanced, {vertices: null}), prefix, {vertices: sharedRigidGeometry})
+      : normalizeSceneObject(instanced, prefix);
+    sceneApplyModelMaterialName(normalized, model);
+    if (!morphMeta && !nodeAnimSource && normalized && normalized.vertices) {
+      // Imported rigid and skeletal bind streams own immutable snapshots.
+      // Joint playback changes matrices; morph and node streams stay mutable.
+      // Retain attributes rather than rebuilding and hashing every triangle.
+      // Live rigid transforms advance the revision when geometry is rebaked.
+      normalized.vertices.immutable = true;
+      normalized.vertices.revision = 0;
+    }
+    if (sharedRigidGeometry && normalized) {
+      normalized.vertices = sharedRigidGeometry;
+      normalized._modelLocalVertices = sharedRigidGeometry;
+    } else if (!hasSkin && normalized && normalized.vertices) {
+      normalized._modelLocalVertices = {
+        positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
+        normals: vertices.normals instanceof Float32Array ? new Float32Array(vertices.normals) : sceneTypedFloatArray(vertices.normals),
+        uvs: vertices.uvs instanceof Float32Array ? new Float32Array(vertices.uvs) : sceneTypedFloatArray(vertices.uvs),
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ tangents: vertices.tangents instanceof Float32Array ? new Float32Array(vertices.tangents) : sceneTypedFloatArray(vertices.tangents),
+        indices: sceneCloneModelMeshIndices(vertices.indices),
+        count: Math.max(0, Math.floor(sceneNumber(vertices.count, 0))),
+      };
+    }
+    if (morphMeta && normalized && normalized.vertices) {
+      // Re-attached AFTER normalization (the whitelist drops it otherwise).
+      // meta is the shared immutable source; matrices, lastWeights, the
+      // cached fold and the snapshot fields are per-instance output state.
+      normalized._morphAnim = {
+        meta: morphMeta,
+        vertices: normalized.vertices,
+        skinned: hasSkin === true,
+        nodeMatrix: morphNodeMatrix || null,
+        modelMatrix: hasSkin ? null : sceneModelTransformMatrix(model),
+        modelLocalVertices: normalized._modelLocalVertices || null,
+        lastWeights: morphMeta.defaults.slice(),
+        lastFolded: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
+      };
+    }
+    if (nodeAnimSource && normalized && normalized.vertices) {
+      // Re-attached AFTER normalization (the whitelist drops it otherwise).
+      // meta is the shared immutable pristine-local source; matrices and the
+      // last-applied snapshots are per-instance output state.
+      normalized._nodeAnimLive = {
+        kind: "mesh",
+        meta: nodeAnimSource,
+        nodeIndex: nodeAnimSource.nodeIndex,
+        instanceMatrix: nodeAnimSource.instanceMatrix || null,
+        nodeMatrix: nodeAnimSource.nodeMatrix || null,
+        vertices: normalized.vertices,
+        modelLocalVertices: normalized._modelLocalVertices || null,
+        modelMatrix: null,
+        model: null,
+        lastNodeMatrix: null,
+        lastModelMatrix: null,
+      };
+    }
+    return normalized;
+  }
+
+  function sceneInstantiateModelLabel(rawLabel, model, prefix, index) {
+    const normalized = normalizeSceneLabel(rawLabel, index);
+    const position = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+    });
+  }
+
+  function sceneInstantiateModelLight(rawLight, model, prefix, index) {
+    const normalized = normalizeSceneLight(rawLight, index, null);
+    if (!normalized) {
+      return null;
+    }
+    const next = Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+    });
+    if (next.kind === "directional") {
+      const rotated = sceneModelRotateDirection({
+        x: next.directionX,
+        y: next.directionY,
+        z: next.directionZ,
+      }, model);
+      next.directionX = rotated.x;
+      next.directionY = rotated.y;
+      next.directionZ = rotated.z;
+      // Re-stamp the light sub-hash since directionX/Y/Z were just mutated
+      // in place after normalizeSceneLight's original stamp. Without this
+      // scenePBRLightsHash would read a stale _lightHash and miss content
+      // changes for model-rotated directional lights.
+      if (typeof hashLightContent === "function") {
+        next._lightHash = hashLightContent(next);
+      }
+      return next;
+    }
+    const position = sceneModelTransform({ x: next.x, y: next.y, z: next.z }, model, 0);
+    next.x = position.x;
+    next.y = position.y;
+    next.z = position.z;
+    if (next.kind === "point") {
+      next.range = sceneNumber(next.range, 0) * Math.max(
+        Math.abs(sceneNumber(model && model.scaleX, 1)),
+        Math.abs(sceneNumber(model && model.scaleY, 1)),
+        Math.abs(sceneNumber(model && model.scaleZ, 1)),
+      );
+    }
+    // Re-stamp after the above in-place x/y/z (and range for points)
+    // writes — see the directional branch comment above.
+    if (typeof hashLightContent === "function") {
+      next._lightHash = hashLightContent(next);
+    }
+    return next;
+  }
+
+  function sceneInstantiateModelSprite(rawSprite, model, prefix, index) {
+    const normalized = normalizeSceneSprite(rawSprite, index);
+    if (!normalized || !normalized.src) {
+      return null;
+    }
+    const position = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
+    const shift = sceneModelTransform({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model, 1);
+    const modelScale = sceneModelMaxScale(model);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      shiftX: shift.x,
+      shiftY: shift.y,
+      shiftZ: shift.z,
+      width: normalized.width * modelScale,
+      height: normalized.height * modelScale,
+    });
+  }
+
+  function sceneInstantiateModelHTML(rawHTML, model, prefix, index) {
+    const normalized = normalizeSceneHTML(rawHTML, index);
+    if (!normalized || !normalized.html.trim()) {
+      return null;
+    }
+    const position = sceneModelTransform({ x: normalized.x, y: normalized.y, z: normalized.z }, model, 0);
+    const shift = sceneModelTransform({ x: normalized.shiftX, y: normalized.shiftY, z: normalized.shiftZ }, model, 1);
+    const modelScale = sceneModelMaxScale(model);
+    return Object.assign({}, normalized, {
+      id: prefix + "/" + normalized.id,
+      x: position.x,
+      y: position.y,
+      z: position.z,
+      shiftX: shift.x,
+      shiftY: shift.y,
+      shiftZ: shift.z,
+      width: normalized.width * modelScale,
+      height: normalized.height * modelScale,
+    });
+  }
+
+  function sceneModelBoundsNumber(value) {
+    const number = typeof value === "number" ? value : Number(value);
+    return Number.isFinite(number) ? number : null;
+  }
+
+  function sceneModelExpandBounds(bounds, x, y, z) {
+    const px = sceneModelBoundsNumber(x);
+    const py = sceneModelBoundsNumber(y);
+    const pz = sceneModelBoundsNumber(z);
+    if (px == null || py == null || pz == null) {
+      return bounds;
+    }
+    const next = bounds || {
+      minX: Infinity,
+      minY: Infinity,
+      minZ: Infinity,
+      maxX: -Infinity,
+      maxY: -Infinity,
+      maxZ: -Infinity,
+    };
+    if (px < next.minX) next.minX = px;
+    if (py < next.minY) next.minY = py;
+    if (pz < next.minZ) next.minZ = pz;
+    if (px > next.maxX) next.maxX = px;
+    if (py > next.maxY) next.maxY = py;
+    if (pz > next.maxZ) next.maxZ = pz;
+    return next;
+  }
+
+  function sceneModelFinalizeBounds(bounds) {
+    if (!bounds) {
+      return null;
+    }
+    const minX = sceneModelBoundsNumber(bounds.minX);
+    const minY = sceneModelBoundsNumber(bounds.minY);
+    const minZ = sceneModelBoundsNumber(bounds.minZ);
+    const maxX = sceneModelBoundsNumber(bounds.maxX);
+    const maxY = sceneModelBoundsNumber(bounds.maxY);
+    const maxZ = sceneModelBoundsNumber(bounds.maxZ);
+    if (minX == null || minY == null || minZ == null || maxX == null || maxY == null || maxZ == null) {
+      return null;
+    }
+    if (maxX < minX || maxY < minY || maxZ < minZ) {
+      return null;
+    }
+    const width = maxX - minX;
+    const height = maxY - minY;
+    const depth = maxZ - minZ;
+    return {
+      minX,
+      minY,
+      minZ,
+      maxX,
+      maxY,
+      maxZ,
+      width,
+      height,
+      depth,
+      centerX: (minX + maxX) * 0.5,
+      centerY: (minY + maxY) * 0.5,
+      centerZ: (minZ + maxZ) * 0.5,
+      maxDimension: Math.max(width, height, depth),
+    };
+  }
+
+  function sceneModelNormalizeAssetBounds(value) {
+    return value && typeof value === "object" ? sceneModelFinalizeBounds(value) : null;
+  }
+
+  function sceneModelExpandPositionArray(bounds, positions, offset) {
+    if (!positions || typeof positions.length !== "number") {
+      return bounds;
+    }
+    const source = positions instanceof Float32Array ? positions : sceneTypedFloatArray(positions);
+    const ox = sceneNumber(offset && offset.x, 0);
+    const oy = sceneNumber(offset && offset.y, 0);
+    const oz = sceneNumber(offset && offset.z, 0);
+    for (let index = 0; index + 2 < source.length; index += 3) {
+      bounds = sceneModelExpandBounds(bounds, source[index] + ox, source[index + 1] + oy, source[index + 2] + oz);
+    }
+    return bounds;
+  }
+
+  function sceneModelExpandPointList(bounds, points, offset) {
+    if (!Array.isArray(points)) {
+      return bounds;
+    }
+    const ox = sceneNumber(offset && offset.x, 0);
+    const oy = sceneNumber(offset && offset.y, 0);
+    const oz = sceneNumber(offset && offset.z, 0);
+    for (let index = 0; index < points.length; index += 1) {
+      const point = points[index] || {};
+      bounds = sceneModelExpandBounds(bounds, sceneNumber(point.x, 0) + ox, sceneNumber(point.y, 0) + oy, sceneNumber(point.z, 0) + oz);
+    }
+    return bounds;
+  }
+
+  function sceneModelExpandPrimitiveBounds(bounds, object) {
+    const kind = String(object && object.kind || "").trim().toLowerCase();
+    const x = sceneNumber(object && object.x, 0);
+    const y = sceneNumber(object && object.y, 0);
+    const z = sceneNumber(object && object.z, 0);
+    if (kind === "sphere") {
+      const radius = Math.max(0, sceneNumber(object.radius, sceneNumber(object.size, 1.2) * 0.5));
+      bounds = sceneModelExpandBounds(bounds, x - radius, y - radius, z - radius);
+      return sceneModelExpandBounds(bounds, x + radius, y + radius, z + radius);
+    }
+    if (kind === "box" || kind === "cube") {
+      const size = sceneNumber(object.size, 1.2);
+      const halfX = Math.max(0, sceneNumber(object.width, size)) * 0.5;
+      const halfY = Math.max(0, sceneNumber(object.height, size)) * 0.5;
+      const halfZ = Math.max(0, sceneNumber(object.depth, size)) * 0.5;
+      bounds = sceneModelExpandBounds(bounds, x - halfX, y - halfY, z - halfZ);
+      return sceneModelExpandBounds(bounds, x + halfX, y + halfY, z + halfZ);
+    }
+    return bounds;
+  }
+
+  function sceneModelAssetBounds(record, objects, points) {
+    const authored = sceneModelNormalizeAssetBounds(record && record.bounds);
+    if (authored && authored.maxDimension > 0) {
+      return authored;
+    }
+    let bounds = null;
+    const objectEntries = Array.isArray(objects) ? objects : [];
+    for (let index = 0; index < objectEntries.length; index += 1) {
+      const object = objectEntries[index] || {};
+      if (object.vertices && object.vertices.positions) {
+        bounds = sceneModelExpandPositionArray(bounds, object.vertices.positions, object);
+      } else if (Array.isArray(object.points)) {
+        bounds = sceneModelExpandPointList(bounds, object.points, object);
+      } else {
+        bounds = sceneModelExpandPrimitiveBounds(bounds, object);
+      }
+    }
+    const pointEntries = Array.isArray(points) ? points : [];
+    for (let index = 0; index < pointEntries.length; index += 1) {
+      const pointEntry = pointEntries[index] || {};
+      bounds = sceneModelExpandPositionArray(bounds, pointEntry._cachedPos || pointEntry.positions, pointEntry);
+    }
+    return sceneModelFinalizeBounds(bounds);
+  }
+
+  function parseSceneModelAsset(raw, src) {
+    let payload = raw;
+    if (payload && typeof payload === "object" && payload.scene && typeof payload.scene === "object") {
+      payload = payload.scene;
+    }
+    if (Array.isArray(payload)) {
+      payload = { objects: payload };
+    }
+    const record = payload && typeof payload === "object" ? payload : {};
+    const objects = Array.isArray(record.objects) ? record.objects.map(function(object) {
+      return resolveSceneModelObjectURLs(src, object);
+    }) : [];
+    const points = Array.isArray(record.points) ? record.points : [];
+    const sprites = Array.isArray(record.sprites) ? record.sprites.map(function(sprite) {
+      if (!sprite || typeof sprite !== "object") {
+        return sprite;
+      }
+      const resolved = Object.assign({}, sprite);
+      resolved.src = resolveSceneModelAssetURL(src, sprite.src);
+      return resolved;
+    }) : [];
+    return {
+      src,
+      bounds: sceneModelAssetBounds(record, objects, points),
+      objects,
+      points,
+      labels: Array.isArray(record.labels) ? record.labels : [],
+      sprites,
+      html: Array.isArray(record.html) ? record.html : (Array.isArray(record.htmlOverlays) ? record.htmlOverlays : []),
+      lights: Array.isArray(record.lights) ? record.lights : [],
+      animations: Array.isArray(record.animations) ? record.animations : [],
+      skins: Array.isArray(record.skins) ? record.skins : [],
+      nodes: Array.isArray(record.nodes) ? record.nodes : [],
+    };
+  }
+
+  function sceneModelAssetFormat(src) {
+    const raw = typeof src === "string" ? src.trim() : "";
+    if (!raw) {
+      return "";
+    }
+    let pathname = raw;
+    try {
+      pathname = new URL(raw, window.location.href).pathname;
+    } catch (_error) {
+      pathname = raw.split(/[?#]/, 1)[0];
+    }
+    const normalized = pathname.toLowerCase();
+    if (normalized.endsWith(".glb")) {
+      return "glb";
+    }
+    if (normalized.endsWith(".gltf")) {
+      return "gltf";
+    }
+    return "json";
+  }
+
+  // resolveSceneSubFeatureURL reads a hashed sub-feature URL that the
+  // island renderer embedded as a data-* attribute on the main scene3d
+  // script tag. Using the hashed URL (rather than the unhashed compat
+  // URL) lets the browser cache the sub-feature forever, keyed on its
+  // content hash. Falls back to the unhashed URL when the attribute
+  // isn't present (dev mode, manual integration without the island
+  // renderer, etc.).
+
+
+  // Cached promise for the WebGPU sub-feature chunk. Scene3D now treats
+  // WebGPU as the default accelerated backend when the browser exposes it,
+  // so the first mount awaits this before choosing its renderer. Failed or
+  // unsupported probes still fall through to WebGL/canvas.
+
+  function sceneHasNavigatorWebGPU() {
+    return typeof navigator !== "undefined"
+      && navigator.gpu
+      && typeof navigator.gpu.requestAdapter === "function";
+  }
+
+  function ensureWebGPUFeatureLoaded() {
+    if (!sceneHasNavigatorWebGPU()) {
+      return Promise.resolve(null);
+    }
+    return ensureSceneGatedFeatureLoaded("webgpu", "gosxScene3dWebgpuUrl", "/gosx/bootstrap-feature-scene3d-webgpu.js");
+  }
+
+  async function ensurePreferredWebGPUBackend(props, capability) {
+    if (sceneCapabilityWebGPUPreference(props, capability) !== "prefer") {
+      return false;
+    }
+    if (sceneNeedsWebGLForWebGPUCoverage(props)) {
+      return false;
+    }
+    try {
+      // The probe is in the scene core, so failed adapter/device/context
+      // checks can fall back without fetching the unused renderer chunk.
+      if (typeof window.__gosx_scene3d_webgpu_probe_ready === "function"
+        && !(await window.__gosx_scene3d_webgpu_probe_ready())) {
+        return false;
+      }
+      await ensureWebGPUFeatureLoaded();
+      return sceneWebGPUAvailable();
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D WebGPU backend:", error && error.message ? error.message : error);
+      return false;
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // WebGL sub-feature chunk
+  // --------------------------------------------------------------------------
+  //
+  // Cached promise for the WebGL sub-feature chunk. A WebGPU-capable browser
+  // never fetches it, which is the whole point of the split: it used to ride
+  // in the base scene3d chunk and cost a Chromium page 160_835 minified bytes
+  // it never executed. See 26j-feature-scene3d-webgl-prefix.js.
+
+  function ensureWebGLFeatureLoaded() {
+    // The monolith keeps 16-scene-webgl.js inline, so nothing to fetch.
+    if (typeof createScenePBRRendererOrFallback === "function") {
+      return Promise.resolve(sceneWebGLChunkAPI() || { inline: true });
+    }
+    if (window.__gosx_scene3d_webgl_api) {
+      return Promise.resolve(window.__gosx_scene3d_webgl_api);
+    }
+    if (window.__gosx_scene3d_webgl_feature_promise) {
+      return window.__gosx_scene3d_webgl_feature_promise;
+    }
+    const promise = ensureSceneGatedFeatureLoaded("webgl", "gosxScene3dWebglUrl", "/gosx/bootstrap-feature-scene3d-webgl.js");
+    window.__gosx_scene3d_webgl_feature_promise = promise;
+    return promise;
+  }
+
+  // sceneWebGLBackendRequest builds the same registry request
+  // createSceneRendererFromRegistry builds, with one difference: it drops a
+  // WebGPU backend the probe could not deliver. That lets backendSelectionOrder
+  // rank only the backends this page can really use.
+  //
+  // There is exactly ONE backend selection policy — backendSelectionOrder in
+  // 15c-scene-backend-registry.ts. This function only feeds it. Do not add a
+  // second ordering rule here.
+  function sceneWebGLBackendRequest(props, capability) {
+    const webglPreference = sceneCapabilityWebGLPreference(props, capability);
+    const webgpuPreference = sceneCapabilityWebGPUPreference(props, capability);
+    const requireWebGL = sceneRequiresWebGL(props);
+    const backendCaps = sceneBackendCapsOf(props);
+    const webgpuAvail = typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    const verdict = chooseSceneBackend(backendCaps, {
+      requireWebGL,
+      forceWebGL: sceneForcesWebGL(props),
+      preferCanvas: sceneBool(props && props.preferCanvas, false),
+      preferWebGPU: webgpuPreference === "prefer",
+    }, { webgpu: webgpuAvail, webgl: true });
+    const wantsWebGPU = verdict
+      ? verdict.backend === "webgpu"
+      : (webgpuPreference === "prefer" && !sceneNeedsWebGLForWebGPUCoverage(props));
+    const preferWebGPU = wantsWebGPU && webgpuAvail && sceneBackendCapsAllowsKind(backendCaps, "webgpu");
+    // Trust the verdict the same way wantsWebGPU does above. Without this, a
+    // scene whose backendCaps exclude canvas2d (skinning, water) and whose
+    // capability tier marks WebGL "avoid" (low-power/reduced-data) computed
+    // allowWebGL=false even when verdict.backend was "webgl" — the ONLY real
+    // backend chooseSceneBackend could pick once WebGPU was unavailable. That
+    // starved settlePreferredWebGLBackend of a reason to fetch the WebGL
+    // chunk, so createSceneRenderer ran with no factory loaded and reported
+    // "could not acquire a renderer" even though WebGL was the correct and
+    // only viable backend.
+    const wantsWebGL = verdict
+      ? verdict.backend === "webgl"
+      : (webglPreference === "prefer" || webglPreference === "force");
+    const allowWebGL = wantsWebGL && sceneBackendCapsAllowsKind(backendCaps, "webgl");
+    return {
+      props,
+      capability,
+      webgpu: preferWebGPU,
+      webgl: allowWebGL,
+      webgl2: allowWebGL,
+      canvas2d: !requireWebGL && sceneBackendCapsAllowsKind(backendCaps, "canvas2d"),
+      preferWebGPU: preferWebGPU,
+      forceWebGL: webglPreference === "force" && sceneBackendCapsAllowsKind(backendCaps, "webgl"),
+    };
+  }
+
+  // sceneMountWantsWebGLFirst reports whether WebGL is the backend this mount
+  // will actually draw with. It reads the head of the shared selection order,
+  // so forceWebGL, requireWebGL, preferWebGL and preferCanvas keep exactly the
+  // meaning 15c gives them.
+  function sceneMountWantsWebGLFirst(props, capability) {
+    const order = backendSelectionOrder(sceneWebGLBackendRequest(props, capability));
+    return order.length > 0 && order[0] === "webgl";
+  }
+
+  // settlePreferredWebGLBackend is the WebGL sibling of
+  // ensurePreferredWebGPUBackend. Await it before createSceneRenderer so a
+  // page that draws with WebGL has the chunk, the registry entry and the water
+  // runtime in place on the very first render.
+  //
+  // A WebGPU page does NOT wait here. It reaches WebGL only through a device
+  // loss, and deferSceneWebGLFallback below fetches the chunk at that point.
+  async function settlePreferredWebGLBackend(props, capability) {
+    if (sceneWebGLRendererFactory()) {
+      return true;
+    }
+    if (!sceneMountWantsWebGLFirst(props, capability)) {
+      return false;
+    }
+    try {
+      return !!(await ensureWebGLFeatureLoaded());
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D WebGL backend:", error && error.message ? error.message : error);
+      return false;
+    }
+  }
+
+  // Warm start for the WebGL chunk. A browser with no navigator.gpu can draw a
+  // Scene3D only with WebGL, so the fetch may begin while the base chunk still
+  // evaluates instead of waiting for the first mount. First paint then costs
+  // the same one round trip it cost before the split. The same holds when the
+  // page asked for WebGL through window.__gosx_scene3d_force_webgl.
+  //
+  // This is a warm start, not a policy decision. settlePreferredWebGLBackend
+  // still asks backendSelectionOrder which backend the mount uses, and
+  // ensureWebGLFeatureLoaded caches its promise, so the fetch happens once.
+  //
+  // bootstrap.js keeps 16-scene-webgl.js inline, so the guard below sees the
+  // lexical factory and fetches nothing.
+  if (typeof createScenePBRRendererOrFallback !== "function"
+    && typeof document !== "undefined"
+    && document.head
+    && (!sceneHasNavigatorWebGPU() || sceneForcesWebGL(null))) {
+    try {
+      ensureWebGLFeatureLoaded().catch(function() {});
+    } catch (_error) {}
+  }
+
+  // Cached promise for the GLTF sub-feature chunk. First call starts the
+  // fetch; subsequent calls await the same promise. See 26f-feature-
+  // scene3d-gltf-prefix.js for the split rationale.
+
+  function ensureGLTFFeatureLoaded() {
+    return ensureSceneGatedFeatureLoaded("gltf", "gosxScene3dGltfUrl", "/gosx/bootstrap-feature-scene3d-gltf.js");
+  }
+
+  function scenePropsHasKTX2Textures(props: any) {
+    const scene = props && props.scene && typeof props.scene === "object" ? props.scene : props;
+    if (!scene) return false;
+    const isKTX2 = (src: any) => typeof src === "string" && /\.ktx2(?:[?#]|$)/i.test(src.trim());
+    if (isKTX2(scene.environment && scene.environment.envMap)) return true;
+    for (const list of [scene.objects, scene.models, scene.instancedMeshes, scene.points, scene.sprites]) {
+      for (const node of Array.isArray(list) ? list : []) {
+        if (!node) continue;
+        for (const key of ["texture", "normalMap", "roughnessMap", "metalnessMap", "occlusionMap", "emissiveMap", "specularIntensityMap", "specularColorMap", "thicknessMap"]) {
+          if (isKTX2(node[key])) return true;
+        }
+        const descriptors: any[] = Object.values(node.textureDescriptors || {});
+        if (descriptors.some(descriptor => descriptor && isKTX2(descriptor.uri))) return true;
+      }
+    }
+    return false;
+  }
+
+  function scenePropsHasIBLProducts(props) {
+    var scene = props && props.scene && typeof props.scene === "object" ? props.scene : props;
+    var environment = scene && scene.environment && typeof scene.environment === "object"
+      ? scene.environment
+      : null;
+    var ibl = environment && environment.ibl && typeof environment.ibl === "object"
+      ? environment.ibl
+      : null;
+    return Boolean(
+      ibl &&
+      ibl.radiance && typeof ibl.radiance.uri === "string" && ibl.radiance.uri.trim() &&
+      ibl.irradiance && typeof ibl.irradiance.uri === "string" && ibl.irradiance.uri.trim() &&
+      ibl.brdfLUT && typeof ibl.brdfLUT.uri === "string" && ibl.brdfLUT.uri.trim()
+    );
+  }
+
+  // IBL products and authored KTX2 textures use the reader that ships with the
+  // glTF parser in the glTF sub-feature. Settle it before renderer creation so
+  // WebGPU cannot silently construct a frame layout that ignores an authored
+  // Environment.IBL descriptor. The parser chunk is cached page-wide.
+  async function settleSceneIBLFeature(props) {
+    if (!scenePropsHasIBLProducts(props) && !scenePropsHasKTX2Textures(props)) return true;
+    try {
+      await ensureGLTFFeatureLoaded();
+      var ready = Boolean(window.__gosx_scene3d_ktx2);
+      if (!ready) {
+        gosxSceneEmit("warn", "ibl-loader-unavailable", {
+          reason: "ktx2-api-not-published",
+        });
+      }
+      return ready;
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D IBL products:", error && error.message ? error.message : error);
+      gosxSceneEmit("warn", "ibl-loader-unavailable", {
+        reason: "ktx2-feature-load-failed",
+        error: error && error.message ? String(error.message) : String(error),
+      });
+      return false;
+    }
+  }
+
+  // Cached promise for the animation sub-feature chunk. Consumers that
+  // want to drive keyframe or skeletal animations can await this helper
+  // and then use window.__gosx_scene3d_animation_api.
+
+  function ensureAnimationFeatureLoaded() {
+    return ensureSceneGatedFeatureLoaded("animation", "gosxScene3dAnimationUrl", "/gosx/bootstrap-feature-scene3d-animation.js");
+  }
+
+  // Expose the animation lazy-loader for consumers that need to drive
+  // keyframe or skeletal clips from outside the main scene mount.
+  window.__gosx_ensure_scene3d_animation_loaded = ensureAnimationFeatureLoaded;
+
+  // Cached promise for the compute sub-feature chunk. It carries the GPU
+  // particle simulation, the CPU particle fallback, the particle force
+  // registry and the GPU instanced-cull system. A scene with one cube and one
+  // directional light runs none of them, and used to pay 8_772 gzip bytes for
+  // all of them. See 26k-feature-scene3d-compute-prefix.js.
+
+  function ensureComputeFeatureLoaded() {
+    if (window.__gosx_scene3d_compute_api) {
+      return Promise.resolve(window.__gosx_scene3d_compute_api);
+    }
+    // bootstrap.js keeps 16b-scene-compute.js inline, so the API object
+    // already carries the factory and no fetch is needed.
+    if (window.__gosx_scene3d_api
+      && typeof window.__gosx_scene3d_api.createSceneParticleSystem === "function") {
+      return Promise.resolve(window.__gosx_scene3d_api);
+    }
+    return ensureSceneGatedFeatureLoaded("compute", "gosxScene3dComputeUrl", "");
+  }
+
+  // Expose the compute lazy-loader so a runtime program that adds particles
+  // after mount can await the chunk instead of dropping the first frames.
+  window.__gosx_ensure_scene3d_compute_loaded = ensureComputeFeatureLoaded;
+
+  // sceneNeedsComputeFeature reports whether a scene state reaches the compute
+  // chunk. Two paths do:
+  //
+  //   1. A compute particle system. Both renderers call
+  //      createSceneParticleSystem for each entry.
+  //   2. An instanced mesh. The WebGPU renderer runs the GPU frustum cull for
+  //      instanced meshes, and that lives in the same file.
+  //
+  // Be permissive on purpose. A chunk that is needed and not fetched is a
+  // dropped particle system; a chunk fetched and unused costs one request the
+  // page would otherwise not make.
+  function sceneNeedsComputeFeature(state) {
+    if (!state) return false;
+    if (Array.isArray(state.computeParticles) && state.computeParticles.length > 0) {
+      return true;
+    }
+    return Array.isArray(state.instancedMeshes) && state.instancedMeshes.length > 0;
+  }
+
+  // requestSceneComputeFeatureIfNeeded starts the fetch without awaiting it.
+  // A runtime program or a scene command can add a particle system after the
+  // mount settled, and the renderer bridges return null until the chunk lands.
+  // The scene then draws its particles one or two frames later instead of
+  // throwing.
+  function requestSceneComputeFeatureIfNeeded(state) {
+    if (!sceneNeedsComputeFeature(state)) return;
+    try {
+      ensureComputeFeatureLoaded().catch(function() {});
+    } catch (_error) {}
+  }
+
+  // settleSceneComputeFeature awaits the compute chunk before the first
+  // render when the scene needs it. Await it next to settlePreferredWebGLBackend
+  // so the first frame draws the particles instead of skipping them.
+  async function settleSceneComputeFeature(state) {
+    if (!sceneNeedsComputeFeature(state)) {
+      return false;
+    }
+    try {
+      return !!(await ensureComputeFeatureLoaded());
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D compute systems:",
+        error && error.message ? error.message : error);
+      return false;
+    }
+  }
+
+  // Cached promise for the decompress sub-feature chunk. It carries the
+  // quantized-array decoder, the progressive and level-of-detail ladders, and
+  // the procedural point generators. See
+  // 26l-feature-scene3d-decompress-prefix.js.
+
+  // sceneDecompressAPIFunction resolves one decompress entry point. The
+  // monolith keeps 11a and 11b inline, so the lookup finds the function on the
+  // API object either way: 10-runtime-scene-core.js publishes the inline copy
+  // there, and the chunk suffix publishes the fetched copy to the same place.
+  function sceneDecompressAPIFunction(name) {
+    var api = typeof window !== "undefined" ? window.__gosx_scene3d_api : null;
+    return api && typeof api[name] === "function" ? api[name] : null;
+  }
+
+  function ensureDecompressFeatureLoaded() {
+    return ensureSceneGatedFeatureLoaded("decompress", "gosxScene3dDecompressUrl", "");
+  }
+
+  window.__gosx_ensure_scene3d_decompress_loaded = ensureDecompressFeatureLoaded;
+
+  // Share the URL, CSP, caching and retry path for content-gated authorities.
+  // No fallback URL: pages that do not advertise a feature cannot fetch it.
+
+
+
+  // sceneEntryNeedsDecompress reports whether one points, instanced-mesh or
+  // animation-channel record carries something only the decompress chunk can
+  // read. The field names match the writers in 11a-scene-decompress.ts.
+  function sceneEntryNeedsDecompress(entry) {
+    if (!entry || typeof entry !== "object") return false;
+    return Boolean(entry.generator
+      || entry.compressedPositions
+      || entry.compressedSizes
+      || entry.compressedTransforms
+      || entry.compressedTimes
+      || entry.compressedValues
+      || entry.previewPositions
+      || entry.previewSizes
+      || entry.previewTransforms
+      || entry.previewTimes
+      || entry.previewValues);
+  }
+
+  function sceneListNeedsDecompress(list) {
+    if (!Array.isArray(list)) return false;
+    for (var i = 0; i < list.length; i += 1) {
+      if (sceneEntryNeedsDecompress(list[i])) return true;
+    }
+    return false;
+  }
+
+  // sceneNeedsDecompressFeature inspects the RAW props, not the scene state,
+  // because createSceneState calls sceneDecompressProps before it builds the
+  // state. A compression policy alone is enough: progressive and
+  // level-of-detail mode both drive the chunk on every frame.
+  function sceneNeedsDecompressFeature(props) {
+    if (!props || typeof props !== "object") return false;
+    if (props.compression) return true;
+    var scene = props.scene && typeof props.scene === "object" ? props.scene : null;
+    var points = (scene && scene.points) || props.points;
+    if (sceneListNeedsDecompress(points)) return true;
+    var meshes = (scene && scene.instancedMeshes) || props.instancedMeshes;
+    if (sceneListNeedsDecompress(meshes)) return true;
+    var animations = (scene && scene.animations) || props.animations;
+    if (!Array.isArray(animations)) return false;
+    for (var i = 0; i < animations.length; i += 1) {
+      var clip = animations[i];
+      if (clip && sceneListNeedsDecompress(clip.channels)) return true;
+    }
+    return false;
+  }
+
+  // settleSceneDecompressFeature awaits the decompress chunk BEFORE
+  // createSceneState runs. createSceneState calls sceneDecompressProps as its
+  // first statement, so a late chunk would leave every compressed array
+  // undecoded and the scene would draw nothing.
+  async function settleSceneDecompressFeature(props) {
+    if (!sceneNeedsDecompressFeature(props)) {
+      return false;
+    }
+    try {
+      return !!(await ensureDecompressFeatureLoaded());
+    } catch (error) {
+      console.warn("[gosx] failed to prepare Scene3D compressed data:",
+        error && error.message ? error.message : error);
+      return false;
+    }
+  }
+
+  function sceneModelHydrationIsCurrent(meta) {
+    const state = meta && meta.state;
+    return !state || Number(state._modelHydrationGeneration) === Number(meta.generation) &&
+      (!state._modelOwner || state._modelOwner());
+  }
+
+  function invalidateSceneModelHydration(state) {
+    if (!state) return 0;
+    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
+    state._modelHydrationGeneration = generation;
+    return generation;
+  }
+
+  function publishSceneModelAssetStatus(mount, status, asset, cached, error, meta) {
+    if (!mount) return;
+    const context = meta && typeof meta === "object" ? meta : {};
+    const variantScope = context.variantScope;
+    const variantContext = variantScope && variantScope.context
+      ? normalizeSceneModelTextureVariantContext(variantScope.context, "")
+      : normalizeSceneModelTextureVariantContext(null, "");
+    const detail = {
+      status: String(status || ""),
+      asset: String(asset || ""),
+      cached: Boolean(cached),
+      error: error ? String(error) : "",
+      generation: Math.max(0, Math.floor(sceneNumber(context.generation, 0))),
+      modelID: String(context.modelID || ""),
+      modelIndex: Math.max(0, Math.floor(sceneNumber(context.modelIndex, 0))),
+      stage: String(context.stage || "load"),
+      stale: Boolean(context.stale),
+      committed: Boolean(context.committed),
+      variantScope: variantScope && variantScope.key ? String(variantScope.key) : "",
+      variantBackend: variantContext.backend,
+      variantUploadReady: variantContext.uploadReady,
+      variantTokenCount: variantContext.tokens.length,
+    };
+    setAttrValue(mount, "data-gosx-scene3d-model-status", detail.status);
+    setAttrValue(mount, "data-gosx-scene3d-model-asset", detail.asset);
+    setAttrValue(mount, "data-gosx-scene3d-model-cache", detail.cached ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-model-error", detail.error);
+    setAttrValue(mount, "data-gosx-scene3d-model-generation", String(detail.generation));
+    setAttrValue(mount, "data-gosx-scene3d-model-id", detail.modelID);
+    setAttrValue(mount, "data-gosx-scene3d-model-stage", detail.stage);
+    setAttrValue(mount, "data-gosx-scene3d-model-variant-scope", detail.variantScope);
+    setAttrValue(mount, "data-gosx-scene3d-model-variant-backend", detail.variantBackend);
+    setAttrValue(mount, "data-gosx-scene3d-model-variant-upload-ready", detail.variantUploadReady ? "true" : "false");
+    if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
+      mount.dispatchEvent(new CustomEvent("gosx:scene3d:model-status", { detail, bubbles: true }));
+    }
+  }
+
+  function publishSceneModelHydrationStatus(mount, status, detail) {
+    if (!mount) return;
+    const source = detail && typeof detail === "object" ? detail : {};
+    const counts = source.counts && typeof source.counts === "object" ? source.counts : {};
+    const eventDetail = {
+      status: String(status || ""),
+      generation: Math.max(0, Math.floor(sceneNumber(source.generation, 0))),
+      currentGeneration: Math.max(0, Math.floor(sceneNumber(source.currentGeneration, source.generation))),
+      stale: Boolean(source.stale),
+      committed: Boolean(source.committed),
+      stage: String(source.stage || ""),
+      modelID: String(source.modelID || ""),
+      modelIndex: Math.max(0, Math.floor(sceneNumber(source.modelIndex, 0))),
+      asset: String(source.asset || ""),
+      error: source.error ? String(source.error) : "",
+      counts,
+    };
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-status", eventDetail.status);
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-generation", String(eventDetail.generation));
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-current-generation", String(eventDetail.currentGeneration));
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-stale", eventDetail.stale ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-committed", eventDetail.committed ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-failure-stage", eventDetail.stage);
+    setAttrValue(mount, "data-gosx-scene3d-model-hydration-error", eventDetail.error);
+    try {
+      setAttrValue(mount, "data-gosx-scene3d-model-hydration-counts", JSON.stringify(counts));
+    } catch (_error) {
+      setAttrValue(mount, "data-gosx-scene3d-model-hydration-counts", "{}");
+    }
+    if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
+      mount.dispatchEvent(new CustomEvent("gosx:scene3d:model-hydration-status", { detail: eventDetail, bubbles: true }));
+    }
+  }
+
+  function publishSceneProgressiveModelStatus(mount, status, detail) {
+    if (!mount) return;
+    const source = detail && typeof detail === "object" ? detail : {};
+    const eventDetail = {
+      status: String(status || ""),
+      modelID: String(source.modelID || ""),
+      modelIndex: Math.max(0, Math.floor(sceneNumber(source.modelIndex, 0))),
+      previewSrc: String(source.previewSrc || ""),
+      fullSrc: String(source.fullSrc || ""),
+      error: source.error ? String(source.error) : "",
+    };
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-status", eventDetail.status);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-id", eventDetail.modelID);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-preview-src", eventDetail.previewSrc);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-full-src", eventDetail.fullSrc);
+    setAttrValue(mount, "data-gosx-scene3d-progressive-model-error", eventDetail.error);
+    if (typeof CustomEvent === "function" && typeof mount.dispatchEvent === "function") {
+      mount.dispatchEvent(new CustomEvent("gosx:scene3d:progressive-model", { detail: eventDetail, bubbles: true }));
+    }
+  }
+
+  function sceneProgressiveModelEntries(models) {
+    const entries = [];
+    const source = Array.isArray(models) ? models : [];
+    for (let index = 0; index < source.length; index += 1) {
+      const model = source[index];
+      if (!model || model.progressive !== true || !model.previewSrc || !model.fullSrc) {
+        continue;
+      }
+      entries.push({ model, index });
+    }
+    return entries;
+  }
+
+  function sceneFullModelFromProgressive(model) {
+    const next = Object.assign({}, model);
+    next.src = String(model.fullSrc || "").trim();
+    next.progressive = false;
+    return next;
+  }
+
+  function sceneModelAssetHasContent(asset) {
+    if (!asset || typeof asset !== "object") return false;
+    return (Array.isArray(asset.objects) && asset.objects.length > 0)
+      || (Array.isArray(asset.points) && asset.points.length > 0)
+      || (Array.isArray(asset.labels) && asset.labels.length > 0)
+      || (Array.isArray(asset.sprites) && asset.sprites.length > 0)
+      || (Array.isArray(asset.html) && asset.html.length > 0)
+      || (Array.isArray(asset.lights) && asset.lights.length > 0)
+      || (Array.isArray(asset.animations) && asset.animations.length > 0)
+      || (Array.isArray(asset.skins) && asset.skins.length > 0)
+      || (Array.isArray(asset.nodes) && asset.nodes.length > 0);
+  }
+
+  function sceneModelHydrationOutcomeDetail(outcome, expectedGeneration) {
+    if (Array.isArray(outcome)) {
+      const entries = outcome.filter(function(entry) { return entry && typeof entry === "object"; });
+      const expected = Math.max(0, Math.floor(sceneNumber(expectedGeneration, 0)));
+      const committed = entries.filter(function(entry) {
+        return entry.committed === true && entry.stale !== true && (expected <= 0 || Number(entry.generation) === expected);
+      });
+      const source = committed.length ? committed : entries;
+      return source.sort(function(a, b) {
+        return Math.max(0, Math.floor(sceneNumber(b.generation, 0))) - Math.max(0, Math.floor(sceneNumber(a.generation, 0)));
+      })[0] || null;
+    }
+    return outcome && typeof outcome === "object" ? outcome : null;
+  }
+
+  function sceneCreateProgressiveModelToken(state, models, previewGeneration) {
+    if (!state) return null;
+    const token = {
+      id: Math.max(0, Math.floor(sceneNumber(state._modelProgressiveTokenID, 0))) + 1,
+      models,
+      previewGeneration: Math.max(0, Math.floor(sceneNumber(previewGeneration, state._modelHydrationGeneration))),
+      fullGeneration: 0,
+      cancelled: false,
+      resolveRender: null,
+      renderTimeout: null,
+    };
+    state._modelProgressiveTokenID = token.id;
+    state._modelProgressiveToken = token;
+    return token;
+  }
+
+  function sceneProgressiveModelTokenCurrent(state, token) {
+    return Boolean(state && token && state._modelProgressiveToken === token && token.cancelled !== true);
+  }
+
+  function cancelSceneProgressiveModelLifecycle(state) {
+    if (!state || !state._modelProgressiveToken) return;
+    state._modelProgressiveToken.cancelled = true;
+    if (typeof state._modelProgressiveToken.resolveRender === "function") {
+      state._modelProgressiveToken.resolveRender(false);
+    }
+    if (state._modelProgressiveToken.renderTimeout != null) {
+      clearTimeout(state._modelProgressiveToken.renderTimeout);
+      state._modelProgressiveToken.renderTimeout = null;
+    }
+    state._modelProgressiveToken = null;
+  }
+
+  function notifySceneProgressiveModelRenderCommitted(state) {
+    const token = state && state._modelProgressiveToken;
+    if (!token || typeof token.resolveRender !== "function") return;
+    const resolve = token.resolveRender;
+    token.resolveRender = null;
+    if (token.renderTimeout != null) {
+      clearTimeout(token.renderTimeout);
+      token.renderTimeout = null;
+    }
+    resolve(sceneProgressiveModelTokenCurrent(state, token));
+  }
+
+  function sceneProgressiveModelWaitForRender(state, token, mount, entry, canRender, timeoutMS) {
+    return new Promise(function(resolve) {
+      if (!sceneProgressiveModelTokenCurrent(state, token)) {
+        resolve(false);
+        return;
+      }
+      token.resolveRender = resolve;
+      if (typeof canRender === "function" && !canRender()) {
+        publishSceneProgressiveModelStatus(mount, "full-pending-render", {
+          modelID: entry && entry.model ? entry.model.id : "",
+          modelIndex: entry ? entry.index : 0,
+          previewSrc: entry && entry.model ? entry.model.previewSrc : "",
+          fullSrc: entry && entry.model ? entry.model.fullSrc : "",
+          error: "render paused",
+        });
+        return;
+      }
+      token.renderTimeout = setTimeout(function() {
+        if (token.resolveRender !== resolve) return;
+        token.renderTimeout = null;
+        token.resolveRender = null;
+        if (state && state._modelProgressiveToken === token) {
+          state._modelProgressiveToken = null;
+        }
+        token.cancelled = true;
+        publishSceneProgressiveModelStatus(mount, "full-render-timeout", {
+          modelID: entry && entry.model ? entry.model.id : "",
+          modelIndex: entry ? entry.index : 0,
+          previewSrc: entry && entry.model ? entry.model.previewSrc : "",
+          fullSrc: entry && entry.model ? entry.model.fullSrc : "",
+          error: "render wait timed out",
+        });
+      }, Math.max(1, Math.floor(sceneNumber(timeoutMS, 2000))));
+    });
+  }
+
+  function scheduleSceneProgressiveModelLifecycle(state, mount, initialHydration, applyModels, options) {
+    if (!state || typeof applyModels !== "function") return null;
+    const opts = options && typeof options === "object" ? options : {};
+    const canRender = typeof opts.canRender === "function" ? opts.canRender : null;
+    const renderTimeoutMS = Math.max(1, Math.floor(sceneNumber(opts.renderTimeoutMS, 2000)));
+    const restorePreview = typeof opts.restorePreview === "function" ? opts.restorePreview : null;
+    const models = Array.isArray(opts.models) ? opts.models : (Array.isArray(state.models) ? state.models : []);
+    const entries = sceneProgressiveModelEntries(models);
+    if (!entries.length) return null;
+    const previewGeneration = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
+    const variantScope = state._modelTextureVariantScope;
+    let token = null;
+    const lifecycle = Promise.resolve(initialHydration).then(function(outcome) {
+      const hydration = sceneModelHydrationOutcomeDetail(outcome, previewGeneration);
+      if (!hydration || hydration.committed !== true || hydration.stale === true || Number(hydration.generation) !== previewGeneration || state.models !== models) {
+        return null;
+      }
+      token = sceneCreateProgressiveModelToken(state, models, previewGeneration);
+      if (!sceneProgressiveModelTokenCurrent(state, token)) {
+        return null;
+      }
+      entries.forEach(function(entry) {
+        publishSceneProgressiveModelStatus(mount, "preview-ready", {
+          modelID: entry.model.id,
+          modelIndex: entry.index,
+          previewSrc: entry.model.previewSrc,
+          fullSrc: entry.model.fullSrc,
+        });
+      });
+      return Promise.all(entries.map(function(entry) {
+        return loadSceneModelAsset(entry.model.fullSrc, mount, {
+          state,
+          generation: previewGeneration,
+          modelID: entry.model.id || "",
+          modelIndex: entry.index,
+          stage: "progressive-preload",
+          variantScope,
+        }).then(function(asset) {
+          if (!sceneModelAssetHasContent(asset)) {
+            publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+              modelID: entry.model.id,
+              modelIndex: entry.index,
+              previewSrc: entry.model.previewSrc,
+              fullSrc: entry.model.fullSrc,
+              error: "empty model asset",
+            });
+            return { ok: false, entry, error: "empty model asset" };
+          }
+          return { ok: true, entry, asset };
+        }, function(error) {
+          publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+            modelID: entry.model.id,
+            modelIndex: entry.index,
+            previewSrc: entry.model.previewSrc,
+            fullSrc: entry.model.fullSrc,
+            error: error && error.message ? error.message : error,
+          });
+          return { ok: false, entry, error };
+        });
+      }));
+    }).then(function(results) {
+      if (!sceneProgressiveModelTokenCurrent(state, token) || !Array.isArray(results) || !results.some(function(result) { return result && result.ok; })) {
+        return null;
+      }
+      const nextModels = models.map(function(model, index) {
+        const matched = results.find(function(result) {
+          return result && result.ok && result.entry && result.entry.index === index;
+        });
+        return matched ? sceneFullModelFromProgressive(model) : model;
+      });
+      const firstOK = results.find(function(result) { return result && result.ok; });
+      publishSceneProgressiveModelStatus(mount, "swap-issued", {
+        modelID: firstOK.entry.model.id,
+        modelIndex: firstOK.entry.index,
+        previewSrc: firstOK.entry.model.previewSrc,
+        fullSrc: firstOK.entry.model.fullSrc,
+      });
+      if (!sceneProgressiveModelTokenCurrent(state, token) || state.models !== models) {
+        return null;
+      }
+      const swapResult = applyModels(nextModels);
+      token.fullGeneration = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
+      return Promise.resolve(swapResult).then(function(outcome) {
+        const hydration = sceneModelHydrationOutcomeDetail(outcome, token.fullGeneration);
+        if (!sceneProgressiveModelTokenCurrent(state, token) || !hydration || hydration.committed !== true || hydration.stale === true || Number(hydration.generation) !== Number(token.fullGeneration)) {
+          if (restorePreview) {
+            restorePreview(models);
+          }
+          publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+            modelID: firstOK.entry.model.id,
+            modelIndex: firstOK.entry.index,
+            previewSrc: firstOK.entry.model.previewSrc,
+            fullSrc: firstOK.entry.model.fullSrc,
+            error: hydration && hydration.failureStage ? hydration.failureStage : "full hydration failed",
+          });
+          return null;
+        }
+        return sceneProgressiveModelWaitForRender(state, token, mount, firstOK.entry, canRender, renderTimeoutMS).then(function(rendered) {
+          if (!rendered || !sceneProgressiveModelTokenCurrent(state, token)) {
+            return null;
+          }
+          const settled = firstOK;
+          state._modelProgressiveToken = null;
+          state._modelProgressiveLastSettledGeneration = token.fullGeneration;
+          token.cancelled = true;
+          token.resolveRender = null;
+          return settled;
+        });
+      }).then(function(settled) {
+        if (!settled) return null;
+        publishSceneProgressiveModelStatus(mount, "full-settled", {
+          modelID: settled.entry.model.id,
+          modelIndex: settled.entry.index,
+          previewSrc: settled.entry.model.previewSrc,
+          fullSrc: settled.entry.model.fullSrc,
+        });
+        return null;
+      });
+    }).catch(function(error) {
+      if (sceneProgressiveModelTokenCurrent(state, token)) {
+        publishSceneProgressiveModelStatus(mount, "full-preload-failed", {
+          error: error && error.message ? error.message : error,
+        });
+      }
+    });
+    return lifecycle;
+  }
+
+  async function loadSceneModelAsset(src, mount, hydrationMeta) {
+    const key = String(src || "").trim();
+    if (!key) {
+      return parseSceneModelAsset({}, key);
+    }
+    const format = sceneModelAssetFormat(key);
+    const variantScope = hydrationMeta && hydrationMeta.variantScope
+      ? hydrationMeta.variantScope
+      : (hydrationMeta && hydrationMeta.state ? hydrationMeta.state._modelTextureVariantScope : null);
+    const cacheKey = (format === "glb" || format === "gltf") && variantScope && variantScope.key
+      ? String(variantScope.key) + "\u0000" + key
+      : key;
+    const statusMeta = hydrationMeta
+      ? Object.assign({}, hydrationMeta, { variantScope })
+      : { variantScope };
+    const cached = sceneModelAssetCache.has(cacheKey);
+    if (sceneModelAssetReady.has(cacheKey)) {
+      const readyResult = await sceneModelAssetCache.get(cacheKey);
+      if (sceneModelHydrationIsCurrent(hydrationMeta)) {
+        publishSceneModelAssetStatus(mount, "cached", key, true, "", statusMeta);
+      }
+      return readyResult.asset;
+    }
+    if (sceneModelHydrationIsCurrent(hydrationMeta)) {
+      publishSceneModelAssetStatus(mount, "loading", key, cached, "", statusMeta);
+    }
+    if (!cached) {
+      const loadPromise = (async function() {
+        try {
+          if (format === "glb" || format === "gltf") {
+            // GLTF parsing lives in a sub-feature chunk that's fetched
+            // on demand — the first .glb/.gltf request on a page pays
+            // the download + parse cost, subsequent ones reuse the
+            // cached module. Pages that never load models never fetch
+            // the chunk at all.
+            var gltfApi = await ensureGLTFFeatureLoaded();
+            const variantContext = variantScope ? variantScope.ready : null;
+            const asset = parseSceneModelAsset(gltfApi.gltfSceneToModelAsset(
+              await gltfApi.sceneLoadGLTFModel(key, variantContext),
+              key
+            ), key);
+            // Explicit WebGL scene prewarms include palette/bounds work before
+            // the decoded asset is marked ready; all actor waiters share this promise.
+            if (hydrationMeta && hydrationMeta.crowd && hydrationMeta.state && hydrationMeta.state._crowdWebGLRequested &&
+                asset.objects.length && asset.objects.every(o => o.skin && !o._morphAnim && !o._nodeAnim)) {
+              try {
+                const animationAPI = await ensureAnimationFeatureLoaded();
+                const skins = new Set(asset.objects.map(o => o.skinIndex));
+                for (const skin of skins) animationAPI.buildCrowdAtlas(asset, skin);
+              } catch (error) {
+                /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // Unsupported ordinary Model assets retain their existing playback.
+                asset._crowdUnsupported = String(error && error.message || error);
+              }
+            }
+            sceneModelAssetReady.add(cacheKey);
+            return { asset, error: null };
+          }
+          const response = await fetch(key, { credentials: "same-origin" });
+          if (!response || !response.ok) {
+            throw new Error("HTTP " + String(response && response.status || 0));
+          }
+          const asset = parseSceneModelAsset(await response.json(), key);
+          sceneModelAssetReady.add(cacheKey);
+          return { asset, error: null };
+        } catch (error) {
+          console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
+          gosxSceneEmit("warn", "model-asset-load-failed", {
+            asset: String(key || ""),
+            error: error && error.message ? String(error.message) : String(error),
+          });
+          return { asset: parseSceneModelAsset({}, key), error };
+        }
+      })();
+      sceneModelAssetCache.set(cacheKey, loadPromise);
+      // Failed entries must not poison the page for its lifetime. Keep the
+      // in-flight Promise long enough to deduplicate current waiters, then
+      // evict it before a subsequent request so a transient failure can retry.
+      loadPromise.then(function(result) {
+        if (result && result.error && sceneModelAssetCache.get(cacheKey) === loadPromise) {
+          sceneModelAssetCache.delete(cacheKey);
+        }
+      });
+    }
+    const result = await sceneModelAssetCache.get(cacheKey);
+    if (sceneModelHydrationIsCurrent(hydrationMeta)) {
+      if (result.error) {
+        publishSceneModelAssetStatus(mount, "error", key, cached,
+          result.error && result.error.message ? result.error.message : "model asset failed to load", statusMeta);
+      } else {
+        publishSceneModelAssetStatus(mount, cached ? "cached" : "loaded", key, cached, "", statusMeta);
+      }
+    }
+    return result.asset;
+  }
+
+  // Public prewarm hook for progressive single-engine upgrades (e.g. a boot
+  // script that swaps a preview mount from a small preview GLB to the full
+  // model without tearing down/re-mounting the engine). Fetching + parsing a
+  // model asset ahead of the actual swap lands the parsed result in the
+  // module-level asset cache. JSON assets remain reusable by a later mount.
+  // GLB/glTF preloads are intentionally neutral and do not populate a
+  // renderer-scoped parsed cache: guessing a backend here would let one mount
+  // choose texture URIs for another. Safe to call with no mounted engine;
+  // resolves to the parsed asset ({objects, points, labels, sprites, html,
+  // lights, ...}, all empty arrays on failure) so callers can verify the load
+  // actually produced content before committing to a swap.
+  window.__gosx_scene3d_preload_model = function(src: any, meta: any = null) {
+    return loadSceneModelAsset(String(src || "").trim(), null, meta);
+  };
+  if (typeof window !== "undefined") {
+    window.__gosx_runtime_payload_normalizers = window.__gosx_runtime_payload_normalizers || {};
+    window.__gosx_runtime_payload_normalizers.GoSXScene3D = function(props, _entry, helpers) {
+      if (props && props.scene) helpers.inflateSceneShaderLib(props.scene);
+      return props || null;
+    };
+    window.__gosx = window.__gosx || {};
+    window.__gosx.scene3d = window.__gosx.scene3d || {};
+    window.__gosx.scene3d.preloadModel = function(src) {
+      return window.__gosx_scene3d_preload_model(src);
+    };
+    window.__gosx.scene3d.setPerformanceTelemetry = function(enabled) {
+      window.__gosx_scene3d_perf = enabled === true;
+      return window.__gosx_scene3d_perf;
+    };
+    window.__gosx.scene3d.isPerformanceTelemetryEnabled = function() {
+      return window.__gosx_scene3d_perf === true;
+    };
+  }
+
+  function sceneModelHasSkins(skins) {
+    return Array.isArray(skins) && skins.some(function(skin) {
+      return Boolean(skin && Array.isArray(skin.joints) && skin.joints.length > 0 && skin.inverseBindMatrices);
+    });
+  }
+
+  // True when any parsed animation channel drives morph weights, so a model
+  // without skins still needs a mixer record and per-frame pose ticks.
+  // Parsed channels carry `property` — no tolerant aliases.
+  function sceneModelHasWeightAnimations(asset) {
+    const animations = asset && Array.isArray(asset.animations) ? asset.animations : [];
+    for (let index = 0; index < animations.length; index += 1) {
+      const channels = animations[index] && Array.isArray(animations[index].channels)
+        ? animations[index].channels
+        : [];
+      for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+        const channel = channels[channelIndex];
+        if (channel && channel.property === "weights") {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  // True when any parsed animation channel drives rigid node TRS, so a
+  // non-skinned, weights-free model still needs a mixer record and per-frame
+  // pose ticks (one record per model, shared with skins/morphs).
+  function sceneModelHasNodeAnimations(asset) {
+    const animations = asset && Array.isArray(asset.animations) ? asset.animations : [];
+    for (let index = 0; index < animations.length; index += 1) {
+      const channels = animations[index] && Array.isArray(animations[index].channels)
+        ? animations[index].channels
+        : [];
+      for (let channelIndex = 0; channelIndex < channels.length; channelIndex += 1) {
+        const channel = channels[channelIndex];
+        if (channel && (channel.property === "translation"
+          || channel.property === "rotation"
+          || channel.property === "scale")) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  function sceneModelRootNodes(nodes) {
+    if (!Array.isArray(nodes) || !nodes.length) {
+      return [];
+    }
+    const childSet = new Set();
+    for (let index = 0; index < nodes.length; index += 1) {
+      const children = nodes[index] && nodes[index].children;
+      if (!Array.isArray(children)) {
+        continue;
+      }
+      for (let childIndex = 0; childIndex < children.length; childIndex += 1) {
+        childSet.add(children[childIndex]);
+      }
+    }
+    const roots = [];
+    for (let index = 0; index < nodes.length; index += 1) {
+      if (!childSet.has(index)) {
+        roots.push(index);
+      }
+    }
+    return roots;
+  }
+
+  // True when the WASM motion mixer is active for this record (P4-M3, opt-in).
+  function sceneModelWasmMixerActive(record) {
+    return Boolean(
+      record && record.wasmMixer &&
+      typeof window !== "undefined" && window.__gosx_motion_wasm &&
+      typeof window.__gosx_motion_mixer_update === "function"
+    );
+  }
+
+  // Drive one WASM-mixer frame: tick the mixer into a reused out buffer
+  // (grow-and-retick when the write count exceeds capacity) and decode the
+  // packed writes into animatedTransforms via the published animation API.
+  function sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms) {
+    const api = record.animationApi;
+    if (!api || typeof api.wasmDecodePose !== "function") {
+      return;
+    }
+    if (!record._wasmMixerF64 || !record._wasmMixerU8) {
+      record._wasmMixerF64 = new Float64Array(2048);
+      record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
+    }
+    const reducedFlag = reduced === true;
+    let count = window.__gosx_motion_mixer_update(record.wasmMixer, deltaTime, reducedFlag, record._wasmMixerU8);
+    if (count > record._wasmMixerF64.length) {
+      record._wasmMixerF64 = new Float64Array(count);
+      record._wasmMixerU8 = new Uint8Array(record._wasmMixerF64.buffer);
+      // Pass dt=0: the clip clock already advanced on the first call above.
+      // Re-emitting at the current time with dt=0 avoids a double clock step.
+      count = window.__gosx_motion_mixer_update(record.wasmMixer, 0, reducedFlag, record._wasmMixerU8);
+      if (count > record._wasmMixerF64.length) {
+        count = record._wasmMixerF64.length;
+      }
+    }
+    api.wasmDecodePose(record._wasmMixerF64, count, animatedTransforms);
+  }
+
+  function sceneApplyModelSkinPose(record, deltaTime, reduced) {
+    if (!record || !record.animationApi || !record.nodes || !record.skins) {
+      return;
+    }
+    const animatedTransforms = record.animatedTransforms;
+    if (animatedTransforms && typeof animatedTransforms.clear === "function") {
+      animatedTransforms.clear();
+    }
+    if (record.explicitClips) {
+      record.animationApi.sampleExplicitAnimation(record.explicitClips, record.model._crowdPose, animatedTransforms);
+    } else if (sceneModelWasmMixerActive(record)) {
+      sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms);
+    } else if (record.mixer) {
+      record.mixer.update(deltaTime, function(targetNode, property, value) {
+        let entry = animatedTransforms.get(targetNode);
+        if (!entry) {
+          entry = {};
+          animatedTransforms.set(targetNode, entry);
+        }
+        entry[property] = Array.isArray(value) ? value.slice() : Array.from(value || []);
+      });
+    }
+    // Animated morph weights. entry.modelMatrix is refreshed from the
+    // record's live root transform every tick so a model-only move is never
+    // folded with a stale matrix, and transform-only changes still re-apply
+    // even when the sampled weights are unchanged (applyMorphPose detects
+    // the matrix delta itself).
+    if (record.morphTargets && record.morphTargets.length > 0) {
+      for (let morphIndex = 0; morphIndex < record.morphTargets.length; morphIndex += 1) {
+        const morphEntry = record.morphTargets[morphIndex];
+        if (morphEntry && !morphEntry.skinned && record.rootTransform) {
+          morphEntry.modelMatrix = record.rootTransform;
+        }
+      }
+    }
+    // Model-local node transforms (no root/model transform), shared by the
+    // morph fold and rigid node TRS playback: animated TRS — including
+    // per-frame sampled values with authored per-component fallbacks and
+    // ancestor composition — without double-applying the model transform.
+    // The world map for skinning is built separately below with
+    // record.rootTransform, exactly as before.
+    const hasMorphTargets = record.morphTargets && record.morphTargets.length > 0;
+    const hasNodeAnimTargets = record.nodeAnimTargets && record.nodeAnimTargets.length > 0;
+    const localNodeTransforms = hasMorphTargets || hasNodeAnimTargets
+      ? record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, null, record.rootNodes)
+      : null;
+    if (hasMorphTargets) {
+      const morphApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
+      if (morphApi && typeof morphApi.applyMorphPose === "function") {
+        morphApi.applyMorphPose(record.morphTargets, animatedTransforms, localNodeTransforms);
+      }
+    }
+    // Rigid node TRS playback for every emitted geometry kind. Mesh entries
+    // compose animated node-world * authored instance-local * primitive-local
+    // and apply the model/root transform once; points/lines entries get
+    // genuinely new position arrays each rebuilt frame so the render caches
+    // re-upload. A stopped/reset mixer hands back the authored full node map,
+    // restoring the authored pose.
+    if (hasNodeAnimTargets) {
+      const nodeAnimApi = (typeof window !== "undefined" && window.__gosx_scene3d_gltf_api) || record.morphApi;
+      if (nodeAnimApi && typeof nodeAnimApi.applyNodeAnimPose === "function") {
+        for (let nodeAnimIndex = 0; nodeAnimIndex < record.nodeAnimTargets.length; nodeAnimIndex += 1) {
+          const animEntry = record.nodeAnimTargets[nodeAnimIndex];
+          if (animEntry) {
+            animEntry.modelMatrix = record.rootTransform;
+            animEntry.model = record.model;
+          }
+        }
+        nodeAnimApi.applyNodeAnimPose(record.nodeAnimTargets, localNodeTransforms);
+      }
+    }
+    const nodeTransforms = record.animationApi.buildNodeTransforms(record.nodes, animatedTransforms, record.rootTransform, record.rootNodes);
+    for (let index = 0; index < record.skins.length; index += 1) {
+      const skin = record.skins[index];
+      if (!skin) {
+        continue;
+      }
+      skin.jointMatrices = record.animationApi.computeJointMatrices(skin, nodeTransforms);
+    }
+  }
+
+  function sceneOwns(source, key) {
+    return Boolean(source && Object.prototype.hasOwnProperty.call(source, key));
+  }
+
+  function sceneRegisterModelAnimationRecord(state, record) {
+    if (!state || !record || (!record.mixer && !record.wasmMixerActive)) {
+      return;
+    }
+    if (!Array.isArray(state._modelAnimations)) {
+      state._modelAnimations = [];
+    }
+    if (state._modelAnimations.indexOf(record) < 0) {
+      state._modelAnimations.push(record);
+    }
+  }
+
+  function sceneRegisterStaticModelLiveRecord(state, instanceModel, objectIDs) {
+    if (!state || !instanceModel || !Array.isArray(instanceModel._live) || instanceModel._live.length === 0 || !Array.isArray(objectIDs) || objectIDs.length === 0) {
+      return;
+    }
+    const modelCopy = Object.assign({}, instanceModel || {});
+    const record = {
+      id: typeof modelCopy.id === "string" ? modelCopy.id : "",
+      model: modelCopy,
+      live: modelCopy._live.slice(),
+      objectIDs: objectIDs.slice(),
+      rootTransform: sceneModelTransformMatrix(modelCopy),
+      animation: "",
+      animationSeq: "",
+      poseDirty: false,
+      staticModel: true,
+    };
+    if (!Array.isArray(state._modelSkins)) {
+      state._modelSkins = [];
+    }
+    state._modelSkins.push(record);
+  }
+
+  async function scenePrepareModelSkinPlayback(state, asset, instanceModel, skinInstances, objectIDs, stagedObjects, stagedPoints) {
+    if ((!sceneModelHasSkins(skinInstances) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset))
+      || !Array.isArray(asset.nodes) || !asset.nodes.length) {
+      return;
+    }
+
+    let animationApi = null;
+    try {
+      animationApi = await ensureAnimationFeatureLoaded();
+    } catch (error) {
+      console.warn("[gosx] failed to load Scene3D animation support:", error && error.message ? error.message : error);
+      return;
+    }
+    if (!animationApi || typeof animationApi.buildNodeTransforms !== "function" || typeof animationApi.computeJointMatrices !== "function"
+      || typeof animationApi.initializeModelPlayback !== "function" || typeof animationApi.isModelPlaying !== "function" || typeof animationApi.applyModelAnimation !== "function") {
+      return;
+    }
+    const record = {
+      id: typeof instanceModel.id === "string" ? instanceModel.id : "",
+      model: Object.assign({}, instanceModel || {}),
+      live: Array.isArray(instanceModel && instanceModel._live) ? instanceModel._live.slice() : [],
+      objectIDs: Array.isArray(objectIDs) ? objectIDs.slice() : [],
+      nodes: asset.nodes,
+      rootNodes: sceneModelRootNodes(asset.nodes),
+      skins: skinInstances,
+      animatedTransforms: new Map(),
+      rootTransform: sceneModelTransformMatrix(instanceModel),
+      animationApi,
+      mixer: null,
+      animation: "",
+      animationSeq: "",
+      poseDirty: false,
+    };
+    if (!Array.isArray(state._modelSkins)) {
+      state._modelSkins = [];
+    }
+    state._modelSkins.push(record);
+
+    // Per-instance morph fold entries: shared immutable source metadata, one
+    // live vertices owner per instance. Registered only when the parsed asset
+    // actually carries animated morphs. stagedObjects is optional; older call
+    // sites that omit it simply register no morph entries.
+    const morphTargets = [];
+    if (Array.isArray(stagedObjects)) {
+      for (let index = 0; index < stagedObjects.length; index += 1) {
+        const entry = stagedObjects[index] && stagedObjects[index]._morphAnim;
+        if (entry) {
+          morphTargets.push(entry);
+        }
+      }
+    }
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (morphTargets.length > 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.morphTargets = morphTargets;
+      record.morphApi = typeof window !== "undefined" ? (window.__gosx_scene3d_gltf_api || null) : null;
+    }
+    // Rigid node TRS playback entries: one live record per emitted geometry
+    // kind (mesh/points/lines), sharing the immutable loader metadata and
+    // owning the per-instance live streams. Registered alongside morphs so
+    // there is still exactly one animation/live record per model.
+    const nodeAnimTargets = [];
+    if (Array.isArray(stagedObjects)) {
+      for (let index = 0; index < stagedObjects.length; index += 1) {
+        const meshLive = stagedObjects[index] && stagedObjects[index]._nodeAnimLive;
+        if (meshLive) {
+          nodeAnimTargets.push(meshLive);
+        }
+      }
+    }
+    if (Array.isArray(stagedPoints)) {
+      for (let index = 0; index < stagedPoints.length; index += 1) {
+        const pointLive = stagedPoints[index] && stagedPoints[index]._nodeAnimLive;
+        if (pointLive) {
+          nodeAnimTargets.push(pointLive);
+        }
+      }
+    }
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (nodeAnimTargets.length > 0) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.nodeAnimTargets = nodeAnimTargets;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (!record.morphApi && typeof window !== "undefined") {
+        record.morphApi = window.__gosx_scene3d_gltf_api || null;
+      }
+    }
+
+    const clips = sceneCloneModelAnimations(asset.animations);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (instanceModel._instancedGLB && instanceModel._crowdPose && animationApi.sampleExplicitAnimation) {
+      record.explicitClips = clips;
+      sceneApplyModelSkinPose(record, 0, false);
+      return;
+    }
+    const wantWasmMixer = clips.length > 0
+      && typeof window !== "undefined"
+      && window.__gosx_motion_wasm
+      && typeof window.__gosx_motion_mixer_create === "function"
+      && typeof animationApi.wasmClipJSON === "function";
+    if (wantWasmMixer) {
+      // P4-M3: route glTF clip playback through the Go WASM motion mixer.
+      const handle = window.__gosx_motion_mixer_create();
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (handle >= 1) {
+        /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.wasmMixer = handle;
+        record.wasmMixerActive = true;
+        for (let index = 0; index < clips.length; index += 1) {
+          const clip = clips[index];
+          window.__gosx_motion_mixer_add_clip(handle, clip.name, animationApi.wasmClipJSON(clip));
+        }
+        sceneRegisterModelAnimationRecord(state, record);
+      }
+    } else if (typeof animationApi.createMixer === "function") {
+      if (clips.length) {
+        const mixer = animationApi.createMixer();
+        // Own the mixer before clip registration: addClip is extensible and may
+        // throw, so failed transactional staging must still be able to dispose
+        // the resource through the already-registered model record.
+        record.mixer = mixer;
+        for (let index = 0; index < clips.length; index += 1) {
+          const clip = clips[index];
+          mixer.addClip(clip.name, clip);
+        }
+        sceneRegisterModelAnimationRecord(state, record);
+      }
+    }
+
+    animationApi.initializeModelPlayback(record, instanceModel);
+    sceneApplyModelSkinPose(record, 0, false);
+  }
+
+  function sceneHasActiveModelAnimations(state) {
+    const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
+    return records.some(function(record) {
+      return record.animationApi.isModelPlaying(record);
+    });
+  }
+
+  function sceneAdvanceModelAnimations(state, deltaTime, reduced) {
+    const records = state && Array.isArray(state._modelAnimations) ? state._modelAnimations : [];
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (!record) {
+        continue;
+      }
+      const playing = record.animationApi.isModelPlaying(record);
+      if (!playing && !record.poseDirty) {
+        continue;
+      }
+      record.poseDirty = false;
+      sceneApplyModelSkinPose(record, deltaTime, reduced);
+    }
+  }
+
+  function sceneModelRecordListensToEvent(record, eventName) {
+    return Boolean(record && Array.isArray(record.live) && record.live.indexOf(eventName) >= 0);
+  }
+
+  function sceneModelLivePatchForRecord(record, payload) {
+    if (!sceneIsPlainObject(payload)) {
+      return null;
+    }
+    if (record && record.id && sceneIsPlainObject(payload[record.id])) {
+      return payload[record.id];
+    }
+    return payload;
+  }
+
+  function sceneApplyModelLiveOpacity(state, record, patch) {
+    if (!state || !record || !sceneIsPlainObject(patch) || !Object.prototype.hasOwnProperty.call(patch, "opacity")) {
+      return false;
+    }
+    const opacity = Math.max(0, Math.min(1, sceneNumber(patch.opacity, sceneNumber(record.model && record.model.opacity, 1))));
+    if (record.model) {
+      record.model.opacity = opacity;
+    }
+    const objectIDs = Array.isArray(record.objectIDs) ? record.objectIDs : [];
+    let changed = false;
+    for (let index = 0; index < objectIDs.length; index += 1) {
+      const object = state.objects && state.objects.get ? state.objects.get(objectIDs[index]) : null;
+      if (!object || object.opacity === opacity) {
+        continue;
+      }
+      object.opacity = opacity;
+      if (opacity < 1 && (!object.blendMode || object.blendMode === "opaque")) {
+        object.blendMode = "alpha";
+      }
+      changed = true;
+    }
+    return changed;
+  }
+
+  function sceneApplyStaticModelObjectTransform(state, record) {
+    if (!state || !record || !record.staticModel || !Array.isArray(record.objectIDs)) {
+      return false;
+    }
+    let changed = false;
+    const modelMatrix = sceneModelTransformMatrix(record.model);
+    const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
+    const orientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
+    for (let index = 0; index < record.objectIDs.length; index += 1) {
+      const object = state.objects && state.objects.get ? state.objects.get(record.objectIDs[index]) : null;
+      const local = object && object._modelLocalVertices;
+      if (!object || !object.vertices || !local || !local.positions) {
+        continue;
+      }
+      object.vertices.positions = sceneModelTransformMeshFloats(local.positions, 3, function(x, y, z) {
+        return sceneMatrixTransformInto({}, modelMatrix, x, y, z, 4, true);
+      });
+      if (local.normals && local.normals.length) {
+        object.vertices.normals = sceneModelTransformMeshFloats(local.normals, 3, function(x, y, z) {
+          return sceneNormalizeDirection(sceneMatrixTransformInto({}, normalMatrix, x, y, z, 3, false));
+        });
+      }
+      if (local.tangents && local.tangents.length) {
+        object.vertices.tangents = sceneModelTransformTangents(local.tangents, object.vertices.normals, record.model, orientation);
+      }
+      object.vertices.uvs = local.uvs;
+      object.vertices.indices = sceneCloneModelMeshIndices(local.indices, orientation < 0, local.count);
+      object.vertices.count = local.count;
+      if (object.vertices.immutable === true) {
+        object.vertices.revision = Math.max(0, sceneNumber(object.vertices.revision, 0)) + 1;
+      }
+      object.static = false;
+      sceneApplyModelObjectHiddenState(object, record.model);
+      changed = true;
+    }
+    return changed;
+  }
+
+  function sceneComputedPoseName(value) {
+    const pose = String(value == null ? "" : value).trim();
+    switch (pose) {
+      case "guard":
+      case "strike":
+      case "kick":
+      case "hit":
+      case "down":
+      case "surge":
+      case "start":
+        return pose;
+      case "idle":
+      default:
+        return "idle";
+    }
+  }
+
+  function sceneComputedPoseBaseID(id) {
+    let base = String(id || "").trim();
+    const suffixes = ["-guard", "-strike", "-kick", "-hit", "-down", "-surge", "-start"];
+    for (let index = 0; index < suffixes.length; index += 1) {
+      const suffix = suffixes[index];
+      if (base.length > suffix.length && base.slice(base.length - suffix.length) === suffix) {
+        base = base.slice(0, base.length - suffix.length);
+        break;
+      }
+    }
+    return base;
+  }
+
+  function sceneComputedPoseTargetID(recordID, pose) {
+    const base = sceneComputedPoseBaseID(recordID);
+    const normalized = sceneComputedPoseName(pose);
+    if (!base || normalized === "idle") {
+      return base;
+    }
+    return base + "-" + normalized;
+  }
+
+  function sceneComputedPoseRecordByID(state, id) {
+    const want = String(id || "").trim();
+    if (!want) {
+      return null;
+    }
+    const records = Array.isArray(state && state._modelSkins) ? state._modelSkins : [];
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (record && String(record.id || "") === want) {
+        return record;
+      }
+    }
+    return null;
+  }
+
+  function sceneComputedPoseObject(state, id) {
+    return state && state.objects && typeof state.objects.get === "function"
+      ? state.objects.get(id)
+      : null;
+  }
+
+  function sceneComputedPoseLocalVertices(object) {
+    const local = object && object._modelLocalVertices;
+    if (!local || !local.positions || typeof local.positions.length !== "number") {
+      return null;
+    }
+    const count = Math.max(0, Math.floor(sceneNumber(local.count, 0)));
+    if (count <= 0 || local.positions.length < count * 3) {
+      return null;
+    }
+    return local;
+  }
+
+  function sceneComputedPoseFloat32Array(value) {
+    if (!value || typeof value.length !== "number") {
+      return null;
+    }
+    return value instanceof Float32Array ? value : new Float32Array(value);
+  }
+
+  function sceneComputedPoseBlendArray(object, cacheKey, source, target, tupleSize, alpha, normalizeVec3) {
+    const sourceArray = sceneComputedPoseFloat32Array(source);
+    const targetArray = sceneComputedPoseFloat32Array(target || source);
+    const width = Math.max(1, Math.floor(sceneNumber(tupleSize, 1)));
+    if (!sourceArray || !targetArray || sourceArray.length < width || targetArray.length < width) {
+      return null;
+    }
+    const limit = Math.min(sourceArray.length, targetArray.length);
+    let current = object && object[cacheKey];
+    if (!current || current.length !== sourceArray.length) {
+      current = new Float32Array(sourceArray);
+      if (object) {
+        object[cacheKey] = current;
+      }
+    }
+    const t = Math.max(0, Math.min(1, sceneNumber(alpha, 0.45)));
+    for (let index = 0; index + width - 1 < limit; index += width) {
+      for (let component = 0; component < width; component += 1) {
+        current[index + component] += (targetArray[index + component] - current[index + component]) * t;
+      }
+      if (normalizeVec3 && width >= 3) {
+        const x = current[index];
+        const y = current[index + 1];
+        const z = current[index + 2];
+        const length = Math.hypot(x, y, z);
+        if (length > 0.000001) {
+          current[index] = x / length;
+          current[index + 1] = y / length;
+          current[index + 2] = z / length;
+        }
+      }
+    }
+    return current;
+  }
+
+  function sceneComputedPosePriorArray(object, cacheKey, sourceArray) {
+    const cached = object ? object[cacheKey] : null;
+    if (cached && typeof cached.length === "number" && cached.length === sourceArray.length) {
+      return new Float32Array(cached);
+    }
+    return new Float32Array(sourceArray);
+  }
+
+  function sceneComputedPoseApplyObjectMorph(object, sourceLocal, targetLocal, model, alpha) {
+    if (!object || !object.vertices || !sourceLocal || !targetLocal) {
+      return 0;
+    }
+    const sourceCount = Math.max(0, Math.floor(sceneNumber(sourceLocal.count, 0)));
+    const targetCount = Math.max(0, Math.floor(sceneNumber(targetLocal.count, 0)));
+    const count = Math.min(sourceCount, targetCount);
+    if (count <= 0 || sourceLocal.positions.length < count * 3 || targetLocal.positions.length < count * 3) {
+      return 0;
+    }
+    const sourcePositions = sourceLocal.positions.length === count * 3
+      ? sourceLocal.positions
+      : sourceLocal.positions.subarray(0, count * 3);
+    const targetPositions = targetLocal.positions.length === count * 3
+      ? targetLocal.positions
+      : targetLocal.positions.subarray(0, count * 3);
+    const priorPositions = sceneComputedPosePriorArray(object, "_computedPoseLocalPositions", sourcePositions);
+    const morphedPositions = sceneComputedPoseBlendArray(object, "_computedPoseLocalPositions", sourcePositions, targetPositions, 3, alpha, false);
+    if (!morphedPositions) {
+      return 0;
+    }
+
+    // Reuse the existing plain object instead of replacing it on every event,
+    // so renderer-owned caches hanging off computedMorph (packed GPU data
+    // buffers, output buffers, bind groups) remain reusable across events.
+    // Every public morph data field is reassigned each event so no stale
+    // source/target/count/alpha/model data leaks through the reused object.
+    let morphData = object.computedMorph;
+    if (!morphData || typeof morphData !== "object") {
+      morphData = {};
+      object.computedMorph = morphData;
+    }
+    morphData.sourcePositions = priorPositions;
+    morphData.targetPositions = targetPositions;
+    morphData.uvs = sourceLocal.uvs;
+    morphData.count = count;
+    morphData.alpha = Math.max(0, Math.min(1, sceneNumber(alpha, 0.45)));
+    morphData.modelMatrix = sceneModelTransformMatrix(model);
+
+    const orientation = sceneAffineDeterminant(sceneModelTransformMatrix(model), 0) < 0 ? -1 : 1;
+    object.vertices.positions = sceneModelTransformMeshFloats(morphedPositions, 3, function(x, y, z) {
+      return sceneModelTransform({ x: x, y: y, z: z }, model, 0);
+    });
+
+    const sourceNormals = sourceLocal.normals && sourceLocal.normals.length >= count * 3
+      ? sourceLocal.normals.subarray ? sourceLocal.normals.subarray(0, count * 3) : sourceLocal.normals
+      : null;
+    const targetNormals = targetLocal.normals && targetLocal.normals.length >= count * 3
+      ? targetLocal.normals.subarray ? targetLocal.normals.subarray(0, count * 3) : targetLocal.normals
+      : null;
+    const priorNormals = sourceNormals
+      ? sceneComputedPosePriorArray(object, "_computedPoseLocalNormals", sourceNormals)
+      : null;
+    const morphedNormals = sourceNormals
+      ? sceneComputedPoseBlendArray(object, "_computedPoseLocalNormals", sourceNormals, targetNormals || sourceNormals, 3, alpha, true)
+      : null;
+    if (object.computedMorph) {
+      object.computedMorph.sourceNormals = priorNormals;
+      object.computedMorph.targetNormals = sourceNormals ? (targetNormals || sourceNormals) : null;
+    }
+    if (morphedNormals) {
+      object.vertices.normals = sceneModelTransformMeshFloats(morphedNormals, 3, function(x, y, z) {
+        return sceneNormalizeDirection(sceneObjectTransformNormal(model, { x: x, y: y, z: z }, 0));
+      });
+    }
+
+    const sourceTangents = sourceLocal.tangents && sourceLocal.tangents.length >= count * 4
+      ? sourceLocal.tangents.subarray ? sourceLocal.tangents.subarray(0, count * 4) : sourceLocal.tangents
+      : null;
+    const targetTangents = targetLocal.tangents && targetLocal.tangents.length >= count * 4
+      ? targetLocal.tangents.subarray ? targetLocal.tangents.subarray(0, count * 4) : targetLocal.tangents
+      : null;
+    const priorTangents = sourceTangents
+      ? sceneComputedPosePriorArray(object, "_computedPoseLocalTangents", sourceTangents)
+      : null;
+    const morphedTangents = sourceTangents
+      ? sceneComputedPoseBlendArray(object, "_computedPoseLocalTangents", sourceTangents, targetTangents || sourceTangents, 4, alpha, true)
+      : null;
+    if (object.computedMorph) {
+      object.computedMorph.sourceTangents = priorTangents;
+      object.computedMorph.targetTangents = sourceTangents ? (targetTangents || sourceTangents) : null;
+    }
+    if (morphedTangents) {
+      object.vertices.tangents = sceneModelTransformTangents(morphedTangents, object.vertices.normals, model, orientation);
+    }
+
+    object.vertices.uvs = sourceLocal.uvs;
+    object.vertices.indices = sceneCloneModelMeshIndices(sourceLocal.indices, orientation < 0, count);
+    object.vertices.count = count;
+    object.static = false;
+    sceneApplyModelObjectHiddenState(object, model);
+    return count;
+  }
+
+  function sceneApplyModelComputedPose(state, record, patch) {
+    if (!state || !record || !record.staticModel || !sceneOwns(patch, "computedPose")) {
+      return false;
+    }
+    const pose = sceneComputedPoseName(patch.computedPose);
+    const alpha = Math.max(0, Math.min(1, sceneNumber(patch.computedPoseAlpha, pose === "idle" ? 0.32 : 0.52)));
+    const targetID = sceneComputedPoseTargetID(record.id, pose);
+    const targetRecord = targetID === record.id ? record : sceneComputedPoseRecordByID(state, targetID);
+    record.computedPose = pose;
+    record.computedPoseAlpha = alpha;
+    record.computedPoseTargetID = targetID;
+    record.computedMorphObjects = 0;
+    record.computedMorphVertices = 0;
+    if (!targetRecord || !Array.isArray(record.objectIDs) || !Array.isArray(targetRecord.objectIDs)) {
+      return false;
+    }
+
+    const count = Math.min(record.objectIDs.length, targetRecord.objectIDs.length);
+    let changed = false;
+    let morphObjects = 0;
+    let morphVertices = 0;
+    for (let index = 0; index < count; index += 1) {
+      const object = sceneComputedPoseObject(state, record.objectIDs[index]);
+      const targetObject = sceneComputedPoseObject(state, targetRecord.objectIDs[index]);
+      const sourceLocal = sceneComputedPoseLocalVertices(object);
+      const targetLocal = sceneComputedPoseLocalVertices(targetObject) || sourceLocal;
+      const vertices = sceneComputedPoseApplyObjectMorph(object, sourceLocal, targetLocal, record.model, alpha);
+      if (vertices <= 0) {
+        continue;
+      }
+      changed = true;
+      morphObjects += 1;
+      morphVertices += vertices;
+    }
+    record.computedMorphObjects = morphObjects;
+    record.computedMorphVertices = morphVertices;
+    return changed;
+  }
+
+  function sceneApplyModelLivePatch(state, record, patch) {
+    if (!record || !record.model || !sceneIsPlainObject(patch)) {
+      return false;
+    }
+    const keys = ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ"];
+    const hasComputedPose = sceneOwns(patch, "computedPose");
+    let changed = sceneApplyModelLiveOpacity(state, record, patch);
+    if (sceneOwns(patch, "visible")) {
+      const nextVisible = sceneBool(patch.visible, true);
+      if (record.model.visible !== nextVisible) {
+        record.model.visible = nextVisible;
+        changed = true;
+      }
+    }
+    for (let index = 0; index < keys.length; index += 1) {
+      const key = keys[index];
+      if (!Object.prototype.hasOwnProperty.call(patch, key)) {
+        continue;
+      }
+      const next = sceneNumber(patch[key], sceneNumber(record.model[key], key.indexOf("scale") === 0 ? 1 : 0));
+      if (record.model[key] === next) {
+        continue;
+      }
+      record.model[key] = next;
+      changed = true;
+    }
+    if (!changed && !hasComputedPose) {
+      return false;
+    }
+    record.rootTransform = sceneModelTransformMatrix(record.model);
+    let computedPoseChanged = false;
+    if (hasComputedPose) {
+      computedPoseChanged = sceneApplyModelComputedPose(state, record, patch);
+    }
+    if (record.staticModel && !computedPoseChanged) {
+      sceneApplyStaticModelObjectTransform(state, record);
+    }
+    changed = changed || computedPoseChanged;
+    if (!changed) {
+      return false;
+    }
+    record.poseDirty = true;
+    return true;
+  }
+
+  function sceneApplyModelLiveEvent(state, eventName, payload) {
+    const event = typeof eventName === "string" ? eventName.trim() : "";
+    if (!event) {
+      return false;
+    }
+    const records = state && Array.isArray(state._modelSkins) ? state._modelSkins : [];
+    let changed = false;
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (!sceneModelRecordListensToEvent(record, event)) {
+        continue;
+      }
+      const patch = sceneModelLivePatchForRecord(record, payload);
+      changed = sceneApplyModelLivePatch(state, record, patch) || changed;
+      changed = Boolean(record.animationApi && record.animationApi.applyModelAnimation(record, patch)) || changed;
+    }
+    return changed;
+  }
+
+  function sceneApplyCameraLiveEvent(state, payload) {
+    if (!state || !sceneIsPlainObject(payload) || !sceneIsPlainObject(payload.camera)) {
+      return false;
+    }
+    const nextCamera = normalizeSceneCamera(payload.camera, state.camera);
+    if (sceneCameraEquivalent(state.camera, nextCamera)) {
+      return false;
+    }
+    state.camera = nextCamera;
+    return true;
+  }
+
+  function sceneHydrationModels(state, props) {
+    const models = Array.isArray(state && state.models) ? state.models : sceneModels(props);
+    const instancedGLBMeshes = Array.isArray(state && state.instancedGLBMeshes)
+      ? state.instancedGLBMeshes
+      : sceneInstancedGLBMeshes(props);
+    return models.concat(sceneInstancedGLBModelsFromBatches(instancedGLBMeshes));
+  }
+
+  function sceneClearHydratedModelRecords(state) {
+    if (!state || !state._hydratedModelRecords) {
+      return;
+    }
+    const records = state._hydratedModelRecords;
+    for (const id of (Array.isArray(records.objects) ? records.objects : [])) {
+      state.objects.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.labels) ? records.labels : [])) {
+      state.labels.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.sprites) ? records.sprites : [])) {
+      state.sprites.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.html) ? records.html : [])) {
+      state.html.delete(sceneObjectKey(id));
+    }
+    for (const id of (Array.isArray(records.lights) ? records.lights : [])) {
+      state.lights.delete(sceneObjectKey(id));
+    }
+    if (Array.isArray(records.points) && records.points.length > 0 && Array.isArray(state.points)) {
+      const pointIDs = new Set(records.points.map(function(id) { return sceneObjectKey(id); }));
+      state.points = state.points.filter(function(point) {
+        return !pointIDs.has(sceneObjectKey(point && point.id));
+      });
+    }
+    state._hydratedModelRecords = null;
+  }
+
+  // Free motion mixers attached to model records before they are dropped
+  // (re-hydration, failed staging, supersession or teardown). The name is kept
+  // for compatibility with source-level consumers from the original WASM-only
+  // cleanup, but JS mixers are resources too and must follow the same lifetime.
+  function sceneDestroyModelWasmMixers(records) {
+    if (!Array.isArray(records)) {
+      return;
+    }
+    for (let index = 0; index < records.length; index += 1) {
+      const record = records[index];
+      if (!record) {
+        continue;
+      }
+      if (record.wasmMixer && typeof window !== "undefined" && typeof window.__gosx_motion_mixer_destroy === "function") {
+        window.__gosx_motion_mixer_destroy(record.wasmMixer);
+        record.wasmMixer = 0;
+        record.wasmMixerActive = false;
+      }
+      if (record.mixer && typeof record.mixer.dispose === "function") {
+        record.mixer.dispose();
+        record.mixer = null;
+      }
+    }
+  }
+
+  function sceneModelHydrationCounts(modelCount) {
+    return {
+      models: Math.max(0, Math.floor(sceneNumber(modelCount, 0))),
+      objects: 0,
+      points: 0,
+      labels: 0,
+      sprites: 0,
+      html: 0,
+      lights: 0,
+    };
+  }
+
+  function sceneModelHydrationOutcome(counts, generation, outcome, committed, stale, failureStage) {
+    return Object.assign({}, counts, {
+      generation,
+      outcome: String(outcome || ""),
+      committed: Boolean(committed),
+      stale: Boolean(stale),
+      failureStage: String(failureStage || ""),
+    });
+  }
+
+  // Identity-root rigid stages share immutable primitive streams from the same
+  // decoded asset. The asset's vertex identity also scopes texture variants and
+  // node transforms; animated/morph/live stages never enter this cache.
+  const sceneRigidPrimitiveGeometry = new WeakMap();
+
+  function sceneCrowdPrimitiveMaterialEligible(raw, model) {
+    const source = sceneApplyMaterialOverride(raw, model);
+    // Read through the same nested/top-level precedence as normalization.
+    // A primitive-authored custom shader must not lose its skin before the
+    // renderer discovers that it cannot use the crowd PBR program.
+    if (normalizeSceneMaterialKind(sceneObjectMaterialKindValue(source)) !== "standard") return false;
+    for (const key of ["customVertex", "customFragment", "customVertexWGSL", "customFragmentWGSL", "shaderBackend", "shaderSource"]) {
+      const value = sceneObjectMaterialValue(source, key);
+      if (typeof value === "string" && value.trim()) return false;
+    }
+    const uniforms = sceneObjectMaterialValue(source, "customUniforms");
+    if (uniforms && typeof uniforms === "object" && Object.keys(uniforms).length) return false;
+    const opacity = sceneObjectMaterialValue(source, "opacity");
+    if (opacity != null && (!Number.isFinite(Number(opacity)) || Number(opacity) < 1)) return false;
+    const blend = sceneObjectMaterialValue(source, "blendMode");
+    if (blend && blend !== "opaque" && blend !== "normal") return false;
+    const pass = sceneObjectMaterialValue(source, "renderPass");
+    return (!pass || pass === "opaque") && source.wireframe !== true;
+  }
+
+  async function sceneStageModelHydration(state, model, modelIndex, generation) {
+    const staged = {
+      model,
+      modelIndex,
+      objects: [],
+      points: [],
+      labels: [],
+      sprites: [],
+      html: [],
+      lights: [],
+      modelAnimations: [],
+      modelSkins: [],
+      rigidInstanceModel: null,
+    };
+    const stageState = {
+      _modelAnimations: staged.modelAnimations,
+      _modelSkins: staged.modelSkins,
+    };
+    let stage = "load";
+    try {
+      const asset = await loadSceneModelAsset(model.src, state && state._modelStatusMount, {
+        state,
+        generation,
+        crowd: model._instancedGLB === true,
+        modelID: model.id || "",
+        modelIndex,
+        stage: "load",
+        variantScope: state && state._modelTextureVariantScope,
+      });
+      // A newer command or factory owner already owns the scene. Avoid
+      // needless instantiation and mixer creation; the terminal currency
+      // check still fences the whole batch if supersession happens later.
+      if (!sceneModelHydrationIsCurrent({ state, generation })) {
+        return { ok: true, staged };
+      }
+      stage = "fit";
+      const instanceModel = sceneModelWithAssetFit(model, asset);
+      const prefix = model.id || ("scene-model-" + modelIndex);
+      let crowdCandidate = !asset._crowdUnsupported && model._instancedGLB === true && model._crowdPose && model._crowdPose.animation &&
+        /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ state._crowdWebGLRequested && state._crowdRenderer && state._crowdRenderer.prepareCrowdAtlas &&
+        Boolean(sceneRigidInstanceHydrationKey(state, model)) && !sceneModelHasWeightAnimations(asset) &&
+        !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
+        (!model.materialKind || model.materialKind === "standard") &&
+        asset.objects.length > 0 && asset.objects.every(function(object) {
+          return object.skin && object.vertices && object.vertices.joints && object.vertices.weights &&
+            !object._morphAnim && !object._nodeAnim && object.renderPass !== "alpha" &&
+            sceneCrowdPrimitiveMaterialEligible(object, model);
+        });
+      let crowdAPI = null;
+      if (crowdCandidate) {
+        try {
+          crowdAPI = await ensureAnimationFeatureLoaded();
+          for (const skin of new Set(asset.objects.map(o => o.skinIndex))) {
+            state._crowdRenderer.prepareCrowdAtlas(crowdAPI.buildCrowdAtlas(asset, skin));
+          }
+        } catch (error) {
+          // Preserve the explicit clock through ordinary skin/morph playback.
+          // Never silently submit bind geometry to a missing palette shader.
+          crowdCandidate = false;
+          if (!state._crowdFallbackReason) console.warn("[gosx] crowd skin fallback:", error && error.message || error);
+          state._crowdFallbackReason = String(error && error.message || error);
+        }
+      }
+      if (crowdCandidate) {
+        stage = "crowd-palette";
+        const api = crowdAPI;
+        const geometryModel = Object.assign({}, instanceModel, { x: 0, y: 0, z: 0,
+          rotationX: 0, rotationY: 0, rotationZ: 0, scaleX: 1, scaleY: 1, scaleZ: 1,
+          parentMatrix: null, _shareRigidGeometry: true });
+        for (let i = 0; i < asset.objects.length; i++) {
+          const raw = asset.objects[i];
+          const atlas = api.buildCrowdAtlas(asset, raw.skinIndex);
+          const primitive = atlas.primitives.get(raw.vertices);
+          sceneRigidPrimitiveGeometry.set(primitive.vertices, primitive.vertices);
+          const source = Object.assign({}, raw, { skin: null, skinIndex: null, vertices: primitive.vertices });
+          const object = sceneInstantiateModelObject(source, geometryModel, prefix, i, null);
+          object.vertices = primitive.vertices;
+          object._modelLocalVertices = primitive.vertices;
+          object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
+          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows };
+          object.static = false;
+          staged.objects.push(object);
+        }
+        staged.rigidInstanceModel = instanceModel;
+        return { ok: true, staged };
+      }
+      const rigidInstance = (model.static !== true || model._instancedGLB === true) &&
+        !sceneModelHasSkins(asset.skins) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) &&
+        !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
+        asset.objects.length > 0 && asset.objects.every(function(object) {
+          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return object.vertices && object.vertices.count > 0 && !object._morphAnim && !object._nodeAnim;
+        }) && Boolean(sceneRigidInstanceHydrationKey(state, model));
+      // glTF node transforms are already folded into the asset vertices. Keep
+      // those vertices in model-local space and apply the instance TRS once
+      // in the GPU (or through the existing canvas fallback transform).
+      const geometryModel = rigidInstance ? Object.assign({}, instanceModel, {
+        x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
+        scaleX: 1, scaleY: 1, scaleZ: 1, parentMatrix: null,
+        _shareRigidGeometry: true,
+      }) : instanceModel;
+      if (rigidInstance) staged.rigidInstanceModel = instanceModel;
+      stage = "skin-clone";
+      const skinInstances = sceneCloneModelSkins(asset.skins);
+      const objectIDs = [];
+      stage = "object";
+      for (let i = 0; i < asset.objects.length; i += 1) {
+        const object = sceneInstantiateModelObject(asset.objects[i], geometryModel, prefix, i, skinInstances);
+        if (!object) {
+          continue;
+        }
+        if (rigidInstance) {
+          const sourceVertices = asset.objects[i].vertices;
+          let shared = sceneRigidPrimitiveGeometry.get(sourceVertices);
+          if (!shared) {
+            shared = object.vertices;
+            // The decoded asset owns immutable streams shared by its entire
+            // swarm. A short bounded GPU residency window can reuse them
+            // across an empty wave without retaining any actor identities.
+            shared._rigidPool = true;
+            sceneRigidPrimitiveGeometry.set(sourceVertices, shared);
+          }
+          object.vertices = shared;
+          object._modelLocalVertices = shared;
+          object._rigidSharedAppearance = model._instancedGLBSharedAppearance === true;
+          object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
+          object.static = false;
+        }
+        staged.objects.push(object);
+        objectIDs.push(object.id);
+      }
+      stage = "points";
+      for (let i = 0; i < asset.points.length; i += 1) {
+        const point = sceneInstantiateModelPointsEntry(asset.points[i], instanceModel, prefix, i);
+        if (point && point.count > 0) {
+          staged.points.push(point);
+        }
+      }
+      stage = "label";
+      for (let i = 0; i < asset.labels.length; i += 1) {
+        const label = sceneInstantiateModelLabel(asset.labels[i], instanceModel, prefix, i);
+        if (label && label.text.trim()) {
+          staged.labels.push(label);
+        }
+      }
+      stage = "sprite";
+      for (let i = 0; i < asset.sprites.length; i += 1) {
+        const sprite = sceneInstantiateModelSprite(asset.sprites[i], instanceModel, prefix, i);
+        if (sprite) {
+          staged.sprites.push(sprite);
+        }
+      }
+      stage = "html";
+      for (let i = 0; i < asset.html.length; i += 1) {
+        const entry = sceneInstantiateModelHTML(asset.html[i], instanceModel, prefix, i);
+        if (entry) {
+          staged.html.push(entry);
+        }
+      }
+      stage = "light";
+      for (let i = 0; i < asset.lights.length; i += 1) {
+        const light = sceneInstantiateModelLight(asset.lights[i], instanceModel, prefix, i);
+        if (light) {
+          staged.lights.push(light);
+        }
+      }
+      stage = "skin";
+      if (sceneModelHasSkins(skinInstances) || sceneModelHasWeightAnimations(asset) || sceneModelHasNodeAnimations(asset)) {
+        // ONE record per model: the playback record is the live record, the
+        // same way skinned models already receive live patches. Registering
+        // an additional static/live record under the same model ID would let
+        // two records diverge in pose state.
+        await scenePrepareModelSkinPlayback(stageState, asset, instanceModel, skinInstances, objectIDs, staged.objects, staged.points);
+        // Explicit instanced playback owns bounded per-instance deformation
+        // streams. Cache that owner by the same template/identity as GPU skins.
+        if (model._instancedGLB === true && sceneRigidInstanceHydrationKey(state, model, null) &&
+            staged.modelSkins.length === 1 && staged.modelSkins[0].explicitClips) {
+          staged.rigidInstanceModel = instanceModel;
+        }
+      } else {
+        sceneRegisterStaticModelLiveRecord(stageState, instanceModel, objectIDs);
+      }
+      return { ok: true, staged };
+    } catch (error) {
+      return { ok: false, staged, stage, error };
+    }
+  }
+
+  function sceneDestroyStagedModelHydrations(results) {
+    for (let index = 0; index < results.length; index += 1) {
+      const staged = results[index] && results[index].staged;
+      if (staged) {
+        sceneDestroyModelWasmMixers(staged.modelSkins);
+      }
+    }
+  }
+
+  function sceneStaticModelHydrationKey(state, model, modelIndex) {
+    if (!model || model.static !== true || model.animation || model.animationSeq ||
+        model._inState || model._outState ||
+        Array.isArray(model._live) && model._live.length > 0) {
+      return "";
+    }
+    if (model._transition && ["in", "out", "update"].some(function(kind) {
+      return model._transition[kind] && model._transition[kind].duration > 0;
+    })) return "";
+    // Normalized declarations include the asset, transform, fit and material
+    // overrides. Texture variants are a separate asset-cache identity.
+    const scope = state && state._modelTextureVariantScope;
+    return JSON.stringify([modelIndex, model, scope && scope.key || ""]);
+  }
+
+  function sceneReusableStaticModelHydration(staged, state) {
+    // Reuse only rigid mesh stages with no playback or auxiliary lifecycle
+    // owners. Animated, live-bound and non-mesh models keep full staging.
+    if (!staged || !staged.objects.length || staged.modelSkins.length ||
+        staged.modelAnimations.length || staged.points.length || staged.labels.length ||
+        staged.sprites.length || staged.html.length || staged.lights.length) return false;
+    return staged.objects.every(function(object) {
+      const vertices = object && object.vertices;
+      return vertices && vertices.immutable === true && vertices.revision === 0 &&
+        (!state || state.objects.get(object.id) === object);
+    });
+  }
+
+  function sceneRigidInstanceHydrationEligible(model, matrix) {
+    if (!model || model.static === true && model._instancedGLB !== true || model.animation || model.animationSeq ||
+        model._inState || model._outState || Array.isArray(model._live) && model._live.length) return false;
+    if (model._transition && ["in", "out", "update"].some(function(kind) {
+      return model._transition[kind] && model._transition[kind].duration > 0;
+    })) return false;
+    const determinant = sceneAffineDeterminant(matrix || sceneModelTransformMatrix(model), 0);
+    // Nonnegative instanced scales may collapse during fades without changing
+    // geometry identity. Mirrored declarations retain the winding/bake path.
+    if (model._instancedGLB === true && model.scaleX >= 0 && model.scaleY >= 0 && model.scaleZ >= 0) {
+      return Number.isFinite(determinant) && determinant >= 0;
+    }
+    return determinant > 0.000001;
+  }
+
+  function sceneRigidInstanceHydrationKey(state, model, matrix) {
+    if (!sceneRigidInstanceHydrationEligible(model, matrix)) return "";
+    const template = sceneInstancedGLBHydrationTemplates.get(model);
+    if (template) return '["instanced-glb",' + template + ',' + JSON.stringify([model.id,
+      state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]) + ']';
+    const declaration = Object.assign({}, model);
+    for (const key of ["x", "y", "z", "rotationX", "rotationY", "rotationZ", "scaleX", "scaleY", "scaleZ", "parentMatrix"]) delete declaration[key];
+    return JSON.stringify([declaration, state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || ""]);
+  }
+
+  function sceneReusableRigidInstance(staged, state) {
+    if (!staged || !staged.rigidInstanceModel) return false;
+    if (sceneReusableStaticModelHydration(staged, state)) return true;
+    if (state) for (const object of staged.objects) {
+      if (state.objects.get(object.id) !== object) return false;
+    }
+    return Boolean(staged.model && staged.model._instancedGLB === true &&
+      staged.modelSkins.length === 1 && staged.modelSkins[0].explicitClips &&
+      !staged.modelSkins[0].mixer && !staged.modelSkins[0].wasmMixer &&
+      !staged.modelAnimations.length && !staged.points.length && !staged.labels.length &&
+      !staged.sprites.length && !staged.html.length && !staged.lights.length &&
+      staged.objects.length);
+  }
+
+  function scenePrepareRigidInstancePatch(state, staged, model, matrix) {
+    if (!sceneReusableRigidInstance(staged, state)) return null;
+    let crowdRows = null;
+    for (const object of staged.objects) {
+      if (!object._crowdSkin) continue;
+      const rows = object._crowdSkin.poseRows(object._crowdSkin.atlas, model._crowdPose, new Float32Array(3));
+      if (!rows || rows.length !== object._crowdSkin.rows.length) return null;
+      if (!crowdRows) crowdRows = [];
+      crowdRows.push({ object, rows });
+    }
+    // InstancedGLB expansion creates an immutable command-owned model, so its
+    // cached matrix is already a transaction snapshot. Ordinary Model entries
+    // persist across commands and reuse their mutable matrix cache; retain the
+    // defensive copy for those broader declarations.
+    const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
+    return { staged, model, matrix: snapshotMatrix, crowdRows, poseRevision: staged._poseRevision || 0 };
+  }
+
+  function sceneCommitRigidInstancePatch(patch) {
+    if (patch.staged.modelSkins && patch.staged.modelSkins.length) {
+      const record = patch.staged.modelSkins[0];
+      record.model = patch.model;
+      record.rootTransform = patch.matrix;
+      sceneApplyModelSkinPose(record, 0, false);
+    } else {
+      for (const object of patch.staged.objects) object.parentMatrix = patch.matrix;
+    }
+    if (patch.crowdRows) {
+      for (const update of patch.crowdRows) update.object._crowdSkin.rows.set(update.rows);
+    }
+    patch.staged.model = patch.model;
+    patch.staged.rigidInstanceModel = patch.model;
+  }
+
+  function sceneUpdateRigidInstancePoses(state, hydrationModels) {
+    // The binary bridge supplies an optional third argument with its exact
+    // batches. Ordinary declaration commands omit it and retain atomic staging.
+    const poseBatches = arguments[2];
+    const binary = Array.isArray(poseBatches);
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    const pending = Boolean(state && (state._modelHydrationPromise || state._modelHydrationUncommitted));
+    if (!cache || pending && (!binary || !poseBatches.length) || state._modelOwner && !state._modelOwner()) return false;
+    let models;
+    if (binary && !Array.isArray(hydrationModels)) {
+      // The bridge has applied these poses to their declared instances. Expand
+      // only those batches: props and effects outside the frame must keep
+      // their committed transforms, playback owners and pose revisions.
+      models = [];
+      const mounted = Array.isArray(state.instancedGLBMeshes) ? state.instancedGLBMeshes : [];
+      const seenBatches = new Set();
+      for (const batch of poseBatches) {
+        if (!batch || typeof batch.id !== "string" || seenBatches.has(batch.id) || !Array.isArray(batch.instances)) return false;
+        seenBatches.add(batch.id);
+        const currentIndex = mounted.findIndex(function(candidate) { return candidate.id === batch.id; });
+        if (currentIndex < 0) { if (pending) continue; return false; }
+        const current = mounted[currentIndex];
+        if (!Array.isArray(current.instances)) return false;
+        let selected = current;
+        if (pending) {
+          const currentByID = new Map(current.instances.map(function(instance) { return [instance.id, instance]; }));
+          const instances = [];
+          const seenInstances = new Set();
+          for (const pose of batch.instances) {
+            if (!pose || seenInstances.has(pose.id)) return false;
+            seenInstances.add(pose.id);
+            const instance = currentByID.get(pose.id);
+            if (instance) instances.push(instance);
+          }
+          selected = Object.assign({}, current, { instances });
+        } else {
+          if (current.instances.length !== batch.instances.length) return false;
+          for (let index = 0; index < batch.instances.length; index++) {
+            if (!batch.instances[index] || current.instances[index].id !== batch.instances[index].id) return false;
+          }
+        }
+        const expanded = sceneInstancedGLBMeshToModels(selected, currentIndex);
+        for (const model of expanded) models.push(model);
+      }
+    } else {
+      models = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
+    }
+    if (!pending && !binary && models.length !== records.modelCount) return false;
+    // Only the explicit binary frame can advance committed poses during a
+    // declaration transaction. JSON membership/material replacement remains
+    // atomic and does not move unrelated actors before its assets are ready.
+    const requested = binary ? new Set() : null;
+    if (requested) {
+      for (const batch of poseBatches) {
+        for (const instance of batch.instances) requested.add(batch.id + "/" + instance.id);
+      }
+    }
+    const memberships = records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
+    const scope = sceneRigidMembershipScopeKey(state);
+    const patches = [];
+    const keys = new Set();
+    for (let index = 0; index < models.length; index++) {
+      const model = models[index];
+      const id = sceneRigidMembershipModelID(model);
+      if (requested && !requested.has(id)) continue;
+      const matrix = sceneModelTransformMatrix(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const membership = id && memberships && memberships.get(id);
+      let key = "";
+      if (membership) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            membership.template !== template || membership.scope !== scope ||
+            membership.staged !== cache.get(membership.key)) {
+          if (pending) continue; // A different asset/template has no committed authority yet.
+          return false;
+        }
+        key = membership.key;
+      } else if (id) {
+        if (pending) continue; // New identities stay staged until commit.
+        return false;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
+      if (!key) {
+        const staticKey = sceneStaticModelHydrationKey(state, model, index);
+        if (!staticKey || !sceneReusableStaticModelHydration(records.staticModels.get(staticKey), state)) return false;
+        continue;
+      }
+      const staged = key && cache.get(key);
+      if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
+      keys.add(key);
+      patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
+    }
+    // No compatible committed identities is a deferred pose, not a failure.
+    // The ordered queue retains the latest frame for replay after hydration.
+    if (pending && !patches.length) return true;
+    // Validate every selected committed wrapper before changing any pose.
+    for (const patch of patches) {
+      if (patch.staged.modelSkins && patch.staged.modelSkins.length) {
+        const record = patch.staged.modelSkins[0];
+        record.model = patch.model;
+        record.rootTransform = patch.matrix;
+        sceneApplyModelSkinPose(record, 0, false);
+      }
+      for (const object of patch.staged.objects) {
+        if (!patch.staged.modelSkins || !patch.staged.modelSkins.length) object.parentMatrix = patch.matrix;
+        if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
+        if (object._crowdMotion) delete object._crowdMotion;
+      }
+      patch.staged.model = patch.model;
+      patch.staged.rigidInstanceModel = patch.model;
+      patch.staged._poseRevision = (patch.staged._poseRevision || 0) + 1;
+    }
+    return true;
+  }
+
+  // sceneUpdateRigidInstanceMotion applies a decoded GSP3 MotionFrame (see
+  // command-runtime.ts's decodeMotionFrame/applyMountedMotionFrame) to the
+  // retained crowd render objects a MotionBatch's instances name. Unlike
+  // sceneUpdateRigidInstancePoses, it never rebuilds a CPU-side transform
+  // matrix or atlas pose row: it writes the instance's motion key and
+  // animation state straight into object._crowdMotion.record, and the GPU
+  // vertex shader (SCENE_CROWD_SKIN_MOTION_GLSL) derives the transform and
+  // pose from that record and the per-frame u_now uniform. Because of that,
+  // this function needs no positional re-derivation from state.models the
+  // way sceneUpdateRigidInstancePoses does: an instance ID resolves straight
+  // to its hydrated render objects through
+  // state._hydratedModelRecords.rigidInstancesByID.
+  //
+  // A qualifying object must already carry _crowdSkin -- the SAME crowd
+  // hydration PoseFrame/legacy playback uses (see sceneStageModelHydration's
+  // "crowd" branch) -- so a MotionFrame targets an actor that was declared
+  // with an initial animation, exactly like PoseFrame requires. _crowdMotion
+  // is created lazily, on an object's FIRST motion frame, reusing that same
+  // atlas: hydration does not need to know in advance which driving channel
+  // (PoseFrame or MotionFrame) an actor will use.
+  //
+  // Fails closed (returns false, no partial writes) when: the hydration
+  // cache is not ready, an instance ID has no crowd-skinned hydration, or
+  // the WebGL crowd renderer has no prepareCrowdMotionShaders (any other
+  // backend, or WebGL before its first crowd draw ever ran) -- see
+  // scene/motion_frame.go's DispatchMotionFrame doc comment for how a caller
+  // routes around that with options.fallbackPoseFrame or
+  // options.fallbackCommands.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+  function sceneUpdateRigidInstanceMotion(state, batches) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    const memberships = records && records.rigidInstancesByID instanceof Map ? records.rigidInstancesByID : null;
+    const api = typeof window !== "undefined" ? window.__gosx_scene3d_animation_api : null;
+    if (!cache || !memberships || !api || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return false;
+    if (!state._crowdRenderer || typeof state._crowdRenderer.prepareCrowdMotionShaders !== "function") return false;
+    const resolved = [];
+    for (const batch of batches) {
+      for (const instance of batch.instances) {
+        // InstancedGLB expansion stores hydrated models under batch/id.
+        const membership = memberships.get(batch.id + "/" + instance.id);
+        const staged = membership && membership.staged === cache.get(membership.key) ? membership.staged : null;
+        // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
+        const skinned = staged ? staged.objects.filter(function(object) { return Boolean(object._crowdSkin); }) : null;
+        if (!skinned || !skinned.length) return false;
+        for (const object of skinned) {
+          if (api.crowdMotionClipTable(object._crowdSkin.atlas).count > api.crowdMotionMaxClips) return false;
+        }
+        resolved.push({ skinned, instance });
+      }
+    }
+    try {
+      state._crowdRenderer.prepareCrowdMotionShaders();
+    } catch (_error) {
+      return false;
+    }
+    for (const entry of resolved) {
+      for (const object of entry.skinned) {
+        if (!object._crowdMotion) {
+          object._crowdMotion = {
+            atlas: object._crowdSkin.atlas,
+            clipTable: api.crowdMotionClipTable(object._crowdSkin.atlas),
+            record: new Float32Array(api.crowdMotionRecordFloats),
+            localRadius: api.crowdMotionLocalRadius(object._crowdSkin.bounds),
+            bounds: { minX: Infinity, minY: Infinity, minZ: Infinity, maxX: -Infinity, maxY: -Infinity, maxZ: -Infinity },
+            dirty: true,
+          };
+        }
+        const motion = object._crowdMotion;
+        const clipRow = api.crowdMotionClipIndex(motion.atlas, entry.instance.animation);
+        api.crowdMotionWriteRecord(motion.record, entry.instance, clipRow);
+        const bounds = motion.bounds;
+        bounds.minX = bounds.minY = bounds.minZ = Infinity;
+        bounds.maxX = bounds.maxY = bounds.maxZ = -Infinity;
+        api.crowdMotionSweptBoundsInto(bounds, motion.record, motion.localRadius);
+        motion.dirty = true;
+      }
+    }
+    return true;
+  }
+
+  function sceneRigidMembershipModelID(model) {
+    return model && model._instancedGLB === true ? String(model.id || "") : "";
+  }
+
+  function sceneRigidMembershipScopeKey(state) {
+    return state && state._modelTextureVariantScope && state._modelTextureVariantScope.key || "";
+  }
+
+  function sceneRigidMembershipDescriptor(state, key, staged) {
+    const model = staged && staged.model;
+    const id = sceneRigidMembershipModelID(model);
+    const template = model && sceneInstancedGLBHydrationTemplates.get(model);
+    return id && template ? { id, key, staged, template, scope: sceneRigidMembershipScopeKey(state) } : null;
+  }
+
+  function sceneRigidMembershipSnapshotModel(model) {
+    // InstancedGLB models are freshly expanded from a command-owned normalized
+    // batch. normalizeSceneInstancedGLBMeshEntry already deep-snapshots every
+    // nested authored shader/material field once per batch, and expansion
+    // creates a new pose record per instance. Later commands replace the
+    // batch array, so this record is already an immutable async snapshot.
+    // Ordinary Model declarations retain the established deep clone because
+    // their broader mutable/lifecycle contract is unchanged.
+    return sceneInstancedGLBHydrationTemplates.has(model)
+      ? model
+      : sceneCloneHydrationModel(model);
+  }
+
+  function scenePlanRigidInstanceMembership(state, hydrationModels) {
+    const records = state && state._hydratedModelRecords;
+    const cache = records && records.rigidInstances;
+    const statics = records && records.staticModels;
+    if (!cache || !statics || state._modelHydrationPromise || state._modelOwner && !state._modelOwner()) return null;
+    // Only reusable rigid/static collections enter this path. Animated,
+    // auxiliary, lifecycle-bound and specialized records keep full hydration.
+    if (records.modelCount !== cache.size + statics.size) return null;
+    let models;
+    try {
+      const expanded = Array.isArray(hydrationModels) ? hydrationModels : sceneHydrationModels(state, null);
+      models = expanded.map(sceneRigidMembershipSnapshotModel);
+    } catch (_error) {
+      return null;
+    }
+    const previousByID = records.rigidInstancesByID;
+    if (!(previousByID instanceof Map)) return null;
+    const scope = sceneRigidMembershipScopeKey(state);
+    const keys = new Set();
+    const staticKeys = new Set();
+    const nextIDs = new Set();
+    const entries = [];
+    let changed = models.length !== records.modelCount;
+    for (let modelIndex = 0; modelIndex < models.length; modelIndex += 1) {
+      const model = models[modelIndex];
+      const matrix = sceneModelTransformMatrix(model);
+      const id = sceneRigidMembershipModelID(model);
+      const template = id && sceneInstancedGLBHydrationTemplates.get(model);
+      const previous = id && previousByID.get(id);
+      let key = "";
+      if (previous) {
+        if (!sceneRigidInstanceHydrationEligible(model, matrix) || !template ||
+            previous.template !== template || previous.scope !== scope ||
+            previous.staged !== cache.get(previous.key)) return null;
+        key = previous.key;
+      } else {
+        key = sceneRigidInstanceHydrationKey(state, model, matrix);
+      }
+      if (!key) {
+        const staticKey = sceneStaticModelHydrationKey(state, model, modelIndex);
+        const staged = staticKey && statics.get(staticKey);
+        if (!staticKey || staticKeys.has(staticKey) || !sceneReusableStaticModelHydration(staged, state)) return null;
+        staticKeys.add(staticKey);
+        entries.push({ kind: "static", key: staticKey, staged, model, modelIndex });
+        continue;
+      }
+      if (keys.has(key)) return null;
+      keys.add(key);
+      const staged = cache.get(key);
+      if (staged) {
+        if (previous && previous.staged !== staged) return null;
+        const patch = scenePrepareRigidInstancePatch(state, staged, model, matrix);
+        if (!patch) return null;
+        entries.push({ kind: "rigid", key, staged, model, modelIndex, patch, membership: previous || null });
+        continue;
+      }
+      // A changed key for the same actor means its template, appearance or
+      // texture scope changed and retains full-hydration semantics.
+      if (!id || nextIDs.has(id) || previous) return null;
+      nextIDs.add(id);
+      changed = true;
+      entries.push({ kind: "add", key, staged: null, model, modelIndex, patch: null });
+    }
+    for (const [key, staged] of cache) {
+      if (keys.has(key)) continue;
+      if (!sceneRigidMembershipModelID(staged && staged.model)) return null;
+      changed = true;
+    }
+    // Static membership/order changes take full hydration to prevent orphaned derived objects.
+    if (staticKeys.size !== statics.size) return null;
+    for (const key of statics.keys()) if (!staticKeys.has(key)) return null;
+    return changed ? { state, records, models, entries, keys, scope } : null;
+  }
+
+  async function sceneCommitRigidInstanceMembership(plan) {
+    const state = plan.state;
+    state._modelHydrationUncommitted = true;
+    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0)));
+    const additions = plan.entries.filter(function(entry) { return entry.kind === "add"; });
+    const results = await Promise.all(additions.map(function(entry) {
+      return sceneStageModelHydration(state, entry.model, entry.modelIndex, generation);
+    }));
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+    }
+    const failure = results.find(function(result) { return !result || result.ok !== true; });
+    if (failure) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "failed", false, false,
+        failure && failure.stage || "unknown");
+    }
+    for (let index = 0; index < additions.length; index += 1) {
+      const entry = additions[index];
+      /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const staged = results[index].staged;
+      const key = sceneRigidInstanceHydrationKey(state, entry.model);
+      if (key !== entry.key || !sceneReusableRigidInstance(staged, null)) {
+        sceneDestroyStagedModelHydrations(results);
+        return hydrateSceneStateModels(state, null);
+      }
+      const patch = scenePrepareRigidInstancePatch(null, staged, entry.model, sceneModelTransformMatrix(entry.model));
+      if (!patch) {
+        sceneDestroyStagedModelHydrations(results);
+        return hydrateSceneStateModels(state, null);
+      }
+      entry.staged = staged;
+      entry.patch = patch;
+    }
+    // Revalidate every retained wrapper and all object IDs after asynchronous
+    // staging. No committed matrix or membership changes before this point.
+    const nextObjectIDs = new Set();
+    const oldObjectIDs = new Set(Array.isArray(plan.records.objects) ? plan.records.objects : []);
+    for (const entry of plan.entries) {
+      if (entry.kind === "static") {
+        if (!sceneReusableStaticModelHydration(entry.staged, state)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+      } else if (entry.kind === "rigid") {
+        if (!sceneReusableRigidInstance(entry.staged, state)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        // Independent binary poses may have advanced this committed identity
+        // while an addition loaded. Keep that newer pose, not the plan snapshot.
+        if (entry.patch.poseRevision !== (entry.staged._poseRevision || 0)) {
+          const model = entry.staged.rigidInstanceModel;
+          entry.patch = scenePrepareRigidInstancePatch(state, entry.staged, model, sceneModelTransformMatrix(model));
+          if (!entry.patch) { sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null); }
+        }
+      }
+      for (const object of entry.staged.objects) {
+        if (nextObjectIDs.has(object.id)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        if (entry.kind === "add" && state.objects.has(object.id) && !oldObjectIDs.has(object.id)) {
+          sceneDestroyStagedModelHydrations(results); return hydrateSceneStateModels(state, null);
+        }
+        nextObjectIDs.add(object.id);
+      }
+    }
+    if (!sceneModelHydrationIsCurrent({ state, generation }) || state._hydratedModelRecords !== plan.records ||
+        sceneRigidMembershipScopeKey(state) !== plan.scope) {
+      sceneDestroyStagedModelHydrations(results);
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(plan.models.length), generation, "stale", false, true, "");
+    }
+
+    const hydrated = { modelCount: plan.entries.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
+    for (const entry of plan.entries) {
+      if (entry.kind === "static") hydrated.staticModels.set(entry.key, entry.staged);
+      else {
+        for (const object of entry.staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
+        hydrated.rigidInstances.set(entry.key, entry.staged);
+        const membership = entry.membership || sceneRigidMembershipDescriptor(state, entry.key, entry.staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
+      }
+      for (const object of entry.staged.objects) hydrated.objects.push(object.id);
+    }
+    // Commit in one synchronous turn after complete validation. Removed model
+    // wrappers are dropped only when they are still the committed object.
+    for (const [key, staged] of plan.records.rigidInstances) {
+      if (hydrated.rigidInstances.has(key)) continue;
+      for (const object of staged.objects) {
+        if (state.objects.get(object.id) === object) state.objects.delete(object.id);
+      }
+    }
+    for (const entry of plan.entries) {
+      if (entry.patch) sceneCommitRigidInstancePatch(entry.patch);
+      if (entry.kind === "add") {
+        for (const object of entry.staged.objects) state.objects.set(object.id, object);
+      }
+    }
+    // Retain the playback owners for surviving identities and drop only
+    // retired owners; CPU deformation storage must not grow across waves.
+    state._modelSkins = [];
+    for (const staged of hydrated.rigidInstances.values()) {
+      Array.prototype.push.apply(state._modelSkins, staged.modelSkins);
+    }
+    state._hydratedModelRecords = hydrated;
+    state._modelHydrationUncommitted = false;
+    const counts = sceneModelHydrationCounts(plan.entries.length);
+    counts.objects = hydrated.objects.length;
+    publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+      generation,
+      currentGeneration: generation,
+      committed: true,
+      counts,
+    });
+    gosxSceneEmit("info", "model-membership-committed", Object.assign({ generation, committed: true, stale: false }, counts));
+    return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
+  }
+
+  function sceneReconcileRigidInstanceMembership(state, hydrationModels) {
+    const plan = scenePlanRigidInstanceMembership(state, hydrationModels);
+    return plan ? sceneCommitRigidInstanceMembership(plan) : null;
+  }
+
+  async function hydrateSceneStateModels(state, props) {
+    if (!state) {
+      return sceneModelHydrationOutcome(sceneModelHydrationCounts(0), 0, "failed", false, false, "state");
+    }
+    const generation = Math.max(0, Math.floor(sceneNumber(state._modelHydrationGeneration, 0))) + 1;
+    state._modelHydrationGeneration = generation;
+    // A failed replacement leaves these declarations uncommitted. Compatible
+    // binary poses may still advance the last committed generation afterward.
+    state._modelHydrationUncommitted = true;
+    let models;
+    try {
+      // Commands can replace the declaration arrays while their assets are in
+      // flight. Clone the fully-expanded list once so this generation has an
+      // immutable, deterministic declaration order.
+      models = sceneHydrationModels(state, props).map(sceneCloneHydrationModel);
+    } catch (error) {
+      const counts = sceneModelHydrationCounts(0);
+      publishSceneModelHydrationStatus(state._modelStatusMount, "failed", {
+        generation,
+        currentGeneration: state._modelHydrationGeneration,
+        committed: false,
+        stage: "declarations",
+        error: error && error.message ? error.message : error,
+        counts,
+      });
+      return sceneModelHydrationOutcome(counts, generation, "failed", false, false, "declarations");
+    }
+
+    const counts = sceneModelHydrationCounts(models.length);
+    publishSceneModelHydrationStatus(state._modelStatusMount, "loading", {
+      generation,
+      currentGeneration: generation,
+      committed: false,
+      counts,
+    });
+    if (!models.length) {
+      sceneDestroyModelWasmMixers(state._modelSkins);
+      sceneClearHydratedModelRecords(state);
+      state._modelAnimations = [];
+      state._modelSkins = [];
+      state._modelHydrationUncommitted = false;
+      publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+        generation,
+        currentGeneration: generation,
+        committed: true,
+        counts,
+      });
+      gosxSceneEmit("info", "model-hydration-committed", {
+        generation,
+        committed: true,
+        stale: false,
+        models: 0,
+      });
+      return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
+    }
+
+    const previousStaticModels = state._hydratedModelRecords && state._hydratedModelRecords.staticModels;
+    /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const previousRigidInstances = state._hydratedModelRecords && state._hydratedModelRecords.rigidInstances;
+    const rigidKeys = models.map(function(model) { return sceneRigidInstanceHydrationKey(state, model); });
+    const staticKeys = models.map(function(model, modelIndex) {
+      return sceneStaticModelHydrationKey(state, model, modelIndex);
+    });
+    const results = await Promise.all(models.map(function(model, modelIndex) {
+      const key = staticKeys[modelIndex];
+      const cached = key && previousStaticModels && previousStaticModels.get(key);
+      if (cached && sceneReusableStaticModelHydration(cached, state)) {
+        return { ok: true, staged: cached };
+      }
+      const rigid = rigidKeys[modelIndex] && previousRigidInstances && previousRigidInstances.get(rigidKeys[modelIndex]);
+      if (sceneReusableRigidInstance(rigid, state)) {
+        const matrix = new Float32Array(sceneModelTransformMatrix(model));
+        // Keep the live wrappers and their material/cache identities when
+        // another actor spawns or dies. Defer pose mutation until the entire
+        // generation is ready and current, preserving transaction isolation.
+        return { ok: true, staged: Object.assign({}, rigid, { model, modelIndex,
+          rigidInstanceModel: model,
+          _pendingRigidMatrix: matrix,
+          _pendingRigidSource: rigid,
+          _pendingRigidPoseRevision: rigid._poseRevision || 0,
+        }) };
+      }
+      return sceneStageModelHydration(state, model, modelIndex, generation);
+    }));
+
+    if (!sceneModelHydrationIsCurrent({ state, generation })) {
+      sceneDestroyStagedModelHydrations(results);
+      gosxSceneEmit("info", "model-hydration-stale", {
+        generation,
+        currentGeneration: state._modelHydrationGeneration,
+        committed: false,
+        stale: true,
+      });
+      return sceneModelHydrationOutcome(counts, generation, "stale", false, true, "");
+    }
+
+    const failure = results.find(function(result) { return !result || result.ok !== true; });
+    if (failure) {
+      sceneDestroyStagedModelHydrations(results);
+      const failedStage = failure && failure.stage ? failure.stage : "unknown";
+      const failedError = failure && failure.error;
+      const failedStaged = failure && failure.staged;
+      publishSceneModelHydrationStatus(state._modelStatusMount, "failed", {
+        generation,
+        currentGeneration: generation,
+        committed: false,
+        stage: failedStage,
+        modelID: failedStaged && failedStaged.model ? failedStaged.model.id : "",
+        modelIndex: failedStaged ? failedStaged.modelIndex : 0,
+        asset: failedStaged && failedStaged.model ? failedStaged.model.src : "",
+        error: failedError && failedError.message ? failedError.message : failedError,
+        counts,
+      });
+      console.warn("[gosx] Scene3D model hydration failed during " + failedStage + ":",
+        failedError && failedError.message ? failedError.message : failedError);
+      gosxSceneEmit("warn", "model-hydration-failed", {
+        generation,
+        committed: false,
+        stale: false,
+        stage: failedStage,
+        modelID: failedStaged && failedStaged.model ? String(failedStaged.model.id || "") : "",
+        asset: failedStaged && failedStaged.model ? String(failedStaged.model.src || "") : "",
+        error: failedError && failedError.message ? String(failedError.message) : String(failedError || ""),
+      });
+      return sceneModelHydrationOutcome(counts, generation, "failed", false, false, failedStage);
+    }
+
+    // Reused wrappers may have received independent binary poses while this
+    // generation loaded. Refresh only those exact cached identities; new or
+    // replaced templates retain this generation's transaction snapshot.
+    for (const result of results) {
+      const staged = result.staged;
+      const source = staged._pendingRigidSource;
+      if (source && staged._pendingRigidPoseRevision !== (source._poseRevision || 0)) {
+        staged.model = source.rigidInstanceModel;
+        staged.rigidInstanceModel = source.rigidInstanceModel;
+        staged._pendingRigidMatrix = new Float32Array(sceneModelTransformMatrix(source.rigidInstanceModel));
+        staged._poseRevision = source._poseRevision;
+      }
+      delete staged._pendingRigidSource;
+      delete staged._pendingRigidPoseRevision;
+    }
+
+    // The entire generation is ready and still current. Replace the previous
+    // model-derived records in one synchronous turn, preserving declaration
+    // order regardless of network completion order.
+    sceneDestroyModelWasmMixers(state._modelSkins);
+    sceneClearHydratedModelRecords(state);
+    state._modelAnimations = [];
+    state._modelSkins = [];
+    // Keep only this committed generation. Moving transforms and removed
+    // models cannot accumulate a history of cached geometry.
+    const hydrated = { modelCount: results.length, objects: [], points: [], labels: [], sprites: [], html: [], lights: [], staticModels: new Map(), rigidInstances: new Map(), rigidInstancesByID: new Map() };
+    for (let modelIndex = 0; modelIndex < results.length; modelIndex += 1) {
+      const staged = results[modelIndex].staged;
+      if (staged._pendingRigidMatrix) {
+        if (staged.modelSkins.length) {
+          const record = staged.modelSkins[0];
+          record.model = staged.model;
+          record.rootTransform = staged._pendingRigidMatrix;
+          sceneApplyModelSkinPose(record, 0, false);
+        }
+        for (const object of staged.objects) {
+          if (!staged.modelSkins.length) object.parentMatrix = staged._pendingRigidMatrix;
+          if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, staged.model._crowdPose, object._crowdSkin.rows);
+        }
+        delete staged._pendingRigidMatrix;
+      }
+      if (staticKeys[modelIndex] && sceneReusableStaticModelHydration(staged, null)) {
+        hydrated.staticModels.set(staticKeys[modelIndex], staged);
+      }
+      if (rigidKeys[modelIndex] && sceneReusableRigidInstance(staged, null)) {
+        for (const object of staged.objects) {
+          if (object._rigidMaterialProfileStable !== false) object._rigidMaterialProfileStable = true;
+        }
+        hydrated.rigidInstances.set(rigidKeys[modelIndex], staged);
+        const membership = sceneRigidMembershipDescriptor(state, rigidKeys[modelIndex], staged);
+        if (membership) hydrated.rigidInstancesByID.set(membership.id, membership);
+      }
+      for (let index = 0; index < staged.objects.length; index += 1) {
+        const object = staged.objects[index];
+        state.objects.set(object.id, object);
+        hydrated.objects.push(object.id);
+      }
+      for (let index = 0; index < staged.points.length; index += 1) {
+        const point = staged.points[index];
+        state.points.push(point);
+        hydrated.points.push(point.id);
+      }
+      for (let index = 0; index < staged.labels.length; index += 1) {
+        const label = staged.labels[index];
+        state.labels.set(label.id, label);
+        hydrated.labels.push(label.id);
+      }
+      for (let index = 0; index < staged.sprites.length; index += 1) {
+        const sprite = staged.sprites[index];
+        state.sprites.set(sprite.id, sprite);
+        hydrated.sprites.push(sprite.id);
+      }
+      for (let index = 0; index < staged.html.length; index += 1) {
+        const entry = staged.html[index];
+        state.html.set(entry.id, entry);
+        hydrated.html.push(entry.id);
+      }
+      for (let index = 0; index < staged.lights.length; index += 1) {
+        const light = staged.lights[index];
+        state.lights.set(light.id, light);
+        hydrated.lights.push(light.id);
+      }
+      Array.prototype.push.apply(state._modelAnimations, staged.modelAnimations);
+      Array.prototype.push.apply(state._modelSkins, staged.modelSkins);
+    }
+    state._hydratedModelRecords = hydrated;
+    state._modelHydrationUncommitted = false;
+    counts.objects = hydrated.objects.length;
+    counts.points = hydrated.points.length;
+    counts.labels = hydrated.labels.length;
+    counts.sprites = hydrated.sprites.length;
+    counts.html = hydrated.html.length;
+    counts.lights = hydrated.lights.length;
+    publishSceneModelHydrationStatus(state._modelStatusMount, "committed", {
+      generation,
+      currentGeneration: generation,
+      committed: true,
+      counts,
+    });
+    gosxSceneEmit("info", "model-hydration-committed", Object.assign({
+      generation,
+      committed: true,
+      stale: false,
+    }, counts));
+    return sceneModelHydrationOutcome(counts, generation, "committed", true, false, "");
+  }
+
+  function normalizeSceneCapabilityTier(value) {
+    switch (String(value || "").trim().toLowerCase()) {
+      case "constrained":
+      case "balanced":
+      case "full":
+        return String(value).trim().toLowerCase();
+      default:
+        return "";
+    }
+  }
+
+  function sceneMediaQueryMatches(query) {
+    if (!query || typeof window.matchMedia !== "function") {
+      return false;
+    }
+    try {
+      return Boolean(window.matchMedia(query).matches);
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  function sceneEnvironmentState() {
+    if (window.__gosx
+      && window.__gosx.environment
+      && typeof window.__gosx.environment.get === "function") {
+      return window.__gosx.environment.get();
+    }
+    return null;
+  }
+
+  // sceneExtractCSSVarTransitionTiming scans the original props for materials
+  // or environment with a transition config and returns the first timing found.
+  // This is stashed on the mount element so the planner can use it as a default
+  // when CSS var values change.
+  function sceneExtractCSSVarTransitionTiming(props) {
+    var scene = props && props.scene;
+    if (!scene || typeof scene !== "object") return null;
+    var materials = Array.isArray(scene.materials) ? scene.materials : [];
+    for (var i = 0; i < materials.length; i++) {
+      var m = materials[i];
+      if (m && m.transition && typeof m.transition === "object") {
+        var update = m.transition.update || m.transition;
+        var duration = typeof update.duration === "number" ? update.duration
+          : typeof update.duration === "string" ? parseFloat(update.duration) * (update.duration.indexOf("ms") >= 0 ? 1 : 1000)
+          : 0;
+        if (duration > 0) {
+          return { duration: duration, easing: update.easing || "ease-in-out" };
+        }
+      }
+    }
+    var env = scene.environment;
+    if (env && env.transition && typeof env.transition === "object") {
+      var envUpdate = env.transition.update || env.transition;
+      var envDuration = typeof envUpdate.duration === "number" ? envUpdate.duration : 0;
+      if (envDuration > 0) {
+        return { duration: envDuration, easing: envUpdate.easing || "ease-in-out" };
+      }
+    }
+    return null;
+  }
+
+  function sceneCapabilityProfile(props) {
+    const requestedTier = normalizeSceneCapabilityTier(props && props.capabilityTier);
+    const environment = sceneEnvironmentState();
+    const navigatorRef = window && window.navigator ? window.navigator : {};
+    // Reuse the selected adapter's classification; unknown metadata still needs
+    // the legacy probe so capability and fallback policy remain unchanged.
+    const gpuPreferred = scenePrefersWebGPU(props) && !sceneRequiresWebGL(props) && !sceneForcesWebGL(props)
+      && !sceneBool(props && props.preferCanvas, false) && !sceneNeedsWebGLForWebGPUCoverage(props)
+      && typeof sceneWebGPUAvailable === "function" && sceneWebGPUAvailable();
+    const verdict = gpuPreferred ? chooseSceneBackend(sceneBackendCapsOf(props), { preferWebGPU: true }, { webgpu: true, webgl: true }) : null;
+    const gpuSelected = gpuPreferred && (!verdict || verdict.backend === "webgpu");
+    const gpuProbe = gpuSelected && typeof window.__gosx_scene3d_webgpu_probe === "function" ? window.__gosx_scene3d_webgpu_probe() : null;
+    const adapter = gpuProbe && gpuProbe.adapter;
+    const info = gpuProbe && gpuProbe.adapterInfo || adapter && adapter.info || {};
+    const gpuMetadata = { vendor: String(info.vendor || ""), renderer: [info.architecture, info.description].filter(Boolean).join(" ") };
+    const gpuClassified = Boolean(adapter && (adapter.isFallbackAdapter || (gpuMetadata.vendor + gpuMetadata.renderer).trim()));
+    const webglProbe = !gpuClassified && sceneBool(props && props.preferWebGL, true) ? sceneProbeWebGLRenderer() : null;
+    const softwareWebGL = gpuClassified ? Boolean(adapter.isFallbackAdapter || sceneWebGLRendererLooksSoftware(gpuMetadata)) : Boolean(webglProbe && webglProbe.available && webglProbe.software);
+    const coarsePointer = environment ? Boolean(environment.coarsePointer) : (sceneMediaQueryMatches("(pointer: coarse)") || sceneMediaQueryMatches("(any-pointer: coarse)"));
+    const hover = environment ? Boolean(environment.hover) : (sceneMediaQueryMatches("(hover: hover)") || sceneMediaQueryMatches("(any-hover: hover)"));
+    const reducedData = environment ? Boolean(environment.reducedData) : sceneMediaQueryMatches("(prefers-reduced-data: reduce)");
+    const lowPower = (environment ? Boolean(environment.lowPower) : false) || softwareWebGL;
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const visualViewportActive = environment ? Boolean(environment.visualViewportActive) : Boolean(window.visualViewport);
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const deviceMemory = sceneNumber(environment && environment.deviceMemory, sceneNumber(navigatorRef && navigatorRef.deviceMemory, 0));
+    const hardwareConcurrency = Math.max(0, Math.floor(sceneNumber(environment && environment.hardwareConcurrency, sceneNumber(navigatorRef && navigatorRef.hardwareConcurrency, 0))));
+    // Device-capability gate via the single source of truth gosxLowEndHardware
+    // (05-document-env), preferring the value already computed in the environment
+    // snapshot. This is what previously drifted (OR vs AND) and throttled capable
+    // phones to the low-power GPU; deriving it from one helper prevents recurrence.
+    const lowEndHardware = environment && typeof environment.lowEndHardware === "boolean"
+      ? environment.lowEndHardware
+      : gosxLowEndHardware(deviceMemory, hardwareConcurrency);
+    const constrainedHardware = lowPower || reducedData || lowEndHardware;
+
+    let tier = requestedTier;
+    if (!tier) {
+      if ((coarsePointer && constrainedHardware) || reducedData || lowPower) {
+        tier = "constrained";
+      } else if (coarsePointer) {
+        tier = "balanced";
+      } else {
+        tier = "full";
+      }
+    }
+
+    return {
+      tier,
+      coarsePointer,
+      hover,
+      reducedData,
+      lowPower,
+      softwareWebGL,
+      visualViewportActive,
+      deviceMemory,
+      hardwareConcurrency,
+    };
+  }
+
+  function sceneCapabilityWebGLPreference(props, capability) {
+    if (sceneRequiresWebGL(props) || sceneForcesWebGL(props)) {
+      return "force";
+    }
+    if (!sceneBool(props && props.preferWebGL, true)) {
+      return "disabled";
+    }
+    if (sceneBool(props && props.preferCanvas, false)) {
+      return "avoid";
+    }
+    if (!capability) {
+      return "prefer";
+    }
+    if (capability.reducedData || capability.lowPower) {
+      return "avoid";
+    }
+    if (capability.tier === "constrained" && capability.coarsePointer) {
+      return "avoid";
+    }
+    return "prefer";
+  }
+
+  function sceneCapabilityWebGPUPreference(props, capability) {
+    if (sceneRequiresWebGL(props) || sceneForcesWebGL(props) || sceneBool(props && props.preferCanvas, false)) {
+      return "disabled";
+    }
+    if (scenePrefersWebGPU(props)) {
+      return "prefer";
+    }
+    return sceneCapabilityWebGLPreference(props, capability) === "prefer" ? "prefer" : "avoid";
+  }
+
+  function sceneRendererFallbackReason(props, capability, rendererKind) {
+    if (rendererKind === "webgl") {
+      return "";
+    }
+    if (sceneCapabilityWebGPUPreference(props, capability) === "prefer") {
+      return sceneNeedsWebGLForWebGPUCoverage(props) ? "webgpu-feature-gap" : "webgpu-unavailable";
+    }
+    switch (sceneCapabilityWebGLPreference(props, capability)) {
+      case "disabled":
+        return "webgl-disabled";
+      case "avoid":
+        return "environment-constrained";
+      default:
+        return sceneBool(props && props.preferWebGL, true) ? "webgl-unavailable" : "";
+    }
+  }
+
+  function sceneCapabilityChanged(prev, next) {
+    if (!prev || !next) {
+      return true;
+    }
+    return prev.tier !== next.tier
+      || prev.coarsePointer !== next.coarsePointer
+      || prev.hover !== next.hover
+      || prev.reducedData !== next.reducedData
+      || prev.lowPower !== next.lowPower
+      || prev.softwareWebGL !== next.softwareWebGL
+      || prev.visualViewportActive !== next.visualViewportActive
+      || prev.deviceMemory !== next.deviceMemory
+      || prev.hardwareConcurrency !== next.hardwareConcurrency;
+  }
+
+  function defaultSceneMaxDevicePixelRatio(capability) {
+    if (capability && (capability.reducedData || capability.lowPower)) {
+      switch (capability.tier) {
+        case "constrained":
+          return 1.25;
+        case "balanced":
+          return 1.5;
+        default:
+          return 1.75;
+      }
+    }
+    switch (capability && capability.tier) {
+      case "constrained":
+        return 1.5;
+      case "balanced":
+        return 1.75;
+      default:
+        return 2;
+    }
+  }
+
+  function applySceneCapabilityState(mount, props, capability) {
+    if (!mount || !capability) {
+      return;
+    }
+    setAttrValue(mount, "data-gosx-scene3d-capability-tier", capability.tier);
+    setAttrValue(mount, "data-gosx-scene3d-coarse-pointer", capability.coarsePointer ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-hover", capability.hover ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-reduced-data", capability.reducedData ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-low-power", capability.lowPower ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-software-webgl", capability.softwareWebGL ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-require-webgl", sceneRequiresWebGL(props) ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-visual-viewport", capability.visualViewportActive ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-webgl-preference", sceneCapabilityWebGLPreference(props, capability));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-preference", sceneCapabilityWebGPUPreference(props, capability));
+    setAttrValue(mount, "data-gosx-scene3d-device-memory", capability.deviceMemory > 0 ? capability.deviceMemory : "");
+    setAttrValue(mount, "data-gosx-scene3d-hardware-concurrency", capability.hardwareConcurrency > 0 ? capability.hardwareConcurrency : "");
+  }
+
+  function sceneWebGPULimitKey(name) {
+    return String(name || "").trim().toLowerCase().replace(/[^a-z0-9]/g, "");
+  }
+
+  function sceneWebGPULimitValue(limits, name) {
+    if (!limits || typeof limits !== "object") {
+      return "";
+    }
+    const wanted = sceneWebGPULimitKey(name);
+    for (const key of Object.keys(limits)) {
+      if (sceneWebGPULimitKey(key) !== wanted) {
+        continue;
+      }
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? value : "";
+    }
+    return "";
+  }
+
+  function sceneWebGPULimitList(limits) {
+    if (!limits || typeof limits !== "object") {
+      return "";
+    }
+    return Object.keys(limits).sort().map(function(key) {
+      const value = Number(limits[key]);
+      return Number.isFinite(value) ? key + "=" + value : "";
+    }).filter(Boolean).join(",");
+  }
+
+  // sceneRenderTruthAPI resolves the shared render-truth helpers. Returns null
+  // when 15a-scene-postfx-shared.ts is absent, and every caller null-checks.
+  function sceneRenderTruthAPI() {
+    if (typeof window !== "undefined" && window && window.__gosx_scene3d_render_truth_api) {
+      return window.__gosx_scene3d_render_truth_api;
+    }
+    return null;
+  }
+
+  // Publish the actual backend, adapter, implementation and fallback as one
+  // machine-readable record. The journal preserves backend transitions that
+  // the final selection alone cannot explain after a recovered device loss.
+  function sceneRenderBackendTruth(mount, renderer, fallbackReason, degraded) {
+    const api = sceneRenderTruthAPI();
+    const kind = renderer && renderer.kind ? renderer.kind : "";
+    const diag = renderer && typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
+    let adapterInfo = diag && diag.adapterInfo ? diag.adapterInfo : {}; const probe = typeof window !== "undefined" && window.__gosx && window.__gosx.scene3dWebGLProbe; if (kind === "webgl" && probe) adapterInfo = Object.assign({}, adapterInfo, { vendor: adapterInfo.vendor || probe.vendor || "", device: adapterInfo.device || probe.renderer || "", description: adapterInfo.description || probe.renderer || "" });
+    const truth = {
+      backend: kind,
+      // This identifies shader-backed APIs; draw and frame evidence is separate.
+      gpu: kind === "webgpu" || kind === "webgl",
+      fallbackReason: fallbackReason || "",
+      dropped: Array.isArray(degraded) ? degraded.slice() : [],
+      implementation: api ? api.implementation(adapterInfo) : "",
+      browserEngine: api && typeof api.browserEngine === "function" ? api.browserEngine() : "",
+      adapter: api && typeof api.adapterLabel === "function" ? api.adapterLabel(adapterInfo) : "",
+      adapterInfo: {
+        vendor: adapterInfo.vendor || "",
+        architecture: adapterInfo.architecture || "",
+        device: adapterInfo.device || "",
+        description: adapterInfo.description || "",
+      },
+      deviceLost: !!(diag && diag.deviceLost),
+      initError: (diag && diag.initError) || "",
+      lastError: (diag && diag.lastError) || "",
+      shaderDiagnostics: (diag && diag.shaderDiagnostics) || { messages: 0, errors: 0 },
+      events: api && typeof api.events === "function" ? api.events() : [],
+    };
+    if (mount && typeof mount.setAttribute === "function") {
+      let encoded = "";
+      try {
+        encoded = JSON.stringify(truth);
+      } catch (_err) {
+        encoded = "";
+      }
+      setAttrValue(mount, "data-gosx-scene3d-render-backend-truth", encoded);
+      setAttrValue(mount, "data-gosx-scene3d-render-gpu", truth.gpu ? "true" : "false");
+      setAttrValue(mount, "data-gosx-scene3d-render-implementation", truth.implementation);
+      mount.__gosxScene3DRenderBackendTruth = truth;
+    }
+    return truth;
+  }
+
+  function applySceneRendererState(mount, renderer, fallbackReason, degraded) {
+    if (!mount) {
+      return;
+    }
+    const chosenBackend = renderer && renderer.kind ? renderer.kind : "";
+    setAttrValue(mount, "data-gosx-scene3d-renderer", chosenBackend);
+    setAttrValue(mount, "data-gosx-scene3d-renderer-fallback", fallbackReason || "");
+    // data-gosx-scene3d-backend mirrors the renderer kind (canonical chosen backend name).
+    setAttrValue(mount, "data-gosx-scene3d-backend", chosenBackend);
+    // Journal every backend selection and swap with a timestamp. A final-state
+    // attribute cannot describe "mounted on WebGPU, device died at t=8.2s,
+    // continued on WebGL"; an ordered log can, and that sequence is the shape
+    // of the intermittent, environment-specific defects that cost the most time.
+    const truthAPI = sceneRenderTruthAPI();
+    if (truthAPI && typeof truthAPI.record === "function") {
+      truthAPI.record("backend", chosenBackend + (fallbackReason ? " fallback=" + fallbackReason : ""));
+    }
+    sceneRenderBackendTruth(mount, renderer, fallbackReason, degraded);
+    // data-gosx-scene3d-dropped lists features skipped per the backendCaps degraded verdict.
+    setAttrValue(mount, "data-gosx-scene3d-dropped",
+      Array.isArray(degraded) && degraded.length > 0 ? degraded.join(",") : "");
+    if (Array.isArray(degraded) && degraded.indexOf("postfx") >= 0) {
+      setAttrValue(mount, "data-gosx-scene3d-postfx", "dropped");
+    }
+    const webgpuDiagnostics = renderer && renderer.kind === "webgpu" && typeof renderer.diagnostics === "function"
+      ? renderer.diagnostics()
+      : null;
+    const webgpuAdapterLimits = webgpuDiagnostics && webgpuDiagnostics.adapterLimits ? webgpuDiagnostics.adapterLimits : null;
+    const webgpuDeviceLimits = webgpuDiagnostics && webgpuDiagnostics.deviceLimits ? webgpuDiagnostics.deviceLimits : null;
+    const webgpuRequiredLimits = webgpuDiagnostics && webgpuDiagnostics.requiredLimits ? webgpuDiagnostics.requiredLimits : null;
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requestedFeatures) ? webgpuDiagnostics.requestedFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-required-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.requiredFeatures) ? webgpuDiagnostics.requiredFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-features", webgpuDiagnostics && Array.isArray(webgpuDiagnostics.deviceFeatures) ? webgpuDiagnostics.deviceFeatures.join(",") : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-required-limits", sceneWebGPULimitList(webgpuRequiredLimits));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-sample-count", webgpuDiagnostics && webgpuDiagnostics.activeSampleCount > 0 ? webgpuDiagnostics.activeSampleCount : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-target-format", webgpuDiagnostics && webgpuDiagnostics.targetFormat ? webgpuDiagnostics.targetFormat : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-presentation-alpha-mode", webgpuDiagnostics && webgpuDiagnostics.presentationAlphaMode ? webgpuDiagnostics.presentationAlphaMode : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-presentation-color-space", webgpuDiagnostics && webgpuDiagnostics.presentationColorSpace ? webgpuDiagnostics.presentationColorSpace : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-presentation-tone-mapping", webgpuDiagnostics && webgpuDiagnostics.presentationToneMappingMode ? webgpuDiagnostics.presentationToneMappingMode : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-power-preference", webgpuDiagnostics && webgpuDiagnostics.powerPreference ? webgpuDiagnostics.powerPreference : "");
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-limits", sceneWebGPULimitList(webgpuAdapterLimits));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-limits", sceneWebGPULimitList(webgpuDeviceLimits));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-texture-2d", sceneWebGPULimitValue(webgpuAdapterLimits, "maxTextureDimension2D"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-texture-2d", sceneWebGPULimitValue(webgpuDeviceLimits, "maxTextureDimension2D"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-buffer-size", sceneWebGPULimitValue(webgpuAdapterLimits, "maxBufferSize"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-buffer-size", sceneWebGPULimitValue(webgpuDeviceLimits, "maxBufferSize"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-compute-workgroup-size-x", sceneWebGPULimitValue(webgpuAdapterLimits, "maxComputeWorkgroupSizeX"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-compute-workgroup-size-x", sceneWebGPULimitValue(webgpuDeviceLimits, "maxComputeWorkgroupSizeX"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter-max-compute-workgroups-per-dimension", sceneWebGPULimitValue(webgpuAdapterLimits, "maxComputeWorkgroupsPerDimension"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-device-max-compute-workgroups-per-dimension", sceneWebGPULimitValue(webgpuDeviceLimits, "maxComputeWorkgroupsPerDimension"));
+    setAttrValue(mount, "data-gosx-scene3d-webgpu-adapter", webgpuDiagnostics && webgpuDiagnostics.adapterInfo ? [
+      webgpuDiagnostics.adapterInfo.vendor || "",
+      webgpuDiagnostics.adapterInfo.architecture || "",
+      webgpuDiagnostics.adapterInfo.device || "",
+    ].filter(Boolean).join(" ") : "");
+    sceneSyncStatusBindings(mount);
+  }
+
+  function showSceneRequiredRendererMessage(mount, props, reason) {
+    if (!mount || typeof document === "undefined" || !document || typeof document.createElement !== "function") {
+      return;
+    }
+    const defaultMessage = sceneRequiresWebGL(props)
+      ? "Accelerated WebGL is required. Update your browser or enable hardware acceleration."
+      : "Scene rendering is unavailable in this browser.";
+    const message = String(
+      props && props.unsupportedMessage
+        ? props.unsupportedMessage
+        : defaultMessage
+    );
+    const wrapper = document.createElement("div");
+    wrapper.setAttribute("class", "gosx-scene3d-unsupported");
+    wrapper.setAttribute("data-gosx-scene3d-unsupported", "true");
+    wrapper.setAttribute("data-gosx-scene3d-unsupported-reason", reason || "webgl-required");
+    wrapper.setAttribute("role", "status");
+    const text = document.createElement("p");
+    text.textContent = message;
+    wrapper.appendChild(text);
+    mount.appendChild(wrapper);
+  }
+
+  function observeSceneCapability(mount, props, capability, onChange) {
+    if (!mount || !capability || typeof onChange !== "function") {
+      return function() {};
+    }
+    applySceneCapabilityState(mount, props, capability);
+    if (!(window.__gosx.environment && typeof window.__gosx.environment.observe === "function")) {
+      return function() {};
+    }
+    return window.__gosx.environment.observe(function() {
+      const next = sceneCapabilityProfile(props);
+      if (!sceneCapabilityChanged(capability, next)) {
+        return;
+      }
+      capability.tier = next.tier;
+      capability.coarsePointer = next.coarsePointer;
+      capability.hover = next.hover;
+      capability.reducedData = next.reducedData;
+      capability.lowPower = next.lowPower;
+      capability.softwareWebGL = next.softwareWebGL;
+      capability.visualViewportActive = next.visualViewportActive;
+      capability.deviceMemory = next.deviceMemory;
+      capability.hardwareConcurrency = next.hardwareConcurrency;
+      applySceneCapabilityState(mount, props, capability);
+      onChange("capability");
+    }, { immediate: false });
+  }
+
+  function sceneViewportBase(props) {
+    const width = Math.max(240, sceneNumber(props && props.width, 720));
+    const height = Math.max(180, sceneNumber(props && props.height, 420));
+    const explicitMaxDevicePixelRatio = sceneNumber(props && (props.maxDevicePixelRatio || props.maxPixelRatio), 0);
+    return {
+      baseWidth: width,
+      baseHeight: height,
+      aspectRatio: width / Math.max(1, height),
+      responsive: sceneBool(props && props.responsive, true),
+      explicitMaxDevicePixelRatio,
+    };
+  }
+
+  function scheduleSceneIdleTask(callback, delayMS) {
+    if (typeof callback !== "function") {
+      return;
+    }
+    const delay = Math.max(0, sceneNumber(delayMS, 0));
+    const runIdle = function() {
+      if (typeof requestIdleCallback === "function") {
+        let fired = false;
+        const invoke = function(deadline) {
+          if (fired) {
+            return;
+          }
+          fired = true;
+          callback(deadline);
+        };
+        requestIdleCallback(invoke, { timeout: 1000 });
+        setTimeout(invoke, 1200);
+      } else {
+        setTimeout(callback, 0);
+      }
+    };
+    if (delay > 0) {
+      setTimeout(runIdle, delay);
+      return;
+    }
+    runIdle();
+  }
+
+  function sceneCompressionProgressiveDelay(props) {
+    const comp = props && props.compression && typeof props.compression === "object" ? props.compression : null;
+    if (!comp) {
+      return 0;
+    }
+    return Math.max(0, sceneNumber(
+      comp.progressiveDelayMS != null ? comp.progressiveDelayMS : comp.upgradeDelayMS,
+      0,
+    ));
+  }
+
+  function sceneDeferredPostFXDelay(props) {
+    return Math.max(0, sceneNumber(
+      props && (props.deferPostFXDelayMS != null ? props.deferPostFXDelayMS : props.postFXDelayMS),
+      0,
+    ));
+  }
+
+  function sceneStatusBindingLabel(value) {
+    const normalized = String(value || "");
+    const branded = normalized.replace(/^webgpu(?=-|$)/, "WebGPU").replace(/^webgl2?(?=-|$)/, "WebGL2");
+    return branded.replace(/(^|-)([a-z])/g, function(_match, dash, letter) {
+      return (dash ? " " : "") + letter.toUpperCase();
+    });
+  }
+  // Declarative status bindings keep Scene3D diagnostics visible without
+  // requiring demo-specific scripts or CSS parent selectors. A status scope
+  // owns one scene mount and any number of renderer/fallback/quality outputs.
+  function sceneSyncStatusBindings(mount) {
+    if (!mount) return;
+    let scope = mount;
+    while (scope && (!scope.hasAttribute || !scope.hasAttribute("data-gosx-scene3d-status-scope"))) {
+      scope = scope.parentNode;
+    }
+    if (!scope || typeof scope.querySelectorAll !== "function") return;
+    const bindings = scope.querySelectorAll("[data-gosx-scene3d-status]");
+    const backend = mount.getAttribute("data-gosx-scene3d-renderer") || "starting";
+    const fallback = mount.getAttribute("data-gosx-scene3d-renderer-fallback") || "";
+    const quality = mount.getAttribute("data-gosx-scene3d-quality-active") || "measuring";
+    const frameP95 = Number(mount.getAttribute("data-gosx-scene3d-quality-p95-ms"));
+    for (let i = 0; i < bindings.length; i++) {
+      const output = bindings[i];
+      const kind = output.getAttribute("data-gosx-scene3d-status") || "";
+      let value = "";
+      if (kind === "renderer") {
+        value = backend === "starting" ? "starting…" : sceneStatusBindingLabel(backend);
+        output.hidden = false;
+        setAttrValue(output, "data-state", backend);
+      } else if (kind === "adapter") {
+        const truth = mount.__gosxScene3DRenderBackendTruth;
+        if (!truth) continue;
+        const info = truth.adapterInfo || {};
+        const adapter = truth.adapter || [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(" ");
+        value = adapter || "adapter details unavailable";
+        output.hidden = false;
+        setAttrValue(output, "data-state", adapter ? "ready" : "unavailable");
+      } else if (kind === "fallback") {
+        value = fallback ? "· fallback: " + sceneStatusBindingLabel(fallback) : "";
+        output.hidden = !fallback;
+        setAttrValue(output, "data-state", fallback ? "active" : "none");
+      } else if (kind === "quality") {
+        value = quality === "measuring" ? "measuring…" : sceneStatusBindingLabel(quality);
+        output.hidden = false;
+        setAttrValue(output, "data-state", quality);
+      } else if (kind === "frame-p95") {
+        value = Number.isFinite(frameP95) && frameP95 > 0 ? frameP95.toFixed(1) + " ms" : "measuring…";
+        output.hidden = false;
+        setAttrValue(output, "data-state", value === "measuring…" ? "measuring" : "ready");
+      } else {
+        continue;
+      }
+      if (output.textContent !== value) {
+        output.textContent = value;
+        // A texture-mode HTML surface holds a raster of this DOM mirror.
+        // Status changes must invalidate that raster, or its renderer and
+        // quality text remains frozen at the first frame.
+        let parent = output.parentNode;
+        while (parent && (!parent.hasAttribute || !parent.hasAttribute("data-gosx-scene-html"))) {
+          parent = parent.parentNode;
+        }
+        if (parent && typeof window !== "undefined" && window.__gosx_scene3d_html &&
+            typeof window.__gosx_scene3d_html.invalidate === "function") {
+          window.__gosx_scene3d_html.invalidate(parent.getAttribute("data-gosx-scene-html"));
+        }
+      }
+    }
+  }
+
+  function createSceneAdaptiveQualityState(props, base, capability) {
+    const adaptiveValue = props && (props.adaptiveQuality != null
+      ? props.adaptiveQuality
+      : (props.adaptivePerformance != null ? props.adaptivePerformance : props.dynamicQuality));
+    const adaptiveConfig = adaptiveValue && typeof adaptiveValue === "object" ? adaptiveValue : {};
+    const enabled = adaptiveValue && typeof adaptiveValue === "object"
+      ? adaptiveValue.enabled !== false
+      : sceneBool(adaptiveValue, false);
+    const targetFrameMS = Math.max(8, Math.min(50, sceneNumber(
+      props && (props.adaptiveTargetFrameMS != null ? props.adaptiveTargetFrameMS : props.targetFrameMS),
+      capability && capability.tier === "constrained" ? 20 : 16.7,
+    )));
+    const minProp = props && (props.minDevicePixelRatio != null ? props.minDevicePixelRatio : props.minPixelRatio);
+    const minDevicePixelRatio = Math.max(1, Math.min(2, sceneNumber(minProp, 1)));
+    const warmupFrames = Math.max(0, Math.floor(sceneNumber(props && props.adaptiveWarmupFrames, 24)));
+    const adaptivePostFX = sceneBool(props && props.adaptivePostFX, true);
+    const authoredFrameIntervalMS = Math.max(0, sceneNumber(props && props.frameIntervalMS, 0));
+    // Key precedence MUST mirror sceneAnimationFrameIntervalMS in mount.ts:
+    // frameIntervalMS, then maxFrameRate, then maxFPS. This read once skipped
+    // maxFrameRate, so a scene capped at 30fps (authored intervals ~33.3ms)
+    // was judged against its 28ms adaptive target: every rAF-measured frame
+    // "missed budget" by construction, badFrames hit 20 within a second, and
+    // the quality ladder walked itself to the floor rung — re-partitioning
+    // point layers on every step. On the m31labs galaxy that replayed after
+    // every rung reset and read as the gas bodies flickering; it survived
+    // three shader-side fixes because it was never the shader.
+    const authoredMaxFPS = Math.max(0, sceneNumber(
+      props && (props.maxFrameRate != null ? props.maxFrameRate : props.maxFPS),
+      0,
+    ));
+    const cpuRAFBudgetMS = Math.max(targetFrameMS, authoredFrameIntervalMS > 0
+      ? authoredFrameIntervalMS
+      : (authoredMaxFPS > 0 ? 1000 / authoredMaxFPS : 0));
+    const profileOverrides = (props && (props.qualityProfiles || props.adaptiveQualityProfiles)) || adaptiveConfig.profiles || {};
+    const defaults = {
+      full: { dprCap: 1.6, surfaceResolution: 160, causticsResolution: 512, objectShadowResolution: 512, objectTextureMaxSide: 512, objectTexturePixelBudget: 786432, expensivePassCadence: 1 },
+      balanced: { dprCap: 1.25, surfaceResolution: 128, causticsResolution: 384, objectShadowResolution: 384, objectTextureMaxSide: 384, objectTexturePixelBudget: 442368, expensivePassCadence: 2 },
+      survival: { dprCap: 1.0, surfaceResolution: 96, causticsResolution: 256, objectShadowResolution: 256, objectTextureMaxSide: 256, objectTexturePixelBudget: 196608, expensivePassCadence: 3 },
+    };
+    const profiles = {};
+    ["full", "balanced", "survival"].forEach(function(tier) {
+      const source = profileOverrides && profileOverrides[tier] && typeof profileOverrides[tier] === "object"
+        ? profileOverrides[tier]
+        : {};
+      const fallback = defaults[tier];
+      profiles[tier] = {
+        tier,
+        detail: sceneBool(source.detail, tier !== "survival"),
+        dprCap: Math.max(1, Math.min(3, sceneNumber(source.dprCap, fallback.dprCap))),
+        surfaceResolution: Math.max(32, Math.floor(sceneNumber(source.surfaceResolution, fallback.surfaceResolution))),
+        causticsResolution: Math.max(64, Math.floor(sceneNumber(source.causticsResolution, fallback.causticsResolution))),
+        objectShadowResolution: Math.max(64, Math.floor(sceneNumber(source.objectShadowResolution, fallback.objectShadowResolution))),
+        objectTextureMaxSide: Math.max(64, Math.floor(sceneNumber(source.objectTextureMaxSide, fallback.objectTextureMaxSide))),
+        objectTexturePixelBudget: Math.max(65536, Math.floor(sceneNumber(source.objectTexturePixelBudget, fallback.objectTexturePixelBudget))),
+        expensivePassCadence: Math.max(1, Math.floor(sceneNumber(source.expensivePassCadence, fallback.expensivePassCadence))),
+      };
+    });
+    const requestedValue = (props && (props.requestedQualityTier || props.adaptiveQualityTier || props.qualityTier)) || adaptiveConfig.tier;
+    const requestedTier = requestedValue === "low" ? "survival" : requestedValue === "balanced" || requestedValue === "survival" ? requestedValue : "full";
+    // G2: QualityLadder, when authored, supersedes the dprCap-tier governor
+    // built above entirely — see sceneUpdateQualityLadder/
+    // applySceneQualityLadderState. `tierEnabled` (NOT `enabled`) gates every
+    // dprCap-tier field below so a ladder-governed mount reads as "tier
+    // disabled" throughout (in particular sceneViewportFromMount's DPR clamp
+    // at `adaptiveQuality.enabled`, which must stay false so a ladder NEVER
+    // touches DPR — the PRIME DIRECTIVE's resolution axis is forbidden for
+    // ladder degradation). No ladder authored: tierEnabled === enabled,
+    // zero behavior change (back-compat).
+    const ladder = sceneQualityLadder(props);
+    const hasLadder = ladder.rungs.length > 0;
+    const tierEnabled = hasLadder ? false : enabled;
+    // hasExplicitAdaptiveTierConfig: true only when the author configured
+    // actual dprCap-tier substance beyond the plain `adaptiveQuality: true`
+    // opt-in every scene carries as its framework default (adaptiveQuality
+    // defaults to enabled with the built-in full/balanced/survival presets —
+    // see `defaults` above). A bare boolean toggle strands nothing worth
+    // warning about since there is no author-authored tier config to lose;
+    // only a non-default profile override or an explicit requested tier
+    // means AdaptiveQuality's tier/profile behavior is actually superseded.
+    const hasExplicitAdaptiveTierConfig = Object.keys(profileOverrides).length > 0 || Boolean(requestedValue);
+    if (hasLadder && enabled && hasExplicitAdaptiveTierConfig && typeof console !== "undefined" && console.warn) {
+      // Go-side authors get the equivalent Props.QualityLadderWarnings()
+      // warning at build time; this covers directly JS-authored scenes too.
+      console.warn("[gosx] QualityLadder overrides adaptiveQuality.");
+    }
+    const state = {
+      enabled: tierEnabled,
+      targetFrameMS,
+      cpuRAFBudgetMS,
+      minDevicePixelRatio,
+      warmupFrames,
+      adaptivePostFX,
+      profiles,
+      requestedTier,
+      activeTier: requestedTier,
+      // Resolve once: desktop GPU timing on an emulated phone cannot prove
+      // mobile post-effect headroom. Explicit ladder admission is the opt-in.
+      postFXMobile: typeof navigator !== "undefined" && /Android|iPhone|iPad|Mobile/i.test(navigator.userAgent || ""),
+      activeProfile: profiles[requestedTier],
+      frameCount: 0,
+      validSamples: 0,
+      badFrames: 0,
+      goodFrames: 0,
+      severeFrames: 0,
+      ewmaFrameMS: 0,
+      p95FrameMS: 0,
+      lastFrameMS: 0,
+      measurement: "none",
+      lastMeasurement: null,
+      sampleWindow: [],
+      sampleCursor: 0,
+      sampleScratch: new Array(120),
+      lastRAFNowMS: null,
+      missingRendererSamples: 0,
+      rendererTimingFallbackFrames: Math.max(2, Math.floor(sceneNumber(props && props.adaptiveRendererTimingFallbackFrames, 8))),
+      resumePending: true,
+      cooldownMS: Math.max(5000, sceneNumber(props && props.adaptiveCooldownMS, 5000)),
+      cooldownUntilMS: 0,
+      transitionReason: tierEnabled ? "initial" : "disabled",
+      currentMaxDevicePixelRatio: profiles[requestedTier].dprCap,
+      postFXSuppressed: false,
+      tier: tierEnabled ? requestedTier : "fixed",
+      qualityRevision: 0,
+      lastPublishedAtMS: 0,
+      lastPublishedRevision: -1,
+      baseExplicitMaxDevicePixelRatio: sceneNumber(base && base.explicitMaxDevicePixelRatio, 0),
+      mode: hasLadder ? "ladder" : "tier",
+    };
+    /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (hasLadder) {
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.ladder = ladder.rungs;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungIndex = ladder.startRung;
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungRevision = 0;
+      state.rungReason = "initial";
+      // PROMOTE after N (default 120) consecutive frames with headroom below
+      // promoteThreshold (default 0.7) × the frame budget. DEMOTE reuses the
+      // dprCap-tier governor's sustained-miss condition verbatim (badFrames
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // >= 20 || severeFrames >= 3) — see sceneUpdateQualityLadder.
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ state.rungPromoteFrames = Math.max(1, Math.floor(sceneNumber(props && props.qualityLadderPromoteFrames, 120)));
+      state.rungPromoteThreshold = Math.max(0.05, Math.min(0.95, sceneNumber(props && props.qualityLadderPromoteThreshold, 0.7)));
+      // rungPromoteRule: which promotion rule the last measurement used —
+      // "gpu-headroom" (real GPU timing) or "raf-cadence" (cpu-raf fallback,
+      // no timestamp-query support). Set fresh every sampled frame in
+      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ // sceneUpdateQualityLadder; this is just the pre-first-sample default.
+      state.rungPromoteRule = "gpu-headroom";
+    }
+    return state;
+  }
+
+  function sceneAdaptivePostFXSource(sceneState) {
+    const source = sceneState && sceneState._adaptiveSourcePostEffects;
+    return Array.isArray(source) ? source : [];
+  }
+
+  function applySceneAdaptiveQualityState(mount, state, nowMS, force) {
+    if (!mount || !state) {
+      return;
+    }
+    if (state.mode === "ladder") {
+      applySceneQualityLadderState(mount, state, nowMS, force);
+      return;
+    }
+    const profile = state.activeProfile || (state.profiles && state.profiles.full) || {};
+    mount.__gosxScene3DQualityState = {
+      enabled: Boolean(state.enabled),
+      requestedTier: state.requestedTier,
+      activeTier: state.activeTier,
+      qualityRevision: state.qualityRevision,
+      reason: state.transitionReason,
+      cooldownUntilMS: state.cooldownUntilMS,
+      validSamples: state.validSamples,
+      ewmaFrameMS: state.ewmaFrameMS,
+      p95FrameMS: state.p95FrameMS,
+      measurement: state.measurement,
+      missingRendererSamples: state.missingRendererSamples,
+      lastMeasurement: state.lastMeasurement,
+      profile,
+      postFXSuppressed: Boolean(state.postFXSuppressed),
+    };
+    const now = Number.isFinite(Number(nowMS)) ? Number(nowMS) : (typeof performance !== "undefined" && performance.now ? performance.now() : Date.now());
+    const changed = state.lastPublishedRevision !== state.qualityRevision;
+    if (!force && !changed && now - state.lastPublishedAtMS < 250) return;
+    state.lastPublishedAtMS = now;
+    state.lastPublishedRevision = state.qualityRevision;
+    setAttrValue(mount, "data-gosx-scene3d-adaptive-quality", state.enabled ? "true" : "false");
+    setAttrValue(mount, "data-gosx-scene3d-quality-tier", state.tier || (state.enabled ? "full" : "fixed"));
+    setAttrValue(mount, "data-gosx-scene3d-quality-requested", state.requestedTier || "full");
+    setAttrValue(mount, "data-gosx-scene3d-quality-active", state.activeTier || "full");
+    setAttrValue(mount, "data-gosx-scene3d-quality-revision", String(Math.max(0, state.qualityRevision || 0)));
+    setAttrValue(mount, "data-gosx-scene3d-quality-reason", state.transitionReason || "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-measurement", state.measurement || "none");
+    setAttrValue(mount, "data-gosx-scene3d-quality-renderer-timing-misses", String(Math.max(0, state.missingRendererSamples || 0)));
+    setAttrValue(mount, "data-gosx-scene3d-quality-dpr-cap", state.currentMaxDevicePixelRatio > 0 ? state.currentMaxDevicePixelRatio.toFixed(3) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-frame-ms", state.lastFrameMS > 0 ? state.lastFrameMS.toFixed(1) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-ewma-ms", state.ewmaFrameMS > 0 ? state.ewmaFrameMS.toFixed(2) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-p95-ms", state.p95FrameMS > 0 ? state.p95FrameMS.toFixed(2) : "");
+    setAttrValue(mount, "data-gosx-scene3d-quality-surface-resolution", String(profile.surfaceResolution || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-caustics-resolution", String(profile.causticsResolution || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-object-shadow-resolution", String(profile.objectShadowResolution || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-object-texture-max-side", String(profile.objectTextureMaxSide || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-object-texture-pixel-budget", String(profile.objectTexturePixelBudget || 0));
+    setAttrValue(mount, "data-gosx-scene3d-quality-expensive-pass-cadence", String(profile.expensivePassCadence || 1));
+    setAttrValue(mount, "data-gosx-scene3d-quality-postfx-suppressed", state.postFXSuppressed ? "true" : "false");
+    sceneSyncStatusBindings(mount);
+  }
+
+  function scenePrimeAdaptiveQuality(state, viewport, mount, sceneState) {
+    if (state && state.mode === "ladder") {
+      // Prime the STARTING rung's postEffects admitted-set before the first
+      // render — without this, the scene would render with the author's
+      // full postEffects list (whatever createSceneState built from props)
+      // until the governor's first promote/demote transition, ignoring
+      // QualityStartRung entirely.
+      sceneApplyQualityLadderRung(sceneState, state);
+    } else {
+      sceneApplyAdaptivePostFX(sceneState, state);
+      if (state && state.enabled) {
+        state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, sceneNumber(state.activeProfile && state.activeProfile.dprCap, 1));
+      }
+    }
+    applyScenePostFXState(mount, sceneState);
+    applySceneAdaptiveQualityState(mount, state, 0, true);
+  }
+
+  function sceneApplyAdaptivePostFX(sceneState, adaptiveQuality) {
+    if (!sceneState || !adaptiveQuality) {
+      return false;
+    }
+    const source = sceneAdaptivePostFXSource(sceneState);
+    if (Array.isArray(sceneState._deferredPostEffects) && sceneState._deferredPostEffects.length > 0) {
+      sceneState.postEffects = [];
+      return false;
+    }
+    if (adaptiveQuality.mode === "ladder") {
+      return sceneApplyQualityLadderRung(sceneState, adaptiveQuality);
+    }
+    const suppress = adaptiveQuality.adaptivePostFX && adaptiveQuality.postFXSuppressed && source.length > 0;
+    const limited = adaptiveQuality.postFXMobile || adaptiveQuality.activeTier !== "full";
+    // Keep the existing spatial edge pass; denied TAA never enters history.
+    const next = suppress ? [] : limited ? source.filter(function(effect) { return effect.kind !== "ssao" && effect.kind !== "contactShadows" && effect.kind !== "taa"; }) : source;
+    if (limited && !suppress && source.some(function(effect) { return effect.kind === "taa"; }) && !next.some(function(effect) { return effect.kind === "fxaa"; })) next.push({ kind: "fxaa" });
+    const current = Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
+    if (current.length === next.length && current.every(function(effect, index) { return effect === next[index]; })) {
+      return false;
+    }
+    sceneState.postEffects = next;
+    return true;
+  }
+
+  function sceneAdaptiveP95(state) {
+    const count = state.sampleWindow.length;
+    if (count === 0) return 0;
+    const scratch = state.sampleScratch;
+    for (let i = 0; i < count; i++) scratch[i] = state.sampleWindow[i];
+    for (let i = 1; i < count; i++) {
+      const value = scratch[i];
+      let j = i - 1;
+      while (j >= 0 && scratch[j] > value) {
+        scratch[j + 1] = scratch[j];
+        j -= 1;
+      }
+      scratch[j + 1] = value;
+    }
+    return scratch[Math.max(0, Math.ceil(count * 0.95) - 1)];
+  }
+
+  function sceneAdaptiveRendererSample(renderer, nowMS, cpuDurationMS = 0) {
+    if (!renderer || typeof renderer.pollPerformanceSample !== "function") return null;
+    let sample = null;
+    try { sample = renderer.pollPerformanceSample(); } catch (e) { return null; }
+    if (sample && typeof sample.then === "function") return null;
+    if (typeof sample === "number") sample = { durationMS: sample, source: "renderer" };
+    if (!sample || typeof sample !== "object") return null;
+    const durationMS = sceneNumber(sample.durationMS != null ? sample.durationMS : (sample.frameMS != null ? sample.frameMS : sample.gpuMS), 0);
+    if (!(durationMS > 0) || !Number.isFinite(durationMS)) return null;
+    const cpuMS = Math.max(0, sceneNumber(cpuDurationMS, 0));
+    const source = String(sample.source || sample.measurement || "renderer");
+    return {
+      // CPU and GPU work overlap. Govern by the slower stage, preserving the
+      // renderer duration separately so a CPU-bound frame is never called GPU time.
+      durationMS: Math.max(durationMS, cpuMS),
+      rendererDurationMS: durationMS,
+      source: cpuMS > durationMS ? "cpu-work+" + source : source,
+      atMS: sceneNumber(sample.atMS, nowMS),
+      rafIntervalMS: 0,
+      cpuDurationMS: cpuMS,
+    };
+  }
+
+  function sceneAdaptiveRendererTimingStatus(renderer) {
+    if (!renderer || typeof renderer.getPerformanceTimingStatus !== "function") return null;
+    try {
+      const status = renderer.getPerformanceTimingStatus();
+      return status && typeof status === "object" ? status : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function sceneAdaptiveSetTier(state, tier, reason, nowMS) {
+    if (!state.profiles[tier] || state.activeTier === tier) return false;
+    state.activeTier = tier;
+    state.activeProfile = state.profiles[tier];
+    state.tier = tier;
+    state.currentMaxDevicePixelRatio = Math.max(state.minDevicePixelRatio, state.activeProfile.dprCap);
+    state.qualityRevision += 1;
+    state.transitionReason = reason;
+    state.cooldownUntilMS = nowMS + state.cooldownMS;
+    state.badFrames = 0;
+    state.goodFrames = 0;
+    state.severeFrames = 0;
+    return true;
+  }
+
+  function sceneUpdateAdaptiveQuality(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer) {
+    if (state && state.mode === "ladder") {
+      return sceneUpdateQualityLadder(state, mount, sceneState, viewport, frameStart, frameNowMS, renderer);
+    }
+    if (!state || !state.enabled) {
+      return false;
+    }
+    const now = typeof performance !== "undefined" && performance.now ? performance.now() : Date.now();
+    const rafNow = Number.isFinite(Number(frameNowMS)) ? Number(frameNowMS) : now;
+    const cpuDurationMS = Math.max(0, now - sceneNumber(frameStart, now));
+    const rafIntervalMS = state.lastRAFNowMS != null && rafNow >= state.lastRAFNowMS ? rafNow - state.lastRAFNowMS : 0;
+    state.lastRAFNowMS = rafNow;
+    state.frameCount += 1;
+    const timingStatus = sceneAdaptiveRendererTimingStatus(renderer);
+    const rendererTimingLocked = Boolean(timingStatus && (timingStatus.available === true || timingStatus.active === true));
+    let sample = sceneAdaptiveRendererSample(renderer, now, cpuDurationMS);
+    if (sample) state.missingRendererSamples = 0;
+    else if (rendererTimingLocked) state.missingRendererSamples += 1;
+    else state.missingRendererSamples = 0;
+    const rendererTimingStale = rendererTimingLocked && state.missingRendererSamples >= state.rendererTimingFallbackFrames;
+    if (!sample && (!rendererTimingLocked || rendererTimingStale) && rafIntervalMS > 0 && cpuDurationMS >= 0) {
+      sample = {
+        durationMS: Math.max(rafIntervalMS, cpuDurationMS),
+        rendererDurationMS: 0,
+        source: rendererTimingStale ? "cpu-raf-stale-renderer-timing" : "cpu-raf",
+        atMS: now,
+        rafIntervalMS,
+        cpuDurationMS,
+      };
+    }
+    if (state.resumePending || state.frameCount <= state.warmupFrames || !sample) {
+      state.resumePending = false;
+      applySceneAdaptiveQualityState(mount, state, now, false);
+      return false;
+    }
+    const frameMS = sample.durationMS;
+    state.lastFrameMS = frameMS;
+    state.measurement = sample.source;
+    state.lastMeasurement = sample;
+    state.validSamples += 1;
+    state.ewmaFrameMS = state.ewmaFrameMS > 0
+      ? state.ewmaFrameMS * 0.84 + frameMS * 0.16
+      : frameMS;
+    if (state.sampleWindow.length < 120) state.sampleWindow.push(frameMS);
+    else {
+      state.sampleWindow[state.sampleCursor] = frameMS;
+      state.sampleCursor = (state.sampleCursor + 1) % 120;
+    }
+    if (state.validSamples === 1 || state.validSamples % 10 === 0) state.p95FrameMS = sceneAdaptiveP95(state);
+
+    const cpuMeasured = sample.source.indexOf("cpu-raf") === 0 || sample.source.indexOf("cpu-work+") === 0;
+    const target = Math.max(8, sceneNumber(cpuMeasured ? state.cpuRAFBudgetMS : state.targetFrameMS, 16.7));
+    const missesBudget = state.ewmaFrameMS > target * 1.15 || state.p95FrameMS > target * 1.35;
+    const severeMiss = frameMS > target * 2;
+    if (missesBudget) {
+      state.badFrames += 1;
+      state.goodFrames = 0;
+    } else if (frameMS < target * 0.72) {
+      state.goodFrames += 1;
+      state.badFrames = 0;
+    } else {
+      state.badFrames = 0;
+      state.goodFrames = 0;
+    }
+    state.severeFrames = severeMiss ? state.severeFrames + 1 : 0;
+
+    let changed = false;
+    const order = ["full", "balanced", "survival"];
+    const activeIndex = Math.max(0, order.indexOf(state.activeTier));
+    const requestedIndex = Math.max(0, order.indexOf(state.requestedTier));
+    if (now >= state.cooldownUntilMS && (state.badFrames >= 20 || state.severeFrames >= 3)) {
+      if (activeIndex < order.length - 1) {
+        changed = sceneAdaptiveSetTier(state, order[activeIndex + 1], state.severeFrames >= 3 ? "severe" : "sustained", now);
+      } else if (state.adaptivePostFX && !state.postFXSuppressed && sceneAdaptivePostFXSource(sceneState).length > 0) {
+        state.postFXSuppressed = true;
+        state.qualityRevision += 1;
+        state.transitionReason = "postfx";
+        state.cooldownUntilMS = now + state.cooldownMS;
+        changed = true;
+      }
+    } else if (now >= state.cooldownUntilMS && state.validSamples >= 300 && state.goodFrames >= 300) {
+      if (state.postFXSuppressed) {
+        state.postFXSuppressed = false;
+        state.qualityRevision += 1;
+        state.transitionReason = "postfx-restore";
+        state.cooldownUntilMS = now + state.cooldownMS;
+        changed = true;
+      } else if (activeIndex > requestedIndex) {
+        changed = sceneAdaptiveSetTier(state, order[activeIndex - 1], "recovered", now);
+      }
+    }
+    if (changed) {
+      sceneApplyAdaptivePostFX(sceneState, state);
+      applyScenePostFXState(mount, sceneState);
+      applySceneAdaptiveQualityState(mount, state, now, true);
+      gosxSceneEmit("warn", "adaptive-quality-transition", {
+        reason: state.transitionReason,
+        requestedTier: state.requestedTier,
+        activeTier: state.activeTier,
+        frameMS,
+        ewmaFrameMS: state.ewmaFrameMS,
+        p95FrameMS: state.p95FrameMS,
+        targetFrameMS: state.targetFrameMS,
+        dprCap: state.currentMaxDevicePixelRatio,
+        postFXSuppressed: state.postFXSuppressed,
+      });
+      return true;
+    }
+    applySceneAdaptiveQualityState(mount, state, now, false);
+    return false;
+  }

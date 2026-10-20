@@ -1,0 +1,6 @@
+<ol data-gosx-reorder data-gosx-reorder-action="POST /api/board/reorder">
+	    <li data-gosx-reorder-item="42">
+	        <span data-gosx-reorder-handle aria-label="Reorder">⠿</span>
+	        Player Name
+	    </li>
+	</ol>

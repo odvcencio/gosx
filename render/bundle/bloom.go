@@ -567,6 +567,11 @@ func resolveBloomConfig(b engine.RenderBundle) bloomConfig {
 		if !strings.EqualFold(strings.TrimSpace(effect.Kind), "bloom") {
 			continue
 		}
+		// The native pass has no separate specular attachment yet. Never
+		// substitute total scene radiance for an explicitly selected lobe.
+		if strings.EqualFold(strings.TrimSpace(effect.Source), "specular") {
+			continue
+		}
 		cfg.enabled = true
 		cfg.threshold = bloomEffectNumber(effect, "threshold", defaultBloomThreshold)
 		cfg.intensity = bloomEffectNumber(effect, "intensity", defaultBloomIntensity, "strength")

@@ -1,0 +1,11 @@
+scene.AnimationClip{
+	    Name:     "hover",
+	    Duration: 2.0,
+	    Channels: []scene.AnimationChannel{{
+	        TargetNode:    0,
+	        Property:      "translation",
+	        Interpolation: "LINEAR",
+	        Times:         []float64{0, 1, 2},
+	        Values:        []float64{0, 0, 0, 0, 0.5, 0, 0, 0, 0},
+	    }},
+	}

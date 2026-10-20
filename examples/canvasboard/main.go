@@ -41,11 +41,10 @@ func main() {
 	app := server.New()
 
 	app.SetLayout(func(title string, body gosx.Node) gosx.Node {
-		return server.HTMLDocument(
-			"GoSX CanvasBoard Example — "+title,
-			gosx.Node{},
-			body,
-		)
+		return server.HTMLDocument(&server.DocumentContext{
+			Title: "GoSX CanvasBoard Example — " + title,
+			Body:  body,
+		})
 	})
 
 	app.Route("/", func(r *http.Request) gosx.Node {

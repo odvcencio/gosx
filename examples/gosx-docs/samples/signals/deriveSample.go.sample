@@ -1,0 +1,8 @@
+first := signal.New("Ada")
+last := signal.New("Lovelace")
+full := signal.Derive(func() string {
+	return first.Get() + " " + last.Get()
+})
+defer full.Stop()
+
+fmt.Println(full.Get())

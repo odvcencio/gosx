@@ -1,4 +1,6 @@
 "use strict";
+
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 // Scene3D camera math and the shared draw planner: projection, view matrices,
 // depth conventions, screen-to-ray, draw sorting and bounds culling.
 //
@@ -13,8 +15,10 @@ const path = require("node:path");
 
 const {
   bootstrapSource,
+  bootstrapRuntimeSource,
   FakeElement,
   createContext,
+  freshFeatureBundleSource,
   runScript,
   flushAsyncWork,
   makeSceneApiEnv,
@@ -248,10 +252,10 @@ test("bootstrap Scene3D world planner keeps front bounds and drops behind bounds
 
 test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
   // The legacy vertex-colour renderer and its shaders left
-  // 10-runtime-scene-core.js for 16e-scene-webgl-legacy.js, which ships in the
+  // 10-runtime-scene-core.js for 16e-scene-webgl-legacy.ts, which ships in the
   // WebGL chunk instead of on every Scene3D page. Read the file that holds the
   // shaders now, and keep every assertion the depth contract had.
-  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.js"), "utf8");
+  const core = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16e-scene-webgl-legacy.ts"), "utf8");
 
   assert.match(core, /uniform vec2 u_depth_range;/);
   assert.match(core, /a_position\.z - u_camera\.z/);
@@ -260,8 +264,8 @@ test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
   assert.match(core, /float clipZ = \(\(nearDepth \+ farDepth\) \* rangeInv\) \* local\.z \+ \(2\.0 \* nearDepth \* farDepth \* rangeInv\);/);
   assert.match(core, /vec4\(local\.x \* focal \/ max\(u_aspect, 0\.0001\), local\.y \* focal, clipZ, depth\)/);
   assert.match(core, /float clipDepth = \(\(depth - nearDepth\) \/ max\(farDepth - nearDepth, 0\.0001\)\) \* 2\.0 - 1\.0/);
-  assert.match(core, /depthRangeLocation: gl\.getUniformLocation\(program, "u_depth_range"\)/);
-  assert.match(core, /surfaceDepthRangeLocation: surfaceProgram \? gl\.getUniformLocation\(surfaceProgram, "u_depth_range"\)/);
+  assert.match(core, /result\.depthRangeLocation = gl\.getUniformLocation\(program, "u_depth_range"\)/);
+  assert.match(core, /result\.surfaceDepthRangeLocation = surfaceProgram \? gl\.getUniformLocation\(surfaceProgram, "u_depth_range"\)/);
   assert.match(core, /gl\.uniform2f\(resources\.depthRangeLocation, camera\.near, camera\.far\)/);
   assert.match(core, /gl\.uniform2f\(resources\.surfaceDepthRangeLocation, camera\.near, camera\.far\)/);
   assert.match(core, /gl\.uniform2f\(thickProgram\.depthRangeLocation, camera\.near, camera\.far\)/);
@@ -273,8 +277,8 @@ test("bootstrap Scene3D WebGL shaders use shared camera depth contract", () => {
 });
 
 test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgl, /scenePBRViewMatrix\(cam, scratchViewMatrix\)/);
   assert.match(webgl, /gl\.uniformMatrix4fv\(uniforms\.viewMatrix, false, viewMatrix\)/);
@@ -284,8 +288,8 @@ test("bootstrap Scene3D WebGL and WebGPU consume shared PBR view matrix", () => 
 });
 
 test("bootstrap Scene3D PBR cameraPos uniforms use world eye position", () => {
-  const webgl = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16-scene-webgl.js"), "utf8");
-  const webgpu = fs.readFileSync(path.join(__dirname, "bootstrap-src", "16a-scene-webgpu.js"), "utf8");
+  const webgl = readSceneRendererBackendSrc("webgl");
+  const webgpu = readSceneRendererBackendSrc("webgpu");
 
   assert.match(webgl, /vec3 V = normalize\(u_cameraPosition - v_worldPosition\);/);
   assert.match(webgl, /gl\.uniform3f\(uniforms\.cameraPosition, cam\.x, cam\.y, cam\.z\)/);
@@ -373,4 +377,120 @@ test("bootstrap resolves Scene3D CSS custom properties in the planner", async ()
   assert.notEqual(updated, prepared);
   assert.equal(updated.ir.materials[0].color, "#1e3a8a");
   assert.ok(computedStyleCalls > firstComputedStyleCalls);
+});
+
+test("bootstrap Scene3D planner invalidates cached spot-light projection and shadow fields", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const light = {
+    id: "key",
+    kind: "spot",
+    color: "#ffffff",
+    intensity: 1,
+    x: 0,
+    y: 3,
+    z: 2,
+    directionX: 0,
+    directionY: -1,
+    directionZ: 0,
+    angle: 0.5,
+    penumbra: 0.1,
+    range: 6,
+    decay: 2,
+  };
+
+  for (const [field, value] of [
+    ["x", 2], ["directionZ", -0.5],
+    ["range", 12], ["decay", 3], ["angle", 0.75], ["penumbra", 0.4],
+    ["castShadow", true], ["shadowBias", -0.001], ["shadowSize", 512],
+    ["shadowCascades", 1], ["shadowSoftness", 1.25],
+  ]) {
+    const bundle = {
+      bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+      camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+      environment: {},
+      lights: [Object.assign({}, light)],
+      materials: [],
+      meshObjects: [],
+      objects: [],
+      points: [],
+      worldPositions: new Float32Array(0),
+      worldColors: new Float32Array(0),
+      worldMeshPositions: new Float32Array(0),
+      worldMeshNormals: new Float32Array(0),
+    };
+    const prepared = api.prepareScene(bundle, bundle.camera, viewport, null);
+    bundle.lights = [Object.assign({}, light, { [field]: value })];
+
+    const updated = api.prepareScene(bundle, bundle.camera, viewport, prepared);
+    assert.notEqual(updated, prepared, field + " mutation must invalidate the prepared scene");
+    assert.notEqual(updated.signature, prepared.signature, field + " mutation must change the signature");
+    assert.equal(updated.rebuilds, prepared.rebuilds + 1);
+    assert.equal(api.prepareScene(bundle, bundle.camera, viewport, updated), updated);
+  }
+});
+
+
+test("bootstrap Scene3D cached planner keeps current mesh identities for crowd and rigid draws", async () => {
+  const env = createContext({});
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
+  await flushAsyncWork();
+  const api = env.context.__gosx_scene3d_api;
+  const vertices = {
+    count: 3, immutable: true, revision: 0,
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+  };
+  function mesh(id, renderPass, row) {
+    return {
+      id, kind: "mesh", materialIndex: 0, renderPass, vertexOffset: 0,
+      vertexCount: 3, depthCenter: 4, directVertices: true,
+      retainedGeometry: true, vertices, skin: null,
+      _crowdSkin: { rows: new Float32Array([row, row + 1, 0.5]) },
+    };
+  }
+  const bundle = {
+    bundleVersion: api.SCENE_RENDER_BUNDLE_VERSION,
+    camera: { x: 0, y: 0, z: 6, fov: 72, near: 0.05, far: 128 },
+    environment: {}, materials: [{ kind: "standard" }],
+    meshObjects: [mesh("hero", "opaque", 43), mesh("glass", "alpha", 43), mesh("glow", "additive", 43)],
+    objects: [], points: [],
+    worldPositions: new Float32Array(0), worldColors: new Float32Array(0),
+    worldMeshPositions: new Float32Array(0), worldMeshNormals: new Float32Array(0),
+  };
+  const viewport = { cssWidth: 320, cssHeight: 180, pixelWidth: 320, pixelHeight: 180, pixelRatio: 1 };
+  const first = api.prepareScene(bundle, bundle.camera, viewport, null);
+  const passes = first.pbrPasses;
+  const opaque = passes.opaque, alpha = passes.alpha, additive = passes.additive;
+  const nextObjects = bundle.meshObjects.map(object => ({
+    ...object, _crowdSkin: { rows: new Float32Array([100, 101, 0.8]) },
+  }));
+  const nextBundle = { ...bundle, meshObjects: nextObjects };
+  const cached = api.prepareScene(nextBundle, nextBundle.camera, viewport, first);
+  assert.equal(cached, first, "pose-only updates keep the prepared-plan cache hit");
+  assert.equal(cached.ir, nextBundle);
+  assert.equal(cached.pbrPasses, passes, "reuse the pass container");
+  assert.equal(passes.opaque, opaque, "reuse opaque bucket storage");
+  assert.equal(passes.alpha, alpha, "reuse alpha bucket storage");
+  assert.equal(passes.additive, additive, "reuse additive bucket storage");
+  const currentBatches = new Map(nextObjects.map(object => [object, { atlas: object._crowdSkin }]));
+  for (const [index, pass] of ["opaque", "alpha", "additive"].entries()) {
+    assert.equal(passes[pass][0], nextObjects[index], pass + " must reference the current mesh");
+    assert.ok(currentBatches.has(passes[pass][0]), pass + " must resolve the renderer's identity-keyed batch");
+    assert.equal(passes[pass][0]._crowdSkin.rows[0], 100);
+  }
+  const replacement = { ...nextObjects[0], _crowdSkin: { rows: new Float32Array([114, 115, 0.25]) } };
+  nextObjects[0] = replacement;
+  const sameBundle = api.prepareScene(nextBundle, nextBundle.camera, viewport, cached);
+  assert.equal(sameBundle, cached, "replacing a mesh in the same array also keeps the cache hit");
+  assert.equal(sameBundle.pbrPasses.opaque[0], replacement, "same-array replacement must refresh the draw identity");
+  assert.equal(api.prepareScene(nextBundle, nextBundle.camera, viewport, sameBundle), sameBundle);
+  assert.equal(sameBundle.pbrPasses.opaque, opaque, "unchanged identities do not accumulate or replace buckets");
+  assert.equal(opaque.length, 1);
+  assert.equal(alpha.length, 1);
+  assert.equal(additive.length, 1);
 });

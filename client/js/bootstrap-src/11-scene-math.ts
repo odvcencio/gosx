@@ -1,0 +1,992 @@
+  // Scene math utilities — pure numeric helpers with no DOM or WebGL dependencies.
+
+  function sceneClamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+
+  function sceneAddPoint(left, right) {
+    return {
+      x: sceneNumber(left && left.x, 0) + sceneNumber(right && right.x, 0),
+      y: sceneNumber(left && left.y, 0) + sceneNumber(right && right.y, 0),
+      z: sceneNumber(left && left.z, 0) + sceneNumber(right && right.z, 0),
+    };
+  }
+
+  function sceneScalePoint(point, scale) {
+    return {
+      x: sceneNumber(point && point.x, 0) * scale,
+      y: sceneNumber(point && point.y, 0) * scale,
+      z: sceneNumber(point && point.z, 0) * scale,
+    };
+  }
+
+  function sceneMultiplyPoint(left, right) {
+    return {
+      x: sceneNumber(left && left.x, 0) * sceneNumber(right && right.x, 0),
+      y: sceneNumber(left && left.y, 0) * sceneNumber(right && right.y, 0),
+      z: sceneNumber(left && left.z, 0) * sceneNumber(right && right.z, 0),
+    };
+  }
+
+  function scenePointLength(point) {
+    var px = sceneNumber(point && point.x, 0);
+    var py = sceneNumber(point && point.y, 0);
+    var pz = sceneNumber(point && point.z, 0);
+    return Math.sqrt(px * px + py * py + pz * pz);
+  }
+
+  function sceneNormalizePoint(point) {
+    const length = scenePointLength(point);
+    if (length <= 0.000001) {
+      return { x: 0, y: 0, z: 0 };
+    }
+    return sceneScalePoint(point, 1 / length);
+  }
+
+  function sceneDotPoint(left, right) {
+    return (
+      sceneNumber(left && left.x, 0) * sceneNumber(right && right.x, 0) +
+      sceneNumber(left && left.y, 0) * sceneNumber(right && right.y, 0) +
+      sceneNumber(left && left.z, 0) * sceneNumber(right && right.z, 0)
+    );
+  }
+
+  function sceneRotatePoint(point, rotationX, rotationY, rotationZ) {
+    let x = point.x;
+    let y = point.y;
+    let z = point.z;
+
+    const sinX = Math.sin(rotationX);
+    const cosX = Math.cos(rotationX);
+    let nextY = y * cosX - z * sinX;
+    let nextZ = y * sinX + z * cosX;
+    y = nextY;
+    z = nextZ;
+
+    const sinY = Math.sin(rotationY);
+    const cosY = Math.cos(rotationY);
+    let nextX = x * cosY + z * sinY;
+    nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinZ = Math.sin(rotationZ);
+    const cosZ = Math.cos(rotationZ);
+    nextX = x * cosZ - y * sinZ;
+    nextY = x * sinZ + y * cosZ;
+
+    return { x: nextX, y: nextY, z: z };
+  }
+
+  function sceneInverseRotatePoint(point, rotationX, rotationY, rotationZ) {
+    let x = sceneNumber(point && point.x, 0);
+    let y = sceneNumber(point && point.y, 0);
+    let z = sceneNumber(point && point.z, 0);
+
+    const sinZ = Math.sin(-rotationZ);
+    const cosZ = Math.cos(-rotationZ);
+    let nextX = x * cosZ - y * sinZ;
+    let nextY = x * sinZ + y * cosZ;
+    x = nextX;
+    y = nextY;
+
+    const sinY = Math.sin(-rotationY);
+    const cosY = Math.cos(-rotationY);
+    nextX = x * cosY + z * sinY;
+    let nextZ = -x * sinY + z * cosY;
+    x = nextX;
+    z = nextZ;
+
+    const sinX = Math.sin(-rotationX);
+    const cosX = Math.cos(-rotationX);
+    nextY = y * cosX - z * sinX;
+    nextZ = y * sinX + z * cosX;
+    return { x, y: nextY, z: nextZ };
+  }
+
+  // Module-level camera scratch used by sceneProjectPoint's internal
+  // normalization. sceneRenderCamera (with out-param form) mutates in
+  // place so each call doesn't allocate a fresh camera struct. Safe
+  // because sceneProjectPoint consumes the scratch fields inline and
+  // returns before any downstream code can observe the scratch state.
+  const _sceneProjectCameraScratch = {
+    kind: "perspective",
+    x: 0, y: 0, z: 0,
+    rotationX: 0, rotationY: 0, rotationZ: 0,
+    left: 0, right: 0, top: 0, bottom: 0, zoom: 1,
+    fov: 0, near: 0, far: 0,
+  };
+
+  function sceneProjectPoint(point, camera, width, height) {
+    // Inlined camera normalization + local transform + perspective
+    // projection. Previously this function allocated 5 intermediate
+    // objects per call (a camera, a second camera inside
+    // sceneCameraLocalPoint, a local point arg, the sceneInverseRotatePoint
+    // result, and the final result) which turned into ~60k allocs/sec
+    // on a line-heavy scene at 60 fps. Now allocates 1 (the returned
+    // projected point — callers retain refs, so we can't scratch that).
+    const cam = sceneRenderCamera(camera, _sceneProjectCameraScratch);
+
+    // Step 1: translate into camera-local space.
+    let lx = sceneNumber(point && point.x, 0) - cam.x;
+    let ly = sceneNumber(point && point.y, 0) - cam.y;
+    let lz = sceneNumber(point && point.z, 0) - cam.z;
+
+    // Step 2: inverse-rotate into camera frame (was sceneInverseRotatePoint).
+    const sinZ = Math.sin(-cam.rotationZ);
+    const cosZ = Math.cos(-cam.rotationZ);
+    let nextX = lx * cosZ - ly * sinZ;
+    let nextY = lx * sinZ + ly * cosZ;
+    lx = nextX;
+    ly = nextY;
+
+    const sinY = Math.sin(-cam.rotationY);
+    const cosY = Math.cos(-cam.rotationY);
+    nextX = lx * cosY + lz * sinY;
+    let nextZ = -lx * sinY + lz * cosY;
+    lx = nextX;
+    lz = nextZ;
+
+    const sinX = Math.sin(-cam.rotationX);
+    const cosX = Math.cos(-cam.rotationX);
+    nextY = ly * cosX - lz * sinX;
+    nextZ = ly * sinX + lz * cosX;
+    ly = nextY;
+    lz = nextZ;
+
+    // Step 3: positive forward depth uses camera -Z.
+    const depth = -lz;
+    if (depth <= cam.near || depth >= cam.far) return null;
+
+    if (cam.kind === "orthographic") {
+      const bounds = sceneOrthographicBounds(cam, width, height);
+      const spanX = Math.max(0.000001, bounds.right - bounds.left);
+      const spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      return {
+        x: ((lx - bounds.left) / spanX) * width,
+        y: ((bounds.top - ly) / spanY) * height,
+        depth: depth,
+      };
+    }
+
+    // Step 4: perspective divide.
+    // Vertical-FOV focal, matching scenePBRProjectionMatrix (m[5] = 1/tan(fovY/2),
+    // m[0] = that / aspect). Referencing height (not min(width,height)) keeps
+    // projection aligned with the renderer in portrait viewports, not just landscape.
+    const focal = (height / 2) / Math.tan((cam.fov * Math.PI) / 360);
+    return {
+      x: width / 2 + (lx * focal) / depth,
+      y: height / 2 - (ly * focal) / depth,
+      depth: depth,
+    };
+  }
+
+  function sceneCameraLocalPoint(point, camera) {
+    const normalizedCamera = sceneRenderCamera(camera);
+    return sceneInverseRotatePoint({
+      x: sceneNumber(point && point.x, 0) - normalizedCamera.x,
+      y: sceneNumber(point && point.y, 0) - normalizedCamera.y,
+      z: sceneNumber(point && point.z, 0) - normalizedCamera.z,
+    }, normalizedCamera.rotationX, normalizedCamera.rotationY, normalizedCamera.rotationZ);
+  }
+
+  function sceneClipPoint(point, width, height) {
+    return {
+      x: (point.x / width) * 2 - 1,
+      y: 1 - (point.y / height) * 2,
+    };
+  }
+
+  function sceneSafeNormal(normal) {
+    const normalized = sceneNormalizePoint(normal);
+    return scenePointLength(normalized) > 0.0001 ? normalized : { x: 0, y: 1, z: 0 };
+  }
+
+  function sceneColorPoint(value, fallback) {
+    const rgba = sceneColorRGBA(value, [sceneNumber(fallback && fallback.x, 1), sceneNumber(fallback && fallback.y, 1), sceneNumber(fallback && fallback.z, 1), 1]);
+    return { x: rgba[0], y: rgba[1], z: rgba[2] };
+  }
+
+  function sceneRGBAString(rgba) {
+    const color = Array.isArray(rgba) ? rgba : [0.55, 0.88, 1, 1];
+    return "rgba(" +
+      Math.round(clamp01(sceneNumber(color[0], 0.55)) * 255) + ", " +
+      Math.round(clamp01(sceneNumber(color[1], 0.88)) * 255) + ", " +
+      Math.round(clamp01(sceneNumber(color[2], 1)) * 255) + ", " +
+      clamp01(sceneNumber(color[3], 1)).toFixed(3) + ")";
+  }
+
+  function sceneColorRGBA(value, fallback) {
+    const base = Array.isArray(fallback) && fallback.length === 4 ? fallback.slice() : [0.55, 0.88, 1, 1];
+    if (typeof value !== "string") {
+      return base;
+    }
+
+    const trimmed = value.trim();
+    const hex = trimmed.match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+    if (hex) {
+      const digits = hex[1].length === 3 ? hex[1].replace(/./g, "$&$&") : hex[1];
+      return [0, 2, 4].map(function(offset) {
+        return parseInt(digits.slice(offset, offset + 2), 16) / 255;
+      }).concat(1);
+    }
+
+    const rgba = trimmed.match(/^rgba?\(([^)]+)\)$/i);
+    if (rgba) {
+      const parts = rgba[1].split(",").map(function(part) {
+        return Number(part.trim());
+      });
+      if (parts.length >= 3 && parts.length <= 4 && parts.every(Number.isFinite)) {
+        return parts.slice(0, 3).map(function(part) { return clamp01(part / 255); })
+          .concat(parts.length > 3 ? clamp01(parts[3]) : 1);
+      }
+    }
+
+    return base;
+  }
+
+  function sceneMixRGBA(left, right) {
+    return [0.55, 0.88, 1, 1].map(function(fallback, index) {
+      return (sceneNumber(left && left[index], fallback) + sceneNumber(right && right[index], fallback)) / 2;
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Flat (non-allocating) math for tight loops — no {x,y,z} object allocation
+  // ---------------------------------------------------------------------------
+
+  // Flat dot product — no object allocation.
+  function sceneDot3(ax, ay, az, bx, by, bz) {
+    return ax * bx + ay * by + az * bz;
+  }
+
+  // Ray intersection utilities for raycast-based scene picking.
+
+  function sceneRayIntersectsAABB(rayOrigin, rayDir, boundsMin, boundsMax) {
+    // Returns distance to intersection, or -1 if no hit.
+    // rayOrigin, rayDir, boundsMin, boundsMax are all {x,y,z} objects.
+    var tMin = -Infinity;
+    var tMax = Infinity;
+
+    for (var ai = 0; ai < 3; ai++) {
+      var axis = ai === 0 ? "x" : ai === 1 ? "y" : "z";
+      var origin = rayOrigin[axis];
+      var dir = rayDir[axis];
+      var min = boundsMin[axis];
+      var max = boundsMax[axis];
+
+      if (Math.abs(dir) < 1e-10) {
+        // Ray parallel to slab.
+        if (origin < min || origin > max) return -1;
+      } else {
+        var t1 = (min - origin) / dir;
+        var t2 = (max - origin) / dir;
+        if (t1 > t2) { var tmp = t1; t1 = t2; t2 = tmp; }
+        tMin = Math.max(tMin, t1);
+        tMax = Math.min(tMax, t2);
+        if (tMin > tMax) return -1;
+      }
+    }
+
+    if (tMax < 0) return -1;
+    return tMin >= 0 ? tMin : tMax;
+  }
+
+  function sceneRayIntersectsTriangle(rayOrigin, rayDir, v0, v1, v2) {
+    // Moller-Trumbore intersection. Returns { distance, u, v } or null.
+    // Extract components once to avoid repeated property access in hot path.
+    var EPSILON = 1e-7;
+
+    var rox = rayOrigin.x, roy = rayOrigin.y, roz = rayOrigin.z;
+    var rdx = rayDir.x, rdy = rayDir.y, rdz = rayDir.z;
+    var v0x = v0.x, v0y = v0.y, v0z = v0.z;
+
+    var edge1x = v1.x - v0x, edge1y = v1.y - v0y, edge1z = v1.z - v0z;
+    var edge2x = v2.x - v0x, edge2y = v2.y - v0y, edge2z = v2.z - v0z;
+
+    // cross(rayDir, edge2)
+    var hx = rdy * edge2z - rdz * edge2y;
+    var hy = rdz * edge2x - rdx * edge2z;
+    var hz = rdx * edge2y - rdy * edge2x;
+
+    var a = sceneDot3(edge1x, edge1y, edge1z, hx, hy, hz);
+    if (a > -EPSILON && a < EPSILON) return null; // parallel
+
+    var f = 1.0 / a;
+    var sx = rox - v0x;
+    var sy = roy - v0y;
+    var sz = roz - v0z;
+
+    var u = f * sceneDot3(sx, sy, sz, hx, hy, hz);
+    if (u < 0.0 || u > 1.0) return null;
+
+    // cross(s, edge1)
+    var qx = sy * edge1z - sz * edge1y;
+    var qy = sz * edge1x - sx * edge1z;
+    var qz = sx * edge1y - sy * edge1x;
+
+    var v = f * sceneDot3(rdx, rdy, rdz, qx, qy, qz);
+    if (v < 0.0 || u + v > 1.0) return null;
+
+    var t = f * sceneDot3(edge2x, edge2y, edge2z, qx, qy, qz);
+    if (t < EPSILON) return null; // behind ray
+
+    return { distance: t, u: u, v: v };
+  }
+
+  function clamp01(value) {
+    return Math.max(0, Math.min(1, value));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Column-major 4x4 matrix utilities
+  // ---------------------------------------------------------------------------
+
+  var SCENE_IDENTITY_MAT4 = new Float32Array([
+    1, 0, 0, 0,
+    0, 1, 0, 0,
+    0, 0, 1, 0,
+    0, 0, 0, 1,
+  ]);
+
+  // Scratch buffers for hot-path multiply — avoids per-call allocations.
+  var _sceneMat4ScratchA = new Float32Array(16);
+  var _sceneMat4ScratchB = new Float32Array(16);
+
+  // Allocating multiply: returns a new Float32Array(16).
+  function sceneMat4Multiply(a, b) {
+    var out = new Float32Array(16);
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[row]      * b[col * 4] +
+          a[4 + row]  * b[col * 4 + 1] +
+          a[8 + row]  * b[col * 4 + 2] +
+          a[12 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  }
+
+  // Non-allocating multiply: writes result into `out`.
+  function sceneMat4MultiplyInto(out, a, b) {
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        out[col * 4 + row] =
+          a[row]      * b[col * 4] +
+          a[4 + row]  * b[col * 4 + 1] +
+          a[8 + row]  * b[col * 4 + 2] +
+          a[12 + row] * b[col * 4 + 3];
+      }
+    }
+    return out;
+  }
+
+  function sceneMatrixTransformInto(out, matrix, x, y, z, stride, translate) {
+    out.x = matrix[0] * x + matrix[stride] * y + matrix[stride * 2] * z;
+    out.y = matrix[1] * x + matrix[stride + 1] * y + matrix[stride * 2 + 1] * z;
+    out.z = matrix[2] * x + matrix[stride + 2] * y + matrix[stride * 2 + 2] * z;
+    if (translate) {
+      out.x += matrix[12]; out.y += matrix[13]; out.z += matrix[14];
+    }
+    return out;
+  }
+
+  function sceneAffineDeterminant(matrix, base, out) {
+    base = base || 0;
+    if (!matrix || matrix.length < base + 16) return 0;
+    for (var n = 0; n < 16; n++) if (!Number.isFinite(matrix[base + n])) return 0;
+    if (matrix[base + 3] !== 0 || matrix[base + 7] !== 0 || matrix[base + 11] !== 0 || matrix[base + 15] !== 1) return 0;
+    var s = 0;
+    for (var k = 0; k < 3; k++) for (var j = 0; j < 3; j++) s = Math.max(s, Math.abs(matrix[base + k * 4 + j]));
+    if (!s || !Number.isFinite(1 / s)) return 0;
+    var a = matrix[base] / s, b = matrix[base + 4] / s, c = matrix[base + 8] / s;
+    var d = matrix[base + 1] / s, e = matrix[base + 5] / s, f = matrix[base + 9] / s;
+    var g = matrix[base + 2] / s, h = matrix[base + 6] / s, i = matrix[base + 10] / s;
+    var c00 = e * i - f * h, c01 = f * g - d * i, c02 = d * h - e * g;
+    var det = a * c00 + b * c01 + c * c02;
+    if (!Number.isFinite(det) || Math.abs(det) <= 1e-12) return 0;
+    out = out || _sceneAffineInverseScratch;
+    out.set([
+      c00 / det / s, c01 / det / s, c02 / det / s, 0,
+      (c * h - b * i) / det / s, (a * i - c * g) / det / s, (b * g - a * h) / det / s, 0,
+      (b * f - c * e) / det / s, (c * d - a * f) / det / s, (a * e - b * d) / det / s, 0,
+    ]);
+    if (!out.every(Number.isFinite) || !out.some(Boolean)) return 0;
+    return det;
+  }
+
+  // Column-major inverse-transpose of the affine linear part. Singular or
+  // non-finite matrices preserve the authored local basis instead of
+  // manufacturing NaNs, matching the GPU shader fallback.
+  const _sceneAffineInverseScratch = new Float64Array(12);
+  function sceneAffineNormalMatrix(matrix, out) {
+    out = out || Array(9);
+    if (!sceneAffineDeterminant(matrix, 0, _sceneAffineInverseScratch)) {
+      out.fill(0); out[0] = out[4] = out[8] = 1;
+      return out;
+    }
+    for (var n = 0; n < 9; n++) out[n] = _sceneAffineInverseScratch[n % 3 * 4 + (n / 3 | 0)];
+    return out;
+  }
+
+  function sceneEulerMatrixInto(out, rx, ry, rz, x, y, z) {
+    const cx = Math.cos(rx), sx = Math.sin(rx);
+    const cy = Math.cos(ry), sy = Math.sin(ry);
+    const cz = Math.cos(rz), sz = Math.sin(rz);
+    out[0] = cy * cz; out[4] = sx * sy * cz - cx * sz; out[8] = cx * sy * cz + sx * sz; out[12] = x;
+    out[1] = cy * sz; out[5] = sx * sy * sz + cx * cz; out[9] = cx * sy * sz - sx * cz; out[13] = y;
+    out[2] = -sy; out[6] = sx * cy; out[10] = cx * cy; out[14] = z;
+    out[3] = 0; out[7] = 0; out[11] = 0; out[15] = 1;
+    return out;
+  }
+
+  // Build a column-major 4x4 matrix from translation, quaternion rotation,
+  // and scale components (TRS decomposition). Returns a new Float32Array(16).
+  function sceneTRSToMat4(t, r, s) {
+    return sceneTRSToMat4Into(new Float32Array(16), t, r, s);
+  }
+
+  // Convert a unit quaternion (x,y,z,w) to the (rotationX, rotationY, rotationZ)
+  // Euler angles (radians) used by normalizeSceneObject. sceneRotatePoint applies
+  // X then Y then Z, so the composed matrix is Rz·Ry·Rx; decompose accordingly.
+  // Returns { x, y, z }.
+  function sceneQuatToEulerXYZ(x, y, z, w) {
+    var m00 = 1 - 2 * (y * y + z * z);
+    var m10 = 2 * (x * y + z * w);
+    var m20 = 2 * (x * z - y * w);
+    var m21 = 2 * (y * z + x * w);
+    var m22 = 1 - 2 * (x * x + y * y);
+    var ey = Math.asin(sceneClamp(-m20, -1, 1));
+    if (Math.abs(m20) < 0.9999999) {
+      return { x: Math.atan2(m21, m22), y: ey, z: Math.atan2(m10, m00) };
+    }
+    // Gimbal lock: pitch is ±90°; fold Z into X.
+    return { x: Math.atan2(-2 * (y * z - x * w), 1 - 2 * (x * x + z * z)), y: ey, z: 0 };
+  }
+
+  // Non-allocating TRS: writes result into `out`.
+  function sceneTRSToMat4Into(out, t, r, s) {
+    var x = r[0], y = r[1], z = r[2], w = r[3];
+    var x2 = x + x, y2 = y + y, z2 = z + z;
+    var xx = x * x2, xy = x * y2, xz = x * z2;
+    var yy = y * y2, yz = y * z2, zz = z * z2;
+    var wx = w * x2, wy = w * y2, wz = w * z2;
+
+    out[0]  = (1 - (yy + zz)) * s[0]; out[1]  = (xy + wz) * s[0];       out[2]  = (xz - wy) * s[0];       out[3]  = 0;
+    out[4]  = (xy - wz) * s[1];       out[5]  = (1 - (xx + zz)) * s[1]; out[6]  = (yz + wx) * s[1];       out[7]  = 0;
+    out[8]  = (xz + wy) * s[2];       out[9]  = (yz - wx) * s[2];       out[10] = (1 - (xx + yy)) * s[2]; out[11] = 0;
+    out[12] = t[0];                    out[13] = t[1];                    out[14] = t[2];                    out[15] = 1;
+
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Ortho-2D board camera (camera.mode === "ortho2d")
+  // ---------------------------------------------------------------------------
+  //
+  // JS half of the pinned cross-language contract with the native 2D board
+  // camera math: computeOrthoCamera2DMVP in render/bundle/math.go, guarded by
+  // TestComputeOrthoCamera2DMVP_Golden (render/bundle/ortho_camera_2d_golden_test.go).
+  // For identical inputs, sceneMat4Ortho2DViewProj must reproduce the native
+  // MVP exactly (column-major, WebGL depth convention: NDC z in [-1, 1]).
+  //
+  // These helpers read the RAW engine.RenderCamera wire fields — mode, x/y
+  // (pan), z (zoom), near/far. Do NOT route the camera through
+  // sceneRenderCamera first: the normalizer strips `mode`, applies 3D defaults
+  // (z→6, near→0.05, far→128), and treats z as a position rather than a zoom,
+  // which would silently mangle the 2D camera.
+
+  // Private scratch for sceneMat4Ortho2DViewProj — kept separate from the
+  // exported _sceneMat4ScratchA/B so callers holding those can't alias `out`.
+  var _sceneOrtho2DProjScratch = new Float32Array(16);
+  var _sceneOrtho2DViewScratch = new Float32Array(16);
+
+  // sceneMat4Ortho2DView writes the 2D board view matrix into `out`
+  // (column-major Float32Array(16)): a pure translation by (-panX, -panY, 0).
+  // Rotation and depth are ignored in 2D mode per ADR 0004.
+  function sceneMat4Ortho2DView(camera, out) {
+    out[0] = 1; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = 1; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = 1; out[11] = 0;
+    out[12] = -sceneNumber(camera && camera.x, 0);
+    out[13] = -sceneNumber(camera && camera.y, 0);
+    out[14] = 0;
+    out[15] = 1;
+    return out;
+  }
+
+  // sceneMat4Ortho2DProj writes the 2D board projection into `out`: an
+  // asymmetric orthographic projection over the framebuffer half-extents
+  // divided by zoom (carried in camera.z). Output uses the WebGL convention
+  // (NDC z in [-1, 1]) to match the native golden; the WebGPU renderer
+  // applies its [0, 1] depth remap downstream (see uploadFrameUniforms).
+  // Y is intentionally NOT flipped — renderer NDC has +Y up, so board-space
+  // "up" matches screen "up"; pointer-input handlers compensate elsewhere.
+  function sceneMat4Ortho2DProj(camera, width, height, out) {
+    var zoom = sceneNumber(camera && camera.z, 0);
+    if (zoom <= 0) zoom = 1;
+    var w = sceneNumber(width, 0);
+    if (w <= 0) w = 1;
+    var h = sceneNumber(height, 0);
+    if (h <= 0) h = 1;
+    var halfW = w / (2 * zoom);
+    var halfH = h / (2 * zoom);
+    var near = sceneNumber(camera && camera.near, 0);
+    if (near === 0) near = -1;
+    var far = sceneNumber(camera && camera.far, 0);
+    if (far === 0) far = 1;
+    var left = -halfW;
+    var right = halfW;
+    var bottom = -halfH;
+    var top = halfH;
+    var rl = right - left;
+    var tb = top - bottom;
+    var fn = far - near;
+    if (rl === 0) rl = 1;
+    if (tb === 0) tb = 1;
+    if (fn === 0) fn = 1;
+    out[0] = 2 / rl; out[1] = 0; out[2] = 0; out[3] = 0;
+    out[4] = 0; out[5] = 2 / tb; out[6] = 0; out[7] = 0;
+    out[8] = 0; out[9] = 0; out[10] = -2 / fn; out[11] = 0;
+    out[12] = -(right + left) / rl;
+    out[13] = -(top + bottom) / tb;
+    out[14] = -(far + near) / fn;
+    out[15] = 1;
+    return out;
+  }
+
+  // sceneMat4Ortho2DViewProj writes proj*view into `out` — the combined 2D
+  // board MVP. THIS is the golden-contract helper named by the native test
+  // TestComputeOrthoCamera2DMVP_Golden; keep it bit-compatible with
+  // computeOrthoCamera2DMVP. `out` must not alias the module scratch buffers.
+  function sceneMat4Ortho2DViewProj(camera, width, height, out) {
+    sceneMat4Ortho2DProj(camera, width, height, _sceneOrtho2DProjScratch);
+    sceneMat4Ortho2DView(camera, _sceneOrtho2DViewScratch);
+    return sceneMat4MultiplyInto(out, _sceneOrtho2DProjScratch, _sceneOrtho2DViewScratch);
+  }
+
+  // Scratch arrays for animation interpolation — avoids .slice() allocations.
+  var _animScratch3 = [0, 0, 0];
+  var _animScratch4 = [0, 0, 0, 0];
+
+  // Lazy Scene3D sub-feature chunks run in their own IIFEs. Publish the
+  // matrix helpers they need after the math module has initialized.
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    Object.assign(window.__gosx_scene3d_api, {
+      SCENE_IDENTITY_MAT4,
+      sceneMat4Multiply,
+      sceneMat4MultiplyInto,
+      sceneAffineDeterminant,
+      sceneAffineNormalMatrix,
+      sceneEulerMatrixInto,
+      sceneTRSToMat4,
+      sceneTRSToMat4Into,
+      _sceneMat4ScratchA,
+      _sceneMat4ScratchB,
+      _animScratch3,
+      _animScratch4,
+    });
+  }
+
+  // clamp01 is consumed by normalizeEngineRenderBundle (30-tail.js), which
+  // ships in bootstrap-feature-engines.js — a bundle that never includes this
+  // file (see build-bootstrap.mjs). Bridged via window.__gosx_runtime_api so
+  // the engines feature prefers this canonical copy when it's already on the
+  // page; the engines-prefix falls back to its own local copy otherwise (see
+  // 26b-feature-engines-prefix.js).
+  if (typeof window !== "undefined" && window.__gosx_runtime_api) {
+    window.__gosx_runtime_api.clamp01 = clamp01;
+  }
+
+  function sceneScreenToRay(pointerX, pointerY, width, height, camera) {
+    // Unproject screen coordinates into a world-space ray, consistent with sceneProjectPoint.
+    var cam = sceneRenderCamera(camera);
+
+    var origin = { x: cam.x, y: cam.y, z: cam.z };
+    if (cam.kind === "orthographic") {
+      var bounds = sceneOrthographicBounds(cam, width, height);
+      var spanX = Math.max(0.000001, bounds.right - bounds.left);
+      var spanY = Math.max(0.000001, bounds.top - bounds.bottom);
+      var localOrigin = {
+        x: bounds.left + (pointerX / Math.max(1, width)) * spanX,
+        y: bounds.top - (pointerY / Math.max(1, height)) * spanY,
+        z: -cam.near,
+      };
+      var localDir = { x: 0, y: 0, z: -1 };
+      var worldOffset = sceneRotatePoint(localOrigin, cam.rotationX, cam.rotationY, cam.rotationZ);
+      var worldDir = sceneRotatePoint(localDir, cam.rotationX, cam.rotationY, cam.rotationZ);
+      var lenOrtho = Math.sqrt(worldDir.x * worldDir.x + worldDir.y * worldDir.y + worldDir.z * worldDir.z);
+      return {
+        origin: { x: origin.x + worldOffset.x, y: origin.y + worldOffset.y, z: origin.z + worldOffset.z },
+        dir: lenOrtho < 1e-12
+          ? { x: 0, y: 0, z: -1 }
+          : { x: worldDir.x / lenOrtho, y: worldDir.y / lenOrtho, z: worldDir.z / lenOrtho },
+      };
+    }
+
+    // Compute direction in camera-local space, matching the projection focal length.
+    var halfFov = (cam.fov * Math.PI) / 360;
+    var tanHalf = Math.tan(halfFov);
+    // Match scenePBRProjectionMatrix (fovY + aspect): reference height, not
+    // min(width,height), so the picking ray aligns with the rendered image in
+    // portrait viewports as well as landscape (where the two conventions agree).
+    var refDim = height / 2;
+    var focal = refDim / tanHalf;
+
+    // Invert the projection at unit positive depth. Camera forward is local -Z.
+    var dirCam = {
+      x: (pointerX - width / 2) / focal,
+      y: (height / 2 - pointerY) / focal,
+      z: -1.0,
+    };
+
+    // Rotate from camera-local space to world space (inverse of sceneInverseRotatePoint).
+    var dirWorld = sceneRotatePoint(dirCam, cam.rotationX, cam.rotationY, cam.rotationZ);
+
+    // Normalize.
+    var len = Math.sqrt(dirWorld.x * dirWorld.x + dirWorld.y * dirWorld.y + dirWorld.z * dirWorld.z);
+    if (len < 1e-12) {
+      return { origin: origin, dir: { x: 0, y: 0, z: -1 } };
+    }
+
+    return {
+      origin: origin,
+      dir: { x: dirWorld.x / len, y: dirWorld.y / len, z: dirWorld.z / len },
+    };
+  }
+
+  function sceneRayIntersectYPlane(ray, planeY) {
+    if (!ray || !ray.origin || !ray.dir) return null;
+    var dy = sceneNumber(ray.dir.y, 0);
+    if (Math.abs(dy) < 1e-9) return null;
+    var distance = (sceneNumber(planeY, 0) - sceneNumber(ray.origin.y, 0)) / dy;
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + sceneNumber(ray.dir.x, 0) * distance,
+      y: sceneNumber(planeY, 0),
+      z: sceneNumber(ray.origin.z, 0) + sceneNumber(ray.dir.z, 0) * distance,
+    };
+  }
+
+  function sceneRayIntersectPlane(ray, point, normal) {
+    if (!ray || !ray.origin || !ray.dir || !point || !normal) return null;
+    var nx = sceneNumber(normal.x, 0);
+    var ny = sceneNumber(normal.y, 0);
+    var nz = sceneNumber(normal.z, 0);
+    var denom = nx * sceneNumber(ray.dir.x, 0) + ny * sceneNumber(ray.dir.y, 0) + nz * sceneNumber(ray.dir.z, 0);
+    if (Math.abs(denom) < 1e-9) return null;
+    var distance = (
+      nx * (sceneNumber(point.x, 0) - sceneNumber(ray.origin.x, 0)) +
+      ny * (sceneNumber(point.y, 0) - sceneNumber(ray.origin.y, 0)) +
+      nz * (sceneNumber(point.z, 0) - sceneNumber(ray.origin.z, 0))
+    ) / denom;
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + sceneNumber(ray.dir.x, 0) * distance,
+      y: sceneNumber(ray.origin.y, 0) + sceneNumber(ray.dir.y, 0) * distance,
+      z: sceneNumber(ray.origin.z, 0) + sceneNumber(ray.dir.z, 0) * distance,
+    };
+  }
+
+  function sceneRayIntersectSphere(ray, center, radius) {
+    if (!ray || !ray.origin || !ray.dir || !center) return null;
+    var r = Math.max(0, sceneNumber(radius, 0));
+    if (r <= 0) return null;
+    var ox = sceneNumber(ray.origin.x, 0) - sceneNumber(center.x, 0);
+    var oy = sceneNumber(ray.origin.y, 0) - sceneNumber(center.y, 0);
+    var oz = sceneNumber(ray.origin.z, 0) - sceneNumber(center.z, 0);
+    var dx = sceneNumber(ray.dir.x, 0);
+    var dy = sceneNumber(ray.dir.y, 0);
+    var dz = sceneNumber(ray.dir.z, 0);
+    var b = ox * dx + oy * dy + oz * dz;
+    var c = ox * ox + oy * oy + oz * oz - r * r;
+    var discriminant = b * b - c;
+    if (discriminant < 0) return null;
+    var root = Math.sqrt(discriminant);
+    var distance = -b - root;
+    if (distance < 0) distance = -b + root;
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + dx * distance,
+      y: sceneNumber(ray.origin.y, 0) + dy * distance,
+      z: sceneNumber(ray.origin.z, 0) + dz * distance,
+    };
+  }
+
+  function sceneRayIntersectAABB(ray, min, max) {
+    if (!ray || !ray.origin || !ray.dir || !min || !max) return null;
+    var distance = sceneRayIntersectsAABB(ray.origin, ray.dir, min, max);
+    if (!Number.isFinite(distance) || distance < 0) return null;
+    return {
+      distance: distance,
+      x: sceneNumber(ray.origin.x, 0) + sceneNumber(ray.dir.x, 0) * distance,
+      y: sceneNumber(ray.origin.y, 0) + sceneNumber(ray.dir.y, 0) * distance,
+      z: sceneNumber(ray.origin.z, 0) + sceneNumber(ray.dir.z, 0) * distance,
+    };
+  }
+
+  if (typeof window !== "undefined" && window.__gosx_scene3d_api) {
+    Object.assign(window.__gosx_scene3d_api, {
+      sceneProjectPoint,
+      sceneCameraLocalPoint,
+      sceneScreenToRay,
+      sceneRayIntersectYPlane,
+      sceneRayIntersectPlane,
+      sceneRayIntersectSphere,
+      sceneRayIntersectAABB,
+    });
+  }
+
+  // -----------------------------------------------------------------------
+  // Frustum Plane Extraction — shared by WebGPU (16a) and WebGL2 (16) renderers.
+  // -----------------------------------------------------------------------
+  // Port of render/bundle/cull.go extractFrustumPlanes (Gribb-Hartmann).
+  //
+  // Column-major convention (same as Go cull.go): vp[col*4 + row].
+  // row(r) = [vp[r], vp[4+r], vp[8+r], vp[12+r]] (mat4 column-major).
+  //
+  // Plane layout: [nx, ny, nz, d]. Half-space "inside" = dot(n, p) + d >= 0.
+  // Planes: left(R3+R0), right(R3-R0), bottom(R3+R1), top(R3-R1),
+  //         near(R2), far(R3-R2).
+  //
+  // The WebGPU renderer passes a depth-remapped VP (WebGPU [0,1] clip space)
+  // so near=R2 is the correct half-depth form. The WebGL2 renderer passes the
+  // standard GL VP; the near-plane formula is slightly conservative there but
+  // the four side planes and far plane are exact. Both paths share this function.
+
+  function extractFrustumPlanesJS(vp) {
+    // vp is a Float32Array[16] in column-major order.
+    // row(r) = (vp[0*4+r], vp[1*4+r], vp[2*4+r], vp[3*4+r])
+    var r0 = [vp[0], vp[4], vp[8],  vp[12]];
+    var r1 = [vp[1], vp[5], vp[9],  vp[13]];
+    var r2 = [vp[2], vp[6], vp[10], vp[14]];
+    var r3 = [vp[3], vp[7], vp[11], vp[15]];
+
+    function addRow(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2], a[3]+b[3]]; }
+    function subRow(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2], a[3]-b[3]]; }
+    function norm(p) {
+      var l = Math.sqrt(p[0]*p[0] + p[1]*p[1] + p[2]*p[2]);
+      if (l === 0) return p;
+      return [p[0]/l, p[1]/l, p[2]/l, p[3]/l];
+    }
+
+    return [
+      norm(addRow(r3, r0)), // left:   R3+R0
+      norm(subRow(r3, r0)), // right:  R3-R0
+      norm(addRow(r3, r1)), // bottom: R3+R1
+      norm(subRow(r3, r1)), // top:    R3-R1
+      norm(r2),             // near:   R2  (WebGPU half-depth; conservative on GL VP)
+      norm(subRow(r3, r2)), // far:    R3-R2
+    ];
+  }
+
+  // instancePassesCullTest tests a single instance's bounding sphere against
+  // the six frustum planes. Matches the WGSL kernel in render/bundle/cull.go:
+  //   let d = dot(plane.xyz, center) + plane.w;
+  //   if (d < -radius) { inside = false; }
+  //
+  // transforms is a Float32Array of all instance transforms (column-major mat4,
+  // 16 floats per instance). instanceIndex is the zero-based instance index.
+  // planes is the array[6] from extractFrustumPlanesJS. radius is the cull
+  // radius (absent/0 → defaults to 2.0, matching the compute cull system).
+  //
+  // Returns true if the instance is VISIBLE (passes all 6 planes).
+
+  function instancePassesCullTest(transforms, instanceIndex, planes, radius) {
+    var base = instanceIndex * 16;
+    // Translation is column 3 of a column-major mat4: indices 12, 13, 14.
+    var cx = transforms[base + 12];
+    var cy = transforms[base + 13];
+    var cz = transforms[base + 14];
+    var sum = 0;
+    for (var k = 0; k < 3; k++) for (var j = 0; j < 3; j++) {
+      var value = transforms[base + k * 4 + j];
+      sum += value * value;
+    }
+    var r  = ((typeof radius === "number" && radius > 0) ? radius : 2.0) * (Math.sqrt(sum) || 1);
+    for (var p = 0; p < 6; p++) {
+      var pl = planes[p];
+      var d  = pl[0] * cx + pl[1] * cy + pl[2] * cz + pl[3];
+      if (d < -r) return false;
+    }
+    return true;
+  }
+
+  // Shared by WebGPU and WebGL. Pooled scratch for thick-line vertex expansion lives on the renderer
+  // resources (resources.thickLineScratch) so it's reused across frames —
+  // the previous implementation allocated 8 fresh typed arrays per frame
+  // for any scene with thick lines, which on a 60 fps particle-effect
+  // scene burned 480 typed-array allocations per second on the GC heap.
+  //
+  // Growth strategy: geometric (2× current capacity) up to the current
+  // segment count. Never shrinks — sustained peak usage stays mapped.
+  //
+  // Quad layout per segment (4 vertices, 2 triangles):
+  //
+  //     endpoint=0,side=-1   endpoint=1,side=-1
+  //              *──────────*
+  //              │          │
+  //              │          │
+  //              *──────────*
+  //     endpoint=0,side=+1   endpoint=1,side=+1
+  //
+  // All 4 vertices carry the full (positionA, positionB, colorA, colorB)
+  // pair so the vertex shader can compute the screen-space direction
+  // without touching the index buffer.
+  function createSceneThickLineScratch() {
+    return {
+      segmentCapacity: 0,
+      positionsA: new Float32Array(0),
+      positionsB: new Float32Array(0),
+      colorsA: new Float32Array(0),
+      colorsB: new Float32Array(0),
+      sides: new Float32Array(0),
+      endpoints: new Float32Array(0),
+      widths: new Float32Array(0),
+      // Three pooled index buffers — one per render pass. Writing them
+      // separately lets the draw path issue up to three drawElements
+      // calls with different blend/depth states so additive thick lines
+      // composite correctly against opaque and alpha passes.
+      opaqueIndices: new Uint16Array(0),
+      alphaIndices: new Uint16Array(0),
+      additiveIndices: new Uint16Array(0),
+      opaqueIndexCount: 0,
+      alphaIndexCount: 0,
+      additiveIndexCount: 0,
+    };
+  }
+
+  function ensureSceneThickLineScratchCapacity(scratch, segmentCount) {
+    if (scratch.segmentCapacity >= segmentCount) {
+      return;
+    }
+    const nextCapacity = Math.max(64, Math.max(scratch.segmentCapacity * 2, segmentCount));
+    const totalVerts = nextCapacity * 4;
+    scratch.positionsA = new Float32Array(totalVerts * 3);
+    scratch.positionsB = new Float32Array(totalVerts * 3);
+    scratch.colorsA = new Float32Array(totalVerts * 4);
+    scratch.colorsB = new Float32Array(totalVerts * 4);
+    scratch.sides = new Float32Array(totalVerts);
+    scratch.endpoints = new Float32Array(totalVerts);
+    scratch.widths = new Float32Array(totalVerts);
+    // Worst case: all segments belong to one pass. Sized for that.
+    scratch.opaqueIndices = new Uint16Array(nextCapacity * 6);
+    scratch.alphaIndices = new Uint16Array(nextCapacity * 6);
+    scratch.additiveIndices = new Uint16Array(nextCapacity * 6);
+    scratch.segmentCapacity = nextCapacity;
+  }
+
+  // Quad corner layout: shared constants hoisted out of the hot loop.
+  // Vertex indices inside a quad: 0 = A-, 1 = A+, 2 = B+, 3 = B-.
+  // Triangles: (0,1,2) and (0,2,3).
+  const _thickLineQuadEndpoints = [0, 0, 1, 1];
+  const _thickLineQuadSides = [-1, 1, 1, -1];
+
+  // expandSceneThickLineIntoScratch walks world line data, writes the
+  // expanded per-quad attribute values into pooled scratch, and assigns
+  // each segment's 6 triangle indices to the scratch index buffer
+  // matching its render pass (0=opaque, 1=alpha, 2=additive). One linear
+  // pass through worldPositions — no sorting, no allocations.
+  //
+  // Returns the total segment count actually processed (may be less than
+  // the input when the 16384-segment Uint16 cap is hit; the overflow
+  // guard in the draw path routes those scenes back to gl.LINES).
+  function expandSceneThickLineIntoScratch(scratch, worldPositions, worldColors, worldLineWidths, worldLinePasses, segmentCount) {
+    const safeCount = Math.min(segmentCount, 16384);
+    ensureSceneThickLineScratchCapacity(scratch, safeCount);
+
+    const positionsA = scratch.positionsA;
+    const positionsB = scratch.positionsB;
+    const colorsA = scratch.colorsA;
+    const colorsB = scratch.colorsB;
+    const sides = scratch.sides;
+    const endpoints = scratch.endpoints;
+    const widths = scratch.widths;
+    const opaqueIndices = scratch.opaqueIndices;
+    const alphaIndices = scratch.alphaIndices;
+    const additiveIndices = scratch.additiveIndices;
+
+    let opaqueIdx = 0;
+    let alphaIdx = 0;
+    let additiveIdx = 0;
+
+    for (let seg = 0; seg < safeCount; seg += 1) {
+      const posOffset = seg * 6;
+      const colorOffset = seg * 8;
+      const ax = worldPositions[posOffset];
+      const ay = worldPositions[posOffset + 1];
+      const az = worldPositions[posOffset + 2];
+      const bx = worldPositions[posOffset + 3];
+      const by = worldPositions[posOffset + 4];
+      const bz = worldPositions[posOffset + 5];
+      const caR = worldColors[colorOffset];
+      const caG = worldColors[colorOffset + 1];
+      const caB = worldColors[colorOffset + 2];
+      const caA = worldColors[colorOffset + 3];
+      const cbR = worldColors[colorOffset + 4];
+      const cbG = worldColors[colorOffset + 5];
+      const cbB = worldColors[colorOffset + 6];
+      const cbA = worldColors[colorOffset + 7];
+      const width = (worldLineWidths && worldLineWidths[seg] > 0) ? worldLineWidths[seg] : 1;
+
+      for (let corner = 0; corner < 4; corner += 1) {
+        const vi = seg * 4 + corner;
+        const p3 = vi * 3;
+        const p4 = vi * 4;
+        positionsA[p3] = ax;
+        positionsA[p3 + 1] = ay;
+        positionsA[p3 + 2] = az;
+        positionsB[p3] = bx;
+        positionsB[p3 + 1] = by;
+        positionsB[p3 + 2] = bz;
+        colorsA[p4] = caR;
+        colorsA[p4 + 1] = caG;
+        colorsA[p4 + 2] = caB;
+        colorsA[p4 + 3] = caA;
+        colorsB[p4] = cbR;
+        colorsB[p4 + 1] = cbG;
+        colorsB[p4 + 2] = cbB;
+        colorsB[p4 + 3] = cbA;
+        sides[vi] = _thickLineQuadSides[corner];
+        endpoints[vi] = _thickLineQuadEndpoints[corner];
+        widths[vi] = width;
+      }
+
+      const base = seg * 4;
+      const pass = (worldLinePasses && seg < worldLinePasses.length) ? worldLinePasses[seg] : 0;
+      if (pass === 2) {
+        additiveIndices[additiveIdx] = base;
+        additiveIndices[additiveIdx + 1] = base + 1;
+        additiveIndices[additiveIdx + 2] = base + 2;
+        additiveIndices[additiveIdx + 3] = base;
+        additiveIndices[additiveIdx + 4] = base + 2;
+        additiveIndices[additiveIdx + 5] = base + 3;
+        additiveIdx += 6;
+      } else if (pass === 1) {
+        alphaIndices[alphaIdx] = base;
+        alphaIndices[alphaIdx + 1] = base + 1;
+        alphaIndices[alphaIdx + 2] = base + 2;
+        alphaIndices[alphaIdx + 3] = base;
+        alphaIndices[alphaIdx + 4] = base + 2;
+        alphaIndices[alphaIdx + 5] = base + 3;
+        alphaIdx += 6;
+      } else {
+        opaqueIndices[opaqueIdx] = base;
+        opaqueIndices[opaqueIdx + 1] = base + 1;
+        opaqueIndices[opaqueIdx + 2] = base + 2;
+        opaqueIndices[opaqueIdx + 3] = base;
+        opaqueIndices[opaqueIdx + 4] = base + 2;
+        opaqueIndices[opaqueIdx + 5] = base + 3;
+        opaqueIdx += 6;
+      }
+    }
+
+    scratch.opaqueIndexCount = opaqueIdx;
+    scratch.alphaIndexCount = alphaIdx;
+    scratch.additiveIndexCount = additiveIdx;
+    return safeCount;
+  }

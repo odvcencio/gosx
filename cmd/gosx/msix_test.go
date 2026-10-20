@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"m31labs.dev/gosx/internal/bundlepolicy"
 )
 
 func TestWriteMSIXManifestIncludesFullTrustAndCapabilities(t *testing.T) {
@@ -72,6 +74,35 @@ func TestStageMSIXPackageDirectoryWritesManifestLogosAndPayload(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(opts.PackageDir, "msix", "old", "stale.txt")); !os.IsNotExist(err) {
 		t.Fatalf("did not expect nested msix staging directory, stat err=%v", err)
+	}
+}
+
+func TestStageMSIXPackageKeepsAllowedMutableAppStateAuditable(t *testing.T) {
+	distDir := filepath.Join(t.TempDir(), "dist")
+	cfg := bundlepolicy.Config{Allow: []string{"app/cache.db"}}
+	mustWriteFile(t, filepath.Join(distDir, "app", "cache.db"), "immutable cache")
+	if err := writeBundlePolicySidecar(distDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	opts := msixPackageOptions{
+		IdentityName:         "gosx.test.app",
+		Publisher:            "CN=GoSX Test",
+		PublisherDisplayName: "GoSX Test",
+		DisplayName:          "GoSX Test App",
+		Description:          "GoSX package",
+		Version:              "1.2.3.4",
+		Executable:           "server\\app.exe",
+		PackageDir:           filepath.Join(distDir, "msix", "package"),
+		Capabilities:         []string{"internetClient", "runFullTrust"},
+	}
+	if err := stageMSIXPackageDirectory(distDir, opts); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(opts.PackageDir, "app", "cache.db")); err != nil {
+		t.Fatalf("allowed app database was not staged into MSIX: %v", err)
+	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg); !diagnostics.Empty() {
+		t.Fatalf("allowed MSIX app database failed final audit: %s", diagnostics.Error())
 	}
 }
 

@@ -1,4 +1,4 @@
-//go:build js && wasm && gosx_tiny_islands_only
+//go:build js && wasm && (gosx_tiny_islands_only || gosx_runtime_core)
 
 package main
 
@@ -166,7 +166,10 @@ func TestIslandsOnlyRuntimeOmitsFullRuntimeExports(t *testing.T) {
 		"__gosx_tick_engine",
 		"__gosx_engine_dispose",
 		"__gosx_text_layout",
-		"__gosx_crdt_apply",
+		"__gosx_crdt_init",
+		"__gosx_crdt_sync",
+		"__gosx_crdt_put",
+		"__gosx_crdt_get",
 		"__gosx_render_canvas",
 		"__gosx_tick_canvas",
 		"__gosx_canvas_event",

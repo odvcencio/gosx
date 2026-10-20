@@ -5,22 +5,34 @@ import (
 	"m31labs.dev/gosx/route"
 )
 
+type LiveCounterPropsData struct {
+	Initial int
+}
+
 func init() {
-	docsapp.RegisterDocsPage("Islands", "Reactive DOM regions powered by a Go expression VM with shared signals.", route.FileModuleOptions{
+	docsapp.RegisterDocsPage("Islands", "Explicit interactive regions compiled for the shared GoSX browser VM.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
-				"mode":        "",
-				"title":       "Islands",
-				"description": "Reactive DOM regions powered by a Go expression VM with shared signals.",
-				"tags":        []string{"islands", "reactivity", "signals", "hydration"},
+				"mode":             "",
+				"title":            "Islands",
+				"description":      "Explicit interactive regions compiled for the shared GoSX browser VM.",
+				"tags":             []string{"islands", "signals", "handlers", "hydration", "vm"},
+				"liveCounterProps": LiveCounterPropsData{Initial: 2},
 				"toc": []map[string]string{
-					{"href": "#what-are-islands", "label": "What Are Islands"},
-					{"href": "#island-programs", "label": "Island Programs"},
-					{"href": "#expression-vm", "label": "Expression VM"},
+					{"href": "#island-model", "label": "Island Model"},
+					{"href": "#authoring", "label": "Authoring"},
+					{"href": "#composition", "label": "Composition"},
+					{"href": "#collections", "label": "Collections"},
+					{"href": "#vm-subset", "label": "VM Subset"},
 					{"href": "#shared-signals", "label": "Shared Signals"},
-					{"href": "#cross-island-sync", "label": "Cross-Island Sync"},
-					{"href": "#hydration", "label": "Hydration"},
+					{"href": "#program-assets", "label": "Program Assets"},
+					{"href": "#choosing", "label": "Choosing Islands"},
 				},
+				"counterSample":     docsapp.DocSample("islands/counterSample.gosx.sample"),
+				"liveCounterSample": docsapp.DocSample("islands/liveCounter.gosx.sample"),
+				"compositionSample": docsapp.DocSample("islands/compositionSample.gosx.sample"),
+				"sharedSample":      docsapp.DocSample("islands/sharedSample.gosx.sample"),
+				"assetSample":       docsapp.DocSample("islands/assetSample.go.sample"),
 			}, nil
 		},
 	})

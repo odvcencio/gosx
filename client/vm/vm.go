@@ -5,8 +5,10 @@ import (
 	"math"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 
+	"m31labs.dev/gosx/internal/htmlattr"
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/signal"
 )
@@ -16,9 +18,10 @@ type VM struct {
 	program        *program.Program
 	props          map[string]Value
 	signals        map[string]*signal.Signal[Value]
+	computeds      map[string]*signal.Computed[Value]
 	exprs          []program.Expr
 	lits           []litSlot                   // numeric literals decoded once, indexed by ExprID
-	eventData      map[string]string           // current event data (set during handler dispatch)
+	eventData      map[string]Value            // current event data (set during handler dispatch)
 	frame          *frame                      // locals table for the current handler evaluation (X.A)
 	forCap         int                         // per-loop AND per-dispatch total iteration cap (X.C, loops.go); 0 → default
 	funcs          map[string]*program.FuncDef // user-function registry (Y.D)
@@ -51,7 +54,7 @@ type forEachScope struct {
 }
 
 // SetEventData sets the current event context for OpEventGet evaluation.
-func (vm *VM) SetEventData(data map[string]string) {
+func (vm *VM) SetEventData(data map[string]Value) {
 	vm.eventData = data
 }
 
@@ -98,6 +101,40 @@ func NewVM(prog *program.Program, props map[string]Value) *VM {
 func (vm *VM) SetSignal(name string, sig *signal.Signal[Value]) {
 	vm.signals[name] = sig
 	vm.signalGen++
+	// A shared-signal install replaces the dependency object, not just its
+	// value. Rebuild derived nodes so their subscriptions move from the
+	// retired local signal to the shared instance.
+	if len(vm.computeds) > 0 {
+		vm.rebuildComputeds()
+	}
+}
+
+// stopComputeds releases every dependency subscription retained by the
+// current program's derived values. It is shared by hot-swap and disposal so
+// neither path can leave an old program observing live signals.
+func (vm *VM) stopComputeds() {
+	for _, computed := range vm.computeds {
+		computed.Stop()
+	}
+	vm.computeds = nil
+}
+
+// rebuildComputeds recreates the program's declared derived values in source
+// order. signal.Derive records the mutable or earlier-computed values read by
+// Eval, giving the VM dependency invalidation and Batch semantics without a
+// second reactive implementation.
+func (vm *VM) rebuildComputeds() {
+	vm.stopComputeds()
+	if vm.program == nil || len(vm.program.Computeds) == 0 {
+		return
+	}
+	vm.computeds = make(map[string]*signal.Computed[Value], len(vm.program.Computeds))
+	for _, def := range vm.program.Computeds {
+		expr := def.Expr
+		vm.computeds[def.Name] = signal.Derive(func() Value {
+			return vm.Eval(expr)
+		})
+	}
 }
 
 // SwapProgram replaces the VM's running program in place, preserving signal
@@ -105,14 +142,9 @@ func (vm *VM) SetSignal(name string, sig *signal.Signal[Value]) {
 // the compiled bytecode changes but the live reactive state is carried across
 // where the signal names still match.
 //
-// Teardown: the DOM VM holds no persistent effects or subscriptions of its
-// own — signals are read on demand during EvalTree, and handler bodies are
-// plain Expr data the Island looks up by name (see island.go handlerMap).
-// So there is nothing to dispose here beyond dropping references to the old
-// program: re-pointing program/exprs and rebuilding the funcDef registry
-// (mirrors NewVM:70-80) atomically swaps in the new bytecode. The
-// scene/canvas adapters that DO subscribe (scene_adapter.go,
-// canvas_board_adapter.go) own their own teardown and are out of scope here.
+// Teardown: computed definitions retain dependency subscriptions, so the old
+// set is stopped before bytecode replacement and rebuilt against the new
+// program and merged signal table below.
 //
 // Signal merge-by-name (the reason signals are name-keyed at vm.signals):
 // for each SignalDef in the new program, if a signal with the same Name is
@@ -134,6 +166,7 @@ func (vm *VM) SwapProgram(p *program.Program) {
 		})
 		return
 	}
+	vm.stopComputeds()
 
 	// Install the new bytecode. Point at the new exprs and rebuild the
 	// funcDef lookup exactly as NewVM does, so OpIndirectCall resolves
@@ -155,30 +188,39 @@ func (vm *VM) SwapProgram(p *program.Program) {
 	// carried over; for each retained name, keep the live signal instance
 	// (and thus its current value), and for each new name, evaluate the
 	// init expr against the freshly-installed exprs.
+	oldSignals := vm.signals
 	merged := make(map[string]*signal.Signal[Value], len(p.Signals))
+	// Expose the in-progress table while evaluating fresh initializers. This
+	// preserves source-order references to earlier signal declarations without
+	// making removed names from the old program visible.
+	vm.signals = merged
 	for _, def := range p.Signals {
-		if existing, ok := vm.signals[def.Name]; ok {
+		if existing, ok := oldSignals[def.Name]; ok {
 			merged[def.Name] = existing
 			continue
 		}
 		merged[def.Name] = signal.New(vm.Eval(def.Init))
 	}
-	vm.signals = merged
 	vm.signalGen++
+	vm.rebuildComputeds()
 }
 
 // SetProp installs a value under name in the VM's prop map. Use this
 // when an out-of-band caller (engine-surface event dispatcher, host
 // bridge, …) needs to feed values to a handler that reads them via
 // OpPropGet without going through the constructor's initial map. The
-// write is direct — no signal subscription is created, no diagnostic
-// is emitted — so callers must restore prior values via GetProp + a
-// subsequent SetProp if they care about scoping.
+// write creates no signal subscription and emits no diagnostic. Declared
+// computeds are rebuilt because signal.Derive cannot observe ordinary prop-map
+// writes; callers must still restore prior values via GetProp + SetProp when
+// they care about scoping.
 func (vm *VM) SetProp(name string, value Value) {
 	if vm.props == nil {
 		vm.props = make(map[string]Value)
 	}
 	vm.props[name] = value
+	if len(vm.computeds) > 0 {
+		vm.rebuildComputeds()
+	}
 }
 
 // GetProp returns the value under name plus a presence flag. Mirrors
@@ -193,6 +235,41 @@ func (vm *VM) GetProp(name string) (Value, bool) {
 // restoring previously-absent slots after a temporary SetProp.
 func (vm *VM) DeleteProp(name string) {
 	delete(vm.props, name)
+	if len(vm.computeds) > 0 {
+		vm.rebuildComputeds()
+	}
+}
+
+// PropMutation describes one slot in a bulk prop update. Delete removes the
+// slot; otherwise Value replaces it. ApplyPropMutations is the preferred seam
+// for event scopes that stage several related props because ordinary props
+// are not reactive dependencies and the computed graph must be rebuilt after
+// the complete state transition, not once per field.
+type PropMutation struct {
+	Name   string
+	Value  Value
+	Delete bool
+}
+
+// ApplyPropMutations changes every requested prop, then rebuilds declared
+// computeds exactly once. Empty mutation sets are a no-op.
+func (vm *VM) ApplyPropMutations(mutations []PropMutation) {
+	if len(mutations) == 0 {
+		return
+	}
+	if vm.props == nil {
+		vm.props = make(map[string]Value)
+	}
+	for _, mutation := range mutations {
+		if mutation.Delete {
+			delete(vm.props, mutation.Name)
+			continue
+		}
+		vm.props[mutation.Name] = mutation.Value
+	}
+	if len(vm.computeds) > 0 {
+		vm.rebuildComputeds()
+	}
 }
 
 // maxEvalDepth bounds Eval's own recursion. Program.MaxCallDepth
@@ -280,7 +357,7 @@ func (vm *VM) evalExpr(e *program.Expr) Value {
 	case program.OpSignalSet, program.OpSignalUpdate:
 		return vm.updateSignal(e)
 	case program.OpEventGet:
-		return vm.eventValue(e.Value)
+		return vm.eventValue(e.Value, e.Type)
 
 	// --- two-operand arithmetic, comparison, boolean and string joins ---
 	case program.OpAdd, program.OpSub, program.OpMul, program.OpDiv,
@@ -620,6 +697,9 @@ func (vm *VM) localGetValue(e *program.Expr) Value {
 	if sig, ok := vm.signals[e.Value]; ok {
 		return sig.Get()
 	}
+	if computed, ok := vm.computeds[e.Value]; ok {
+		return computed.Get()
+	}
 	if v, ok := vm.props[e.Value]; ok {
 		return v
 	}
@@ -686,7 +766,7 @@ const (
 
 // litSlot caches the decoded form of one OpLitInt or OpLitFloat expression.
 type litSlot struct {
-	num  float64
+	bits uint64
 	kind litKind
 }
 
@@ -717,15 +797,15 @@ func buildLiteralTable(exprs []program.Expr) []litSlot {
 				table[i] = litSlot{kind: litBad}
 				continue
 			}
-			// Match IntVal(int(n)) exactly, including its narrowing.
-			table[i] = litSlot{num: float64(int(n)), kind: litInt}
+			// Cache integer bits without a float or host-int conversion.
+			table[i] = litSlot{bits: uint64(n), kind: litInt}
 		case program.OpLitFloat:
 			f, err := strconv.ParseFloat(exprs[i].Value, 64)
 			if err != nil {
 				table[i] = litSlot{kind: litBad}
 				continue
 			}
-			table[i] = litSlot{num: f, kind: litFloat}
+			table[i] = litSlot{bits: math.Float64bits(f), kind: litFloat}
 		}
 	}
 	return table
@@ -737,9 +817,9 @@ func buildLiteralTable(exprs []program.Expr) []litSlot {
 func (vm *VM) decodedLiteral(id program.ExprID, slot litSlot) Value {
 	switch slot.kind {
 	case litInt:
-		return Value{Type: program.TypeInt, num: slot.num}
+		return Int64Val(int64(slot.bits))
 	case litFloat:
-		return Value{Type: program.TypeFloat, num: slot.num}
+		return FloatVal(math.Float64frombits(slot.bits))
 	}
 	e := &vm.exprs[id]
 	if e.Op == program.OpLitFloat {
@@ -757,7 +837,7 @@ func (vm *VM) parseIntLiteral(e *program.Expr) Value {
 		vm.recordExprDiagnostic("invalid_int_literal", fmt.Sprintf("invalid integer literal %q: %v", e.Value, err), e.Op, e.Value)
 		return ZeroValue(program.TypeInt)
 	}
-	return IntVal(int(n))
+	return Int64Val(n)
 }
 
 // parseFloatLiteral decodes an OpLitFloat from its text. See parseIntLiteral.
@@ -906,6 +986,9 @@ func (vm *VM) signalValue(name string, typ program.ExprType) Value {
 	if sig, ok := vm.signals[name]; ok {
 		return sig.Get()
 	}
+	if computed, ok := vm.computeds[name]; ok {
+		return computed.Get()
+	}
 	return ZeroValue(typ)
 }
 
@@ -921,13 +1004,27 @@ func (vm *VM) updateSignal(e *program.Expr) Value {
 	return ZeroValue(program.TypeAny)
 }
 
-func (vm *VM) eventValue(name string) Value {
+func (vm *VM) eventValue(name string, typ program.ExprType) Value {
 	if vm.eventData != nil {
 		if v, ok := vm.eventData[name]; ok {
-			return StringVal(v)
+			// JSON has only one number type. parseAnyValue keeps integral
+			// numbers as IntVal to preserve ordinary payload values, but known
+			// event fields have a static VM type. Promote or narrow those numeric
+			// values here so arithmetic follows the lowered field contract (for
+			// example clientX=13 divided by 2 must be 6.5, not integer 6).
+			switch typ {
+			case program.TypeFloat:
+				return v.ToFloatVal()
+			case program.TypeInt:
+				return v.ToIntVal()
+			case program.TypeString:
+				return v.ToStringVal()
+			default:
+				return v
+			}
 		}
 	}
-	return StringVal("")
+	return ZeroValue(typ)
 }
 
 func (vm *VM) formatValue(e *program.Expr) Value {
@@ -1018,8 +1115,8 @@ func safeBoundInt(f float64) int {
 func (vm *VM) sliceValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 3) {
 		coll := vm.Eval(e.Operands[0])
-		start := safeBoundInt(vm.Eval(e.Operands[1]).num)
-		end := safeBoundInt(vm.Eval(e.Operands[2]).num)
+		start := safeBoundInt(vm.Eval(e.Operands[1]).Number())
+		end := safeBoundInt(vm.Eval(e.Operands[2]).Number())
 		// Slice Y.E.3: OpSlice now dispatches on the runtime collection
 		// kind so the lowerer's *ast.SliceExpr handler can emit a single
 		// opcode without knowing whether the source operand is a slice
@@ -1081,8 +1178,8 @@ func (vm *VM) replaceValue(e *program.Expr) Value {
 func (vm *VM) substringValue(e *program.Expr) Value {
 	if vm.requireOperands(e, 3) {
 		coll := vm.Eval(e.Operands[0])
-		start := safeBoundInt(vm.Eval(e.Operands[1]).num)
-		end := safeBoundInt(vm.Eval(e.Operands[2]).num)
+		start := safeBoundInt(vm.Eval(e.Operands[1]).Number())
+		end := safeBoundInt(vm.Eval(e.Operands[2]).Number())
 		return coll.SubstringVal(start, end)
 	}
 	return StringVal("")
@@ -1115,7 +1212,7 @@ func (vm *VM) mapItems(items []Value, exprID program.ExprID) []Value {
 }
 
 func (vm *VM) filterItems(items []Value, exprID program.ExprID) []Value {
-	var result []Value
+	result := make([]Value, 0, len(items))
 	restore := vm.captureProps([]string{"_item", "_index"})
 	defer vm.restoreProps(restore)
 	for i, item := range items {
@@ -1246,7 +1343,13 @@ func (vm *VM) appendResolvedNode(tree *ResolvedTree, source int, node program.No
 		tree.Nodes[idx].Text = vm.Eval(node.Expr).String()
 	case program.NodeElement:
 		vm.resolveElementNode(&tree.Nodes[idx], source, node)
-		tree.Nodes[idx].Children = vm.resolveChildren(tree, node.Children)
+		// resolveChildren recurses back into appendNodeRefs for every
+		// descendant, and each one can append to tree.Nodes. An append
+		// past capacity moves the backing array, so tree.Nodes[idx] must
+		// be re-read after that call returns. Binding the result first
+		// avoids storing through a stale pre-growth address under TinyGo.
+		children := vm.resolveChildren(tree, node.Children)
+		tree.Nodes[idx].Children = children
 	}
 
 	// The subtree is complete and contiguous now, so record where it
@@ -1363,6 +1466,9 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 	eventCount := 0
 	clickCount := 0
 	for _, attr := range attrs {
+		if attr.Kind != program.AttrEvent && (!htmlattr.SafeAuthoredName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on")) {
+			continue
+		}
 		switch attr.Kind {
 		case program.AttrStatic, program.AttrExpr:
 			if attr.Name != "key" {
@@ -1387,6 +1493,9 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 	}
 
 	for _, attr := range attrs {
+		if attr.Kind != program.AttrEvent && (!htmlattr.SafeAuthoredName(attr.Name) || strings.HasPrefix(strings.ToLower(attr.Name), "on")) {
+			continue
+		}
 		switch attr.Kind {
 		case program.AttrStatic:
 			if attr.Name == "key" {
@@ -1394,15 +1503,21 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 				explicitKey = true
 				continue
 			}
-			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: attr.Value})
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: htmlattr.FilterURL(attr.Name, attr.Value)})
 		case program.AttrExpr:
-			value := vm.Eval(attr.Expr).String()
+			value := vm.Eval(attr.Expr)
 			if attr.Name == "key" {
-				key = value
+				key = value.String()
 				explicitKey = true
 				continue
 			}
-			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: value})
+			if htmlattr.IsBoolean(attr.Name) && value.Type == program.TypeBool {
+				if value.Truth() {
+					domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Bool: true})
+				}
+				continue
+			}
+			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Value: htmlattr.FilterURL(attr.Name, value.String())})
 		case program.AttrBool:
 			domAttrs = append(domAttrs, ResolvedAttr{Name: attr.Name, Bool: true})
 		case program.AttrEvent:
@@ -1414,23 +1529,12 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 	// Sharing the backing array means rn.Attrs reads the same memory as
 	// the first `len(resolved)` entries of rn.DOMAttrs.
 	if len(domAttrs) > 0 {
-		resolved = domAttrs[:staticCount:staticCount]
+		resolvedCount := len(domAttrs)
+		resolved = domAttrs[:resolvedCount:resolvedCount]
 	}
 
 	// Append the event markers after the static prefix.
-	for _, event := range events {
-		eventType := eventAttrType(event.Name)
-		domAttrs = append(domAttrs, ResolvedAttr{
-			Name:  eventMarkerAttr(eventType),
-			Value: event.Handler,
-		})
-		if eventType == "click" {
-			domAttrs = append(domAttrs, ResolvedAttr{
-				Name:  "data-gosx-handler",
-				Value: event.Handler,
-			})
-		}
-	}
+	domAttrs = appendGeneratedDispatchAttrs(domAttrs, events)
 	return
 }
 
@@ -1443,7 +1547,7 @@ func (vm *VM) autoKey(source int, tag string) (string, bool) {
 	if !hasIndex {
 		return "", false
 	}
-	return fmt.Sprintf("_auto_%d_%s_%d", int(idxVal.num), tag, source), true
+	return fmt.Sprintf("_auto_%d_%s_%d", idxVal.integer(), tag, source), true
 }
 
 type eachEntry struct {
@@ -1494,9 +1598,9 @@ func valueTruthy(value Value) bool {
 		text := value.text()
 		return text != "" && text != "0" && text != "false"
 	case program.TypeInt, program.TypeFloat:
-		return value.num != 0
+		return value.number() != 0
 	default:
-		return value.truth() || value.num != 0 || value.text() != ""
+		return value.truth() || value.number() != 0 || value.text() != ""
 	}
 }
 

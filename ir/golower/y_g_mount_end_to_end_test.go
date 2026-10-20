@@ -1,6 +1,6 @@
-// Slice Y.G — Mount end-to-end test.
+// Mount end-to-end test.
 //
-// Pins the canonical proof case the dispatch brief calls out: a
+// Pins the canonical proof case: a
 // Mount-shaped handler that
 //   1. declares `var props GraphProps` (zero-init Fields map)
 //   2. calls `ctx.PropsInto(&props)` (host populates the local)
@@ -8,8 +8,8 @@
 //   4. calls `c.StartLoop(func(dt float64) { ... })` (FuncLit closure
 //      passed to a host method)
 //
-// This is the exact pattern that blocked Y.F's full Mount parity
-// claim. Both residuals (FuncLit closure and `&x` on nil-Fields) must
+// This is the exact pattern that once blocked full Mount parity.
+// Both the FuncLit closure and `&x` on nil-Fields paths must
 // close for this scenario to lower cleanly AND run end-to-end.
 
 package golower
@@ -21,7 +21,7 @@ import (
 )
 
 // TestY_G_MountStyleHandlerLowersAndRuns is the canonical proof of
-// both Y.G residuals closing together.
+// both FuncLit-closure residuals closing together.
 func TestY_G_MountStyleHandlerLowersAndRuns(t *testing.T) {
 	src := []byte(`package handlers
 
@@ -108,7 +108,7 @@ func (h *propsIntoHostNamed) Call(method string, args []vm.Value) (vm.Value, err
 	}
 	target := args[0]
 	if !target.IsMap() {
-		// Y.G's eager struct zero-init means this branch should
+		// The eager struct zero-init means this branch should
 		// not fire; if it does, the test fails the props-propagate
 		// assertion above.
 		return vm.ZeroValue(0), nil

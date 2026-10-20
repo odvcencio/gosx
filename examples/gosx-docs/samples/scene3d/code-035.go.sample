@@ -1,0 +1,16 @@
+scene.Model{
+	    ID:       "helmet",
+	    Src:      "/models/helmet.glb",
+	    Position: scene.Vec3(0, 1, 0),
+	    Rotation: scene.Rotate(0, math.Pi, 0),
+	    Scale:    scene.Vec3(1.2, 1.2, 1.2),
+	    Fit:      "contain",
+	    Bounds:   2.5,
+
+	    // Override the asset material from Go — useful for theming shared assets.
+	    Material: scene.StandardMaterial{Color: "#D4AF37", Roughness: 0.3, Metalness: 0.8},
+
+	    CastShadow:    true,
+	    ReceiveShadow: true,
+	    Static:        scene.Bool(true),
+	}

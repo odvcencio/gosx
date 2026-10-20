@@ -1,0 +1,9 @@
+<section data-gosx-transfer
+		    data-gosx-transfer-action="POST /team/actions/lineup-set"
+		    data-gosx-transfer-context="team_id=team-1&week=1">
+		    <article data-gosx-transfer-source="player-7" aria-label="Player 7">
+		        <button data-gosx-transfer-handle type="button">Player 7</button>
+		    </article>
+		    <button data-gosx-transfer-target="QB" type="button">Quarterback</button>
+		    <button data-gosx-transfer-target="RB" type="button">Running back</button>
+		</section>

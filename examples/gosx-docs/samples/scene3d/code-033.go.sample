@@ -1,0 +1,15 @@
+scene.Label{
+	    ID:        "hotspot-1",
+	    Target:    "engine-block",
+	    Text:      "Cast aluminium block",
+	    MaxWidth:  220,
+	    MaxLines:  3,
+	    Overflow:  "ellipsis",
+	    Collision: "hide",
+	    Priority:  10,
+	    Occlude:   true,
+	    OffsetY:   -12,
+	    AnchorX:   0.5,
+	    AnchorY:   1,
+	    ClassName: "hotspot-label",
+	}

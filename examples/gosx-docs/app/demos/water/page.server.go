@@ -3,7 +3,6 @@ package docs
 import (
 	"strings"
 
-	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/server"
@@ -34,22 +33,5 @@ func init() {
 }
 
 func addWaterDemoPreloadHead(ctx *route.RouteContext) {
-	if ctx == nil {
-		return
-	}
-	for _, href := range []string{
-		"/water/tiles.jpg",
-		"/water/xpos.jpg",
-		"/water/xneg.jpg",
-		"/water/ypos.jpg",
-		"/water/zpos.jpg",
-		"/water/zneg.jpg",
-	} {
-		ctx.AddHead(gosx.El("link", gosx.Attrs(
-			gosx.Attr("rel", "preload"),
-			gosx.Attr("as", "image"),
-			gosx.Attr("href", href),
-			gosx.Attr("crossorigin", "anonymous"),
-		)))
-	}
+	docsapp.AddScenePosterPreload(ctx, "/demos/posters/water.webp")
 }

@@ -24,16 +24,19 @@ import path from "node:path";
 import vm from "node:vm";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import rendererSourceSet from "./scene3d-renderer-source-set.js";
+
+const { readSceneRendererBackendSrc } = rendererSourceSet;
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const srcDir = path.join(__dirname, "bootstrap-src");
 
 function readSource(name) {
-  return fs.readFileSync(path.join(srcDir, name), "utf8");
+  return fs.readFileSync(name.startsWith("../") ? path.join(__dirname, name) : path.join(srcDir, name), "utf8");
 }
 
-const webgpuSource = readSource("16a-scene-webgpu.js");
-const webglSource = readSource("16-scene-webgl.js");
+const webgpuSource = readSceneRendererBackendSrc("webgpu");
+const webglSource = readSceneRendererBackendSrc("webgl");
 
 // --- Bundle-shaped VM context ----------------------------------------------
 
@@ -90,8 +93,8 @@ function createContext() {
     function sceneProjectPoint() { return null; }
   `;
   vm.runInContext(prelude, context, { filename: "prelude.js" });
-  vm.runInContext(readSource("11-scene-math.js"), context, { filename: "11-scene-math.js" });
-  vm.runInContext(readSource("17-scene-input.js"), context, { filename: "17-scene-input.js" });
+  vm.runInContext(readSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
+  vm.runInContext(readSource("17-scene-input.ts"), context, { filename: "17-scene-input.ts" });
   vm.runInContext(webgpuSource, context, { filename: "16a-scene-webgpu.js" });
   return { context, sandbox };
 }
@@ -697,7 +700,7 @@ test("the fragment shader carries a branch for every light type it declares", ()
   assert.match(body, /lightType == 3u/, "spot");
   assert.match(body, /spotConeAttenuation\(L, light\.direction\.xyz, light\.params\.w, light\.groundPenumbra\.a\)/);
   assert.match(body, /mix\(light\.groundPenumbra\.rgb, lightColor, hBlend\)/);
-  assert.match(body, /rectAreaLightRadiance\(light, in\.worldPos, N, V, albedo, roughness, metalness, F0, NoV\)/);
+  assert.match(body, /rectAreaLightRadiance\(light, in\.worldPos, N, V, albedo, roughness, metalness, F0, F90, NoV\)/);
 });
 
 test("the WGSL spot cone reproduces the WebGL2 cone, term for term", () => {

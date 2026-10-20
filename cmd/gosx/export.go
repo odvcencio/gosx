@@ -1,20 +1,39 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 
+	"m31labs.dev/gosx/buildmanifest"
 	"m31labs.dev/gosx/env"
+	"m31labs.dev/gosx/internal/bundlepolicy"
 )
 
 // RunExport prerenders static file-routed pages into dist/static.
 func RunExport(dir string) error {
-	absDir, err := filepath.Abs(dir)
+	absDir, err := canonicalExistingDir(dir)
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", dir, err)
+	}
+	discovery, err := collectProjectIslandDiscovery(absDir)
+	if err != nil {
+		return err
+	}
+	if err := checkVersionSkew(absDir); err != nil {
+		return err
+	}
+	cfg, err := loadProjectConfig(absDir)
+	if err != nil {
+		return err
+	}
+	printBundlePolicyWarnings(cfg.Build.Bundle)
+	if diagnostics := bundlepolicy.ValidateProject(absDir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
 	}
 
 	isMain, err := isMainPackage(absDir)
@@ -34,7 +53,14 @@ func RunExport(dir string) error {
 	if err := env.LoadDir(absDir, ""); err != nil {
 		return fmt.Errorf("load env: %w", err)
 	}
-	if err := prepareDevAssets(absDir); err != nil {
+	if err := checkStrictProject(context.Background(), absDir); err != nil {
+		return fmt.Errorf("check strict components: %w", err)
+	}
+	distDir := filepath.Join(absDir, "dist")
+	if err := os.RemoveAll(distDir); err != nil {
+		return fmt.Errorf("clean output directory: %w", err)
+	}
+	if err := prepareDevAssetsWithPrograms(absDir, discovery.Programs); err != nil {
 		return err
 	}
 
@@ -54,9 +80,10 @@ func RunExport(dir string) error {
 	}
 
 	manifest, err := prerenderStaticBundle(staticExportOptions{
-		AppRoot:    absDir,
-		OutputDir:  filepath.Join(absDir, "dist", "static"),
-		BinaryPath: binaryPath,
+		AppRoot:      absDir,
+		OutputDir:    filepath.Join(distDir, "static"),
+		BinaryPath:   binaryPath,
+		BundlePolicy: cfg.Build.Bundle,
 		StageAssets: func(outputDir string, manifest exportManifest) error {
 			return copyExportRuntime(filepath.Join(absDir, "build"), outputDir, manifest)
 		},
@@ -64,8 +91,14 @@ func RunExport(dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := writeExportManifest(filepath.Join(absDir, "dist", "export.json"), manifest); err != nil {
+	if err := writeExportManifest(filepath.Join(distDir, "export.json"), manifest); err != nil {
 		return err
+	}
+	if err := writeBundlePolicySidecar(distDir, cfg.Build.Bundle); err != nil {
+		return err
+	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg.Build.Bundle); !diagnostics.Empty() {
+		return errors.New(diagnostics.Error())
 	}
 
 	fmt.Fprintf(os.Stderr, "gosx export: wrote %d pages to %s\n", len(manifest.Pages), filepath.Join(absDir, "dist", "static"))
@@ -99,6 +132,12 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "gosx-runtime.wasm"), true
 	case "/gosx/runtime-islands.wasm":
 		return filepath.Join(buildDir, "gosx-runtime-islands.wasm"), true
+	case "/gosx/runtime-core.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-core.wasm"), true
+	case "/gosx/runtime-engine.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-engine.wasm"), true
+	case "/gosx/runtime-collab.wasm":
+		return filepath.Join(buildDir, "gosx-runtime-collab.wasm"), true
 	case "/gosx/wasm_exec.js":
 		return filepath.Join(buildDir, "wasm_exec.js"), true
 	case "/gosx/standard-go-wasm_exec.js":
@@ -117,12 +156,16 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "bootstrap-feature-hubs.js"), true
 	case "/gosx/bootstrap-feature-controllers.js":
 		return filepath.Join(buildDir, "bootstrap-feature-controllers.js"), true
+	case "/gosx/bootstrap-controller-input.js":
+		return filepath.Join(buildDir, "bootstrap-controller-input.js"), true
 	case "/gosx/bootstrap-feature-textlayout.js":
 		return filepath.Join(buildDir, "bootstrap-feature-textlayout.js"), true
 	case "/gosx/bootstrap-feature-scene3d.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d.js"), true
 	case "/gosx/bootstrap-feature-scene3d-command.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"), true
+	case "/gosx/bootstrap-feature-scene3d-hydrate.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-hydrate.js"), true
 	case "/gosx/bootstrap-feature-scene3d-webgpu.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-webgpu.js"), true
 	case "/gosx/bootstrap-feature-scene3d-webgl.js":
@@ -135,6 +178,8 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-compute.js"), true
 	case "/gosx/bootstrap-feature-scene3d-decompress.js":
 		return filepath.Join(buildDir, "bootstrap-feature-scene3d-decompress.js"), true
+	case "/gosx/bootstrap-feature-scene3d-instance-stream.js":
+		return filepath.Join(buildDir, "bootstrap-feature-scene3d-instance-stream.js"), true
 	case "/gosx/patch.js":
 		return filepath.Join(buildDir, "patch.js"), true
 	case "/gosx/hls.min.js":
@@ -143,6 +188,12 @@ func exportRuntimeBuildPath(buildDir, ref string) (string, bool) {
 		return filepath.Join(buildDir, "stripe-bridge.js"), true
 	case "/gosx/relay.js":
 		return filepath.Join(buildDir, "relay.js"), true
+	}
+	// Any other opt-in feature chunk stages under its own file name.
+	if file, ok := strings.CutPrefix(ref, "/gosx/"); ok {
+		if _, valid := buildmanifest.FeatureChunkName(file); valid {
+			return filepath.Join(buildDir, file), true
+		}
 	}
 	if rel, ok := strings.CutPrefix(ref, "/gosx/islands/"); ok && rel != "" {
 		return filepath.Join(buildDir, "islands", filepath.FromSlash(rel)), true

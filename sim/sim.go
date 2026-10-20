@@ -48,21 +48,32 @@ type Options struct {
 	// StateEncoding selects the state/snapshot representation in hub payloads.
 	// Leave empty for StateEncodingBytes compatibility.
 	StateEncoding StateEncoding
+	// DisableReplay skips the unbounded input log for long-running simulations.
+	// Replay returns an empty log when recording is disabled.
+	DisableReplay bool
+	// Observer receives aggregate timing after the existing whole tick finishes.
+	// A nil observer skips timing reads and event construction.
+	Observer Observer
+	// Clock supplies ticker deadlines and elapsed time; nil uses a real clock.
+	Clock Clock
 }
 
 // Runner drives a Simulation at a fixed tick rate over a hub.
 type Runner struct {
-	hub       *hub.Hub
-	sim       Simulation
-	tickRate  int
-	mu        sync.Mutex
-	wg        sync.WaitGroup
-	inputs    map[string]Input
-	running   atomic.Bool
-	frame     atomic.Uint64
-	snapshots *snapshotRing
-	recorder  *replayRecorder
-	encoding  StateEncoding
+	hub        *hub.Hub
+	sim        Simulation
+	tickRate   int
+	mu         sync.Mutex
+	runMu      sync.Mutex
+	stop, done chan struct{}
+	inputs     map[string]Input
+	running    atomic.Bool
+	frame      atomic.Uint64
+	snapshots  *snapshotRing
+	recorder   *replayRecorder
+	encoding   StateEncoding
+	observer   Observer
+	clock      Clock
 }
 
 // New creates a Runner that will drive sim over h at the configured tick rate.
@@ -71,14 +82,24 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 	if rate <= 0 {
 		rate = 60
 	}
+	var recorder *replayRecorder
+	if !opts.DisableReplay {
+		recorder = newReplayRecorder()
+	}
+	c := opts.Clock
+	if c == nil {
+		c = newClock()
+	}
 	return &Runner{
 		hub:       h,
 		sim:       s,
 		tickRate:  rate,
 		inputs:    make(map[string]Input),
 		snapshots: newSnapshotRing(128),
-		recorder:  newReplayRecorder(),
+		recorder:  recorder,
 		encoding:  normalizeStateEncoding(opts.StateEncoding),
+		observer:  opts.Observer,
+		clock:     c,
 	}
 }
 
@@ -118,7 +139,11 @@ func (r *Runner) DrainInputs() map[string]Input {
 }
 
 // Replay returns the complete replay log of all recorded frames.
+// It returns an empty log if Options.DisableReplay is set.
 func (r *Runner) Replay() ReplayLog {
+	if r.recorder == nil {
+		return ReplayLog{}
+	}
 	return r.recorder.Finish()
 }
 

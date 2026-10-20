@@ -300,5 +300,5 @@ func dirModuleSourceHere(skip int) string {
 	if !ok {
 		return ""
 	}
-	return filepath.Dir(file)
+	return filepath.Dir(resolveCallerFilePath(file))
 }

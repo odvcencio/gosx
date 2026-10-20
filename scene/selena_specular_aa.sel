@@ -1,0 +1,7 @@
+fn gsxSpecularRoughness(normalWorld: vec3, perceptualRoughness: float, variance: float, threshold: float) -> float {
+    let dx = dpdx(normalWorld)
+    let dy = dpdy(normalWorld)
+    let kernel = min(2.0 * clamp(variance, 0.0, 1.0) * (dot(dx, dx) + dot(dy, dy)), clamp(threshold, 0.0, 1.0))
+    let r = clamp(perceptualRoughness, 0.0, 1.0)
+    return kernel > 0.0 ? sqrt(sqrt(min(r * r * r * r + kernel, 1.0))) : perceptualRoughness
+}

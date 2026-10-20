@@ -1,0 +1,8 @@
+{
+  "sequence": "production-route-input",
+  "steps": [
+    "navigation",
+    "usable-state",
+    "interaction"
+  ]
+}

@@ -55,23 +55,19 @@ var (
 	cmsLimiter = democtl.NewLimiter(2, 10)
 )
 
-// cmsClientIP extracts a stable rate-limiting key from the HTTP request.
-// It prefers the first entry of X-Forwarded-For (set by reverse proxies) and
-// falls back to the host part of RemoteAddr. Same behavior as
-// playground/compile_handler.go:clientIPFromRequest.
+// cmsClientIP extracts a stable rate-limiting key from the HTTP server's
+// RemoteAddr. Forwarding headers are deliberately ignored because this public
+// demo has no trusted-proxy parser; a caller can otherwise rotate
+// X-Forwarded-For and receive a fresh burst for every publish.
 func cmsClientIP(r *http.Request) string {
 	if r == nil {
 		return "cms"
 	}
-	if fwd := r.Header.Get("X-Forwarded-For"); fwd != "" {
-		// X-Forwarded-For may be "client, proxy1, proxy2" — take the first.
-		if comma := strings.IndexByte(fwd, ','); comma >= 0 {
-			fwd = fwd[:comma]
-		}
-		return strings.TrimSpace(fwd)
-	}
 	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
 		return host
+	}
+	if r.RemoteAddr == "" {
+		return "cms"
 	}
 	return r.RemoteAddr
 }
@@ -203,8 +199,8 @@ func cloneCMSBlocks(blocks []map[string]string) []map[string]string {
 // which use go/parser to evaluate expressions.
 func defaultCMSBlocks() []map[string]string {
 	return []map[string]string{
-		{"kind": "hero", "title": "Welcome to GoSX", "subtitle": "The Go-native web platform"},
-		{"kind": "feature", "title": "Server Rendering", "body": "Every page renders on the server first."},
-		{"kind": "quote", "text": "One language, full stack.", "author": "GoSX"},
+		{"kind": "hero", "title": "Coastal Field Notes", "subtitle": "A record of places worth slowing down for."},
+		{"kind": "feature", "title": "North Head Trail", "body": "A short path runs above the water. At dusk, the grass moves before the tide turns."},
+		{"kind": "quote", "text": "The coast asks you to pay attention.", "author": "Field Notes"},
 	}
 }

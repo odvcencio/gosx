@@ -3,6 +3,7 @@ package vm
 import (
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/signal"
+	"math"
 )
 
 // Subtree reuse — route (b) of the Reconcile design note in island.go.
@@ -396,7 +397,7 @@ type watchSample struct {
 	// dirty on every reconcile.
 	stable  bool
 	typ     program.ExprType
-	num     float64
+	num     uint64
 	str     string
 	boolean bool
 	// rev is the signal revision this snapshot was read at, and revValid
@@ -419,11 +420,15 @@ func sampleValue(v Value, present bool) watchSample {
 	if v.isList() || v.isMap() || v.closureRefOf() != nil {
 		return watchSample{present: true}
 	}
+	bits := math.Float64bits(v.num)
+	if v.Type == program.TypeInt {
+		bits = uint64(v.integer())
+	}
 	return watchSample{
 		present: true,
 		stable:  true,
 		typ:     v.Type,
-		num:     v.num,
+		num:     bits,
 		str:     v.text(),
 		boolean: v.truth(),
 	}
@@ -449,9 +454,16 @@ func sameSample(left, right watchSample) bool {
 	return left.present == right.present &&
 		left.stable == right.stable &&
 		left.typ == right.typ &&
-		left.num == right.num &&
+		sameSampleNumber(left, right) &&
 		left.str == right.str &&
 		left.boolean == right.boolean
+}
+
+func sameSampleNumber(left, right watchSample) bool {
+	if left.typ == program.TypeInt {
+		return left.num == right.num
+	}
+	return math.Float64frombits(left.num) == math.Float64frombits(right.num)
 }
 
 // watchSampleAt reads the live value of the watched input at index i.
@@ -466,7 +478,14 @@ func (r *islandReuse) watchSampleAt(vm *VM, i int, key watchKey) watchSample {
 	}
 	sig := r.watchSigs[i]
 	if sig == nil {
-		return watchSample{}
+		computed, ok := vm.computeds[key.name]
+		if !ok || computed == nil {
+			return watchSample{}
+		}
+		// Computed values do not expose a mutable write revision. Sampling
+		// invokes their lazy refresh and lets the ordinary scalar comparison
+		// decide whether this subtree can be copied verbatim.
+		return sampleValue(computed.Get(), true)
 	}
 	return sampleValue(sig.Get(), true)
 }
@@ -525,10 +544,14 @@ func (vm *VM) currentWatchSample(key watchKey) watchSample {
 	switch key.kind {
 	case watchSignal:
 		sig, ok := vm.signals[key.name]
-		if !ok || sig == nil {
+		if ok && sig != nil {
+			return sampleValue(sig.Get(), true)
+		}
+		computed, ok := vm.computeds[key.name]
+		if !ok || computed == nil {
 			return watchSample{}
 		}
-		return sampleValue(sig.Get(), true)
+		return sampleValue(computed.Get(), true)
 	default:
 		v, ok := vm.props[key.name]
 		return sampleValue(v, ok)

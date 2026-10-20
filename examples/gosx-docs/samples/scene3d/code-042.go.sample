@@ -1,0 +1,11 @@
+props.Audio = &scene.Audio{
+	    MasterVolume: scene.Float(0.8),
+	    Buses: []scene.AudioBus{
+	        {ID: "sfx", Volume: scene.Float(0.9)},
+	        {ID: "music", Volume: scene.Float(0.4)},
+	    },
+	    Clips: []scene.AudioClip{
+	        {ID: "splash", Src: "/audio/splash.mp3", Bus: "sfx", Preload: true},
+	        {ID: "theme", Src: "/audio/theme.mp3", Bus: "music", Loop: true},
+	    },
+	}

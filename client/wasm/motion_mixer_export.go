@@ -37,12 +37,17 @@ var mixerWriteBuf = motion.NewWriteBuf(64)
 
 // clipJSONChannel mirrors one glTF animation channel as delivered from JS. Field
 // names match the JSON keys the model loader emits.
+// weightCount is only meaningful for "weights" channels; its absence leaves it
+// 0, which motion.BuildClipTimeline treats as an invalid weights channel
+// (weights are never guessed as vec4). TRS channels ignore it, so existing
+// clip JSON stays backward compatible.
 type clipJSONChannel struct {
 	Node          int       `json:"node"`
 	Property      string    `json:"property"`
 	Interpolation string    `json:"interpolation"`
 	Times         []float64 `json:"times"`
 	Values        []float64 `json:"values"`
+	WeightCount   int       `json:"weightCount"`
 }
 
 // clipJSONDoc is the {duration, channels} object passed to add_clip.
@@ -116,11 +121,12 @@ func mixerAddClip(args []js.Value) bool {
 	channels := make([]motion.ClipChannel, 0, len(doc.Channels))
 	for _, c := range doc.Channels {
 		channels = append(channels, motion.ClipChannel{
-			Node:     c.Node,
-			Property: c.Property,
-			Interp:   c.Interpolation,
-			Times:    c.Times,
-			Values:   c.Values,
+			Node:        c.Node,
+			Property:    c.Property,
+			Interp:      c.Interpolation,
+			Times:       c.Times,
+			Values:      c.Values,
+			WeightCount: c.WeightCount,
 		})
 	}
 

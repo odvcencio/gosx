@@ -70,12 +70,16 @@ func buildTinyGoWASM(projectDir, gosxRoot, outputPath, tinygoPath string, extraT
 		cmd := exec.Command(tinygoPath, tinyGoBuildArgs(outputPath, extraTags...)...)
 		cmd.Dir = scratchDir
 		cmd.Env = setEnv(candidate.env, "GOFLAGS", goModuleCommandFlags)
-		out, err := cmd.CombinedOutput()
+		out, err := runValidatedWASMCompiler(cmd, outputPath)
 		if err == nil {
 			if candidate.label != "" {
 				fmt.Printf("    TinyGo toolchain: %s\n", candidate.label)
 			}
 			return nil
+		}
+		var invalidOutput *invalidCompilerWASMOutput
+		if errors.As(err, &invalidOutput) {
+			return fmt.Errorf("tinygo build: %w", err)
 		}
 		failures = append(failures, tinyGoFailure(candidate.label, err, out))
 		if !tinyGoFailureLooksToolchainRelated(out) {
@@ -109,7 +113,7 @@ func tinyGoBuildArgs(outputPath string, extraTags ...string) []string {
 
 func tinyGoWASMTags(extraTags ...string) []string {
 	tags := []string{"tinygo"}
-	if !tinyGoFullRuntimeEnabled() {
+	if !tinyGoFullRuntimeEnabled() && !runtimeVariantNeedsFullRuntime(extraTags...) {
 		tags = append(tags, "gosx_tiny_runtime")
 	}
 	tags = append(tags, extraTags...)
@@ -125,6 +129,16 @@ func tinyGoWASMTags(extraTags ...string) []string {
 		out = append(out, tag)
 	}
 	return out
+}
+
+func runtimeVariantNeedsFullRuntime(tags ...string) bool {
+	for _, tag := range normalizeBuildTags(tags...) {
+		switch tag {
+		case "gosx_runtime_collab", "gosx_runtime_full":
+			return true
+		}
+	}
+	return false
 }
 
 func writeTinyGoWASMExec(tinygoPath, runtimeDir string) (HashedAsset, error) {
@@ -147,6 +161,7 @@ func writeTinyGoWASMExec(tinygoPath, runtimeDir string) (HashedAsset, error) {
 	if err != nil {
 		return HashedAsset{}, fmt.Errorf("write TinyGo wasm_exec.js: %w", err)
 	}
+	asset = withRuntimeIntegrity(asset, data)
 	return asset, nil
 }
 
@@ -165,12 +180,9 @@ func prepareTinyGoWASMModule(gosxRoot string, tags ...string) (string, func(), e
 		return "", nil, err
 	}
 
-	scratchDir, err := os.MkdirTemp("", "gosx-tinygo-wasm-*")
+	scratchDir, cleanup, err := tinyGoScratchDirectory(gosxRoot, tags...)
 	if err != nil {
-		return "", nil, fmt.Errorf("create tinygo scratch module: %w", err)
-	}
-	cleanup := func() {
-		_ = os.RemoveAll(scratchDir)
+		return "", nil, err
 	}
 
 	for _, pkg := range packages {

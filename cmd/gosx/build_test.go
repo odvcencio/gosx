@@ -1,15 +1,111 @@
 package main
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"fmt"
+	"io"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
+	"m31labs.dev/gosx"
+	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
+	"m31labs.dev/gosx/internal/bundlepolicy"
+	"m31labs.dev/gosx/island"
 	sceneinspect "m31labs.dev/gosx/scene/inspect"
 )
+
+func TestRuntimeVariantAssetCarriesContractIdentity(t *testing.T) {
+	asset := runtimeVariantAsset(string(runtimewasm.VariantIslands), HashedAsset{
+		File: "gosx-runtime-islands.abc.wasm",
+		Hash: "abcdef0123456789",
+		Size: 42,
+	})
+	if asset.ManifestHash == "" || asset.ManifestHash != runtimewasm.ManifestIdentity() {
+		t.Fatalf("runtime variant manifest identity = %q", asset.ManifestHash)
+	}
+	if asset.FeatureMask != uint32(runtimewasm.FeatureCore|runtimewasm.FeatureIslands) {
+		t.Fatalf("runtime variant feature mask = 0x%x", asset.FeatureMask)
+	}
+}
+
+func TestPublishedRuntimeVariantAssetsAreExactlyTheFourProfiles(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "")
+	assets := publishedRuntimeVariantAssets(
+		HashedAsset{File: "core.wasm"},
+		HashedAsset{File: "engine.wasm"},
+		HashedAsset{File: "collab.wasm"},
+		HashedAsset{File: "full.wasm"},
+	)
+	if len(assets) != 4 {
+		t.Fatalf("published runtime assets = %v, want four profiles", assets)
+	}
+	if _, ok := assets[string(runtimewasm.VariantIslands)]; ok {
+		t.Fatal("legacy islands alias was advertised as a capability profile")
+	}
+	for _, variant := range runtimewasm.PublishedVariants() {
+		asset, ok := assets[string(variant)]
+		if !ok {
+			t.Fatalf("published runtime assets omitted %q", variant)
+		}
+		if asset.Variant != string(variant) || asset.FeatureMask != uint32(runtimewasm.FeatureMaskForVariant(variant)) {
+			t.Fatalf("published %s contract = %+v", variant, asset)
+		}
+	}
+}
+
+func TestFullRuntimeCompatibilityModeOnlyAdvertisesFullProfile(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
+	assets := publishedRuntimeVariantAssets(
+		HashedAsset{File: "core.wasm"},
+		HashedAsset{File: "engine.wasm"},
+		HashedAsset{File: "collab.wasm"},
+		HashedAsset{File: "full.wasm"},
+	)
+	if len(assets) != 1 {
+		t.Fatalf("full-runtime compatibility assets = %v, want one full profile", assets)
+	}
+	full, ok := assets[string(runtimewasm.VariantFull)]
+	if !ok {
+		t.Fatalf("full-runtime compatibility assets omitted full: %v", assets)
+	}
+	if full.File != "full.wasm" || full.Variant != string(runtimewasm.VariantFull) {
+		t.Fatalf("full-runtime compatibility asset = %+v", full)
+	}
+}
+
+func TestFullRuntimeCompatibilityManifestMakesIslandRouteSelectFull(t *testing.T) {
+	t.Setenv("GOSX_TINYGO_FULL_RUNTIME", "1")
+	full := HashedAsset{File: "gosx-runtime-full.wasm", Hash: "full", Size: 40}
+	manifest := &BuildManifest{Runtime: RuntimeAssets{
+		WASM:        full,
+		WASMIslands: HashedAsset{File: "gosx-runtime-islands.wasm", Hash: "islands", Size: 5},
+		WASMVariants: publishedRuntimeVariantAssets(
+			HashedAsset{File: "gosx-runtime-core.wasm", Hash: "core", Size: 10},
+			HashedAsset{File: "gosx-runtime-engine.wasm", Hash: "engine", Size: 25},
+			HashedAsset{File: "gosx-runtime-collab.wasm", Hash: "collab", Size: 28},
+			full,
+		),
+	}}
+	renderer := island.NewRenderer("compatibility-route")
+	if err := renderer.ApplyBuildManifest(manifest, "/gosx/assets"); err != nil {
+		t.Fatal(err)
+	}
+	renderer.RenderIsland("Counter", nil, gosx.Text("counter"))
+	if got := renderer.Summary().RuntimePath; got != "/gosx/assets/runtime/gosx-runtime-full.wasm" {
+		t.Fatalf("full-runtime compatibility island selected %q, want full artifact", got)
+	}
+}
 
 func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
 	raw := []byte("window.Hls = function() {};\n//# sourceMappingURL=hls.min.js.map\n")
@@ -24,6 +120,14 @@ func TestRuntimeJSAssetDataStripsMissingHLSMapTrailer(t *testing.T) {
 	other := []byte("console.log('bootstrap');\n//# sourceMappingURL=bootstrap.js.map\n")
 	if got := string(runtimeJSAssetData("bootstrap", other)); got != string(other) {
 		t.Fatalf("non-HLS runtime asset was changed: %q", got)
+	}
+}
+
+func TestGoServerBuildArgsUsesTrimpath(t *testing.T) {
+	got := goServerBuildArgs("dist/server/app")
+	want := []string{"build", "-trimpath", "-o", "dist/server/app", "."}
+	if !slices.Equal(got, want) {
+		t.Fatalf("server build args = %#v, want %#v", got, want)
 	}
 }
 
@@ -46,6 +150,7 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	distDir := filepath.Join(t.TempDir(), "dist")
 
 	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
+	mustWriteFile(t, filepath.Join(distDir, "app", "page.gsx"), "staged app\n")
 	mustWriteFile(t, filepath.Join(projectDir, "content", "docs", "intro.md"), "# Introduction\n")
 	mustWriteFile(t, filepath.Join(projectDir, "public", "styles.css"), "body {}\n")
 	mustWriteFile(t, filepath.Join(projectDir, ".env.example"), "PORT=8080\n")
@@ -53,7 +158,8 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	serverBinaryPath := filepath.Join(distDir, "server", "app")
 	mustWriteFile(t, serverBinaryPath, "binary")
 
-	if err := stageDeploymentBundle(projectDir, distDir, true, serverBinaryPath); err != nil {
+	manifest := &BuildManifest{}
+	if err := stageDeploymentBundle(projectDir, distDir, manifest, true, serverBinaryPath); err != nil {
 		t.Fatal(err)
 	}
 
@@ -61,7 +167,6 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 		"app/page.gsx",
 		"content/docs/intro.md",
 		"public/styles.css",
-		".env.example",
 		"README.md",
 		"run.sh",
 	} {
@@ -71,6 +176,9 @@ func TestStageDeploymentBundleCopiesRuntimeDirsAndWritesArtifacts(t *testing.T) 
 	}
 	if _, err := os.Stat(filepath.Join(distDir, "content", "docs", "removed.md")); !os.IsNotExist(err) {
 		t.Fatalf("stale content file survived deployment staging: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(distDir, ".env.example")); !os.IsNotExist(err) {
+		t.Fatalf("root .env.example was copied into deployment staging: %v", err)
 	}
 
 	runScript := readFile(t, filepath.Join(distDir, "run.sh"))
@@ -164,6 +272,15 @@ func TestWriteHashedWritesCompressedSidecarsWhenSmaller(t *testing.T) {
 		if err != nil {
 			t.Fatalf("expected %s sidecar: %v", ext, err)
 		}
+		var recorded int64
+		if ext == ".gz" {
+			recorded = asset.GzipSize
+		} else {
+			recorded = asset.BrotliSize
+		}
+		if recorded != info.Size() {
+			t.Fatalf("recorded %s size = %d, sidecar size = %d", ext, recorded, info.Size())
+		}
 		if info.Size() >= int64(len(data)) {
 			t.Fatalf("expected %s sidecar smaller than raw data, raw=%d compressed=%d", ext, len(data), info.Size())
 		}
@@ -187,6 +304,9 @@ func TestWriteHashedWithoutCompressedSidecarsSkipsDevRuntimeSidecars(t *testing.
 	devAsset, err := writeHashedWithoutCompressedSidecars(dir, "gosx-runtime", ".wasm", data)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if devAsset.GzipSize != 0 || devAsset.BrotliSize != 0 {
+		t.Fatalf("dev asset must omit absent compressed sizes: %+v", devAsset)
 	}
 	if devAsset.File != prodAsset.File {
 		t.Fatalf("expected same hashed runtime path, got %q want %q", devAsset.File, prodAsset.File)
@@ -245,7 +365,9 @@ func TestStageOfflineAssetBundleWritesVersionedManifest(t *testing.T) {
 	projectDir := t.TempDir()
 	distDir := filepath.Join(t.TempDir(), "dist")
 	mustWriteFile(t, filepath.Join(projectDir, "app", "page.gsx"), "package app\n")
-	mustWriteFile(t, filepath.Join(projectDir, "public", "logo.svg"), "<svg />\n")
+	mustWriteFile(t, filepath.Join(projectDir, "public", "logo.svg"), "source public should not be copied\n")
+	mustWriteFile(t, filepath.Join(distDir, "app", "page.gsx"), "staged app\n")
+	mustWriteFile(t, filepath.Join(distDir, "public", "logo.svg"), "staged public\n")
 	mustWriteFile(t, filepath.Join(distDir, "assets", "runtime", "bootstrap.abc.js"), "runtime")
 	mustWriteFile(t, filepath.Join(distDir, "build.json"), `{"runtime":{}}`)
 
@@ -291,6 +413,24 @@ func TestStageOfflineAssetBundleWritesVersionedManifest(t *testing.T) {
 	}
 }
 
+func TestStageOfflineAssetBundleKeepsAllowedMutableAppStateAuditable(t *testing.T) {
+	distDir := filepath.Join(t.TempDir(), "dist")
+	cfg := bundlepolicy.Config{Allow: []string{"app/cache.db"}}
+	mustWriteFile(t, filepath.Join(distDir, "app", "cache.db"), "immutable cache")
+	if err := writeBundlePolicySidecar(distDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := stageOfflineAssetBundleWithPolicy(distDir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(distDir, "offline", "app", "cache.db")); err != nil {
+		t.Fatalf("allowed app database was not staged offline: %v", err)
+	}
+	if diagnostics := bundlepolicy.AuditArtifact(distDir, cfg); !diagnostics.Empty() {
+		t.Fatalf("allowed offline app database failed final audit: %s", diagnostics.Error())
+	}
+}
+
 func TestProjectBuildHooksLoadAndRun(t *testing.T) {
 	dir := t.TempDir()
 	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{
@@ -322,6 +462,93 @@ func TestProjectBuildHooksLoadAndRun(t *testing.T) {
 	}
 	if got := readFile(t, filepath.Join(dir, "post.txt")); got != "post" {
 		t.Fatalf("expected post hook output, got %q", got)
+	}
+}
+
+func TestPreBuildHookRefreshesIslandDiscoveryForMutationGenerationAndDeletion(t *testing.T) {
+	t.Run("mutation", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+		mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+		before, err := collectProjectIslandDiscovery(dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mutated := strings.Replace(testIslandSource("main", "Counter"), "signal.New(0)", "signal.New(7)", 1)
+		mustWriteFile(t, filepath.Join(dir, "counter.after"), mutated)
+
+		after, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, []string{"cp counter.after counter.gsx"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(before.Programs) != 1 || len(after.Programs) != 1 || before.Programs[0].SourceHash == after.Programs[0].SourceHash {
+			t.Fatalf("post-hook mutation reused stale program: before=%v after=%v", before.Programs, after.Programs)
+		}
+	})
+
+	t.Run("generation", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+		mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+		mustWriteFile(t, filepath.Join(dir, "badge.source"), testIslandSource("main", "Badge"))
+		if _, err := collectProjectIslandDiscovery(dir); err != nil {
+			t.Fatal(err)
+		}
+
+		after, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, []string{"cp badge.source badge.gsx"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got, want := islandProgramIdentities(after.Programs), []string{"corp/app#Badge", "corp/app#Counter"}; !slices.Equal(got, want) {
+			t.Fatalf("post-hook generated programs = %#v, want %#v", got, want)
+		}
+		if len(after.GSXFiles) != 2 {
+			t.Fatalf("post-hook GSX files = %#v, want generated and original sources", after.GSXFiles)
+		}
+	})
+
+	t.Run("deletion", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+		mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+		if _, err := collectProjectIslandDiscovery(dir); err != nil {
+			t.Fatal(err)
+		}
+
+		after, err := runPreBuildHooksAndRefreshIslandDiscovery(dir, []string{"rm counter.gsx"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after.Programs) != 0 || len(after.GSXFiles) != 0 {
+			t.Fatalf("post-hook deletion retained stale discovery: programs=%v files=%v", after.Programs, after.GSXFiles)
+		}
+	})
+}
+
+func TestRunBuildRejectsHookCreatedIslandAmbiguityBeforeReplacingDist(t *testing.T) {
+	dir := t.TempDir()
+	mustWriteFile(t, filepath.Join(dir, "go.mod"), "module corp/app\n\ngo 1.22\n")
+	mustWriteFile(t, filepath.Join(dir, "counter.gsx"), testIslandSource("main", "Counter"))
+	mustWriteFile(t, filepath.Join(dir, "duplicate.source"), testIslandSource("main", "Counter"))
+	mustWriteFile(t, filepath.Join(dir, "gosx.config.json"), `{
+  "build": {
+    "hooks": {
+      "pre": ["cp duplicate.source duplicate.gsx"]
+    }
+  }
+}`)
+	sentinel := filepath.Join(dir, "dist", "sentinel.txt")
+	mustWriteFile(t, sentinel, "keep")
+
+	err := RunBuildWithOptions(dir, BuildOptions{Dev: true})
+	if err == nil || !strings.Contains(err.Error(), `ambiguous island program "Counter"`) {
+		t.Fatalf("RunBuildWithOptions error = %v, want hook-created ambiguity", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "duplicate.gsx")); statErr != nil {
+		t.Fatalf("pre-build hook did not run: %v", statErr)
+	}
+	if got := readFile(t, sentinel); got != "keep" {
+		t.Fatalf("post-hook validation replaced existing dist before failing: %q", got)
 	}
 }
 
@@ -418,6 +645,8 @@ func TestStageManifestCompatibilityRuntimeCopiesOnlyReferencedAssets(t *testing.
 }
 
 func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
@@ -426,10 +655,15 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "route.config.json"), `{"prerender":true}`)
 	tidyModule(t, dir)
 
 	if err := RunBuild(dir, false); err != nil {
 		t.Fatal(err)
+	}
+
+	if report, err := checkDeploymentBundle(filepath.Join(dir, "dist")); err != nil || !report.OK || report.StaticRoutes != 2 {
+		t.Fatalf("prerendered production bundle failed deployment checks: %+v, %v", report, err)
 	}
 
 	for _, rel := range []string{
@@ -448,13 +682,16 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	}
 	for _, rel := range []string{
 		"dist/static/assets/runtime",
-		"dist/static/gosx",
 	} {
 		if _, err := os.Stat(filepath.Join(dir, rel)); !os.IsNotExist(err) {
 			t.Fatalf("did not expect zero-runtime static build artifact %s: %v", rel, err)
 		}
 	}
 
+	asset := filepath.Join(dir, "dist", "static", filepath.FromSlash(strings.TrimPrefix(runtimehost.NavigationRuntimePath, "/")))
+	if readFile(t, asset) != runtimehost.NavigationRuntime {
+		t.Fatal("production export lost the standalone navigation asset")
+	}
 	stackHTML := readFile(t, filepath.Join(dir, "dist", "static", "stack", "index.html"))
 	if !strings.Contains(stackHTML, `href="../styles.css"`) {
 		t.Fatalf("expected export-safe nested asset url in %q", stackHTML)
@@ -472,7 +709,421 @@ func TestRunBuildProdWritesHybridStaticBundleForStarterApp(t *testing.T) {
 	}
 }
 
+// TestRunBuildRelocatedBundleRendersSiblingFragment proves the production
+// deployment shape end to end. The server binary is built with -trimpath,
+// the finished dist/ tree is copied to a fresh path, and the original source
+// tree is removed before run.sh starts it from outside the bundle. run.sh's
+// GOSX_APP_ROOT export must therefore point the trimpath-safe caller resolver
+// at the staged app/ tree for LoadFileProgramHere to find page.gsx. The same
+// build also proves framework health and signal-driven draining through run.sh.
+func TestRunBuildRelocatedBundleRendersSiblingFragment(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("run.sh and Unix signal forwarding require a POSIX host")
+	}
+	if raceDetectorEnabled {
+		t.Skip("shells out to the production build and server; race instrumentation adds no value and blows the timeout")
+	}
+	if _, err := exec.LookPath("tinygo"); err != nil {
+		t.Skip("production relocation test requires TinyGo on PATH")
+	}
+
+	sourceDir := filepath.Join(t.TempDir(), "fragment-source")
+	if err := os.MkdirAll(sourceDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(sourceDir, "go.mod"), `module example.com/fragment-relocation
+
+go 1.25
+
+require m31labs.dev/gosx v0.53.10
+`)
+	addLocalGoSXReplace(t, sourceDir)
+	mustWriteFile(t, filepath.Join(sourceDir, "main.go"), `package main
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log"
+	"net"
+	"net/http"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"time"
+
+	"example.com/fragment-relocation/app/wire"
+	"m31labs.dev/gosx/route"
+	"m31labs.dev/gosx/server"
+)
+
+func main() {
+	shutdown, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := server.ResolveAppRoot(thisFile)
+	router := route.NewRouter()
+	router.Handle("/wire/signal", http.HandlerFunc(wire.ServeSignalFragment))
+	router.Handle("/wire/drain", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Println("DRAINING")
+		select {
+		case <-shutdown.Done():
+			_, _ = fmt.Fprint(w, "request drained")
+		case <-r.Context().Done():
+		}
+	}))
+	if err := router.AddDir(filepath.Join(root, "app"), route.FileRoutesOptions{}); err != nil {
+		log.Fatal(err)
+	}
+	handler, err := router.BuildChecked()
+	if err != nil {
+		log.Fatal(err)
+	}
+	listenAddr := "127.0.0.1:0"
+	if port := os.Getenv("PORT"); port != "" {
+		listenAddr = port
+		if _, _, err := net.SplitHostPort(port); err != nil {
+			listenAddr = net.JoinHostPort("127.0.0.1", strings.TrimPrefix(port, ":"))
+		}
+	}
+	ln, err := net.Listen("tcp", listenAddr)
+	if err != nil {
+		log.Fatal(err)
+	}
+	app := server.New()
+	app.Mount("/", handler)
+	srv := &http.Server{Handler: app.Build(), ReadHeaderTimeout: 5 * time.Second}
+	drained := make(chan struct{})
+	go func() {
+		defer close(drained)
+		<-shutdown.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := srv.Shutdown(ctx); err != nil {
+			log.Fatal(err)
+		}
+	}()
+	fmt.Printf("LISTENING %s\n", ln.Addr())
+	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		log.Fatal(err)
+	}
+	<-drained
+}
+`)
+	mustWriteFile(t, filepath.Join(sourceDir, "app", "wire", "page.gsx"), `package wire
+
+type SignalCardProps struct {
+	Label string
+	Value string
+}
+
+component SignalCard(props: SignalCardProps) {
+	return <li class="signal-card">{props.Label}: {props.Value}</li>
+}
+
+component Page() {
+	return <ul data-gosx-region data-gosx-region-url="/wire/signal">
+		<SignalCard label="Passing Yards" value="317" />
+	</ul>
+}
+`)
+	mustWriteFile(t, filepath.Join(sourceDir, "app", "wire", "page.server.go"), `package wire
+
+import (
+	"net/http"
+
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/route"
+)
+
+// FragmentProps deliberately has a different name from page.gsx's
+// SignalCardProps. RenderProgramComponentNode proves the fields structurally
+// at the render boundary; it does not require Go to recreate the .gsx type.
+type FragmentProps struct {
+	Label string
+	Value string
+}
+
+func init() {
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{}); err != nil {
+		panic(err)
+	}
+}
+
+func ServeSignalFragment(w http.ResponseWriter, _ *http.Request) {
+	prog, err := route.LoadFileProgramHere("page.gsx")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	node, err := route.RenderProgramComponentNode(prog, "SignalCard", route.ProgramRenderEnv{
+		Props: FragmentProps{Label: "Passing Yards", Value: "317"},
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	_, _ = w.Write([]byte(gosx.RenderHTML(node)))
+}
+`)
+	tidyModule(t, sourceDir)
+
+	if err := RunBuild(sourceDir, false); err != nil {
+		t.Fatalf("RunBuild: %v", err)
+	}
+
+	relocated := filepath.Join(t.TempDir(), "staged bundle")
+	if err := os.CopyFS(relocated, os.DirFS(filepath.Join(sourceDir, "dist"))); err != nil {
+		t.Fatalf("copy dist to isolated path: %v", err)
+	}
+	if err := os.RemoveAll(sourceDir); err != nil {
+		t.Fatalf("remove original source tree: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(sourceDir, "app", "wire", "page.gsx")); !os.IsNotExist(err) {
+		t.Fatalf("original page.gsx is still available after relocation: %v", err)
+	}
+
+	if report, err := checkDeploymentBundle(relocated); err != nil || !report.OK {
+		t.Fatalf("relocated bundle failed deployment checks: %+v, %v", report, err)
+	}
+
+	launchLog, err := os.Create(filepath.Join(t.TempDir(), "bundle.log"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = launchLog.Close() })
+	runContext, cancelRun := context.WithTimeout(context.Background(), time.Minute)
+	t.Cleanup(cancelRun)
+	cmd := exec.CommandContext(runContext, filepath.Join(relocated, "run.sh"))
+	cmd.Dir = filepath.Dir(relocated)
+	cmd.Stderr = launchLog
+	// Deliberately omit the source/build environment and toolchain PATH. run.sh
+	// must establish GOSX_APP_ROOT itself, including paths containing spaces.
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "GOSX_ENV=production", "PORT=127.0.0.1:0"}
+	cmd.WaitDelay = 5 * time.Second
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start relocated bundle: %v", err)
+	}
+	processDone := make(chan struct{})
+	var processErr error
+	go func() {
+		processErr = cmd.Wait()
+		close(processDone)
+	}()
+	t.Cleanup(func() {
+		select {
+		case <-processDone:
+		default:
+			_ = cmd.Process.Signal(syscall.SIGTERM)
+			select {
+			case <-processDone:
+			case <-time.After(5 * time.Second):
+				_ = cmd.Process.Kill()
+				select {
+				case <-processDone:
+				case <-time.After(5 * time.Second):
+					t.Error("relocated bundle did not exit after cleanup kill")
+				}
+			}
+		}
+		if t.Failed() {
+			data, _ := os.ReadFile(launchLog.Name())
+			t.Logf("bundle process output:\n%s", data)
+		}
+	})
+
+	addrCh := make(chan string, 1)
+	drainStarted := make(chan struct{}, 1)
+	go func() {
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			line := scanner.Text()
+			_, _ = fmt.Fprintln(launchLog, line)
+			if addr, ok := strings.CutPrefix(line, "LISTENING "); ok {
+				select {
+				case addrCh <- addr:
+				default:
+				}
+			}
+			if line == "DRAINING" {
+				select {
+				case drainStarted <- struct{}{}:
+				default:
+				}
+			}
+		}
+	}()
+
+	var addr string
+	select {
+	case addr = <-addrCh:
+	case <-processDone:
+		t.Fatalf("relocated bundle exited before readiness: %v", processErr)
+	case <-time.After(20 * time.Second):
+		t.Fatal("relocated bundle never printed its listening address")
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	t.Cleanup(client.CloseIdleConnections)
+	baseURL := "http://" + addr
+	healthResp, err := client.Get(baseURL + "/healthz")
+	if err != nil {
+		t.Fatalf("GET relocated health: %v", err)
+	}
+	var health struct {
+		OK bool `json:"ok"`
+	}
+	healthErr := json.NewDecoder(healthResp.Body).Decode(&health)
+	_ = healthResp.Body.Close()
+	if healthResp.StatusCode != http.StatusOK || healthErr != nil || !health.OK {
+		t.Fatalf("GET /healthz = %d, health %+v, error %v", healthResp.StatusCode, health, healthErr)
+	}
+	pageResp, err := client.Get(baseURL + "/wire")
+	if err != nil {
+		t.Fatalf("GET relocated page: %v", err)
+	}
+	pageBody, readErr := io.ReadAll(pageResp.Body)
+	_ = pageResp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read relocated page: %v", readErr)
+	}
+	if pageResp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /wire = %d, want 200; body: %s", pageResp.StatusCode, pageBody)
+	}
+	if !strings.Contains(string(pageBody), `data-gosx-region-url="/wire/signal"`) {
+		t.Fatalf("relocated page is missing region wiring: %s", pageBody)
+	}
+
+	fragmentResp, err := client.Get(baseURL + "/wire/signal")
+	if err != nil {
+		t.Fatalf("GET relocated fragment: %v", err)
+	}
+	fragmentBody, readErr := io.ReadAll(fragmentResp.Body)
+	_ = fragmentResp.Body.Close()
+	if readErr != nil {
+		t.Fatalf("read relocated fragment: %v", readErr)
+	}
+	const wantFragment = `<li class="signal-card">Passing Yards: 317</li>`
+	if fragmentResp.StatusCode != http.StatusOK || string(fragmentBody) != wantFragment {
+		t.Fatalf("GET /wire/signal = %d body %q, want 200 and %q", fragmentResp.StatusCode, fragmentBody, wantFragment)
+	}
+
+	// Hold a real request until SIGTERM arrives. An abrupt shell/server exit
+	// would lose the response, so this proves both forwarding and draining.
+	drainResult := make(chan error, 1)
+	go func() {
+		resp, err := client.Get(baseURL + "/wire/drain")
+		if err != nil {
+			drainResult <- err
+			return
+		}
+		body, err := io.ReadAll(resp.Body)
+		_ = resp.Body.Close()
+		if err == nil && (resp.StatusCode != http.StatusOK || string(body) != "request drained") {
+			err = fmt.Errorf("drain response = %d %q", resp.StatusCode, body)
+		}
+		drainResult <- err
+	}()
+	select {
+	case <-drainStarted:
+	case err := <-drainResult:
+		t.Fatalf("drain request ended before shutdown: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("drain request never reached the bundle")
+	}
+	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+		t.Fatalf("signal relocated bundle: %v", err)
+	}
+	select {
+	case err := <-drainResult:
+		if err != nil {
+			t.Fatalf("in-flight request did not drain: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("in-flight request did not finish during graceful shutdown")
+	}
+	select {
+	case <-processDone:
+		if processErr != nil {
+			t.Fatalf("relocated bundle did not exit cleanly: %v", processErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("relocated bundle did not shut down gracefully")
+	}
+
+}
+
+func TestRunBuildStrictGateRunsBeforeDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "build-strict-gate")
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "cannot use 42") {
+		t.Fatalf("RunBuild error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
+		t.Fatalf("strict gate wrote dist before failing: %v", statErr)
+	}
+}
+
+func TestRunBuildRejectsAmbiguousImportedIslandNamesBeforeDistWrites(t *testing.T) {
+	dir, _, _ := newAmbiguousIslandProject(t, true)
+	writeTempFile(t, dir, "gosx.config.json", `{
+  "build": {
+    "hooks": {
+      "pre": ["printf ran > pre-build-hook-ran.txt"]
+    }
+  }
+}`)
+
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "ambiguous island program \"Counter\"") {
+		t.Fatalf("RunBuild error = %v, want ambiguous island rejection", err)
+	}
+	for _, output := range []string{"dist", "modules/modules.go", "pre-build-hook-ran.txt"} {
+		if _, statErr := os.Stat(filepath.Join(dir, filepath.FromSlash(output))); !os.IsNotExist(statErr) {
+			t.Fatalf("ambiguous island preflight created %s before failing: %v", output, statErr)
+		}
+	}
+}
+
+// TestRunBuildRejectsPropsBearingStrictLayoutEntryBeforeDistWrites proves
+// the narrowed gate (gosx#248) still refuses a props-bearing strict layout
+// before any dist write: no code path calls a layout's own module's Load
+// hook, so a layout's EntryProps is always nil. A props-bearing strict Page
+// entry, by contrast, now passes this gate — see route/fileprogram_test.go
+// and examples/basic for the render-time proof.
+func TestRunBuildRejectsPropsBearingStrictLayoutEntryBeforeDistWrites(t *testing.T) {
+	dir := newInvalidStrictStarter(t, "build-root-props-gate")
+	mustWriteFile(t, filepath.Join(dir, "app", "page.gsx"), `package app
+component Page() {
+	return <main>ok</main>
+}
+`)
+	mustWriteFile(t, filepath.Join(dir, "app", "layout.gsx"), `package app
+type LayoutProps struct { Title string }
+component Layout(props: LayoutProps) {
+	return <main>{props.Title}</main>
+}
+`)
+	err := RunBuild(dir, false)
+	if err == nil || !strings.Contains(err.Error(), "layout has no Load hook wired to its own root props") {
+		t.Fatalf("RunBuild error = %v", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "dist")); !os.IsNotExist(statErr) {
+		t.Fatalf("root-props gate wrote dist before failing: %v", statErr)
+	}
+}
+
 func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
@@ -482,6 +1133,7 @@ func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, projectDir)
+	mustWriteFile(t, filepath.Join(projectDir, "app", "route.config.json"), `{"prerender":true}`)
 	tidyModule(t, projectDir)
 
 	wd, err := os.Getwd()
@@ -513,6 +1165,8 @@ func TestRunBuildProdHandlesRelativeProjectDir(t *testing.T) {
 }
 
 func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
+	t.Setenv("GOSX_ENV", "production")
+	t.Setenv("SESSION_SECRET", "change-me-in-production")
 	if raceDetectorEnabled {
 		t.Skip("shells out to a TinyGo/go build subprocess; race instrumentation adds no value and blows the -race timeout")
 	}
@@ -521,6 +1175,7 @@ func TestRunBuildProdPreservesFileModuleHooksInStaticExport(t *testing.T) {
 		t.Fatal(err)
 	}
 	addLocalGoSXReplace(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "verify", "route.config.json"), `{"prerender":true}`)
 
 	mustWriteFile(t, filepath.Join(dir, "app", "verify", "page.gsx"), `package app
 
@@ -587,5 +1242,38 @@ func mustWriteFile(t *testing.T, path string, contents string) {
 	}
 	if err := os.WriteFile(path, []byte(contents), 0644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func newInvalidStrictStarter(t *testing.T, name string) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), name)
+	if err := RunInit(dir, "example.com/"+name, ""); err != nil {
+		t.Fatal(err)
+	}
+	addLocalGoSXReplace(t, dir)
+	tidyModule(t, dir)
+	mustWriteFile(t, filepath.Join(dir, "app", "page.gsx"), `package app
+
+type CardProps struct { Label string }
+
+component Card(props: CardProps) {
+	return <p>{props.Label}</p>
+}
+
+component Page() {
+	return <Card label={42} />
+}
+`)
+	return dir
+}
+
+func TestWriteHashedOmitsCompressedSizesWhenSidecarsAreNotSmaller(t *testing.T) {
+	asset, err := writeHashed(t.TempDir(), "tiny", ".wasm", []byte{0})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asset.GzipSize != 0 || asset.BrotliSize != 0 {
+		t.Fatalf("absent compressed sidecars must not have transfer sizes: %+v", asset)
 	}
 }

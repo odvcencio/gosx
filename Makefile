@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-macos perf-budget perf-budget-ci build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -104,23 +104,97 @@ test:
 test-unit:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test unit
 
+.PHONY: test-budget-contract test-budget-derive
+test-budget-contract:
+	GOWORK=off $(GO) test ./perf/budget
+
+.PHONY: test-budget-public
+test-budget-public:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Public|ReportSchema)'
+
+.PHONY: test-budget-measure
+test-budget-measure:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Measure|HTTPMeasure|Inline)'
+
+.PHONY: test-budget-trailers
+test-budget-trailers:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Trailer|Acknowledge)'
+
+.PHONY: test-budget-gate
+test-budget-gate:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Check|Policy|Exception|Approval)'
+
+.PHONY: test-budget-cli
+test-budget-cli:
+	GOWORK=off $(GO) test ./cmd/gosx -run TestBudget
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Markdown|Collect)'
+
+test-budget-derive:
+	GOWORK=off $(GO) test ./perf/budget -run 'Test(Derive|Transfer|Sensitivity)'
+
+# CI runs the two exhaustive name partitions separately. An ordinary test-cli
+# invocation still runs the full package with the same 25-minute timeout.
 test-cli:
-	$(GO) test ./cmd/gosx
+ifdef CLI_SHARD
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest cli $(CLI_SHARD)
+else
+	$(GO) test -timeout 25m ./cmd/gosx
+endif
+
+.PHONY: test-island-aot
+test-island-aot:
+	GOWORK=off $(GO) test -count=1 ./island/aot
+	GOWORK=off $(GO) test -count=1 ./ir -run '^TestIslandAOT(StubSignatures|TinyGoDependencyBoundary|GoWASMDependencyBoundary)$$'
+
+.PHONY: test-wasmgen
+test-wasmgen:
+	GOWORK=off $(GO) test -count=1 ./internal/wasmgen
 
 test-ci-partitions:
 	$(GO) test ./internal/citest
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest verify
 
 test-race:
-	$(GO) test -race ./...
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test full-race
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test ouroboros-race
 
 # Pull requests exercise the reviewed shared-state surfaces without rerunning
-# CPU-heavy codec and vector kernels under the race detector. Protected-branch
-# pushes still run test-race across every package.
+# CPU-heavy codec and vector kernels under the race detector. This is a subset
+# of test-race: it excludes cmd/gosx, whose production-build tests require
+# TinyGo and run without race instrumentation in test-cli on both events.
+# Protected-branch pushes race-build every package and run every test except
+# nine explicitly validated real-repository evidence recomputations in
+# perf/ouroboros. The unit lane runs those deterministic tests; the scoped
+# race lane retains a direct
+# concurrent network-capture mutation/snapshot test.
 test-race-pr:
 	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest test race
 
-test-fuzz-smoke:
+# Native telemetry checks stay non-short so cap and ownership tests execute.
+.PHONY: test-telemetry test-telemetry-metric-race test-telemetry-helpers-race
+test-telemetry:
+	GOWORK=off $(GO) test -count=1 -timeout 5m ./telemetry/... ./server ./route ./scheduled ./hub ./sim ./game/loop
+
+test-telemetry-metric-race:
+	GOWORK=off $(GO) test -race ./telemetry/metric
+
+test-telemetry-helpers-race:
+	GOWORK=off $(GO) test -race ./internal/clock ./telemetry/telemetrytest
+
+.PHONY: test-telemetry-wasm bench-telemetry
+test-telemetry-wasm:
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./telemetry ./telemetry/metric ./telemetry/schema ./internal/clock ./telemetry/telemetrytest ./sim ./game/loop
+
+bench-telemetry:
+	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim
+
+.PHONY: test-telemetry-fuzz
+test-telemetry-fuzz:
+	GOWORK=off GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./server -run '^$$' -fuzz FuzzTrustedProxyResolution -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOWORK=off GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./telemetry -run '^$$' -fuzz FuzzDomainFields -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+	GOWORK=off GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./telemetry -run '^$$' -fuzz FuzzActivityTransitions -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
+
+test-fuzz-smoke: test-telemetry-fuzz
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./session -run '^$$' -fuzz FuzzDanmujiDecodeSessionCookieNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./crdt -run '^$$' -fuzz FuzzDanmujiLoadDocumentNeverPanics -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
 	GOMAXPROCS=$(FUZZ_PARALLEL) $(GO) test ./physics -run '^$$' -fuzz FuzzDanmujiRaycastHandlesBoundedNumericInputs -fuzztime=$(FUZZTIME) -parallel=$(FUZZ_PARALLEL) -timeout=$(FUZZ_TIMEOUT)
@@ -137,10 +211,21 @@ test-fuzz-smoke:
 # budget: nesting it keeps those requires out of the library's go.mod and out of
 # every consumer's module graph. It is invoked from its own directory for the
 # same reason.
-build-bootstrap:
-	cd cmd/buildbootstrap && $(GO) run .
+BOOTSTRAP_GRAMMAR_TAGS := grammar_subset grammar_subset_typescript
 
-# test-js runs three independent checks:
+build-bootstrap:
+	cd cmd/buildbootstrap && $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' .
+
+# test-runtime-types uses the real TypeScript compiler in strict mode for the
+# generated ABI contract. The wider runtime is deliberately
+# guarded by buildbootstrap's typed transpilation, chunk closure and source-graph
+# coverage checks: most legacy script bodies remain JSDoc JavaScript syntax and
+# are not falsely advertised as strict TypeScript yet.
+test-runtime-types:
+	cd client/runtime && npm ci
+	cd client/runtime && npm run typecheck
+
+# test-js runs four independent checks:
 #   1. The unit tests of the bundle builder itself. cmd/buildbootstrap
 #      writes every shipped client bundle, so a defect there corrupts
 #      bootstrap.js, bootstrap-lite.js, bootstrap-runtime.js, every
@@ -154,20 +239,61 @@ build-bootstrap:
 #      does not contain package". GOWORK=off forces module mode for
 #      this one command. The target then works the same, with or
 #      without a local go.work.
-#   3. The JS runtime unit tests (`node --test`, stdlib-only, with no
-#      npm dependencies to install), across every *.test.js /
-#      *.test.mjs file. The glob picks up new test files on its own,
-#      so nothing here needs an edit when a suite is added or split.
-#      This includes the 562 client-runtime tests in the
+#   3. The JS runtime unit tests (`node --test`), across every *.test.js /
+#      *.test.mjs file under client/js, plus every *.test.js file one
+#      directory below client/runtime (currently
+#      client/runtime/wasm/loader.test.js, the WASM loader's own
+#      suite; it lived here unglobbed and never ran under `make
+#      test-js` or `make ci`). Both globs pick up new test files on
+#      their own, so nothing here needs an edit when a suite is added
+#      or split. This includes the 562 client-runtime tests in the
 #      runtime-NN-*.test.js files (split out of the former
 #      runtime.test.js; their shared setup lives in
 #      client/js/runtime-test-harness.js, which the glob skips
 #      because it is not a *.test.js file) and the size-budget gates
 #      in bootstrap-size.test.mjs.
 test-js:
-	cd cmd/buildbootstrap && GOWORK=off $(GO) test ./...
-	cd cmd/buildbootstrap && GOWORK=off $(GO) run . --check
-	$(NODE) --test ./client/js/*.test.js ./client/js/*.test.mjs
+	$(MAKE) test-runtime-types
+	# These Go tests inspect runtime TypeScript and JSON outside their package;
+	# bypass Go's package cache so source-only renderer edits are always seen.
+	cd cmd/buildbootstrap && GOWORK=off $(GO) test -count=1 -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' ./...
+	cd cmd/buildbootstrap && GOWORK=off $(GO) run -tags '$(BOOTSTRAP_GRAMMAR_TAGS)' . --check
+	$(MAKE) test-js-node
+
+# test-js-node runs only check 3, the Node suite. The shared harness
+# (client/js/runtime-test-harness.js) loads the pinned TypeScript compiler from
+# client/runtime's npm dependencies, so run `cd client/runtime && npm ci`
+# first (test-js does, through test-runtime-types).
+#
+# NODE_TEST_GROUP splits the suite by file name, so a test's CI job never
+# moves when files are added: `runtime` is the client/js/runtime-NN-*.test.js
+# suites (js-tests runs it after the checks above) and `other` is every other
+# file (js-tests-b). Unset, it runs the whole suite. The file set matches the
+# original shell globs, where `**` matched one directory level.
+JS_NODE_TESTS := $(wildcard client/js/*.test.js) $(wildcard client/js/*.test.mjs) $(wildcard client/runtime/*/*.test.js) $(wildcard scripts/*.test.mjs)
+JS_NODE_RUNTIME_TESTS := $(wildcard client/js/runtime-[0-9]*.test.js)
+JS_NODE_OTHER_TESTS := $(filter-out $(JS_NODE_RUNTIME_TESTS),$(JS_NODE_TESTS))
+NODE_TEST_GROUP ?=
+#
+# JS_TEST_NODE_OPTIONS caps the heap of the test runner and of every test file
+# process it starts (they inherit NODE_OPTIONS). A runaway test then fails fast
+# and writes one heap snapshot to JS_TEST_HEAP_DIR, instead of growing until it
+# starves the machine. Test files peak near 260 MB, so 2 GiB leaves wide
+# headroom. Options already in NODE_OPTIONS come later and win, so a caller can
+# override these.
+JS_TEST_HEAP_DIR ?= $(or $(TMPDIR),/tmp)
+JS_TEST_NODE_OPTIONS ?= --max-old-space-size=2048 --heapsnapshot-near-heap-limit=1 --diagnostic-dir=$(JS_TEST_HEAP_DIR)
+JS_TEST_NODE = NODE_OPTIONS="$(JS_TEST_NODE_OPTIONS) $$NODE_OPTIONS" $(NODE)
+test-js-node:
+ifeq ($(NODE_TEST_GROUP),)
+	$(JS_TEST_NODE) --test $(JS_NODE_TESTS)
+else ifeq ($(NODE_TEST_GROUP),runtime)
+	$(JS_TEST_NODE) --test $(JS_NODE_RUNTIME_TESTS)
+else ifeq ($(NODE_TEST_GROUP),other)
+	$(JS_TEST_NODE) --test $(JS_NODE_OTHER_TESTS)
+else
+	$(error NODE_TEST_GROUP must be empty, runtime or other; got $(NODE_TEST_GROUP))
+endif
 
 # test-editor builds, vets and tests the nested editor module.
 #
@@ -199,24 +325,30 @@ test-editor:
 # could never fail and the prose rotted beside it.
 #
 # `make test` cannot catch this: it builds for the host, where a _js.go suffix
-# excludes the offending file. test-wasm below builds only ./client/wasm.
+# excludes the offending file. test-wasm below tests selected packages.
 # This target builds EVERY package for js/wasm, which is what the claim says.
 build-wasm-all:
 	GOOS=js GOARCH=wasm $(GO) build ./...
 
 test-wasm:
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/wasm
+	GOOS=js GOARCH=wasm $(GO) test -timeout=3m -exec="$(GO_WASM_EXEC)" ./hub/client
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./client/jsutil
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/host
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./game/audio/host ./client/browser ./internal/browserdom ./game/storage ./hub/socket ./engine/wasm
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./scene -run '^Test(InstanceStream|StreamWriter|Surface)'
 
 test-wasm-islands:
 	GOOS=js GOARCH=wasm $(GO) test -tags='gosx_tiny_runtime gosx_tiny_islands_only' -exec="$(GO_WASM_EXEC)" ./client/wasm
 
-# test-motion-parity: native↔WASM parity gate for the motion evaluator.
-# Runs TestGolden (and the full motion suite) under GOOS=js GOARCH=wasm so that
-# the native-generated golden corpus proves FMA/float parity across targets.
+# test-motion-parity: native↔WASM↔JavaScript parity gate for motion values.
+# The native-generated golden corpus proves evaluator parity across targets;
+# the bootstrap test runs every sample against the browser-side evaluator.
 test-motion-parity:
-	$(GO) test ./motion/
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
-	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
+	GOWORK=off $(GO) test ./motion/
+	GOWORK=off GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/ -run TestGolden -v
+	GOWORK=off GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
+	$(NODE) --test ./client/js/motion-parity.test.mjs
 
 # test-physics-parity: native↔WASM parity gate for the rigid body engine.
 # Replays the golden corpus under GOOS=js GOARCH=wasm and demands bit equality,
@@ -236,7 +368,11 @@ wasm-size-budget:
 	./scripts/check-wasm-size.sh
 
 test-e2e:
+ifdef E2E_SHARD
+	GOSX_CI_GO="$(GO)" $(GO) run ./internal/citest browser $(E2E_SHARD)
+else
 	$(GO) test -tags e2e -timeout 30m ./e2e
+endif
 
 # test-perf-browser runs the perf driver's own browser tests.
 #
@@ -259,17 +395,37 @@ test-e2e:
 test-perf-browser:
 	GOSX_REQUIRE_CHROME=1 $(GO) test -tags browser -timeout 10m ./perf/...
 
+# Requires OUROBOROS_SMOKE_BASELINE to point at a committed smoke artifact.
+# CI intentionally does not invoke this until that versioned browser capture lands.
+test-ouroboros-smoke:
+	$(SHELL) ./scripts/ouroboros-smoke-ci.sh
+
 # Build the deployable docs bundle and prove the production server can serve
 # the water route and its content-addressed Scene3D runtime assets.
 test-water-prod:
 	$(SHELL) ./scripts/prod-water-smoke.sh
 
 test-desktop:
-	$(GO) test ./desktop ./cmd/gosx -run 'Desktop|RunDesktop|NormalizeOptions|NewUnsupportedPlatform'
-	GOOS=windows GOARCH=amd64 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-amd64.test.exe ./desktop
-	GOOS=windows GOARCH=arm64 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-arm64.test.exe ./desktop
-	GOOS=windows GOARCH=amd64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
-	GOOS=windows GOARCH=arm64 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
+	GOWORK=off nice -n 10 $(GO) test ./desktop ./cmd/gosx -run 'Desktop|RunDesktop|NormalizeOptions|NewUnsupportedPlatform'
+	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-amd64.test.exe ./desktop
+	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-windows-arm64.test.exe ./desktop
+	GOWORK=off nice -n 10 $(GO) test ./desktop/sidecar
+	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-desktop-sidecar-windows-amd64.test.exe ./desktop/sidecar
+	GOWORK=off GOOS=windows GOARCH=amd64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-amd64.test.exe ./cmd/gosx
+	GOWORK=off GOOS=windows GOARCH=arm64 nice -n 10 $(GO) test -c -o $(TMPDIR)/gosx-cmd-windows-arm64.test.exe ./cmd/gosx
+
+# Windows-only. Run from WSL on a machine with Windows interop enabled.
+test-desktop-windows-smoke:
+	bash scripts/test-desktop-windows-smoke.sh
+
+# Runs the Windows smoke plus runtime selection, production input policy,
+# WebView2 arguments, HTML fullscreen, and executable-icon assertions.
+test-desktop-windows-shipping-smoke:
+	bash scripts/test-desktop-windows-smoke.sh --shipping-features
+
+# Verifies signed direct-download updates from WSL against a local Windows client.
+test-desktop-windows-update-smoke:
+	bash scripts/test-wb-update-check-windows.sh
 
 test-desktop-macos:
 	mkdir -p build/desktop-test
@@ -284,6 +440,20 @@ perf-budget:
 
 perf-budget-ci:
 	$(SHELL) ./scripts/perf-budget-ci.sh
+
+# wire-gate builds a fresh `gosx init` app (plus one counter island) and the
+# docs site for production, serves both, and checks every route in
+# perf/budgets/wire.json: bytes on the wire by type, request count, largest
+# inline script, and the compression, cache and cookie policies. No browser is
+# involved, so the numbers are deterministic for a given build.
+wire-gate:
+	$(SHELL) ./scripts/wire-gate.sh
+
+# wire-gate-update rewrites perf/budgets/wire.json to the current measurements.
+# Limits only move down; a raise needs `-allow-raise` and a reason in the
+# route's raiseReason or raise map, which the CI ratchet check enforces.
+wire-gate-update:
+	WIRE_GATE_MODE=update $(SHELL) ./scripts/wire-gate.sh
 
 test-water-profile-evidence:
 	$(NODE) --test scripts/water-profile-evidence.test.mjs
@@ -316,25 +486,93 @@ build-runtime:
 #      go.mod contains ANY replace directive; this is what made v0.27.0 a bad tag.
 #   3. tracked-filename scan - a stray file with a shell-redirect-style name broke
 #      Go module zip creation and forced the v0.29.0 retraction.
-#   4. module-zip smoke (`git archive --format=zip`) - reproduces the exact
+#   4. repository hygiene - rejects tracked build artifacts, top-level scratch
+#      outputs, and accidental binary/manifests that should not ship in the module.
+#   5. docs deploy identity and transaction - prevents stale docs revisions,
+#      overlapping deployment, or rollback from overwriting a newer successful
+#      docs release.
+#   6. governed release workflow topology - proves deploy-key material is scoped
+#      to the tag step and the retired release workflow stays retired.
+#   7. release tag ancestry regression - proves the default-branch lineage
+#      contract accepts canonical release commits and rejects side-branch tags.
+#   8. live release tag ancestry - when a release tag is present, that exact tag
+#      commit must already be reachable from the fresh remote default branch.
+#   9. perf budget CI wrapper - proves browser-lane failures preserve the
+#      partial report/server log without hiding budget failures.
+#   10. module-zip smoke (`git archive --format=zip`) - reproduces the exact
 #      operation that broke v0.29.0 so a zip-breaking commit fails fast.
+test-docs-deploy:
+	sh scripts/deploy-gosx-docs-concurrency-test.sh
+	sh scripts/deploy-gosx-docs-public-test.sh
+	sh scripts/check-gosx-docs-deploy-source-test.sh
+	sh scripts/check-gosx-docs-built-identity-test.sh
+	sh scripts/deploy-gosx-docs-order-test.sh
+	sh scripts/deploy-gosx-docs-gate-test.sh
+
+test-release-workflow:
+	sh scripts/check-release-workflow-topology.sh
+	PYTHONDONTWRITEBYTECODE=1 python3 scripts/package-browser-runtime-test.py
+
+test-release-ancestry:
+	sh scripts/check-release-tag-ancestry-test.sh
+
+test-repo-hygiene:
+	sh scripts/check-repo-hygiene.sh --root .
+	sh scripts/check-repo-hygiene-test.sh
+
+test-perf-budget-ci:
+	sh scripts/local-listen-overrides-test.sh
+	sh scripts/perf-budget-ci-test.sh
+	sh scripts/verify-perf-browser-identity-test.sh
+	sh scripts/check-perf-browser-pin-test.sh
+	PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts -p test_showcase_windows_cdp.py
+
 release-gate:
-	@echo "release-gate (1/4): go run ./cmd/gosx release check"
+	@echo "release-gate (1/10): go run ./cmd/gosx release check"
 	$(GO) run ./cmd/gosx release check
-	@echo "release-gate (2/4): go.mod replace-directive scan"
+	@echo "release-gate (2/10): go.mod replace-directive scan"
 	@if grep -E '^replace ' go.mod; then \
 		echo "release-gate: go.mod has a replace directive; 'go run mod@version' fails with any replace present (this is why v0.27.0 was a bad tag). Remove it before release."; \
 		exit 1; \
 	fi
-	@echo "release-gate (3/4): tracked-filename scan"
+	@echo "release-gate (3/10): tracked-filename scan"
 	@bad="$$(git ls-files | grep -E '[:"|<>?*[:cntrl:]]' || true)"; \
 	if [ -n "$$bad" ]; then \
 		echo "release-gate: tracked filenames contain characters Go's module zip format rejects (a file like this broke v0.29.0's module zip and forced its retraction):"; \
 		echo "$$bad"; \
 		exit 1; \
 	fi
-	@echo "release-gate (4/4): module-zip smoke (git archive --format=zip)"
+	@echo "release-gate (4/10): repository hygiene"
+	@$(MAKE) --no-print-directory test-repo-hygiene
+	@echo "release-gate (5/10): docs deploy identity and transaction regression"
+	@$(MAKE) --no-print-directory test-docs-deploy
+	@echo "release-gate (6/10): governed release workflow topology"
+	@$(MAKE) --no-print-directory test-release-workflow
+	@echo "release-gate (7/10): release tag ancestry regression"
+	@$(MAKE) --no-print-directory test-release-ancestry
+	@echo "release-gate (8/10): live release tag ancestry"
+	@sh scripts/check-release-tag-ancestry.sh --root .
+	@echo "release-gate (9/10): perf budget CI wrapper regression"
+	@$(MAKE) --no-print-directory test-perf-budget-ci
+	@echo "release-gate (10/10): module-zip smoke (git archive --format=zip)"
 	@git archive --format=zip -o /dev/null HEAD
 	@echo "release-gate: all gates passed"
 
-ci: fmt-check verify-danmuji test test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+ci: fmt-check verify-danmuji test test-telemetry test-race test-fuzz-smoke test-js test-editor test-wasm test-wasm-islands test-motion-parity test-physics-parity wasm-size-budget test-e2e test-perf-browser perf-budget-ci test-desktop test-desktop-macos build-cli build-desktop-windows build-desktop-macos build-runtime
+
+.PHONY: test-assetmeasure
+test-assetmeasure:
+	GOWORK=off go test ./internal/assetmeasure ./cmd/gosx -run 'Test(AssetMeasure|Sidecar|Size)'
+
+.PHONY: test-pagecaps
+test-pagecaps:
+	GOWORK=off go test ./internal/pagecaps ./cmd/gosx -run 'Test(PageCaps|Classify|Export.*Capabilities)'
+
+.PHONY: test-perf-manifest
+test-perf-manifest:
+	GOWORK=off go test ./buildmanifest -run TestPerfAsset
+
+.PHONY: test-perf-graph
+test-perf-graph:
+	GOWORK=off go test ./cmd/gosx ./buildmanifest ./island -run 'TestPerf(Graph|Asset)'
+	cd cmd/buildbootstrap && GOWORK=off go test -run TestPerfGraph

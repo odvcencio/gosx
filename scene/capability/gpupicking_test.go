@@ -3,6 +3,8 @@ package capability
 import (
 	"os"
 	"testing"
+
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 )
 
 // TestGPUPickingVerdictTracksMatrix pins the required-feature behavior without
@@ -52,12 +54,8 @@ func TestGPUPickingVerdictTracksMatrix(t *testing.T) {
 // re-introducing the original defect — a false cell over a working picker —
 // would have deleted this check instead of failing it.
 func TestGPUPickingRendererEvidence(t *testing.T) {
-	const rendererPath = "../../client/js/bootstrap-src/16a-scene-webgpu.js"
-	data, err := os.ReadFile(rendererPath)
-	if err != nil {
-		t.Fatalf("read WebGPU renderer at %s: %v", rendererPath, err)
-	}
-	source := string(data)
+	rendererPath := scene3drenderersource.BackendLabel("webgpu")
+	source := scene3drenderersource.ReadBackend(t, "webgpu")
 
 	evidenceFor(t, FeatureGPUPicking, BackendWebGPU).
 		needs(rendererPath, source,
@@ -74,7 +72,7 @@ func TestGPUPickingRendererEvidence(t *testing.T) {
 
 // TestGPUPickingWebGLEvidence records why the WebGL cell is true. Picking on
 // WebGL2 is not an ID-buffer read: setupScenePickInteractions in
-// 17-scene-input.js raycasts the scene bundle on the CPU. That function takes no
+// 17-scene-input.ts raycasts the scene bundle on the CPU. That function takes no
 // renderer argument, so it serves BOTH GPU backends identically. This test fails
 // if that shared, backend-neutral entry point disappears, because the WebGL cell
 // and the byte-for-byte parity claim both rest on it.
@@ -84,7 +82,7 @@ func TestGPUPickingRendererEvidence(t *testing.T) {
 // flipped to false — which would exclude WebGL2 from every interactive scene,
 // because gpu-picking is REQUIRED — silently removed this check.
 func TestGPUPickingWebGLEvidence(t *testing.T) {
-	const inputPath = "../../client/js/bootstrap-src/17-scene-input.js"
+	const inputPath = "../../client/js/bootstrap-src/17-scene-input.ts"
 	data, err := os.ReadFile(inputPath)
 	if err != nil {
 		t.Fatalf("read scene input at %s: %v", inputPath, err)
@@ -93,7 +91,7 @@ func TestGPUPickingWebGLEvidence(t *testing.T) {
 
 	evidenceFor(t, FeatureGPUPicking, BackendWebGL).
 		needs(inputPath, source,
-			"function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction)",
+			"function setupScenePickInteractions(canvas, props, readViewport, readSceneBundle, emitInteraction, interactiveEnabled, emitPointerPhase)",
 			"function sceneRaycastPick(",
 			"window.__gosx_scene3d_api.sceneRaycastPickGroup = sceneRaycastPickGroup",
 			"window.__gosx_scene3d_api.sceneRaycastPickInstancedMeshes = sceneRaycastPickInstancedMeshes",

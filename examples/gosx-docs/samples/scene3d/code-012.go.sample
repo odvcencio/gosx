@@ -1,0 +1,5 @@
+scene.FlatMaterial{Color: "#E8E8E8"}                             // unlit solid
+	scene.GhostMaterial{Color: "#D4AF37", Opacity: scene.Float(0.3)} // transparent
+	scene.GlassMaterial{Color: "#aaddff"}                            // refractive
+	scene.GlowMaterial{Color: "#fff1d6", Emissive: scene.Float(1)}   // additive
+	scene.MatteMaterial{Color: "#1a1a18"}                            // Lambertian

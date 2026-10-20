@@ -3,6 +3,7 @@ package docs
 import (
 	"encoding/json"
 	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/internal/scene3drenderersource"
 	"m31labs.dev/gosx/route"
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/selena/bindings"
@@ -11,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -18,6 +20,9 @@ func TestWaterDemoPreloadHead(t *testing.T) {
 	ctx := &route.RouteContext{}
 	addWaterDemoPreloadHead(ctx)
 	head := gosx.RenderHTML(ctx.Head())
+	if !strings.Contains(head, `rel="preload" as="image" type="image/webp" href="/demos/posters/water.webp" fetchpriority="high"`) {
+		t.Fatalf("preload head missing high-priority water poster in %s", head)
+	}
 	for _, href := range []string{
 		"/water/tiles.jpg",
 		"/water/xpos.jpg",
@@ -25,13 +30,6 @@ func TestWaterDemoPreloadHead(t *testing.T) {
 		"/water/ypos.jpg",
 		"/water/zpos.jpg",
 		"/water/zneg.jpg",
-	} {
-		want := `rel="preload" as="image" href="` + href + `" crossorigin="anonymous"`
-		if !strings.Contains(head, want) {
-			t.Fatalf("preload head missing %s in %s", want, head)
-		}
-	}
-	for _, href := range []string{
 		"/water/models/duck/Duck.gltf",
 		"/water/models/duck/Duck0.bin",
 		"/water/models/duck/DuckCM.png",
@@ -253,13 +251,9 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read page.css: %v", err)
 	}
-	runtimeBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/19b-scene-control-forms.js"))
+	runtimeBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/19b-scene-control-forms.ts"))
 	if err != nil {
 		t.Fatalf("read managed water controls runtime: %v", err)
-	}
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
-	if err != nil {
-		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
 	}
 	programBytes, err := os.ReadFile(filepath.Join(dir, "program.go"))
 	if err != nil {
@@ -268,7 +262,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 	page := string(pageBytes)
 	css := string(cssBytes)
 	runtimeSource := string(runtimeBytes)
-	webgpuSource := string(webgpuBytes)
+	webgpuSource := scene3drenderersource.ReadBackend(t, "webgpu")
 	program := string(programBytes)
 	if got := strings.Count(page, `y={10}`); got != 2 {
 		t.Fatalf("water page hidden object y count = %d, want 2 eagerly authored inactive meshes", got)
@@ -306,17 +300,17 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`Ported to GoSX by`,
 		`Scroll or pinch to zoom`,
 		`Press SPACEBAR to pause and unpause`,
-		`controlTargetY={-0.5}`,
+		`controlTargetY={0}`,
 		`capabilityTier={data.diagCapabilityTier}`,
 		`controlRotateMode="pixel-degrees"`,
 		`controlRotateDirection="grab"`,
 		`controlMinDistance={2}`,
 		`controlMaxDistance={10}`,
 		`controlPitchLimit={1.5707788735}`,
-		`x={1.38}`,
-		`y={1.52}`,
-		`z={2.87}`,
-		`fov={42}`,
+		`x={1.55}`,
+		`y={2.8}`,
+		`z={2.1}`,
+		`fov={38}`,
 		`interactionProfile="water-object-drop-orbit"`,
 		`interactionTarget="water-main"`,
 		`interactionObject="Sphere"`,
@@ -838,11 +832,8 @@ func readWaterWebGPURuntimeSource(t *testing.T) string {
 		t.Fatal("runtime.Caller failed")
 	}
 	dir := filepath.Dir(file)
-	webgpuBytes, err := os.ReadFile(filepath.Join(dir, "../../../../../client/js/bootstrap-src/16a-scene-webgpu.js"))
-	if err != nil {
-		t.Fatalf("read Scene3D WebGPU runtime: %v", err)
-	}
-	return string(webgpuBytes)
+	_ = dir
+	return scene3drenderersource.ReadBackend(t, "webgpu")
 }
 
 // TestWaterAtRestGatingEmitsStatsAttr is the M5 (water-parity-campaign)
@@ -870,8 +861,8 @@ func TestWaterAtRestGatingEmitsStatsAttr(t *testing.T) {
 		// folded into waterStateDirty) must wake the system instantly.
 		"if (waterStateDirty) {\n            system.waterRestEnergy = 1.0;\n            system.waterLastDisturbanceMS = currentNowMS;\n            system.waterAtRest = false;\n          }",
 		// The DOM/stats surface diag overlays and e2e tests observe.
-		`setEssentialAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
-		`mount.setAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-at-rest-systems", String(published.waterAtRestSystems || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-rest-substeps-skipped", String(published.waterRestSubstepsSkipped || 0));`,
 	} {
 		if !strings.Contains(webgpuSource, want) {
 			t.Fatalf("Scene3D WebGPU water runtime missing at-rest gating source %q", want)
@@ -901,8 +892,8 @@ func TestWaterUniformUploadDedupSkipsUnchangedFrames(t *testing.T) {
 		"device.queue.writeBuffer(system.uniformBuffer, 0, commitUniformData);",
 		"stats.waterUniformUploads += 1;",
 		"stats.waterUniformUploadsSkipped += 1;",
-		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
-		`mount.setAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads", String(published.waterUniformUploads || 0));`,
+		`queueWebGPUAttribute("data-gosx-scene3d-webgpu-water-uniform-uploads-skipped", String(published.waterUniformUploadsSkipped || 0));`,
 		// (b): the swapchain-reconfigure dirty check this audit verified
 		// (rather than needing to add).
 		"function configureWebGPUCanvas(canvas) {\n      var target = canvas || (gpuCtx && gpuCtx.canvas) || null;\n      var key = sceneWebGPUSurfaceKey(target);\n      if (key === configuredSurfaceKey) return false;",
@@ -1275,4 +1266,55 @@ func TestWaterQualityProfilesPreserveTruthfulFeatureCoverage(t *testing.T) {
 			previous = current
 		}
 	}
+}
+
+// The page loader writes per-request keys into the map it gets. That map must be
+// private to the request: a shared one crashed the live site under concurrent
+// load ("fatal error: concurrent map writes") and leaked one visitor's knobs
+// into another's page.
+func TestWaterDemoDataReturnsAPrivateCopyPerCall(t *testing.T) {
+	first, err := WaterDemoData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := WaterDemoData()
+	if err != nil {
+		t.Fatal(err)
+	}
+	first["diagDpr"] = 9.9
+	first["waterControlData"] = "replaced"
+	if _, leaked := second["diagDpr"]; leaked {
+		t.Fatal("a key written to one result appeared in another call's result")
+	}
+	if second["waterControlData"] == "replaced" {
+		t.Fatal("a replaced top-level value appeared in another call's result")
+	}
+	third, _ := WaterDemoData()
+	if _, leaked := third["diagDpr"]; leaked {
+		t.Fatal("the shared data was modified")
+	}
+}
+
+func TestWaterDemoDataIsSafeToWriteConcurrently(t *testing.T) {
+	var wg sync.WaitGroup
+	for worker := 0; worker < 32; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for i := 0; i < 50; i++ {
+				data, err := WaterDemoData()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				data["diagWorker"] = worker
+				data["diagIteration"] = i
+				if data["diagWorker"] != worker {
+					t.Errorf("worker %d read another request's value", worker)
+					return
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
 }

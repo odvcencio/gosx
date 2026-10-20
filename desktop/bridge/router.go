@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime/debug"
+	"sort"
 	"sync"
 	"time"
 )
@@ -216,6 +217,18 @@ func (r *Router) Unregister(name string) {
 	r.mu.Lock()
 	delete(r.methods, name)
 	r.mu.Unlock()
+}
+
+// MethodNames returns a sorted snapshot of registered method names.
+func (r *Router) MethodNames() []string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	names := make([]string, 0, len(r.methods))
+	for name := range r.methods {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
 }
 
 // Emit sends a host→page event with the given method name and payload.

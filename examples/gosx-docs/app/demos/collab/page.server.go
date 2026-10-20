@@ -20,6 +20,10 @@ var presenceRoster *roster
 
 func init() {
 	Hub = hub.New("collab")
+	Hub.MaxClients = 64
+	Hub.RequireOrigin = true
+	Hub.MaxMessagesPerSecond = 60
+	Hub.MaxMessageBurst = 120
 	doc = NewDoc(defaultDocText)
 	presenceRoster = newRoster()
 
@@ -52,7 +56,7 @@ func init() {
 		if err := json.Unmarshal(ctx.Data, &payload); err != nil {
 			return
 		}
-		textLen := len(doc.State().Text)
+		textLen := doc.UTF16Len()
 		offset := clampInt(payload.Offset, 0, textLen)
 		selEnd := clampInt(payload.SelEnd, 0, textLen)
 		evt, ok := presenceRoster.updateCursor(ctx.Client.ID, offset, selEnd)
@@ -67,11 +71,10 @@ func init() {
 	// Send the new client the current document state so they start in sync,
 	// assign it a stable identity, hand it any already-connected peers'
 	// cursors, and tell everyone (including this client) the new count.
-	Hub.On("join", func(ctx *hub.Context) {
+	synchronize := func(ctx *hub.Context, identity Identity) {
 		state := doc.State()
 		ctx.Hub.Send(ctx.Client.ID, "doc:update", state)
 
-		identity := presenceRoster.join(ctx.Client.ID)
 		ctx.Hub.Send(ctx.Client.ID, "presence:self", struct {
 			ID string `json:"id"`
 			Identity
@@ -81,7 +84,18 @@ func init() {
 			ctx.Hub.Send(ctx.Client.ID, "cursor:roster", cursors)
 		}
 
+		ctx.Hub.Send(ctx.Client.ID, "presence:count", PresenceEvent{Count: presenceRoster.count()})
+	}
+	Hub.On("join", func(ctx *hub.Context) {
+		synchronize(ctx, presenceRoster.join(ctx.Client.ID))
 		ctx.Hub.Broadcast("presence:count", PresenceEvent{Count: presenceRoster.count()})
+	})
+	// A reused connection does not join again after soft navigation. The
+	// framework asks for a fresh snapshot, identity and roster when remounted.
+	Hub.On("doc:sync", func(ctx *hub.Context) {
+		if identity, ok := presenceRoster.identity(ctx.Client.ID); ok {
+			synchronize(ctx, identity)
+		}
 	})
 
 	// leave — fires automatically when a client disconnects. Forget its
@@ -98,10 +112,15 @@ func init() {
 		"A deliberately simple last-write-wins document synchronized over one GoSX Hub.",
 		route.FileModuleOptions{
 			Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
-				ctx.Runtime().BindHub("collab", "/demos/collab/ws", []hydrate.HubBinding{})
 				state := doc.State()
+				if _, err := ctx.Runtime().BindHubDocument("collab", "/demos/collab/ws", hydrate.HubDocumentConfig{
+					RootID: "collab-editor", Version: state.Version,
+				}); err != nil {
+					return nil, err
+				}
 				return map[string]any{
 					"initialText":    state.Text,
+					"initialHTML":    state.HTML,
 					"initialVersion": state.Version,
 				}, nil
 			},

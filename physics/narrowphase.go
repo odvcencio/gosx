@@ -104,6 +104,8 @@ func collidePair(a, b *Collider) (ContactManifold, bool) {
 		return flipManifold(manifold), true
 	case a.Shape == ShapeCapsule && b.Shape == ShapeCapsule:
 		return collideCapsuleCapsule(a, b)
+	case a.Shape == ShapeCylinder && b.Shape == ShapeCylinder:
+		return collideCylinderCylinder(a, b)
 	case a.Shape == ShapePlane && b.Shape == ShapePlane:
 		// Two half-spaces overlap everywhere. There is no useful contact and
 		// the broadphase never pairs two immovable colliders anyway.

@@ -1,0 +1,38 @@
+.gsx-split {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+
+.gsx-split--vertical {
+  grid-template-columns: var(--gsx-split-a, 280px) auto minmax(0, 1fr);
+}
+
+.gsx-split--horizontal {
+  grid-template-rows: minmax(0, 1fr) auto var(--gsx-split-a, 240px);
+}
+
+.gsx-split > * {
+  min-width: 0;
+  min-height: 0;
+}
+
+.gsx-split__handle {
+  touch-action: none;
+  background: var(--gsx-color-border);
+}
+
+.gsx-split__handle[aria-orientation="vertical"] {
+  width: 8px;
+  cursor: col-resize;
+}
+
+.gsx-split__handle[aria-orientation="horizontal"] {
+  height: 8px;
+  cursor: row-resize;
+}
+
+.gsx-split__handle:focus-visible {
+  outline: 2px solid var(--gsx-color-focus);
+  outline-offset: -2px;
+}

@@ -1,0 +1,13 @@
+type Program struct {
+	Package    string
+	Imports    []Import
+	Components []Component
+	Nodes      []Node
+}
+
+type Component struct {
+	Name      string
+	PropsType string
+	Root      NodeID
+	Syntax    ComponentSyntax
+}

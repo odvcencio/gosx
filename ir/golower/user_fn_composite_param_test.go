@@ -1,13 +1,12 @@
-// Slice Y.D composite-parameter regression tests — pin Y.C's
-// retrospective handoff guarantee.
+// Composite-parameter regression tests.
 //
-// Y.C's retrospective documented: "OpFieldSet on a parameter-typed
-// receiver already propagates because Value.Map() is reference-
-// typed." Y.D inherits this verbatim — composite arguments are passed
-// by Value-by-value copy but their Fields/Items storage is shared, so
-// the callee's mutations land in the caller's storage.
+// OpFieldSet on a parameter-typed receiver already propagates because
+// Value.Map() is reference-typed. User-defined function calls inherit
+// this verbatim — composite arguments are passed by Value-by-value
+// copy but their Fields/Items storage is shared, so the callee's
+// mutations land in the caller's storage.
 //
-// The tests below pin this behavior so a future Y.E refactor (or any
+// The tests below pin this behavior so a future refactor (or any
 // VM change to Value semantics) doesn't silently regress it.
 
 package golower
@@ -20,7 +19,7 @@ import (
 
 // TestY_D_StructParamMutationPropagates verifies that a callee
 // mutating a struct param's field via OpFieldSet reflects back into
-// the caller's local — Y.C's retrospective Decision 2.
+// the caller's local.
 func TestY_D_StructParamMutationPropagates(t *testing.T) {
 	src := []byte(`package handlers
 

@@ -110,7 +110,9 @@ unit "partitioned list convergence scenarios" {
 		if strings.Join(leftValues, "|") != strings.Join(rightValues, "|") {
 			return false
 		}
-		return len(leftValues) == leftCount+rightCount
+		if len(leftValues) != leftCount+rightCount {
+			return false
+		}
 	}
 }
 

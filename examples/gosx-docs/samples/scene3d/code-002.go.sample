@@ -1,0 +1,3 @@
+func Load(ctx *route.RouteContext, page route.FilePage) (any, error) {
+	    return map[string]any{"scene": MyScene()}, nil
+	}

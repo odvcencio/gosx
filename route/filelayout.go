@@ -4,9 +4,12 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"html"
+	"m31labs.dev/gosx/internal/filepolicy"
+	"m31labs.dev/gosx/internal/htmlattr"
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 
@@ -30,9 +33,12 @@ import (
 // stale program. Filesystems with one-second time resolution can hit that; ext4
 // and APFS report nanoseconds and cannot.
 var gsxCompileCache struct {
-	mu    sync.RWMutex
-	progs map[string]*ir.Program
-	files map[string]gsxFileProgram
+	mu sync.RWMutex
+	// Allocation-heavy cold compiles share one process-wide slot. Cache hits
+	// bypass this lock; waiters recheck the content cache before compiling.
+	compileMu sync.Mutex
+	progs     map[string]*ir.Program
+	files     map[string]gsxFileProgram
 }
 
 // gsxFileProgram is one stat-keyed cache entry. It stores the compile error too
@@ -52,6 +58,14 @@ func init() {
 // loadCachedGSXProgram returns the compiled program for a .gsx file, reading
 // and compiling it only when the file changed since the last request.
 func loadCachedGSXProgram(path string) (*ir.Program, error) {
+	if filepolicy.Immutable() {
+		gsxCompileCache.mu.RLock()
+		entry, ok := gsxCompileCache.files[path]
+		gsxCompileCache.mu.RUnlock()
+		if ok {
+			return entry.prog, entry.err
+		}
+	}
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		// Stat failed. Read the bytes and fall back to the content hash.
@@ -61,7 +75,7 @@ func loadCachedGSXProgram(path string) (*ir.Program, error) {
 		}
 		prog, err := compileCachedGSX(data)
 		if err != nil {
-			return nil, fmt.Errorf("compile %s: %w", path, err)
+			return nil, fmt.Errorf("compile %s:%w", path, err)
 		}
 		return prog, nil
 	}
@@ -82,7 +96,7 @@ func loadCachedGSXProgram(path string) (*ir.Program, error) {
 	}
 	prog, compileErr := compileCachedGSX(data)
 	if compileErr != nil {
-		compileErr = fmt.Errorf("compile %s: %w", path, compileErr)
+		compileErr = fmt.Errorf("compile %s:%w", path, compileErr)
 	}
 
 	gsxCompileCache.mu.Lock()
@@ -112,6 +126,11 @@ type htmlSourceEntry struct {
 }
 
 func loadCachedHTMLSource(path string) (string, error) {
+	if filepolicy.Immutable() {
+		if entry, ok := htmlSourceCache.Load(path); ok {
+			return entry.(htmlSourceEntry).source, nil
+		}
+	}
 	info, statErr := os.Stat(path)
 	if statErr != nil {
 		data, err := os.ReadFile(path)
@@ -152,6 +171,15 @@ func compileCachedGSX(data []byte) (*ir.Program, error) {
 		return prog, nil
 	}
 	gsxCompileCache.mu.RUnlock()
+
+	gsxCompileCache.compileMu.Lock()
+	defer gsxCompileCache.compileMu.Unlock()
+	gsxCompileCache.mu.RLock()
+	prog, cached := gsxCompileCache.progs[hash]
+	gsxCompileCache.mu.RUnlock()
+	if cached {
+		return prog, nil
+	}
 
 	prog, err := gosx.Compile(data)
 	if err != nil {
@@ -270,6 +298,72 @@ type fileRenderOptions struct {
 	EvalEnv               fileRenderEnv
 	RequireReplacement    bool
 	Scene3DStyles         gosxcss.Scene3DStylesheet
+	// Profile installs an EXPERIMENTAL render-profile hook (gosx#185). A nil
+	// Profile reproduces today's rendering exactly, byte for byte. See
+	// RenderProfile. Only RenderProgramComponent sets this field, from
+	// ProgramRenderEnv.Profile: renderFileNode, the entry point a
+	// file-routed page or layout renders through, has no Profile field of
+	// its own to set it from, so a file-routed page or layout cannot
+	// install a render profile today (gosx#185 m6).
+	Profile *RenderProfile
+	// EntryProps supplies the typed props value for a strict component
+	// rendered as the render entry (gosx#226). Only RenderProgramComponent
+	// sets this field, from ProgramRenderEnv.Props: renderFileNode, the
+	// entry point a file-routed page or layout renders through, has no
+	// Props field of its own to set it from, so a file-routed page or
+	// layout still cannot render with typed root props — a file-routed
+	// entry's data comes from ctx.Data and a DataLoader, not a Go-typed
+	// caller. See renderFileProgramHTML's strict-entry branch.
+	EntryProps any
+	// SourceDir is the absolute directory of the .gsx file being rendered.
+	// A shared (./ or ../ prefixed) import resolves relative to it — see
+	// writeSharedComponent. ir.Program carries no reliable directory of its
+	// own at render time (Program.Dir is empty unless the build pipeline
+	// sets it, and the compiled-program cache keys on content hash alone,
+	// so two files with byte-identical content could share one cached
+	// Program and one wrong Dir — see loadCachedGSXProgram), so this field
+	// is how renderGSXFile threads the one directory it actually knows.
+	// Empty for a program rendered through RenderProgramComponent, which
+	// has no file path of its own to set it from: a shared call inside such
+	// a program fails clearly at render time rather than resolving against
+	// the wrong directory.
+	SourceDir string
+	// SourceFile locates render failures without mutating the shared program.
+	SourceFile string
+	// EntryChildren supplies the children node for a strict component
+	// rendered as the render entry (gosx#226, gosx#246). Only
+	// RenderProgramComponent sets this field, built from its own
+	// children ...gosx.Node parameter with gosx.Fragment: renderFileNode
+	// has no children parameter of its own to build it from, so a
+	// file-routed page or layout still cannot accept Go-supplied
+	// children — same limitation as EntryProps, for the same reason.
+	//
+	// The zero Node (EntryChildren.IsZero()) means "no children
+	// supplied", not "an empty children node": renderFileProgramHTML
+	// only binds the "children" scope value when this is non-zero, so a
+	// caller that never sets it — every existing caller before this
+	// field existed — reproduces the prior unresolved-identifier
+	// behavior byte for byte, not a bound empty Fragment. See
+	// renderFileProgramHTML's strict-entry branch.
+	EntryChildren gosx.Node
+	// EntrySlots supplies named-slot values for a strict component rendered
+	// as the render entry (gosx#249). Only RenderProgramComponent sets this
+	// field, from ProgramRenderEnv.Slots. Keyed by slot name ("Title", not
+	// "slotTitle" — see strictcomponent.SlotBindingName for the reserved
+	// identifier a name binds to).
+	//
+	// A nil or empty map means "no slots supplied", the same "take no new
+	// branch" contract EntryChildren's zero-Node sentinel keeps: every
+	// caller that predates this field reproduces prior behavior exactly.
+	// A key naming a slot comp's body does not declare (ir.Component.
+	// AcceptsSlot) fails closed with a descriptive error instead of
+	// silently rendering nothing — see renderFileProgramHTML's strict-entry
+	// branch, and validateStrictCalleeChildren's arity-rule precedent for
+	// why an unrecognized supply is an error rather than a silent no-op. A
+	// slot comp's body declares but this map does not supply stays
+	// unresolved, rendering empty, exactly the way an unsupplied
+	// {children} does today.
+	EntrySlots map[string]gosx.Node
 }
 
 func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
@@ -300,6 +394,11 @@ func renderFileNode(path string, opts fileRenderOptions) (gosx.Node, error) {
 }
 
 func renderGSXFile(path string, opts fileRenderOptions, scopeID string) (gosx.Node, error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			panic(renderErrorFile(panicError(recovered), path))
+		}
+	}()
 	prog, err := loadCachedGSXProgram(path)
 	if err != nil {
 		return gosx.Node{}, err
@@ -310,9 +409,19 @@ func renderGSXFile(path string, opts fileRenderOptions, scopeID string) (gosx.No
 		return gosx.Node{}, err
 	}
 
+	// opts.SourceDir resolves a shared (./ or ../ prefixed) import; see
+	// writeSharedComponent and fileRenderOptions.SourceDir's doc comment.
+	// path is absolute here (every caller of renderFileNode already resolves
+	// one — FileLayoutWithOptionsAndRegistry, and the file router's own page
+	// resolution), so filepath.Dir needs no further Abs call.
+	opts.SourceDir = filepath.Dir(path)
+	opts.SourceFile = path
+
 	htmlOut, replaced, err := renderFileProgramHTML(prog, component, opts)
 	if err != nil {
-		return gosx.Node{}, fmt.Errorf("render %s: %w", path, err)
+		// Programs are shared by content hash; filenames belong to this
+		// request's error rather than to the cached program.
+		return gosx.Node{}, renderErrorFile(err, path)
 	}
 	if opts.RequireReplacement && !replaced {
 		return gosx.Node{}, fmt.Errorf("layout %s is missing a <Slot /> or <Outlet /> component", path)
@@ -384,11 +493,17 @@ func scopeHTMLFragmentRoots(fragment, scopeID string) string {
 	attrValue := html.EscapeString(scopeID)
 
 	var out strings.Builder
+	out.Grow(len(fragment) + 64)
 	depth := 0
 	for i := 0; i < len(fragment); {
 		if fragment[i] != '<' {
-			out.WriteByte(fragment[i])
-			i++
+			next := strings.IndexByte(fragment[i:], '<')
+			if next < 0 {
+				out.WriteString(fragment[i:])
+				break
+			}
+			out.WriteString(fragment[i : i+next])
+			i += next
 			continue
 		}
 		switch {
@@ -504,10 +619,38 @@ func injectHTMLTagAttr(tag, name, value string) string {
 	return out.String()
 }
 
-func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML string) string {
+type fileComponentHTMLAttrs struct {
+	values        map[string]any
+	authoredNames map[string]bool
+}
+
+// defaultRenderedComponent emits the fallback markup for an unresolved
+// component reference: a <div data-gosx-component="Tag"> carrying every
+// attribute the reference supplied, so client-side hydration can find and
+// mount the real component.
+//
+// attrs iterates in sorted name order (gosx#188): Go's map iteration order
+// is randomized per run, so two renders of the same input previously
+// differed only in attribute order — byte-identity goldens, HTTP ETags, and
+// caches all churn on content that has not actually changed. Sorting names
+// before emission makes the output deterministic across runs and processes.
+func defaultRenderedComponent(tag string, attrs fileComponentHTMLAttrs, childrenHTML string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, `<div data-gosx-component="%s"`, html.EscapeString(tag))
-	for name, value := range attrs {
+	names := make([]string, 0, len(attrs.values))
+	for name := range attrs.values {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		if attrs.authoredNames[name] {
+			if !htmlattr.SafeAuthoredName(name) {
+				continue
+			}
+		} else if !htmlattr.SafeSpreadName(name) {
+			continue
+		}
+		value := attrs.values[name]
 		safeName := html.EscapeString(name)
 		switch v := value.(type) {
 		case bool:
@@ -515,9 +658,9 @@ func defaultRenderedComponent(tag string, attrs map[string]any, childrenHTML str
 				fmt.Fprintf(&b, " %s", safeName)
 			}
 		case string:
-			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(v))
+			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(htmlattr.FilterURL(name, v)))
 		default:
-			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(fmt.Sprint(v)))
+			fmt.Fprintf(&b, ` %s="%s"`, safeName, html.EscapeString(htmlattr.FilterURL(name, fmt.Sprint(v))))
 		}
 	}
 	b.WriteByte('>')

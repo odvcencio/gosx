@@ -36,13 +36,18 @@ func TestWriteFindingMessage(t *testing.T) {
 }
 
 func TestQueryMessage(t *testing.T) {
-	ws := New(Options{Name: "test", Dim: 4, BitWidth: 2})
-	ws.HandleWriteFinding(FindingMessage{
+	// This handler fixture needs reproducible approximate rankings.
+	ws := New(Options{Name: "test", Dim: 4, BitWidth: 2, Seed: 1})
+	if err := ws.HandleWriteFinding(FindingMessage{
 		ID: "f1", Vector: []float32{1, 0, 0, 0}, Text: "pattern A", Agent: "oak",
-	})
-	ws.HandleWriteFinding(FindingMessage{
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ws.HandleWriteFinding(FindingMessage{
 		ID: "f2", Vector: []float32{0, 1, 0, 0}, Text: "pattern B", Agent: "birch",
-	})
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	results, err := ws.HandleQuery(QueryMessage{
 		Vector: []float32{1, 0, 0, 0},
@@ -56,6 +61,9 @@ func TestQueryMessage(t *testing.T) {
 	}
 	if results[0].ID != "f1" {
 		t.Errorf("top result ID = %q want %q", results[0].ID, "f1")
+	}
+	if results[0].Text != "pattern A" {
+		t.Errorf("top result text = %q want %q", results[0].Text, "pattern A")
 	}
 }
 

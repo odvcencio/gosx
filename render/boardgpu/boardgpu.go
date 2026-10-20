@@ -97,7 +97,7 @@ func attachBoardFillMaterials(b rootengine.RenderBundle) rootengine.RenderBundle
 		// One immutable layout map shared by every board material (and every
 		// bundle) — it describes the shader, not the instance, and nothing
 		// downstream mutates it: the marshal path only reads, and the JS scene
-		// path clones on ingest (13-scene-material.js sceneCloneData).
+		// path clones on ingest (13-scene-material.ts sceneCloneData).
 		m.ShaderLayout = fill.ShaderLayout
 		if rgb, ok := boardFillBaseColor(m.Color); ok {
 			m.CustomUniforms = map[string]any{"baseColor": rgb}
@@ -264,7 +264,7 @@ func appendBoardSpriteQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 
 // AttachBoardGPUGeometry makes a Canvas2D board bundle GPU-renderable without a
 // new pipeline. The board's rects live in bundle.Objects as a 2D-painter display
-// list (kind/bounds/materialIndex) consumed by 26b1-canvas2d-painter.js, but the
+// list (kind/bounds/materialIndex) consumed by 26b1-canvas2d-painter.ts, but the
 // GPU scene renderers (native render/bundle's drawObjectMeshes and the JS 16a
 // renderer) draw RenderObjects from the bundle's World* vertex buffers via
 // VertexOffset/VertexCount — which the painter bundle leaves empty. This expands
@@ -273,12 +273,12 @@ func appendBoardSpriteQuads(b *rootengine.RenderBundle, g *boardGeometry) {
 // appends one quad per b.Lines segment (appendBoardLineQuads) and one per
 // b.Sprites record (appendBoardSpriteQuads), each with its own RenderObject.
 // Objects land in painter z-order — rects, then lines, then sprites — which is
-// the order the GPU object paths draw them in (labels stay wire-only; M1 slice
-// 2C renders them as a DOM overlay). ObjectCount is kept in sync.
+// the order the GPU object paths draw them in (labels stay wire-only; they
+// render as a DOM overlay). ObjectCount is kept in sync.
 //
 // DRY: the rect geometry has ONE source — the object's existing Bounds (already
 // computed by package vm). Lighting/depth stay off via the bundle's
-// OrthoCamera2D camera (ADR 0004); rect/line color comes from the Selena
+// OrthoCamera2D camera; rect/line color comes from the Selena
 // BoardFill shader this also attaches to the flat materials
 // (attachBoardFillMaterials) — custom WGSL the 16a WebGPU renderer draws unlit
 // at full brightness, with the flat/Unlit Color kept alongside for the native

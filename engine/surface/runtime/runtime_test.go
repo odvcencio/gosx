@@ -19,7 +19,7 @@ import (
 )
 
 // TestBootstrapKindTableMatchesRuntimeRuntime guards the symbol table that
-// the JS bootstrap (engine/surface/runtime/bootstrap.js) uses against the
+// typed browser bootstrap (engine/surface/runtime/bootstrap.ts) uses against the
 // canonical table in runtime.go lines 18-37. If these drift, surface events
 // silently route to the wrong Go handler — this test catches that.
 func TestBootstrapKindTableMatchesRuntimeRuntime(t *testing.T) {
@@ -29,33 +29,33 @@ func TestBootstrapKindTableMatchesRuntimeRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parse runtime.go kinds: %v", err)
 	}
-	jsTable, err := parseBootstrapJSKinds(filepath.Join(pkgDir, "bootstrap.js"))
+	jsTable, err := parseBootstrapJSKinds(filepath.Join(pkgDir, "bootstrap.ts"))
 	if err != nil {
-		t.Fatalf("parse bootstrap.js KIND_TABLE: %v", err)
+		t.Fatalf("parse bootstrap.ts KIND_TABLE: %v", err)
 	}
 
 	if len(goTable) == 0 {
 		t.Fatal("runtime.go: no kinds parsed from the canonical table — check the comment grammar")
 	}
 	if len(jsTable) == 0 {
-		t.Fatal("bootstrap.js: no kinds parsed from KIND_TABLE")
+		t.Fatal("bootstrap.ts: no kinds parsed from KIND_TABLE")
 	}
 
 	// Every Go kind must appear in JS with the same numeric value.
 	for name, goVal := range goTable {
 		jsVal, ok := jsTable[name]
 		if !ok {
-			t.Errorf("bootstrap.js missing kind %q (runtime.go: %d)", name, goVal)
+			t.Errorf("bootstrap.ts missing kind %q (runtime.go: %d)", name, goVal)
 			continue
 		}
 		if jsVal != goVal {
-			t.Errorf("kind %q: runtime.go=%d, bootstrap.js=%d", name, goVal, jsVal)
+			t.Errorf("kind %q: runtime.go=%d, bootstrap.ts=%d", name, goVal, jsVal)
 		}
 	}
 	// And the JS table must not invent extras (they would route to nothing on the Go side).
 	for name, jsVal := range jsTable {
 		if _, ok := goTable[name]; !ok {
-			t.Errorf("bootstrap.js declares kind %q=%d not present in runtime.go", name, jsVal)
+			t.Errorf("bootstrap.ts declares kind %q=%d not present in runtime.go", name, jsVal)
 		}
 	}
 }

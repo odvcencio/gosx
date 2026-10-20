@@ -1,16 +1,20 @@
 package server
 
 import (
+	"m31labs.dev/gosx/internal/filepolicy"
+	"mime"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"m31labs.dev/gosx/buildmanifest"
+	runtimehost "m31labs.dev/gosx/client/runtime/host"
+	"m31labs.dev/gosx/internal/httpcache"
+	"m31labs.dev/gosx/internal/httpcompress"
 	"m31labs.dev/gosx/island"
 )
 
@@ -18,7 +22,19 @@ import (
 // bootstrap.js has not been built yet (e.g. during `go run` development).
 const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
 (function(){
-  window.__gosx = window.__gosx || { version: "dev", islands: new Map(), engines: new Map(), hubs: new Map(), controllers: new Map(), textLayouts: new Map(), sharedSignals: { values: new Map(), subscribers: new Map() }, input: {}, ready: true };
+  var gosx = window.__gosx || {};
+  window.__gosx = gosx;
+  if (!gosx.navigation && window.__gosx_page_nav) gosx.navigation = window.__gosx_page_nav;
+  gosx.version = "dev";
+  gosx.islands = new Map();
+  gosx.computeIslands = new Map();
+  gosx.engines = new Map();
+  gosx.hubs = new Map();
+  gosx.controllers = new Map();
+  gosx.textLayouts = new Map();
+  gosx.sharedSignals = { values: new Map(), subscribers: new Map(), nextID: 0 };
+  gosx.input = { pending: null, frameHandle: 0, providers: Object.create(null) };
+  gosx.ready = false;
   window.__gosx_engine_factories = window.__gosx_engine_factories || Object.create(null);
   window.__gosx_register_engine_factory = window.__gosx_register_engine_factory || function(name, factory) { window.__gosx_engine_factories[name] = factory; };
   // Mount engines from page manifest
@@ -39,6 +55,7 @@ const bootstrapStub = `// Minimal bootstrap stub — gosx build not yet run
       } catch(ex) {}
     });
   } catch(ex) {}
+  gosx.ready = true;
 })();
 `
 
@@ -54,6 +71,17 @@ type runtimeManifestCache struct {
 func (a *App) SetRuntimeRoot(root string) {
 	a.runtimeRoot = strings.TrimSpace(root)
 	island.SetManifestRoot(a.runtimeRoot)
+}
+
+// GoWASMURL returns the immutable URL of a named build.goWASM application
+// module. It uses the configured runtime root and cached build manifest.
+// Missing manifests or names return an empty string, as in an unbuilt app.
+func (a *App) GoWASMURL(name string) string {
+	manifest, ok := a.runtimeBuildManifest(a.effectiveRuntimeRoot())
+	if !ok {
+		return ""
+	}
+	return manifest.GoWASMURL("/gosx/assets", name)
 }
 
 func (a *App) effectiveRuntimeRoot() string {
@@ -97,6 +125,10 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 
 	// Embedded runtime assets resolve before (and independently of) the
 	// runtime asset root.
+	if _, ok := runtimehost.NavigationRuntimeAssetHash("/gosx/" + name); ok {
+		a.serveNavigationRuntime(w, r)
+		return
+	}
 	if name == "devtools-lantern.js" {
 		serveDevtoolsLantern(w, r)
 		return
@@ -120,17 +152,15 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if fsPath, ok := runtimeManifestDirectAssetPath(root, name); ok {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFile(w, r, fsPath)
+		serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
 	if version := strings.TrimSpace(r.URL.Query().Get("v")); version != "" {
 		if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			MarkObservedRequest(r, "runtime", "/gosx/"+name)
-			serveRuntimeFile(w, r, fsPath)
+			serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
 			return
 		}
 	}
@@ -138,14 +168,13 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	if fsPath, ok := runtimeCompatSourcePath(root, name); ok {
 		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFile(w, r, fsPath)
+		serveRuntimeFileWithCompression(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
 	if fsPath, ok := a.runtimeCompatBuiltPath(root, name); ok {
-		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		MarkObservedRequest(r, "runtime", "/gosx/"+name)
-		serveRuntimeFile(w, r, fsPath)
+		serveImmutableRuntimeFile(w, r, fsPath, !a.compressionOff)
 		return
 	}
 
@@ -160,20 +189,39 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+func serveImmutableRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
+	setRuntimeContentType(w.Header(), fsPath)
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", mime.TypeByExtension(filepath.Ext(fsPath)))
+	}
+	httpcache.MarkImmutableAsset(w, r)
+	serveRuntimeFileWithCompression(w, r, fsPath, compression)
+}
+
 func serveRuntimeFile(w http.ResponseWriter, r *http.Request, fsPath string) {
-	if requestAcceptsBrotli(r) {
+	serveRuntimeFileWithCompression(w, r, fsPath, true)
+}
+
+func serveRuntimeFileWithCompression(w http.ResponseWriter, r *http.Request, fsPath string, compression bool) {
+	// Preserve the media type of a compiled program when serving its compressed
+	// sidecar; otherwise ServeFile infers a type from the .gz or .br filename.
+	if strings.EqualFold(filepath.Ext(fsPath), ".gxi") {
+		setRuntimeContentType(w.Header(), fsPath)
+	}
+	if compression {
+		addAcceptEncodingVary(w.Header())
+	}
+	if compression && canServeCompressedFile(r) && requestAcceptsBrotli(r) {
 		if brPath := fsPath + ".br"; isFile(brPath) {
 			w.Header().Set("Content-Encoding", "br")
-			w.Header().Add("Vary", "Accept-Encoding")
 			setRuntimeContentType(w.Header(), fsPath)
 			http.ServeFile(w, r, brPath)
 			return
 		}
 	}
-	if requestAcceptsGzip(r) {
+	if compression && canServeCompressedFile(r) && requestAcceptsGzip(r) {
 		if gzPath := fsPath + ".gz"; isFile(gzPath) {
 			w.Header().Set("Content-Encoding", "gzip")
-			w.Header().Add("Vary", "Accept-Encoding")
 			setRuntimeContentType(w.Header(), fsPath)
 			http.ServeFile(w, r, gzPath)
 			return
@@ -194,29 +242,7 @@ func requestAcceptsEncoding(r *http.Request, encoding string) bool {
 	if r == nil {
 		return false
 	}
-	encoding = strings.ToLower(strings.TrimSpace(encoding))
-	for _, part := range strings.Split(r.Header.Get("Accept-Encoding"), ",") {
-		fields := strings.Split(part, ";")
-		token := strings.ToLower(strings.TrimSpace(fields[0]))
-		if token == "" {
-			continue
-		}
-		if token != encoding {
-			continue
-		}
-		for _, param := range fields[1:] {
-			key, value, ok := strings.Cut(strings.TrimSpace(param), "=")
-			if !ok || !strings.EqualFold(strings.TrimSpace(key), "q") {
-				continue
-			}
-			q, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
-			if err == nil && q <= 0 {
-				return false
-			}
-		}
-		return true
-	}
-	return false
+	return httpcompress.Accepts(strings.Join(r.Header.Values("Accept-Encoding"), ","), encoding)
 }
 
 func setRuntimeContentType(h http.Header, fsPath string) {
@@ -224,6 +250,8 @@ func setRuntimeContentType(h http.Header, fsPath string) {
 		return
 	}
 	switch strings.ToLower(filepath.Ext(fsPath)) {
+	case ".gxi":
+		h.Set("Content-Type", "application/octet-stream")
 	case ".wasm":
 		h.Set("Content-Type", "application/wasm")
 	case ".js":
@@ -256,24 +284,31 @@ func runtimeManifestDirectAssetPath(root, name string) (string, bool) {
 func runtimeCompatSourcePath(root, name string) (string, bool) {
 	buildDir := filepath.Join(root, "build")
 	candidates := map[string]string{
-		"runtime.wasm":                         filepath.Join(buildDir, "gosx-runtime.wasm"),
-		"runtime-islands.wasm":                 filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
-		"wasm_exec.js":                         filepath.Join(buildDir, "wasm_exec.js"),
-		"standard-go-wasm_exec.js":             filepath.Join(buildDir, "standard-go-wasm_exec.js"),
-		"bootstrap.js":                         filepath.Join(buildDir, "bootstrap.js"),
-		"bootstrap-lite.js":                    filepath.Join(buildDir, "bootstrap-lite.js"),
-		"bootstrap-runtime.js":                 filepath.Join(buildDir, "bootstrap-runtime.js"),
-		"bootstrap-feature-islands.js":         filepath.Join(buildDir, "bootstrap-feature-islands.js"),
-		"bootstrap-feature-engines.js":         filepath.Join(buildDir, "bootstrap-feature-engines.js"),
-		"bootstrap-feature-hubs.js":            filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
-		"bootstrap-feature-controllers.js":     filepath.Join(buildDir, "bootstrap-feature-controllers.js"),
-		"bootstrap-feature-textlayout.js":      filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
-		"bootstrap-feature-scene3d.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
-		"bootstrap-feature-scene3d-command.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
-		"patch.js":                             filepath.Join(buildDir, "patch.js"),
-		"hls.min.js":                           filepath.Join(buildDir, "hls.min.js"),
-		"stripe-bridge.js":                     filepath.Join(buildDir, "stripe-bridge.js"),
-		"relay.js":                             filepath.Join(buildDir, "relay.js"),
+		"runtime.wasm":                                 filepath.Join(buildDir, "gosx-runtime.wasm"),
+		"runtime-islands.wasm":                         filepath.Join(buildDir, "gosx-runtime-islands.wasm"),
+		"runtime-core.wasm":                            filepath.Join(buildDir, "gosx-runtime-core.wasm"),
+		"runtime-engine.wasm":                          filepath.Join(buildDir, "gosx-runtime-engine.wasm"),
+		"runtime-collab.wasm":                          filepath.Join(buildDir, "gosx-runtime-collab.wasm"),
+		"wasm_exec.js":                                 filepath.Join(buildDir, "wasm_exec.js"),
+		"standard-go-wasm_exec.js":                     filepath.Join(buildDir, "standard-go-wasm_exec.js"),
+		"bootstrap.js":                                 filepath.Join(buildDir, "bootstrap.js"),
+		"bootstrap-lite.js":                            filepath.Join(buildDir, "bootstrap-lite.js"),
+		"bootstrap-runtime.js":                         filepath.Join(buildDir, "bootstrap-runtime.js"),
+		"bootstrap-feature-islands.js":                 filepath.Join(buildDir, "bootstrap-feature-islands.js"),
+		"bootstrap-feature-engines.js":                 filepath.Join(buildDir, "bootstrap-feature-engines.js"),
+		"bootstrap-feature-hubs.js":                    filepath.Join(buildDir, "bootstrap-feature-hubs.js"),
+		"bootstrap-feature-controllers.js":             filepath.Join(buildDir, "bootstrap-feature-controllers.js"),
+		"bootstrap-controller-input.js":                filepath.Join(buildDir, "bootstrap-controller-input.js"),
+		"bootstrap-feature-textlayout.js":              filepath.Join(buildDir, "bootstrap-feature-textlayout.js"),
+		"bootstrap-feature-scene3d.js":                 filepath.Join(buildDir, "bootstrap-feature-scene3d.js"),
+		"bootstrap-feature-scene3d-command.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-command.js"),
+		"bootstrap-feature-scene3d-experience.js":      filepath.Join(buildDir, "bootstrap-feature-scene3d-experience.js"),
+		"bootstrap-feature-scene3d-hydrate.js":         filepath.Join(buildDir, "bootstrap-feature-scene3d-hydrate.js"),
+		"bootstrap-feature-scene3d-instance-stream.js": filepath.Join(buildDir, "bootstrap-feature-scene3d-instance-stream.js"),
+		"patch.js":         filepath.Join(buildDir, "patch.js"),
+		"hls.min.js":       filepath.Join(buildDir, "hls.min.js"),
+		"stripe-bridge.js": filepath.Join(buildDir, "stripe-bridge.js"),
+		"relay.js":         filepath.Join(buildDir, "relay.js"),
 	}
 	if direct, ok := candidates[name]; ok && isFile(direct) {
 		return direct, true
@@ -317,7 +352,17 @@ func runtimeCompatSourcePath(root, name string) (string, bool) {
 	return "", false
 }
 
+// runtimeCompatBuiltPath maps an unhashed /gosx/ runtime name to its
+// content-hashed build output. It reads build.json from the runtime root, or
+// from root/dist when the app runs from its project root: the same order the
+// island renderer uses to pick hashed URLs, so every URL a page can fall back
+// to resolves through the manifest the page was rendered from.
 func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
+	if !isFile(filepath.Join(root, "build.json")) {
+		if distRoot := filepath.Join(root, "dist"); isFile(filepath.Join(distRoot, "build.json")) {
+			root = distRoot
+		}
+	}
 	manifest, ok := a.runtimeBuildManifest(root)
 	if !ok {
 		return "", false
@@ -332,6 +377,12 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 			return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASM.File)
 		}
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMIslands.File)
+	case "runtime-core.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "core")
+	case "runtime-engine.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "engine")
+	case "runtime-collab.wasm":
+		return runtimeManifestVariantAssetPath(assetsDir, manifest, "collab")
 	case "wasm_exec.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.WASMExec.File)
 	case "standard-go-wasm_exec.js":
@@ -356,12 +407,18 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureHubs.File)
 	case "bootstrap-feature-controllers.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureControllers.File)
+	case "bootstrap-controller-input.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapControllerInput.File)
 	case "bootstrap-feature-textlayout.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureTextlayout.File)
 	case "bootstrap-feature-scene3d.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3D.File)
 	case "bootstrap-feature-scene3d-command.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCommand.File)
+	case "bootstrap-feature-scene3d-experience.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DExperience.File)
+	case "bootstrap-feature-scene3d-hydrate.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DHydrate.File)
 	case "bootstrap-feature-scene3d-webgpu.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWebGPU.File)
 	case "bootstrap-feature-scene3d-webgl.js":
@@ -372,8 +429,24 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DAnimation.File)
 	case "bootstrap-feature-scene3d-compute.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DCompute.File)
+	case "bootstrap-feature-scene3d-walk.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DWalk.File)
+	case "bootstrap-feature-scene3d-model-preparation.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DModelPreparation.File)
+	case "bootstrap-feature-scene3d-particle-burst.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DParticleBurst.File)
+	case "bootstrap-feature-scene3d-zoom.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DZoom.File)
+	case "bootstrap-feature-scene3d-timeline.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DTimeline.File)
+	case "bootstrap-feature-scene3d-vessel.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DVessel.File)
+	case "bootstrap-feature-scene3d-ocean-query.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DOceanQuery.File)
 	case "bootstrap-feature-scene3d-decompress.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
+	case "bootstrap-feature-scene3d-instance-stream.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DInstanceStream.File)
 	case "patch.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Patch.File)
 	case "hls.min.js":
@@ -382,6 +455,13 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.StripeBridge.File)
 	case "relay.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.Relay.File)
+	}
+
+	// Opt-in feature chunks are listed by name in build.json runtime.features.
+	if featureName, ok := buildmanifest.FeatureChunkName(name); ok {
+		if asset, found := manifest.Runtime.Features[featureName]; found {
+			return runtimeManifestAssetPath(assetsDir, "runtime", asset.File)
+		}
 	}
 
 	if strings.HasPrefix(name, "islands/") {
@@ -399,6 +479,17 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func runtimeManifestVariantAssetPath(assetsDir string, manifest *buildmanifest.Manifest, variant string) (string, bool) {
+	if manifest == nil {
+		return "", false
+	}
+	asset, ok := manifest.Runtime.WASMVariants[strings.TrimSpace(variant)]
+	if !ok {
+		return "", false
+	}
+	return runtimeManifestAssetPath(assetsDir, "runtime", asset.File)
 }
 
 func runtimeManifestAssetPath(assetsDir, bucket, file string) (string, bool) {
@@ -424,6 +515,17 @@ func (a *App) runtimeBuildManifest(root string) (*buildmanifest.Manifest, bool) 
 	if a == nil {
 		return nil, false
 	}
+	runtimeMetaInitMu.Lock()
+	cache := a.runtimeMeta
+	runtimeMetaInitMu.Unlock()
+	if cache != nil && filepolicy.Immutable() {
+		cache.mu.Lock()
+		manifest, cacheRoot := cache.manifest, cache.root
+		cache.mu.Unlock()
+		if manifest != nil && cacheRoot == root {
+			return manifest, true
+		}
+	}
 	manifestPath := filepath.Join(root, "build.json")
 	info, err := os.Stat(manifestPath)
 	if err != nil || info.IsDir() {
@@ -434,7 +536,7 @@ func (a *App) runtimeBuildManifest(root string) (*buildmanifest.Manifest, bool) 
 	if a.runtimeMeta == nil {
 		a.runtimeMeta = &runtimeManifestCache{}
 	}
-	cache := a.runtimeMeta
+	cache = a.runtimeMeta
 	runtimeMetaInitMu.Unlock()
 
 	modTime := info.ModTime().UTC()

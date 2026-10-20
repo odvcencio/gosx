@@ -1,0 +1,13 @@
+{
+  "package": "boytacean",
+  "version": "0.13.2",
+  "source": "https://github.com/joamag/boytacean",
+  "artifact": "https://registry.npmjs.org/boytacean/-/boytacean-0.13.2.tgz",
+  "artifactSHA256": "8d5826e22ac4496ef8dc95503ec82d2054d5452e620a70eb932dbc107c4a8bd3",
+  "license": "Apache-2.0",
+  "files": {
+    "boytacean_bg.wasm": "a1abc3f2f53bae2b02e504910ae352f79f584e3a00b5b0fd60d630c93a2f0b7b",
+    "LICENSE": "ca272f2300291bb93ed90505cfe7605bd0174b4fcfcc7931ff1aa350f8e0de89",
+    "boytacean.js": "fb861d4338c28d6de991c4e366ae09646487d26827af0f60df65d62ef71b708c"
+  }
+}

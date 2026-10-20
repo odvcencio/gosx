@@ -27,9 +27,10 @@ type islandProgram struct {
 // broadcasts the matching SSE events.
 //
 // Classification (scoped to the Phase-0 hot-swap seam):
-//   - If every changed path is an island .gsx that recompiles to one or more
-//     island programs, broadcast one "program" event per island component and
-//     do NOT reload, and do NOT run OnChange (no app rebuild/restart). The
+//   - If every changed path is an island-only .gsx that recompiles to one or
+//     more island programs and declares no server components, broadcast one
+//     "program" event per island component and do NOT reload, and do NOT run
+//     OnChange (no app rebuild/restart). The
 //     client routes each "program" event to __gosx_reload_program, which
 //     hot-swaps the live island in place (signal state intact) — no
 //     window.location.reload(). Skipping the restart is what keeps the swap
@@ -46,6 +47,32 @@ type islandProgram struct {
 // -> component). A fully-general changed-file -> runtime-islandID mapping (and a
 // paired "patch"-only path) is broader than the Phase-0 seam and is deferred.
 func (s *Server) emitChange(paths []string) {
+	if err := s.runPreflightChange(paths); err != nil {
+		s.recordBuildError(err)
+		s.setQuarantined(true)
+		s.logf("change preflight failed: %v", err)
+		s.broadcast("build-error", map[string]any{
+			"error": err.Error(),
+			"time":  time.Now().Format(time.RFC3339Nano),
+		})
+		return
+	}
+	if s.isQuarantined() {
+		if err := s.runOnChange(); err != nil {
+			s.recordBuildError(err)
+			s.logf("quarantined change recovery failed: %v", err)
+			s.broadcast("build-error", map[string]any{
+				"error": err.Error(),
+				"time":  time.Now().Format(time.RFC3339Nano),
+			})
+			return
+		}
+		s.setQuarantined(false)
+		s.markBuilt()
+		s.logf("strict source recovered, restarting app and reloading clients")
+		s.broadcastReload("strict_recovered")
+		return
+	}
 	programs, fullReload, compileErr := s.classifyChange(paths)
 
 	if compileErr != nil {
@@ -91,6 +118,25 @@ func (s *Server) emitChange(paths []string) {
 			"time":      time.Now().Format(time.RFC3339Nano),
 		})
 	}
+}
+
+func (s *Server) runPreflightChange(paths []string) error {
+	if s.PreflightChange == nil {
+		return nil
+	}
+	return s.PreflightChange(append([]string(nil), paths...))
+}
+
+func (s *Server) setQuarantined(quarantined bool) {
+	s.mu.Lock()
+	s.quarantined = quarantined
+	s.mu.Unlock()
+}
+
+func (s *Server) isQuarantined() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.quarantined
 }
 
 // restageIslandProgram rewrites the staged build/islands/<Component>.json so the
@@ -168,9 +214,15 @@ func (s *Server) classifyChange(paths []string) (programs []islandProgram, fullR
 			// declared is gone. Reload so the page reflects its removal.
 			return nil, true, nil
 		}
-		compiled, compileErr := compileIslandPrograms(path)
+		compiled, serverBearing, compileErr := compileChangedGSX(path)
 		if compileErr != nil {
 			return nil, false, compileErr
+		}
+		if serverBearing {
+			// Replacing only the island bytecode would leave co-located server
+			// component code stale in the running Go process. Conservatively
+			// rebuild/restart the whole app for mixed or server-bearing files.
+			return nil, true, nil
 		}
 		if len(compiled) == 0 {
 			// A .gsx with no island components (e.g. a server page template)
@@ -187,29 +239,39 @@ func (s *Server) classifyChange(paths []string) (programs []islandProgram, fullR
 // lowering compileDevIslands performs at full-build time, so a hot-swapped
 // program is byte-identical to what a fresh page load would fetch.
 func compileIslandPrograms(path string) ([]islandProgram, error) {
+	programs, _, err := compileChangedGSX(path)
+	return programs, err
+}
+
+// compileChangedGSX returns the island programs plus whether the same source
+// declares any server component. Only a source whose component set is purely
+// islands is safe for the no-restart hot-swap path.
+func compileChangedGSX(path string) ([]islandProgram, bool, error) {
 	source, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", path, err)
+		return nil, false, fmt.Errorf("read %s: %w", path, err)
 	}
 	irProg, err := gosx.Compile(source)
 	if err != nil {
-		return nil, fmt.Errorf("compile %s: %w", path, err)
+		return nil, false, fmt.Errorf("compile %s: %w", path, err)
 	}
 
 	var out []islandProgram
+	serverBearing := false
 	for i, comp := range irProg.Components {
 		if !comp.IsIsland {
+			serverBearing = true
 			continue
 		}
 		isl, err := ir.LowerIsland(irProg, i)
 		if err != nil {
-			return nil, fmt.Errorf("lower island %s in %s: %w", comp.Name, path, err)
+			return nil, false, fmt.Errorf("lower island %s in %s: %w", comp.Name, path, err)
 		}
 		data, err := program.EncodeJSON(isl)
 		if err != nil {
-			return nil, fmt.Errorf("encode island %s: %w", comp.Name, err)
+			return nil, false, fmt.Errorf("encode island %s: %w", comp.Name, err)
 		}
 		out = append(out, islandProgram{Component: comp.Name, ProgramJSON: data})
 	}
-	return out, nil
+	return out, serverBearing, nil
 }

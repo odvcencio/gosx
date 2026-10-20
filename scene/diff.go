@@ -125,6 +125,12 @@ type DiffOptions struct {
 	// light keep the pair, because their records carry no scale or rotation and
 	// a position-only patch would save little.
 	PatchTransforms bool
+	// PatchObjectState also patches interaction, selection and visibility along
+	// with the transform. Geometry and materials must remain unchanged. Explicit
+	// defaults clear old state, and ambiguous picking resets fall back to a
+	// complete replacement. This preserves mesh buffers across turn/selection
+	// changes. The existing CommandSetTransform bridge accepts these object keys.
+	PatchObjectState bool
 }
 
 // Diff is the full result of DiffScene: the commands that carry the change, plus
@@ -162,7 +168,9 @@ func DiffCommands(previous, next SceneIR) []Command {
 func DiffScene(previous, next SceneIR, options DiffOptions) Diff {
 	var commands []Command
 	var objectPatch func(previous, next *ObjectIR) (Command, bool)
-	if options.PatchTransforms {
+	if options.PatchObjectState {
+		objectPatch = objectStatePatch
+	} else if options.PatchTransforms {
 		objectPatch = objectTransformPatch
 	}
 	diffSceneRecords(&commands, previous.Objects, next.Objects, func(record *ObjectIR) string {
@@ -279,6 +287,14 @@ var sceneIRFieldPolicies = map[string]sceneIRFieldPolicy{
 		reason: "A shadow atlas budget. The runtime sizes the atlas once at mount and no command " +
 			"kind resizes it.",
 		changed: func(previous, next *SceneIR) bool { return previous.ShadowMaxPixels != next.ShadowMaxPixels },
+	},
+	"GPUDriven": {
+		policy: sceneIRRemount,
+		reason: "A WebGPU renderer mode the client reads from the scene at mount. No command kind " +
+			"carries it.",
+		changed: func(previous, next *SceneIR) bool {
+			return !sceneRecordJSONEqual(previous.GPUDriven, next.GPUDriven)
+		},
 	},
 	"QualityLadder": {
 		policy: sceneIRRemount,
@@ -481,7 +497,7 @@ func SetInstancedMeshesCommand(meshes []InstancedMeshIR) Command {
 	return Command{
 		Kind: CommandSetInstancedMeshes,
 		Data: map[string]any{
-			"instancedMeshes": meshes,
+			"instancedMeshes": instancedMeshReplacements(meshes),
 		},
 	}
 }
@@ -520,6 +536,26 @@ func SetAnimationsCommand(animations []AnimationClipIR) Command {
 
 // SetCameraCommand replaces the active camera state.
 func SetCameraCommand(camera any) Command {
+	switch c := camera.(type) {
+	case PerspectiveCamera:
+		camera = completeCamera(CameraIR(c))
+	case *PerspectiveCamera:
+		if c != nil {
+			camera = completeCamera(CameraIR(*c))
+		}
+	case OrthographicCamera:
+		camera = completeCamera((Props{OrthographicCamera: &c}).cameraToIR())
+	case *OrthographicCamera:
+		if c != nil {
+			camera = completeCamera((Props{OrthographicCamera: c}).cameraToIR())
+		}
+	case IRCamera:
+		camera = completeCamera(c)
+	case *IRCamera:
+		if c != nil {
+			camera = completeCamera(*c)
+		}
+	}
 	return Command{
 		Kind: CommandSetCamera,
 		Data: camera,
@@ -550,13 +586,19 @@ const (
 // SetSceneEnvironmentCommand replaces scene-wide lighting, atmosphere, and
 // exposure from the SceneIR compatibility payload.
 func SetSceneEnvironmentCommand(environment EnvironmentIR) Command {
-	return environmentCommand(environment, EnvironmentShapeSceneIR)
+	return environmentCommand(struct {
+		EnvironmentIR
+		Ocean *Ocean `json:"ocean"`
+	}{environment, environment.Ocean}, EnvironmentShapeSceneIR)
 }
 
 // SetIREnvironmentCommand replaces scene-wide lighting, atmosphere, and exposure
 // from the canonical IR.
 func SetIREnvironmentCommand(environment IREnvironment) Command {
-	return environmentCommand(environment, EnvironmentShapeCanonicalIR)
+	return environmentCommand(struct {
+		IREnvironment
+		Ocean *Ocean `json:"ocean"`
+	}{environment, environment.Ocean}, EnvironmentShapeCanonicalIR)
 }
 
 // SetEnvironmentCommand replaces scene-wide lighting, atmosphere, and exposure.
@@ -636,30 +678,33 @@ func SetPostUniformsCommand(effects []PostUniformPatch) Command {
 // merges over an object whose scale the runtime already resolved, so it must
 // send the resolved 1. Sending 0 would collapse the object to a point.
 type TransformPatch struct {
-	X         float64 `json:"x"`
-	Y         float64 `json:"y"`
-	Z         float64 `json:"z"`
-	RotationX float64 `json:"rotationX"`
-	RotationY float64 `json:"rotationY"`
-	RotationZ float64 `json:"rotationZ"`
-	ScaleX    float64 `json:"scaleX"`
-	ScaleY    float64 `json:"scaleY"`
-	ScaleZ    float64 `json:"scaleZ"`
+	X            float64      `json:"x"`
+	Y            float64      `json:"y"`
+	Z            float64      `json:"z"`
+	RotationX    float64      `json:"rotationX"`
+	RotationY    float64      `json:"rotationY"`
+	RotationZ    float64      `json:"rotationZ"`
+	ScaleX       float64      `json:"scaleX"`
+	ScaleY       float64      `json:"scaleY"`
+	ScaleZ       float64      `json:"scaleZ"`
+	ParentMatrix *[16]float64 `json:"parentMatrix"`
 }
 
 // SetTransformCommand patches one object's position, rotation, and scale without
 // replacing the record. Dragging an object through remove plus create ships the
-// whole record every frame, including geometry; this ships nine floats.
+// whole record every frame, including geometry; this ships ten transform fields.
 //
 // DiffScene emits it when DiffOptions.PatchTransforms is on. Any caller may
 // build it by hand for an object the runtime already holds.
+// A Model root ID transforms all imported primitives; retained rigid models
+// update their parent matrices without replacing geometry or materials.
 func SetTransformCommand(id string, patch TransformPatch) Command {
 	return Command{Kind: CommandSetTransform, ObjectID: id, Data: patch}
 }
 
 // objectTransformPatch returns a transform patch when next changed only in
 // position, rotation, or scale. It proves that claim rather than assuming it: it
-// copies previous, overwrites the nine transform fields with next's, and
+// copies previous, overwrites the ten transform fields with next's, and
 // requires the copy to equal next. Any other changed field, including a nested
 // slice or a map, leaves the copy unequal and the caller falls back to remove
 // plus create. So a patch can never drop a second edit that arrived in the same
@@ -669,20 +714,75 @@ func objectTransformPatch(previous, next *ObjectIR) (Command, bool) {
 	probe.X, probe.Y, probe.Z = next.X, next.Y, next.Z
 	probe.RotationX, probe.RotationY, probe.RotationZ = next.RotationX, next.RotationY, next.RotationZ
 	probe.ScaleX, probe.ScaleY, probe.ScaleZ = next.ScaleX, next.ScaleY, next.ScaleZ
+	probe.ParentMatrix = next.ParentMatrix
 	if !sceneRecordPointerJSONEqual(&probe, next) {
 		return Command{}, false
 	}
+	parentMatrix, ok := transformPatchParentMatrix(next.ParentMatrix)
+	if !ok {
+		return Command{}, false
+	}
 	return SetTransformCommand(next.ID, TransformPatch{
-		X:         next.X,
-		Y:         next.Y,
-		Z:         next.Z,
-		RotationX: next.RotationX,
-		RotationY: next.RotationY,
-		RotationZ: next.RotationZ,
-		ScaleX:    resolveIRScale(next.ScaleX),
-		ScaleY:    resolveIRScale(next.ScaleY),
-		ScaleZ:    resolveIRScale(next.ScaleZ),
+		X:            next.X,
+		Y:            next.Y,
+		Z:            next.Z,
+		RotationX:    next.RotationX,
+		RotationY:    next.RotationY,
+		RotationZ:    next.RotationZ,
+		ScaleX:       resolveIRScale(next.ScaleX),
+		ScaleY:       resolveIRScale(next.ScaleY),
+		ScaleZ:       resolveIRScale(next.ScaleZ),
+		ParentMatrix: parentMatrix,
 	}), true
+}
+
+// ObjectStatePatch extends the transform patch with explicit interaction and
+// presentation state. Pickable remains optional because nil means an unauthored
+// picking policy, rather than false. DiffScene declines a patch that cannot
+// safely restore that policy through the existing shallow-merge bridge.
+type ObjectStatePatch struct {
+	TransformPatch
+	Interactive      bool   `json:"interactive"`
+	Label            string `json:"label"`
+	InteractiveOrder int    `json:"interactiveOrder"`
+	Pickable         *bool  `json:"pickable,omitempty"`
+	Visible          bool   `json:"visible"`
+	Selected         bool   `json:"selected"`
+}
+
+func objectStatePatch(previous, next *ObjectIR) (Command, bool) {
+	// Fresh noninteractive records with no pickable property normalize to an
+	// unspecified policy. A merge cannot remove a prior explicit/interactive
+	// policy, so replace the record in that case.
+	if next.Pickable == nil && !next.Interactive && (previous.Pickable != nil || previous.Interactive) {
+		return Command{}, false
+	}
+	probe := *previous
+	probe.Interactive, probe.Label, probe.InteractiveOrder = next.Interactive, next.Label, next.InteractiveOrder
+	probe.Pickable, probe.Visible, probe.Selected = next.Pickable, next.Visible, next.Selected
+	command, ok := objectTransformPatch(&probe, next)
+	if !ok {
+		return Command{}, false
+	}
+	visible := next.Visible == nil || *next.Visible
+	command.Data = ObjectStatePatch{
+		TransformPatch: command.Data.(TransformPatch),
+		Interactive:    next.Interactive, Label: next.Label, InteractiveOrder: next.InteractiveOrder,
+		Pickable: next.Pickable, Visible: visible, Selected: next.Selected,
+	}
+	return command, true
+}
+
+func transformPatchParentMatrix(values []float64) (*[16]float64, bool) {
+	if values == nil {
+		return nil, true
+	}
+	affine, ok := affineFromValues(values)
+	if !ok {
+		return nil, false
+	}
+	matrix := [16]float64(affine)
+	return &matrix, true
 }
 
 // resolveIRScale maps one ObjectIR scale component to an explicit factor. See
@@ -774,11 +874,13 @@ func sceneRecordJSONEqual[T any](a, b T) bool {
 // sceneRecordPointerJSONEqual answers the same question as sceneRecordJSONEqual
 // without copying either value.
 //
-// It tries provenJSONEqual first, and marshals only when that fast path cannot
-// prove equality. The fast path is one-way on purpose: true means the two values
+// It rejects unequal plain object transforms, tries provenJSONEqual, and then
+// rejects known scalar/vertex differences before resorting to marshaling.
+//
+// provenJSONEqual is one-way on purpose: true means the two values
 // must encode to identical JSON, and false means "not proven", never "different".
 // So the answer is always the answer the marshal comparison gives, and the
-// marshal comparison is still the only code that decides a record changed.
+// marshal comparison still decides differences the fast paths cannot settle.
 //
 // Why this shape: DiffCommands used to marshal both records for every record in
 // the scene, so an edit that moved 10 percent of a scene paid the full encode
@@ -786,8 +888,22 @@ func sceneRecordJSONEqual[T any](a, b T) bool {
 // write path it feeds. A real edit leaves most records untouched, and an
 // untouched record is exactly the case provenJSONEqual settles without encoding.
 func sceneRecordPointerJSONEqual[T any](a, b *T) bool {
+	if object, ok := any(a).(*ObjectIR); ok {
+		other := any(b).(*ObjectIR)
+		// These plain float64 fields encode directly with omitempty. Unequal
+		// finite values have distinct JSON; non-finite values cannot encode.
+		// Signed zeros compare equal here and retain the existing fallback.
+		if object.X != other.X || object.Y != other.Y || object.Z != other.Z ||
+			object.RotationX != other.RotationX || object.RotationY != other.RotationY || object.RotationZ != other.RotationZ ||
+			object.ScaleX != other.ScaleX || object.ScaleY != other.ScaleY || object.ScaleZ != other.ScaleZ {
+			return false
+		}
+	}
 	if provenJSONEqual(reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()) {
 		return true
+	}
+	if object, ok := any(a).(*ObjectIR); ok && objectRecordJSONDifferent(object, any(b).(*ObjectIR)) {
+		return false
 	}
 	return sceneRecordMarshalEqual(*a, *b)
 }

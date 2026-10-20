@@ -1,11 +1,11 @@
-// Slice Y.C.5 — graph_surface.go-pattern regression tests.
+// graph_surface.go-pattern regression tests.
 //
 // These tests pin the *exact* LHS shapes that graph_surface.go's
-// handlers use, so any future refactor of Y.C's dispatcher catches
+// handlers use, so any future refactor of the LHS dispatcher catches
 // regressions against the canonical hard case. The fixture in each
 // test is a minimal restatement of the relevant graph_surface.go
 // excerpt, scrubbed of dependencies (surface.Canvas, math intrinsics,
-// user-function calls) that other Y.* slices cover.
+// user-function calls) that other tests cover.
 
 package golower
 
@@ -133,8 +133,8 @@ func F() float64 {
 
 // TestLowerGraphSurfacePackageVarStructField mirrors `gTx.X = ...`
 // where gTx is a package-level struct variable (a signal in our model).
-// The struct is constructed at package init via a composite literal
-// (Y.A), and the handler mutates one field at a time.
+// The struct is constructed at package init via a composite literal,
+// and the handler mutates one field at a time.
 //
 // Because package-level vars become *signals* (not locals), this also
 // exercises the OpFieldSet path through signal resolution — the

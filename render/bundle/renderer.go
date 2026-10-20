@@ -35,6 +35,8 @@ const cascadeCount = 3
 // a gpu.Device. One Renderer instance serves one canvas / one engine runtime.
 // Not safe for concurrent use.
 type Renderer struct {
+	materialDiagnostics materialDiagnosticsCache
+
 	device        gpu.Device
 	surface       gpu.Surface
 	surfaceFormat gpu.TextureFormat
@@ -739,6 +741,7 @@ func (r *Renderer) Frame(b engine.RenderBundle, width, height int, timeSeconds f
 	if width <= 0 || height <= 0 {
 		return nil
 	}
+	r.stats.setMaterialFallbacks(r.materialDiagnostics.update(b))
 	b = applyNativeAnimations(b, timeSeconds)
 	r.updatePickSpans(b)
 	if err := r.prepareMeshStates(b); err != nil {
@@ -1757,7 +1760,7 @@ func (r *Renderer) buildLitPipeline() error {
 		},
 		Primitive: gpu.PrimitiveState{
 			Topology:  gpu.TopologyTriangleList,
-			CullMode:  gpu.CullBack,
+			CullMode:  gpu.CullNone,
 			FrontFace: gpu.FrontFaceCCW,
 		},
 		DepthStencil: &gpu.DepthStencilState{
@@ -1837,7 +1840,7 @@ func (r *Renderer) buildSkinnedLitPipeline() error {
 		},
 		Primitive: gpu.PrimitiveState{
 			Topology:  gpu.TopologyTriangleList,
-			CullMode:  gpu.CullBack,
+			CullMode:  gpu.CullNone,
 			FrontFace: gpu.FrontFaceCCW,
 		},
 		DepthStencil: &gpu.DepthStencilState{
@@ -1884,11 +1887,11 @@ func (r *Renderer) buildShadowPipeline() error {
 				}},
 			},
 		},
-		// No fragment stage — depth-only.
-		Fragment: gpu.FragmentStageDesc{},
+		// Fragment classification discards the authored back face without writing color.
+		Fragment: gpu.FragmentStageDesc{Module: shader, EntryPoint: "fs_main"},
 		Primitive: gpu.PrimitiveState{
 			Topology:  gpu.TopologyTriangleList,
-			CullMode:  gpu.CullBack,
+			CullMode:  gpu.CullNone,
 			FrontFace: gpu.FrontFaceCCW,
 		},
 		DepthStencil: &gpu.DepthStencilState{

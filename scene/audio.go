@@ -11,7 +11,7 @@
 // file is the typed front door to both — study the two engines below before
 // picking one.
 //
-//   - gosxAudio (client/js/bootstrap-src/05-document-env.js, exposed as
+//   - gosxAudio (client/js/bootstrap-src/05-document-env.ts, exposed as
 //     window.__gosx.audio) is a manifest-driven sample player: named buses
 //     with volume/mute, preloaded or streamed clips addressed by ID, and
 //     optional 3D PannerNode spatialization per playback. Use Audio,
@@ -19,7 +19,7 @@
 //     voice-over, recorded SFX) to register once at mount time and then
 //     play/stop by ID, optionally positioned in world space.
 //
-//   - arcadeAudio (client/js/bootstrap-src/30c2-tail-arcade-audio.js) is a
+//   - arcadeAudio (client/js/bootstrap-src/30c2-tail-arcade-audio.ts) is a
 //     procedural synth: oscillator tones, frequency sweeps, and noise bursts
 //     shaped by short attack/decay/sustain/release gain envelopes, mixed
 //     through a shared compressor bus with a 28-voice limiter. It needs no
@@ -38,7 +38,7 @@
 // "audio" key of the engine's props — e.g. props["audio"] = manifest.Props().
 // The client's mountEngine already does the rest: whenever entry.props.audio
 // is present it calls window.__gosx.audio.registerManifest(entry.props.audio)
-// automatically (client/js/bootstrap-src/30b-tail-engine-mounting.js). No
+// automatically (client/js/bootstrap-src/30b-tail-engine-mounting.ts). No
 // client changes were needed for this path.
 //
 // The three paragraphs above named client/js/bootstrap-src/30-tail.js, which
@@ -46,10 +46,10 @@
 // path found nothing and had no way to tell which of eleven files replaced it.
 // The claims below name the real homes and fail on the next split.
 //
-//	gosx:claim has client/js/bootstrap-src/30c2-tail-arcade-audio.js `arcadeAudio`
-//	gosx:claim has client/js/bootstrap-src/30b-tail-engine-mounting.js `window.__gosx.audio.registerManifest\(entry.props.audio\)`
-//	gosx:claim has client/js/bootstrap-src/30c1-tail-hub-fight-input.js `function onHubMessage`
-//	gosx:claim has client/js/bootstrap-src/05-document-env.js `registerManifest`
+//	gosx:claim has client/js/bootstrap-src/30c2-tail-arcade-audio.ts `arcadeAudio`
+//	gosx:claim has client/js/bootstrap-src/30b-tail-engine-mounting.ts `window.__gosx.audio.registerManifest\(entry.props.audio\)`
+//	gosx:claim has client/js/bootstrap-src/30c1-tail-hub-fight-input.ts `function onHubMessage`
+//	gosx:claim has client/js/bootstrap-src/05-document-env.ts `registerManifest`
 //
 // AudioCue is the live-fire counterpart: a single "play this now" event a
 // server-driven scene sends per tick or on demand. See AudioCue's doc for
@@ -142,7 +142,7 @@ type Audio struct {
 	// Muted hard-mutes the master bus.
 	//
 	// Quirk inherited from the current client (gosxAudioRegisterManifest
-	// in 05-document-env.js): Muted is only applied together with
+	// in 05-document-env.ts): Muted is only applied together with
 	// MasterVolume — if MasterVolume is nil, Muted is ignored even when
 	// true, because the client only re-registers the master bus when the
 	// manifest carries a "masterVolume" key at all. Set MasterVolume
@@ -197,7 +197,7 @@ func (c AudioClip) Props() map[string]any {
 
 // Props lowers a to the exact map shape
 // window.__gosx.audio.registerManifest expects (gosxAudioRegisterManifest
-// in 05-document-env.js). Assign the result to an engine's "audio" prop.
+// in 05-document-env.ts). Assign the result to an engine's "audio" prop.
 func (a Audio) Props() map[string]any {
 	out := map[string]any{}
 	if len(a.Buses) > 0 {
@@ -455,7 +455,7 @@ func (p SynthPatch) Props() map[string]any {
 //     AudioCue.Props() under the "audio" key of whatever payload a hub
 //     broadcasts as e.g. its "tick" event. The engine's built-in hub
 //     input controller (createHubInputController's onHubMessage, in
-//     client/js/bootstrap-src/30c1-tail-hub-fight-input.js) reads data.audio
+//     client/js/bootstrap-src/30c1-tail-hub-fight-input.ts) reads data.audio
 //     and fires playArcadeSFX(cue.cue || <inferred from event.kind>,
 //     {intensity, pan, depth}) plus phase/state cues (round/fight/ko/
 //     surge/...) inferred from other tick fields. Seq/Cue/PhaseCue/

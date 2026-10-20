@@ -80,41 +80,42 @@ func ResolveMetric(name string, r *Report) (float64, bool) {
 
 // ResolvePageMetric extracts a named metric value from one page report.
 func ResolvePageMetric(name string, p *PageReport) (float64, bool) {
+	available := pageMetricAvailability(p)
 	switch name {
 	case "ttfb":
-		return p.TTFBMs, true
+		return p.TTFBMs, available.Navigation && (p.MetricAvailability != nil || p.TTFBMs > 0)
 	case "dcl":
-		return p.DCLMs, true
+		return p.DCLMs, available.Navigation && (p.MetricAvailability != nil || p.DCLMs > 0)
 	case "fully_loaded":
-		return p.FullyLoadedMs, true
+		return p.FullyLoadedMs, available.Navigation && (p.MetricAvailability != nil || p.FullyLoadedMs > 0)
 	case "lcp", "lcp_ms":
-		return p.LargestContentfulPaintMs, true
+		return p.LargestContentfulPaintMs, available.LCP
 	case "cls":
-		return p.CumulativeLayoutShift, true
+		return p.CumulativeLayoutShift, available.CLS
 	case "fid", "fid_ms":
-		return p.FirstInputDelayMs, true
+		return p.FirstInputDelayMs, available.FID
 	case "long_tasks":
-		return float64(p.LongTaskCount), true
+		return float64(p.LongTaskCount), available.LongTasks && (p.MetricAvailability != nil || p.LongTaskCount > 0)
 	case "long_task_total", "long_task_total_ms":
-		return p.LongTaskTotalMs, true
+		return p.LongTaskTotalMs, available.LongTasks && (p.MetricAvailability != nil || p.LongTaskTotalMs > 0)
 	case "tbt", "tbt_ms":
-		return p.TotalBlockingTimeMs, true
+		return p.TotalBlockingTimeMs, available.LongTasks && (p.MetricAvailability != nil || p.TotalBlockingTimeMs > 0)
 	case "hydration_total":
-		return p.IslandHydrationMs, true
+		return p.IslandHydrationMs, available.Hydration && (p.MetricAvailability != nil || p.IslandHydrationMs > 0)
 	case "heap_mb":
-		return p.JSHeapSizeMB, true
+		return p.JSHeapSizeMB, available.Heap
 	case "island_count":
-		return float64(len(p.Islands)), true
+		return float64(len(p.Islands)), available.Hydration && (p.MetricAvailability != nil || len(p.Islands) > 0)
 	case "network_kb":
-		return float64(p.TotalBytesTransferred) / 1024, true
+		return float64(p.TotalBytesTransferred) / 1024, available.Network && (p.MetricAvailability != nil || p.TotalBytesTransferred > 0)
 	case "requests":
-		return float64(len(p.Resources)), true
+		return float64(len(p.Resources)), available.Network && (p.MetricAvailability != nil || len(p.Resources) > 0)
 	case "hub_messages":
-		return float64(p.HubMessageCount), true
+		return float64(p.HubMessageCount), available.RuntimeCounters && (p.MetricAvailability != nil || p.HubMessageCount > 0)
 	case "hub_bytes":
-		return float64(p.HubMessageBytes), true
+		return float64(p.HubMessageBytes), available.RuntimeCounters && (p.MetricAvailability != nil || p.HubMessageBytes > 0)
 	case "hub_sends":
-		return float64(p.HubSendCount), true
+		return float64(p.HubSendCount), available.RuntimeCounters && (p.MetricAvailability != nil || p.HubSendCount > 0)
 	case "js_used_kb":
 		if !hasCoverageMetric(p) {
 			return 0, false
@@ -148,19 +149,19 @@ func ResolvePageMetric(name string, p *PageReport) (float64, bool) {
 	}
 	switch name {
 	case "first_frame", "scene_first_frame":
-		return p.Scene.FirstFrameMs, true
+		return p.Scene.FirstFrameMs, p.Scene.FrameStats.Count > 0
 	case "p50", "scene_p50":
-		return p.Scene.FrameStats.P50, true
+		return p.Scene.FrameStats.P50, p.Scene.FrameStats.Count > 0
 	case "p95", "scene_p95":
-		return p.Scene.FrameStats.P95, true
+		return p.Scene.FrameStats.P95, p.Scene.FrameStats.Count > 0
 	case "p99", "scene_p99":
-		return p.Scene.FrameStats.P99, true
+		return p.Scene.FrameStats.P99, p.Scene.FrameStats.Count > 0
 	case "frame_max", "scene_frame_max":
-		return p.Scene.FrameStats.Max, true
+		return p.Scene.FrameStats.Max, p.Scene.FrameStats.Count > 0
 	case "dropped_frames", "scene_dropped_frames":
-		return float64(p.Scene.DroppedFrames), true
+		return float64(p.Scene.DroppedFrames), p.Scene.Presentation != nil && p.Scene.Presentation.Stats.Count > 0
 	case "frame_count", "scene_frame_count":
-		return float64(p.Scene.FrameCount), true
+		return float64(p.Scene.FrameCount), available.SceneFrames
 	case "cpu_submit_p50", "scene_cpu_submit_p50":
 		return telemetryStat(p.Scene.CPURenderSubmit, "all", "p50")
 	case "cpu_submit_p95", "scene_cpu_submit_p95":
@@ -285,6 +286,26 @@ func resolveGPUPassMetric(metric string, gpu *SceneGPUTelemetry) (float64, bool)
 
 func hasCoverageMetric(p *PageReport) bool {
 	return p.CoverageCaptured || len(p.Coverage) > 0
+}
+
+func pageMetricAvailability(p *PageReport) MetricAvailability {
+	if p.MetricAvailability != nil {
+		return *p.MetricAvailability
+	}
+	// Legacy reports have no capture metadata. A nonzero measurement or a
+	// recorded sample is evidence; a default zero alone is not.
+	return MetricAvailability{
+		Navigation:      p.TTFBMs > 0 || p.DCLMs > 0 || p.FullyLoadedMs > 0,
+		Heap:            p.JSHeapSizeMB > 0,
+		Hydration:       p.IslandHydrationMs > 0 || len(p.Islands) > 0,
+		LCP:             p.LargestContentfulPaintMs > 0,
+		CLS:             p.CumulativeLayoutShift > 0,
+		FID:             p.FirstInputDelayMs > 0,
+		LongTasks:       len(p.LongTasks) > 0 || p.LongTaskCount > 0 || p.LongTaskTotalMs > 0 || p.TotalBlockingTimeMs > 0,
+		Network:         len(p.Resources) > 0 || p.TotalBytesTransferred > 0,
+		RuntimeCounters: p.SignalWrites > 0 || p.SignalReads > 0 || p.HubMessageCount > 0 || p.HubMessageBytes > 0 || p.HubSendCount > 0,
+		SceneFrames:     p.Scene != nil && p.Scene.FrameCount > 0,
+	}
 }
 
 func compare(actual float64, op string, target float64) bool {

@@ -7,8 +7,14 @@ func Page() Node {
 		<script src="/cms-client.js" defer></script>
 		<header class="cms-header">
 			<div class="cms-header__brand">
-				<span class="cms-header__logo">CMS Editor</span>
-				<span class="cms-header__badge">Server Action</span>
+				<p class="cms-header__eyebrow">
+					A content editor powered by a server action
+				</p>
+				<h1 class="cms-header__logo">Build a page.</h1>
+				<p class="cms-header__purpose">
+					Add blocks, edit the draft, and publish a validated snapshot.
+				</p>
+				<a class="cms-header__preview-link" href="#cms-preview-canvas">See the live preview ↓</a>
 			</div>
 			<div class="cms-header__actions">
 				<span class="cms-header__unsaved" id="cms-unsaved-badge" role="status" aria-live="polite" hidden>
@@ -37,7 +43,7 @@ func Page() Node {
 		<div class="cms-workspace">
 			<aside class="cms-palette" aria-label="Block types">
 				<h2 class="cms-panel-label">Blocks</h2>
-				<p class="cms-palette__hint">Click a block to add it to the draft</p>
+				<p class="cms-palette__hint">Choose a block to add it to your page.</p>
 				<div class="cms-palette__list" id="cms-palette-list">
 					<button
 						type="button"
@@ -77,7 +83,7 @@ func Page() Node {
 					</button>
 				</div>
 			</aside>
-			<main class="cms-editor" aria-label="Block editor">
+			<section class="cms-editor" aria-label="Block editor">
 				<h2 class="cms-panel-label">Draft editor</h2>
 				<div class="cms-block-list" id="cms-block-list">
 					<Each of={data.blocks} as="block" index="i">
@@ -173,7 +179,7 @@ func Page() Node {
 						</article>
 					</Each>
 				</div>
-			</main>
+			</section>
 			<aside class="cms-preview" aria-label="Live preview">
 				<h2 class="cms-panel-label">Live preview</h2>
 				<div class="cms-preview__canvas" id="cms-preview-canvas">
@@ -181,7 +187,7 @@ func Page() Node {
 						<div class={"cms-preview-block cms-preview-block--" + block.kind} data-block-index={i}>
 							<If cond={block.kind == "hero"}>
 								<div class="cms-preview-hero">
-									<h1 data-preview-field="title">{block.title}</h1>
+									<h2 data-preview-field="title">{block.title}</h2>
 									<span class="cms-preview-hero__divider"></span>
 									<p data-preview-field="subtitle">{block.subtitle}</p>
 								</div>
@@ -207,13 +213,13 @@ func Page() Node {
 				</div>
 			</aside>
 		</div>
-		<footer class="cms-statusbar">
+		<div class="cms-statusbar">
 			<span class="cms-statusbar__info">
 				<span id="cms-block-total">{len(data.blocks)}</span>
 				blocks in document
 			</span>
 			<span class="cms-statusbar__hint" id="cms-publish-feedback" role="status" aria-live="polite"></span>
-		</footer>
+		</div>
 		<div class="cms-sr-only" aria-live="polite" id="cms-announcer"></div>
 	</form>
 }

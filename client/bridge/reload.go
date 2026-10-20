@@ -48,18 +48,21 @@ func (b *Bridge) ReloadProgram(islandID string, data []byte, format string) erro
 		}
 		delete(b.unsubs, islandID)
 	}
+	b.disposeIslandHosts(islandID, island)
 
-	// Swap the program in place. SwapProgram merges signals by name (keeping
-	// the live shared-signal instances connected to the store) and Island.
-	// SwapProgram rebuilds the handler map and reconciles, returning the
-	// patch set that brings the DOM current.
-	patches := island.SwapProgram(prog)
+	// Install bytecode and handlers without reconciling yet. New shared names
+	// still hold their local initializer until bindSharedSignals below; walking
+	// here would produce an intermediate patch and lose the old DOM baseline.
+	island.InstallProgram(prog)
+	b.bindIslandHosts(islandID, island, prog)
 
-	// Reconnect + re-subscribe shared signals against the new program. New
-	// names get connected to the store; names that persisted keep the value
-	// merge-by-name preserved.
+	// Reconnect shared signals before the single reconcile. A newly-added name
+	// may already have a live store value that differs from its program init;
+	// BindSharedSignal keeps island.prev untouched so Reconcile compares the
+	// actual old DOM state with that final shared/computed value.
 	defs := sharedSignalDefs(prog)
-	b.connectSharedSignals(island, defs)
+	b.bindSharedSignals(island, defs)
+	patches := island.Reconcile()
 	b.unsubs[islandID] = b.subscribeSharedSignals(islandID, defs)
 
 	// Forward the reconcile patches to JS (no-op for compute islands or when

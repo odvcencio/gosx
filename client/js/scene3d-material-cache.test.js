@@ -1,0 +1,409 @@
+"use strict";
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const vm = require("node:vm");
+const { createBoardWebGPUHarness, flushAsyncWork, deviceCallSnapshot } = require("./runtime-test-harness.js");
+
+async function materialHarness(selena = false, count = 50, renderBundles = true, fresh = true) {
+  const harness = await createBoardWebGPUHarness({ fresh, fakeDeviceOptions: { renderBundles, validateBindings: true } });
+  const api = harness.env.context.__gosx_scene3d_api;
+  const shader = `struct Uniforms { mvp: mat4x4f, modelMatrix: mat4x4f, baseColor: vec4f, };
+    @group(0) @binding(0) var<uniform> u: Uniforms;
+    @vertex fn vertexMain(@location(0) position: vec3f) -> @builtin(position) vec4f {
+      return u.mvp * u.modelMatrix * vec4f(position, 1.0);
+    }
+    @fragment fn fragmentMain() -> @location(0) vec4f { return u.baseColor; }`;
+  const material = selena ? { id: "m", shaderBackend: "selena", customVertexWGSL: shader,
+    customFragmentWGSL: shader, customUniforms: { baseColor: [0.8, 0.8, 0.8, 1] },
+    shaderLayout: { material: "MaterialCacheProbe", kind: "mesh", wgsl: { group: 0, binding: 0 },
+      attributes: [{ name: "position", type: "vec3", wgsl: { location: 0 } }],
+      uniformBlock: { size: 144, fields: [{ name: "mvp", type: "mat4", offset: 0 },
+        { name: "modelMatrix", type: "mat4", offset: 64 }, { name: "baseColor", type: "vec4", offset: 128 }] } }
+  } : { id: "m", color: "#8de1ff", roughness: 0.4, metalness: 0.1 };
+  const state = api.createSceneState({ scene: { materials: [material], objects: Array.from({ length: count }, (_, i) => ({
+    id: "box-" + i, kind: "box", width: 0.4, height: 0.4, depth: 0.4,
+    x: (i % 20) * 0.5 - 5, y: Math.floor(i / 20) * 0.5 - 2, material: "m", wireframe: false,
+  })) } }, { tier: "full" });
+  let frame = 0;
+  const bundle = () => api.createSceneRenderBundle(640, 480, "#000000",
+    { x: 0, y: 0, z: 14, fov: 60, near: 0.05, far: 128 }, api.sceneStateObjectsWithMaterials(state),
+    [], [], [], [], {}, 0, [], [], [], [], [], 0, false, { retainedGeometry: true });
+  const render = async (b = bundle()) => {
+    const result = harness.renderer.render(b, { width: 640, height: 480 }, { nowMS: frame++ * 16, active: true });
+    await flushAsyncWork();
+    return result;
+  };
+  return { ...harness, api, state, bundle, render };
+}
+
+const materialWrites = h => h.fake.state.writeBufferCalls.filter(call => call.buffer.size === 288).length;
+
+for (const selena of [false, true]) test(`persistent ${selena ? "Selena" : "named"} materials plateau after frame 2`, async t => {
+  const h = await materialHarness(selena);
+  t.after(() => h.renderer.dispose());
+  let steady;
+  let pending = 0;
+  for (let frame = 0; frame < 30; frame++) {
+    if (await h.render() === "pending") pending++;
+    const snapshot = { ...deviceCallSnapshot(h.fake), buffers: h.fake.state.buffers.length };
+    if (frame === 2) steady = snapshot;
+    if (frame > 2) {
+      assert.equal(snapshot.buffers, steady.buffers, `frame ${frame}: no new buffers`);
+      assert.equal(snapshot.bindGroups, steady.bindGroups, `frame ${frame}: no new bind groups`);
+      assert.equal(snapshot.renderPipelines, steady.renderPipelines);
+    }
+  }
+  assert.ok(pending <= 2);
+  assert.ok(h.fake.state.renderPasses.length > 0);
+  assert.ok(Number(h.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-replays")) > 0);
+  if (selena) {
+    h.state.materials[0].customUniforms = { baseColor: [0.125, 0.25, 0.5, 1] };
+    for (let i = 0; i < 3; i++) await h.render();
+    const uniform = h.fake.state.writeBufferCalls.filter(c => c.data && c.data.byteLength === 144).at(-1);
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "replayed");
+    assert.equal(uniform.data[32], 0.125, "replayed Selena bundle receives live uniforms");
+  }
+});
+
+test("replacing a retained resource owner reuses the shared material uniform", async t => {
+  const h = await materialHarness(false, 1, false);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 3; i++) await h.render();
+  const b = h.bundle();
+  const materialBuffer = h.fake.state.bindGroups.flatMap(g => g.desc.entries || [])
+    .map(e => e.resource && e.resource.buffer).find(b => b && b.size === 288);
+  assert.ok(materialBuffer);
+  const bufferCount = h.fake.state.buffers.length;
+  const materialUploadCount = materialWrites(h);
+  b.meshObjects[0].resourceOwner = {};
+  await h.render(b);
+  assert.notEqual(materialBuffer.destroyed, true, "shared material remains live after an object owner replacement");
+  assert.equal(h.fake.state.buffers.length, bufferCount);
+  assert.equal(materialWrites(h), materialUploadCount, "shared material is not uploaded again");
+});
+
+
+test("stable Selena owners invalidate groups when the shader layout changes", async t => {
+  const h = await materialHarness(true, 1);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 3; i++) await h.render();
+  const material = h.state.materials[0];
+  material.shaderLayout.wgsl.binding = 1;
+  material.customVertexWGSL = material.customVertexWGSL.replace(/@binding\(0\)/g, "@binding(1)");
+  material.customFragmentWGSL = material.customFragmentWGSL.replace(/@binding\(0\)/g, "@binding(1)");
+  for (let i = 0; i < 3; i++) await h.render();
+  const pipeline = h.fake.state.renderPipelines.filter(p => /selena/.test(p.label || p.desc.label)).at(-1);
+  const layout = pipeline.desc.layout.desc.bindGroupLayouts[0];
+  assert.ok(h.fake.state.bindGroups.some(g => g.desc.layout === layout && g.desc.entries[0].binding === 1),
+    "the new pipeline binds a group with the current layout");
+});
+
+for (const mode of ["shadow casters", "shared vertices"]) test(`patched named ${mode} retire every absent owner after submit`, async t => {
+  const h = await materialHarness(false, 3, false);
+  t.after(() => h.renderer.dispose());
+  const shared = h.bundle().meshObjects[0].vertices;
+  for (const object of h.state.objects.values()) {
+    if (mode === "shadow casters") object.castShadow = true;
+    else object.vertices = shared;
+  }
+  const render = async () => {
+    const b = h.bundle();
+    if (mode === "shadow casters") b.lights = [{ kind: "directional", castShadow: true,
+      x: 2, y: 4, z: 2, directionX: 0.2, directionY: -1, directionZ: -0.3, shadowSize: 64 }];
+    else assert.equal(b.meshObjects[0].vertices, b.meshObjects[1].vertices);
+    await h.render(b);
+  };
+  for (let i = 0; i < 5; i++) await render();
+  const uniformUsage = h.env.context.GPUBufferUsage.UNIFORM;
+  const live = () => h.fake.state.buffers.filter(b => !b.destroyed && (b.usage & uniformUsage)).length;
+  const initial = live();
+  let beforeSubmit = null, earlyRetirements = 0;
+  const observe = buffer => {
+    const destroy = buffer.destroy.bind(buffer);
+    buffer.destroy = () => {
+      if (beforeSubmit !== null && h.fake.state.submitCount <= beforeSubmit) earlyRetirements++;
+      destroy();
+    };
+    return buffer;
+  };
+  for (const buffer of h.fake.state.buffers) if (buffer.size === 288) observe(buffer);
+  const create = h.fake.device.createBuffer.bind(h.fake.device);
+  h.fake.device.createBuffer = desc => { const b = create(desc); return b.size === 288 ? observe(b) : b; };
+  for (let i = 0; i < 20; i++) {
+    h.api.applySceneCommands(h.state, [{ kind: 2, objectId: "box-0", data: { x: -4 + i * 0.01 } }]);
+    beforeSubmit = h.fake.state.submitCount;
+    await render();
+    beforeSubmit = null;
+  }
+  t.diagnostic(`live uniform buffers: ${initial} -> ${live()}`);
+  assert.equal(live(), initial, "patched owners do not accumulate material uniforms");
+  assert.equal(earlyRetirements, 0, "material retirement occurs after submission");
+  if (mode === "shadow casters") assert.ok(h.fake.state.renderPasses.some(p => p.descriptor.colorAttachments.length === 0));
+});
+
+test("named material CSS inputs perform no steady computed-style reads", async t => {
+  const h = await materialHarness(false, 3);
+  t.after(() => h.renderer.dispose());
+  let styles = 0, properties = 0;
+  h.env.context.window.getComputedStyle = () => { styles++; return {
+    getPropertyValue() { properties++; return ""; },
+  }; };
+  for (let i = 0; i < 5; i++) await h.render();
+  styles = properties = 0;
+  await h.render();
+  t.diagnostic(`steady getComputedStyle/getPropertyValue: ${styles}/${properties}`);
+  assert.equal(styles, 0);
+  assert.equal(properties, 0);
+});
+
+test("a named PBR field edit refreshes both objects sharing that material", async t => {
+  const h = await materialHarness(false, 2, false);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 5; i++) await h.render();
+  const b = h.bundle();
+  assert.equal(b.meshObjects[0].materialIndex, b.meshObjects[1].materialIndex);
+  assert.notEqual(b.meshObjects[0].resourceOwner, b.meshObjects[1].resourceOwner);
+  const start = h.fake.state.writeBufferCalls.length;
+  h.state.materials[0].roughness = 0.75;
+  await h.render();
+  const writes = h.fake.state.writeBufferCalls.slice(start).filter(w => w.buffer.size === 288);
+  assert.ok(writes.length >= 1);
+  for (const write of writes) assert.equal(new Float32Array(write.data.buffer)[3], 0.75);
+  const bindings = h.fake.state.renderPasses.at(-1).bindGroups.filter(binding => binding.slot === 1);
+  assert.equal(bindings.length, 2, "both named-material objects draw");
+  for (const binding of bindings) {
+    const buffer = binding.group.desc.entries.find(e => e.binding === 0).resource.buffer;
+    const write = h.fake.state.writeBufferCalls.findLast(w => w.buffer === buffer);
+    assert.equal(new Float32Array(write.data.buffer)[3], 0.75, "both draws use the edited field");
+  }
+});
+
+test("two objects sharing a named material preserve the surviving owner after removal", async t => {
+  const h = await materialHarness(false, 2, false);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 5; i++) await h.render();
+  const groups = h.fake.state.renderPasses.at(-1).bindGroups.filter(b => b.slot === 1);
+  assert.equal(groups.length, 2);
+  const survivor = groups[1].group.desc.entries.find(e => e.binding === 0).resource.buffer;
+  h.api.applySceneCommands(h.state, [{ kind: 1, objectId: "box-0" }]);
+  await h.render();
+  const group = h.fake.state.renderPasses.at(-1).bindGroups.find(b => b.slot === 1).group;
+  assert.equal(group.desc.entries.find(e => e.binding === 0).resource.buffer, survivor);
+  assert.notEqual(survivor.destroyed, true);
+});
+
+
+for (const bundles of [false, true]) test(`400 retained meshes batch uploads (bundles=${bundles})`, async t => {
+  const h = await materialHarness(false, 400, bundles);
+  t.after(() => h.renderer.dispose());
+  const offsetViews = new Set();
+  if (!bundles) {
+    const createEncoder = h.fake.device.createCommandEncoder.bind(h.fake.device);
+    h.fake.device.createCommandEncoder = (...args) => {
+      const encoder = createEncoder(...args);
+      const beginPass = encoder.beginRenderPass.bind(encoder);
+      encoder.beginRenderPass = (...args) => {
+        const pass = beginPass(...args), bind = pass.setBindGroup.bind(pass);
+        pass.setBindGroup = (slot, group, offsets, ...rest) => {
+          if (slot === 1 && offsets?.[0] > 0) offsetViews.add(offsets);
+          return bind(slot, group, offsets, ...rest);
+        };
+        return pass;
+      };
+      return encoder;
+    };
+  }
+  for (let i = 0; i < 4; i++) await h.render();
+  offsetViews.clear();
+  const before = deviceCallSnapshot(h.fake);
+  const materialUploads = materialWrites(h);
+  await h.render();
+  const after = deviceCallSnapshot(h.fake);
+  t.diagnostic(JSON.stringify({ bundles, meshes: 400, steadyWriteCalls: after.writeBufferCalls - before.writeBufferCalls,
+    steadyWriteBytes: after.writeBufferBytes - before.writeBufferBytes }));
+  assert.ok(h.fake.state.submitCount > 0, "frames submit rendered commands");
+  assert.ok(after.writeBufferCalls - before.writeBufferCalls <= 8,
+    `expected a small constant, got ${after.writeBufferCalls - before.writeBufferCalls}`);
+  assert.equal(after.bindGroups, before.bindGroups);
+  assert.equal(after.renderPipelines, before.renderPipelines);
+  if (!bundles) assert.equal(offsetViews.size, 1, "model draws reuse one dynamic-offset view");
+  assert.equal(materialWrites(h), materialUploads, "steady frame never uploads a material block");
+  if (bundles) {
+    assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "replayed");
+  }
+});
+
+for (const fresh of [true, false]) test(`unchanged ${fresh ? "source" : "generated"} bundled frames avoid serializing draw metadata`, async t => {
+  const h = await materialHarness(false, 400, true, fresh);
+  const originalJSON = vm.runInContext("JSON", h.env.context);
+  t.after(() => { h.env.context.JSON = originalJSON; h.renderer.dispose(); });
+  const bundle = h.bundle();
+  for (let i = 0; i < 4; i++) await h.render(bundle);
+  let serializedDraws = 0;
+  h.env.context.JSON = {
+    parse: originalJSON.parse,
+    stringify(value, replacer, space) {
+      const encoded = originalJSON.stringify(value, replacer, space);
+      if (typeof encoded === "string") serializedDraws += (encoded.match(/"box-\d+"/g) || []).length;
+      return encoded;
+    },
+  };
+  const encodes = h.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-encodes");
+  const submissions = h.fake.state.submitCount;
+  for (let i = 0; i < 30; i++) await h.render(bundle);
+  assert.equal(h.fake.state.submitCount, submissions + 30, "all measured frames submit");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-state"), "replayed");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-bundle-encodes"), encodes,
+    "the same GPU bundle serves all measured frames");
+  assert.equal(serializedDraws, 0, "steady replay must not serialize every draw again");
+});
+
+test("material revisions refresh packed fields once and retire the replaced block", async t => {
+  const h = await materialHarness(false, 2, false);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 3; i++) await h.render();
+  const old = h.fake.state.renderPasses.at(-1).bindGroups.find(c => c.slot === 1)
+    .group.desc.entries.find(e => e.binding === 0).resource.buffer;
+  const b = h.bundle(); b.materials[0].revision = 1; b.materials[0].roughness = 0.625;
+  const materialUploadCount = materialWrites(h);
+  await h.render(b);
+  const updated = h.fake.state.writeBufferCalls.filter(c => c.data?.byteLength === 288).at(-1);
+  assert.equal(updated.data[3], 0.625);
+  assert.equal(old.destroyed, true);
+  assert.equal(materialWrites(h), materialUploadCount + 1, "material revision uploads once");
+  await h.render(b);
+  assert.equal(materialWrites(h), materialUploadCount + 1, "material revision uploads once");
+  const writes = h.fake.state.writeBufferCalls.filter(c => c.buffer === updated.buffer);
+  assert.equal(writes.length, 1);
+});
+
+for (const [fresh, bundles] of [[true, false], [false, false], [true, true]]) test(`unchanged model matrices stay on GPU and sparse changes upload one row (source=${fresh}, bundles=${bundles})`, async t => {
+  const h = await materialHarness(false, 3, bundles, fresh);
+  t.after(() => h.renderer.dispose());
+  const b = h.bundle();
+  for (let i = 0; i < 4; i++) await h.render(b);
+  const group = h.fake.state.bindGroups.findLast(g =>
+    g.desc.entries.some(e => e.binding === 0 && e.resource.buffer?.size === 288) &&
+    g.desc.entries.some(e => e.binding === 19));
+  const arena = group.desc.entries.find(e => e.binding === 19).resource.buffer;
+  const writes = () => h.fake.state.writeBufferCalls.filter(c => c.buffer === arena);
+  const initial = writes().length;
+  const submissions = h.fake.state.submitCount;
+  for (let i = 0; i < 3; i++) await h.render(b);
+  assert.equal(h.fake.state.submitCount, submissions + 3);
+  assert.equal(writes().length, initial, "settled transforms need no model uploads");
+
+  const matrix = Array.from(b.meshObjects[1].modelMatrix);
+  matrix[12] = 0.1; // The wire format carries float64 numbers; the uniform stores float32.
+  b.meshObjects[1].modelMatrix = matrix;
+  await h.render(b);
+  assert.equal(writes().length, initial + 1);
+  assert.equal(writes().at(-1).offset, 512);
+  assert.equal(writes().at(-1).data.byteLength, 64, "one changed transform sends one matrix");
+  assert.deepEqual(Array.from(writes().at(-1).data), Array.from(new Float32Array(matrix)));
+
+  b.meshObjects[1].modelMatrix = matrix.slice();
+  await h.render(b);
+  assert.equal(writes().length, initial + 1, "equivalent float64 input stays cached after float32 rounding");
+  if (!bundles) {
+    const bound = h.fake.state.renderPasses.at(-1).bindGroups.filter(c => c.slot === 1 &&
+      c.group.desc.entries.some(e => e.binding === 19 && e.resource.buffer === arena));
+    assert.deepEqual(bound.map(c => c.dynamicOffsets[0]), [256, 512, 768], "fresh matrix arrays retain their draw offsets");
+  }
+});
+
+test("model arena offsets preserve transforms and growth refreshes cached bindings", async t => {
+  const h = await materialHarness(false, 2, false);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 3; i++) await h.render();
+  const b = h.bundle();
+  b.meshObjects[0].modelMatrix[12] = 3.25;
+  b.meshObjects[1].modelMatrix[12] = -2.5;
+  await h.render(b);
+  const bound = h.fake.state.renderPasses.at(-1).bindGroups.filter(c => c.slot === 1 && c.group.desc.entries.some(e => e.binding === 19));
+  assert.deepEqual(bound.map(c => c.dynamicOffsets[0]), [256, 512]);
+  const arena = bound[0].group.desc.entries.find(e => e.binding === 19).resource.buffer;
+  const upload = h.fake.state.writeBufferCalls.filter(c => c.buffer === arena).at(-1);
+  assert.equal(upload.offset, 256);
+  assert.equal(upload.data[12], 3.25); assert.equal(upload.data[64 + 12], -2.5);
+  const material = bound[0].group.desc.entries.find(e => e.binding === 0).resource.buffer;
+  const big = h.bundle();
+  big.meshObjects = Array.from({ length: 8 }, (_, i) => ({ ...big.meshObjects[i % 2], id: 'grown-' + i,
+    modelMatrix: new Float32Array(big.meshObjects[i % 2].modelMatrix) }));
+  await h.render(big);
+  assert.equal(arena.destroyed, true);
+  const groups = h.fake.state.renderPasses.at(-1).bindGroups.filter(c => c.slot === 1);
+  assert.ok(groups.every(c => c.group.desc.entries.find(e => e.binding === 19).resource.buffer !== arena));
+  assert.ok(groups.every(c => c.group.desc.entries.find(e => e.binding === 0).resource.buffer === material));
+});
+
+test("bundle reuse invalidates for depth overrides", async t => {
+  const h = await materialHarness(false, 2, true);
+  t.after(() => h.renderer.dispose());
+  for (let i = 0; i < 4; i++) await h.render();
+  const bundles = h.fake.state.renderBundles.length;
+  const b = h.bundle(); b.meshObjects[0].depthWrite = false;
+  await h.render(b);
+  assert.equal(h.fake.state.renderBundles.length, bundles + 1, "depth override re-encodes pipeline commands");
+  const groups = h.fake.state.renderBundles.at(-1);
+  assert.ok(groups.recorded.pipelines.some(p => p.desc.depthStencil.depthWriteEnabled === false));
+});
+
+
+test("bundle reuse preserves transparent order below the planner hash precision", async t => {
+  const h = await materialHarness(false, 2, true);
+  t.after(() => h.renderer.dispose());
+  const b = h.bundle();
+  Object.assign(b.materials[0], { renderPass: "alpha", blendMode: "alpha", opacity: 0.5 });
+  for (const object of b.meshObjects) object.renderPass = "alpha";
+  b.meshObjects[0].depthCenter = 1; b.meshObjects[1].depthCenter = 1.0000001;
+  for (let i = 0; i < 4; i++) await h.render(b);
+  const offsets = () => h.fake.state.renderBundles.at(-1).recorded.bindGroups
+    .filter(binding => binding.slot === 1).map(binding => binding.dynamicOffsets[0]);
+  assert.deepEqual(offsets(), [512, 256], "farther transparent draw appears first");
+  const bundles = h.fake.state.renderBundles.length;
+  b.meshObjects[0].depthCenter = 1.0000001; b.meshObjects[1].depthCenter = 1;
+  await h.render(b);
+  assert.equal(h.fake.state.renderBundles.length, bundles + 1, "changed order re-encodes the bundle");
+  assert.deepEqual(offsets(), [256, 512], "recorded model offsets follow the new exact depth order");
+});
+
+for (const fresh of [true, false]) test(`fallback materials survive bundle replay (${fresh ? 'source' : 'generated'})`, async t => {
+  const h = await materialHarness(false, 1, true, fresh);
+  t.after(() => h.renderer.dispose());
+  const b = h.bundle(); b.materials = []; b.meshObjects[0].materialIndex = 4;
+  await h.render(b);
+  const group = h.fake.state.renderBundles.at(-1).recorded.bindGroups.find(c => c.slot === 1).group;
+  const uniform = group.desc.entries.find(e => e.binding === 0).resource.buffer;
+  await h.render(b);
+  assert.notEqual(uniform.destroyed, true, 'a live fallback material must remain valid during replay');
+  assert.equal(h.mount.getAttribute('data-gosx-scene3d-webgpu-bundle-state'), 'replayed');
+});
+
+test('one retained mesh uploads less than its former material block', async t => {
+  const h = await materialHarness(false,1,false);
+  t.after(() => h.renderer.dispose());
+  for(let i=0;i<3;i++) await h.render();
+  const before=deviceCallSnapshot(h.fake); await h.render(); const after=deviceCallSnapshot(h.fake);
+  assert.ok(after.writeBufferBytes-before.writeBufferBytes<=740,
+    'frame uniforms and one model row must fit below the former 288-byte material upload');
+});
+
+test("shadow-casting Selena bundles keep live uniform uploads on every replay", async t => {
+  const h = await materialHarness(true, 1);
+  t.after(() => h.renderer.dispose());
+  h.state.objects.get("box-0").castShadow = true;
+  const render = () => {
+    const b = h.bundle();
+    b.lights = [{ kind: "directional", castShadow: true, x: 2, y: 4, z: 2,
+      directionX: 0.2, directionY: -1, directionZ: -0.3, shadowSize: 64 }];
+    return h.render(b);
+  };
+  for (let i = 0; i < 5; i++) await render();
+  const start = h.fake.state.writeBufferCalls.length;
+  await render();
+  assert.ok(h.fake.state.writeBufferCalls.slice(start).some(c => c.data?.byteLength === 144),
+    "Selena replay must still pack live model and frame uniforms");
+});
+
+module.exports = { materialHarness };

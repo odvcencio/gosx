@@ -13,9 +13,11 @@ go_cmd="${GO:-go}"
 mkdir -p "$(dirname "$out")" "$(dirname "$log")"
 rm -f "$log"
 
-PORT="$port" \
+local_secret="$(openssl rand -hex 32)"
+PORT="127.0.0.1:$port" \
+GOSX_LISTEN_ADDR="127.0.0.1:$port" \
 PUBLIC_URL="$base_url" \
-SESSION_SECRET="${SESSION_SECRET:-gosx-perf-budget-ci-secret}" \
+SESSION_SECRET="$local_secret" \
 	"$go_cmd" run ./cmd/gosx dev ./examples/gosx-docs >"$log" 2>&1 &
 server_pid=$!
 
@@ -51,5 +53,27 @@ fi
 # PERF_FLAGS and PERF_URLS intentionally split on shell words so callers can
 # pass the same flag and URL lists used by `make perf-budget`.
 # shellcheck disable=SC2086
-GOSX_CHROME_NO_SANDBOX="${GOSX_CHROME_NO_SANDBOX:-1}" \
-	"$go_cmd" run ./cmd/gosx perf $flags --budget "$budget" --json $urls >"$out"
+if GOSX_CHROME_NO_SANDBOX="${GOSX_CHROME_NO_SANDBOX:-1}" \
+	"$go_cmd" run ./cmd/gosx perf $flags --budget "$budget" --json $urls >"$out"; then
+	exit 0
+else
+	status=$?
+	echo "gosx perf-budget-ci: perf collection or budget gate failed with status ${status}" >&2
+	if [ -s "$out" ]; then
+		echo "gosx perf-budget-ci: preserved JSON report at ${out}" >&2
+		if command -v jq >/dev/null 2>&1; then
+			if jq empty "$out" >/dev/null 2>&1; then
+				echo "gosx perf-budget-ci: report JSON is parseable" >&2
+			else
+				echo "gosx perf-budget-ci: report JSON is not parseable" >&2
+			fi
+		fi
+	else
+		echo "gosx perf-budget-ci: no perf report was written to ${out}" >&2
+	fi
+	if [ -s "$log" ]; then
+		echo "gosx perf-budget-ci: server log tail from ${log}" >&2
+		tail -n 200 "$log" >&2 || true
+	fi
+	exit "$status"
+fi

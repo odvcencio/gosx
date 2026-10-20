@@ -1,0 +1,20 @@
+package app
+
+import (
+	"log"
+
+	"m31labs.dev/gosx/route"
+)
+
+func init() {
+	if err := route.RegisterFileModuleHere(route.FileModuleOptions{
+		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
+			return map[string]any{
+				"greeting": "Hello from Go",
+				"visitors": 1,
+			}, nil
+		},
+	}); err != nil {
+		log.Fatal(err)
+	}
+}

@@ -44,8 +44,8 @@ func runAssetPlanCommand(args []string, stdout io.Writer) error {
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	writePath := fs.String("write", "", "write JSON report to a file")
 	maxProbeMB := fs.Int64("max-probe-mb", assetpipe.DefaultMaxProbeBytes>>20, "maximum bytes to read per probed asset, in MiB")
-	turboBits := fs.Int("turboquant-bits", 12, "TurboQuant bit width to plan for vertex/transform streams")
-	previewBits := fs.Int("preview-bits", 0, "optional preview TurboQuant bit width")
+	quantizeBits := fs.Int("quantize-bits", 12, "KHR_mesh_quantization bit width to plan for vertex/transform streams")
+	previewBits := fs.Int("preview-bits", 0, "optional preview quantization bit width")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -54,9 +54,9 @@ func runAssetPlanCommand(args []string, stdout io.Writer) error {
 		roots = []string{"."}
 	}
 	report, err := assetpipe.Plan(roots, assetpipe.Options{
-		MaxProbeBytes:         *maxProbeMB << 20,
-		TurboQuantBitWidth:    *turboBits,
-		TurboQuantPreviewBits: *previewBits,
+		MaxProbeBytes:       *maxProbeMB << 20,
+		QuantizeBitWidth:    *quantizeBits,
+		QuantizePreviewBits: *previewBits,
 	})
 	if err != nil {
 		return err
@@ -139,7 +139,7 @@ Usage:
 
 Examples:
   gosx assets plan public
-  gosx assets plan --json --turboquant-bits 10 public/assets
+  gosx assets plan --json --quantize-bits 10 public/assets
 
 `)
 }
