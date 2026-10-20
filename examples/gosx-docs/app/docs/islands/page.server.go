@@ -9,19 +9,25 @@ type LiveCounterPropsData struct {
 	Initial int
 }
 
+type LiveCollectionPropsData struct {
+	Initial string
+}
+
 func init() {
 	docsapp.RegisterDocsPage("Islands", "Explicit interactive regions compiled for the shared GoSX browser VM.", route.FileModuleOptions{
 		Load: func(ctx *route.RouteContext, page route.FilePage) (any, error) {
 			return map[string]any{
-				"mode":             "",
-				"title":            "Islands",
-				"description":      "Explicit interactive regions compiled for the shared GoSX browser VM.",
-				"tags":             []string{"islands", "signals", "handlers", "hydration", "vm"},
-				"liveCounterProps": LiveCounterPropsData{Initial: 2},
+				"mode":                "",
+				"title":               "Islands",
+				"description":         "Explicit interactive regions compiled for the shared GoSX browser VM.",
+				"tags":                []string{"islands", "signals", "handlers", "hydration", "vm"},
+				"liveCounterProps":    LiveCounterPropsData{Initial: 2},
+				"liveCollectionProps": LiveCollectionPropsData{Initial: "GoSX"},
 				"toc": []map[string]string{
 					{"href": "#island-model", "label": "Island Model"},
 					{"href": "#authoring", "label": "Authoring"},
 					{"href": "#composition", "label": "Composition"},
+					{"href": "#collections", "label": "Collections"},
 					{"href": "#vm-subset", "label": "VM Subset"},
 					{"href": "#shared-signals", "label": "Shared Signals"},
 					{"href": "#program-assets", "label": "Program Assets"},
@@ -30,6 +36,7 @@ func init() {
 				"counterSample":     docsapp.DocSample("islands/counterSample.gosx.sample"),
 				"liveCounterSample": docsapp.DocSample("islands/liveCounter.gosx.sample"),
 				"compositionSample": docsapp.DocSample("islands/compositionSample.gosx.sample"),
+				"collectionSample":  docsapp.DocSample("islands/collectionSample.gosx.sample"),
 				"sharedSample":      docsapp.DocSample("islands/sharedSample.gosx.sample"),
 				"assetSample":       docsapp.DocSample("islands/assetSample.go.sample"),
 			}, nil

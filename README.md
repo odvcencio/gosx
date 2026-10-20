@@ -115,6 +115,11 @@ supported signals, computed values, and handlers, compiles expressions to VM
 instructions, and serializes an island program. Server components emit static
 HTML with no client-side cost.
 
+Island expressions accept `append(items.Get(), first, second)` for individual
+slice elements, including no new elements. Additions use the VM's existing
+immutable append operation; earlier slice values remain independent. Variadic
+slice expansion (`append(items, more...)`) is not in this expression subset.
+
 Strict `//gosx:engine` declarations and automatic `.gsx` engine-surface
 discovery remain preview/post-v1. The v1 engine contract is the programmatic
 `engine.Config` / `ctx.Engine` surface described below.

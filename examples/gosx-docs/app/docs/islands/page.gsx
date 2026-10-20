@@ -1,6 +1,9 @@
 package docs
 
-import "m31labs.dev/gosx/signal"
+import (
+	"m31labs.dev/gosx/browser"
+	"m31labs.dev/gosx/signal"
+)
 
 
 type LiveCounterProps struct {
@@ -15,6 +18,44 @@ component LiveCounter(props: LiveCounterProps) {
 		Island count:
 		{count.Get()}
 	</button>
+}
+
+type LiveCollectionProps struct {
+	Initial string
+}
+
+//gosx:island
+component LiveCollection(props: LiveCollectionProps) {
+	items := signal.New([]string{props.Initial})
+	draft := signal.New("")
+	edit := func() { draft.Set(value) }
+	add := func() {
+		browser.PreventDefault()
+		items.Set(append(items.Get(), draft.Get()))
+		draft.Set("")
+		browser.Focus("#island-collection-draft")
+	}
+	clear := func() { items.Set([]string{}); browser.Focus("#island-collection-draft") }
+	return <section aria-label="Interactive collection">
+		<form onSubmit={add}>
+			<label for="island-collection-draft">Add a building block</label>
+			<input
+				id="island-collection-draft"
+				name="item"
+				value={draft.Get()}
+				onInput={edit}
+				required
+				maxlength="48"
+				autocomplete="off"
+			 />
+			<button type="submit" disabled={draft.Get() == "" || len(items.Get()) >= 12}>Add</button>
+			<button type="button" onClick={clear} disabled={len(items.Get()) == 0}>Clear</button>
+		</form>
+		<ul id="island-collection-items" aria-live="polite">
+			<Each of={items.Get()} as="item"><li>{item}</li></Each>
+		</ul>
+		<p>{len(items.Get())} of 12 building blocks.</p>
+	</section>
 }
 
 func Page() Node {
@@ -70,13 +111,25 @@ func Page() Node {
 			A parent island may call a same-file strict pure-view component. The compiler inlines every invocation into the parent's program, including direct typed scalar props, caller-owned children, and named slots. Projected child markup can read the parent island's signals and bind its handlers. The browser still hydrates one root with one VM, and the encoded program has no component-call opcode.
 		</p>
 		<p>
-			Pure-view means the callee owns no signals, computed values, handlers, or effects. Nested islands, engines, legacy and imported callees, handler-valued props, nested or slice props, spreads, recursion, and more than 32 composed component frames fail closed. Expanded programs retain the 65,535-node and expression limits.
+			Pure-view means the callee owns no signals, computed values, handlers, or effects. A typed func() prop may forward a handler owned by the parent island, including through another pure-view wrapper. Callbacks remain static event bindings and cannot come from server props or be used as ordinary data. Nested islands, engines, legacy and imported callees, nested or slice props, spreads, recursion, and more than 32 composed component frames fail closed. Expanded programs retain the 65,535-node and expression limits.
 		</p>
 		<p>
 			Caller children and named slots belong on an inner pure-view component, as in the sample. The root island itself cannot declare those holes because its
 			<span class="inline-code">.gxi</span>
 			asset is compiled before any individual server call site supplies content.
 		</p>
+		<section id="collections" class="docs-live-example" aria-label="Collection island example">
+			<p class="eyebrow">Working collection</p>
+			<h2>Go slice values</h2>
+			<LiveCollection {...data.liveCollectionProps} />
+			<p>
+				Use append(items.Get(), item) and Set to grow a list. Each renders the updated slice. Several individual elements may be appended in one call, and a call with only the slice preserves its value. The VM creates a fresh slice for additions, keeping earlier signal values independent.
+			</p>
+			<p>
+				This intrinsic supports individual elements. Variadic slice expansion with ... remains outside the island expression subset. Collections use the existing shared VM and add no browser feature module or runtime opcode.
+			</p>
+			{CodeBlock("gosx", data.collectionSample)}
+		</section>
 		<h2 id="vm-subset">Expression VM subset</h2>
 		<p>
 			The island VM implements a constrained expression and statement language for signal reads and writes, literals, supported operators, property/index access, conditionals, and known handlers. The compiler rejects constructs it cannot encode.

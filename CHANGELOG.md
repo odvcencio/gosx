@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Accept Go's `append(slice, first, second)` spelling with individual element
+  arguments in island expressions. Lower to existing immutable VM operations,
+  preserve handler shadowing, and demonstrate a live collection in the docs.
+  Preserve slice element types in strict island loops and project typed implicit
+  event values into server Go handlers without adding runtime instructions.
+
 - Add typed Hub document views with debounced editing, server-rendered previews,
   presence, UTF-16 remote carets, reconnect recovery and navigation cleanup in an
   optional browser host. Replace the collaboration demo's application script
