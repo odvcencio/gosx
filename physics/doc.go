@@ -9,6 +9,12 @@
 // an integer solver iteration count, and no wall-clock or map-iteration order
 // anywhere in the step.
 //
+// The package is marked //gosx:deterministic: every float product that feeds an
+// addition is rounded by an explicit conversion, so a compiler that fuses a
+// multiply and an add (arm64, or amd64 at GOAMD64=v3) cannot change the bits.
+// Run `make lint-deterministic` after editing, and see
+// docs/deterministic-simulation.md.
+//
 // # The handful that matter
 //
 //	NewWorld(config)      build a world; WorldConfig carries gravity and the

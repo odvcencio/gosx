@@ -25,6 +25,7 @@ build/
 !/docs/immutable-asset-caching.md
 !/docs/shutdown-hooks.md
 !/docs/hub-snapshots.md
+!/docs/deterministic-simulation.md
 /gosx
 node_modules/
 

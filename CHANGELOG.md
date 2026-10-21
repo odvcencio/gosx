@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Add `m31labs.dev/gosx/det`, assembly-free and fusion-proof versions of Exp,
+  Exp2, Log, Log2, Log10, Pow, Sin, Cos, Tan, Asin, Acos, Atan, Atan2, Hypot,
+  Sinh, Cosh and Tanh that return the same bits on js/wasm, amd64 and arm64,
+  plus `det.MulAdd`. Add `det/parity` to record and compare per-step state
+  hashes, `gosx detlint` and `gosx-detlint` (a `go vet -vettool`) to check
+  packages marked `//gosx:deterministic`, and the make targets
+  `test-det-parity`, `test-det-parity-arm64-remote`,
+  `build-det-parity-darwin-arm64` and `lint-deterministic`. See
+  `docs/deterministic-simulation.md`. Go 1.26's `math.Log` on amd64 returns
+  wrong values for subnormal inputs; `det.Log` does not.
+
+- Make `physics` bit-identical whether or not the build fuses a multiply and an
+  add. The package is now marked `//gosx:deterministic`: float products are
+  rounded explicitly, `math.Sin/Cos/Acos/Atan2/Hypot` became `det` calls, and
+  the static broadphase prune walks slots in index order instead of ranging a
+  map. The parity corpus now passes at `GOAMD64=v3` and on arm64.
+
 - Reconcile shared-signal batch readers after notifications and derived values
   have settled. Each affected island evaluates once per store batch, preserving
   individual signal events and reentrant observer updates. Group subscriptions,
