@@ -11,7 +11,7 @@
 
 package bridge
 
-import "fmt"
+import "errors"
 
 // engineSurfaceInstance is an opaque placeholder so the bridge struct
 // layout matches the full build. Methods that take it are unreachable
@@ -43,7 +43,7 @@ const (
 // is typed as any so the islands-only caller doesn't need to import
 // engine/surface either.
 func (b *Bridge) HydrateEngineSurface(id, componentName, propsJSON string, programData []byte, format string, canvas any) error {
-	return fmt.Errorf("engine surface hydration unavailable in islands-only build")
+	return errors.New("engine surface hydration unavailable in islands-only build")
 }
 
 // DispatchEngineSurfaceEvent is a silent no-op in the islands-only

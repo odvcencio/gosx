@@ -27,6 +27,23 @@
   gamepad: buttons are OR-ed and directions take the last sample, so a press
   and release inside one frame still counts. Edge sends still go out in the
   same event turn. Default behavior is unchanged.
+- Add `netplay`, a transport-agnostic rollback netcode engine for two-player
+  deterministic simulations, standard library only. `Session` predicts the
+  remote input, rolls back within one tick, stalls at an 8-frame prediction
+  window, syncs frame advantage and exchanges confirmed-frame checksums over a
+  versioned binary packet under 1,200 bytes. `Relay` forwards packets, verifies
+  checksums with a native copy of the game, repairs a desync with its `Save`
+  blob, flags late inputs and streams delayed inputs to spectators.
+  `EventLedger` starts, cancels or keeps presentation effects after a rollback.
+  Replays are versioned and refuse a different simulation identity; the
+  `netplay-identity` generator hashes sources, data files, the Go version and
+  an optional det version. `LossyNet` and `Loopback` are in-process transports.
+  Ten thousand seeded lossy sessions agree with zero desyncs, and a steady-state
+  frame allocates nothing on native and js/wasm. See `docs/netplay.md`.
+
+- Settle individual shared-signal writes through the same reader boundary as
+  batches. Derived values update on the same write, and nested observer writes
+  produce one settled island update while preserving each signal notification.
 
 - Reconcile shared-signal batch readers after notifications and derived values
   have settled. Each affected island evaluates once per store batch, preserving

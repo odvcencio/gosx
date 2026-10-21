@@ -39,7 +39,7 @@ type Bridge struct {
 	signalFn       func(name, valueJSON string)          // callback to notify JS of shared signal changes
 	dispatching    map[string]uint32                     // active handler depth by island (same-island depth is capped at one)
 	unsubs         map[string][]func()                   // per-island unsubscribe handles for shared signals
-	pendingReaders []*sharedIslandReader                 // shared readers awaiting the outermost store batch
+	pendingReaders []*sharedIslandReader                 // shared readers awaiting the outermost store update
 	hostFactories  map[string]HostReceiverFactory        // receiver name -> per-island capability factory
 	hostReceivers  map[string]map[string]vm.HostReceiver // island id -> live receiver bindings
 
@@ -103,10 +103,10 @@ func (b *Bridge) EmitPatches(islandID string, patches []vm.PatchOp) {
 // Any island can read/write shared signals. When a shared signal changes,
 // all islands that reference it are re-rendered — like Redux, but reactive.
 type Store struct {
-	signals    map[string]*signal.Signal[vm.Value]
-	onChange   func(name string, value vm.Value)
-	batchDepth int
-	afterBatch func()
+	signals     map[string]*signal.Signal[vm.Value]
+	onChange    func(name string, value vm.Value)
+	updating    bool
+	afterUpdate func()
 }
 
 // NewStore creates an empty shared store.
@@ -127,6 +127,10 @@ func (s *Store) SetObserver(fn func(name string, value vm.Value)) {
 // pass here is defensive for hand-rolled callers that haven't migrated.
 func (s *Store) Set(name string, val vm.Value) {
 	name = signal.ResolveAlias(name)
+	if !s.updating {
+		s.updating = true
+		defer s.endUpdate()
+	}
 	if sig, ok := s.signals[name]; ok {
 		sig.Set(val)
 	} else {
@@ -145,13 +149,10 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 	if len(values) == 0 {
 		return
 	}
-	s.batchDepth++
-	defer func() {
-		s.batchDepth--
-		if s.batchDepth == 0 && s.afterBatch != nil {
-			s.afterBatch()
-		}
-	}()
+	if !s.updating {
+		s.updating = true
+		defer s.endUpdate()
+	}
 	signal.Batch(func() {
 		var created []string
 		for name, value := range values {
@@ -171,6 +172,15 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 			}
 		}
 	})
+}
+
+// endUpdate keeps readers behind the complete notification pass for both
+// individual writes and batches, including reentrant observer writes.
+func (s *Store) endUpdate() {
+	s.updating = false
+	if s.afterUpdate != nil {
+		s.afterUpdate()
+	}
 }
 
 // Get reads a shared signal value.
@@ -225,7 +235,7 @@ func New() *Bridge {
 		hostReceivers:  make(map[string]map[string]vm.HostReceiver),
 	}
 	b.store.SetObserver(b.notifySharedSignal)
-	b.store.afterBatch = b.flushSharedIslands
+	b.store.afterUpdate = b.flushSharedIslands
 	return b
 }
 
@@ -613,7 +623,7 @@ func (b *Bridge) reconcileSharedIsland(reader *sharedIslandReader) {
 	if reader.island == nil || b.dispatching[reader.id] > 0 {
 		return
 	}
-	if b.store.batchDepth > 0 {
+	if b.store.updating {
 		if !reader.pending {
 			reader.pending = true
 			b.pendingReaders = append(b.pendingReaders, reader)
