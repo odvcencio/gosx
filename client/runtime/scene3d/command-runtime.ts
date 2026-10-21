@@ -246,6 +246,16 @@
     });
   }
 
+  function live(target: any, eventName: any, data: any, options: any) {
+    if (typeof eventName !== "string" || !eventName.trim()) return Promise.reject(new TypeError("Scene3D Live event name is required"));
+    var opts = options || {};
+    return waitForCommandMount(target, opts, "live event", function(rec, resolve, reject) {
+      aborted(opts);
+      if (typeof rec.handle.applyLive !== "function") return reject(new Error("Scene3D Live events are unavailable"));
+      return Promise.resolve(rec.handle.applyLive(eventName, data)).then(resolve, reject);
+    });
+  }
+
   const sceneAPI = window.__gosx_scene3d_api || (window.__gosx_scene3d_api = {});
 
   // One adapter per handle, shared by optional presentation features. Lower
@@ -871,6 +881,7 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
+    live: live,
     getCamera, setCamera, whenReady, setAnimationClock,
     playTimeline: playTimeline,
     burstParticles: burstParticles,

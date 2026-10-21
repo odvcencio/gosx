@@ -19,6 +19,22 @@
   batch draws without an outline. A per-instance `ParentMatrix` is still
   rejected in motion frames. Existing crowds and frames behave as before. See
   `docs/scene3d-crowd-motion.md`.
+- Run the fighting input controller without a hub socket. `HubInputConfig.Sink`
+  `"signal"` with `SignalName` (register it with `Manifest.AddLocalInput`)
+  publishes each closed frame's absolute held samples, `[{player, dir, btn,
+  frame}]` with both players in local mode, to a shared signal that a Go WASM
+  engine reads. It uses the same per-frame latch and same-turn edge writes as
+  `HeldMode: "absolute"`, and makes a game's own keyboard, touch and pad
+  reading unnecessary. Hub input is unchanged. See `docs/fight-input.md`.
+
+- Add `Scene3D.Live(ctx, event, data)` to `engine/wasm` and
+  `window.__gosx.scene3d.live`, which feed a named Live event to a mounted
+  scene through the same path as a hub event. Engines no longer need to
+  dispatch the internal `gosx:hub:event` document event.
+
+- Add the `arcade-audio` feature chunk (`RequireFeature("arcade-audio")`) so a
+  page without hubs gets `window.__gosx.arcadeAudio`. Several bundle size
+  targets rise by the measured growth.
 
 - Add sampled clip frames to Scene3D, so an app can pose a skinned model from
   its own simulation clock. Declare `scene.Model{ID: ..., ClipSampled: true}`,

@@ -915,3 +915,93 @@ test("default fighting mode keeps client-side direction mapping", async () => {
   assert.equal("frame" in inputs[inputs.length - 1], false);
   env.context.__gosx_disconnect_hub("gosx-hub-0");
 });
+
+// Local sink: the fight controller runs without a hub socket and publishes each
+// absolute held sample to a shared signal that a Go WASM engine reads.
+async function createSinkEnv(inputOverrides) {
+  const env = createContext({
+    createWebSocket() { throw new Error("a local sink must not open a socket"); },
+    fetchRoutes: { "/runtime.wasm": { bytes: [0, 97, 115, 109] } },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [{
+        id: "gosx-hub-0",
+        name: "fight-input",
+        bindings: [],
+        input: Object.assign({
+          mode: "fighting",
+          sink: "signal",
+          signalName: "$fightHeld",
+          player: 1,
+          sendEveryMs: 100,
+        }, inputOverrides),
+      }],
+    },
+  });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const samples = () => env.sharedSignalCalls.filter((call) => call[0] === "$fightHeld").map((call) => JSON.parse(call[1]));
+  return { env, raf, samples };
+}
+
+test("local sink publishes absolute held samples without a hub socket", async () => {
+  const { env, raf, samples } = await createSinkEnv({});
+  assert.equal(env.sockets.length, 0);
+  assert.ok(env.context.__gosx.hubs.get("gosx-hub-0").inputController, "controller runs without a socket");
+  const document = env.context.document;
+  const before = samples().length;
+
+  document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  document.dispatchEvent(keyEvent("keydown", "u", "KeyU"));
+  let all = samples();
+  assert.deepEqual(all[all.length - 1], [{ player: 1, dir: 2, btn: 1, frame: 1 }], "edge publishes in the same event turn");
+  assert.ok(all.length > before);
+
+  document.dispatchEvent(keyEvent("keyup", "u", "KeyU"));
+  raf.flush();
+  all = samples();
+  assert.deepEqual(all[all.length - 1], [{ player: 1, dir: 2, btn: 1, frame: 1 }], "latch keeps a press that ended inside the frame");
+  raf.flush();
+  all = samples();
+  assert.deepEqual(all[all.length - 1], [{ player: 1, dir: 2, btn: 0, frame: 2 }]);
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("local sink publishes both players in local mode and honors disableEdgeSend", async () => {
+  const pad1 = { connected: true, axes: [0, 0, 0, 0], buttons: Array.from({ length: 16 }, () => ({ pressed: false })) };
+  pad1.buttons[1] = { pressed: true };
+  const made = createContext({
+    getGamepads: () => [{ connected: true, axes: [0, 0, 0, 0], buttons: Array.from({ length: 16 }, () => ({ pressed: false })) }, pad1],
+    fetchRoutes: { "/runtime.wasm": { bytes: [0, 97, 115, 109] } },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [{ id: "gosx-hub-0", name: "fight-input", bindings: [], input: {
+        mode: "fighting", sink: "signal", signalName: "$held", local: true, disableEdgeSend: true, sendEveryMs: 100,
+      } }],
+    },
+  });
+  const raf = installManualRAF(made.context);
+  runScript(bootstrapSource, made.context, "bootstrap.js");
+  await flushAsyncWork();
+  const calls = () => made.sharedSignalCalls.filter((call) => call[0] === "$held").map((call) => JSON.parse(call[1]));
+  const before = calls().length;
+  made.context.document.dispatchEvent(keyEvent("keydown", "a", "KeyA"));
+  assert.equal(calls().length, before, "no edge publish when disabled");
+  raf.flush();
+  const last = calls()[calls().length - 1];
+  assert.deepEqual(last, [
+    { player: 1, dir: 1, btn: 0, frame: 1 },
+    { player: 2, dir: 0, btn: 2, frame: 1 },
+  ]);
+  made.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("local sink implies absolute encoding and leaves hub input unchanged", async () => {
+  const { env, sent } = createFightInputEnv({ player: 2 });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  env.context.document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  assert.equal(inputsOf(sent).pop().dir, 7);
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});

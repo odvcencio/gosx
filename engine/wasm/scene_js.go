@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"m31labs.dev/gosx/client/jsutil"
 	"m31labs.dev/gosx/scene"
+	"strings"
 	"syscall/js"
 )
 
@@ -65,6 +66,24 @@ func (s Scene3D) Dispatch(ctx context.Context, commands []scene.Command) error {
 		return err
 	}
 	return s.async(ctx, "dispatchCommands", value)
+}
+
+// Live delivers one named Live event to this scene. It takes the same path as
+// a hub event the scene listens for, so scene.Live nodes, model animation and
+// audio cues react to it without a hub or an internal document event. data is
+// JSON-encoded; nil sends no data.
+func (s Scene3D) Live(ctx context.Context, event string, data any) error {
+	if strings.TrimSpace(event) == "" {
+		return fmt.Errorf("Scene3D Live event name is required")
+	}
+	value := js.Null()
+	if data != nil {
+		var err error
+		if value, err = encodeEventDetail(data); err != nil {
+			return err
+		}
+	}
+	return s.async(ctx, "live", event, value)
 }
 
 // Camera returns the effective mounted camera, including user orbit/zoom.

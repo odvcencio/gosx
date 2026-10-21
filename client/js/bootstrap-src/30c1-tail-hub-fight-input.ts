@@ -31,7 +31,11 @@
       readyEvent: String(input.readyEvent || "ready"),
       readyWhen: String(input.readyWhen || "").trim().toLowerCase() === "scene-committed" ? "scene-committed" : "socket",
       edgeSend: !input.disableEdgeSend,
-      absolute: String(input.heldMode || "").trim().toLowerCase() === "absolute",
+      // A signal sink always carries absolute samples: the Go WASM engine on
+      // the other end derives edges and resolves opposite directions itself.
+      sink: String(input.sink || "").trim().toLowerCase() === "signal",
+      signalName: String(input.signalName || ""),
+      absolute: String(input.heldMode || "").trim().toLowerCase() === "absolute" || String(input.sink || "").trim().toLowerCase() === "signal",
       trainingEvent: String(input.trainingEvent || "training"),
       signal: String(input.signal || ""),
       trainingSignal: String(input.trainingSignal || ""),
@@ -424,6 +428,25 @@
       return (config.absolute ? sampleFrame + ":" : "") + input.dir + ":" + input.btn;
     }
 
+    // canEmit reports whether a sample has somewhere to go: the shared signal
+    // for a local sink, otherwise an open hub socket.
+    function canEmit() {
+      return config.sink ? Boolean(config.signalName) : socketOpen();
+    }
+
+    // publishSink writes the frame's latched samples for every player to the
+    // sink signal as one array of {player, dir, btn, frame}.
+    function publishSink() {
+      const players = framePlayers();
+      const samples = [];
+      for (let i = 0; i < players.length; i++) {
+        const held = latch[players[i]];
+        samples.push({ player: players[i], dir: held.dir, btn: held.btn, frame: sampleFrame });
+        lastSentInput[players[i]] = inputKey(held);
+      }
+      publishJSON(config.signalName, samples);
+    }
+
     function framePlayers() {
       return config.local ? [1, 2] : [config.player];
     }
@@ -447,9 +470,13 @@
     function closeFrame() {
       if (disposed) return;
       sampleLatch();
-      if (socketOpen() && !config.spectator) {
-        const players = framePlayers();
-        for (let i = 0; i < players.length; i++) sendInput(players[i], latch[players[i]]);
+      if (canEmit() && !config.spectator) {
+        if (config.sink) {
+          publishSink();
+        } else {
+          const players = framePlayers();
+          for (let i = 0; i < players.length; i++) sendInput(players[i], latch[players[i]]);
+        }
       }
       sampleFrame++;
       for (const key of Object.keys(latch)) delete latch[key];
@@ -472,8 +499,17 @@
         // Always latch the event, even when edge sends are off, so a press and
         // release inside one frame is not lost.
         sampleLatch();
-        if (!config.edgeSend || !socketOpen()) return;
+        if (!config.edgeSend || !canEmit()) return;
         const players = framePlayers();
+        if (config.sink) {
+          for (let i = 0; i < players.length; i++) {
+            if (lastSentInput[players[i]] !== inputKey(latch[players[i]])) {
+              publishSink();
+              break;
+            }
+          }
+          return;
+        }
         for (let i = 0; i < players.length; i++) {
           if (lastSentInput[players[i]] !== inputKey(latch[players[i]])) sendInput(players[i], latch[players[i]]);
         }

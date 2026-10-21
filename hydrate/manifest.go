@@ -311,6 +311,26 @@ type HubInputConfig struct {
 	// netplay layer. A hidden tab stops animation frames and so stops sending.
 	HeldMode string `json:"heldMode,omitempty"`
 
+	// Sink picks where fighting-mode samples go. Empty sends them to the hub
+	// socket. "signal" runs the controller without any socket and publishes
+	// each closed frame's samples to the shared signal named by SignalName, for
+	// a Go WASM engine to read. Register such a controller with
+	// Manifest.AddLocalInput. A signal sink always uses the "absolute" encoding
+	// (see HeldMode), sends no ready, training or hub events, and needs no hub.
+	Sink string `json:"sink,omitempty"`
+
+	// SignalName is the shared signal that receives samples when Sink is
+	// "signal". Its value is a JSON array with one sample per local player
+	// (both in Local mode), each shaped {player, dir, btn, frame}:
+	//
+	//	[{"player":1,"dir":2,"btn":1,"frame":7}]
+	//
+	// dir, btn and frame follow HeldMode "absolute". The array is written once
+	// per closed frame and, unless DisableEdgeSend is set, again at once when
+	// a key or touch change alters the latched state, with the same frame
+	// number. Read the last value written for a frame.
+	SignalName string `json:"signalName,omitempty"`
+
 	// DisableEdgeSend turns off the same-event-turn send in fighting mode.
 	// By default a mapped key or touch control that changes held state sends
 	// the full input state immediately, and the SendEveryMS timer keeps
@@ -639,6 +659,19 @@ func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, inp
 		Input:    input,
 	})
 	return id
+}
+
+// AddLocalInput registers a fighting-input controller that runs without a hub
+// socket and publishes samples to input.SignalName (see HubInputConfig.Sink).
+// It returns the entry ID, or "" when input is nil or names no signal. The
+// entry's Path stays empty, so the browser opens no connection for it.
+func (m *Manifest) AddLocalInput(name string, input *HubInputConfig) string {
+	if input == nil || strings.TrimSpace(input.SignalName) == "" {
+		return ""
+	}
+	local := *input
+	local.Sink = "signal"
+	return m.AddHubWithInput(name, "", nil, &local)
 }
 
 // AddHubWithRoundTrip registers a realtime hub with an optional measured
