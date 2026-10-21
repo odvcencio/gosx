@@ -24,7 +24,7 @@ import (
 // unsupported. To ride a moving parent, set InstancedGLBMesh.ParentNode: the
 // transforms in a frame are then relative to that node and the renderer applies
 // the node's world matrix once per frame. To send only the agents that
-// changed, see PartialMotionFrame (GSP4). Send EncodeMotionFrame's bytes to
+// changed, see PartialMotionFrame (GSP5). Send EncodeMotionFrame's bytes to
 // window.__gosx.scene3d.dispatchMotionFrame(target, bytes, options); supply
 // options.fallbackCommands or options.fallbackPoseFrame for a route that
 // still works when GPU-motion application is unavailable.
@@ -215,7 +215,7 @@ func (e *MotionFrameEncoder) Encode(frame MotionFrame) ([]byte, error) {
 
 // appendMotionPayload writes one instance's motion key and animation state
 // (everything after its ID in a GSP3 record, everything after its slot in a
-// GSP4 record): eighteen transform float32s with a timestamp after each nine,
+// GSP5 record): eighteen transform float32s with a timestamp after each nine,
 // the clip index, clip start time, loop byte and playback rate.
 func appendMotionPayload(out []byte, instance MotionInstanceIR, clip uint16) ([]byte, error) {
 	if math.IsNaN(instance.TPrev) || math.IsInf(instance.TPrev, 0) ||

@@ -26,9 +26,9 @@
     return Boolean(handle && handle.__gosxScene3DCommandReady === true && typeof handle.applyCommands === "function");
   }
 
-  // GSP2, GSP3 and GSP4 share strict framing, IDs and scalar validation. Format
+  // GSP2, GSP3 and GSP5 share strict framing, IDs and scalar validation. Format
   // fields remain separate, and nothing reaches the renderer until decoding ends.
-  // GSP4 is the partial motion frame: a motion frame whose instances are named
+  // GSP5 is the partial motion frame: a motion frame whose instances are named
   // by slot (their position in the mounted batch) instead of by ID, and which
   // lists only the instances that changed.
   function decodeInstanceFrame(input: any, motion: boolean) {
@@ -59,7 +59,7 @@
     }
     need(6);
     var version = view.getUint8(3);
-    var partial = motion && version === 52;
+    var partial = motion && version === 53;
     if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || (version !== (motion ? 51 : 50) && !partial)) {
       throw new TypeError("unsupported " + kind + " frame version");
     }
@@ -614,13 +614,13 @@
 
   function decodeMotionFrame(input) { return decodeInstanceFrame(input, true); }
 
-  // A GSP4 frame carries only the instances that changed. Superseding one
+  // A GSP5 frame carries only the instances that changed. Superseding one
   // with a newer frame would lose the older frame's movers, so the motion
   // queue merges partial frames and never drops one for a full frame.
   // @ts-ignore TS7006 -- untyped, matching this file's convention.
   function isPartialMotionFrame(frame) {
     var bytes = frame instanceof ArrayBuffer ? new Uint8Array(frame, 0, Math.min(4, frame.byteLength)) : frame;
-    return bytes instanceof Uint8Array && bytes.length >= 4 && bytes[0] === 71 && bytes[1] === 83 && bytes[2] === 80 && bytes[3] === 52;
+    return bytes instanceof Uint8Array && bytes.length >= 4 && bytes[0] === 71 && bytes[1] === 83 && bytes[2] === 80 && bytes[3] === 53;
   }
 
   // mergePartialMotionBatches folds the changes of a newer partial frame over
@@ -642,7 +642,7 @@
     }
     var out = [];
     for (var entry of merged.values()) {
-      var slots = Array.from(entry.slots.keys()).sort(function(a, b) { return a - b; });
+      var slots = Array.from(entry.slots.keys()).sort(function(a: number, b: number) { return a - b; });
       out.push({ id: entry.id, partial: true, size: entry.size, instances: slots.map(function(slot) { return entry.slots.get(slot); }) });
     }
     return out;

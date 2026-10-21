@@ -320,16 +320,16 @@ test("sceneUpdateRigidInstanceMotion fails closed when the backend has no GPU-mo
   assert.equal(object._crowdMotion, undefined);
 });
 
-// ---- GSP4 partial motion frames ----
+// ---- GSP5 partial motion frames ----
 
 // The bytes scene.EncodePartialMotionFrame writes for one batch "crowd" of 300
 // instances, with slots 2 and 257 carrying the same motion key. The Go golden
 // test in scene/motion_frame_partial_test.go builds the identical buffer.
-const GSP4_GOLDEN = Uint8Array.from(Buffer.from(
-  "475350340100040077616c6b0100050063726f77642c01020002000000803f00000040000040400000003f0000803e000000000000803f0000803f0000803f00002041000080400000a0400000c040000000000000403f0000003e00000040000000400000004000002841010000001841010000c03f" +
+const GSP5_GOLDEN = Uint8Array.from(Buffer.from(
+  "475350350100040077616c6b0100050063726f77642c01020002000000803f00000040000040400000003f0000803e000000000000803f0000803f0000803f00002041000080400000a0400000c040000000000000403f0000003e00000040000000400000004000002841010000001841010000c03f" +
   "01010000803f00000040000040400000003f0000803e000000000000803f0000803f0000803f00002041000080400000a0400000c040000000000000403f0000003e00000040000000400000004000002841010000001841010000c03f", "hex"));
 
-// partialFrame builds a GSP4 buffer by hand: one batch of `size` instances that
+// partialFrame builds a GSP5 buffer by hand: one batch of `size` instances that
 // lists `slots`, each with the motion key prev(slot,0,0) -> next(slot+1,0,0).
 function partialFrame(slots, size = 300, id = "crowd") {
   const bytes = [];
@@ -337,7 +337,7 @@ function partialFrame(slots, size = 300, id = "crowd") {
   const text = value => { const chars = encoder.encode(value); bytes.push(chars.length, 0, ...chars); };
   const u16 = value => bytes.push(value & 255, value >> 8);
   const f32 = value => { const data = new DataView(new ArrayBuffer(4)); data.setFloat32(0, value, true); bytes.push(...new Uint8Array(data.buffer)); };
-  bytes.push(71, 83, 80, 52);
+  bytes.push(71, 83, 80, 53);
   u16(1); text("run");
   u16(1); text(id); u16(size); u16(slots.length);
   for (const slot of slots) {
@@ -348,9 +348,9 @@ function partialFrame(slots, size = 300, id = "crowd") {
   return Uint8Array.from(bytes);
 }
 
-test("GSP4 decoder reads the golden bytes the Go encoder writes", () => {
+test("GSP5 decoder reads the golden bytes the Go encoder writes", () => {
   const { bridge } = runtime();
-  const [batch] = bridge.decodeMotionFrame(GSP4_GOLDEN);
+  const [batch] = bridge.decodeMotionFrame(GSP5_GOLDEN);
   assert.equal(batch.id, "crowd");
   assert.equal(batch.partial, true);
   assert.equal(batch.size, 300);
@@ -365,7 +365,7 @@ test("GSP4 decoder reads the golden bytes the Go encoder writes", () => {
   assert.equal(instance.playbackRate, 1.5);
 });
 
-test("GSP4 decoder rejects descending slots, slots outside the batch, trailing bytes and truncation", () => {
+test("GSP5 decoder rejects descending slots, slots outside the batch, trailing bytes and truncation", () => {
   const { bridge } = runtime();
   assert.throws(() => bridge.decodeMotionFrame(partialFrame([5, 5])), /ascend strictly/);
   assert.throws(() => bridge.decodeMotionFrame(partialFrame([5, 3])), /ascend strictly/);

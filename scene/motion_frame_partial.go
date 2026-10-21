@@ -8,7 +8,7 @@ import (
 )
 
 // PartialMotionFrame is the slot-indexed sibling of MotionFrame (wire version
-// GSP4). It carries only the agents whose motion or animation state changed,
+// GSP5). It carries only the agents whose motion or animation state changed,
 // each named by its slot: its zero-based position in the mounted
 // InstancedGLBMesh batch's Instances list. Agents it omits keep their last
 // motion key, so a crowd of thousands where a few percent move per network
@@ -59,9 +59,9 @@ func (b MotionBatch) Partial(slots []int) PartialMotionBatch {
 	return PartialMotionBatch{ID: b.ID, Size: len(b.Instances), Updates: updates}
 }
 
-// EncodePartialMotionFrame writes the GSP4 little-endian wire format.
+// EncodePartialMotionFrame writes the GSP5 little-endian wire format.
 //
-//	"GSP4"
+//	"GSP5"
 //	u16 clipCount, clipCount x (u16 length, UTF-8 name)   // index 0 is the empty clip
 //	u16 batchCount
 //	batchCount x {
@@ -78,7 +78,7 @@ func EncodePartialMotionFrame(frame PartialMotionFrame) ([]byte, error) {
 	return new(MotionFrameEncoder).EncodePartial(frame)
 }
 
-// EncodePartial writes one GSP4 frame, reusing storage held by the encoder.
+// EncodePartial writes one GSP5 frame, reusing storage held by the encoder.
 // Like Encode, the returned bytes stay valid until the next call.
 func (e *MotionFrameEncoder) EncodePartial(frame PartialMotionFrame) ([]byte, error) {
 	if len(frame.Batches) > math.MaxUint16 {
@@ -122,7 +122,7 @@ func (e *MotionFrameEncoder) EncodePartial(frame PartialMotionFrame) ([]byte, er
 		e.out = make([]byte, 0, int(capacity))
 	}
 	out := e.out[:6]
-	copy(out, "GSP4")
+	copy(out, "GSP5")
 	binary.LittleEndian.PutUint16(out[4:], uint16(len(e.clips)-1))
 	appendID := func(id string) error {
 		if id == "" || len(id) > math.MaxUint16 || !utf8.ValidString(id) {

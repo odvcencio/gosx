@@ -26,7 +26,7 @@ func partialSample() MotionInstanceIR {
 	}
 }
 
-// TestEncodePartialMotionFrameGoldenBytes pins the exact GSP4 byte layout. The
+// TestEncodePartialMotionFrameGoldenBytes pins the exact GSP5 byte layout. The
 // TypeScript decoder test in client/js/scene3d-motion-frame.test.mjs decodes
 // the same literal bytes.
 func TestEncodePartialMotionFrameGoldenBytes(t *testing.T) {
@@ -40,7 +40,7 @@ func TestEncodePartialMotionFrameGoldenBytes(t *testing.T) {
 	var want []byte
 	u16 := func(v int) { want = binary.LittleEndian.AppendUint16(want, uint16(v)) }
 	f32 := func(v float32) { want = binary.LittleEndian.AppendUint32(want, math.Float32bits(v)) }
-	want = append(want, "GSP4"...)
+	want = append(want, "GSP5"...)
 	u16(1)
 	u16(4)
 	want = append(want, "walk"...)
@@ -60,7 +60,7 @@ func TestEncodePartialMotionFrameGoldenBytes(t *testing.T) {
 		f32(1.5)
 	}
 	if !bytes.Equal(data, want) {
-		t.Fatalf("GSP4 bytes differ\n got %x\nwant %x", data, want)
+		t.Fatalf("GSP5 bytes differ\n got %x\nwant %x", data, want)
 	}
 	// A changed agent costs a fixed 93 bytes: slot, motion key, clip state.
 	perAgent := (len(data) - (4 + 2 + 2 + 4 + 2 + 2 + 5 + 2 + 2)) / 2

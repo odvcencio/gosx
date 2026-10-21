@@ -16,7 +16,7 @@
 //            and re-applies the whole batch (GSP3), whatever changed.
 //   partial  Agents are in the ship's space (InstancedGLBMesh.ParentNode). The
 //            ship's pose is one matrix written per frame, and a tick sends only
-//            the 5% of agents that changed, by slot (GSP4).
+//            the 5% of agents that changed, by slot (GSP5).
 //
 // What is timed: frame decode, applying the frame to the agents, and the
 // per-frame bundle, planner and renderer preparation. What is not: building the
@@ -127,7 +127,7 @@ function loadRenderer() {
   return { context, uploads };
 }
 
-// ---- wire layout (GSP3 / GSP4), as written by scene/motion_frame*.go ----
+// ---- wire layout (GSP3 / GSP5), as written by scene/motion_frame*.go ----
 
 const encoder = new TextEncoder();
 function writer() {
@@ -165,7 +165,7 @@ function fullFrame(batchID, ids, keys) {
 }
 function partialFrame(batchID, size, slots, keys) {
   const w = writer();
-  for (const c of [71, 83, 80, 52]) w.u8(c);
+  for (const c of [71, 83, 80, 53]) w.u8(c);
   w.u16(1); w.text('Run'); w.u16(1); w.text(batchID); w.u16(size); w.u16(slots.length);
   for (const slot of slots) { w.u16(slot); payload(w, keys.get(slot)); }
   return w.done();

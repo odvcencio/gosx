@@ -35,7 +35,7 @@ func DispatchMotionFrameAfterCommands(target string, beforeCommands []Command, f
 	})
 }
 
-// DispatchPartialMotionFrame encodes a GSP4 frame (only the changed agents,
+// DispatchPartialMotionFrame encodes a GSP5 frame (only the changed agents,
 // by slot) and applies it like DispatchMotionFrame. The client merges queued
 // partial frames instead of dropping the older one, so every changed agent
 // reaches the renderer.
