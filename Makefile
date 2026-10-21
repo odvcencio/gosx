@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-det-parity build-det-parity-darwin-arm64 lint-deterministic release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -360,6 +360,44 @@ test-physics-parity:
 	$(GO) test ./physics/...
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./physics/ -run 'TestParityCorpus|TestFusedMultiplyAddProbeIsSound' -v
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./physics/
+
+# Deterministic-math parity (package det). The same corpus and golden hashes run
+# on every platform and must give the same bits:
+#   1. native, at the default GOAMD64 (no fused multiply-add);
+#   2. native with GOAMD64=v3, where Go fuses x*y+z, when this CPU supports it;
+#   3. js/wasm under Node;
+#   4. linux/arm64 under qemu-aarch64, when qemu-aarch64 is installed.
+# An Apple Silicon Mac cannot be run from here; `make build-det-parity-darwin-arm64`
+# writes test binaries to copy there.
+DET_PARITY_OUT ?= build/det-parity
+DET_PARITY_PKGS = ./det ./det/parity
+
+test-det-parity:
+	$(GO) test -p 4 $(DET_PARITY_PKGS)
+	@if grep -qw fma /proc/cpuinfo 2>/dev/null && grep -qw avx2 /proc/cpuinfo 2>/dev/null; then \
+		echo "det parity: GOAMD64=v3 (fused multiply-add enabled)"; \
+		GOAMD64=v3 $(GO) test -p 4 $(DET_PARITY_PKGS) || exit 1; \
+	else \
+		echo "det parity: SKIP GOAMD64=v3 run, this CPU has no FMA and AVX2 (or /proc/cpuinfo is unreadable)"; \
+	fi
+	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" $(DET_PARITY_PKGS)
+	@if command -v qemu-aarch64 >/dev/null 2>&1; then \
+		echo "det parity: linux/arm64 under qemu-aarch64"; \
+		GOOS=linux GOARCH=arm64 $(GO) test -p 4 -exec="qemu-aarch64" $(DET_PARITY_PKGS) || exit 1; \
+	else \
+		echo "det parity: SKIP linux/arm64, qemu-aarch64 is not installed (install qemu-user to enable it)"; \
+	fi
+
+# build-det-parity-darwin-arm64 cross-compiles the det parity test binaries for
+# Apple Silicon into $(DET_PARITY_OUT). Copy them to a Mac and run each one:
+#   ./det.test -test.v && ./parity.test -test.v
+# The golden data is embedded, so the binaries need no other files.
+build-det-parity-darwin-arm64:
+	mkdir -p $(DET_PARITY_OUT)
+	GOOS=darwin GOARCH=arm64 $(GO) test -c -o $(DET_PARITY_OUT)/det.darwin-arm64.test ./det
+	GOOS=darwin GOARCH=arm64 $(GO) test -c -o $(DET_PARITY_OUT)/parity.darwin-arm64.test ./det/parity
+	@echo "wrote $(DET_PARITY_OUT)/det.darwin-arm64.test and $(DET_PARITY_OUT)/parity.darwin-arm64.test"
+	@echo "copy both to an Apple Silicon Mac and run each with -test.v"
 
 # wasm-size-budget builds both client/wasm flavors and asserts they stay within
 # the budget. Override WASM_FULL_BUDGET_KB / WASM_TINY_BUDGET_KB to raise the

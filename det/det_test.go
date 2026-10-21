@@ -1,6 +1,7 @@
 package det
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -258,6 +259,12 @@ type goldenSample struct {
 
 const goldenPath = "testdata/golden.json"
 
+// goldenData is embedded so a compiled test binary can run on another machine
+// without the source tree.
+//
+//go:embed testdata/golden.json
+var goldenData []byte
+
 func hex64(f float64) string { return fmt.Sprintf("%016x", math.Float64bits(f)) }
 
 func computeGolden() map[string]goldenEntry {
@@ -313,12 +320,8 @@ func TestGolden(t *testing.T) {
 		t.Logf("wrote %s", goldenPath)
 		return
 	}
-	raw, err := os.ReadFile(goldenPath)
-	if err != nil {
-		t.Fatalf("read golden: %v (run with DET_REGEN=1 to create it)", err)
-	}
 	var want map[string]goldenEntry
-	if err := json.Unmarshal(raw, &want); err != nil {
+	if err := json.Unmarshal(goldenData, &want); err != nil {
 		t.Fatal(err)
 	}
 	for name, w := range want {
