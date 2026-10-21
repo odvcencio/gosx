@@ -344,6 +344,40 @@ toSVG, {easing: "ease-in-out"})` and call `sample(progress)` / `dispose()`;
 GoSX-slides uses this boundary for storyboard navigation. Applications use the
 Go binding rather than authoring browser scripts.
 
+## Native material choreography
+
+Declare uniform animation beside the mesh's Selena material. The material must
+declare the named uniform, such as a scalar `gain` parameter:
+
+```go
+scene.Mesh{
+    ID: "glow",
+    Geometry: scene.BoxGeometry{Width: 1, Height: 1, Depth: 1},
+    Material: material, // From scene.CompileSelenaMaterial.
+    MaterialAnims: []scene.MaterialUniformAnim{
+        {
+            Uniform: "gain", Arity: 1,
+            Spring: &scene.MaterialSpringAnim{
+                From: .2, To: 1, Stiffness: 160, Damping: 12,
+            },
+        },
+    },
+}
+```
+
+A standalone Scene3D with `MaterialAnims` automatically requests the framework's
+Go/WASM kernel and keeps its material clock running. It needs no island,
+application program, or browser flag. Keyframes and per-component oscillators
+use the same declaration. The scene clock controls pause, resume and seeking;
+reduced motion emits the native rest value and stops ambient work.
+
+The renderer uses `engine.RuntimeKernel` for these framework helpers and chooses
+the smallest compatible runtime profile. Other page features may require a
+larger profile. Ordinary scenes and spin-only declarations retain their existing
+loading behavior. An explicit shared engine program keeps its own runtime
+ownership. Each mount owns and releases its material program, including failed
+loads and program replacement.
+
 ## Repeated native spring sampling
 
 For repeated absolute-time samples in Go, prepare a spring once:

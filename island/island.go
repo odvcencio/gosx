@@ -1468,6 +1468,14 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if !engine.KindSupported(cfg.Kind) {
 		return renderEngineError(fmt.Errorf("unsupported engine kind: %q", cfg.Kind))
 	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
+		if cfg.Scene3DProbe == nil {
+			cfg.Scene3DProbe = sceneprobe.Decode(cfg.Props)
+		}
+		if cfg.Runtime == engine.RuntimeNone && strings.TrimSpace(cfg.WASMPath) == "" && cfg.Scene3DProbe.NeedsMaterialMotion() {
+			cfg.Runtime = engine.RuntimeKernel
+		}
+	}
 	if err := engine.ValidateRuntime(cfg.Runtime, cfg.WASMPath); err != nil {
 		return renderEngineError(err)
 	}
@@ -2353,6 +2361,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		mode = "preview"
 	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()
+	kernelEngine := r.needsKernelRuntime()
 	// In preview mode, the bridge is required even without islands —
 	// otherwise the iframe has no Bridge.DispatchInboundSignal target.
 	previewNeedsRuntime := previewRelay && mode == "preview"
@@ -2369,8 +2378,8 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		Mode:               mode,
 		Manifest:           bootstrap && mode != "lite",
 		Selective:          selective,
-		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
-		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
+		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || kernelEngine || monolithBridge,
+		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || kernelEngine || monolithBridge,
 		StandardGoWASMExec: r.hasGoWASMEngines(),
 		Patch:              islands > 0,
 		PreviewRelay:       previewRelay,
@@ -2777,6 +2786,15 @@ func (r *Renderer) scene3DNeedsHydrateChunk() bool {
 func (r *Renderer) needsSharedRuntimeEngineBridge() bool {
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Runtime), string(engine.RuntimeShared)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) needsKernelRuntime() bool {
+	for _, entry := range r.manifest.Engines {
+		if entry.Runtime == string(engine.RuntimeKernel) {
 			return true
 		}
 	}

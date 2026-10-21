@@ -86,6 +86,8 @@ func TestClassifyDecodedEngineEvidence(t *testing.T) {
 		want []string
 	}{
 		{`{"engines":[{"component":"GoSXScene3D"}]}`, false, []string{"scene3d/js"}},
+		{`{"engines":[{"component":"GoSXScene3D","runtime":"kernel"}]}`, true, []string{"game/shared", "scene3d/shared"}},
+		{`{"engines":[{"runtime":"kernel"},{}]}`, true, []string{"engine/js", "engine/shared", "game/js", "game/shared"}},
 		{`{"islands":[{}],"runtime":{"path":"core.wasm"},"engines":[{"component":"GoSXScene3D"}]}`, true, []string{"game/js", "island", "scene3d/js"}},
 		{`{"engines":[{}, {"runtime":"shared"}]}`, true, []string{"engine/js", "engine/shared", "game/js", "game/shared"}},
 		{`{"engines":[{"component":"GoSXScene3D"},{}]}`, false, []string{"engine/js", "scene3d/js"}},

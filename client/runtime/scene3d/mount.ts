@@ -138,11 +138,8 @@
     let wasmMotionPropRefs = null;
     let wasmMotionF64 = null;
     let wasmMotionU8 = null;
-    // C3: material-uniform motion seam. Mirrors wasmMotion* but loads
-    // props.scene.materialMotionProgram and writes evaluated values into each
-    // mesh's customUniforms so selena re-packs them every frame. Same opt-in
-    // flag + state lifecycle (0=unloaded, 1=loaded, -1=disabled).
-    let wasmMatMotionState = 0;
+    // Go-declared material motion owns a kernel handle: 0=unloaded, -1=disabled.
+    let wasmMatMotionSource = "";
     let wasmMatMotionHandle = 0;
     let wasmMatMotionTargetRefs = null;
     let wasmMatMotionPropRefs = null;
@@ -192,6 +189,10 @@
       }
       if (runtimeScene) {
         return { wants: true, reason: "runtime-program" };
+      }
+      const materialProgram = sceneMotionProgram("materialMotionProgram");
+      if (materialProgram && (wasmMatMotionHandle >= 0 || materialProgram !== wasmMatMotionSource)) {
+        return { wants: true, reason: "material-motion" };
       }
       if (Array.isArray(sceneState.computeParticles) && sceneState.computeParticles.length > 0) {
         return { wants: true, reason: "compute-particles" };
@@ -1438,7 +1439,7 @@
       // transitions and the shared input window keep the display cadence.
       if (!(interval > 0)) {
         var activeUntil = Math.max(sceneActiveInputUntil, sceneNumber(sceneState._scrollCamera?._activeInputUntil, 0));
-        var ambient = /^(auto-rotate|clouds|point-spin|material-clock|(?:object|label|sprite|html)-animation)$/.test(reason);
+        var ambient = /^(auto-rotate|clouds|point-spin|material-clock|material-motion|(?:object|label|sprite|html)-animation)$/.test(reason);
         if (ambient && activeUntil < sceneNowMilliseconds() && !(sceneState._gosxMotionController && sceneState._gosxMotionController.active)) interval = 1000 / 60;
       }
       // Scroll-driven camera scenes need to track the display while input is
@@ -2856,19 +2857,8 @@
         })
       : function() {};
 
-    // WASM motion seam (P2.4b): lazy-load the scene's motion program once, then
-    // each frame tick + decode packed transform writes into SET_TRANSFORM
-    // commands routed through applySceneCommands (so state re-normalizes). Inert
-    // unless window.__gosx_motion_wasm is set and the exports are present.
-    //
-    // SCOPE: this seam runs ONLY on the JS-sceneState render path — i.e. the
-    // createSceneRenderBundle fall-through (onRenderEngine returns ""), and
-    // declarative SceneIR scenes that ship motionProgram but render via JS rather
-    // than the Go runtime bundle. Production shared-runtime Scene3D scenes call
-    // ctx.runtime.renderFrame(), receive a non-empty runtimeBundle, and return at
-    // line ~7128 BEFORE reaching this call — so this seam does NOT drive them.
-    // Motion for those scenes is computed by motion.Eval inside
-    // client/vm/scene_render_bundle.go and is baked into the Go-produced bundle.
+    // Transform motion remains opt-in on the JS scene-state path. Shared engine
+    // bundles already include transforms evaluated by client/vm and return earlier.
     function applyWasmMotionFrame(timeSeconds) {
       if (wasmMotionState < 0) return;
       if (typeof window === "undefined" || !window.__gosx_motion_wasm
@@ -2876,13 +2866,9 @@
         return;
       }
       if (wasmMotionState === 0) {
-        // The scene IR (carrying motionProgram as base64) rides under
-        // props.scene; some callers pass the scene object as props directly.
-        const sceneIR = props && typeof props.scene === "object" && props.scene ? props.scene : props;
-        const b64 = sceneIR && typeof sceneIR.motionProgram === "string" ? sceneIR.motionProgram : "";
+        const b64 = sceneMotionProgram("motionProgram");
         const handle = b64 ? window.__gosx_motion_load(sceneBase64Decode(b64)) : 0;
-        const refs = handle >= 1 && typeof window.__gosx_motion_refs === "function"
-          ? window.__gosx_motion_refs(handle) : null;
+        const refs = handle >= 1 ? window.__gosx_motion_refs?.(handle) : null;
         if (!refs) { wasmMotionState = -1; return; }
         wasmMotionHandle = handle;
         wasmMotionTargetRefs = refs.target || [];
@@ -2897,7 +2883,7 @@
         wasmMotionF64 = new Float64Array(count);
         wasmMotionU8 = new Uint8Array(wasmMotionF64.buffer);
         count = window.__gosx_motion_tick(wasmMotionHandle, timeSeconds, reduced, wasmMotionU8);
-        if (count > wasmMotionF64.length) count = wasmMotionF64.length;
+        count = Math.min(count, wasmMotionF64.length);
       }
       const f = wasmMotionF64;
       const cmds = [];
@@ -2925,36 +2911,41 @@
       if (cmds.length > 0) applySceneCommands(sceneState, cmds);
     }
 
-    // C3: motion-evaluated MATERIAL UNIFORM animation. Mirrors
-    // applyWasmMotionFrame but loads props.scene.materialMotionProgram (whose
-    // tracks target material uniforms: targetRef=mesh id, prop=uniform name).
-    // Each frame it ticks at absolute time t, decodes packed
-    // [targetID, propID, arity, comps...] records, and writes the evaluated
-    // value into the mesh's customUniforms bag (the same bag selena re-packs
-    // per frame via sceneSelenaUniformData). MUST run BEFORE the per-frame
-    // bundle build so the next createSceneRenderBundle clones the new value.
-    // Stateless single-program tick at absolute t, so a grow-and-retick at the
-    // same t is safe (no clock-advance concern like the model mixer).
+    function sceneMotionProgram(name) {
+      const value = (props.scene || props)[name];
+      return typeof value === "string" ? value.trim() : "";
+    }
+
+    function releaseMaterialMotion(nextHandle = 0) {
+      if (wasmMatMotionHandle >= 1) window.__gosx_motion_unload?.(wasmMatMotionHandle);
+      wasmMatMotionHandle = nextHandle;
+      wasmMatMotionTargetRefs = wasmMatMotionPropRefs = wasmMatMotionF64 = wasmMatMotionU8 = null;
+    }
+
+    // Sample native material tracks before bundle creation so Selena sees the
+    // current uniforms. Absolute-time sampling permits a buffer grow and retick.
     function applyWasmMaterialMotionFrame(timeSeconds) {
-      if (wasmMatMotionState < 0) return;
-      if (typeof window === "undefined" || !window.__gosx_motion_wasm
-          || typeof window.__gosx_motion_load !== "function") {
+      const source = sceneMotionProgram("materialMotionProgram");
+      if (source !== wasmMatMotionSource) {
+        releaseMaterialMotion();
+        wasmMatMotionSource = source;
+      }
+      if (!source || wasmMatMotionHandle < 0 || typeof window.__gosx_motion_load !== "function") {
         return;
       }
-      if (wasmMatMotionState === 0) {
-        const sceneIR = props && typeof props.scene === "object" && props.scene ? props.scene : props;
-        const b64 = sceneIR && typeof sceneIR.materialMotionProgram === "string" ? sceneIR.materialMotionProgram : "";
-        const handle = b64 ? window.__gosx_motion_load(sceneBase64Decode(b64)) : 0;
-        if (handle < 1) { wasmMatMotionState = -1; return; }
-        const refs = typeof window.__gosx_motion_refs === "function"
-          ? window.__gosx_motion_refs(handle) : null;
-        if (!refs) { wasmMatMotionState = -1; return; }
-        wasmMatMotionHandle = handle;
-        wasmMatMotionTargetRefs = refs.target || [];
-        wasmMatMotionPropRefs = refs.prop || [];
-        wasmMatMotionF64 = new Float64Array(256);
-        wasmMatMotionU8 = new Uint8Array(wasmMatMotionF64.buffer);
-        wasmMatMotionState = 1;
+      if (wasmMatMotionHandle === 0) {
+        try {
+          wasmMatMotionHandle = window.__gosx_motion_load(sceneBase64Decode(source));
+          const refs = wasmMatMotionHandle >= 1 ? window.__gosx_motion_refs?.(wasmMatMotionHandle) : null;
+          if (!refs) return releaseMaterialMotion(-1);
+          wasmMatMotionTargetRefs = refs.target || [];
+          wasmMatMotionPropRefs = refs.prop || [];
+          wasmMatMotionF64 = new Float64Array(256);
+          wasmMatMotionU8 = new Uint8Array(wasmMatMotionF64.buffer);
+        } catch (_error) {
+          releaseMaterialMotion(-1);
+          return;
+        }
       }
       const reduced = motion.reducedMotion === true;
       let count = window.__gosx_motion_tick(wasmMatMotionHandle, timeSeconds, reduced, wasmMatMotionU8);
@@ -2962,7 +2953,11 @@
         wasmMatMotionF64 = new Float64Array(count);
         wasmMatMotionU8 = new Uint8Array(wasmMatMotionF64.buffer);
         count = window.__gosx_motion_tick(wasmMatMotionHandle, timeSeconds, reduced, wasmMatMotionU8);
-        if (count > wasmMatMotionF64.length) count = wasmMatMotionF64.length;
+        count = Math.min(count, wasmMatMotionF64.length);
+      }
+      if (!(count > 0)) {
+        releaseMaterialMotion(-1);
+        return;
       }
       const f = wasmMatMotionF64;
       for (let i = 0; i + 3 <= count;) {
@@ -2981,9 +2976,7 @@
         if (width === 1) {
           uniforms[uniformName] = f[c];
         } else {
-          const arr = new Array(width);
-          for (let k = 0; k < width; k++) arr[k] = f[c + k];
-          uniforms[uniformName] = arr;
+          uniforms[uniformName] = Array.prototype.slice.call(f, c, c + width);
         }
       }
     }
@@ -3728,13 +3721,7 @@
       }
       wasmMotionState = -1;
       wasmMotionHandle = 0;
-      // C3: free the material-uniform motion program handle.
-      if (wasmMatMotionState === 1 && typeof window !== "undefined"
-          && typeof window.__gosx_motion_unload === "function") {
-        window.__gosx_motion_unload(wasmMatMotionHandle);
-      }
-      wasmMatMotionState = -1;
-      wasmMatMotionHandle = 0;
+      releaseMaterialMotion(-1);
       // P4-M3: free any per-model WASM motion mixers created behind the flag.
       sceneDestroyModelWasmMixers(sceneState && sceneState._modelSkins);
       cancelFrame();

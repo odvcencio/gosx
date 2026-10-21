@@ -139,6 +139,7 @@ func decodeFallback(raw json.RawMessage, original *Probe) *Probe {
 	var preload legacyPreload
 	preloadErr := json.Unmarshal(raw, &preload)
 	p := new(Probe)
+	p.MaterialMotion = original.NeedsMaterialMotion()
 	if preloadErr == nil {
 		filtered, _ := json.Marshal(preload)
 		_ = json.Unmarshal(filtered, p)
