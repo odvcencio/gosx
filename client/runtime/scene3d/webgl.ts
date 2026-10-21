@@ -9416,57 +9416,8 @@
       }
       var retained = obj.retainedGeometry === true;
       var revision = retained ? obj.geometryRevision : null;
-      let entry = directMeshAttributeCache.get(vertices);
-      if (
-        entry &&
-        (entry.retained !== retained || (retained && entry.revision !== revision))
-      ) {
-        if (retained || entry.retained) {
-          retainedMeshBufferStats.rebuilds += 1;
-          if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
-        }
-        retireWebGLDirectMeshEntry(vertices, entry);
-        entry = null;
-      }
-      if (!entry) {
-        entry = {
-          retained,
-          revision,
-          lastSeenEpoch: directMeshAttributeEpoch,
-          attributes: Object.create(null),
-        };
-        directMeshAttributeCache.set(vertices, entry);
-      }
-      entry.lastSeenEpoch = directMeshAttributeEpoch;
-      let record = entry.attributes.indices;
-      if (!record || record.data !== data) {
-        if (record) {
-          if (retained) retainedMeshBufferStats.rebuilds += 1;
-          retireWebGLDirectMeshAttribute(entry, "indices");
-        }
-        record = {
-          data,
-          size: 1,
-          byteLength: data.byteLength,
-          buffer: gl.createBuffer(),
-        };
-        pointsEntryBuffers.add(record.buffer);
-        entry.attributes.indices = record;
-        if (retained) {
-          retainedMeshBufferStats.misses += 1;
-          retainedMeshBufferStats.allocations += 1;
-          retainedMeshBufferStats.liveBytes += data.byteLength;
-        }
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, record.buffer);
-        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
-        if (retained) {
-          retainedMeshBufferStats.uploadCalls += 1;
-          retainedMeshBufferStats.uploadBytes += data.byteLength;
-        }
-      } else {
-        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, record.buffer);
-        if (retained) retainedMeshBufferStats.hits += 1;
-      }
+      var entry = webGLDirectMeshEntry(vertices, retained, revision);
+      bindWebGLDirectMeshBuffer(entry, "indices", data, 1, gl.ELEMENT_ARRAY_BUFFER);
       return data.length;
     }
 
@@ -9491,6 +9442,59 @@
         retireWebGLDirectMeshAttribute(entry, keys[i]);
       }
       directMeshAttributeCache.delete(vertices);
+    }
+
+    function webGLDirectMeshEntry(vertices: any, retained: boolean, revision: unknown) {
+      let entry = directMeshAttributeCache.get(vertices);
+      if (
+        entry &&
+        (entry.retained !== retained || (retained && entry.revision !== revision))
+      ) {
+        retainedMeshBufferStats.rebuilds += 1;
+        if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
+        retireWebGLDirectMeshEntry(vertices, entry);
+        entry = null;
+      }
+      if (!entry) {
+        entry = {
+          retained,
+          revision,
+          lastSeenEpoch: directMeshAttributeEpoch,
+          attributes: Object.create(null),
+        };
+        directMeshAttributeCache.set(vertices, entry);
+      }
+      entry.lastSeenEpoch = directMeshAttributeEpoch;
+      return entry;
+    }
+
+    function bindWebGLDirectMeshBuffer(entry: any, key: string, data: Float32Array | Uint32Array, size: number, target: number) {
+      const retained = entry.retained;
+      let record = entry.attributes[key];
+      if (!record || record.data !== data || record.size !== size) {
+        if (record) {
+          if (retained) retainedMeshBufferStats.rebuilds += 1;
+          retireWebGLDirectMeshAttribute(entry, key);
+        }
+        record = { data, size, byteLength: data.byteLength, buffer: gl.createBuffer() };
+        pointsEntryBuffers.add(record.buffer);
+        entry.attributes[key] = record;
+        if (retained) {
+          retainedMeshBufferStats.misses += 1;
+          retainedMeshBufferStats.allocations += 1;
+          retainedMeshBufferStats.liveBytes += data.byteLength;
+        }
+        gl.bindBuffer(target, record.buffer);
+        gl.bufferData(target, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
+        if (retained) {
+          retainedMeshBufferStats.uploadCalls += 1;
+          retainedMeshBufferStats.uploadBytes += data.byteLength;
+        }
+      } else {
+        gl.bindBuffer(target, record.buffer);
+        if (retained) retainedMeshBufferStats.hits += 1;
+        else if (target === gl.ARRAY_BUFFER) gl.bufferData(target, data, gl.DYNAMIC_DRAW);
+      }
     }
 
     function beginWebGLDirectMeshBufferFrame(bundle) {
@@ -9554,63 +9558,8 @@
       var retained = obj.retainedGeometry === true &&
         (!obj._worldBakedUpload || obj._worldBakedUpload.resident === true);
       var revision = retained ? obj.geometryRevision : null;
-      let entry = directMeshAttributeCache.get(vertices);
-      if (
-        entry &&
-        (entry.retained !== retained || (retained && entry.revision !== revision))
-      ) {
-        if (retained || entry.retained) {
-          retainedMeshBufferStats.rebuilds += 1;
-          if (entry.revision !== revision) retainedMeshBufferStats.revisionInvalidations += 1;
-        }
-        retireWebGLDirectMeshEntry(vertices, entry);
-        entry = null;
-      }
-      if (!entry) {
-        entry = {
-          retained,
-          revision,
-          lastSeenEpoch: directMeshAttributeEpoch,
-          attributes: Object.create(null),
-        };
-        directMeshAttributeCache.set(vertices, entry);
-      }
-      entry.lastSeenEpoch = directMeshAttributeEpoch;
-	      let record = entry.attributes[key];
-	      if (!record || record.data !== data || record.size !== size) {
-	        if (record) {
-            if (retained) retainedMeshBufferStats.rebuilds += 1;
-            retireWebGLDirectMeshAttribute(entry, key);
-          }
-	        record = {
-	          data,
-            size,
-            byteLength: data.byteLength,
-	          buffer: gl.createBuffer(),
-	        };
-	        pointsEntryBuffers.add(record.buffer);
-        entry.attributes[key] = record;
-        if (retained) {
-          retainedMeshBufferStats.misses += 1;
-          retainedMeshBufferStats.allocations += 1;
-          retainedMeshBufferStats.liveBytes += data.byteLength;
-        }
-        gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
-        gl.bufferData(gl.ARRAY_BUFFER, data, retained ? gl.STATIC_DRAW : gl.DYNAMIC_DRAW);
-        if (retained) {
-          retainedMeshBufferStats.uploadCalls += 1;
-          retainedMeshBufferStats.uploadBytes += data.byteLength;
-        }
-      } else {
-        gl.bindBuffer(gl.ARRAY_BUFFER, record.buffer);
-        if (retained) {
-          retainedMeshBufferStats.hits += 1;
-        } else {
-          // Skinning/morph/authored shader geometry remains mutable and is
-          // uploaded every draw instead of inheriting retained semantics.
-          gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
-        }
-      }
+      var entry = webGLDirectMeshEntry(vertices, retained, revision);
+      bindWebGLDirectMeshBuffer(entry, key, data, size, gl.ARRAY_BUFFER);
       gl.enableVertexAttribArray(attrib);
       gl.vertexAttribPointer(attrib, size, gl.FLOAT, false, 0, 0);
       return true;
