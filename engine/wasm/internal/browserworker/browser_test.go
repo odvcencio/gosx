@@ -192,10 +192,19 @@ func serve(t *testing.T, dir string, html func(r *http.Request) string) *httptes
 
 // drive opens url in Chromium and returns the page's state once waitExpr is truthy.
 func drive(t *testing.T, url, waitExpr string, timeout time.Duration, shots ...string) browserState {
+	return driveScript(t, url, waitExpr, timeout, "", shots...)
+}
+
+// driveScript is drive with a Playwright script (scripts/*.mjs) that acts on
+// the page, for example to send input.
+func driveScript(t *testing.T, url, waitExpr string, timeout time.Duration, script string, shots ...string) browserState {
 	t.Helper()
-	args := []string{"run.mjs", url, waitExpr, fmt.Sprint(timeout.Milliseconds())}
+	args := []string{"run.mjs", url, waitExpr, fmt.Sprint(timeout.Milliseconds()), "[]"}
 	if len(shots) > 0 {
-		args = append(args, shots[0])
+		args[4] = shots[0]
+	}
+	if script != "" {
+		args = append(args, script)
 	}
 	cmd := exec.Command("node", args...)
 	var stderr strings.Builder
@@ -514,4 +523,91 @@ func runSceneScenario(t *testing.T, path, wantThread string, mainThread bool) {
 			t.Errorf("unexpected event %v", ev)
 		}
 	}
+}
+
+func inputEngine() engine.Config {
+	cfg := workerEngine(`{"scenario":"input"}`)
+	cfg.Capabilities = []engine.Capability{engine.CapKeyboard, engine.CapPointer, engine.CapGamepad}
+	return cfg
+}
+
+// Page input reaches a worker with timestamps: keyboard (auto-repeat dropped),
+// pointer, and a gamepad the page polls (navigator.getGamepads does not exist in a
+// worker). The worker places each event on its own clock and measures the delay.
+func TestWorkerReceivesTimestampedPageInput(t *testing.T) {
+	dir := assets(t)
+	ts := serve(t, dir, func(*http.Request) string { return page(t, pageOptions{engines: []engine.Config{inputEngine()}}) })
+	state := driveScript(t, ts.URL+"/", `window.__done === true`, 45*time.Second, "scripts/input.mjs")
+	if e := state.find("input-error"); e != nil {
+		t.Fatalf("input error: %v", e)
+	}
+	var events []report
+	for _, r := range state.Reports {
+		if r["kind"] == "input" {
+			events = append(events, r)
+		}
+	}
+	want := func(pred func(report) bool, what string) report {
+		t.Helper()
+		for _, e := range events {
+			if pred(e) {
+				return e
+			}
+		}
+		t.Fatalf("no %s event among %d forwarded events: %v", what, len(events), events)
+		return nil
+	}
+	keyDown := want(func(e report) bool { return e["k"] == "key" && e["code"] == "KeyA" && e["down"] == true }, "KeyA down")
+	if keyDown["keyA"] != true {
+		t.Errorf("KeyDown(KeyA) was false while handling the key-down event: %v", keyDown)
+	}
+	want(func(e report) bool { return e["k"] == "key" && e["code"] == "KeyA" && e["down"] == false }, "KeyA up")
+	downs := 0
+	for _, e := range events {
+		if e["k"] == "key" && e["code"] == "KeyA" && e["down"] == true {
+			downs++
+		}
+	}
+	if downs != 1 {
+		t.Errorf("auto-repeat must not be forwarded: %d KeyA downs", downs)
+	}
+	want(func(e report) bool {
+		return e["k"] == "pointer" && e["type"] == "move" && num(e, "x") == 60 && num(e, "y") == 70
+	}, "pointer move to (60,70)")
+	want(func(e report) bool { return e["k"] == "pointer" && e["type"] == "down" && num(e, "mask") == 1 }, "pointer down")
+	want(func(e report) bool {
+		return e["k"] == "pad" && e["connected"] == true && fmt.Sprint(e["buttons"]) == "[0 0 0 0]"
+	}, "pad connect")
+	want(func(e report) bool {
+		return e["k"] == "pad" && e["connected"] == true && fmt.Sprint(e["buttons"]) == "[1 0 0 0]"
+	}, "pad button press")
+	want(func(e report) bool { return e["k"] == "pad" && fmt.Sprint(e["axes"]) == "[0.75 -0.5]" }, "pad stick")
+	want(func(e report) bool { return e["k"] == "pad" && e["connected"] == false }, "pad disconnect")
+	pads := 0
+	for _, e := range events {
+		if e["k"] == "pad" && e["connected"] == true {
+			pads++
+		}
+	}
+	if pads != 3 {
+		t.Errorf("an unchanged pad must be sent once per change: %d pad states", pads)
+	}
+	// Timestamps: ordered on the worker clock, and the delay is small.
+	var maxDelay, prevAt float64
+	for _, e := range events {
+		at, delay := num(e, "at"), num(e, "delay")
+		if delay < 0 || delay > 250 {
+			t.Errorf("event %v has delay %.1f ms", e, delay)
+		}
+		if delay > maxDelay {
+			maxDelay = delay
+		}
+		if k := e["k"]; k == "key" || k == "pointer" {
+			if at < prevAt-1 {
+				t.Errorf("event timestamps went backwards: %.1f after %.1f", at, prevAt)
+			}
+			prevAt = at
+		}
+	}
+	t.Logf("%d forwarded events, longest page-to-worker delay %.2f ms", len(events), maxDelay)
 }

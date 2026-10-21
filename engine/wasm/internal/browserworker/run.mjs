@@ -8,7 +8,7 @@
 // NETPLAY_CHROME) selects the Chromium or chrome-headless-shell binary.
 import { chromium } from "playwright";
 
-const [url, waitExpr, timeoutArg, shotsArg] = process.argv.slice(2);
+const [url, waitExpr, timeoutArg, shotsArg, scriptArg] = process.argv.slice(2);
 const timeoutMs = Number(timeoutArg || 30000);
 const shots = shotsArg ? JSON.parse(shotsArg) : [];
 const executablePath = process.env.ENGINE_WORKER_CHROME || process.env.NETPLAY_CHROME || undefined;
@@ -24,7 +24,10 @@ try {
   page.on("console", m => log.push(m.type() + ": " + m.text()));
   page.on("pageerror", e => log.push("pageerror: " + e.message));
   page.on("response", r => { if (r.status() >= 400) log.push("http " + r.status() + " " + r.url()); });
+  const script = scriptArg ? await import(new URL(scriptArg, "file://" + process.cwd() + "/").href) : null;
+  if (script && script.init) await script.init(page);
   await page.goto(url);
+  if (script && script.run) await script.run(page);
   const analyzer = await browser.newPage();
   const measured = [];
   for (const shot of shots) {

@@ -261,6 +261,7 @@
         rec.mountWaiter = { ok: ok, bad: bad };
         rec.worker.postMessage({ t: "mount" });
       }).then(function() {
+        startInput(rec);
         return { dispose: function() { disposeRecord(rec); } };
       }, function(error) {
         terminate(rec);
@@ -274,6 +275,120 @@
       rec.disposed = true;
       try { rec.worker.postMessage({ t: "dispose" }); } catch (_) {}
       rec.shutdownTimer = setTimeout(function() { terminate(rec); }, SHUTDOWN_GRACE_MS);
+    }
+
+    // ---- input forwarding ---------------------------------------------------
+    //
+    // An engine that declares the keyboard, pointer or gamepad capability gets
+    // the page's input as timestamped messages. The page samples (events and
+    // gamepad polling need the main thread, and navigator.getGamepads does not
+    // exist in a worker); the worker decides what to do with it. Timestamps
+    // are epoch milliseconds, so the worker can place an event on its own
+    // clock (__gosx.worker.toLocalTime) and measure the delay.
+
+    var PAD_POLL_MS = 8;
+    var PAD_EPSILON = 0.001;
+
+    function wants(rec, capability) {
+      var lists = [rec.entry.capabilities, rec.entry.requiredCapabilities];
+      for (var i = 0; i < lists.length; i++) {
+        if (Array.isArray(lists[i]) && lists[i].indexOf(capability) >= 0) return true;
+      }
+      return false;
+    }
+
+    function eventStamp(event) {
+      return (performance.timeOrigin || 0) + (event && typeof event.timeStamp === "number" && event.timeStamp > 0 ? event.timeStamp : performance.now());
+    }
+
+    function editable(target) {
+      if (!target || !target.tagName) return false;
+      var tag = String(target.tagName).toUpperCase();
+      return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT" || target.isContentEditable === true;
+    }
+
+    function sendInput(rec, ev) {
+      if (rec.terminated || rec.disposed) return;
+      rec.stats.inputSent++;
+      try { rec.worker.postMessage({ t: "input", ev: ev }); } catch (_) {}
+    }
+
+    function startInput(rec) {
+      var stops = [];
+      function listen(target, type, fn) {
+        target.addEventListener(type, fn);
+        stops.push(function() { target.removeEventListener(type, fn); });
+      }
+      if (wants(rec, "keyboard")) {
+        var onKey = function(e) {
+          if (e.repeat || editable(e.target)) return;
+          sendInput(rec, { k: "key", code: String(e.code || ""), key: String(e.key || ""), down: e.type === "keydown", ts: eventStamp(e) });
+        };
+        listen(document, "keydown", onKey);
+        listen(document, "keyup", onKey);
+      }
+      if (wants(rec, "pointer")) {
+        var onPointer = function(e) {
+          sendInput(rec, { k: "pointer", type: e.type.slice(7), x: e.clientX, y: e.clientY, mask: e.buttons | 0, pid: e.pointerId | 0, ts: eventStamp(e) });
+        };
+        listen(document, "pointermove", onPointer);
+        listen(document, "pointerdown", onPointer);
+        listen(document, "pointerup", onPointer);
+      }
+      var releaseAll = function() { sendInput(rec, { k: "blur", ts: nowStamp() }); };
+      if (wants(rec, "keyboard") || wants(rec, "pointer") || wants(rec, "gamepad")) {
+        listen(window, "blur", releaseAll);
+      }
+      if (wants(rec, "gamepad") && window.navigator && typeof window.navigator.getGamepads === "function") {
+        stops.push(startGamepadPoll(rec, releaseAll, listen));
+      }
+      rec.stopInput = function() { for (var i = 0; i < stops.length; i++) { try { stops[i](); } catch (_) {} } stops = []; };
+      var previous = rec.onTerminate;
+      rec.onTerminate = function() { rec.stopInput(); if (previous) previous(); };
+    }
+
+    // Gamepads exist only while the page is visible and focused; poll then,
+    // and send a pad only when something changed.
+    function startGamepadPoll(rec, releaseAll, listen) {
+      var last = new Map();
+      var timer = 0;
+      function snapshot(pad) {
+        return { buttons: Array.prototype.map.call(pad.buttons || [], function(b) { return b && typeof b === "object" ? b.value : Number(b) || 0; }), axes: Array.prototype.slice.call(pad.axes || []) };
+      }
+      function changed(a, b) {
+        if (!b || a.buttons.length !== b.buttons.length || a.axes.length !== b.axes.length) return true;
+        for (var i = 0; i < a.buttons.length; i++) if (Math.abs(a.buttons[i] - b.buttons[i]) > PAD_EPSILON) return true;
+        for (var j = 0; j < a.axes.length; j++) if (Math.abs(a.axes[j] - b.axes[j]) > PAD_EPSILON) return true;
+        return false;
+      }
+      function poll() {
+        var pads;
+        try { pads = window.navigator.getGamepads() || []; } catch (_) { return; }
+        var seen = new Set();
+        for (var i = 0; i < pads.length; i++) {
+          var pad = pads[i];
+          if (!pad || pad.connected === false) continue;
+          seen.add(pad.index);
+          var snap = snapshot(pad);
+          if (!changed(snap, last.get(pad.index))) continue;
+          last.set(pad.index, snap);
+          var stamp = typeof pad.timestamp === "number" && pad.timestamp > 0 ? (performance.timeOrigin || 0) + pad.timestamp : nowStamp();
+          sendInput(rec, { k: "pad", index: pad.index, id: String(pad.id || ""), mapping: String(pad.mapping || ""), connected: true, buttons: snap.buttons, axes: snap.axes, ts: stamp });
+        }
+        for (var gone of Array.from(last.keys())) {
+          if (seen.has(gone)) continue;
+          last.delete(gone);
+          sendInput(rec, { k: "pad", index: gone, connected: false, ts: nowStamp() });
+        }
+      }
+      function start() { if (!timer) timer = setInterval(poll, PAD_POLL_MS); }
+      function stop() { if (timer) { clearInterval(timer); timer = 0; } }
+      function onVisibility() {
+        if (documentHidden()) { stop(); last.clear(); releaseAll(); } else start();
+      }
+      listen(document, "visibilitychange", onVisibility);
+      if (!documentHidden()) start();
+      return stop;
     }
 
     // ---- worker -> page ---------------------------------------------------
@@ -544,13 +659,12 @@
     var nextSID = 1;
     var appHandlers = new Set();
     var visibilityHandlers = new Set();
+    var inputHandlers = new Set();
     var mountListeners = new Map();   // lid -> callback(json)
     var nextLID = 1;
     var hidden = false;
-    var epochSkew = 0;                // page epoch ms minus worker epoch ms at init
 
     function post(msg, transfer) { scope.postMessage(msg, transfer || []); }
-    function workerEpoch() { return (scope.performance.timeOrigin || 0) + scope.performance.now(); }
 
     function logToPage(level, text) { try { post({ t: "log", level: level, text: String(text) }); } catch (_) {} }
 
@@ -603,11 +717,17 @@
       frameStats: frameClock.stats,
       now: function() { return scope.performance.now(); },
       // Page-clock time for an epoch stamp the page attached to a message.
-      toLocalTime: function(epochMs) { return epochMs - epochSkew - (scope.performance.timeOrigin || 0); },
+      // Both realms measure epoch time as timeOrigin + now(), so the two clocks
+      // differ only by their time origins.
+      toLocalTime: function(epochMs) { return epochMs - (scope.performance.timeOrigin || 0); },
       post: function(name, json) { post({ t: "app", name: String(name), json: json === undefined ? undefined : String(json) }); },
       postBytes: function(name, bytes) { var buf = ownedBuffer(bytes); post({ t: "app", name: String(name), buf: buf }, [buf]); },
       onMessage: function(fn) { appHandlers.add(fn); return function() { appHandlers.delete(fn); }; },
       onVisibility: function(fn) { visibilityHandlers.add(fn); return function() { visibilityHandlers.delete(fn); }; },
+      // Page input as JSON strings: {k:"key"|"pointer"|"pad"|"blur", ..., at, recv}.
+      // "at" is when the event happened and "recv" when the worker got it, both
+      // in this worker's performance.now() milliseconds.
+      onInput: function(fn) { inputHandlers.add(fn); return function() { inputHandlers.delete(fn); }; },
       request: request,
       postFrame: postFrame,
       // Scene3D mount access without a document (see the page handlers).
@@ -695,7 +815,6 @@
     async function boot(message) {
       init = message;
       hidden = message.hidden === true;
-      epochSkew = (message.clock && message.clock.epochMs ? message.clock.epochMs : workerEpoch()) - workerEpoch();
       frameClock.setRate(message.frameHz || DEFAULT_FRAME_HZ);
       var token = randomToken();
       var registered = new Promise(function(resolveReg) {
@@ -792,6 +911,15 @@
       app: function(msg) {
         var bytes = msg.buf instanceof ArrayBuffer ? new Uint8Array(msg.buf) : undefined;
         for (var fn of Array.from(appHandlers)) { try { fn(String(msg.name), msg.json, bytes); } catch (error) { logToPage("error", error); } }
+      },
+      input: function(msg) {
+        var ev = msg.ev;
+        if (!ev || typeof ev !== "object") return;
+        ev.at = workerAPI.toLocalTime(ev.ts);
+        ev.recv = scope.performance.now();
+        if (inputHandlers.size === 0) return;
+        var json = JSON.stringify(ev);
+        for (var fn of Array.from(inputHandlers)) { try { fn(json); } catch (error) { logToPage("error", error); } }
       },
       "mount.event": function(msg) {
         var callback = mountListeners.get(msg.lid);

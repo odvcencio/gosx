@@ -29,7 +29,8 @@ FakeWorker.all = [];
 
 function bootPage(opts = {}) {
   FakeWorker.all = []; FakeWorker.throwOnCreate = opts.throwOnCreate || "";
-  const issues = [], events = [], docEvents = [], listeners = {};
+  const issues = [], events = [], docEvents = [], listeners = {}, winListeners = {};
+  const fire = (name, event = {}, target = "document") => { for (const fn of (((target === "window" ? winListeners : listeners)[name]) || []).slice()) fn(event); };
   const win = {
     __gosx: {
       reportIssue: i => issues.push(i),
@@ -38,11 +39,15 @@ function bootPage(opts = {}) {
     __gosx_emit: (level, scope, message, detail) => events.push({ level, scope, message, detail }),
     Worker: opts.noWorker ? undefined : FakeWorker,
     __gosx_go_wasm_factory_timeout_ms: opts.timeout || 0,
+    addEventListener: (name, fn) => { (winListeners[name] = winListeners[name] || []).push(fn); },
+    removeEventListener: (name, fn) => { winListeners[name] = (winListeners[name] || []).filter(f => f !== fn); },
+    navigator: opts.navigator,
   };
   const document = {
     hidden: false, baseURI: "https://app.test/play/",
     currentScript: { src: "https://app.test/gosx/assets/runtime/bootstrap-feature-engine-worker.def.js" },
-    addEventListener: (name, fn) => { listeners[name] = fn; },
+    addEventListener: (name, fn) => { (listeners[name] = listeners[name] || []).push(fn); },
+    removeEventListener: (name, fn) => { listeners[name] = (listeners[name] || []).filter(f => f !== fn); },
     dispatchEvent: e => docEvents.push(e),
     getElementById: id => (opts.mounts && opts.mounts[id]) || null,
   };
@@ -50,14 +55,14 @@ function bootPage(opts = {}) {
   const context = vm.createContext({
     window: win, document, location: { href: "https://app.test/play/" }, console, URL, CustomEvent, Worker: win.Worker,
     performance: { timeOrigin: 1000, now: () => 5 }, TextDecoder, TextEncoder, ArrayBuffer, Uint8Array, JSON, Promise, Map, Set, Math, Number, String, Object, Array, Error,
-    setTimeout, clearTimeout, isFinite,
+    setTimeout, clearTimeout, setInterval, clearInterval, isFinite, Array, Set,
   });
   let factory;
   win.__gosx_register_bootstrap_feature = (name, f) => { assert.equal(name, "engine-worker"); factory = f; };
   vm.runInContext(source, context, { filename: "engine-worker.ts" });
   assert.equal(typeof factory, "function");
   const feature = factory({});
-  return { win, document, issues, events, docEvents, listeners, host: win.__gosx.engineWorker, feature, context };
+  return { win, document, issues, events, docEvents, listeners, winListeners, fire, host: win.__gosx.engineWorker, feature, context };
 }
 
 const ENTRY = { id: "gosx-engine-0", component: "Sim", kind: "worker", programRef: "/gosx/engines/sim.wasm", runtime: "go-wasm", thread: "worker", props: { workerFrameHz: 30, seed: 7 }, capabilities: ["wasm"] };
@@ -359,7 +364,7 @@ test("visibility changes are forwarded with an epoch timestamp", async () => {
   const page = bootPage();
   const { worker } = await mounted(page);
   page.document.hidden = true;
-  page.listeners.visibilitychange();
+  page.fire("visibilitychange");
   const [msg] = worker.of("visibility");
   assert.equal(msg.hidden, true);
   assert.equal(msg.at, 1005);
@@ -730,4 +735,117 @@ test("worker: mountOp and mountListen post to the page and deliver events back",
   assert.equal(w.of("mount.unlisten").length, 1);
   w.send({ t: "mount.event", lid, json: "{}" });
   assert.equal(seen.length, 1);
+});
+
+// ---------------------------------------------------------------------------
+// Input forwarding
+// ---------------------------------------------------------------------------
+
+const withCaps = (...caps) => ({ ...ENTRY, capabilities: caps });
+const inputs = worker => worker.of("input").map(m => m.ev);
+
+test("page: keyboard events reach the worker with epoch timestamps; repeats and text fields are skipped", async () => {
+  const page = bootPage();
+  const { worker } = await mounted(page, withCaps("keyboard"));
+  page.fire("keydown", { type: "keydown", code: "KeyA", key: "a", timeStamp: 40, target: { tagName: "DIV" } });
+  page.fire("keydown", { type: "keydown", code: "KeyA", key: "a", repeat: true, timeStamp: 50, target: {} });
+  page.fire("keydown", { type: "keydown", code: "KeyB", key: "b", timeStamp: 60, target: { tagName: "INPUT" } });
+  page.fire("keyup", { type: "keyup", code: "KeyA", key: "a", timeStamp: 90, target: {} });
+  assert.deepEqual(plain(inputs(worker)), [
+    { k: "key", code: "KeyA", key: "a", down: true, ts: 1040 },
+    { k: "key", code: "KeyA", key: "a", down: false, ts: 1090 },
+  ]);
+  assert.equal(page.host.get(ENTRY.id).stats().inputSent, 2);
+});
+
+test("page: pointer events carry position, buttons and the pointer id", async () => {
+  const page = bootPage();
+  const { worker } = await mounted(page, withCaps("pointer"));
+  page.fire("pointerdown", { type: "pointerdown", clientX: 10.5, clientY: 20, buttons: 1, pointerId: 3, timeStamp: 12 });
+  page.fire("pointermove", { type: "pointermove", clientX: 11, clientY: 21, buttons: 1, pointerId: 3, timeStamp: 18 });
+  page.fire("pointerup", { type: "pointerup", clientX: 11, clientY: 21, buttons: 0, pointerId: 3, timeStamp: 30 });
+  assert.deepEqual(plain(inputs(worker)), [
+    { k: "pointer", type: "down", x: 10.5, y: 20, mask: 1, pid: 3, ts: 1012 },
+    { k: "pointer", type: "move", x: 11, y: 21, mask: 1, pid: 3, ts: 1018 },
+    { k: "pointer", type: "up", x: 11, y: 21, mask: 0, pid: 3, ts: 1030 },
+  ]);
+});
+
+test("page: an engine without input capabilities gets no listeners", async () => {
+  const page = bootPage();
+  const { worker } = await mounted(page, withCaps("wasm"));
+  assert.equal(Object.keys(page.listeners).filter(k => k.startsWith("key") || k.startsWith("pointer")).length, 0);
+  assert.equal(Object.keys(page.winListeners).length, 0);
+  assert.equal(worker.of("input").length, 0);
+});
+
+test("page: blur releases everything, and terminating the worker removes the listeners", async () => {
+  const page = bootPage();
+  const { worker } = await mounted(page, withCaps("keyboard"));
+  page.fire("blur", {}, "window");
+  assert.equal(inputs(worker).at(-1).k, "blur");
+  assert.equal((page.listeners.keydown || []).length, 1);
+  page.host.get(ENTRY.id).terminate();
+  assert.equal((page.listeners.keydown || []).length, 0);
+  assert.equal((page.winListeners.blur || []).length, 0);
+});
+
+test("page: gamepads are polled, sent only on change, and a vanished pad is reported", async () => {
+  let pads = [];
+  const page = bootPage({ navigator: { getGamepads: () => pads } });
+  const { worker } = await mounted(page, withCaps("gamepad"));
+  const pad = (buttons, axes) => ({ index: 0, id: "Pad", mapping: "standard", connected: true, timestamp: 77, buttons: buttons.map(value => ({ value, pressed: value > 0 })), axes });
+  pads = [pad([0, 0], [0, 0])];
+  await new Promise(r => setTimeout(r, 40));
+  assert.equal(inputs(worker).length, 1, "an unchanged pad is sent once");
+  assert.deepEqual(plain(inputs(worker)[0]), { k: "pad", index: 0, id: "Pad", mapping: "standard", connected: true, buttons: [0, 0], axes: [0, 0], ts: 1077 });
+  pads = [pad([1, 0], [0.0004, 0])];                 // below the epsilon on the axis, a real change on the button
+  await new Promise(r => setTimeout(r, 40));
+  assert.equal(inputs(worker).length, 2);
+  assert.deepEqual(plain(inputs(worker)[1].buttons), [1, 0]);
+  pads = [pad([1, 0], [0.0009, 0])];                 // jitter only
+  await new Promise(r => setTimeout(r, 40));
+  assert.equal(inputs(worker).length, 2, "jitter below 0.001 is not an input");
+  pads = [null];
+  await new Promise(r => setTimeout(r, 40));
+  assert.deepEqual(plain(inputs(worker).at(-1)), { k: "pad", index: 0, connected: false, ts: inputs(worker).at(-1).ts });
+  page.host.get(ENTRY.id).terminate();
+});
+
+test("page: a hidden page stops gamepad polling and releases input; showing it resumes", async () => {
+  let pads = [{ index: 0, id: "P", mapping: "standard", connected: true, buttons: [{ value: 0 }], axes: [] }];
+  const page = bootPage({ navigator: { getGamepads: () => pads } });
+  const { worker } = await mounted(page, withCaps("gamepad", "keyboard"));
+  await new Promise(r => setTimeout(r, 30));
+  const before = inputs(worker).length;
+  page.document.hidden = true;
+  page.fire("visibilitychange");
+  assert.equal(inputs(worker).at(-1).k, "blur");
+  pads = [{ index: 0, id: "P", mapping: "standard", connected: true, buttons: [{ value: 1 }], axes: [] }];
+  await new Promise(r => setTimeout(r, 40));
+  assert.equal(inputs(worker).filter(e => e.k === "pad").length, before, "no polling while hidden");
+  page.document.hidden = false;
+  page.fire("visibilitychange");
+  await new Promise(r => setTimeout(r, 40));
+  assert.ok(inputs(worker).filter(e => e.k === "pad").length > before, "polling resumes when shown");
+  page.host.get(ENTRY.id).terminate();
+});
+
+test("worker: input arrives as JSON stamped with the event time and arrival time on the worker clock", async () => {
+  const w = await mountedWorker();
+  const seen = [];
+  w.scope.__gosx.worker.onInput(json => seen.push(JSON.parse(json)));
+  w.setClock(400);
+  // The page stamped the event at page epoch 5000 + 380 = worker time 380 (same timeOrigin here).
+  w.send({ t: "input", ev: { k: "key", code: "KeyA", key: "a", down: true, ts: 5380 } });
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].at, 380);
+  assert.equal(seen[0].recv, 400);
+  assert.equal(w.scope.__gosx.worker.toLocalTime(5380), 380);
+  const off = w.scope.__gosx.worker.onInput(() => seen.push("second"));
+  off();
+  w.send({ t: "input", ev: { k: "blur", ts: 5390 } });
+  assert.equal(seen.length, 2);
+  w.send({ t: "input", ev: "not an object" });
+  assert.equal(seen.length, 2);
 });

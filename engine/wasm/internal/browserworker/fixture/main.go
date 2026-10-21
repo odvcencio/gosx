@@ -13,6 +13,7 @@ import (
 
 	"m31labs.dev/gosx/engine/wasm"
 	"m31labs.dev/gosx/game"
+	"m31labs.dev/gosx/game/host"
 	"m31labs.dev/gosx/game/loop"
 	"m31labs.dev/gosx/scene"
 )
@@ -52,6 +53,8 @@ func main() {
 			stop = startClock(ctx, props.Tag, props.RunHidden)
 		case "scene":
 			stop = startScene(ctx, props.Target)
+		case "input":
+			stop = startInput(ctx)
 		}
 		return wasm.HandleFunc(func() {
 			if stop != nil {
@@ -210,4 +213,28 @@ func sendOtherFrames(target string) {
 	_ = scene.DispatchMotionFrame(target, scene.MotionFrame{Batches: []scene.MotionBatch{{ID: "crowd2", Instances: []scene.MotionInstanceIR{
 		{ID: "m0", Animation: "Run", TPrev: 0, TNext: 1, PrevScaleX: 1, PrevScaleY: 1, PrevScaleZ: 1, NextScaleX: 1, NextScaleY: 1, NextScaleZ: 1}}}}}, nil)
 	_ = scene.DispatchClipFrame(target, scene.ClipFrame{Models: []scene.ClipModel{{ID: "hero", Layers: []scene.ClipLayer{{Name: "Run", Time: .5, Weight: 1, Loop: true}}}}})
+}
+
+// startInput reports every forwarded input event with its measured delay, and
+// the pad state a game/gamepad.Poller-style reader would see.
+func startInput(ctx wasm.Context) (stop func()) {
+	input, ok := host.NewForwardedInput()
+	if !ok {
+		report(ctx, "input-error", map[string]any{"error": "no forwarded input in this context"})
+		return nil
+	}
+	cancel := input.Subscribe(func(e host.InputEvent) {
+		data := map[string]any{
+			"k": e.Kind, "code": e.Code, "down": e.Down, "type": e.PointerType, "x": e.X, "y": e.Y, "mask": e.Mask,
+			"delay": e.Delay(), "at": e.AtMS, "recv": e.ReceivedMS, "pageEpoch": e.PageEpochMS,
+			"nowMS": perfNow(), "keyA": input.KeyDown("KeyA"),
+		}
+		if e.Kind == "pad" {
+			data["index"], data["connected"], data["buttons"], data["axes"] = e.PadIndex, e.Connected, e.Buttons, e.Axes
+			data["padsHeld"] = len(input.Gamepads())
+		}
+		report(ctx, "input", data)
+	})
+	report(ctx, "input-ready", nil)
+	return func() { cancel(); input.Close() }
 }

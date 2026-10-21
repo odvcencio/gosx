@@ -128,3 +128,32 @@ func TestWorkerFrameSourceUsesTheWorkerClockAndForwardedVisibility(t *testing.T)
 		t.Fatal("forwarded page visibility must drive Hidden() when there is no document")
 	}
 }
+
+func TestForwardedInputBindsToTheWorkerBridgeAndReleasesIt(t *testing.T) {
+	bridge := js.Global().Call("eval", `({subs: new Set(), onInput(cb) { this.subs.add(cb); return () => this.subs.delete(cb); }, emit(ev) { for (const cb of this.subs) cb(JSON.stringify(ev)); }})`)
+	replaceGlobal(t, "__gosx", map[string]any{"worker": bridge})
+	input, ok := NewForwardedInput()
+	if !ok {
+		t.Fatal("a worker bridge with onInput must yield forwarded input")
+	}
+	var got []InputEvent
+	input.Subscribe(func(e InputEvent) { got = append(got, e) })
+	bridge.Call("emit", map[string]any{"k": "key", "code": "KeyA", "down": true, "ts": 5380, "at": 380, "recv": 382.5})
+	bridge.Call("emit", map[string]any{"k": "pad", "index": 0, "id": "P", "mapping": "standard", "connected": true, "buttons": []any{1, 0}, "axes": []any{-1}, "ts": 1, "at": 1, "recv": 2})
+	if !input.KeyDown("KeyA") || len(input.Gamepads()) != 1 || input.Gamepads()[0].Axes[0] != -1 {
+		t.Fatal("forwarded events did not update the tracked state")
+	}
+	if len(got) != 2 || got[0].Delay() != 2.5 || got[0].PageEpochMS != 5380 {
+		t.Fatalf("events %+v", got)
+	}
+	bridge.Call("emit", "not an object") // garbage must be ignored, not crash
+	input.Close()
+	input.Close()
+	if bridge.Get("subs").Get("size").Int() != 0 {
+		t.Fatal("Close must unsubscribe from the worker bridge")
+	}
+	replaceGlobal(t, "__gosx", map[string]any{})
+	if _, ok := NewForwardedInput(); ok {
+		t.Fatal("no worker bridge: forwarded input must be unavailable")
+	}
+}

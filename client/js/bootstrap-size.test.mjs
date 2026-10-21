@@ -91,7 +91,7 @@ const budgets = [
   // Engine worker host (page half and Worker script in one file). It loads only
   // for a page with a Thread: worker engine; no first-load bundle gains more
   // than the 246 byte hook in the engines chunk.
-  { file: "bootstrap-feature-engine-worker.js", raw: 20200, gzip: 6900, brotli: 6300 },
+  { file: "bootstrap-feature-engine-worker.js", raw: 23100, gzip: 7900, brotli: 7300 },
   { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
   // Native cubic tangents add 846 raw / 325 gzip / 310 Brotli bytes to this
   // optional chunk. Only its exhausted raw target moves to the measured
