@@ -7,6 +7,29 @@
   individual signal events and reentrant observer updates. Group subscriptions,
   reuse the pending-reader queue, and ignore callbacks from retired programs.
   Remove repeated canonical lookups and JSON string-to-byte round trips.
+- Fix a data race in `sim`: a spectator join read `Simulation.Snapshot` on the
+  HTTP goroutine while the tick goroutine ran `Tick`. The runner now serializes
+  all calls into the simulation.
+- Make `game.Runtime.ApplyNetworkInputs` order-stable: inputs apply in ascending
+  player ID order, so event order and the last pointer position no longer depend
+  on map iteration. Add `sim.SortedPlayerIDs` and `sim.EachInput`.
+- Store default `game` snapshot time as integer nanoseconds (`timeNanos`),
+  still reading older `timeSeconds` snapshots. Add `sim.Runner.Restore`, which
+  also restores the frame counter, and extend `sim.ReplayLog` with `Initial`,
+  `InitialFrame`, `Seed` and `Truncated`. New `Options.Seed` and
+  `Options.ReplayMaxFrames`. Replay now takes one extra `Snapshot` call at start.
+- Add `sim.Options` `Broadcaster`, `RingSize` (`sim.RingDisabled`),
+  `SnapshotEvery`, `BroadcastEvery`, `CatchUpBudget`, `InputQueue` and
+  `InputQueueDepth`; `sim.NewBinarySnapshotBroadcaster`; `Runner.Pause`,
+  `Resume`, `SetSpeed`, `ReceiveInputAt` and `SnapshotAt`; and
+  `TickEvent.Behind`. Defaults keep the previous behavior.
+- Add `game.Clock` and `game.Runtime` pause and time scale, `Frame.RealDelta`,
+  `Frame.Steps`, `Context.Tick`, and the `game.Every` and `game.EveryInterval`
+  system cadence wrappers. `Frame.Delta` is now game time (unchanged at scale
+  1). A default `MaxDelta` no longer clamps a coarse `FixedStep` below one step.
+- Add `game.SaveCodec` to export and import `World` entities, registered
+  component columns and resources, and a `SnapshotCodec` helper that includes
+  them.
 
 - Preserve signed 64-bit integer values in shared-signal JSON batches, including
   nested IDs and counters. State snapshots and event batches use the same exact
