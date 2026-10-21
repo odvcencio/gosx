@@ -5,7 +5,11 @@
 - Freeze inactive windows in long Go scene timeline sequences using existing
   clamp signals. Steady playback samples the active bucket and selection path;
   gaps, cuts and reverse seeks retain their native poses. Sequences of eight or
-  fewer tweens per property retain identical programs and runtime bytes.
+  fewer tweens per property retain identical motion programs.
+
+- Preserve all wide-integer bits in strict state-snapshot comparisons. Compare
+  packed metadata once and reject non-finite numbers with the existing payload
+  bits, keeping the core runtime under its wire limit.
 
 - Bind Go scene timelines to motion programs with `Timeline.BindMotion`.
   Existing Go playback controls now seek node and camera sequences alongside

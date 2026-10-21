@@ -42,3 +42,23 @@ func TestEqualJSONStrictSnapshots(t *testing.T) {
 		t.Fatal("cycle compared equal")
 	}
 }
+
+func TestEqualJSONPreservesWideIntegerLowBitsAndScalarMetadata(t *testing.T) {
+	numbers := []int64{0, 1, -1, 1<<53 - 1, 1 << 53, 1<<53 + 1, 1<<53 + 2, -(1 << 53) - 1, -(1 << 53) - 2, -(1 << 53) - 3, math.MaxInt64, math.MaxInt64 - 1, math.MinInt64, math.MinInt64 + 1}
+	for _, left := range numbers {
+		for _, right := range numbers {
+			if got := EqualJSON(Int64Val(left), Int64Val(right)); got != (left == right) {
+				t.Fatalf("wide/integer equality %d / %d = %v", left, right, got)
+			}
+		}
+	}
+	if EqualJSON(ArrayVal(nil), ArrayVal([]Value{})) || EqualJSON(ObjectVal(nil), ObjectVal(map[string]Value{})) {
+		t.Fatal("nil and empty payloads compared equal")
+	}
+	if EqualJSON(FloatVal(0), FloatVal(math.Copysign(0, -1))) || EqualJSON(BoolVal(true), BoolVal(false)) {
+		t.Fatal("signed zero or boolean payload was lost")
+	}
+	if EqualJSON(IntVal(1), FloatVal(1)) || EqualJSON(IntVal(1), IntVal(1).WithControl(ControlReturn)) {
+		t.Fatal("static type or control metadata was lost")
+	}
+}
