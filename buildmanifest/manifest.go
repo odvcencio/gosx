@@ -12,6 +12,9 @@ import (
 	"strings"
 )
 
+// DevRuntimeManifestFile records digests for the stable assets staged by gosx dev.
+const DevRuntimeManifestFile = "gosx-dev-runtime.json"
+
 // Manifest describes all build outputs for deployment.
 type Manifest struct {
 	// GoWASM holds explicitly configured standard-Go engine modules, separate

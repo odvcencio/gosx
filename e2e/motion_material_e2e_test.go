@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -23,6 +24,20 @@ type emissiveReading struct {
 func TestMotionMaterialProgramShips(t *testing.T) {
 	chrome := e2eChromePath(t)
 	app := startProductionDocsApp(t)
+	checkNativeMaterialMotion(t, chrome, app, "production")
+}
+
+func TestMotionMaterialProgramDev(t *testing.T) {
+	chrome := e2eChromePath(t)
+	app := startDocsApp(t, fmt.Sprintf("http://127.0.0.1:%d", freeE2EPort(t)))
+	checkNativeMaterialMotion(t, chrome, app, "development")
+}
+
+func checkNativeMaterialMotion(t *testing.T, chrome string, app *docsApp, mode string) {
+	t.Helper()
+	proof := newRuntimeBrowserProof(t, filepath.Join(e2eRepoRoot(t), "examples", "gosx-docs", "app", "test", "motion-material", "page.server.go"))
+	proof.NoProductionBuild = mode == "development"
+	defer writeRuntimeBrowserProof(t, "material-motion-"+mode+".json", &proof)
 	page := newBrowserPage(t, chrome, nil, 1280, 800, "", 120*time.Second)
 	fixtureURL := app.baseURL + "/test/motion-material"
 	response, err := http.Get(fixtureURL)
@@ -43,6 +58,8 @@ func TestMotionMaterialProgramShips(t *testing.T) {
 		t.Fatalf("fixture page returned %d\n%s", status, app.logs.String())
 	}
 	page.waitFor(t, `typeof window.__gosx_motion_tick === "function" && !!document.querySelector("[data-gosx-scene3d-mounted]")`, 45*time.Second, "standalone material kernel and scene mount")
+	page.eval(t, "navigator.userAgent", &proof.Browser)
+	page.eval(t, `JSON.parse(document.getElementById("gosx-manifest").textContent).runtime`, &proof.Runtime)
 	var optedIn bool
 	page.eval(t, `window.__gosx_motion_wasm === true`, &optedIn)
 	if optedIn {
@@ -66,6 +83,9 @@ func TestMotionMaterialProgramShips(t *testing.T) {
 	}
 	quoted, _ := json.Marshal(string(serialized))
 	page.waitFor(t, fmt.Sprintf(`(() => { const next = %s; return next.found && JSON.stringify(next.value) !== %s; })()`, readUniform, quoted), 10*time.Second, "material motion advancing without another animation source")
+	var advanced emissiveReading
+	page.eval(t, readUniform, &advanced)
+	proof.Steps = append(proof.Steps, devRuntimeStep{Input: "automatic native frames, no application opt-in flag", Expected: "uniform values advance", Observed: []any{first.Value, advanced.Value}})
 	for _, sample := range []struct {
 		time float64
 		want []float64
@@ -85,6 +105,7 @@ func TestMotionMaterialProgramShips(t *testing.T) {
 				t.Fatalf("seek %g component %d = %g, want %g", sample.time, i, uniform[i], want)
 			}
 		}
+		proof.Steps = append(proof.Steps, devRuntimeStep{Input: fmt.Sprintf("pause and seek to %g seconds", sample.time), Expected: sample.want, Observed: uniform})
 	}
 	var backend string
 	page.eval(t, `document.querySelector("[data-gosx-scene3d-mounted]").getAttribute("data-gosx-scene3d-backend")`, &backend)
