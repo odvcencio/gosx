@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- Add two opt-in features for thousands of animated agents on a moving ship.
+  `scene.PartialMotionFrame` (wire format GSP5) names each agent by slot and
+  carries only the agents that changed; send it with
+  `scene.DispatchPartialMotionFrame` or `scene.EncodePartialMotionFrame`, after
+  a full `MotionFrame` has stated every agent. The browser merges queued
+  partial frames, rejects one built for a different batch size, and copies only
+  the changed slots into the renderer. `InstancedGLBMesh.ParentNode` makes a
+  batch ride a scene node: instance transforms and motion frames are relative
+  to the node, and the renderer applies the node's world matrix once per frame,
+  including a pose computed in the browser, as `scene.Vessel` does. Culling,
+  depth sorting, shadows and picking use the parented positions. For 5,000
+  agents with 5% changing per 10 Hz tick, a tick drops from 513,917 to 23,279
+  bytes and its decode and apply time from 27 ms to 1.2 ms (Node benchmark).
+  Only the WebGL crowd path follows a parent; a selected agent of a parented
+  batch draws without an outline. A per-instance `ParentMatrix` is still
+  rejected in motion frames. Existing crowds and frames behave as before. See
+  `docs/scene3d-crowd-motion.md`.
+
 - Add sampled clip frames to Scene3D, so an app can pose a skinned model from
   its own simulation clock. Declare `scene.Model{ID: ..., ClipSampled: true}`,
   then send `scene.ClipFrame` (up to four layers per model: clip name or
