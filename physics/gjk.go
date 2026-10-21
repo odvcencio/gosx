@@ -461,7 +461,7 @@ func faceNormal(verts []minkowskiPoint, ia, ib, ic int) (Vec3, bool) {
 // epaGapTolerance returns the gap below which the expansion stops.
 func epaGapTolerance(a, b convexShape) float64 {
 	scale := math.Min(a.bound, b.bound)
-	relative := epaRelativeTolerance * scale
+	relative := float64(epaRelativeTolerance * scale)
 	if relative > epaTolerance {
 		return relative
 	}
@@ -532,12 +532,12 @@ func barycentric(p0, p1, p2, q Vec3) (float64, float64, float64) {
 	d11 := v1.Dot(v1)
 	d20 := v2.Dot(v0)
 	d21 := v2.Dot(v1)
-	denom := d00*d11 - d01*d01
+	denom := float64(d00*d11) - float64(d01*d01)
 	if math.Abs(denom) <= 1e-24 {
 		return 1, 0, 0
 	}
-	v := (d11*d20 - d01*d21) / denom
-	w := (d00*d21 - d01*d20) / denom
+	v := (float64(d11*d20) - float64(d01*d21)) / denom
+	w := (float64(d00*d21) - float64(d01*d20)) / denom
 	u := 1 - v - w
 	u = clampFloat(u, 0, 1)
 	v = clampFloat(v, 0, 1)

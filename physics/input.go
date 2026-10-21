@@ -114,6 +114,7 @@ func (w *World) ApplyInputs(inputs map[string]Input) {
 		return
 	}
 	players := make([]string, 0, len(inputs))
+	//gosx:allow map-range the keys are sorted before use
 	for playerID := range inputs {
 		players = append(players, playerID)
 	}

@@ -1,6 +1,10 @@
 package physics
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Manifold expansion for the GJK narrowphase.
 //
@@ -172,7 +176,7 @@ func expandConvexManifold(a, b *Collider, normal Vec3, depth float64, points []C
 
 	// Reject a patch that disagrees with EPA. Feature selection uses angle
 	// tolerances, so a near-edge case can clip away the true deepest point.
-	if math.Abs(deepest-depth) > maxFloat(1e-4, depth*0.05) {
+	if math.Abs(deepest-depth) > maxFloat(1e-4, float64(depth*0.05)) {
 		return points, false
 	}
 
@@ -280,7 +284,7 @@ func boxSupportFace(c *Collider, centre Vec3, rotation Quat, dir Vec3, face *con
 		if along < 0 {
 			sign = -1
 		}
-		base = base.Add(axes[i].Mul(sign * extents[i]))
+		base = base.Add(axes[i].Mul(float64(sign * extents[i])))
 	}
 
 	switch freeCount {
@@ -340,7 +344,7 @@ func cylinderSupportFace(c *Collider, centre Vec3, dir Vec3, face *contactFace) 
 		if along < 0 {
 			sign = -1
 		}
-		capCentre := centre.Add(axis.Mul(sign * half))
+		capCentre := centre.Add(axis.Mul(float64(sign * half)))
 		u, v := orthonormalBasis(axis)
 		u = u.Mul(radius)
 		v = v.Mul(radius)
@@ -429,7 +433,7 @@ func orderFacePoints(points []Vec3, dir Vec3, face *contactFace) {
 	var angles [maxFacePoints]float64
 	for i, p := range points {
 		d := p.Sub(centre)
-		angles[i] = math.Atan2(v.Dot(d), u.Dot(d))
+		angles[i] = det.Atan2(v.Dot(d), u.Dot(d))
 	}
 	// Insertion sort. The list never holds more than maxFacePoints entries.
 	for i := 1; i < len(points); i++ {

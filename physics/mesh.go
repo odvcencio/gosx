@@ -306,8 +306,8 @@ func rayHitsAABB(box AABB, origin, direction Vec3, maxDistance float64) bool {
 			continue
 		}
 		inv := 1 / dirs[i]
-		t1 := (mins[i] - origins[i]) * inv
-		t2 := (maxs[i] - origins[i]) * inv
+		t1 := float64((mins[i] - origins[i]) * inv)
+		t2 := float64((maxs[i] - origins[i]) * inv)
 		if t1 > t2 {
 			t1, t2 = t2, t1
 		}
@@ -392,9 +392,9 @@ func (c *Collider) localAABBFromWorld(box AABB) AABB {
 	half := box.Size().Mul(0.5)
 	// Project the world half extents onto the local axes.
 	localHalf := Vec3{
-		X: math.Abs(basis.x.X)*half.X + math.Abs(basis.x.Y)*half.Y + math.Abs(basis.x.Z)*half.Z,
-		Y: math.Abs(basis.y.X)*half.X + math.Abs(basis.y.Y)*half.Y + math.Abs(basis.y.Z)*half.Z,
-		Z: math.Abs(basis.z.X)*half.X + math.Abs(basis.z.Y)*half.Y + math.Abs(basis.z.Z)*half.Z,
+		X: float64(math.Abs(basis.x.X)*half.X) + float64(math.Abs(basis.x.Y)*half.Y) + float64(math.Abs(basis.x.Z)*half.Z),
+		Y: float64(math.Abs(basis.y.X)*half.X) + float64(math.Abs(basis.y.Y)*half.Y) + float64(math.Abs(basis.y.Z)*half.Z),
+		Z: float64(math.Abs(basis.z.X)*half.X) + float64(math.Abs(basis.z.Y)*half.Y) + float64(math.Abs(basis.z.Z)*half.Z),
 	}
 	return AABBFromCenterHalfExtents(localCenter, localHalf)
 }

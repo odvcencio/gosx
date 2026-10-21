@@ -1,6 +1,10 @@
 package physics
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Constraint is the polymorphic interface every constraint type implements.
 // The world invokes Prepare once per step (to compute effective mass etc.),
@@ -204,7 +208,7 @@ func (c *DistanceConstraint) SolveVelocity() {
 		return
 	}
 	vRel := relativeVelocityAt(c.BodyA, c.BodyB, c.anchor.rA, c.anchor.rB).Dot(c.axis)
-	lambda := -(vRel + c.bias) * c.effMass
+	lambda := float64(-(vRel + c.bias) * c.effMass)
 
 	c.accumImpulse += lambda
 	applyJointImpulse(c.BodyA, c.BodyB, c.axis.Mul(lambda), c.anchor.rA, c.anchor.rB)
@@ -336,7 +340,7 @@ func (c *HingeConstraint) Angle() float64 {
 	refA = refA.Normalize()
 	refB = refB.Normalize()
 	cross := axis.Cross(refA)
-	return math.Atan2(cross.Dot(refB), refA.Dot(refB))
+	return det.Atan2(cross.Dot(refB), refA.Dot(refB))
 }
 
 // ensureReference fills in the reference directions the first time the joint
@@ -464,7 +468,7 @@ func (c *HingeConstraint) SolveVelocity() {
 	// Motor row first: it is bounded, so later rows correct any overshoot.
 	if c.MotorEnabled && c.motorMass > 0 {
 		error := relativeAngular.Dot(c.worldAxis) - c.MotorSpeed
-		lambda := -error * c.motorMass
+		lambda := float64(-error * c.motorMass)
 		old := c.accumMotor
 		next := old + lambda
 		if c.MaxMotorTorque > 0 {
@@ -480,17 +484,17 @@ func (c *HingeConstraint) SolveVelocity() {
 	}
 
 	if c.limitSign != 0 && c.limitMass > 0 {
-		speed := relativeAngular.Dot(c.worldAxis) * c.limitSign
-		lambda := -(speed - c.limitBias) * c.limitMass
-		old := c.accumLimit * c.limitSign
+		speed := float64(relativeAngular.Dot(c.worldAxis) * c.limitSign)
+		lambda := float64(-(speed - c.limitBias) * c.limitMass)
+		old := float64(c.accumLimit * c.limitSign)
 		next := old + lambda
 		if next < 0 {
 			next = 0
 		}
 		delta := next - old
-		c.accumLimit = next * c.limitSign
+		c.accumLimit = float64(next * c.limitSign)
 		if delta != 0 {
-			applyJointAngularImpulse(c.BodyA, c.BodyB, c.worldAxis.Mul(delta*c.limitSign))
+			applyJointAngularImpulse(c.BodyA, c.BodyB, c.worldAxis.Mul(float64(delta*c.limitSign)))
 		}
 		relativeAngular = jointAngularVelocity(c.BodyB).Sub(jointAngularVelocity(c.BodyA))
 	}
@@ -500,7 +504,7 @@ func (c *HingeConstraint) SolveVelocity() {
 			continue
 		}
 		speed := relativeAngular.Dot(c.perp[i])
-		lambda := -(speed + c.angularBias[i]) * c.angularMass[i]
+		lambda := float64(-(speed + c.angularBias[i]) * c.angularMass[i])
 		c.accumAngular[i] += lambda
 		applyJointAngularImpulse(c.BodyA, c.BodyB, c.perp[i].Mul(lambda))
 		relativeAngular = jointAngularVelocity(c.BodyB).Sub(jointAngularVelocity(c.BodyA))
