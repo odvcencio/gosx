@@ -68,7 +68,7 @@ Signal names are scoped under `<timeline ID>.motion`; conflicting names return
 an error. Reuse one clock for several plans with distinct IDs. The input may be
 any scalar motion signal; its units must be seconds since the plan's start.
 
-The binding compiles to existing map, sampled-track, step and mix signals.
+The binding compiles to existing maps, sampled tracks (including steps), and mixes.
 It does not start another clock or require `scene.Props.Timelines`. The normal
 motion feature loader supplies the adapters. Long sequences use a balanced
 selection tree. Reduced motion settles the final pose; scope disposal releases

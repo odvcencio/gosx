@@ -17,7 +17,7 @@ type timelineMotionLeaf struct {
 // MotionScope and MotionControl constructs own playback, seeking and disposal;
 // no imperative scene playback or application script is needed.
 //
-// The compiler reuses ordinary track, map, step and mix signals. Gaps hold the
+// The compiler reuses maps, sampled tracks (including steps), and mixes. Gaps hold the
 // preceding value, cuts take effect at their exact start, and reverse seeks
 // reconstruct the pose. Names are scoped under "<timeline ID>.motion"; a name
 // collision or invalid program leaves program unchanged. The plan is not mutated.

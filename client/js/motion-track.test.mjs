@@ -49,6 +49,19 @@ test("mix selects exact endpoints without cancellation, overflow or vector alias
   assert.equal(r.frames.size, 0);
 });
 
+test("signals suppress equal scalar and nested vector writes while retaining signed zero changes", () => {
+  const r = runtime(), value = r.motion.signal([1, [-0, NaN]]);
+  let writes = 0;
+  const stop = value.subscribe(() => writes++, {immediate: false});
+  value.set([1, [-0, NaN]]); assert.equal(writes, 0);
+  value.set([1, [0, NaN]]); assert.equal(writes, 1);
+  value.set([1]); assert.equal(writes, 2);
+  value.set(1); assert.equal(writes, 3);
+  value.set(1); assert.equal(writes, 3);
+  value.set([1]); assert.equal(writes, 4);
+  stop(); assert.equal(r.frames.size, 0);
+});
+
 test("prepared scalar tracks agree with native Eval for easing, holds, step boundaries, stagger and reverse seeks", () => {
   const r = runtime(); r.load();
   for (const fixture of fixtures) {
