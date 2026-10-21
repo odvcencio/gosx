@@ -10,12 +10,15 @@ import "math"
 func EqualJSON(a, b Value) bool { return equalJSONAtDepth(a, b, 0) }
 
 func equalJSONAtDepth(a, b Value, depth int) bool {
-	if depth > maxValueRecursionDepth || a.Type != b.Type || a.kind() != b.kind() || a.Control() != b.Control() {
+	// The tag contains kind, boolean payload and control bits. Compare it once
+	// rather than copying Values through exported accessors at every level.
+	// n carries array/string length or the low word of a wide integer.
+	if depth > maxValueRecursionDepth || a.Type != b.Type || a.tag != b.tag || a.n != b.n {
 		return false
 	}
 	if a.isList() {
 		left, right := a.list(), b.list()
-		if (left == nil) != (right == nil) || len(left) != len(right) {
+		if (left == nil) != (right == nil) {
 			return false
 		}
 		for i := range left {
@@ -41,6 +44,6 @@ func equalJSONAtDepth(a, b Value, depth int) bool {
 	if a.kind() == kindClosure {
 		return false
 	}
-	return a.text() == b.text() && a.truth() == b.truth() &&
-		!math.IsNaN(a.num) && !math.IsInf(a.num, 0) && math.Float64bits(a.num) == math.Float64bits(b.num)
+	bits := math.Float64bits(a.num)
+	return a.text() == b.text() && bits == math.Float64bits(b.num) && bits&0x7ff0000000000000 != 0x7ff0000000000000
 }
