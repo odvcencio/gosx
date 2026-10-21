@@ -59,6 +59,9 @@ func checkNativeMaterialMotion(t *testing.T, chrome string, app *docsApp, mode s
 	page.waitFor(t, `typeof window.__gosx_motion_tick === "function" && !!document.querySelector("[data-gosx-scene3d-mounted]")`, 45*time.Second, "standalone material kernel and scene mount")
 	page.eval(t, "navigator.userAgent", &proof.Browser)
 	page.eval(t, `JSON.parse(document.getElementById("gosx-manifest").textContent).runtime`, &proof.Runtime)
+	if mode == "development" && (!strings.HasPrefix(proof.Runtime.Path, "/gosx/runtime.wasm?v=") || len(proof.Runtime.Hash) != 64) {
+		t.Fatalf("development served stale production runtime metadata: %+v", proof.Runtime)
+	}
 	var optedIn bool
 	page.eval(t, `window.__gosx_motion_wasm === true`, &optedIn)
 	if optedIn {
