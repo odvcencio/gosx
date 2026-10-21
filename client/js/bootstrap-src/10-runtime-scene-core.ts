@@ -5200,6 +5200,9 @@
         normalizeSceneMaterialKind(sceneObjectMaterialKindValue(object)));
       if (!registered &&
           sceneMeshCanRetainLocalGeometry(bundle, object, object, vertices, wire, bundle.timeSeconds)) continue;
+      if (bundle.worldBakedAttributeViewsEnabled && sceneWorldBakedGeometryCacheLookup(
+          object, vertices, sceneMeshGeometryRevision(object, vertices),
+          sceneObjectModelMatrix(object, bundle.timeSeconds))) continue;
       const indices = vertices.indices;
       const drawnCount = indices instanceof Uint32Array && indices.length >= 3 && indices.length % 3 === 0
         ? indices.length : vertices.count;
@@ -5273,6 +5276,9 @@
       // Fail closed: callers which do not identify a retained-capable
       // renderer receive a backend-neutral, fully baked bundle.
       retainedGeometryEnabled: Boolean(rendererCapabilities && rendererCapabilities.retainedGeometry === true),
+      // WebGL can draw immutable world-space snapshots directly. Other
+      // backends keep the complete aggregate streams until they opt in.
+      worldBakedAttributeViewsEnabled: Boolean(rendererCapabilities && rendererCapabilities.worldBakedAttributeViews === true),
       // WebGL can consume immutable imported rigid primitives as one retained
       // geometry/material record plus a transform stream. Keep this internal
       // capability opt-in: WebGPU and Canvas continue receiving the ordinary
@@ -6631,22 +6637,26 @@
       : null;
     const drawnTriangleCount = authoredIndices ? authoredIndices.length : vertices.count;
     const bakedVertexCount = Math.floor(drawnTriangleCount / 3) * 3;
-    sceneReserveWorldMeshAttributes(bundle, bakedVertexCount);
     const cacheEligible = sceneMeshCanCacheWorldBakedGeometry(
       bundle, object, material, vertices, emitWireSegments, timeSeconds);
     const cachedGeometry = cacheEligible
       ? sceneWorldBakedGeometryCacheLookup(object, vertices, geometryRevision, modelMatrix)
       : null;
+    const cachedView = cachedGeometry && bundle.worldBakedAttributeViewsEnabled &&
+      (!vertices.attributes || Object.keys(vertices.attributes).length === 0);
+    if (!cachedView) sceneReserveWorldMeshAttributes(bundle, bakedVertexCount);
     if (!cacheEligible) sceneDropWorldBakedGeometryCache(object);
     if (cachedGeometry) {
       // Cached attributes already have the final Float32 representation.
-      // Copy each stream once instead of unpacking every vertex through the
-      // scalar append helpers on every frame. Bundle storage remains owned,
-      // so later transforms cannot mutate a previously completed frame.
-      sceneAppendFloat32Stream(bundle.worldMeshPositions, cachedGeometry.positions);
-      sceneAppendFloat32Stream(bundle.worldMeshNormals, cachedGeometry.normals);
-      sceneAppendFloat32Stream(bundle.worldMeshUVs, cachedGeometry.uvs);
-      sceneAppendFloat32Stream(bundle.worldMeshTangents, cachedGeometry.tangents);
+      // Backends without direct world views receive their own aggregate copy.
+      // Direct views share only immutable snapshots, so later transforms
+      // cannot mutate a previously completed frame.
+      if (!cachedView) {
+        sceneAppendFloat32Stream(bundle.worldMeshPositions, cachedGeometry.positions);
+        sceneAppendFloat32Stream(bundle.worldMeshNormals, cachedGeometry.normals);
+        sceneAppendFloat32Stream(bundle.worldMeshUVs, cachedGeometry.uvs);
+        sceneAppendFloat32Stream(bundle.worldMeshTangents, cachedGeometry.tangents);
+      }
       meshVertexCount = cachedGeometry.vertexCount;
       bounds = {
         minX: cachedGeometry.bounds.minX, minY: cachedGeometry.bounds.minY, minZ: cachedGeometry.bounds.minZ,
@@ -6770,7 +6780,7 @@
 
     // Flat color follows the live material on both cold bakes and cache hits.
     // Wire lighting remains per vertex; ordinary fills need one repeated tuple.
-    if (!emitWireSegments) {
+    if (!emitWireSegments && !cachedView) {
       sceneAppendFloat32RepeatedQuad(bundle.worldMeshColors, meshVertexCount,
         flatMeshColor[0], flatMeshColor[1], flatMeshColor[2], flatMeshColor[3]);
     }
@@ -6813,6 +6823,24 @@
       vertexOffset: meshVertexOffset,
       vertexCount: meshVertexCount,
     });
+    if (cachedView) {
+      // These vertices already include the authored transform, index expansion
+      // and mirrored winding. Use the ordinary direct draw contract with an
+      // identity model matrix; do not copy them into this frame's streams.
+      Object.assign(meshRecord, {
+        vertices: cachedGeometry.upload.vertices,
+        directVertices: true,
+        retainedGeometry: true,
+        geometryRevision: 0,
+        resourceOwner: cachedGeometry.upload,
+        modelMatrix: SCENE_IDENTITY_MAT4,
+        vertexOffset: 0,
+      });
+      bundle.retainedMeshObjectCount += 1;
+      bundle.retainedMeshVertexCount += meshVertexCount;
+      bundle.retainedGeometryTelemetry.fallback -= 1;
+      bundle.retainedGeometryTelemetry.retained += 1;
+    }
     if (cachedGeometry && cachedGeometry.upload) {
       // A cold pose keeps streaming. Admit only an unchanged cache hit so
       // animated meshes do not allocate replacement GPU buffers each frame.
