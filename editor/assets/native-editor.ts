@@ -577,6 +577,30 @@
       }
     };
 
+    const sourceVisibleViewport = () => {
+      const rect = textarea.getBoundingClientRect();
+      const left = rect.left + textarea.clientLeft;
+      const top = rect.top + textarea.clientTop;
+      const visible = {
+        left: Math.max(0, left), top: Math.max(0, top),
+        right: Math.min(document.documentElement.clientWidth, left + textarea.clientWidth),
+        bottom: Math.min(document.documentElement.clientHeight, top + textarea.clientHeight),
+      };
+      for (let ancestor = textarea.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        const style = getComputedStyle(ancestor);
+        const bounds = ancestor.getBoundingClientRect();
+        if (/^(hidden|clip|auto|scroll|overlay)$/.test(style.overflowX)) {
+          visible.left = Math.max(visible.left, bounds.left + ancestor.clientLeft);
+          visible.right = Math.min(visible.right, bounds.left + ancestor.clientLeft + ancestor.clientWidth);
+        }
+        if (/^(hidden|clip|auto|scroll|overlay)$/.test(style.overflowY)) {
+          visible.top = Math.max(visible.top, bounds.top + ancestor.clientTop);
+          visible.bottom = Math.min(visible.bottom, bounds.top + ancestor.clientTop + ancestor.clientHeight);
+        }
+      }
+      return {left: visible.left - left, top: visible.top - top, right: visible.right - left, bottom: visible.bottom - top};
+    };
+
     const revealSelection = (focus = true) => {
       const offset = textarea.selectionStart || 0;
       const measure = ensureLineMeasure();
@@ -591,11 +615,14 @@
       const left = (rect?.left ?? origin.left) - origin.left + (parseFloat(style.paddingLeft) || 0);
       const height = sourceLineHeight();
       if (focus) textarea.focus({preventScroll: true});
-      if (top < textarea.scrollTop || top + height > textarea.scrollTop + textarea.clientHeight) {
-        textarea.scrollTop = Math.max(0, top - (textarea.clientHeight - height) / 2);
+      const view = sourceVisibleViewport();
+      if (view.bottom > view.top &&
+          (top < textarea.scrollTop + view.top || top + height > textarea.scrollTop + view.bottom)) {
+        textarea.scrollTop = Math.max(0, top - (view.top + view.bottom - height) / 2);
       }
-      if (left < textarea.scrollLeft || left + height > textarea.scrollLeft + textarea.clientWidth) {
-        textarea.scrollLeft = Math.max(0, left - textarea.clientWidth / 2);
+      if (view.right > view.left &&
+          (left < textarea.scrollLeft + view.left || left + height > textarea.scrollLeft + view.right)) {
+        textarea.scrollLeft = Math.max(0, left - (view.left + view.right) / 2);
       }
       syncScroll();
     };
