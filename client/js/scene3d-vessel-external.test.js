@@ -126,3 +126,24 @@ test('a walker on a lower deck rides the rolling ship from Go and a second deck 
  assert.ok(h.mount.__gosxScene3DState,'mounted');
  h.handle.dispose();
 });
+
+test('the cutaway reaches the model parts of a mounted vessel and Go can switch it',async()=>{
+ const fixture=JSON.parse(fs.readFileSync(path.join(__dirname,'testdata/vessel-decks-liner.json'),'utf8'));
+ const h=await mountExternal({position:{x:0,y:0,z:0},heading:0,decks:fixture.decks,cutaway:{enabled:true,deck:4}});
+ for(let t=200;t<700;t+=17)h.raf.flush(t);
+ const hull=()=>h.objects().get('ship/hull');
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-cutaway'),'on');
+ assert.equal(hull().cutaway.constructor.name,'Float32Array');assert.equal(hull().cutaway.length,12);assert.equal(hull().cutawayCrowd.length,8);
+ assert.equal(hull().cutaway[1],1,'the deck cut faces up on a level ship');
+ const ceiling=fixture.decks[5].y-.35;assert.ok(Math.abs(hull().cutaway[3]+ceiling)<1e-4,`cut at deck 5 ceiling: ${hull().cutaway[3]}`);
+ // A tilted pose from Go tilts the cut with it.
+ h.env.context.__gosx_scene3d_vessel_pose('go-ship',frame({id:'ship',time:1,x:0,y:0,z:0,heading:0,pitch:0,roll:.3,snap:true}));
+ for(let t=800;t<1000;t+=17)h.raf.flush(t);
+ assert.ok(Math.abs(hull().cutaway[0])>.25&&hull().cutaway[1]<.97,`tilted normal ${[...hull().cutaway.slice(0,3)]}`);
+ assert.equal(h.env.context.__gosx_scene3d_vessel_cutaway('go-ship','ship',JSON.stringify({enabled:false})),true);
+ for(let t=1100;t<1300;t+=17)h.raf.flush(t);
+ assert.equal(h.mount.getAttribute('data-gosx-scene3d-cutaway'),'off');assert.equal(hull().cutaway,null);
+ assert.equal(h.env.context.__gosx_scene3d_vessel_cutaway('go-ship','other','{}'),false);
+ h.handle.dispose();
+ assert.equal(h.env.context.__gosx_scene3d_vessel_cutaway('go-ship','ship','{}'),false,'disposed mounts stop listening');
+});

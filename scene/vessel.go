@@ -48,6 +48,11 @@ type Vessel struct {
 	// above their feet, so a rolling ship keeps people on the deck they chose.
 	// Leave it empty for the rectangle.
 	Decks []VesselDeck `json:"decks,omitempty"`
+
+	// Cutaway is the initial dollhouse state. Change it later with
+	// DispatchVesselCutaway. Setting it, even disabled, makes the vessel
+	// cutaway-capable.
+	Cutaway *VesselCutaway `json:"cutaway,omitempty"`
 }
 
 // VesselCommandEvent accepts a VesselCommand on the mounted Scene3D element.

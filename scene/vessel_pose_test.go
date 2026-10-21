@@ -156,3 +156,25 @@ func TestVesselDeckConformanceFixture(t *testing.T) {
 		t.Fatal("deck fixture is stale; rerun with UPDATE_VESSEL_DECK_FIXTURE=1")
 	}
 }
+
+func TestVesselCutawayWire(t *testing.T) {
+	plain, _ := json.Marshal(Vessel{NodeID: "ship"})
+	if strings.Contains(string(plain), "cutaway") {
+		t.Fatal("cutaway must stay opt-in")
+	}
+	h := 30.5
+	v := Vessel{NodeID: "ship", Cutaway: &VesselCutaway{Enabled: true, Deck: 7, Height: &h, Above: "fade", FadeAlpha: 0.2, Section: &VesselSection{Axis: "x", Position: 0, Side: 1}}}
+	b, _ := json.Marshal(v)
+	for _, want := range []string{`"enabled":true`, `"deck":7`, `"height":30.5`, `"above":"fade"`, `"axis":"x"`, `"side":1`, `"position":0`} {
+		if !strings.Contains(string(b), want) {
+			t.Errorf("missing %s in %s", want, b)
+		}
+	}
+	zero, _ := json.Marshal(VesselCutaway{})
+	if string(zero) != `{"enabled":false,"deck":0}` {
+		t.Errorf("zero cutaway = %s", zero)
+	}
+	if err := DispatchVesselCutaway("scene", "ship", VesselCutaway{}); err == nil {
+		t.Error("native builds cannot dispatch")
+	}
+}

@@ -38,10 +38,12 @@
     const high=query.create(ocean,'high',(x,z)=>waveFloor(x,z),true),low=query.create(ocean,'low',(x,z)=>waveFloor(x,z),true);
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     loadFloor(ocean,sample=>{waveFloor=sample;helpers.schedule('vessel-bathymetry');},()=>!disposed);
-    const model=window.__gosx_scene3d_vessel_model.create(sceneState,props.vessel,physics),surface={x:0,y:0,z:0,sizeX:0,sizeZ:0,rotationY:0,slopeX:0,slopeZ:0};
-    const decks=props.vessel.decks?.length?window.__gosx_scene3d_vessel_decks.create(props.vessel.decks,physics):null,floor0=decks?decks.surface:surface;
-    if(props.walk) {walk.surfaces=walk.surfaces||[];walk.surfaces.push(floor0);}
     const mount=canvas.closest('[data-gosx-engine="GoSXScene3D"]')||canvas.parentElement;
+    const model=window.__gosx_scene3d_vessel_model.create(sceneState,props.vessel,physics),surface={x:0,y:0,z:0,sizeX:0,sizeZ:0,rotationY:0,slopeX:0,slopeZ:0};
+    const decks=props.vessel.decks?.length||props.vessel.cutaway||ext?window.__gosx_scene3d_vessel_decks.create(props.vessel.decks||[],physics):null,multi=!!decks&&decks.list.length>0,floor0=multi?decks.surface:surface;
+    const cw=decks?window.__gosx_scene3d_vessel_cutaway_api.create(decks,mount,()=>helpers.schedule('vessel-cutaway'),props.vessel.cutaway):null;
+    if(cw){model.cut=cw.touch;window.__gosx_scene3d_vessel_cutaway_api.register(mount.id,props.vessel.nodeId,cw);}
+    if(props.walk) {walk.surfaces=walk.surfaces||[];walk.surfaces.push(floor0);}
     const link=ext?ext.attach(mount,props.vessel.nodeId,()=>helpers.schedule('vessel-pose')):null;
     const read=()=>helpers.current(base.controller,sceneState.camera,sceneState._scrollCamera);
     let navigation: any = null;
@@ -93,8 +95,8 @@
       if(link)link.apply(state);
       else if(!paused)physics.advance(state,dt,seconds,input,sample,floor);
       const pose=link?state:physics.presentation(state);
-      if(decks)decks.update(pose);else deck(pose,physics,surface);
-      if(local&&(decks?decks.aboard(local):Math.abs(local.x)<surface.sizeX/2+.3&&Math.abs(local.z)<surface.sizeZ/2+.3&&Math.abs(local.y-state.helm.y)<2)) {
+      if(decks)decks.update(pose);if(!multi)deck(pose,physics,surface);if(cw)cw.update(decks);
+      if(local&&(multi?decks.aboard(local):Math.abs(local.x)<surface.sizeX/2+.3&&Math.abs(local.z)<surface.sizeZ/2+.3&&Math.abs(local.y-state.helm.y)<2)) {
         const p=physics.localPoint(pose,local.x,local.y,local.z);
         lastBob=link?0:physics.deckBob(state,seconds);p.y+=lastBob;
         if(link&&base.controller)base.controller.touched=true;// an untouched walker would be reset to the scene camera
@@ -108,7 +110,7 @@
       if(navigation)navigation.advance(dt);
     },dispose() {
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-      disposed=true;if(link)link.dispose();if(navigation)navigation.dispose();controls.dispose();if(wake)wake.dispose();if(props.walk)walk.surfaces=walk.surfaces.filter(s=>s!==floor0);
+      disposed=true;if(cw)window.__gosx_scene3d_vessel_cutaway_api.unregister(mount.id,props.vessel.nodeId,cw);if(link)link.dispose();if(navigation)navigation.dispose();controls.dispose();if(wake)wake.dispose();if(props.walk)walk.surfaces=walk.surfaces.filter(s=>s!==floor0);
       suspend(false);base.dispose();if(sceneState._gosxMotionController===controller)sceneState._gosxMotionController=null;
     }};
   }

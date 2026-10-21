@@ -216,6 +216,8 @@
     "uniform float u_rimStrength;",
     "uniform float u_opacity;",
     "uniform float u_alphaCutoff;",
+    // Vessel cutaway: planes in world space, a point with dot(n,p)+w>0 is cut. [0] decks above (dithered by u_cut[2].x, 0 hides), [1] hull section.
+    "uniform vec4 u_cut[3];",
     "uniform bool u_unlit;",
     "",
     // Texture maps
@@ -477,6 +479,8 @@
     "}",
     GLSL_TRANSMISSION,
     "void main() {",
+    "    if (dot(u_cut[1].xyz, v_worldPosition) + u_cut[1].w > 0.0) discard;",
+    "    if (dot(u_cut[0].xyz, v_worldPosition) + u_cut[0].w > 0.0 && fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715)))) >= u_cut[2].x) discard;",
     "    gosxSpecularOutput = vec4(0.0);",
     // Resolve material properties, sampling textures when available.
     "    vec3 albedo = u_albedo;",
@@ -863,6 +867,8 @@
 
   // --- Shadow Depth Shader Sources ---
 
+  // Cutaway planes are off when every value is zero.
+  const SCENE_NO_CUT = new Float32Array(12);
   const SCENE_SHADOW_VERTEX_SOURCE = [
     "#version 300 es",
     "precision highp float;",
@@ -1054,11 +1060,13 @@
     "in vec4 a_joints; in vec4 a_weights; in vec3 a_pose;",
     "uniform highp sampler2D u_crowdAtlas;",
     "uniform mat4 u_crowdParent;",
+    "uniform vec4 u_crowdCut[2];",
+    "bool gosxCrowdCulled(mat4 m){vec3 p=m[3].xyz;return dot(u_crowdCut[0].xyz,p)+u_crowdCut[0].w>0.0||dot(u_crowdCut[1].xyz,p)+u_crowdCut[1].w>0.0;}",
     "mat4 gosxCrowdJoint(int joint,int row){int x=joint*4;return mat4(texelFetch(u_crowdAtlas,ivec2(x,row),0),texelFetch(u_crowdAtlas,ivec2(x+1,row),0),texelFetch(u_crowdAtlas,ivec2(x+2,row),0),texelFetch(u_crowdAtlas,ivec2(x+3,row),0));}",
     "mat4 gosxCrowdSkin(){mat4 m=mat4(0.0);float total=0.0;for(int i=0;i<4;i++){float w=a_weights[i];if(w>0.0){mat4 a=gosxCrowdJoint(int(a_joints[i]),int(a_pose.x));mat4 b=gosxCrowdJoint(int(a_joints[i]),int(a_pose.y));m+=(a*(1.0-a_pose.z)+b*a_pose.z)*w;total+=w;}}return total>0.0?m:mat4(1.0);}",
   ].join("\n");
   const SCENE_PBR_CROWD_VERTEX_SOURCE = SCENE_PBR_INSTANCED_VERTEX_SOURCE
-    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=u_crowdParent*a_instanceMatrix*gosxCrowdSkin();")
+    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=u_crowdParent*a_instanceMatrix*gosxCrowdSkin();if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}")
     .replace("a_instanceMatrix * vec4(a_position", "crowdModel * vec4(a_position")
     .replace("mat3(a_instanceMatrix)", "mat3(crowdModel)");
 
@@ -1111,6 +1119,8 @@
     "uniform float u_now;",
     "uniform float u_motionExtrapolationSeconds;",
     "uniform mat4 u_crowdParent;",
+    "uniform vec4 u_crowdCut[2];",
+    "bool gosxCrowdCulled(mat4 m){vec3 p=m[3].xyz;return dot(u_crowdCut[0].xyz,p)+u_crowdCut[0].w>0.0||dot(u_crowdCut[1].xyz,p)+u_crowdCut[1].w>0.0;}",
   ].join("\n");
 
   // Functions only -- no declarations -- so both the color and shadow motion
@@ -1152,6 +1162,7 @@
     "",
     "void main() {",
     "    mat4 crowdModel = u_crowdParent * gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+    "    if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}",
     "    vec4 worldPos = crowdModel * vec4(a_position, 1.0);",
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(crowdModel);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
@@ -1599,6 +1610,7 @@
         h += (o.crowdRevision || 0) * 13.0 + (o.instanceCount || 0) * 7.0;
         // The parent matrix moves every agent without changing the revision.
         if (o.crowdParentMatrix) for (var p = 0; p < 16; p++) h += (o.crowdParentMatrix[p] || 0) * (p + 3);
+        if (o.crowdCut) for (var c = 0; c < 8; c++) h += (o.crowdCut[c] || 0) * (c + 5);
       }
       casterCount++;
     }
@@ -1735,8 +1747,8 @@
     let source = instanced ? SCENE_SHADOW_VERTEX_SOURCE
       .replace("uniform mat4 u_modelMatrix;", "in mat4 a_instanceMatrix;")
       .replace("u_modelMatrix *", "a_instanceMatrix *") : SCENE_SHADOW_VERTEX_SOURCE;
-    if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {")
-      .replace("a_instanceMatrix *", "u_crowdParent * a_instanceMatrix * gosxCrowdSkin() *");
+    if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=u_crowdParent*a_instanceMatrix*gosxCrowdSkin();if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}")
+      .replace("a_instanceMatrix *", "crowdModel *");
     return scenePBRCreateShaderProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Shadow shader", function(program: any, vertexShader: any, fragmentShader: any) {
       return {
         program: program, vertexShader: vertexShader, fragmentShader: fragmentShader,
@@ -1750,6 +1762,7 @@
         uniforms: {
           crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
           crowdParent: crowd ? gl.getUniformLocation(program, "u_crowdParent") : null,
+          crowdCut: crowd ? gl.getUniformLocation(program, "u_crowdCut") : null,
           ...scenePBRProgramLocations(gl, program, "lightViewProjection modelMatrix"),
         },
       };
@@ -1775,6 +1788,7 @@
       SCENE_CROWD_SKIN_MOTION_GLSL,
       "void main() {",
       "    mat4 crowdModel = u_crowdParent * gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+      "    if(gosxCrowdCulled(crowdModel)){gl_Position=vec4(2.0,2.0,2.0,1.0);return;}",
       "    gl_Position = u_lightViewProjection * (crowdModel * vec4(a_position, 1.0));",
       "}",
     ].join("\n");
@@ -1785,7 +1799,7 @@
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         attributes: scenePBRAttributeLocations(gl, program, "position joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState"),
-        uniforms: scenePBRUniformLocations(gl, program, "crowdAtlas crowdClipTable now motionExtrapolationSeconds crowdParent lightViewProjection"),
+        uniforms: scenePBRUniformLocations(gl, program, "crowdAtlas crowdClipTable now motionExtrapolationSeconds crowdParent crowdCut lightViewProjection"),
       };
     });
   }
@@ -5547,6 +5561,7 @@
 
     var uniforms = Object.assign(scenePBRUniformLocations(gl, program, "viewMatrix projectionMatrix modelMatrix cameraPosition albedo roughness specularAA thicknessMap hasThicknessMap metalness clearcoat sheen transmission volume attenuationColor transmissionScene transmissionCapture iridescence anisotropy emissive emissiveColor hasEmissiveColor normalScale normalUVScale occlusionStrength rimColor rimPower rimStrength opacity unlit albedoMap normalMap roughnessMap metalnessMap occlusionMap emissiveMap hasAlbedoMap hasNormalMap hasRoughnessMap hasMetalnessMap hasOcclusionMap hasEmissiveMap lightCount ambientColor ambientIntensity skyColor skyIntensity groundColor groundIntensity envMap hasEnvMap envMapMaxLod iblIrradiance iblRadiance iblBRDFLUT hasIBL iblRadianceMaxLod envIntensity envRotation shadowMap0 lightSpaceMatrices0 shadowCascadeSplits0 shadowCascades0 hasShadow0 shadowBias0 shadowSoftness0 shadowLightIndex0 shadowMap1 lightSpaceMatrices1 shadowCascadeSplits1 shadowCascades1 hasShadow1 shadowBias1 shadowSoftness1 shadowLightIndex1 receiveShadow exposure toneMapMode outputLinear hasFog fogDensity fogColor"), {
       alphaCutoff: gl.getUniformLocation(program, "u_alphaCutoff"),
+      cut: gl.getUniformLocation(program, "u_cut"),
       specularF0: gl.getUniformLocation(program, "u_specularF0"),
       specularF90: gl.getUniformLocation(program, "u_specularF90"),
       specularIntensityMap: gl.getUniformLocation(program, "u_specularIntensityMap"),
@@ -6252,6 +6267,7 @@
     var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
     uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
     uniforms.crowdParent = crowd ? gl.getUniformLocation(linked.program, "u_crowdParent") : null;
+    uniforms.crowdCut = crowd ? gl.getUniformLocation(linked.program, "u_crowdCut") : null;
     uniforms.hasInstanceColor = gl.getUniformLocation(linked.program, "u_hasInstanceColor");
 
     return {
@@ -6275,6 +6291,7 @@
       uniforms.now = gl.getUniformLocation(program, "u_now");
       uniforms.motionExtrapolationSeconds = gl.getUniformLocation(program, "u_motionExtrapolationSeconds");
       uniforms.crowdParent = gl.getUniformLocation(program, "u_crowdParent");
+      uniforms.crowdCut = gl.getUniformLocation(program, "u_crowdCut");
       return {
         attributes: attributes,
         uniforms: uniforms,
@@ -7796,6 +7813,7 @@
       gl.activeTexture(gl.TEXTURE0 + record.unit); gl.bindTexture(gl.TEXTURE_2D, record.texture);
       gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
       gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
+      gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
       const obj = batch.objects[0];
       for (const name of ["joints", "weights"]) {
         const location = ip.attributes[name]; allowed[location] = true;
@@ -7950,6 +7968,7 @@
       gl.uniform1f(ip.uniforms.now, crowdMotionNow);
       gl.uniform1f(ip.uniforms.motionExtrapolationSeconds, SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS);
       gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
+      gl.uniform4fv(ip.uniforms.crowdCut, batch.cut || SCENE_NO_CUT);
       const obj = batch.objects[0];
       for (const name of ["joints", "weights"]) {
         const location = ip.attributes[name]; allowed[location] = true;
@@ -9636,7 +9655,7 @@
       }
       batch.atlas = obj.crowdAtlas; batch.clipTable = obj.crowdClipTable;
       batch.members = obj.crowdMembers; batch.shape = obj.crowdShape; batch.count = obj.instanceCount;
-      batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses; batch.parent = obj.crowdParentMatrix || null;
+      batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses; batch.parent = obj.crowdParentMatrix || null; batch.cut = obj.crowdCut || null;
       if (batch._packedRevision !== obj.crowdRevision) {
         // Dirty slot ranges describe one revision. Use them only when this
         // batch packed the revision just before it.
@@ -10082,6 +10101,8 @@
 
         // Per-object shadow receive control.
         gl.uniform1i(currentUniforms.receiveShadow, obj.receiveShadow ? 1 : 0);
+        if (obj.cut) { gl.uniform4fv(currentUniforms.cut, obj.cut); currentUniforms.cutLive = true; }
+        else if (currentUniforms.cutLive) { gl.uniform4fv(currentUniforms.cut, SCENE_NO_CUT); currentUniforms.cutLive = false; }
 
         // Per-object depth write control.
         var objDepthWriteOverride = obj.depthWrite !== undefined && obj.depthWrite !== null || sceneTransmissionMaterial(mat);

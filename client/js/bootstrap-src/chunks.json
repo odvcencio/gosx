@@ -399,6 +399,7 @@
         "../runtime/scene3d/vessel-wake.ts",
         "../runtime/scene3d/vessel-external.ts",
         "../runtime/scene3d/vessel-decks.ts",
+        "../runtime/scene3d/vessel-cutaway.ts",
         "../runtime/scene3d/mount-vessel.ts"
       ]
     },

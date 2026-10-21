@@ -86,7 +86,7 @@
     // @ts-ignore TS7006 -- plain JS parameters are exercised without transpilation.
     const surface = {sample: (x, z, feet) => height(x, z, feet)};
     // @ts-ignore TS7006 -- plain JS parameters are exercised without transpilation.
-    return {list, update, height, toLocal, deckAt, aboard, surface, y: index => list.find(d => d.index === index)?.y};
+    return {list, axes: m, origin: o, update, height, toLocal, deckAt, aboard, surface, y: index => list.find(d => d.index === index)?.y};
   }
   window.__gosx_scene3d_vessel_decks = {create, polygon, inside};
 })();

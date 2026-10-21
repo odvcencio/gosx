@@ -5861,6 +5861,7 @@
       if (group.parentNode !== "") {
         const node = sceneCrowdBatchParentObject(rest, group.parentNode);
         parentMoved = sceneCrowdBatchSetParent(group, node ? sceneObjectModelMatrix(node, timeSeconds) : null);
+        group.cut = node && node.cutawayCrowd || null; // vessel cutaway: Float32Array(8) clip planes (see vessel-cutaway)
       }
       if (group.n !== group.count) {
         group.changed = true;
@@ -6005,6 +6006,7 @@
       record.crowdPoses = group.poses;
       record.crowdMotion = motion;
       record.crowdParentMatrix = group.parentMatrix;
+      record.crowdCut = group.cut || null;
       record.crowdDirtyRanges = group.dirtyFull ? null : group.dirty;
       record.crowdDirtyBase = group.revision - 1;
       record.crowdAtlas = motion ? first._crowdMotion.atlas : first._crowdSkin.atlas;
@@ -7155,6 +7157,7 @@
           _renderPassDerived: (object && object._renderPassDerived) === true,
           texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
           static: Boolean(object.static),
+          cut: object.cutaway || null,
           castShadow: Boolean(object.castShadow),
           receiveShadow: Boolean(object.receiveShadow),
           depthWrite: object.depthWrite,
@@ -7373,6 +7376,7 @@
       _renderPassDerived: (object && object._renderPassDerived) === true,
       texture: material && typeof material.texture === "string" ? material.texture : (typeof object.texture === "string" ? object.texture : ""),
       static: Boolean(object.static),
+      cut: object.cutaway || null,
       castShadow: Boolean(object.castShadow),
       receiveShadow: Boolean(object.receiveShadow),
       depthWrite: object.depthWrite,

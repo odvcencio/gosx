@@ -59,7 +59,9 @@ test("WebGL detail is a cached compile variant with nil source unchanged", () =>
   assert.equal(c.sceneWebGLDetailFragment(base, null), base);
   // Reviewed optics/MRT base: thickness, geometric AA and reflected-radiance output.
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "613af02ff18141cc4a1a6bc751596478100a1a4cf688e3a4565075dc49a540bf");
+  // Reviewed vessel cutaway base: two u_cut clip planes discard before shading; all-zero planes cut nothing
+  // (scripts/scene3d-vessel-cutaway.mjs checks the pixels).
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "ba5119d2f1e7d21615e685e8cc757367ac048e774ad9893ed3d0f807efdf2411");
   const shader = c.sceneWebGLDetailFragment(base, true);
   const glWithUnits = units => ({ MAX_TEXTURE_IMAGE_UNITS: 1, getParameter: () => units });
   assert.match(c.scenePBRFragmentSourceForContext(glWithUnits(16), base), /#define GOSX_HDR_IBL 1/);

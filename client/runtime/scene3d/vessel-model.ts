@@ -57,7 +57,7 @@
   function create(sceneState, config, physics) {
     const roots=[{nodeId:config.nodeId,distance:0},...(config.lods||[])],saved=new WeakMap(),pose=new Float32Array(16);
   // @ts-ignore TS7006 -- plain JS method parameters are exercised without transpilation.
-    return {pose,update(state,camera,time,detail) {
+    return {pose,cut:null,update(state,camera,time,detail) {
       matrix(state,physics,pose);
       const distance=Math.hypot(camera.x-state.x,camera.y-state.y,camera.z-state.z);
       let root=roots[0];for(const lod of roots) if(distance>lod.distance*Math.max(.45,detail)) root=lod;
@@ -68,6 +68,7 @@
       for(const [id,object] of sceneState.objects) {
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
         const owner=roots.find(r=>String(id).startsWith(r.nodeId+'/'));if(!owner)continue;
+        if(this.cut)this.cut(object);
         object.parentMatrix=pose;object.x=0;object.y=0;object.z=0;object.rotationX=0;object.rotationY=0;object.rotationZ=0;
         object.visible=owner===root;object._modelHidden=false;object.static=false;
         if(!object.visible)continue;
