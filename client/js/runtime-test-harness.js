@@ -4888,6 +4888,9 @@ async function renderWaterPerfShapeFrames(duck, frameCount, resolution) {
       qualityTier: resolution === 128 ? "survival" : (resolution === 192 ? "balanced" : "full"),
       qualityRevision: 0,
     });
+    // Image.onload uses a timer turn; finish decode/upload inside warmup so
+    // steady-state measurements cover cached targets, not pending retries.
+    if (frame === 0) await flushAsyncWork();
     const after = deviceCallSnapshot(harness.fake);
     deltas.push(deviceCallDelta(before, after));
   }

@@ -137,3 +137,60 @@ test('preparation is separately gated and has a fixed new-chunk size bound', () 
   }
   assert.doesNotMatch(source, /requestAnimationFrame|setInterval|getParameter|getError/);
 });
+
+
+for(const backend of ['webgl','webgpu']) {
+ test('opt-in rigid preparation uses '+backend+' scope without submitting nodes or draws',async()=>{
+  const native=backend==='webgl'?createWebGLRendererForPost({fresh:true}):await createBoardWebGPUHarness({fresh:true});
+  const h=boundary(native),win=native.env.context.window||native.env.context,geometry=[];
+  let draws=0;const render=h.renderer.render.bind(h.renderer);
+  h.renderer.render=(...args)=>{draws++;return render(...args);};
+  const prepareRigid=win.__gosx_scene3d_api.modelGeometry.prepare;
+  win.__gosx_scene3d_api.modelGeometry.prepare=raw=>{geometry.push(raw);return prepareRigid(raw);};
+  const asset={objects:[{kind:'mesh',vertices:{count:3,positions:[0,0,0,1,0,0,0,1,0],normals:[0,0,1,0,0,1,0,0,1],uvs:[0,0,1,0,0,1]}}],skins:[],animations:[],points:[],labels:[],sprites:[],html:[],lights:[]},selection=[{id:'prop',src:'/prop.glb',rigidGeometry:true}];
+  const wait=h.prepare(selection);
+  selection[0].rigidGeometry=false;
+  h.pending.get('/prop.glb').resolve(asset);
+  assert.deepEqual({...await wait},{models:1,textures:0});
+  assert.equal(geometry.length,1);assert.equal(geometry[0],asset.objects[0]);assert.equal(draws,0);
+  assert.equal(h.mount.__gosxScene3DState.objects,undefined,'no scene member map is created');
+  for(const [name,change] of Object.entries({skin:{objects:[{...asset.objects[0],skin:{joints:[0],inverseBindMatrices:new Float32Array(16)}}]},morph:{objects:[{...asset.objects[0],_morphAnim:{}}]},node:{objects:[{...asset.objects[0],_nodeAnim:{}}]},aux:{points:[{}]},invalid:{objects:[{vertices:{count:3,positions:[]}}]}})) {
+   const rejected=assert.rejects(h.prepare([{id:name,src:'/'+name+'.glb',rigidGeometry:true}]),new RegExp('Not rigid: '+name));
+   h.pending.get('/'+name+'.glb').resolve({...asset,...change});await rejected;
+  }
+  const identity=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+  const skinObject={...asset.objects[0],skinIndex:0,vertices:{...asset.objects[0].vertices,joints:new Float32Array(12),weights:new Float32Array([1,0,0,0,1,0,0,0,1,0,0,0])}};
+  const metadataCases={skinIndex:{objects:[skinObject],skins:[{joints:[0],inverseBindMatrices:identity}],nodes:[{}]}};
+  for(const property of ['weights','translation','rotation','scale']) metadataCases[property]={nodes:[{}],animations:[{name:'Attack',channels:[{nodeIndex:0,property,times:new Float32Array([0,1]),values:new Float32Array([0,1])}]}]};
+  const before=geometry.length;
+  for(const [name,change] of Object.entries(metadataCases)) {
+   const rejected=assert.rejects(h.prepare([{id:name,src:'/meta-'+name+'.glb',rigidGeometry:true}]),new RegExp('Not rigid: '+name));
+   h.pending.get('/meta-'+name+'.glb').resolve({...asset,...change});await rejected;
+  }
+  assert.equal(geometry.length,before,'source-shaped playback metadata is rejected before primitive caching');
+  native.renderer.dispose();
+ });
+}
+
+test('rigid preparation obeys cancellation and renderer replacement before delayed decode',async()=>{
+ for(const mode of ['cancel','replace']) {
+  const h=boundary(),controller=new AbortController();
+  // The optional hook must not be reached after the existing ownership check.
+  const wait=h.prepare([{id:'prop',src:'/prop.glb',rigidGeometry:true}],controller);
+  const rejected=assert.rejects(wait,/canceled|replaced/);
+  if(mode==='cancel')controller.abort();else h.mount.__gosxScene3DState._crowdRenderer={};
+  h.pending.get('/prop.glb').resolve({objects:[{material:{}}]});
+  await rejected;await tick();
+  assert.equal(h.listeners.size,0);assert.equal(h.calls.filter(c=>c.uri).length,0);
+ }
+});
+
+test('rigid preparation failure is explicit and opt-out leaves it untouched',async()=>{
+ const h=boundary();
+ const wait=h.prepare([{id:'prop',src:'/prop.glb',rigidGeometry:true}]);
+ const rejected=assert.rejects(wait); // missing capability must not silently succeed
+ h.pending.get('/prop.glb').resolve({objects:[{material:{}}]});
+ await rejected;
+ assert.equal(h.listeners.size,0);
+ assert.throws(()=>h.prepare([{id:'bad',src:'/bad.glb',rigidGeometry:1}]),/preparation/);
+});

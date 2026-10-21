@@ -39,6 +39,108 @@ const hubConnectionsSource = [
   fs.readFileSync(path.join(__dirname, "..", "runtime", "host", "hubs.ts"), "utf8"),
 ].join("\n");
 
+test("navigation keeps retained styles connected for unchanged head order and inserted metadata", async () => {
+  for (const addMeta of [false, true]) {
+    const parsedDocs = new Map();
+    const url = "http://localhost:3000/stable-style";
+    const env = createContext({
+      fetchRoutes: { [url]: { text: "__STABLE_STYLE__", url } },
+      parseHTML(html) { return parsedDocs.get(html); },
+    });
+    const stylesheet = new FakeElement("link", env.document);
+    stylesheet.setAttribute("rel", "stylesheet");
+    stylesheet.setAttribute("href", "/studio.css");
+    stylesheet.sheet = {};
+    appendManagedHead(env.document, [stylesheet]);
+    const incomingStyle = new FakeElement("link", null);
+    incomingStyle.setAttribute("rel", "stylesheet");
+    incomingStyle.setAttribute("href", "/studio.css");
+    const meta = new FakeElement("meta", null);
+    meta.setAttribute("name", "description");
+    meta.setAttribute("content", "Updated scene");
+    parsedDocs.set("__STABLE_STYLE__", buildNavigatedDocument({
+      title: "Studio",
+      headNodes: addMeta ? [meta, incomingStyle] : [incomingStyle],
+      bodyNodes: [new FakeElement("main", null)],
+    }));
+    let stylesheetMoves = 0;
+    const insertBefore = env.document.head.insertBefore.bind(env.document.head);
+    env.document.head.insertBefore = function(node, before) {
+      if (node === stylesheet && node.parentNode === this) stylesheetMoves += 1;
+      return insertBefore(node, before);
+    };
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    assert.equal(await env.context.__gosx.navigation.navigate(url), true);
+    assert.equal(stylesheetMoves, 0, "retained stylesheet must not be detached and reinserted");
+    const links = env.document.head.children.filter(node => node.tagName === "LINK");
+    assert.equal(links.length, 1);
+    assert.equal(links[0], stylesheet);
+    if (addMeta) {
+      assert.ok(env.document.head.childNodes.indexOf(env.document.head.children.find(node => node.getAttribute("name") === "description")) < env.document.head.childNodes.indexOf(stylesheet));
+    }
+  }
+});
+
+test("navigation still applies an intentional stylesheet cascade reorder", async () => {
+  const parsedDocs = new Map();
+  const url = "http://localhost:3000/reordered-style";
+  const env = createContext({
+    fetchRoutes: { [url]: { text: "__REORDERED_STYLE__", url } },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  function style(name, owner) {
+    const node = new FakeElement("link", owner);
+    node.setAttribute("rel", "stylesheet");
+    node.setAttribute("href", "/" + name + ".css");
+    node.sheet = {};
+    return node;
+  }
+  const base = style("base", env.document);
+  const theme = style("theme", env.document);
+  appendManagedHead(env.document, [base, theme]);
+  parsedDocs.set("__REORDERED_STYLE__", buildNavigatedDocument({
+    title: "Reordered",
+    headNodes: [style("theme", null), style("base", null)],
+    bodyNodes: [new FakeElement("main", null)],
+  }));
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  assert.equal(await env.context.__gosx.navigation.navigate(url), true);
+  assert.deepEqual(env.document.head.children.filter(node => node.tagName === "LINK"), [theme, base]);
+});
+
+test("application-owned popstate entries can cancel page navigation without claiming other entries", async () => {
+  const url = "http://localhost:3000/history-destination";
+  const parsedDocs = new Map();
+  const env = createContext({
+    fetchRoutes: { [url]: { text: "__HISTORY_PAGE__", url } },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  parsedDocs.set("__HISTORY_PAGE__", buildNavigatedDocument({
+    title: "History destination", headNodes: [], bodyNodes: [new FakeElement("main", null)],
+  }));
+  const originalDispatch = env.document.dispatchEvent.bind(env.document);
+  env.document.dispatchEvent = function(event) {
+    if (event.type === "gosx:popstate") {
+      assert.equal(event.detail.url, url);
+      if (event.detail.state && event.detail.state.localSelection) return false;
+    }
+    return originalDispatch(event);
+  };
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  // Native history moves the URL before delivering popstate. Keep the
+  // runtime's original page distinct from the history destination.
+  env.context.location.href = url;
+  const popstate = env.windowListeners.get("popstate")[0];
+  const before = env.fetchCalls.length;
+  popstate({ state: { localSelection: "piece-1" } });
+  await flushAsyncWork();
+  assert.equal(env.fetchCalls.length, before, "owned history must not fetch or morph the page");
+  popstate({ state: null });
+  await flushAsyncWork();
+  assert.ok(env.fetchCalls.length > before, "unclaimed history retains normal navigation");
+  assert.equal(env.document.title, "History destination");
+});
+
 test("bootstrap preserves navigation and request installed before it", async () => {
   const env = createContext({ elements: [] });
   runScript(navigationSource, env.context, "navigation_runtime.js");

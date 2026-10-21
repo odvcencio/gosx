@@ -20,20 +20,28 @@ func Layout() Node {
 					aria-label={"Running GoSX version " + site.frameworkVersion}
 				>{site.frameworkVersion}</a>
 			</div>
-			<a
+			<button
 				class="pill-toggle"
-				href="#nav-overlay"
+				type="button"
+				popovertarget="nav-overlay"
 				aria-controls="nav-overlay"
 				aria-label="Open navigation menu"
 			>
 				<span class="pill-toggle__bar"></span>
 				<span class="pill-toggle__bar"></span>
 				<span class="pill-toggle__bar"></span>
-			</a>
+			</button>
 		</nav>
-		<div id="nav-overlay" class="nav-overlay" role="dialog" aria-modal="true" aria-label="Site navigation">
+		<div id="nav-overlay" class="nav-overlay" popover="auto" role="dialog" aria-label="Site navigation">
 			<div class="nav-overlay__inner">
-				<a class="nav-overlay__close" href="#main-content" aria-label="Close navigation menu">Close</a>
+				<button
+					class="nav-overlay__close"
+					type="button"
+					popovertarget="nav-overlay"
+					popovertargetaction="hide"
+					aria-label="Close navigation menu"
+					autofocus
+				>Close</button>
 				<form class="overlay-search" action="/docs" method="get" role="search">
 					<label for="overlay-site-search">Search all guides</label>
 					<div>
@@ -50,17 +58,17 @@ func Layout() Node {
 				<div class="nav-overlay__groups">
 					<div class="nav-group">
 						<span class="nav-group__label">Learn</span>
-						<a href="/docs" data-gosx-link="true" class="nav-link">All documentation</a>
-						<a href="/docs/getting-started" data-gosx-link="true" class="nav-link">Getting started</a>
-						<a href="/docs/components" data-gosx-link="true" class="nav-link">Components</a>
-						<a href="/docs/typed-live" data-gosx-link="true" class="nav-link">Typed component proof</a>
+						<a href="/docs" data-gosx-native="true" class="nav-link">All documentation</a>
+						<a href="/docs/getting-started" data-gosx-native="true" class="nav-link">Getting started</a>
+						<a href="/docs/components" data-gosx-native="true" class="nav-link">Components</a>
+						<a href="/docs/typed-live" data-gosx-native="true" class="nav-link">Typed component proof</a>
 					</div>
 					<div class="nav-group">
 						<span class="nav-group__label">See it work</span>
-						<a href="/demos" data-gosx-link="true" class="nav-link">All demos</a>
+						<a href="/demos" data-gosx-native="true" class="nav-link">All demos</a>
 						<a href="/demos/playground" data-gosx-native="true" class="nav-link">Compiler playground</a>
 						<a href="/demos/collab" data-gosx-native="true" class="nav-link">Realtime collaboration</a>
-						<a href="/demos/beacon" data-gosx-link="true" class="nav-link">Scene3D world</a>
+						<a href="/demos/beacon" data-gosx-native="true" class="nav-link">Scene3D world</a>
 					</div>
 					<div class="nav-group">
 						<span class="nav-group__label">Project</span>

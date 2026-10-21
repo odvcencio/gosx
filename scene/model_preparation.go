@@ -11,6 +11,10 @@ import (
 type ModelPreparation struct {
 	ID  string `json:"id"`
 	Src string `json:"src"`
+	// RigidGeometry prepares shared CPU primitive streams without scene nodes.
+	// Only immutable rigid meshes are supported; skins, morphs and node animation
+	// are rejected. GPU buffers and shaders remain first-render work.
+	RigidGeometry bool `json:"rigidGeometry,omitempty"`
 }
 
 // ModelPreparationResult counts selected models and distinct native texture records.

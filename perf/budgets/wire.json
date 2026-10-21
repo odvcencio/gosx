@@ -15,7 +15,7 @@
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 283738,
-          "lazyJsWireBytes": 203162,
+          "lazyJsWireBytes": 203695,
           "requests": 10,
           "totalWireBytes": 1018650,
           "wasmWireBytes": 662965
@@ -29,7 +29,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
+        }
       },
       "/capabilities/": {
         "limits": {
@@ -87,7 +90,7 @@
           "imageWireBytes": 8404,
           "inlineScriptBytes": 256,
           "jsWireBytes": 267128,
-          "lazyJsWireBytes": 203162,
+          "lazyJsWireBytes": 203695,
           "requests": 8,
           "totalWireBytes": 978053,
           "wasmWireBytes": 662965
@@ -101,7 +104,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
+        }
       },
       "/demos/water": {
         "limits": {
@@ -111,7 +117,7 @@
           "imageWireBytes": 193942,
           "inlineScriptBytes": 256,
           "jsWireBytes": 271525,
-          "lazyJsWireBytes": 203162,
+          "lazyJsWireBytes": 203695,
           "requests": 15,
           "totalWireBytes": 1204485,
           "wasmWireBytes": 662965
@@ -125,7 +131,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
+        }
       },
       "/docs/getting-started/": {
         "limits": {
@@ -162,7 +171,7 @@
           "lazyJsWireBytes": 256,
           "requests": 11,
           "totalWireBytes": 383937,
-          "wasmWireBytes": 219045
+          "wasmWireBytes": 219397
         },
         "require": [
           "html-compressed",
@@ -173,7 +182,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "wasmWireBytes": "2026-10-21: direct VM auto-key construction removes recurring formatting/boxing work (native keyed-ID benchmark about 3.7x faster, 4 to 2 allocations). Production core is 219141 B Brotli versus 218909 B on main (+232 B, 0.11%), while raw WASM decreases 201 B. Set this metric to measured bytes plus the existing minimum 256 B headroom; all other limits and requirements remain unchanged."
+        }
       },
       "/performance/": {
         "limits": {
@@ -236,7 +248,7 @@
           "lazyJsWireBytes": 256,
           "requests": 9,
           "totalWireBytes": 312157,
-          "wasmWireBytes": 219045
+          "wasmWireBytes": 219397
         },
         "require": [
           "html-compressed",
@@ -247,7 +259,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "wasmWireBytes": "2026-10-21: direct VM auto-key construction removes recurring formatting/boxing work (native keyed-ID benchmark about 3.7x faster, 4 to 2 allocations). Production core is 219141 B Brotli versus 218909 B on main (+232 B, 0.11%), while raw WASM decreases 201 B. Set this metric to measured bytes plus the existing minimum 256 B headroom; all other limits and requirements remain unchanged."
+        }
       },
       "/stack/": {
         "limits": {

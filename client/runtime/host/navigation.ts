@@ -840,10 +840,15 @@
       }
     }
 
+    // Moving an already-loaded stylesheet through insertBefore detaches its
+    // CSSStyleSheet in Chrome, even when the final head order is unchanged.
+    // Keep retained styles connected unless the cascade actually changes.
+    let headIndex = toArray(head.childNodes).indexOf(currentMarkers.start) + 1;
     for (const node of orderedNodes) {
-      if (node.parentNode === head) {
-        head.insertBefore(node, currentMarkers.end);
-      }
+      if (node.parentNode !== head) continue;
+      const before = head.childNodes[headIndex] || currentMarkers.end;
+      if (node !== before) head.insertBefore(node, before);
+      headIndex += 1;
     }
   }
 
@@ -7896,7 +7901,17 @@
     prefetchLink(anchor, "focus");
   }
 
-  function onPopState() {
+  function onPopState(event) {
+    // Local application state can own a history entry without replacing the
+    // document. Emit the intent before starting navigation so handler order
+    // cannot force an unnecessary page morph (for example, editor selection).
+    if (typeof CustomEvent === "function" && typeof document.dispatchEvent === "function") {
+      const intent = new CustomEvent("gosx:popstate", {
+        cancelable: true,
+        detail: { state: event && event.state, url: window.location.href },
+      });
+      if (!document.dispatchEvent(intent)) return;
+    }
     navigate(window.location.href, { replace: true, preserveScroll: true }).catch(function(err) {
       console.error("[gosx] popstate navigation failed:", err);
       // The browser already moved the URL. A soft-nav failure here would
