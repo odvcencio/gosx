@@ -32,6 +32,7 @@ function readSource(name) {
 
 function createMixerContext() {
   const sandbox = {
+    __gosx_scene3d_api: {},
     console: { warn: () => {}, error: () => {}, log: () => {} },
     Math,
     JSON,

@@ -19,6 +19,9 @@
   keyboard dismissal of the documentation's mobile menu.
 - Build list auto-keys directly without formatting and boxing overhead,
   preserving source identity and full-width integer indices.
+- Add opt-in rigid-model CPU geometry preparation without hidden scene nodes.
+  Reuse prepared streams on first hydration; reject animated or skinned assets
+  instead of freezing them. GPU buffer and shader work remains first-render work.
 
 - Settle individual shared-signal writes through the same reader boundary as
   batches. Derived values update on the same write, and nested observer writes

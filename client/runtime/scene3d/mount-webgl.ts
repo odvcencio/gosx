@@ -1146,9 +1146,9 @@
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
-    const sharedGeometry = model && model._shareRigidGeometry && !morphSource && !nodeAnimSource &&
-      !(source && source.skin) && rawObject && rawObject.vertices
-      ? sceneRigidPrimitiveGeometry.get(rawObject.vertices) : null;
+    const canShare = model && model._shareRigidGeometry && !morphSource && !nodeAnimSource &&
+      !(source && source.skin) && rawObject && rawObject.vertices;
+    const sharedGeometry = canShare ? sceneRigidPrimitiveGeometry.get(rawObject.vertices) : null;
     // The shared primitive was already normalized and validated on first
     // hydration. Normalize only instance metadata; cloning its normal/UV/
     // tangent arrays again is proportional to the whole incoming swarm.
@@ -1160,7 +1160,12 @@
       // the decoded asset's original primitive, not that temporary wrapper.
       // Looking up the latter rebakes every new actor before throwing its
       // geometry away in favor of the shared stream during staging.
-      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry);
+      const object = sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry);
+      if (canShare && !sharedGeometry) {
+        object.vertices._rigidPool = true;
+        sceneRigidPrimitiveGeometry.set(rawObject.vertices, object.vertices);
+      }
+      return object;
     }
     if (normalized.kind === "lines") {
       return sceneModelLineObject(normalized, model, prefix, nodeAnimSource);
@@ -1247,10 +1252,9 @@
     const modelMatrix = sceneModelTransformMatrix(model);
     const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
     const modelOrientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
-    const sharedRigidGeometry = !hasSkin && !morphMeta && !nodeAnimSource && model && model._shareRigidGeometry
-      ? sharedGeometry || sceneRigidPrimitiveGeometry.get(vertices) : null;
-    if (sharedRigidGeometry) {
-      instanced.vertices = sharedRigidGeometry;
+    // The caller resolves sharing against the pristine decoded primitive.
+    if (sharedGeometry) {
+      instanced.vertices = sharedGeometry;
     } else if (hasSkin) {
       instanced.vertices = {
         count: vertexCount,
@@ -1305,9 +1309,8 @@
     sceneApplyModelMaterialName(instanced, model);
     sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
-    const normalized = sharedRigidGeometry
-      ? normalizeSceneObject(Object.assign({}, instanced, {vertices: null}), prefix, {vertices: sharedRigidGeometry})
-      : normalizeSceneObject(instanced, prefix);
+    if (sharedGeometry) instanced.vertices = null;
+    const normalized = normalizeSceneObject(instanced, prefix, sharedGeometry ? {vertices: sharedGeometry} : null);
     sceneApplyModelMaterialName(normalized, model);
     if (!morphMeta && !nodeAnimSource && normalized && normalized.vertices) {
       // Imported rigid and skeletal bind streams own immutable snapshots.
@@ -1317,9 +1320,8 @@
       normalized.vertices.immutable = true;
       normalized.vertices.revision = 0;
     }
-    if (sharedRigidGeometry && normalized) {
-      normalized.vertices = sharedRigidGeometry;
-      normalized._modelLocalVertices = sharedRigidGeometry;
+    if (sharedGeometry && normalized) {
+      normalized._modelLocalVertices = sharedGeometry;
     } else if (!hasSkin && normalized && normalized.vertices) {
       normalized._modelLocalVertices = {
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
@@ -3439,6 +3441,12 @@
   // node transforms; animated/morph/live stages never enter this cache.
   const sceneRigidPrimitiveGeometry = new WeakMap();
 
+  const sceneRigidPreparationModel = { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
+    scaleX: 1, scaleY: 1, scaleZ: 1, _shareRigidGeometry: true };
+  window.__gosx_scene3d_api.modelGeometry = { skin: sceneModelHasSkins, weights: sceneModelHasWeightAnimations, nodes: sceneModelHasNodeAnimations, prepare: function(raw: any) {
+    return sceneRigidPrimitiveGeometry.get(raw.vertices) || sceneInstantiateModelObject(raw, sceneRigidPreparationModel, "", 0, null)?.vertices;
+  } };
+
   function sceneCrowdPrimitiveMaterialEligible(raw, model) {
     const source = sceneApplyMaterialOverride(raw, model);
     // Read through the same nested/top-level precedence as normalization.
@@ -3570,16 +3578,7 @@
           continue;
         }
         if (rigidInstance) {
-          const sourceVertices = asset.objects[i].vertices;
-          let shared = sceneRigidPrimitiveGeometry.get(sourceVertices);
-          if (!shared) {
-            shared = object.vertices;
-            // The decoded asset owns immutable streams shared by its entire
-            // swarm. A short bounded GPU residency window can reuse them
-            // across an empty wave without retaining any actor identities.
-            shared._rigidPool = true;
-            sceneRigidPrimitiveGeometry.set(sourceVertices, shared);
-          }
+          const shared = sceneRigidPrimitiveGeometry.get(asset.objects[i].vertices);
           object.vertices = shared;
           object._modelLocalVertices = shared;
           object._rigidSharedAppearance = model._instancedGLBSharedAppearance === true;
