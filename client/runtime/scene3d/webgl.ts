@@ -1053,11 +1053,12 @@
   const SCENE_CROWD_SKIN_GLSL = [
     "in vec4 a_joints; in vec4 a_weights; in vec3 a_pose;",
     "uniform highp sampler2D u_crowdAtlas;",
+    "uniform mat4 u_crowdParent;",
     "mat4 gosxCrowdJoint(int joint,int row){int x=joint*4;return mat4(texelFetch(u_crowdAtlas,ivec2(x,row),0),texelFetch(u_crowdAtlas,ivec2(x+1,row),0),texelFetch(u_crowdAtlas,ivec2(x+2,row),0),texelFetch(u_crowdAtlas,ivec2(x+3,row),0));}",
     "mat4 gosxCrowdSkin(){mat4 m=mat4(0.0);float total=0.0;for(int i=0;i<4;i++){float w=a_weights[i];if(w>0.0){mat4 a=gosxCrowdJoint(int(a_joints[i]),int(a_pose.x));mat4 b=gosxCrowdJoint(int(a_joints[i]),int(a_pose.y));m+=(a*(1.0-a_pose.z)+b*a_pose.z)*w;total+=w;}}return total>0.0?m:mat4(1.0);}",
   ].join("\n");
   const SCENE_PBR_CROWD_VERTEX_SOURCE = SCENE_PBR_INSTANCED_VERTEX_SOURCE
-    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=a_instanceMatrix*gosxCrowdSkin();")
+    .replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {\nmat4 crowdModel=u_crowdParent*a_instanceMatrix*gosxCrowdSkin();")
     .replace("a_instanceMatrix * vec4(a_position", "crowdModel * vec4(a_position")
     .replace("mat3(a_instanceMatrix)", "mat3(crowdModel)");
 
@@ -1109,6 +1110,7 @@
     "uniform vec4 u_crowdClipTable[" + SCENE_CROWD_MOTION_MAX_CLIPS + "];",
     "uniform float u_now;",
     "uniform float u_motionExtrapolationSeconds;",
+    "uniform mat4 u_crowdParent;",
   ].join("\n");
 
   // Functions only -- no declarations -- so both the color and shadow motion
@@ -1149,7 +1151,7 @@
     SCENE_CROWD_SKIN_MOTION_GLSL,
     "",
     "void main() {",
-    "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+    "    mat4 crowdModel = u_crowdParent * gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
     "    vec4 worldPos = crowdModel * vec4(a_position, 1.0);",
     "    v_worldPosition = worldPos.xyz;",
     "mat3 m=mat3(crowdModel);vec4 q=gosxAffineNormal(m,a_normal);v_normal=q.xyz;",
@@ -1593,7 +1595,11 @@
         for (var k = 0; k < 16; k++) h += o.modelMatrix[k] || 0;
       }
       // A crowd batch record holds one matrix; its revision tracks every agent.
-      if (o._crowdBatch === true) h += (o.crowdRevision || 0) * 13.0 + (o.instanceCount || 0) * 7.0;
+      if (o._crowdBatch === true) {
+        h += (o.crowdRevision || 0) * 13.0 + (o.instanceCount || 0) * 7.0;
+        // The parent matrix moves every agent without changing the revision.
+        if (o.crowdParentMatrix) for (var p = 0; p < 16; p++) h += (o.crowdParentMatrix[p] || 0) * (p + 3);
+      }
       casterCount++;
     }
     h += casterCount * 17.0;
@@ -1730,7 +1736,7 @@
       .replace("uniform mat4 u_modelMatrix;", "in mat4 a_instanceMatrix;")
       .replace("u_modelMatrix *", "a_instanceMatrix *") : SCENE_SHADOW_VERTEX_SOURCE;
     if (crowd) source = source.replace("void main() {", SCENE_CROWD_SKIN_GLSL + "\nvoid main() {")
-      .replace("a_instanceMatrix *", "a_instanceMatrix * gosxCrowdSkin() *");
+      .replace("a_instanceMatrix *", "u_crowdParent * a_instanceMatrix * gosxCrowdSkin() *");
     return scenePBRCreateShaderProgram(gl, source, SCENE_SHADOW_FRAGMENT_SOURCE, "Shadow shader", function(program: any, vertexShader: any, fragmentShader: any) {
       return {
         program: program, vertexShader: vertexShader, fragmentShader: fragmentShader,
@@ -1743,6 +1749,7 @@
         },
         uniforms: {
           crowdAtlas: crowd ? gl.getUniformLocation(program, "u_crowdAtlas") : null,
+          crowdParent: crowd ? gl.getUniformLocation(program, "u_crowdParent") : null,
           ...scenePBRProgramLocations(gl, program, "lightViewProjection modelMatrix"),
         },
       };
@@ -1767,7 +1774,7 @@
       "uniform mat4 u_lightViewProjection;",
       SCENE_CROWD_SKIN_MOTION_GLSL,
       "void main() {",
-      "    mat4 crowdModel = gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
+      "    mat4 crowdModel = u_crowdParent * gosxMotionModel() * gosxCrowdSkinFromPose(gosxCrowdMotionPoseRows());",
       "    gl_Position = u_lightViewProjection * (crowdModel * vec4(a_position, 1.0));",
       "}",
     ].join("\n");
@@ -1778,7 +1785,7 @@
         vertexShader: vertexShader,
         fragmentShader: fragmentShader,
         attributes: scenePBRAttributeLocations(gl, program, "position joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState"),
-        uniforms: scenePBRUniformLocations(gl, program, "crowdAtlas crowdClipTable now motionExtrapolationSeconds lightViewProjection"),
+        uniforms: scenePBRUniformLocations(gl, program, "crowdAtlas crowdClipTable now motionExtrapolationSeconds crowdParent lightViewProjection"),
       };
     });
   }
@@ -6244,6 +6251,7 @@
 
     var uniforms = scenePBRCacheBaseUniforms(gl, linked.program);
     uniforms.crowdAtlas = crowd ? gl.getUniformLocation(linked.program, "u_crowdAtlas") : null;
+    uniforms.crowdParent = crowd ? gl.getUniformLocation(linked.program, "u_crowdParent") : null;
     uniforms.hasInstanceColor = gl.getUniformLocation(linked.program, "u_hasInstanceColor");
 
     return {
@@ -6266,6 +6274,7 @@
       uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
       uniforms.now = gl.getUniformLocation(program, "u_now");
       uniforms.motionExtrapolationSeconds = gl.getUniformLocation(program, "u_motionExtrapolationSeconds");
+      uniforms.crowdParent = gl.getUniformLocation(program, "u_crowdParent");
       return {
         attributes: attributes,
         uniforms: uniforms,
@@ -7786,6 +7795,7 @@
       const record = prepareCrowdAtlas(batch.atlas);
       gl.activeTexture(gl.TEXTURE0 + record.unit); gl.bindTexture(gl.TEXTURE_2D, record.texture);
       gl.uniform1i(ip.uniforms.crowdAtlas, record.unit); gl.activeTexture(gl.TEXTURE0);
+      gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
       const obj = batch.objects[0];
       for (const name of ["joints", "weights"]) {
         const location = ip.attributes[name]; allowed[location] = true;
@@ -7939,6 +7949,7 @@
       gl.uniform4fv(ip.uniforms.crowdClipTable, batch.clipTable.data);
       gl.uniform1f(ip.uniforms.now, crowdMotionNow);
       gl.uniform1f(ip.uniforms.motionExtrapolationSeconds, SCENE_CROWD_MOTION_EXTRAPOLATION_SECONDS);
+      gl.uniformMatrix4fv(ip.uniforms.crowdParent, false, batch.parent || SHADOW_IDENTITY_MODEL_MATRIX);
       const obj = batch.objects[0];
       for (const name of ["joints", "weights"]) {
         const location = ip.attributes[name]; allowed[location] = true;
@@ -9625,7 +9636,7 @@
       }
       batch.atlas = obj.crowdAtlas; batch.clipTable = obj.crowdClipTable;
       batch.members = obj.crowdMembers; batch.shape = obj.crowdShape; batch.count = obj.instanceCount;
-      batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses;
+      batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses; batch.parent = obj.crowdParentMatrix || null;
       if (batch._packedRevision !== obj.crowdRevision) {
         // Dirty slot ranges describe one revision. Use them only when this
         // batch packed the revision just before it.

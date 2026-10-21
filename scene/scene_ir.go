@@ -170,6 +170,9 @@ type InstancedGLBMeshIR struct {
 	// SharedAppearance opts corresponding primitives into one shared renderer
 	// appearance across instances. It does not merge different GLB primitives.
 	SharedAppearance bool `json:"sharedAppearance,omitempty"`
+	// ParentNode names the scene node whose world matrix carries the batch;
+	// see InstancedGLBMesh.ParentNode.
+	ParentNode string `json:"parentNode,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
@@ -2625,6 +2628,7 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	if item.SharedAppearance {
 		record["sharedAppearance"] = true
 	}
+	setString(record, "parentNode", item.ParentNode)
 	if len(item.Instances) > 0 {
 		instances := make([]map[string]any, 0, len(item.Instances))
 		for _, inst := range item.Instances {

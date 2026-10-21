@@ -675,6 +675,16 @@ type InstancedGLBMesh struct {
 	// materials, but per-instance scene-node CSS appearance overrides are not
 	// supported for an opted-in batch.
 	SharedAppearance bool
+	// ParentNode names a scene node (a Model ID, a Vessel.NodeID, an object ID)
+	// whose world transform carries the whole batch. Instance positions,
+	// rotations and motion frames are then relative to that node, and the
+	// renderer applies the node's current world matrix once per frame instead
+	// of every agent being re-sent in world space. Use it for crowds that ride
+	// a moving ship. The node must exist in the same scene; while it is absent
+	// the batch draws in world space. Only the WebGL crowd path (animated
+	// agents sharing one primitive) follows the parent; leave it empty
+	// elsewhere.
+	ParentNode string
 }
 
 // MeshInstance describes the transform for a single instance within an
@@ -3736,6 +3746,7 @@ func (l *graphLowerer) lowerInstancedGLBMesh(igm InstancedGLBMesh, parent worldT
 		Visible:          igm.Visible,
 		Static:           igm.Static,
 		SharedAppearance: igm.SharedAppearance,
+		ParentNode:       strings.TrimSpace(igm.ParentNode),
 		Instances:        instances,
 	}
 	applyMaterialToInstancedGLBIR(&record, igm.Material)

@@ -9,6 +9,8 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
 const { bootstrapSource, createContext, runScript, flushAsyncWork } = require("./runtime-test-harness.js");
+const fs = require("node:fs");
+const path = require("node:path");
 
 // The bootstrap runs in a vm context, whose Float32Array differs from this
 // file's. The runtime tests typed arrays with instanceof, so build them in its
@@ -63,7 +65,7 @@ function makeCrowd(api, count, options = {}) {
       spinX: 0, spinY: 0, spinZ: 0, shiftX: 0, shiftY: 0, shiftZ: 0, driftSpeed: 0, driftPhase: 0,
       static: false, skin: null, parentMatrix: matrixAt(i * 2, -10),
     });
-    object._crowdSkin = { atlas, bounds, rows: new Float32([1, 2, .5]), poseRows: null, batchID: "crowd", rev: 0, group: null };
+    object._crowdSkin = { atlas, bounds, rows: new Float32([1, 2, .5]), poseRows: null, batchID: "crowd", rev: 0, group: null, parent: options.parent || "" };
     if (options.motion) {
       object._crowdMotion = { atlas, clipTable: { count: 1 }, record: new Float32(24), dirty: false,
         bounds: { minX: i * 2 - 1, minY: -1, minZ: -11, maxX: i * 2 + 1, maxY: 1, maxZ: -9 } };
@@ -332,4 +334,188 @@ test("scattered changes collapse into a bounded range list", async () => {
   assert.ok(record.crowdDirtyRanges.length <= 256);
   assert.equal(record.crowdDirtyRanges[0], 0);
   assert.equal(record.crowdDirtyRanges[record.crowdDirtyRanges.length - 1], 599);
+});
+
+// A node the way the vessel presents itself: parts named "<node>/<part>" that
+// share one parentMatrix, which the vessel rewrites in place every frame.
+function makeShip(api, pose) {
+  const part = api.normalizeSceneObject({ id: "ship/hull", kind: "mesh", vertices: cubeVertices(), materialKind: "standard", color: "#884422", pickable: false }, 0);
+  Object.assign(part, { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0, parentMatrix: pose, static: false });
+  return part;
+}
+
+function yawPose(yaw, x, y, z) {
+  const c = Math.cos(yaw), s = Math.sin(yaw);
+  return new Float32([c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, x, y, z, 1]);
+}
+
+test("a parented crowd carries the node's world matrix and follows it without a new revision", async () => {
+  const api = await makeSceneApiEnv();
+  const pose = yawPose(0, 100, 5, 0);
+  const objects = [makeShip(api, pose), ...makeCrowd(api, 40, { motion: true, parent: "ship" })];
+  const first = build(api, objects);
+  const [record] = batchRecords(first);
+  assert.ok(record.crowdParentMatrix, "the record carries a batch matrix");
+  assert.ok(Array.from(pose).every((v, i) => record.crowdParentMatrix[i] === v), "the record carries the node's matrix values");
+  assert.equal(first.meshObjects.filter(r => r.id === "ship/hull").length, 1, "the node itself is an ordinary record");
+  const revision = record.crowdRevision;
+  const localMinX = record.bounds.minX - 100;
+
+  // The vessel mutates its pose in place every frame; no agent changes.
+  pose.set(yawPose(0, 130, 6, 20));
+  build(api, objects);
+  assert.equal(record.crowdRevision, revision, "moving the parent is not an agent change");
+  assert.equal(record.crowdParentMatrix[12], 130);
+  assert.equal(record.crowdParentMatrix[14], 20);
+  assert.ok(Math.abs(record.bounds.minX - (130 + localMinX)) < 1e-4, "culling bounds follow the parent: " + record.bounds.minX);
+  assert.ok(record.bounds.minZ > 20 - 12 && record.bounds.maxZ < 20 + 12 && record.bounds.minY > 5 - 2);
+});
+
+test("a parent that turns the crowd rotates its culling bounds", async () => {
+  const api = await makeSceneApiEnv();
+  const pose = yawPose(Math.PI / 2, 0, 0, 0);
+  const objects = [makeShip(api, pose), ...makeCrowd(api, 10, { motion: true, parent: "ship" })];
+  const [record] = batchRecords(build(api, objects));
+  // Agents lie along +X (x = 2i, up to 19) at z = -10; a quarter turn about Y
+  // sends local X to world -Z and local Z to world X.
+  assert.ok(record.bounds.minX > -12 && record.bounds.maxX < -8, JSON.stringify(record.bounds));
+  assert.ok(record.bounds.minZ < -15 && record.bounds.maxZ < 2, JSON.stringify(record.bounds));
+});
+
+test("a crowd draws in world space until its parent exists, and again if it goes away", async () => {
+  const api = await makeSceneApiEnv();
+  const crowd = makeCrowd(api, 12, { parent: "ship" });
+  const [record] = batchRecords(build(api, crowd));
+  assert.equal(record.crowdParentMatrix, null);
+  const worldMinX = record.bounds.minX;
+  const pose = yawPose(0, 50, 0, 0);
+  const ship = makeShip(api, pose);
+  build(api, [ship, ...crowd]);
+  assert.equal(record.crowdParentMatrix[12], 50);
+  assert.ok(Math.abs(record.bounds.minX - (worldMinX + 50)) < 1e-4);
+  build(api, crowd);
+  assert.equal(record.crowdParentMatrix, null);
+  assert.ok(Math.abs(record.bounds.minX - worldMinX) < 1e-4, "bounds return to world space");
+});
+
+test("a parent name matches a node or its parts, not a longer name", async () => {
+  const api = await makeSceneApiEnv();
+  const crowd = makeCrowd(api, 4, { parent: "ship" });
+  const other = makeShip(api, yawPose(0, 9, 0, 0));
+  other.id = "ship-two/hull";
+  const [record] = batchRecords(build(api, [other, ...crowd]));
+  assert.equal(record.crowdParentMatrix, null);
+  const exact = makeShip(api, yawPose(0, 7, 0, 0));
+  exact.id = "ship";
+  assert.equal(batchRecords(build(api, [other, exact, ...crowd]))[0].crowdParentMatrix[12], 7);
+});
+
+test("agents with different parents do not share a record", async () => {
+  const api = await makeSceneApiEnv();
+  const a = makeCrowd(api, 4, { parent: "ship" });
+  const b = makeCrowd(api, 4, { parent: "dock" });
+  for (const object of b) { object._crowdSkin.batchID = "crowd-b"; object.id = object.id.replace("crowd/", "crowd-b/"); }
+  const bundle = build(api, [makeShip(api, yawPose(0, 1, 0, 0)), ...a, ...b]);
+  assert.equal(batchRecords(bundle).length, 2);
+});
+
+test("a ray hits an agent where its parent has carried it", async () => {
+  const api = await makeSceneApiEnv();
+  const pose = yawPose(0, 0, 0, 0);
+  const crowd = makeCrowd(api, 1, { parent: "ship", appearance: { pickable: undefined } });
+  for (const object of crowd) { delete object.pickable; object._crowdSkin.bounds = { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 1, maxZ: 1 }; }
+  const objects = [makeShip(api, pose), ...crowd];
+  const camera = { x: 0, y: 0, z: 10, fov: 60, near: .1, far: 500 };
+  // The lone agent sits at (0, 0, -10) in the ship's space.
+  let bundle = build(api, objects, camera);
+  assert.ok(api.sceneRaycastPick(320, 180, 640, 360, bundle.camera, bundle), "ray finds the agent at the ship's origin");
+  // The ship sails 60 m to the side: the centre ray no longer hits, a ray at the new spot does.
+  pose.set(yawPose(0, 60, 0, 0));
+  bundle = build(api, objects, camera);
+  assert.equal(api.sceneRaycastPick(320, 180, 640, 360, bundle.camera, bundle), null);
+  const moved = Object.assign({}, camera, { x: 60 });
+  bundle = build(api, objects, moved);
+  const hit = api.sceneRaycastPick(320, 180, 640, 360, bundle.camera, bundle);
+  assert.ok(hit && hit.object.id === "crowd/agent-0/0", "ray finds the agent where the ship carried it");
+});
+
+test("motion agents are picked at their latest motion key, through the parent", async () => {
+  const api = await makeSceneApiEnv();
+  const pose = yawPose(0, 40, 0, 0);
+  const crowd = makeCrowd(api, 1, { motion: true, parent: "ship", appearance: { pickable: undefined } });
+  const [agent] = crowd;
+  delete agent.pickable;
+  agent._crowdSkin.bounds = { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 1, maxZ: 1 };
+  // Motion key: from (0,0,-10) to (4,0,-10) over t in [0, 1].
+  const record = agent._crowdMotion.record;
+  record.set([0, 0, -10, 0, 0, 0, 1, 1, 1, 0, 4, 0, -10, 0, 0, 0, 1, 1, 1, 1]);
+  agent._crowdMotion.bounds = { minX: -1, minY: -1, minZ: -11, maxX: 5, maxY: 1, maxZ: -9 };
+  agent._crowdMotion.dirty = true;
+  const objects = [makeShip(api, pose), agent];
+  const bundle = api.createSceneRenderBundle(640, 360, "#000000", { x: 44, y: 0, z: 10, fov: 60, near: .1, far: 500 }, objects,
+    [], [], [], [], {}, 2, [], [], [], [], [], 0, false, capabilities);
+  const [batch] = batchRecords(bundle);
+  const [pick] = batch.crowdPickRecords();
+  assert.ok(Math.abs(pick.modelMatrix[12] - 44) < 1e-4, "40 (ship) + 4 (motion key after t=1): " + pick.modelMatrix[12]);
+  assert.ok(pick.bounds.minX > 38 && pick.bounds.maxX < 46);
+});
+
+test("a crowd parented on today's vessel rides its JS-computed pose", async () => {
+  const api = await makeSceneApiEnv();
+  // The real vessel authority, as the vessel mount runs it: physics state in,
+  // pose matrix out, written into every part's parentMatrix.
+  const root = path.resolve(__dirname, "../..");
+  const vessel = vm.createContext({ window: {}, Float32Array, Uint8Array, Uint16Array, Uint32Array, Int8Array, Int16Array, ArrayBuffer, DataView, TextDecoder });
+  for (const source of ["client/js/bootstrap-src/11-scene-math.ts", "client/runtime/scene3d/gltf.ts", "client/runtime/scene3d/vessel-navigation.ts",
+    "client/runtime/scene3d/vessel-physics.ts", "client/runtime/scene3d/vessel-model.ts"]) {
+    vm.runInContext(fs.readFileSync(path.join(root, source), "utf8"), vessel);
+  }
+  const physics = vessel.window.__gosx_scene3d_vessel_physics, modelAPI = vessel.window.__gosx_scene3d_vessel_model;
+  const hull = makeShip(api, null);
+  hull.id = "ship-high/tarred-hull";
+  const mast = makeShip(api, null);
+  mast.id = "ship-high/mast-1";
+  const sceneState = { objects: new Map([[hull.id, hull], [mast.id, mast]]) };
+  const config = { nodeId: "ship-high", lods: [] };
+  const state = physics.create(config, {}, {});
+  const model = modelAPI.create(sceneState, config, physics);
+
+  const crowd = makeCrowd(api, 30, { parent: "ship-high" });
+  const objects = [hull, mast, ...crowd];
+  for (const frame of [0, 1, 2]) {
+    Object.assign(state, { x: 200 + frame * 3, y: 0.4 * frame, z: -50 + frame, heading: 0.5 + frame * 0.1, roll: 0.05 * frame, pitch: -0.02 * frame });
+    model.update(state, { x: 0, y: 0, z: 0 }, 1, 1);
+    const bundle = build(api, objects);
+    const [record] = batchRecords(bundle);
+    const pose = hull.parentMatrix;
+    assert.ok(pose === mast.parentMatrix && pose === model.pose, "the vessel shares one pose matrix across its parts");
+    assert.ok(Array.from(pose).every((v, i) => record.crowdParentMatrix[i] === v), "frame " + frame + ": the batch matrix is the vessel pose");
+    // Spot check: the agent at ship-local (2i, 0, -10) lands where the vessel says that deck point is.
+    const local = physics.localPoint(state, 6, 0, -10);
+    const [pick] = record.crowdPickRecords();
+    const agent3 = record.crowdPickRecords()[3];
+    assert.ok(Math.abs(agent3.modelMatrix[12] - local.x) < 1e-3 && Math.abs(agent3.modelMatrix[13] - local.y) < 1e-3 && Math.abs(agent3.modelMatrix[14] - local.z) < 1e-3,
+      "pick matrix puts agent 3 at the vessel's world point for its deck position");
+    assert.ok(pick);
+  }
+});
+
+test("an InstancedGLB batch keeps its parentNode through normalization", async () => {
+  const api = await makeSceneApiEnv();
+  const batch = api.normalizeSceneInstancedGLBMeshEntry({ id: "riders", src: "/p.glb", parentNode: " ship ", instances: [{ id: "a" }] }, 0, null);
+  assert.equal(batch.parentNode, "ship");
+  assert.equal(api.normalizeSceneInstancedGLBMeshEntry({ id: "walkers", src: "/p.glb", instances: [{ id: "a" }] }, 0, null).parentNode, "");
+  assert.equal(api.normalizeSceneInstancedGLBMeshEntry({ id: "x", src: "/p.glb", parentNode: 7, instances: [] }, 0, null).parentNode, "");
+});
+
+test("a selected agent leaves its batch, unless the batch rides a parent", async () => {
+  const api = await makeSceneApiEnv();
+  const free = makeCrowd(api, 6);
+  free[2].selected = true;
+  assert.equal(build(api, free).meshObjects.length, 2, "five batched agents and the selected one on its own record");
+  const parented = makeCrowd(api, 6, { parent: "ship" });
+  parented[2].selected = true;
+  const bundle = build(api, [makeShip(api, yawPose(0, 5, 0, 0)), ...parented]);
+  assert.equal(batchRecords(bundle).length, 1);
+  assert.equal(batchRecords(bundle)[0].instanceCount, 6, "a record outside the ship would sit in world space");
 });
