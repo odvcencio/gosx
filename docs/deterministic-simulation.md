@@ -3,7 +3,8 @@
 A simulation is deterministic when the same inputs give the same bits on every
 platform. Rollback netcode, server-authoritative games and replays all need
 this. GoSX gives you three tools for it: the `det` math package, the
-`det/parity` hash recorder, and a linter. The `physics` package uses all three.
+`det/parity` hash recorder, and a linter. The `physics` and `vessel` packages use
+all three. `vessel` models a powered ship; see `docs/scene3d-powered-vessels.md`.
 
 ## The three platforms
 
@@ -102,7 +103,7 @@ for _, v := range counts {
 Test files are not checked. The analyzer needs type information to tell float
 arithmetic from integer arithmetic, so it uses `go/types` through
 `golang.org/x/tools/go/analysis`. In this repository, `make lint-deterministic`
-runs it on `det` and `physics`. Add your package to `DET_LINT_PKGS`.
+runs it on `det`, `physics` and `vessel`. Add your package to `DET_LINT_PKGS`.
 
 ## Proving it: parity tests
 

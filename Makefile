@@ -415,7 +415,7 @@ test-physics-parity:
 # An Apple Silicon Mac cannot be run from here; `make build-det-parity-darwin-arm64`
 # writes test binaries to copy there.
 DET_PARITY_OUT ?= build/det-parity
-DET_PARITY_PKGS = ./det ./det/parity
+DET_PARITY_PKGS = ./det ./det/parity ./vessel
 
 test-det-parity:
 	$(GO) test -p 4 $(DET_PARITY_PKGS)
@@ -453,7 +453,7 @@ build-det-parity-darwin-arm64:
 # opt in with a //gosx:deterministic comment. Add a package to DET_LINT_PKGS when
 # it opts in. The analyzer type-checks each package, so list packages instead of
 # using ./... .
-DET_LINT_PKGS ?= ./det/... ./physics
+DET_LINT_PKGS ?= ./det/... ./physics ./vessel
 lint-deterministic:
 	$(GO) run ./cmd/gosx-detlint $(DET_LINT_PKGS)
 
