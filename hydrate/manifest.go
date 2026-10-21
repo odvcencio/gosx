@@ -293,10 +293,11 @@ type HubInputConfig struct {
 	// cancelled, left/right mapped to forward/back by player slot).
 	//
 	// "absolute" sends raw screen-absolute held state for a simulation that
-	// derives press edges and resolves opposite directions itself:
+	// derives press edges and resolves opposite directions itself. The bit
+	// layout is a wire contract that matches the Primal Shift sim:
 	//
-	//	dir    bit mask: up 1, down 2, left 4, right 8; no client SOCD, no slot mapping
-	//	btn    bit mask: lp 1, hp 2, lk 4, hk 8, guard 16
+	//	dir    bit mask: left 1, right 2, up 4, down 8; no client SOCD, no slot mapping
+	//	btn    bit mask: lp 1, hp 2, lk 4, hk 8, guard 16 (32 is reserved for transform)
 	//	frame  sample frame number, starting at 1, +1 per animation frame
 	//
 	// Every sample taken in one frame (key, touch and pointer events, gamepad

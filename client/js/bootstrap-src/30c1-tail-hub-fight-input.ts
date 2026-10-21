@@ -382,22 +382,22 @@
     }
 
     // readDirectionBits returns the held directions as raw screen-absolute
-    // bits (up 1, down 2, left 4, right 8). It resolves no opposite pairs and
+    // bits (left 1, right 2, up 4, down 8). It resolves no opposite pairs and
     // maps nothing by player slot: the simulation owns both.
     function readDirectionBits(pad, includePrimary) {
       let bits = 0;
       if (includePrimary) {
-        if (keyDown("KeyW", "w", "ArrowUp", "arrowup") || touch.up) bits |= 1;
-        if (keyDown("KeyS", "s", "ArrowDown", "arrowdown") || touch.down) bits |= 2;
-        if (keyDown("KeyA", "a", "ArrowLeft", "arrowleft") || touch.left) bits |= 4;
-        if (keyDown("KeyD", "d", "ArrowRight", "arrowright") || touch.right) bits |= 8;
+        if (keyDown("KeyW", "w", "ArrowUp", "arrowup") || touch.up) bits |= 4;
+        if (keyDown("KeyS", "s", "ArrowDown", "arrowdown") || touch.down) bits |= 8;
+        if (keyDown("KeyA", "a", "ArrowLeft", "arrowleft") || touch.left) bits |= 1;
+        if (keyDown("KeyD", "d", "ArrowRight", "arrowright") || touch.right) bits |= 2;
       }
       if (pad) {
         const axes = Array.isArray(pad.axes) ? pad.axes : [];
-        if (gamepadPressed(pad, 12) || hubInputNumber(axes[1], 0) < -0.5) bits |= 1;
-        if (gamepadPressed(pad, 13) || hubInputNumber(axes[1], 0) > 0.5) bits |= 2;
-        if (gamepadPressed(pad, 14) || hubInputNumber(axes[0], 0) < -0.5) bits |= 4;
-        if (gamepadPressed(pad, 15) || hubInputNumber(axes[0], 0) > 0.5) bits |= 8;
+        if (gamepadPressed(pad, 12) || hubInputNumber(axes[1], 0) < -0.5) bits |= 4;
+        if (gamepadPressed(pad, 13) || hubInputNumber(axes[1], 0) > 0.5) bits |= 8;
+        if (gamepadPressed(pad, 14) || hubInputNumber(axes[0], 0) < -0.5) bits |= 1;
+        if (gamepadPressed(pad, 15) || hubInputNumber(axes[0], 0) > 0.5) bits |= 2;
       }
       return bits;
     }

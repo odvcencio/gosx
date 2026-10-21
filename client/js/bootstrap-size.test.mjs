@@ -838,10 +838,10 @@ const budgets = [
     // Typed night lighting and held-signal deduplication: only the exhausted gzip minimum moves; allowances remain unchanged.
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
     // Fighting-hub edge sends and the scene-committed ready gate measure 1,974,069 raw / 547,626 gzip / 450,986 brotli bytes; raise only the exhausted targets and keep every allowance.
-    // Absolute held-input mode with per-frame latching measures 1,975,645 raw / 548,110 gzip / 451,158 brotli bytes; raise only the exhausted targets and keep every allowance.
+    // Absolute held-input mode with per-frame latching measures 1,975,645 raw / 548,110 gzip / 451,243 brotli bytes (after the bit layout change); raise only the exhausted targets and keep every allowance.
     file: "bootstrap.js", raw: 1910109, gzip: 531726,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    brotli: 434774 },
+    brotli: 434859 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
