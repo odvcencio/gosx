@@ -1696,6 +1696,10 @@
       sharedAppearance: Object.prototype.hasOwnProperty.call(raw, "sharedAppearance")
         ? sceneBool(raw.sharedAppearance, false)
         : sceneBool(current.sharedAppearance, false),
+      // Scene node whose world matrix carries the whole crowd batch ("" for none).
+      parentNode: Object.prototype.hasOwnProperty.call(raw, "parentNode")
+        ? (typeof raw.parentNode === "string" ? raw.parentNode.trim() : "")
+        : (typeof current.parentNode === "string" ? current.parentNode : ""),
       instances: rawInstances.map(function(instance, instanceIndex) {
         return normalizeSceneInstancedGLBInstance(instance, instanceIndex);
       }),
@@ -1764,6 +1768,7 @@
   // mutable authored Model declaration is trusted by identity.
   const sceneInstancedGLBHydrationTemplates = new WeakMap();
   const sceneInstancedGLBBatchIDs = new WeakMap();
+  const sceneInstancedGLBBatchParents = new WeakMap();
 
   function sceneCloneHydrationModel(model) {
     const copy = sceneCloneData(model);
@@ -1811,6 +1816,7 @@
       // Not a hydration input, so kept out of the template: the batch id names
       // the crowd batch record this agent's render objects join.
       sceneInstancedGLBBatchIDs.set(model, batch.id);
+      if (batch.parentNode) sceneInstancedGLBBatchParents.set(model, batch.parentNode);
       models.push(model);
     }
     return models;
@@ -5313,7 +5319,7 @@
     }
     // Crowd agents leave the per-object walk here and return as one record
     // per batch after the ordinary objects.
-    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects) : objects;
+    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects, timeSeconds) : objects;
     const selectedObjects = sceneSelectLODObjects(sceneObjects, renderCamera);
     sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
@@ -5539,11 +5545,14 @@
   // _crowdSkin.rev. Motion writers set _crowdMotion.dirty, which the renderer
   // clears after it uploads the record.
   //
-  // Reserved seam: crowdParentMatrix (a matrix applied to the whole batch) and
-  // crowdDirtyRanges (slot ranges that changed since the last pack) are null
-  // today, meaning "no batch transform" and "everything may have changed".
-  // Partial slot-indexed motion frames and a moving parent can fill them in
-  // without reshaping the record.
+  // Two record fields carry batch-level knowledge to the renderer.
+  // crowdDirtyRanges is a flat list of [start, end) slot pairs naming the
+  // agents whose motion record changed in the revision the record carries.
+  // The renderer may copy only those slots, but only if it last packed
+  // revision crowdDirtyBase; any other renderer, or null, means "everything
+  // may have changed". crowdParentMatrix is a matrix applied once to the
+  // whole batch (see the parent section below); null means no batch
+  // transform.
   const sceneCrowdBatchGroups = new Map();
   const sceneCrowdBatchStaleBundles = 8;
   const sceneCrowdBatchIdentity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -5583,6 +5592,7 @@
 
   function sceneCrowdBatchGroupMatches(group, object, skin, vertices, mode) {
     return group.vertices === vertices && group.batchID === skin.batchID && group.mode === mode &&
+      group.parentNode === (skin.parent || "") &&
       group.cast === (object.castShadow === true) && group.recv === (object.receiveShadow === true) &&
       group.dbl === (object.doubleSided === true) && group.depthWrite === object.depthWrite;
   }
@@ -5590,7 +5600,7 @@
   function sceneCrowdBatchGroup(object, skin, vertices, mode) {
     const cast = object.castShadow === true, recv = object.receiveShadow === true, dbl = object.doubleSided === true;
     const key = skin.batchID + "|" + mode + (cast ? "c" : "-") + (recv ? "r" : "-") + (dbl ? "d" : "-") +
-      ":" + String(object.depthWrite);
+      ":" + String(object.depthWrite) + "@" + (skin.parent || "");
     let list = sceneCrowdBatchGroups.get(key);
     if (!list) {
       list = [];
@@ -5602,7 +5612,10 @@
     const group = {
       key, id: "crowd-batch-" + (++sceneCrowdBatchSequence), alive: true,
       batchID: skin.batchID, vertices, mode, cast, recv, dbl, depthWrite: object.depthWrite,
+      parentNode: skin.parent || "", parentMatrix: null, parentSeen: false, time: 0,
+      localBounds: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 },
       epoch: 0, n: 0, count: 0, revision: 0, shape: 0, changed: false, reshaped: false,
+      dirty: [], dirtyEpoch: 0, dirtyFull: true,
       objects: [], skins: [], matrices: [], motions: [], revs: [],
       transforms: null, poses: null,
       bounds: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 },
@@ -5645,7 +5658,7 @@
         if (wz + rz > maxZ) maxZ = wz + rz;
       }
     }
-    const out = group.bounds;
+    const out = group.localBounds;
     if (Number.isFinite(minX + minY + minZ + maxX + maxY + maxZ) && minX <= maxX && minY <= maxY && minZ <= maxZ) {
       out.minX = minX; out.minY = minY; out.minZ = minZ; out.maxX = maxX; out.maxY = maxY; out.maxZ = maxZ;
     } else {
@@ -5669,6 +5682,81 @@
     }
   }
 
+  // ---- Batch parent ------------------------------------------------------
+  //
+  // A group whose agents were declared with a parentNode draws with that
+  // node's world matrix applied once on top of every agent's own transform, so
+  // a crowd on a ship costs one matrix per frame while the ship moves. The node
+  // is any non-crowd object whose id is the node id or starts with "<id>/": the
+  // hydrated parts of a Model, a Vessel's hull and rigging, a plain object.
+  // The matrix is the object's own model matrix, so a pose computed in JS (the
+  // vessel writes its pose into parentMatrix every frame) is followed without
+  // any message. While no such object exists the group draws in world space.
+  // Only InstancedGLB agents carry a parent, and they share one appearance and
+  // a plain matrix, so a parented agent has no reason to leave its batch. The
+  // one exception is selection (see the partition): it keeps the agent in the
+  // batch and drops its outline. A hand-built agent that differs from its batch
+  // still draws on its own record, in world space.
+  // group.localBounds holds the agents' union in the parent's space and
+  // group.bounds the world-space box the renderer culls and sorts with.
+  function sceneCrowdBatchParentObject(rest, id) {
+    if (!rest) return null;
+    const prefix = id + "/";
+    for (let i = 0; i < rest.length; i += 1) {
+      const object = rest[i];
+      const name = object && object.id;
+      if (typeof name === "string" && (name === id || name.startsWith(prefix))) return object;
+    }
+    return null;
+  }
+
+  // Returns true when the world matrix or its presence changed.
+  function sceneCrowdBatchSetParent(group, matrix) {
+    if (!matrix || matrix.length < 16) {
+      if (group.parentMatrix === null) return false;
+      group.parentMatrix = null;
+      return true;
+    }
+    let changed = false;
+    let target = group.parentMatrix;
+    if (target === null) {
+      target = group.parentMatrix = new Float32Array(16);
+      changed = true;
+    }
+    for (let i = 0; i < 16; i += 1) {
+      const value = matrix[i];
+      if (target[i] !== value) {
+        target[i] = value;
+        changed = true;
+      }
+    }
+    return changed;
+  }
+
+  // Copies the agents' union into group.bounds, through the parent when there is one.
+  function sceneCrowdBatchWorldBounds(group) {
+    const out = group.bounds, local = group.localBounds;
+    const world = group.parentMatrix ? sceneTransformMeshBounds(local, group.parentMatrix) : local;
+    const b = world || local;
+    out.minX = b.minX; out.minY = b.minY; out.minZ = b.minZ;
+    out.maxX = b.maxX; out.maxY = b.maxY; out.maxZ = b.maxZ;
+  }
+
+  // sceneCrowdBatchMark records that the agent in `slot` changed this bundle.
+  // Slots arrive in ascending order within a bundle, so a run of neighbours
+  // extends the last range. Past 64 ranges the last one stretches to cover the
+  // gap; copying a clean slot again is harmless.
+  function sceneCrowdBatchMark(group, slot, epoch) {
+    const ranges = group.dirty;
+    if (group.dirtyEpoch !== epoch) {
+      group.dirtyEpoch = epoch;
+      ranges.length = 0;
+    }
+    const n = ranges.length;
+    if (n !== 0 && (ranges[n - 1] === slot || n >= 128)) ranges[n - 1] = slot + 1;
+    else ranges.push(slot, slot + 1);
+  }
+
   function sceneCrowdBatchEnter(group, epoch, active) {
     group.epoch = epoch;
     group.n = 0;
@@ -5679,7 +5767,7 @@
 
   // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
   // agents. When the scene has no crowd agent it returns its input unchanged.
-  function sceneCrowdBatchPartition(bundle, objects) {
+  function sceneCrowdBatchPartition(bundle, objects, timeSeconds) {
     const list = Array.isArray(objects) ? objects : [];
     const epoch = ++sceneCrowdBatchEpoch;
     const active = sceneCrowdBatchActive = [];
@@ -5699,21 +5787,26 @@
         const knownMotion = object._crowdMotion || null;
         if (slot < known.count && known.objects[slot] === object && known.motions[slot] === knownMotion &&
             known.matrices[slot] === object.parentMatrix && object.visible !== false &&
-            object.selected !== true && !object._modelHidden) {
+            (object.selected !== true || Boolean(skin.parent)) && !object._modelHidden) {
           if (!rest) rest = list.slice(0, i);
           if (known.revs[slot] !== skin.rev) {
             known.revs[slot] = skin.rev;
             known.changed = true;
+            sceneCrowdBatchMark(known, slot, epoch);
           } else if (knownMotion !== null && knownMotion.dirty === true) {
             known.changed = true;
+            sceneCrowdBatchMark(known, slot, epoch);
           }
           known.n = slot + 1;
           continue;
         }
       }
       const vertices = skin && object.vertices;
+      // A selected agent normally leaves its batch to draw an outline on its own
+      // record. A parented agent stays: that record would sit in world space,
+      // away from the node the agent rides, so it draws without the outline.
       if (!skin || typeof skin.batchID !== "string" || !vertices ||
-          object.selected === true || object.skin || object.lodGroup) {
+          object.selected === true && !skin.parent || object.skin || object.lodGroup) {
         if (rest) rest.push(object);
         continue;
       }
@@ -5739,8 +5832,10 @@
         if (group.revs[slot] !== skin.rev) {
           group.revs[slot] = skin.rev;
           group.changed = true;
+          sceneCrowdBatchMark(group, slot, epoch);
         } else if (motion !== null && motion.dirty === true) {
           group.changed = true;
+          sceneCrowdBatchMark(group, slot, epoch);
         }
       } else {
         if (mode === 0 && !sceneCrowdMatrixPlain(object, parent) ||
@@ -5760,6 +5855,13 @@
     }
     for (let i = 0; i < active.length; i += 1) {
       const group = active[i];
+      group.time = timeSeconds;
+      // A parented group follows its node every bundle, even when no agent changed.
+      let parentMoved = false;
+      if (group.parentNode !== "") {
+        const node = sceneCrowdBatchParentObject(rest, group.parentNode);
+        parentMoved = sceneCrowdBatchSetParent(group, node ? sceneObjectModelMatrix(node, timeSeconds) : null);
+      }
       if (group.n !== group.count) {
         group.changed = true;
         group.reshaped = true;
@@ -5767,9 +5869,14 @@
         group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
           group.revs.length = group.n;
       }
+      if (parentMoved && !group.changed) sceneCrowdBatchWorldBounds(group);
       if (group.changed && group.count > 0) {
         group.revision += 1;
+        // Slot ranges describe this revision only when no agent joined, left
+        // or moved slot and the batch draws from motion records.
+        group.dirtyFull = group.reshaped || group.mode !== 1 || group.dirtyEpoch !== epoch;
         sceneCrowdBatchRefreshBounds(group);
+        sceneCrowdBatchWorldBounds(group);
         if (group.mode === 0) sceneCrowdBatchPack(group);
       }
       if (group.reshaped) group.shape += 1;
@@ -5793,13 +5900,44 @@
 
   // Pointer picking sees the batch as its agents: one transient record per
   // agent, built only when a ray test asks for them.
+  // A motion agent's matrix is its latest motion key, interpolated at the
+  // bundle time. object.parentMatrix still holds the pose it was declared with.
+  function sceneCrowdBatchMotionMatrix(record, time) {
+    const tPrev = record[9], tNext = record[19];
+    const t = Math.min(1, Math.max(0, tNext > tPrev ? (time - tPrev) / (tNext - tPrev) : 1));
+    const lerp = (a, b) => record[a] + (record[b] - record[a]) * t;
+    const angle = (a, b) => {
+      let d = record[b] - record[a];
+      d -= 6.283185307179586 * Math.floor((d + Math.PI) / 6.283185307179586);
+      return record[a] + d * t;
+    };
+    const rx = angle(3, 13), ry = angle(4, 14), rz = angle(5, 15);
+    const sx = lerp(6, 16), sy = lerp(7, 17), sz = lerp(8, 18);
+    const cx = Math.cos(rx), cy = Math.cos(ry), cz = Math.cos(rz), ex = Math.sin(rx), ey = Math.sin(ry), ez = Math.sin(rz);
+    return new Float32Array([
+      cy * cz * sx, cy * ez * sx, -ey * sx, 0,
+      (ex * ey * cz - cx * ez) * sy, (ex * ey * ez + cx * cz) * sy, ex * cy * sy, 0,
+      (cx * ey * cz + ex * ez) * sz, (cx * ey * ez - ex * cz) * sz, cx * cy * sz, 0,
+      lerp(0, 10), lerp(1, 11), lerp(2, 12), 1,
+    ]);
+  }
+
+  // Pointer picking sees the batch as its agents: one transient record per
+  // agent, built only when a ray test asks for them. Agents sit in the parent's
+  // space, so a parented group tests them through the parent's world matrix.
   function sceneCrowdBatchPickRecords(group) {
     const records = [];
+    const parent = group.parentMatrix;
     for (let i = 0; i < group.count; i += 1) {
       const object = group.objects[i];
       const motion = group.motions[i];
-      const matrix = group.matrices[i] instanceof Float32Array ? group.matrices[i] : sceneObjectModelMatrix(object, 0);
-      const bounds = motion ? motion.bounds : sceneTransformMeshBounds(group.skins[i].bounds, matrix);
+      let matrix = motion ? sceneCrowdBatchMotionMatrix(motion.record, group.time) :
+        (group.matrices[i] instanceof Float32Array ? group.matrices[i] : sceneObjectModelMatrix(object, 0));
+      let bounds = motion ? motion.bounds : sceneTransformMeshBounds(group.skins[i].bounds, matrix);
+      if (parent) {
+        matrix = sceneMat4Multiply(parent, matrix);
+        bounds = sceneTransformMeshBounds(bounds, parent);
+      }
       records.push({
         id: object.id, kind: object.kind,
         pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
@@ -5839,9 +5977,9 @@
           skin: null, viewCulled: false, resourceOwner: group, geometryRevision: 0,
           vertexOffset: 0, bounds: group.bounds, vertices,
           _crowdBatch: true,
-          // Reserved for the batch-level parent transform and slot-indexed
-          // partial motion frames; null means none and "all slots".
-          crowdParentMatrix: null, crowdDirtyRanges: null,
+          // crowdParentMatrix: batch-level parent transform, null for none.
+          // crowdDirtyRanges: changed slot ranges, null for "all slots".
+          crowdParentMatrix: null, crowdDirtyRanges: null, crowdDirtyBase: -1,
           crowdPickRecords: function() { return sceneCrowdBatchPickRecords(group); },
         };
       }
@@ -5866,6 +6004,9 @@
       record.crowdTransforms = group.transforms;
       record.crowdPoses = group.poses;
       record.crowdMotion = motion;
+      record.crowdParentMatrix = group.parentMatrix;
+      record.crowdDirtyRanges = group.dirtyFull ? null : group.dirty;
+      record.crowdDirtyBase = group.revision - 1;
       record.crowdAtlas = motion ? first._crowdMotion.atlas : first._crowdSkin.atlas;
       record.crowdClipTable = motion ? first._crowdMotion.clipTable : null;
       sceneStampRetainedMeshCSSInput(record, group);

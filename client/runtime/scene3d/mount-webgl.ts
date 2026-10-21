@@ -3547,7 +3547,7 @@
           object.vertices = primitive.vertices;
           object._modelLocalVertices = primitive.vertices;
           object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
-          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows, batchID: sceneInstancedGLBBatchIDs.get(model) || "", rev: 0, group: null };
+          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows, batchID: sceneInstancedGLBBatchIDs.get(model) || "", parent: sceneInstancedGLBBatchParents.get(model) || "", rev: 0, group: null };
           object.static = false;
           staged.objects.push(object);
         }

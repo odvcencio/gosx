@@ -26,8 +26,11 @@
     return Boolean(handle && handle.__gosxScene3DCommandReady === true && typeof handle.applyCommands === "function");
   }
 
-  // GSP2 and GSP3 share strict framing, IDs and scalar validation. Format
+  // GSP2, GSP3 and GSP5 share strict framing, IDs and scalar validation. Format
   // fields remain separate, and nothing reaches the renderer until decoding ends.
+  // GSP5 is the partial motion frame: a motion frame whose instances are named
+  // by slot (their position in the mounted batch) instead of by ID, and which
+  // lists only the instances that changed.
   function decodeInstanceFrame(input: any, motion: boolean) {
     var kind = "Scene3D " + (motion ? "motion" : "pose");
     var bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
@@ -55,7 +58,9 @@
       return value;
     }
     need(6);
-    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || view.getUint8(3) !== (motion ? 51 : 50)) {
+    var version = view.getUint8(3);
+    var partial = motion && version === 53;
+    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || (version !== (motion ? 51 : 50) && !partial)) {
       throw new TypeError("unsupported " + kind + " frame version");
     }
     offset = 4;
@@ -75,14 +80,26 @@
       var batchID = id();
       if (batchIDs.has(batchID)) throw new TypeError("duplicate " + kind + " batch ID");
       batchIDs.add(batchID);
+      var batchSize = partial ? u16() : 0;
       var instanceCount = u16();
+      if (partial && instanceCount > batchSize) throw new RangeError("Scene3D partial motion frame lists more instances than its batch holds");
       var instances = [];
       var instanceIDs = new Set();
+      var lastSlot = -1;
       for (var j = 0; j < instanceCount; j++) {
-        var instanceID = id();
-        if (instanceIDs.has(instanceID)) throw new TypeError("duplicate " + kind + " instance ID");
-        instanceIDs.add(instanceID);
-        var instance: any = { id: instanceID };
+        var instance: any;
+        if (partial) {
+          var slot = u16();
+          if (slot <= lastSlot) throw new RangeError("Scene3D partial motion frame slots must ascend strictly");
+          if (slot >= batchSize) throw new RangeError("Scene3D partial motion frame slot is outside its batch");
+          lastSlot = slot;
+          instance = { slot: slot };
+        } else {
+          var instanceID = id();
+          if (instanceIDs.has(instanceID)) throw new TypeError("duplicate " + kind + " instance ID");
+          instanceIDs.add(instanceID);
+          instance = { id: instanceID };
+        }
         if (motion) {
           for (const side of ["prev", "next"]) {
             for (const field of poseFields.slice(0, 9)) {
@@ -107,7 +124,7 @@
         if (motion) instance.playbackRate = number();
         instances.push(instance);
       }
-      batches.push({ id: batchID, instances: instances });
+      batches.push(partial ? { id: batchID, partial: true, size: batchSize, instances: instances } : { id: batchID, instances: instances });
     }
     if (offset !== view.byteLength) throw new RangeError("trailing " + kind + " frame data");
     return batches;
@@ -635,6 +652,40 @@
 
   function decodeMotionFrame(input) { return decodeInstanceFrame(input, true); }
 
+  // A GSP5 frame carries only the instances that changed. Superseding one
+  // with a newer frame would lose the older frame's movers, so the motion
+  // queue merges partial frames and never drops one for a full frame.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention.
+  function isPartialMotionFrame(frame) {
+    var bytes = frame instanceof ArrayBuffer ? new Uint8Array(frame, 0, Math.min(4, frame.byteLength)) : frame;
+    return bytes instanceof Uint8Array && bytes.length >= 4 && bytes[0] === 71 && bytes[1] === 83 && bytes[2] === 80 && bytes[3] === 53;
+  }
+
+  // mergePartialMotionBatches folds the changes of a newer partial frame over
+  // an older one: per batch and slot the newer entry wins. A batch whose size
+  // changed between the two frames is replaced whole by the newer entry, since
+  // its older slots refer to a membership that no longer exists.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention.
+  function mergePartialMotionBatches(older, newer) {
+    var merged = new Map();
+    for (var group of [older, newer]) {
+      for (var batch of group) {
+        var entry = merged.get(batch.id);
+        if (!entry || entry.size !== batch.size) {
+          entry = { id: batch.id, partial: true, size: batch.size, slots: new Map() };
+          merged.set(batch.id, entry);
+        }
+        for (var instance of batch.instances) entry.slots.set(instance.slot, instance);
+      }
+    }
+    var out = [];
+    for (var entry of merged.values()) {
+      var slots = Array.from(entry.slots.keys()).sort(function(a: number, b: number) { return a - b; });
+      out.push({ id: entry.id, partial: true, size: entry.size, instances: slots.map(function(slot) { return entry.slots.get(slot); }) });
+    }
+    return out;
+  }
+
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
   function dispatchMotionFrame(target, frame, options) {
     var opts = options || {};
@@ -643,8 +694,20 @@
     return new Promise(function(resolve, reject) {
       var queue = motionQueues.get(queueKey);
       if (!queue) {
-        queue = { running: false, pending: null, stats: null };
+        queue = { running: false, pending: null, ahead: [], stats: null };
         motionQueues.set(queueKey, queue);
+      }
+      var partial = isPartialMotionFrame(frame);
+      var decoded = null;
+      if (queue.pending && (partial || queue.pending.partial)) {
+        // Only two partial frames fold into one. A partial frame and a full
+        // frame each depend on the other being applied, so both run, in order.
+        var folded = null;
+        if (partial && queue.pending.partial) {
+          try { folded = mergePartialMotionBatches(queue.pending.decoded || decodeMotionFrame(queue.pending.frame), decodeMotionFrame(frame)); } catch (_error) { folded = null; }
+        }
+        if (folded) decoded = folded;
+        else { queue.ahead.push(queue.pending); queue.pending = null; }
       }
       if (queue.pending) {
         var older = queue.pending.opts.beforeCommands;
@@ -660,7 +723,7 @@
         motionStats(queue.pending.target, queue.pending.opts).superseded++;
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
-      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject };
+      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject, partial: partial, decoded: decoded };
       if (!queue.running) runMotionQueue(queueKey, queue);
     });
   }
@@ -670,15 +733,15 @@
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
   function runMotionQueue(queueKey, queue) {
-    var job = queue.pending;
+    var job = queue.ahead.length ? queue.ahead.shift() : queue.pending;
     if (!job) { queue.running = false; motionQueues.delete(queueKey); return; }
-    queue.pending = null;
+    if (job === queue.pending) queue.pending = null;
     queue.running = true;
     var operation;
     try {
       operation = Array.isArray(job.opts.beforeCommands)
-        ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() { return dispatchMotionFrameNow(job.target, job.frame, job.opts); })
-        : dispatchMotionFrameNow(job.target, job.frame, job.opts);
+        ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() { return dispatchMotionFrameNow(job.target, job.frame, job.opts, job.decoded); })
+        : dispatchMotionFrameNow(job.target, job.frame, job.opts, job.decoded);
     } catch (error) {
       operation = Promise.reject(error);
     }
@@ -708,7 +771,7 @@
   // path) -- so a page can adopt MotionFrame per crowd without a hard
   // dependency on the mount already supporting it.
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-  function dispatchMotionFrameNow(target, frame, opts) {
+  function dispatchMotionFrameNow(target, frame, opts, decoded) {
     // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
     function fallbackToCommands(error) {
       if (!Array.isArray(opts.fallbackCommands)) throw error;
@@ -731,7 +794,7 @@
     }
     // @ts-ignore TS7034 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
     var batches;
-    try { batches = decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
+    try { batches = decoded || decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
     return waitForCommandMount(target, opts, "motion frame", function(rec, resolve, reject) {
       motionStats(target, opts);
       if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
@@ -764,6 +827,15 @@
     for (var batch of batches) {
       // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
       var current = mounted.find(function(candidate) { return candidate.id === batch.id; });
+      if (batch && batch.partial === true) {
+        // A partial batch names agents by slot. Its size must equal the
+        // mounted instance count; a frame built before a membership change
+        // would otherwise move the wrong agents. Slots become the mounted IDs
+        // so the writer below handles partial and full frames alike.
+        if (!current || !Array.isArray(batch.instances) || current.instances.length !== batch.size) reject("membership-changed");
+        for (var slotted of batch.instances) slotted.id = current.instances[slotted.slot].id || ("instance-" + slotted.slot);
+        continue;
+      }
       if (!current || !Array.isArray(batch.instances) || current.instances.length !== batch.instances.length) reject("membership-changed");
       for (var index = 0; index < batch.instances.length; index++) {
         if (current.instances[index].id !== batch.instances[index].id) reject("membership-order-changed");
