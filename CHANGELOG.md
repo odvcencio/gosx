@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Preserve signed 64-bit integer values in shared-signal JSON batches, including
+  nested IDs and counters. State snapshots and event batches use the same exact
+  decoder as individual writes, so adjacent large IDs remain distinct.
+
 - Freeze inactive windows in long Go scene timeline sequences using existing
   clamp signals. Steady playback samples the active bucket and selection path;
   gaps, cuts and reverse seeks retain their native poses. Sequences of eight or
