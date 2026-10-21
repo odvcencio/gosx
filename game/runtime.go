@@ -339,12 +339,14 @@ func (r *Runtime) ApplyNetworkInputs(inputs map[string]sim.Input) {
 		return
 	}
 	r.networkInputs = cloneSimInputs(inputs)
-	for playerID, input := range inputs {
+	// Ascending player order keeps event order and last-writer fields
+	// (pointer position) identical across runs and replays.
+	sim.EachInput(inputs, func(playerID string, input sim.Input) {
 		if len(input.Data) == 0 {
-			continue
+			return
 		}
 		r.applyNetworkInput(playerID, input.Data)
-	}
+	})
 }
 
 func (r *Runtime) applyNetworkInput(playerID string, data []byte) {

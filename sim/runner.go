@@ -92,6 +92,7 @@ func (r *Runner) tickOnce() (uint64, int, int) {
 	if r.recorder != nil {
 		replayInputs = cloneInputs(inputs)
 	}
+	r.simMu.Lock()
 	r.sim.Tick(inputs)
 
 	frame := r.frame.Add(1)
@@ -101,6 +102,7 @@ func (r *Runner) tickOnce() (uint64, int, int) {
 	}
 
 	state := r.sim.State()
+	r.simMu.Unlock()
 	r.hub.Broadcast("sim:tick", r.tickPayload(frame, state))
 	return frame, len(state), inputCount
 }

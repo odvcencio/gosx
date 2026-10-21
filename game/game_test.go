@@ -808,3 +808,19 @@ func hasBinding(bindings []Binding, action string) bool {
 	}
 	return false
 }
+
+func TestApplyNetworkInputsIsDeterministicAcrossPlayers(t *testing.T) {
+	for run := 0; run < 50; run++ {
+		inputs := map[string]sim.Input{}
+		for _, id := range []string{"p3", "p1", "p5", "p2", "p4"} {
+			x := float64(id[1] - '0')
+			data, _ := json.Marshal(InputEvent{Kind: EventPointerMove, X: x, Y: x})
+			inputs[id] = sim.Input{Data: data}
+		}
+		rt := New(Config{})
+		rt.ApplyNetworkInputs(inputs)
+		if x, _ := rt.Input().Pointer(); x != 5 {
+			t.Fatalf("run %d: last pointer position should come from p5 (sorted order), got %v", run, x)
+		}
+	}
+}

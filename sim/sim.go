@@ -18,7 +18,10 @@ type Input struct {
 
 // Simulation is the interface a game must implement to be driven by a Runner.
 type Simulation interface {
-	// Tick advances the simulation one step with the collected inputs.
+	// Tick advances the simulation one step with the collected inputs. The
+	// inputs map has random iteration order: use SortedPlayerIDs or EachInput
+	// when order can affect state. The Runner never calls Tick, Snapshot,
+	// Restore or State concurrently with one another.
 	Tick(inputs map[string]Input)
 	// Snapshot returns an opaque checkpoint for rollback or replay.
 	Snapshot() []byte
@@ -64,6 +67,7 @@ type Runner struct {
 	sim        Simulation
 	tickRate   int
 	mu         sync.Mutex
+	simMu      sync.Mutex // serializes every call into sim
 	runMu      sync.Mutex
 	stop, done chan struct{}
 	inputs     map[string]Input
@@ -115,10 +119,16 @@ func (r *Runner) RegisterHandlers() {
 	})
 
 	r.hub.On("join", func(ctx *hub.Context) {
-		snap := r.sim.Snapshot()
-		frame := r.frame.Load()
+		frame, snap := r.snapshotNow()
 		ctx.Hub.Send(ctx.Client.ID, "sim:snapshot", r.snapshotPayload(frame, snap))
 	})
+}
+
+// snapshotNow returns the current frame and a snapshot that belong together.
+func (r *Runner) snapshotNow() (uint64, []byte) {
+	r.simMu.Lock()
+	defer r.simMu.Unlock()
+	return r.frame.Load(), r.sim.Snapshot()
 }
 
 // ReceiveInput stores an input for the given player, overwriting any prior
