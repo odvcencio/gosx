@@ -30,6 +30,18 @@
 - Add `game.SaveCodec` to export and import `World` entities, registered
   component columns and resources, and a `SnapshotCodec` helper that includes
   them.
+- Send fighting-mode hub input on key and touch edges. A mapped key or touch
+  control that changes held state now sends the full input state in the same
+  event turn instead of waiting up to `SendEveryMS` for the timer. Key repeat,
+  typing in inputs, textareas and contenteditable, and states identical to the
+  last send are skipped, and window blur sends the release. The timer still
+  polls gamepads. Set `HubInputConfig.DisableEdgeSend` to keep timer-only sends.
+
+- Add `HubInputConfig.ReadyWhen` (`"scene-committed"`) so a fighting hub sends
+  its ready event only after the socket opens, a Scene3D mount reports
+  `data-gosx-scene3d-ready` and `data-gosx-scene3d-model-hydration-committed`,
+  and two animation frames pass. It sends at most once per socket, so it holds
+  across reconnects and enhanced navigation. Default behavior is unchanged.
 
 - Preserve signed 64-bit integer values in shared-signal JSON batches, including
   nested IDs and counters. State snapshots and event batches use the same exact

@@ -19,6 +19,7 @@ const {
   createContext,
   runScript,
   flushAsyncWork,
+  installManualRAF,
 } = require("./runtime-test-harness.js");
 
 test("bootstrap does not load engine JS via jsRef (eval escape-hatch removed)", async () => {
@@ -598,4 +599,226 @@ test("bootstrap reconnects hubs whose sockets died while the page was frozen", a
   assert.equal(env.context.__gosx.hubs.size, 1, "the reconnect replaces the record, never duplicates it");
   assert.equal(env.context.__gosx.hubs.get("gosx-hub-0").socket, env.sockets[1]);
   assert.equal(env.sockets[1].url, "ws://localhost:3000/gosx/hub/presence");
+});
+
+// Fighting-mode input: key and touch edges send in the same event turn, and
+// the ready event can wait for the Scene3D mount.
+function createFightInputEnv(inputOverrides, extra) {
+  const sent = [];
+  const sockets = [];
+  function makeSocket(url) {
+    const socket = {
+      url,
+      readyState: 1,
+      closeCalled: false,
+      send(raw) {
+        sent.push(JSON.parse(raw));
+      },
+      close() {
+        this.closeCalled = true;
+      },
+    };
+    sockets.push(socket);
+    return socket;
+  }
+  const env = createContext(Object.assign({
+    createWebSocket: makeSocket,
+    fetchRoutes: {
+      "/runtime.wasm": { bytes: [0, 97, 115, 109] },
+    },
+    manifest: {
+      runtime: { path: "/runtime.wasm" },
+      hubs: [
+        {
+          id: "gosx-hub-0",
+          name: "fight",
+          path: "/ws/fight/abc",
+          bindings: [],
+          input: Object.assign({
+            mode: "fighting",
+            event: "input",
+            readyEvent: "ready",
+            player: 1,
+            slotToken: "slot-one",
+            sendEveryMs: 100,
+            touchRoot: "#touch-controls",
+          }, inputOverrides),
+        },
+      ],
+    },
+  }, extra || {}));
+  return { env, sent, sockets };
+}
+
+function keyEvent(type, key, code, extra) {
+  return Object.assign({ type, key, code, repeat: false, target: null, preventDefault() {} }, extra);
+}
+
+function inputsOf(sent) {
+  return sent.filter((message) => message.event === "input").map((message) => message.data);
+}
+
+test("fighting input sends key edges in the same event turn", async () => {
+  const { env, sent } = createFightInputEnv({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const document = env.context.document;
+  const before = inputsOf(sent).length;
+
+  document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  let inputs = inputsOf(sent);
+  assert.equal(inputs.length, before + 1, "press sends immediately");
+  assert.equal(inputs[inputs.length - 1].dir, 3);
+  assert.equal(inputs[inputs.length - 1].slotToken, "slot-one");
+
+  document.dispatchEvent(keyEvent("keydown", "d", "KeyD", { repeat: true }));
+  assert.equal(inputsOf(sent).length, before + 1, "key repeat does not resend");
+
+  document.dispatchEvent(keyEvent("keydown", "u", "KeyU"));
+  inputs = inputsOf(sent);
+  assert.equal(inputs.length, before + 2);
+  assert.deepEqual([inputs[inputs.length - 1].dir, inputs[inputs.length - 1].btn], [3, 1], "each send carries full held state");
+
+  document.dispatchEvent(keyEvent("keyup", "d", "KeyD"));
+  document.dispatchEvent(keyEvent("keyup", "u", "KeyU"));
+  inputs = inputsOf(sent);
+  assert.equal(inputs.length, before + 4, "release sends immediately");
+  assert.deepEqual([inputs[inputs.length - 1].dir, inputs[inputs.length - 1].btn], [0, 0]);
+
+  document.dispatchEvent(keyEvent("keydown", "x", "KeyX"));
+  assert.equal(inputsOf(sent).length, before + 4, "unmapped keys send nothing");
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("fighting input ignores edges that do not change the sent state and editable targets", async () => {
+  const { env, sent } = createFightInputEnv({});
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const document = env.context.document;
+  const editable = { closest: (selector) => (/input/.test(selector) ? {} : null) };
+
+  document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  const after = inputsOf(sent).length;
+  // ArrowRight maps to the same direction, so the full state is unchanged.
+  document.dispatchEvent(keyEvent("keydown", "ArrowRight", "ArrowRight"));
+  assert.equal(inputsOf(sent).length, after, "identical consecutive state is not resent");
+
+  document.dispatchEvent(keyEvent("keydown", "j", "KeyJ", { target: editable }));
+  assert.equal(inputsOf(sent).length, after, "typing in an input field does not send");
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("fighting input sends touch control edges and flushes after blur releases keys", async () => {
+  const touchRoot = new FakeElement("div", null);
+  touchRoot.id = "touch-controls";
+  const button = new FakeElement("button", null);
+  button.dataset.btn = "lp";
+  button.setAttribute("data-btn", "lp");
+  touchRoot.appendChild(button);
+  const { env, sent } = createFightInputEnv({}, { elements: [touchRoot] });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const document = env.context.document;
+  const before = inputsOf(sent).length;
+
+  document.dispatchEvent({ type: "pointerdown", pointerId: 1, target: button, preventDefault() {} });
+  let inputs = inputsOf(sent);
+  assert.equal(inputs.length, before + 1);
+  assert.equal(inputs[inputs.length - 1].btn, 1);
+  document.dispatchEvent({ type: "pointerup", pointerId: 1, target: button, preventDefault() {} });
+  inputs = inputsOf(sent);
+  assert.equal(inputs.length, before + 2);
+  assert.equal(inputs[inputs.length - 1].btn, 0);
+
+  document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  const held = inputsOf(sent).length;
+  env.context.window.dispatchEvent({ type: "blur" });
+  inputs = inputsOf(sent);
+  assert.equal(inputs.length, held + 1, "blur releases held keys and sends the release");
+  assert.equal(inputs[inputs.length - 1].dir, 0);
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("fighting input disableEdgeSend keeps timer-only sending", async () => {
+  const { env, sent } = createFightInputEnv({ disableEdgeSend: true });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const before = inputsOf(sent).length;
+  env.context.document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  assert.equal(inputsOf(sent).length, before, "no send until the next timer pump");
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("fighting input readyWhen scene-committed waits for the scene and two frames, once per socket", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "arena";
+  const { env, sent, sockets } = createFightInputEnv({ readyWhen: "scene-committed" }, { elements: [mount] });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const readies = () => sent.filter((message) => message.event === "ready");
+  const record = env.context.__gosx.hubs.get("gosx-hub-0");
+  const pump = () => record.inputController.flush();
+
+  pump();
+  raf.flush();
+  raf.flush();
+  assert.equal(readies().length, 0, "socket open alone is not enough");
+
+  mount.setAttribute("data-gosx-scene3d-ready", "true");
+  pump();
+  raf.flush();
+  raf.flush();
+  assert.equal(readies().length, 0, "ready without model hydration is not enough");
+
+  mount.setAttribute("data-gosx-scene3d-model-hydration-committed", "true");
+  pump();
+  pump();
+  assert.equal(raf.count(), 1, "one pending frame chain per socket");
+  raf.flush();
+  assert.equal(readies().length, 0, "first frame does not send");
+  raf.flush();
+  assert.equal(readies().length, 1, "second frame sends ready");
+  assert.deepEqual(readies()[0].data, { player: 1, slotToken: "slot-one" });
+  pump();
+  raf.flush();
+  raf.flush();
+  assert.equal(readies().length, 1, "at most one ready per socket");
+
+  // A reconnect swaps record.socket; the new socket gets its own ready.
+  const reconnect = Object.assign({}, sockets[0], { sent: true });
+  reconnect.send = sockets[0].send;
+  record.socket = reconnect;
+  pump();
+  raf.flush();
+  raf.flush();
+  assert.equal(readies().length, 2, "a new socket sends ready again");
+
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("fighting input readyWhen scene-committed drops ready when the scene unmounts before the second frame", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "arena";
+  mount.setAttribute("data-gosx-scene3d-ready", "true");
+  mount.setAttribute("data-gosx-scene3d-model-hydration-committed", "true");
+  const { env, sent } = createFightInputEnv({ readyWhen: "scene-committed" }, { elements: [mount] });
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  const record = env.context.__gosx.hubs.get("gosx-hub-0");
+  record.inputController.flush();
+  raf.flush();
+  mount.setAttribute("data-gosx-scene3d-model-hydration-committed", "false");
+  raf.flush();
+  assert.equal(sent.filter((message) => message.event === "ready").length, 0);
+  mount.setAttribute("data-gosx-scene3d-model-hydration-committed", "true");
+  record.inputController.flush();
+  raf.flush();
+  raf.flush();
+  assert.equal(sent.filter((message) => message.event === "ready").length, 1);
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
 });

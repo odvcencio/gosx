@@ -29,6 +29,8 @@
       mode: String(input.mode || "").trim().toLowerCase(),
       event: String(input.event || "input"),
       readyEvent: String(input.readyEvent || "ready"),
+      readyWhen: String(input.readyWhen || "").trim().toLowerCase() === "scene-committed" ? "scene-committed" : "socket",
+      edgeSend: !input.disableEdgeSend,
       trainingEvent: String(input.trainingEvent || "training"),
       signal: String(input.signal || ""),
       trainingSignal: String(input.trainingSignal || ""),
@@ -66,6 +68,9 @@
     let disposed = false;
     let timer = 0;
     let readySent = false;
+    let readySocket = null;
+    let pendingReadySocket = null;
+    const lastSentInput = Object.create(null);
     let trainingVisible = false;
     let lastCue = "";
     let lastFeedbackSeq = 0;
@@ -119,7 +124,48 @@
       return payload;
     }
 
+    // sceneCommitted reports whether a Scene3D mount (inside config.root when
+    // set) has rendered and committed its model generation.
+    function sceneCommitted() {
+      const root = config.root ? controllerQuery(config.root) : document;
+      if (!root || typeof root.querySelector !== "function") return false;
+      const scene = root.querySelector('[data-gosx-scene3d-ready="true"][data-gosx-scene3d-model-hydration-committed="true"]');
+      return Boolean(scene) && scene.isConnected !== false;
+    }
+
+    function afterFrames(count, fn) {
+      if (count <= 0) {
+        fn();
+        return;
+      }
+      const next = function() { afterFrames(count - 1, fn); };
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(next);
+      } else {
+        setTimeout(next, 16);
+      }
+    }
+
+    // sendSceneReady sends the ready event at most once per socket, after the
+    // scene is committed and two animation frames have drawn the models.
+    function sendSceneReady() {
+      const socket = record && record.socket;
+      if (!socketOpen() || socket === readySocket || socket === pendingReadySocket) return;
+      if (!sceneCommitted()) return;
+      pendingReadySocket = socket;
+      afterFrames(2, function() {
+        if (pendingReadySocket !== socket) return;
+        pendingReadySocket = null;
+        if (disposed || record.socket !== socket || !socketOpen() || !sceneCommitted()) return;
+        if (send(config.readyEvent, basePayload(config.player))) readySocket = socket;
+      });
+    }
+
     function sendReady() {
+      if (config.readyWhen === "scene-committed") {
+        sendSceneReady();
+        return;
+      }
       if (readySent || !socketOpen()) return;
       readySent = send(config.readyEvent, basePayload(config.player));
     }
@@ -212,16 +258,17 @@
     }
 
     function updateTouch(key, active) {
-      if (!key) return;
+      if (!key) return false;
       const next = Math.max(0, (touchCounts[key] || 0) + (active ? 1 : -1));
       touchCounts[key] = next;
       const value = next > 0;
       const parts = key.split(":");
-      if (parts[0] === "dir" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
+      if ((parts[0] === "dir" || parts[0] === "btn") && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
+        const changed = touch[parts[1]] !== value;
         touch[parts[1]] = value;
-      } else if (parts[0] === "btn" && Object.prototype.hasOwnProperty.call(touch, parts[1])) {
-        touch[parts[1]] = value;
+        return changed;
       }
+      return false;
     }
 
     function onPointerDown(event) {
@@ -231,7 +278,7 @@
       if (!key) return;
       unlockArcadeAudio();
       activePointers.set(event.pointerId, key);
-      updateTouch(key, true);
+      const changed = updateTouch(key, true);
       if (control.setPointerCapture && event.pointerId != null) {
         try {
           control.setPointerCapture(event.pointerId);
@@ -240,23 +287,30 @@
         }
       }
       event.preventDefault();
+      if (changed) sendEdge();
     }
 
     function onPointerUp(event) {
       const fallback = touchKey(touchControl(event));
       const key = activePointers.get(event.pointerId) || fallback;
       activePointers.delete(event.pointerId);
-      updateTouch(key, false);
+      const changed = updateTouch(key, false);
       if (key) event.preventDefault();
+      if (changed) sendEdge();
     }
 
-    function onBlur() {
+    function releaseAll() {
       for (const key of Object.keys(keys)) keys[key] = false;
       for (const key of Object.keys(touchCounts)) {
         touchCounts[key] = 0;
         updateTouch(key, false);
       }
       activePointers.clear();
+    }
+
+    function onBlur() {
+      releaseAll();
+      sendEdge();
     }
 
     function gamepads() {
@@ -332,7 +386,51 @@
       const payload = basePayload(player);
       payload.dir = input.dir;
       payload.btn = input.btn;
-      send(config.event, payload);
+      if (send(config.event, payload)) lastSentInput[player] = input.dir + ":" + input.btn;
+    }
+
+    // sendEdge sends the full held state in the same event turn as a key or
+    // touch change, skipping players whose state matches the last send. Each
+    // message carries the whole state, so the timer pump and edges can mix.
+    function sendEdge() {
+      if (disposed || !config.edgeSend || config.spectator || !socketOpen()) return;
+      const pads = gamepads();
+      const changed = function(player, input) {
+        return lastSentInput[player] !== input.dir + ":" + input.btn;
+      };
+      if (config.local) {
+        const first = readInput(pads[0], true, 1);
+        const second = readInput(pads[1], false, 2);
+        if (changed(1, first)) sendInput(1, first);
+        if (changed(2, second)) sendInput(2, second);
+        return;
+      }
+      const input = readInput(pads[0], true, config.player);
+      if (changed(config.player, input)) sendInput(config.player, input);
+    }
+
+    function editableTarget(event) {
+      const target = event && event.target;
+      return Boolean(target && typeof target.closest === "function" && target.closest("input, textarea, [contenteditable=\"true\"], [contenteditable=\"\"]"));
+    }
+
+    // fightKeyNames lists the key codes and key values readDirection and
+    // readButtons read, so only those presses trigger an edge send.
+    const fightKeyNames = {
+      keyw: 1, w: 1, arrowup: 1, keys: 1, s: 1, arrowdown: 1, keya: 1, a: 1, arrowleft: 1,
+      keyd: 1, d: 1, arrowright: 1, keyu: 1, u: 1, keyi: 1, i: 1, keyj: 1, j: 1,
+      keyk: 1, k: 1, keyl: 1, l: 1, space: 1, " ": 1,
+    };
+
+    function mappedKey(event) {
+      return Boolean(event && ((event.code && fightKeyNames[String(event.code).toLowerCase()]) ||
+        (event.key && fightKeyNames[String(event.key).toLowerCase()])));
+    }
+
+    function onKey(event, active) {
+      setKey(event, active);
+      if (!config.edgeSend || !event || event.repeat || !mappedKey(event) || editableTarget(event)) return;
+      sendEdge();
     }
 
     function fightAudioFallbackCue(kind, event) {
@@ -528,8 +626,8 @@
       timer = setTimeout(tick, config.sendEveryMS);
     }
 
-    addListener(document, "keydown", function(event) { setKey(event, true); }, { passive: false });
-    addListener(document, "keyup", function(event) { setKey(event, false); }, { passive: false });
+    addListener(document, "keydown", function(event) { onKey(event, true); }, { passive: false });
+    addListener(document, "keyup", function(event) { onKey(event, false); }, { passive: false });
     addListener(document, "pointerdown", onPointerDown, { passive: false });
     addListener(document, "pointerup", onPointerUp, { passive: false });
     addListener(document, "pointercancel", onPointerUp, { passive: false });
@@ -547,7 +645,7 @@
           timer = 0;
         }
         disposeListeners();
-        onBlur();
+        releaseAll();
         publishJSON(config.signal, { connected: false, active: false, pads: 0 });
         publishJSON(config.trainingSignal, { enabled: false, paused: false, recording: false });
       },

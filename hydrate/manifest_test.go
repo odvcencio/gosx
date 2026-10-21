@@ -370,17 +370,19 @@ func TestManifestAddHubWithInput(t *testing.T) {
 	id := m.AddHubWithInput("fight", "/ws/fight/abc", []HubBinding{
 		{Event: "tick", Signal: "$fight"},
 	}, &HubInputConfig{
-		Mode:           "fighting",
-		Event:          "input",
-		ReadyEvent:     "ready",
-		TrainingEvent:  "training",
-		Signal:         "$fightInput",
-		TrainingSignal: "$fightTrainingUI",
-		TouchRoot:      "#touch-controls",
-		Player:         2,
-		Local:          true,
-		SlotToken:      "slot-two",
-		SendEveryMS:    16,
+		Mode:            "fighting",
+		Event:           "input",
+		ReadyEvent:      "ready",
+		TrainingEvent:   "training",
+		Signal:          "$fightInput",
+		TrainingSignal:  "$fightTrainingUI",
+		TouchRoot:       "#touch-controls",
+		Player:          2,
+		Local:           true,
+		SlotToken:       "slot-two",
+		SendEveryMS:     16,
+		ReadyWhen:       "scene-committed",
+		DisableEdgeSend: true,
 	})
 
 	if id != "gosx-hub-0" {
@@ -391,6 +393,19 @@ func TestManifestAddHubWithInput(t *testing.T) {
 	}
 	if m.Hubs[0].Input.Mode != "fighting" || m.Hubs[0].Input.Player != 2 {
 		t.Fatalf("unexpected hub input config %#v", m.Hubs[0].Input)
+	}
+	data, err := json.Marshal(m.Hubs[0].Input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	for _, want := range []string{`"readyWhen":"scene-committed"`, `"disableEdgeSend":true`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected %s in %s", want, data)
+		}
+	}
+	zero, _ := json.Marshal(HubInputConfig{Mode: "fighting"})
+	if strings.Contains(string(zero), "readyWhen") || strings.Contains(string(zero), "disableEdgeSend") {
+		t.Fatalf("zero values must be omitted, got %s", zero)
 	}
 }
 
