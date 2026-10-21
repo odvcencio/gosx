@@ -1,6 +1,7 @@
 package bridge
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 )
@@ -140,7 +141,7 @@ func (b *Bridge) SetCrossFrameRelaySendCallback(fn func(name, valueJSON string))
 // handler.
 func (b *Bridge) DispatchInboundSignal(name, valueJSON, originatingOrigin string) error {
 	if b == nil {
-		return fmt.Errorf("bridge is nil")
+		return errors.New("bridge is nil")
 	}
 	if _, ok := b.relayMatchForOrigin(name, originatingOrigin); !ok {
 		// Determine which gate failed for a clearer error.

@@ -13,7 +13,7 @@
 package bridge
 
 import (
-	"fmt"
+	"errors"
 
 	"m31labs.dev/gosx/client/videosync"
 )
@@ -21,7 +21,7 @@ import (
 // NewVideoSync returns an error in the islands-only build — video sync is
 // not available in builds that strip the engine dependencies.
 func (b *Bridge) NewVideoSync(id string, configJSON string) error {
-	return fmt.Errorf("video sync unavailable in islands-only build")
+	return errors.New("video sync unavailable in islands-only build")
 }
 
 // IngestVideoSync is a silent no-op in the islands-only build.
