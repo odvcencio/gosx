@@ -101,14 +101,20 @@ func (r *Runner) tickOnce() (uint64, int, int) {
 	r.sim.Tick(inputs)
 
 	frame := r.frame.Add(1)
-	r.snapshots.Push(frame, r.sim.Snapshot())
+	if r.snapshots != nil && frame%r.snapEvery == 0 {
+		r.snapshots.Push(frame, r.sim.Snapshot())
+	}
 	if r.recorder != nil {
 		r.recorder.Record(frame, replayInputs)
 	}
 
 	state := r.sim.State()
 	r.simMu.Unlock()
-	r.hub.Broadcast("sim:tick", r.tickPayload(frame, state))
+	if r.bcast != nil {
+		r.bcast.Broadcast(r.hub, frame, state)
+	} else {
+		r.hub.Broadcast("sim:tick", r.tickPayload(frame, state))
+	}
 	return frame, len(state), inputCount
 }
 

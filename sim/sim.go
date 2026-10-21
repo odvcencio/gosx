@@ -44,6 +44,9 @@ const (
 	StateEncodingJSON StateEncoding = "json"
 )
 
+// RingDisabled turns off the rollback snapshot ring when set as Options.RingSize.
+const RingDisabled = -1
+
 // Options configures a Runner.
 type Options struct {
 	// TickRate is the number of simulation ticks per second. Zero defaults to 60.
@@ -61,6 +64,17 @@ type Options struct {
 	// frames, recording stops and ReplayLog.Truncated is set; the kept frames
 	// still replay exactly from ReplayLog.Initial. Zero means unbounded.
 	ReplayMaxFrames int
+	// Broadcaster replaces the per-tick "sim:tick" JSON broadcast. Nil keeps
+	// the historical behavior (and StateEncoding applies). See
+	// NewBinarySnapshotBroadcaster for a keyframe plus delta adapter.
+	Broadcaster Broadcaster
+	// RingSize is the number of rollback snapshots kept. Zero keeps the
+	// default of 128; RingDisabled (-1) keeps none and skips the per-tick
+	// Simulation.Snapshot call.
+	RingSize int
+	// SnapshotEvery stores a ring snapshot every N frames. Zero or one means
+	// every frame.
+	SnapshotEvery int
 	// Observer receives aggregate timing after the existing whole tick finishes.
 	// A nil observer skips timing reads and event construction.
 	Observer Observer
@@ -80,7 +94,9 @@ type Runner struct {
 	inputs     map[string]Input
 	running    atomic.Bool
 	frame      atomic.Uint64
-	snapshots  *snapshotRing
+	snapshots  *snapshotRing // nil when disabled
+	snapEvery  uint64
+	bcast      Broadcaster
 	recorder   *replayRecorder
 	encoding   StateEncoding
 	observer   Observer
@@ -98,6 +114,13 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 		recorder = newReplayRecorder()
 		recorder.seed, recorder.max = opts.Seed, opts.ReplayMaxFrames
 	}
+	var ring *snapshotRing
+	switch {
+	case opts.RingSize == 0:
+		ring = newSnapshotRing(128)
+	case opts.RingSize > 0:
+		ring = newSnapshotRing(opts.RingSize)
+	}
 	c := opts.Clock
 	if c == nil {
 		c = newClock()
@@ -107,7 +130,9 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 		sim:       s,
 		tickRate:  rate,
 		inputs:    make(map[string]Input),
-		snapshots: newSnapshotRing(128),
+		snapshots: ring,
+		snapEvery: uint64(max(opts.SnapshotEvery, 1)),
+		bcast:     opts.Broadcaster,
 		recorder:  recorder,
 		encoding:  normalizeStateEncoding(opts.StateEncoding),
 		observer:  opts.Observer,
@@ -145,6 +170,18 @@ func (r *Runner) Restore(frame uint64, snapshot []byte) {
 	if r.recorder != nil {
 		r.recorder.begin(frame, snapshot)
 	}
+}
+
+// SnapshotAt returns the ring snapshot stored for frame, if it is still held.
+// It reports false when the ring is disabled or the frame was skipped by
+// Options.SnapshotEvery.
+func (r *Runner) SnapshotAt(frame uint64) ([]byte, bool) {
+	if r.snapshots == nil {
+		return nil, false
+	}
+	r.simMu.Lock()
+	defer r.simMu.Unlock()
+	return r.snapshots.Get(frame)
 }
 
 // snapshotNow returns the current frame and a snapshot that belong together.
