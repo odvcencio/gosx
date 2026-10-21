@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reconcile shared-signal batch readers after notifications and derived values
+  have settled. Each affected island evaluates once per store batch, preserving
+  individual signal events and reentrant observer updates. Group subscriptions,
+  reuse the pending-reader queue, and ignore callbacks from retired programs.
+  Remove repeated canonical lookups and JSON string-to-byte round trips.
+
 - Preserve signed 64-bit integer values in shared-signal JSON batches, including
   nested IDs and counters. State snapshots and event batches use the same exact
   decoder as individual writes, so adjacent large IDs remain distinct.
