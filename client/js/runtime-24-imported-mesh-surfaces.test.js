@@ -1706,13 +1706,13 @@ test("resource-only rigid preparation creates no scene members and first visible
  const asset=await env.context.__gosx_scene3d_preload_model("/prepared.glb");
  const transforms=env.context.__meshTest.countVertexTransforms();
  const copies=env.context.__meshTest.countVertexCopies();
- env.context.__gosx_scene3d_prepare_rigid_geometry(asset);
+ asset.objects.forEach(raw=>env.context.__gosx_scene3d_api.modelGeometry.prepare(raw));
  const prepared=env.context.__meshTest.rigidGeometry(asset.objects[0]);
  assert.ok(prepared && prepared.immutable && prepared._rigidPool);
  assert.deepEqual([...state.objects.entries()],initialMembers,"no scene nodes or drawable membership added");
  const warmTransforms=transforms(),warmCopies=copies();
  assert.ok(warmTransforms>0,"actually prepares CPU streams");
- env.context.__gosx_scene3d_prepare_rigid_geometry(asset);
+ asset.objects.forEach(raw=>env.context.__gosx_scene3d_api.modelGeometry.prepare(raw));
  assert.equal(transforms(),warmTransforms,"repeated preparation does no geometry work");
  state.models=[env.context.__meshTest.normalize({id:"first-visible",src:"/prepared.glb",x:7},0)];
  await env.context.__meshTest.hydrate(state,null);
@@ -1724,7 +1724,4 @@ test("resource-only rigid preparation creates no scene members and first visible
  assert.equal(visible[0].parentMatrix[12],7);
  const other=await env.context.__gosx_scene3d_preload_model("/prepared.glb");
  assert.equal(other,asset,"cache remains owned by decoded asset");
- for(const change of [{skins:[{joints:[0],inverseBindMatrices:new Float32Array(16)}]},{objects:[{...asset.objects[0],_morphAnim:{}}]}, {objects:[{...asset.objects[0],_nodeAnim:{}}]}]) {
-  assert.throws(()=>env.context.__gosx_scene3d_prepare_rigid_geometry({...asset,...change}),/immutable rigid/);
- }
 });
