@@ -82,17 +82,14 @@
     return false;
   }
 
+  function motionScalarMix(a, b, t) { return t === 0 ? a : t === 1 ? b : a + (b - a) * t; }
   function motionMix(a, b, t) {
     if (Array.isArray(a) && Array.isArray(b)) {
-      const length = Math.min(a.length, b.length);
-      if (t === 0 || t === 1) return (t === 0 ? a : b).slice(0, length);
-      const out = new Array(length);
-      for (let i = 0; i < out.length; i++) out[i] = a[i] + (b[i] - a[i]) * t;
+      const out = new Array(Math.min(a.length, b.length));
+      for (let i = 0; i < out.length; i++) out[i] = motionScalarMix(a[i], b[i], t);
       return out;
     }
-    const from = motionNumber(a, 0);
-    const to = motionNumber(b, 0);
-    return t === 0 ? from : t === 1 ? to : from + (to - from) * t;
+    return motionScalarMix(motionNumber(a, 0), motionNumber(b, 0), t);
   }
 
   // Piecewise scalar curve used by "curve" signals and camera rails. The math
@@ -1024,17 +1021,17 @@
         if (animateOpacityOnly && property !== "opacity") {
           styles[property] = last[property];
         } else if (property === "opacity" && typeof from === "number" && typeof to === "number") {
-          styles.opacity = from + (to - from) * eased;
+          styles.opacity = motionScalarMix(from, to, eased);
         } else if (property === "transform" && !animateOpacityOnly) {
           const fromTransform = motionTransformComponents(from);
           const toTransform = motionTransformComponents(to);
           if (fromTransform.known && toTransform.known) {
             styles.transform = motionFormatTransform({
-              x: fromTransform.x + (toTransform.x - fromTransform.x) * eased,
-              y: fromTransform.y + (toTransform.y - fromTransform.y) * eased,
-              z: fromTransform.z + (toTransform.z - fromTransform.z) * eased,
-              rotate: fromTransform.rotate + (toTransform.rotate - fromTransform.rotate) * eased,
-              scale: fromTransform.scale + (toTransform.scale - fromTransform.scale) * eased,
+              x: motionScalarMix(fromTransform.x, toTransform.x, eased),
+              y: motionScalarMix(fromTransform.y, toTransform.y, eased),
+              z: motionScalarMix(fromTransform.z, toTransform.z, eased),
+              rotate: motionScalarMix(fromTransform.rotate, toTransform.rotate, eased),
+              scale: motionScalarMix(fromTransform.scale, toTransform.scale, eased),
               base: toTransform.base || fromTransform.base,
               known: true,
             });
@@ -1523,7 +1520,7 @@
   motion.map = function(signal, inMin, inMax, outMin, outMax, name) {
     return createDerivedSignal(signal, function(value) {
       const span = inMax - inMin, t = span === 0 ? 0 : (motionNumber(value, 0) - inMin) / span;
-      return outMin + (outMax - outMin) * t;
+      return motionScalarMix(outMin, outMax, t);
     }, name || "");
   };
   motion.clamp = function(signal, min, max, name) {

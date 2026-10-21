@@ -39,6 +39,9 @@ func TestSceneTimelineGoControls(t *testing.T) {
 			proof := newRuntimeBrowserProof(t, filepath.Join(fixture, "main.go"))
 			defer writeRuntimeBrowserProof(t, "scene-timeline-"+viewport.name+".json", &proof)
 			page := newBrowserPage(t, chrome, map[string]any{"use-angle": "swiftshader", "enable-unsafe-swiftshader": true}, viewport.width, viewport.height, "", 120*time.Second)
+			if err := chromedp.Run(page.ctx, emulation.SetDeviceMetricsOverride(int64(viewport.width), int64(viewport.height), 1, viewport.name == "mobile")); err != nil {
+				t.Fatal(err)
+			}
 			if status := page.navigate(t, app.baseURL); status != http.StatusOK {
 				t.Fatalf("fixture HTTP %d\n%s", status, app.logs.String())
 			}
@@ -54,7 +57,7 @@ func TestSceneTimelineGoControls(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			const state = `(() => {const mount=document.getElementById('form'), h=mount.__gosxScene3DHandle; return {camera:h.getCamera(),clock:h.getAnimationClock(),transport:window.__gosx.motion.transport('tide-story').state(),chapter:parseFloat(document.querySelector('.chapter-0 .chapter-fill').style.width),backend:mount.getAttribute('data-gosx-scene3d-backend')};})()`
+			const state = `(() => {const mount=document.getElementById('form'), h=mount.__gosxScene3DHandle; return {camera:h.getCamera(),clock:h.getAnimationClock(),transport:window.__gosx.motion.transport('tide-story').state(),chapter:parseFloat(document.querySelector('.chapter-0 .chapter-fill').style.width),backend:mount.getAttribute('data-gosx-scene3d-backend'),viewport:{width:innerWidth,height:innerHeight}};})()`
 			read := func() map[string]any {
 				t.Helper()
 				var got map[string]any
@@ -80,6 +83,9 @@ func TestSceneTimelineGoControls(t *testing.T) {
 			click("pause", "")
 			click("seek", "bloom")
 			bloom := pose(8.725, .255, 45.75, 5)
+			if got := bloom["viewport"].(map[string]any); got["width"].(float64) != float64(viewport.width) || got["height"].(float64) != float64(viewport.height) {
+				t.Fatalf("viewport does not match requested metrics: %v", got)
+			}
 			if bloom["chapter"].(float64) != 100 {
 				t.Fatalf("DOM chapter did not seek alongside camera: %v", bloom)
 			}

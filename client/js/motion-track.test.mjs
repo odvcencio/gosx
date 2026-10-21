@@ -33,6 +33,10 @@ test("mix selects exact endpoints without cancellation, overflow or vector alias
     weight.set(1); assert.ok(Object.is(mixed.get(), to), `${from} -> ${to}`);
     weight.set(0); assert.ok(Object.is(mixed.get(), from));
     mixed.dispose();
+    const mapped = r.motion.map(weight, 0, 1, from, to);
+    assert.ok(Object.is(mapped.get(), from));
+    weight.set(1); assert.ok(Object.is(mapped.get(), to));
+    mapped.dispose();
   }
   const from = [1e20, -0], to = [1, 2], weight = r.motion.signal(0);
   const mixed = r.motion.mix(r.motion.signal(from), r.motion.signal(to), weight);
