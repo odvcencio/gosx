@@ -28,7 +28,7 @@
     let state = normalize({}, 1), ready = '';
     // @ts-ignore TS7006 -- plain JS parameters are exercised without transpilation.
     function set(next) {
-      const n = normalize(next, decks ? decks.list.length : 1);
+      const n = normalize(next, decks.list.length);
       if (!n) return false;
       state = n;ready = '';
       if (schedule) schedule('vessel-cutaway');
@@ -41,7 +41,6 @@
     // Ship-local height of the cut for the chosen deck: the ceiling of that deck.
     function height() {
       if (finite(state.height)) return state.height;
-      if (!decks) return Infinity;
       // @ts-ignore TS7006 -- plain JS parameters are exercised without transpilation.
       const i = decks.list.findIndex(d => d.index === state.deck), here = decks.list[i], above = decks.list[i + 1];
       return here ? (above ? above.y : here.y + 3.3) - .35 : Infinity;
@@ -64,7 +63,7 @@
         cut[4] = s.side * m[k];cut[5] = s.side * m[k + 1];cut[6] = s.side * m[k + 2];
         cut[7] = -s.side * (m[k] * o.x + m[k + 1] * o.y + m[k + 2] * o.z) - s.side * s.position;
       }
-      if (!finite(h) || h === Infinity) cut.fill(0, 0, 4);
+      if (!finite(h)) cut.fill(0, 0, 4);
       cut[8] = state.fade;cut[9] = cut[10] = cut[11] = 0;
       if (ready !== 'on') {mount.setAttribute('data-gosx-scene3d-cutaway', 'on');ready = 'on';}
     }
