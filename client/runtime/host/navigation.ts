@@ -274,6 +274,7 @@
   // every entry reliably removed once its submission settles.
   // form -> outstanding submissions (more than one only for queued forms).
   const pendingManagedForms = new Map();
+  const managedFormSubmissions = new WeakMap();
   const sentNavigationBeacons = new Set();
   let revalidateTimerHandle = null;
   let revalidateSrc = "";
@@ -2891,6 +2892,8 @@
     const action = formSubmissionAction(form, submitter) || window.location.href;
     const url = new URL(action, window.location.href);
     const previous = captureManagedFormState(form);
+    const submission = {};
+    managedFormSubmissions.set(form, submission);
     let outcome = null;
 
     setManagedFormPending(form);
@@ -2912,10 +2915,22 @@
       return;
     } finally {
       try {
-        restoreManagedFormState(form, previous);
-        if (outcome && !outcome.redirected
-            && (!document.documentElement.contains || document.documentElement.contains(form))) {
-          projectManagedFormResult(form, outcome.response, outcome.result);
+        if (managedFormSubmissions.get(form) === submission) {
+          const acceptedRedirect = outcome && outcome.redirected && !managedActionFailed(outcome.response, outcome.result);
+          const current = acceptedRedirect ? captureManagedFormState(form) : previous;
+          // The destination can retain this form and render fresh lifecycle
+          // state. Do not resurrect the previous validation error after an
+          // accepted redirect, or overwrite a newer submission's feedback.
+          if (acceptedRedirect) {
+            if (current.pending === "true") current.pending = null;
+            if (current.state === "pending") current.state = "idle";
+          }
+          restoreManagedFormState(form, current);
+          if (outcome && !outcome.redirected
+              && (!document.documentElement.contains || document.documentElement.contains(form))) {
+            projectManagedFormResult(form, outcome.response, outcome.result);
+          }
+          managedFormSubmissions.delete(form);
         }
       } catch (err) {
         reportManagedActionResponseFailure("form action projection", err, url.href, method);
