@@ -435,7 +435,9 @@ func (s *Session[I]) Advance(now time.Duration, local I) Outcome {
 	s.local[g%historyFrames] = local
 	s.localNext = g + 1
 	s.stepFrame(s.frame)
-	s.changedFrom = s.frame
+	if s.changedFrom == noFrame { // a rollback this tick already set it, earlier
+		s.changedFrom = s.frame
+	}
 	s.frame++
 	s.sendInput(now)
 	return OutcomeAdvanced

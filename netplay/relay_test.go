@@ -29,13 +29,14 @@ type rigOpts struct {
 	faults [2][]int32
 	relay  func(c *RelayConfig[pad])
 	spec   bool
+	id     [32]byte
 }
 
 func newRig(t *testing.T, o rigOpts) *rig {
 	t.Helper()
 	r := &rig{t: t}
 	r.script = randomInputs(o.links[0].Seed+77, 6000)
-	rc := RelayConfig[pad]{NewGame: func() Game[pad] { return newFightGame() }, Codec: padCodec{}}
+	rc := RelayConfig[pad]{Identity: o.id, NewGame: func() Game[pad] { return newFightGame() }, Codec: padCodec{}}
 	for i := 0; i < 2; i++ {
 		r.nets[i] = NewLossyNet(o.links[i])
 		r.g[i] = newFightGame()
@@ -44,7 +45,7 @@ func newRig(t *testing.T, o rigOpts) *rig {
 		i := i
 		s, err := NewSession(Config[pad]{
 			Game: r.g[i], Codec: padCodec{}, Transport: r.nets[i].Endpoint(0), LocalPlayer: i,
-			InputDelay: o.delay[i], Relay: true,
+			InputDelay: o.delay[i], Relay: true, Identity: o.id,
 			OnChecksum: func(f int64, c uint64) { r.sums[i][f] = c },
 		})
 		if err != nil {
