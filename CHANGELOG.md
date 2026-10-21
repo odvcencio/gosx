@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Use logarithmic keyframe lookup for long motion tracks, preserving exact
+  interpolation, arbitrary seeks and allocation-free sampling. Short tracks
+  retain their linear lookup path.
+
 - Accept Go's `append(slice, first, second)` spelling with individual element
   arguments in island expressions. Lower to existing immutable VM operations,
   preserve handler shadowing, and demonstrate a live collection in the docs.

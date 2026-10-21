@@ -177,10 +177,25 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 		out.Push(track.TargetID, track.PropID, Value{Arity: last.Value.Arity, F: scratch})
 
 	default:
-		// Find surrounding pair by linear scan.
+		// Short tracks stay on the cheap linear path. Long clips use an upper
+		// bound so playback and arbitrary seeks take logarithmic lookup work.
+		// Equal timestamps retain the last matching key, as the scan does.
 		i := 0
-		for i < len(keys)-2 && keys[i+1].T <= localT {
-			i++
+		if len(keys) > 8 {
+			lo, hi := 1, len(keys)-1
+			for lo < hi {
+				mid := lo + (hi-lo)/2
+				if keys[mid].T <= localT {
+					lo = mid + 1
+				} else {
+					hi = mid
+				}
+			}
+			i = lo - 1
+		} else {
+			for i < len(keys)-2 && keys[i+1].T <= localT {
+				i++
+			}
 		}
 		ka := keys[i]
 		kb := keys[i+1]
