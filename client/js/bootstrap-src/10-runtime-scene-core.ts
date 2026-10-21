@@ -1761,6 +1761,7 @@
   // Their shared non-pose settings are re-normalized on every command; no
   // mutable authored Model declaration is trusted by identity.
   const sceneInstancedGLBHydrationTemplates = new WeakMap();
+  const sceneInstancedGLBBatchIDs = new WeakMap();
 
   function sceneCloneHydrationModel(model) {
     const copy = sceneCloneData(model);
@@ -1805,6 +1806,9 @@
         model._crowdPose = { animation: instance.animation || "", animationTime: instance.animationTime || 0, animationLoop: instance.animationLoop === true };
       }
       sceneInstancedGLBHydrationTemplates.set(model, hydrationTemplate);
+      // Not a hydration input, so kept out of the template: the batch id names
+      // the crowd batch record this agent's render objects join.
+      sceneInstancedGLBBatchIDs.set(model, batch.id);
       models.push(model);
     }
     return models;
@@ -5284,6 +5288,10 @@
       // capability opt-in: WebGPU and Canvas continue receiving the ordinary
       // per-object records until they implement the same draw contract.
       rigidImportedBatchesEnabled: Boolean(rendererCapabilities && rendererCapabilities.rigidImportedBatches === true),
+      // WebGL draws a crowd batch (palette-skinned or GPU-motion agents that
+      // share one primitive) from one record plus per-agent pose streams.
+      // Other backends keep receiving one record per agent.
+      crowdBatchesEnabled: Boolean(rendererCapabilities && rendererCapabilities.crowdBatches === true),
       // Canvas2D's final fallback draws projected edges, not PBR triangles.
       // Preserve recognizable imported assets when no GPU backend is usable.
       meshWireframeFallback: Boolean(rendererCapabilities && rendererCapabilities.meshWireframeFallback === true),
@@ -5301,10 +5309,17 @@
     if (sceneBool(showDebugGrid, false)) {
       appendSceneGridToBundle(bundle, width, height);
     }
-    const selectedObjects = sceneSelectLODObjects(objects, renderCamera);
+    // Crowd agents leave the per-object walk here and return as one record
+    // per batch after the ordinary objects.
+    const sceneObjects = bundle.crowdBatchesEnabled ? sceneCrowdBatchPartition(bundle, objects) : objects;
+    const selectedObjects = sceneSelectLODObjects(sceneObjects, renderCamera);
     sceneReserveBakedObjectAttributes(bundle, selectedObjects);
     appendSceneObjectsToBundle(bundle, materialLookup, renderCamera, width, height,
       selectedObjects, bundle.lights, resolvedEnvironment, timeSeconds);
+    if (bundle.crowdBatchesEnabled) {
+      sceneAppendCrowdBatchRecords(bundle, materialLookup, renderCamera, width, height,
+        bundle.lights, resolvedEnvironment, timeSeconds);
+    }
     for (const label of labels || []) {
       appendSceneLabelToBundle(bundle, camera, width, height, label, timeSeconds);
     }
@@ -5498,6 +5513,349 @@
     if (source.maxY > target.maxY) target.maxY = source.maxY;
     if (source.maxZ > target.maxZ) target.maxZ = source.maxZ;
     return target;
+  }
+
+  // ---- Crowd batch records ------------------------------------------------
+  //
+  // A hydrated InstancedGLB crowd holds one render object per agent per
+  // primitive. Walking those objects, building a 30-field record for each and
+  // hashing each record's matrix made the cost of every frame grow with the
+  // agent count. sceneCrowdBatchPartition takes the agents out of the
+  // per-object walk and sorts them into groups: one batch id, one shared
+  // primitive and one set of draw flags. sceneAppendCrowdBatchRecords then
+  // emits ONE meshObjects record per group.
+  //
+  // A group outlives the bundle. For each slot it remembers the identities that
+  // decide what the renderer must upload: the agent's pose record, matrix,
+  // motion record and pose revision (_crowdSkin.rev). A frame that finds every
+  // slot unchanged leaves group.revision alone, so the renderer keeps its
+  // packed streams and the planner sees the same record. Any difference bumps
+  // group.revision once; the renderer repacks a batch when its packed revision
+  // differs from the record's.
+  //
+  // Writers that change an agent's pose rows in place must bump
+  // _crowdSkin.rev. Motion writers set _crowdMotion.dirty, which the renderer
+  // clears after it uploads the record.
+  //
+  // Reserved seam: crowdParentMatrix (a matrix applied to the whole batch) and
+  // crowdDirtyRanges (slot ranges that changed since the last pack) are null
+  // today, meaning "no batch transform" and "everything may have changed".
+  // Partial slot-indexed motion frames and a moving parent can fill them in
+  // without reshaping the record.
+  const sceneCrowdBatchGroups = new Map();
+  const sceneCrowdBatchStaleBundles = 8;
+  const sceneCrowdBatchIdentity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  let sceneCrowdBatchSequence = 0;
+  let sceneCrowdBatchEpoch = 0;
+  let sceneCrowdBatchActive = [];
+
+  // sceneObjectModelMatrix returns parentMatrix itself, with no per-agent
+  // arithmetic, exactly when an agent is a plain hydrated crowd member. Batch
+  // only those agents: the renderer reads the same matrix.
+  function sceneCrowdMatrixPlain(object, parent) {
+    return parent instanceof Float32Array && parent.length === 16 &&
+      parent[3] === 0 && parent[7] === 0 && parent[11] === 0 && parent[15] === 1 &&
+      object.x === 0 && object.y === 0 && object.z === 0 &&
+      object.rotationX === 0 && object.rotationY === 0 && object.rotationZ === 0 &&
+      !object.spinX && !object.spinY && !object.spinZ &&
+      !object.shiftX && !object.shiftY && !object.shiftZ &&
+      sceneNumber(object.scaleX, 1) === 1 && sceneNumber(object.scaleY, 1) === 1 &&
+      sceneNumber(object.scaleZ, 1) === 1;
+  }
+
+  function sceneCrowdBatchGroupMatches(group, object, skin, vertices, mode) {
+    return group.vertices === vertices && group.batchID === skin.batchID && group.mode === mode &&
+      group.cast === (object.castShadow === true) && group.recv === (object.receiveShadow === true) &&
+      group.dbl === (object.doubleSided === true) && group.depthWrite === object.depthWrite;
+  }
+
+  function sceneCrowdBatchGroup(object, skin, vertices, mode) {
+    const cast = object.castShadow === true, recv = object.receiveShadow === true, dbl = object.doubleSided === true;
+    const key = skin.batchID + "|" + mode + (cast ? "c" : "-") + (recv ? "r" : "-") + (dbl ? "d" : "-") +
+      ":" + String(object.depthWrite);
+    let list = sceneCrowdBatchGroups.get(key);
+    if (!list) {
+      list = [];
+      sceneCrowdBatchGroups.set(key, list);
+    }
+    for (let i = 0; i < list.length; i += 1) {
+      if (list[i].vertices === vertices) return list[i];
+    }
+    const group = {
+      key, id: "crowd-batch-" + (++sceneCrowdBatchSequence), alive: true,
+      batchID: skin.batchID, vertices, mode, cast, recv, dbl, depthWrite: object.depthWrite,
+      epoch: 0, n: 0, count: 0, revision: 0, shape: 0, changed: false, reshaped: false,
+      objects: [], skins: [], matrices: [], motions: [], revs: [],
+      transforms: null, poses: null,
+      bounds: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 },
+      record: null,
+    };
+    list.push(group);
+    return group;
+  }
+
+  function sceneCrowdBatchRefreshBounds(group) {
+    let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    const count = group.count;
+    if (group.mode === 1) {
+      for (let i = 0; i < count; i += 1) {
+        const b = group.motions[i].bounds;
+        if (b.minX < minX) minX = b.minX;
+        if (b.minY < minY) minY = b.minY;
+        if (b.minZ < minZ) minZ = b.minZ;
+        if (b.maxX > maxX) maxX = b.maxX;
+        if (b.maxY > maxY) maxY = b.maxY;
+        if (b.maxZ > maxZ) maxZ = b.maxZ;
+      }
+    } else {
+      for (let i = 0; i < count; i += 1) {
+        const b = group.skins[i].bounds, m = group.matrices[i];
+        if (!b || !m) continue;
+        const x = (b.minX + b.maxX) * .5, y = (b.minY + b.maxY) * .5, z = (b.minZ + b.maxZ) * .5;
+        const ex = (b.maxX - b.minX) * .5, ey = (b.maxY - b.minY) * .5, ez = (b.maxZ - b.minZ) * .5;
+        const wx = m[0] * x + m[4] * y + m[8] * z + m[12];
+        const wy = m[1] * x + m[5] * y + m[9] * z + m[13];
+        const wz = m[2] * x + m[6] * y + m[10] * z + m[14];
+        const rx = Math.abs(m[0]) * ex + Math.abs(m[4]) * ey + Math.abs(m[8]) * ez;
+        const ry = Math.abs(m[1]) * ex + Math.abs(m[5]) * ey + Math.abs(m[9]) * ez;
+        const rz = Math.abs(m[2]) * ex + Math.abs(m[6]) * ey + Math.abs(m[10]) * ez;
+        if (wx - rx < minX) minX = wx - rx;
+        if (wy - ry < minY) minY = wy - ry;
+        if (wz - rz < minZ) minZ = wz - rz;
+        if (wx + rx > maxX) maxX = wx + rx;
+        if (wy + ry > maxY) maxY = wy + ry;
+        if (wz + rz > maxZ) maxZ = wz + rz;
+      }
+    }
+    const out = group.bounds;
+    if (Number.isFinite(minX + minY + minZ + maxX + maxY + maxZ) && minX <= maxX && minY <= maxY && minZ <= maxZ) {
+      out.minX = minX; out.minY = minY; out.minZ = minZ; out.maxX = maxX; out.maxY = maxY; out.maxZ = maxZ;
+    } else {
+      out.minX = out.minY = out.minZ = out.maxX = out.maxY = out.maxZ = 0;
+    }
+  }
+
+  // Pose-mode batches hand the renderer ready-made transform (16 floats per
+  // agent) and pose-row (3 floats per agent) streams, which it uploads as
+  // they are. Motion-mode batches pack their per-agent motion records in the
+  // renderer, which owns their dirty flags.
+  function sceneCrowdBatchPack(group) {
+    const count = group.count;
+    if (!group.transforms || group.transforms.length !== count * 16) {
+      group.transforms = new Float32Array(count * 16);
+      group.poses = new Float32Array(count * 3);
+    }
+    for (let i = 0; i < count; i += 1) {
+      group.transforms.set(group.matrices[i], i * 16);
+      group.poses.set(group.skins[i].rows, i * 3);
+    }
+  }
+
+  function sceneCrowdBatchEnter(group, epoch, active) {
+    group.epoch = epoch;
+    group.n = 0;
+    group.changed = false;
+    group.reshaped = false;
+    active.push(group);
+  }
+
+  // sceneCrowdBatchPartition returns the objects that are NOT batched crowd
+  // agents. When the scene has no crowd agent it returns its input unchanged.
+  function sceneCrowdBatchPartition(bundle, objects) {
+    const list = Array.isArray(objects) ? objects : [];
+    const epoch = ++sceneCrowdBatchEpoch;
+    const active = sceneCrowdBatchActive = [];
+    let rest = null;
+    let cur = null;
+    for (let i = 0; i < list.length; i += 1) {
+      const object = list[i];
+      const skin = object && object._crowdSkin;
+      // Common case: the same agent object in the slot it held last frame.
+      // Only fields that change in place (visibility, selection, the
+      // matrix, the motion record, the pose revision) are re-read; the draw
+      // flags and geometry were checked when the agent took its slot.
+      const known = skin && skin.group;
+      if (known && known.alive === true) {
+        if (known.epoch !== epoch) sceneCrowdBatchEnter(known, epoch, active);
+        const slot = known.n;
+        const knownMotion = object._crowdMotion || null;
+        if (slot < known.count && known.objects[slot] === object && known.motions[slot] === knownMotion &&
+            known.matrices[slot] === object.parentMatrix && object.visible !== false &&
+            object.selected !== true && !object._modelHidden) {
+          if (!rest) rest = list.slice(0, i);
+          if (known.revs[slot] !== skin.rev) {
+            known.revs[slot] = skin.rev;
+            known.changed = true;
+          } else if (knownMotion !== null && knownMotion.dirty === true) {
+            known.changed = true;
+          }
+          known.n = slot + 1;
+          continue;
+        }
+      }
+      const vertices = skin && object.vertices;
+      if (!skin || typeof skin.batchID !== "string" || !vertices ||
+          object.selected === true || object.skin || object.lodGroup) {
+        if (rest) rest.push(object);
+        continue;
+      }
+      if (!rest) rest = list.slice(0, i);
+      // An invisible agent never produced a record.
+      if (object.visible === false || object._modelHidden) continue;
+      const motion = object._crowdMotion || null;
+      const mode = motion ? 1 : 0;
+      let group = cur;
+      if (!group || !sceneCrowdBatchGroupMatches(group, object, skin, vertices, mode)) {
+        group = skin.group;
+        if (!group || group.alive !== true || !sceneCrowdBatchGroupMatches(group, object, skin, vertices, mode)) {
+          group = sceneCrowdBatchGroup(object, skin, vertices, mode);
+        }
+        if (group.epoch !== epoch) sceneCrowdBatchEnter(group, epoch, active);
+        cur = group;
+      }
+      skin.group = group;
+      const parent = object.parentMatrix;
+      const slot = group.n;
+      if (slot < group.count && group.skins[slot] === skin && group.motions[slot] === motion &&
+          group.matrices[slot] === parent) {
+        if (group.revs[slot] !== skin.rev) {
+          group.revs[slot] = skin.rev;
+          group.changed = true;
+        } else if (motion !== null && motion.dirty === true) {
+          group.changed = true;
+        }
+      } else {
+        if (mode === 0 && !sceneCrowdMatrixPlain(object, parent)) {
+          rest.push(object);
+          continue;
+        }
+        group.skins[slot] = skin;
+        group.motions[slot] = motion;
+        group.matrices[slot] = parent;
+        group.revs[slot] = skin.rev;
+        group.changed = true;
+        group.reshaped = true;
+      }
+      group.objects[slot] = object;
+      group.n = slot + 1;
+    }
+    for (let i = 0; i < active.length; i += 1) {
+      const group = active[i];
+      if (group.n !== group.count) {
+        group.changed = true;
+        group.reshaped = true;
+        group.count = group.n;
+        group.objects.length = group.skins.length = group.motions.length = group.matrices.length =
+          group.revs.length = group.n;
+      }
+      if (group.changed && group.count > 0) {
+        group.revision += 1;
+        sceneCrowdBatchRefreshBounds(group);
+        if (group.mode === 0) sceneCrowdBatchPack(group);
+      }
+      if (group.reshaped) group.shape += 1;
+      group.changed = false;
+      group.reshaped = false;
+    }
+    for (const [key, groups] of sceneCrowdBatchGroups) {
+      for (let i = groups.length - 1; i >= 0; i -= 1) {
+        if (epoch - groups[i].epoch > sceneCrowdBatchStaleBundles) {
+          const stale = groups[i];
+          stale.alive = false;
+          stale.objects.length = stale.skins.length = stale.motions.length = stale.matrices.length =
+            stale.revs.length = 0;
+          groups.splice(i, 1);
+        }
+      }
+      if (!groups.length) sceneCrowdBatchGroups.delete(key);
+    }
+    return rest || list;
+  }
+
+  // Pointer picking sees the batch as its agents: one transient record per
+  // agent, built only when a ray test asks for them.
+  function sceneCrowdBatchPickRecords(group) {
+    const records = [];
+    for (let i = 0; i < group.count; i += 1) {
+      const object = group.objects[i];
+      const motion = group.motions[i];
+      const matrix = group.matrices[i] instanceof Float32Array ? group.matrices[i] : sceneObjectModelMatrix(object, 0);
+      const bounds = motion ? motion.bounds : sceneTransformMeshBounds(group.skins[i].bounds, matrix);
+      records.push({
+        id: object.id, kind: object.kind,
+        pickable: typeof object.pickable === "boolean" ? object.pickable : undefined,
+        bounds, vertices: group.vertices, directVertices: true, modelMatrix: matrix,
+        vertexOffset: 0, vertexCount: group.vertices.count, viewCulled: false,
+      });
+    }
+    return records;
+  }
+
+  function sceneAppendCrowdBatchRecords(bundle, materialLookup, camera, width, height, lights, environment, timeSeconds) {
+    const active = sceneCrowdBatchActive;
+    sceneCrowdBatchActive = [];
+    for (let index = 0; index < active.length; index += 1) {
+      const group = active[index];
+      const count = group.count;
+      if (!count) continue;
+      const first = group.objects[0];
+      const material = sceneObjectMaterialProfile(first);
+      if (sceneMeshObjectEffectivelyInvisible(first, material)) continue;
+      const renderPass = sceneWorldObjectRenderPass(first, material);
+      if (renderPass !== "opaque") {
+        // Blended agents sort back to front, one record each.
+        for (let i = 0; i < count; i += 1) {
+          appendSceneObjectToBundle(bundle, materialLookup, camera, width, height, group.objects[i], lights, environment, timeSeconds);
+        }
+        continue;
+      }
+      const materialIndex = sceneBundleMaterialIndex(bundle, materialLookup, material);
+      const depth = sceneBoundsDepthMetrics(group.bounds, camera, group);
+      const vertices = group.vertices;
+      const motion = group.mode === 1;
+      let record = group.record;
+      if (!record) {
+        record = group.record = {
+          id: group.id, kind: first.kind, retainedGeometry: true, directVertices: true, static: false,
+          skin: null, viewCulled: false, resourceOwner: group, geometryRevision: 0,
+          vertexOffset: 0, bounds: group.bounds, vertices,
+          _crowdBatch: true,
+          // Reserved for the batch-level parent transform and slot-indexed
+          // partial motion frames; null means none and "all slots".
+          crowdParentMatrix: null, crowdDirtyRanges: null,
+          crowdPickRecords: function() { return sceneCrowdBatchPickRecords(group); },
+        };
+      }
+      record.materialIndex = materialIndex;
+      record.renderPass = "opaque";
+      record._renderPassDerived = first._renderPassDerived === true;
+      record.pickable = typeof first.pickable === "boolean" ? first.pickable : undefined;
+      record.castShadow = group.cast;
+      record.receiveShadow = group.recv;
+      record.doubleSided = group.dbl;
+      record.depthWrite = group.depthWrite;
+      record.depthNear = depth.near;
+      record.depthFar = depth.far;
+      record.depthCenter = depth.center;
+      record.vertexCount = vertices.count;
+      record.modelMatrix = group.matrices[0] instanceof Float32Array ? group.matrices[0] : sceneCrowdBatchIdentity;
+      record.instanceMatrices = group.matrices;
+      record.instanceCount = count;
+      record.crowdMembers = group.objects;
+      record.crowdRevision = group.revision;
+      record.crowdShape = group.shape;
+      record.crowdTransforms = group.transforms;
+      record.crowdPoses = group.poses;
+      record.crowdMotion = motion;
+      record.crowdAtlas = motion ? first._crowdMotion.atlas : first._crowdSkin.atlas;
+      record.crowdClipTable = motion ? first._crowdMotion.clipTable : null;
+      sceneStampRetainedMeshCSSInput(record, group);
+      bundle.meshObjects.push(record);
+      bundle.retainedMeshObjectCount += count;
+      bundle.retainedMeshVertexCount += vertices.count * count;
+      bundle.retainedGeometryTelemetry.eligible += count;
+      bundle.retainedGeometryTelemetry.retained += count;
+    }
   }
 
   function appendSceneObjectsToBundle(bundle, materialLookup, camera, width, height, objects, lights, environment, timeSeconds) {

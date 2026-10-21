@@ -3209,6 +3209,8 @@
           retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true),
           worldBakedAttributeViews: Boolean(renderer && renderer.supportsWorldBakedAttributeViews === true),
           rigidImportedBatches: Boolean(renderer && renderer.supportsRigidImportedBatches === true),
+          // Only the PBR WebGL renderer can draw a crowd batch record.
+          crowdBatches: Boolean(renderer && typeof renderer.prepareCrowdMotionShaders === "function"),
           meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
         },
       ), sceneState, sceneControlHandle);

@@ -1726,6 +1726,13 @@
       if (object._rigidImportedBatch === true) {
         return scenePlannerHashNumber(hash, sceneNumber(object.instanceCount, 0));
       }
+      // A crowd batch record is stable while agents move. Its membership
+      // count and draw mode shape the passes; its revision changes whenever an
+      // agent's pose or motion does and only the renderer reads it.
+      if (object._crowdBatch === true) {
+        hash = scenePlannerHashNumber(hash, object.crowdMotion === true ? 1 : 0);
+        return scenePlannerHashNumber(hash, sceneNumber(object.instanceCount, 0));
+      }
       // Retained geometry is immutable between explicit revisions, so hashing
       // every position/normal/UV on every animated frame would recreate the
       // exact O(vertices) cost the retained path removes. The compact model
