@@ -2686,6 +2686,8 @@
     }
     if (record.explicitClips) {
       record.animationApi.sampleExplicitAnimation(record.explicitClips, record.model._crowdPose, animatedTransforms);
+    } else if (record.clipSampler) { // sampled: a pure function of the last layers; deltaTime is ignored
+      record.clipSampler.sample(record.sampledLayers, record.sampledLayerCount, animatedTransforms);
     } else if (sceneModelWasmMixerActive(record)) {
       sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms);
     } else if (record.mixer) {
@@ -2762,7 +2764,7 @@
   }
 
   function sceneRegisterModelAnimationRecord(state, record) {
-    if (!state || !record || (!record.mixer && !record.wasmMixerActive)) {
+    if (!state || !record || (!record.mixer && !record.wasmMixerActive && !record.clipSampler)) {
       return;
     }
     if (!Array.isArray(state._modelAnimations)) {
@@ -2881,6 +2883,12 @@
     const clips = sceneCloneModelAnimations(asset.animations);
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (instanceModel._instancedGLB && instanceModel._crowdPose && animationApi.sampleExplicitAnimation) {
       record.explicitClips = clips;
+      sceneApplyModelSkinPose(record, 0, false);
+      return;
+    }
+    if (instanceModel.clipSampled === true && animationApi.configureSampledRecord) {
+      animationApi.configureSampledRecord(state, record, clips, instanceModel);
+      sceneRegisterModelAnimationRecord(state, record);
       sceneApplyModelSkinPose(record, 0, false);
       return;
     }
@@ -3476,6 +3484,7 @@
     const stageState = {
       _modelAnimations: staged.modelAnimations,
       _modelSkins: staged.modelSkins,
+      _clipFrameLayers: state && (state._clipFrameLayers || (state._clipFrameLayers = new Map())),
     };
     let stage = "load";
     try {

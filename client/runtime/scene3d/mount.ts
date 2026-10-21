@@ -3540,6 +3540,8 @@
       // still render that crowd.
       // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
       applyMotionFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedMotionFrame(sceneState, batches, sceneUpdateRigidInstanceMotion, scheduleRender, handle); },
+      // applyClipFrame: the GSP4 sampled-animation channel (docs/scene3d-clip-frames.md).
+      applyClipFrame(models) { return window.__gosx_scene3d_command_bridge.applyMountedClipFrame(sceneState, models, window.__gosx_scene3d_animation_api, sceneApplyModelSkinPose, scheduleRender, handle); },
       // applyInstanceStream: opt-in fast path; the bridge (instance-stream-
       // bridge.ts) lazy-loads the chunk on first use, queues an in-flight
       // frame, and reports a load failure -- never a silent drop.
