@@ -234,6 +234,52 @@ browserTest('Find keeps typing focus, navigates both directions and wraps; Repla
   assert.equal(await textarea.inputValue(), 'omega beta alpha');
 });
 
+browserTest('Find restores field focus and caret when native textarea selection moves focus as WebKit does', async t => {
+  const {page, textarea} = await mount(t, 'alpha beta alpha');
+  await textarea.evaluate(node => {
+    // WKWebView focuses the textarea from selection APIs. Also reset the
+    // blurred control's caret so restoring focus alone cannot pass this test.
+    for (const method of ['setSelectionRange', 'setRangeText']) {
+      const original = node[method];
+      node[method] = function (...args) {
+        const active = document.activeElement;
+        const result = original.apply(this, args);
+        this.focus();
+        if (active !== this && active?.matches('[data-code-find]')) active.setSelectionRange(0, 0);
+        return result;
+      };
+    }
+  });
+  const query = page.locator('[data-code-find="query"]');
+  const replacement = page.locator('[data-code-find="replacement"]');
+  const fieldState = field => field.evaluate(node => ({focused: document.activeElement === node, start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection}));
+  await page.keyboard.press('Control+f');
+  for (const [index, character] of Array.from('alpha').entries()) {
+    await page.keyboard.type(character);
+    assert.deepEqual(await fieldState(query), {focused: true, start: index + 1, end: index + 1, direction: 'forward'});
+  }
+  assert.equal(await query.inputValue(), 'alpha');
+  assert.equal(await textarea.inputValue(), 'alpha beta alpha');
+  await query.evaluate(node => node.setSelectionRange(1, 4, 'backward'));
+  await page.keyboard.press('Enter');
+  assert.deepEqual(await fieldState(query), {focused: true, start: 1, end: 4, direction: 'backward'});
+  assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [11, 16]);
+  await textarea.focus(); await select(textarea, 0, 5);
+  await replacement.focus();
+  for (const [index, character] of Array.from('omega').entries()) {
+    await page.keyboard.type(character);
+    assert.deepEqual(await fieldState(replacement), {focused: true, start: index + 1, end: index + 1, direction: 'forward'});
+  }
+  await replacement.evaluate(node => node.setSelectionRange(1, 4, 'backward'));
+  for (const expected of ['omega beta alpha', 'omega beta omega']) {
+    await page.keyboard.press('Enter');
+    assert.equal(await textarea.inputValue(), expected);
+    assert.deepEqual(await fieldState(replacement), {focused: true, start: 1, end: 4, direction: 'backward'});
+  }
+  await textarea.focus(); await page.keyboard.press('F3');
+  assert.equal(await textarea.evaluate(node => document.activeElement === node), true, 'explicit editor navigation must keep source focus');
+});
+
 browserTest('Go to line uses scalar columns, reveals distant and wrapped targets, validates input and restores Escape checkpoint', async t => {
   const lines = ['// 🎵 café', 'a🎵bc', ...Array.from({length: 160}, (_, i) => `line ${i}`), 'x'.repeat(2000)];
   const source = lines.join('\n');

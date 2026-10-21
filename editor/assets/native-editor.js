@@ -1146,6 +1146,22 @@
       return findMatches.length;
     };
 
+    const keepFindControlFocus = (operation) => {
+      const control = document.activeElement;
+      const selection = control && (control === findQuery || control === findReplacement)
+        ? [control.selectionStart, control.selectionEnd, control.selectionDirection] : null;
+      try {
+        return operation();
+      } finally {
+        if (selection && control.isConnected) {
+          // WebKit can focus the textarea from setSelectionRange/setRangeText.
+          // Restore the search field and its caret after previewing source text.
+          control.focus({preventScroll: true});
+          control.setSelectionRange(...selection);
+        }
+      }
+    };
+
     const selectFindMatch = (direction = 0, focus = true) => {
       if (rebuildFindMatches() === 0) return false;
       const current = findMatches.findIndex(offset => offset === textarea.selectionStart &&
@@ -1157,9 +1173,13 @@
         if (findIndex < 0) findIndex = findMatches.length - 1;
       }
       const offset = findMatches[findIndex];
-      clearSecondaryCursors();
-      textarea.setSelectionRange(offset, offset + String(findQuery.value).length);
-      revealSelection(focus);
+      const select = () => {
+        clearSecondaryCursors();
+        textarea.setSelectionRange(offset, offset + String(findQuery.value).length);
+        revealSelection(focus);
+      };
+      if (focus) select();
+      else keepFindControlFocus(select);
       if (findStatus) findStatus.textContent = `${findIndex + 1} / ${findMatches.length}`;
       return true;
     };
@@ -1183,13 +1203,13 @@
       textarea.focus();
     };
 
-    const replaceFindMatch = () => {
+    const replaceFindMatch = () => keepFindControlFocus(() => {
       if (!findQuery || !findReplacement || !selectFindMatch(0, false)) return;
       rememberLocalEdit();
       textarea.setRangeText(findReplacement.value, textarea.selectionStart, textarea.selectionEnd, "end");
       dispatchEditorInput({ preserveWhitespaceOnlyLines: true });
       rebuildFindMatches();
-    };
+    });
 
     const openGoToLine = () => {
       if (!codeSurface || !gotoPanel || !gotoQuery) return;
