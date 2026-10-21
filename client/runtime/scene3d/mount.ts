@@ -91,7 +91,7 @@
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
-    sceneState._crowdWebGLRequested = sceneForcesWebGL(props) || sceneRequiresWebGL(props);
+    sceneState._crowdWebGLRequested = sceneForcesWebGL(props) || sceneRequiresWebGL(props) || scenePrefersWebGPU(props);
     // Parse the immutable inline shader manifest once per mount.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
       window.__gosx_scene3d_water_shader_sources_by_id &&
