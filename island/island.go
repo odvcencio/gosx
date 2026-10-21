@@ -291,6 +291,12 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	// override with a hashed URL during a build-manifest apply.
 	renderer.relayPath = "/gosx/relay.js"
 	if manifest != nil {
+		// Development metadata describes stable /gosx/* URLs, with full digests
+		// instead of content-addressed deployment filenames.
+		if runtimeAssets.WASM.File == "" && runtimeAssets.WASM.Hash != "" {
+			renderer.SetRuntime("/gosx/runtime.wasm", runtimeAssets.WASM.Hash, runtimeAssets.WASM.Size)
+			return renderer
+		}
 		// ApplyBuildManifest only reads the manifest, so renderers may share
 		// one cached pointer. Do not mutate a manifest returned by
 		// loadDefaultBuildManifest.
@@ -349,6 +355,17 @@ func loadDefaultBuildManifest() *buildmanifest.Manifest {
 
 	if root == "" {
 		return nil
+	}
+	if os.Getenv("GOSX_DEV") == "1" {
+		candidate := filepath.Join(root, "build", buildmanifest.DevRuntimeManifestFile)
+		if manifest := loadCachedBuildManifest(candidate); manifest != nil {
+			return manifest
+		}
+		// Malformed or inaccessible development metadata must not silently
+		// select a stale production build. A missing file retains legacy lookup.
+		if _, err := os.Stat(candidate); !os.IsNotExist(err) {
+			return nil
+		}
 	}
 
 	for _, candidate := range []string{
