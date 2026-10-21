@@ -120,6 +120,14 @@ mixer does. Both the WebGL and the WebGPU renderers then skin on the GPU from
 those matrices. A sampled model never asks for continuous rendering: a frame or
 a transform patch schedules one render.
 
-The Node benchmark `client/js/scene3d-clip-frame.bench.mjs` measures decode,
-sampling, blending and joint matrices for two 64-joint models with four layers
-each.
+In steady state a frame allocates almost nothing, so it adds no garbage
+collection pressure: decoding, sampling, blending, node transforms and joint
+matrices reuse buffers sized when the model mounts. Two fighters with four
+layers each measured about 0.3 KB per frame, against about 10 KB per frame for
+the general mixer path. A sampled model that also has morph targets or rigid
+node animation takes the general path and allocates per frame. The `Dispatch`
+call itself still creates one Promise per frame.
+
+The Node benchmark `client/js/scene3d-clip-frame.bench.mjs` (run it with
+`node --expose-gc`) measures both paths for two 64-joint models with four
+layers each, and reports per-frame mean, p50, p95, p99 and heap growth.

@@ -731,19 +731,176 @@
   // sceneAnimationSampleTime: loop wraps (modulo duration), once clamps.
 
   // Smallest i in [0, n-2] with times[i + 1] >= time. This is the index a scan
-  // from zero reaches, so the result does not depend on any earlier call.
-  function sceneAnimSeekChannel(channel: any, time: number) {
+  // from zero reaches, so the result does not depend on any earlier call. The
+  // previous result (channel._ci) is only a hint: it is accepted when it, or a
+  // neighbour, satisfies the same rule (times[i + 1] >= time and, for i > 0,
+  // times[i] < time); otherwise a binary search finds the canonical index.
+  // Time that moves a little per frame therefore costs O(1) per channel.
+  //
+  // The hot path passes time through a Float64Array slot (buf[0]) instead of a
+  // number argument: V8 boxes a double argument into a heap number at a call it
+  // does not inline, and the sampled path must not allocate.
+  function sceneClipSeekBuf(channel: any, buf: Float64Array) {
     var times = channel.times;
-    var lo = 0, hi = times.length - 2;
-    if (hi < 0 || time <= times[0] || time >= times[times.length - 1]) {
+    var time = buf[0];
+    var last = times.length - 1;
+    if (last < 1 || time <= times[0] || time >= times[last]) {
       channel._lastIndex = 0;
       return;
     }
-    while (lo < hi) {
-      var mid = (lo + hi) >> 1;
-      if (times[mid + 1] >= time) hi = mid; else lo = mid + 1;
+    var i = channel._ci | 0;
+    if (i >= last) i = 0;
+    if (!(times[i + 1] >= time && (i === 0 || times[i] < time))) {
+      if (i + 1 < last && times[i + 2] >= time && times[i + 1] < time) {
+        i++;
+      } else if (i > 0 && times[i] >= time && (i === 1 || times[i - 1] < time)) {
+        i--;
+      } else {
+        var lo = 0, hi = last - 1;
+        while (lo < hi) {
+          var mid = (lo + hi) >> 1;
+          if (times[mid + 1] >= time) hi = mid; else lo = mid + 1;
+        }
+        i = lo;
+      }
     }
-    channel._lastIndex = lo;
+    channel._ci = i;
+    channel._lastIndex = i;
+  }
+
+  var _clipSeekTime = new Float64Array(1);
+  function sceneAnimSeekChannel(channel: any, time: number) {
+    _clipSeekTime[0] = time;
+    sceneClipSeekBuf(channel, _clipSeekTime);
+  }
+
+  // Quaternion slerp with t read from buf[ti]. Same arithmetic, in the same
+  // order, as _sceneAnimSlerpQuatOffset.
+  function sceneClipSlerp(out: any, arrA: any, offA: number, arrB: any, offB: number, buf: Float64Array, ti: number) {
+    var t = buf[ti];
+    var a0 = arrA[offA], a1 = arrA[offA + 1], a2 = arrA[offA + 2], a3 = arrA[offA + 3];
+    var bx = arrB[offB], by = arrB[offB + 1], bz = arrB[offB + 2], bw = arrB[offB + 3];
+    var dot = a0 * bx + a1 * by + a2 * bz + a3 * bw;
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+    if (dot > 0.9995) {
+      out[0] = a0 + (bx - a0) * t;
+      out[1] = a1 + (by - a1) * t;
+      out[2] = a2 + (bz - a2) * t;
+      out[3] = a3 + (bw - a3) * t;
+      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
+      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
+      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
+      return;
+    }
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+    out[0] = a0 * w0 + bx * w1;
+    out[1] = a1 * w0 + by * w1;
+    out[2] = a2 * w0 + bz * w1;
+    out[3] = a3 * w0 + bw * w1;
+  }
+
+  // The same slerp for Float64Array inputs (blended pose storage). Two copies
+  // keep each function monomorphic: one body fed both Float32Array and
+  // Float64Array would use generic element loads, which box every double.
+  function sceneClipSlerpF64(out: any, arrA: any, offA: number, arrB: any, offB: number, buf: Float64Array, ti: number) {
+    var t = buf[ti];
+    var a0 = arrA[offA], a1 = arrA[offA + 1], a2 = arrA[offA + 2], a3 = arrA[offA + 3];
+    var bx = arrB[offB], by = arrB[offB + 1], bz = arrB[offB + 2], bw = arrB[offB + 3];
+    var dot = a0 * bx + a1 * by + a2 * bz + a3 * bw;
+    if (dot < 0) {
+      dot = -dot;
+      bx = -bx; by = -by; bz = -bz; bw = -bw;
+    }
+    if (dot > 0.9995) {
+      out[0] = a0 + (bx - a0) * t;
+      out[1] = a1 + (by - a1) * t;
+      out[2] = a2 + (bz - a2) * t;
+      out[3] = a3 + (bw - a3) * t;
+      var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
+      if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
+      else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
+      return;
+    }
+    var theta = Math.acos(dot);
+    var sinTheta = Math.sin(theta);
+    var w0 = Math.sin((1 - t) * theta) / sinTheta;
+    var w1 = Math.sin(t * theta) / sinTheta;
+    out[0] = a0 * w0 + bx * w1;
+    out[1] = a1 * w0 + by * w1;
+    out[2] = a2 * w0 + bz * w1;
+    out[3] = a3 * w0 + bw * w1;
+  }
+
+  // Evaluate one channel at buf[0] into out[0..width), for translation,
+  // rotation and scale channels. It is sceneAnimInterpolateChannel with the
+  // cached-hint seek and no scratch return value, so its results are bit-equal
+  // to the general path and it allocates nothing.
+  function sceneClipEvalChannel(channel: any, buf: Float64Array, out: Float64Array) {
+    var times = channel.times;
+    var values = channel.values;
+    var time = buf[0];
+    var isRotation = channel.property === "rotation";
+    var width = isRotation ? 4 : 3;
+    var isCubic = channel.interpolation === "CUBICSPLINE";
+    var keyStride = isCubic ? width * 3 : width;
+    var valueOffset = isCubic ? width : 0;
+    if (time <= times[0]) {
+      for (var a = 0; a < width; a++) out[a] = values[valueOffset + a];
+      return;
+    }
+    if (time >= times[times.length - 1]) {
+      var start = (times.length - 1) * keyStride + valueOffset;
+      for (var b = 0; b < width; b++) out[b] = values[start + b];
+      return;
+    }
+    sceneClipSeekBuf(channel, buf);
+    var i = channel._ci;
+    var t0 = times[i];
+    var t1 = times[i + 1];
+    var alpha = (time - t0) / (t1 - t0);
+    var start0 = i * keyStride + valueOffset;
+    var start1 = (i + 1) * keyStride + valueOffset;
+    if (channel.interpolation === "STEP") {
+      for (var c = 0; c < width; c++) out[c] = values[start0 + c];
+      return;
+    }
+    if (isCubic) {
+      var dt = t1 - t0;
+      var u = alpha;
+      var u2 = u * u;
+      var u3 = u2 * u;
+      var h00 = 2 * u3 - 3 * u2 + 1;
+      var h10 = u3 - 2 * u2 + u;
+      var h01 = -2 * u3 + 3 * u2;
+      var h11 = u3 - u2;
+      var m0Off = i * keyStride + 2 * width;
+      var m1Off = (i + 1) * keyStride;
+      for (var d = 0; d < width; d++) {
+        var p0 = values[start0 + d];
+        var p1 = values[start1 + d];
+        var m0 = values[m0Off + d] * dt;
+        var m1 = values[m1Off + d] * dt;
+        out[d] = h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
+      }
+      if (isRotation) {
+        var len = Math.sqrt(out[0] * out[0] + out[1] * out[1] + out[2] * out[2] + out[3] * out[3]);
+        if (len < 1e-10) { out[0] = 0; out[1] = 0; out[2] = 0; out[3] = 1; }
+        else { out[0] /= len; out[1] /= len; out[2] /= len; out[3] /= len; }
+      }
+      return;
+    }
+    if (isRotation) {
+      buf[1] = alpha;
+      sceneClipSlerp(out, values, start0, values, start1, buf, 1);
+    } else {
+      for (var e = 0; e < width; e++) out[e] = values[start0 + e] + (values[start1 + e] - values[start0 + e]) * alpha;
+    }
   }
 
   function sceneClipChannelTarget(channel: any) {
@@ -777,6 +934,100 @@
       }
     }
     return roots;
+  }
+
+  // Preallocated pose evaluation for one sampled model. Everything the hot path
+  // writes (blended TRS, world matrices, joint matrices) is sized once here, so
+  // evaluating a frame allocates nothing. The arithmetic mirrors
+  // sceneAnimBuildNodeTransforms and sceneAnimComputeJointMatrices exactly
+  // (same multiply order, same float32 stores), so the results are bit-equal.
+  function sceneClipBuildPoseState(nodes: any[], rootNodes: any, skins: any[]) {
+    var n = nodes.length;
+    var childSet = new Set<number>();
+    for (var c = 0; c < n; c++) {
+      var ch = nodes[c] && nodes[c].children;
+      if (ch) for (var k = 0; k < ch.length; k++) childSet.add(ch[k]);
+    }
+    var roots: number[] = [];
+    if (Array.isArray(rootNodes) && rootNodes.length) roots = rootNodes.slice();
+    else for (var r = 0; r < n; r++) if (!childSet.has(r)) roots.push(r);
+    var st: any = {
+      n: n,
+      order: [] as number[],
+      parent: new Int32Array(n).fill(-1),
+      worldBuf: new Float32Array(n * 16),
+      world: [] as Float32Array[],
+      flags: new Uint8Array(n),
+      t: new Float64Array(n * 3), r: new Float64Array(n * 4), s: new Float64Array(n * 3),
+      wt: new Float64Array(n * 3),
+      authT: new Float64Array(n * 3), authR: new Float64Array(n * 4), authS: new Float64Array(n * 3),
+      matrix: [] as any[],
+      local: new Float32Array(16),
+      tS: new Float64Array(3), rS: new Float64Array(4), sS: new Float64Array(3), q: new Float64Array(4),
+      reached: new Uint8Array(n),
+      buf: new Float64Array(4), v: new Float64Array(4),
+      skins: [] as any[],
+    };
+    for (var i = 0; i < n; i++) {
+      var node = nodes[i] || {};
+      st.world.push(st.worldBuf.subarray(i * 16, i * 16 + 16));
+      st.worldBuf.set(SCENE_IDENTITY_MAT4, i * 16);
+      var tr = node.translation || [0, 0, 0], ro = node.rotation || [0, 0, 0, 1], sc = node.scale || [1, 1, 1];
+      for (var a = 0; a < 3; a++) { st.authT[i * 3 + a] = tr[a]; st.authS[i * 3 + a] = sc[a]; }
+      for (var b = 0; b < 4; b++) st.authR[i * 4 + b] = ro[b];
+      st.matrix.push(node.matrix && node.matrix.length === 16 ? new Float32Array(node.matrix) : null);
+    }
+    function walk(index: number, parent: number) {
+      if (!nodes[index] || st.reached[index]) return;
+      st.reached[index] = 1;
+      st.parent[index] = parent;
+      st.order.push(index);
+      var kids = nodes[index].children || [];
+      for (var q = 0; q < kids.length; q++) walk(kids[q], index);
+    }
+    for (var ri = 0; ri < roots.length; ri++) walk(roots[ri], -1);
+    for (var si = 0; si < skins.length; si++) {
+      var skin = skins[si];
+      var joints = skin && Array.isArray(skin.joints) ? skin.joints : [];
+      var count = joints.length;
+      var buffer = skin && skin._jointMatricesBuffer;
+      if (count > 0 && (!buffer || buffer.length !== count * 16)) buffer = skin._jointMatricesBuffer = new Float32Array(count * 16);
+      var ibm = skin && skin.inverseBindMatrices && typeof skin.inverseBindMatrices.length === "number" ? skin.inverseBindMatrices : null;
+      var ent: any = { skin: skin, joints: joints, out: [] as Float32Array[], ibm: [] as Float32Array[], buffer: buffer };
+      for (var j = 0; j < count; j++) {
+        ent.out.push(buffer.subarray(j * 16, j * 16 + 16));
+        ent.ibm.push(ibm && j * 16 + 16 <= ibm.length ? ibm.subarray(j * 16, j * 16 + 16) : SCENE_IDENTITY_MAT4);
+      }
+      st.skins.push(ent);
+    }
+    return st;
+  }
+
+  // Blend the channel value in st.v into the node's pose, with the layer weight
+  // in st.buf[3]. The first layer to touch a property copies it; later layers
+  // blend by running weight exactly as sceneAnimBlendValue does. Weights travel
+  // through st.buf so no double crosses a call boundary.
+  function sceneClipBlendChannel(st: any, node: number, code: number) {
+    var bit = 1 << code, wi = node * 3 + code;
+    var width = code === 1 ? 4 : 3;
+    var store = code === 0 ? st.t : code === 1 ? st.r : st.s;
+    var off = node * width;
+    var weight = st.buf[3];
+    if (!(st.flags[node] & bit)) {
+      for (var v = 0; v < width; v++) store[off + v] = st.v[v];
+      st.wt[wi] = weight;
+      st.flags[node] |= bit;
+      return;
+    }
+    var tw = weight / (st.wt[wi] + weight);
+    st.wt[wi] += weight;
+    if (code === 1) {
+      st.buf[2] = tw;
+      sceneClipSlerpF64(st.q, store, off, st.v, 0, st.buf, 2);
+      for (var qv = 0; qv < 4; qv++) store[off + qv] = st.q[qv];
+    } else {
+      for (var lv = 0; lv < 3; lv++) store[off + lv] = store[off + lv] + (st.v[lv] - store[off + lv]) * tw;
+    }
   }
 
   // options: { nodes, skins, rootNodes, rootMotion }. clips is the model's own
@@ -863,7 +1114,87 @@
       return output;
     }
 
-    return { sample: sample };
+    var poseState: any = null;
+
+    // pose evaluates the held layers straight into the model's skin joint
+    // matrices without allocating. It returns false (and writes nothing) for a
+    // model with morph or rigid node-animation targets, which keep the general
+    // path through sample() and sceneAnimBuildNodeTransforms.
+    function pose(record: any) {
+      if ((record.morphTargets && record.morphTargets.length > 0) || (record.nodeAnimTargets && record.nodeAnimTargets.length > 0)) return false;
+      var st = poseState || (poseState = sceneClipBuildPoseState(nodes, record.rootNodes, record.skins));
+      var layers = record.sampledLayers, count = Math.min(record.sampledLayerCount, layers.length);
+      st.flags.fill(0);
+      for (var li = 0; li < count; li++) {
+        var layer = layers[li];
+        var weight = layer.weight;
+        if (!(weight > 0)) continue;
+        var clip = resolve(layer);
+        if (!clip || !clip.channels) continue;
+        // Same rule as sceneAnimationSampleTime, written inline so no double
+        // crosses a call boundary: negative or non-finite time is 0, a looping
+        // layer wraps, a once layer clamps, a zero-length clip shows key 0.
+        var rawTime = layer.time, duration = clip.duration;
+        if (!Number.isFinite(rawTime) || rawTime < 0) rawTime = 0;
+        st.buf[0] = duration > 0 ? (layer.loop ? rawTime % duration : Math.min(rawTime, duration)) : 0;
+        st.buf[3] = weight;
+        var channels = clip.channels;
+        for (var c = 0; c < channels.length; c++) {
+          var channel = channels[c];
+          var code = channel._pc;
+          if (code === undefined) {
+            code = channel.property === "translation" ? 0 : channel.property === "rotation" ? 1 : channel.property === "scale" ? 2 : -1;
+            var tn = sceneClipChannelTarget(channel);
+            channel._pc = code = (code >= 0 && Number.isInteger(tn) && tn >= 0 && tn < st.n) ? code : -1;
+            channel._tn = tn;
+          }
+          if (code < 0) continue;
+          var node = channel._tn;
+          sceneClipEvalChannel(channel, st.buf, st.v);
+          sceneClipBlendChannel(st, node, code);
+        }
+      }
+      if (rootSet) {
+        for (var ri = 0; ri < st.order.length; ri++) {
+          var rn = st.order[ri];
+          if ((st.flags[rn] & 1) && rootSet.has(rn)) {
+            st.t[rn * 3] = st.authT[rn * 3];
+            st.t[rn * 3 + 2] = st.authT[rn * 3 + 2];
+          }
+        }
+      }
+      var root = record.rootTransform || null;
+      for (var oi = 0; oi < st.order.length; oi++) {
+        var ni = st.order[oi], f = st.flags[ni];
+        var local = st.local;
+        if (f === 0 && st.matrix[ni]) {
+          local.set(st.matrix[ni]);
+        } else {
+          for (var a = 0; a < 3; a++) {
+            st.tS[a] = (f & 1) ? st.t[ni * 3 + a] : st.authT[ni * 3 + a];
+            st.sS[a] = (f & 4) ? st.s[ni * 3 + a] : st.authS[ni * 3 + a];
+          }
+          for (var b = 0; b < 4; b++) st.rS[b] = (f & 2) ? st.r[ni * 4 + b] : st.authR[ni * 4 + b];
+          sceneTRSToMat4Into(local, st.tS, st.rS, st.sS);
+        }
+        var pi = st.parent[ni];
+        if (pi >= 0) sceneMat4MultiplyInto(st.world[ni], st.world[pi], local);
+        else if (root) sceneMat4MultiplyInto(st.world[ni], root, local);
+        else st.world[ni].set(local);
+      }
+      for (var si = 0; si < st.skins.length; si++) {
+        var ent = st.skins[si];
+        for (var j = 0; j < ent.joints.length; j++) {
+          var jn = ent.joints[j];
+          var w = jn >= 0 && jn < st.n && st.reached[jn] ? st.world[jn] : SCENE_IDENTITY_MAT4;
+          sceneMat4MultiplyInto(ent.out[j], w, ent.ibm[j]);
+        }
+        if (ent.skin) ent.skin.jointMatrices = ent.buffer;
+      }
+      return true;
+    }
+
+    return { sample: sample, pose: pose };
   }
 
   // Sampled models (Model.ClipSampled) have no mixer and no clock. The caller
@@ -873,55 +1204,73 @@
   function sceneConfigureSampledRecord(state: any, record: any, clips: any[], instanceModel: any) {
     record.clipSampler = sceneCreateClipSampler(clips, {
       nodes: record.nodes,
-      skins: record.skins.map(function(skin: any) { return { joints: skin && skin.joints }; }),
+      skins: record.skins,
       rootNodes: record.rootNodes,
       rootMotion: instanceModel.rootMotion === true,
     });
-    record.sampledLayers = [];
-    record.sampledLayerCount = 0;
-    // A scene replacement re-hydrates models. Re-pose from the last frame the
-    // app sent instead of showing the bind pose until the next frame arrives.
-    var last = state && state._clipFrameLayers && state._clipFrameLayers.get(record.id);
-    if (last) {
-      record.sampledLayers = last.slice();
-      record.sampledLayerCount = last.length;
+    // The layer holder outlives the record: a scene replacement re-hydrates
+    // models, and the new record re-poses from the last frame the app sent
+    // instead of showing the bind pose until the next frame arrives.
+    var holder = sceneClipHolder(state, record.id);
+    record.sampledLayers = holder.layers;
+    record.sampledLayerCount = holder.count;
+  }
+
+  // One holder per model ID: four reusable layer objects and a count. Frames
+  // are copied into it, so applying a frame allocates nothing.
+  function sceneClipHolder(state: any, id: string) {
+    var map = state && state._clipFrameLayers;
+    var holder = map && map.get(id);
+    if (!holder) {
+      holder = { layers: [] as any[], count: 0 };
+      for (var i = 0; i < 4; i++) holder.layers.push({ name: "", index: 0, time: 0, weight: 0, loop: false });
+      if (map) map.set(id, holder);
     }
+    return holder;
   }
 
   // sceneApplyClipFrame applies a decoded GSP4 ClipFrame: [{ id, layers }].
-  // Each model's layers replace its previous layers (no history is kept) and
-  // the model is re-skinned immediately through applyPose(record, 0, false).
-  // Validation happens before any write, so a rejected frame changes nothing.
+  // Each model's layers are copied over its previous layers (no history is
+  // kept) and the model is re-skinned immediately through applyPose(record, 0,
+  // false). Validation happens before any write, so a rejected frame changes
+  // nothing. In steady state this allocates nothing.
   function sceneApplyClipFrame(state: any, models: any, applyPose: any) {
-    if (!state || !Array.isArray(models)) return { applied: false, reason: "invalid-frame" };
+    if (!state || !models || typeof models.length !== "number") return { applied: false, reason: "invalid-frame" };
     if (!(state._clipFrameLayers instanceof Map)) state._clipFrameLayers = new Map();
     var pending = Boolean(state._modelHydrationPromise || state._modelHydrationUncommitted);
     var skins = Array.isArray(state._modelSkins) ? state._modelSkins : [];
     var index = state._clipRecordIndex;
     if (!index || index.skins !== skins || index.length !== skins.length) {
-      index = { skins: skins, length: skins.length, byID: new Map<any, any>() };
+      index = { skins: skins, length: skins.length, byID: new Map<any, any>(), found: [] as any[] };
       for (var i = 0; i < skins.length; i++) {
         if (skins[i] && skins[i].clipSampler && skins[i].id) index.byID.set(skins[i].id, skins[i]);
       }
       state._clipRecordIndex = index;
     }
-    var records: any[] = [];
+    var found = index.found;
+    found.length = 0;
     for (var m = 0; m < models.length; m++) {
-      var found = index.byID.get(models[m].id);
-      if (!found && !pending) return { applied: false, reason: "unknown-model", id: models[m].id };
-      records.push(found || null);
+      var record = index.byID.get(models[m].id);
+      if (!record && !pending) return { applied: false, reason: "unknown-model", id: models[m].id };
+      found.push(record || null);
     }
     for (var w = 0; w < models.length; w++) {
       var layers = models[w].layers;
-      state._clipFrameLayers.set(models[w].id, layers);
-      var target = records[w];
+      var holder = sceneClipHolder(state, models[w].id);
+      for (var l = 0; l < layers.length; l++) {
+        var src = layers[l], dst = holder.layers[l];
+        dst.name = src.name; dst.index = src.index; dst.time = src.time; dst.weight = src.weight; dst.loop = src.loop;
+      }
+      holder.count = layers.length;
+      var target = found[w];
       if (!target) continue;
-      target.sampledLayers = layers;
-      target.sampledLayerCount = layers.length;
+      target.sampledLayers = holder.layers;
+      target.sampledLayerCount = holder.count;
       applyPose(target, 0, false);
     }
-    return { applied: true, pending: pending };
+    return SCENE_CLIP_APPLIED[pending ? 1 : 0];
   }
+  var SCENE_CLIP_APPLIED = [{ applied: true, pending: false }, { applied: true, pending: true }];
 
   // Model playback control belongs to the animation authority. Core hydration
   // owns records and geometry; these adapters only drive their existing mixers.

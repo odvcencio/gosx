@@ -31,6 +31,13 @@
       return loadCommandBridge().then(function(bridge) { return bridge[method](...args); });
     };
   });
+  // Clip frames arrive every simulation frame. Once the bridge is loaded, call it
+  // directly instead of chaining a load promise and a spread per frame.
+  const stagedClipFrame = api.dispatchClipFrame;
+  api.dispatchClipFrame = function() {
+    const bridge = window.__gosx_scene3d_command_bridge;
+    return bridge ? bridge.dispatchClipFrame.apply(bridge, arguments) : stagedClipFrame.apply(api, arguments);
+  };
   api.getCamera = function(target) {
     return window.__gosx_scene3d_command_bridge?.getCamera(target) || null;
   };

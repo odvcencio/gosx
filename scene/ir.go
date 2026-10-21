@@ -307,6 +307,8 @@ type IRMeshNode struct {
 	AnimationFadeInMS  *int        `json:"animationFadeInMS,omitempty"`
 	AnimationFadeOutMS *int        `json:"animationFadeOutMS,omitempty"`
 	Loop               *bool       `json:"loop,omitempty"`
+	ClipSampled        bool        `json:"clipSampled,omitempty"`
+	RootMotion         bool        `json:"rootMotion,omitempty"`
 }
 
 // IRPointsNode describes a static point cloud.
@@ -1186,6 +1188,8 @@ func modelToIRNode(model ModelIR, materialIndex int) IRNode {
 	node.Mesh.AnimationFadeInMS = nonNegativeIntPtr(model.AnimationFadeInMS)
 	node.Mesh.AnimationFadeOutMS = nonNegativeIntPtr(model.AnimationFadeOutMS)
 	node.Mesh.Loop = model.Loop
+	node.Mesh.ClipSampled = model.ClipSampled
+	node.Mesh.RootMotion = model.RootMotion
 	return node
 }
 

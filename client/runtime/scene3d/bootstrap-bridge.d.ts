@@ -226,6 +226,7 @@ declare var sceneStateObjectsWithMaterials: any;
 declare var sceneStatePointsWithMaterials: any;
 declare var sceneStateSprites: any;
 declare var sceneTRSToMat4: any;
+declare var sceneTRSToMat4Into: any;
 declare var sceneTypedFloatArray: any;
 declare var sceneViewportValue: any;
 declare var sceneWaterAdvanceClock: any;

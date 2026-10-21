@@ -8,6 +8,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
+import { execFileSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
@@ -242,7 +243,7 @@ test("applyClipFrame rejects unknown models without writing, and remembers frame
   const pending = applyFrame(state, [{ id: "later", layers: [layer("walk", 1)] }]);
   assert.equal(pending.applied, true);
   assert.equal(pending.pending, true);
-  assert.equal(state._clipFrameLayers.get("later").length, 1);
+  assert.equal(state._clipFrameLayers.get("later").count, 1);
 });
 
 test("re-hydration re-poses from the last frame instead of the bind pose", () => {
@@ -334,4 +335,98 @@ test("decodeClipFrame reads the bytes the Go encoder writes", () => {
     ] },
     { id: "p2", layers: [] },
   ]);
+});
+
+// --- allocation-free steady state ---------------------------------------------
+
+// A seeded generator keeps these tests reproducible.
+function lcg(seed) { let x = seed >>> 0; return () => ((x = (Math.imul(x, 1664525) + 1013904223) >>> 0) / 4294967296); }
+
+test("the cached key search returns exactly the index a scan from zero finds", () => {
+  const { api, context } = animationContext();
+  const seek = vm.runInContext("sceneAnimSeekChannel", context);
+  const rnd = lcg(7);
+  // Irregular times, including duplicates, so boundary and tie handling is exercised.
+  const times = Float32Array.from([0, 0.1, 0.1, 0.25, 0.5, 0.5, 0.75, 1, 1.5, 2, 2.0625, 3]);
+  const channel = { times, values: new Float32Array(times.length * 3), property: "translation", interpolation: "LINEAR" };
+  const scan = (t) => { let i = 0; while (i < times.length - 1 && times[i + 1] < t) i++; return i; };
+  let time = 1;
+  for (let n = 0; n < 20000; n++) {
+    const mode = rnd();
+    if (mode < 0.5) time += (rnd() - 0.45) * 0.05;       // small steps both ways
+    else if (mode < 0.7) time = times[Math.floor(rnd() * times.length)]; // exactly on a key
+    else time = rnd() * 3.2;                              // arbitrary jump
+    time = Math.min(3.2, Math.max(-0.1, time));
+    seek(channel, time);
+    if (time > times[0] && time < times[times.length - 1]) assert.equal(channel._lastIndex, scan(time), `t=${time}`);
+  }
+  void api;
+});
+
+function poseFixture(options = {}) {
+  const { api, context } = animationContext();
+  const { nodes, skins, clips } = rig();
+  const clipList = clips();
+  const skin = { joints: skins[0].joints, inverseBindMatrices: skins[0].inverseBindMatrices };
+  const record = { rootNodes: [0], skins: [skin], rootTransform: options.root || null, sampledLayers: [], sampledLayerCount: 0 };
+  const sampler = api.createClipSampler(clipList, { nodes, skins: [skin], rootNodes: [0], rootMotion: options.rootMotion === true });
+  return { api, context, nodes, skin, record, sampler };
+}
+
+test("the allocation-free pose path is bit-equal to the general node-transform path", () => {
+  const rootMatrix = Float32Array.from([0.9, 0, 0.1, 0, 0, 1.1, 0, 0, -0.1, 0, 0.9, 0, 3, -1, 2, 1]);
+  const rnd = lcg(11);
+  for (const rootMotion of [false, true]) for (const root of [null, rootMatrix]) {
+    const fast = poseFixture({ rootMotion, root });
+    const slow = poseFixture({ rootMotion, root });
+    const output = new Map();
+    for (let n = 0; n < 300; n++) {
+      const count = Math.floor(rnd() * 5);
+      const layers = Array.from({ length: count }, () => layer(rnd() < 0.5 ? "walk" : rnd() < 0.5 ? "pop" : 0, rnd() * 3, rnd() < 0.2 ? 0 : 0.1 + rnd() * 2, rnd() < 0.5));
+      fast.record.sampledLayers = layers; fast.record.sampledLayerCount = layers.length;
+      assert.equal(fast.sampler.pose(fast.record), true);
+      output.clear();
+      slow.sampler.sample(layers, layers.length, output);
+      const world = slow.api.buildNodeTransforms(slow.nodes, output, root, [0]);
+      const expected = slow.api.computeJointMatrices(slow.skin, world);
+      assert.deepEqual(Array.from(fast.skin.jointMatrices), Array.from(expected), `rootMotion=${rootMotion} root=${!!root} frame ${n}`);
+    }
+  }
+});
+
+test("pose declines models with morph or rigid node-animation targets", () => {
+  const f = poseFixture();
+  f.record.morphTargets = [{}];
+  assert.equal(f.sampler.pose(f.record), false);
+  assert.equal(f.skin.jointMatrices, undefined, "nothing written");
+});
+
+// The probe runs in a child process with a 64 MB young generation, so no
+// scavenge happens during the measurement and heapUsed growth is the number of
+// bytes allocated. It applies 5000 two-model, four-layer frames (decode, sample,
+// blend, node and joint matrices) and runs the general Map-based path as a
+// control that must allocate, so a zero cannot come from a broken probe.
+test("applying clip frames allocates (almost) nothing in steady state", () => {
+  const probe = fileURLToPath(new URL("./scene3d-clip-frame-alloc.probe.mjs", import.meta.url));
+  const out = execFileSync(process.execPath, ["--expose-gc", "--min-semi-space-size=64", "--max-semi-space-size=64", probe], { encoding: "utf8", timeout: 120000 });
+  const { applyBytes, controlBytes, frames } = JSON.parse(out.trim().split("\n").pop());
+  assert.equal(frames, 5000);
+  assert.ok(controlBytes > 50 * 1024 * frames / 10, `probe sanity: the general path allocated only ${controlBytes} bytes`);
+  // Budget: 1 KiB per frame (two models), against about 28 KiB for the general path.
+  assert.ok(applyBytes < 1024 * frames, `steady-state apply allocated ${applyBytes} bytes over ${frames} frames (control: ${controlBytes})`);
+});
+
+test("the clip decoder interns strings and reuses its result objects", () => {
+  const decode = bridge().createClipDecoder();
+  const hex = "475350340100040077616c6b0200020070310200000000c03f0000803e0103800000003f0000403f000200703200";
+  const bytes = Uint8Array.from(Buffer.from(hex, "hex"));
+  const first = decode(bytes);
+  const layers = first[0].layers;
+  const id = first[0].id;
+  const second = decode(bytes);
+  assert.equal(second, first, "same models array");
+  assert.equal(second[0].layers, layers, "same layers array");
+  assert.equal(second[0].layers[0], layers[0], "same layer objects");
+  assert.equal(second[0].id, id);
+  assert.throws(() => decode(Uint8Array.from([71, 83, 80, 52, 0, 0, 2, 0, 2, 0, 112, 49, 0, 2, 0, 112, 49, 0])), /duplicate/);
 });

@@ -175,3 +175,34 @@ func BenchmarkEncodeClipFrameTwoModelsFourLayers(b *testing.B) {
 		}
 	}
 }
+
+func TestCanonicalIRMeshNodeCarriesClipSampled(t *testing.T) {
+	props := Props{Graph: NewGraph(
+		Model{ID: "p1", Src: "/m/fighter.glb", Scale: Vec3(1, 1, 1), ClipSampled: true},
+		Model{ID: "p2", Src: "/m/fighter.glb", Scale: Vec3(1, 1, 1), ClipSampled: true, RootMotion: true},
+		Model{ID: "prop", Src: "/m/crate.glb", Scale: Vec3(1, 1, 1)},
+	)}
+	byID := map[string]*IRMeshNode{}
+	for _, node := range props.CanonicalIR().Nodes {
+		if node.Mesh != nil {
+			byID[node.ID] = node.Mesh
+		}
+	}
+	if m := byID["p1"]; m == nil || !m.ClipSampled || m.RootMotion {
+		t.Fatalf("p1 mesh = %+v", m)
+	}
+	if m := byID["p2"]; m == nil || !m.ClipSampled || !m.RootMotion {
+		t.Fatalf("p2 mesh = %+v", m)
+	}
+	if m := byID["prop"]; m == nil || m.ClipSampled || m.RootMotion {
+		t.Fatalf("prop mesh = %+v", m)
+	}
+	raw, _ := json.Marshal(byID["p1"])
+	if !strings.Contains(string(raw), `"clipSampled":true`) || strings.Contains(string(raw), "rootMotion") {
+		t.Fatalf("p1 json = %s", raw)
+	}
+	raw, _ = json.Marshal(byID["prop"])
+	if strings.Contains(string(raw), "clipSampled") || strings.Contains(string(raw), "rootMotion") {
+		t.Fatalf("default json must omit both flags: %s", raw)
+	}
+}
