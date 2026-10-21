@@ -156,16 +156,16 @@
 .fluid__intro p { grid-column: 1 / -1; margin: 0; color: var(--demo-accent); font: 700 var(--type-xs)/1.4 var(--font-mono); letter-spacing: 0.1em; text-transform: uppercase; }
 .fluid__intro h1 { margin: 0; font: 800 var(--type-3xl)/1 var(--font-display); letter-spacing: -0.05em; }
 .fluid__intro span { max-width: 31rem; color: var(--color-text-secondary); font-size: var(--type-base); line-height: 1.6; }
-.fluid__frame { gap: var(--space-lg); align-items: stretch; }
-.fluid__canvas { width: min(100%, 860px); height: auto; aspect-ratio: 8 / 5; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); background: var(--demo-bg); box-shadow: var(--elevation-panel); }
+.fluid__frame { display: grid; grid-template-columns: minmax(0, 1fr) minmax(15rem, 18rem); gap: var(--space-lg); align-items: start; }
+.fluid__canvas { width: 100%; min-width: 0; height: auto; aspect-ratio: 8 / 5; border: 1px solid var(--color-border-strong); border-radius: var(--radius-md); background: var(--demo-bg); box-shadow: var(--elevation-panel); }
 .fluid__hud { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; gap: var(--space-sm); min-width: 15rem; padding: var(--space-md); border: 1px solid var(--color-border); border-radius: var(--radius-md); background: var(--color-surface); }
 .fluid__hud-title { grid-column: 1 / -1; margin: 0 0 var(--space-xs); color: var(--demo-accent); font: 700 var(--type-xs)/1.4 var(--font-mono); letter-spacing: 0.09em; }
-.fluid__stat { gap: 0.15rem; padding-top: var(--space-sm); border-top: 1px solid var(--color-border); }
+.fluid__stat { min-width: 0; gap: 0.15rem; padding-top: var(--space-sm); border-top: 1px solid var(--color-border); }
 .fluid__stat-label { color: var(--color-text-muted); font: 600 var(--type-xs)/1.4 var(--font-mono); letter-spacing: 0.05em; }
-.fluid__stat-value { color: var(--demo-fg); font: 700 var(--type-sm)/1.3 var(--font-body); letter-spacing: 0; }
+.fluid__stat-value { overflow-wrap: anywhere; color: var(--demo-fg); font: 700 var(--type-sm)/1.3 var(--font-body); letter-spacing: 0; }
 .fluid__footer { margin-top: 0; padding-top: var(--space-md); color: var(--color-text-secondary); font: 400 var(--type-sm)/1.5 var(--font-body); text-align: left; }
 @media (max-width: 1100px) {
-  .fluid__frame { flex-direction: column; }
+  .fluid__frame { grid-template-columns: minmax(0, 1fr); }
   .fluid__canvas { width: 100%; }
   .fluid__hud { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); width: 100%; box-sizing: border-box; }
 }

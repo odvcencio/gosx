@@ -354,11 +354,20 @@
     attributes: [{ format: "uint32", offset: 0, shaderLocation: 4 }],
   };
 
+  // Shader packing may rename a local binding, but the four authored
+  // per-instance matrix columns remain part of this renderer contract.
+  var SCENE_GPU_DRIVEN_MODEL_DECLARATION = /\blet\s+([A-Za-z_][A-Za-z_0-9]*)\s*=\s*mat4x4f\(\s*in\.instanceMatrix0\s*,\s*in\.instanceMatrix1\s*,\s*in\.instanceMatrix2\s*,\s*in\.instanceMatrix3\s*\)\s*;/;
+
   // sceneGPUDrivenReplace swaps one exact anchor and throws when it is
   // missing, so a renderer edit that moves an anchor fails loudly in tests
   // instead of shipping a shader that still reads the old instance inputs.
   function sceneGPUDrivenReplace(source, anchor, replacement, label) {
-    if (typeof source !== "string" || source.indexOf(anchor) < 0) {
+    // Production shader packing removes line indentation. Match the same
+    // WGSL declarations in both authored and packed shaders without making
+    // token changes silently acceptable.
+    if (typeof source === "string") source = source.replace(/^[\t ]+/gm, "");
+    if (typeof anchor === "string") anchor = anchor.replace(/^[\t ]+/gm, "");
+    if (typeof source !== "string" || (typeof anchor === "string" ? source.indexOf(anchor) < 0 : !anchor.test(source))) {
       throw new Error("gpu-driven: vertex shader anchor missing: " + label);
     }
     return source.replace(anchor, replacement);
@@ -375,8 +384,8 @@
     s = sceneGPUDrivenReplace(s, "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
       "@group(0) @binding(0) var<uniform> frame: FrameUniforms;\n" + SCENE_GPU_DRIVEN_INSTANCE_STRUCT_WGSL +
       "\n@group(2) @binding(0) var<storage, read> gdInstances: array<GDInstance>;", "pbr binding");
-    s = sceneGPUDrivenReplace(s, "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-      "    let gdInstance = gdInstances[in.gdSlot];\n    let model = gdInstance.model;", "pbr model");
+    s = sceneGPUDrivenReplace(s, SCENE_GPU_DRIVEN_MODEL_DECLARATION,
+      "    let gdInstance = gdInstances[in.gdSlot];\n    let $1 = gdInstance.model;", "pbr model");
     s = sceneGPUDrivenReplace(s, "    out.instanceColor = in.instanceColor;",
       "    out.instanceColor = gdInstance.color;", "pbr color");
     return s;
@@ -392,8 +401,8 @@
     s = sceneGPUDrivenReplace(s, "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
       "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;\n" + SCENE_GPU_DRIVEN_INSTANCE_STRUCT_WGSL +
       "\n@group(1) @binding(0) var<storage, read> gdInstances: array<GDInstance>;", "shadow binding");
-    s = sceneGPUDrivenReplace(s, "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-      "    let model = gdInstances[in.gdSlot].model;", "shadow model");
+    s = sceneGPUDrivenReplace(s, SCENE_GPU_DRIVEN_MODEL_DECLARATION,
+      "    let $1 = gdInstances[in.gdSlot].model;", "shadow model");
     return s;
   }
 
@@ -599,7 +608,9 @@
         // Same factories as the renderer's own layouts, so the renderer's
         // frame, material and shadow bind groups are group-equivalent here.
         frame: hooks.createFrameBindGroupLayout(device),
-        material: hooks.createMaterialBindGroupLayout(device),
+        // Renderer materials include the dynamic model-uniform binding even
+        // when this shader pulls the instance transform from storage.
+        material: hooks.createMaterialBindGroupLayout(device, true),
         shadow: hooks.createShadowBindGroupLayout(device),
       };
       return layouts;
@@ -610,6 +621,7 @@
       failed = name;
       console.warn("[gosx] gpu-driven: " + name + " pipeline rejected:", detail);
       if (typeof sceneReportPipelineFailure === "function") sceneReportPipelineFailure("gpu-driven", name, String(detail));
+      if (typeof hooks.onResourceReady === "function") hooks.onResourceReady();
     }
 
     // settle waits for a pipeline promise, then for the module's compile
@@ -620,7 +632,12 @@
         return check.then(function(error) {
           if (disposed) return;
           if (error) fail(name, error);
-          else store(pipeline);
+          else {
+            store(pipeline);
+            // The device's own completion notification precedes shader
+            // diagnostics. Wake static scenes only after the host is ready.
+            if (typeof hooks.onResourceReady === "function") hooks.onResourceReady();
+          }
         });
       }).catch(function(error) {
         fail(name, error && error.message ? error.message : error);

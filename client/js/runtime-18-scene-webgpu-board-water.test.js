@@ -547,10 +547,9 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   }, "render() must not throw -- a throw here means the fake device's validator caught a @group/@binding mismatch");
 
   // Both materials are drawn through drawPBRObjects' fully-generic Selena
-  // mesh path (getSelenaPipeline/createSelenaBindGroup) -- the SAME path
-  // pool/surface use, generalized by sceneSelenaGridUniformData's
-  // material.customUniforms.grid fallback (drawPBRObjects supplies no
-  // renderContext at all, unlike the water-system-owned passes above).
+  // mesh path (getSelenaPipeline/createSelenaBindGroup). The binder resolves
+  // live water context from the material's resource reference; ordinary
+  // authored parameters still use material.customUniforms.
   const objectMatPipeline = harness.fake.state.renderPipelines.find(
     (p) => p.desc && p.desc.label && String(p.desc.label).indexOf("WaterObjectMaterial") >= 0,
   );
@@ -575,22 +574,17 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   const duckMatBindGroup = harness.fake.state.bindGroups.find((bg) => bg.desc && bg.desc.layout === duckMatBGL);
   assert.ok(duckMatBindGroup, "expected a bind group built against the duck-material bind group layout");
 
-  // VALUES GATE: object-material/duck-material draw through drawPBRObjects,
-  // which supplies NO renderContext at all (see createSelenaBindGroup(mat,
-  // selenaResource, obj) in 16a-scene-webgpu.js -- only 3 args), so every
-  // uniform field must resolve via material.customUniforms or a compiled
-  // descriptor default. lightDir is a `context` field with NO compiled
-  // default and baseColor is a `param` with NO literal default either -- both
-  // fall to sceneSelenaUniformValue's zero fallback if customUniforms is ever
-  // dropped, which reads as "TorusKnot pure white" / "duck flat/unlit" in a
-  // real browser (lightDir=(0,0,0) normalizes to NaN; baseColor=(0,0,0,0)
-  // zeroes the albedo). Assert the actual packed bytes carry the entry
-  // config, not that value-free zero.
+  // VALUES GATE: live context supplies the current water light instead of
+  // the stale authored direction, while baseColor and main-scene pass flags
+  // remain authored parameters. Assert actual packed bytes, not just bindings.
+  const liveLight = [waterEntry.lightDirectionX, waterEntry.lightDirectionY, waterEntry.lightDirectionZ];
+  const liveLightLength = Math.hypot(...liveLight);
+  const liveLightDir = Array.from(Float32Array.from(liveLight, value => value / liveLightLength));
   const objectMatFloats = waterSelenaLastUniformWrite(harness.fake, objectMatBindGroup);
   const objectBaseColor = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "baseColor", 4);
   assert.deepEqual(objectBaseColor, [0.5, 0.5, 0.5, 1], "object-material baseColor must match the entry config (0.5,0.5,0.5,1), not the default-white/zero fallback");
   const objectLightDir = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "lightDir", 3);
-  assert.deepEqual(objectLightDir, [2, 3, -1], "object-material lightDir must be the nonzero entry config (2,3,-1), not zero");
+  assert.deepEqual(objectLightDir, liveLightDir, "object-material lightDir must follow the normalized live water light, not stale authored parameters");
   const objectIsTexturePass = waterSelenaFieldFloats(waterObjectMaterialSelenaFixture.layout, objectMatFloats, "isTexturePass", 1)[0];
   assert.equal(objectIsTexturePass, 0, "isTexturePass must be 0 on the main-scene draw (only the RTT reflection/refraction/clipped passes set it)");
 
@@ -598,7 +592,7 @@ test("Scene3D WebGPU water object-material/duck-material meshes route through th
   const duckBaseColor = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "baseColor", 4);
   assert.deepEqual(duckBaseColor, [1, 1, 1, 1], "duck-material baseColor must match the entry config (1,1,1,1)");
   const duckLightDir = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "lightDir", 3);
-  assert.deepEqual(duckLightDir, [2, 3, -1], "duck-material lightDir must be the nonzero entry config (2,3,-1), not zero");
+  assert.deepEqual(duckLightDir, liveLightDir, "duck-material lightDir must follow the normalized live water light");
   const duckIsTexturePass = waterSelenaFieldFloats(waterDuckMaterialSelenaFixture.layout, duckMatFloats, "isTexturePass", 1)[0];
   assert.equal(duckIsTexturePass, 0, "isTexturePass must be 0 on the main-scene draw");
 

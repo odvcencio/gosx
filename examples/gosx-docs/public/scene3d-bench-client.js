@@ -14,6 +14,7 @@
 	  var lastRAF = 0;
 	  var detectedGPU = "unavailable";
 	  var selectedBackend = "starting";
+	  var syncBackend = function() { return null; };
 
 	  // 16.7ms == one frame at 60fps. Used only to colour-code the p95/max/
 	  // rAF-p95 readouts; CPU submit is a fraction of a frame so this is a
@@ -247,6 +248,7 @@
 	  }
 
 	  function updateOverlay() {
+	    syncBackend();
 	    var stats = computeStats();
 	    var rafStats = computeRAFStats();
 	    if (stats) {
@@ -281,11 +283,16 @@
 
 	  function snapshot() {
 	    var overlay = document.getElementById("bench3d-overlay");
+	    var renderer = syncBackend();
 	    return {
 	      schema: "gosx.scene3d-bench.v1",
 	      capturedAt: new Date().toISOString(),
 	      workload: overlay ? overlay.getAttribute("data-workload") : "unknown",
 	      backend: selectedBackend,
+	      rendererMounted: !!(renderer && renderer.mounted),
+	      rendererFallback: renderer ? renderer.fallback : null,
+	      rendererError: renderer ? renderer.error : null,
+	      gpuDriven: renderer ? renderer.gpuDriven : null,
 	      gpu: detectedGPU,
 	      cpuSubmitMs: computeStats(),
 	      cpuSamples: bufCount,
@@ -324,6 +331,10 @@
 	  }
 
 	  function onEntries(entries) {
+	    var renderer = syncBackend();
+	    // Do not attribute a failed WebGPU submission (or a classic fallback)
+	    // to the requested GPU-driven workload.
+	    if (!renderer || !renderer.mounted || (renderer.gpuDriven.requested && !renderer.gpuDriven.active)) return;
 	    for (var i = 0; i < entries.length; i++) {
 	      var entry = entries[i];
 	      if (entry.name !== "scene3d-render" || entry.entryType !== "measure") continue;
@@ -387,24 +398,37 @@
 
 	    detectedGPU = gpuStr;
 	    if (gpuEl) gpuEl.textContent = gpuStr;
-	    function syncBackend() {
+	    syncBackend = function() {
 	      var mount = document.querySelector(".scene3d-bench [data-gosx-scene3d-renderer]");
-	      if (!mount) return false;
-	      selectedBackend = mount.getAttribute("data-gosx-scene3d-renderer") || "starting";
-	      if (apiEl) apiEl.textContent = selectedBackend;
-	      if (selectedBackend === "webgpu" && gpuEl) {
-	        detectedGPU = "adapter details unavailable";
-	        gpuEl.textContent = detectedGPU;
+	      var overlay = document.getElementById("bench3d-overlay");
+	      var mounted = !!mount && mount.getAttribute("data-gosx-scene3d-mounted") === "true";
+	      var candidate = mount ? (mount.getAttribute("data-gosx-scene3d-renderer") || "starting") : "starting";
+	      var nextBackend = mounted || candidate === "unsupported" ? candidate : "starting";
+	      if (nextBackend !== selectedBackend) {
+	        // A renderer fallback starts a different measurement population.
+	        bufIdx = 0; bufCount = 0; lastSampleMs = 0;
+	        [els.current, els.mean, els.p50, els.p95, els.max].forEach(function(el) { if (el) el.textContent = "—"; });
+	        if (els.samples) els.samples.textContent = "0";
 	      }
-	      return selectedBackend !== "starting";
-	    }
-	    if (!syncBackend()) {
-	      var attempts = 0;
-	      var timer = setInterval(function() {
-	        attempts++;
-	        if (syncBackend() || attempts >= 80) clearInterval(timer);
-	      }, 100);
-	    }
+	      selectedBackend = nextBackend;
+	      var fallback = mount ? (mount.getAttribute("data-gosx-scene3d-renderer-fallback") || null) : null;
+	      var error = mount ? (mount.getAttribute("data-gosx-scene3d-webgpu-last-error") || null) : null;
+	      var requested = !!overlay && overlay.getAttribute("data-workload") === "gpu-driven";
+	      var active = mounted && selectedBackend === "webgpu" && mount.getAttribute("data-gosx-scene3d-webgpu-gpu-driven-active") === "true";
+	      var reason = mount ? ((selectedBackend !== "webgpu" && fallback) || mount.getAttribute("data-gosx-scene3d-webgpu-gpu-driven-reason") || fallback) : null;
+	      if (apiEl) apiEl.textContent = selectedBackend;
+	      detectedGPU = selectedBackend === "webgpu" ? "adapter details unavailable" : gpuStr;
+	      if (gpuEl) gpuEl.textContent = detectedGPU;
+	      var status = document.getElementById("bench3d-render-status");
+	      if (status) {
+	        if (!mounted) status.textContent = candidate === "unsupported" ? "Renderer unavailable on this browser." : "Starting renderer…";
+	        else if (requested && !active) status.textContent = "GPU-driven path unavailable" + (reason ? ": " + reason : "; waiting for GPU diagnostics") + ". Current renderer: " + selectedBackend + ".";
+	        else if (fallback) status.textContent = "Renderer: " + selectedBackend + " · fallback: " + fallback;
+	        else status.textContent = "Renderer: " + selectedBackend + (requested ? " · GPU-driven instancing active" : "");
+	      }
+	      return { mounted: mounted, fallback: fallback, error: error, gpuDriven: { requested: requested, active: active, reason: reason } };
+	    };
+	    syncBackend();
 	  }
 
 	  function markActiveWorkload() {

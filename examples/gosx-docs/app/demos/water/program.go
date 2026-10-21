@@ -249,8 +249,9 @@ func waterControlDataJSON() (string, error) {
 				"objectDisplacementSpheres": torusKnotDisplacementSpheres(),
 				"mesh": map[string]any{
 					"x": -0.4, "y": -0.87, "z": 0.2,
-					"visible": true,
-					"radius":  0.17, "tube": 0.045,
+					"pickable": true,
+					"visible":  true,
+					"radius":   0.17, "tube": 0.045,
 					"rotationX": math.Pi / 2,
 					"spinX":     0, "spinY": 0, "spinZ": 0,
 					"driftX": 0, "driftY": 0, "driftZ": 0,
@@ -266,19 +267,18 @@ func waterControlDataJSON() (string, error) {
 				"objectHitTest": "mesh",
 				"objectSubtype": "duck",
 				"objectX":       0.4,
-				// Keep the low-density rubber duck at its natural buoyancy
-				// line. Object switches preserve the previous object's shared
-				// position, so floorClearance must clamp a floor-resting
-				// sphere/cube up to this line rather than leaving the entire
-				// textured duck hidden under the surface.
+				// Keep selection readable without making the waterline a fake
+				// collision floor. The center-min-y fitted mesh can be dunked
+				// down to the real pool floor and recover through buoyancy.
 				"objectY":                   -0.1,
+				"selectionMinY":             -0.1,
 				"objectZ":                   -0.2,
 				"objectRadius":              0.32,
 				"objectHalfSizeX":           0,
 				"objectHalfSizeY":           0,
 				"objectHalfSizeZ":           0,
 				"buoyancyRadius":            0.12,
-				"floorClearance":            0.9,
+				"floorClearance":            0,
 				"xLimitRadius":              0.32,
 				"zLimitRadius":              0.32,
 				"meshYOffset":               0,
@@ -291,6 +291,7 @@ func waterControlDataJSON() (string, error) {
 				"objectDisplacementSpheres": duckDisplacementSpheres(),
 				"mesh": map[string]any{
 					"x": 0.4, "y": -0.1, "z": -0.2,
+					"pickable":  true,
 					"visible":   true,
 					"rotationY": 0,
 					"scaleX":    1, "scaleY": 1, "scaleZ": 1,

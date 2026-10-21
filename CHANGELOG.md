@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## v0.57.18
+
+- Preserve asset fitting through retained model updates, keep Water shapes
+  pickable through selection changes, and match their refraction and shadows to
+  the selected geometry. Clear inactive object and shadow targets consistently.
+- Keep retained navigation stylesheets connected when head order has not changed,
+  preventing unstyled flashes during enhanced page updates. Let applications
+  claim local history entries through the cancelable `gosx:popstate` event,
+  preserving in-place editor selection during Back and Forward.
+- Derive GPU-driven shaders from emitted production shader strings as well as
+  source strings. Report actual benchmark backend/fallback state in the UI and
+  exported measurements instead of attributing failed submissions to WebGPU.
+- Repair demo diagnostics overflow, preview anchor offsets, Checkers disclosure
+  flow and renderer status, chart hydration defaults, Greeter labeling, and
+  keyboard dismissal of the documentation's mobile menu.
+
 - Reconcile shared-signal batch readers after notifications and derived values
   have settled. Each affected island evaluates once per store batch, preserving
   individual signal events and reentrant observer updates. Group subscriptions,
