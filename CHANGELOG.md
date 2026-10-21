@@ -15,10 +15,31 @@
   depth sorting, shadows and picking use the parented positions. For 5,000
   agents with 5% changing per 10 Hz tick, a tick drops from 513,917 to 23,279
   bytes and its decode and apply time from 27 ms to 1.2 ms (Node benchmark).
-  Only the WebGL crowd path follows a parent; a selected agent of a parented
+  The WebGL and WebGPU crowd paths follow a parent; a selected agent of a parented
   batch draws without an outline. A per-instance `ParentMatrix` is still
   rejected in motion frames. Existing crowds and frames behave as before. See
   `docs/scene3d-crowd-motion.md`.
+- Draw animated crowds on the WebGPU renderer. A scene that sets `PreferWebGPU`
+  now hydrates its `InstancedGLBMesh` agents as crowd batches, and the WebGPU
+  renderer draws them with the same features as WebGL: palette-skinned poses,
+  `MotionFrame` motion with GPU interpolation, `PartialMotionFrame` updates that
+  upload only the changed slot runs, `ParentNode`, and shadows. The batch record
+  and the planner are shared with WebGL. `scene.GPUDriven` now covers crowd
+  batches too: one compute dispatch per batch culls every agent against the
+  camera frustum, and with `Occlusion` the main pass runs in two phases and a
+  Hi-Z pyramid built from that frame's depth hides the agents behind decks and
+  walls, with no per-agent work on the CPU. A frustum cull changes no pixel; Hi-Z
+  removes only stray pixels that an occluded agent leaks through a wall (26 to 30
+  of 230,400 in the 5,000 and 7,800 agent ship benchmark, where it draws 45% and
+  44% of the agents). Measured on SwiftShader, not on a GPU: main thread 1.3 to
+  2.9 ms per frame for 5,000 to 7,800 agents. Limits: agents are not GPU pick
+  targets on WebGPU, crowd materials draw without detail layers, and water and
+  ocean reflection passes skip crowds. See `docs/scene3d-crowd-motion.md`.
+- Fix GPU-driven instancing in the shipped WebGPU bundle. The bundle build
+  strips the indentation of the renderer's WGSL and renames its locals, so the
+  host's text anchors never matched, and a `GPUDriven` scene with an eligible
+  instanced mesh failed over to WebGL2 on its first frame. The host now matches its anchors without depending on
+  indentation or local names.
 - Run the fighting input controller without a hub socket. `HubInputConfig.Sink`
   `"signal"` with `SignalName` (register it with `Manifest.AddLocalInput`)
   publishes each closed frame's absolute held samples, `[{player, dir, btn,
