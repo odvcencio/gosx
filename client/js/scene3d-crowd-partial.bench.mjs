@@ -51,6 +51,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '..', '..');
 const H = require(path.join(here, 'runtime-test-harness.js'));
 const ts = createRequire(path.join(root, 'client/runtime/package.json'))('typescript');
+const { readSceneRendererBackendSrc } = require(path.join(here, 'scene3d-renderer-source-set.js'));
 
 function arg(name, fallback) {
   const index = process.argv.indexOf('--' + name);
@@ -95,7 +96,7 @@ function loadFrameRuntime(window) {
   window.document = window.document || {};
   new Function('window', 'document', 'TextDecoder', 'Date', 'Promise', 'setTimeout', transpile(read('client/runtime/scene3d/command-runtime.ts')))(
     window, window.document, TextDecoder, Date, Promise, setTimeout);
-  const webglMount = read('client/runtime/scene3d/mount-webgl.ts');
+  const webglMount = fs.readFileSync(path.join(root, 'client', 'runtime', 'scene3d', 'mount-webgl.ts'), 'utf8');
   const writer = section(webglMount, 'function sceneUpdateRigidInstanceMotion(', 'function sceneRigidMembershipModelID(');
   const updateRigidMotion = new Function('window', transpile(writer) + '\nreturn sceneUpdateRigidInstanceMotion;')(window);
   return { bridge: window.__gosx_scene3d_command_bridge, updateRigidMotion };
@@ -104,7 +105,7 @@ function loadFrameRuntime(window) {
 // The WebGL renderer's per-record preparation and motion-stream upload, against
 // a GL mock that counts bytes. Same cut as scene3d-crowd-motion.bench.mjs.
 function loadRenderer() {
-  const webgl = read('client/runtime/scene3d/webgl.ts');
+  const webgl = readSceneRendererBackendSrc('webgl');
   const uploads = { bytes: 0, calls: 0 };
   let bufferID = 0;
   const gl = {
