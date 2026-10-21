@@ -386,11 +386,26 @@ test("application messages go both ways: JSON, bytes, and a document event", asy
   assert.equal(sent.transfer.length, 1);
 });
 
-test("disposePage terminates every worker", async () => {
+test("disposePage shuts mounted workers down through Go, and ends ones that never mounted", async () => {
   const page = bootPage();
   const { worker } = await mounted(page);
   page.feature.disposePage();
+  assert.equal(worker.of("dispose").length, 1, "a mounted engine runs its Go Dispose");
+  worker.say({ t: "disposed" });
   assert.equal(worker.terminated, true);
+  const booting = bootPage();
+  const { worker: unmounted } = await bootedRecord(booting);
+  booting.feature.disposePage();
+  assert.equal(unmounted.terminated, true, "an engine that never mounted has nothing to dispose");
+});
+
+test("disposePage leaves the engines the next page reuses running", async () => {
+  const page = bootPage();
+  const { worker } = await mounted(page);
+  page.feature.disposePage(new Set([ENTRY.id]));
+  assert.equal(worker.of("dispose").length, 0);
+  assert.equal(worker.terminated, false);
+  assert.deepEqual(page.host.ids(), [ENTRY.id]);
 });
 
 // ---------------------------------------------------------------------------

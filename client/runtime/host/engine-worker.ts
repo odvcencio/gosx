@@ -55,7 +55,7 @@
       if (!host) return {};
       var api = createPageHost(scriptURL);
       host.engineWorker = api;
-      return { disposePage: api.disposeAll };
+      return { disposePage: api.disposePage };
     });
   }
 
@@ -583,7 +583,7 @@
           onState: function(state) { post({ t: "net.state", nid: msg.nid, state: state }); },
           onDatagram: function(bytes) { post({ t: "net.data", nid: msg.nid, buf: bytes.buffer }, [bytes.buffer]); },
         };
-        // window.__gosx_engine_worker_net_transfer = false keeps the channel on
+        // Setting window.__gosx_engine_worker_net_transfer to false keeps the channel on
         // the page and relays datagrams; use it to compare routes or to work
         // around a browser that mishandles a transferred channel.
         if (msg.canAdopt === true && window.__gosx_engine_worker_net_transfer !== false) {
@@ -683,7 +683,14 @@
       };
     }
 
-    function disposeAll() { for (var rec of Array.from(records.values())) terminate(rec); }
+    // The runtime calls this when the page changes. Engines that the next page
+    // reuses keep their worker; the others shut down through Go's Dispose.
+    function disposePage(reuseIDs) {
+      for (var rec of Array.from(records.values())) {
+        if (reuseIDs instanceof Set && reuseIDs.has(rec.entry.id)) continue;
+        if (rec.ctx) disposeRecord(rec); else terminate(rec);
+      }
+    }
 
     return {
       version: 1,
@@ -692,7 +699,7 @@
       resolve: resolve,
       get: get,
       ids: function() { return Array.from(records.keys()); },
-      disposeAll: disposeAll,
+      disposePage: disposePage,
     };
   }
 
