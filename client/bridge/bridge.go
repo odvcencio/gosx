@@ -378,25 +378,32 @@ func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) er
 		batchJSON = "{}"
 	}
 
-	// Decode once. Decoding RawMessages and then each value separately repeated
-	// the JSON validation/parse walk for every field in a large HUD snapshot.
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(batchJSON), &payload); err != nil {
+	// Use the same number-preserving decoder as individual writes. Decoding
+	// into map[string]any with json.Unmarshal rounds wide integers to float64
+	// before the VM can represent them. Reuse the resulting VM map directly.
+	payload, err := vm.ValueFromJSON(batchJSON)
+	if err != nil {
 		return fmt.Errorf("decode shared signal batch: %w", err)
 	}
+	if !payload.IsMap() {
+		// Preserve null as an empty batch, matching map decoding. All other
+		// non-object JSON values are invalid batch payloads.
+		if payload.Type == program.TypeAny && !payload.IsList() {
+			return nil
+		}
+		return fmt.Errorf("decode shared signal batch: expected JSON object")
+	}
 
-	values := make(map[string]vm.Value, len(payload))
-	for name, raw := range payload {
+	values := payload.Map()
+	for name, value := range values {
 		if name == "" {
 			return fmt.Errorf("shared signal name required")
 		}
-		value := vm.ValueFromAny(raw)
 		if changedOnly {
 			if current, ok := b.store.Get(name); ok && vm.EqualJSON(current, value) {
-				continue
+				delete(values, name)
 			}
 		}
-		values[name] = value
 	}
 
 	b.store.SetBatch(values)
