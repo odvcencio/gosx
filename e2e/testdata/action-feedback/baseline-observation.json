@@ -1,6 +1,6 @@
 {
-  "revision": "385787d010a72a7da13c970075d4525139446ce2",
-  "tree": "44a0f8fcb17ad770290840bbaa0be5eb10f3a1d4",
+  "revision": "6dd40d2f780f3159962f676e2ddf7500e4746251",
+  "tree": "1cc746b003d592e160f1ee3ca198d933f996a6bc",
   "dirty": false,
   "snapshotSHA256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "fixtureSHA256": "75fed9e90a948dc3b8440bedc958eefea7dc36f3cd0cbe126d2009ce8f48a721",
@@ -34,6 +34,6 @@
   ],
   "passed": false,
   "expectedFailure": true,
-  "provenance": "Retained local real-browser baseline on unchanged main. Only the test driver was supplied through Go overlay; its fixture directory points to a retained copy of the identical Go app. This is not a CI baseline execution.",
+  "provenance": "Retained local real-browser baseline on unchanged main after #711. Only the correction-sequence test driver was supplied through Go overlay, using an identical retained Go fixture. This is not a CI baseline execution.",
   "driverSHA256": "1b4ae69c90a2398a5288b90bd7d204fe82b97462f24c4a4905be518be988c8a9"
 }
