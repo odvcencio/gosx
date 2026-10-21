@@ -20,6 +20,11 @@ type Scene3D struct {
 
 func (c Context) Scene3D(mount js.Value) Scene3D { return Scene3D{owner: c, mount: mount} }
 
+// Scene3DByID targets the Scene3D mount element with the given DOM id. Use it
+// in a worker-thread engine, which has no document to look the element up in;
+// the page resolves the id. It works on the main thread too.
+func (c Context) Scene3DByID(id string) Scene3D { return c.Scene3D(js.ValueOf(id)) }
+
 func (s Scene3D) call(method string, args ...any) (value js.Value, err error) {
 	defer func() {
 		if failure := recover(); failure != nil {

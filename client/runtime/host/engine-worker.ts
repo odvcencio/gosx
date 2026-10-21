@@ -413,6 +413,42 @@
         if (result && typeof result.catch === "function") result.catch(function(error) { frameFault(rec, msg, error); });
       },
 
+      // Scene3D mount access for Go code that has no document: events on the
+      // mount element, and a short list of renderer calls. Event names stay in
+      // the gosx:scene3d: namespace.
+      "mount.op": function(rec, msg) {
+        if (!current(rec)) return;
+        var mount = resolveMount(msg.target);
+        if (!mount) { mountFault(rec, msg, "mount #" + msg.target + " not found"); return; }
+        try {
+          var detail = typeof msg.json === "string" ? JSON.parse(msg.json) : undefined;
+          if (msg.op === "dispatchEvent" && SCENE_EVENT.test(msg.name)) {
+            mount.dispatchEvent(new CustomEvent(msg.name, { detail: detail }));
+          } else if (msg.op === "call" && MOUNT_CALLS.indexOf(msg.name) >= 0 && mount.__gosxScene3DHandle) {
+            mount.__gosxScene3DHandle[msg.name](detail);
+          } else {
+            mountFault(rec, msg, "mount operation " + msg.op + " " + msg.name + " is not allowed");
+          }
+        } catch (error) { mountFault(rec, msg, String(error && error.message || error)); }
+      },
+      "mount.listen": function(rec, msg) {
+        if (!current(rec) || !SCENE_EVENT.test(msg.name)) return;
+        var mount = resolveMount(msg.target);
+        if (!mount || typeof mount.addEventListener !== "function") { mountFault(rec, msg, "mount #" + msg.target + " not found"); return; }
+        var listener = function(event) {
+          if (event.target !== mount || rec.terminated) return;
+          var json;
+          try { json = JSON.stringify(event.detail); } catch (_) { return; }
+          try { rec.worker.postMessage({ t: "mount.event", lid: msg.lid, json: json }); } catch (_) {}
+        };
+        mount.addEventListener(msg.name, listener);
+        rec.listeners.set(msg.lid, function() { mount.removeEventListener(msg.name, listener); });
+      },
+      "mount.unlisten": function(rec, msg) {
+        var off = rec.listeners.get(msg.lid);
+        if (off) { rec.listeners.delete(msg.lid); try { off(); } catch (_) {} }
+      },
+
       // Messages the application defines between its page code and its engine.
       app: function(rec, msg) {
         rec.stats.appMessages++;
@@ -426,6 +462,12 @@
     };
 
     var FRAME_METHODS = { pose: "dispatchPoseFrame", motion: "dispatchMotionFrame", clip: "dispatchClipFrame" };
+    var SCENE_EVENT = /^gosx:scene3d:[a-z0-9-]+$/;
+    var MOUNT_CALLS = ["updateSceneProps"];
+
+    function mountFault(rec, msg, text) {
+      try { rec.worker.postMessage({ t: "fault", where: "mount." + msg.op, message: text }); } catch (_) {}
+    }
 
     function frameFault(rec, msg, error) {
       console.error("[gosx] engine worker " + msg.kind + " frame rejected:", error);
@@ -502,6 +544,8 @@
     var nextSID = 1;
     var appHandlers = new Set();
     var visibilityHandlers = new Set();
+    var mountListeners = new Map();   // lid -> callback(json)
+    var nextLID = 1;
     var hidden = false;
     var epochSkew = 0;                // page epoch ms minus worker epoch ms at init
 
@@ -566,6 +610,19 @@
       onVisibility: function(fn) { visibilityHandlers.add(fn); return function() { visibilityHandlers.delete(fn); }; },
       request: request,
       postFrame: postFrame,
+      // Scene3D mount access without a document (see the page handlers).
+      mountOp: function(target, op, name, json) {
+        post({ t: "mount.op", target: String(target), op: String(op), name: String(name), json: json === undefined ? undefined : String(json) });
+      },
+      mountListen: function(target, name, callback) {
+        var lid = nextLID++;
+        mountListeners.set(lid, callback);
+        post({ t: "mount.listen", lid: lid, target: String(target), name: String(name) });
+        return function() {
+          if (!mountListeners.delete(lid)) return;
+          try { post({ t: "mount.unlisten", lid: lid }); } catch (_) {}
+        };
+      },
     };
 
     var scene3d = {};
@@ -735,6 +792,10 @@
       app: function(msg) {
         var bytes = msg.buf instanceof ArrayBuffer ? new Uint8Array(msg.buf) : undefined;
         for (var fn of Array.from(appHandlers)) { try { fn(String(msg.name), msg.json, bytes); } catch (error) { logToPage("error", error); } }
+      },
+      "mount.event": function(msg) {
+        var callback = mountListeners.get(msg.lid);
+        if (callback) { try { callback(msg.json); } catch (error) { logToPage("error", error); } }
       },
       fault: function(msg) { logToPage("error", "page rejected " + msg.where + ": " + msg.message); },
     };

@@ -216,7 +216,7 @@ test-engine-worker-hidden:
 	ENGINE_WORKER_BROWSER=1 GOWORK=off $(GO) test -count=1 -v -run TestHiddenTabTimers ./engine/wasm/internal/browserworker
 
 test-engine-worker-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" -count=1 ./engine/wasm ./game/host ./game/loop
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" -count=1 ./engine/wasm ./game/host ./game/loop ./scene
 
 test-netplay:
 	GOWORK=off $(GO) test -p 4 -count=1 ./netplay/...

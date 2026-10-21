@@ -3,6 +3,7 @@
 package wasm
 
 import (
+	"context"
 	"testing"
 
 	"syscall/js"
@@ -148,5 +149,16 @@ func TestPortVisibilityRateAndStats(t *testing.T) {
 	}
 	if port.Now() != 42.5 {
 		t.Fatal("Now")
+	}
+}
+
+func TestScene3DByIDPassesTheIDAsTheMountTarget(t *testing.T) {
+	host := js.Global().Call("eval", `({current:true, isCurrent(){return true}, scene3D(method, target, ...args){ this.method = method; this.target = target; return Promise.resolve(); }})`)
+	ctx := Context{value: host}
+	if err := ctx.Scene3DByID("arena").Dispatch(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if host.Get("method").String() != "dispatchCommands" || host.Get("target").Type() != js.TypeString || host.Get("target").String() != "arena" {
+		t.Fatalf("method %v target %v", host.Get("method"), host.Get("target"))
 	}
 }

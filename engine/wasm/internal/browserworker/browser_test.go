@@ -34,7 +34,15 @@ type browserState struct {
 	UA      string           `json:"ua"`
 	Error   string           `json:"error"`
 	Log     []string         `json:"log"`
-	Extra   map[string]any   `json:"extra"`
+	Frames  []map[string]any `json:"frames"`
+	Signal  map[string]any   `json:"signal"`
+	Shots   []shot           `json:"shots"`
+}
+
+type shot struct {
+	Name   string   `json:"name"`
+	Orange int      `json:"orange"`
+	MeanX  *float64 `json:"meanX"`
 }
 
 func (s browserState) find(kind string) report {
@@ -103,13 +111,26 @@ func assets(t *testing.T) string {
 
 // harness script: collects what the engines report and what the runtime raises.
 const harness = `<script>
-window.__reports = []; window.__events = [];
+window.__reports = []; window.__events = []; window.__frames = [];
 document.addEventListener("gosx:engine:report", function(e) { window.__reports.push(e.detail.detail); });
 ["thread-fallback", "worker-error", "worker-frame-error"].forEach(function(n) {
   document.addEventListener("gosx:engine:" + n, function(e) { window.__events.push({ name: n, detail: e.detail }); });
 });
 var q = new URLSearchParams(location.search);
 if (q.get("noworker")) window.__gosx_engine_worker_disable = true;
+// Record binary frames at the page's Scene3D dispatch entry points: the same
+// functions a main-thread engine calls.
+window.addEventListener("load", function() {
+  var api = window.__gosx && window.__gosx.scene3d; if (!api) return;
+  ["dispatchPoseFrame", "dispatchMotionFrame", "dispatchClipFrame"].forEach(function(name) {
+    var original = api[name];
+    api[name] = function(target, bytes, options) {
+      var b = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+      window.__frames.push({ method: name, target: String(target), length: b.length, magic: String.fromCharCode(b[0], b[1], b[2], b[3]) });
+      return original.apply(this, arguments);
+    };
+  });
+});
 // A main-thread timer the tests compare with the worker clock.
 window.__mainTicks = 0; setInterval(function() { window.__mainTicks++; }, 16);
 // Main-thread jank: a render spike of ~120 ms every 200 ms.
@@ -170,9 +191,13 @@ func serve(t *testing.T, dir string, html func(r *http.Request) string) *httptes
 }
 
 // drive opens url in Chromium and returns the page's state once waitExpr is truthy.
-func drive(t *testing.T, url, waitExpr string, timeout time.Duration) browserState {
+func drive(t *testing.T, url, waitExpr string, timeout time.Duration, shots ...string) browserState {
 	t.Helper()
-	cmd := exec.Command("node", "run.mjs", url, waitExpr, fmt.Sprint(timeout.Milliseconds()))
+	args := []string{"run.mjs", url, waitExpr, fmt.Sprint(timeout.Milliseconds())}
+	if len(shots) > 0 {
+		args = append(args, shots[0])
+	}
+	cmd := exec.Command("node", args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
@@ -184,7 +209,7 @@ func drive(t *testing.T, url, waitExpr string, timeout time.Duration) browserSta
 		t.Fatalf("browser output %q: %v", out, jerr)
 	}
 	if state.Error != "" {
-		t.Fatalf("browser run failed: %s\nlog: %v", state.Error, state.Log)
+		t.Fatalf("browser run failed: %s\npartial: %s\nlog: %v", state.Error, out, state.Log)
 	}
 	return state
 }
@@ -408,5 +433,85 @@ func TestHiddenTabTimers(t *testing.T) {
 	}
 	if got := rate(a, b, "", ""); got > 20 {
 		t.Errorf("main-thread 16 ms timer ran %.1f/s while hidden; the control shows no throttling, so the comparison proves nothing", got)
+	}
+}
+
+const sceneProps = `{"width":400,"height":300,"responsive":false,"maxDevicePixelRatio":1,"requireWebGL":true,"forceWebGL":true,"shaded":true,"controls":"none","background":"#08151f",
+ "scene":{"camera":{"x":0,"y":0,"z":8,"fov":60},"instancedMeshes":[{"id":"crowd","count":1,"kind":"box","size":1,"color":"#ffbb33","transforms":[1,0,0,0,0,1,0,0,0,0,1,0,-3,0,0,1]}]}}`
+
+func sceneEngine() engine.Config {
+	return engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, MountID: "arena", Props: json.RawMessage(sceneProps),
+		MountAttrs: map[string]any{"style": "width:400px;height:300px"}}
+}
+
+func sceneWorker(thread engine.Thread) engine.Config {
+	cfg := workerEngine(`{"scenario":"scene","target":"arena"}`)
+	cfg.Thread = thread
+	return cfg
+}
+
+func scenePage(t *testing.T, thread engine.Thread) func(*http.Request) string {
+	return func(*http.Request) string {
+		return page(t, pageOptions{
+			engines: []engine.Config{sceneEngine(), sceneWorker(thread)},
+		})
+	}
+}
+
+// A Go engine in a worker drives a Scene3D object on the page: GSXI frames move
+// an instanced box, GSP2/GSP3/GSP4 reach the page's dispatch functions, and
+// signal batches update a shared signal. The pixels of the page's canvas are
+// the evidence that the object moved.
+func TestWorkerDrivesAScene3DObjectThroughBinaryFrames(t *testing.T) {
+	runSceneScenario(t, "/", "worker", false)
+}
+
+// The same engine on the main thread (the fallback path) must produce the same
+// result, because the page's dispatch functions are the same ones.
+func TestMainThreadFallbackDrivesTheSameScene(t *testing.T) {
+	runSceneScenario(t, "/?noworker=1", "", true)
+}
+
+func runSceneScenario(t *testing.T, path, wantThread string, mainThread bool) {
+	dir := assets(t)
+	ts := serve(t, dir, scenePage(t, engine.ThreadWorker))
+	shots := `[{"name":"early","selector":"#arena","when":"(window.__reports||[]).some(r => r.kind === 'scene-progress' && r.rev >= 30)"},
+	           {"name":"late","selector":"#arena","when":"(window.__reports||[]).some(r => r.kind === 'scene-done')"}]`
+	state := drive(t, ts.URL+path, `(window.__reports||[]).some(r => r.kind === 'scene-done' || r.kind === 'scene-error')`, 60*time.Second, shots)
+	if e := state.find("scene-error"); e != nil {
+		t.Fatalf("scene error: %v\nlog: %v", e, state.Log)
+	}
+	mounted := state.find("mounted")
+	if mounted["thread"] != wantThread || (mounted["hasDocument"] == true) != mainThread {
+		t.Fatalf("engine ran on the wrong thread (want %q): %v", wantThread, mounted)
+	}
+	done := state.find("scene-done")
+	if done == nil || num(done, "applied") != 240 || num(done, "rejected") != 0 {
+		t.Fatalf("scene-done %v\nlog: %v", done, state.Log)
+	}
+	if len(state.Shots) != 2 || state.Shots[0].MeanX == nil || state.Shots[1].MeanX == nil {
+		t.Fatalf("no foreground pixels found in the canvas: %+v\nlog: %v", state.Shots, state.Log)
+	}
+	early, late := *state.Shots[0].MeanX, *state.Shots[1].MeanX
+	t.Logf("instanced box foreground mean x: %.1f px at frame>=30, %.1f px at frame 240 (%d and %d foreground pixels)", early, late, state.Shots[0].Orange, state.Shots[1].Orange)
+	if late-early < 80 {
+		t.Fatalf("the box moved %.1f px, want at least 80: GSXI frames from the worker did not drive it", late-early)
+	}
+	magics := map[string]string{}
+	for _, f := range state.Frames {
+		magics[fmt.Sprint(f["method"])] = fmt.Sprint(f["magic"])
+	}
+	for method, magic := range map[string]string{"dispatchPoseFrame": "GSP2", "dispatchMotionFrame": "GSP3", "dispatchClipFrame": "GSP4"} {
+		if magics[method] != magic {
+			t.Errorf("%s received %q, want %q (frames seen: %v)", method, magics[method], magic, state.Frames)
+		}
+	}
+	if state.Signal == nil || num(report(state.Signal), "rev") != 240 {
+		t.Errorf("shared signal $sim = %v, want rev 240", state.Signal)
+	}
+	for _, ev := range state.Events {
+		if (ev["name"] == "thread-fallback" && !mainThread) || ev["name"] == "worker-error" {
+			t.Errorf("unexpected event %v", ev)
+		}
 	}
 }

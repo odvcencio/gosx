@@ -655,3 +655,79 @@ test("worker: a timer that fires early still yields one frame per slot", async (
   w.advance(1000);
   assert.ok(count >= 58 && count <= 61, "60 Hz for 1 s gave " + count);
 });
+
+// ---------------------------------------------------------------------------
+// Scene3D mount access
+// ---------------------------------------------------------------------------
+
+function fakeMount() {
+  const mount = {
+    events: [], listeners: new Map(), calls: [],
+    dispatchEvent(e) { this.events.push(e); const fn = this.listeners.get(e.type); if (fn) { e.target = this; fn(e); } return true; },
+    addEventListener(type, fn) { this.listeners.set(type, fn); },
+    removeEventListener(type) { this.listeners.delete(type); },
+    __gosxScene3DHandle: { updateSceneProps(p) { mount.calls.push(p); } },
+  };
+  return mount;
+}
+
+test("page: mount.op dispatches only gosx:scene3d: events and a short call list", async () => {
+  const page = bootPage();
+  const mount = fakeMount();
+  page.document.getElementById = id => (id === "arena" ? mount : null);
+  const { worker } = await mounted(page);
+  worker.say({ t: "mount.op", target: "arena", op: "dispatchEvent", name: "gosx:scene3d:commands", json: '{"revision":1}' });
+  assert.equal(mount.events.length, 1);
+  assert.equal(mount.events[0].type, "gosx:scene3d:commands");
+  assert.deepEqual(plain(mount.events[0].detail), { revision: 1 });
+  worker.say({ t: "mount.op", target: "arena", op: "call", name: "updateSceneProps", json: '{"maxFrameRate":30}' });
+  assert.deepEqual(plain(mount.calls), [{ maxFrameRate: 30 }]);
+  for (const bad of [
+    { op: "dispatchEvent", name: "click", json: "{}" },
+    { op: "dispatchEvent", name: "gosx:scene3d:../x", json: "{}" },
+    { op: "call", name: "dispose", json: "{}" },
+    { op: "evalThis", name: "x" },
+  ]) worker.say({ t: "mount.op", target: "arena", ...bad });
+  assert.equal(mount.events.length, 1, "no disallowed event may reach the page");
+  assert.equal(mount.calls.length, 1);
+  assert.equal(worker.of("fault").length, 4);
+  worker.say({ t: "mount.op", target: "gone", op: "dispatchEvent", name: "gosx:scene3d:commands", json: "{}" });
+  assert.match(worker.of("fault").at(-1).message, /not found/);
+});
+
+test("page: mount.listen forwards events for that mount only, and unlisten or dispose stops them", async () => {
+  const page = bootPage();
+  const mount = fakeMount();
+  page.document.getElementById = id => (id === "arena" ? mount : null);
+  const { worker, handle } = await mounted(page);
+  worker.say({ t: "mount.listen", lid: 5, target: "arena", name: "gosx:scene3d:frame-submitted" });
+  mount.dispatchEvent({ type: "gosx:scene3d:frame-submitted", detail: { requestID: "r" } });
+  assert.deepEqual(worker.of("mount.event").map(m => [m.lid, m.json]), [[5, '{"requestID":"r"}']]);
+  mount.listeners.get("gosx:scene3d:frame-submitted")({ type: "x", target: {}, detail: {} });
+  assert.equal(worker.of("mount.event").length, 1, "a bubbled event from a child is ignored");
+  worker.say({ t: "mount.listen", lid: 6, target: "arena", name: "click" });
+  assert.equal(mount.listeners.has("click"), false, "only scene3d events may be observed");
+  worker.say({ t: "mount.unlisten", lid: 5 });
+  assert.equal(mount.listeners.size, 0);
+  worker.say({ t: "mount.listen", lid: 7, target: "arena", name: "gosx:scene3d:frame-submitted" });
+  assert.equal(mount.listeners.size, 1);
+  handle.dispose();
+  worker.say({ t: "disposed" });
+  assert.equal(mount.listeners.size, 0, "terminating the worker removes its listeners");
+});
+
+test("worker: mountOp and mountListen post to the page and deliver events back", async () => {
+  const w = await mountedWorker();
+  const api = w.scope.__gosx.worker;
+  api.mountOp("arena", "dispatchEvent", "gosx:scene3d:commands", '{"a":1}');
+  assert.deepEqual(plain(w.of("mount.op")[0].msg), { t: "mount.op", target: "arena", op: "dispatchEvent", name: "gosx:scene3d:commands", json: '{"a":1}' });
+  const seen = [];
+  const off = api.mountListen("arena", "gosx:scene3d:frame-submitted", json => seen.push(json));
+  const lid = w.of("mount.listen")[0].msg.lid;
+  w.send({ t: "mount.event", lid, json: '{"x":1}' });
+  assert.deepEqual(seen, ['{"x":1}']);
+  off(); off();
+  assert.equal(w.of("mount.unlisten").length, 1);
+  w.send({ t: "mount.event", lid, json: "{}" });
+  assert.equal(seen.length, 1);
+});

@@ -7,12 +7,14 @@
 package main
 
 import (
+	"context"
 	"syscall/js"
 	"time"
 
 	"m31labs.dev/gosx/engine/wasm"
 	"m31labs.dev/gosx/game"
 	"m31labs.dev/gosx/game/loop"
+	"m31labs.dev/gosx/scene"
 )
 
 func perfNow() float64 { return js.Global().Get("performance").Call("now").Float() }
@@ -32,6 +34,7 @@ func main() {
 		var props struct {
 			Scenario  string `json:"scenario"`
 			Tag       string `json:"tag"`
+			Target    string `json:"target"`
 			RunHidden bool   `json:"runHidden"`
 		}
 		_ = ctx.DecodeProps(&props)
@@ -47,6 +50,8 @@ func main() {
 		switch props.Scenario {
 		case "clock":
 			stop = startClock(ctx, props.Tag, props.RunHidden)
+		case "scene":
+			stop = startScene(ctx, props.Target)
 		}
 		return wasm.HandleFunc(func() {
 			if stop != nil {
@@ -125,4 +130,84 @@ func startClock(ctx wasm.Context, tag string, runHidden bool) (stop func()) {
 		frames++
 	})
 	return driver.Stop
+}
+
+// startScene waits for the page's Scene3D mount, then drives one instanced box
+// across the view at 60 Hz with GSXI instance-stream frames, writes the frame
+// counter to a shared signal, and sends one pose, motion and clip frame so the
+// test can see all four binary formats reach the page.
+func startScene(ctx wasm.Context, target string) (stop func()) {
+	const totalFrames = 240
+	done := make(chan struct{})
+	stream := scene.NewStreamWriter(target)
+	source := loop.NewFrameSourceJS()
+	var handle int
+	go func() {
+		readyCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := ctx.Scene3DByID(target).Ready(readyCtx); err != nil {
+			report(ctx, "scene-error", map[string]any{"error": err.Error()})
+			return
+		}
+		// On the main thread Prepare loads the stream codec and reports false
+		// until it arrives; in a worker it is ready at once.
+		for deadline := time.Now().Add(10 * time.Second); !stream.Prepare(); time.Sleep(50 * time.Millisecond) {
+			if time.Now().After(deadline) {
+				report(ctx, "scene-error", map[string]any{"error": "stream writer not ready"})
+				return
+			}
+		}
+		report(ctx, "scene-ready", nil)
+		rev, applied, rejected := uint64(0), 0, 0
+		var step func(float64)
+		step = func(float64) {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			rev++
+			x := float32(-3 + 6*float64(rev)/totalFrames)
+			ok, err := stream.Apply(scene.InstanceStreamFrame{
+				BatchID: "crowd", Revision: rev, Kind: scene.InstanceStreamTransform, Count: 1,
+				Data: []float32{1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, x, 0, 0, 1},
+			})
+			if err != nil || !ok {
+				rejected++
+			} else {
+				applied++
+			}
+			if rev%10 == 0 {
+				_ = ctx.SetChangedSignals(map[string]any{"$sim": map[string]any{"rev": rev, "x": x}})
+			}
+			if rev == 3 {
+				sendOtherFrames(target)
+			}
+			if rev%30 == 0 {
+				report(ctx, "scene-progress", map[string]any{"rev": rev, "applied": applied, "rejected": rejected})
+			}
+			if rev >= totalFrames {
+				report(ctx, "scene-done", map[string]any{"rev": rev, "applied": applied, "rejected": rejected})
+				return
+			}
+			handle = source.RequestFrame(step)
+		}
+		handle = source.RequestFrame(step)
+	}()
+	return func() {
+		close(done)
+		source.CancelFrame(handle)
+		stream.Dispose()
+	}
+}
+
+// sendOtherFrames sends one frame of each remaining binary format. The page has
+// no model batches mounted, so the renderer may reject them; the test checks
+// only that the bytes reach the page's dispatch entry points.
+func sendOtherFrames(target string) {
+	_ = scene.DispatchPoseFrame(target, scene.PoseFrame{Batches: []scene.PoseBatch{{ID: "actors", Instances: []scene.MeshInstanceIR{
+		{ID: "a0", X: 1, ScaleX: 1, ScaleY: 1, ScaleZ: 1, Animation: "Run", AnimationTime: .25, AnimationLoop: true}}}}}, nil)
+	_ = scene.DispatchMotionFrame(target, scene.MotionFrame{Batches: []scene.MotionBatch{{ID: "crowd2", Instances: []scene.MotionInstanceIR{
+		{ID: "m0", Animation: "Run", TPrev: 0, TNext: 1, PrevScaleX: 1, PrevScaleY: 1, PrevScaleZ: 1, NextScaleX: 1, NextScaleY: 1, NextScaleZ: 1}}}}}, nil)
+	_ = scene.DispatchClipFrame(target, scene.ClipFrame{Models: []scene.ClipModel{{ID: "hero", Layers: []scene.ClipLayer{{Name: "Run", Time: .5, Weight: 1, Loop: true}}}}})
 }
