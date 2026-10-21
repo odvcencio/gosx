@@ -127,6 +127,11 @@ func (a *App) shouldAttemptISR(r *http.Request, dispatch func(http.ResponseWrite
 	if a == nil || a.isr == nil || r == nil || dispatch == nil {
 		return false
 	}
+	// A previous export must not hide current source or its freshly staged
+	// runtime metadata while the development server is running.
+	if os.Getenv("GOSX_DEV") == "1" {
+		return false
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}

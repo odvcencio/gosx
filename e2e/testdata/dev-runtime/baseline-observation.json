@@ -1,0 +1,22 @@
+{
+  "capture": "Retained local baseline execution, not a CI baseline run",
+  "frameworkRevision": "33d84a796201b3f4059beb285d68d90bc1bf8210",
+  "frameworkTree": "8faf82fedb85504c3a5c4523b398ee69bcc453d0",
+  "mainAtCapture": "9d066a88c8863e848f1d5adbbf7b8c222067f96e",
+  "fixture": "Go-only public CounterProgram API; explicit runtime root; no application JavaScript or production build",
+  "fixtureSourceSHA256": "8a15f4e5815cfff588b7c19526de7aab8f661012e3514d026aa049033d32433e",
+  "browser": "153.0.8010.12",
+  "input": "load the fresh dev app and click +",
+  "initial": "-0+",
+  "observed": "-0+",
+  "runtime": {
+    "path": ""
+  },
+  "errors": [
+    "[gosx] islands, compute islands, and shared runtime engines require manifest.runtime.path",
+    "[gosx] __gosx_hydrate not available \u2014 cannot hydrate island gosx-island-0"
+  ],
+  "stagedWasmPresent": true,
+  "stagedWasmSHA256": "82cec9e1aa4afa4f639567b23492b576df6d17ee613e2e3de4e05da299e8e244",
+  "limitation": "Startup behavior observation; not a latency benchmark. Framework tree predates #709; fixture header comment differs from the committed fixture."
+}

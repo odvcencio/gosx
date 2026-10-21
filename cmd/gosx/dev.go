@@ -238,71 +238,9 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 	if err := os.WriteFile(filepath.Join(buildDir, "standard-go-wasm_exec.js"), wrapStandardGoWASMExec(standardGoWASMExec), 0644); err != nil {
 		return fmt.Errorf("stage standard-Go wasm_exec.js: %w", err)
 	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap.js")); err != nil {
-		return fmt.Errorf("stage bootstrap.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-lite.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-lite.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-lite.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-runtime.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-runtime.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-runtime.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-islands.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-islands.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-feature-islands.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-engines.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-engines.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-feature-engines.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-hubs.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-hubs.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-feature-hubs.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-controllers.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-controllers.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-feature-controllers.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-controller-input.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-controller-input.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-controller-input.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "bootstrap-feature-textlayout.js"), filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-textlayout.js")); err != nil {
-		return fmt.Errorf("stage bootstrap-feature-textlayout.js: %w", err)
-	}
-	for _, chunk := range []string{
-		"bootstrap-feature-scene3d.js",
-		"bootstrap-feature-scene3d-command.js",
-		"bootstrap-feature-scene3d-model-preparation.js",
-		"bootstrap-feature-scene3d-hydrate.js",
-		"bootstrap-feature-scene3d-webgpu.js",
-		"bootstrap-feature-scene3d-webgl.js",
-		"bootstrap-feature-scene3d-gltf.js",
-		"bootstrap-feature-scene3d-animation.js",
-		"bootstrap-feature-scene3d-compute.js",
-		"bootstrap-feature-scene3d-decompress.js",
-		"bootstrap-feature-scene3d-instance-stream.js",
-	} {
-		if err := copyFile(filepath.Join(buildDir, chunk), filepath.Join(gosxRoot, "client", "js", chunk)); err != nil {
-			return fmt.Errorf("stage %s: %w", chunk, err)
-		}
-	}
-	if err := copyFile(filepath.Join(buildDir, "patch.js"), filepath.Join(gosxRoot, "client", "js", "patch.js")); err != nil {
-		return fmt.Errorf("stage patch.js: %w", err)
-	}
-	hlsData, err := os.ReadFile(filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"))
-	if err != nil {
-		return fmt.Errorf("read hls.min.js: %w", err)
-	}
-	if err := os.WriteFile(filepath.Join(buildDir, "hls.min.js"), runtimeJSAssetData("hls.min", hlsData), 0644); err != nil {
-		return fmt.Errorf("stage hls.min.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "stripe-bridge.js"), filepath.Join(gosxRoot, "client", "js", "stripe-bridge.js")); err != nil {
-		return fmt.Errorf("stage stripe-bridge.js: %w", err)
-	}
-	if err := copyFile(filepath.Join(buildDir, "relay.js"), filepath.Join(gosxRoot, "client", "js", "relay.js")); err != nil {
-		return fmt.Errorf("stage relay.js: %w", err)
-	}
-	for _, chunk := range runtimeFeatureChunks {
-		file := "bootstrap-feature-" + chunk.name + ".js"
-		if err := copyFile(filepath.Join(buildDir, file), filepath.Join(gosxRoot, "client", "js", file)); err != nil {
-			return fmt.Errorf("stage %s: %w", file, err)
-		}
+	var runtimeAssets RuntimeAssets
+	if err := stageDevRuntimeJavaScript(gosxRoot, buildDir, &runtimeAssets); err != nil {
+		return err
 	}
 
 	if err := writeDevIslandPrograms(islandDir, islands); err != nil {
@@ -314,7 +252,7 @@ func prepareDevAssetsWithPrograms(dir string, islands []*IslandProgramSource) er
 	// Automatic .gsx engine-surface discovery is preview/post-v1 and is not
 	// part of dev asset staging. The v1 engine surface is programmatic
 	// engine.Config, whose runtime assets are staged above.
-	return nil
+	return writeDevRuntimeManifest(buildDir, runtimeAssets)
 }
 
 func compileDevIslands(dir, islandDir string) error {

@@ -1,0 +1,84 @@
+// Go-only fixture for development runtime bootstrap and integrity checks.
+package main
+
+import (
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
+
+	"m31labs.dev/gosx"
+	"m31labs.dev/gosx/island"
+	"m31labs.dev/gosx/island/program"
+	"m31labs.dev/gosx/server"
+)
+
+func main() {
+	_, thisFile, _, _ := runtime.Caller(0)
+	root := filepath.Dir(thisFile)
+
+	counterProgram := program.CounterProgram()
+	counterJSON, err := program.EncodeJSON(counterProgram)
+	if err != nil {
+		log.Fatalf("encode counter island: %v", err)
+	}
+
+	app := server.New()
+	app.SetPublicDir(filepath.Join(root, "public"))
+	app.SetRuntimeRoot(root)
+	app.Mount("/counter-program.json", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-cache, no-store, must-revalidate")
+		_, _ = w.Write(counterJSON)
+	}))
+	app.Mount("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(gosx.RenderHTML(counterPage(counterProgram, queryCount(r)))))
+	}))
+
+	port := getenv("PORT", "8080")
+	fmt.Printf("GoSX counter example running at http://localhost:%s\n", port)
+	log.Fatal(app.ListenAndServe(":" + port))
+}
+
+func queryCount(r *http.Request) int {
+	count, _ := strconv.Atoi(r.URL.Query().Get("count"))
+	return count
+}
+
+func getenv(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return fallback
+}
+
+func counterPage(counterProgram *program.Program, count int) gosx.Node {
+	islands := island.NewRenderer("counter")
+	islands.SetProgramAsset("Counter", "/counter-program.json", "json", "")
+
+	body := gosx.El("main", gosx.Attrs(gosx.Attr("class", "page-shell")),
+		gosx.El("section", gosx.Attrs(gosx.Attr("class", "counter-panel")),
+			gosx.El("h1", gosx.Text("GoSX Counter")),
+			islands.RenderIslandFromProgram(counterProgram, map[string]int{"initial": count}),
+			gosx.RawHTML(fmt.Sprintf(
+				`<noscript><div class="counter no-js-counter"><a href="/?count=%d">-</a><span class="count">%d</span><a href="/?count=%d">+</a></div></noscript>`,
+				count-1,
+				count,
+				count+1,
+			)),
+		),
+	)
+
+	return server.HTMLDocument(&server.DocumentContext{
+		Title: "GoSX Counter",
+		Head: gosx.Fragment(
+			gosx.RawHTML(`<link rel="stylesheet" href="/counter.css">`),
+			islands.PageHead(),
+		),
+		Body: body,
+	})
+}
