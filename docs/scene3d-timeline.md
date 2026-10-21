@@ -1,22 +1,11 @@
 # Scene3D timelines
 
-Author a finite sequence in Go, then play it on a mounted scene without sending
-per-frame updates from your server. A tabletop game can drop a piece, move the
-camera, and settle the piece's scale in one plan.
-
-Set `scene.Props{Timelines: scene.Bool(true)}` or `<Scene3D timelines={true}>`
-on scenes that will receive plans. This advertises the versioned chunk URL;
-the browser fetches it on first playback. Other pages omit the URL.
+Author finite node and camera sequences in Go and bind them to a motion program.
+`Timeline.BindMotion` shares the existing playhead, scheduler and Go playback
+controls with DOM, SVG, material and Selena shader animation. It requires no
+application script or per-frame server updates.
 
 ```go
-import (
-    "encoding/json"
-    "time"
-
-    "m31labs.dev/gosx/motion"
-    "m31labs.dev/gosx/scene"
-)
-
 plan := scene.NewTimeline("place").At(0,
     scene.Tween{
         Node: "piece", Property: "y", From: 1, To: 0,
@@ -31,27 +20,40 @@ plan := scene.NewTimeline("place").At(0,
     Node: "piece", Property: "scaleX", From: 1.1, To: 1,
     Duration: 100 * time.Millisecond,
 })
-payload, err := json.Marshal(plan) // Validates; wire times are seconds.
+program := motion.NewProgram("placement").WithTransport(motion.TransportOptions{
+    Duration: plan.Duration(),
+    Labels: map[string]time.Duration{"landed": 400 * time.Millisecond},
+    Scenes: []string{"#board"}, // Also synchronize shader/animation clocks.
+})
+if err := plan.BindMotion(program, program.Playhead("clock"), "#board"); err != nil {
+    return nil, err
+}
+body := ctx.Runtime().MotionScope(program,
+    board, // Scene3D engine mounted as "board" inside this scope.
+    server.MotionControl(server.MotionControlProps{
+        Transport: program.ID, Action: server.MotionPlay,
+    }, gosx.Text("Place piece")),
+    server.MotionControl(server.MotionControlProps{
+        Transport: program.ID, Action: server.MotionReverse,
+    }, gosx.Text("Reverse")),
+    server.MotionControl(server.MotionControlProps{
+        Transport: program.ID, Action: server.MotionSeek, Label: "landed",
+    }, gosx.Text("Landed")),
+)
 ```
 
-Return `payload` in your existing authenticated action or hub response. After
-applying any prerequisite scene commands, hand the decoded plan to the public
-Scene3D bridge. The target may be a mount element, its stable ID, or its handle.
-
-```js
-await window.__gosx.scene3d.dispatchCommands(mount, response.commands);
-const playback = await window.__gosx.scene3d.playTimeline(mount, response.timeline);
-playback.pause();
-playback.seek(0.25); // Seconds; may seek backward while playback is unfinished.
-playback.resume();
-const result = await playback.finished; // { finished: true }
-```
+The complete Go/Selena example is [motion-shader](../examples/motion-shader/main.go).
+Run `go run ./examples/motion-shader` and use its playback buttons. See
+[shared motion](motion-transport.md) for pause, replay, labels and other bindings.
 
 `At(offset, tweens...)` starts parallel tweens at an absolute offset.
 `Then(tweens...)` starts them after the latest existing end time. `Duration()`
 returns that end time. The first `From` holds before a property's start;
-subsequent gaps hold the preceding `To`. Values are absolute: author rotations
-in radians, positions in scene units, and camera `fov` in degrees.
+subsequent gaps hold the preceding `To`. A zero-duration tween cuts at its exact
+start. At a shared boundary the new tween's `From` takes effect, even when it
+differs from the previous `To`. Seeking backward reconstructs the same pose.
+Values are absolute: rotations are radians, positions are scene units, and
+camera `fov` is degrees.
 
 Object properties are `x`, `y`, `z`, `rotationX`, `rotationY`, `rotationZ`,
 `scaleX`, `scaleY`, `scaleZ`, and `opacity`. Camera properties are position,
@@ -60,33 +62,40 @@ the existing `motion.Ease` kinds, including power, cubic Bézier, steps, and bac
 curves. Rotation interpolates authored scalar angles; author the intended arc.
 
 Plans require an ID, 1–1,024 tweens, finite values, and a total duration of at most
-one day. Overlapping tweens on the same property are rejected. A malformed
-replacement leaves the existing playback running. Each mounted scene has one
-active timeline; starting another cancels the previous one with
-`{ finished: false, reason: "replaced" }`. `cancel()` holds the last applied
-values and resolves with reason `"cancelled"`; disposal resolves with reason
-`"disposed"`. `finish()` settles final values. `finished` rejects on an application
-error. Treat timeline playback as presentation; keep game rules on the server.
-Explicit object, camera, model, or animation commands through `dispatchCommands`
-supersede presentation with reason `"commands"`. Material, particle, and post
-effect updates keep the current timeline running.
+one day. Overlapping tweens on the same property are rejected. `BindMotion`
+validates the complete resulting program before changing it and copies the plan.
+Signal names are scoped under `<timeline ID>.motion`; conflicting names return
+an error. Reuse one clock for several plans with distinct IDs. The input may be
+any scalar motion signal; its units must be seconds since the plan's start.
 
-Playback uses GoSX's shared read/evaluate/write/render scheduler. Pausing or
-finishing stops its continuous work. Background gaps are capped to 100 ms per
-frame. Reduced motion settles the final pose without tweening, including when
-the preference changes during playback. Camera updates also synchronize the
-built-in controls so the final camera survives the next interaction.
-Both JavaScript scenes and shared Go/WASM render bundles receive the same
-presentation bindings. Settled object values hold until an authoritative scene
-command supersedes them; the settled camera returns to user control.
+The binding compiles to existing maps, sampled tracks (including steps), and mixes.
+It does not start another clock or require `scene.Props.Timelines`. The normal
+motion feature loader supplies the adapters. Long sequences use a balanced
+selection tree. Reduced motion settles the final pose; scope disposal releases
+the bindings. A paused scope retains ownership of its bound properties, so use
+its controls to manage playback and avoid concurrently binding another source
+to the same property. Imperative scene commands do not dispose a motion scope.
 
-The implementation loads `bootstrap-feature-scene3d-timeline.js` on first play.
-It is included in production manifests and size reports and uses the advertised,
-versioned URL. `Renderer.SetBootstrapFeatureScene3DTimelinePath` accepts an asset
-prefix for embedded deployments. Scenes that opt in advertise the URL without
-loading or preloading the chunk.
+## Native sampling and imperative host playback
 
 Native hosts can prepare a `scene.NewTimelinePlayer(plan)` once and call
 `player.Sample(elapsedSeconds)` for compact scene commands. `plan.Sample` is the
 one-shot convenience. Hosts own their clocks, cancellation, and reduced-motion
-preferences. Sampling does not rebuild the scene or mutate the plan.
+preferences. Sampling does not rebuild the scene or mutate the plan. Exact
+endpoints are preserved even when interpolation would lose precision.
+
+For existing imperative host integrations, `json.Marshal(plan)` emits a
+validated wire plan with times in seconds. Set
+`scene.Props{Timelines: scene.Bool(true)}` or `<Scene3D timelines={true}>` on
+scenes receiving plans through the public Scene3D `playTimeline` bridge.
+The optional `bootstrap-feature-scene3d-timeline.js` chunk loads on first play
+from the advertised versioned URL. `Renderer.SetBootstrapFeatureScene3DTimelinePath`
+accepts an asset prefix for embedded deployments.
+
+This imperative API has its own playback lifecycle: each mounted scene has one
+active timeline; replacement, disposal, cancellation and authoritative object,
+camera, model or animation commands settle its `finished` result. Invalid
+replacement leaves playback running. `pause`, `resume`, `seek` and `finish`
+control that playback. Material, particle and post-effect commands preserve it.
+These cancellation rules apply to imperative playback, not persistent motion
+scope bindings. Keep game rules on the server.

@@ -220,7 +220,12 @@ func (p *TimelinePlayer) Sample(seconds float64) ([]Command, error) {
 				progress = (seconds - tween.At.Seconds()) / tween.Duration.Seconds()
 			}
 		}
-		value := tween.From + (tween.To-tween.From)*tween.Ease.Apply(progress)
+		value := tween.From
+		if progress >= 1 {
+			value = tween.To
+		} else if progress > 0 {
+			value = tween.From + (tween.To-tween.From)*tween.Ease.Apply(progress)
+		}
 		if math.IsNaN(value) || math.IsInf(value, 0) {
 			return nil, fmt.Errorf("scene timeline sample overflowed")
 		}
