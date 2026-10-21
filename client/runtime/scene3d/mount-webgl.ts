@@ -2680,6 +2680,7 @@
     if (!record || !record.animationApi || !record.nodes || !record.skins) {
       return;
     }
+    if (record.clipSampler && record.clipSampler.pose(record)) return; // sampled: allocation-free path
     const animatedTransforms = record.animatedTransforms;
     if (animatedTransforms && typeof animatedTransforms.clear === "function") {
       animatedTransforms.clear();
@@ -2888,8 +2889,7 @@
     }
     if (instanceModel.clipSampled === true && animationApi.configureSampledRecord) {
       animationApi.configureSampledRecord(state, record, clips, instanceModel);
-      sceneRegisterModelAnimationRecord(state, record);
-      sceneApplyModelSkinPose(record, 0, false);
+      sceneRegisterModelAnimationRecord(state, record); sceneApplyModelSkinPose(record, 0, false);
       return;
     }
     const wantWasmMixer = clips.length > 0

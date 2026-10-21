@@ -483,71 +483,91 @@
   // Sampled clip frames (GSP4) pose skinned models from exact clip times. A
   // frame is complete state for the models it names, so there is no queue and
   // no supersession: frames apply in dispatch order and the last one wins.
-  // decodeClipFrame validates the whole frame before anything reaches a model.
-  function decodeClipFrame(input: any) {
-    var bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
-    if (!(bytes instanceof Uint8Array)) throw new TypeError("Scene3D clip frame must be an ArrayBuffer or Uint8Array");
-    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-    var decoder = new TextDecoder("utf-8", { fatal: true });
+  //
+  // createClipDecoder returns a decode(input) function that validates the whole
+  // frame before anything reaches a model. Its result (the models array, each
+  // model and each layer object) is REUSED by the next call to the same
+  // decoder, so a caller must consume it before decoding again. Strings are
+  // interned by byte content, so steady-state decoding allocates nothing.
+  function createClipDecoder() {
+    var textDecoder = new TextDecoder("utf-8", { fatal: true });
+    var scratch = new DataView(new ArrayBuffer(4));
+    var strings: any[] = [];
+    var names: string[] = [];
+    var models: any[] = [];
+    var pools: any[][] = [];
+    var bytes: Uint8Array = new Uint8Array(0);
     var offset = 0;
     function need(size: number) {
-      if (size > view.byteLength - offset) throw new RangeError("truncated Scene3D clip frame");
+      if (size > bytes.length - offset) throw new RangeError("truncated Scene3D clip frame");
     }
-    function u16() { need(2); var value = view.getUint16(offset, true); offset += 2; return value; }
-    function id() {
+    function u16() { need(2); var value = bytes[offset] | (bytes[offset + 1] << 8); offset += 2; return value; }
+    function text() {
       var length = u16();
       if (!length) throw new TypeError("empty Scene3D clip frame ID");
       need(length);
-      var value = decoder.decode(bytes.subarray(offset, offset + length));
+      for (var i = 0; i < strings.length; i++) {
+        var known = strings[i].bytes;
+        if (known.length !== length) continue;
+        var j = 0;
+        while (j < length && known[j] === bytes[offset + j]) j++;
+        if (j === length) { offset += length; return strings[i].text; }
+      }
+      var value = textDecoder.decode(bytes.subarray(offset, offset + length));
+      if (strings.length < 512) strings.push({ bytes: bytes.slice(offset, offset + length), text: value });
       offset += length;
       return value;
     }
-    function number() {
-      need(4);
-      var value = view.getFloat32(offset, true);
-      offset += 4;
-      if (!Number.isFinite(value)) throw new TypeError("non-finite Scene3D clip frame value");
-      return value;
-    }
-    need(6);
-    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || view.getUint8(3) !== 52) {
-      throw new TypeError("unsupported Scene3D clip frame version");
-    }
-    offset = 4;
-    var nameCount = u16();
-    var names = [];
-    for (var n = 0; n < nameCount; n++) names.push(id());
-    var count = u16();
-    var models = [];
-    var seen = new Set();
-    for (var i = 0; i < count; i++) {
-      var modelID = id();
-      if (seen.has(modelID)) throw new TypeError("duplicate Scene3D clip frame model ID");
-      seen.add(modelID);
-      need(1);
-      var layerCount = view.getUint8(offset++);
-      if (layerCount > 4) throw new RangeError("too many Scene3D clip frame layers");
-      var layers = [];
-      for (var j = 0; j < layerCount; j++) {
-        var ref = u16();
-        var layer: any = { name: "", index: 0, time: 0, weight: 0, loop: false };
-        if (ref & 0x8000) layer.index = ref & 0x7fff;
-        else if (ref < names.length) layer.name = names[ref];
-        else throw new RangeError("unknown Scene3D clip frame clip name");
-        layer.time = number();
-        layer.weight = number();
-        if (layer.time < 0 || layer.weight < 0) throw new RangeError("negative Scene3D clip frame time or weight");
+    return function decode(input: any) {
+      bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
+      if (!(bytes instanceof Uint8Array)) throw new TypeError("Scene3D clip frame must be an ArrayBuffer or Uint8Array");
+      offset = 0;
+      need(6);
+      if (bytes[0] !== 71 || bytes[1] !== 83 || bytes[2] !== 80 || bytes[3] !== 52) throw new TypeError("unsupported Scene3D clip frame version");
+      offset = 4;
+      var nameCount = u16();
+      for (var n = 0; n < nameCount; n++) names[n] = text();
+      var count = u16();
+      for (var i = 0; i < count; i++) {
+        var model = models[i] || (models[i] = { id: "", layers: [] });
+        var pool = pools[i] || (pools[i] = []);
+        var modelID = text();
+        for (var d = 0; d < i; d++) if (models[d].id === modelID) throw new TypeError("duplicate Scene3D clip frame model ID");
+        model.id = modelID;
         need(1);
-        var flags = view.getUint8(offset++);
-        if (flags > 1) throw new TypeError("invalid Scene3D clip frame layer flags");
-        layer.loop = flags === 1;
-        layers.push(layer);
+        var layerCount = bytes[offset++];
+        if (layerCount > 4) throw new RangeError("too many Scene3D clip frame layers");
+        for (var j = 0; j < layerCount; j++) {
+          // One bounds check per 11-byte layer. The floats are read inline: a
+          // helper that returns a double would box it into a heap number.
+          need(11);
+          var ref = bytes[offset] | (bytes[offset + 1] << 8);
+          var layer = pool[j] || (pool[j] = { name: "", index: 0, time: 0, weight: 0, loop: false });
+          if (ref & 0x8000) { layer.index = ref & 0x7fff; layer.name = ""; }
+          else if (ref < nameCount) { layer.index = 0; layer.name = names[ref]; }
+          else throw new RangeError("unknown Scene3D clip frame clip name");
+          for (var k = 0; k < 4; k++) scratch.setUint8(k, bytes[offset + 2 + k]);
+          layer.time = scratch.getFloat32(0, true);
+          for (var w = 0; w < 4; w++) scratch.setUint8(w, bytes[offset + 6 + w]);
+          layer.weight = scratch.getFloat32(0, true);
+          if (!Number.isFinite(layer.time) || !Number.isFinite(layer.weight)) throw new TypeError("non-finite Scene3D clip frame value");
+          if (layer.time < 0 || layer.weight < 0) throw new RangeError("negative Scene3D clip frame time or weight");
+          var flags = bytes[offset + 10];
+          if (flags > 1) throw new TypeError("invalid Scene3D clip frame layer flags");
+          layer.loop = flags === 1;
+          offset += 11;
+          model.layers[j] = layer;
+        }
+        model.layers.length = layerCount;
       }
-      models.push({ id: modelID, layers: layers });
-    }
-    if (offset !== view.byteLength) throw new RangeError("trailing Scene3D clip frame data");
-    return models;
+      models.length = count;
+      if (offset !== bytes.length) throw new RangeError("trailing Scene3D clip frame data");
+      return models;
+    };
   }
+
+  // decodeClipFrame decodes into fresh storage that the caller owns.
+  function decodeClipFrame(input: any) { return createClipDecoder()(input); }
 
   function clipFrameStats(target: any, opts: any) {
     var rec = record(target, opts);
@@ -556,26 +576,44 @@
     return stats;
   }
 
+  function clipFrameFailed(target: any, opts: any, error: any) {
+    var stats = clipFrameStats(target, opts);
+    stats.errors++;
+    stats.lastError = String(error && error.message || error);
+    var rec = record(target, opts);
+    var eventTarget = rec && rec.mount || window;
+    if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
+      try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:clip-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
+    }
+  }
+
   function dispatchClipFrame(target: any, frame: any, options: any) {
     var opts = options || {};
     if (!key(target, opts) && !target) return Promise.reject(new Error("Scene3D clip frame target has no stable id"));
+    // Fast path: a mounted, ready target decodes into its own reusable decoder
+    // and applies synchronously, so nothing is retained between frames.
+    var rec = record(target, opts);
+    if (rec && typeof rec.handle.applyClipFrame === "function") {
+      try {
+        var decode = rec.handle.__gosxClipDecoder || (rec.handle.__gosxClipDecoder = createClipDecoder());
+        return Promise.resolve(rec.handle.applyClipFrame(decode(frame)));
+      } catch (error) {
+        clipFrameFailed(target, opts, error);
+        return Promise.reject(error);
+      }
+    }
     var models;
     try { models = decodeClipFrame(frame); } catch (error) { return Promise.reject(error); }
     return waitForCommandMount(target, opts, "clip frame", function(rec, resolve, reject) {
       if (typeof rec.handle.applyClipFrame !== "function") return reject(new Error("Scene3D clip frames are unsupported by this mount"));
       try { resolve(rec.handle.applyClipFrame(models)); } catch (error) { reject(error); }
     }).catch(function(error) {
-      var stats = clipFrameStats(target, opts);
-      stats.errors++;
-      stats.lastError = String(error && error.message || error);
-      var rec = record(target, opts);
-      var eventTarget = rec && rec.mount || window;
-      if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
-        try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:clip-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
-      }
+      clipFrameFailed(target, opts, error);
       throw error;
     });
   }
+
+  var CLIP_FRAME_RESULTS = [{ applied: true, binary: true, pending: false }, { applied: true, binary: true, pending: true }];
 
   function applyMountedClipFrame(state: any, models: any, animationApi: any, applyPose: any, scheduleRender: any, handle: any) {
     var stats = handle.__gosxClipFrameStats || (handle.__gosxClipFrameStats = { accepted: 0, errors: 0, lastError: "", rejected: Object.create(null) });
@@ -589,7 +627,7 @@
     }
     stats.accepted++;
     if (!result.pending) scheduleRender("clip-frame");
-    return { applied: true, binary: true, pending: Boolean(result.pending) };
+    return CLIP_FRAME_RESULTS[result.pending ? 1 : 0];
   }
 
   // GPU-driven crowd motion retains its own queues and mount validation.
@@ -769,6 +807,7 @@
     applyMountedPoseFrame: applyMountedPoseFrame,
     dispatchClipFrame: dispatchClipFrame,
     decodeClipFrame: decodeClipFrame,
+    createClipDecoder: createClipDecoder,
     applyMountedClipFrame: applyMountedClipFrame,
     dispatchMotionFrame: dispatchMotionFrame,
     decodeMotionFrame: decodeMotionFrame,

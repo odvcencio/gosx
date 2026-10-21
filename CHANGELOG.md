@@ -13,7 +13,9 @@
   looping layer and holds the last key otherwise. Clip root motion is ignored
   by default (horizontal translation of root nodes keeps its authored value);
   `Model.RootMotion` applies it. Existing models and `PoseFrame`/`MotionFrame`
-  behave as before. See `docs/scene3d-clip-frames.md`.
+  behave as before. Evaluating a frame allocates almost nothing in steady
+  state. The IR mesh node (`IRMeshNode`) also carries `clipSampled` and
+  `rootMotion`. See `docs/scene3d-clip-frames.md`.
 
 - Add `m31labs.dev/gosx/det`, assembly-free and fusion-proof versions of Exp,
   Exp2, Log, Log2, Log10, Pow, Sin, Cos, Tan, Asin, Acos, Atan, Atan2, Hypot,
