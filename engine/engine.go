@@ -243,6 +243,37 @@ func RuntimeSupported(runtime Runtime) bool {
 	}
 }
 
+// Thread selects the browser thread that runs an engine's Go code.
+type Thread string
+
+const (
+	// ThreadMain runs the engine on the page's main thread. It is the default.
+	ThreadMain Thread = ""
+	// ThreadWorker runs a RuntimeGoWASM engine in a dedicated Web Worker. The
+	// page keeps the DOM, Scene3D, and shared signals; the worker keeps the
+	// Go module, the simulation clock, and netplay. If the browser cannot
+	// start the worker, the engine falls back to ThreadMain and reports it.
+	ThreadWorker Thread = "worker"
+)
+
+// ThreadSupported reports whether thread is understood by the browser
+// bootstrap contract.
+func ThreadSupported(thread Thread) bool {
+	return thread == ThreadMain || thread == ThreadWorker
+}
+
+// ValidateThread checks the thread selector against the runtime. Only
+// RuntimeGoWASM engines can run in a worker.
+func ValidateThread(thread Thread, runtime Runtime) error {
+	if !ThreadSupported(thread) {
+		return fmt.Errorf("unsupported engine thread: %q", thread)
+	}
+	if thread == ThreadWorker && runtime != RuntimeGoWASM {
+		return fmt.Errorf("engine thread %q requires runtime %q", thread, RuntimeGoWASM)
+	}
+	return nil
+}
+
 // ValidateRuntime checks the runtime-specific part of an engine config.
 func ValidateRuntime(runtime Runtime, wasmPath string) error {
 	if !RuntimeSupported(runtime) {
@@ -292,6 +323,10 @@ type Config struct {
 	// Runtime selects the client runtime used to mount the engine. Empty means
 	// the engine is mounted by a bootstrap-registered JavaScript factory.
 	Runtime Runtime `json:"runtime,omitempty"`
+
+	// Thread selects where a go-wasm engine runs. Empty (ThreadMain) keeps
+	// today's behavior. ThreadWorker needs Runtime: RuntimeGoWASM.
+	Thread Thread `json:"thread,omitempty"`
 
 	// PixelSurface configures a managed pixel framebuffer when CapPixelSurface
 	// is declared. The runtime creates a canvas at the logical resolution,
@@ -355,6 +390,9 @@ func (c Config) Validate() error {
 		return fmt.Errorf("engine kind %q requires a MountID", c.Kind)
 	}
 	if err := ValidateRuntime(c.Runtime, c.WASMPath); err != nil {
+		return err
+	}
+	if err := ValidateThread(c.Thread, c.Runtime); err != nil {
 		return err
 	}
 	if err := ValidateCapabilities(c.Capabilities); err != nil {

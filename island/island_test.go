@@ -1983,3 +1983,48 @@ func TestScene3DModelPreparationURLRequiresExplicitOptIn(t *testing.T) {
 		})
 	}
 }
+
+func TestRenderEngineWorkerThreadRecordsThreadAndRequiresHostChunk(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{
+		Name:     "Sim",
+		Kind:     engine.KindWorker,
+		Runtime:  engine.RuntimeGoWASM,
+		Thread:   engine.ThreadWorker,
+		WASMPath: "/gosx/engines/sim.wasm",
+	}, gosx.Node{})
+	engines := r.Manifest().Engines
+	if len(engines) != 1 || engines[0].Thread != "worker" {
+		t.Fatalf("engine entries = %+v, want one with thread worker", engines)
+	}
+	raw, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"thread":"worker"`) || !strings.Contains(raw, `"engine-worker"`) {
+		t.Fatalf("manifest must carry thread and the engine-worker feature: %s", raw)
+	}
+	if got := r.FeaturePaths()["engine-worker"]; got == "" {
+		t.Fatalf("FeaturePaths = %v, want engine-worker", r.FeaturePaths())
+	}
+}
+
+func TestRenderEngineMainThreadOmitsThread(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{Name: "Sim", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, WASMPath: "/gosx/engines/sim.wasm"}, gosx.Node{})
+	raw, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(raw, `"thread"`) || strings.Contains(raw, "engine-worker") {
+		t.Fatalf("a main-thread engine must not mention the worker host: %s", raw)
+	}
+}
+
+func TestRenderEngineWorkerThreadWithoutGoWASMIsRejected(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{Name: "Sim", Kind: engine.KindWorker, Thread: engine.ThreadWorker}, gosx.Node{})
+	if len(r.Manifest().Engines) != 0 {
+		t.Fatalf("a worker-thread engine without go-wasm must not register: %+v", r.Manifest().Engines)
+	}
+}

@@ -88,6 +88,10 @@ const budgets = [
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
   // Netplay's browser binding loads only for a page that calls RequireFeature("netplay");
   // no existing bundle changed size (measured 4353 raw / 1772 gzip / 1639 Brotli).
+  // Engine worker host (page half and Worker script in one file). It loads only
+  // for a page with a Thread: worker engine; no first-load bundle gains more
+  // than the 246 byte hook in the engines chunk.
+  { file: "bootstrap-feature-engine-worker.js", raw: 19000, gzip: 6500, brotli: 6000 },
   { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
   // Native cubic tangents add 846 raw / 325 gzip / 310 Brotli bytes to this
   // optional chunk. Only its exhausted raw target moves to the measured
@@ -848,7 +852,8 @@ const budgets = [
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
     // Fighting-hub edge sends, absolute held input and crowd batch records together measure 1983246 raw / 550575 gzip / 453528 brotli bytes; only the exhausted minimums move; allowances remain unchanged.
     // Sampled clip frames (GSP4 decoder, stateless clip sampler, mount hooks) measure 1987164 raw / 551994 gzip / 454745 brotli monolith bytes; only exhausted minimums move to the exact measured value; allowances remain unchanged.
-    file: "bootstrap.js", raw: 1921628, gzip: 535610,
+    // Engine worker thread hook (resolveMountedEngineFactory) measures 1987421 raw; only the exhausted raw minimum moves to the exact measured value; allowances remain unchanged.
+    file: "bootstrap.js", raw: 1921885, gzip: 535681,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 438361 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
@@ -1925,9 +1930,11 @@ const routeBudgets = [
     // Dormant gamepad input adds the same 524 raw bytes to this route.
     // Measured 305,783 raw. Move only the breached raw target to its minimum
     // passing value; compressed targets and the governed allowance stay fixed.
-    raw: 293401,
+    // The engine worker thread hook adds 246 raw bytes to the engines chunk
+    // (measured 308,317 raw, 78,760 Brotli); only the exhausted raw and Brotli minimums move.
+    raw: 293646,
     gzip: 83400,
-    brotli: 74872,
+    brotli: 75016,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -2109,8 +2116,8 @@ const routeBudgets = [
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
     // Detail resource reuse and retirement adds 1,086 raw, 314 gzip and 280
     // Brotli bytes to this route. Keep the shared allowances unchanged.
-    raw: 1396256,
-    gzip: 386563,
+    raw: 1396502,
+    gzip: 386655,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2318,7 +2325,7 @@ const routeBudgets = [
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 306268,
+    brotli: 306412,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2516,7 +2523,7 @@ const routeBudgets = [
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 406360,
+    brotli: 406504,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.

@@ -405,6 +405,13 @@ var outputs = []output{
 		name:    "bootstrap-feature-netplay.js",
 		sources: []source{sourceFile("../runtime/host/netplay.ts")},
 	},
+	{
+		// Host for engines with Thread: worker. The same file is the page
+		// half (starts the Worker, relays calls and binary frames) and the
+		// Worker script. It loads only for a page that has such an engine.
+		name:    "bootstrap-feature-engine-worker.js",
+		sources: []source{sourceFile("../runtime/host/engine-worker.ts")},
+	},
 
 	{
 		// Text-layout engine chunk. bootstrap-lite.js and bootstrap-runtime.js

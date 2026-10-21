@@ -245,6 +245,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-engine-worker.js",
+      "sources": [
+        "../runtime/host/engine-worker.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
         "bootstrap-src/26i-feature-textlayout-prefix.ts",

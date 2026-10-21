@@ -1496,6 +1496,9 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if err := engine.ValidateRuntime(cfg.Runtime, cfg.WASMPath); err != nil {
 		return renderEngineError(err)
 	}
+	if err := engine.ValidateThread(cfg.Thread, cfg.Runtime); err != nil {
+		return renderEngineError(err)
+	}
 	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
 		return renderEngineError(err)
 	}
@@ -1534,6 +1537,14 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	)
 	if err != nil {
 		return renderEngineError(err)
+	}
+
+	if cfg.Thread == engine.ThreadWorker {
+		r.manifest.Engines[len(r.manifest.Engines)-1].Thread = string(cfg.Thread)
+		// The worker host chunk loads only for pages with a worker-thread engine.
+		if err := r.manifest.RequireFeature("engine-worker"); err != nil {
+			return renderEngineError(err)
+		}
 	}
 
 	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {

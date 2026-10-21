@@ -201,6 +201,14 @@ test-netplay-webrtc:
 test-netplay-browser:
 	cd netplay/webrtc && NETPLAY_BROWSER=1 GOWORK=off $(GO) test -count=1 -v -run TestRealBrowser .
 
+# test-engine-worker-browser runs Go WASM engines in a real Web Worker in
+# headless Chromium (Thread: worker, fallback, frames, timers). It needs
+# Playwright in node_modules; set ENGINE_WORKER_CHROME to a Chromium or
+# chrome-headless-shell binary when Playwright's own download does not run.
+.PHONY: test-engine-worker-browser
+test-engine-worker-browser:
+	ENGINE_WORKER_BROWSER=1 GOWORK=off $(GO) test -count=1 -v ./engine/wasm/internal/browserworker
+
 test-netplay:
 	GOWORK=off $(GO) test -p 4 -count=1 ./netplay/...
 

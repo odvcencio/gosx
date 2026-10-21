@@ -181,6 +181,10 @@ type EngineEntry struct {
 	// Runtime selects the GoSX client runtime for this engine.
 	Runtime string `json:"runtime,omitempty"`
 
+	// Thread is "worker" when a go-wasm engine runs in a dedicated Web Worker.
+	// Empty keeps the engine on the main thread.
+	Thread string `json:"thread,omitempty"`
+
 	// Props is the JSON-serialized props snapshot.
 	Props json.RawMessage `json:"props"`
 
