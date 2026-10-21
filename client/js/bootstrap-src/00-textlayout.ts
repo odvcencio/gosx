@@ -141,7 +141,7 @@
     }
     for (const entry of Array.from(listeners.values())) {
       try {
-        entry(value, signalName);
+        entry(value, signalName, valueJSON);
       } catch (error) {
         console.error("[gosx] shared signal subscriber failed:", error);
       }

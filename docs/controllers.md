@@ -134,6 +134,14 @@ calling native scene queries, then copy the hit fields into `controller.RayHit`.
 subscription with the engine handle. Native signal constructors remain
 request-local; the context methods provide the engine/VM bridge.
 
+Use `ctx.SetChangedSignals(map[string]any{...})` for a batched state snapshot.
+Only values that differ from the live shared store notify subscribers; reads
+inside a subscriber see the complete batch. In-place island edits are included
+in that comparison. Keep `ctx.SetSignals` for repeated event/pulse writes, where
+every delivery matters even when the payload is identical. Both methods encode
+before writing and use a direct JSON handoff on current hosts. Older hosts keep
+working through the decoded-value bridge and may notify unchanged snapshots.
+
 A native result must retain `RequestID`; a nil `Hit` is a miss. The controller
 ignores stale and cancelled requests. Native results expire after `TimeoutMS`
 (default 1000). The mount bridge is detached on replacement and disposal.
