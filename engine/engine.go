@@ -224,6 +224,9 @@ type Runtime string
 const (
 	RuntimeNone   Runtime = ""
 	RuntimeShared Runtime = "shared"
+	// RuntimeKernel loads framework Go/WASM helpers without an engine program.
+	// The built-in JavaScript engine keeps ownership of rendering and its clock.
+	RuntimeKernel Runtime = "kernel"
 	// RuntimeGoWASM loads WASMPath as a standard Go WebAssembly module. The
 	// module registers a component factory through m31labs.dev/gosx/engine/wasm.
 	RuntimeGoWASM Runtime = "go-wasm"
@@ -233,7 +236,7 @@ const (
 // bootstrap contract.
 func RuntimeSupported(runtime Runtime) bool {
 	switch runtime {
-	case RuntimeNone, RuntimeShared, RuntimeGoWASM:
+	case RuntimeNone, RuntimeShared, RuntimeKernel, RuntimeGoWASM:
 		return true
 	default:
 		return false
@@ -247,6 +250,9 @@ func ValidateRuntime(runtime Runtime, wasmPath string) error {
 	}
 	if runtime == RuntimeGoWASM && strings.TrimSpace(wasmPath) == "" {
 		return fmt.Errorf("engine runtime %q requires a WASMPath", runtime)
+	}
+	if runtime == RuntimeKernel && strings.TrimSpace(wasmPath) != "" {
+		return fmt.Errorf("engine runtime %q uses framework helpers and cannot carry a WASMPath", runtime)
 	}
 	return nil
 }

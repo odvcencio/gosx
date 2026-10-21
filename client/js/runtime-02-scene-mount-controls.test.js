@@ -732,15 +732,42 @@ test("Scene3D WASM material-motion seam writes evaluated color into customUnifor
     "motion-evaluated color must be written into customUniforms.emissive");
 });
 
-test("Scene3D WASM material-motion seam stays inert when the flag is unset (sceneState fall-through path)", async () => {
-  const { state, tickCalls } = await mountMaterialMotionScene(false);
-  assert.equal(tickCalls(), 0, "material-motion tick must not run when the flag is unset");
+test("Scene3D declared material motion runs without application flags and releases its program", async () => {
+  const { state, tickCalls, color, env, raf, loadCalls, unloadCalls } = await mountMaterialMotionScene(false);
+  assert.equal(env.context.__gosx_motion_wasm, undefined);
+  assert.ok(tickCalls() > 0, "declared material motion must tick without an application flag");
   const obj = state.objects.get("1");
   assert.ok(obj, "expected the glow-cube object in sceneState");
-  // customUniforms.emissive stays at its hydrated default — proving non-breaking
-  // inert behavior with the exports present but the opt-in flag absent.
-  assert.deepEqual(obj.customUniforms.emissive, [0, 0, 0, 0],
-    "customUniforms must be untouched when the motion flag is unset");
+  assert.deepEqual(obj.customUniforms.emissive, color);
+  assert.equal(loadCalls(), 1);
+  await env.context.__gosx_dispose_page();
+  assert.deepEqual(unloadCalls, [1]);
+  const before = tickCalls(); raf.flush(100); await flushAsyncWork();
+  assert.equal(tickCalls(), before, "disposed motion must stop ticking");
+});
+
+test("Scene3D material motion releases a loaded program whose references fail", async () => {
+  const { env, tickCalls, loadCalls, unloadCalls } = await mountMaterialMotionScene(false, {refs:null});
+  assert.equal(loadCalls(), 1);
+  assert.equal(tickCalls(), 0);
+  assert.deepEqual(unloadCalls, [1]);
+  await env.context.__gosx_dispose_page();
+  assert.deepEqual(unloadCalls, [1], "failed programs must not be unloaded twice");
+});
+
+test("Scene3D material program replacement releases each mount-owned handle", async () => {
+  const { mount, env, raf, loadCalls, unloadCalls, tickCalls } = await mountMaterialMotionScene(false);
+  mount.__gosxScene3DHandle.updateSceneProps({scene:{materialMotionProgram:"AQID"}});
+  raf.flush(100); await flushAsyncWork();
+  assert.equal(loadCalls(), 2);
+  assert.deepEqual(unloadCalls, [1]);
+  mount.__gosxScene3DHandle.updateSceneProps({scene:{}});
+  raf.flush(200); await flushAsyncWork();
+  assert.deepEqual(unloadCalls, [1, 2]);
+  const before = tickCalls(); raf.flush(300); await flushAsyncWork();
+  assert.equal(tickCalls(), before, "removing a declaration must stop material sampling");
+  await env.context.__gosx_dispose_page();
+  assert.deepEqual(unloadCalls, [1, 2]);
 });
 
 test("Scene3D drag only starts when the pointer lands on a shape in shared runtime mode", async () => {

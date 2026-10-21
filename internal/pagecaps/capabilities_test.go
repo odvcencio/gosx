@@ -28,6 +28,8 @@ func TestPageCapsRenderedShapes(t *testing.T) {
 		{"loader-only", "<script defer data-gosx-script=wasm-exec src=\"exec.js\"></script>", Capabilities{BootstrapMode: "none", Runtime: "js"}},
 		{"js-engine", manifestHTML("{\"engines\":[{\"runtime\":\"\"}]}"), Capabilities{Bootstrap: true, Engines: 1, BootstrapMode: "none", Runtime: "js"}},
 		{"shared-engine", manifestHTML("{\"engines\":[{\"runtime\":\"shared\"}]}"), Capabilities{Bootstrap: true, Engines: 1, WASM: true, BootstrapMode: "none", Runtime: "shared"}},
+		{"kernel-engine", manifestHTML(`{"engines":[{"runtime":"kernel"}]}`), Capabilities{Bootstrap: true, Engines: 1, WASM: true, BootstrapMode: "none", Runtime: "shared"}},
+		{"kernel-scene", manifestHTML(`{"runtime":{"path":"core.wasm"},"engines":[{"component":"GoSXScene3D","runtime":"kernel"}]}`), Capabilities{Bootstrap: true, Engines: 1, Scene3D: true, WASM: true, BootstrapMode: "none", Runtime: "shared"}},
 		{"go-wasm", manifestHTML("{\"engines\":[{\"runtime\":\"go-wasm\",\"programRef\":\"app.wasm\"}]}"), Capabilities{Bootstrap: true, Engines: 1, WASM: true, BootstrapMode: "none", Runtime: "go-wasm"}},
 		{"scene-ir", manifestHTML("{\"engines\":[{\"component\":\"GoSXScene3D\",\"props\":{\"SceneIR\":{}}}]}"), Capabilities{Bootstrap: true, Scene3D: true, Engines: 1, BootstrapMode: "none", Runtime: "js"}},
 		{"shared-scene", manifestHTML("{\"engines\":[{\"component\":\"GoSXScene3D\",\"runtime\":\"shared\"}]}"), Capabilities{Bootstrap: true, Scene3D: true, Engines: 1, WASM: true, BootstrapMode: "none", Runtime: "shared"}},
@@ -57,6 +59,9 @@ func TestPageCapsRenderedShapes(t *testing.T) {
 }
 
 func TestPageCapsRejectMalformedContracts(t *testing.T) {
+	if _, err := FromHTML([]byte(manifestHTML(`{"engines":[{"runtime":"kernel","programRef":"app.wasm"}]}`))); err == nil {
+		t.Fatal("kernel accepted an application program")
+	}
 	for _, body := range []string{"{", "null", "[]", "{\"engines\":[{\"runtime\":\"unknown\"}]}", "{\"engines\":[{\"runtime\":\"go-wasm\"}]}"} {
 		if _, err := FromHTML([]byte(manifestHTML(body))); err == nil {
 			t.Fatal("malformed manifest accepted")
@@ -120,6 +125,9 @@ func TestPageCapsActualRendererContracts(t *testing.T) {
 		{"scene-js", func(r *island.Renderer) {
 			r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface}, gosx.Text(""))
 		}, "full", "js", "scene3d/js"},
+		{"material-scene", func(r *island.Renderer) {
+			r.RenderEngine(engine.Config{Name: "GoSXScene3D", Kind: engine.KindSurface, Props: json.RawMessage(`{"scene":{"materialMotionProgram":"TU9UMw=="}}`)}, gosx.Text(""))
+		}, "full", "shared", "scene3d/shared"},
 		{"go-wasm", func(r *island.Renderer) {
 			r.RenderEngine(engine.Config{Name: "Example", Kind: engine.KindWorker, Runtime: engine.Runtime("go-wasm"), WASMPath: "/app/example.wasm"}, gosx.Text(""))
 		}, "full", "go-wasm", "go-wasm"},

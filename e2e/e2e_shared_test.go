@@ -81,11 +81,16 @@ func (l *logBuffer) String() string {
 // waits for /readyz. The process group is killed on test cleanup.
 func startDocsApp(t *testing.T, baseURL string) *docsApp {
 	t.Helper()
+	return startDevApp(t, filepath.Join(e2eRepoRoot(t), "examples", "gosx-docs"), baseURL)
+}
+
+func startDevApp(t *testing.T, appDir, baseURL string) *docsApp {
+	t.Helper()
 	root := e2eRepoRoot(t)
 	port := baseURL[strings.LastIndex(baseURL, ":")+1:]
 
 	logs := &logBuffer{}
-	cmd := exec.Command("go", "run", "./cmd/gosx", "dev", "./examples/gosx-docs")
+	cmd := exec.Command("go", "run", "./cmd/gosx", "dev", appDir)
 	cmd.Dir = root
 	localEnv, err := localapp.Environment(os.Environ(), port)
 	if err != nil {

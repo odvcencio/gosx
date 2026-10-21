@@ -291,6 +291,12 @@ func newRendererTemplate(manifest *buildmanifest.Manifest) *Renderer {
 	// override with a hashed URL during a build-manifest apply.
 	renderer.relayPath = "/gosx/relay.js"
 	if manifest != nil {
+		// Development metadata describes stable /gosx/* URLs, with full digests
+		// instead of content-addressed deployment filenames.
+		if runtimeAssets.WASM.File == "" && runtimeAssets.WASM.Hash != "" {
+			renderer.SetRuntime("/gosx/runtime.wasm", runtimeAssets.WASM.Hash, runtimeAssets.WASM.Size)
+			return renderer
+		}
 		// ApplyBuildManifest only reads the manifest, so renderers may share
 		// one cached pointer. Do not mutate a manifest returned by
 		// loadDefaultBuildManifest.
@@ -349,6 +355,17 @@ func loadDefaultBuildManifest() *buildmanifest.Manifest {
 
 	if root == "" {
 		return nil
+	}
+	if os.Getenv("GOSX_DEV") == "1" {
+		candidate := filepath.Join(root, "build", buildmanifest.DevRuntimeManifestFile)
+		if manifest := loadCachedBuildManifest(candidate); manifest != nil {
+			return manifest
+		}
+		// Malformed or inaccessible development metadata must not silently
+		// select a stale production build. A missing file retains legacy lookup.
+		if _, err := os.Stat(candidate); !os.IsNotExist(err) {
+			return nil
+		}
 	}
 
 	for _, candidate := range []string{
@@ -1468,6 +1485,14 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if !engine.KindSupported(cfg.Kind) {
 		return renderEngineError(fmt.Errorf("unsupported engine kind: %q", cfg.Kind))
 	}
+	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
+		if cfg.Scene3DProbe == nil {
+			cfg.Scene3DProbe = sceneprobe.Decode(cfg.Props)
+		}
+		if cfg.Runtime == engine.RuntimeNone && strings.TrimSpace(cfg.WASMPath) == "" && cfg.Scene3DProbe.NeedsMaterialMotion() {
+			cfg.Runtime = engine.RuntimeKernel
+		}
+	}
 	if err := engine.ValidateRuntime(cfg.Runtime, cfg.WASMPath); err != nil {
 		return renderEngineError(err)
 	}
@@ -2353,6 +2378,7 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		mode = "preview"
 	}
 	sharedEngine := r.needsSharedRuntimeEngineBridge()
+	kernelEngine := r.needsKernelRuntime()
 	// In preview mode, the bridge is required even without islands —
 	// otherwise the iframe has no Bridge.DispatchInboundSignal target.
 	previewNeedsRuntime := previewRelay && mode == "preview"
@@ -2369,8 +2395,8 @@ func (r *Renderer) clientRuntimePlan() clientRuntimePlan {
 		Mode:               mode,
 		Manifest:           bootstrap && mode != "lite",
 		Selective:          selective,
-		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
-		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || monolithBridge,
+		SharedRuntime:      previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || kernelEngine || monolithBridge,
+		WASMExec:           previewNeedsRuntime || islands > 0 || computeIslands > 0 || sharedEngine || kernelEngine || monolithBridge,
 		StandardGoWASMExec: r.hasGoWASMEngines(),
 		Patch:              islands > 0,
 		PreviewRelay:       previewRelay,
@@ -2777,6 +2803,15 @@ func (r *Renderer) scene3DNeedsHydrateChunk() bool {
 func (r *Renderer) needsSharedRuntimeEngineBridge() bool {
 	for _, entry := range r.manifest.Engines {
 		if strings.EqualFold(strings.TrimSpace(entry.Runtime), string(engine.RuntimeShared)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Renderer) needsKernelRuntime() bool {
+	for _, entry := range r.manifest.Engines {
+		if entry.Runtime == string(engine.RuntimeKernel) {
 			return true
 		}
 	}
