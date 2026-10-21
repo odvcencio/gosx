@@ -239,6 +239,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-netplay.js",
+      "sources": [
+        "../runtime/host/netplay.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-textlayout.js",
       "sources": [
         "bootstrap-src/26i-feature-textlayout-prefix.ts",

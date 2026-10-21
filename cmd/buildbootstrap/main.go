@@ -398,6 +398,13 @@ var outputs = []output{
 		name:    "bootstrap-feature-hub-document.js",
 		sources: []source{sourceFile("../runtime/host/hub-document.ts")},
 	},
+	{
+		// Browser half of netplay: RTCPeerConnection and one unreliable data
+		// channel per connection, polled by Go WASM (netplay/client). It loads
+		// only for a page that calls RequireFeature("netplay").
+		name:    "bootstrap-feature-netplay.js",
+		sources: []source{sourceFile("../runtime/host/netplay.ts")},
+	},
 
 	{
 		// Text-layout engine chunk. bootstrap-lite.js and bootstrap-runtime.js
