@@ -73,19 +73,22 @@ async function select(textarea, start, end = start, direction = 'forward') {
 async function snapshot(textarea) {
   return textarea.evaluate(node => ({value: node.value, start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection}));
 }
-async function caretVisible(textarea) {
-  return textarea.evaluate(node => {
+async function caretVisible(textarea, clipSelector) {
+  return textarea.evaluate((node, clipSelector) => {
     const walker = document.createTreeWalker(document.querySelector('#editor-highlight-content'), NodeFilter.SHOW_TEXT);
     let offset = node.selectionStart, text;
     while ((text = walker.nextNode())) {
       if (offset >= text.length) { offset -= text.length; continue; }
       const range = document.createRange();
       range.setStart(text, offset); range.setEnd(text, offset + 1);
-      const rect = range.getBoundingClientRect(), view = node.getBoundingClientRect();
+      const rect = range.getBoundingClientRect(), bounds = node.getBoundingClientRect();
+      const clip = clipSelector ? document.querySelector(clipSelector).getBoundingClientRect() : bounds;
+      const view = {top: Math.max(bounds.top, clip.top, 0), bottom: Math.min(bounds.bottom, clip.bottom, innerHeight),
+        left: Math.max(bounds.left, clip.left, 0), right: Math.min(bounds.right, clip.right, innerWidth)};
       return rect.top >= view.top && rect.bottom <= view.bottom && rect.left >= view.left && rect.right <= view.right;
     }
     return false;
-  });
+  }, clipSelector);
 }
 const browserTest = (name, run) => test(name, {skip: !modulePath && 'Set GOSX_PLAYWRIGHT_MODULE to run browser contracts'}, run);
 
@@ -358,6 +361,53 @@ browserTest('Go to line uses scalar columns, reveals distant and wrapped targets
       });
       assert.equal(prevented, false, 'Mac Command-G must remain native');
     }
+  }
+});
+
+browserTest('Go to line reveals targets inside ancestor clips without scrolling the application', async t => {
+  const source = ['wrap '.repeat(30), ...Array.from({length: 13}, (_, i) => `line ${i + 2} café 🎵`)].join('\n');
+  for (const overflow of ['hidden', 'auto', 'scroll']) {
+    const {page, textarea} = await mount(t, source);
+    const original = await textarea.evaluate((node, overflow) => {
+      const shell = node.parentElement;
+      const clip = document.createElement('div');
+      clip.id = 'clipped-editor';
+      clip.style.cssText = `width:320px;height:180px;overflow:${overflow}`;
+      shell.replaceWith(clip); clip.appendChild(shell);
+      return {top: clip.scrollTop, left: clip.scrollLeft, x: window.scrollX, y: window.scrollY};
+    }, overflow);
+    await textarea.focus();
+    await page.keyboard.press('Control+g');
+    const query = page.locator('[data-code-goto="query"]');
+    await query.fill('8:3'); await page.keyboard.press('Enter');
+    assert.equal(await caretVisible(textarea, '#clipped-editor'), true, overflow + ': target was selected below its visible dock');
+    assert.ok(await textarea.evaluate(node => node.scrollTop) > 0, 'the hidden portion of the textarea counted as visible');
+    assert.equal(await textarea.inputValue(), source);
+    await textarea.evaluate(async node => {
+      node.style.whiteSpace = 'pre';
+      document.querySelector('.editor-highlight-layer').style.whiteSpace = 'pre';
+      window.dispatchEvent(new Event('resize'));
+      await new Promise(requestAnimationFrame);
+    });
+    await page.keyboard.press('Control+g');
+    await query.fill('1:55'); await page.keyboard.press('Enter');
+    assert.equal(await caretVisible(textarea, '#clipped-editor'), true, overflow + ': target was selected beyond the horizontal clip');
+    assert.ok(await textarea.evaluate(node => node.scrollLeft) > 0);
+    await page.evaluate(() => {
+      const clip = document.querySelector('#clipped-editor');
+      clip.style.position = 'fixed';
+      clip.style.top = `${innerHeight - 100}px`;
+    });
+    await page.keyboard.press('Control+g');
+    await query.fill('5:3'); await page.keyboard.press('Enter');
+    assert.equal(await caretVisible(textarea, '#clipped-editor'), true, overflow + ': target stayed beyond the browser viewport');
+    assert.deepEqual(await page.evaluate(() => {
+      const clip = document.querySelector('#clipped-editor');
+      return {top: clip.scrollTop, left: clip.scrollLeft, x: window.scrollX, y: window.scrollY};
+    }), original, 'navigation scrolled an application ancestor');
+    assert.deepEqual(await textarea.evaluate(node => [
+      node.scrollTop, document.querySelector('.editor-highlight-layer').scrollTop, document.querySelector('#editor-line-numbers').scrollTop,
+    ]), await textarea.evaluate(node => [node.scrollTop, node.scrollTop, node.scrollTop]));
   }
 });
 
