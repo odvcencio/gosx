@@ -188,7 +188,12 @@ test-telemetry-wasm:
 bench-telemetry:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim
 
-.PHONY: test-netplay test-netplay-wasm bench-netplay
+.PHONY: test-netplay test-netplay-wasm bench-netplay test-netplay-webrtc
+# netplay/webrtc is its OWN module (pion stays out of the core go.mod); the
+# core target above covers ./netplay/... of the core module only.
+test-netplay-webrtc:
+	cd netplay/webrtc && GOWORK=off $(GO) vet ./... && GOWORK=off $(GO) test -p 4 -count=1 -race ./...
+
 test-netplay:
 	GOWORK=off $(GO) test -p 4 -count=1 ./netplay/...
 
