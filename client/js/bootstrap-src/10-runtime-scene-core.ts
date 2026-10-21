@@ -6200,6 +6200,57 @@
     return sceneNormalizeDirectionInto(out, out);
   }
 
+  // One bounded scratch serves successive indexed bakes. Float64 preserves
+  // the scalar path's precision until the final Float32 output; mesh epochs
+  // prevent reuse across poses, source edits, objects or independent mounts.
+  let sceneIndexedBakeValues = new Float64Array(0);
+  let sceneIndexedBakeSeen = new Uint32Array(0);
+  let sceneIndexedBakeEpoch = 0;
+
+  function sceneIndexedMeshBakeScratch(vertices, indexCount) {
+    const count = Math.floor(sceneNumber(vertices && vertices.count, 0));
+    // Small soups and sparsely indexed meshes cost less on the scalar path.
+    // The largest scratch is 8192 * (10 * 8 + 4) = 672 KiB, with no owners.
+    if (count <= 0 || count > 8192 || indexCount < 96 || indexCount < count * 2) return null;
+    if (sceneIndexedBakeSeen.length < count) {
+      let capacity = 128;
+      while (capacity < count) capacity *= 2;
+      sceneIndexedBakeValues = new Float64Array(capacity * 10);
+      sceneIndexedBakeSeen = new Uint32Array(capacity);
+    }
+    sceneIndexedBakeEpoch = (sceneIndexedBakeEpoch + 1) >>> 0;
+    if (sceneIndexedBakeEpoch === 0) {
+      sceneIndexedBakeSeen.fill(0);
+      sceneIndexedBakeEpoch = 1;
+    }
+    return { values: sceneIndexedBakeValues, seen: sceneIndexedBakeSeen, epoch: sceneIndexedBakeEpoch, count };
+  }
+
+  function sceneMeshBakeIndexedVertexInto(point, normal, tangent, vertices, index, modelMatrix, linearState, scratch) {
+    const cacheable = scratch && index < scratch.count;
+    const offset = index * 10;
+    if (cacheable && scratch.seen[index] === scratch.epoch) {
+      const values = scratch.values;
+      point.x = values[offset]; point.y = values[offset + 1]; point.z = values[offset + 2];
+      normal.x = values[offset + 3]; normal.y = values[offset + 4]; normal.z = values[offset + 5];
+      tangent.x = values[offset + 6]; tangent.y = values[offset + 7];
+      tangent.z = values[offset + 8]; tangent.w = values[offset + 9];
+      return;
+    }
+    const source = index * 3;
+    sceneMatrixTransformInto(point, modelMatrix, vertices.positions[source], vertices.positions[source + 1], vertices.positions[source + 2], 4, true);
+    sceneMeshWorldNormalInto(normal, vertices, index, linearState);
+    sceneMeshWorldTangentInto(tangent, vertices, index, modelMatrix, normal, linearState[9]);
+    if (cacheable) {
+      const values = scratch.values;
+      values[offset] = point.x; values[offset + 1] = point.y; values[offset + 2] = point.z;
+      values[offset + 3] = normal.x; values[offset + 4] = normal.y; values[offset + 5] = normal.z;
+      values[offset + 6] = tangent.x; values[offset + 7] = tangent.y;
+      values[offset + 8] = tangent.z; values[offset + 9] = tangent.w;
+      scratch.seen[index] = scratch.epoch;
+    }
+  }
+
   function sceneMeshWorldTangent(vertices, index, modelMatrix, normal, orientation) {
     return sceneMeshWorldTangentInto({}, vertices, index, modelMatrix, normal, orientation);
   }
@@ -6676,6 +6727,7 @@
       ];
       const bakeLinearState = sceneObjectMeshBakeLinearState(object, modelMatrix);
       const reverseWinding = bakeLinearState[9] < 0;
+      const indexedScratch = authoredIndices ? sceneIndexedMeshBakeScratch(vertices, drawnTriangleCount) : null;
       const capture = cacheEligible && sceneCanCaptureWorldBakedGeometry(bakedVertexCount)
         ? {
           positions: new Float32Array(bakedVertexCount * 3),
@@ -6706,12 +6758,21 @@
         const tri0 = source0 * 3;
         const tri1 = source1 * 3;
         const tri2 = source2 * 3;
-        sceneMatrixTransformInto(points[0], modelMatrix, positions[tri0], positions[tri0 + 1], positions[tri0 + 2], 4, true);
-        sceneMatrixTransformInto(points[1], modelMatrix, positions[tri1], positions[tri1 + 1], positions[tri1 + 2], 4, true);
-        sceneMatrixTransformInto(points[2], modelMatrix, positions[tri2], positions[tri2 + 1], positions[tri2 + 2], 4, true);
-        sceneMeshWorldNormalInto(normals[0], vertices, source0, bakeLinearState);
-        sceneMeshWorldNormalInto(normals[1], vertices, source1, bakeLinearState);
-        sceneMeshWorldNormalInto(normals[2], vertices, source2, bakeLinearState);
+        if (indexedScratch) {
+          sceneMeshBakeIndexedVertexInto(points[0], normals[0], tangents[0], vertices, source0, modelMatrix, bakeLinearState, indexedScratch);
+          sceneMeshBakeIndexedVertexInto(points[1], normals[1], tangents[1], vertices, source1, modelMatrix, bakeLinearState, indexedScratch);
+          sceneMeshBakeIndexedVertexInto(points[2], normals[2], tangents[2], vertices, source2, modelMatrix, bakeLinearState, indexedScratch);
+        } else {
+          sceneMatrixTransformInto(points[0], modelMatrix, positions[tri0], positions[tri0 + 1], positions[tri0 + 2], 4, true);
+          sceneMatrixTransformInto(points[1], modelMatrix, positions[tri1], positions[tri1 + 1], positions[tri1 + 2], 4, true);
+          sceneMatrixTransformInto(points[2], modelMatrix, positions[tri2], positions[tri2 + 1], positions[tri2 + 2], 4, true);
+          sceneMeshWorldNormalInto(normals[0], vertices, source0, bakeLinearState);
+          sceneMeshWorldNormalInto(normals[1], vertices, source1, bakeLinearState);
+          sceneMeshWorldNormalInto(normals[2], vertices, source2, bakeLinearState);
+          sceneMeshWorldTangentInto(tangents[0], vertices, source0, modelMatrix, normals[0], bakeLinearState[9]);
+          sceneMeshWorldTangentInto(tangents[1], vertices, source1, modelMatrix, normals[1], bakeLinearState[9]);
+          sceneMeshWorldTangentInto(tangents[2], vertices, source2, modelMatrix, normals[2], bakeLinearState[9]);
+        }
         // Full per-vertex analytic lighting is only computed when its result
         // is actually visible (wire segments) -- see flatMeshColor's comment
         // above. Otherwise reuse the one flat base color computed once for
@@ -6727,9 +6788,6 @@
         sceneMeshVertexUVInto(uvs[0], vertices, source0);
         sceneMeshVertexUVInto(uvs[1], vertices, source1);
         sceneMeshVertexUVInto(uvs[2], vertices, source2);
-        sceneMeshWorldTangentInto(tangents[0], vertices, source0, modelMatrix, normals[0], bakeLinearState[9]);
-        sceneMeshWorldTangentInto(tangents[1], vertices, source1, modelMatrix, normals[1], bakeLinearState[9]);
-        sceneMeshWorldTangentInto(tangents[2], vertices, source2, modelMatrix, normals[2], bakeLinearState[9]);
 
         for (let index = 0; index < 3; index += 1) {
           const point = points[index];

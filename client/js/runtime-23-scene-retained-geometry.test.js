@@ -5,6 +5,7 @@ const assert = require("node:assert/strict");
 const vm = require("node:vm");
 
 const {
+  bootstrapFeatureScene3DSource,
   bootstrapRuntimeSource,
   createContext,
   createBoardWebGPUHarness,
@@ -180,6 +181,97 @@ function loadFreshSceneAPI() {
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   runScript(freshFeatureBundleSource("scene3d"), env.context, "bootstrap-feature-scene3d.js");
   return { env, api: env.context.__gosx_scene3d_api };
+}
+
+function expandedIndexedMesh(object, F32) {
+  const source = object.vertices;
+  const vertices = { count: source.indices.length, immutable: false };
+  for (const [key, width] of [["positions", 3], ["normals", 3], ["uvs", 2], ["tangents", 4]]) {
+    vertices[key] = new F32(vertices.count * width);
+    for (let i = 0; i < source.indices.length; i++) {
+      for (let j = 0; j < width; j++) vertices[key][i * width + j] = source[key][source.indices[i] * width + j];
+    }
+  }
+  return Object.assign({}, object, { vertices });
+}
+
+function bakedMeshSnapshot(bundle) {
+  return {
+    positions: Array.from(bundle.worldMeshPositions), normals: Array.from(bundle.worldMeshNormals),
+    uvs: Array.from(bundle.worldMeshUVs), tangents: Array.from(bundle.worldMeshTangents),
+    colors: Array.from(bundle.worldMeshColors), lines: Array.from(bundle.worldPositions),
+    lineColors: Array.from(bundle.worldColors),
+    bounds: bundle.meshObjects.map(mesh => ({ ...mesh.bounds })),
+  };
+}
+
+for (const fresh of [true, false]) {
+  test(`${fresh ? "source" : "generated"} indexed world bakes preserve triangle soup through pose and source edits`, () => {
+    const env = createContext({});
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    runScript(fresh ? freshFeatureBundleSource("scene3d") : bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+    const api = env.context.__gosx_scene3d_api;
+    const F32 = vm.runInContext("Float32Array", env.context);
+    const U32 = vm.runInContext("Uint32Array", env.context);
+    const object = obliqueTriangle({ x: 0, castShadow: true }, F32);
+    object.vertices.immutable = false;
+    object.vertices.indices = new U32(Array.from({ length: 192 }, (_, i) => i % 3));
+    const other = Object.assign({}, object, { id: "interleaved-mesh", x: 3, rotationY: 0.6, scaleZ: 1.7 });
+    const lights = [{ kind: "directional", x: 1, y: 3, z: 2, color: "#ffffff", intensity: 1 }];
+    for (const [step, scale] of [[2, 3, 4], [-2, 3, 4], [-2, -3, -4], [1, 1, 1]].entries()) {
+      [object.scaleX, object.scaleY, object.scaleZ] = scale;
+      object.rotationZ = step * 0.3;
+      object.wireframe = step === 3;
+      if (step === 2) {
+        object.vertices.positions[0] += 0.125;
+        object.vertices.normals[1] = 0.9;
+        object.vertices.tangents[3] = -1;
+        object.vertices.uvs[0] = 0.75;
+        object.vertices.indices.reverse();
+      }
+      const objects = [object, other];
+      const actual = renderBundle(api, objects, step, [], false, lights);
+      const expected = renderBundle(api, objects.map(mesh => expandedIndexedMesh(mesh, F32)), step, [], false, lights);
+      assert.deepEqual(bakedMeshSnapshot(actual), bakedMeshSnapshot(expected), `pose ${step} must match expanded geometry exactly`);
+      const hit = api.sceneRaycastPick(160, 90, 320, 180, actual.camera, actual);
+      const oracleHit = api.sceneRaycastPick(160, 90, 320, 180, expected.camera, expected);
+      assert.ok(hit && oracleHit, `pose ${step} remains pickable`);
+      assert.equal(hit.triangleIndex, oracleHit.triangleIndex);
+      assert.deepEqual({ ...hit.worldPosition }, { ...oracleHit.worldPosition });
+      assert.deepEqual({ ...hit.uv }, { ...oracleHit.uv });
+    }
+  });
+
+  test(`${fresh ? "source" : "generated"} indexed world bakes transform shared vertices once and bound scratch use`, () => {
+    const env = createContext({});
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    runScript(fresh ? freshFeatureBundleSource("scene3d") : bootstrapFeatureScene3DSource, env.context, "bootstrap-feature-scene3d.js");
+    const api = env.context.__gosx_scene3d_api;
+    const F32 = vm.runInContext("Float32Array", env.context);
+    const U32 = vm.runInContext("Uint32Array", env.context);
+    for (const [count, indexCount, expectedReads] of [[3, 192, 9], [3, 6, 18], [1024, 96, 288], [8193, 24579, 73737]]) {
+      let reads = 0;
+      const object = obliqueTriangle({}, F32);
+      const normals = new F32(count * 3);
+      normals.set(object.vertices.normals);
+      object.vertices.normals = new Proxy(normals, {
+        get(target, key) {
+          if (typeof key === "string" && /^\d+$/.test(key)) reads++;
+          return Reflect.get(target, key, target);
+        },
+      });
+      object.vertices.count = count;
+      object.vertices.immutable = false;
+      object.vertices.indices = new U32(Array.from({ length: indexCount }, (_, i) => i % 3));
+      for (let pose = 0; pose < 2; pose++) {
+        reads = 0;
+        object.x = pose;
+        const bundle = renderBundle(api, object, pose, [], false);
+        assert.equal(reads, expectedReads, `${count}/${indexCount}, pose ${pose}`);
+        assert.equal(bundle.worldBakedMeshVertexCount, indexCount);
+      }
+    }
+  });
 }
 
 test("Scene3D retains eligible local mesh arrays and updates only compact transform state", () => {
