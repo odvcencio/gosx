@@ -2,14 +2,15 @@ package scene
 
 import (
 	"fmt"
+	"math"
 	"strings"
 
 	"m31labs.dev/gosx/motion"
 )
 
 type timelineMotionLeaf struct {
+	index int
 	at    float64
-	value motion.SignalRef
 }
 
 // BindMotion binds this plan's node and camera properties to a motion program.
@@ -48,10 +49,49 @@ func (t *Timeline) BindMotion(program *motion.Program, input motion.SignalRef, s
 	var groups []group
 	indices := make(map[string]int)
 	for i, tween := range player.tracks {
+		key := tweenKey(tween)
+		index, exists := indices[key]
+		if !exists {
+			index = len(groups)
+			indices[key] = index
+			groups = append(groups, group{target: tween})
+		}
+		groups[index].leaves = append(groups[index].leaves, timelineMotionLeaf{
+			index: i, at: tween.At.Seconds(),
+		})
+	}
+	leafClocks := make([]motion.SignalRef, len(player.tracks))
+	gateClocks := make([]motion.SignalRef, len(player.tracks))
+	values := make([]motion.SignalRef, len(player.tracks))
+	var scopeClocks func([]timelineMotionLeaf, motion.SignalRef)
+	scopeClocks = func(leaves []timelineMotionLeaf, clock motion.SignalRef) {
+		if len(leaves) == 1 {
+			leafClocks[leaves[0].index] = clock
+			return
+		}
+		mid := len(leaves) / 2
+		pivot := leaves[mid]
+		gateClocks[pivot.index] = clock
+		left, right := clock, clock
+		if len(leaves) > 8 {
+			// Freeze finished/future branches at this boundary. Non-overlap
+			// guarantees the left branch has ended when the right branch starts.
+			// Small buckets avoid adding a clamp pair for every individual tween.
+			id := fmt.Sprintf("%s.window.%d", prefix, pivot.index)
+			left = next.Clamp(id+".left", clock, -math.MaxFloat64, pivot.at)
+			right = next.Clamp(id+".right", clock, pivot.at, math.MaxFloat64)
+		}
+		scopeClocks(leaves[:mid], left)
+		scopeClocks(leaves[mid:], right)
+	}
+	for _, group := range groups {
+		scopeClocks(group.leaves, input)
+	}
+	for i, tween := range player.tracks {
 		id := fmt.Sprintf("%s.%d", prefix, i)
 		start := tween.At.Seconds()
 		track := motion.Track{Ease: tween.Ease}
-		clock := input
+		clock := leafClocks[i]
 		if tween.Duration == 0 {
 			track.Interp = motion.InterpStep
 			track.Keys = []motion.Key{
@@ -61,7 +101,7 @@ func (t *Timeline) BindMotion(program *motion.Program, input motion.SignalRef, s
 		} else {
 			// Translate seconds before sampling, preserving the authored duration
 			// even when a very short tween starts late in a long presentation.
-			clock = next.Map(id+".time", input, 0, 1, -start, 1-start)
+			clock = next.Map(id+".time", clock, 0, 1, -start, 1-start)
 			track.Keys = []motion.Key{
 				{T: 0, Value: motion.ScalarV(tween.From)},
 				{T: tween.Duration.Seconds(), Value: motion.ScalarV(tween.To)},
@@ -71,20 +111,13 @@ func (t *Timeline) BindMotion(program *motion.Program, input motion.SignalRef, s
 		if err != nil {
 			return err
 		}
-		key := tweenKey(tween)
-		index, exists := indices[key]
-		if !exists {
-			index = len(groups)
-			indices[key] = index
-			groups = append(groups, group{target: tween})
-		}
-		groups[index].leaves = append(groups[index].leaves, timelineMotionLeaf{at: start, value: value})
+		values[i] = value
 	}
 	selection := 0
 	var selectValue func([]timelineMotionLeaf) (motion.SignalRef, error)
 	selectValue = func(leaves []timelineMotionLeaf) (motion.SignalRef, error) {
 		if len(leaves) == 1 {
-			return leaves[0].value, nil
+			return values[leaves[0].index], nil
 		}
 		// A balanced selection tree keeps long same-property sequences shallow.
 		mid := len(leaves) / 2
@@ -99,7 +132,7 @@ func (t *Timeline) BindMotion(program *motion.Program, input motion.SignalRef, s
 		id := fmt.Sprintf("%s.select.%d", prefix, selection)
 		selection++
 		at := leaves[mid].at
-		gate, err := next.SampleTrack(id+".gate", input, motion.Track{
+		gate, err := next.SampleTrack(id+".gate", gateClocks[leaves[mid].index], motion.Track{
 			Interp: motion.InterpStep,
 			Keys: []motion.Key{
 				{T: at - 1, Value: motion.ScalarV(0)},

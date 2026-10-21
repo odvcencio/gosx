@@ -71,7 +71,17 @@ any scalar motion signal; its units must be seconds since the plan's start.
 The binding compiles to existing maps, sampled tracks (including steps), and mixes.
 It does not start another clock or require `scene.Props.Timelines`. The normal
 motion feature loader supplies the adapters. Long sequences use a balanced
-selection tree. Reduced motion settles the final pose; scope disposal releases
+selection tree. For properties with more than eight tweens, existing clamp
+signals freeze clocks outside small windows. Steady playback avoids sampling
+most inactive tracks; large seeks can still resample crossed windows. This adds
+some graph data and mount work for long sequences. Short sequences produce the
+same programs, and no runtime JavaScript is added. A reproducible CPU-only
+[benchmark](../client/js/timeline-motion.bench.mjs) and
+[recorded measurements](../scene/testdata/timeline_motion_performance.json)
+separate steady updates, arbitrary seeks, mount cost and serialized size;
+they do not measure GPU rendering or full-frame rates.
+
+Reduced motion settles the final pose; scope disposal releases
 the bindings. A paused scope retains ownership of its bound properties, so use
 its controls to manage playback and avoid concurrently binding another source
 to the same property. Imperative scene commands do not dispose a motion scope.

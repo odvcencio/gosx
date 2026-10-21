@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Freeze inactive windows in long Go scene timeline sequences using existing
+  clamp signals. Steady playback samples the active bucket and selection path;
+  gaps, cuts and reverse seeks retain their native poses. Sequences of eight or
+  fewer tweens per property retain identical programs and runtime bytes.
+
 - Bind Go scene timelines to motion programs with `Timeline.BindMotion`.
   Existing Go playback controls now seek node and camera sequences alongside
   DOM and Selena animation, including exact cuts, holds and backward seeks.

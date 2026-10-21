@@ -1,0 +1,2224 @@
+{
+  "scope": "CPU only: actual mounted GoSX signal graph with mock DOM/RAF/scene writer; VM boundary included; excludes Go authoring, source loading, browser and GPU/frame-rate budgets",
+  "baseline": "f50f3344c99076d9fa4b25e65250a89c92b50960",
+  "head": "f50f3344c99076d9fa4b25e65250a89c92b50960",
+  "dirty": true,
+  "compilerSHA256": {
+    "baseline": "b3288c60e0e5579b0dd132f4d0bf9db06751fd11f0a729d2be047cb0015423f2",
+    "candidate": "439537686d3202aa48908dddfa3fb954297c9ded7d5a7e70390f25802f8e79d1"
+  },
+  "sourceSHA256": {
+    "client/js/bootstrap-src/06-motion-core.ts": "52a3e08789698474ed05d24b2054ba93d31032344d4627abe54ae67a9abe3bd0",
+    "client/runtime/motion/track.ts": "82d725c4d900d87cf90625c3751622acd7cb8c7948db5a095bf02d851e9dd5b1",
+    "client/runtime/motion/transport.ts": "3c8c2c212094818cdc1aad4e65f8bd62378361991c17017d0e84dc2a2c20fb3f",
+    "scene/testdata/timeline_motion_bench/main.go": "32f824c106069c2279058301fa32aa2aeed99ae2ee0fe2913f5af4897d18ae46",
+    "client/js/timeline-motion.bench.mjs": "c2f20ac6e7cbac237dc17be728db4ebbf8014f13664a55d4e13d54cb7c5c5a9f"
+  },
+  "environment": {
+    "node": "v22.23.2",
+    "go": "go version go1.26.0 linux/amd64",
+    "os": "Linux",
+    "release": "6.18.33.2-microsoft-standard-WSL2",
+    "arch": "x64",
+    "cpu": "Intel(R) Core(TM) Ultra 9 285",
+    "affinity": "0",
+    "gcExposed": true
+  },
+  "timing": {
+    "inspectorDisabled": true,
+    "repetitions": 8,
+    "frames": 1000,
+    "warmupFrames": 256,
+    "alternatingOrder": true
+  },
+  "work": [
+    {
+      "variant": "baseline",
+      "tweens": 1,
+      "samplerCalls": 1,
+      "pose": 0.75,
+      "signals": 3,
+      "programBytes": 521,
+      "programGzipBytes": 259,
+      "programSHA256": "6be43a705f6de87b7f191569dfce318d970af43851a24fd26e3336485fad435f",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "baseline",
+      "tweens": 2,
+      "samplerCalls": 3,
+      "pose": 1.25,
+      "signals": 7,
+      "programBytes": 1178,
+      "programGzipBytes": 348,
+      "programSHA256": "1073999774d71b6ef3725c30439c239b126ce8302dadacfeeb32bebc342366f7",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "baseline",
+      "tweens": 8,
+      "samplerCalls": 15,
+      "pose": 4.25,
+      "signals": 31,
+      "programBytes": 5126,
+      "programGzipBytes": 609,
+      "programSHA256": "414e70267a137421e2adfe52a7ad5c722d5f71567c223c257fdd221977ab52c5",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "baseline",
+      "tweens": 16,
+      "samplerCalls": 31,
+      "pose": 8.25,
+      "signals": 63,
+      "programBytes": 10471,
+      "programGzipBytes": 950,
+      "programSHA256": "a067a83da52471f05e6f419e200c27a50a02211a953f2c400fd1fc2b756fd4ce",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "baseline",
+      "tweens": 64,
+      "samplerCalls": 127,
+      "pose": 32.25,
+      "signals": 255,
+      "programBytes": 42727,
+      "programGzipBytes": 2926,
+      "programSHA256": "183b8251bc597789cf666c85ea7ed24e59b0ddcc04958e6963114e3b022d4983",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "baseline",
+      "tweens": 256,
+      "samplerCalls": 511,
+      "pose": 128.25,
+      "signals": 1023,
+      "programBytes": 173932,
+      "programGzipBytes": 11249,
+      "programSHA256": "30fef2090009ec84ed435045fe937a16b54225c4d2f3d616dd288ff6a610c51a",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "baseline",
+      "tweens": 1024,
+      "samplerCalls": 2047,
+      "pose": 512.25,
+      "signals": 4095,
+      "programBytes": 701113,
+      "programGzipBytes": 43187,
+      "programSHA256": "1eb7b92c15366e7b7840f3424fb8870406013ebe8966cb8d53980242d6c13b2c",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "candidate",
+      "tweens": 1,
+      "samplerCalls": 1,
+      "pose": 0.75,
+      "signals": 3,
+      "programBytes": 521,
+      "programGzipBytes": 259,
+      "programSHA256": "6be43a705f6de87b7f191569dfce318d970af43851a24fd26e3336485fad435f",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "candidate",
+      "tweens": 2,
+      "samplerCalls": 3,
+      "pose": 1.25,
+      "signals": 7,
+      "programBytes": 1178,
+      "programGzipBytes": 348,
+      "programSHA256": "1073999774d71b6ef3725c30439c239b126ce8302dadacfeeb32bebc342366f7",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "candidate",
+      "tweens": 8,
+      "samplerCalls": 15,
+      "pose": 4.25,
+      "signals": 31,
+      "programBytes": 5126,
+      "programGzipBytes": 609,
+      "programSHA256": "414e70267a137421e2adfe52a7ad5c722d5f71567c223c257fdd221977ab52c5",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "candidate",
+      "tweens": 16,
+      "samplerCalls": 16,
+      "pose": 8.25,
+      "signals": 65,
+      "programBytes": 11456,
+      "programGzipBytes": 1024,
+      "programSHA256": "ffce0809273e094ad7c89722f81ec088340a0ab7eb3d2fdd0f9cb01f05396359",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "candidate",
+      "tweens": 64,
+      "samplerCalls": 18,
+      "pose": 32.25,
+      "signals": 269,
+      "programBytes": 47990,
+      "programGzipBytes": 3232,
+      "programSHA256": "ed1987bc3344d749d00217097ffb814b9f8bae22b57986ad82ae9165f42c8e75",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "candidate",
+      "tweens": 256,
+      "samplerCalls": 20,
+      "pose": 128.25,
+      "signals": 1085,
+      "programBytes": 196737,
+      "programGzipBytes": 12524,
+      "programSHA256": "8b0b9bd4c9c8ac1a987b869324204fa4e97ccb0eaacdf6a51ffc1f3df751b01a",
+      "nativeSamplesChecked": 6
+    },
+    {
+      "variant": "candidate",
+      "tweens": 1024,
+      "samplerCalls": 22,
+      "pose": 512.25,
+      "signals": 4349,
+      "programBytes": 794556,
+      "programGzipBytes": 48381,
+      "programSHA256": "cc346251861d5814c9e523faec711d47091ade92d7d61001d313db69e45ea194",
+      "nativeSamplesChecked": 6
+    }
+  ],
+  "trials": [
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.3652350000002116,
+      "microsecondsPerUpdate": 12.710285000000113
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.15884399999958987,
+      "microsecondsPerUpdate": 12.947063999999955
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.26668900000004214,
+      "microsecondsPerUpdate": 21.127856000000065
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.2498169999998936,
+      "microsecondsPerUpdate": 20.739998000000014
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.44125400000029913,
+      "microsecondsPerUpdate": 38.05895699999928
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.4249569999992673,
+      "microsecondsPerUpdate": 45.31362300000001
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.4861170000003767,
+      "microsecondsPerUpdate": 54.969256000000314
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.48381699999936245,
+      "microsecondsPerUpdate": 63.47866299999987
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.3978640000004816,
+      "microsecondsPerUpdate": 173.56144799999947
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.4680349999998725,
+      "microsecondsPerUpdate": 323.664436
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 7.914389999999912,
+      "microsecondsPerUpdate": 614.5537670000003
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 6.323973999999907,
+      "microsecondsPerUpdate": 1344.7682429999995
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 39.35229700000036,
+      "microsecondsPerUpdate": 2555.896288
+    },
+    {
+      "repetition": 0,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 50.03174200000103,
+      "microsecondsPerUpdate": 6498.941944
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.1737009999997099,
+      "microsecondsPerUpdate": 12.685073000000557
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.1869299999998475,
+      "microsecondsPerUpdate": 14.264775999999983
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.21127900000283262,
+      "microsecondsPerUpdate": 16.219010000000708
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.39945499999885214,
+      "microsecondsPerUpdate": 25.27505200000087
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.33733700000084355,
+      "microsecondsPerUpdate": 39.02850199999739
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.32995500000106404,
+      "microsecondsPerUpdate": 47.520111000001634
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5092170000025362,
+      "microsecondsPerUpdate": 41.4924319999991
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5120919999972102,
+      "microsecondsPerUpdate": 49.619479000000865
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.4330340000014985,
+      "microsecondsPerUpdate": 43.05833100000018
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.4254619999992428,
+      "microsecondsPerUpdate": 246.742968999999
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 8.933051999996678,
+      "microsecondsPerUpdate": 47.72640500000125
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 8.281671999997343,
+      "microsecondsPerUpdate": 1022.6561509999992
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 37.31497700000182,
+      "microsecondsPerUpdate": 55.662688000000344
+    },
+    {
+      "repetition": 0,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 35.740546000000904,
+      "microsecondsPerUpdate": 4964.150743999999
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.29241800000090734,
+      "microsecondsPerUpdate": 17.319322999999713
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.8841529999990598,
+      "microsecondsPerUpdate": 16.504895999998553
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.2891559999989113,
+      "microsecondsPerUpdate": 26.779614999999467
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.30779900000197813,
+      "microsecondsPerUpdate": 31.123101999997743
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.4277680000013788,
+      "microsecondsPerUpdate": 44.86871499999688
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.39253199999802746,
+      "microsecondsPerUpdate": 50.40517800000089
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.522940999999264,
+      "microsecondsPerUpdate": 45.56457099999898
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.6263169999983802,
+      "microsecondsPerUpdate": 69.21884499999942
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.490894999999,
+      "microsecondsPerUpdate": 54.7733679999983
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 2.5741569999991043,
+      "microsecondsPerUpdate": 353.4468130000023
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 7.953644000001077,
+      "microsecondsPerUpdate": 52.97886899999867
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 7.22357799999736,
+      "microsecondsPerUpdate": 1271.8889430000017
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 39.017493999999715,
+      "microsecondsPerUpdate": 79.9106520000023
+    },
+    {
+      "repetition": 1,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 47.833535999998276,
+      "microsecondsPerUpdate": 4549.132346000002
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.19507699999667238,
+      "microsecondsPerUpdate": 16.507900000004156
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.16700600000331178,
+      "microsecondsPerUpdate": 16.13955800000258
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.24448699999629753,
+      "microsecondsPerUpdate": 24.992965999997978
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.32566700000461424,
+      "microsecondsPerUpdate": 27.17248600000312
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.3262350000004517,
+      "microsecondsPerUpdate": 41.56270000000222
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.49504399999568705,
+      "microsecondsPerUpdate": 47.63324299999658
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5433150000026217,
+      "microsecondsPerUpdate": 61.20492899999954
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5438839999987977,
+      "microsecondsPerUpdate": 70.16559699999925
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.3614640000014333,
+      "microsecondsPerUpdate": 182.19044600000052
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.7367310000045109,
+      "microsecondsPerUpdate": 337.6859189999959
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 7.395487999994657,
+      "microsecondsPerUpdate": 669.6182389999959
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 8.368218999996316,
+      "microsecondsPerUpdate": 1535.8875800000023
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 43.213465000000724,
+      "microsecondsPerUpdate": 3215.8977349999986
+    },
+    {
+      "repetition": 1,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 59.21654800000397,
+      "microsecondsPerUpdate": 6511.470452000001
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.23428599999897415,
+      "microsecondsPerUpdate": 17.22373499999958
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.25681299999996554,
+      "microsecondsPerUpdate": 14.155589000001783
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.32228700000268873,
+      "microsecondsPerUpdate": 24.59769399999641
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.2761769999997341,
+      "microsecondsPerUpdate": 33.90489299999899
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.4076989999957732,
+      "microsecondsPerUpdate": 49.171806000005745
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.5903160000016214,
+      "microsecondsPerUpdate": 53.879863999994996
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5311559999972815,
+      "microsecondsPerUpdate": 58.04168400000344
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5251199999984237,
+      "microsecondsPerUpdate": 76.26287800000136
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.650313999998616,
+      "microsecondsPerUpdate": 209.63548499999888
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.7506710000016028,
+      "microsecondsPerUpdate": 369.86345400000573
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 8.02148400000442,
+      "microsecondsPerUpdate": 635.740764000002
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 9.552881999996316,
+      "microsecondsPerUpdate": 1394.7724380000002
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 38.83727400000498,
+      "microsecondsPerUpdate": 2997.468372999996
+    },
+    {
+      "repetition": 2,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 36.40640100000019,
+      "microsecondsPerUpdate": 5831.352860000006
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.17208600000594743,
+      "microsecondsPerUpdate": 16.583820999992895
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.1732380000030389,
+      "microsecondsPerUpdate": 13.231297000005725
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.22177500001271255,
+      "microsecondsPerUpdate": 21.201576999999816
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.2545810000010533,
+      "microsecondsPerUpdate": 25.020384999996168
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.3459949999960372,
+      "microsecondsPerUpdate": 38.26088999999047
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.39980800000193994,
+      "microsecondsPerUpdate": 49.799522999994224
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5103129999915836,
+      "microsecondsPerUpdate": 47.700142000001506
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5868590000027325,
+      "microsecondsPerUpdate": 56.8069220000034
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.7315139999991516,
+      "microsecondsPerUpdate": 47.96345199999632
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.5583719999995083,
+      "microsecondsPerUpdate": 264.0702549999987
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 7.008839000001899,
+      "microsecondsPerUpdate": 55.29468900000211
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 8.536419999989448,
+      "microsecondsPerUpdate": 1234.2775249999975
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 41.877184000011766,
+      "microsecondsPerUpdate": 79.2130499999912
+    },
+    {
+      "repetition": 2,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 50.436730999994325,
+      "microsecondsPerUpdate": 6096.278112
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.23958000000857282,
+      "microsecondsPerUpdate": 17.75281000000541
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.2800180000049295,
+      "microsecondsPerUpdate": 17.13045099998999
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.3562789999996312,
+      "microsecondsPerUpdate": 30.622927999997046
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.3195709999999963,
+      "microsecondsPerUpdate": 35.50395199999912
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.5024220000050263,
+      "microsecondsPerUpdate": 52.39727600000333
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.4669910000084201,
+      "microsecondsPerUpdate": 59.313507999992
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.6353159999998752,
+      "microsecondsPerUpdate": 55.532434000007925
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.684586000003037,
+      "microsecondsPerUpdate": 69.7095960000006
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.938041000001249,
+      "microsecondsPerUpdate": 59.145378999994136
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 2.2174700000032317,
+      "microsecondsPerUpdate": 328.85025499999756
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 10.794080000006943,
+      "microsecondsPerUpdate": 60.383228000006056
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 10.795650000000023,
+      "microsecondsPerUpdate": 1242.2147120000006
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 52.311396000004606,
+      "microsecondsPerUpdate": 63.65706999998656
+    },
+    {
+      "repetition": 3,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 39.95508600000176,
+      "microsecondsPerUpdate": 4979.543594999995
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.18113799999991897,
+      "microsecondsPerUpdate": 14.570930999994744
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.18029499999829568,
+      "microsecondsPerUpdate": 12.516971999997622
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.24342199999955483,
+      "microsecondsPerUpdate": 24.135559999995166
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.3723909999971511,
+      "microsecondsPerUpdate": 25.119174999999814
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.4649269999936223,
+      "microsecondsPerUpdate": 42.966887000002316
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.3672400000068592,
+      "microsecondsPerUpdate": 46.44662800000515
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.46080700001039077,
+      "microsecondsPerUpdate": 55.76343399999314
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.46099300000059884,
+      "microsecondsPerUpdate": 62.45682900000247
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 3.17862600000808,
+      "microsecondsPerUpdate": 177.0913259999943
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.452569000000949,
+      "microsecondsPerUpdate": 321.2293070000014
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 11.631605999995372,
+      "microsecondsPerUpdate": 702.9825859999983
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 6.336270999992848,
+      "microsecondsPerUpdate": 1387.4516329999897
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 31.556598000010126,
+      "microsecondsPerUpdate": 2367.263982999997
+    },
+    {
+      "repetition": 3,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 33.98218300000008,
+      "microsecondsPerUpdate": 5794.365793999998
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.1736209999944549,
+      "microsecondsPerUpdate": 12.937948999999207
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.17979700000432786,
+      "microsecondsPerUpdate": 14.894541999994544
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.21979599999031052,
+      "microsecondsPerUpdate": 21.22166000001016
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.31538100000761915,
+      "microsecondsPerUpdate": 27.990916999988258
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.4731199999951059,
+      "microsecondsPerUpdate": 53.13752899999963
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.41665100000682287,
+      "microsecondsPerUpdate": 63.26920899999095
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.49370700000145007,
+      "microsecondsPerUpdate": 66.07204600000114
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5422350000008009,
+      "microsecondsPerUpdate": 66.01685099999304
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 2.938615999999456,
+      "microsecondsPerUpdate": 193.6435630000051
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.5434719999902882,
+      "microsecondsPerUpdate": 327.7041509999981
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 6.693573999989894,
+      "microsecondsPerUpdate": 805.5081950000022
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 8.781730999995489,
+      "microsecondsPerUpdate": 1520.648191
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 45.49820600000385,
+      "microsecondsPerUpdate": 2445.3881339999934
+    },
+    {
+      "repetition": 4,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 33.464801000009174,
+      "microsecondsPerUpdate": 6265.0295719999995
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.257341999997152,
+      "microsecondsPerUpdate": 13.53102100000251
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.19178400000964757,
+      "microsecondsPerUpdate": 15.383692999996128
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.4423220000026049,
+      "microsecondsPerUpdate": 25.35495799999626
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.3150400000013178,
+      "microsecondsPerUpdate": 31.84247200000391
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.44481400000222493,
+      "microsecondsPerUpdate": 46.68715399999928
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.36134999999194406,
+      "microsecondsPerUpdate": 45.05310000000463
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5029199999989942,
+      "microsecondsPerUpdate": 37.431360000002314
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5175899999885587,
+      "microsecondsPerUpdate": 47.81682000000728
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.4373000000050524,
+      "microsecondsPerUpdate": 43.09073999999964
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.4412600000068778,
+      "microsecondsPerUpdate": 291.8809800000017
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 7.5317399999912595,
+      "microsecondsPerUpdate": 59.23871999999392
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 8.750339999998687,
+      "microsecondsPerUpdate": 1003.2913799999951
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 33.97409999999218,
+      "microsecondsPerUpdate": 53.69138999999268
+    },
+    {
+      "repetition": 4,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 33.76340999999957,
+      "microsecondsPerUpdate": 4307.870227000007
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.1733749999984866,
+      "microsecondsPerUpdate": 16.71892200000002
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.3211319999973057,
+      "microsecondsPerUpdate": 14.532978999995976
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.20734000000811648,
+      "microsecondsPerUpdate": 21.40551399999822
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.21482300000207033,
+      "microsecondsPerUpdate": 26.361233000003267
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.4370350000099279,
+      "microsecondsPerUpdate": 37.12179699999979
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.32909500000823755,
+      "microsecondsPerUpdate": 44.86322100000689
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.49978399999963585,
+      "microsecondsPerUpdate": 40.04172999999719
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5032389999978477,
+      "microsecondsPerUpdate": 49.63990600001125
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.4162630000064382,
+      "microsecondsPerUpdate": 43.6908540000004
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.4257610000058776,
+      "microsecondsPerUpdate": 250.96421900000132
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 8.089899999991758,
+      "microsecondsPerUpdate": 50.636115000001155
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 9.484286999999313,
+      "microsecondsPerUpdate": 1006.3365110000013
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 35.86566999999923,
+      "microsecondsPerUpdate": 55.95230499999889
+    },
+    {
+      "repetition": 5,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 35.43947599999956,
+      "microsecondsPerUpdate": 5119.048499000011
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.20934199998737313,
+      "microsecondsPerUpdate": 16.825215999997454
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.18594299998949282,
+      "microsecondsPerUpdate": 17.558726999995997
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.2635240000090562,
+      "microsecondsPerUpdate": 26.45829800001229
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.3127180000010412,
+      "microsecondsPerUpdate": 35.07967199999257
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.5356770000071265,
+      "microsecondsPerUpdate": 42.5098210000142
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.36507800000254065,
+      "microsecondsPerUpdate": 47.315764999977546
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5114159999939147,
+      "microsecondsPerUpdate": 58.330618000007235
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5152520000119694,
+      "microsecondsPerUpdate": 64.0273440000019
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.3486869999906048,
+      "microsecondsPerUpdate": 171.21823399999994
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.4788189999817405,
+      "microsecondsPerUpdate": 390.325308999978
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 7.627888000017265,
+      "microsecondsPerUpdate": 706.5095620000211
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 8.061052000004565,
+      "microsecondsPerUpdate": 1293.490489000018
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 32.84461400000146,
+      "microsecondsPerUpdate": 2422.696150999982
+    },
+    {
+      "repetition": 5,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 32.94156499998644,
+      "microsecondsPerUpdate": 6232.810884999985
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.1958720000111498,
+      "microsecondsPerUpdate": 12.524165999988327
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.1791899999952875,
+      "microsecondsPerUpdate": 15.324656999990111
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.23882299999240786,
+      "microsecondsPerUpdate": 27.41278600000078
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.4035349999903701,
+      "microsecondsPerUpdate": 31.46089000001666
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.4778379999916069,
+      "microsecondsPerUpdate": 56.2633050000004
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.6780230000149459,
+      "microsecondsPerUpdate": 53.88581300000078
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5264460000034887,
+      "microsecondsPerUpdate": 56.362919000006514
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5005599999858532,
+      "microsecondsPerUpdate": 84.8767270000244
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.5507679999864195,
+      "microsecondsPerUpdate": 174.11993899999652
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 3.012879999994766,
+      "microsecondsPerUpdate": 337.4075330000196
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 6.570455000008224,
+      "microsecondsPerUpdate": 704.1854030000104
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 6.578315999999177,
+      "microsecondsPerUpdate": 1280.4130630000145
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 34.595544999989215,
+      "microsecondsPerUpdate": 2384.777425999986
+    },
+    {
+      "repetition": 6,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 37.74771399999736,
+      "microsecondsPerUpdate": 6080.993382999994
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.17657700000563636,
+      "microsecondsPerUpdate": 13.30587199999718
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.18510800000512972,
+      "microsecondsPerUpdate": 13.670624999998836
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.6428469999809749,
+      "microsecondsPerUpdate": 22.83776900000521
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.27838199998950586,
+      "microsecondsPerUpdate": 29.480975999991642
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.34241799998562783,
+      "microsecondsPerUpdate": 38.50615000000107
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.36101500000222586,
+      "microsecondsPerUpdate": 48.67456799998763
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5655829999886919,
+      "microsecondsPerUpdate": 56.06568599998718
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.5789079999958631,
+      "microsecondsPerUpdate": 53.80306599999312
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.4910309999831952,
+      "microsecondsPerUpdate": 47.16589900001418
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.516914000007091,
+      "microsecondsPerUpdate": 250.6887090000091
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 12.284275000012713,
+      "microsecondsPerUpdate": 55.54391099998611
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 8.84140699999989,
+      "microsecondsPerUpdate": 1234.1325009999855
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 46.90331799999694,
+      "microsecondsPerUpdate": 73.05696999997599
+    },
+    {
+      "repetition": 6,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 51.47064300000784,
+      "microsecondsPerUpdate": 4745.621176999994
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.3143229999986943,
+      "microsecondsPerUpdate": 15.168433000013465
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.17015099999844097,
+      "microsecondsPerUpdate": 17.24580699999933
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.26016199999139644,
+      "microsecondsPerUpdate": 25.511009999987436
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.2804850000247825,
+      "microsecondsPerUpdate": 34.49324300000444
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.5293370000144932,
+      "microsecondsPerUpdate": 46.5070340000093
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.5081510000163689,
+      "microsecondsPerUpdate": 45.43551599999773
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.5294320000102744,
+      "microsecondsPerUpdate": 49.71823399999994
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.6612399999867193,
+      "microsecondsPerUpdate": 63.378412999998545
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.8448170000046957,
+      "microsecondsPerUpdate": 49.11853599999449
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.512375999998767,
+      "microsecondsPerUpdate": 238.89516600000206
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 6.360856999992393,
+      "microsecondsPerUpdate": 46.24802199998521
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 7.4758960000181105,
+      "microsecondsPerUpdate": 1097.499181000021
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 36.89397000000463,
+      "microsecondsPerUpdate": 60.85398499999428
+    },
+    {
+      "repetition": 7,
+      "variant": "candidate",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 36.58972700001323,
+      "microsecondsPerUpdate": 4727.739323999995
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "steady",
+      "mountMS": 0.17531900000176392,
+      "microsecondsPerUpdate": 14.77551200002199
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 1,
+      "kind": "seek",
+      "mountMS": 0.17608500001369976,
+      "microsecondsPerUpdate": 12.16472000000067
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "steady",
+      "mountMS": 0.2108799999987241,
+      "microsecondsPerUpdate": 23.306191999989096
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 2,
+      "kind": "seek",
+      "mountMS": 0.2131809999991674,
+      "microsecondsPerUpdate": 28.917331000004197
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "steady",
+      "mountMS": 0.3393250000081025,
+      "microsecondsPerUpdate": 36.77012500001001
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 8,
+      "kind": "seek",
+      "mountMS": 0.3727789999975357,
+      "microsecondsPerUpdate": 45.73588799999561
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "steady",
+      "mountMS": 0.4956640000164043,
+      "microsecondsPerUpdate": 54.767694999987725
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 16,
+      "kind": "seek",
+      "mountMS": 0.47419300000183284,
+      "microsecondsPerUpdate": 62.61512400000356
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "steady",
+      "mountMS": 1.3856749999977183,
+      "microsecondsPerUpdate": 169.11901600001147
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 64,
+      "kind": "seek",
+      "mountMS": 1.8382049999781884,
+      "microsecondsPerUpdate": 315.1173800000106
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "steady",
+      "mountMS": 7.4160939999856055,
+      "microsecondsPerUpdate": 610.4757530000061
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 256,
+      "kind": "seek",
+      "mountMS": 6.268882000003941,
+      "microsecondsPerUpdate": 1311.3304119999812
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "steady",
+      "mountMS": 33.1022740000044,
+      "microsecondsPerUpdate": 2608.69673700002
+    },
+    {
+      "repetition": 7,
+      "variant": "baseline",
+      "tweens": 1024,
+      "kind": "seek",
+      "mountMS": 35.02183400001377,
+      "microsecondsPerUpdate": 5794.815157000005
+    }
+  ],
+  "summary": [
+    {
+      "tweens": 1,
+      "kind": "steady",
+      "baseline": {
+        "medianUS": 14.673221500008367,
+        "minUS": 12.524165999988327,
+        "maxUS": 17.22373499999958,
+        "medianMountMS": 0.1954745000039111
+      },
+      "candidate": {
+        "medianUS": 15.87612700000318,
+        "minUS": 12.685073000000557,
+        "maxUS": 17.75281000000541,
+        "medianMountMS": 0.2080785000071046
+      },
+      "speedup": 0.9242318041424983
+    },
+    {
+      "tweens": 1,
+      "kind": "seek",
+      "baseline": {
+        "medianUS": 14.525065499998163,
+        "minUS": 12.16472000000067,
+        "maxUS": 17.558726999995997,
+        "medianMountMS": 0.17949349999980768
+      },
+      "candidate": {
+        "medianUS": 14.958335999996052,
+        "minUS": 13.231297000005725,
+        "maxUS": 17.24580699999933,
+        "medianMountMS": 0.18935700000474753
+      },
+      "speedup": 0.9710348463894645
+    },
+    {
+      "tweens": 2,
+      "kind": "steady",
+      "baseline": {
+        "medianUS": 24.366626999995788,
+        "minUS": 21.127856000000065,
+        "maxUS": 27.41278600000078,
+        "medianMountMS": 0.24395449999792618
+      },
+      "candidate": {
+        "medianUS": 24.096363500000734,
+        "minUS": 16.219010000000708,
+        "maxUS": 30.622927999997046,
+        "medianMountMS": 0.27465899999515386
+      },
+      "speedup": 1.0112159455095806
+    },
+    {
+      "tweens": 2,
+      "kind": "seek",
+      "baseline": {
+        "medianUS": 28.454123999996227,
+        "minUS": 20.739998000000014,
+        "maxUS": 35.07967199999257,
+        "medianMountMS": 0.3140495000043302
+      },
+      "candidate": {
+        "medianUS": 30.302038999994693,
+        "minUS": 25.020384999996168,
+        "maxUS": 35.50395199999912,
+        "medianMountMS": 0.2941420000133803
+      },
+      "speedup": 0.9390168100569474
+    },
+    {
+      "tweens": 8,
+      "kind": "steady",
+      "baseline": {
+        "medianUS": 42.73835400000826,
+        "minUS": 36.77012500001001,
+        "maxUS": 56.2633050000004,
+        "medianMountMS": 0.4530904999969607
+      },
+      "candidate": {
+        "medianUS": 41.948608499997135,
+        "minUS": 37.12179699999979,
+        "maxUS": 52.39727600000333,
+        "medianMountMS": 0.43240150000565336
+      },
+      "speedup": 1.0188265005264996
+    },
+    {
+      "tweens": 8,
+      "kind": "seek",
+      "baseline": {
+        "medianUS": 47.474503999987064,
+        "minUS": 45.31362300000001,
+        "maxUS": 63.26920899999095,
+        "medianMountMS": 0.4208040000030451
+      },
+      "candidate": {
+        "medianUS": 48.09733949999463,
+        "minUS": 44.86322100000689,
+        "maxUS": 59.313507999992,
+        "medianMountMS": 0.37694099999498576
+      },
+      "speedup": 0.9870505207464201
+    },
+    {
+      "tweens": 16,
+      "kind": "steady",
+      "baseline": {
+        "medianUS": 57.20230150000498,
+        "minUS": 54.767694999987725,
+        "maxUS": 66.07204600000114,
+        "medianMountMS": 0.5035400000051595
+      },
+      "candidate": {
+        "medianUS": 46.63235650000024,
+        "minUS": 37.431360000002314,
+        "maxUS": 56.06568599998718,
+        "medianMountMS": 0.5166269999954238
+      },
+      "speedup": 1.2266654699297619
+    },
+    {
+      "tweens": 16,
+      "kind": "seek",
+      "baseline": {
+        "medianUS": 65.02209749999747,
+        "minUS": 62.45682900000247,
+        "maxUS": 84.8767270000244,
+        "medianMountMS": 0.5079059999989113
+      },
+      "candidate": {
+        "medianUS": 55.30499399999826,
+        "minUS": 47.81682000000728,
+        "maxUS": 69.7095960000006,
+        "medianMountMS": 0.5828834999992978
+      },
+      "speedup": 1.175700290284807
+    },
+    {
+      "tweens": 64,
+      "kind": "steady",
+      "baseline": {
+        "medianUS": 175.6056324999954,
+        "minUS": 169.11901600001147,
+        "maxUS": 209.63548499999888,
+        "medianMountMS": 1.4743159999934505
+      },
+      "candidate": {
+        "medianUS": 47.56467550000525,
+        "minUS": 43.05833100000018,
+        "maxUS": 59.145378999994136,
+        "medianMountMS": 1.4909629999910976
+      },
+      "speedup": 3.691933786029425
+    },
+    {
+      "tweens": 64,
+      "kind": "seek",
+      "baseline": {
+        "medianUS": 332.55584200000885,
+        "minUS": 315.1173800000106,
+        "maxUS": 390.325308999978,
+        "medianMountMS": 1.6401014999973995
+      },
+      "candidate": {
+        "medianUS": 257.517237,
+        "minUS": 238.89516600000206,
+        "maxUS": 353.4468130000023,
+        "medianMountMS": 1.514645000002929
+      },
+      "speedup": 1.2913925524915788
+    },
+    {
+      "tweens": 256,
+      "kind": "steady",
+      "baseline": {
+        "medianUS": 686.300412499997,
+        "minUS": 610.4757530000061,
+        "maxUS": 805.5081950000022,
+        "medianMountMS": 7.521991000001435
+      },
+      "candidate": {
+        "medianUS": 54.13677900000039,
+        "minUS": 46.24802199998521,
+        "maxUS": 60.383228000006056,
+        "medianMountMS": 8.021771999996417
+      },
+      "speedup": 12.677156365361007
+    },
+    {
+      "tweens": 256,
+      "kind": "seek",
+      "baseline": {
+        "medianUS": 1366.1099379999946,
+        "minUS": 1280.4130630000145,
+        "maxUS": 1535.8875800000023,
+        "medianMountMS": 7.319684000001871
+      },
+      "candidate": {
+        "medianUS": 1165.8158410000033,
+        "minUS": 1003.2913799999951,
+        "maxUS": 1271.8889430000017,
+        "medianMountMS": 8.643379999994067
+      },
+      "speedup": 1.1718059490666937
+    },
+    {
+      "tweens": 1024,
+      "kind": "steady",
+      "baseline": {
+        "medianUS": 2500.6422109999967,
+        "minUS": 2367.263982999997,
+        "maxUS": 3215.8977349999986,
+        "medianMountMS": 36.7164094999971
+      },
+      "candidate": {
+        "medianUS": 62.25552749999042,
+        "minUS": 53.69138999999268,
+        "maxUS": 79.9106520000023,
+        "medianMountMS": 38.16623550000077
+      },
+      "speedup": 40.1673925419776
+    },
+    {
+      "tweens": 1024,
+      "kind": "seek",
+      "baseline": {
+        "medianUS": 6156.902133999989,
+        "minUS": 5794.365793999998,
+        "maxUS": 6511.470452000001,
+        "medianMountMS": 35.71411750000698
+      },
+      "candidate": {
+        "medianUS": 4854.885960499996,
+        "minUS": 4307.870227000007,
+        "maxUS": 6096.278112,
+        "medianMountMS": 38.27240650000749
+      },
+      "speedup": 1.2681867677414818
+    }
+  ]
+}

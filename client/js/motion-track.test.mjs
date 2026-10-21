@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import inspector from "node:inspector";
 import test from "node:test";
 import vm from "node:vm";
 
@@ -18,7 +19,7 @@ function runtime() {
   const context = vm.createContext({window, document, console, performance: {now: () => clock}, setTimeout, clearTimeout, queueMicrotask});
   vm.runInContext(core, context);
   return {motion: window.__gosx.motion, frames,
-    load(source = track) {vm.runInContext(source, context);},
+    load(source = track, filename = "motion-feature.ts") {vm.runInContext(source, context, {filename});},
     advance(ms = clock) {clock = ms; const callbacks = [...frames.values()]; frames.clear(); callbacks.forEach(fn => fn(ms));},
     reduce(value) {reduced({matches: value});},
   };
@@ -151,7 +152,7 @@ test("track and transport chunks tolerate either load order, deferred loading, c
 
 const valueFixtures = JSON.parse(read("../../motion/testdata/track_value_golden.json"));
 
-const timelineFixtures = JSON.parse(read("../../scene/testdata/timeline_motion.json"));
+const timelineFixtures = [...JSON.parse(read("../../scene/testdata/timeline_motion.json")), ...JSON.parse(read("../../scene/testdata/timeline_motion_windows.json"))];
 test("Go scene plans mounted as motion programs agree with native poses through seeks, cuts and reduced motion", () => {
   const property = name => /^[xyz]$/.test(name) ? `position.${name}` : name.replace(/^(rotation|scale)([XYZ])$/, (_, prefix, axis) => `${prefix}.${axis.toLowerCase()}`);
   for (const deferred of [false, true]) for (const fixture of timelineFixtures) {
@@ -171,7 +172,7 @@ test("Go scene plans mounted as motion programs agree with native poses through 
       }
     };
     for (const sample of fixture.samples) {
-      playback.seek(sample.seconds * 1000); r.advance(); check(sample.commands, sample.seconds);
+      playback.seek((sample.seconds - (fixture.offset || 0)) * 1000); r.advance(); check(sample.commands, sample.seconds);
     }
     r.reduce(true); r.advance(); check(fixture.final);
     r.reduce(false); playback.seek(0); r.advance(); check(fixture.samples[0].commands);
@@ -179,6 +180,38 @@ test("Go scene plans mounted as motion programs agree with native poses through 
     const settled = new Map(latest);
     r.reduce(true); r.advance(); assert.deepEqual(latest, settled);
     assert.equal(r.frames.size, 0, `${fixture.name}: disposed scope retains no RAF`);
+  }
+});
+
+test("long Go scene sequences stop sampling inactive branches without another runtime primitive", async () => {
+  const fixture = timelineFixtures.find(f => f.name === "long-linear"), r = runtime(), scene = {};
+  r.load(transport); r.load(track, "timeline-work-proof.ts");
+  let latest;
+  const root = {nodeType: 1, hasAttribute: name => name === "data-gosx-motion-program", getAttribute: () => JSON.stringify(fixture.program),
+    querySelectorAll(selector) {return selector === "#scene" ? [scene] : [];}};
+  r.motion.attachScene(scene, {write(_binding, value) {latest = value;}, invalidate() {}});
+  r.motion.mountPrograms(root); r.advance();
+  const playback = r.motion.transport(fixture.program.id);
+  playback.seek(32125); r.advance();
+  const session = new inspector.Session(); session.connect();
+  const post = (method, params = {}) => new Promise((resolve, reject) => session.post(method, params, (error, value) => error ? reject(error) : resolve(value)));
+  try {
+    await post("Profiler.enable");
+    await post("Profiler.startPreciseCoverage", {callCount: true, detailed: true});
+    await post("Profiler.takePreciseCoverage");
+    playback.seek(32250); r.advance();
+    const coverage = await post("Profiler.takePreciseCoverage");
+    const start = track.indexOf("function(input, output)");
+    assert.ok(start >= 0, "identify the actual prepared sampler");
+    const samplers = coverage.result.filter(script => script.url === "timeline-work-proof.ts")
+      .flatMap(script => script.functions.filter(fn => fn.ranges[0].startOffset === start));
+    assert.equal(samplers.length, 1);
+    const calls = samplers[0].ranges[0].count;
+    assert.ok(calls > 0 && calls <= 20, `one active tween required ${calls} actual sampler calls; old graph requires 127`);
+    assert.equal(latest, 32.25);
+  } finally {
+    await post("Profiler.stopPreciseCoverage"); session.disconnect();
+    r.motion.disposePrograms(root); r.advance(); assert.equal(r.frames.size, 0);
   }
 });
 
