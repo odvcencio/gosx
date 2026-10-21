@@ -59,6 +59,12 @@ type Options struct {
 	// browser already offers permessage-deflate on its own, so there is
 	// nothing to enable from client Go code running as js/wasm.
 	EnableCompression bool
+	// OnBinary, if set, receives each binary frame the hub sends. The hub
+	// carries application datagrams (such as netplay's WebSocket fallback) in
+	// binary frames whose first byte is 0x00; the callback sees the whole frame
+	// and owns the slice. It runs on the client's internal goroutine, so it
+	// must return quickly. Without OnBinary, binary frames are dropped.
+	OnBinary func(data []byte)
 }
 
 // Client is a reconnecting hub connection. The zero value is not usable;
@@ -212,6 +218,28 @@ func (c *Client) Send(event string, data any) error {
 		return ErrNotConnected
 	}
 	return cn.Send(msg, false)
+}
+
+// SendBinary writes data as one binary frame on the current connection. It
+// returns ErrNotConnected if no transport is open and ErrClosed once Close has
+// been called. Like Send, it does not queue across a reconnect, and it does not
+// retain data after it returns.
+func (c *Client) SendBinary(data []byte) error {
+	if c == nil {
+		return ErrClosed
+	}
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return ErrClosed
+	}
+	cn := c.current
+	connected := c.state == StateConnected
+	c.mu.Unlock()
+	if cn == nil || !connected {
+		return ErrNotConnected
+	}
+	return cn.Send(data, true)
 }
 
 // Connect starts the reconnect loop in a background goroutine and returns
@@ -377,7 +405,11 @@ func (c *Client) pump(cn conn) bool {
 			opened = true
 			c.setState(StateConnected)
 		case frameMessage:
-			c.dispatch(ev.Data)
+			if ev.Binary {
+				c.dispatchBinary(ev.Data)
+			} else {
+				c.dispatch(ev.Data)
+			}
 		case frameError:
 			// A frameClosed always follows; nothing to do here beyond letting
 			// the loop continue draining events.
@@ -386,6 +418,19 @@ func (c *Client) pump(cn conn) bool {
 			// queued, but there normally isn't one after frameClosed.
 		}
 	}
+}
+
+func (c *Client) dispatchBinary(data []byte) {
+	if c.opts.OnBinary == nil {
+		return
+	}
+	c.mu.Lock()
+	closed := c.closed
+	c.mu.Unlock()
+	if closed {
+		return
+	}
+	c.callCallback(func() { c.opts.OnBinary(data) })
 }
 
 func (c *Client) dispatch(data []byte) {

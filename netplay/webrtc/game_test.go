@@ -12,9 +12,9 @@ type duelPad uint8
 
 type duelCodec struct{}
 
-func (duelCodec) Size() int                 { return 1 }
+func (duelCodec) Size() int                  { return 1 }
 func (duelCodec) Put(dst []byte, in duelPad) { dst[0] = byte(in) }
-func (duelCodec) Get(src []byte) duelPad    { return duelPad(src[0]) }
+func (duelCodec) Get(src []byte) duelPad     { return duelPad(src[0]) }
 
 // duelGame is a tiny deterministic game. chaos folds every input into the
 // state, so one wrong input anywhere in history changes the checksum.

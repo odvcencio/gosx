@@ -31,6 +31,10 @@ type Config struct {
 	// QueueLen is the receive queue length of each Peer, in datagrams
 	// (default 128).
 	QueueLen int
+	// NextBinary receives the hub binary frames that are not netplay's
+	// fallback frames, so an app's own binary protocol keeps working after
+	// AttachHub. Optional.
+	NextBinary hub.BinaryMessageHandler
 	// ConfigureICE may adjust pion's setting engine: UDP port range,
 	// NAT1To1IPs behind a fixed public address, interface filters. Optional.
 	ConfigureICE func(*pion.SettingEngine)
@@ -44,6 +48,8 @@ type Server struct {
 
 	mu     sync.Mutex
 	conns  map[string]*serverConn
+	links  map[string]*Link
+	fb     *hubnet.Fallback
 	accept chan *Peer
 	closed bool
 }
@@ -84,14 +90,18 @@ func NewServer(cfg Config) (*Server, error) {
 	}
 	return &Server{
 		cfg: cfg, api: newAPI(cfg.ConfigureICE),
-		conns: map[string]*serverConn{}, accept: make(chan *Peer, 16),
+		conns: map[string]*serverConn{}, links: map[string]*Link{}, accept: make(chan *Peer, 16),
 	}, nil
 }
 
-// AttachHub routes the netplay signaling events of h to the server. It does
-// not install "join" or "leave" handlers; call Remove from your own leave
-// handler when a hub client disconnects.
+// AttachHub routes the netplay signaling events of h to the server and installs
+// the WebSocket fallback's binary frame handler (Config.NextBinary gets the
+// other binary frames). It does not install "join" or "leave" handlers; call
+// Remove from your own leave handler when a hub client disconnects.
 func (s *Server) AttachHub(h *hub.Hub) *hubnet.Signaling {
+	s.mu.Lock()
+	s.fb = hubnet.AttachFallback(h, s.cfg.NextBinary)
+	s.mu.Unlock()
 	var sig *hubnet.Signaling
 	sig = hubnet.AttachSignaling(h, func(clientID string, m signal.Message) {
 		s.Handle(clientID, m, func(r signal.Message) error { return sig.Send(clientID, r) })
@@ -160,7 +170,7 @@ func (s *Server) offer(clientID string, m *signal.Offer, reply func(signal.Messa
 		return err
 	}
 	peer := newPeer(clientID, m.Session, pc, dc, s.cfg.QueueLen)
-	peer.onClose = func() { c.detach() }
+	peer.onClose = func() { c.detach(); s.unlinkPeer(clientID, peer) }
 	pc.OnICECandidate(c.onLocalCandidate)
 	pc.OnConnectionStateChange(func(st pion.PeerConnectionState) {
 		if st == pion.PeerConnectionStateFailed || st == pion.PeerConnectionStateClosed {
@@ -235,6 +245,7 @@ func (c *serverConn) opened(p *Peer) {
 	if c.timer != nil {
 		c.timer.Stop()
 	}
+	c.s.Link(c.id).peer.Store(p)
 	select {
 	case c.s.accept <- p:
 	default:
@@ -288,12 +299,17 @@ func (c *serverConn) close(cause error) {
 	_ = c.pc.Close()
 }
 
-// Remove closes the connection of a hub client that left.
+// Remove closes the connection of a hub client that left and forgets its Link.
 func (s *Server) Remove(clientID string) {
 	s.mu.Lock()
 	c := s.conns[clientID]
 	delete(s.conns, clientID)
+	delete(s.links, clientID)
+	fb := s.fb
 	s.mu.Unlock()
+	if fb != nil {
+		fb.Forget(clientID)
+	}
 	if c != nil {
 		c.close(nil)
 	}

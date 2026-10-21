@@ -2,6 +2,7 @@ package webrtc
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -12,6 +13,8 @@ import (
 	pion "github.com/pion/webrtc/v4"
 
 	"m31labs.dev/gosx/hub"
+	"m31labs.dev/gosx/netplay/dgram"
+	"m31labs.dev/gosx/netplay/hubnet"
 	"m31labs.dev/gosx/netplay/signal"
 )
 
@@ -181,6 +184,8 @@ type hubSignaler struct {
 	ws  *websocket.Conn
 	wmu sync.Mutex
 	in  chan signal.Message
+	// bin holds fallback datagrams the relay sent in hub binary frames.
+	bin *dgram.Queue
 }
 
 func (h *hubSignaler) Send(m signal.Message) error {
@@ -196,12 +201,33 @@ func (h *hubSignaler) Send(m signal.Message) error {
 
 func (h *hubSignaler) Recv() <-chan signal.Message { return h.in }
 
+// sendBinary writes one fallback datagram as a hub binary frame.
+func (h *hubSignaler) sendBinary(p []byte) error {
+	frame := make([]byte, 1+len(p))
+	frame[0] = hubnet.FrameTag
+	copy(frame[1:], p)
+	h.wmu.Lock()
+	defer h.wmu.Unlock()
+	_ = h.ws.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	return h.ws.WriteMessage(websocket.BinaryMessage, frame)
+}
+
 func (h *hubSignaler) readLoop() {
 	defer close(h.in)
 	for {
-		var env hub.Message
-		if err := h.ws.ReadJSON(&env); err != nil {
+		typ, data, err := h.ws.ReadMessage()
+		if err != nil {
 			return
+		}
+		if typ == websocket.BinaryMessage {
+			if len(data) > 1 && data[0] == hubnet.FrameTag {
+				h.bin.Push(data[1:])
+			}
+			continue
+		}
+		var env hub.Message
+		if err := json.Unmarshal(data, &env); err != nil {
+			continue
 		}
 		m, err := signal.Parse(env.Event, env.Data)
 		if err != nil {
@@ -223,13 +249,14 @@ func DialHub(ctx context.Context, wsURL string, cfg ClientConfig) (*Peer, error)
 		return nil, err
 	}
 	ws.SetReadLimit(256 * 1024)
-	sig := &hubSignaler{ws: ws, in: make(chan signal.Message, 64)}
+	sig := &hubSignaler{ws: ws, in: make(chan signal.Message, 64), bin: dgram.NewQueue(128)}
 	go sig.readLoop()
 	peer, err := Connect(ctx, sig, cfg)
 	if err != nil {
 		_ = ws.Close()
 		return nil, err
 	}
+	peer.sig = sig
 	prev := peer.onClose
 	peer.onClose = func() {
 		_ = ws.Close()
@@ -239,4 +266,3 @@ func DialHub(ctx context.Context, wsURL string, cfg ClientConfig) (*Peer, error)
 	}
 	return peer, nil
 }
-

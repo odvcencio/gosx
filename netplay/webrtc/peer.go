@@ -58,6 +58,7 @@ type Peer struct {
 	closeOnce sync.Once
 	err       atomic.Pointer[error]
 	onClose   func()
+	sig       *hubSignaler // set by DialHub; nil for a server-side Peer
 
 	sent, recv, sendDrop, sendBytes, recvBytes atomic.Uint64
 }

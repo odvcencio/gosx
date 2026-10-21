@@ -136,9 +136,15 @@ func TestMatchesThroughRelayHaveZeroDesyncs(t *testing.T) {
 
 func runMatch(t *testing.T, name string, frames int64) {
 	r := connectPlayers(t, name)
+	runMatchOn(t, name, frames, [2]netplay.Transport{r.client[0], r.client[1]}, [2]netplay.Transport{r.relay[0], r.relay[1]})
+}
+
+// runMatchOn plays a real-time match between two sessions whose transports
+// are players[i], with the relay on relayEnds[i].
+func runMatchOn(t *testing.T, name string, frames int64, players, relayEnds [2]netplay.Transport) {
 	relay, err := netplay.NewRelay(netplay.RelayConfig[duelPad]{
 		NewGame: func() netplay.Game[duelPad] { return newDuelGame() },
-		Codec:   duelCodec{}, Peers: [2]netplay.Transport{r.relay[0], r.relay[1]},
+		Codec:   duelCodec{}, Peers: relayEnds,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -151,7 +157,7 @@ func runMatch(t *testing.T, name string, frames int64) {
 		games[i] = newDuelGame()
 		sums[i] = map[int64]uint64{}
 		sess[i], err = netplay.NewSession(netplay.Config[duelPad]{
-			Game: games[i], Codec: duelCodec{}, Transport: r.client[i], LocalPlayer: i,
+			Game: games[i], Codec: duelCodec{}, Transport: players[i], LocalPlayer: i,
 			InputDelay: 2, Relay: true,
 			OnChecksum: func(f int64, s uint64) { sums[i][f] = s },
 		})
@@ -205,7 +211,6 @@ func runMatch(t *testing.T, name string, frames int64) {
 	if rep.VerifiedFrames < frames/2 {
 		t.Fatalf("relay verified %d frames, want at least %d", rep.VerifiedFrames, frames/2)
 	}
-	st := r.client[0].Stats()
-	t.Logf("%s: frames=%d common checksums=%d relay verified=%d rtt=%v client0 sent=%d recv=%d dropped=%d",
-		name, sess[0].Frame(), common, rep.VerifiedFrames, sess[0].RTT(), st.Sent, st.Received, st.SendDropped+st.ReceiveDropped)
+	t.Logf("%s: frames=%d common checksums=%d relay verified=%d rtt=%v rollbacks=%d",
+		name, sess[0].Frame(), common, rep.VerifiedFrames, sess[0].RTT(), sess[0].Stats().Rollbacks)
 }
