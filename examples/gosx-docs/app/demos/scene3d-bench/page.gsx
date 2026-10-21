@@ -125,6 +125,6 @@ func Page() Node {
 				</details>
 			</div>
 		</div>
-		<script src="/scene3d-bench-client.js"></script>
+		<script src={data.clientScriptURL}></script>
 	</section>
 }

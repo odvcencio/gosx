@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"m31labs.dev/gosx"
 	docsapp "m31labs.dev/gosx/examples/gosx-docs/app"
 	"m31labs.dev/gosx/route"
 )
@@ -14,8 +15,9 @@ func init() {
 				docsapp.AddScenePosterPreload(ctx, "/demos/posters/scene3d-bench.webp")
 				workload := ctx.Query("workload")
 				return map[string]any{
-					"scene":    BenchScene(workload),
-					"workload": workloadLabel(workload),
+					"scene":           BenchScene(workload),
+					"workload":        workloadLabel(workload),
+					"clientScriptURL": "/scene3d-bench-client.js?v=" + gosx.Version,
 				}, nil
 			},
 		},
