@@ -25,6 +25,11 @@ func TestManagedFormFeedbackAfterRedirect(t *testing.T) {
 	fixture := filepath.Join(root, "e2e", "testdata", "action-feedback")
 	proof := newRuntimeBrowserProof(t, filepath.Join(fixture, "main.go"))
 	defer writeRuntimeBrowserProof(t, "managed-form-feedback.json", &proof)
+	baseline, err := os.ReadFile(filepath.Join(fixture, "baseline-observation.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	proof.Baseline = baseline
 	appDir := t.TempDir()
 	copyFixtureTree(t, fixture, appDir)
 	module := "module example.invalid/gosx-form-feedback\n\ngo 1.26.0\n\nrequire m31labs.dev/gosx v" + strings.TrimPrefix(gosx.Version, "v") + "\n\nreplace m31labs.dev/gosx => " + strconv.Quote(filepath.ToSlash(root)) + "\n"
@@ -92,8 +97,12 @@ func TestManagedFormFeedbackAfterRedirect(t *testing.T) {
 	}
 	load()
 	submit("destination")
-	page.waitFor(t, `location.search === "?destination=error" && document.getElementById("save-form").getAttribute("data-gosx-form-state") === "error"`, 5*time.Second, "fresh destination feedback preserved")
-	proof.Steps = append(proof.Steps, devRuntimeStep{Input: "save and redirect to a destination with fresh error feedback", Expected: "destination error state preserved; no pending marker", Observed: readState()})
+	page.waitFor(t, `location.search === "?destination=error" && window.__gosxFormProofResults === 1 && document.getElementById("save-form").getAttribute("data-gosx-pending") !== "true"`, 5*time.Second, "destination redirect settles")
+	destination := readState()
+	proof.Steps = append(proof.Steps, devRuntimeStep{Input: "save and redirect to a destination with fresh error feedback", Expected: "destination error state preserved; no pending marker", Observed: destination})
+	if destination["state"] != "error" || destination["sameForm"] != true || destination["pending"] != nil || destination["message"] != "Destination needs attention." {
+		t.Fatalf("fresh destination feedback changed: %v", destination)
+	}
 	load()
 	submit("inline")
 	page.waitFor(t, `document.getElementById("save-form").getAttribute("data-gosx-form-state") === "success"`, 5*time.Second, "non-redirect success")
