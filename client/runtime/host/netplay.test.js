@@ -42,7 +42,7 @@ FakePC.all = [];
 
 function boot(opts = {}) {
   FakePC.all = [];
-  const win = {};
+  const win = { __gosx: {} };
   const context = vm.createContext({
     window: win, console, Uint8Array, Int32Array, ArrayBuffer, JSON, Promise, Map, Math, Number, String, Object, Array,
     queueMicrotask,
@@ -52,7 +52,7 @@ function boot(opts = {}) {
   let factory;
   win.__gosx_register_bootstrap_feature = (name, f) => { assert.equal(name, "netplay"); factory = f; };
   vm.runInContext(source, context, { filename: "netplay.ts" });
-  return { win, np: win.__gosx_netplay, factory };
+  return { win, np: win.__gosx.netplay, factory };
 }
 
 const plain = v => JSON.parse(JSON.stringify(v));
@@ -192,6 +192,16 @@ test("close releases the connection and later calls are harmless", async () => {
   assert.equal(np.recv(c.id, new Uint8Array(8)), -1);
   np.close(c.id);
   np.signal(c.id, "netplay.answer", "{}");
+});
+
+test("without the host namespace nothing is installed and no global leaks", async () => {
+  const win = {};
+  const context = vm.createContext({ window: win, console, Uint8Array, Int32Array, ArrayBuffer, JSON, Promise, Map, Math, Number, String, Object, Array });
+  vm.runInContext(source, context, { filename: "netplay.ts" });
+  assert.equal(win.__gosx_netplay, undefined);
+  assert.equal(win.__gosx, undefined);
+  const { win: w2 } = boot();
+  assert.equal(w2.__gosx_netplay, undefined, "no ambient __gosx_netplay global");
 });
 
 test("without RTCPeerConnection open reports failure", async () => {

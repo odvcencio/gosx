@@ -11,7 +11,7 @@ import (
 	"m31labs.dev/gosx/netplay"
 )
 
-// jsLink drives window.__gosx_netplay (client/runtime/host/netplay.ts).
+// jsLink drives window.__gosx.netplay (client/runtime/host/netplay.ts).
 type jsLink struct {
 	api   js.Value
 	mu    sync.Mutex
@@ -27,7 +27,11 @@ type jsLink struct {
 // newBrowserLink returns a link over the page's netplay binding. It fails with
 // errNoBrowser until the "netplay" runtime feature has loaded.
 func newBrowserLink() (rtcLink, error) {
-	api := js.Global().Get("__gosx_netplay")
+	host := js.Global().Get("__gosx")
+	if host.IsUndefined() || host.IsNull() {
+		return nil, errNoBrowser
+	}
+	api := host.Get("netplay")
 	if api.IsUndefined() || api.IsNull() || api.Get("open").Type() != js.TypeFunction {
 		return nil, errNoBrowser
 	}

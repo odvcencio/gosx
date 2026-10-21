@@ -25,6 +25,9 @@ const browserPage = `<!doctype html><meta charset="utf-8"><title>netplay</title>
 <script>
 // Test scaffolding only: the standard Go WASM boot. A GoSX app gets this from
 // the framework and writes no JavaScript.
+// The page also stands in for the GoSX runtime, which owns window.__gosx and
+// loads the netplay chunk when the server calls RequireFeature("netplay").
+window.__gosx = {};
 const q = new URLSearchParams(location.search);
 const load = src => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
 (async () => {

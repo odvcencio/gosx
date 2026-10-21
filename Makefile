@@ -205,7 +205,7 @@ test-netplay:
 	GOWORK=off $(GO) test -p 4 -count=1 ./netplay/...
 
 test-netplay-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" -count=1 ./netplay
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" -count=1 ./netplay ./netplay/client ./netplay/signal ./netplay/dgram
 
 bench-netplay:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem ./netplay

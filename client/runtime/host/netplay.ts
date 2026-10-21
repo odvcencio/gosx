@@ -168,7 +168,10 @@
   }
 
   const api = { version: 1, supported, open, signal, send, recv, state, stats, close };
-  window.__gosx_netplay = api;
+  // The typed host namespace, like __gosx.workbench. No new ambient global.
+  const host = window.__gosx;
+  if (!host) return;
+  host.netplay = api;
 
   const register = window.__gosx_register_bootstrap_feature;
   if (typeof register === "function") {

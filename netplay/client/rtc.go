@@ -25,7 +25,7 @@ type rtcConfig struct {
 }
 
 // rtcLink is one browser data channel. The browser implementation wraps the
-// GoSX runtime's window.__gosx_netplay binding; tests supply a fake.
+// GoSX runtime's window.__gosx.netplay binding; tests supply a fake.
 type rtcLink interface {
 	// Open starts the connection. onSignal receives each signaling message the
 	// browser produces (offer, candidates); onState reports linkOpen,

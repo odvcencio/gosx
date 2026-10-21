@@ -10,7 +10,7 @@ import (
 	"m31labs.dev/gosx/netplay/signal"
 )
 
-// fakeBinding installs a window.__gosx_netplay written in Go and records calls.
+// fakeBinding installs window.__gosx.netplay written in Go and records calls.
 type fakeBinding struct {
 	cfg       js.Value
 	sent      [][]byte
@@ -22,9 +22,17 @@ type fakeBinding struct {
 
 func (f *fakeBinding) install(t *testing.T, supported bool) {
 	g := js.Global()
-	prev := g.Get("__gosx_netplay")
+	hadHost := !g.Get("__gosx").IsUndefined()
+	if !hadHost {
+		g.Set("__gosx", g.Get("Object").New())
+	}
+	host := g.Get("__gosx")
+	prev := host.Get("netplay")
 	t.Cleanup(func() {
-		g.Set("__gosx_netplay", prev)
+		host.Set("netplay", prev)
+		if !hadHost {
+			g.Set("__gosx", js.Undefined())
+		}
 		for _, fn := range f.funcs {
 			fn.Release()
 		}
@@ -58,7 +66,7 @@ func (f *fakeBinding) install(t *testing.T, supported bool) {
 		return len(p)
 	}))
 	api.Set("close", fn(func(a []js.Value) any { f.closedIDs = append(f.closedIDs, a[0].Int()); return nil }))
-	g.Set("__gosx_netplay", api)
+	host.Set("netplay", api)
 }
 
 func TestJSLinkRoundTrip(t *testing.T) {
@@ -131,12 +139,14 @@ func TestJSLinkRoundTrip(t *testing.T) {
 
 func TestJSLinkMissingOrUnsupported(t *testing.T) {
 	g := js.Global()
-	prev := g.Get("__gosx_netplay")
-	g.Set("__gosx_netplay", js.Undefined())
-	if _, err := newBrowserLink(); err != errNoBrowser {
+	if _, err := newBrowserLink(); err != errNoBrowser { // no __gosx at all
+		t.Fatalf("missing host: %v", err)
+	}
+	g.Set("__gosx", g.Get("Object").New())
+	if _, err := newBrowserLink(); err != errNoBrowser { // host without the chunk
 		t.Fatalf("missing binding: %v", err)
 	}
-	g.Set("__gosx_netplay", prev)
+	g.Set("__gosx", js.Undefined())
 	f := &fakeBinding{}
 	f.install(t, false)
 	if _, err := newBrowserLink(); err == nil {

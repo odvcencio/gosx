@@ -41,6 +41,25 @@
   Ten thousand seeded lossy sessions agree with zero desyncs, and a steady-state
   frame allocates nothing on native and js/wasm. See `docs/netplay.md`.
 
+- Add a network transport for `netplay`: WebRTC data channels between browsers
+  and a Go relay, with a WebSocket fallback. Apps write no JavaScript. The relay
+  uses `m31labs.dev/gosx/netplay/webrtc`, a nested Go module that holds the
+  only pion dependency, so the core `go.mod` gains no requirements and the
+  js/wasm build imports no pion. `webrtc.Server` answers browser offers over the
+  hub WebSocket, opens one unordered, zero-retransmit data channel per peer,
+  takes STUN and TURN servers from `webrtc.Config`, and gives the relay a
+  `Link` per client that answers on the path the client uses. In the browser,
+  `netplay/client.Dial` returns a `netplay.Transport`; after a timeout, or when
+  WebRTC fails, it uses hub binary frames and reports `Degraded()`. A page
+  loads the new `bootstrap-feature-netplay.js` chunk (4,353 bytes, none for
+  other pages) through `RequireFeature("netplay")`. New core packages:
+  `netplay/signal` (signaling messages with size limits and validation),
+  `netplay/hubnet` and `netplay/dgram`. `hub.Hub.SendBinary` sends one binary
+  frame to one client, and `hubclient` gains `Options.OnBinary` and
+  `Client.SendBinary`; before, `hubclient` dropped every binary frame. Native
+  `hubclient` writes are now serialized. Make targets: `test-netplay-webrtc`
+  and `test-netplay-browser`. See `docs/netplay.md`.
+
 - Settle individual shared-signal writes through the same reader boundary as
   batches. Derived values update on the same write, and nested observer writes
   produce one settled island update while preserving each signal notification.

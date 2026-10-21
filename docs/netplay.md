@@ -155,3 +155,120 @@ game: an 8-frame rollback takes 183 ns native and 741 ns under js/wasm with
 Node; one tick of two sessions takes 284 ns native and 1.0 us under wasm; none
 of them allocates. Your game's `Step` cost will dominate. Measure the worst-case
 8-frame re-simulation of your own game on your target device.
+
+## Network transport: WebRTC with a WebSocket fallback
+
+The engine above needs a `Transport`. For real players, GoSX provides one that
+uses an unreliable WebRTC data channel between each browser and the relay, and
+falls back to the hub WebSocket where WebRTC cannot connect. You write no
+JavaScript.
+
+| Piece | Where | Dependencies |
+|---|---|---|
+| `netplay/signal`, `netplay/hubnet`, `netplay/dgram` | core module | standard library and the hub |
+| `netplay/client` | core module, browser (Go WASM) | no pion |
+| `bootstrap-feature-netplay.js` | runtime chunk, loaded on demand | none |
+| `netplay/webrtc` | nested module `m31labs.dev/gosx/netplay/webrtc` | pion/webrtc v4 |
+
+The relay program imports the nested module; the core module and your WASM
+build never import pion. Add it to the relay's `go.mod` with
+`go get m31labs.dev/gosx/netplay/webrtc`.
+
+### Relay (Go, native)
+
+```go
+srv, err := webrtc.NewServer(webrtc.Config{
+    ICEServers: []signal.ICEServer{
+        {URLs: []string{"stun:stun.example.org:3478"}},
+        {URLs: []string{"turn:turn.example.org:3478"}, Username: user, Credential: secret},
+    },
+    FallbackAfter: 4 * time.Second, // sent to browsers; 0 lets them choose
+})
+h := hub.New("match")
+srv.AttachHub(h) // signaling events and the WebSocket fallback
+h.On("join", func(ctx *hub.Context) { /* pair players by ctx.Client.ID */ })
+h.On("leave", func(ctx *hub.Context) { srv.Remove(ctx.Client.ID) })
+
+// once two clients are paired:
+relay, _ := netplay.NewRelay(netplay.RelayConfig[Pad]{
+    NewGame: newGame, Codec: padCodec{}, Identity: sim.SimulationIdentity,
+    Peers: [2]netplay.Transport{srv.Link(idA), srv.Link(idB)},
+})
+```
+
+`srv.Link(clientID)` is the relay's `Transport` for one player. It sends on the
+data channel while the client uses it and on the WebSocket when the client has
+fallen back, and it reads both. `link.Mode()` and `link.Degraded()` report
+which. The STUN and TURN servers go to pion on the relay and to each browser in
+a `netplay.config` message, so TURN credentials stay in your server config.
+Hand out short-lived TURN credentials: they reach the client.
+
+`webrtc.Config` also has `ConfigureICE`, a hook on pion's `SettingEngine`, for a
+UDP port range, `SetNAT1To1IPs` behind a fixed public address, or interface
+filters, and `MaxPeers`, `ConnectTimeout` and `QueueLen` limits. Allow the
+relay's UDP range in your firewall. The hub's `MaxMessagesPerSecond`, if set,
+must allow the fallback path: two players send 60 frames per second each.
+
+### Page (Go)
+
+```go
+ctx.Runtime().RequireFeature("netplay") // loads bootstrap-feature-netplay.js on this page only
+```
+
+### Browser (Go WASM)
+
+```go
+conn, err := client.Dial(client.Options{
+    HubURL: "wss://example.com/gosx/hub/match",
+    OnMode: func(m client.Mode) { /* ModeWebRTC, or ModeWebSocket: show "degraded" */ },
+})
+s, _ := netplay.NewSession(netplay.Config[Pad]{Transport: conn /* ... */})
+```
+
+`Dial` returns at once. Until a path is ready, `Send` drops datagrams and
+`Recv` returns nothing, as a lossy network would; the session handshake
+retries. `conn.Mode()` is `ModeConnecting`, `ModeWebRTC` or `ModeWebSocket`.
+`conn.Degraded()` is true on the WebSocket.
+
+### Fallback rules
+
+- The browser makes the offer; the relay answers. Both ends create the data
+  channel as negotiated (id 0, `ordered: false`, `maxRetransmits: 0`).
+- If the channel is not open within `FallbackAfter` (default 4 s), if the
+  browser has no `RTCPeerConnection`, if the page did not load the chunk, or if
+  the relay replies `netplay.failure`, `Conn` switches to hub binary frames
+  (first byte `0x00`, then the packet) and calls `OnMode(ModeWebSocket)`.
+- Both ends read both paths all the time, so no packet is lost at a switch. The
+  relay answers on the WebSocket as soon as the client sends there, even if
+  pion still reports the channel open.
+- If the channel opens later, `Conn` moves back to WebRTC.
+- The WebSocket is ordered and reliable, so loss becomes delay (head-of-line
+  blocking). Rollback still works, but the match feels worse; tell the player.
+- If the hub connection itself drops, hub reconnect gives the client a new ID,
+  and the relay must pair it again. `Conn` does not re-pair for you.
+
+### Signaling and limits
+
+Signaling messages are hub text events: `netplay.hello`, `netplay.config`,
+`netplay.offer`, `netplay.answer`, `netplay.candidate` and `netplay.failure`.
+`netplay/signal` validates every message before use: payload at most 24 KiB,
+SDP at most 16 KiB and 256 lines, candidates at most 1 KiB, session ids of
+`[A-Za-z0-9._-]` up to 64 bytes, at most 8 ICE servers with `stun`, `stuns`,
+`turn` or `turns` URLs. The relay accepts at most 64 trickled candidates per
+connection. A datagram never exceeds 1,200 bytes. When more than 16 KiB sits
+unsent in the data channel, `Send` drops the datagram, because an old input is
+worth less than a fresh one.
+
+### Testing
+
+```sh
+make test-netplay-webrtc    # nested module: pion loopback matches, WebSocket-fallback match
+make test-netplay-browser   # headless Chromium plays a Go WASM peer through the relay
+```
+
+The module tests run full matches through a `netplay.Relay` over real pion data
+channels on loopback and over the WebSocket fallback, and require zero desyncs.
+`test-netplay-browser` needs Playwright in `node_modules`; set `NETPLAY_CHROME`
+to a Chromium or `chrome-headless-shell` binary if Playwright's own download
+does not run. Headless Chromium on loopback does not exercise NAT, TURN or
+mobile networks: test those on real devices.

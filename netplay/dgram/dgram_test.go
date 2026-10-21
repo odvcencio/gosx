@@ -1,6 +1,7 @@
 package dgram
 
 import (
+	"runtime"
 	"sync"
 	"testing"
 )
@@ -65,6 +66,9 @@ func TestQueueConcurrent(t *testing.T) {
 			defer wg.Done()
 			for j := 0; j < 1000; j++ {
 				q.Push([]byte{byte(j)})
+				if j%100 == 0 {
+					runtime.Gosched()
+				}
 			}
 		}()
 	}
@@ -77,6 +81,7 @@ func TestQueueConcurrent(t *testing.T) {
 				return
 			default:
 				q.Pop(buf)
+				runtime.Gosched() // js/wasm has one thread and no preemption
 			}
 		}
 	}()
