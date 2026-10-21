@@ -44,6 +44,7 @@ async function mount(t, source, options = {}) {
     .editor-line-numbers span { display: block; height: 24px; }
   </style><main class="editor-page-native"><form data-editor-native="true"
     data-editor-surface="${options.surface || 'code'}" data-code-tab-width="${options.width || 2}"
+    ${options.unsaved ? 'data-code-unsaved' : ''}
     ${options.tabs ? '' : 'data-code-insert-spaces'} data-code-highlight-source="external">
     <div class="editor-source-shell"><div id="editor-line-numbers" class="editor-line-numbers"></div>
     <pre class="editor-highlight-layer"><code id="editor-highlight-content"><span class="syntax-initial">${escape(source)}</span></code></pre>
@@ -469,6 +470,77 @@ browserTest('Markdown retains whitespace normalization and literal-tab behavior'
   await select(textarea, 0);
   await page.keyboard.press('Tab');
   assert.equal(await textarea.inputValue(), '\talpha\n\n');
+});
+
+browserTest('manual Code status follows edits and Undo, preserves dirty refreshes, and accepts only canonical saved projections', async t => {
+  const source = '// café 🎵\nalpha';
+  const {page, textarea} = await mount(t, source);
+  await page.evaluate(() => {
+    window.__manualRequests = 0;
+    window.fetch = async () => { window.__manualRequests++; throw Error('manual edits must not request a save'); };
+  });
+  const status = page.locator('#editor-save-status');
+  assert.equal(await status.textContent(), 'Saved');
+  await page.keyboard.type('!');
+  assert.equal(await status.textContent(), 'Unsaved');
+  await page.keyboard.press('Control+z');
+  assert.equal(await textarea.inputValue(), source); assert.equal(await status.textContent(), 'Saved');
+  await page.keyboard.press('Control+Shift+z');
+  assert.equal(await status.textContent(), 'Unsaved');
+  const draft = await textarea.inputValue();
+  const depth = await page.locator('form').getAttribute('data-undo-depth');
+  await page.evaluate(() => {
+    const form = document.querySelector('form');
+    form.dispatchEvent(new CustomEvent('gosx:highlight-spans', {detail: []}));
+    document.querySelector('#editor-save-status').textContent = 'Saved';
+    document.querySelector('.editor-page-native').className = 'editor-page-native';
+  });
+  await page.addScriptTag({content: script});
+  assert.equal(await status.textContent(), 'Unsaved');
+  assert.equal(await textarea.inputValue(), draft);
+  assert.equal(await page.locator('form').getAttribute('data-undo-depth'), depth);
+  // A managed save projects its canonical defaultValue while retaining the
+  // textarea and local history. No analysis refresh can acknowledge a draft.
+  await textarea.evaluate(node => { node.firstChild.data = node.value; });
+  await page.waitForFunction(() => document.querySelector('#editor-save-status').textContent === 'Saved');
+  assert.equal(await textarea.inputValue(), draft);
+  assert.equal(await page.locator('form').getAttribute('data-undo-depth'), depth);
+  await page.keyboard.press('Control+z');
+  assert.equal(await textarea.inputValue(), source); assert.equal(await status.textContent(), 'Unsaved');
+  await page.keyboard.press('Control+Shift+z');
+  assert.equal(await textarea.inputValue(), draft); assert.equal(await status.textContent(), 'Saved');
+  assert.equal(await page.evaluate(() => window.__manualRequests), 0);
+  t.diagnostic('Saved → edit Unsaved → Undo Saved → dirty refresh Unsaved → canonical projection Saved; no requests');
+});
+
+browserTest('recovered manual Code stays Unsaved through Undo and Check projections until the host acknowledges a saved file', async t => {
+  const source = 'recovered café 🎵';
+  const {page, textarea} = await mount(t, source, {unsaved: true});
+  const status = page.locator('#editor-save-status');
+  assert.equal(await status.textContent(), 'Unsaved');
+  await page.keyboard.type('!'); await page.keyboard.press('Control+z');
+  assert.equal(await textarea.inputValue(), source); assert.equal(await status.textContent(), 'Unsaved');
+  await page.evaluate(() => {
+    const form = document.querySelector('form');
+    const node = form.querySelector('textarea');
+    // A successful Check projects a retained draft; it does not save it.
+    node.defaultValue = node.value;
+    form.className = 'checked-draft';
+    form.querySelector('#editor-save-status').textContent = 'Saved';
+  });
+  await page.waitForFunction(() => document.querySelector('#editor-save-status').textContent === 'Unsaved');
+  assert.equal(await textarea.inputValue(), source);
+  await page.locator('form').evaluate(form => form.removeAttribute('data-code-unsaved'));
+  await page.waitForFunction(() => document.querySelector('#editor-save-status').textContent === 'Saved');
+  await page.evaluate(() => {
+    const old = document.querySelector('form');
+    const form = old.cloneNode(true), node = form.querySelector('textarea');
+    node.defaultValue = 'canonical saved file'; node.value = node.defaultValue;
+    old.replaceWith(form);
+  });
+  await page.waitForFunction(() => document.querySelector('textarea').value === 'canonical saved file' && document.querySelector('form').dataset.undoDepth === '0');
+  assert.equal(await status.textContent(), 'Saved');
+  t.diagnostic('Recovered Unsaved → edit/Undo Unsaved → Check projection Unsaved → saved projection/remount Saved');
 });
 
 browserTest('managed form replacement and script reexecution mount exactly one set of native handlers', async t => {

@@ -64,6 +64,37 @@ func TestMarkdownSurfaceOmitsCodeNavigation(t *testing.T) {
 	}
 }
 
+func TestCodeUnsavedProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		options Options
+		unsaved bool
+		status  string
+		class   string
+	}{
+		{name: "saved by default", options: Options{Surface: SurfaceCode}, status: "Saved", class: "saved"},
+		{name: "recovered manual draft", options: Options{Surface: SurfaceCode, Code: &CodeOptions{Unsaved: true}}, unsaved: true, status: "Unsaved", class: "unsaved"},
+		{name: "autosave retains its existing status", options: Options{Surface: SurfaceCode, AutoSaveURL: "/autosave", Code: &CodeOptions{Unsaved: true}}, unsaved: true, status: "Saved", class: "saved"},
+		{name: "read only", options: Options{Surface: SurfaceCode, ReadOnly: true, Code: &CodeOptions{Unsaved: true}}, unsaved: true, status: "Read only", class: "saved"},
+		{name: "publishing ignores code projection", options: Options{Code: &CodeOptions{Unsaved: true}}, status: "Saved", class: "saved"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			html := gosx.RenderHTML(New("editor", tc.options).Render())
+			if got := strings.Contains(html, " data-code-unsaved"); got != tc.unsaved {
+				t.Fatalf("unsaved attribute = %v, want %v", got, tc.unsaved)
+			}
+			start := strings.Index(html, `id="editor-save-status"`)
+			if start < 0 {
+				t.Fatal("missing native save status")
+			}
+			status := html[start : start+strings.Index(html[start:], "</span>")]
+			if !strings.Contains(status, "editor-save-status-"+tc.class) || !strings.HasSuffix(status, ">"+tc.status) {
+				t.Fatalf("status = %s, want %s/%s", status, tc.class, tc.status)
+			}
+		})
+	}
+}
+
 func TestCodeSurfaceRendersDeclarativeCollaborationBinding(t *testing.T) {
 	component := New("code", Options{Surface: SurfaceCode, Content: "x", Collaboration: &Collaboration{HubURL: "/gosx/hub/cells", CapabilityURL: "/api/cells/cell-1/capability", CellID: "cell-1", Path: "main.go", BinarySplices: true}})
 	html := gosx.RenderHTML(component.Render())

@@ -349,6 +349,15 @@
       saveStatus.className = `editor-save-status editor-save-status-${state}`;
     };
 
+    const updateManualCodeStatus = () => {
+      if (!codeSurface || form.dataset.autosaveUrl || form.hasAttribute("data-readonly")) return false;
+      const unsaved = form.hasAttribute("data-code-unsaved") || textarea.value !== textarea.defaultValue;
+      const state = unsaved ? "unsaved" : "saved";
+      const label = unsaved ? "Unsaved" : "Saved";
+      if (saveStatus && (saveStatus.textContent !== label || !saveStatus.classList.contains(`editor-save-status-${state}`))) setSaveStatus(state, label);
+      return true;
+    };
+
     const renderHighlight = () => {
       if (form.dataset.codeHighlightSource === "external" || form.dataset.codeIntelligenceRuntime || form.dataset.codeIntelligenceServer) {
         // Keep edited text visible while the asynchronous provider catches up.
@@ -798,7 +807,7 @@
     };
 
     const scheduleAutosave = () => {
-      if (!live() || !form.dataset.autosaveUrl) return;
+      if (!live() || updateManualCodeStatus() || !form.dataset.autosaveUrl) return;
       if (autosaveFingerprint() === lastAutosaveFingerprint) {
         if (!autosaveInFlight) setSaveStatus("saved", "Saved");
         return;
@@ -1820,7 +1829,7 @@
 
     if (!codeSurface) normalizeWhitespaceOnlyLines();
     lastAutosaveFingerprint = autosaveFingerprint();
-    setSaveStatus("saved", "Saved");
+    if (!updateManualCodeStatus()) setSaveStatus("saved", "Saved");
     renderEditorFrame();
     const initialPreview = form.querySelector("#editor-preview-content");
     const initialPreviewIsPlaceholder = !!initialPreview?.querySelector(".editor-preview-empty");
@@ -1840,6 +1849,7 @@
       const page = form.closest(".editor-page-native");
       if (page && !page.classList.contains("editor-highlight-ready")) page.classList.add("editor-highlight-ready");
       updateHistoryStatus();
+      updateManualCodeStatus();
       if (form.dataset.multiCursorCount !== String(secondaryCursors.length + 1)) updateMultiCursorStatus();
       scheduleEditorRender();
     }, cleanup: () => {
@@ -1879,10 +1889,12 @@
       const relevant = node => node.nodeType === 1 && (node.matches(selector + ", #editor-content") || node.querySelector(selector));
       if (records.some(record => record.type === "attributes"
         ? record.target.matches(selector + ", .editor-page-native")
-        : record.target.matches?.("#editor-content") || Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) refresh();
+        : record.target.matches?.("#editor-content") ||
+          (record.type === "characterData" && record.target.parentElement?.matches("#editor-content")) ||
+          Array.from(record.addedNodes).some(relevant) || Array.from(record.removedNodes).some(relevant))) refresh();
     }).observe(document.documentElement, {
-      childList: true, subtree: true, attributes: true,
-      attributeFilter: ["class", "data-undo-depth", "data-redo-depth", "data-multi-cursor-count"],
+      childList: true, characterData: true, subtree: true, attributes: true,
+      attributeFilter: ["class", "data-undo-depth", "data-redo-depth", "data-multi-cursor-count", "data-code-unsaved"],
     });
   });
 })();

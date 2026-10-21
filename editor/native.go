@@ -138,6 +138,9 @@ func (e *Editor) renderNativeForm() gosx.Node {
 		if code.ExternalUndo {
 			attrs = append(attrs, gosx.BoolAttr("data-code-external-undo"))
 		}
+		if code.Unsaved {
+			attrs = append(attrs, gosx.BoolAttr("data-code-unsaved"))
+		}
 	}
 
 	return gosx.El("form", attrs, gosx.Fragment(children...))
@@ -236,7 +239,7 @@ func (e *Editor) renderNativeCodeTopbar() gosx.Node {
 		),
 		gosx.El("nav", gosx.Attrs(gosx.Attr("class", "editor-segments"), gosx.Attr("aria-label", "Editor panels")), gosx.Fragment(e.renderNativePanelSegments()...)),
 		gosx.El("div", gosx.Attrs(gosx.Attr("class", "editor-actions editor-native-actions")),
-			gosx.El("span", gosx.Attrs(gosx.Attr("id", "editor-save-status"), gosx.Attr("class", "editor-save-status editor-save-status-saved"), gosx.Attr("aria-live", "polite")), gosx.Text(e.saveStatusText())),
+			gosx.El("span", gosx.Attrs(gosx.Attr("id", "editor-save-status"), gosx.Attr("class", "editor-save-status editor-save-status-"+e.saveStatusClass()), gosx.Attr("aria-live", "polite")), gosx.Text(e.saveStatusText())),
 			gosx.Fragment(e.renderNativeFormButtons(e.Options.Buttons)...),
 		),
 	)
