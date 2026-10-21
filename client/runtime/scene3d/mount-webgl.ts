@@ -3439,6 +3439,32 @@
   // node transforms; animated/morph/live stages never enter this cache.
   const sceneRigidPrimitiveGeometry = new WeakMap();
 
+  function sceneRigidModelGeometryEligible(asset: any) {
+    return !sceneModelHasSkins(asset.skins) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) &&
+      !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
+      asset.objects.length > 0 && asset.objects.every(function(object: any) {
+        return object.vertices && object.vertices.count > 0 && !object.skin && !object._morphAnim && !object._nodeAnim;
+      });
+  }
+
+  // CPU-only preparation shares the decoded primitive's weak ownership with
+  // normal instantiation. No stage, actor, renderer buffer or draw is created.
+  // Both native backends consume these same immutable model-local streams.
+  window.__gosx_scene3d_prepare_rigid_geometry = function(asset: any) {
+    if (!sceneRigidModelGeometryEligible(asset)) throw new Error("Scene3D rigid geometry preparation requires immutable rigid meshes");
+    const model = { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
+      scaleX: 1, scaleY: 1, scaleZ: 1, _shareRigidGeometry: true };
+    for (let i = 0; i < asset.objects.length; i++) {
+      const raw = asset.objects[i];
+      if (sceneRigidPrimitiveGeometry.has(raw.vertices)) continue;
+      const object = sceneInstantiateModelObject(raw, model, "", i, null);
+      if (!object || !object.vertices) throw new Error("Scene3D rigid geometry preparation failed");
+      object.vertices._rigidPool = true;
+      sceneRigidPrimitiveGeometry.set(raw.vertices, object.vertices);
+    }
+  };
+
+
   function sceneCrowdPrimitiveMaterialEligible(raw, model) {
     const source = sceneApplyMaterialOverride(raw, model);
     // Read through the same nested/top-level precedence as normalization.
@@ -3546,11 +3572,7 @@
         return { ok: true, staged };
       }
       const rigidInstance = (model.static !== true || model._instancedGLB === true) &&
-        !sceneModelHasSkins(asset.skins) && !sceneModelHasWeightAnimations(asset) && !sceneModelHasNodeAnimations(asset) &&
-        !asset.points.length && !asset.labels.length && !asset.sprites.length && !asset.html.length && !asset.lights.length &&
-        asset.objects.length > 0 && asset.objects.every(function(object) {
-          /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ return object.vertices && object.vertices.count > 0 && !object._morphAnim && !object._nodeAnim;
-        }) && Boolean(sceneRigidInstanceHydrationKey(state, model));
+        sceneRigidModelGeometryEligible(asset) && Boolean(sceneRigidInstanceHydrationKey(state, model, undefined));
       // glTF node transforms are already folded into the asset vertices. Keep
       // those vertices in model-local space and apply the instance TRS once
       // in the GPU (or through the existing canvas fallback transform).

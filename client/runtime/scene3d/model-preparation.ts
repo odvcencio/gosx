@@ -1,6 +1,6 @@
 // Opt-in preparation uses the mounted backend's existing decoded/model/map caches.
 // It never draws actors, owns shared resources, or polls the GPU on a frame loop.
-interface SceneModelPreparationSpec { id: string; src: string }
+interface SceneModelPreparationSpec { id: string; src: string; rigidGeometry?: boolean }
 const SCENE_MODEL_PREPARATION_SLOTS = [
   ['texture', 'baseColor', 'base-color', 'srgb'],
   ['normalMap', 'normal', 'normal', 'linear'],
@@ -18,7 +18,8 @@ function sceneModelPreparationSnapshot(requests: SceneModelPreparationSpec[]) {
   return requests.map(req => {
     if (!req || typeof req.id !== 'string' || !req.id.trim() || ids.has(req.id) || typeof req.src !== 'string' || !req.src.trim()) throw new TypeError('invalid Scene3D preparation model');
     ids.add(req.id);
-    return { id: req.id, src: req.src.trim() };
+    if (req.rigidGeometry !== undefined && typeof req.rigidGeometry !== 'boolean') throw new TypeError('invalid Scene3D rigid geometry preparation');
+    return { id: req.id, src: req.src.trim(), rigidGeometry: req.rigidGeometry === true };
   });
 }
 function sceneModelPreparationMaps(asset: any, renderer: any, records: Set<any>) {
@@ -73,6 +74,7 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
       check();
       if (done) return;
       if (!asset?.objects?.length) throw new Error('Scene3D model failed or has no geometry: ' + req.id + ': ' + req.src);
+      if (req.rigidGeometry) window.__gosx_scene3d_prepare_rigid_geometry(asset);
       sceneModelPreparationMaps(asset, renderer, records);
     })).then(() => { decoded = true; check(); }, close);
   });
