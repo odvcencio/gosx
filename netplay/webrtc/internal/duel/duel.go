@@ -1,4 +1,6 @@
-package webrtc
+// Package duel is a tiny deterministic two-player game for netplay transport
+// tests and the real-browser harness. It is not part of the public API.
+package duel
 
 import (
 	"encoding/binary"
@@ -7,28 +9,28 @@ import (
 	"m31labs.dev/gosx/netplay"
 )
 
-// duelPad is one player's held buttons for one frame.
-type duelPad uint8
+// Pad is one player's held buttons for one frame.
+type Pad uint8
 
-type duelCodec struct{}
+type Codec struct{}
 
-func (duelCodec) Size() int                  { return 1 }
-func (duelCodec) Put(dst []byte, in duelPad) { dst[0] = byte(in) }
-func (duelCodec) Get(src []byte) duelPad     { return duelPad(src[0]) }
+func (Codec) Size() int              { return 1 }
+func (Codec) Put(dst []byte, in Pad) { dst[0] = byte(in) }
+func (Codec) Get(src []byte) Pad     { return Pad(src[0]) }
 
-// duelGame is a tiny deterministic game. chaos folds every input into the
+// Game is a tiny deterministic game. chaos folds every input into the
 // state, so one wrong input anywhere in history changes the checksum.
-type duelGame struct {
+type Game struct {
 	frame int32
 	x     [2]int32
-	prev  [2]duelPad
+	prev  [2]Pad
 	score [2]int32
 	chaos uint64
 }
 
-func newDuelGame() *duelGame { return &duelGame{x: [2]int32{80, 120}} }
+func NewGame() *Game { return &Game{x: [2]int32{80, 120}} }
 
-func (g *duelGame) Step(in []duelPad) {
+func (g *Game) Step(in []Pad) {
 	for p := 0; p < 2; p++ {
 		if in[p]&1 != 0 {
 			g.x[p] -= 2
@@ -51,9 +53,9 @@ func (g *duelGame) Step(in []duelPad) {
 	g.frame++
 }
 
-const duelStateSize = 4 + 2*(4+1+4) + 8
+const stateSize = 4 + 2*(4+1+4) + 8
 
-func (g *duelGame) Save(dst []byte) []byte {
+func (g *Game) Save(dst []byte) []byte {
 	le := binary.LittleEndian
 	dst = le.AppendUint32(dst, uint32(g.frame))
 	for p := 0; p < 2; p++ {
@@ -64,8 +66,8 @@ func (g *duelGame) Save(dst []byte) []byte {
 	return le.AppendUint64(dst, g.chaos)
 }
 
-func (g *duelGame) Load(src []byte) error {
-	if len(src) != duelStateSize {
+func (g *Game) Load(src []byte) error {
+	if len(src) != stateSize {
 		return errors.New("bad state")
 	}
 	le := binary.LittleEndian
@@ -73,7 +75,7 @@ func (g *duelGame) Load(src []byte) error {
 	o := 4
 	for p := 0; p < 2; p++ {
 		g.x[p] = int32(le.Uint32(src[o:]))
-		g.prev[p] = duelPad(src[o+4])
+		g.prev[p] = Pad(src[o+4])
 		g.score[p] = int32(le.Uint32(src[o+5:]))
 		o += 9
 	}
@@ -81,11 +83,11 @@ func (g *duelGame) Load(src []byte) error {
 	return nil
 }
 
-func (g *duelGame) Events(dst []netplay.Event) []netplay.Event { return dst }
+func (g *Game) Events(dst []netplay.Event) []netplay.Event { return dst }
 
-// duelInput is a deterministic pseudo-random input for player p at frame f.
-func duelInput(seed uint64, p int, f int64) duelPad {
+// Input is a deterministic pseudo-random input for player p at frame f.
+func Input(seed uint64, p int, f int64) Pad {
 	h := (uint64(f/6)+seed)*0x9E3779B97F4A7C15 ^ uint64(p+1)*0xC2B2AE3D27D4EB4F
 	h ^= h >> 29
-	return duelPad(h & 7)
+	return Pad(h & 7)
 }

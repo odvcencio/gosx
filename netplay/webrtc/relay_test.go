@@ -13,6 +13,7 @@ import (
 
 	"m31labs.dev/gosx/hub"
 	"m31labs.dev/gosx/netplay"
+	"m31labs.dev/gosx/netplay/webrtc/internal/duel"
 )
 
 // loopbackICE lets pion gather and use 127.0.0.1 candidates and skips mDNS, so
@@ -142,22 +143,22 @@ func runMatch(t *testing.T, name string, frames int64) {
 // runMatchOn plays a real-time match between two sessions whose transports
 // are players[i], with the relay on relayEnds[i].
 func runMatchOn(t *testing.T, name string, frames int64, players, relayEnds [2]netplay.Transport) {
-	relay, err := netplay.NewRelay(netplay.RelayConfig[duelPad]{
-		NewGame: func() netplay.Game[duelPad] { return newDuelGame() },
-		Codec:   duelCodec{}, Peers: relayEnds,
+	relay, err := netplay.NewRelay(netplay.RelayConfig[duel.Pad]{
+		NewGame: func() netplay.Game[duel.Pad] { return duel.NewGame() },
+		Codec:   duel.Codec{}, Peers: relayEnds,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var games [2]*duelGame
-	var sess [2]*netplay.Session[duelPad]
+	var games [2]*duel.Game
+	var sess [2]*netplay.Session[duel.Pad]
 	var sums [2]map[int64]uint64
 	for i := 0; i < 2; i++ {
 		i := i
-		games[i] = newDuelGame()
+		games[i] = duel.NewGame()
 		sums[i] = map[int64]uint64{}
-		sess[i], err = netplay.NewSession(netplay.Config[duelPad]{
-			Game: games[i], Codec: duelCodec{}, Transport: players[i], LocalPlayer: i,
+		sess[i], err = netplay.NewSession(netplay.Config[duel.Pad]{
+			Game: games[i], Codec: duel.Codec{}, Transport: players[i], LocalPlayer: i,
 			InputDelay: 2, Relay: true,
 			OnChecksum: func(f int64, s uint64) { sums[i][f] = s },
 		})
@@ -185,7 +186,7 @@ func runMatchOn(t *testing.T, name string, frames int64, players, relayEnds [2]n
 			}
 			nextFrame[i] += frameDur
 			f := sess[i].Frame()
-			sess[i].Advance(now, duelInput(7, i, f))
+			sess[i].Advance(now, duel.Input(7, i, f))
 			if err := sess[i].Err(); err != nil {
 				t.Fatalf("session %d ended: %v", i, err)
 			}
