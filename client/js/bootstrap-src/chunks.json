@@ -397,6 +397,7 @@
         "../runtime/scene3d/vessel-input.ts",
         "../runtime/scene3d/vessel-model.ts",
         "../runtime/scene3d/vessel-wake.ts",
+        "../runtime/scene3d/vessel-external.ts",
         "../runtime/scene3d/mount-vessel.ts"
       ]
     },

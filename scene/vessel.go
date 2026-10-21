@@ -34,6 +34,14 @@ type Vessel struct {
 	LODs              []VesselLOD     `json:"lods,omitempty"`
 	WakeTexture       string          `json:"wakeTexture,omitempty"` // optional alpha foam image
 	Wake              *bool           `json:"wake,omitempty"`        // default true
+
+	// ExternalPose hands the pose to Go. The runtime then runs no sailing
+	// physics for this vessel: it shows the pose that DispatchVesselPose sends
+	// (for example from package vessel), blended between ticks, and still
+	// carries the walker, the model parts, parented crowds and the wake.
+	// Wind, sail trim, helm, navigation and landings are ignored. Position and
+	// Heading give the pose until the first frame arrives.
+	ExternalPose bool `json:"externalPose,omitempty"`
 }
 
 // VesselCommandEvent accepts a VesselCommand on the mounted Scene3D element.
