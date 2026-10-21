@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 // Package physics is a deterministic rigid-body simulation.
 //
 // Determinism is the point. The same world stepped with the same inputs

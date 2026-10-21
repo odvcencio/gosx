@@ -29,7 +29,7 @@ GOFILES := $(shell find . -name '*.go' -not -path './dist/*' -not -path './build
 DMJFILES := $(shell find . -name '*.dmj' -not -path './dist/*' -not -path './build/*')
 DMJGOFILES := $(patsubst %.dmj,%_danmuji_test.go,$(DMJFILES))
 
-.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-det-parity build-det-parity-darwin-arm64 lint-deterministic release-gate
+.PHONY: fmt fmt-check verify-fmt verify-danmuji canopy-index canopy-stats canopy-clean build-bootstrap test test-unit test-cli test-ci-partitions test-race test-race-pr test-fuzz-smoke test-js test-js-node test-runtime-types test-editor test-wasm test-wasm-islands wasm-size-budget test-e2e test-perf-browser test-ouroboros-smoke test-water-prod test-water-profile-evidence water-profile-evidence test-desktop test-desktop-windows-smoke test-desktop-windows-shipping-smoke test-desktop-windows-update-smoke test-desktop-macos test-docs-deploy test-release-workflow test-release-ancestry test-repo-hygiene test-perf-budget-ci perf-budget perf-budget-ci wire-gate wire-gate-update build-cli build-desktop-windows build-desktop-macos build-runtime ci test-motion-parity test-physics-parity test-det-parity test-det-parity-arm64-remote build-det-parity-darwin-arm64 lint-deterministic release-gate
 
 fmt:
 	$(GOFMT) -w $(GOFILES)
@@ -350,14 +350,20 @@ test-motion-parity:
 	GOWORK=off GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./motion/
 	$(NODE) --test ./client/js/motion-parity.test.mjs
 
-# test-physics-parity: native↔WASM parity gate for the rigid body engine.
-# Replays the golden corpus under GOOS=js GOARCH=wasm and demands bit equality,
-# so a server's authoritative step and a client's predicted step cannot drift.
-# The claim needs a build that does not fuse a floating point multiply and add:
-# GOAMD64 v2 or lower (the default) on amd64, and js/wasm, which has no fused
-# multiply-add instruction. GOAMD64 v3 and arm64 fuse and fail with that reason.
+# test-physics-parity: native, fused and WASM parity gate for the rigid body engine.
+# Replays the golden corpus under GOOS=js GOARCH=wasm and under GOAMD64=v3 (which
+# fuses a multiply and an add) and demands bit equality, so a server's
+# authoritative step and a client's predicted step cannot drift. The physics
+# package is //gosx:deterministic, so the corpus holds on every build, including
+# arm64; see `make test-det-parity-arm64-remote`.
 test-physics-parity:
 	$(GO) test ./physics/...
+	@if grep -qw fma /proc/cpuinfo 2>/dev/null && grep -qw avx2 /proc/cpuinfo 2>/dev/null; then \
+		echo "physics parity: GOAMD64=v3 (fused multiply-add enabled)"; \
+		GOAMD64=v3 $(GO) test ./physics/ || exit 1; \
+	else \
+		echo "physics parity: SKIP GOAMD64=v3 run, this CPU has no FMA and AVX2"; \
+	fi
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./physics/ -run 'TestParityCorpus|TestFusedMultiplyAddProbeIsSound' -v
 	GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" ./physics/
 
@@ -388,6 +394,11 @@ test-det-parity:
 		echo "det parity: SKIP linux/arm64, qemu-aarch64 is not installed (install qemu-user to enable it)"; \
 	fi
 
+# test-det-parity-arm64-remote runs the parity tests on a real Apple Silicon Mac
+# over ssh. Set PARITY_ARM64_HOST to the ssh alias; it skips when unset.
+test-det-parity-arm64-remote:
+	GO="$(GO)" ./scripts/det-parity-remote.sh
+
 # build-det-parity-darwin-arm64 cross-compiles the det parity test binaries for
 # Apple Silicon into $(DET_PARITY_OUT). Copy them to a Mac and run each one:
 #   ./det.test -test.v && ./parity.test -test.v
@@ -403,7 +414,7 @@ build-det-parity-darwin-arm64:
 # opt in with a //gosx:deterministic comment. Add a package to DET_LINT_PKGS when
 # it opts in. The analyzer type-checks each package, so list packages instead of
 # using ./... .
-DET_LINT_PKGS ?= ./det/...
+DET_LINT_PKGS ?= ./det/... ./physics
 lint-deterministic:
 	$(GO) run ./cmd/gosx-detlint $(DET_LINT_PKGS)
 
