@@ -188,12 +188,24 @@ test-telemetry-wasm:
 bench-telemetry:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem -count=5 ./telemetry/... ./hub ./sim
 
-.PHONY: test-netplay test-netplay-wasm bench-netplay
+.PHONY: test-netplay test-netplay-wasm bench-netplay test-netplay-webrtc test-netplay-browser
+# netplay/webrtc is its OWN module (pion stays out of the core go.mod); the
+# test-netplay target covers ./netplay/... of the core module only.
+test-netplay-webrtc:
+	cd netplay/webrtc && GOWORK=off $(GO) vet ./... && GOWORK=off $(GO) test -p 4 -count=1 -race ./...
+
+# test-netplay-browser plays real matches against a Go WASM peer in headless
+# Chromium (WebRTC and WebSocket fallback). It needs Playwright in the repo's
+# node_modules; set NETPLAY_CHROME to a Chromium or chrome-headless-shell binary
+# when Playwright's own download does not run.
+test-netplay-browser:
+	cd netplay/webrtc && NETPLAY_BROWSER=1 GOWORK=off $(GO) test -count=1 -v -run TestRealBrowser .
+
 test-netplay:
 	GOWORK=off $(GO) test -p 4 -count=1 ./netplay/...
 
 test-netplay-wasm:
-	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" -count=1 ./netplay
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" -count=1 ./netplay ./netplay/client ./netplay/signal ./netplay/dgram
 
 bench-netplay:
 	GOWORK=off $(GO) test -run '^$$' -bench . -benchmem ./netplay

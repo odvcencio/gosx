@@ -86,6 +86,9 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
+  // Netplay's browser binding loads only for a page that calls RequireFeature("netplay");
+  // no existing bundle changed size (measured 4353 raw / 1772 gzip / 1639 Brotli).
+  { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
   // Native cubic tangents add 846 raw / 325 gzip / 310 Brotli bytes to this
   // optional chunk. Only its exhausted raw target moves to the measured
   // minimum (5722 - 2048 allowance); compressed targets and policy stay fixed.
