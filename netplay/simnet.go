@@ -48,6 +48,9 @@ func NewLossyNet(cfg NetConfig) *LossyNet {
 	return &LossyNet{cfg: cfg, rng: rand.New(rand.NewPCG(cfg.Seed, 0x6e657470))}
 }
 
+// SetLoss changes the drop probability, for example 1 to cut the link.
+func (n *LossyNet) SetLoss(p float64) { n.cfg.Loss = p }
+
 // SetNow sets the network clock. Time must not go backwards.
 func (n *LossyNet) SetNow(t time.Duration) { n.now = t }
 

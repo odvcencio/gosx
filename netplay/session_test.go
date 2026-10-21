@@ -392,3 +392,22 @@ func TestNoPauseMessage(t *testing.T) {
 		t.Fatalf("peer 0 ran %d frames past a silent peer", got-last)
 	}
 }
+
+func TestShortOutageStallsThenRecovers(t *testing.T) {
+	p := newPair(t, pairOpts{net: NetConfig{Seed: 13, Delay: [2]time.Duration{3 * frameDur, 3 * frameDur}}})
+	p.run(2 * time.Second)
+	p.net.SetLoss(1) // link cut
+	p.run(2 * time.Second)
+	for i := 0; i < 2; i++ {
+		if p.s[i].Err() != nil {
+			t.Fatalf("peer %d ended during a 2s outage: %v", i, p.s[i].Err())
+		}
+	}
+	stalled := p.s[0].Frame()
+	p.net.SetLoss(0)
+	p.run(4 * time.Second)
+	if p.s[0].Frame() < stalled+120 {
+		t.Fatalf("peer 0 did not resume: %d -> %d", stalled, p.s[0].Frame())
+	}
+	p.requireAgreement(10)
+}
