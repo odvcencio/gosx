@@ -16,7 +16,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 283738,
           "lazyJsWireBytes": 203695,
-          "requests": 11,
+          "requests": 10,
           "totalWireBytes": 1018650,
           "wasmWireBytes": 662965
         },
@@ -31,7 +31,6 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed.",
           "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
         }
       },
@@ -44,7 +43,7 @@
           "inlineScriptBytes": 1620,
           "jsWireBytes": 28620,
           "lazyJsWireBytes": 256,
-          "requests": 6,
+          "requests": 5,
           "totalWireBytes": 98832,
           "wasmWireBytes": 256
         },
@@ -57,10 +56,7 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
-        "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed."
-        }
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       },
       "/demos/": {
         "limits": {
@@ -71,7 +67,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 28620,
           "lazyJsWireBytes": 256,
-          "requests": 5,
+          "requests": 4,
           "totalWireBytes": 91823,
           "wasmWireBytes": 256
         },
@@ -84,10 +80,7 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
-        "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed."
-        }
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       },
       "/demos/scene3d/": {
         "limits": {
@@ -98,7 +91,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 267128,
           "lazyJsWireBytes": 203695,
-          "requests": 9,
+          "requests": 8,
           "totalWireBytes": 978053,
           "wasmWireBytes": 662965
         },
@@ -113,7 +106,6 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed.",
           "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
         }
       },
@@ -126,7 +118,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 271525,
           "lazyJsWireBytes": 203695,
-          "requests": 16,
+          "requests": 15,
           "totalWireBytes": 1204485,
           "wasmWireBytes": 662965
         },
@@ -141,7 +133,6 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed.",
           "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
         }
       },
@@ -154,7 +145,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 67514,
           "lazyJsWireBytes": 256,
-          "requests": 8,
+          "requests": 7,
           "totalWireBytes": 188161,
           "wasmWireBytes": 256
         },
@@ -167,10 +158,7 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-19 native docs controls: static docs explicitly enable the existing lite framework bootstrap so copy works without application JavaScript or WASM. Measured 65,868 JS bytes and 183,572 total bytes on getting-started; retain the unchanged 2.5% byte headroom and original seven requests. Other route limits, required policies and tolerance remain unchanged.",
-        "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed."
-        }
+        "raiseReason": "2026-10-19 native docs controls: static docs explicitly enable the existing lite framework bootstrap so copy works without application JavaScript or WASM. Measured 65,868 JS bytes and 183,572 total bytes on getting-started; retain the unchanged 2.5% byte headroom and original seven requests. Other route limits, required policies and tolerance remain unchanged."
       },
       "/docs/islands/": {
         "limits": {
@@ -181,7 +169,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 91332,
           "lazyJsWireBytes": 256,
-          "requests": 12,
+          "requests": 11,
           "totalWireBytes": 383937,
           "wasmWireBytes": 219045
         },
@@ -194,10 +182,7 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
-        "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed."
-        }
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       },
       "/performance/": {
         "limits": {
@@ -208,7 +193,7 @@
           "inlineScriptBytes": 256,
           "jsWireBytes": 28620,
           "lazyJsWireBytes": 256,
-          "requests": 6,
+          "requests": 5,
           "totalWireBytes": 98584,
           "wasmWireBytes": 256
         },
@@ -221,10 +206,7 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
-        "raise": {
-          "requests": "2026-10-21 measured one extra app-owned docs-navigation.js request for Escape dismissal and focus restoration; no other request allowance or required policy changed."
-        }
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       }
     },
     "scaffold": {

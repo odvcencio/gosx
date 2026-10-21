@@ -47,6 +47,51 @@ func TestDocsGSXFilesCompile(t *testing.T) {
 	}
 }
 
+// The platform owns dismissal and focus return. Do not add a docs-only script
+// or enlarge every route's request budget to implement the navigation menu.
+func TestDocsNavigationUsesNativePopover(t *testing.T) {
+	source, err := os.ReadFile("app/layout.gsx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := gosx.Compile(source); err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	for _, required := range []string{`popovertarget="nav-overlay"`, `popover="auto"`, `popovertargetaction="hide"`, `autofocus`} {
+		if !strings.Contains(text, required) {
+			t.Errorf("navigation missing native popover contract %s", required)
+		}
+	}
+	if strings.Contains(text, `href="#nav-overlay"`) || strings.Contains(text, `aria-modal="true"`) {
+		t.Fatal("nonmodal popover must not retain hash navigation or claim modal focus containment")
+	}
+	// Native links dispose the open top-layer menu with the document; retained
+	// navigation would otherwise keep the site's unchanged layout open.
+	_, menu, ok := strings.Cut(text, `<div id="nav-overlay"`)
+	if !ok {
+		t.Fatal("missing navigation popover")
+	}
+	menu, _, _ = strings.Cut(menu, `<main id="main-content">`)
+	if strings.Contains(menu, `data-gosx-link="true"`) {
+		t.Fatal("popover menu destinations must close through native document navigation")
+	}
+	css, err := os.ReadFile("app/layout.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(css), ".nav-overlay:popover-open") || strings.Contains(string(css), ".nav-overlay:target") {
+		t.Fatal("menu visibility must follow the native popover state")
+	}
+	mainSource, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(mainSource), "docs-navigation.js") {
+		t.Fatal("native popover must not load an app-authored keyboard helper")
+	}
+}
+
 // TestDemosLayoutStructure verifies the editorial demos shell has the expected
 // structural shape. We use compile + raw-source grep rather than rendered HTML
 // because the IR does not expose an HTML renderer in tests.

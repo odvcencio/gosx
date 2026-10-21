@@ -3,7 +3,7 @@
   "profile": {"file":"perf/profiles/mid-tier-mobile.v1.json","sha256":"9b0a475dcf760674ed2bbd9a104bcf07c0303918f2c95b99ce1931729b202343"},
   "coefficients": {"file":"perf/profiles/mid-tier-mobile.v1.coefficients.json","sha256":"f4f3f9387f4e439444e92f09f3a744466fbf0a49767b5b94f661f583c1f99210"},
   "toolchain": {"file":"perf/toolchain/v1.json","sha256":"a919c5a0e95cdc9975cb4890eb406e027244abc08b3d2be1866dd3e52ce02471"},
-  "fixtures": {"file":"perf/fixtures/catalog.v1.json","sha256":"c017ad2158f9baa02fe35c22211fc7d7c08e82e66d4b4e2f3303d5399f45eca8"},
+  "fixtures": {"file":"perf/fixtures/catalog.v1.json","sha256":"8e11bf8498669d1d2ee299c2d7e471f863642488a81500d7e2b6837b7dc36719"},
   "tripwire": {"minBytes":1024,"fractionPPM":10000},
   "pageTypes": {
     "engine/js": {
