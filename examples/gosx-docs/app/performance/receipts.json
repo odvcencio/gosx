@@ -13,7 +13,7 @@
   },
   "lighthouse": {
     "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 · Lighthouse 13.5.0",
-    "method": "Lighthouse mobile emulation against the local packaged production build (server GOMAXPROCS=1); one fresh headless Windows Chrome process and profile per cold run, serially with no idle GPU browser; median of three runs per page, with no samples filtered. Canonical Windows CDP helpers were invoked through a task-local native Node24 filesystem queue to avoid WSL interop startup failures.",
+    "method": "Mobile Lighthouse on the local production package (server GOMAXPROCS=1). Fresh headless Windows Chrome process/profile for every cold run, with GPU Chrome closed. Three-run medians; no sample filtering.",
     "loadAverageStart": "6.62 16.14 21.45",
     "loadAverageEnd": "12.52 13.26 18.23",
     "runCount": 3,
@@ -695,7 +695,7 @@
   ],
   "quickstart": {
     "command": "go install m31labs.dev/gosx/cmd/gosx@latest",
-    "method": "Cold run used fresh isolated GOMODCACHE and GOCACHE directories. Warm run reused both caches. Times include compilation and module download. The command resolved released CLI v0.57.17, not this unreleased v0.57.18 candidate.",
+    "method": "Fresh isolated GOMODCACHE/GOCACHE for cold install; warm install reused both. Includes compilation/download. Resolved released CLI v0.57.17, not the v0.57.18 candidate.",
     "coldSeconds": 32.81,
     "warmSeconds": 1.05
   }
