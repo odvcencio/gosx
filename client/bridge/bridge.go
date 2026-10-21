@@ -137,8 +137,22 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 		return
 	}
 	signal.Batch(func() {
+		var created []string
 		for name, value := range values {
-			s.Set(name, value)
+			name = signal.ResolveAlias(name)
+			if _, exists := s.signals[name]; !exists {
+				s.Signal(name, value)
+				created = append(created, name)
+			} else {
+				s.Set(name, value)
+			}
+		}
+		// Newly created signals have no Set notification to defer. Publish
+		// their first notification only after the complete batch is installed.
+		for _, name := range created {
+			if s.onChange != nil {
+				s.onChange(name, s.signals[name].Get())
+			}
 		}
 	})
 }
@@ -349,20 +363,38 @@ func (b *Bridge) SetSharedSignalJSON(name, valueJSON string) error {
 // SetSharedSignalBatchJSON updates multiple shared signals from a JSON object.
 // The payload shape is {"$signal.name": <json value>, ...}.
 func (b *Bridge) SetSharedSignalBatchJSON(batchJSON string) error {
+	return b.setSharedSignalBatchJSON(batchJSON, false)
+}
+
+// SetChangedSharedSignalBatchJSON applies a state snapshot, notifying only
+// signals whose current value differs. Event/pulse writes should continue to
+// use SetSharedSignalBatchJSON. Both paths validate the whole batch first.
+func (b *Bridge) SetChangedSharedSignalBatchJSON(batchJSON string) error {
+	return b.setSharedSignalBatchJSON(batchJSON, true)
+}
+
+func (b *Bridge) setSharedSignalBatchJSON(batchJSON string, changedOnly bool) error {
 	if batchJSON == "" {
 		batchJSON = "{}"
 	}
 
-	var payload map[string]json.RawMessage
+	// Decode once. Decoding RawMessages and then each value separately repeated
+	// the JSON validation/parse walk for every field in a large HUD snapshot.
+	var payload map[string]any
 	if err := json.Unmarshal([]byte(batchJSON), &payload); err != nil {
 		return fmt.Errorf("decode shared signal batch: %w", err)
 	}
 
 	values := make(map[string]vm.Value, len(payload))
 	for name, raw := range payload {
-		value, err := decodeSharedSignalValue(name, raw)
-		if err != nil {
-			return err
+		if name == "" {
+			return fmt.Errorf("shared signal name required")
+		}
+		value := vm.ValueFromAny(raw)
+		if changedOnly {
+			if current, ok := b.store.Get(name); ok && vm.EqualJSON(current, value) {
+				continue
+			}
 		}
 		values[name] = value
 	}
