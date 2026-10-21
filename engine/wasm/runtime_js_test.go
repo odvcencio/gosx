@@ -70,10 +70,11 @@ func TestTypedSignalReadAndBatchFailureIsAtomic(t *testing.T) {
 
 func TestSceneCommandsCameraAndCancellation(t *testing.T) {
 	host := js.Global().Call("eval", `({current:true, isCurrent(){return this.current}, calls:[], scene3D(method,mount,...args){
-   this.calls.push(method); this.mount=mount;
+   this.calls.push(method); this.mount=mount; this.method=method;
    if(method==='getCamera') return {kind:'perspective', x:3,y:4,z:5,fov:41,near:.5,far:90};
    this.signal=args.at(-1).signal;
    if(method==='whenReady') return new Promise(resolve => {this.complete=resolve});
+   if(method==='live'){this.liveEvent=args[0]; this.payload=args[1]; return Promise.resolve();}
    this.payload=args[0]; return Promise.resolve();
  }})`)
 	engine := Context{value: host}
@@ -94,6 +95,16 @@ func TestSceneCommandsCameraAndCancellation(t *testing.T) {
 	}
 	if host.Get("payload").Length() != 1 {
 		t.Fatal("commands not forwarded")
+	}
+	if err = target.Live(context.Background(), "attack", map[string]any{"rig": map[string]any{"animationSeq": "hit-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	if host.Get("method").String() != "live" || host.Get("liveEvent").String() != "attack" ||
+		host.Get("payload").Get("rig").Get("animationSeq").String() != "hit-1" || !host.Get("mount").Equal(mount) {
+		t.Fatal("live event, data or mount lost")
+	}
+	if err = target.Live(context.Background(), "", nil); err == nil {
+		t.Fatal("empty live event name accepted")
 	}
 	if err = target.SetAnimationClock(context.Background(), 2.5, true); err != nil {
 		t.Fatal(err)

@@ -378,6 +378,19 @@ var outputs = []output{
 		},
 	},
 	{
+		// The procedural arcade synth without the hub chunk. A page whose Go
+		// WASM engine plays arcade cues, and that has no hub (for example one
+		// that reads the local fight-input sink), requires it with
+		// RequireFeature("arcade-audio"). 30c2 is the same source the hubs chunk
+		// carries, so scene.AudioCue behaves identically.
+		name: "bootstrap-feature-arcade-audio.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26m-feature-arcade-audio-prefix.ts"),
+			sourceFile(tailArcadeAudioFile),
+			sourceFile("bootstrap-src/26m-feature-arcade-audio-suffix.ts"),
+		},
+	},
+	{
 		name: "bootstrap-feature-controllers.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26h-feature-controllers-prefix.ts"),

@@ -44,7 +44,7 @@ func TestNativeRuntimeAPIsAreExplicitlyUnsupported(t *testing.T) {
 		t.Fatalf("navigation=%v", err)
 	}
 	target := ctx.Scene3D(nil)
-	for _, err := range []error{target.Ready(context.Background()), target.Dispatch(context.Background(), nil), target.SetCamera(context.Background(), nil), target.SetAnimationClock(context.Background(), 0, true)} {
+	for _, err := range []error{target.Ready(context.Background()), target.Dispatch(context.Background(), nil), target.Live(context.Background(), "attack", nil), target.SetCamera(context.Background(), nil), target.SetAnimationClock(context.Background(), 0, true)} {
 		if !errors.Is(err, ErrUnsupported) {
 			t.Fatalf("scene=%v", err)
 		}

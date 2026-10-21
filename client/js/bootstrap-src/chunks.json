@@ -212,6 +212,14 @@
       ]
     },
     {
+      "name": "bootstrap-feature-arcade-audio.js",
+      "sources": [
+        "bootstrap-src/26m-feature-arcade-audio-prefix.ts",
+        "bootstrap-src/30c2-tail-arcade-audio.ts",
+        "bootstrap-src/26m-feature-arcade-audio-suffix.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-controllers.js",
       "sources": [
         "bootstrap-src/26h-feature-controllers-prefix.ts",

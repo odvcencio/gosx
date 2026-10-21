@@ -3526,6 +3526,16 @@
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
+      // applyLive feeds one named Live event through the same path the
+      // gosx:hub:event listener uses, so an engine can drive scene.Live nodes
+      // without a hub or a synthetic document event.
+      applyLive(eventName, data) {
+        if (disposed) throw new Error("disposed");
+        if (typeof eventName !== "string" || !eventName) throw new TypeError("Scene3D Live event name is required");
+        if (eventName === "audio") applySceneAudioCue(data);
+        else applySceneHubEvent(eventName, data, "engine-live");
+        return Promise.resolve({ applied: true });
+      },
       applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
       get applyPendingPoseFrame() {
         return sceneState._modelHydrationPromise ? this.applyPoseFrame : null;
