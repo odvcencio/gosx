@@ -1,0 +1,13 @@
+//gosx:deterministic
+
+package fixme
+
+type Meters float64
+
+func f(x, y, z float64) float64 {
+	return float64(x*y) + z // want `fused-multiply-add`
+}
+
+func g(a, b Meters) Meters {
+	return Meters(a*b) - 1 // want `fused-multiply-add`
+}

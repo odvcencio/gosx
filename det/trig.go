@@ -280,7 +280,7 @@ func trigReduce(x float64) (j uint64, z float64) {
 		z--
 	}
 	// Multiply the fractional part by pi/4.
-	return j, z * PI4
+	return j, float64(z * PI4)
 }
 
 // mPi4 is the binary digits of 4/pi as a uint64 array, that is, 4/pi =

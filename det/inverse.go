@@ -200,5 +200,5 @@ func Hypot(p, q float64) float64 {
 		return 0
 	}
 	q = q / p
-	return p * Sqrt(1+float64(q*q))
+	return float64(p * Sqrt(1+float64(q*q)))
 }

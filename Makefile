@@ -399,6 +399,14 @@ build-det-parity-darwin-arm64:
 	@echo "wrote $(DET_PARITY_OUT)/det.darwin-arm64.test and $(DET_PARITY_OUT)/parity.darwin-arm64.test"
 	@echo "copy both to an Apple Silicon Mac and run each with -test.v"
 
+# lint-deterministic runs the deterministic-code analyzer over the packages that
+# opt in with a //gosx:deterministic comment. Add a package to DET_LINT_PKGS when
+# it opts in. The analyzer type-checks each package, so list packages instead of
+# using ./... .
+DET_LINT_PKGS ?= ./det/...
+lint-deterministic:
+	$(GO) run ./cmd/gosx-detlint $(DET_LINT_PKGS)
+
 # wasm-size-budget builds both client/wasm flavors and asserts they stay within
 # the budget. Override WASM_FULL_BUDGET_KB / WASM_TINY_BUDGET_KB to raise the
 # bar for a planned-growth slice (require an ADR for any >10% bump).
