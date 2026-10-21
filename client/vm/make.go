@@ -24,8 +24,6 @@
 package vm
 
 import (
-	"fmt"
-
 	"m31labs.dev/gosx/island/program"
 )
 
@@ -43,7 +41,7 @@ func (vm *VM) makeValue(e *program.Expr) Value {
 	default:
 		vm.recordExprDiagnostic(
 			"invalid_make",
-			fmt.Sprintf("OpMake has unknown kind tag %q (want \"map\" or \"slice\")", e.Value),
+			namedDiagnostic("OpMake has unknown kind tag ", e.Value, " (want \"map\" or \"slice\")"),
 			e.Op,
 			e.Value,
 		)
@@ -69,7 +67,7 @@ func (vm *VM) makeSlice(e *program.Expr) Value {
 	if n64 < 0 || int64(n) != n64 {
 		vm.recordExprDiagnostic(
 			"invalid_make",
-			fmt.Sprintf("OpMake(slice) length must fit a non-negative host integer, got %d", n64),
+			numericDiagnostic("OpMake(slice) length must fit a non-negative host integer, got ", n64, ""),
 			e.Op,
 			e.Value,
 		)

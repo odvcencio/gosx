@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Settle shared-signal writes from island handlers before rendering peer islands.
+  Render each affected peer once per action with current derived values, while
+  preserving signal events, dispatch guards and writes made by peer callbacks.
+  Reuse JSON decoding and first-write signal creation, and build list auto-keys
+  directly without the formatting and boxing overhead.
+
 - Settle individual shared-signal writes through the same reader boundary as
   batches. Derived values update on the same write, and nested observer writes
   produce one settled island update while preserving each signal notification.

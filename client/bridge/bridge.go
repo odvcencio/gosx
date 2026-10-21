@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	runtimewasm "m31labs.dev/gosx/client/runtime/wasm"
@@ -134,7 +135,7 @@ func (s *Store) Set(name string, val vm.Value) {
 	if sig, ok := s.signals[name]; ok {
 		sig.Set(val)
 	} else {
-		sig := s.Signal(name, val)
+		sig := s.createSignal(name, val)
 		if s.onChange != nil {
 			s.onChange(name, sig.Get())
 		}
@@ -160,7 +161,7 @@ func (s *Store) SetBatch(values map[string]vm.Value) {
 			if sig, exists := s.signals[name]; exists {
 				sig.Set(value)
 			} else {
-				s.Signal(name, value)
+				s.createSignal(name, value)
 				created = append(created, name)
 			}
 		}
@@ -210,6 +211,12 @@ func (s *Store) Signal(name string, init vm.Value) *signal.Signal[vm.Value] {
 	if sig, ok := s.signals[name]; ok {
 		return sig
 	}
+	return s.createSignal(name, init)
+}
+
+// createSignal installs an already-canonical, absent name. Set and SetBatch
+// have done the lookup, so they need no second alias resolution or map probe.
+func (s *Store) createSignal(name string, init vm.Value) *signal.Signal[vm.Value] {
 	sig := signal.New(init)
 	s.signals[name] = sig
 	sig.Subscribe(func() {
@@ -352,25 +359,34 @@ func (b *Bridge) HydrateEngine(id, componentName, propsJSON string, programData 
 func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]vm.PatchOp, error) {
 	island, ok := b.islands[islandID]
 	if !ok {
-		return nil, fmt.Errorf("island %q not found", islandID)
+		return nil, errors.New("island " + strconv.Quote(islandID) + " not found")
 	}
 	if b.dispatching[islandID] > 0 {
-		return nil, fmt.Errorf("island %q is already dispatching", islandID)
+		return nil, errors.New("island " + strconv.Quote(islandID) + " is already dispatching")
 	}
 	if b.dispatching == nil {
 		b.dispatching = make(map[string]uint32)
 	}
 
-	b.dispatching[islandID]++
+	// Peer delivery belongs between handler mutation and the owned reconcile,
+	// so writes from peer callbacks cannot make the returned patches stale.
+	ownsUpdate := !b.store.updating
+	var flush func()
+	if ownsUpdate {
+		b.store.updating = true
+		flush = b.store.afterUpdate
+	}
+	b.dispatching[islandID] = 1
 	defer func() {
-		if b.dispatching[islandID] <= 1 {
-			delete(b.dispatching, islandID)
-		} else {
-			b.dispatching[islandID]--
+		delete(b.dispatching, islandID)
+		// Unknown handlers and panics still close an owned update. Nested
+		// actions leave completion to the action or store write that owns it.
+		if ownsUpdate && b.store.updating {
+			b.store.endUpdate()
 		}
 	}()
 
-	return island.Dispatch(handlerName, eventDataJSON), nil
+	return island.DispatchWithFlush(handlerName, eventDataJSON, flush), nil
 }
 
 // SetSharedSignalJSON updates a shared signal from a JSON payload.
@@ -548,7 +564,7 @@ func normalizePropsJSON(componentName, propsJSON string) (string, error) {
 		propsJSON = "{}"
 	}
 	if !json.Valid([]byte(propsJSON)) {
-		return "", fmt.Errorf("invalid props JSON for %q", componentName)
+		return "", errors.New("invalid props JSON for " + strconv.Quote(componentName))
 	}
 	return propsJSON, nil
 }
@@ -634,6 +650,7 @@ func (b *Bridge) reconcileSharedIsland(reader *sharedIslandReader) {
 }
 
 func (b *Bridge) flushSharedIslands() {
+	b.store.updating = false
 	// Detach before rendering: patch callbacks may start a separate batch.
 	// Its pending readers belong to that batch, not the one being drained.
 	pending := b.pendingReaders

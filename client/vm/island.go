@@ -303,6 +303,14 @@ func ResolveInitialTree(prog *program.Program, propsJSON string) *ResolvedTree {
 // Dispatch executes a named handler and returns the resulting patch ops.
 // All signal mutations within the handler body are batched into a single reconcile.
 func (island *Island) Dispatch(handlerName string, eventDataJSON string) []PatchOp {
+	return island.DispatchWithFlush(handlerName, eventDataJSON, nil)
+}
+
+// DispatchWithFlush lets a host flush shared readers after handler mutation and
+// before this island's own reconciliation. A flush callback may update shared
+// state; those writes must be reflected in the returned patches. The island's
+// dispatch guard remains active throughout the callback.
+func (island *Island) DispatchWithFlush(handlerName string, eventDataJSON string, flush func()) []PatchOp {
 	if island == nil || island.vm == nil {
 		return nil
 	}
@@ -310,7 +318,7 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 		island.vm.recordDiagnostic(Diagnostic{
 			Severity: DiagnosticError,
 			Code:     "reentrant_dispatch",
-			Message:  fmt.Sprintf("island handler %q cannot dispatch while another handler is active", handlerName),
+			Message:  namedDiagnostic("island handler ", handlerName, " cannot dispatch while another handler is active"),
 		})
 		return nil
 	}
@@ -326,6 +334,9 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 		island.evalHandlerBody(handler)
 	})
 	island.vm.ClearEventData()
+	if flush != nil {
+		flush()
+	}
 	return island.Reconcile()
 }
 
@@ -420,7 +431,7 @@ func parseProps(prog *program.Program, propsJSON string) map[string]Value {
 	_ = json.Unmarshal([]byte(propsJSON), &rawProps)
 
 	props := make(map[string]Value, len(rawProps)+len(prog.Props)+1)
-	propsObject := make(map[string]any, len(rawProps))
+	propsObject := make(map[string]Value, len(rawProps))
 	for name, raw := range rawProps {
 		var decoded any
 		if err := decodeJSON(string(raw), &decoded); err != nil {
@@ -428,9 +439,11 @@ func parseProps(prog *program.Program, propsJSON string) map[string]Value {
 			continue
 		}
 		props[name] = parseAnyValue(decoded)
-		propsObject[name] = decoded
+		// Keep the two prop views independent while constructing their final
+		// VM maps directly, without an intermediate map and another walk.
+		propsObject[name] = parseAnyValue(decoded)
 	}
-	props["props"] = parseAnyValue(propsObject)
+	props["props"] = ObjectVal(propsObject)
 
 	for _, def := range prog.Props {
 		if raw, ok := rawProps[def.Name]; ok {
@@ -548,11 +561,11 @@ func parseJSONValue(raw json.RawMessage, typ program.ExprType) Value {
 		json.Unmarshal(raw, &b)
 		return BoolVal(b)
 	default:
-		var value any
-		if err := decodeJSON(string(raw), &value); err != nil {
+		value, err := ValueFromJSON(string(raw))
+		if err != nil {
 			return ZeroValue(typ)
 		}
-		return parseAnyValue(value)
+		return value
 	}
 }
 

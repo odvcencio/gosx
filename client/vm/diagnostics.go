@@ -57,6 +57,9 @@ func (vm *VM) EvalWithDiagnostics(id program.ExprID) (Value, []Diagnostic) {
 	return value, append([]Diagnostic(nil), vm.diagnostics[before:]...)
 }
 
+// Keep diagnostic assembly and delivery out of the ordinary evaluator paths.
+//
+//go:noinline
 func (vm *VM) recordDiagnostic(d Diagnostic) {
 	if d.Severity == "" {
 		d.Severity = DiagnosticError
@@ -67,6 +70,7 @@ func (vm *VM) recordDiagnostic(d Diagnostic) {
 	}
 }
 
+//go:noinline
 func (vm *VM) recordExprDiagnostic(code, message string, op program.OpCode, value string) {
 	vm.recordDiagnostic(Diagnostic{
 		Severity: DiagnosticError,

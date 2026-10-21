@@ -89,7 +89,7 @@ func (vm *VM) chargeLoopStep(e *program.Expr) bool {
 	vm.loopBudgetHit = true
 	vm.recordExprDiagnostic(
 		"loop_step_budget_exceeded",
-		fmt.Sprintf("total loop steps across nested loops exceeded the per-dispatch budget of %d; aborting", vm.effectiveForCap()),
+		numericDiagnostic("total loop steps across nested loops exceeded the per-dispatch budget of ", int64(vm.effectiveForCap()), "; aborting"),
 		e.Op,
 		e.Value,
 	)
@@ -109,7 +109,7 @@ func (vm *VM) forValue(e *program.Expr) Value {
 	if len(e.Operands) < 4 {
 		vm.recordExprDiagnostic(
 			"missing_operands",
-			fmt.Sprintf("OpFor requires 4 operands (init, cond, post, body), got %d", len(e.Operands)),
+			numericDiagnostic("OpFor requires 4 operands (init, cond, post, body), got ", int64(len(e.Operands)), ""),
 			e.Op,
 			e.Value,
 		)
@@ -142,7 +142,7 @@ func (vm *VM) forValue(e *program.Expr) Value {
 	}
 	vm.recordExprDiagnostic(
 		"loop_cap_exceeded",
-		fmt.Sprintf("OpFor exceeded iteration cap of %d; aborting", cap),
+		numericDiagnostic("OpFor exceeded iteration cap of ", int64(cap), "; aborting"),
 		e.Op,
 		e.Value,
 	)

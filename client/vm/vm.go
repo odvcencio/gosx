@@ -1,7 +1,6 @@
 package vm
 
 import (
-	"fmt"
 	"math"
 	"sort"
 	"strconv"
@@ -12,6 +11,19 @@ import (
 	"m31labs.dev/gosx/island/program"
 	"m31labs.dev/gosx/signal"
 )
+
+// namedDiagnostic shares quoting and assembly across cold error paths without
+// copying that formatting work into each VM evaluator.
+//
+//go:noinline
+func namedDiagnostic(prefix, name, suffix string) string {
+	return prefix + strconv.Quote(name) + suffix
+}
+
+//go:noinline
+func numericDiagnostic(prefix string, value int64, suffix string) string {
+	return prefix + strconv.FormatInt(value, 10) + suffix
+}
 
 // VM evaluates island expressions against props and signal state.
 type VM struct {
@@ -292,7 +304,7 @@ func (vm *VM) Eval(id program.ExprID) Value {
 		vm.recordDiagnostic(Diagnostic{
 			Severity: DiagnosticError,
 			Code:     "expr_out_of_range",
-			Message:  fmt.Sprintf("expression %d is outside the expression table length %d", id, len(vm.exprs)),
+			Message:  "expression " + strconv.Itoa(int(id)) + " is outside the expression table length " + strconv.Itoa(len(vm.exprs)),
 			ExprID:   diagnosticExprID(id),
 		})
 		return ZeroValue(program.TypeAny)
@@ -309,7 +321,7 @@ func (vm *VM) Eval(id program.ExprID) Value {
 	if vm.evalDepth >= maxEvalDepth {
 		vm.recordExprDiagnostic(
 			"eval_depth_exceeded",
-			fmt.Sprintf("Eval recursion exceeded depth cap %d; aborting to avoid a stack overflow", maxEvalDepth),
+			numericDiagnostic("Eval recursion exceeded depth cap ", maxEvalDepth, "; aborting to avoid a stack overflow"),
 			vm.exprs[id].Op,
 			vm.exprs[id].Value,
 		)
@@ -460,7 +472,7 @@ func (vm *VM) evalExpr(e *program.Expr) Value {
 
 	vm.recordExprDiagnostic(
 		"unknown_opcode",
-		fmt.Sprintf("unknown island VM opcode %d", e.Op),
+		numericDiagnostic("unknown island VM opcode ", int64(e.Op), ""),
 		e.Op,
 		e.Value,
 	)
@@ -487,7 +499,7 @@ func (vm *VM) compositeValue(e *program.Expr) Value {
 	if len(e.Operands)%2 != 0 {
 		vm.recordExprDiagnostic(
 			"invalid_composite",
-			fmt.Sprintf("OpComposite %q requires an even operand count (key/value pairs), got %d", e.Value, len(e.Operands)),
+			"OpComposite "+strconv.Quote(e.Value)+" requires an even operand count (key/value pairs), got "+strconv.Itoa(len(e.Operands)),
 			e.Op,
 			e.Value,
 		)
@@ -503,7 +515,7 @@ func (vm *VM) compositeValue(e *program.Expr) Value {
 	default:
 		vm.recordExprDiagnostic(
 			"invalid_composite",
-			fmt.Sprintf("OpComposite has unknown kind tag %q (want struct:<Name>, slice, or map)", e.Value),
+			namedDiagnostic("OpComposite has unknown kind tag ", e.Value, " (want struct:<Name>, slice, or map)"),
 			e.Op,
 			e.Value,
 		)
@@ -578,7 +590,7 @@ func (vm *VM) mapLookupValue(e *program.Expr) Value {
 		// downstream OpIndex reads still resolve to safe defaults.
 		vm.recordExprDiagnostic(
 			"map_lookup_non_map",
-			fmt.Sprintf("OpMapLookup target has no Fields map (Value type %d)", coll.Type),
+			numericDiagnostic("OpMapLookup target has no Fields map (Value type ", int64(coll.Type), ")"),
 			e.Op,
 			e.Value,
 		)
@@ -653,7 +665,7 @@ func (vm *VM) assignValue(e *program.Expr) Value {
 	if vm.frame == nil {
 		vm.recordExprDiagnostic(
 			"missing_frame",
-			fmt.Sprintf("OpAssign target %q resolves to neither a signal nor a local (no frame active)", e.Value),
+			namedDiagnostic("OpAssign target ", e.Value, " resolves to neither a signal nor a local (no frame active)"),
 			e.Op,
 			e.Value,
 		)
@@ -670,7 +682,7 @@ func (vm *VM) localDeclValue(e *program.Expr) Value {
 	if vm.frame == nil {
 		vm.recordExprDiagnostic(
 			"missing_frame",
-			fmt.Sprintf("OpLocalDecl %q evaluated without an active frame", e.Value),
+			namedDiagnostic("OpLocalDecl ", e.Value, " evaluated without an active frame"),
 			e.Op,
 			e.Value,
 		)
@@ -705,7 +717,7 @@ func (vm *VM) localGetValue(e *program.Expr) Value {
 	}
 	vm.recordExprDiagnostic(
 		"missing_local",
-		fmt.Sprintf("identifier %q is not declared as a local, signal, or prop", e.Value),
+		namedDiagnostic("identifier ", e.Value, " is not declared as a local, signal, or prop"),
 		e.Op,
 		e.Value,
 	)
@@ -722,7 +734,7 @@ func (vm *VM) localSetValue(e *program.Expr) Value {
 	if vm.frame == nil {
 		vm.recordExprDiagnostic(
 			"missing_frame",
-			fmt.Sprintf("OpLocalSet %q evaluated without an active frame", e.Value),
+			namedDiagnostic("OpLocalSet ", e.Value, " evaluated without an active frame"),
 			e.Op,
 			e.Value,
 		)
@@ -834,7 +846,7 @@ func (vm *VM) decodedLiteral(id program.ExprID, slot litSlot) Value {
 func (vm *VM) parseIntLiteral(e *program.Expr) Value {
 	n, err := strconv.ParseInt(e.Value, 10, 64)
 	if err != nil {
-		vm.recordExprDiagnostic("invalid_int_literal", fmt.Sprintf("invalid integer literal %q: %v", e.Value, err), e.Op, e.Value)
+		vm.recordExprDiagnostic("invalid_int_literal", "invalid integer literal "+strconv.Quote(e.Value)+": "+err.Error(), e.Op, e.Value)
 		return ZeroValue(program.TypeInt)
 	}
 	return Int64Val(n)
@@ -844,7 +856,7 @@ func (vm *VM) parseIntLiteral(e *program.Expr) Value {
 func (vm *VM) parseFloatLiteral(e *program.Expr) Value {
 	f, err := strconv.ParseFloat(e.Value, 64)
 	if err != nil {
-		vm.recordExprDiagnostic("invalid_float_literal", fmt.Sprintf("invalid float literal %q: %v", e.Value, err), e.Op, e.Value)
+		vm.recordExprDiagnostic("invalid_float_literal", "invalid float literal "+strconv.Quote(e.Value)+": "+err.Error(), e.Op, e.Value)
 		return ZeroValue(program.TypeFloat)
 	}
 	return FloatVal(f)
@@ -999,7 +1011,7 @@ func (vm *VM) updateSignal(e *program.Expr) Value {
 	if sig, ok := vm.signals[e.Value]; ok {
 		sig.Set(vm.Eval(e.Operands[0]))
 	} else {
-		vm.recordExprDiagnostic("missing_signal", fmt.Sprintf("signal %q is not registered", e.Value), e.Op, e.Value)
+		vm.recordExprDiagnostic("missing_signal", namedDiagnostic("signal ", e.Value, " is not registered"), e.Op, e.Value)
 	}
 	return ZeroValue(program.TypeAny)
 }
@@ -1303,7 +1315,7 @@ func (vm *VM) appendNodeRefs(tree *ResolvedTree, out []int, nodeID program.NodeI
 		vm.recordDiagnostic(Diagnostic{
 			Severity: DiagnosticError,
 			Code:     "node_out_of_range",
-			Message:  fmt.Sprintf("node %d is outside the node table length %d", nodeID, len(vm.program.Nodes)),
+			Message:  "node " + strconv.Itoa(int(nodeID)) + " is outside the node table length " + strconv.Itoa(len(vm.program.Nodes)),
 			NodeID:   diagnosticNodeID(nodeID),
 		})
 		return out
@@ -1541,13 +1553,13 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 func (vm *VM) autoKey(source int, tag string) (string, bool) {
 	keyVal, hasKey := vm.props["_key"]
 	if hasKey {
-		return fmt.Sprintf("_auto_%s_%s_%d", keyVal.String(), tag, source), true
+		return "_auto_" + keyVal.String() + "_" + tag + "_" + strconv.Itoa(source), true
 	}
 	idxVal, hasIndex := vm.props["_index"]
 	if !hasIndex {
 		return "", false
 	}
-	return fmt.Sprintf("_auto_%d_%s_%d", idxVal.integer(), tag, source), true
+	return "_auto_" + strconv.FormatInt(idxVal.integer(), 10) + "_" + tag + "_" + strconv.Itoa(source), true
 }
 
 type eachEntry struct {
