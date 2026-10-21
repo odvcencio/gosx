@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 )
@@ -456,8 +457,14 @@ if (root && window.__playgroundListenerAudit?.originalRemove) {
   root.removeEventListener = window.__playgroundListenerAudit.originalRemove;
 }
 })()`, nil)
+	var initialName string
+	page.eval(t, `document.querySelector('.play__preview-frame input').value`, &initialName)
+	if initialName != "world" {
+		t.Fatalf("bound Greeter input = %q, want world", initialName)
+	}
 	if err := chromedp.Run(page.ctx,
 		chromedp.Click(`.play__preview-frame input`, chromedp.ByQuery),
+		chromedp.KeyEvent("a", chromedp.KeyModifiers(input.ModifierCtrl)),
 		chromedp.SendKeys(`.play__preview-frame input`, "Ada", chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("type in playground greeter: %v", err)
@@ -482,6 +489,7 @@ document.querySelector(".play__preview-frame h1")?.textContent.trim() === "Hello
 	)
 	if err := chromedp.Run(page.ctx,
 		chromedp.Click(`.play__preview-frame input`, chromedp.ByQuery),
+		chromedp.KeyEvent("a", chromedp.KeyModifiers(input.ModifierCtrl)),
 		chromedp.SendKeys(`.play__preview-frame input`, "Grace", chromedp.ByQuery),
 	); err != nil {
 		t.Fatalf("type in recompiled playground greeter: %v", err)
