@@ -43,7 +43,7 @@ function mountedHarness(nativeBatch = false) {
     goWASMEnginePageGeneration: 1,
     pendingEngineOwned: value => !value.closed,
     gosxReadSharedSignal: name => values.get(name),
-    gosxNotifySharedSignal(name, raw) { values.set(name, JSON.parse(raw)); for (const callback of listeners.get(name) || []) callback(values.get(name)); },
+    gosxNotifySharedSignal(name, raw) { values.set(name, JSON.parse(raw)); for (const callback of listeners.get(name) || []) callback(values.get(name), name, raw); },
     setSharedSignalValue(name, value) { scope.gosxNotifySharedSignal(name, JSON.stringify(value)); },
     gosxSubscribeSharedSignal(name, fn) { const set = listeners.get(name) || new Set(); listeners.set(name, set); set.add(fn); return () => set.delete(fn); },
   };
@@ -88,4 +88,57 @@ test("published engine context stays usable and replacement revokes every bridge
   scope.gosxNotifySharedSignal("$left","7");
   assert.equal(notifications,1); assert.equal(navigations,1); assert.equal(commands,1);
   unsubscribe();
+});
+
+for (const native of [false, true]) test(`encoded state batches skip browser stringify with native VM=${native}`, () => {
+  const {ctx, scope, values} = mountedHarness(native);
+  const raw = '{ "$left": 3, "$right": {"turn":"west"} }';
+  let observed, submitted, flag;
+  ctx.subscribeSignalJSON("$left", value => { observed = value; assert.equal(ctx.getSignal("$right").turn,"west"); }, {immediate:false});
+  if (native) {
+    scope.JSON = {parse: JSON.parse, stringify() { throw new Error("redundant stringify"); }};
+    scope.window.__gosx_set_input_batch = (value, changedOnly) => {
+      submitted=value; flag=changedOnly;
+      for (const [name, field] of Object.entries(JSON.parse(value))) scope.gosxNotifySharedSignal(name,JSON.stringify(field));
+    };
+  }
+  ctx.setSignalsJSON(raw,true);
+  assert.equal(observed,"3"); assert.equal(values.get("$right").turn,"west");
+  if (native) { assert.equal(submitted,raw); assert.equal(flag,true); }
+  else {
+    observed=null; ctx.setSignalsJSON(raw,true);
+    assert.equal(observed,null,"identical snapshot notified in fallback");
+    values.get("$right").turn="east";
+    ctx.setSignalsJSON(raw,true);
+    assert.equal(values.get("$right").turn,"west","live edit was concealed");
+    ctx.setSignals({"$left":3}); assert.equal(observed,"3","pulse delivery was suppressed");
+  }
+});
+
+test("encoded signal batches validate and roll back before notifying", () => {
+  const {ctx, values, scope} = mountedHarness(true);
+  for (const raw of ['{', '[]', 'null', '{"":1,"$left":9}']) assert.throws(() => ctx.setSignalsJSON(raw,true));
+  assert.equal(values.get("$left"),1);
+  scope.window.__gosx_set_input_batch=()=>"rejected snapshot";
+  assert.throws(()=>ctx.setSignalsJSON('{"$left":9,"$new":1}',true),/rejected snapshot/);
+  assert.equal(values.get("$left"),1); assert.equal(values.has("$new"),false);
+});
+
+test("replaced contexts revoke encoded writes and raw subscriptions", () => {
+  const {ctx, pending, engines} = mountedHarness();
+  pending.closed=true; engines.set("test",{context:{},disposed:false});
+  assert.throws(()=>ctx.setSignalsJSON('{"$left":9}',true),/disposed/);
+  assert.throws(()=>ctx.subscribeSignalJSON("$left",()=>{}),/disposed/);
+});
+
+test("shared store forwards the original encoded value to raw subscribers", () => {
+  const text = fs.readFileSync(new URL("./bootstrap-src/00-textlayout.ts", import.meta.url), "utf8");
+  const notify = text.slice(text.indexOf("function gosxNotifySharedSignal("),text.indexOf("function gosxSubscribeSharedSignal("));
+  const listeners = new Map(); let got;
+  listeners.set("raw",(...args)=>{got=args});
+  const store = {values:new Map(),subscribers:new Map([["$view",listeners]])};
+  const scope={gosxSharedSignalStore:()=>store,parseSharedSignalJSON:JSON.parse};
+  vm.createContext(scope); vm.runInContext(notify,scope);
+  const raw='{ "turn": "west" }'; scope.gosxNotifySharedSignal("$view",raw);
+  assert.equal(got[0].turn,"west"); assert.equal(got[1],"$view"); assert.equal(got[2],raw);
 });

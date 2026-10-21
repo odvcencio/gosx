@@ -37,6 +37,9 @@ func TestNativeRuntimeAPIsAreExplicitlyUnsupported(t *testing.T) {
 	if err := ctx.SetSignals(map[string]any{"$value": 1}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("batch=%v", err)
 	}
+	if err := ctx.SetChangedSignals(map[string]any{"$value": 1}); !errors.Is(err, ErrUnsupported) {
+		t.Fatalf("changed batch=%v", err)
+	}
 	if err := ctx.Navigate(context.Background(), "/", NavigationOptions{}); !errors.Is(err, ErrUnsupported) {
 		t.Fatalf("navigation=%v", err)
 	}

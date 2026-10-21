@@ -255,7 +255,13 @@ func inputBatchRuntimeFunc(b *bridge.Bridge) js.Func {
 		if err != nil {
 			return jsError(err)
 		}
-		if err := b.SetSharedSignalBatchJSON(batchJSON); err != nil {
+		var applyErr error
+		if len(args) > 1 && args[1].Type() == js.TypeBoolean && args[1].Bool() {
+			applyErr = b.SetChangedSharedSignalBatchJSON(batchJSON)
+		} else {
+			applyErr = b.SetSharedSignalBatchJSON(batchJSON)
+		}
+		if err := applyErr; err != nil {
 			return jsError(err)
 		}
 		return js.Null()
