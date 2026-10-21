@@ -1072,15 +1072,15 @@ test("WebGPU fragment shaders pin coverage discard and corrected alpha selects",
 
 test("WebGPU instanceColor varyings are flat (primitive-constant, no interpolation drift)", () => {
   // Every producer writes a primitive constant (ordinary vec4f(1), cull
-  // vec4f(1), instanced per-instance constants), and every consumer (PBR,
-  // water) reads it back. Perspective-correct interpolation of a constant 1
+  // vec4f(1), crowd vec4f(1), instanced per-instance constants), and every
+  // consumer (PBR, water) reads it back. Perspective-correct interpolation of a constant 1
   // can round just below 1 and discard a fragment at cutoff equality.
   // @interpolate(flat) keeps the primitive-constant alpha exact.
   const { source } = setupWebGPURenderer();
   assert.strictEqual(
     (source.match(/@location\(5\) @interpolate\(flat\) instanceColor: vec4f,/g) || []).length,
-    4,
-    "ordinary/instanced vertex outputs + PBR/water fragment inputs all flat");
+    5,
+    "ordinary/instanced/crowd vertex outputs + PBR/water fragment inputs all flat");
   assert.match(source,
     /WGSL_PBR_INSTANCED_CULL_VERTEX = WGSL_PBR_INSTANCED_VERTEX[\s\S]*\.replace\("instanceColor: vec4f,", "pickData: vec4u,"\)/,
     "the cull vertex variant derives from the already-flat instanced source");

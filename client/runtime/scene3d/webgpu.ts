@@ -5444,7 +5444,7 @@
   // must draw exactly the set that file picks, so a non-pickable object never
   // occludes a pickable one in the ID buffer.
   function sceneWebGPUPickAllowsObject(object) {
-    if (!object || object.viewCulled) return false;
+    if (!object || object.viewCulled || object._crowdBatch === true || object._crowdSkin) return false;
     if (typeof object.pickable === "boolean") return object.pickable;
     if (object.kind === "plane") return false;
     var extents = sceneWebGPUPickBoundsExtents(object.bounds);
@@ -16268,6 +16268,7 @@
         if (!obj || obj.viewCulled) continue;
         if (!obj.castShadow) continue;
         if (!Number.isFinite(obj.vertexOffset) || !Number.isFinite(obj.vertexCount) || obj.vertexCount <= 0) continue;
+        if (obj._crowdBatch === true || obj._crowdSkin) continue;
         if (webGPUObjectIsSkinned(obj)) {
           var skinnedPositionBuffer = obj._gosxWGPUElioSkinOutputBuffer;
           if (!skinnedPositionBuffer) continue;
@@ -16335,6 +16336,7 @@
       }
 
       pass.setBindGroup(0, shadowBG, [baseMatrixOffset]);
+      webGPUCrowdHost().drawShadow(pass, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       drawInstancedShadowMeshes(pass, bundle, Math.max(0, Math.floor(sceneNumber(shadowResource.lightSlot, 0))));
       pass.end();
     }
@@ -16389,6 +16391,7 @@
       }
       for (var i = 0; i < objectList.length; i++) {
         var obj = objectList[i];
+        if (obj._crowdBatch === true || obj._crowdSkin) continue;
         var matIndex = sceneNumber(obj.materialIndex, 0);
         var mat = materials[matIndex] || null;
         objectDepthWrite = sceneTransmissionDepthWrite(obj, mat, depthWrite);
@@ -16716,6 +16719,23 @@
         drawInstancedMeshes: drawInstancedMeshes,
       });
       gpuDrivenHosts.set("host", host);
+      return host;
+    }
+
+    // webGPUCrowdHost returns this renderer's crowd host (webgpu-crowd.ts). The
+    // hooks bind a batch record's retained geometry and its material group.
+    function webGPUCrowdHost() {
+      var host = gpuDrivenHosts.get("crowd");
+      if (host) return host;
+      host = createSceneWebGPUCrowd(device, {
+        bindAttribute: webGPUBindRetainedMeshAttribute,
+        bindIndex: webGPUBindRetainedMeshIndexBuffer,
+        materialGroup: function(record, materials) {
+          var index = sceneNumber(record.materialIndex, 0);
+          return webGPUFrameMaterialGroup(materialFrame, index, materials[index] || null, !!record.receiveShadow, createMaterialBindGroup);
+        },
+      });
+      gpuDrivenHosts.set("crowd", host);
       return host;
     }
 
@@ -18503,7 +18523,7 @@
       if (!obj) return false;
       if (webGPUObjectIsSkinned(obj)) return true;
       if (webGPUObjectComputedMorphDrawRecord(obj)) return true;
-      return false;
+      return obj._crowdBatch === true || Boolean(obj._crowdSkin);
     }
 
     // encodeBundleableSceneDraws drives ONE target through the PBR and instanced
@@ -18684,7 +18704,7 @@
       // The standard mesh, shadow and post variants are prepared above. Other
       // feature renderers can discover pipelines while encoding; defer their
       // canvas commands until the entire frame has encoded successfully.
-      pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
+      pipelineGuard.framePipelinesReady = !(hasPointsData || hasInstancedData || webGPUCrowdHost().present(bundle) || hasWorldLines || hasScreenLines || hasSurfaces || hasLabels || hasWaterData || hasTransmission ||
         bundle.environment && (bundle.environment.sky || bundle.environment.ocean || bundle.environment.clouds) ||
         (bundle.materials || []).some(function(material: any) { return sceneWebGPUIsSelenaMaterial(material); }) ||
         postEffects.some(function(effect: any) { return effect.kind === SCENE_POST_CUSTOM_POST; }));
@@ -18765,6 +18785,8 @@
         var material = instancedMeshMaterial(mesh, bundle.materials);
         return !material || !material.detail;
       }) : instancedDrawList.opaque });
+      var crowd = webGPUCrowdHost();
+      crowd.beginFrame(bundle, encoder, { now: selenaFrame.time, viewProjection: scratchSelenaViewProjection, width: scaledW, height: scaledH, sampleCount: sampleCount, targetFormat: targetFormat, specular: selectiveBloom });
       updateInstancedCullSystems(bundle.instancedMeshes, encoder, scratchSelenaViewProjection);
       var webGPUCullTotals = webGPUSummarizeCullSystems();
 
@@ -18801,6 +18823,7 @@
         shadowLightIndices[slot] = li;
 
         gpuDriven.lightView(encoder, lightMatrix, slot);
+        crowd.lightView(encoder, lightMatrix, slot);
         renderShadowPass(encoder, lightMatrix, bundle, { view: shadowSlots[slot].view, lightSlot: slot }, pbrSceneBuffers);
         activeShadowCount++;
       }
@@ -18918,6 +18941,7 @@
       };
       /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var mainStamps = gpuPassTimestampWrites("main");
       if (mainStamps) mainPassDescriptor.timestampWrites = mainStamps;
+      crowd.prepareMainPass(mainPassDescriptor);
       gpuDriven.prepareMainPass(mainPassDescriptor);
       var mainPass = encoder.beginRenderPass(mainPassDescriptor);
       var skyState = "none";
@@ -19167,6 +19191,7 @@
         if (drawList.opaque.length > 0) {
           drawPBRObjects(mainPass, drawList.opaque, bundle, materials, frameBindGroup, "opaque", true, pbrSceneBuffers, frameStats, frameMeta && frameMeta.frameRequest);
         }
+        frameStats.meshDrawCalls += crowd.drawColor(mainPass, frameBindGroup, materials);
         if (instancedDrawList.opaque.length > 0) {
           mainPass.setBindGroup(0, frameBindGroup);
           drawInstancedMeshes(mainPass, instancedDrawList.opaque, materials, "opaque", true);
@@ -19183,6 +19208,7 @@
         // Two-phase occlusion: end the early pass, cull against its depth, and
         // draw the newly visible instances in a late pass that loads it.
         mainPass = gpuDriven.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials, instancedDrawList.opaque);
+        mainPass = crowd.splitMainPass(encoder, mainPass, mainPassDescriptor, frameBindGroup, materials);
 
         prepareOceanReflection();
         // The water surface writes depth before translucent world surfaces.
@@ -19198,6 +19224,7 @@
           mainPass.end();
           transmissionResources.capture(encoder, postTarget.colorView);
           gpuDriven.resumeMainPass(mainPassDescriptor);
+          crowd.resumeMainPass(mainPassDescriptor);
           mainColorAttachment.loadOp = "load";
           if (specularAttachment) specularAttachment.loadOp = "load";
           mainPassDescriptor.depthStencilAttachment.depthLoadOp = "load";
@@ -19293,8 +19320,9 @@
       endGPUFrameTiming(encoder, gpuTimingToken);
       endGPUPassTimingFrame(encoder);
       gpuDriven.finishEncoding(encoder);
+      crowd.finishEncoding(encoder);
       device.queue.submit([encoder.finish()]);
-      Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink));
+      Object.assign(frameStats, gpuDriven.endFrame(webGPUAttributeSink), crowd.endFrame());
       pollGPUTimingReadback();
       // Pick readback starts after submit and does not wait in this frame.
       if (scenePicker) scenePicker.finishReadback();
@@ -19674,7 +19702,9 @@
       kind: "webgpu",
       type: "webgpu",
       supportsRetainedGeometry: true,
-      supportsBundle: supportsBundle, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace) },
+      supportsBundle: supportsBundle,
+      prepareCrowdAtlas: function(atlas: any) { return webGPUCrowdHost().prepareCrowdAtlas(atlas); },
+      prepareCrowdMotionShaders: function() { return webGPUCrowdHost().prepareCrowdMotionShaders(); }, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace) },
       queuePick: queuePick,
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,

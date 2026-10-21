@@ -77,6 +77,7 @@
         "../runtime/scene3d/webgpu-specular-bloom.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-contact-shadows.ts",
+        "../runtime/scene3d/webgpu-crowd.ts",
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/17-scene-input.ts",
@@ -376,6 +377,7 @@
         "../runtime/scene3d/webgpu-specular-bloom.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-contact-shadows.ts",
+        "../runtime/scene3d/webgpu-crowd.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },

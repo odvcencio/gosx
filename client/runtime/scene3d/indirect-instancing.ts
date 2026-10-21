@@ -354,46 +354,46 @@
     attributes: [{ format: "uint32", offset: 0, shaderLocation: 4 }],
   };
 
-  // sceneGPUDrivenReplace swaps one exact anchor and throws when it is
-  // missing, so a renderer edit that moves an anchor fails loudly in tests
-  // instead of shipping a shader that still reads the old instance inputs.
+  // sceneGPUDrivenReplace swaps one anchor and throws when it is missing, so a
+  // renderer edit that moves an anchor fails loudly in tests instead of
+  // shipping a shader that still reads the old instance inputs. An anchor is
+  // an exact string or a RegExp. The bundle build strips the indentation of the
+  // renderer's WGSL and renames its locals, so the anchors that start a line or
+  // name a local are RegExps that ignore indentation and capture the name.
   function sceneGPUDrivenReplace(source, anchor, replacement, label) {
-    if (typeof source !== "string" || source.indexOf(anchor) < 0) {
-      throw new Error("gpu-driven: vertex shader anchor missing: " + label);
-    }
+    var found = typeof source === "string" && (typeof anchor === "string" ? source.indexOf(anchor) >= 0 : anchor.test(source));
+    if (!found) throw new Error("gpu-driven: vertex shader anchor missing: " + label);
     return source.replace(anchor, replacement);
   }
 
+  // sceneGPUDrivenInstanceInputs matches the renderer's instance-matrix (and,
+  // for the color pass, instance-color) vertex inputs, at any indentation.
+  function sceneGPUDrivenInstanceInputs(withColor) {
+    return new RegExp("[ \\t]*@location\\(4\\) instanceMatrix0: vec4f,\\s*@location\\(5\\) instanceMatrix1: vec4f,\\s*@location\\(6\\) instanceMatrix2: vec4f,\\s*@location\\(7\\) instanceMatrix3: vec4f," +
+      (withColor ? "\\s*@location\\(8\\) instanceColor: vec4f," : ""));
+  }
+
+  var SCENE_GPU_DRIVEN_MODEL_ANCHOR = /[ \t]*let (\w+) = mat4x4f\(in\.instanceMatrix0, in\.instanceMatrix1, in\.instanceMatrix2, in\.instanceMatrix3\);/;
+
   function sceneGPUDrivenPBRVertexWGSL(base) {
-    var s = sceneGPUDrivenReplace(base, [
-      "    @location(4) instanceMatrix0: vec4f,",
-      "    @location(5) instanceMatrix1: vec4f,",
-      "    @location(6) instanceMatrix2: vec4f,",
-      "    @location(7) instanceMatrix3: vec4f,",
-      "    @location(8) instanceColor: vec4f,",
-    ].join("\n"), "    @location(4) gdSlot: u32,", "pbr inputs");
+    var s = sceneGPUDrivenReplace(base, sceneGPUDrivenInstanceInputs(true), "    @location(4) gdSlot: u32,", "pbr inputs");
     s = sceneGPUDrivenReplace(s, "@group(0) @binding(0) var<uniform> frame: FrameUniforms;",
       "@group(0) @binding(0) var<uniform> frame: FrameUniforms;\n" + SCENE_GPU_DRIVEN_INSTANCE_STRUCT_WGSL +
       "\n@group(2) @binding(0) var<storage, read> gdInstances: array<GDInstance>;", "pbr binding");
-    s = sceneGPUDrivenReplace(s, "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-      "    let gdInstance = gdInstances[in.gdSlot];\n    let model = gdInstance.model;", "pbr model");
-    s = sceneGPUDrivenReplace(s, "    out.instanceColor = in.instanceColor;",
+    s = sceneGPUDrivenReplace(s, SCENE_GPU_DRIVEN_MODEL_ANCHOR,
+      function(_match, name) { return "    let gdInstance = gdInstances[in.gdSlot];\n    let " + name + " = gdInstance.model;"; }, "pbr model");
+    s = sceneGPUDrivenReplace(s, /[ \t]*out\.instanceColor = in\.instanceColor;/,
       "    out.instanceColor = gdInstance.color;", "pbr color");
     return s;
   }
 
   function sceneGPUDrivenShadowVertexWGSL(base) {
-    var s = sceneGPUDrivenReplace(base, [
-      "    @location(4) instanceMatrix0: vec4f,",
-      "    @location(5) instanceMatrix1: vec4f,",
-      "    @location(6) instanceMatrix2: vec4f,",
-      "    @location(7) instanceMatrix3: vec4f,",
-    ].join("\n"), "    @location(4) gdSlot: u32,", "shadow inputs");
+    var s = sceneGPUDrivenReplace(base, sceneGPUDrivenInstanceInputs(false), "    @location(4) gdSlot: u32,", "shadow inputs");
     s = sceneGPUDrivenReplace(s, "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;",
       "@group(0) @binding(0) var<uniform> shadowFrame: ShadowFrameUniforms;\n" + SCENE_GPU_DRIVEN_INSTANCE_STRUCT_WGSL +
       "\n@group(1) @binding(0) var<storage, read> gdInstances: array<GDInstance>;", "shadow binding");
-    s = sceneGPUDrivenReplace(s, "    let model = mat4x4f(in.instanceMatrix0, in.instanceMatrix1, in.instanceMatrix2, in.instanceMatrix3);",
-      "    let model = gdInstances[in.gdSlot].model;", "shadow model");
+    s = sceneGPUDrivenReplace(s, SCENE_GPU_DRIVEN_MODEL_ANCHOR,
+      function(_match, name) { return "    let " + name + " = gdInstances[in.gdSlot].model;"; }, "shadow model");
     return s;
   }
 
