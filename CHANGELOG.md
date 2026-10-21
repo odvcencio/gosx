@@ -18,6 +18,10 @@
   flow and renderer status, chart hydration defaults, Greeter labeling, and
   keyboard dismissal of the documentation's mobile menu.
 
+- Settle individual shared-signal writes through the same reader boundary as
+  batches. Derived values update on the same write, and nested observer writes
+  produce one settled island update while preserving each signal notification.
+
 - Reconcile shared-signal batch readers after notifications and derived values
   have settled. Each affected island evaluates once per store batch, preserving
   individual signal events and reentrant observer updates. Group subscriptions,
