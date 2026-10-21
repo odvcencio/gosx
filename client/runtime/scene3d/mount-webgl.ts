@@ -1146,9 +1146,9 @@
     if (skinInstances && source && source.skinIndex != null && skinInstances[source.skinIndex]) {
       source.skin = skinInstances[source.skinIndex];
     }
-    const sharedGeometry = model && model._shareRigidGeometry && !morphSource && !nodeAnimSource &&
-      !(source && source.skin) && rawObject && rawObject.vertices
-      ? sceneRigidPrimitiveGeometry.get(rawObject.vertices) : null;
+    const canShare = model && model._shareRigidGeometry && !morphSource && !nodeAnimSource &&
+      !(source && source.skin) && rawObject && rawObject.vertices;
+    const sharedGeometry = canShare ? sceneRigidPrimitiveGeometry.get(rawObject.vertices) : null;
     // The shared primitive was already normalized and validated on first
     // hydration. Normalize only instance metadata; cloning its normal/UV/
     // tangent arrays again is proportional to the whole incoming swarm.
@@ -1160,7 +1160,12 @@
       // the decoded asset's original primitive, not that temporary wrapper.
       // Looking up the latter rebakes every new actor before throwing its
       // geometry away in favor of the shared stream during staging.
-      return sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry);
+      const object = sceneModelMeshObject(normalized, model, prefix, morphSource, morphNodeMatrix, nodeAnimSource, sharedGeometry);
+      if (canShare && !sharedGeometry) {
+        object.vertices._rigidPool = true;
+        sceneRigidPrimitiveGeometry.set(rawObject.vertices, object.vertices);
+      }
+      return object;
     }
     if (normalized.kind === "lines") {
       return sceneModelLineObject(normalized, model, prefix, nodeAnimSource);
@@ -1247,10 +1252,9 @@
     const modelMatrix = sceneModelTransformMatrix(model);
     const normalMatrix = sceneAffineNormalMatrix(modelMatrix);
     const modelOrientation = sceneAffineDeterminant(modelMatrix, 0) < 0 ? -1 : 1;
-    const sharedRigidGeometry = !hasSkin && !morphMeta && !nodeAnimSource && model && model._shareRigidGeometry
-      ? sharedGeometry || sceneRigidPrimitiveGeometry.get(vertices) : null;
-    if (sharedRigidGeometry) {
-      instanced.vertices = sharedRigidGeometry;
+    // The caller resolves sharing against the pristine decoded primitive.
+    if (sharedGeometry) {
+      instanced.vertices = sharedGeometry;
     } else if (hasSkin) {
       instanced.vertices = {
         count: vertexCount,
@@ -1305,9 +1309,8 @@
     sceneApplyModelMaterialName(instanced, model);
     sceneApplyModelRenderFlags(instanced, model);
     sceneApplyModelLOD(instanced, model);
-    const normalized = sharedRigidGeometry
-      ? normalizeSceneObject(Object.assign({}, instanced, {vertices: null}), prefix, {vertices: sharedRigidGeometry})
-      : normalizeSceneObject(instanced, prefix);
+    if (sharedGeometry) instanced.vertices = null;
+    const normalized = normalizeSceneObject(instanced, prefix, sharedGeometry ? {vertices: sharedGeometry} : null);
     sceneApplyModelMaterialName(normalized, model);
     if (!morphMeta && !nodeAnimSource && normalized && normalized.vertices) {
       // Imported rigid and skeletal bind streams own immutable snapshots.
@@ -1317,9 +1320,8 @@
       normalized.vertices.immutable = true;
       normalized.vertices.revision = 0;
     }
-    if (sharedRigidGeometry && normalized) {
-      normalized.vertices = sharedRigidGeometry;
-      normalized._modelLocalVertices = sharedRigidGeometry;
+    if (sharedGeometry && normalized) {
+      normalized._modelLocalVertices = sharedGeometry;
     } else if (!hasSkin && normalized && normalized.vertices) {
       normalized._modelLocalVertices = {
         positions: vertices.positions instanceof Float32Array ? new Float32Array(vertices.positions) : sceneTypedFloatArray(vertices.positions),
@@ -3439,6 +3441,12 @@
   // node transforms; animated/morph/live stages never enter this cache.
   const sceneRigidPrimitiveGeometry = new WeakMap();
 
+  const sceneRigidPreparationModel = { x: 0, y: 0, z: 0, rotationX: 0, rotationY: 0, rotationZ: 0,
+    scaleX: 1, scaleY: 1, scaleZ: 1, _shareRigidGeometry: true };
+  window.__gosx_scene3d_api.modelGeometry = { skin: sceneModelHasSkins, weights: sceneModelHasWeightAnimations, nodes: sceneModelHasNodeAnimations, prepare: function(raw: any) {
+    return sceneRigidPrimitiveGeometry.get(raw.vertices) || sceneInstantiateModelObject(raw, sceneRigidPreparationModel, "", 0, null)?.vertices;
+  } };
+
   function sceneCrowdPrimitiveMaterialEligible(raw, model) {
     const source = sceneApplyMaterialOverride(raw, model);
     // Read through the same nested/top-level precedence as normalization.
@@ -3570,16 +3578,7 @@
           continue;
         }
         if (rigidInstance) {
-          const sourceVertices = asset.objects[i].vertices;
-          let shared = sceneRigidPrimitiveGeometry.get(sourceVertices);
-          if (!shared) {
-            shared = object.vertices;
-            // The decoded asset owns immutable streams shared by its entire
-            // swarm. A short bounded GPU residency window can reuse them
-            // across an empty wave without retaining any actor identities.
-            shared._rigidPool = true;
-            sceneRigidPrimitiveGeometry.set(sourceVertices, shared);
-          }
+          const shared = sceneRigidPrimitiveGeometry.get(asset.objects[i].vertices);
           object.vertices = shared;
           object._modelLocalVertices = shared;
           object._rigidSharedAppearance = model._instancedGLBSharedAppearance === true;
@@ -3724,6 +3723,11 @@
 
   function scenePrepareRigidInstancePatch(state, staged, model, matrix) {
     if (!sceneReusableRigidInstance(staged, state)) return null;
+    // Retained poses use the same asset fit as first hydration.
+    if (model.fit && !model._fitBounds) {
+      model = sceneModelWithAssetFit(model, { bounds: staged.rigidInstanceModel._fitBounds });
+      matrix = sceneModelTransformMatrix(model);
+    }
     let crowdRows = null;
     for (const object of staged.objects) {
       if (!object._crowdSkin) continue;
@@ -3736,24 +3740,23 @@
     // cached matrix is already a transaction snapshot. Ordinary Model entries
     // persist across commands and reuse their mutable matrix cache; retain the
     // defensive copy for those broader declarations.
-    const snapshotMatrix = sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix);
-    return { staged, model, matrix: snapshotMatrix, crowdRows, poseRevision: staged._poseRevision || 0 };
+    return { staged, model, matrix: sceneInstancedGLBHydrationTemplates.has(model) ? matrix : new Float32Array(matrix),
+      crowdRows, poseRevision: staged._poseRevision || 0 };
   }
 
-  function sceneCommitRigidInstancePatch(patch) {
-    if (patch.staged.modelSkins && patch.staged.modelSkins.length) {
-      const record = patch.staged.modelSkins[0];
-      record.model = patch.model;
-      record.rootTransform = patch.matrix;
+  function sceneCommitRigidInstancePatch({ staged, model, matrix, crowdRows }) {
+    if (staged.modelSkins?.length) {
+      const record = staged.modelSkins[0];
+      record.model = model;
+      record.rootTransform = matrix;
       sceneApplyModelSkinPose(record, 0, false);
     } else {
-      for (const object of patch.staged.objects) object.parentMatrix = patch.matrix;
+      for (const object of staged.objects) object.parentMatrix = matrix;
     }
-    if (patch.crowdRows) {
-      for (const update of patch.crowdRows) update.object._crowdSkin.rows.set(update.rows);
+    if (crowdRows) {
+      for (const update of crowdRows) update.object._crowdSkin.rows.set(update.rows);
     }
-    patch.staged.model = patch.model;
-    patch.staged.rigidInstanceModel = patch.model;
+    staged.rigidInstanceModel = staged.model = model;
   }
 
   function sceneUpdateRigidInstancePoses(state, hydrationModels) {
@@ -3845,30 +3848,20 @@
         if (!staticKey || !sceneReusableStaticModelHydration(records.staticModels.get(staticKey), state)) return false;
         continue;
       }
-      const staged = key && cache.get(key);
-      if (!key || keys.has(key) || !sceneReusableRigidInstance(staged, state)) return false;
+      if (keys.has(key)) return false;
+      const patch = scenePrepareRigidInstancePatch(state, cache.get(key), model, matrix);
+      if (!patch) return false;
       keys.add(key);
-      patches.push({ staged, model, matrix: template ? matrix : new Float32Array(matrix) });
+      patches.push(patch);
     }
     // No compatible committed identities is a deferred pose, not a failure.
     // The ordered queue retains the latest frame for replay after hydration.
     if (pending && !patches.length) return true;
     // Validate every selected committed wrapper before changing any pose.
     for (const patch of patches) {
-      if (patch.staged.modelSkins && patch.staged.modelSkins.length) {
-        const record = patch.staged.modelSkins[0];
-        record.model = patch.model;
-        record.rootTransform = patch.matrix;
-        sceneApplyModelSkinPose(record, 0, false);
-      }
-      for (const object of patch.staged.objects) {
-        if (!patch.staged.modelSkins || !patch.staged.modelSkins.length) object.parentMatrix = patch.matrix;
-        if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, patch.model._crowdPose, object._crowdSkin.rows);
-        if (object._crowdMotion) delete object._crowdMotion;
-      }
-      patch.staged.model = patch.model;
-      patch.staged.rigidInstanceModel = patch.model;
-      patch.staged._poseRevision = (patch.staged._poseRevision || 0) + 1;
+      sceneCommitRigidInstancePatch(patch);
+      for (const object of patch.staged.objects) delete object._crowdMotion;
+      patch.staged._poseRevision = patch.poseRevision + 1;
     }
     return true;
   }

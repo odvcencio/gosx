@@ -32,12 +32,12 @@ func Page() Node {
 		<a class="bgb__close" href="/demos" aria-label="Back to the demos">×</a>
 		<div class="bgb__tools">
 			<CoastChart
-				driftX={data.chartIslands.driftX}
-				driftZ={data.chartIslands.driftZ}
-				bellX={data.chartIslands.bellX}
-				bellZ={data.chartIslands.bellZ}
-				starX={data.chartIslands.starglassX}
-				starZ={data.chartIslands.starglassZ}
+				DriftX={data.chartIslands.driftX}
+				DriftZ={data.chartIslands.driftZ}
+				BellX={data.chartIslands.bellX}
+				BellZ={data.chartIslands.bellZ}
+				StarX={data.chartIslands.starglassX}
+				StarZ={data.chartIslands.starglassZ}
 			 />
 			<CoastJournal />
 			<CoastSpyglass />
@@ -218,8 +218,18 @@ func CoastChart(props struct{ DriftX, DriftZ, BellX, BellZ, StarX, StarZ float64
 				aria-label="Coastal survey chart with live ship position"
 			>
 				<image href="/api/blackglass-chart.svg" x="-245" y="-430" width="600" height="480" />
-				<a href="#coast-course" onClick={plot} data-gosx-event-value="drift" aria-label="Plot Drift Isle"><circle cx={props.DriftX} cy={props.DriftZ} r="1.2" /><text x={props.DriftX+2} y={props.DriftZ-2}>Drift Isle</text></a>
-				<a href="#coast-course" onClick={plot} data-gosx-event-value="bell" aria-label="Plot Bell Rock"><circle cx={props.BellX} cy={props.BellZ} r="1.2" /><text x={props.BellX+2} y={props.BellZ-2}>Bell Rock</text></a>
+				<a
+					href="#coast-course"
+					onClick={plot}
+					data-gosx-event-value="drift-isle"
+					aria-label="Plot Drift Isle"
+				><circle cx={props.DriftX} cy={props.DriftZ} r="1.2" /><text x={props.DriftX+2} y={props.DriftZ-2}>Drift Isle</text></a>
+				<a
+					href="#coast-course"
+					onClick={plot}
+					data-gosx-event-value="bell-rock"
+					aria-label="Plot Bell Rock"
+				><circle cx={props.BellX} cy={props.BellZ} r="1.2" /><text x={props.BellX+2} y={props.BellZ-2}>Bell Rock</text></a>
 				<a
 					href="#coast-course"
 					onClick={plot}
@@ -253,8 +263,8 @@ func CoastChart(props struct{ DriftX, DriftZ, BellX, BellZ, StarX, StarZ float64
 			<p class="bgb__chart-status" role="status">{nav.Get().Status}</p>
 			<p class="bgb__chart-hint">Hold the plotted course to sail to an island. Sails lower near its pier; slow down, step ashore, then walk to the find. Manual steering takes over at any time.</p>
 			<nav class="bgb__chart-places" aria-label="Plot an island landing">
-				<button type="button" onClick={plot} data-gosx-event-value="drift">Drift Isle</button>
-				<button type="button" onClick={plot} data-gosx-event-value="bell">Bell Rock</button>
+				<button type="button" onClick={plot} data-gosx-event-value="drift-isle">Drift Isle</button>
+				<button type="button" onClick={plot} data-gosx-event-value="bell-rock">Bell Rock</button>
 				<button type="button" onClick={plot} data-gosx-event-value="starglass">Starglass Isle</button>
 			</nav>
 		</div>
@@ -329,7 +339,8 @@ func CoastJournal() Node {
 //gosx:island
 func CoastPocket() Node {
 	journal := signal.NewShared("blackglass.journal", scene.JournalState{})
-	nav := signal.NewShared("blackglass.navigation", scene.NavigationState{})
+	// Either island can hydrate first; match CoastChart's instrument defaults.
+	nav := signal.NewShared("blackglass.navigation", scene.NavigationState{BearingLabel: "—", SpeedLabel: "—", WindLabel: "—", DistanceLabel: "—", HelmLabel: "Pilot ship", SailLabel: "Full sail", HoldLabel: "Hold course", LandingLabel: "Step ashore", Status: "Instruments connect when the scene is ready.", Destination: "Three islands wait offshore.", MapViewBox: "-70 -80 160 120", MapTransform: "translate(21 -42)"})
 	open := signal.NewShared("blackglass.pocket", false)
 	takeOut := func() { open.Set(true) }
 	putAway := func() { open.Set(false) }

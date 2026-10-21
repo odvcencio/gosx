@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const ts = require("node:module").createRequire(path.join(__dirname, "../runtime/package.json"))("typescript");
 
 function runtime() {
-  const context = vm.createContext({ window: {}, console });
+  const context = vm.createContext({ window: { __gosx_scene3d_api: {} }, console });
   for (const name of ["10-runtime-primitives.ts", "10-runtime-scene-utils.ts", "11-scene-math.ts", "12-scene-geometry.ts", "13-scene-material.ts", "10-runtime-scene-core.ts", "15-scene-draw-plan.ts", "15b-scene-planner.ts"]) {
     let source = fs.readFileSync(path.join(__dirname, "bootstrap-src", name), "utf8");
     if (name === "10-runtime-scene-core.ts") source = source.slice(0, source.indexOf("// Scene3D shared API"));

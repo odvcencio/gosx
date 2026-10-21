@@ -193,7 +193,7 @@ test("one decoder serves a dense frame and reordered membership falls back witho
 test("retained pose application reaches the existing crowd animation rows", () => {
   const { context, bridge } = runtime();
   const rendererSource = fs.readFileSync(path.join(directory, "..", "runtime", "scene3d", "mount-webgl.ts"), "utf8");
-  const start = rendererSource.indexOf("function sceneUpdateRigidInstancePoses(");
+  const start = rendererSource.indexOf("function scenePrepareRigidInstancePatch(");
   const end = rendererSource.indexOf("function sceneRigidMembershipModelID(", start);
   assert.ok(start > 0 && end > start);
   context.sceneHydrationModels = () => { throw Error('binary poses must not expand the whole declaration'); };

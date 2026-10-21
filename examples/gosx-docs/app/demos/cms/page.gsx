@@ -14,7 +14,7 @@ func Page() Node {
 				<p class="cms-header__purpose">
 					Add blocks, edit the draft, and publish a validated snapshot.
 				</p>
-				<a class="cms-header__preview-link" href="#cms-preview-canvas">See the live preview ↓</a>
+				<a class="cms-header__preview-link" href="#cms-preview">See the live preview ↓</a>
 			</div>
 			<div class="cms-header__actions">
 				<span class="cms-header__unsaved" id="cms-unsaved-badge" role="status" aria-live="polite" hidden>
@@ -180,7 +180,7 @@ func Page() Node {
 					</Each>
 				</div>
 			</section>
-			<aside class="cms-preview" aria-label="Live preview">
+			<aside class="cms-preview" id="cms-preview" aria-label="Live preview">
 				<h2 class="cms-panel-label">Live preview</h2>
 				<div class="cms-preview__canvas" id="cms-preview-canvas">
 					<Each of={data.blocks} as="block" index="i">

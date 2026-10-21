@@ -48,7 +48,7 @@ func Page() Node {
 				canvasAlpha={false}
 				stats={false}
 			>
-				<Camera x={1.55} y={2.8} z={2.1} fov={38} near={0.01} far={100} />
+				<Camera x={1.55} y={2.8} z={2.1} fov={38} portraitFOV={42} near={0.01} far={100} />
 				<Environment
 					ambientColor="#a8cfda"
 					ambientIntensity={0.16}

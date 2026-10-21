@@ -1,7 +1,12 @@
 package checkers
 
 func Page() Node {
-	return <section class="checkers-showcase chinese-checkers" aria-labelledby="checkers-title" data-checkers-root>
+	return <section
+		class="checkers-showcase chinese-checkers"
+		aria-labelledby="checkers-title"
+		data-checkers-root
+		data-gosx-scene3d-status-scope
+	>
 		<header class="checkers-showcase__intro">
 			<p class="checkers-showcase__eyebrow">Board 01 · live match</p>
 			<h1 id="checkers-title">Chinese Checkers</h1>
@@ -27,7 +32,8 @@ func Page() Node {
 			 />
 			<Scene3D {...data.scene} stats={false} />
 			<p class="checkers-showcase__render-note">
-				Static poster · interactive Scene3D when available
+				Renderer: <output data-gosx-scene3d-status="renderer">starting…</output>
+				<output data-gosx-scene3d-status="fallback" hidden></output>
 			</p>
 		</div>
 		<section class="checkers-showcase__dashboard" aria-label="Match controls and live search statistics">
@@ -99,7 +105,7 @@ func Page() Node {
 		<details class="checkers-showcase__board-panel">
 			<summary>Keyboard board · 121 holes</summary>
 			<p id="checkers-board-help">
-				Use arrow keys to move between neighboring holes. Press Enter or Space to select and move.
+				Scroll sideways to see every column. Use arrow keys to move between neighboring holes. Press Enter or Space to select and move.
 			</p>
 			<div
 				class="checkers-showcase__board"

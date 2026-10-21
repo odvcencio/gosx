@@ -43,3 +43,20 @@ func TestPropsModelPreparationSerializesOnlyAuthoredCapability(t *testing.T) {
 		}
 	}
 }
+
+func TestModelPreparationRigidGeometryOptIn(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		data, err := modelPreparationSnapshot([]ModelPreparation{{ID: "prop", Src: "/prop.glb", RigidGeometry: enabled}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []map[string]any
+		if err := json.Unmarshal(data, &got); err != nil {
+			t.Fatal(err)
+		}
+		value, present := got[0]["rigidGeometry"]
+		if present != enabled || enabled && value != true {
+			t.Fatalf("rigid preparation opt-in: %s", data)
+		}
+	}
+}

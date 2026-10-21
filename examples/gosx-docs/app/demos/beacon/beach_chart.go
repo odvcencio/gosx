@@ -83,6 +83,28 @@ func blackglassBeachChartPlaces() string {
 	return string(data)
 }
 
+// Keep the view-model keys used by CoastChart independent of the public
+// navigation IDs (drift-isle and bell-rock are not Go field names).
+func blackglassBeachChartIslandCoordinates() map[string]float64 {
+	coordinates := make(map[string]float64, 6)
+	for _, place := range blackglassBeachPlaces() {
+		key := ""
+		switch place.View {
+		case "drift-isle":
+			key = "drift"
+		case "bell-rock":
+			key = "bell"
+		case "starglass":
+			key = "starglass"
+		}
+		if key != "" && place.Island {
+			coordinates[key+"X"] = place.X
+			coordinates[key+"Z"] = place.Z
+		}
+	}
+	return coordinates
+}
+
 func blackglassBeachOptics() *scene.Optics {
 	optics := &scene.Optics{Magnification: 3, InputSignal: "$blackglass.spyglass", OutputSignal: "$blackglass.sight"}
 	for _, place := range blackglassBeachPlaces() {

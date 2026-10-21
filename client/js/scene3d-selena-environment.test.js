@@ -99,6 +99,7 @@ test("WebGPU Selena reuses IBL views, updates bind groups on readiness/replaceme
     device:{createBindGroup:d=>{groups.push(d);return d;}},
     sceneNumber:(v,f)=>Number.isFinite(v)?v:f,
     sceneSelenaUniformData:()=>new Float32Array(4),sceneSelenaUniformBufferSlot:()=>"uniforms",
+    sceneWaterMainSelenaContext:()=>undefined,
     wgpuCachedTrackedBuffer:()=>buffer,sceneSelenaTextureDescriptors:l=>l.textures,
     sceneSelenaStorageBufferDescriptors:()=>[],sceneSelenaStateDescriptors:()=>[],
     sceneSelenaLiveTextureView:()=>null,

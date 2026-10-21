@@ -30,6 +30,15 @@ counts distinct texture records. It does not guarantee GPU vertex buffers,
 shader compilation, or a scene-generation commit. Observe the relevant command
 acknowledgement separately when a committed scene is required.
 
+For immutable rigid props, opt in per request with `RigidGeometry: true`.
+This also prepares shared, model-local CPU primitive streams used by both WebGL
+and WebGPU instantiation. Repeated preparation and the first visible instance
+reuse those streams. It creates no scene members or draw calls. Skinned,
+morph-animated, node-animated, and auxiliary-content models are unsupported and
+return an error rather than freezing animation. Leave this flag unset for
+animated actors. Prepared streams remain weakly owned by the decoded asset;
+this option does not allocate GPU vertex buffers or compile shaders.
+
 Model or map failure, context cancellation, `Surface.Dispose`, mount removal,
 or renderer replacement returns an error. A canceled operation cleans up its
 listeners and stops launching material maps. Shared model fetches remain

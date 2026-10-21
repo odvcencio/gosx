@@ -7,8 +7,26 @@
   same settled reads and callback order in AOT islands. Deliver shared peers
   once after each handler, before the writer returns its final patches.
 
+## v0.57.18
+
+- Preserve asset fitting through retained model updates, keep Water shapes
+  pickable through selection changes, and match their refraction and shadows to
+  the selected geometry. Clear inactive object and shadow targets consistently.
+- Keep retained navigation stylesheets connected when head order has not changed,
+  preventing unstyled flashes during enhanced page updates. Let applications
+  claim local history entries through the cancelable `gosx:popstate` event,
+  preserving in-place editor selection during Back and Forward.
+- Derive GPU-driven shaders from emitted production shader strings as well as
+  source strings. Report actual benchmark backend/fallback state in the UI and
+  exported measurements instead of attributing failed submissions to WebGPU.
+- Repair demo diagnostics overflow, preview anchor offsets, Checkers disclosure
+  flow and renderer status, chart hydration defaults, Greeter labeling, and
+  keyboard dismissal of the documentation's mobile menu.
 - Build list auto-keys directly without formatting and boxing overhead,
   preserving source identity and full-width integer indices.
+- Add opt-in rigid-model CPU geometry preparation without hidden scene nodes.
+  Reuse prepared streams on first hydration; reject animated or skinned assets
+  instead of freezing them. GPU buffer and shader work remains first-render work.
 
 - Settle individual shared-signal writes through the same reader boundary as
   batches. Derived values update on the same write, and nested observer writes
