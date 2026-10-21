@@ -91,8 +91,10 @@ const budgets = [
   // Engine worker host (page half and Worker script in one file). It loads only
   // for a page with a Thread: worker engine; no first-load bundle gains more
   // than the 246 byte hook in the engines chunk.
-  { file: "bootstrap-feature-engine-worker.js", raw: 23100, gzip: 7900, brotli: 7300 },
-  { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
+  { file: "bootstrap-feature-engine-worker.js", raw: 28500, gzip: 9400, brotli: 8700 },
+  // Worker support adds the channel-adoption and datagram-push hooks:
+  // measured 4676 raw / 1879 gzip / 1752 Brotli; budgets are the measurement rounded up to 100.
+  { file: "bootstrap-feature-netplay.js", raw: 4700, gzip: 1900, brotli: 1800 },
   // Native cubic tangents add 846 raw / 325 gzip / 310 Brotli bytes to this
   // optional chunk. Only its exhausted raw target moves to the measured
   // minimum (5722 - 2048 allowance); compressed targets and policy stay fixed.

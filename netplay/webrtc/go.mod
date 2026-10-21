@@ -11,6 +11,7 @@ require (
 
 require (
 	github.com/google/uuid v1.6.0 // indirect
+	github.com/odvcencio/gotreesitter v0.56.0 // indirect
 	github.com/pion/datachannel v1.6.3 // indirect
 	github.com/pion/dtls/v3 v3.1.15 // indirect
 	github.com/pion/interceptor v0.1.49 // indirect
@@ -30,6 +31,8 @@ require (
 	golang.org/x/net v0.52.0 // indirect
 	golang.org/x/sys v0.43.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
+	m31labs.dev/prism v0.1.3 // indirect
+	m31labs.dev/selena v0.5.3-0.20261010191520-994398415643 // indirect
 	m31labs.dev/turboquant v0.2.1 // indirect
 )
 

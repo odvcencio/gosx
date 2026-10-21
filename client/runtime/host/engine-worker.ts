@@ -189,7 +189,7 @@
         }
         var rec = {
           entry: entry, worker: worker, state: "booting", ctx: null, disposed: false,
-          subs: new Map(), listeners: new Map(), appHandlers: new Map(), mountWaiter: null,
+          subs: new Map(), listeners: new Map(), appHandlers: new Map(), nets: new Map(), netModes: {}, mountWaiter: null,
           stats: { messagesIn: 0, framesIn: 0, frameBytes: 0, signalBatches: 0, signalBytes: 0, appMessages: 0, inputSent: 0 },
           terminate: function() { terminate(rec); },
         };
@@ -221,7 +221,7 @@
             t: "init", v: PROTOCOL, id: entry.id, component: entry.component, kind: entry.kind,
             programRef: absolute(entry.programRef), wasmExec: wasmExecURL(), runtimeMode: entry.runtime || "go-wasm",
             props: entry.props || {}, capabilities: entry.capabilities || [], requiredCapabilities: entry.requiredCapabilities || [],
-            hidden: documentHidden(), clock: { epochMs: nowStamp() },
+            hidden: documentHidden(), clock: { epochMs: nowStamp() }, rtc: typeof window.RTCPeerConnection === "function",
             frameHz: Number(entry.props && entry.props.workerFrameHz) > 0 ? Number(entry.props.workerFrameHz) : DEFAULT_FRAME_HZ,
           });
         } catch (error) {
@@ -238,6 +238,9 @@
       rec.subs.clear();
       for (var off2 of rec.listeners.values()) { try { off2(); } catch (_) {} }
       rec.listeners.clear();
+      var netApi = window.__gosx && window.__gosx.netplay;
+      if (netApi) for (var netID of rec.nets.values()) { try { netApi.close(netID); } catch (_) {} }
+      rec.nets.clear();
       try { rec.worker.onmessage = rec.worker.onerror = rec.worker.onmessageerror = null; rec.worker.terminate(); } catch (_) {}
       if (records.get(rec.entry.id) === rec) records.delete(rec.entry.id);
       if (rec.mountWaiter) { var w = rec.mountWaiter; rec.mountWaiter = null; w.bad(workerError("worker-terminated", "engine worker was terminated")); }
@@ -564,6 +567,54 @@
         if (off) { rec.listeners.delete(msg.lid); try { off(); } catch (_) {} }
       },
 
+      // Netplay: the page owns the RTCPeerConnection (it does not exist in a
+      // worker). Where the browser can transfer an RTCDataChannel to a worker,
+      // the worker owns the datagrams (net.channel); otherwise the page relays
+      // them (net.send, net.data). Signaling always goes through the worker's
+      // Go code, over the hub, exactly as on the main thread.
+      "net.open": function(rec, msg) {
+        var api = window.__gosx && window.__gosx.netplay;
+        var post = function(m, transfer) { if (!rec.terminated) try { rec.worker.postMessage(m, transfer || []); } catch (_) {} };
+        if (!current(rec) || !api || typeof api.open !== "function") { post({ t: "net.state", nid: msg.nid, state: "failed" }); return; }
+        var adopted = false;
+        var cfg = {
+          session: msg.session, iceServers: msg.iceServers,
+          onSignal: function(event, json) { post({ t: "net.signal", nid: msg.nid, event: event, json: json }); },
+          onState: function(state) { post({ t: "net.state", nid: msg.nid, state: state }); },
+          onDatagram: function(bytes) { post({ t: "net.data", nid: msg.nid, buf: bytes.buffer }, [bytes.buffer]); },
+        };
+        // window.__gosx_engine_worker_net_transfer = false keeps the channel on
+        // the page and relays datagrams; use it to compare routes or to work
+        // around a browser that mishandles a transferred channel.
+        if (msg.canAdopt === true && window.__gosx_engine_worker_net_transfer !== false) {
+          cfg.adopt = function(dc) {
+            try { rec.worker.postMessage({ t: "net.channel", nid: msg.nid, dc: dc }, [dc]); adopted = true; return true; } catch (_) { return false; }
+          };
+        }
+        var id = api.open(cfg);
+        if (!(id > 0)) { post({ t: "net.state", nid: msg.nid, state: "failed" }); return; }
+        rec.nets.set(msg.nid, id);
+        rec.netModes[msg.nid] = adopted ? "transfer" : "relay";
+        post({ t: "net.mode", nid: msg.nid, mode: rec.netModes[msg.nid] });
+      },
+      "net.signal.in": function(rec, msg) {
+        var api = window.__gosx && window.__gosx.netplay, id = rec.nets.get(msg.nid);
+        if (api && id) api.signal(id, msg.event, msg.json);
+      },
+      "net.send": function(rec, msg) {
+        var api = window.__gosx && window.__gosx.netplay, id = rec.nets.get(msg.nid);
+        if (api && id && msg.buf instanceof ArrayBuffer) api.send(id, new Uint8Array(msg.buf), msg.buf.byteLength);
+      },
+      "net.worker-state": function(rec, msg) {
+        var api = window.__gosx && window.__gosx.netplay, id = rec.nets.get(msg.nid);
+        if (api && id && typeof api.adopted === "function") api.adopted(id, msg.state);
+      },
+      "net.close": function(rec, msg) {
+        var api = window.__gosx && window.__gosx.netplay, id = rec.nets.get(msg.nid);
+        rec.nets.delete(msg.nid);
+        if (api && id) api.close(id);
+      },
+
       // Messages the application defines between its page code and its engine.
       app: function(rec, msg) {
         rec.stats.appMessages++;
@@ -624,6 +675,9 @@
           set.add(fn); rec.appHandlers.set(name, set);
           return function() { set.delete(fn); };
         },
+        // How each netplay connection moves datagrams: "transfer" (the worker owns
+        // the RTCDataChannel) or "relay" (the page forwards them), by connection id.
+        netModes: function() { return Object.assign({}, rec.netModes); },
         terminate: function() { terminate(rec); },
         worker: rec.worker,
       };
@@ -758,7 +812,9 @@
       return { applied: true, queued: true };
     };
 
+    var netplayShim = createNetplayShim(scope, post, function() { return init; });
     var gosx = scope.__gosx = scope.__gosx || {};
+    gosx.netplay = netplayShim.api;
     gosx.worker = workerAPI;
     gosx.scene3d = Object.assign(gosx.scene3d || {}, scene3d);
     scope.__gosx_worker_extensions = scope.__gosx_worker_extensions || [];
@@ -921,6 +977,11 @@
         var json = JSON.stringify(ev);
         for (var fn of Array.from(inputHandlers)) { try { fn(json); } catch (error) { logToPage("error", error); } }
       },
+      "net.signal": function(msg) { netplayShim.onSignal(msg); },
+      "net.state": function(msg) { netplayShim.onState(msg); },
+      "net.mode": function(msg) { netplayShim.onMode(msg); },
+      "net.channel": function(msg) { netplayShim.onChannel(msg); },
+      "net.data": function(msg) { netplayShim.onData(msg); },
       "mount.event": function(msg) {
         var callback = mountListeners.get(msg.lid);
         if (callback) { try { callback(msg.json); } catch (error) { logToPage("error", error); } }
@@ -934,6 +995,158 @@
       var handler = handlers[msg.t];
       if (typeof handler === "function") handler(msg);
       else if (scope.__gosx_worker_handlers && typeof scope.__gosx_worker_handlers[msg.t] === "function") scope.__gosx_worker_handlers[msg.t](msg);
+    };
+  }
+
+  // The worker's stand-in for the page's netplay binding (netplay.ts), with
+  // the same polled API Go's netplay/client already uses. RTCPeerConnection does
+  // not exist in a worker, so the page owns it and this shim asks the page
+  // to open and signal it. Datagrams then take one of two routes:
+  //   transfer  the page hands the RTCDataChannel to this worker at creation;
+  //             datagrams go straight between the worker and the network and
+  //             never touch the page's main thread.
+  //   relay     the browser refused the transfer (or has no RTCDataChannel in
+  //             workers); the page forwards datagrams over the port.
+  function createNetplayShim(scope, post, getInit) {
+    var MAX_PACKET = 1200, QUEUE_SLOTS = 128, MAX_BUFFERED = 16 * 1024, MAX_CONNECTIONS = 8;
+    var conns = new Map();
+    var nextNID = 1;
+
+    function supported() {
+      var init = getInit();
+      return !!(init && init.rtc === true);
+    }
+
+    function notify(c, next) {
+      if (c.state === next || c.state === "closed" || c.state === "failed") return;
+      c.state = next;
+      try { if (c.cfg.onState) c.cfg.onState(next); } catch (_) {}
+    }
+
+    function pushIncoming(c, bytes) {
+      if (!bytes || bytes.length === 0 || bytes.length > MAX_PACKET || c.count === QUEUE_SLOTS) { c.receiveDropped++; return; }
+      var slot = (c.head + c.count) % QUEUE_SLOTS;
+      c.queue.set(bytes, slot * MAX_PACKET);
+      c.lens[slot] = bytes.length;
+      c.count++;
+      c.received++;
+    }
+
+    function open(cfg) {
+      if (!cfg || typeof cfg.onSignal !== "function") return 0;
+      var fail = function() { try { if (cfg.onState) cfg.onState("failed"); } catch (_) {} return 0; };
+      if (!supported() || conns.size >= MAX_CONNECTIONS) return fail();
+      var nid = nextNID++;
+      var c = {
+        nid: nid, cfg: cfg, state: "connecting", mode: "pending", dc: null,
+        queue: new Uint8Array(QUEUE_SLOTS * MAX_PACKET), lens: new Int32Array(QUEUE_SLOTS), head: 0, count: 0,
+        received: 0, receiveDropped: 0, sent: 0, sendDropped: 0,
+      };
+      conns.set(nid, c);
+      post({
+        t: "net.open", nid: nid, session: String(cfg.session || ""), iceServers: Array.isArray(cfg.iceServers) ? cfg.iceServers : [],
+        canAdopt: typeof scope.RTCDataChannel === "function",
+      });
+      return nid;
+    }
+
+    function release(c) {
+      if (c.dc) {
+        try { c.dc.onopen = c.dc.onmessage = c.dc.onclose = c.dc.onerror = null; c.dc.close(); } catch (_) {}
+        c.dc = null;
+      }
+    }
+
+    return {
+      onSignal: function(msg) {
+        var c = conns.get(msg.nid);
+        if (c && c.state !== "closed" && c.state !== "failed") { try { c.cfg.onSignal(msg.event, msg.json); } catch (_) {} }
+      },
+      onState: function(msg) {
+        var c = conns.get(msg.nid);
+        if (!c) return;
+        // The page reports a failed connection as "failed" until it has seen
+        // the channel open. When this worker saw it open, that is a closure.
+        if (msg.state === "failed" && c.state === "open") { notify(c, "closed"); release(c); return; }
+        if (msg.state === "failed") { notify(c, "failed"); release(c); return; }
+        if (msg.state === "closed") { notify(c, "closed"); release(c); return; }
+        if (msg.state === "open" && c.mode === "relay") notify(c, "open");
+      },
+      onMode: function(msg) {
+        var c = conns.get(msg.nid);
+        if (c && c.mode === "pending") c.mode = msg.mode === "transfer" ? "transfer" : "relay";
+      },
+      onChannel: function(msg) {
+        var c = conns.get(msg.nid);
+        var dc = msg.dc;
+        if (!c || !dc || c.state === "closed" || c.state === "failed") { try { if (dc) dc.close(); } catch (_) {} return; }
+        c.mode = "transfer";
+        c.dc = dc;
+        dc.binaryType = "arraybuffer";
+        dc.onmessage = function(ev) {
+          var d = ev.data;
+          pushIncoming(c, d instanceof ArrayBuffer ? new Uint8Array(d) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : null);
+        };
+        dc.onopen = function() { notify(c, "open"); post({ t: "net.worker-state", nid: c.nid, state: "open" }); };
+        dc.onclose = function() {
+          var wasConnecting = c.state === "connecting";
+          if (wasConnecting) notify(c, "failed"); else notify(c, "closed");
+          post({ t: "net.worker-state", nid: c.nid, state: "closed" });
+        };
+        if (dc.readyState === "open") dc.onopen();
+      },
+      onData: function(msg) {
+        var c = conns.get(msg.nid);
+        if (!c || !(msg.buf instanceof ArrayBuffer)) return;
+        if (c.state === "connecting") notify(c, "open");   // relay: data implies an open channel
+        pushIncoming(c, new Uint8Array(msg.buf));
+      },
+      api: {
+        version: 1,
+        mode: function(id) { var c = conns.get(id); return c ? c.mode : "closed"; },
+        supported: supported,
+        open: open,
+        signal: function(id, event, json) {
+          var c = conns.get(id);
+          if (!c || c.state === "closed" || c.state === "failed") return;
+          post({ t: "net.signal.in", nid: id, event: String(event), json: String(json) });
+        },
+        send: function(id, bytes, n) {
+          var c = conns.get(id);
+          if (!c || c.state !== "open" || !bytes) return false;
+          if (!(n > 0) || n > MAX_PACKET || n > bytes.length) { c.sendDropped++; return false; }
+          if (c.mode === "transfer" && c.dc) {
+            if (c.dc.bufferedAmount > MAX_BUFFERED) { c.sendDropped++; return false; }
+            try { c.dc.send(bytes.subarray(0, n)); c.sent++; return true; } catch (_) { c.sendDropped++; return false; }
+          }
+          var copy = bytes.slice(0, n);
+          post({ t: "net.send", nid: id, buf: copy.buffer }, [copy.buffer]);
+          c.sent++;
+          return true;
+        },
+        recv: function(id, dst) {
+          var c = conns.get(id);
+          if (!c || c.count === 0 || !dst) return -1;
+          var n = Math.min(c.lens[c.head], dst.length);
+          dst.set(c.queue.subarray(c.head * MAX_PACKET, c.head * MAX_PACKET + n));
+          c.head = (c.head + 1) % QUEUE_SLOTS;
+          c.count--;
+          return n;
+        },
+        state: function(id) { var c = conns.get(id); return c ? c.state : "closed"; },
+        stats: function(id) {
+          var c = conns.get(id);
+          return c ? { received: c.received, receiveDropped: c.receiveDropped, sent: c.sent, sendDropped: c.sendDropped, queued: c.count, mode: c.mode } : null;
+        },
+        close: function(id) {
+          var c = conns.get(id);
+          if (!c) return;
+          if (c.state !== "failed") c.state = "closed";
+          release(c);
+          conns.delete(id);
+          post({ t: "net.close", nid: id });
+        },
+      },
     };
   }
 

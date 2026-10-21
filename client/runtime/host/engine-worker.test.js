@@ -849,3 +849,248 @@ test("worker: input arrives as JSON stamped with the event time and arrival time
   w.send({ t: "input", ev: "not an object" });
   assert.equal(seen.length, 2);
 });
+
+// ---------------------------------------------------------------------------
+// Netplay bridge
+// ---------------------------------------------------------------------------
+
+function fakeNetplayBinding() {
+  const calls = [];
+  const conns = new Map();
+  let next = 40;
+  const api = {
+    calls, conns,
+    open(cfg) { const id = ++next; calls.push(["open", id]); conns.set(id, { cfg, adoptedOK: cfg.adopt ? cfg.adopt({ fakeChannel: id }) : false }); return api.refuse ? 0 : id; },
+    signal(id, event, json) { calls.push(["signal", id, event, json]); },
+    send(id, bytes, n) { calls.push(["send", id, Array.from(bytes), n]); return true; },
+    close(id) { calls.push(["close", id]); },
+    adopted(id, state) { calls.push(["adopted", id, state]); },
+  };
+  return api;
+}
+
+test("page: net.open asks the binding to adopt the channel for the worker and reports the mode", async () => {
+  const page = bootPage();
+  const net = fakeNetplayBinding();
+  page.win.__gosx.netplay = net;
+  const { worker } = await mounted(page);
+  worker.say({ t: "net.open", nid: 1, session: "s", iceServers: [{ urls: ["stun:x"] }], canAdopt: true });
+  const channel = worker.sent.find(s => s.msg.t === "net.channel");
+  assert.ok(channel, "the channel is posted to the worker");
+  assert.deepEqual(plain(channel.msg.dc), { fakeChannel: 41 });
+  assert.ok(channel.transfer.length === 1 && channel.transfer[0] === channel.msg.dc, "the channel travels in the transfer list");
+  assert.deepEqual(worker.of("net.mode").map(m => [m.nid, m.mode]), [[1, "transfer"]]);
+  assert.equal(net.conns.get(41).cfg.session, "s");
+});
+
+test("page: without adopt support, or when it is refused, datagrams relay over the port", async () => {
+  for (const canAdopt of [false, true]) {
+    const page = bootPage();
+    const net = fakeNetplayBinding();
+    const open = net.open;
+    net.open = cfg => { if (canAdopt) { const real = cfg.adopt; cfg.adopt = () => false; void real; } return open(cfg); };
+    page.win.__gosx.netplay = net;
+    const { worker } = await mounted(page);
+    worker.say({ t: "net.open", nid: 2, session: "s", iceServers: [], canAdopt });
+    assert.equal(worker.sent.some(s => s.msg.t === "net.channel"), false);
+    assert.deepEqual(worker.of("net.mode").map(m => m.mode), ["relay"]);
+    const cfg = net.conns.get(41).cfg;
+    const dgram = new Uint8Array([1, 2, 3]);
+    cfg.onDatagram(dgram);
+    const data = worker.sent.find(s => s.msg.t === "net.data");
+    assert.equal(data.msg.buf, dgram.buffer);
+    assert.ok(data.transfer.length === 1 && data.transfer[0] === dgram.buffer);
+    worker.say({ t: "net.send", nid: 2, buf: new Uint8Array([9, 8]).buffer });
+    assert.deepEqual(net.calls.at(-1), ["send", 41, [9, 8], 2]);
+  }
+});
+
+test("page: signals, state and close pass through; a missing or refusing binding fails the connection", async () => {
+  const page = bootPage();
+  const net = fakeNetplayBinding();
+  page.win.__gosx.netplay = net;
+  const { worker } = await mounted(page);
+  worker.say({ t: "net.open", nid: 3, session: "s", iceServers: [], canAdopt: false });
+  const cfg = net.conns.get(41).cfg;
+  cfg.onSignal("netplay.offer", '{"sdp":"v=0"}');
+  cfg.onState("open");
+  assert.deepEqual(worker.of("net.signal").map(m => [m.nid, m.event, m.json]), [[3, "netplay.offer", '{"sdp":"v=0"}']]);
+  assert.deepEqual(worker.of("net.state").map(m => m.state), ["open"]);
+  worker.say({ t: "net.signal.in", nid: 3, event: "netplay.answer", json: "{}" });
+  worker.say({ t: "net.worker-state", nid: 3, state: "open" });
+  worker.say({ t: "net.close", nid: 3 });
+  assert.deepEqual(net.calls.slice(-3), [["signal", 41, "netplay.answer", "{}"], ["adopted", 41, "open"], ["close", 41]]);
+  worker.say({ t: "net.signal.in", nid: 3, event: "x", json: "{}" });
+  assert.equal(net.calls.at(-1)[0], "close", "a closed connection ignores later signals");
+
+  net.refuse = true;
+  worker.say({ t: "net.open", nid: 4, session: "s", iceServers: [], canAdopt: false });
+  assert.equal(worker.of("net.state").at(-1).state, "failed");
+  delete page.win.__gosx.netplay;
+  worker.say({ t: "net.open", nid: 5, session: "s", iceServers: [], canAdopt: false });
+  assert.deepEqual(worker.of("net.state").slice(-1).map(m => [m.nid, m.state]), [[5, "failed"]]);
+});
+
+test("page: terminating the worker closes its page connections", async () => {
+  const page = bootPage();
+  const net = fakeNetplayBinding();
+  page.win.__gosx.netplay = net;
+  const { worker } = await mounted(page);
+  worker.say({ t: "net.open", nid: 6, session: "s", iceServers: [], canAdopt: true });
+  page.host.get(ENTRY.id).terminate();
+  assert.deepEqual(net.calls.at(-1), ["close", 41]);
+});
+
+class FakeDC {
+  constructor(state = "connecting") { this.readyState = state; this.bufferedAmount = 0; this.sent = []; this.binaryType = ""; }
+  send(b) { this.sent.push(Array.from(b)); }
+  close() { this.readyState = "closed"; this.closed = true; }
+}
+
+async function netWorker(opts = {}) {
+  const w = await mountedWorker();
+  w.scope.RTCDataChannel = opts.noDC ? undefined : FakeDC;
+  return w;
+}
+
+function openNet(w, init = {}) {
+  const signals = [], states = [];
+  // The init message from the page said whether RTCPeerConnection exists.
+  const id = w.scope.__gosx.netplay.open({ session: "s", iceServers: [{ urls: ["stun:x"] }], onSignal: (e, j) => signals.push([e, j]), onState: s => states.push(s), ...init });
+  return { id, signals, states };
+}
+
+test("worker: netplay is unsupported unless the page has RTCPeerConnection", async () => {
+  const w = await bootedWorker();            // INIT has no rtc flag
+  w.send({ t: "mount" }); await tick(); await tick();
+  const api = w.scope.__gosx.netplay;
+  assert.equal(api.supported(), false);
+  const states = [];
+  assert.equal(api.open({ session: "s", onSignal() {}, onState: s => states.push(s) }), 0);
+  assert.deepEqual(states, ["failed"]);
+  assert.equal(w.of("net.open").length, 0);
+});
+
+async function rtcWorker(opts) {
+  const w = bootWorker();
+  w.send({ ...INIT, rtc: true });
+  await tick(); await tick(); await tick();
+  w.send({ t: "mount" });
+  await tick(); await tick();
+  w.scope.RTCDataChannel = opts && opts.noDC ? undefined : FakeDC;
+  return w;
+}
+
+test("worker: open asks the page to start the connection and says whether it can adopt a channel", async () => {
+  for (const [noDC, canAdopt] of [[false, true], [true, false]]) {
+    const w = await rtcWorker({ noDC });
+    const c = openNet(w);
+    assert.ok(c.id > 0);
+    const req = w.of("net.open")[0].msg;
+    assert.deepEqual(plain({ nid: req.nid, session: req.session, canAdopt: req.canAdopt, iceServers: req.iceServers }), { nid: c.id, session: "s", canAdopt, iceServers: [{ urls: ["stun:x"] }] });
+  }
+});
+
+test("worker: signaling flows both ways through the page", async () => {
+  const w = await rtcWorker();
+  const c = openNet(w);
+  w.send({ t: "net.signal", nid: c.id, event: "netplay.offer", json: '{"a":1}' });
+  assert.deepEqual(c.signals, [["netplay.offer", '{"a":1}']]);
+  w.scope.__gosx.netplay.signal(c.id, "netplay.answer", '{"b":2}');
+  assert.deepEqual(plain(w.of("net.signal.in").map(m => [m.msg.nid, m.msg.event, m.msg.json])), [[c.id, "netplay.answer", '{"b":2}']]);
+});
+
+test("worker transfer mode: datagrams use the adopted channel and never cross the port", async () => {
+  const w = await rtcWorker();
+  const c = openNet(w);
+  const api = w.scope.__gosx.netplay;
+  const dc = new FakeDC();
+  w.send({ t: "net.channel", nid: c.id, dc });
+  w.send({ t: "net.mode", nid: c.id, mode: "transfer" });
+  assert.equal(dc.binaryType, "arraybuffer");
+  assert.equal(api.mode(c.id), "transfer");
+  assert.equal(api.send(c.id, Uint8Array.from([1, 2, 3]), 3), false, "not open yet");
+  dc.readyState = "open";
+  dc.onopen();
+  assert.deepEqual(c.states, ["open"]);
+  assert.deepEqual(w.of("net.worker-state").map(m => m.msg.state), ["open"], "the page learns the channel opened");
+  assert.equal(api.send(c.id, Uint8Array.from([1, 2, 3, 4]), 3), true);
+  assert.deepEqual(dc.sent, [[1, 2, 3]]);
+  assert.equal(w.of("net.send").length, 0, "no datagram goes through the page");
+  dc.bufferedAmount = 20000;
+  assert.equal(api.send(c.id, Uint8Array.from([1]), 1), false, "a congested channel drops, like the page binding");
+  dc.onmessage({ data: Uint8Array.from([5, 6]).buffer });
+  const out = new Uint8Array(1200);
+  assert.equal(api.recv(c.id, out), 2);
+  assert.deepEqual(Array.from(out.subarray(0, 2)), [5, 6]);
+  assert.equal(api.recv(c.id, out), -1);
+  assert.deepEqual(plain(api.stats(c.id)), { received: 1, receiveDropped: 0, sent: 1, sendDropped: 1, queued: 0, mode: "transfer" });
+  dc.onclose();
+  assert.deepEqual(c.states, ["open", "closed"]);
+});
+
+test("worker transfer mode: a channel that already opened, or never opens, is handled", async () => {
+  const w = await rtcWorker();
+  const a = openNet(w);
+  w.send({ t: "net.channel", nid: a.id, dc: new FakeDC("open") });
+  assert.deepEqual(a.states, ["open"], "a channel that opened before the handlers attached");
+  const b = openNet(w);
+  const dc = new FakeDC();
+  w.send({ t: "net.channel", nid: b.id, dc });
+  dc.onclose();
+  assert.deepEqual(b.states, ["failed"], "closing before open is a failed connection");
+  const c = openNet(w);
+  w.send({ t: "net.state", nid: c.id, state: "failed" });
+  const late = new FakeDC();
+  w.send({ t: "net.channel", nid: c.id, dc: late });
+  assert.equal(late.closed, true, "a channel for a failed connection is closed, not kept");
+});
+
+test("worker relay mode: datagrams travel through the page as transferred buffers", async () => {
+  const w = await rtcWorker({ noDC: true });
+  const c = openNet(w);
+  const api = w.scope.__gosx.netplay;
+  w.send({ t: "net.mode", nid: c.id, mode: "relay" });
+  assert.equal(api.mode(c.id), "relay");
+  w.send({ t: "net.state", nid: c.id, state: "open" });
+  assert.deepEqual(c.states, ["open"]);
+  const payload = Uint8Array.from([1, 2, 3, 4]);
+  assert.equal(api.send(c.id, payload, 3), true);
+  const sent = w.of("net.send")[0];
+  assert.deepEqual(Array.from(new Uint8Array(sent.msg.buf)), [1, 2, 3], "only n bytes, copied from the caller's scratch buffer");
+  assert.ok(sent.transfer.length === 1 && sent.transfer[0] === sent.msg.buf);
+  payload[0] = 99;                                   // the caller reuses its buffer
+  assert.equal(new Uint8Array(sent.msg.buf)[0], 1);
+  w.send({ t: "net.data", nid: c.id, buf: Uint8Array.from([7, 7]).buffer });
+  const out = new Uint8Array(1200);
+  assert.equal(api.recv(c.id, out), 2);
+  assert.equal(api.send(c.id, payload, 0), false);
+  assert.equal(api.send(c.id, payload, 1201), false);
+});
+
+test("worker: close tells the page, and later signals and sends are ignored", async () => {
+  const w = await rtcWorker();
+  const c = openNet(w);
+  const api = w.scope.__gosx.netplay;
+  api.close(c.id);
+  assert.equal(w.of("net.close").length, 1);
+  assert.equal(api.state(c.id), "closed");
+  api.signal(c.id, "x", "{}");
+  assert.equal(w.of("net.signal.in").length, 0);
+  assert.equal(api.send(c.id, Uint8Array.from([1]), 1), false);
+  w.send({ t: "net.signal", nid: c.id, event: "e", json: "{}" });
+  assert.equal(c.signals.length, 0);
+});
+
+test("worker: a page failure after the channel opened is a closure, before it a failure", async () => {
+  const w = await rtcWorker();
+  const a = openNet(w);
+  const dc = new FakeDC("open");
+  w.send({ t: "net.channel", nid: a.id, dc });
+  w.send({ t: "net.state", nid: a.id, state: "failed" });
+  assert.deepEqual(a.states, ["open", "closed"]);
+  assert.equal(dc.closed, true);
+  const b = openNet(w);
+  w.send({ t: "net.state", nid: b.id, state: "failed" });
+  assert.deepEqual(b.states, ["failed"]);
+});

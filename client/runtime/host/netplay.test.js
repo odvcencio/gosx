@@ -243,3 +243,54 @@ test("session and server limits are enforced", async () => {
   assert.equal(np.open({ session: "s1", onSignal() {}, onState: s => states.push(s) }), 0, "ninth connection refused");
   assert.deepEqual(states, ["failed"]);
 });
+
+test("adopt hands the channel to a worker, which then owns the datagrams", async () => {
+  const { np } = boot();
+  const adopted = [];
+  const c = connect(np, { adopt: dc => { adopted.push(dc); return true; }, onDatagram: () => assert.fail("an adopted channel must not relay") });
+  const channel = c.pc.channel;
+  assert.deepEqual(adopted, [channel]);
+  assert.equal(channel.binaryType, "arraybuffer", "binaryType is set before the transfer");
+  assert.equal(channel.onopen, undefined, "the page must not touch a transferred channel");
+  assert.equal(channel.onmessage, undefined);
+  await tick();
+  assert.equal(np.send(c.id, Uint8Array.from([1]), 1), false, "the page cannot send on a channel it gave away");
+  assert.equal(np.state(c.id), "connecting");
+  np.adopted(c.id, "open");
+  assert.equal(np.state(c.id), "open");
+  assert.deepEqual(c.states, ["open"]);
+  np.adopted(c.id, "failed");            // only open and closed are accepted from the worker
+  assert.equal(np.state(c.id), "open");
+  np.adopted(c.id, "closed");
+  assert.deepEqual(c.states, ["open", "closed"]);
+});
+
+test("a refused transfer leaves the page in charge", async () => {
+  const { np } = boot();
+  const c = connect(np, { adopt: () => false });
+  assert.ok(c.pc.channel.onopen, "the page keeps the channel");
+  const thrown = connect(np, { adopt: () => { throw new Error("DataCloneError"); } });
+  assert.ok(thrown.pc.channel.onopen);
+  c.pc.channel.open();
+  assert.equal(np.state(c.id), "open");
+});
+
+test("onDatagram pushes each datagram to the receiver instead of queueing it", async () => {
+  const { np } = boot();
+  const got = [];
+  const c = connect(np, { onDatagram: bytes => got.push(Array.from(bytes)) });
+  c.pc.channel.open();
+  c.pc.channel.deliver([7, 8, 9]);
+  c.pc.channel.deliver(new Array(1201).fill(1));   // oversize: dropped
+  c.pc.channel.deliver([]);                          // empty: dropped
+  assert.deepEqual(got, [[7, 8, 9]]);
+  assert.equal(np.recv(c.id, new Uint8Array(1200)), -1, "nothing is queued for polling");
+  assert.deepEqual(plain(np.stats(c.id)), { received: 1, receiveDropped: 2, sent: 0, sendDropped: 0, queued: 0 });
+});
+
+test("adopted is a no-op for a channel the page owns", async () => {
+  const { np } = boot();
+  const c = connect(np);
+  np.adopted(c.id, "open");
+  assert.equal(np.state(c.id), "connecting");
+});
