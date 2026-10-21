@@ -69,3 +69,11 @@ All callbacks run outside hub and client locks and retain the existing shutdown
 ordering: admitted callbacks finish before the final `Closed` callback.
 `Broadcast` reports accepted clients and zero full-queue drops for each valid
 offer; intentional replacements are counted only by replacement observations.
+
+## Using the snapshot lane from `sim`
+
+`sim.NewBinarySnapshotBroadcaster` (set as `sim.Options.Broadcaster`) offers each
+tick's state through this lane: a keyframe every `KeyframeEvery` ticks and, in
+between, deltas that carry the changed middle of the state against that
+keyframe. `sim.DecodeBinarySnapshot` rebuilds the state in Go. See
+`sim/README.md`.

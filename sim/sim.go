@@ -1,6 +1,10 @@
 // Package sim provides server-authoritative game simulation over gosx hubs.
 // Games implement the Simulation interface and a Runner drives the simulation
 // at a fixed tick rate, collecting player inputs and broadcasting state.
+//
+// The Runner never calls the Simulation concurrently with itself. It supports
+// pause, speed, catch-up, input queues, pluggable broadcasters and replay logs
+// with an initial snapshot; see Options and the package README.
 package sim
 
 import (
