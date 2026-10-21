@@ -36,7 +36,6 @@ func TestMotionMaterialProgramDev(t *testing.T) {
 func checkNativeMaterialMotion(t *testing.T, chrome string, app *docsApp, mode string) {
 	t.Helper()
 	proof := newRuntimeBrowserProof(t, filepath.Join(e2eRepoRoot(t), "examples", "gosx-docs", "app", "test", "motion-material", "page.server.go"))
-	proof.NoProductionBuild = mode == "development"
 	defer writeRuntimeBrowserProof(t, "material-motion-"+mode+".json", &proof)
 	page := newBrowserPage(t, chrome, nil, 1280, 800, "", 120*time.Second)
 	fixtureURL := app.baseURL + "/test/motion-material"

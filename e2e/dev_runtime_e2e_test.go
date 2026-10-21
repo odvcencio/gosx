@@ -41,7 +41,7 @@ type devRuntimeProof struct {
 	Browser           string             `json:"browser"`
 	Runtime           hydrate.RuntimeRef `json:"runtime"`
 	ServedSHA256      string             `json:"servedSHA256"`
-	NoProductionBuild bool               `json:"noProductionBuild"`
+	NoProductionBuild bool               `json:"noProductionBuild,omitempty"`
 	Steps             []devRuntimeStep   `json:"steps"`
 	Passed            bool               `json:"passed"`
 }
