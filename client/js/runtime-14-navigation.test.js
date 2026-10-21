@@ -3848,6 +3848,133 @@ test("managed action same-URL redirects force a cache-bypassing soft refresh", a
   assert.equal(form.getAttribute("data-gosx-form-state"), "idle");
 });
 
+test("a successful redirected correction clears the previous retained form error state", async () => {
+  for (const rejectedStatus of [422, 409]) {
+    const pageURL = "http://localhost:3000/studio";
+    const actionURL = "http://localhost:3000/__actions/source";
+    const makeForm = () => {
+      const form = new FakeElement("form", null);
+      form.id = "source-form";
+      form.setAttribute("action", actionURL);
+      form.setAttribute("method", "post");
+      form.setAttribute("data-gosx-form", "");
+      return form;
+    };
+    const form = makeForm();
+    let calls = 0;
+    const parsedDocs = new Map();
+    const env = createContext({
+      elements: [form],
+      fetchRoutes: {
+        [actionURL]: () => ++calls === 1
+          ? {ok: false, status: rejectedStatus, text: '{"ok":false,"message":"Correct the draft."}'}
+          : {ok: false, status: 303, text: '{"ok":true,"redirect":"/studio"}'},
+        [pageURL]: {text: "__CORRECTED_FORM__", url: pageURL},
+      },
+      parseHTML(html) { return parsedDocs.get(html); },
+    });
+    env.context.location.href = pageURL;
+    env.context.__gosx_dispose_page = async function() {};
+    env.context.__gosx_bootstrap_page = async function() {};
+    parsedDocs.set("__CORRECTED_FORM__", buildNavigatedDocument({title: "Corrected", bodyNodes: [makeForm()]}));
+    runScript(navigationSource, env.context, "navigation_runtime.js");
+    const submit = () => env.document.eventListeners.get("submit")[0]({
+      type: "submit", target: form, defaultPrevented: false,
+      preventDefault() { this.defaultPrevented = true; },
+    });
+    submit();
+    await flushAsyncWork();
+    assert.equal(form.getAttribute("data-gosx-form-state"), "error", rejectedStatus);
+    submit();
+    await flushAsyncWork();
+    assert.equal(env.document.getElementById("source-form"), form, "redirect replaced the submitted form");
+    assert.equal(form.getAttribute("data-gosx-form-state"), "idle", rejectedStatus);
+    assert.equal(form.getAttribute("data-gosx-pending"), null, rejectedStatus);
+  }
+});
+
+test("accepted redirects preserve a destination form's current error feedback", async () => {
+  const actionURL = "http://localhost:3000/__actions/save";
+  const pageURL = "http://localhost:3000/destination";
+  const form = new FakeElement("form", null);
+  form.id = "save-form";
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  const destination = form.cloneNode(true);
+  destination.setAttribute("data-gosx-form-state", "error");
+  const parsedDocs = new Map();
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: {ok: false, status: 303, text: '{"ok":true,"redirect":"/destination"}'},
+      [pageURL]: {text: "__DESTINATION_ERROR__", url: pageURL},
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  parsedDocs.set("__DESTINATION_ERROR__", buildNavigatedDocument({bodyNodes: [destination]}));
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  env.document.eventListeners.get("submit")[0]({
+    type: "submit", target: form, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  await flushAsyncWork();
+  assert.equal(env.document.getElementById("save-form"), form);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "error");
+  assert.equal(form.getAttribute("data-gosx-pending"), null);
+});
+
+test("an older redirected completion cannot restore over a newer pending or failed submission", async () => {
+  const actionURL = "http://localhost:3000/__actions/save";
+  const pageURL = "http://localhost:3000/studio";
+  const form = new FakeElement("form", null);
+  form.id = "queued-form";
+  form.setAttribute("action", actionURL);
+  form.setAttribute("method", "post");
+  form.setAttribute("data-gosx-form", "");
+  form.setAttribute("data-gosx-queue", "serial");
+  const fresh = form.cloneNode(true);
+  const parsedDocs = new Map();
+  let calls = 0;
+  let resolveNewer;
+  const env = createContext({
+    elements: [form],
+    fetchRoutes: {
+      [actionURL]: () => ++calls === 1
+        ? {ok: false, status: 303, text: '{"ok":true,"redirect":"/studio"}'}
+        : new Promise(resolve => { resolveNewer = resolve; }),
+      [pageURL]: {text: "__QUEUED_CORRECTION__", url: pageURL},
+    },
+    parseHTML(html) { return parsedDocs.get(html); },
+  });
+  env.context.location.href = pageURL;
+  env.context.__gosx_dispose_page = async function() {};
+  env.context.__gosx_bootstrap_page = async function() {};
+  parsedDocs.set("__QUEUED_CORRECTION__", buildNavigatedDocument({bodyNodes: [fresh]}));
+  runScript(navigationSource, env.context, "navigation_runtime.js");
+  // A queue adapter can begin the next submission from the public result
+  // event, before the previous submitFormWith finalizer has returned.
+  env.context.__gosx.editQueue = {submit: (form, submitter, data, send) => send(form, submitter, data)};
+  const submit = () => env.document.eventListeners.get("submit")[0]({
+    type: "submit", target: form, defaultPrevented: false,
+    preventDefault() { this.defaultPrevented = true; },
+  });
+  env.document.addEventListener("gosx:form:result", event => {
+    if (event.detail.result?.redirect) submit();
+  });
+  submit();
+  await flushAsyncWork();
+  assert.equal(calls, 2);
+  assert.equal(form.getAttribute("data-gosx-form-state"), "pending");
+  assert.equal(form.getAttribute("data-gosx-pending"), "true");
+  resolveNewer({ok: false, status: 422, text: '{"ok":false,"message":"The new draft needs correction."}'});
+  await flushAsyncWork();
+  assert.equal(form.getAttribute("data-gosx-form-state"), "error");
+  assert.equal(form.getAttribute("data-gosx-pending"), null);
+});
+
 test("accepted action redirects replace pre-mutation pending pages with a fresh fetch", async () => {
   class TestAbortSignal {
     constructor() {
