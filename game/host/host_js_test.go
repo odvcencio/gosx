@@ -87,3 +87,44 @@ func TestBrowserGamepadSnapshots(t *testing.T) {
 		t.Fatal("missing Gamepad API must yield no devices")
 	}
 }
+
+func TestWorkerFrameSourceUsesTheWorkerClockAndForwardedVisibility(t *testing.T) {
+	next := 100
+	callbacks := map[int]js.Value{}
+	request := js.FuncOf(func(_ js.Value, args []js.Value) any { next++; callbacks[next] = args[0]; return next })
+	cancel := js.FuncOf(func(_ js.Value, args []js.Value) any { delete(callbacks, args[0].Int()); return nil })
+	t.Cleanup(request.Release)
+	t.Cleanup(cancel.Release)
+	// A worker can have requestAnimationFrame; it must not be used.
+	rafCalls := 0
+	raf := js.FuncOf(func(_ js.Value, _ []js.Value) any { rafCalls++; return 1 })
+	t.Cleanup(raf.Release)
+	replaceGlobal(t, "requestAnimationFrame", raf)
+	replaceGlobal(t, "cancelAnimationFrame", raf)
+	worker := map[string]any{"requestFrame": request, "cancelFrame": cancel, "hidden": false}
+	replaceGlobal(t, "__gosx", map[string]any{"worker": worker})
+	replaceGlobal(t, "document", js.Undefined())
+
+	source := NewFrameSourceJS()
+	got := -1.0
+	h := source.RequestFrame(func(ts float64) { got = ts })
+	if h != 101 || rafCalls != 0 {
+		t.Fatalf("handle %d, rAF calls %d: the worker clock must serve the request", h, rafCalls)
+	}
+	callbacks[h].Invoke(16.5)
+	if got != 16.5 {
+		t.Fatalf("timestamp %v", got)
+	}
+	h2 := source.RequestFrame(func(float64) { t.Error("canceled frame ran") })
+	source.CancelFrame(h2)
+	if _, still := callbacks[h2]; still || rafCalls != 0 {
+		t.Fatal("cancel must reach the worker clock")
+	}
+	if source.Hidden() {
+		t.Fatal("a visible page reported hidden")
+	}
+	js.Global().Get("__gosx").Get("worker").Set("hidden", true)
+	if !source.Hidden() {
+		t.Fatal("forwarded page visibility must drive Hidden() when there is no document")
+	}
+}

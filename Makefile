@@ -205,9 +205,18 @@ test-netplay-browser:
 # headless Chromium (Thread: worker, fallback, frames, timers). It needs
 # Playwright in node_modules; set ENGINE_WORKER_CHROME to a Chromium or
 # chrome-headless-shell binary when Playwright's own download does not run.
-.PHONY: test-engine-worker-browser
+.PHONY: test-engine-worker-browser test-engine-worker-wasm test-engine-worker-hidden
 test-engine-worker-browser:
 	ENGINE_WORKER_BROWSER=1 GOWORK=off $(GO) test -count=1 -v ./engine/wasm/internal/browserworker
+
+# test-engine-worker-hidden measures worker clocks in a tab that is really
+# hidden. It needs a headed Chrome and a display: set ENGINE_WORKER_HEADFUL_CHROME
+# to a Chrome binary and DISPLAY. Takes about 40 seconds.
+test-engine-worker-hidden:
+	ENGINE_WORKER_BROWSER=1 GOWORK=off $(GO) test -count=1 -v -run TestHiddenTabTimers ./engine/wasm/internal/browserworker
+
+test-engine-worker-wasm:
+	GOWORK=off GOMAXPROCS=1 GOOS=js GOARCH=wasm $(GO) test -exec="$(GO_WASM_EXEC)" -count=1 ./engine/wasm ./game/host ./game/loop
 
 test-netplay:
 	GOWORK=off $(GO) test -p 4 -count=1 ./netplay/...

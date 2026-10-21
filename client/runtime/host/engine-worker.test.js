@@ -642,3 +642,16 @@ test("worker: cancelFrame prevents the callback and bad rates are refused", asyn
   assert.equal(api.setFrameRate(5000), false);
   assert.equal(api.frameRate(), 60);
 });
+
+test("worker: a timer that fires early still yields one frame per slot", async () => {
+  const w = await mountedWorker();
+  const api = w.scope.__gosx.worker;
+  // Make every timer fire 0.4 ms before its due time, as browsers sometimes do.
+  const realSet = w.scope.setTimeout;
+  w.scope.setTimeout = (fn, ms) => realSet(fn, Math.max(0, ms - 0.4));
+  let count = 0;
+  const loop = () => { count++; if (count < 500) api.requestFrame(loop); };
+  api.requestFrame(loop);
+  w.advance(1000);
+  assert.ok(count >= 58 && count <= 61, "60 Hz for 1 s gave " + count);
+});

@@ -773,7 +773,11 @@
       if (timer || stopped || callbacks.size === 0) return;
       var now = scope.performance.now();
       if (!base) base = now;
-      var slot = Math.floor((now - base) / period()) + 1;
+      // A timer can fire a fraction of a millisecond before its slot. Count
+      // from the later of "now" and the slot just served, or the early fire
+      // would land in the same slot again and double the frame rate.
+      var reference = Math.max(now, armedFor);
+      var slot = Math.floor((reference - base) / period() + 1e-9) + 1;
       var due = base + slot * period();
       timer = scope.setTimeout(fire, Math.max(0, due - now));
       armedFor = due;
@@ -811,6 +815,7 @@
         if (!(next >= 1 && next <= 1000)) return false;
         hz = next;
         base = 0;
+        armedFor = 0;
         if (timer) { scope.clearTimeout(timer); timer = 0; arm(); }
         return true;
       },
