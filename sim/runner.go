@@ -14,6 +14,10 @@ func (r *Runner) Start() {
 		return
 	}
 	r.stop, r.done = make(chan struct{}), make(chan struct{})
+	// Capture the replay baseline here so it stays out of tick timing.
+	r.simMu.Lock()
+	r.beginReplayLocked()
+	r.simMu.Unlock()
 	r.running.Store(true)
 	stop := r.stop
 	go func() {
@@ -93,6 +97,7 @@ func (r *Runner) tickOnce() (uint64, int, int) {
 		replayInputs = cloneInputs(inputs)
 	}
 	r.simMu.Lock()
+	r.beginReplayLocked()
 	r.sim.Tick(inputs)
 
 	frame := r.frame.Add(1)
@@ -105,4 +110,11 @@ func (r *Runner) tickOnce() (uint64, int, int) {
 	r.simMu.Unlock()
 	r.hub.Broadcast("sim:tick", r.tickPayload(frame, state))
 	return frame, len(state), inputCount
+}
+
+// beginReplayLocked records the replay baseline once. Caller holds simMu.
+func (r *Runner) beginReplayLocked() {
+	if r.recorder != nil && !r.recorder.started() {
+		r.recorder.begin(r.frame.Load(), r.sim.Snapshot())
+	}
 }

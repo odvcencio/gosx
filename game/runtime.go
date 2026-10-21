@@ -480,9 +480,14 @@ func (f SnapshotCodecFuncs) State(r *Runtime) []byte {
 
 // RuntimeState is the default snapshot/state payload.
 type RuntimeState struct {
-	Frame       uint64              `json:"frame"`
-	TimeSeconds float64             `json:"timeSeconds"`
-	Physics     *physics.WorldState `json:"physics,omitempty"`
+	Frame uint64 `json:"frame"`
+	// TimeSeconds is a human-readable copy of the time. It loses nanoseconds
+	// after about 104 game days; Restore prefers TimeNanos when present.
+	TimeSeconds float64 `json:"timeSeconds"`
+	// TimeNanos is the exact elapsed time. Snapshots written before this field
+	// existed omit it, and Restore falls back to TimeSeconds.
+	TimeNanos *int64              `json:"timeNanos,omitempty"`
+	Physics   *physics.WorldState `json:"physics,omitempty"`
 }
 
 // Snapshot returns a restorable runtime checkpoint for sim.Runner.
@@ -511,6 +516,9 @@ func (r *Runtime) Restore(snapshot []byte) {
 	}
 	if r.clock != nil {
 		elapsed := time.Duration(state.TimeSeconds * float64(time.Second))
+		if state.TimeNanos != nil {
+			elapsed = time.Duration(*state.TimeNanos)
+		}
 		r.clock.restore(state.Frame, elapsed)
 		r.frame.Index = state.Frame
 		r.frame.Time = elapsed
@@ -533,9 +541,11 @@ func (r *Runtime) State() []byte {
 }
 
 func (r *Runtime) defaultState() []byte {
+	nanos := int64(r.frame.Time)
 	state := RuntimeState{
 		Frame:       r.frame.Index,
 		TimeSeconds: r.frame.Time.Seconds(),
+		TimeNanos:   &nanos,
 	}
 	if r.physics != nil {
 		physicsState := r.physics.StateSnapshot()

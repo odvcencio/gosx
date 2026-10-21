@@ -54,6 +54,13 @@ type Options struct {
 	// DisableReplay skips the unbounded input log for long-running simulations.
 	// Replay returns an empty log when recording is disabled.
 	DisableReplay bool
+	// Seed is stored in the ReplayLog so a replay can rebuild the simulation's
+	// RNG. The runner does not use it otherwise.
+	Seed uint64
+	// ReplayMaxFrames bounds the replay log. Once the log holds this many
+	// frames, recording stops and ReplayLog.Truncated is set; the kept frames
+	// still replay exactly from ReplayLog.Initial. Zero means unbounded.
+	ReplayMaxFrames int
 	// Observer receives aggregate timing after the existing whole tick finishes.
 	// A nil observer skips timing reads and event construction.
 	Observer Observer
@@ -89,6 +96,7 @@ func New(h *hub.Hub, s Simulation, opts Options) *Runner {
 	var recorder *replayRecorder
 	if !opts.DisableReplay {
 		recorder = newReplayRecorder()
+		recorder.seed, recorder.max = opts.Seed, opts.ReplayMaxFrames
 	}
 	c := opts.Clock
 	if c == nil {
@@ -122,6 +130,21 @@ func (r *Runner) RegisterHandlers() {
 		frame, snap := r.snapshotNow()
 		ctx.Hub.Send(ctx.Client.ID, "sim:snapshot", r.snapshotPayload(frame, snap))
 	})
+}
+
+// Restore resets the simulation to snapshot and sets the runner frame counter
+// to frame, so the next tick is frame+1. Use it to load a save. The replay log
+// restarts from this snapshot. Call it from the owner while the runner is
+// stopped or between ticks; it is safe against a running tick but the tick
+// loop keeps going.
+func (r *Runner) Restore(frame uint64, snapshot []byte) {
+	r.simMu.Lock()
+	defer r.simMu.Unlock()
+	r.sim.Restore(snapshot)
+	r.frame.Store(frame)
+	if r.recorder != nil {
+		r.recorder.begin(frame, snapshot)
+	}
 }
 
 // snapshotNow returns the current frame and a snapshot that belong together.

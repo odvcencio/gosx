@@ -824,3 +824,24 @@ func TestApplyNetworkInputsIsDeterministicAcrossPlayers(t *testing.T) {
 		}
 	}
 }
+
+func TestSnapshotKeepsNanosecondTimeAfterManyDays(t *testing.T) {
+	rt := New(Config{})
+	want := 200*24*time.Hour + 123*time.Nanosecond
+	rt.clock.restore(9, want)
+	rt.frame.Index, rt.frame.Time = 9, want
+	snap := rt.Snapshot()
+	rt2 := New(Config{})
+	rt2.Restore(snap)
+	if rt2.Frame().Time != want {
+		t.Fatalf("time %v != %v", rt2.Frame().Time, want)
+	}
+}
+
+func TestRestoreReadsLegacyTimeSeconds(t *testing.T) {
+	rt := New(Config{})
+	rt.Restore([]byte(`{"frame":4,"timeSeconds":1.5}`))
+	if rt.Frame().Time != 1500*time.Millisecond || rt.Frame().Index != 4 {
+		t.Fatalf("frame %+v", rt.Frame())
+	}
+}
