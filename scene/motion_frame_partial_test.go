@@ -75,7 +75,7 @@ func TestEncodePartialMotionFrameIsSmallerThanFullFrame(t *testing.T) {
 	for i := 0; i < crowd; i++ {
 		full.Instances = append(full.Instances, MotionInstanceIR{
 			ID: fmt.Sprintf("agent-%d", i), NextScaleX: 1, NextScaleY: 1, NextScaleZ: 1,
-			PrevScaleX: 1, PrevScaleY: 1, PrevScaleZ: 1, TNext: 1,
+			PrevScaleX: 1, PrevScaleY: 1, PrevScaleZ: 1, TNext: 1, Animation: "Run",
 		})
 	}
 	fullBytes, err := EncodeMotionFrame(MotionFrame{Batches: []MotionBatch{full}})
@@ -90,6 +90,7 @@ func TestEncodePartialMotionFrameIsSmallerThanFullFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Logf("5,000 agents: full frame %d bytes; partial frame with %d changed agents %d bytes", len(fullBytes), len(slots), len(partialBytes))
 	if len(partialBytes)*15 > len(fullBytes) {
 		t.Fatalf("5%% update is %d bytes against a %d-byte full frame", len(partialBytes), len(fullBytes))
 	}
