@@ -1541,13 +1541,13 @@ func (vm *VM) resolveElementAttrs(attrs []program.Attr) (resolved, domAttrs []Re
 func (vm *VM) autoKey(source int, tag string) (string, bool) {
 	keyVal, hasKey := vm.props["_key"]
 	if hasKey {
-		return fmt.Sprintf("_auto_%s_%s_%d", keyVal.String(), tag, source), true
+		return "_auto_" + keyVal.String() + "_" + tag + "_" + strconv.Itoa(source), true
 	}
 	idxVal, hasIndex := vm.props["_index"]
 	if !hasIndex {
 		return "", false
 	}
-	return fmt.Sprintf("_auto_%d_%s_%d", idxVal.integer(), tag, source), true
+	return "_auto_" + strconv.FormatInt(idxVal.integer(), 10) + "_" + tag + "_" + strconv.Itoa(source), true
 }
 
 type eachEntry struct {

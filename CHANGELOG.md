@@ -17,6 +17,8 @@
 - Repair demo diagnostics overflow, preview anchor offsets, Checkers disclosure
   flow and renderer status, chart hydration defaults, Greeter labeling, and
   keyboard dismissal of the documentation's mobile menu.
+- Build list auto-keys directly without formatting and boxing overhead,
+  preserving source identity and full-width integer indices.
 
 - Settle individual shared-signal writes through the same reader boundary as
   batches. Derived values update on the same write, and nested observer writes
