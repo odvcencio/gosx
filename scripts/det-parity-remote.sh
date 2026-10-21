@@ -46,5 +46,5 @@ run() { # dir binary pattern
 run det det.test '.'
 run det/parity parity.test '.'
 run physics physics.test 'TestParityCorpus|TestFusedMultiplyAddProbeIsSound'
-run vessel vessel.test 'TestParityVoyages|TestParityLayout|TestStateCodecRoundTrip'
+run vessel vessel.test 'TestParityVoyages|TestParityLayout|TestLinerBenchParity|TestStateCodecRoundTrip'
 echo "det parity: arm64 on $host passed"

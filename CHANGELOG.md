@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Add large powered ships to GoSX. The new deterministic `vessel` package models
+  a powered displacement hull (power roughly proportional to speed cubed,
+  rudder or pod steering with turning circles and stopping distances, roll and
+  pitch from the wave field, optional stabilizers) with expedition, liner and
+  megaship presets, and gives the same bits on js/wasm, amd64 and arm64
+  (checked on a real Apple Silicon Mac). `Vessel.ExternalPose` lets Go own a
+  vessel's pose: send `scene.VesselPoseFrame` (wire format GSV1, 62 bytes for one
+  ship) with `scene.DispatchVesselPose`; the browser runs no sailing physics and
+  blends between ticks, and walkers, wake and `ParentNode` crowds follow.
+  `Vessel.Decks` gives a ship many walkable decks (polygons with holes and stair
+  ramps, generated from short `vessel.DeckPlan` descriptions or
+  `vessel.StandardLayout`); `vessel.Layout` also answers deck, route, stairs and
+  lift-capacity queries for simulation. `Vessel.Cutaway` and
+  `scene.DispatchVesselCutaway` hide or ghost everything above a deck and can
+  slice the hull; parented crowd agents above the cut are culled and cast no
+  shadow. The cutaway works on WebGL only. For a 290 m, 14-deck liner with 2,900
+  parented agents, a 10 Hz tick is 13.6 KB and the mean frame costs 0.66 ms of
+  main thread in Node. Sailing vessels behave as before. Several Scene3D size
+  targets rise by the measured growth. See `docs/scene3d-powered-vessels.md`.
+
 - Add two opt-in features for thousands of animated agents on a moving ship.
   `scene.PartialMotionFrame` (wire format GSP5) names each agent by slot and
   carries only the agents that changed; send it with

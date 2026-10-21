@@ -82,10 +82,11 @@ Limits:
   An outline needs a separate record, which would sit in world space.
 - A per-instance `ParentMatrix` is still rejected in motion frames. `ParentNode`
   is the per-batch replacement.
-- `scene.Vessel` has one walk rectangle (`Walk.Surfaces` gets one moving
-  surface sized from beam and length). A crowd parented on today's vessel works,
-  but agents are not constrained to the deck, and several decks are not
-  supported yet. Walking on agents' own decks is app logic.
+- `scene.Vessel` has one walk rectangle by default (`Walk.Surfaces` gets one
+  moving surface sized from beam and length). Set `Vessel.Decks` for many decks
+  and `Vessel.Cutaway` to cull the agents above a deck; see
+  `docs/scene3d-powered-vessels.md`. Agents are not constrained to a deck by the
+  renderer: keeping them on floors is simulation logic (`vessel.Layout`).
 
 ## Cost
 
