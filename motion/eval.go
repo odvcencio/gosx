@@ -142,8 +142,12 @@ func evalTrack(track *Track, t, start float64, policy Policy, out *WriteBuf) {
 		return
 	}
 
-	// Skip tracks with no keys.
-	if len(track.Keys) == 0 {
+	// Empty tracks emit nothing. A constant track has no interpolation interval
+	// and keeps its sole value regardless of the clock or timeline offsets.
+	if len(track.Keys) < 2 {
+		if len(track.Keys) == 1 {
+			out.Push(track.TargetID, track.PropID, track.Keys[0].Value)
+		}
 		return
 	}
 
