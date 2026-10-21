@@ -42,6 +42,13 @@
 
   function pushIncoming(c, data) {
     const bytes = data instanceof ArrayBuffer ? new Uint8Array(data) : ArrayBuffer.isView(data) ? new Uint8Array(data.buffer, data.byteOffset, data.byteLength) : null;
+    // An engine worker asks for datagrams to be pushed to it (cfg.onDatagram)
+    // instead of polled: it owns the Go side but cannot reach this queue.
+    if (bytes && typeof c.cfg.onDatagram === "function" && bytes.length > 0 && bytes.length <= MAX_PACKET) {
+      c.received++;
+      try { c.cfg.onDatagram(bytes.slice()); } catch (_) { /* the receiver is gone */ }
+      return;
+    }
     if (!bytes || bytes.length > MAX_PACKET || bytes.length === 0 || c.count === QUEUE_SLOTS) { c.receiveDropped++; return; }
     const slot = (c.head + c.count) % QUEUE_SLOTS;
     c.queue.set(bytes, slot * MAX_PACKET);
@@ -63,17 +70,27 @@
       return failEarly();
     }
     dc.binaryType = "arraybuffer";
+    // An engine worker can take over the channel (cfg.adopt transfers it, which
+    // a browser allows only right after creation). The worker then sends and
+    // receives datagrams itself, off the page's main thread. If the transfer
+    // is refused, the page keeps the channel and relays datagrams.
+    let adoptedChannel = false;
+    if (typeof cfg.adopt === "function") {
+      try { adoptedChannel = cfg.adopt(dc) === true; } catch (_) { adoptedChannel = false; }
+    }
     const id = nextID++;
     const c = {
-      id, cfg, pc, dc, state: "connecting", session: String(cfg.session || ""),
+      id, cfg, pc, dc: adoptedChannel ? null : dc, adopted: adoptedChannel, state: "connecting", session: String(cfg.session || ""),
       queue: new Uint8Array(QUEUE_SLOTS * MAX_PACKET), lens: new Int32Array(QUEUE_SLOTS), head: 0, count: 0,
       received: 0, receiveDropped: 0, sent: 0, sendDropped: 0,
       offered: false, held: [], remoteSet: false, remoteReady: false, early: [], remoteCandidates: 0,
     };
     conns.set(id, c);
-    dc.onopen = () => notify(c, "open");
-    dc.onclose = () => { if (c.state === "connecting") fail(c); else notify(c, "closed"); };
-    dc.onmessage = ev => pushIncoming(c, ev.data);
+    if (!adoptedChannel) {
+      dc.onopen = () => notify(c, "open");
+      dc.onclose = () => { if (c.state === "connecting") fail(c); else notify(c, "closed"); };
+      dc.onmessage = ev => pushIncoming(c, ev.data);
+    }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "failed") fail(c);
       else if (pc.connectionState === "closed") notify(c, c.state === "connecting" ? "failed" : "closed");
@@ -131,7 +148,7 @@
 
   function send(id, bytes, n) {
     const c = conns.get(id);
-    if (!c || c.state !== "open" || !bytes) return false;
+    if (!c || !c.dc || c.state !== "open" || !bytes) return false;
     if (!(n > 0) || n > MAX_PACKET || n > bytes.length) { c.sendDropped++; return false; }
     if (c.dc.bufferedAmount > MAX_BUFFERED) { c.sendDropped++; return false; }
     try {
@@ -151,6 +168,13 @@
     return n;
   }
 
+  // The worker that adopted a channel reports its "open" and "closed" here,
+  // so failure and closure keep their meaning for the connection.
+  function adopted(id, next) {
+    const c = conns.get(id);
+    if (c && c.adopted && (next === "open" || next === "closed")) notify(c, next);
+  }
+
   function state(id) { const c = conns.get(id); return c ? c.state : "closed"; }
 
   function stats(id) {
@@ -167,7 +191,7 @@
     conns.delete(id);
   }
 
-  const api = { version: 1, supported, open, signal, send, recv, state, stats, close };
+  const api = { version: 1, supported, open, signal, send, recv, state, stats, close, adopted };
   // The typed host namespace, like __gosx.workbench. No new ambient global.
   const host = window.__gosx;
   if (!host) return;

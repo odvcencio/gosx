@@ -10,6 +10,7 @@ import (
 type Scene3D struct{}
 
 func (Context) Scene3D(any) Scene3D                             { return Scene3D{} }
+func (Context) Scene3DByID(string) Scene3D                      { return Scene3D{} }
 func (Scene3D) Ready(context.Context) error                     { return ErrUnsupported }
 func (Scene3D) Dispatch(context.Context, []scene.Command) error { return ErrUnsupported }
 func (Scene3D) Live(context.Context, string, any) error         { return ErrUnsupported }

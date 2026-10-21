@@ -32,11 +32,44 @@ const q = new URLSearchParams(location.search);
 const load = src => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
 (async () => {
   if (q.get("binding") !== "0") await load("/bootstrap-feature-netplay.js");
+  if (q.get("jank") === "1") setInterval(() => { const t = performance.now(); while (performance.now() - t < 120); }, 200);
   await load("/wasm_exec.js");
   const go = new Go();
   const r = await WebAssembly.instantiateStreaming(fetch("/peer.wasm"), go.importObject);
   go.run(r.instance);
 })();
+</script>`
+
+// workerPage runs the Go WASM peer as an engine in a GoSX engine worker. It
+// stands in for the GoSX runtime the way browserPage does: it loads the
+// netplay and engine-worker chunks, then asks the worker host to start the
+// engine (what the runtime does for an engine with thread "worker").
+const workerPage = `<!doctype html><meta charset="utf-8"><title>netplay worker</title>
+<script>
+window.__gosx = {};
+const q = new URLSearchParams(location.search);
+const load = src => new Promise((ok, bad) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = bad; document.head.appendChild(s); });
+(async () => {
+  if (q.get("binding") !== "0") await load("/bootstrap-feature-netplay.js");
+  await load("/bootstrap-feature-engine-worker.js");
+  window.__gosx_engine_worker_url = "/bootstrap-feature-engine-worker.js";
+  window.__gosx_engine_worker_wasm_exec_url = "/standard-go-wasm_exec.js";
+  if (q.get("transfer") === "0") window.__gosx_engine_worker_net_transfer = false;
+  if (q.get("jank") === "1") setInterval(() => { const t = performance.now(); while (performance.now() - t < 120); }, 200);
+  window.__gosx_bootstrap_features["engine-worker"]({});
+  const entry = { id: "np", component: "NetplayPeer", kind: "worker", programRef: "/peer.wasm", runtime: "go-wasm", thread: "worker",
+    props: { player: Number(q.get("player")), frames: Number(q.get("frames")), fallbackMs: Number(q.get("fallbackMs")), hub: q.get("hub") }, capabilities: ["wasm"] };
+  const resolved = await window.__gosx.engineWorker.resolve(entry, {}, async () => { throw new Error("worker required"); });
+  const ctx = { isCurrent: () => true, setSignalsJSON() {}, setSignal() {}, getSignal() {}, subscribeSignalJSON() { return () => {}; },
+    emit(name, detail) {
+      if (name !== "netplay-result") return;
+      // Keep the Go program's JSON text: it holds 64-bit checksums that a JS
+      // number cannot represent. Append the route by text.
+      const route = JSON.stringify(JSON.stringify(window.__gosx.engineWorker.get("np").netModes()));
+      window.__netplayResult = detail.json.replace(/}\s*$/, ',"route":' + route + "}");
+    } };
+  await resolved.factory(ctx);
+})().catch(e => { window.__netplayResult = JSON.stringify({ err: String(e && e.message || e) }); });
 </script>`
 
 type browserResult struct {
@@ -50,6 +83,9 @@ type browserResult struct {
 	Rollbacks int               `json:"rollbacks"`
 	Sums      map[string]uint64 `json:"sums"`
 	Err       string            `json:"err"`
+	InWorker  bool              `json:"inWorker"`
+	Route     string            `json:"route"`
+	MaxTickMS float64           `json:"maxTickGapMs"`
 }
 
 type browserOutput struct {
@@ -73,25 +109,43 @@ func TestRealBrowser(t *testing.T) {
 		binding  bool
 		fallback time.Duration
 		wantMode string
+		worker   string // "" for the main thread, otherwise the datagram route to expect
+		query    string
 	}{
-		{"webrtc", true, 6 * time.Second, "webrtc"},
+		{"webrtc", true, 6 * time.Second, "webrtc", "", ""},
 		// Without the netplay chunk the page has no WebRTC binding, so the
 		// client degrades to the WebSocket. The timeout stays under the
 		// 5 s stall timeout of the native peer that waits for the browser.
-		{"fallback", false, 1500 * time.Millisecond, "websocket"},
+		{"fallback", false, 1500 * time.Millisecond, "websocket", "", ""},
+		// The same match with the peer inside an engine worker. The page owns
+		// the RTCPeerConnection; the datagrams either move over an RTCDataChannel
+		// the page transferred to the worker, or the page relays them.
+		{"worker-transfer", true, 6 * time.Second, "webrtc", "transfer", ""},
+		{"worker-relay", true, 6 * time.Second, "webrtc", "relay", "&transfer=0"},
+		{"worker-websocket", false, 1500 * time.Millisecond, "websocket", "", ""},
+		// A busy main thread must not slow a worker whose channel it transferred.
+		{"worker-transfer-busy-page", true, 6 * time.Second, "webrtc", "transfer", "&jank=1"},
+		{"worker-relay-busy-page", true, 6 * time.Second, "webrtc", "relay", "&transfer=0&jank=1"},
+		{"webrtc-busy-page", true, 6 * time.Second, "webrtc", "", "&jank=1"},
 	} {
 		sc := sc
-		t.Run(sc.name, func(t *testing.T) { realBrowserMatch(t, sc.name, sc.binding, sc.fallback, sc.wantMode) })
+		t.Run(sc.name, func(t *testing.T) {
+			realBrowserMatch(t, sc.name, sc.binding, sc.fallback, sc.wantMode, sc.worker, sc.query)
+		})
 	}
 }
 
-func realBrowserMatch(t *testing.T, name string, binding bool, fallback time.Duration, wantMode string) {
+func realBrowserMatch(t *testing.T, name string, binding bool, fallback time.Duration, wantMode, worker, query string) {
 	dir := t.TempDir()
 	repo, err := filepath.Abs("../..")
 	if err != nil {
 		t.Fatal(err)
 	}
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "peer.wasm"), "./internal/browserpeer")
+	peerPkg := "./internal/browserpeer"
+	if strings.HasPrefix(name, "worker") {
+		peerPkg = "./internal/workerpeer"
+	}
+	build := exec.Command("go", "build", "-o", filepath.Join(dir, "peer.wasm"), peerPkg)
 	build.Env = append(os.Environ(), "GOOS=js", "GOARCH=wasm", "GOWORK=off")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the WASM peer: %v\n%s", err, out)
@@ -99,6 +153,19 @@ func realBrowserMatch(t *testing.T, name string, binding bool, fallback time.Dur
 	goroot := strings.TrimSpace(runCmd(t, "go", "env", "GOROOT"))
 	copyFile(t, filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"), filepath.Join(dir, "wasm_exec.js"))
 	copyFile(t, filepath.Join(repo, "client", "js", "bootstrap-feature-netplay.js"), filepath.Join(dir, "bootstrap-feature-netplay.js"))
+	if strings.HasPrefix(name, "worker") {
+		copyFile(t, filepath.Join(repo, "client", "js", "bootstrap-feature-engine-worker.js"), filepath.Join(dir, "bootstrap-feature-engine-worker.js"))
+		// The isolation wrapper `gosx build` puts around the standard Go wasm_exec.js.
+		src, err := os.ReadFile(filepath.Join(goroot, "lib", "wasm", "wasm_exec.js"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		wrapped := "(function(global){\n\"use strict\";\nvar hadGo = Object.prototype.hasOwnProperty.call(global, \"Go\");\nvar previousGo = global.Go;\nvar standardGo;\ntry {\n" + string(src) +
+			"\nstandardGo = global.Go;\n} finally {\nif (hadGo) global.Go = previousGo; else delete global.Go;\n}\nObject.defineProperty(global, \"__gosx_standard_go_wasm_ctor\", {value: standardGo, writable: false, configurable: true});\n})(globalThis);\n"
+		if err := os.WriteFile(filepath.Join(dir, "standard-go-wasm_exec.js"), []byte(wrapped), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	srv, err := NewServer(Config{ConfigureICE: loopbackICE, FallbackAfter: fallback})
 	if err != nil {
@@ -115,6 +182,10 @@ func realBrowserMatch(t *testing.T, name string, binding bool, fallback time.Dur
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/" {
 			w.Header().Set("Content-Type", "text/html")
+			if strings.HasPrefix(name, "worker") {
+				_, _ = w.Write([]byte(workerPage))
+				return
+			}
 			_, _ = w.Write([]byte(browserPage))
 			return
 		}
@@ -137,6 +208,7 @@ func realBrowserMatch(t *testing.T, name string, binding bool, fallback time.Dur
 	if !binding {
 		pageURL += "&binding=0"
 	}
+	pageURL += query
 	outCh := make(chan []byte, 1)
 	go func() {
 		cmd := exec.CommandContext(ctx, "node", "internal/browserpeer/run.mjs", pageURL, "70000")
@@ -240,6 +312,17 @@ func realBrowserMatch(t *testing.T, name string, binding bool, fallback time.Dur
 	if out.Result.Mode != wantMode {
 		t.Fatalf("browser ended in mode %q, want %q (modes %v)\nlog: %v", out.Result.Mode, wantMode, out.Result.Modes, out.Log)
 	}
+	if strings.HasPrefix(name, "worker") {
+		if !out.Result.InWorker {
+			t.Fatalf("the peer did not run in a worker: %+v", out.Result)
+		}
+		if worker != "" && !strings.Contains(out.Result.Route, `"`+worker+`"`) {
+			t.Fatalf("datagram route %s, want %q", out.Result.Route, worker)
+		}
+	}
+	if strings.HasSuffix(name, "transfer-busy-page") && out.Result.MaxTickMS > 60 {
+		t.Fatalf("a busy page slowed a worker that owns its channel: longest tick gap %.1f ms", out.Result.MaxTickMS)
+	}
 	if out.Result.Frames < frames {
 		t.Fatalf("browser reached frame %d, want %d", out.Result.Frames, frames)
 	}
@@ -260,8 +343,8 @@ func realBrowserMatch(t *testing.T, name string, binding bool, fallback time.Dur
 	if common < 5 {
 		t.Fatalf("only %d common checksums", common)
 	}
-	t.Logf("%s on %s/%s: browser %q modes=%v frames=%d rtt=%.1f ms (max %.1f) rollbacks=%d | native rtt=%v max=%v | common checksums=%d relay verified=%d desyncs=%d | %s",
-		name, runtime.GOOS, runtime.GOARCH, out.Result.Mode, out.Result.Modes, out.Result.Frames, out.Result.RTT, out.Result.MaxRTT, out.Result.Rollbacks,
+	t.Logf("%s on %s/%s: browser %q modes=%v frames=%d rtt=%.1f ms (max %.1f) rollbacks=%d route=%s longest tick gap=%.1f ms | native rtt=%v max=%v | common checksums=%d relay verified=%d desyncs=%d | %s",
+		name, runtime.GOOS, runtime.GOARCH, out.Result.Mode, out.Result.Modes, out.Result.Frames, out.Result.RTT, out.Result.MaxRTT, out.Result.Rollbacks, out.Result.Route, out.Result.MaxTickMS,
 		sess[0].RTT(), maxRTT, common, rep.VerifiedFrames, len(rep.DesyncFrames), out.UA)
 }
 

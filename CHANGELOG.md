@@ -35,6 +35,30 @@
 - Add the `arcade-audio` feature chunk (`RequireFeature("arcade-audio")`) so a
   page without hubs gets `window.__gosx.arcadeAudio`. Several bundle size
   targets rise by the measured growth.
+- Add engine workers: set `engine.Config{Runtime: engine.RuntimeGoWASM, Thread:
+  engine.ThreadWorker}` and GoSX runs the Go WASM engine in a dedicated Web
+  Worker instead of the main thread. Apps write no JavaScript; `Thread` defaults
+  to the main thread, so existing engines do not change. If the browser cannot
+  start the worker, the engine falls back to the main thread and the runtime
+  reports why (`Context.ThreadFallbackReason`, a `gosx:engine:thread-fallback`
+  event). In the worker, `game/loop` and `game/host.FrameSourceJS` run on a
+  fixed-rate timer clock (60 Hz by default) and `Hidden()` follows the page's
+  visibility; the new `loop.Driver.RunWhileHidden` keeps a simulation stepping in
+  a hidden tab. Binary frames (GSP2, GSP3, GSP4, GSXI) and signal batches reach
+  the page as transferred buffers and go to the same Scene3D and signal code as
+  on the main thread. `scene.Surface`, `StreamWriter` and the frame dispatchers
+  work in a worker; `Context.Scene3DByID` targets a mount by id. Page input is
+  forwarded to the worker with timestamps (`host.NewForwardedInput`, a
+  `game/gamepad` source). `netplay/client` works in a worker: the page keeps the
+  `RTCPeerConnection` and transfers the data channel to the worker where the
+  browser allows it, and relays datagrams over the port where it does not. In
+  headless Chrome 153 a worker engine held 60.0 frames per second while the page
+  was busy 60% of the time (a main-thread engine ran at 34), and in a tab hidden
+  for 25 s the worker clock kept 60 ticks per second while a page timer ran at
+  about 1. The new chunk `bootstrap-feature-engine-worker.js` loads only for
+  pages with a worker engine; the engines chunk grows by 246 bytes. New make
+  targets: `test-engine-worker-wasm`, `test-engine-worker-browser`,
+  `test-engine-worker-hidden`. See `docs/engine-worker.md`.
 
 - Add sampled clip frames to Scene3D, so an app can pose a skinned model from
   its own simulation clock. Declare `scene.Model{ID: ..., ClipSampled: true}`,

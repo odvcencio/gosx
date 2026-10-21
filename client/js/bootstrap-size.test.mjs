@@ -858,9 +858,9 @@ const budgets = [
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
     // Fighting-hub edge sends, absolute held input and crowd batch records together measure 1983246 raw / 550575 gzip / 453528 brotli bytes; only the exhausted minimums move; allowances remain unchanged.
     // Sampled clip frames (GSP4 decoder, stateless clip sampler, mount hooks) measure 1993370 raw / 554046 gzip / 456587 brotli monolith bytes; only exhausted minimums move to the exact measured value; allowances remain unchanged.
-    file: "bootstrap.js", raw: 1931725, gzip: 539059,
+    file: "bootstrap.js", raw: 1931982, gzip: 539194,
     // Baseline = shipped size with #474 (decision 14 exception, owner-approved 2026-10-7); measured 432728.
-    brotli: 441089 },
+    brotli: 441532 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1935,9 +1935,11 @@ const routeBudgets = [
     // Dormant gamepad input adds the same 524 raw bytes to this route.
     // Measured 305,783 raw. Move only the breached raw target to its minimum
     // passing value; compressed targets and the governed allowance stay fixed.
-    raw: 293401,
+    // The engine worker thread hook adds 246 raw bytes to the engines chunk
+    // (measured 308,317 raw, 78,760 Brotli); only the exhausted raw and Brotli minimums move.
+    raw: 293646,
     gzip: 83400,
-    brotli: 74872,
+    brotli: 75016,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -2119,8 +2121,8 @@ const routeBudgets = [
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
     // Detail resource reuse and retirement adds 1,086 raw, 314 gzip and 280
     // Brotli bytes to this route. Keep the shared allowances unchanged.
-    raw: 1398806,
-    gzip: 387468,
+    raw: 1399052,
+    gzip: 387560,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2328,7 +2330,7 @@ const routeBudgets = [
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 307179,
+    brotli: 307317,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2522,11 +2524,11 @@ const routeBudgets = [
     // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
     raw: 1696300,
-    gzip: 473809,
+    gzip: 473901,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 407310,
+    brotli: 407454,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.

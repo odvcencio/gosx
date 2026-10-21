@@ -27,6 +27,15 @@ type Driver struct {
 	// OnError, if set before Start, receives any non-nil error Step returns.
 	OnError func(error)
 
+	// RunWhileHidden, if set before Start, keeps stepping the runtime and
+	// calling render while the FrameSource reports Hidden. By default a hidden
+	// host pauses the game, which suits a single-player game on the main
+	// thread. A simulation that must stay in step with other players, such as
+	// a rollback netplay loop in a worker, sets this so a hidden tab does not
+	// stall the match. Time still advances by the real interval between
+	// frames, and game.Config.MaxDelta bounds a stall.
+	RunWhileHidden bool
+
 	mu       sync.Mutex
 	frameMu  sync.Mutex // serialize Step/render across a stop and restart
 	running  bool
@@ -133,7 +142,7 @@ func (d *Driver) advanceFrame(epoch uint64, timestampMS float64) (Observer, Fram
 		d.mu.Unlock()
 		return nil, FrameEvent{}
 	}
-	if hidden {
+	if hidden && !d.RunWhileHidden {
 		// Keep scheduling so the driver notices when the tab becomes visible
 		// again, but advance neither game time nor the render callback while
 		// hidden. haveLast resets so the first frame after hidden reports a

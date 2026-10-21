@@ -87,3 +87,73 @@ func TestBrowserGamepadSnapshots(t *testing.T) {
 		t.Fatal("missing Gamepad API must yield no devices")
 	}
 }
+
+func TestWorkerFrameSourceUsesTheWorkerClockAndForwardedVisibility(t *testing.T) {
+	next := 100
+	callbacks := map[int]js.Value{}
+	request := js.FuncOf(func(_ js.Value, args []js.Value) any { next++; callbacks[next] = args[0]; return next })
+	cancel := js.FuncOf(func(_ js.Value, args []js.Value) any { delete(callbacks, args[0].Int()); return nil })
+	t.Cleanup(request.Release)
+	t.Cleanup(cancel.Release)
+	// A worker can have requestAnimationFrame; it must not be used.
+	rafCalls := 0
+	raf := js.FuncOf(func(_ js.Value, _ []js.Value) any { rafCalls++; return 1 })
+	t.Cleanup(raf.Release)
+	replaceGlobal(t, "requestAnimationFrame", raf)
+	replaceGlobal(t, "cancelAnimationFrame", raf)
+	worker := map[string]any{"requestFrame": request, "cancelFrame": cancel, "hidden": false}
+	replaceGlobal(t, "__gosx", map[string]any{"worker": worker})
+	replaceGlobal(t, "document", js.Undefined())
+
+	source := NewFrameSourceJS()
+	got := -1.0
+	h := source.RequestFrame(func(ts float64) { got = ts })
+	if h != 101 || rafCalls != 0 {
+		t.Fatalf("handle %d, rAF calls %d: the worker clock must serve the request", h, rafCalls)
+	}
+	callbacks[h].Invoke(16.5)
+	if got != 16.5 {
+		t.Fatalf("timestamp %v", got)
+	}
+	h2 := source.RequestFrame(func(float64) { t.Error("canceled frame ran") })
+	source.CancelFrame(h2)
+	if _, still := callbacks[h2]; still || rafCalls != 0 {
+		t.Fatal("cancel must reach the worker clock")
+	}
+	if source.Hidden() {
+		t.Fatal("a visible page reported hidden")
+	}
+	js.Global().Get("__gosx").Get("worker").Set("hidden", true)
+	if !source.Hidden() {
+		t.Fatal("forwarded page visibility must drive Hidden() when there is no document")
+	}
+}
+
+func TestForwardedInputBindsToTheWorkerBridgeAndReleasesIt(t *testing.T) {
+	bridge := js.Global().Call("eval", `({subs: new Set(), onInput(cb) { this.subs.add(cb); return () => this.subs.delete(cb); }, emit(ev) { for (const cb of this.subs) cb(JSON.stringify(ev)); }})`)
+	replaceGlobal(t, "__gosx", map[string]any{"worker": bridge})
+	input, ok := NewForwardedInput()
+	if !ok {
+		t.Fatal("a worker bridge with onInput must yield forwarded input")
+	}
+	var got []InputEvent
+	input.Subscribe(func(e InputEvent) { got = append(got, e) })
+	bridge.Call("emit", map[string]any{"k": "key", "code": "KeyA", "down": true, "ts": 5380, "at": 380, "recv": 382.5})
+	bridge.Call("emit", map[string]any{"k": "pad", "index": 0, "id": "P", "mapping": "standard", "connected": true, "buttons": []any{1, 0}, "axes": []any{-1}, "ts": 1, "at": 1, "recv": 2})
+	if !input.KeyDown("KeyA") || len(input.Gamepads()) != 1 || input.Gamepads()[0].Axes[0] != -1 {
+		t.Fatal("forwarded events did not update the tracked state")
+	}
+	if len(got) != 2 || got[0].Delay() != 2.5 || got[0].PageEpochMS != 5380 {
+		t.Fatalf("events %+v", got)
+	}
+	bridge.Call("emit", "not an object") // garbage must be ignored, not crash
+	input.Close()
+	input.Close()
+	if bridge.Get("subs").Get("size").Int() != 0 {
+		t.Fatal("Close must unsubscribe from the worker bridge")
+	}
+	replaceGlobal(t, "__gosx", map[string]any{})
+	if _, ok := NewForwardedInput(); ok {
+		t.Fatal("no worker bridge: forwarded input must be unavailable")
+	}
+}
