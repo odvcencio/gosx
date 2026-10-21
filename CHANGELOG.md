@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Keep single-key motion tracks constant through invalid clock values and
+  timeline offsets, preventing a NaN seek from panicking the evaluator.
+
 - Use logarithmic keyframe lookup for long motion tracks, preserving exact
   interpolation, arbitrary seeks and allocation-free sampling. Short tracks
   retain their linear lookup path.
