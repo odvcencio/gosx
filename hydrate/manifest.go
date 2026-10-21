@@ -276,8 +276,23 @@ type HubInputConfig struct {
 	// Event is the hub event used for input snapshots. Defaults to "input".
 	Event string `json:"event,omitempty"`
 
-	// ReadyEvent is sent once the socket opens. Defaults to "ready".
+	// ReadyEvent is sent once the socket opens. Defaults to "ready". With
+	// ReadyWhen "scene-committed" it is sent later, once per socket.
 	ReadyEvent string `json:"readyEvent,omitempty"`
+
+	// ReadyWhen picks when ReadyEvent is sent in fighting mode. Empty or
+	// "socket" sends it as soon as the socket opens. "scene-committed" waits
+	// for the socket to open and for a Scene3D mount (inside Root when set,
+	// else anywhere on the page) to report data-gosx-scene3d-ready="true" and
+	// data-gosx-scene3d-model-hydration-committed="true", then for two
+	// animation frames, and sends ReadyEvent at most once per socket.
+	ReadyWhen string `json:"readyWhen,omitempty"`
+
+	// DisableEdgeSend turns off the same-event-turn send in fighting mode.
+	// By default a mapped key or touch control that changes held state sends
+	// the full input state immediately, and the SendEveryMS timer keeps
+	// polling gamepads and repeats the state. Set it to send only from the timer.
+	DisableEdgeSend bool `json:"disableEdgeSend,omitempty"`
 
 	// TrainingEvent is used for bootstrap-owned training shortcuts.
 	TrainingEvent string `json:"trainingEvent,omitempty"`
