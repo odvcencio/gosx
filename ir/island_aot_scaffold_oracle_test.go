@@ -56,7 +56,7 @@ func scaffoldOracleCorpus() []scaffoldOracleCase {
 	}
 	// Stub API declarations belong to the imported package. Application
 	// declarations cannot change a qualified signal.New/Get/Set binding.
-	for _, name := range []string{"Subscriber", "Subscribable", "Signal", "Computed", "Effect", "New", "NewShared", "Shared", "NewWithEqual", "Derive", "Get", "Set", "Revision", "Update", "Subscribe", "subscribe", "Stop", "Watch", "Dispose", "Batch", "ResolveAlias", "IsAlias", "AliasesOf", "LegacySceneEventNames", "SurfaceEventNames", "IsSurfaceEventName", "IsSceneEventName"} {
+	for _, name := range []string{"Subscriber", "Subscribable", "Signal", "Computed", "Effect", "New", "NewShared", "Shared", "NewWithEqual", "Derive", "Get", "Set", "Revision", "Update", "Subscribe", "subscribe", "refresh", "revision", "Stop", "Watch", "Dispose", "Batch", "ResolveAlias", "IsAlias", "AliasesOf", "LegacySceneEventNames", "SurfaceEventNames", "IsSurfaceEventName", "IsSceneEventName"} {
 		cases = append(cases, scaffoldOracleCase{name: "stub/" + name, declaration: "const " + name + " = 42", body: "count:=signal.New(0);change:=func(){count.Set(count.Get()+1)};return <button onClick={change}>{count}</button>", goBody: "count:=signal.New(0);change:=func(){count.Set(count.Get()+1)};_ = change;_ = count.Get();return Node{}"})
 	}
 	return cases

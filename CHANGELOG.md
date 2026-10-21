@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep derived reads current inside batched actions and source observers,
+  preserving cached descendants when a derived value stays equal. Match the
+  same settled reads and callback order in AOT islands. Deliver shared peers
+  once after each handler, before the writer returns its final patches.
+
 - Build list auto-keys directly without formatting and boxing overhead,
   preserving source identity and full-width integer indices.
 
