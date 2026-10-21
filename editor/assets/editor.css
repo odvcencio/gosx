@@ -591,6 +591,7 @@
   width: calc(var(--editor-gutter-width) - 0.65rem);
   overflow: hidden;
   padding-top: var(--editor-source-pad-block);
+  padding-bottom: var(--editor-source-pad-block);
   padding-right: 0.65rem;
   color: var(--editor-faint);
   font-family: var(--editor-mono);

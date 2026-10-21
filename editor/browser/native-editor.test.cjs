@@ -6,7 +6,7 @@ const {after, before, test} = require('node:test');
 // Optional standalone browser contract suite. Point GOSX_PLAYWRIGHT_MODULE at
 // an existing Playwright installation; this module needs no npm dependencies.
 const modulePath = process.env.GOSX_PLAYWRIGHT_MODULE;
-let browser, script, intelligenceScript;
+let browser, script, intelligenceScript, editorStylesheet;
 const readAsset = async name => {
   try {
     return await readFile(path.join(__dirname, '../assets', name + '.js'), 'utf8');
@@ -24,6 +24,7 @@ before(async () => {
   });
   script = await readAsset('native-editor');
   intelligenceScript = await readAsset('code-intelligence');
+  editorStylesheet = await readFile(path.join(__dirname, '../assets/editor.css'), 'utf8');
 });
 after(async () => { await browser?.close(); });
 
@@ -408,6 +409,57 @@ browserTest('Go to line reveals targets inside ancestor clips without scrolling 
     assert.deepEqual(await textarea.evaluate(node => [
       node.scrollTop, document.querySelector('.editor-highlight-layer').scrollTop, document.querySelector('#editor-line-numbers').scrollTop,
     ]), await textarea.evaluate(node => [node.scrollTop, node.scrollTop, node.scrollTop]));
+  }
+});
+
+browserTest('EOF keeps the final glyph and gutter aligned with actual editor padding, with or without a trailing newline', async t => {
+  const lines = ['// cicada-code-editor-test: disposable fixture', '// café 🎵 日本語', 'cicada 2',
+    'title "Code editor platform checks"', 'track bass acid { cutoff=700Hz }', 'pattern pulse { 1 . 5 . }',
+    'arrange {', '  place one bass pulse { at = @1.1.1 length = 4bars }', '  place two bass pulse { at = @5.1.1 length = 4bars }', '}'];
+  for (const trailing of ['', '\n']) {
+    const source = lines.join('\n') + trailing;
+    const {page, textarea} = await mount(t, source);
+    await textarea.evaluate(node => {
+      // Replace the minimal fixture's gutter approximation with the shipped
+      // stylesheet, in a short, narrow editor like an embedded source dock.
+      for (const rule of document.querySelector('style').sheet.cssRules) {
+        if (rule.selectorText === '.editor-line-numbers') {
+          rule.style.removeProperty('height'); rule.style.removeProperty('padding');
+        }
+      }
+      node.classList.add('editor-source');
+      node.parentElement.style.width = '300px'; node.parentElement.style.height = '163px';
+    });
+    await page.addStyleTag({content: editorStylesheet});
+    await page.evaluate(async () => {
+      document.querySelector('form').dispatchEvent(new CustomEvent('gosx:highlight-spans', {detail: []}));
+      window.dispatchEvent(new Event('resize'));
+      await new Promise(requestAnimationFrame);
+    });
+    await textarea.focus(); await page.keyboard.press('Control+g');
+    await page.locator('[data-code-goto="query"]').fill(`${lines.length + (trailing ? 1 : 0)}:9999`);
+    await page.keyboard.press('Enter');
+    assert.deepEqual(await textarea.evaluate(node => [node.selectionStart, node.selectionEnd]), [source.length, source.length]);
+    const geometry = await textarea.evaluate(node => {
+      const target = node.value.lastIndexOf('}');
+      const walker = document.createTreeWalker(document.querySelector('#editor-highlight-content'), NodeFilter.SHOW_TEXT);
+      let offset = target, text;
+      while ((text = walker.nextNode())) {
+        if (offset >= text.length) { offset -= text.length; continue; }
+        const range = document.createRange(); range.setStart(text, offset); range.setEnd(text, offset + 1);
+        const glyph = range.getBoundingClientRect(), view = node.getBoundingClientRect();
+        const gutter = document.querySelector('#editor-line-numbers'), layer = document.querySelector('.editor-highlight-layer');
+        return {glyph: range.toString(), visible: glyph.top >= view.top && glyph.bottom <= view.bottom,
+          source: node.scrollTop, highlight: layer.scrollTop, gutter: gutter.scrollTop,
+          sourceMax: node.scrollHeight - node.clientHeight, gutterMax: gutter.scrollHeight - gutter.clientHeight};
+      }
+    });
+    t.diagnostic(JSON.stringify({trailingNewline: Boolean(trailing), ...geometry}));
+    assert.equal(geometry.glyph, '}'); assert.equal(geometry.visible, true);
+    assert.ok(Math.abs(geometry.source - geometry.highlight) <= 1, JSON.stringify(geometry));
+    assert.ok(Math.abs(geometry.source - geometry.gutter) <= 1, JSON.stringify(geometry));
+    assert.ok(geometry.gutterMax >= geometry.source - 1, JSON.stringify(geometry));
+    assert.equal(await textarea.inputValue(), source);
   }
 });
 
