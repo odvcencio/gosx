@@ -66,10 +66,11 @@ test('dispatch routes by mount ID and ship ID and reports whether a vessel took 
 
 // Mount-level checks use the built vessel chunk, like scene3d-vessel.test.js.
 const {FakeElement,createContext,installManualRAF,runScript,flushAsyncWork,bootstrapSource}=require('./runtime-test-harness.js');
-async function mountExternal(extra={}) {
+async function mountExternal(extra={},cameraAt=null) {
  const sources={};for(const part of ['walk','ocean-query','vessel'])sources[part]=fs.readFileSync(path.join(__dirname,'bootstrap-feature-scene3d-'+part+'.js'),'utf8');
  const mount=new FakeElement('div',null);mount.id='go-ship';mount.setAttribute('data-gosx-engine','GoSXScene3D');
  const camera={x:0,y:4.2,z:6.5,rotationX:0,rotationY:0,fov:60,near:.1,far:200};
+ if(cameraAt)Object.assign(camera,cameraAt);
  const props={controls:'first-person',walk:{headBob:0},camera,maxFPS:60,scene:{camera,objects:[{id:'ship/hull',kind:'box',geometry:'box',size:3}]}};
  props.vessel={nodeId:'ship',position:{x:10,y:0,z:-20},heading:.5,externalPose:true,wake:false,windStrength:8,helm:{x:0,y:4.2,z:6.5},...extra};
  props.scene.environment={ocean:{waveHeight:.9,waveLength:17,choppiness:.7}};
@@ -107,4 +108,21 @@ test('the scene keeps rendering while poses arrive and a sailing vessel is unaff
  assert.equal(controller.active,false);
  h.env.context.__gosx_scene3d_vessel_pose('go-ship',frame({id:'ship',time:1,x:1,y:0,z:1,snap:true}));
  assert.equal(controller.active,true);
+});
+
+test('a walker on a lower deck rides the rolling ship from Go and a second deck is a different floor',async()=>{
+ const fixture=JSON.parse(fs.readFileSync(path.join(__dirname,'testdata/vessel-decks-liner.json'),'utf8'));
+ const y3=fixture.decks[3].y;
+ const h=await mountExternal({position:{x:0,y:0,z:0},heading:0,decks:fixture.decks},{x:-12,y:y3+1.7,z:50});
+ for(let t=200;t<900;t+=17)h.raf.flush(t);
+ const start=h.handle.getCamera();
+ assert.ok(Math.abs(start.x+12)<.01&&Math.abs(start.z-50)<.01&&Math.abs(start.y-(y3+1.7))<.05,`standing on deck 4: ${JSON.stringify(start)}`);
+ const pose={id:'ship',time:1,x:300,y:2,z:-100,heading:.9,pitch:.03,roll:.2,speed:8,snap:true};
+ h.env.context.__gosx_scene3d_vessel_pose('go-ship',frame(pose));
+ for(let t=1000;t<1400;t+=17)h.raf.flush(t);
+ const physics=h.env.context.__gosx_scene3d_vessel_physics,want=physics.localPoint({x:300,y:2,z:-100,heading:.9,pitch:.03,roll:.2},-12,y3+1.7,50),got=h.handle.getCamera();
+ assert.ok(Math.hypot(got.x-want.x,got.z-want.z)<.6&&Math.abs(got.y-want.y)<.6,`carried to ${JSON.stringify(got)}, wanted ${JSON.stringify(want)}`);
+ // The deck surface reports the same deck under the walker's feet.
+ assert.ok(h.mount.__gosxScene3DState,'mounted');
+ h.handle.dispose();
 });

@@ -69,3 +69,74 @@ func TestParityVoyages(t *testing.T) {
 		}
 	}
 }
+
+// layoutTrace hashes, per class, the generated deck polygons and a set of
+// routes and world-space deck reads, so decks and pathing are checked for
+// bit-identical results across platforms.
+func layoutTrace() parity.Trace {
+	var l Layout
+	rec := parity.NewRecorder("layout", func(dst []byte) []byte {
+		for _, d := range l.Decks {
+			dst = parity.AppendFloat64(dst, d.Y)
+			for _, poly := range append(append([]Polygon{}, d.Walk...), d.Holes...) {
+				for _, p := range poly {
+					dst = parity.AppendFloat64(dst, p.X)
+					dst = parity.AppendFloat64(dst, p.Z)
+				}
+			}
+		}
+		for _, p := range l.Portals {
+			dst = parity.AppendFloat64(dst, p.X)
+			dst = parity.AppendFloat64(dst, p.Z)
+		}
+		flow := l.NewFlow()
+		for i := 0; i < 40; i++ {
+			from, to := (i*7)%len(l.Decks), (i*11+3)%len(l.Decks)
+			r, ok := l.Route(from, float64(i)-20, float64(i*5)-100, to, float64(20-i), float64(90-i*4), RouteOptions{Flow: flow, Now: float64(i * 30)})
+			dst = parity.AppendFloat64(dst, r.Time)
+			dst = parity.AppendInt64(dst, int64(len(r.Hops)))
+			if ok && len(r.Hops) > 0 {
+				h := r.Hops[0]
+				_, arrive, _ := flow.Admit(&l, h.Portal, h.From, h.To, 5+i, float64(i*30))
+				dst = parity.AppendFloat64(dst, arrive)
+			}
+			pose := Pose{X: float64(i * 100), Y: 1, Z: -float64(i * 50), Heading: float64(i) * 0.37, Pitch: 0.03, Roll: 0.2}
+			w := pose.ToWorld(Vec3{X: -12, Y: l.Decks[from].Y, Z: 40})
+			dst = parity.AppendInt64(dst, int64(l.DeckAtWorld(pose, w)))
+			dst = parity.AppendFloat64(dst, w.X)
+			dst = parity.AppendFloat64(dst, w.Y)
+			dst = parity.AppendFloat64(dst, w.Z)
+		}
+		return dst
+	})
+	for _, c := range Presets() {
+		l = StandardLayout(c)
+		rec.Step()
+	}
+	return rec.Trace()
+}
+
+func TestParityLayout(t *testing.T) {
+	path := filepath.Join("testdata", "parity-layout.json")
+	if *updateParity {
+		data, err := layoutTrace().Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%v (run with -update-parity to record)", err)
+	}
+	want, err := parity.Unmarshal(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := parity.Compare(want, layoutTrace()); d != nil {
+		t.Error(d)
+	}
+}

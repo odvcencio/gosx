@@ -130,7 +130,7 @@ const budgets = [
   // Only this optional chunk's exhausted targets change; allowances stay fixed.
   // Shared render interpolation, stable foam and the touch dead zone measure 31,260 / 11,914 / 10,914 bytes.
   // Only exhausted targets rise to the measured minimum; allowances remain fixed.
-  { file: "bootstrap-feature-scene3d-vessel.js", raw: 38642, gzip: 14579, brotli: 13347 },
+  { file: "bootstrap-feature-scene3d-vessel.js", raw: 38857, gzip: 14489, brotli: 13184 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.
@@ -1418,7 +1418,7 @@ const budgets = [
   // targets, allowances, monolith and first-load route limits stay fixed.
   // Sparse terrain sampling adds 244 raw bytes; the optional walk hard cap
   // becomes the measured 13,634 bytes, with compressed targets unchanged.
-  { file: "bootstrap-feature-scene3d-walk.js", raw: 11586, gzip: 4600, brotli: 4200 },
+  { file: "bootstrap-feature-scene3d-walk.js", raw: 11659, gzip: 4600, brotli: 4200 },
   { file: "bootstrap-feature-scene3d-compute.js", raw: 61200, gzip: 17900, brotli: 16100 },
   // The decompress chunk: the quantized-array decoder, the progressive and
   // level-of-detail ladders, and the procedural point generators. The mount

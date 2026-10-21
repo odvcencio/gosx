@@ -657,6 +657,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/vessel-model.ts"),
 			sourceFile("../runtime/scene3d/vessel-wake.ts"),
 			sourceFile("../runtime/scene3d/vessel-external.ts"),
+			sourceFile("../runtime/scene3d/vessel-decks.ts"),
 			sourceFile("../runtime/scene3d/mount-vessel.ts"),
 		},
 	},

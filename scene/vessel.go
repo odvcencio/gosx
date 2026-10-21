@@ -42,6 +42,12 @@ type Vessel struct {
 	// Wind, sail trim, helm, navigation and landings are ignored. Position and
 	// Heading give the pose until the first frame arrives.
 	ExternalPose bool `json:"externalPose,omitempty"`
+
+	// Decks replaces the single walk rectangle with these walkable levels in
+	// ship-local coordinates. The walker stands on the highest deck at or just
+	// above their feet, so a rolling ship keeps people on the deck they chose.
+	// Leave it empty for the rectangle.
+	Decks []VesselDeck `json:"decks,omitempty"`
 }
 
 // VesselCommandEvent accepts a VesselCommand on the mounted Scene3D element.
