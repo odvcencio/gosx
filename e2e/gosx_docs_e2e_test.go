@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 )
 
 func docsBaseURL() string {
@@ -172,20 +173,40 @@ func TestDocsMobileNavigationWorksWithoutDisclosureRuntime(t *testing.T) {
 		t.Fatalf("open mobile navigation: %v", err)
 	}
 	var open bool
-	page.eval(t, `location.hash === '#nav-overlay' &&
+	page.eval(t, `document.querySelector('#nav-overlay').matches(':popover-open') &&
       getComputedStyle(document.querySelector('#nav-overlay')).display !== 'none' &&
       !!document.querySelector('#nav-overlay form[action="/docs"]')`, &open)
 	if !open {
-		t.Fatal("mobile navigation did not open through the native anchor target")
+		t.Fatal("mobile navigation did not open through the native popover target")
 	}
 	if err := chromedp.Run(page.ctx, chromedp.Click(".nav-overlay__close", chromedp.ByQuery)); err != nil {
 		t.Fatalf("close mobile navigation: %v", err)
 	}
 	var closed bool
-	page.eval(t, `location.hash !== '#nav-overlay' && getComputedStyle(document.querySelector('#nav-overlay')).display === 'none'`, &closed)
+	page.eval(t, `!document.querySelector('#nav-overlay').matches(':popover-open') && getComputedStyle(document.querySelector('#nav-overlay')).display === 'none'`, &closed)
 	if !closed {
 		t.Fatal("mobile navigation did not close")
 	}
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(".pill-toggle", chromedp.ByQuery),
+		chromedp.KeyEvent(kb.Escape),
+	); err != nil {
+		t.Fatalf("dismiss native popover with Escape: %v", err)
+	}
+	var keyboardDismissed bool
+	page.eval(t, `!document.querySelector('#nav-overlay').matches(':popover-open') &&
+      document.activeElement === document.querySelector('.pill-toggle') && location.hash === ''`, &keyboardDismissed)
+	if !keyboardDismissed {
+		t.Fatal("Escape must dismiss the native menu, return opener focus and leave history unchanged")
+	}
+	if err := chromedp.Run(page.ctx,
+		chromedp.Click(".pill-toggle", chromedp.ByQuery),
+		chromedp.Click(`#nav-overlay a[href="/docs/getting-started"]`, chromedp.ByQuery),
+	); err != nil {
+		t.Fatalf("follow native menu destination: %v", err)
+	}
+	page.waitFor(t, `location.pathname.replace(/\/$/, '') === '/docs/getting-started' &&
+      !document.querySelector('#nav-overlay').matches(':popover-open')`, 20*time.Second, "menu destination closes the native popover")
 }
 
 func TestPlaygroundDirectLoadMetadataAndMobileHeader(t *testing.T) {
