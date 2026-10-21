@@ -187,6 +187,25 @@ func TestRuntimeSetSharedSignalExport(t *testing.T) {
 	}
 }
 
+func TestRuntimeChangedSignalBatchExport(t *testing.T) {
+	b := bridge.New()
+	callback := inputBatchRuntimeFunc(b)
+	defer callback.Release()
+	notifications := 0
+	b.SetSharedSignalCallback(func(string, string) { notifications++ })
+	for range 2 {
+		if ret := callback.Invoke(`{"$view":{"turn":"west"},"$selected":""}`, true); !ret.IsNull() {
+			t.Fatal(ret)
+		}
+	}
+	if notifications != 2 {
+		t.Fatalf("unchanged batch notified: %d", notifications)
+	}
+	if ret := callback.Invoke(`{"$selected":""}`); !ret.IsNull() || notifications != 3 {
+		t.Fatal("legacy pulse batch lost")
+	}
+}
+
 func TestRuntimeGetSharedSignalExport(t *testing.T) {
 	setGlobalValue(t, "__gosx_runtime_ready", js.Undefined())
 

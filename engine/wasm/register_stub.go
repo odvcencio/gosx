@@ -47,5 +47,6 @@ func Register(component string, factory Factory) error {
 func (Context) MountElement() browser.Element                             { return browser.Element{} }
 func (Context) SignalJSON(string) (json.RawMessage, error)                { return nil, ErrUnsupported }
 func (Context) SetSignals(map[string]any) error                           { return ErrUnsupported }
+func (Context) SetChangedSignals(map[string]any) error                    { return ErrUnsupported }
 func (Context) Navigate(context.Context, string, NavigationOptions) error { return ErrUnsupported }
 func (Context) IsCurrent() bool                                           { return false }

@@ -4,6 +4,7 @@ package wasm
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"syscall/js"
 	"testing"
@@ -11,6 +12,37 @@ import (
 
 	"m31labs.dev/gosx/scene"
 )
+
+func TestSignalJSONHandoffAvoidsRedundantBrowserConversions(t *testing.T) {
+	host := js.Global().Call("eval", `({calls:0,setSignalsJSON(raw,changed){this.calls++;this.raw=raw;this.changed=changed;},subscribeSignalJSON(name,callback){this.callback=callback;return ()=>{this.callback=null}},deliver(raw){if(this.callback)this.callback(raw)}})`)
+	ctx := Context{value: host}
+	if err := ctx.SetChangedSignals(map[string]any{"$view": map[string]any{"turn": "west"}}); err != nil {
+		t.Fatal(err)
+	}
+	if host.Get("raw").String() != `{"$view":{"turn":"west"}}` || !host.Get("changed").Bool() {
+		t.Fatal("encoded snapshot/changed-only flag lost")
+	}
+	if err := ctx.SetSignals(map[string]any{"$pulse": true}); err != nil || host.Get("changed").Bool() {
+		t.Fatal("pulse batch changed semantics")
+	}
+	if err := ctx.SetChangedSignals(map[string]any{"$bad": make(chan int)}); err == nil || host.Get("calls").Int() != 2 {
+		t.Fatal("invalid batch reached the browser")
+	}
+	var got json.RawMessage
+	dispose, err := ctx.SubscribeSignal("$view", func(raw json.RawMessage) { got = raw })
+	if err != nil {
+		t.Fatal(err)
+	}
+	host.Call("deliver", `{"turn":"west","hand":[1,2]}`)
+	if string(got) != `{"turn":"west","hand":[1,2]}` {
+		t.Fatal("raw subscriber data was re-encoded")
+	}
+	dispose.Dispose()
+	host.Call("deliver", `{"turn":"east"}`)
+	if string(got) != `{"turn":"west","hand":[1,2]}` {
+		t.Fatal("disposed subscriber called")
+	}
+}
 
 func TestTypedSignalReadAndBatchFailureIsAtomic(t *testing.T) {
 	host := js.Global().Call("eval", `({values:{"$selected":"tile"}, calls:0, getSignal(n){return this.values[n]}, setSignals(v){this.calls++; Object.assign(this.values,v)}})`)
