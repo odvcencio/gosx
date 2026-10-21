@@ -163,7 +163,7 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 309732,
+          "frameworkJsWireBytes": 310618,
           "htmlWireBytes": 14280,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
@@ -184,7 +184,8 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "wasmWireBytes": "2026-10-21: keep derived reads current inside batched actions and source observers, retain equality-based caching, and settle shared peers once per handler. Production core is 220702 B Brotli versus the qualified auto-key head 268fc005a336 at 219141 B (+1561 B, 0.71%); raw WASM is 655059 versus 649956 B. Four paired native CPU trials for 32 fields/four peers improve from about 490 to 241 microseconds; ordinary signal writes remain allocation-free. Set only this metric to measured bytes plus the existing minimum 256 B headroom. All other limits, requirements and full qualification gates remain unchanged."
+          "frameworkJsWireBytes": "2026-10-21: include the same 1561 B core-WASM increase for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; set this metric to actual plus 256 B. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions add 1561 B Brotli (0.71%) to the qualified 219141 B core; the actual core is 220702 B (655059 raw). Keep the limit at actual plus 256 B. The same WASM growth is accounted for in the affected aggregate metrics; JavaScript bytes, request counts, other resources, hard ceilings and policy requirements are unchanged. Exact-head hosted and independent wire qualification remain required."
         }
       },
       "/performance/": {
@@ -240,14 +241,14 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 309727,
+          "frameworkJsWireBytes": 310613,
           "htmlWireBytes": 1516,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 90521,
           "lazyJsWireBytes": 256,
           "requests": 9,
-          "totalWireBytes": 312157,
+          "totalWireBytes": 312991,
           "wasmWireBytes": 220958
         },
         "require": [
@@ -261,7 +262,9 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "wasmWireBytes": "2026-10-21: keep derived reads current inside batched actions and source observers, retain equality-based caching, and settle shared peers once per handler. Production core is 220702 B Brotli versus the qualified auto-key head 268fc005a336 at 219141 B (+1561 B, 0.71%); raw WASM is 655059 versus 649956 B. Four paired native CPU trials for 32 fields/four peers improve from about 490 to 241 microseconds; ordinary signal writes remain allocation-free. Set only this metric to measured bytes plus the existing minimum 256 B headroom. All other limits, requirements and full qualification gates remain unchanged."
+          "frameworkJsWireBytes": "2026-10-21: include the same 1561 B core-WASM increase for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; set this metric to actual plus 256 B. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase.",
+          "totalWireBytes": "2026-10-21: include the same 1561 B core-WASM increase for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; set this metric to actual plus 256 B. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Total includes a 3 B smaller compressed HTML document than the qualified baseline.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions add 1561 B Brotli (0.71%) to the qualified 219141 B core; the actual core is 220702 B (655059 raw). Keep the limit at actual plus 256 B. The same WASM growth is accounted for in the affected aggregate metrics; JavaScript bytes, request counts, other resources, hard ceilings and policy requirements are unchanged. Exact-head hosted and independent wire qualification remain required."
         }
       },
       "/stack/": {
