@@ -48,6 +48,9 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // 65,536-byte monolith allowance, 5% policy and all other targets stay fixed.
 // Authored shader-key reuse adds a bounded per-renderer index. Only exhausted
 // measured targets move to their minimum; allowance policy stays unchanged.
+// Indexed world bakes reuse vertex transforms in a bounded scratch: measured
+// monolith/core growth is 930/890 raw bytes. Only their exhausted raw targets
+// move to exact minima; compressed targets and all allowances stay unchanged.
 const budgets = [
   // Finite choreography remains demand-loaded; existing route limits are unchanged.
   { file: "bootstrap-feature-scene3d-timeline.js", raw: 5_400, gzip: 2_400, brotli: 2_200 },
@@ -789,7 +792,7 @@ const budgets = [
     // Colour lifetime and frame-cached snapshots measure 1,940,344 raw bytes.
     // Raise only the raw target by 470 B to the exact minimum; keep the 65,536 B allowance.
     file: "bootstrap.js", // Reused baked shadow bounds measure 1941783 raw bytes; preserve governed allowances.
-    raw: 1877141, gzip: 524100,
+    raw: 1878071, gzip: 524100,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 432800 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
@@ -1323,7 +1326,7 @@ const budgets = [
     // 152948); this is the smallest 100-byte target step that clears the cap.
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
-    file: "bootstrap-feature-scene3d.js", raw: 614200, gzip: 176600,
+    file: "bootstrap-feature-scene3d.js", raw: 614779, gzip: 176600,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     brotli: 153200 },
