@@ -78,7 +78,6 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 		valueKey(9, motion.ColorV(.62, .48, .92, 1)),
 		valueKey(14, motion.ColorV(.42, .83, .8, 1)),
 	)
-	progress := sample("pose", soft, key(0, 0), key(5, .85), key(9, .25), key(14, 1))
 	entrances := motion.ExpandStagger(motion.Track{
 		Ease: motion.Ease{Kind: motion.EaseOutBack, Args: []float64{.8}},
 		Keys: []motion.Key{key(0, 32), key(1.2, 0)},
@@ -119,14 +118,19 @@ func page(ctx *server.Context, flat, form engine.Config) gosx.Node {
 	program.BindSceneNode(size, "#form", "form", "scale")
 	program.BindStyle(tint, ".study-copy .eyebrow", "color", "")
 	program.BindStyle(tint, ".chapter-fill", "backgroundColor", "")
-	if err := program.BindSceneTransition(progress, "#form", scene.CommandTransition{
-		From: []scene.Command{
-			scene.SetCameraCommand(scene.PerspectiveCamera{Position: scene.Vec3(0, 0, 10), FOV: 50}),
-		},
-		To: []scene.Command{
-			scene.SetCameraCommand(scene.PerspectiveCamera{Position: scene.Vec3(0, .3, 8.5), FOV: 45}),
-		},
-	}); err != nil {
+	// A finite Go scene plan shares the same playhead as the DOM and Selena.
+	camera := scene.NewTimeline("camera")
+	for _, phase := range []struct {
+		from, to float64
+		duration time.Duration
+	}{{0, .85, 5 * time.Second}, {.85, .25, 4 * time.Second}, {.25, 1, 5 * time.Second}} {
+		camera.Then(
+			scene.Tween{Camera: true, Property: "y", From: .3 * phase.from, To: .3 * phase.to, Duration: phase.duration, Ease: soft},
+			scene.Tween{Camera: true, Property: "z", From: 10 - 1.5*phase.from, To: 10 - 1.5*phase.to, Duration: phase.duration, Ease: soft},
+			scene.Tween{Camera: true, Property: "fov", From: 50 - 5*phase.from, To: 50 - 5*phase.to, Duration: phase.duration, Ease: soft},
+		)
+	}
+	if err := camera.BindMotion(program, clock, "#form"); err != nil {
 		log.Fatal(err)
 	}
 	program.BindMaterialUniform(gain, "#tide", "ribbon", "gain")

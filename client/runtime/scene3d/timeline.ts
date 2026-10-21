@@ -51,7 +51,7 @@ interface SceneTimelineContext {
       if (seconds < t.at && seen.has(propertyKey)) continue;
       seen.add(propertyKey);
       const progress = seconds < t.at ? 0 : t.duration === 0 ? 1 : (seconds - t.at) / t.duration;
-      const value = t.from + (t.to - t.from) * window.__gosx.motion.ease(progress, t.ease);
+      const value = progress <= 0 ? t.from : progress >= 1 ? t.to : t.from + (t.to - t.from) * window.__gosx.motion.ease(progress, t.ease);
       if (!Number.isFinite(value)) throw new RangeError('Scene3D tween sample overflowed');
       const target = t.camera ? 'camera:' : 'node:' + t.node;
       let patch = patches.get(target);

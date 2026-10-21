@@ -60,6 +60,27 @@ Reduced motion settles automatic playback at the end. Bound Selena scene
 clocks stay at zero so shader animation remains still. Semantic HTML remains
 readable without enhancement; playback buttons enable once their scope mounts.
 
+## Bind a Go scene sequence
+
+Existing `scene.Timeline` plans can use this same playhead:
+
+```go
+plan := scene.NewTimeline("arrival").At(0,
+    scene.Tween{Node: "sculpture", Property: "y", From: 2, To: 0,
+        Duration: 2 * time.Second, Ease: motion.Ease{Kind: motion.EaseOutPow}},
+).Then(scene.Tween{Camera: true, Property: "z", From: 8, To: 6,
+    Duration: time.Second})
+if err := plan.BindMotion(program, clock, "#sculpture"); err != nil {
+    return err
+}
+```
+
+The plan compiles into existing signals and bindings. Playback controls seek
+node and camera poses alongside DOM and Selena animation, including gaps,
+instant cuts and reverse seeks. No imperative bridge or separate clock is
+needed. See [scene timelines](scene3d-timeline.md) for property names, validation
+and scope ownership.
+
 ## Compose expressive keyframes
 
 `Program.SampleTrack` connects the existing native `motion.Track` and `Key`

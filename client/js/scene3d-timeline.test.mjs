@@ -54,6 +54,16 @@ test('Go-authored wire fixture samples easing, parallel tracks, gaps and backwar
   }
 });
 
+test('timeline endpoints remain exact across cancellation, overflow and signed zero', () => {
+  const { api } = runtime();
+  for (const [from, to] of [[1e20, 1], [Number.MAX_VALUE, -Number.MAX_VALUE], [0, -0]]) {
+    const plan = { version: 1, id: 'exact', tweens: [{ node: 'piece', property: 'x', from, to, at: 1, duration: 1 }] };
+    for (const [seconds, want] of [[-1, from], [1, from], [2, to], [3, to]]) {
+      assert.ok(Object.is(api.sample(plan, seconds)[0].data.x, want), `${from} -> ${to} at ${seconds}`);
+    }
+  }
+});
+
 test('playback shares the scheduler, pauses, seeks, completes and stops scheduling', async () => {
   const r = runtime(), player = r.play();
   r.frame(); r.frame(100);

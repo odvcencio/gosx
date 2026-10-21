@@ -84,12 +84,15 @@
 
   function motionMix(a, b, t) {
     if (Array.isArray(a) && Array.isArray(b)) {
-      const out = new Array(Math.min(a.length, b.length));
+      const length = Math.min(a.length, b.length);
+      if (t === 0 || t === 1) return (t === 0 ? a : b).slice(0, length);
+      const out = new Array(length);
       for (let i = 0; i < out.length; i++) out[i] = a[i] + (b[i] - a[i]) * t;
       return out;
     }
     const from = motionNumber(a, 0);
-    return from + (motionNumber(b, 0) - from) * t;
+    const to = motionNumber(b, 0);
+    return t === 0 ? from : t === 1 ? to : from + (to - from) * t;
   }
 
   // Piecewise scalar curve used by "curve" signals and camera rails. The math

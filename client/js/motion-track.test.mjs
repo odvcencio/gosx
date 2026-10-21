@@ -24,6 +24,27 @@ function runtime() {
   };
 }
 
+test("mix selects exact endpoints without cancellation, overflow or vector aliasing", () => {
+  const r = runtime();
+  for (const [from, to] of [[1e20, 1], [Number.MAX_VALUE, -Number.MAX_VALUE], [0, -0]]) {
+    const a = r.motion.signal(from), b = r.motion.signal(to), weight = r.motion.signal(0);
+    const mixed = r.motion.mix(a, b, weight);
+    assert.ok(Object.is(mixed.get(), from));
+    weight.set(1); assert.ok(Object.is(mixed.get(), to), `${from} -> ${to}`);
+    weight.set(0); assert.ok(Object.is(mixed.get(), from));
+    mixed.dispose();
+  }
+  const from = [1e20, -0], to = [1, 2], weight = r.motion.signal(0);
+  const mixed = r.motion.mix(r.motion.signal(from), r.motion.signal(to), weight);
+  assert.deepEqual(Array.from(mixed.get()), from);
+  mixed.get()[0] = 42; assert.equal(from[0], 1e20);
+  weight.set(1); assert.deepEqual(Array.from(mixed.get()), to);
+  mixed.get()[0] = 42; assert.equal(to[0], 1);
+  weight.set(.5); assert.equal(mixed.get()[1], 1);
+  mixed.dispose();
+  assert.equal(r.frames.size, 0);
+});
+
 test("prepared scalar tracks agree with native Eval for easing, holds, step boundaries, stagger and reverse seeks", () => {
   const r = runtime(); r.load();
   for (const fixture of fixtures) {
@@ -112,6 +133,38 @@ test("track and transport chunks tolerate either load order, deferred loading, c
 });
 
 const valueFixtures = JSON.parse(read("../../motion/testdata/track_value_golden.json"));
+
+const timelineFixtures = JSON.parse(read("../../scene/testdata/timeline_motion.json"));
+test("Go scene plans mounted as motion programs agree with native poses through seeks, cuts and reduced motion", () => {
+  const property = name => /^[xyz]$/.test(name) ? `position.${name}` : name.replace(/^(rotation|scale)([XYZ])$/, (_, prefix, axis) => `${prefix}.${axis.toLowerCase()}`);
+  for (const deferred of [false, true]) for (const fixture of timelineFixtures) {
+    const r = runtime(), scene = {}, latest = new Map();
+    r.load(transport); if (!deferred) r.load();
+    const root = {nodeType: 1, hasAttribute: name => name === "data-gosx-motion-program", getAttribute: () => JSON.stringify(fixture.program),
+      querySelectorAll(selector) {return selector === "#scene" ? [scene] : [];}};
+    r.motion.mountPrograms(root);
+    if (deferred) r.load();
+    r.motion.attachScene(scene, {write(binding, value) {latest.set(`${binding.target}:${binding.node || ""}:${binding.property}`, value);}, invalidate() {}});
+    r.advance();
+    const playback = r.motion.transport(fixture.program.id);
+    const check = (commands, at) => {
+      for (const command of commands) for (const [name, want] of Object.entries(command.data)) {
+        const key = `${command.kind === 5 ? "camera" : "sceneNode"}:${command.objectId || ""}:${property(name)}`, got = latest.get(key);
+        assert.ok(Number.isFinite(got) && Math.abs(got - want) <= 1e-9 * Math.max(1, Math.abs(want)), `${fixture.name} at ${at} ${key}: ${got} vs ${want}`);
+      }
+    };
+    for (const sample of fixture.samples) {
+      playback.seek(sample.seconds * 1000); r.advance(); check(sample.commands, sample.seconds);
+    }
+    r.reduce(true); r.advance(); check(fixture.final);
+    r.reduce(false); playback.seek(0); r.advance(); check(fixture.samples[0].commands);
+    r.motion.disposePrograms(root); r.advance();
+    const settled = new Map(latest);
+    r.reduce(true); r.advance(); assert.deepEqual(latest, settled);
+    assert.equal(r.frames.size, 0, `${fixture.name}: disposed scope retains no RAF`);
+  }
+});
+
 test("typed vector, HDR color and shortest-arc quaternion tracks agree with native Eval", () => {
   const r = runtime(); r.load();
   for (const fixture of valueFixtures) {

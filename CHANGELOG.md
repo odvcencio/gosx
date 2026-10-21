@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Bind Go scene timelines to motion programs with `Timeline.BindMotion`.
+  Existing Go playback controls now seek node and camera sequences alongside
+  DOM and Selena animation, including exact cuts, holds and backward seeks.
+  Preserve exact tween/mix endpoints and authored zero map/clamp bounds.
+
 - Keep single-key motion tracks constant through invalid clock values and
   timeline offsets, preventing a NaN seek from panicking the evaluator.
 
