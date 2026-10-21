@@ -383,6 +383,7 @@ func TestManifestAddHubWithInput(t *testing.T) {
 		SendEveryMS:     16,
 		ReadyWhen:       "scene-committed",
 		DisableEdgeSend: true,
+		HeldMode:        "absolute",
 	})
 
 	if id != "gosx-hub-0" {
@@ -398,13 +399,13 @@ func TestManifestAddHubWithInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal input: %v", err)
 	}
-	for _, want := range []string{`"readyWhen":"scene-committed"`, `"disableEdgeSend":true`} {
+	for _, want := range []string{`"readyWhen":"scene-committed"`, `"disableEdgeSend":true`, `"heldMode":"absolute"`} {
 		if !strings.Contains(string(data), want) {
 			t.Fatalf("expected %s in %s", want, data)
 		}
 	}
 	zero, _ := json.Marshal(HubInputConfig{Mode: "fighting"})
-	if strings.Contains(string(zero), "readyWhen") || strings.Contains(string(zero), "disableEdgeSend") {
+	if strings.Contains(string(zero), "readyWhen") || strings.Contains(string(zero), "disableEdgeSend") || strings.Contains(string(zero), "heldMode") {
 		t.Fatalf("zero values must be omitted, got %s", zero)
 	}
 }

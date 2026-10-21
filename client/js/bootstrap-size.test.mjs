@@ -843,10 +843,10 @@ const budgets = [
     // Native touch deduplication and the cross-chunk bridge measure 1969984 raw / 544188 gzip; targets use only the exhausted minima under unchanged allowances.
     // Typed night lighting and held-signal deduplication: only the exhausted gzip minimum moves; allowances remain unchanged.
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
-    // Fighting-hub edge sends plus crowd batch records together measure 1981667 raw / 550120 gzip / 453182 brotli bytes; only the exhausted minimums move; allowances remain unchanged.
-    file: "bootstrap.js", raw: 1916131, gzip: 533736,
+    // Fighting-hub edge sends, absolute held input and crowd batch records together measure 1983246 raw / 550575 gzip / 453528 brotli bytes; only the exhausted minimums move; allowances remain unchanged.
+    file: "bootstrap.js", raw: 1917710, gzip: 534191,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    brotli: 436798 },
+    brotli: 437144 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1754,7 +1754,8 @@ const budgets = [
   // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
   // hard limit had only 10 bytes left; targets grow by the measured change.
   // Fighting-hub edge sends and the scene-committed ready gate add 1,685 / 641 / 555 bytes; targets grow by the measured change.
-  { file: "bootstrap-feature-hubs.js", raw: 49767, gzip: 15445, brotli: 13869 },
+  // Absolute held-input mode adds 1,408 / 437 / 376 bytes; targets grow by the measured change.
+  { file: "bootstrap-feature-hubs.js", raw: 51175, gzip: 15882, brotli: 14245 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact

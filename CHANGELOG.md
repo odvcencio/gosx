@@ -18,6 +18,15 @@
   rounded explicitly, `math.Sin/Cos/Acos/Atan2/Hypot` became `det` calls, and
   the static broadphase prune walks slots in index order instead of ranging a
   map. The parity corpus now passes at `GOAMD64=v3` and on arm64.
+- Add `HubInputConfig.HeldMode = "absolute"` for fighting hubs whose simulation
+  derives press edges and resolves opposite directions itself. Each sample
+  carries `dir` (wire contract, bit mask: left 1, right 2, up 4, down 8, with
+  no client SOCD and no forward/back mapping by player slot), `btn` (bit mask:
+  LP 1, HP 2, LK 4, HK 8, Guard 16; 32 is reserved for Transform) and `frame` (a local sample frame number, +1 per animation frame). All
+  samples in one frame combine by one latch rule for keyboard, touch and
+  gamepad: buttons are OR-ed and directions take the last sample, so a press
+  and release inside one frame still counts. Edge sends still go out in the
+  same event turn. Default behavior is unchanged.
 
 - Reconcile shared-signal batch readers after notifications and derived values
   have settled. Each affected island evaluates once per store batch, preserving
