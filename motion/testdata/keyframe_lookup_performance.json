@@ -1,0 +1,454 @@
+{
+  "schema": "gosx.motion-keyframe-performance/v1",
+  "measuredAt": "2026-10-21T03:48:21.190120+00:00",
+  "environment": {
+    "go": "go version go1.26.0 linux/amd64",
+    "os": "linux",
+    "arch": "amd64",
+    "cpu": "Intel(R) Core(TM) Ultra 9 285",
+    "cpuAffinity": [
+      0
+    ],
+    "gomaxprocs": 1,
+    "node": "v22.23.2"
+  },
+  "baseline": {
+    "revision": "79bd1d54bd95a7de690908265c3e791f9c6e2696",
+    "evalSHA256": "30f53c27c2c4f54f2deeb15aff7f9b964c6d7929644f1e7e7d456e9f6279b42a",
+    "method": "The same test drivers were compiled with only motion/eval.go overlaid from unchanged main."
+  },
+  "candidate": {
+    "sourceSHA256": {
+      "motion/eval.go": "f1cb0be50c26d5855daee46f6a85a9c788f690aaf3b312195d5613431a96cc8f",
+      "motion/eval_search_test.go": "03f25d102119af0335a21da2c47945c4ef88e099903eca76b0087fa960c28dc9",
+      "motion/eval_seek_test.go": "073c9d10e93dfc25f148fa21fc6cb21b58923bcbd8983d42e7fded72b1f237c2"
+    },
+    "wasmExportTestSHA256": "dfefe3922d725524a1346ea9b529721e2fed6deb95561414eee2b95390695b8a"
+  },
+  "workload": {
+    "samplesPerCasePerVariant": 8,
+    "benchtime": "100ms",
+    "alternatingOrder": true,
+    "queriesPerTrack": 1024,
+    "times": "ordered playback or a fixed permutation, spanning the whole track",
+    "cache": "compiled test binaries reused; timer excludes fixture setup"
+  },
+  "results": [
+    {
+      "case": "keys=2/playback",
+      "baseline_ns": [
+        30.43,
+        30.03,
+        32.38,
+        33.8,
+        31.27,
+        31.38,
+        33.7,
+        34.51
+      ],
+      "candidate_ns": [
+        31.13,
+        30.34,
+        35.42,
+        31.17,
+        32.54,
+        31.27,
+        34.36,
+        38.67
+      ],
+      "baseline_median_ns": 31.880000000000003,
+      "candidate_median_ns": 31.905,
+      "speedup": 0.9992164237580317,
+      "candidate_change_percent": 0.07841907151819871,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=2/seeks",
+      "baseline_ns": [
+        28.94,
+        30.05,
+        31.3,
+        33.72,
+        31.89,
+        31.09,
+        38.64,
+        35.2
+      ],
+      "candidate_ns": [
+        31.24,
+        31.02,
+        34.92,
+        32.33,
+        30.22,
+        31.98,
+        35.67,
+        35.24
+      ],
+      "baseline_median_ns": 31.595,
+      "candidate_median_ns": 32.155,
+      "speedup": 0.982584357020681,
+      "candidate_change_percent": 1.7724323468903291,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=8/playback",
+      "baseline_ns": [
+        28.3,
+        30.15,
+        32.75,
+        31.34,
+        31.03,
+        30.89,
+        34.95,
+        32.92
+      ],
+      "candidate_ns": [
+        29.17,
+        29.6,
+        31.56,
+        31.26,
+        30.9,
+        35.24,
+        34.92,
+        35.84
+      ],
+      "baseline_median_ns": 31.185000000000002,
+      "candidate_median_ns": 31.41,
+      "speedup": 0.9928366762177651,
+      "candidate_change_percent": 0.721500721500723,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=8/seeks",
+      "baseline_ns": [
+        28.98,
+        29.93,
+        31.71,
+        31.15,
+        29.89,
+        31.65,
+        33.67,
+        32.6
+      ],
+      "candidate_ns": [
+        28.47,
+        29.09,
+        31.72,
+        29.93,
+        30.7,
+        33.85,
+        34.8,
+        33.71
+      ],
+      "baseline_median_ns": 31.4,
+      "candidate_median_ns": 31.21,
+      "speedup": 1.0060877923742388,
+      "candidate_change_percent": -0.6050955414012682,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=64/playback",
+      "baseline_ns": [
+        37.77,
+        38.5,
+        44.14,
+        39.14,
+        39.08,
+        37.84,
+        41.12,
+        43.02
+      ],
+      "candidate_ns": [
+        31.75,
+        29.8,
+        36.05,
+        33.52,
+        31.21,
+        35.75,
+        35.51,
+        37.27
+      ],
+      "baseline_median_ns": 39.11,
+      "candidate_median_ns": 34.515,
+      "speedup": 1.1331305229610313,
+      "candidate_change_percent": -11.748913321401178,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=64/seeks",
+      "baseline_ns": [
+        32.08,
+        36.32,
+        44.15,
+        35.94,
+        38.12,
+        36.69,
+        37.96,
+        38.2
+      ],
+      "candidate_ns": [
+        32.68,
+        32.47,
+        33.53,
+        30.7,
+        30.7,
+        36.08,
+        35.82,
+        35.42
+      ],
+      "baseline_median_ns": 37.325,
+      "candidate_median_ns": 33.105000000000004,
+      "speedup": 1.1274731913608216,
+      "candidate_change_percent": -11.306095110515734,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=1024/playback",
+      "baseline_ns": [
+        166.7,
+        196.6,
+        222.8,
+        191.7,
+        181.3,
+        184.0,
+        204.2,
+        192.7
+      ],
+      "candidate_ns": [
+        39.84,
+        40.05,
+        42.18,
+        39.59,
+        36.05,
+        45.63,
+        43.84,
+        43.71
+      ],
+      "baseline_median_ns": 192.2,
+      "candidate_median_ns": 41.114999999999995,
+      "speedup": 4.674692934452147,
+      "candidate_change_percent": -78.60822060353799,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=1024/seeks",
+      "baseline_ns": [
+        186.7,
+        218.1,
+        223.3,
+        193.4,
+        180.4,
+        188.2,
+        204.9,
+        199.0
+      ],
+      "candidate_ns": [
+        55.51,
+        60.45,
+        55.98,
+        65.53,
+        66.6,
+        73.14,
+        74.69,
+        66.77
+      ],
+      "baseline_median_ns": 196.2,
+      "candidate_median_ns": 66.065,
+      "speedup": 2.9698024672670855,
+      "candidate_change_percent": -66.32772680937819,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=8192/playback",
+      "baseline_ns": [
+        1907.0,
+        2337.0,
+        2119.0,
+        2057.0,
+        2024.0,
+        2012.0,
+        2544.0,
+        2123.0
+      ],
+      "candidate_ns": [
+        49.79,
+        51.39,
+        43.99,
+        47.1,
+        47.68,
+        48.48,
+        59.91,
+        59.7
+      ],
+      "baseline_median_ns": 2088.0,
+      "candidate_median_ns": 49.135,
+      "speedup": 42.495166378345374,
+      "candidate_change_percent": -97.64679118773947,
+      "allocs_per_op": 0
+    },
+    {
+      "case": "keys=8192/seeks",
+      "baseline_ns": [
+        1935.0,
+        2467.0,
+        2429.0,
+        1975.0,
+        2092.0,
+        2245.0,
+        2398.0,
+        2208.0
+      ],
+      "candidate_ns": [
+        79.12,
+        74.36,
+        83.56,
+        81.57,
+        81.33,
+        117.7,
+        131.0,
+        76.51
+      ],
+      "baseline_median_ns": 2226.5,
+      "candidate_median_ns": 81.44999999999999,
+      "speedup": 27.33578882750154,
+      "candidate_change_percent": -96.34179205030317,
+      "allocs_per_op": 0
+    }
+  ],
+  "wasmExport": {
+    "test": "TestMotionExportLongKeyframeSeeks",
+    "steps": [
+      {
+        "time": 6007.9375,
+        "reduced": false,
+        "expected": 77.5,
+        "observed": 77.5
+      },
+      {
+        "time": 8.875,
+        "reduced": false,
+        "expected": 25.5,
+        "observed": 25.5
+      },
+      {
+        "time": 4101.8125,
+        "reduced": false,
+        "expected": 38.5,
+        "observed": 38.5
+      },
+      {
+        "time": 6.8125,
+        "reduced": false,
+        "expected": -0.5,
+        "observed": -0.5
+      },
+      {
+        "time": 8196.8125,
+        "reduced": false,
+        "expected": 77.5,
+        "observed": 77.5
+      },
+      {
+        "time": 306.8125,
+        "reduced": false,
+        "expected": 38.5,
+        "observed": 38.5
+      },
+      {
+        "time": 6007.9375,
+        "reduced": false,
+        "expected": 77.5,
+        "observed": 77.5
+      },
+      {
+        "time": 6007.9375,
+        "reduced": true,
+        "expected": 84.0,
+        "observed": 84.0
+      },
+      {
+        "time": 8.875,
+        "reduced": true,
+        "expected": 84.0,
+        "observed": 84.0
+      },
+      {
+        "time": 4101.8125,
+        "reduced": true,
+        "expected": 84.0,
+        "observed": 84.0
+      },
+      {
+        "time": 6.8125,
+        "reduced": true,
+        "expected": 84.0,
+        "observed": 84.0
+      },
+      {
+        "time": 8196.8125,
+        "reduced": true,
+        "expected": 84.0,
+        "observed": 84.0
+      },
+      {
+        "time": 306.8125,
+        "reduced": true,
+        "expected": 84.0,
+        "observed": 84.0
+      },
+      {
+        "time": 6007.9375,
+        "reduced": true,
+        "expected": 84.0,
+        "observed": 84.0
+      },
+      {
+        "time": 6007.9375,
+        "reduced": false,
+        "expected": 77.5,
+        "observed": 77.5
+      },
+      {
+        "time": 8.875,
+        "reduced": false,
+        "expected": 25.5,
+        "observed": 25.5
+      },
+      {
+        "time": 4101.8125,
+        "reduced": false,
+        "expected": 38.5,
+        "observed": 38.5
+      },
+      {
+        "time": 6.8125,
+        "reduced": false,
+        "expected": -0.5,
+        "observed": -0.5
+      },
+      {
+        "time": 8196.8125,
+        "reduced": false,
+        "expected": 77.5,
+        "observed": 77.5
+      },
+      {
+        "time": 306.8125,
+        "reduced": false,
+        "expected": 38.5,
+        "observed": 38.5
+      },
+      {
+        "time": 6007.9375,
+        "reduced": false,
+        "expected": 77.5,
+        "observed": 77.5
+      }
+    ]
+  },
+  "reproduce": [
+    "go test ./motion -run \"^$\" -bench \"^BenchmarkEvalKeyframeSeeks$\" -benchmem -benchtime=100ms -count=8",
+    "GOOS=js GOARCH=wasm go test -exec=\"$(go env GOROOT)/lib/wasm/go_js_wasm_exec\" ./client/wasm -run \"^TestMotionExportLongKeyframeSeeks$\" -count=1 -v"
+  ],
+  "limits": "Warm evaluator microbenchmark on one host. This is not browser FPS, frame-pacing, cold-load or hardware certification. Short-track variation and every raw timing sample are included. Product source was not modified between paired runs."
+}
