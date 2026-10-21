@@ -132,7 +132,7 @@ function assertVectorClose(actual, expected, message) {
   }
 }
 
-function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, lights) {
+function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, lights, worldBakedAttributeViews) {
   return api.createSceneRenderBundle(
     320,
     180,
@@ -152,7 +152,7 @@ function renderBundle(api, object, timeSeconds, waterSystems, retainedGeometry, 
     [],
     0,
     false,
-    { retainedGeometry: retainedGeometry !== false },
+    { retainedGeometry: retainedGeometry !== false, worldBakedAttributeViews: worldBakedAttributeViews === true },
   );
 }
 
@@ -514,7 +514,7 @@ function worldUploadHarness(fresh = true) {
   return { ...h, api, object, gl, draw: b => h.renderer.render(b, viewport) };
 }
 
-function worldShadowUploadHarness(fresh) {
+function worldShadowUploadHarness(fresh, worldBakedAttributeViews) {
   const h = worldUploadHarness(fresh);
   h.object.castShadow = true;
   h.object.scaleX = 2;
@@ -558,7 +558,7 @@ function worldShadowUploadHarness(fresh) {
   };
   return { ...h, draws, bundle(time) {
     other.z = (time % 4) * 0.1;
-    return renderBundle(h.api, [h.object, other], time, [], true, [light]);
+    return renderBundle(h.api, [h.object, other], time, [], true, [light], worldBakedAttributeViews);
   } };
 }
 
@@ -583,6 +583,58 @@ for (const fresh of [true, false]) {
       "settled shadow and color passes upload no geometry again");
   });
 }
+
+for (const fresh of [true, false]) {
+  test(`${fresh ? "source" : "generated"} world snapshots draw without copying settled geometry into frame streams`, t => {
+    const h = worldShadowUploadHarness(fresh, true); t.after(() => h.renderer.dispose());
+    const cold = h.bundle(0); h.draw(cold);
+    const before = h.draws.slice();
+    const warm = h.bundle(1), mesh = warm.meshObjects[0];
+    for (const [key, stride] of [["Positions", 3], ["Normals", 3], ["UVs", 2], ["Tangents", 4]]) {
+      assert.deepEqual(Array.from(mesh.vertices[key.toLowerCase()]), Array.from(cold["worldMesh" + key].subarray(0, 6 * stride)), key);
+      assert.equal(warm["worldMesh" + key].length, 3 * stride, "only the moving caster occupies frame streams");
+    }
+    assert.equal(warm.worldMeshColors.length, 12, "settled color tuples are not rebuilt");
+    assert.equal(warm.worldMeshVertexCount + warm.retainedMeshVertexCount,
+      cold.worldMeshVertexCount + cold.retainedMeshVertexCount, "geometry accounting includes direct world snapshots");
+    assert.equal(mesh.directVertices, true);
+    assert.equal(mesh.vertexOffset, 0);
+    assert.deepEqual(Array.from(mesh.modelMatrix), [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+    h.draw(warm);
+    for (let i = 0; i < 2; i++) for (const key of ["positions", "model", "lightMatrix", "winding"]) {
+      assert.deepEqual(h.draws[i + 2][key], before[i][key], key);
+    }
+    const next = h.bundle(2);
+    assert.equal(next.meshObjects[0].vertices, mesh.vertices, "later frames reuse the immutable snapshot");
+    h.draw(next);
+    const at = h.gl.ops.length; h.draw(h.bundle(3));
+    assert.equal(h.gl.ops.slice(at).filter(op => op[0] === "bufferData" && op[4] === h.gl.STATIC_DRAW).length, 0);
+    h.object.color = "#804020";
+    const appearance = h.bundle(4);
+    assert.equal(appearance.meshObjects[0].vertices, mesh.vertices);
+    assert.equal(appearance.materials[appearance.meshObjects[0].materialIndex].color, "#804020");
+    h.object.x += 1;
+    const moved = h.bundle(5); h.draw(moved);
+    assert.equal(moved.meshObjects[0].directVertices, undefined, "a changing pose keeps the streaming path");
+    assert.deepEqual(Array.from(mesh.vertices.positions), before[0].positions, "held frames retain their old world geometry");
+    assert.equal(mesh._worldBakedUpload.resident, false);
+    h.draw(warm);
+    for (let i = 0; i < 2; i++) for (const key of ["positions", "model", "lightMatrix", "winding"]) {
+      assert.deepEqual(h.draws.at(-2 + i)[key], before[i][key], key);
+    }
+    assert.equal(h.renderer.diagnostics().retainedGeometry.liveBytes, 0, "expired held frames stream instead of retaining GPU buffers");
+  });
+}
+
+test("world snapshot views preserve custom attribute fallback", t => {
+  const h = worldUploadHarness(); t.after(() => h.renderer.dispose());
+  h.object.vertices.attributes = { a_weight: { itemSize: 1, array: new Float32Array([1, 2, 3]) } };
+  renderBundle(h.api, h.object, 0, [], true, [], true);
+  const warm = renderBundle(h.api, h.object, 1, [], true, [], true);
+  assert.equal(warm.meshObjects[0].directVertices, undefined);
+  assert.equal(warm.meshObjects[0].vertices.attributes, h.object.vertices.attributes);
+  assert.equal(warm.worldMeshPositions.length, 9);
+});
 
 test("moving and mutable world casters keep their current shadow geometry", t => {
   const h = worldShadowUploadHarness(true); t.after(() => h.renderer.dispose());

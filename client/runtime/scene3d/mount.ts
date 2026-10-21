@@ -3200,6 +3200,7 @@
         sceneBool(props && Object.prototype.hasOwnProperty.call(props, "showGrid") ? props.showGrid : (props && props.debugGrid), false),
         {
           retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true),
+          worldBakedAttributeViews: Boolean(renderer && renderer.supportsWorldBakedAttributeViews === true),
           rigidImportedBatches: Boolean(renderer && renderer.supportsRigidImportedBatches === true),
           meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
         },

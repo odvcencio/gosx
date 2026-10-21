@@ -556,7 +556,7 @@ function assertRendererABI(renderer, backend) {
   assert.equal(typeof renderer.dispose, "function");
   for (const key of contract.optional) {
     if (!(key in renderer)) continue;
-    if (key === "supportsRetainedGeometry" || key === "supportsRigidImportedBatches") assert.equal(typeof renderer[key], "boolean");
+    if (key === "supportsRetainedGeometry" || key === "supportsRigidImportedBatches" || key === "supportsWorldBakedAttributeViews") assert.equal(typeof renderer[key], "boolean");
     else if (key === "texturePreparation") {
       assert.equal(typeof renderer[key].load, "function");
       assert.equal(typeof renderer[key].generation.disposed, "boolean");

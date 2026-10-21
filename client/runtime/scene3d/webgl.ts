@@ -9546,7 +9546,8 @@
       if (!vertices || !Number.isFinite(attrib) || attrib < 0 || !(data instanceof Float32Array)) {
         return false;
       }
-      var retained = obj.retainedGeometry === true;
+      var retained = obj.retainedGeometry === true &&
+        (!obj._worldBakedUpload || obj._worldBakedUpload.resident === true);
       var revision = retained ? obj.geometryRevision : null;
       let entry = directMeshAttributeCache.get(vertices);
       if (
@@ -11165,6 +11166,7 @@
     return {
       kind: "webgl",
       supportsRetainedGeometry: true,
+      supportsWorldBakedAttributeViews: true,
       getFailureReason: function() { return scenePBRShaderFailureReason(program); },
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
