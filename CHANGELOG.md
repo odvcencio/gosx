@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Build list auto-keys directly without formatting and boxing overhead,
+  preserving source identity and full-width integer indices.
+
 - Settle individual shared-signal writes through the same reader boundary as
   batches. Derived values update on the same write, and nested observer writes
   produce one settled island update while preserving each signal notification.
