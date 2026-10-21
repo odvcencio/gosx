@@ -98,7 +98,9 @@ test("planner vertex scans hit by revision and invalidate on resize and material
   const viewport = { cssWidth: 640, cssHeight: 360, pixelWidth: 640, pixelHeight: 360, pixelRatio: 1 };
   const signature = api.scenePreparedSignature(bundle, camera, viewport);
   assert.equal(api.scenePreparedSignature(bundle, camera, viewport), signature);
-  assert.notEqual(api.scenePreparedSignature(bundle, camera, { ...viewport, cssWidth: 800, pixelWidth: 800 }), signature);
+  // Camera and viewport reach the renderer as uniforms; they do not rebuild the plan.
+  assert.equal(api.scenePreparedSignature(bundle, camera, { ...viewport, cssWidth: 800, pixelWidth: 800 }), signature);
+  assert.equal(api.scenePreparedSignature(bundle, { ...camera, x: 3, fov: 80 }, viewport), signature);
   bundle.materials[0].color = "#445566";
   assert.notEqual(api.scenePreparedSignature(bundle, camera, viewport), signature);
 });

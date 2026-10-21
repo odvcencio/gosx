@@ -90,7 +90,7 @@ function makeCrowd(api, count) {
   proto.vertices.revision = 0;
   const atlas = { id: 'bench-atlas' };
   const bounds = { minX: -.5, minY: -.5, minZ: -.5, maxX: .5, maxY: .5, maxZ: .5 };
-  const batch = { id: 'bench-batch', revision: 0 };
+  const batch = { id: 'bench-batch' };
   const objects = [];
   for (let i = 0; i < count; i++) {
     const object = Object.assign({}, proto, {
@@ -99,7 +99,7 @@ function makeCrowd(api, count) {
       static: false, skin: null, vertices: proto.vertices,
       parentMatrix: new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, (i % 100) * .6 - 30, 0, -Math.floor(i / 100) * .6, 1]),
     });
-    object._crowdSkin = { atlas, bounds, rows: new Float32Array([1, 2, .5]), poseRows: null, batch };
+    object._crowdSkin = { atlas, bounds, rows: new Float32Array([1, 2, .5]), poseRows: null, batchID: batch.id, rev: 0, group: null };
     if (mode === 'motion') {
       object._crowdMotion = { atlas, clipTable: { count: 1 }, record: new Float32Array(24), dirty: true,
         bounds: { minX: -1, minY: -1, minZ: -1, maxX: 1, maxY: 1, maxZ: 1 } };
@@ -109,10 +109,10 @@ function makeCrowd(api, count) {
   return { objects, batch };
 }
 
-// The write sceneUpdateRigidInstanceMotion and the pose path make, then the
-// dirty signal the bundle builder reads. The signal is absent on builds that
-// predate batch records.
-function applyMotionFrame(api, crowd, tick) {
+// The writes sceneUpdateRigidInstanceMotion (motion mode) and the pose path
+// (pose mode) make. Both signal the bundle builder the way the runtime does:
+// motion writers set _crowdMotion.dirty, pose writers bump _crowdSkin.rev.
+function applyMotionFrame(crowd, tick) {
   for (const object of crowd.objects) {
     if (object._crowdMotion) {
       object._crowdMotion.record[0] = tick * .1;
@@ -120,9 +120,9 @@ function applyMotionFrame(api, crowd, tick) {
       object._crowdMotion.bounds.maxX = 1 + tick * .1;
     } else {
       object._crowdSkin.rows[2] = (tick % 10) / 10;
+      object._crowdSkin.rev = (object._crowdSkin.rev | 0) + 1;
     }
   }
-  if (typeof api.sceneCrowdBatchTouch === 'function') api.sceneCrowdBatchTouch(crowd.batch);
 }
 
 function median(values) {
@@ -140,7 +140,7 @@ function runCase(api, count, kind) {
   const bundleMS = [], plannerMS = [];
   for (let frame = -warmup; frame < frames; frame++) {
     if (kind === 'b') camera.x = Math.sin(frame * .05) * 4;
-    if (kind === 'c') applyMotionFrame(api, crowd, frame);
+    if (kind === 'c') applyMotionFrame(crowd, frame);
     const t0 = performance.now();
     const bundle = api.createSceneRenderBundle(viewport.cssWidth, viewport.cssHeight, '#101820', Object.assign({}, camera),
       crowd.objects, [], [], [], lights, {}, frame / 60, [], [], [], [], [], 0, false, capabilities);

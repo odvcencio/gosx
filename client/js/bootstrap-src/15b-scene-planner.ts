@@ -1565,8 +1565,11 @@
     let hash = 2166136261 >>> 0;
     hash = scenePlannerHashString(hash, "v");
     hash = scenePlannerHashNumber(hash, sceneNumber(bundle && (bundle.bundleVersion != null ? bundle.bundleVersion : bundle.version), 0));
-    hash = scenePlannerHashCamera(hash, camera);
-    hash = scenePlannerHashViewport(hash, viewport);
+    // The camera and viewport are deliberately not hashed. The plan holds
+    // pass buckets and counts. A cache hit refreshes the buckets and re-sorts
+    // the translucent ones from the current records, and the renderer reads the
+    // camera and viewport from the bundle for its uniforms. Hashing them
+    // rebuilt the plan on every camera move.
     hash = scenePlannerHashCollection(hash, bundle && bundle.meshObjects, scenePlannerHashMeshObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.objects, scenePlannerHashLineObject);
     hash = scenePlannerHashCollection(hash, bundle && bundle.materials, scenePlannerHashMaterial);
@@ -1664,32 +1667,6 @@
     return String(a && a.id || "").localeCompare(String(b && b.id || ""));
   }
 
-  function scenePlannerHashCamera(hash, camera) {
-    hash = scenePlannerHashString(hash, camera && camera.kind);
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.x, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.y, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.z, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationX, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationY, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.rotationZ, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.fov, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.left, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.right, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.top, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.bottom, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.zoom, 1));
-    hash = scenePlannerHashNumber(hash, sceneNumber(camera && camera.near, 0));
-    return scenePlannerHashNumber(hash, sceneNumber(camera && camera.far, 0));
-  }
-
-  function scenePlannerHashViewport(hash, viewport) {
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.cssWidth, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.cssHeight, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelWidth, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelHeight, 0));
-    return scenePlannerHashNumber(hash, sceneNumber(viewport && viewport.pixelRatio, 0));
-  }
-
   function scenePlannerHashCollection(hash, collection, itemFn) {
     if (!Array.isArray(collection)) {
       return scenePlannerHashNumber(hash, 0);
@@ -1707,7 +1684,10 @@
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.materialIndex, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexOffset, 0));
     hash = scenePlannerHashNumber(hash, sceneNumber(object && object.vertexCount, 0));
-    hash = scenePlannerHashNumber(hash, sceneNumber(object && object.depthCenter, 0));
+    // depthCenter is not hashed: only the translucent passes read it, and a
+    // cache hit re-sorts them from the current records (see
+    // prepareScenePBRPasses). viewCulled still is, because it decides which
+    // records the passes contain.
     hash = scenePlannerHashNumber(hash, object && object.viewCulled ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.castShadow ? 1 : 0);
     hash = scenePlannerHashNumber(hash, object && object.receiveShadow ? 1 : 0);
