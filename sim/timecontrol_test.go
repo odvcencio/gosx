@@ -15,7 +15,7 @@ type stepClock struct {
 }
 
 func (c *stepClock) advance(d time.Duration) { c.mu.Lock(); c.now += d; c.mu.Unlock() }
-func (c *stepClock) set(d time.Duration) { c.mu.Lock(); c.now = d; c.mu.Unlock() }
+func (c *stepClock) set(d time.Duration)     { c.mu.Lock(); c.now = d; c.mu.Unlock() }
 func (c *stepClock) Now() Instant {
 	c.mu.Lock()
 	defer c.mu.Unlock()
