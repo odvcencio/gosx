@@ -19,13 +19,20 @@ func TestDocsClientFixesUseReleaseVersionedURLs(t *testing.T) {
 		t.Fatal(err)
 	}
 	rec := httptest.NewRecorder()
-	app.Build().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/demos/scene3d-bench", nil))
+	handler := app.Build()
+	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/demos/scene3d-bench", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("benchmark response: %d", rec.Code)
 	}
 	for _, asset := range []string{"docs-navigation.js", "scene3d-bench-client.js"} {
-		if !strings.Contains(rec.Body.String(), `src="/`+asset+`?v=`+gosx.Version+`"`) {
+		assetURL := "/" + asset + "?release=" + gosx.Version
+		if !strings.Contains(rec.Body.String(), `src="`+assetURL+`"`) {
 			t.Errorf("missing release-versioned %s", asset)
+		}
+		assetResponse := httptest.NewRecorder()
+		handler.ServeHTTP(assetResponse, httptest.NewRequest(http.MethodGet, assetURL, nil))
+		if assetResponse.Code != http.StatusOK || strings.Contains(assetResponse.Header().Get("Cache-Control"), "immutable") {
+			t.Errorf("%s: status %d cache %q; release hints must not claim content immutability", asset, assetResponse.Code, assetResponse.Header().Get("Cache-Control"))
 		}
 	}
 }

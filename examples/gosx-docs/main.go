@@ -100,7 +100,7 @@ func buildDocsApp(root, port string) (*server.App, error) {
 
 	router := route.NewRouter()
 	router.SetLayout(func(ctx *route.RouteContext, body gosx.Node) gosx.Node {
-		ctx.AddHead(gosx.RawHTML(`<script defer src="/docs-navigation.js?v=` + gosx.Version + `"></script>`))
+		ctx.AddHead(gosx.RawHTML(`<script defer src="/docs-navigation.js?release=` + gosx.Version + `"></script>`))
 		if ctx.Request == nil || ctx.Request.URL == nil || !strings.HasPrefix(ctx.Request.URL.Path, "/demos") {
 			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/SpaceGrotesk-Bold.woff2" as="font" type="font/woff2" crossorigin>`))
 			ctx.AddHead(gosx.RawHTML(`<link rel="preload" href="/fonts/Inter-400.woff2" as="font" type="font/woff2" crossorigin>`))

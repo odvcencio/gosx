@@ -423,7 +423,7 @@ func TestScene3DBenchRewrittenShape(t *testing.T) {
 		t.Fatalf("read scene3d-bench-client.js: %v", err)
 	}
 	clientSrc := string(clientSource)
-	if !strings.Contains(gsxSrc, `src="/scene3d-bench-client.js"`) {
+	if !strings.Contains(gsxSrc, `src={data.clientScriptURL}`) {
 		t.Error("scene3d-bench/page.gsx must load the benchmark client")
 	}
 

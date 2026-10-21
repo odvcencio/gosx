@@ -17,7 +17,7 @@ func init() {
 				return map[string]any{
 					"scene":           BenchScene(workload),
 					"workload":        workloadLabel(workload),
-					"clientScriptURL": "/scene3d-bench-client.js?v=" + gosx.Version,
+					"clientScriptURL": "/scene3d-bench-client.js?release=" + gosx.Version,
 				}, nil
 			},
 		},
