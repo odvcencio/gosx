@@ -22,20 +22,22 @@ remote=/tmp/gosx-fir-parity
 ssh_opts=(-o BatchMode=yes)
 
 rm -rf "$out"
-mkdir -p "$out/det" "$out/det/parity" "$out/physics"
+mkdir -p "$out/det" "$out/det/parity" "$out/physics" "$out/vessel"
 (
 	cd "$root"
 	GOOS=darwin GOARCH=arm64 "$GO" test -c -o "$out/det/det.test" ./det
 	GOOS=darwin GOARCH=arm64 "$GO" test -c -o "$out/det/parity/parity.test" ./det/parity
 	GOOS=darwin GOARCH=arm64 "$GO" test -c -o "$out/physics/physics.test" ./physics
+	GOOS=darwin GOARCH=arm64 "$GO" test -c -o "$out/vessel/vessel.test" ./vessel
 )
 cp -R "$root/physics/testdata" "$out/physics/testdata"
+cp -R "$root/vessel/testdata" "$out/vessel/testdata"
 
 cleanup() { ssh "${ssh_opts[@]}" "$host" "rm -rf $remote" || true; }
 trap cleanup EXIT
 
 ssh "${ssh_opts[@]}" "$host" "rm -rf $remote && mkdir -p $remote"
-scp -q -r "${ssh_opts[@]}" "$out/det" "$out/physics" "$host:$remote/"
+scp -q -r "${ssh_opts[@]}" "$out/det" "$out/physics" "$out/vessel" "$host:$remote/"
 
 run() { # dir binary pattern
 	echo "== arm64 on $host: $1/$2 -test.run '$3'"
@@ -44,4 +46,5 @@ run() { # dir binary pattern
 run det det.test '.'
 run det/parity parity.test '.'
 run physics physics.test 'TestParityCorpus|TestFusedMultiplyAddProbeIsSound'
+run vessel vessel.test 'TestParityVoyages|TestStateCodecRoundTrip'
 echo "det parity: arm64 on $host passed"
