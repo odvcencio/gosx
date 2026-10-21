@@ -592,6 +592,9 @@ type RuntimeState struct {
 	TimeScale *float64            `json:"timeScale,omitempty"`
 	Paused    *bool               `json:"paused,omitempty"`
 	Physics   *physics.WorldState `json:"physics,omitempty"`
+	// World holds registered world content. Only a SaveCodec snapshot writes
+	// it; the default snapshot leaves it out.
+	World *WorldSave `json:"world,omitempty"`
 }
 
 // Snapshot returns a restorable runtime checkpoint for sim.Runner.
@@ -618,6 +621,11 @@ func (r *Runtime) Restore(snapshot []byte) {
 	if err := json.Unmarshal(snapshot, &state); err != nil {
 		return
 	}
+	r.applyRuntimeState(state)
+}
+
+// applyRuntimeState restores the clock, time control settings and physics.
+func (r *Runtime) applyRuntimeState(state RuntimeState) {
 	if r.clock != nil {
 		elapsed := time.Duration(state.TimeSeconds * float64(time.Second))
 		if state.TimeNanos != nil {
@@ -652,6 +660,15 @@ func (r *Runtime) State() []byte {
 }
 
 func (r *Runtime) defaultState() []byte {
+	data, err := json.Marshal(r.runtimeState())
+	if err != nil {
+		return nil
+	}
+	return data
+}
+
+// runtimeState captures the clock, time control settings and physics.
+func (r *Runtime) runtimeState() RuntimeState {
 	nanos := int64(r.frame.Time)
 	state := RuntimeState{
 		Frame:       r.frame.Index,
@@ -668,11 +685,7 @@ func (r *Runtime) defaultState() []byte {
 			state.Physics = &physicsState
 		}
 	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		return nil
-	}
-	return data
+	return state
 }
 
 func cloneSimInputs(inputs map[string]sim.Input) map[string]sim.Input {
