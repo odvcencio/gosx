@@ -1,7 +1,12 @@
 package checkers
 
 func Page() Node {
-	return <section class="checkers-showcase chinese-checkers" aria-labelledby="checkers-title" data-checkers-root data-gosx-scene3d-status-scope>
+	return <section
+		class="checkers-showcase chinese-checkers"
+		aria-labelledby="checkers-title"
+		data-checkers-root
+		data-gosx-scene3d-status-scope
+	>
 		<header class="checkers-showcase__intro">
 			<p class="checkers-showcase__eyebrow">Board 01 · live match</p>
 			<h1 id="checkers-title">Chinese Checkers</h1>
