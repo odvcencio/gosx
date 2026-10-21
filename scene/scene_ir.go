@@ -348,6 +348,8 @@ type ModelIR struct {
 	AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
 	AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
 	Loop               *bool    `json:"loop,omitempty"`
+	ClipSampled        bool     `json:"clipSampled,omitempty"`
+	RootMotion         bool     `json:"rootMotion,omitempty"`
 }
 
 // MarshalJSON emits both the embedded ObjectIR fields AND the ModelIR
@@ -388,6 +390,8 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
 		AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
 		Loop               *bool    `json:"loop,omitempty"`
+		ClipSampled        bool     `json:"clipSampled,omitempty"`
+		RootMotion         bool     `json:"rootMotion,omitempty"`
 	}
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
@@ -409,6 +413,8 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		AnimationFadeInMS:  nonNegativeIntPtr(m.AnimationFadeInMS),
 		AnimationFadeOutMS: nonNegativeIntPtr(m.AnimationFadeOutMS),
 		Loop:               m.Loop,
+		ClipSampled:        m.ClipSampled,
+		RootMotion:         m.RootMotion,
 	})
 }
 
@@ -2306,6 +2312,12 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumericPtr(record, "animationWeight", nonNegativeFloatPtr(item.AnimationWeight))
 	setIntPtr(record, "animationFadeInMS", nonNegativeIntPtr(item.AnimationFadeInMS))
 	setIntPtr(record, "animationFadeOutMS", nonNegativeIntPtr(item.AnimationFadeOutMS))
+	if item.ClipSampled {
+		record["clipSampled"] = true
+	}
+	if item.RootMotion {
+		record["rootMotion"] = true
+	}
 	if item.Loop != nil {
 		record["loop"] = *item.Loop
 	}

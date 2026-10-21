@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Add sampled clip frames to Scene3D, so an app can pose a skinned model from
+  its own simulation clock. Declare `scene.Model{ID: ..., ClipSampled: true}`,
+  then send `scene.ClipFrame` (up to four layers per model: clip name or
+  index, exact clip time, weight, loop flag) through `scene.DispatchClipFrame`
+  or `window.__gosx.scene3d.dispatchClipFrame`. The new binary frame type GSP4
+  takes 11 bytes per layer, with no JSON per frame. The browser runs no clock
+  for a sampled model, and the same layers give the same pose after a jump
+  backwards (a rollback) or forwards. Time past a clip's end wraps for a
+  looping layer and holds the last key otherwise. Clip root motion is ignored
+  by default (horizontal translation of root nodes keeps its authored value);
+  `Model.RootMotion` applies it. Existing models and `PoseFrame`/`MotionFrame`
+  behave as before. See `docs/scene3d-clip-frames.md`.
+
 - Add `m31labs.dev/gosx/det`, assembly-free and fusion-proof versions of Exp,
   Exp2, Log, Log2, Log10, Pow, Sin, Cos, Tan, Asin, Acos, Atan, Atan2, Hypot,
   Sinh, Cosh and Tanh that return the same bits on js/wasm, amd64 and arm64,

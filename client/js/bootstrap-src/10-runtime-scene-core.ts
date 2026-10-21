@@ -1571,6 +1571,8 @@
       fitAlign: typeof current.fitAlign === "string" ? current.fitAlign.trim() : "",
       animation: typeof current.animation === "string" && current.animation.trim() ? current.animation.trim() : "",
       animationSeq: typeof current.animationSeq === "string" ? current.animationSeq : "",
+      clipSampled: sceneBool(current.clipSampled, false),
+      rootMotion: sceneBool(current.rootMotion, false),
       loop: Object.prototype.hasOwnProperty.call(current, "loop") ? sceneBool(current.loop, true) : true,
       interactive: sceneBool(current.interactive, false),
       label: typeof current.label === "string" ? current.label.trim() : "",

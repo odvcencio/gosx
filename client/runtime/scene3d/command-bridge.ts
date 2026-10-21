@@ -6,6 +6,7 @@
  * @property {(target: unknown, commands: unknown[], options?: object) => Promise<unknown>} dispatchCommands
  * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchPoseFrame
  * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchMotionFrame
+ * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchClipFrame
  * @property {(root: ParentNode) => unknown} applyCommandScripts
  */
 
@@ -24,7 +25,7 @@
   };
 
   // All public command and presentation calls share one demand-loaded bridge.
-  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline", "burstParticles", "setCamera", "whenReady", "setAnimationClock"].forEach(function(method) {
+  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "dispatchClipFrame", "playTimeline", "burstParticles", "setCamera", "whenReady", "setAnimationClock"].forEach(function(method) {
     api[method] = function() {
       const args = arguments;
       return loadCommandBridge().then(function(bridge) { return bridge[method](...args); });

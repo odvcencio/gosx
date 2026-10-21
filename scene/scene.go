@@ -1198,10 +1198,23 @@ type Model struct {
 	AnimationFadeInMS  *int
 	AnimationFadeOutMS *int
 	Loop               *bool
-	Transition         Transition
-	InState            *ModelProps
-	OutState           *ModelProps
-	Live               []string
+	// ClipSampled opts this model into sampled animation. The model needs an
+	// ID. A sampled model has no client animation clock: it holds its bind
+	// pose until a ClipFrame poses it, and the Animation, Loop and speed
+	// fields above do not drive it. ClipFrame documents the sampling rules.
+	ClipSampled bool
+	// RootMotion applies clip root motion to a ClipSampled model. By default
+	// it is false and the simulation owns position: the horizontal (X and Z)
+	// translation of each root node is replaced by its authored value, so a
+	// walk or lunge clip does not slide the model away from the position the
+	// app sets. A root node is a glTF scene root or the topmost joint of a
+	// skin. Vertical (Y) translation is kept, so crouches and hip height still
+	// animate. Rotation and scale are never altered.
+	RootMotion bool
+	Transition Transition
+	InState    *ModelProps
+	OutState   *ModelProps
+	Live       []string
 }
 
 // Decal projects a planar texture or color marker into the scene. The initial
@@ -3679,6 +3692,8 @@ func (l *graphLowerer) lowerModel(model Model, parent worldTransform) {
 	record.AnimationFadeInMS = nonNegativeIntPtr(model.AnimationFadeInMS)
 	record.AnimationFadeOutMS = nonNegativeIntPtr(model.AnimationFadeOutMS)
 	record.Loop = model.Loop
+	record.ClipSampled = model.ClipSampled
+	record.RootMotion = model.ClipSampled && model.RootMotion
 	l.models = append(l.models, record)
 	l.anchors[id] = world
 }

@@ -480,6 +480,118 @@
     return { applied: true, binary: true };
   }
 
+  // Sampled clip frames (GSP4) pose skinned models from exact clip times. A
+  // frame is complete state for the models it names, so there is no queue and
+  // no supersession: frames apply in dispatch order and the last one wins.
+  // decodeClipFrame validates the whole frame before anything reaches a model.
+  function decodeClipFrame(input: any) {
+    var bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
+    if (!(bytes instanceof Uint8Array)) throw new TypeError("Scene3D clip frame must be an ArrayBuffer or Uint8Array");
+    var view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    var decoder = new TextDecoder("utf-8", { fatal: true });
+    var offset = 0;
+    function need(size: number) {
+      if (size > view.byteLength - offset) throw new RangeError("truncated Scene3D clip frame");
+    }
+    function u16() { need(2); var value = view.getUint16(offset, true); offset += 2; return value; }
+    function id() {
+      var length = u16();
+      if (!length) throw new TypeError("empty Scene3D clip frame ID");
+      need(length);
+      var value = decoder.decode(bytes.subarray(offset, offset + length));
+      offset += length;
+      return value;
+    }
+    function number() {
+      need(4);
+      var value = view.getFloat32(offset, true);
+      offset += 4;
+      if (!Number.isFinite(value)) throw new TypeError("non-finite Scene3D clip frame value");
+      return value;
+    }
+    need(6);
+    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || view.getUint8(3) !== 52) {
+      throw new TypeError("unsupported Scene3D clip frame version");
+    }
+    offset = 4;
+    var nameCount = u16();
+    var names = [];
+    for (var n = 0; n < nameCount; n++) names.push(id());
+    var count = u16();
+    var models = [];
+    var seen = new Set();
+    for (var i = 0; i < count; i++) {
+      var modelID = id();
+      if (seen.has(modelID)) throw new TypeError("duplicate Scene3D clip frame model ID");
+      seen.add(modelID);
+      need(1);
+      var layerCount = view.getUint8(offset++);
+      if (layerCount > 4) throw new RangeError("too many Scene3D clip frame layers");
+      var layers = [];
+      for (var j = 0; j < layerCount; j++) {
+        var ref = u16();
+        var layer: any = { name: "", index: 0, time: 0, weight: 0, loop: false };
+        if (ref & 0x8000) layer.index = ref & 0x7fff;
+        else if (ref < names.length) layer.name = names[ref];
+        else throw new RangeError("unknown Scene3D clip frame clip name");
+        layer.time = number();
+        layer.weight = number();
+        if (layer.time < 0 || layer.weight < 0) throw new RangeError("negative Scene3D clip frame time or weight");
+        need(1);
+        var flags = view.getUint8(offset++);
+        if (flags > 1) throw new TypeError("invalid Scene3D clip frame layer flags");
+        layer.loop = flags === 1;
+        layers.push(layer);
+      }
+      models.push({ id: modelID, layers: layers });
+    }
+    if (offset !== view.byteLength) throw new RangeError("trailing Scene3D clip frame data");
+    return models;
+  }
+
+  function clipFrameStats(target: any, opts: any) {
+    var rec = record(target, opts);
+    var stats = (rec && rec.handle.__gosxClipFrameStats) || { accepted: 0, errors: 0, lastError: "", rejected: Object.create(null) };
+    if (rec) rec.handle.__gosxClipFrameStats = stats;
+    return stats;
+  }
+
+  function dispatchClipFrame(target: any, frame: any, options: any) {
+    var opts = options || {};
+    if (!key(target, opts) && !target) return Promise.reject(new Error("Scene3D clip frame target has no stable id"));
+    var models;
+    try { models = decodeClipFrame(frame); } catch (error) { return Promise.reject(error); }
+    return waitForCommandMount(target, opts, "clip frame", function(rec, resolve, reject) {
+      if (typeof rec.handle.applyClipFrame !== "function") return reject(new Error("Scene3D clip frames are unsupported by this mount"));
+      try { resolve(rec.handle.applyClipFrame(models)); } catch (error) { reject(error); }
+    }).catch(function(error) {
+      var stats = clipFrameStats(target, opts);
+      stats.errors++;
+      stats.lastError = String(error && error.message || error);
+      var rec = record(target, opts);
+      var eventTarget = rec && rec.mount || window;
+      if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
+        try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:clip-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
+      }
+      throw error;
+    });
+  }
+
+  function applyMountedClipFrame(state: any, models: any, animationApi: any, applyPose: any, scheduleRender: any, handle: any) {
+    var stats = handle.__gosxClipFrameStats || (handle.__gosxClipFrameStats = { accepted: 0, errors: 0, lastError: "", rejected: Object.create(null) });
+    // The animation chunk loads with the first skinned model. Without it no
+    // model can be sampled yet, which is the same as a renderer that is not ready.
+    var result = animationApi && animationApi.applyClipFrame ? animationApi.applyClipFrame(state, models, applyPose) : { applied: false, reason: "renderer-not-ready" };
+    if (!result || result.applied !== true) {
+      var reason = String(result && result.reason || "invalid-frame");
+      stats.rejected[reason] = (stats.rejected[reason] || 0) + 1;
+      throw new Error("Scene3D clip frame rejected: " + reason + (result && result.id ? " (" + result.id + ")" : ""));
+    }
+    stats.accepted++;
+    if (!result.pending) scheduleRender("clip-frame");
+    return { applied: true, binary: true, pending: Boolean(result.pending) };
+  }
+
   // GPU-driven crowd motion retains its own queues and mount validation.
   var motionQueues = new Map();
 
@@ -655,6 +767,9 @@
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,
+    dispatchClipFrame: dispatchClipFrame,
+    decodeClipFrame: decodeClipFrame,
+    applyMountedClipFrame: applyMountedClipFrame,
     dispatchMotionFrame: dispatchMotionFrame,
     decodeMotionFrame: decodeMotionFrame,
     applyMountedMotionFrame: applyMountedMotionFrame,

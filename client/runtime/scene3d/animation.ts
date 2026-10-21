@@ -713,6 +713,216 @@
     };
   }
 
+  // ---------------------------------------------------------------------------
+  // Sampled clip layers (GSP4): the caller supplies exact clip times
+  // ---------------------------------------------------------------------------
+  //
+  // A sampler holds no clock. sample(layers, count, output) is a pure function
+  // of the layers and the (immutable) clip data: the same layers always write
+  // the same transforms, in any call order, including after a jump backwards.
+  // Two details keep that true:
+  //  - Keyframe search is stateless. The mixer caches channel._lastIndex, and a
+  //    cached start index changes which key a time exactly on a key boundary
+  //    picks (visible with STEP). The sampler recomputes the index by binary
+  //    search before every interpolation.
+  //  - Blending runs in layer order over reused result slots that are fully
+  //    rewritten each call, so no value survives from an earlier call.
+  // Time past the clip end follows the layer's loop flag via
+  // sceneAnimationSampleTime: loop wraps (modulo duration), once clamps.
+
+  // Smallest i in [0, n-2] with times[i + 1] >= time. This is the index a scan
+  // from zero reaches, so the result does not depend on any earlier call.
+  function sceneAnimSeekChannel(channel: any, time: number) {
+    var times = channel.times;
+    var lo = 0, hi = times.length - 2;
+    if (hi < 0 || time <= times[0] || time >= times[times.length - 1]) {
+      channel._lastIndex = 0;
+      return;
+    }
+    while (lo < hi) {
+      var mid = (lo + hi) >> 1;
+      if (times[mid + 1] >= time) hi = mid; else lo = mid + 1;
+    }
+    channel._lastIndex = lo;
+  }
+
+  function sceneClipChannelTarget(channel: any) {
+    return channel.targetID != null ? channel.targetID : channel.targetNode;
+  }
+
+  // Authored horizontal translation of a root node (used when root motion is off).
+  function sceneClipAuthoredHorizontal(node: any, axis: number) {
+    if (node && node.translation && node.translation.length >= 3) return node.translation[axis];
+    if (node && node.matrix && node.matrix.length === 16) return node.matrix[axis === 0 ? 12 : 14];
+    return 0;
+  }
+
+  // Root nodes: glTF scene roots and the topmost joint of each skin.
+  function sceneClipRootNodes(nodes: any[], skins: any, rootNodes: any) {
+    var roots = new Set<any>();
+    var list = Array.isArray(rootNodes) ? rootNodes : [];
+    for (var i = 0; i < list.length; i++) roots.add(list[i]);
+    var parent = new Map<any, any>();
+    for (var n = 0; n < nodes.length; n++) {
+      var children = nodes[n] && nodes[n].children;
+      if (children) for (var c = 0; c < children.length; c++) parent.set(children[c], n);
+    }
+    var skinList = Array.isArray(skins) ? skins : [];
+    for (var s = 0; s < skinList.length; s++) {
+      var joints = skinList[s] && skinList[s].joints;
+      if (!joints) continue;
+      var jointSet = new Set<any>(joints);
+      for (var j = 0; j < joints.length; j++) {
+        if (!jointSet.has(parent.get(joints[j]))) roots.add(joints[j]);
+      }
+    }
+    return roots;
+  }
+
+  // options: { nodes, skins, rootNodes, rootMotion }. clips is the model's own
+  // cloned clip list: a sampler writes channel._lastIndex, so clips must not be
+  // shared with another sampler or mixer that depends on that cache.
+  function sceneCreateClipSampler(clips: any[], options: any) {
+    var opts = options || {};
+    var nodes = Array.isArray(opts.nodes) ? opts.nodes : [];
+    var rootSet = opts.rootMotion === true ? null : sceneClipRootNodes(nodes, opts.skins, opts.rootNodes);
+    var byName = new Map<string, any>();
+    for (var ci = 0; ci < clips.length; ci++) {
+      if (clips[ci] && clips[ci].name && !byName.has(clips[ci].name)) byName.set(clips[ci].name, clips[ci]);
+    }
+    var missing = new Set<string>();
+    var results = new Map<string, any>();   // channel key -> blend slot, rewritten each call
+    var slots: any[] = [];             // slot pool, reused across calls
+    var entries: any[] = [];           // pose entry pool, reused across calls
+    var warned = missing;
+
+    function resolve(layer: any) {
+      if (layer.name) {
+        var named = byName.get(layer.name);
+        if (!named && !warned.has("n:" + layer.name)) { warned.add("n:" + layer.name); console.warn("[gosx] sampled animation clip not found:", layer.name); }
+        return named || null;
+      }
+      var indexed = clips[layer.index];
+      if (!indexed && !warned.has("i:" + layer.index)) { warned.add("i:" + layer.index); console.warn("[gosx] sampled animation clip index not found:", layer.index); }
+      return indexed || null;
+    }
+
+    function sample(layers: any[], count: number, output: Map<any, any>) {
+      results.clear();
+      var used = 0;
+      var n = Math.min(count, layers.length);
+      for (var li = 0; li < n; li++) {
+        var layer = layers[li];
+        var weight = layer.weight;
+        if (!(weight > 0)) continue;
+        var clip = resolve(layer);
+        if (!clip || !clip.channels) continue;
+        var time = sceneAnimationSampleTime(layer.time, clip.duration, layer.loop);
+        for (var c = 0; c < clip.channels.length; c++) {
+          var channel = clip.channels[c];
+          var target = sceneClipChannelTarget(channel);
+          var key = channel._skey;
+          if (key === undefined) key = channel._skey = target + ":" + channel.property;
+          sceneAnimSeekChannel(channel, time);
+          var value = sceneAnimInterpolateChannel(channel, time);
+          var slot = results.get(key);
+          if (!slot) {
+            slot = slots[used];
+            if (!slot) slot = slots[used] = { targetID: 0, property: "", value: [], totalWeight: 0 };
+            used++;
+            var width = channel.property === "rotation" ? 4 : sceneAnimChannelWidth(channel);
+            slot.targetID = target;
+            slot.property = channel.property;
+            slot.value.length = width;
+            for (var v = 0; v < width; v++) slot.value[v] = value[v];
+            slot.totalWeight = weight;
+            results.set(key, slot);
+          } else {
+            sceneAnimBlendValue(slot, value, weight, channel.property);
+          }
+        }
+      }
+      var entryCount = 0;
+      results.forEach(function(slot: any) {
+        if (rootSet && slot.property === "translation" && rootSet.has(slot.targetID)) {
+          // The simulation owns position: keep the authored horizontal offset.
+          var node = nodes[slot.targetID];
+          slot.value[0] = sceneClipAuthoredHorizontal(node, 0);
+          slot.value[2] = sceneClipAuthoredHorizontal(node, 2);
+        }
+        var entry = output.get(slot.targetID);
+        if (!entry) {
+          entry = entries[entryCount];
+          if (!entry) entry = entries[entryCount] = {};
+          else { entry.translation = entry.rotation = entry.scale = entry.weights = undefined; }
+          entryCount++;
+          output.set(slot.targetID, entry);
+        }
+        entry[slot.property] = slot.value;
+      });
+      return output;
+    }
+
+    return { sample: sample };
+  }
+
+  // Sampled models (Model.ClipSampled) have no mixer and no clock. The caller
+  // registers them in _modelAnimations only so a live transform patch
+  // (poseDirty) re-skins them; isModelPlaying is false for them, so no frame
+  // ever advances their time.
+  function sceneConfigureSampledRecord(state: any, record: any, clips: any[], instanceModel: any) {
+    record.clipSampler = sceneCreateClipSampler(clips, {
+      nodes: record.nodes,
+      skins: record.skins.map(function(skin: any) { return { joints: skin && skin.joints }; }),
+      rootNodes: record.rootNodes,
+      rootMotion: instanceModel.rootMotion === true,
+    });
+    record.sampledLayers = [];
+    record.sampledLayerCount = 0;
+    // A scene replacement re-hydrates models. Re-pose from the last frame the
+    // app sent instead of showing the bind pose until the next frame arrives.
+    var last = state && state._clipFrameLayers && state._clipFrameLayers.get(record.id);
+    if (last) {
+      record.sampledLayers = last.slice();
+      record.sampledLayerCount = last.length;
+    }
+  }
+
+  // sceneApplyClipFrame applies a decoded GSP4 ClipFrame: [{ id, layers }].
+  // Each model's layers replace its previous layers (no history is kept) and
+  // the model is re-skinned immediately through applyPose(record, 0, false).
+  // Validation happens before any write, so a rejected frame changes nothing.
+  function sceneApplyClipFrame(state: any, models: any, applyPose: any) {
+    if (!state || !Array.isArray(models)) return { applied: false, reason: "invalid-frame" };
+    if (!(state._clipFrameLayers instanceof Map)) state._clipFrameLayers = new Map();
+    var pending = Boolean(state._modelHydrationPromise || state._modelHydrationUncommitted);
+    var skins = Array.isArray(state._modelSkins) ? state._modelSkins : [];
+    var index = state._clipRecordIndex;
+    if (!index || index.skins !== skins || index.length !== skins.length) {
+      index = { skins: skins, length: skins.length, byID: new Map<any, any>() };
+      for (var i = 0; i < skins.length; i++) {
+        if (skins[i] && skins[i].clipSampler && skins[i].id) index.byID.set(skins[i].id, skins[i]);
+      }
+      state._clipRecordIndex = index;
+    }
+    var records: any[] = [];
+    for (var m = 0; m < models.length; m++) {
+      var found = index.byID.get(models[m].id);
+      if (!found && !pending) return { applied: false, reason: "unknown-model", id: models[m].id };
+      records.push(found || null);
+    }
+    for (var w = 0; w < models.length; w++) {
+      var layers = models[w].layers;
+      state._clipFrameLayers.set(models[w].id, layers);
+      var target = records[w];
+      if (!target) continue;
+      target.sampledLayers = layers;
+      target.sampledLayerCount = layers.length;
+      applyPose(target, 0, false);
+    }
+    return { applied: true, pending: pending };
+  }
+
   // Model playback control belongs to the animation authority. Core hydration
   // owns records and geometry; these adapters only drive their existing mixers.
   const sceneModelAnimationControlFields = ["loop", "animationSpeed", "animationWeight", "animationFadeInMS", "animationFadeOutMS"];
@@ -874,6 +1084,9 @@
       computeJointMatrices: sceneAnimComputeJointMatrices,
       wasmClipJSON: sceneAnimWasmClipJSON,
       wasmDecodePose: sceneAnimWasmDecodePose,
+      createClipSampler: sceneCreateClipSampler,
+      configureSampledRecord: sceneConfigureSampledRecord,
+      applyClipFrame: sceneApplyClipFrame,
     };
     window.__gosx_scene3d_animation_loaded = true;
   }
