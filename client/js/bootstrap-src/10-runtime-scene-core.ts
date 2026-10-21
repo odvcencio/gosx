@@ -5563,6 +5563,22 @@
       sceneNumber(object.scaleZ, 1) === 1;
   }
 
+  // The batch record carries one appearance. InstancedGLB agents of a batch
+  // share theirs, so this only keeps a hand-built agent that differs from its
+  // batch off the shared record.
+  const sceneCrowdBatchAppearanceKeys = ["material", "materialKind", "color", "texture", "opacity", "emissive",
+    "roughness", "metalness", "ior", "alphaCutoff", "specularIntensity", "specularColor", "blendMode", "renderPass"];
+
+  function sceneCrowdBatchSameAppearance(first, object) {
+    for (let i = 0; i < sceneCrowdBatchAppearanceKeys.length; i += 1) {
+      const a = first[sceneCrowdBatchAppearanceKeys[i]], b = object[sceneCrowdBatchAppearanceKeys[i]];
+      if (a === b) continue;
+      // Each agent is normalized on its own, so a color array is a fresh copy.
+      if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length || a.some((value, j) => value !== b[j])) return false;
+    }
+    return true;
+  }
+
   function sceneCrowdBatchGroupMatches(group, object, skin, vertices, mode) {
     return group.vertices === vertices && group.batchID === skin.batchID && group.mode === mode &&
       group.cast === (object.castShadow === true) && group.recv === (object.receiveShadow === true) &&
@@ -5725,7 +5741,8 @@
           group.changed = true;
         }
       } else {
-        if (mode === 0 && !sceneCrowdMatrixPlain(object, parent)) {
+        if (mode === 0 && !sceneCrowdMatrixPlain(object, parent) ||
+            slot > 0 && !sceneCrowdBatchSameAppearance(group.objects[0], object)) {
           rest.push(object);
           continue;
         }

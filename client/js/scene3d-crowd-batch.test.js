@@ -209,6 +209,18 @@ test("agents that cannot ride a shared matrix stay on their own records", async 
   assert.deepEqual(Array.from(own), ["crowd/agent-2/0", "crowd/agent-4/0"]);
 });
 
+test("an agent whose appearance differs from its batch stays on its own record", async () => {
+  const api = await makeSceneApiEnv();
+  const objects = makeCrowd(api, 6);
+  // Hydration normalizes every agent separately, so equal array fields are distinct copies.
+  for (const object of objects) object.specularColor = Array.from(object.specularColor || [1, 1, 1]);
+  objects[3].color = "#ff0000";
+  const bundle = build(api, objects);
+  const [record] = batchRecords(bundle);
+  assert.equal(record.instanceCount, 5);
+  assert.deepEqual(Array.from(bundle.meshObjects.filter(entry => !entry._crowdBatch), entry => entry.id), ["crowd/agent-3/0"]);
+});
+
 test("a translucent crowd keeps one record per agent so each sorts by depth", async () => {
   const api = await makeSceneApiEnv();
   const objects = makeCrowd(api, 6, { appearance: { opacity: .5, blendMode: "alpha" } });
