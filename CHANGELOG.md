@@ -42,6 +42,18 @@
   `data-gosx-scene3d-ready` and `data-gosx-scene3d-model-hydration-committed`,
   and two animation frames pass. It sends at most once per socket, so it holds
   across reconnects and enhanced navigation. Default behavior is unchanged.
+- Cut the per-frame main-thread cost of animated crowds. A WebGL
+  crowd (palette-skinned `InstancedGLB` actors or GSP3 motion batches) now
+  reaches the render bundle as one record per batch instead of one per agent,
+  and the batch keeps that record from frame to frame. Moving agents, pose
+  frames and motion frames bump a batch revision; the renderer repacks and
+  uploads a batch only when its revision changes. The prepared scene no longer
+  rebuilds when only the camera, the viewport or opaque mesh depth changes, and
+  translucent objects still sort by the current camera. At 5,000 agents, bundle
+  plus planner time falls from about 26 ms to about 1 ms per frame in the Node
+  benchmark (`node client/js/scene3d-crowd-frame.bench.mjs`). The color pass
+  now culls a crowd batch as a whole rather than agent by agent; every agent
+  still casts shadows.
 
 - Preserve signed 64-bit integer values in shared-signal JSON batches, including
   nested IDs and counters. State snapshots and event batches use the same exact
