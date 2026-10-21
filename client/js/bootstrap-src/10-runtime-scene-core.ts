@@ -5539,11 +5539,14 @@
   // _crowdSkin.rev. Motion writers set _crowdMotion.dirty, which the renderer
   // clears after it uploads the record.
   //
-  // Reserved seam: crowdParentMatrix (a matrix applied to the whole batch) and
-  // crowdDirtyRanges (slot ranges that changed since the last pack) are null
-  // today, meaning "no batch transform" and "everything may have changed".
-  // Partial slot-indexed motion frames and a moving parent can fill them in
-  // without reshaping the record.
+  // Two record fields carry batch-level knowledge to the renderer.
+  // crowdDirtyRanges is a flat list of [start, end) slot pairs naming the
+  // agents whose motion record changed in the revision the record carries.
+  // The renderer may copy only those slots, but only if it last packed
+  // revision crowdDirtyBase; any other renderer, or null, means "everything
+  // may have changed". crowdParentMatrix is a matrix applied once to the
+  // whole batch (see the parent section below); null means no batch
+  // transform.
   const sceneCrowdBatchGroups = new Map();
   const sceneCrowdBatchStaleBundles = 8;
   const sceneCrowdBatchIdentity = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -5603,6 +5606,7 @@
       key, id: "crowd-batch-" + (++sceneCrowdBatchSequence), alive: true,
       batchID: skin.batchID, vertices, mode, cast, recv, dbl, depthWrite: object.depthWrite,
       epoch: 0, n: 0, count: 0, revision: 0, shape: 0, changed: false, reshaped: false,
+      dirty: [], dirtyEpoch: 0, dirtyFull: true,
       objects: [], skins: [], matrices: [], motions: [], revs: [],
       transforms: null, poses: null,
       bounds: { minX: 0, minY: 0, minZ: 0, maxX: 0, maxY: 0, maxZ: 0 },
@@ -5669,6 +5673,21 @@
     }
   }
 
+  // sceneCrowdBatchMark records that the agent in `slot` changed this bundle.
+  // Slots arrive in ascending order within a bundle, so a run of neighbours
+  // extends the last range. Past 64 ranges the last one stretches to cover the
+  // gap; copying a clean slot again is harmless.
+  function sceneCrowdBatchMark(group, slot, epoch) {
+    const ranges = group.dirty;
+    if (group.dirtyEpoch !== epoch) {
+      group.dirtyEpoch = epoch;
+      ranges.length = 0;
+    }
+    const n = ranges.length;
+    if (n !== 0 && (ranges[n - 1] === slot || n >= 128)) ranges[n - 1] = slot + 1;
+    else ranges.push(slot, slot + 1);
+  }
+
   function sceneCrowdBatchEnter(group, epoch, active) {
     group.epoch = epoch;
     group.n = 0;
@@ -5704,8 +5723,10 @@
           if (known.revs[slot] !== skin.rev) {
             known.revs[slot] = skin.rev;
             known.changed = true;
+            sceneCrowdBatchMark(known, slot, epoch);
           } else if (knownMotion !== null && knownMotion.dirty === true) {
             known.changed = true;
+            sceneCrowdBatchMark(known, slot, epoch);
           }
           known.n = slot + 1;
           continue;
@@ -5739,8 +5760,10 @@
         if (group.revs[slot] !== skin.rev) {
           group.revs[slot] = skin.rev;
           group.changed = true;
+          sceneCrowdBatchMark(group, slot, epoch);
         } else if (motion !== null && motion.dirty === true) {
           group.changed = true;
+          sceneCrowdBatchMark(group, slot, epoch);
         }
       } else {
         if (mode === 0 && !sceneCrowdMatrixPlain(object, parent) ||
@@ -5769,6 +5792,9 @@
       }
       if (group.changed && group.count > 0) {
         group.revision += 1;
+        // Slot ranges describe this revision only when no agent joined, left
+        // or moved slot and the batch draws from motion records.
+        group.dirtyFull = group.reshaped || group.mode !== 1 || group.dirtyEpoch !== epoch;
         sceneCrowdBatchRefreshBounds(group);
         if (group.mode === 0) sceneCrowdBatchPack(group);
       }
@@ -5839,9 +5865,9 @@
           skin: null, viewCulled: false, resourceOwner: group, geometryRevision: 0,
           vertexOffset: 0, bounds: group.bounds, vertices,
           _crowdBatch: true,
-          // Reserved for the batch-level parent transform and slot-indexed
-          // partial motion frames; null means none and "all slots".
-          crowdParentMatrix: null, crowdDirtyRanges: null,
+          // crowdParentMatrix: batch-level parent transform, null for none.
+          // crowdDirtyRanges: changed slot ranges, null for "all slots".
+          crowdParentMatrix: null, crowdDirtyRanges: null, crowdDirtyBase: -1,
           crowdPickRecords: function() { return sceneCrowdBatchPickRecords(group); },
         };
       }
@@ -5866,6 +5892,8 @@
       record.crowdTransforms = group.transforms;
       record.crowdPoses = group.poses;
       record.crowdMotion = motion;
+      record.crowdDirtyRanges = group.dirtyFull ? null : group.dirty;
+      record.crowdDirtyBase = group.revision - 1;
       record.crowdAtlas = motion ? first._crowdMotion.atlas : first._crowdSkin.atlas;
       record.crowdClipTable = motion ? first._crowdMotion.clipTable : null;
       sceneStampRetainedMeshCSSInput(record, group);

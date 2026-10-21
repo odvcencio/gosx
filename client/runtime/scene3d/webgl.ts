@@ -7852,7 +7852,7 @@
     // upload only changed instance ranges, even if several snapshots arrive
     // before rendering. batch._motionGeneration advances only on a copy.
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
-    function prepareCrowdMotionRecords(batch) {
+    function prepareCrowdMotionRecords(batch, ranges = null) {
       prepareCrowdAtlas(batch.atlas);
       const stride = SCENE_CROWD_MOTION_RECORD_FLOATS;
       const needed = batch.count * stride;
@@ -7876,13 +7876,20 @@
       }
       let touched = resync;
       if (resync) batch._motionDirtyFlags.fill(1, 0, batch.count);
-      for (let i = 0; i < batch.count; i++) {
-        const motion = members[i]._crowdMotion;
-        if (resync || motion.dirty) {
-          batch.motion.set(motion.record, i * stride);
-          batch._motionDirtyFlags[i] = 1;
-          motion.dirty = false;
-          touched = true;
+      // A caller that knows which slots changed passes [start, end) pairs and
+      // the scan skips every other slot.
+      const scans = !resync && ranges ? ranges.length : 2;
+      for (let r = 0; r < scans; r += 2) {
+        const from = !resync && ranges ? Math.max(0, ranges[r]) : 0;
+        const to = !resync && ranges ? Math.min(batch.count, ranges[r + 1]) : batch.count;
+        for (let i = from; i < to; i++) {
+          const motion = members[i]._crowdMotion;
+          if (resync || motion.dirty) {
+            batch.motion.set(motion.record, i * stride);
+            batch._motionDirtyFlags[i] = 1;
+            motion.dirty = false;
+            touched = true;
+          }
         }
       }
       if (touched) {
@@ -9620,9 +9627,12 @@
       batch.members = obj.crowdMembers; batch.shape = obj.crowdShape; batch.count = obj.instanceCount;
       batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses;
       if (batch._packedRevision !== obj.crowdRevision) {
+        // Dirty slot ranges describe one revision. Use them only when this
+        // batch packed the revision just before it.
+        const ranges = obj.crowdDirtyRanges && batch._packedRevision === obj.crowdDirtyBase ? obj.crowdDirtyRanges : null;
         batch._packedRevision = obj.crowdRevision;
         batch._packGeneration++;
-        if (motion) prepareCrowdMotionRecords(batch); else prepareCrowdAtlas(batch.atlas);
+        if (motion) prepareCrowdMotionRecords(batch, ranges); else prepareCrowdAtlas(batch.atlas);
       }
       meshColorVisibility.set(obj, batch.count > 0 && !(obj.bounds && boundsOutsideSidePlanes(obj.bounds, planes)));
       if (batch.count > 0) rigidObjectBatches.set(obj, batch);

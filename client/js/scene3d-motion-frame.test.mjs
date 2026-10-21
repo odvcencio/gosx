@@ -319,3 +319,119 @@ test("sceneUpdateRigidInstanceMotion fails closed when the backend has no GPU-mo
   assert.throws(() => bridge.applyMountedMotionFrame(state, batches, context.sceneUpdateRigidInstanceMotion, () => {}, {}), /retained-motion-unavailable/);
   assert.equal(object._crowdMotion, undefined);
 });
+
+// ---- GSP4 partial motion frames ----
+
+// The bytes scene.EncodePartialMotionFrame writes for one batch "crowd" of 300
+// instances, with slots 2 and 257 carrying the same motion key. The Go golden
+// test in scene/motion_frame_partial_test.go builds the identical buffer.
+const GSP4_GOLDEN = Uint8Array.from(Buffer.from(
+  "475350340100040077616c6b0100050063726f77642c01020002000000803f00000040000040400000003f0000803e000000000000803f0000803f0000803f00002041000080400000a0400000c040000000000000403f0000003e00000040000000400000004000002841010000001841010000c03f" +
+  "01010000803f00000040000040400000003f0000803e000000000000803f0000803f0000803f00002041000080400000a0400000c040000000000000403f0000003e00000040000000400000004000002841010000001841010000c03f", "hex"));
+
+// partialFrame builds a GSP4 buffer by hand: one batch of `size` instances that
+// lists `slots`, each with the motion key prev(slot,0,0) -> next(slot+1,0,0).
+function partialFrame(slots, size = 300, id = "crowd") {
+  const bytes = [];
+  const encoder = new TextEncoder();
+  const text = value => { const chars = encoder.encode(value); bytes.push(chars.length, 0, ...chars); };
+  const u16 = value => bytes.push(value & 255, value >> 8);
+  const f32 = value => { const data = new DataView(new ArrayBuffer(4)); data.setFloat32(0, value, true); bytes.push(...new Uint8Array(data.buffer)); };
+  bytes.push(71, 83, 80, 52);
+  u16(1); text("run");
+  u16(1); text(id); u16(size); u16(slots.length);
+  for (const slot of slots) {
+    u16(slot);
+    for (const v of [slot, 0, 0, 0, 0, 0, 1, 1, 1, 10, slot + 1, 0, 0, 0, 0, 0, 1, 1, 1, 10.5]) f32(v);
+    u16(1); f32(9.5); bytes.push(1); f32(1);
+  }
+  return Uint8Array.from(bytes);
+}
+
+test("GSP4 decoder reads the golden bytes the Go encoder writes", () => {
+  const { bridge } = runtime();
+  const [batch] = bridge.decodeMotionFrame(GSP4_GOLDEN);
+  assert.equal(batch.id, "crowd");
+  assert.equal(batch.partial, true);
+  assert.equal(batch.size, 300);
+  assert.deepEqual(Array.from(batch.instances, instance => instance.slot), [2, 257]);
+  const instance = batch.instances[0];
+  assert.equal(instance.id, undefined, "partial instances are addressed by slot, not ID");
+  assert.deepEqual(Array.from([instance.prevX, instance.prevY, instance.prevZ, instance.prevRotationX, instance.prevRotationY, instance.prevRotationZ]), [1, 2, 3, .5, .25, 0]);
+  assert.deepEqual(Array.from([instance.prevScaleX, instance.tPrev, instance.nextX, instance.nextRotationY, instance.nextRotationZ, instance.nextScaleX, instance.tNext]), [1, 10, 4, .75, .125, 2, 10.5]);
+  assert.equal(instance.animation, "walk");
+  assert.equal(instance.clipStartTime, 9.5);
+  assert.equal(instance.animationLoop, true);
+  assert.equal(instance.playbackRate, 1.5);
+});
+
+test("GSP4 decoder rejects descending slots, slots outside the batch, trailing bytes and truncation", () => {
+  const { bridge } = runtime();
+  assert.throws(() => bridge.decodeMotionFrame(partialFrame([5, 5])), /ascend strictly/);
+  assert.throws(() => bridge.decodeMotionFrame(partialFrame([5, 3])), /ascend strictly/);
+  assert.throws(() => bridge.decodeMotionFrame(partialFrame([4], 4)), /outside its batch/);
+  assert.throws(() => bridge.decodeMotionFrame(partialFrame([0, 1, 2], 2)), /more instances/);
+  assert.throws(() => bridge.decodeMotionFrame(Uint8Array.from([...partialFrame([1]), 0])), /trailing/);
+  assert.throws(() => bridge.decodeMotionFrame(partialFrame([1]).subarray(0, -2)), /truncated/);
+  assert.throws(() => bridge.decodePoseFrame(partialFrame([1])), /unsupported .* version/);
+});
+
+test("applyMountedMotionFrame resolves partial slots to mounted IDs and checks the batch size", () => {
+  const { bridge } = runtime();
+  const instances = Array.from({ length: 6 }, (_, i) => ({ id: i === 3 ? "" : `agent-${i}` }));
+  const state = { instancedGLBMeshes: [{ id: "crowd", instances }], _hydratedModelRecords: {} };
+  const batches = bridge.decodeMotionFrame(partialFrame([1, 3, 5], 6));
+  const seen = [];
+  const result = bridge.applyMountedMotionFrame(state, batches, (s, b) => { seen.push(b[0].instances.map(i => i.id)); return true; }, () => {}, {});
+  assert.equal(result.applied, true);
+  assert.deepEqual(Array.from(seen[0]), ["agent-1", "instance-3", "agent-5"], "an unnamed agent is addressed the way hydration names it");
+  const stale = bridge.decodeMotionFrame(partialFrame([1], 7));
+  assert.throws(() => bridge.applyMountedMotionFrame(state, stale, () => true, () => {}, {}), /membership-changed/);
+  const missing = bridge.decodeMotionFrame(partialFrame([1], 6, "other"));
+  assert.throws(() => bridge.applyMountedMotionFrame(state, missing, () => true, () => {}, {}), /membership-changed/);
+});
+
+test("queued partial frames merge so no changed agent is dropped", async () => {
+  const applied = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const handle = {
+    __gosxScene3DCommandReady: true,
+    applyCommands() { return gate; },
+    applyMotionFrame(batches) { applied.push(batches); return { applied: true, binary: true }; },
+  };
+  const { bridge } = runtime(handle);
+  // The first frame is already running behind a gated beforeCommands job, so
+  // later frames queue.
+  const first = bridge.dispatchMotionFrame(handle, partialFrame([0]), { beforeCommands: [{ kind: 5 }] });
+  const a = bridge.dispatchMotionFrame(handle, partialFrame([1, 4]));
+  const b = bridge.dispatchMotionFrame(handle, partialFrame([4, 7]));
+  const full = bridge.dispatchMotionFrame(handle, frame());
+  const c = bridge.dispatchMotionFrame(handle, partialFrame([9]));
+  release();
+  const results = await Promise.all([first, a, b, full, c]);
+  assert.equal(results[1].superseded, true, "the older partial frame is folded into the newer one");
+  assert.equal(results[0].applied, true);
+  assert.deepEqual(applied.map(batches => batches[0].partial ? Array.from(batches[0].instances, i => i.slot) : "full"),
+    [[0], [1, 4, 7], "full", [9]]);
+  // Slot 4 carries the newer frame's motion key.
+  assert.equal(applied[1][0].instances[1].prevX, 4);
+});
+
+test("a full frame does not supersede a queued partial frame", async () => {
+  const applied = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const handle = {
+    __gosxScene3DCommandReady: true,
+    applyCommands() { return gate; },
+    applyMotionFrame(batches) { applied.push(batches[0].partial ? "partial" : "full"); return { applied: true, binary: true }; },
+  };
+  const { bridge } = runtime(handle);
+  const first = bridge.dispatchMotionFrame(handle, frame(), { beforeCommands: [{ kind: 5 }] });
+  const partial = bridge.dispatchMotionFrame(handle, partialFrame([2]));
+  const full = bridge.dispatchMotionFrame(handle, frame());
+  release();
+  await Promise.all([first, partial, full]);
+  assert.deepEqual(applied, ["full", "partial", "full"]);
+});

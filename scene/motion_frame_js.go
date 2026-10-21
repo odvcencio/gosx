@@ -29,7 +29,29 @@ func DispatchMotionFrame(target string, frame MotionFrame, fallbackCommands []Co
 // optional JSON and PoseFrame fallbacks. The browser keeps at most one
 // active and one latest pending transaction per target; stale pending frames
 // are superseded, exactly like DispatchPoseFrameAfterCommands.
-func DispatchMotionFrameAfterCommands(target string, beforeCommands []Command, frame MotionFrame, fallbackCommands []Command, fallbackPoseFrame *PoseFrame) (err error) {
+func DispatchMotionFrameAfterCommands(target string, beforeCommands []Command, frame MotionFrame, fallbackCommands []Command, fallbackPoseFrame *PoseFrame) error {
+	return dispatchMotionBytes(target, beforeCommands, fallbackCommands, fallbackPoseFrame, func(encoder *MotionFrameEncoder) ([]byte, error) {
+		return encoder.Encode(frame)
+	})
+}
+
+// DispatchPartialMotionFrame encodes a GSP4 frame (only the changed agents,
+// by slot) and applies it like DispatchMotionFrame. The client merges queued
+// partial frames instead of dropping the older one, so every changed agent
+// reaches the renderer.
+func DispatchPartialMotionFrame(target string, frame PartialMotionFrame, fallbackCommands []Command) error {
+	return DispatchPartialMotionFrameAfterCommands(target, nil, frame, fallbackCommands, nil)
+}
+
+// DispatchPartialMotionFrameAfterCommands is DispatchMotionFrameAfterCommands
+// for a PartialMotionFrame.
+func DispatchPartialMotionFrameAfterCommands(target string, beforeCommands []Command, frame PartialMotionFrame, fallbackCommands []Command, fallbackPoseFrame *PoseFrame) error {
+	return dispatchMotionBytes(target, beforeCommands, fallbackCommands, fallbackPoseFrame, func(encoder *MotionFrameEncoder) ([]byte, error) {
+		return encoder.EncodePartial(frame)
+	})
+}
+
+func dispatchMotionBytes(target string, beforeCommands []Command, fallbackCommands []Command, fallbackPoseFrame *PoseFrame, encode func(*MotionFrameEncoder) ([]byte, error)) (err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			err = fmt.Errorf("enqueue Scene3D motion frame: %v", recovered)
@@ -40,7 +62,7 @@ func DispatchMotionFrameAfterCommands(target string, beforeCommands []Command, f
 	}
 	encoder := motionEncoderPool.Get().(*MotionFrameEncoder)
 	defer motionEncoderPool.Put(encoder)
-	data, err := encoder.Encode(frame)
+	data, err := encode(encoder)
 	if err != nil {
 		return err
 	}

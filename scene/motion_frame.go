@@ -20,8 +20,11 @@ import (
 // PoseFrame: a mount that has not opted into the GPU-motion crowd path (or a
 // backend that has not implemented it) keeps applying PoseFrame exactly as
 // before. IDs must match an already-mounted InstancedGLBMesh batch in the
-// same instance order, exactly like PoseFrame. ParentMatrix is unsupported;
-// use a JSON scene command when it changes. Send EncodeMotionFrame's bytes to
+// same instance order, exactly like PoseFrame. A per-instance ParentMatrix is
+// unsupported. To ride a moving parent, set InstancedGLBMesh.ParentNode: the
+// transforms in a frame are then relative to that node and the renderer applies
+// the node's world matrix once per frame. To send only the agents that
+// changed, see PartialMotionFrame (GSP4). Send EncodeMotionFrame's bytes to
 // window.__gosx.scene3d.dispatchMotionFrame(target, bytes, options); supply
 // options.fallbackCommands or options.fallbackPoseFrame for a route that
 // still works when GPU-motion application is unavailable.
@@ -191,7 +194,7 @@ func (e *MotionFrameEncoder) Encode(frame MotionFrame) ([]byte, error) {
 		clear(e.seenInstances)
 		for _, instance := range batch.Instances {
 			if len(instance.ParentMatrix) != 0 {
-				return nil, errors.New("scene motion frame cannot encode parentMatrix; use JSON scene commands")
+				return nil, errors.New("scene motion frame cannot encode a per-instance parentMatrix; set InstancedGLBMesh.ParentNode for a batch-level parent, or use JSON scene commands")
 			}
 			if e.seenInstances[instance.ID] {
 				return nil, errors.New("scene motion frame has duplicate instance ID")
@@ -200,54 +203,55 @@ func (e *MotionFrameEncoder) Encode(frame MotionFrame) ([]byte, error) {
 			if err := appendID(instance.ID); err != nil {
 				return nil, err
 			}
-			if math.IsNaN(instance.TPrev) || math.IsInf(instance.TPrev, 0) ||
-				math.IsNaN(instance.TNext) || math.IsInf(instance.TNext, 0) {
-				return nil, errors.New("scene motion frame requires finite float32 values")
-			}
-			if !(float32(instance.TNext) > float32(instance.TPrev)) {
-				return nil, errors.New("scene motion frame requires TNext after TPrev")
-			}
-			transforms := [...]float64{
-				instance.PrevX, instance.PrevY, instance.PrevZ,
-				instance.PrevRotationX, instance.PrevRotationY, instance.PrevRotationZ,
-				instance.PrevScaleX, instance.PrevScaleY, instance.PrevScaleZ,
-			}
-			for _, value := range transforms {
-				if err := appendFinite32(&out, value); err != nil {
-					return nil, err
-				}
-			}
-			if err := appendFinite32(&out, instance.TPrev); err != nil {
-				return nil, err
-			}
-			nextTransforms := [...]float64{
-				instance.NextX, instance.NextY, instance.NextZ,
-				instance.NextRotationX, instance.NextRotationY, instance.NextRotationZ,
-				instance.NextScaleX, instance.NextScaleY, instance.NextScaleZ,
-			}
-			for _, value := range nextTransforms {
-				if err := appendFinite32(&out, value); err != nil {
-					return nil, err
-				}
-			}
-			if err := appendFinite32(&out, instance.TNext); err != nil {
-				return nil, err
-			}
-			out = binary.LittleEndian.AppendUint16(out, e.clipIndex[instance.Animation])
-			if err := appendFinite32(&out, instance.ClipStartTime); err != nil {
-				return nil, err
-			}
-			if instance.AnimationLoop {
-				out = append(out, 1)
-			} else {
-				out = append(out, 0)
-			}
-			if err := appendFinite32(&out, instance.PlaybackRate); err != nil {
+			var err error
+			if out, err = appendMotionPayload(out, instance, e.clipIndex[instance.Animation]); err != nil {
 				return nil, err
 			}
 		}
 	}
 	e.out = out
+	return out, nil
+}
+
+// appendMotionPayload writes one instance's motion key and animation state
+// (everything after its ID in a GSP3 record, everything after its slot in a
+// GSP4 record): eighteen transform float32s with a timestamp after each nine,
+// the clip index, clip start time, loop byte and playback rate.
+func appendMotionPayload(out []byte, instance MotionInstanceIR, clip uint16) ([]byte, error) {
+	if math.IsNaN(instance.TPrev) || math.IsInf(instance.TPrev, 0) ||
+		math.IsNaN(instance.TNext) || math.IsInf(instance.TNext, 0) {
+		return nil, errors.New("scene motion frame requires finite float32 values")
+	}
+	if !(float32(instance.TNext) > float32(instance.TPrev)) {
+		return nil, errors.New("scene motion frame requires TNext after TPrev")
+	}
+	transforms := [...]float64{
+		instance.PrevX, instance.PrevY, instance.PrevZ,
+		instance.PrevRotationX, instance.PrevRotationY, instance.PrevRotationZ,
+		instance.PrevScaleX, instance.PrevScaleY, instance.PrevScaleZ,
+		instance.TPrev,
+		instance.NextX, instance.NextY, instance.NextZ,
+		instance.NextRotationX, instance.NextRotationY, instance.NextRotationZ,
+		instance.NextScaleX, instance.NextScaleY, instance.NextScaleZ,
+		instance.TNext,
+	}
+	for _, value := range transforms {
+		if err := appendFinite32(&out, value); err != nil {
+			return nil, err
+		}
+	}
+	out = binary.LittleEndian.AppendUint16(out, clip)
+	if err := appendFinite32(&out, instance.ClipStartTime); err != nil {
+		return nil, err
+	}
+	if instance.AnimationLoop {
+		out = append(out, 1)
+	} else {
+		out = append(out, 0)
+	}
+	if err := appendFinite32(&out, instance.PlaybackRate); err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 

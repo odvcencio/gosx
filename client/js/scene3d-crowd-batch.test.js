@@ -289,3 +289,47 @@ test("a group that stops appearing is dropped and a later crowd starts clean", a
   assert.notEqual(again[0], record, "the stale group was released");
   assert.equal(again[0].instanceCount, 3);
 });
+
+test("a partial motion frame hands the renderer the changed slot ranges", async () => {
+  const api = await makeSceneApiEnv();
+  const objects = makeCrowd(api, 200, { motion: true });
+  const first = build(api, objects);
+  const [record] = batchRecords(first);
+  assert.equal(record.crowdDirtyRanges, null, "the first revision restates every slot");
+  for (const object of objects) object._crowdMotion.dirty = false;
+
+  for (const slot of [3, 4, 5, 90, 150, 151]) objects[slot]._crowdMotion.dirty = true;
+  build(api, objects);
+  assert.deepEqual(Array.from(record.crowdDirtyRanges), [3, 6, 90, 91, 150, 152]);
+  assert.equal(record.crowdDirtyBase, record.crowdRevision - 1);
+
+  // The renderer has not cleared the flags, so the next bundle repeats them.
+  const before = record.crowdRevision;
+  build(api, objects);
+  assert.equal(record.crowdRevision, before + 1);
+  assert.deepEqual(Array.from(record.crowdDirtyRanges), [3, 6, 90, 91, 150, 152]);
+
+  // A bundle with no change keeps the revision and the ranges that describe it.
+  for (const object of objects) object._crowdMotion.dirty = false;
+  const quiet = record.crowdRevision;
+  build(api, objects);
+  assert.equal(record.crowdRevision, quiet);
+  assert.deepEqual(Array.from(record.crowdDirtyRanges), [3, 6, 90, 91, 150, 152]);
+
+  // A membership change restates every slot again.
+  objects.splice(10, 1);
+  build(api, objects);
+  assert.equal(record.crowdDirtyRanges, null);
+});
+
+test("scattered changes collapse into a bounded range list", async () => {
+  const api = await makeSceneApiEnv();
+  const objects = makeCrowd(api, 600, { motion: true });
+  const [record] = batchRecords(build(api, objects));
+  for (const object of objects) object._crowdMotion.dirty = false;
+  for (let slot = 0; slot < 600; slot += 2) objects[slot]._crowdMotion.dirty = true;
+  build(api, objects);
+  assert.ok(record.crowdDirtyRanges.length <= 256);
+  assert.equal(record.crowdDirtyRanges[0], 0);
+  assert.equal(record.crowdDirtyRanges[record.crowdDirtyRanges.length - 1], 599);
+});

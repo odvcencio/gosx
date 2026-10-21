@@ -206,3 +206,68 @@ test('switching between pose and motion mode starts the stream over', () => {
   assert.ok(batch.motion instanceof Float32Array);
   assert.equal(batch.motion[20], 1);
 });
+
+test('dirty slot ranges limit the scan to the slots a partial motion frame touched', () => {
+  const { context } = harness();
+  const members = Array.from({ length: 40 }, (_v, i) => motionAgent(i));
+  const record = motionRecordFor(members, 1);
+  context.prepareCrowdBatchRecord(record, planes);
+  const batch = context.prebuiltRigidBatchRecords.get(record.id);
+  assert.ok(members.every(m => m._crowdMotion.dirty === false), 'the first pack copies every slot');
+  batch._motionDirtyFlags.fill(0); // as if the GPU upload ran
+
+  members[3]._crowdMotion.record[20] = 77; members[3]._crowdMotion.dirty = true;
+  members[4]._crowdMotion.record[20] = 78; members[4]._crowdMotion.dirty = true;
+  members[30]._crowdMotion.record[20] = 79; members[30]._crowdMotion.dirty = true;
+  // A dirty slot outside the ranges proves the scan skipped it.
+  members[20]._crowdMotion.record[20] = 99; members[20]._crowdMotion.dirty = true;
+  record.crowdRevision = 2;
+  record.crowdDirtyRanges = [3, 5, 30, 31];
+  record.crowdDirtyBase = 1;
+  context.prepareCrowdBatchRecord(record, planes);
+  assert.equal(batch.motion[3 * STRIDE + 20], 77);
+  assert.equal(batch.motion[4 * STRIDE + 20], 78);
+  assert.equal(batch.motion[30 * STRIDE + 20], 79);
+  assert.equal(batch.motion[20 * STRIDE + 20], 20, 'a slot outside the ranges is not copied');
+  assert.equal(members[20]._crowdMotion.dirty, true, 'and keeps its dirty flag for a later full scan');
+  assert.deepEqual(Array.from(batch._motionDirtyFlags.slice(0, 40).entries()).filter(([, v]) => v).map(([i]) => i), [3, 4, 30]);
+});
+
+test('dirty slot ranges are ignored by a batch that missed the revision they describe', () => {
+  const { context } = harness();
+  const members = Array.from({ length: 10 }, (_v, i) => motionAgent(i));
+  const record = motionRecordFor(members, 1);
+  context.prepareCrowdBatchRecord(record, planes);
+  const batch = context.prebuiltRigidBatchRecords.get(record.id);
+
+  // Revisions 2 and 3 both happened; the renderer only sees 3.
+  members[2]._crowdMotion.record[20] = 51; members[2]._crowdMotion.dirty = true;
+  members[8]._crowdMotion.record[20] = 52; members[8]._crowdMotion.dirty = true;
+  record.crowdRevision = 3;
+  record.crowdDirtyRanges = [8, 9];
+  record.crowdDirtyBase = 2;
+  context.prepareCrowdBatchRecord(record, planes);
+  assert.equal(batch.motion[2 * STRIDE + 20], 51, 'the full scan still finds slot 2');
+  assert.equal(batch.motion[8 * STRIDE + 20], 52);
+});
+
+test('null dirty ranges and a reshaped batch scan every slot', () => {
+  const { context } = harness();
+  const members = Array.from({ length: 6 }, (_v, i) => motionAgent(i));
+  const record = motionRecordFor(members, 1);
+  context.prepareCrowdBatchRecord(record, planes);
+  const batch = context.prebuiltRigidBatchRecords.get(record.id);
+  members[5]._crowdMotion.record[20] = 60; members[5]._crowdMotion.dirty = true;
+  record.crowdRevision = 2;
+  record.crowdDirtyRanges = null;
+  context.prepareCrowdBatchRecord(record, planes);
+  assert.equal(batch.motion[5 * STRIDE + 20], 60);
+
+  members[1]._crowdMotion.record[20] = 61; members[1]._crowdMotion.dirty = true;
+  record.crowdRevision = 3;
+  record.crowdShape = 2;
+  record.crowdDirtyRanges = [4, 5];
+  record.crowdDirtyBase = 2;
+  context.prepareCrowdBatchRecord(record, planes);
+  assert.equal(batch.motion[1 * STRIDE + 20], 61, 'a shape change resyncs every slot');
+});
