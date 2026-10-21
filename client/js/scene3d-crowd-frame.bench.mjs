@@ -30,6 +30,13 @@
 //   500      2.8 ms              2.4 ms           2.6 ms
 //   2000     14.8 ms             12.5 ms          13.1 ms
 //   5000     26 ms               27 ms            25 ms
+//
+// With crowd batch records, same machine and method (median of five runs; the
+// host was shared, so single runs at 5,000 agents range from 0.5 to 2 ms):
+//   agents   a nothing changes   b camera moves   c motion frame
+//   500      0.09 ms             0.05 ms          0.07 ms
+//   2000     0.26 ms             0.26 ms          0.25 ms
+//   5000     1.12 ms             1.80 ms          1.33 ms
 import { createRequire } from 'node:module';
 import { performance } from 'node:perf_hooks';
 import { fileURLToPath } from 'node:url';
