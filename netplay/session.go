@@ -113,6 +113,9 @@ type Stats struct {
 	Agreed             int
 	Mismatches         int
 	Resyncs            int
+	CatchUpTicks       int
+	CatchUpFrames      int
+	MaxCatchUpPerTick  int
 }
 
 const (
@@ -492,9 +495,15 @@ func (s *Session[I]) rollback(f int64) {
 
 // catchUp re-simulates a bounded number of frames after a resync.
 func (s *Session[I]) catchUp() Outcome {
-	for n := 0; n < s.cfg.CatchUpPerTick && s.frame < s.catchEnd; n++ {
+	n := 0
+	for ; n < s.cfg.CatchUpPerTick && s.frame < s.catchEnd; n++ {
 		s.stepFrame(s.frame)
 		s.frame++
+	}
+	s.stats.CatchUpTicks++
+	s.stats.CatchUpFrames += n
+	if n > s.stats.MaxCatchUpPerTick {
+		s.stats.MaxCatchUpPerTick = n
 	}
 	s.sendInput(s.now)
 	if s.frame >= s.catchEnd {

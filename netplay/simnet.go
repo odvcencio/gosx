@@ -11,6 +11,9 @@ type NetConfig struct {
 	// Delay is the fixed one-way delay: Delay[0] for packets sent by
 	// endpoint 0, Delay[1] for packets sent by endpoint 1.
 	Delay [2]time.Duration
+	// DelayRamp adds this much delay per second of network time to packets
+	// sent by endpoint i, to model a player whose inputs arrive ever later.
+	DelayRamp [2]time.Duration
 	// Jitter adds a uniform random delay in [0, Jitter] to each packet.
 	Jitter time.Duration
 	// Loss is the probability, 0 to 1, that a packet is dropped.
@@ -72,7 +75,7 @@ func (e *simEnd) Send(p []byte) error {
 		n.Dropped++
 		return nil
 	}
-	at := n.now + n.cfg.Delay[e.id]
+	at := n.now + n.cfg.Delay[e.id] + time.Duration(float64(n.cfg.DelayRamp[e.id])*n.now.Seconds())
 	if n.cfg.Jitter > 0 {
 		at += time.Duration(n.rng.Int64N(int64(n.cfg.Jitter) + 1))
 	}
