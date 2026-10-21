@@ -288,6 +288,28 @@ type HubInputConfig struct {
 	// animation frames, and sends ReadyEvent at most once per socket.
 	ReadyWhen string `json:"readyWhen,omitempty"`
 
+	// HeldMode selects how fighting mode encodes held input. Empty keeps the
+	// legacy encoding: a 0-8 direction code resolved on the client (opposites
+	// cancelled, left/right mapped to forward/back by player slot).
+	//
+	// "absolute" sends raw screen-absolute held state for a simulation that
+	// derives press edges and resolves opposite directions itself:
+	//
+	//	dir    bit mask: up 1, down 2, left 4, right 8; no client SOCD, no slot mapping
+	//	btn    bit mask: lp 1, hp 2, lk 4, hk 8, guard 16
+	//	frame  sample frame number, starting at 1, +1 per animation frame
+	//
+	// Every sample taken in one frame (key, touch and pointer events, gamepad
+	// polls on each animation frame and each SendEveryMS tick) combines by one
+	// latch rule: buttons are OR-ed, directions take the last sample. A press
+	// and release inside one frame still counts as pressed. Each frame sends
+	// one sample per player when it closes; with edge sends on, a changed
+	// latched state also goes out at once with the current frame number, so
+	// the receiver keeps the last sample per frame. The frame number counts
+	// local sampling only; mapping it to a simulation frame belongs to the
+	// netplay layer. A hidden tab stops animation frames and so stops sending.
+	HeldMode string `json:"heldMode,omitempty"`
+
 	// DisableEdgeSend turns off the same-event-turn send in fighting mode.
 	// By default a mapped key or touch control that changes held state sends
 	// the full input state immediately, and the SendEveryMS timer keeps

@@ -822,3 +822,96 @@ test("fighting input readyWhen scene-committed drops ready when the scene unmoun
   assert.equal(sent.filter((message) => message.event === "ready").length, 1);
   env.context.__gosx_disconnect_hub("gosx-hub-0");
 });
+
+// heldMode "absolute": screen-absolute direction bits, held buttons, one latch
+// rule per sampled frame, and a monotonically increasing sample frame number.
+async function createAbsoluteEnv(inputOverrides, extra) {
+  const made = createFightInputEnv(Object.assign({ heldMode: "absolute" }, inputOverrides), extra);
+  const raf = installManualRAF(made.env.context);
+  runScript(bootstrapSource, made.env.context, "bootstrap.js");
+  await flushAsyncWork();
+  return Object.assign(made, { raf });
+}
+
+test("absolute held mode sends raw screen directions without SOCD or slot mapping", async () => {
+  const { env, sent, raf } = await createAbsoluteEnv({ player: 2 });
+  const document = env.context.document;
+  document.dispatchEvent(keyEvent("keydown", "a", "KeyA"));
+  document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  let inputs = inputsOf(sent);
+  assert.equal(inputs[inputs.length - 1].dir, 4 | 8, "left+right stays raw: the sim resolves it");
+  assert.equal(inputs[inputs.length - 1].player, 2);
+  document.dispatchEvent(keyEvent("keyup", "a", "KeyA"));
+  document.dispatchEvent(keyEvent("keydown", "w", "KeyW"));
+  raf.flush();
+  inputs = inputsOf(sent);
+  assert.equal(inputs[inputs.length - 1].dir, 1 | 8, "player 2 right is still right, not forward");
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("absolute held mode ORs buttons and takes the last direction within a frame", async () => {
+  const { env, sent, raf } = await createAbsoluteEnv({});
+  const document = env.context.document;
+  document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  document.dispatchEvent(keyEvent("keydown", "u", "KeyU"));
+  let inputs = inputsOf(sent);
+  assert.deepEqual([inputs[inputs.length - 1].dir, inputs[inputs.length - 1].btn], [8, 1], "press sends in the same event turn");
+  const edgeSends = inputs.length;
+  document.dispatchEvent(keyEvent("keyup", "u", "KeyU"));
+  document.dispatchEvent(keyEvent("keyup", "d", "KeyD"));
+  document.dispatchEvent(keyEvent("keydown", "a", "KeyA"));
+  raf.flush();
+  inputs = inputsOf(sent);
+  const closed = inputs[inputs.length - 1];
+  assert.equal(closed.btn, 1, "press and release inside one frame still counts as pressed");
+  assert.equal(closed.dir, 4, "directions take the last sample");
+  assert.ok(inputs.length > edgeSends);
+  raf.flush();
+  inputs = inputsOf(sent);
+  const next = inputs[inputs.length - 1];
+  assert.equal(next.btn, 0, "the latch clears at the frame boundary");
+  assert.equal(next.dir, 4, "a held direction carries into the next frame");
+  assert.equal(next.frame, closed.frame + 1);
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("absolute held mode stamps strictly increasing sample frames and samples gamepads", async () => {
+  const pad = { connected: true, axes: [0, 0, 0, 0], buttons: Array.from({ length: 16 }, () => ({ pressed: false })) };
+  const { env, sent, raf } = await createAbsoluteEnv({}, { getGamepads: () => [pad] });
+  const frames = [];
+  for (let i = 0; i < 4; i += 1) {
+    if (i === 1) pad.buttons[0] = { pressed: true };
+    if (i === 2) pad.buttons[0] = { pressed: false };
+    raf.flush();
+    const inputs = inputsOf(sent);
+    frames.push(inputs[inputs.length - 1]);
+  }
+  for (let i = 1; i < frames.length; i += 1) assert.equal(frames[i].frame, frames[i - 1].frame + 1);
+  // The release lands mid-frame, so that frame still latches the button.
+  assert.deepEqual(frames.map((f) => f.btn), [0, 1, 1, 0]);
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("absolute held mode with disableEdgeSend still latches events but sends only at frame boundaries", async () => {
+  const { env, sent, raf } = await createAbsoluteEnv({ disableEdgeSend: true });
+  const document = env.context.document;
+  const before = inputsOf(sent).length;
+  document.dispatchEvent(keyEvent("keydown", "u", "KeyU"));
+  document.dispatchEvent(keyEvent("keyup", "u", "KeyU"));
+  assert.equal(inputsOf(sent).length, before);
+  raf.flush();
+  const inputs = inputsOf(sent);
+  assert.equal(inputs[inputs.length - 1].btn, 1);
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});
+
+test("default fighting mode keeps client-side direction mapping", async () => {
+  const { env, sent } = createFightInputEnv({ player: 2 });
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  await flushAsyncWork();
+  env.context.document.dispatchEvent(keyEvent("keydown", "d", "KeyD"));
+  const inputs = inputsOf(sent);
+  assert.equal(inputs[inputs.length - 1].dir, 7, "player 2 right is back");
+  assert.equal("frame" in inputs[inputs.length - 1], false);
+  env.context.__gosx_disconnect_hub("gosx-hub-0");
+});

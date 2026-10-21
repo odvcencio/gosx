@@ -31,6 +31,7 @@
       readyEvent: String(input.readyEvent || "ready"),
       readyWhen: String(input.readyWhen || "").trim().toLowerCase() === "scene-committed" ? "scene-committed" : "socket",
       edgeSend: !input.disableEdgeSend,
+      absolute: String(input.heldMode || "").trim().toLowerCase() === "absolute",
       trainingEvent: String(input.trainingEvent || "training"),
       signal: String(input.signal || ""),
       trainingSignal: String(input.trainingSignal || ""),
@@ -71,6 +72,11 @@
     let readySocket = null;
     let pendingReadySocket = null;
     const lastSentInput = Object.create(null);
+    // heldMode "absolute" state: the frame being sampled, the latch for each
+    // player, and the pending animation frame handle.
+    let sampleFrame = 1;
+    const latch = Object.create(null);
+    let frameHandle = 0;
     let trainingVisible = false;
     let lastCue = "";
     let lastFeedbackSeq = 0;
@@ -375,7 +381,31 @@
       return buttons;
     }
 
+    // readDirectionBits returns the held directions as raw screen-absolute
+    // bits (up 1, down 2, left 4, right 8). It resolves no opposite pairs and
+    // maps nothing by player slot: the simulation owns both.
+    function readDirectionBits(pad, includePrimary) {
+      let bits = 0;
+      if (includePrimary) {
+        if (keyDown("KeyW", "w", "ArrowUp", "arrowup") || touch.up) bits |= 1;
+        if (keyDown("KeyS", "s", "ArrowDown", "arrowdown") || touch.down) bits |= 2;
+        if (keyDown("KeyA", "a", "ArrowLeft", "arrowleft") || touch.left) bits |= 4;
+        if (keyDown("KeyD", "d", "ArrowRight", "arrowright") || touch.right) bits |= 8;
+      }
+      if (pad) {
+        const axes = Array.isArray(pad.axes) ? pad.axes : [];
+        if (gamepadPressed(pad, 12) || hubInputNumber(axes[1], 0) < -0.5) bits |= 1;
+        if (gamepadPressed(pad, 13) || hubInputNumber(axes[1], 0) > 0.5) bits |= 2;
+        if (gamepadPressed(pad, 14) || hubInputNumber(axes[0], 0) < -0.5) bits |= 4;
+        if (gamepadPressed(pad, 15) || hubInputNumber(axes[0], 0) > 0.5) bits |= 8;
+      }
+      return bits;
+    }
+
     function readInput(pad, includePrimary, player) {
+      if (config.absolute) {
+        return { dir: readDirectionBits(pad, includePrimary), btn: readButtons(pad, includePrimary) };
+      }
       return {
         dir: readDirection(pad, includePrimary, player),
         btn: readButtons(pad, includePrimary),
@@ -386,17 +416,73 @@
       const payload = basePayload(player);
       payload.dir = input.dir;
       payload.btn = input.btn;
-      if (send(config.event, payload)) lastSentInput[player] = input.dir + ":" + input.btn;
+      if (config.absolute) payload.frame = sampleFrame;
+      if (send(config.event, payload)) lastSentInput[player] = inputKey(input);
+    }
+
+    function inputKey(input) {
+      return (config.absolute ? sampleFrame + ":" : "") + input.dir + ":" + input.btn;
+    }
+
+    function framePlayers() {
+      return config.local ? [1, 2] : [config.player];
+    }
+
+    // sampleLatch folds one sample of every player's held state into the
+    // frame's latch: buttons are OR-ed, directions take the last sample.
+    function sampleLatch() {
+      const pads = gamepads();
+      const players = framePlayers();
+      for (let i = 0; i < players.length; i++) {
+        const player = players[i];
+        const input = readInput(pads[player === 2 && config.local ? 1 : 0], player === 1 || !config.local, player);
+        const held = latch[player];
+        latch[player] = { dir: input.dir, btn: (held ? held.btn : 0) | input.btn };
+      }
+      return pads;
+    }
+
+    // closeFrame samples once more, sends the frame's latched state for every
+    // player, then starts the next frame seeded with the current held state.
+    function closeFrame() {
+      if (disposed) return;
+      sampleLatch();
+      if (socketOpen() && !config.spectator) {
+        const players = framePlayers();
+        for (let i = 0; i < players.length; i++) sendInput(players[i], latch[players[i]]);
+      }
+      sampleFrame++;
+      for (const key of Object.keys(latch)) delete latch[key];
+      sampleLatch();
+    }
+
+    function frameLoop() {
+      frameHandle = 0;
+      if (disposed) return;
+      closeFrame();
+      frameHandle = requestAnimationFrame(frameLoop);
     }
 
     // sendEdge sends the full held state in the same event turn as a key or
     // touch change, skipping players whose state matches the last send. Each
     // message carries the whole state, so the timer pump and edges can mix.
     function sendEdge() {
-      if (disposed || !config.edgeSend || config.spectator || !socketOpen()) return;
+      if (disposed || config.spectator) return;
+      if (config.absolute) {
+        // Always latch the event, even when edge sends are off, so a press and
+        // release inside one frame is not lost.
+        sampleLatch();
+        if (!config.edgeSend || !socketOpen()) return;
+        const players = framePlayers();
+        for (let i = 0; i < players.length; i++) {
+          if (lastSentInput[players[i]] !== inputKey(latch[players[i]])) sendInput(players[i], latch[players[i]]);
+        }
+        return;
+      }
+      if (!config.edgeSend || !socketOpen()) return;
       const pads = gamepads();
       const changed = function(player, input) {
-        return lastSentInput[player] !== input.dir + ":" + input.btn;
+        return lastSentInput[player] !== inputKey(input);
       };
       if (config.local) {
         const first = readInput(pads[0], true, 1);
@@ -429,7 +515,7 @@
 
     function onKey(event, active) {
       setKey(event, active);
-      if (!config.edgeSend || !event || event.repeat || !mappedKey(event) || editableTarget(event)) return;
+      if (!event || event.repeat || !mappedKey(event) || editableTarget(event)) return;
       sendEdge();
     }
 
@@ -610,6 +696,13 @@
       sendReady();
       const pads = gamepads();
       publishCue(pads);
+      if (config.absolute) {
+        // Timer ticks are extra samples. Frame boundaries come from
+        // requestAnimationFrame; without it the timer closes the frame.
+        if (frameHandle) sampleLatch();
+        else closeFrame();
+        return;
+      }
       if (socketOpen() && !config.spectator) {
         if (config.local) {
           sendInput(1, readInput(pads[0], true, 1));
@@ -633,6 +726,10 @@
     addListener(document, "pointercancel", onPointerUp, { passive: false });
     addListener(window, "blur", onBlur);
     publishTrainingState();
+    if (config.absolute) {
+      sampleLatch();
+      if (typeof requestAnimationFrame === "function") frameHandle = requestAnimationFrame(frameLoop);
+    }
     tick();
 
     return {
@@ -644,6 +741,8 @@
           clearTimeout(timer);
           timer = 0;
         }
+        if (frameHandle && typeof cancelAnimationFrame === "function") cancelAnimationFrame(frameHandle);
+        frameHandle = 0;
         disposeListeners();
         releaseAll();
         publishJSON(config.signal, { connected: false, active: false, pads: 0 });

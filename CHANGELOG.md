@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add `HubInputConfig.HeldMode = "absolute"` for fighting hubs whose simulation
+  derives press edges and resolves opposite directions itself. Each sample
+  carries `dir` (bit mask: up 1, down 2, left 4, right 8, with no client SOCD
+  and no forward/back mapping by player slot), `btn` (the existing button bit
+  mask) and `frame` (a local sample frame number, +1 per animation frame). All
+  samples in one frame combine by one latch rule for keyboard, touch and
+  gamepad: buttons are OR-ed and directions take the last sample, so a press
+  and release inside one frame still counts. Edge sends still go out in the
+  same event turn. Default behavior is unchanged.
+
 - Reconcile shared-signal batch readers after notifications and derived values
   have settled. Each affected island evaluates once per store batch, preserving
   individual signal events and reentrant observer updates. Group subscriptions,
