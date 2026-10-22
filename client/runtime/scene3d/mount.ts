@@ -95,7 +95,7 @@
     }
     sceneState._modelOwner = scene3DFactoryOwned;
     sceneState._modelStatusMount = mount;
-    sceneState._crowdWebGLRequested = sceneForcesWebGL(props) || sceneRequiresWebGL(props);
+    sceneState._crowdWebGLRequested = sceneForcesWebGL(props) || sceneRequiresWebGL(props) || scenePrefersWebGPU(props);
     // Parse the immutable inline shader manifest once per mount.
     const mountedWaterShaderSources = typeof window !== "undefined" &&
       window.__gosx_scene3d_water_shader_sources_by_id &&
@@ -3214,6 +3214,8 @@
           retainedGeometry: Boolean(renderer && renderer.supportsRetainedGeometry === true),
           worldBakedAttributeViews: Boolean(renderer && renderer.supportsWorldBakedAttributeViews === true),
           rigidImportedBatches: Boolean(renderer && renderer.supportsRigidImportedBatches === true),
+          // Only the PBR WebGL renderer can draw a crowd batch record.
+          crowdBatches: Boolean(renderer && typeof renderer.prepareCrowdMotionShaders === "function"),
           meshWireframeFallback: Boolean(renderer && renderer.kind === "canvas"),
         },
       ), sceneState, sceneControlHandle);
@@ -3529,6 +3531,16 @@
       applyCommands(commands) {
         return applyMountedSceneCommands(commands, "commands");
       },
+      // applyLive feeds one named Live event through the same path the
+      // gosx:hub:event listener uses, so an engine can drive scene.Live nodes
+      // without a hub or a synthetic document event.
+      applyLive(eventName, data) {
+        if (disposed) throw new Error("disposed");
+        if (typeof eventName !== "string" || !eventName) throw new TypeError("Scene3D Live event name is required");
+        if (eventName === "audio") applySceneAudioCue(data);
+        else applySceneHubEvent(eventName, data, "engine-live");
+        return Promise.resolve({ applied: true });
+      },
       applyPoseFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedPoseFrame(sceneState, batches, sceneUpdateRigidInstancePoses, scheduleRender, handle); },
       get applyPendingPoseFrame() {
         return sceneState._modelHydrationPromise ? this.applyPoseFrame : null;
@@ -3543,6 +3555,8 @@
       // still render that crowd.
       // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
       applyMotionFrame(batches) { return window.__gosx_scene3d_command_bridge.applyMountedMotionFrame(sceneState, batches, sceneUpdateRigidInstanceMotion, scheduleRender, handle); },
+      // applyClipFrame: the GSP4 sampled-animation channel (docs/scene3d-clip-frames.md).
+      applyClipFrame(models) { return window.__gosx_scene3d_command_bridge.applyMountedClipFrame(sceneState, models, window.__gosx_scene3d_animation_api, sceneApplyModelSkinPose, scheduleRender, handle); },
       // applyInstanceStream: opt-in fast path; the bridge (instance-stream-
       // bridge.ts) lazy-loads the chunk on first use, queues an in-flight
       // frame, and reports a load failure -- never a silent drop.

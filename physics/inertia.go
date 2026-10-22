@@ -59,7 +59,7 @@ func parallelAxisTerm(mass float64, d Vec3) mat3 {
 	if mass <= 0 || d2 <= 0 {
 		return mat3{}
 	}
-	return mat3Identity().scale(mass * d2).add(outerProduct(d).scale(-mass))
+	return mat3Identity().scale(float64(mass * d2)).add(outerProduct(d).scale(-mass))
 }
 
 // colliderVolume returns the enclosed volume of one collider. A plane, a
@@ -72,23 +72,23 @@ func colliderVolume(c *Collider) float64 {
 	switch c.Shape {
 	case ShapeBox:
 		half := c.halfExtents()
-		return 8 * half.X * half.Y * half.Z
+		return float64(8 * half.X * half.Y * half.Z)
 	case ShapeSphere:
 		r := math.Abs(c.Radius)
-		return 4.0 / 3.0 * math.Pi * r * r * r
+		return float64(4.0 / 3.0 * math.Pi * r * r * r)
 	case ShapeCapsule:
 		r := math.Abs(c.Radius)
 		h := math.Abs(c.Height)
-		return math.Pi*r*r*h + 4.0/3.0*math.Pi*r*r*r
+		return float64(math.Pi*r*r*h) + float64(4.0/3.0*math.Pi*r*r*r)
 	case ShapeCylinder:
 		r := math.Abs(c.Radius)
-		return math.Pi * r * r * math.Abs(c.Height)
+		return float64(math.Pi * r * r * math.Abs(c.Height))
 	case ShapeCone:
 		r := math.Abs(c.Radius)
 		return math.Pi * r * r * math.Abs(c.Height) / 3
 	case ShapeConvexHull, ShapeTriangleMesh:
 		size := c.localBounds.Size()
-		return math.Abs(size.X * size.Y * size.Z)
+		return math.Abs(float64(size.X * size.Y * size.Z))
 	default:
 		return 0
 	}
@@ -104,9 +104,9 @@ func colliderPrincipalInertia(c *Collider, mass float64) Vec3 {
 	switch c.Shape {
 	case ShapeBox:
 		half := c.halfExtents()
-		x2 := 4 * half.X * half.X
-		y2 := 4 * half.Y * half.Y
-		z2 := 4 * half.Z * half.Z
+		x2 := float64(4 * half.X * half.X)
+		y2 := float64(4 * half.Y * half.Y)
+		z2 := float64(4 * half.Z * half.Z)
 		return Vec3{
 			X: mass * (y2 + z2) / 12,
 			Y: mass * (x2 + z2) / 12,
@@ -114,13 +114,13 @@ func colliderPrincipalInertia(c *Collider, mass float64) Vec3 {
 		}
 	case ShapeSphere:
 		r := math.Abs(c.Radius)
-		i := 0.4 * mass * r * r
+		i := float64(0.4 * mass * r * r)
 		return Vec3{X: i, Y: i, Z: i}
 	case ShapeCylinder:
 		r := math.Abs(c.Radius)
 		h := math.Abs(c.Height)
-		axial := 0.5 * mass * r * r
-		radial := mass * (3*r*r + h*h) / 12
+		axial := float64(0.5 * mass * r * r)
+		radial := mass * (float64(3*r*r) + float64(h*h)) / 12
 		return Vec3{X: radial, Y: axial, Z: radial}
 	case ShapeCone:
 		// A solid cone with the body origin at mid height. The centroid sits a
@@ -128,8 +128,8 @@ func colliderPrincipalInertia(c *Collider, mass float64) Vec3 {
 		// parallel axis shift of h/4.
 		r := math.Abs(c.Radius)
 		h := math.Abs(c.Height)
-		axial := 0.3 * mass * r * r
-		radial := 0.15*mass*r*r + mass*h*h/10
+		axial := float64(0.3 * mass * r * r)
+		radial := float64(0.15*mass*r*r) + mass*h*h/10
 		return Vec3{X: radial, Y: axial, Z: radial}
 	case ShapeCapsule:
 		return capsuleInertia(mass, math.Abs(c.Radius), math.Abs(c.Height))
@@ -138,9 +138,9 @@ func colliderPrincipalInertia(c *Collider, mass float64) Vec3 {
 		// is never zero and never negative, so the solver stays stable.
 		size := c.localBounds.Size()
 		box := Vec3{
-			X: mass * (size.Y*size.Y + size.Z*size.Z) / 12,
-			Y: mass * (size.X*size.X + size.Z*size.Z) / 12,
-			Z: mass * (size.X*size.X + size.Y*size.Y) / 12,
+			X: mass * (float64(size.Y*size.Y) + float64(size.Z*size.Z)) / 12,
+			Y: mass * (float64(size.X*size.X) + float64(size.Z*size.Z)) / 12,
+			Z: mass * (float64(size.X*size.X) + float64(size.Y*size.Y)) / 12,
 		}
 		return box
 	default:
@@ -151,23 +151,23 @@ func colliderPrincipalInertia(c *Collider, mass float64) Vec3 {
 // capsuleInertia returns the diagonal inertia of a capsule along local Y. The
 // capsule is one cylinder of height h plus two hemisphere caps of radius r.
 func capsuleInertia(mass, r, h float64) Vec3 {
-	cylinderVolume := math.Pi * r * r * h
-	capVolume := 2.0 / 3.0 * math.Pi * r * r * r // one hemisphere
+	cylinderVolume := float64(math.Pi * r * r * h)
+	capVolume := float64(2.0 / 3.0 * math.Pi * r * r * r) // one hemisphere
 	total := cylinderVolume + 2*capVolume
 	if total <= 0 {
-		i := 0.4 * mass * r * r
+		i := float64(0.4 * mass * r * r)
 		return Vec3{X: i, Y: i, Z: i}
 	}
 	cylinderMass := mass * cylinderVolume / total
 	capMass := mass * capVolume / total
 
-	axial := 0.5*cylinderMass*r*r + 2*(0.4*capMass*r*r)
+	axial := float64(0.5*cylinderMass*r*r) + 2*(0.4*capMass*r*r)
 
 	// A hemisphere has 2/5 m r^2 about a transverse axis through the centre of
 	// its flat face, and its centroid sits 3r/8 from that face.
-	capAboutOwnCentre := capMass*r*r*0.4 - capMass*(3*r/8)*(3*r/8)
+	capAboutOwnCentre := float64(capMass*r*r*0.4) - float64(capMass*(3*r/8)*(3*r/8))
 	capOffset := h/2 + 3*r/8
-	radial := cylinderMass*(h*h/12+r*r/4) +
-		2*(capAboutOwnCentre+capMass*capOffset*capOffset)
+	radial := float64(cylinderMass*(h*h/12+r*r/4)) +
+		2*(capAboutOwnCentre+float64(capMass*capOffset*capOffset))
 	return Vec3{X: radial, Y: axial, Z: radial}
 }

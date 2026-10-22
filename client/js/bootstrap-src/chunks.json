@@ -77,6 +77,7 @@
         "../runtime/scene3d/webgpu-specular-bloom.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-contact-shadows.ts",
+        "../runtime/scene3d/webgpu-crowd.ts",
         "../runtime/scene3d/compute.ts",
         "../runtime/scene3d/indirect-instancing.ts",
         "bootstrap-src/17-scene-input.ts",
@@ -212,6 +213,14 @@
       ]
     },
     {
+      "name": "bootstrap-feature-arcade-audio.js",
+      "sources": [
+        "bootstrap-src/26m-feature-arcade-audio-prefix.ts",
+        "bootstrap-src/30c2-tail-arcade-audio.ts",
+        "bootstrap-src/26m-feature-arcade-audio-suffix.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-controllers.js",
       "sources": [
         "bootstrap-src/26h-feature-controllers-prefix.ts",
@@ -236,6 +245,18 @@
       "name": "bootstrap-feature-hub-document.js",
       "sources": [
         "../runtime/host/hub-document.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-netplay.js",
+      "sources": [
+        "../runtime/host/netplay.ts"
+      ]
+    },
+    {
+      "name": "bootstrap-feature-engine-worker.js",
+      "sources": [
+        "../runtime/host/engine-worker.ts"
       ]
     },
     {
@@ -356,6 +377,7 @@
         "../runtime/scene3d/webgpu-specular-bloom.ts",
         "../runtime/scene3d/webgpu-bloom.ts",
         "../runtime/scene3d/webgpu-contact-shadows.ts",
+        "../runtime/scene3d/webgpu-crowd.ts",
         "bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"
       ]
     },
@@ -383,6 +405,9 @@
         "../runtime/scene3d/vessel-input.ts",
         "../runtime/scene3d/vessel-model.ts",
         "../runtime/scene3d/vessel-wake.ts",
+        "../runtime/scene3d/vessel-external.ts",
+        "../runtime/scene3d/vessel-decks.ts",
+        "../runtime/scene3d/vessel-cutaway.ts",
         "../runtime/scene3d/mount-vessel.ts"
       ]
     },

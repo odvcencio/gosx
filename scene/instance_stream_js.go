@@ -43,6 +43,12 @@ func (w *StreamWriter) Prepare() (ready bool) {
 		return false
 	}
 	w.ready = false
+	if scene := workerScene3D(); scene.Truthy() {
+		// In an engine worker the page applies the stream; there is no
+		// renderer handle or codec to load here.
+		w.ready = true
+		return true
+	}
 	handle, err := w.surface.renderer()
 	if err != nil || handle.Get("applyInstanceStream").Type() != js.TypeFunction {
 		return false
@@ -105,6 +111,13 @@ func (w *StreamWriter) Apply(frame InstanceStreamFrame) (applied bool, err error
 		return false, err
 	}
 	w.buffer = data
+	if scene := workerScene3D(); scene.Truthy() {
+		// The worker transfers a fresh copy; the reusable buffers stay here.
+		// "Applied" means queued for the page; a page-side rejection arrives
+		// as a gosx:engine:worker-frame-error event.
+		result := scene.Call("applyInstanceStream", w.surface.target, jsutil.NewUint8ArrayFromBytes(data))
+		return result.Truthy() && result.Get("applied").Truthy(), nil
+	}
 	if len(data) > w.capacity {
 		w.capacity = max(len(data), 2*w.capacity)
 		w.bytes = js.Global().Get("Uint8Array").New(w.capacity)
@@ -118,6 +131,20 @@ func (w *StreamWriter) Apply(frame InstanceStreamFrame) (applied bool, err error
 	result := w.handle.Call("applyInstanceStream", w.view)
 	return result.Truthy() && result.Get("applied").Truthy(), nil
 }
+
+// workerScene3D returns the worker's __gosx.scene3d stand-in, or undefined on
+// the main thread.
+func workerScene3D() js.Value {
+	if _, ok := workerBridge(); !ok {
+		return js.Undefined()
+	}
+	scene := js.Global().Get("__gosx").Get("scene3d")
+	if scene.Truthy() && scene.Get("applyInstanceStream").Type() == js.TypeFunction {
+		return scene
+	}
+	return js.Undefined()
+}
+
 func (w *StreamWriter) Dispose() {
 	if w == nil || w.disposed {
 		return

@@ -276,21 +276,25 @@ func removeInt32Value(list []int32, v int32) []int32 {
 
 // pruneStatic drops a static collider's slot when this Rebuild did not visit
 // it, which means the world removed the collider since the previous step.
-// Ranging staticSlot costs time proportional to the live static count but,
-// unlike the old clear-and-rebuild, allocates nothing and touches the cell
-// maps only for the (normally zero) slots that actually left.
+// Walking staticEntries costs time proportional to the slot count but, unlike
+// the old clear-and-rebuild, allocates nothing and touches the cell maps only
+// for the (normally zero) slots that actually left. Slots are visited in index
+// order, so the free list is the same on every run.
 func (s *SpatialHash) pruneStatic(build uint64) {
 	if len(s.staticSlot) == 0 {
 		return
 	}
-	for collider, slot := range s.staticSlot {
-		entry := &s.staticEntries[slot]
-		if entry.touchedBuild == build {
+	// Walk the slots in index order. Ranging the staticSlot map would free
+	// slots, and so reuse them, in a random order that differs between runs.
+	for i := range s.staticEntries {
+		slot := int32(i)
+		entry := &s.staticEntries[i]
+		if entry.collider == nil || entry.touchedBuild == build {
 			continue
 		}
 		s.removeStatic(slot, entry.aabb, entry.infinite)
+		delete(s.staticSlot, entry.collider)
 		*entry = spatialEntry{}
-		delete(s.staticSlot, collider)
 		s.staticFree = append(s.staticFree, slot)
 	}
 }

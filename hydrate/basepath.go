@@ -36,7 +36,9 @@ func (m *Manifest) WithBasePath(prefix string) *Manifest {
 	}
 	out.Hubs = append([]HubEntry(nil), m.Hubs...)
 	for i := range out.Hubs {
-		out.Hubs[i].Path = urlpath.URL(prefix, out.Hubs[i].Path)
+		if out.Hubs[i].Path != "" {
+			out.Hubs[i].Path = urlpath.URL(prefix, out.Hubs[i].Path)
+		}
 		if input := out.Hubs[i].Input; input != nil {
 			copy := *input
 			copy.FightPath = urlpath.URL(prefix, copy.FightPath)

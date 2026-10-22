@@ -26,8 +26,11 @@
     return Boolean(handle && handle.__gosxScene3DCommandReady === true && typeof handle.applyCommands === "function");
   }
 
-  // GSP2 and GSP3 share strict framing, IDs and scalar validation. Format
+  // GSP2, GSP3 and GSP5 share strict framing, IDs and scalar validation. Format
   // fields remain separate, and nothing reaches the renderer until decoding ends.
+  // GSP5 is the partial motion frame: a motion frame whose instances are named
+  // by slot (their position in the mounted batch) instead of by ID, and which
+  // lists only the instances that changed.
   function decodeInstanceFrame(input: any, motion: boolean) {
     var kind = "Scene3D " + (motion ? "motion" : "pose");
     var bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
@@ -55,7 +58,9 @@
       return value;
     }
     need(6);
-    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || view.getUint8(3) !== (motion ? 51 : 50)) {
+    var version = view.getUint8(3);
+    var partial = motion && version === 53;
+    if (view.getUint8(0) !== 71 || view.getUint8(1) !== 83 || view.getUint8(2) !== 80 || (version !== (motion ? 51 : 50) && !partial)) {
       throw new TypeError("unsupported " + kind + " frame version");
     }
     offset = 4;
@@ -75,14 +80,26 @@
       var batchID = id();
       if (batchIDs.has(batchID)) throw new TypeError("duplicate " + kind + " batch ID");
       batchIDs.add(batchID);
+      var batchSize = partial ? u16() : 0;
       var instanceCount = u16();
+      if (partial && instanceCount > batchSize) throw new RangeError("Scene3D partial motion frame lists more instances than its batch holds");
       var instances = [];
       var instanceIDs = new Set();
+      var lastSlot = -1;
       for (var j = 0; j < instanceCount; j++) {
-        var instanceID = id();
-        if (instanceIDs.has(instanceID)) throw new TypeError("duplicate " + kind + " instance ID");
-        instanceIDs.add(instanceID);
-        var instance: any = { id: instanceID };
+        var instance: any;
+        if (partial) {
+          var slot = u16();
+          if (slot <= lastSlot) throw new RangeError("Scene3D partial motion frame slots must ascend strictly");
+          if (slot >= batchSize) throw new RangeError("Scene3D partial motion frame slot is outside its batch");
+          lastSlot = slot;
+          instance = { slot: slot };
+        } else {
+          var instanceID = id();
+          if (instanceIDs.has(instanceID)) throw new TypeError("duplicate " + kind + " instance ID");
+          instanceIDs.add(instanceID);
+          instance = { id: instanceID };
+        }
         if (motion) {
           for (const side of ["prev", "next"]) {
             for (const field of poseFields.slice(0, 9)) {
@@ -107,7 +124,7 @@
         if (motion) instance.playbackRate = number();
         instances.push(instance);
       }
-      batches.push({ id: batchID, instances: instances });
+      batches.push(partial ? { id: batchID, partial: true, size: batchSize, instances: instances } : { id: batchID, instances: instances });
     }
     if (offset !== view.byteLength) throw new RangeError("trailing " + kind + " frame data");
     return batches;
@@ -226,6 +243,16 @@
     var rev = ++revision;
     return waitForCommandMount(target, opts, "command", function(rec, resolve, reject) {
       return apply(rec, commands, rev, opts).then(resolve, reject);
+    });
+  }
+
+  function live(target: any, eventName: any, data: any, options: any) {
+    if (typeof eventName !== "string" || !eventName.trim()) return Promise.reject(new TypeError("Scene3D Live event name is required"));
+    var opts = options || {};
+    return waitForCommandMount(target, opts, "live event", function(rec, resolve, reject) {
+      aborted(opts);
+      if (typeof rec.handle.applyLive !== "function") return reject(new Error("Scene3D Live events are unavailable"));
+      return Promise.resolve(rec.handle.applyLive(eventName, data)).then(resolve, reject);
     });
   }
 
@@ -480,10 +507,194 @@
     return { applied: true, binary: true };
   }
 
+  // Sampled clip frames (GSP4) pose skinned models from exact clip times. A
+  // frame is complete state for the models it names, so there is no queue and
+  // no supersession: frames apply in dispatch order and the last one wins.
+  //
+  // createClipDecoder returns a decode(input) function that validates the whole
+  // frame before anything reaches a model. Its result (the models array, each
+  // model and each layer object) is REUSED by the next call to the same
+  // decoder, so a caller must consume it before decoding again. Strings are
+  // interned by byte content, so steady-state decoding allocates nothing.
+  function createClipDecoder() {
+    var textDecoder = new TextDecoder("utf-8", { fatal: true });
+    var scratch = new DataView(new ArrayBuffer(4));
+    var strings: any[] = [];
+    var names: string[] = [];
+    var models: any[] = [];
+    var pools: any[][] = [];
+    var bytes: Uint8Array = new Uint8Array(0);
+    var offset = 0;
+    function need(size: number) {
+      if (size > bytes.length - offset) throw new RangeError("truncated Scene3D clip frame");
+    }
+    function u16() { need(2); var value = bytes[offset] | (bytes[offset + 1] << 8); offset += 2; return value; }
+    function text() {
+      var length = u16();
+      if (!length) throw new TypeError("empty Scene3D clip frame ID");
+      need(length);
+      for (var i = 0; i < strings.length; i++) {
+        var known = strings[i].bytes;
+        if (known.length !== length) continue;
+        var j = 0;
+        while (j < length && known[j] === bytes[offset + j]) j++;
+        if (j === length) { offset += length; return strings[i].text; }
+      }
+      var value = textDecoder.decode(bytes.subarray(offset, offset + length));
+      if (strings.length < 512) strings.push({ bytes: bytes.slice(offset, offset + length), text: value });
+      offset += length;
+      return value;
+    }
+    return function decode(input: any) {
+      bytes = input instanceof ArrayBuffer ? new Uint8Array(input) : input;
+      if (!(bytes instanceof Uint8Array)) throw new TypeError("Scene3D clip frame must be an ArrayBuffer or Uint8Array");
+      offset = 0;
+      need(6);
+      if (bytes[0] !== 71 || bytes[1] !== 83 || bytes[2] !== 80 || bytes[3] !== 52) throw new TypeError("unsupported Scene3D clip frame version");
+      offset = 4;
+      var nameCount = u16();
+      for (var n = 0; n < nameCount; n++) names[n] = text();
+      var count = u16();
+      for (var i = 0; i < count; i++) {
+        var model = models[i] || (models[i] = { id: "", layers: [] });
+        var pool = pools[i] || (pools[i] = []);
+        var modelID = text();
+        for (var d = 0; d < i; d++) if (models[d].id === modelID) throw new TypeError("duplicate Scene3D clip frame model ID");
+        model.id = modelID;
+        need(1);
+        var layerCount = bytes[offset++];
+        if (layerCount > 4) throw new RangeError("too many Scene3D clip frame layers");
+        for (var j = 0; j < layerCount; j++) {
+          // One bounds check per 11-byte layer. The floats are read inline: a
+          // helper that returns a double would box it into a heap number.
+          need(11);
+          var ref = bytes[offset] | (bytes[offset + 1] << 8);
+          var layer = pool[j] || (pool[j] = { name: "", index: 0, time: 0, weight: 0, loop: false });
+          if (ref & 0x8000) { layer.index = ref & 0x7fff; layer.name = ""; }
+          else if (ref < nameCount) { layer.index = 0; layer.name = names[ref]; }
+          else throw new RangeError("unknown Scene3D clip frame clip name");
+          for (var k = 0; k < 4; k++) scratch.setUint8(k, bytes[offset + 2 + k]);
+          layer.time = scratch.getFloat32(0, true);
+          for (var w = 0; w < 4; w++) scratch.setUint8(w, bytes[offset + 6 + w]);
+          layer.weight = scratch.getFloat32(0, true);
+          if (!Number.isFinite(layer.time) || !Number.isFinite(layer.weight)) throw new TypeError("non-finite Scene3D clip frame value");
+          if (layer.time < 0 || layer.weight < 0) throw new RangeError("negative Scene3D clip frame time or weight");
+          var flags = bytes[offset + 10];
+          if (flags > 1) throw new TypeError("invalid Scene3D clip frame layer flags");
+          layer.loop = flags === 1;
+          offset += 11;
+          model.layers[j] = layer;
+        }
+        model.layers.length = layerCount;
+      }
+      models.length = count;
+      if (offset !== bytes.length) throw new RangeError("trailing Scene3D clip frame data");
+      return models;
+    };
+  }
+
+  // decodeClipFrame decodes into fresh storage that the caller owns.
+  function decodeClipFrame(input: any) { return createClipDecoder()(input); }
+
+  function clipFrameStats(target: any, opts: any) {
+    var rec = record(target, opts);
+    var stats = (rec && rec.handle.__gosxClipFrameStats) || { accepted: 0, errors: 0, lastError: "", rejected: Object.create(null) };
+    if (rec) rec.handle.__gosxClipFrameStats = stats;
+    return stats;
+  }
+
+  function clipFrameFailed(target: any, opts: any, error: any) {
+    var stats = clipFrameStats(target, opts);
+    stats.errors++;
+    stats.lastError = String(error && error.message || error);
+    var rec = record(target, opts);
+    var eventTarget = rec && rec.mount || window;
+    if (typeof CustomEvent === "function" && eventTarget && typeof eventTarget.dispatchEvent === "function") {
+      try { eventTarget.dispatchEvent(new CustomEvent("gosx:scene3d:clip-frame-error", { detail: { reason: stats.lastError } })); } catch (_error) {}
+    }
+  }
+
+  function dispatchClipFrame(target: any, frame: any, options: any) {
+    var opts = options || {};
+    if (!key(target, opts) && !target) return Promise.reject(new Error("Scene3D clip frame target has no stable id"));
+    // Fast path: a mounted, ready target decodes into its own reusable decoder
+    // and applies synchronously, so nothing is retained between frames.
+    var rec = record(target, opts);
+    if (rec && typeof rec.handle.applyClipFrame === "function") {
+      try {
+        var decode = rec.handle.__gosxClipDecoder || (rec.handle.__gosxClipDecoder = createClipDecoder());
+        return Promise.resolve(rec.handle.applyClipFrame(decode(frame)));
+      } catch (error) {
+        clipFrameFailed(target, opts, error);
+        return Promise.reject(error);
+      }
+    }
+    var models;
+    try { models = decodeClipFrame(frame); } catch (error) { return Promise.reject(error); }
+    return waitForCommandMount(target, opts, "clip frame", function(rec, resolve, reject) {
+      if (typeof rec.handle.applyClipFrame !== "function") return reject(new Error("Scene3D clip frames are unsupported by this mount"));
+      try { resolve(rec.handle.applyClipFrame(models)); } catch (error) { reject(error); }
+    }).catch(function(error) {
+      clipFrameFailed(target, opts, error);
+      throw error;
+    });
+  }
+
+  var CLIP_FRAME_RESULTS = [{ applied: true, binary: true, pending: false }, { applied: true, binary: true, pending: true }];
+
+  function applyMountedClipFrame(state: any, models: any, animationApi: any, applyPose: any, scheduleRender: any, handle: any) {
+    var stats = handle.__gosxClipFrameStats || (handle.__gosxClipFrameStats = { accepted: 0, errors: 0, lastError: "", rejected: Object.create(null) });
+    // The animation chunk loads with the first skinned model. Without it no
+    // model can be sampled yet, which is the same as a renderer that is not ready.
+    var result = animationApi && animationApi.applyClipFrame ? animationApi.applyClipFrame(state, models, applyPose) : { applied: false, reason: "renderer-not-ready" };
+    if (!result || result.applied !== true) {
+      var reason = String(result && result.reason || "invalid-frame");
+      stats.rejected[reason] = (stats.rejected[reason] || 0) + 1;
+      throw new Error("Scene3D clip frame rejected: " + reason + (result && result.id ? " (" + result.id + ")" : ""));
+    }
+    stats.accepted++;
+    if (!result.pending) scheduleRender("clip-frame");
+    return CLIP_FRAME_RESULTS[result.pending ? 1 : 0];
+  }
+
   // GPU-driven crowd motion retains its own queues and mount validation.
   var motionQueues = new Map();
 
   function decodeMotionFrame(input) { return decodeInstanceFrame(input, true); }
+
+  // A GSP5 frame carries only the instances that changed. Superseding one
+  // with a newer frame would lose the older frame's movers, so the motion
+  // queue merges partial frames and never drops one for a full frame.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention.
+  function isPartialMotionFrame(frame) {
+    var bytes = frame instanceof ArrayBuffer ? new Uint8Array(frame, 0, Math.min(4, frame.byteLength)) : frame;
+    return bytes instanceof Uint8Array && bytes.length >= 4 && bytes[0] === 71 && bytes[1] === 83 && bytes[2] === 80 && bytes[3] === 53;
+  }
+
+  // mergePartialMotionBatches folds the changes of a newer partial frame over
+  // an older one: per batch and slot the newer entry wins. A batch whose size
+  // changed between the two frames is replaced whole by the newer entry, since
+  // its older slots refer to a membership that no longer exists.
+  // @ts-ignore TS7006 -- untyped, matching this file's convention.
+  function mergePartialMotionBatches(older, newer) {
+    var merged = new Map();
+    for (var group of [older, newer]) {
+      for (var batch of group) {
+        var entry = merged.get(batch.id);
+        if (!entry || entry.size !== batch.size) {
+          entry = { id: batch.id, partial: true, size: batch.size, slots: new Map() };
+          merged.set(batch.id, entry);
+        }
+        for (var instance of batch.instances) entry.slots.set(instance.slot, instance);
+      }
+    }
+    var out = [];
+    for (var entry of merged.values()) {
+      var slots = Array.from(entry.slots.keys()).sort(function(a: number, b: number) { return a - b; });
+      out.push({ id: entry.id, partial: true, size: entry.size, instances: slots.map(function(slot) { return entry.slots.get(slot); }) });
+    }
+    return out;
+  }
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
   function dispatchMotionFrame(target, frame, options) {
@@ -493,8 +704,20 @@
     return new Promise(function(resolve, reject) {
       var queue = motionQueues.get(queueKey);
       if (!queue) {
-        queue = { running: false, pending: null, stats: null };
+        queue = { running: false, pending: null, ahead: [], stats: null };
         motionQueues.set(queueKey, queue);
+      }
+      var partial = isPartialMotionFrame(frame);
+      var decoded = null;
+      if (queue.pending && (partial || queue.pending.partial)) {
+        // Only two partial frames fold into one. A partial frame and a full
+        // frame each depend on the other being applied, so both run, in order.
+        var folded = null;
+        if (partial && queue.pending.partial) {
+          try { folded = mergePartialMotionBatches(queue.pending.decoded || decodeMotionFrame(queue.pending.frame), decodeMotionFrame(frame)); } catch (_error) { folded = null; }
+        }
+        if (folded) decoded = folded;
+        else { queue.ahead.push(queue.pending); queue.pending = null; }
       }
       if (queue.pending) {
         var older = queue.pending.opts.beforeCommands;
@@ -510,7 +733,7 @@
         motionStats(queue.pending.target, queue.pending.opts).superseded++;
         queue.pending.resolve({ applied: false, binary: false, superseded: true });
       }
-      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject };
+      queue.pending = { target: target, frame: frame, opts: opts, resolve: resolve, reject: reject, partial: partial, decoded: decoded };
       if (!queue.running) runMotionQueue(queueKey, queue);
     });
   }
@@ -520,15 +743,15 @@
 
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
   function runMotionQueue(queueKey, queue) {
-    var job = queue.pending;
+    var job = queue.ahead.length ? queue.ahead.shift() : queue.pending;
     if (!job) { queue.running = false; motionQueues.delete(queueKey); return; }
-    queue.pending = null;
+    if (job === queue.pending) queue.pending = null;
     queue.running = true;
     var operation;
     try {
       operation = Array.isArray(job.opts.beforeCommands)
-        ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() { return dispatchMotionFrameNow(job.target, job.frame, job.opts); })
-        : dispatchMotionFrameNow(job.target, job.frame, job.opts);
+        ? dispatchCommands(job.target, job.opts.beforeCommands, job.opts).then(function() { return dispatchMotionFrameNow(job.target, job.frame, job.opts, job.decoded); })
+        : dispatchMotionFrameNow(job.target, job.frame, job.opts, job.decoded);
     } catch (error) {
       operation = Promise.reject(error);
     }
@@ -558,7 +781,7 @@
   // path) -- so a page can adopt MotionFrame per crowd without a hard
   // dependency on the mount already supporting it.
   // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
-  function dispatchMotionFrameNow(target, frame, opts) {
+  function dispatchMotionFrameNow(target, frame, opts, decoded) {
     // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
     function fallbackToCommands(error) {
       if (!Array.isArray(opts.fallbackCommands)) throw error;
@@ -581,7 +804,7 @@
     }
     // @ts-ignore TS7034 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
     var batches;
-    try { batches = decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
+    try { batches = decoded || decodeMotionFrame(frame); } catch (error) { return Promise.resolve().then(function() { return fallback(error); }); }
     return waitForCommandMount(target, opts, "motion frame", function(rec, resolve, reject) {
       motionStats(target, opts);
       if (typeof rec.handle.applyMotionFrame !== "function") return reject(new Error("Scene3D motion frames are unsupported by this mount"));
@@ -614,6 +837,15 @@
     for (var batch of batches) {
       // @ts-ignore TS7006 -- untyped, matching this file's convention. the expect-error form would report this directive unused under tsconfig.scene3d.json (noImplicitAny off there); @ts-ignore is silent either way.
       var current = mounted.find(function(candidate) { return candidate.id === batch.id; });
+      if (batch && batch.partial === true) {
+        // A partial batch names agents by slot. Its size must equal the
+        // mounted instance count; a frame built before a membership change
+        // would otherwise move the wrong agents. Slots become the mounted IDs
+        // so the writer below handles partial and full frames alike.
+        if (!current || !Array.isArray(batch.instances) || current.instances.length !== batch.size) reject("membership-changed");
+        for (var slotted of batch.instances) slotted.id = current.instances[slotted.slot].id || ("instance-" + slotted.slot);
+        continue;
+      }
       if (!current || !Array.isArray(batch.instances) || current.instances.length !== batch.instances.length) reject("membership-changed");
       for (var index = 0; index < batch.instances.length; index++) {
         if (current.instances[index].id !== batch.instances[index].id) reject("membership-order-changed");
@@ -649,12 +881,17 @@
 
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
+    live: live,
     getCamera, setCamera, whenReady, setAnimationClock,
     playTimeline: playTimeline,
     burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,
     decodePoseFrame: decodePoseFrame,
     applyMountedPoseFrame: applyMountedPoseFrame,
+    dispatchClipFrame: dispatchClipFrame,
+    decodeClipFrame: decodeClipFrame,
+    createClipDecoder: createClipDecoder,
+    applyMountedClipFrame: applyMountedClipFrame,
     dispatchMotionFrame: dispatchMotionFrame,
     decodeMotionFrame: decodeMotionFrame,
     applyMountedMotionFrame: applyMountedMotionFrame,

@@ -428,7 +428,7 @@ func (w *World) solveContactPositions(dt float64) {
 			body.Position = body.Position.Add(body.pseudoVelocity.Mul(dt))
 		}
 		if speed := body.pseudoAngular.Len(); speed > epsilon {
-			delta := QuatFromAxisAngle(body.pseudoAngular.Div(speed), speed*dt)
+			delta := QuatFromAxisAngle(body.pseudoAngular.Div(speed), float64(speed*dt))
 			body.Rotation = delta.Mul(body.Rotation).Normalize()
 			body.refreshWorldInertia()
 		}
@@ -560,6 +560,7 @@ func (w *World) takeCacheEntry() *cachedManifold {
 // the pool. Ranging the map costs time proportional to the live pair count
 // but allocates nothing, unlike the map-rebuild this replaced.
 func (w *World) pruneContactCache() {
+	//gosx:allow map-range pooled entries are interchangeable: reuse rewrites Count, Points[:Count] and touchedStep, the only fields read
 	for key, cm := range w.contactCache {
 		if cm.touchedStep == w.steps {
 			continue
@@ -643,7 +644,7 @@ func (w *World) integrateVelocities(dt float64) {
 		}
 		angularSpeed := body.AngularVelocity.Len()
 		if angularSpeed > epsilon {
-			delta := QuatFromAxisAngle(body.AngularVelocity.Div(angularSpeed), angularSpeed*dt)
+			delta := QuatFromAxisAngle(body.AngularVelocity.Div(angularSpeed), float64(angularSpeed*dt))
 			body.Rotation = delta.Mul(body.Rotation).Normalize()
 			body.refreshWorldInertia()
 		}
@@ -665,5 +666,5 @@ func dampingFactor(damping, dt float64) float64 {
 	if damping <= 0 {
 		return 1
 	}
-	return maxFloat(0, 1-damping*dt)
+	return maxFloat(0, 1-float64(damping*dt))
 }

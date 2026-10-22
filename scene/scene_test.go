@@ -4368,3 +4368,43 @@ func TestInstancedGLBMeshAutoID(t *testing.T) {
 		t.Fatalf("expected distinct auto-IDs, got duplicate %q", ir.InstancedGLBMeshes[0].ID)
 	}
 }
+
+func TestInstancedGLBMeshParentNodeReachesTheWire(t *testing.T) {
+	ir := Props{
+		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
+		Graph: NewGraph(
+			InstancedGLBMesh{
+				ID: "riders", Src: "/models/passenger.glb", ParentNode: "  ship ",
+				Instances: []MeshInstance{{ID: "p1", Position: Vec3(1, 0, 2), Scale: Vec3(1, 1, 1)}},
+			},
+			InstancedGLBMesh{
+				ID: "walkers", Src: "/models/passenger.glb",
+				Instances: []MeshInstance{{ID: "w1", Scale: Vec3(1, 1, 1)}},
+			},
+		),
+	}.SceneIR()
+	if len(ir.InstancedGLBMeshes) != 2 {
+		t.Fatalf("batches: %d", len(ir.InstancedGLBMeshes))
+	}
+	if got := ir.InstancedGLBMeshes[0].ParentNode; got != "ship" {
+		t.Fatalf("ParentNode: %q", got)
+	}
+	// Instance positions stay relative to the parent: lowering must not move them.
+	if inst := ir.InstancedGLBMeshes[0].Instances[0]; inst.X != 1 || inst.Z != 2 {
+		t.Fatalf("instance moved during lowering: %+v", inst)
+	}
+	data, err := json.Marshal(ir.InstancedGLBMeshes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"parentNode":"ship"`) || strings.Count(string(data), "parentNode") != 1 {
+		t.Fatalf("parentNode should appear once, on the opted-in batch: %s", data)
+	}
+	batches := ir.legacyProps()["instancedGLBMeshes"].([]map[string]any)
+	if batches[0]["parentNode"] != "ship" {
+		t.Fatalf("legacy props: %#v", batches[0])
+	}
+	if _, present := batches[1]["parentNode"]; present {
+		t.Fatal("a batch without a parent must not carry the field")
+	}
+}

@@ -185,6 +185,17 @@ type EngineEntry struct {
 	// Runtime selects the GoSX client runtime for this engine.
 	Runtime string `json:"runtime,omitempty"`
 
+	// Thread is "worker" when a go-wasm engine runs in a dedicated Web Worker.
+	// Empty keeps the engine on the main thread.
+	Thread string `json:"thread,omitempty"`
+
+	// WorkerMode is "required" when the engine must never run on the main
+	// thread. Empty means the engine falls back to the main thread.
+	WorkerMode string `json:"workerMode,omitempty"`
+
+	// ForceWorkerFallback makes the page treat the worker as unavailable.
+	ForceWorkerFallback bool `json:"forceWorkerFallback,omitempty"`
+
 	// Props is the JSON-serialized props snapshot.
 	Props json.RawMessage `json:"props"`
 
@@ -280,8 +291,66 @@ type HubInputConfig struct {
 	// Event is the hub event used for input snapshots. Defaults to "input".
 	Event string `json:"event,omitempty"`
 
-	// ReadyEvent is sent once the socket opens. Defaults to "ready".
+	// ReadyEvent is sent once the socket opens. Defaults to "ready". With
+	// ReadyWhen "scene-committed" it is sent later, once per socket.
 	ReadyEvent string `json:"readyEvent,omitempty"`
+
+	// ReadyWhen picks when ReadyEvent is sent in fighting mode. Empty or
+	// "socket" sends it as soon as the socket opens. "scene-committed" waits
+	// for the socket to open and for a Scene3D mount (inside Root when set,
+	// else anywhere on the page) to report data-gosx-scene3d-ready="true" and
+	// data-gosx-scene3d-model-hydration-committed="true", then for two
+	// animation frames, and sends ReadyEvent at most once per socket.
+	ReadyWhen string `json:"readyWhen,omitempty"`
+
+	// HeldMode selects how fighting mode encodes held input. Empty keeps the
+	// legacy encoding: a 0-8 direction code resolved on the client (opposites
+	// cancelled, left/right mapped to forward/back by player slot).
+	//
+	// "absolute" sends raw screen-absolute held state for a simulation that
+	// derives press edges and resolves opposite directions itself. The bit
+	// layout is a wire contract that matches the Primal Shift sim:
+	//
+	//	dir    bit mask: left 1, right 2, up 4, down 8; no client SOCD, no slot mapping
+	//	btn    bit mask: lp 1, hp 2, lk 4, hk 8, guard 16 (32 is reserved for transform)
+	//	frame  sample frame number, starting at 1, +1 per animation frame
+	//
+	// Every sample taken in one frame (key, touch and pointer events, gamepad
+	// polls on each animation frame and each SendEveryMS tick) combines by one
+	// latch rule: buttons are OR-ed, directions take the last sample. A press
+	// and release inside one frame still counts as pressed. Each frame sends
+	// one sample per player when it closes; with edge sends on, a changed
+	// latched state also goes out at once with the current frame number, so
+	// the receiver keeps the last sample per frame. The frame number counts
+	// local sampling only; mapping it to a simulation frame belongs to the
+	// netplay layer. A hidden tab stops animation frames and so stops sending.
+	HeldMode string `json:"heldMode,omitempty"`
+
+	// Sink picks where fighting-mode samples go. Empty sends them to the hub
+	// socket. "signal" runs the controller without any socket and publishes
+	// each closed frame's samples to the shared signal named by SignalName, for
+	// a Go WASM engine to read. Register such a controller with
+	// Manifest.AddLocalInput. A signal sink always uses the "absolute" encoding
+	// (see HeldMode), sends no ready, training or hub events, and needs no hub.
+	Sink string `json:"sink,omitempty"`
+
+	// SignalName is the shared signal that receives samples when Sink is
+	// "signal". Its value is a JSON array with one sample per local player
+	// (both in Local mode), each shaped {player, dir, btn, frame}:
+	//
+	//	[{"player":1,"dir":2,"btn":1,"frame":7}]
+	//
+	// dir, btn and frame follow HeldMode "absolute". The array is written once
+	// per closed frame and, unless DisableEdgeSend is set, again at once when
+	// a key or touch change alters the latched state, with the same frame
+	// number. Read the last value written for a frame.
+	SignalName string `json:"signalName,omitempty"`
+
+	// DisableEdgeSend turns off the same-event-turn send in fighting mode.
+	// By default a mapped key or touch control that changes held state sends
+	// the full input state immediately, and the SendEveryMS timer keeps
+	// polling gamepads and repeats the state. Set it to send only from the timer.
+	DisableEdgeSend bool `json:"disableEdgeSend,omitempty"`
 
 	// TrainingEvent is used for bootstrap-owned training shortcuts.
 	TrainingEvent string `json:"trainingEvent,omitempty"`
@@ -605,6 +674,19 @@ func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, inp
 		Input:    input,
 	})
 	return id
+}
+
+// AddLocalInput registers a fighting-input controller that runs without a hub
+// socket and publishes samples to input.SignalName (see HubInputConfig.Sink).
+// It returns the entry ID, or "" when input is nil or names no signal. The
+// entry's Path stays empty, so the browser opens no connection for it.
+func (m *Manifest) AddLocalInput(name string, input *HubInputConfig) string {
+	if input == nil || strings.TrimSpace(input.SignalName) == "" {
+		return ""
+	}
+	local := *input
+	local.Sink = "signal"
+	return m.AddHubWithInput(name, "", nil, &local)
 }
 
 // AddHubWithRoundTrip registers a realtime hub with an optional measured

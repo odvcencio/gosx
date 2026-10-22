@@ -212,6 +212,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("../runtime/scene3d/compute.ts"),
 			sourceFile("../runtime/scene3d/indirect-instancing.ts"),
 			sourceFile("bootstrap-src/17-scene-input.ts"),
@@ -378,6 +379,19 @@ var outputs = []output{
 		},
 	},
 	{
+		// The procedural arcade synth without the hub chunk. A page whose Go
+		// WASM engine plays arcade cues, and that has no hub (for example one
+		// that reads the local fight-input sink), requires it with
+		// RequireFeature("arcade-audio"). 30c2 is the same source the hubs chunk
+		// carries, so scene.AudioCue behaves identically.
+		name: "bootstrap-feature-arcade-audio.js",
+		sources: []source{
+			sourceFile("bootstrap-src/26m-feature-arcade-audio-prefix.ts"),
+			sourceFile(tailArcadeAudioFile),
+			sourceFile("bootstrap-src/26m-feature-arcade-audio-suffix.ts"),
+		},
+	},
+	{
 		name: "bootstrap-feature-controllers.js",
 		sources: []source{
 			sourceFile("bootstrap-src/26h-feature-controllers-prefix.ts"),
@@ -397,6 +411,20 @@ var outputs = []output{
 	{
 		name:    "bootstrap-feature-hub-document.js",
 		sources: []source{sourceFile("../runtime/host/hub-document.ts")},
+	},
+	{
+		// Browser half of netplay: RTCPeerConnection and one unreliable data
+		// channel per connection, polled by Go WASM (netplay/client). It loads
+		// only for a page that calls RequireFeature("netplay").
+		name:    "bootstrap-feature-netplay.js",
+		sources: []source{sourceFile("../runtime/host/netplay.ts")},
+	},
+	{
+		// Host for engines with Thread: worker. The same file is the page
+		// half (starts the Worker, relays calls and binary frames) and the
+		// Worker script. It loads only for a page that has such an engine.
+		name:    "bootstrap-feature-engine-worker.js",
+		sources: []source{sourceFile("../runtime/host/engine-worker.ts")},
 	},
 
 	{
@@ -606,6 +634,7 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/webgpu-specular-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-bloom.ts"),
 			sourceFile("../runtime/scene3d/webgpu-contact-shadows.ts"),
+			sourceFile("../runtime/scene3d/webgpu-crowd.ts"),
 			sourceFile("bootstrap-src/26e-feature-scene3d-webgpu-suffix.ts"),
 		},
 	},
@@ -636,6 +665,9 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/vessel-input.ts"),
 			sourceFile("../runtime/scene3d/vessel-model.ts"),
 			sourceFile("../runtime/scene3d/vessel-wake.ts"),
+			sourceFile("../runtime/scene3d/vessel-external.ts"),
+			sourceFile("../runtime/scene3d/vessel-decks.ts"),
+			sourceFile("../runtime/scene3d/vessel-cutaway.ts"),
 			sourceFile("../runtime/scene3d/mount-vessel.ts"),
 		},
 	},

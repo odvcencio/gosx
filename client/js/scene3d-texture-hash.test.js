@@ -261,7 +261,10 @@ test("numeric camera depths and poses reuse CSS resolution while the draw plan s
     assert.equal(prepared.cssCache.inputSignature,signature);
     assert.equal(prepared.ir.objects[0].x,frame);
     assert.equal(prepared.ir.meshObjects[0].depthCenter,frame+4);
-    assert.notEqual(prepared.signature,prior.signature,"draw planning must follow movement");
+    // Mesh depth reaches the plan through the pass buckets, which a cache hit
+    // re-reads from the current records; it no longer forces a rebuild.
+    assert.equal(prepared.signature,prior.signature,"mesh depth alone does not rebuild the plan");
+    assert.equal(prepared.pbrPasses.opaque[0],source.meshObjects[0],"cached passes follow the current records");
   }
   assert.equal(reads,initialReads,"camera movement must not repeat computed-style reads");
   tint="#abcdef";

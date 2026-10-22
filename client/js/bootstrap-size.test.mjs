@@ -77,14 +77,43 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // Direct Go-WASM signal JSON handoffs add 490 raw bytes to the monolith.
 // Move only exhausted generated targets to the measured passing minima;
 // preserve every warning/error allowance and route-fraction limit.
+// Crowd batch records (one bundle record per WebGL crowd batch, a retained
+// batch cache, and a camera-independent prepared-scene signature) add 7,591
+// raw / 2,499 gzip / 2,268 Brotli bytes to the monolith. Only the exhausted
+// targets move, each to its exact measured minimum: the monolith, the Scene3D
+// core chunk (raw, gzip), the WebGL chunk (Brotli) and four Scene3D route
+// totals. Allowances, route fractions and zero-byte invariants stay unchanged.
+// Partial motion frames (GSP5 decode, queue merge, slot ranges) and the crowd
+// batch parent node (shader matrix, parent lookup, world bounds, picks) add 2,922
+// raw / 981 gzip / 626 Brotli bytes to the monolith and 1,514 / 592 / 564 to the
+// command chunk. Only the exhausted targets move, each to its exact measured
+// minimum under the unchanged allowances: the monolith (all three), the Scene3D
+// core chunk (raw, gzip), the WebGL chunk (Brotli), the command chunk (all
+// three) and the Scene3D route totals that include them.
 // Visitor repairs preserve fitted Water poses, current shape optics, and
 // packed GPU-driven shader/material readiness.
 // Opt-in rigid preparation shares normalized CPU geometry with first hydration.
 // Combined exhausted targets use measured passing minima; every allowance and
 // route-fraction policy stays fixed.
+// Merging main into the integration branch combines both sides' growth. Each
+// exhausted target (monolith, WebGL Brotli, WebGPU chunk, and the four Scene3D
+// route totals) moves to the smallest value that passes under the unchanged
+// allowance policy; the larger of the two sides' targets was the starting point.
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
+  // Netplay's browser binding loads only for a page that calls RequireFeature("netplay");
+  // no existing bundle changed size (measured 4353 raw / 1772 gzip / 1639 Brotli).
+  { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
+  // The engine-worker host loads only for a page with a Thread: worker engine, so no other
+  // bundle or route changed. It had no entry before. Call watchdog, status signal, worker
+  // policy, view acknowledgements and vessel forwarding grew it from 28462 / 9351 / 8682 to
+  // 33566 raw / 10837 gzip / 10130 Brotli after review fixes (remount seeding, teardown
+  // cleanup, vessel results). The targets sit at that measurement, rounded up.
+  { file: "bootstrap-feature-engine-worker.js", raw: 33600, gzip: 10840, brotli: 10130 },
+  // The arcade synth for a page with no hub chunk; loads only for RequireFeature("arcade-audio").
+  // Measured 8330 / 2748 / 2519.
+  { file: "bootstrap-feature-arcade-audio.js", raw: 8400, gzip: 2800, brotli: 2570 },
   // Native cubic tangents add 846 raw / 325 gzip / 310 Brotli bytes to this
   // optional chunk. Only its exhausted raw target moves to the measured
   // minimum (5722 - 2048 allowance); compressed targets and policy stay fixed.
@@ -116,7 +145,7 @@ const budgets = [
   // Only this optional chunk's exhausted targets change; allowances stay fixed.
   // Shared render interpolation, stable foam and the touch dead zone measure 31,260 / 11,914 / 10,914 bytes.
   // Only exhausted targets rise to the measured minimum; allowances remain fixed.
-  { file: "bootstrap-feature-scene3d-vessel.js", raw: 33401, gzip: 12303, brotli: 11184 },
+  { file: "bootstrap-feature-scene3d-vessel.js", raw: 41427, gzip: 15464, brotli: 14115 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
   // headroom unchanged.
@@ -842,16 +871,14 @@ const budgets = [
     // Native touch deduplication and the cross-chunk bridge measure 1969984 raw / 544188 gzip; targets use only the exhausted minima under unchanged allowances.
     // Typed night lighting and held-signal deduplication: only the exhausted gzip minimum moves; allowances remain unchanged.
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
+    // Fighting-hub edge sends, absolute held input and crowd batch records together measure 1983246 raw / 550575 gzip / 453528 brotli bytes; only the exhausted minimums move; allowances remain unchanged.
+    // Sampled clip frames (GSP4 decoder, stateless clip sampler, mount hooks) measure 1993370 raw / 554046 gzip / 456587 brotli monolith bytes; only exhausted minimums move to the exact measured value; allowances remain unchanged.
     // Explicit failed-texture preparation retry in both renderers adds 406 raw,
     // 166 gzip and 111 Brotli bytes after the cache-hit lookup reduction.
     // Retain the governed allowances and all other targets.
-    // Model-map profiles and staged rehydration on the merged retry base measure
-    // 1,979,196 raw bytes. Move only the exhausted target by 4,951 bytes;
-    // keep the 65,536-byte governed allowance unchanged.
-    // Shared base-color/emissive alpha selection adds 425 measured raw bytes.
-    file: "bootstrap.js", raw: 1914085, gzip: 533196,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    brotli: 436662 },
+    file: "bootstrap.js", raw: 1976289, gzip: 552171,
+    brotli: 450858 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1241,7 +1268,7 @@ const budgets = [
     // BLEND texture coverage with current main measures 73,953 Brotli bytes. Use the
     // minimum target under the unchanged 5% allowance; retain raw and gzip.
     // Wind-ripple warping measures 73,997 Brotli bytes; the minimum target rises by 24 bytes.
-    file: "bootstrap-feature-scene3d-webgl.js", raw: 290800, gzip: 83600, brotli: 71309 },
+    file: "bootstrap-feature-scene3d-webgl.js", raw: 290800, gzip: 83600, brotli: 72053 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js
@@ -1387,7 +1414,7 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
     // Integrated baked shadow bounds measure 645370 raw bytes; keep the 5% allowance.
-    file: "bootstrap-feature-scene3d.js", raw: 620257, gzip: 176600,
+    file: "bootstrap-feature-scene3d.js", raw: 629434, gzip: 179013,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     brotli: 153200 },
@@ -1409,7 +1436,7 @@ const budgets = [
   // targets, allowances, monolith and first-load route limits stay fixed.
   // Sparse terrain sampling adds 244 raw bytes; the optional walk hard cap
   // becomes the measured 13,634 bytes, with compressed targets unchanged.
-  { file: "bootstrap-feature-scene3d-walk.js", raw: 11586, gzip: 4600, brotli: 4200 },
+  { file: "bootstrap-feature-scene3d-walk.js", raw: 11659, gzip: 4600, brotli: 4200 },
   { file: "bootstrap-feature-scene3d-compute.js", raw: 61200, gzip: 17900, brotli: 16100 },
   // The decompress chunk: the quantized-array decoder, the progressive and
   // level-of-detail ladders, and the procedural point generators. The mount
@@ -1429,7 +1456,7 @@ const budgets = [
   // copy of the same shape. Measured: 13_839 / 3_606 / 3_158; all three caps
   // raised with narrow rounding headroom. The merged build measures
   // 13_888 / 3_631 / 3_181.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 14000, gzip: 4121, brotli: 3642 },
+  { file: "bootstrap-feature-scene3d-command.js", raw: 19588, gzip: 5887, brotli: 5309 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
@@ -1608,14 +1635,15 @@ const budgets = [
     // Merge with main preserves sampler wrapping and signed normal-map scales: raw 436000 -> 436600 (measured 458426); gzip 110700 -> 111000 (measured 116451); brotli 91800 -> 92100 (measured 96629). Governed allowances stay fixed.
     // Detail cache lifecycle adds 1,086 raw / 314 gzip / 280 Brotli WebGPU bytes.
     // Raise only breached measured targets; the size policy stays fixed.
+    // WebGPU crowd batches add 33,158 raw / 9,869 gzip / 8,087 brotli bytes to this chunk; only the exhausted minimums move to exact measured values; allowances remain unchanged.
     file: "bootstrap-feature-scene3d-webgpu.js",
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 461857.
     // Merged WebGPU sources measure 118,032 gzip bytes; raise only this target by 1,411 B under the unchanged 5% allowance.
     // Explicit failed-texture retry adds 74 gzip bytes to this chunk; retain
     // its other targets and the governed allowance.
-    raw: 461900, gzip: 113898,
+    raw: 466708, gzip: 123290,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
-    brotli: 98000 },
+    brotli: 104437 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
   // for the KTX2 work: the variant swap in 19-scene-gltf.js and the browser
   // KTX2 reader in 19a-scene-ktx2.ts, which ships in this chunk because only
@@ -1666,7 +1694,7 @@ const budgets = [
   // GSP3 record read/write helpers. Measured: 16_950 / 6_714 / 5_955; all
   // three caps raised with narrow rounding headroom. The merged build
   // measures 17_457 / 6_841 / 6_055.
-  { file: "bootstrap-feature-scene3d-animation.js", raw: 17550, gzip: 6950, brotli: 6150 },
+  { file: "bootstrap-feature-scene3d-animation.js", raw: 25634, gzip: 9326, brotli: 8452 },
   // bootstrap-feature-engines.js carries the video factory, so it now also
   // carries 28-video-sync-fallback.ts (the JS drift engine): raw 52_000 ->
   // 58_000, gzip 16_000 -> 18_500, brotli 14_500 -> 16_500.
@@ -1760,7 +1788,9 @@ const budgets = [
   // and gzip headroom unchanged. Measured: 44_189 / 13_739 / 12_333.
   // Persistent hub connections add 1,936 / 604 / 511 bytes. The prior raw
   // hard limit had only 10 bytes left; targets grow by the measured change.
-  { file: "bootstrap-feature-hubs.js", raw: 48082, gzip: 14804, brotli: 13314 },
+  // Fighting-hub edge sends and the scene-committed ready gate add 1,685 / 641 / 555 bytes; targets grow by the measured change.
+  // Absolute held-input mode adds 1,408 / 437 / 376 bytes; targets grow by the measured change.
+  { file: "bootstrap-feature-hubs.js", raw: 51720, gzip: 15882, brotli: 14245 },
   // v0.38.0: bumped raw 10_000 -> 14_000 for the island-VM core hub
   // connect/disconnect, island dispose, hydration, and event-delegation
   // tails carried by this chunk. gzip/brotli headroom unchanged. Exact
@@ -1926,9 +1956,11 @@ const routeBudgets = [
     // Dormant gamepad input adds the same 524 raw bytes to this route.
     // Measured 305,783 raw. Move only the breached raw target to its minimum
     // passing value; compressed targets and the governed allowance stay fixed.
-    raw: 293401,
+    // The engine worker thread hook adds 246 raw bytes to the engines chunk
+    // (measured 308,317 raw, 78,760 Brotli); only the exhausted raw and Brotli minimums move.
+    raw: 293646,
     gzip: 83400,
-    brotli: 74872,
+    brotli: 75016,
     maxMonolithFraction: 0.25,
   },
   // Scene3D had no route budget until now, so the four-chunk Scene3D surface
@@ -2110,16 +2142,14 @@ const routeBudgets = [
     // Merged runtime navigation adds 63 raw bytes; retain the existing measured allowance.
     // Detail resource reuse and retirement adds 1,086 raw, 314 gzip and 280
     // Brotli bytes to this route. Keep the shared allowances unchanged.
-    raw: 1394681,
     // The same two-backend retry adds 74 gzip bytes to this route after the
     // cache-hit lookup reduction; retain the 16,384 B cap.
-    // The merged model-map profile adds 961 gzip bytes to this route.
-    // Keep its 16,384-byte governed allowance unchanged.
-    gzip: 385696,
+    raw: 1436252,
+    gzip: 398899,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    brotli: 338000,
+    brotli: 341869,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1215500 -> 1222300 (measured 1283355); gzip 348800 -> 350800 (measured 367126); brotli 293300 -> 294500 (measured 309202). Existing allowances stay fixed.
@@ -2317,13 +2347,13 @@ const routeBudgets = [
     // 1_233_134 / 350_028 / 294_996; targets rise by the smallest 100-byte steps.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // Main navigation growth: 1,276,174 raw / 307,695 Brotli bytes.
-    raw: 1241400,
+    raw: 1243129,
     gzip: 357200,
     // Binding PBR after the ocean changes the Brotli dictionary: measured 307,863 bytes.
     // Shared frame progress on sailing main measures 316,447 Brotli bytes; the minimum target is 301,378 under the unchanged 5% allowance.
     // Merged sources measure 316,967 Brotli bytes; raise only this target by 215 B under the unchanged 5% allowance.
     // Integrated Float32-safe shadow bounds measure 318127 Brotli bytes; keep the 5% allowance.
-    brotli: 305284,
+    brotli: 308809,
   },
   // Volume transmission adds 12965 raw / 4142 gzip / 2712 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1657700 -> 1670800 (measured 1736261); gzip 461900 -> 465500 (measured 481796); brotli 385400 -> 388000 (measured 404295). Existing allowances stay fixed.
@@ -2516,12 +2546,12 @@ const routeBudgets = [
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
     // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
-    raw: 1696300,
-    gzip: 473600,
+    raw: 1729794,
+    gzip: 485809,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
-    brotli: 405634,
+    brotli: 417525,
   },
   // Volume transmission adds 8052 raw / 2713 gzip / 1689 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
   // Integrated renderer changes: raw 1220200 -> 1227800 (measured 1289171); gzip 335300 -> 337500 (measured 353851); brotli 279200 -> 280800 (measured 294775). Existing allowances stay fixed.
@@ -2687,13 +2717,13 @@ const routeBudgets = [
     // The physical sky measures 1_217_282 / 329_134 / 274_908; targets rise by the
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
-    raw: 1242159,
     // The same WebGPU chunk adds 74 gzip bytes to this route; retain its
     // other targets and the governed allowance.
-    gzip: 342088,
+    raw: 1280860,
+    gzip: 355199,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
-    brotli: 299400,
+    brotli: 303245,
   },
 
 ];
