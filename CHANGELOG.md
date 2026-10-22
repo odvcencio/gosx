@@ -2,6 +2,28 @@
 
 ## Unreleased
 
+- Mount a Scene3D after first paint and idle with `scene.Props.Defer`. The page
+  paints the mount's poster or fallback first; the server keeps the props out of
+  the page at `/gosx/scene3d/<hash>.json` (immutable, content-addressed) and the
+  browser downloads no scene chunk, props or model until two animation frames and
+  an idle callback have passed. `Defer.Variants` picks another snapshot by media
+  query. Three new engine capabilities gate a scene before any download:
+  `hardware-gpu`, `full-motion` and `full-data`; a failed gate keeps the poster
+  and publishes the result. Every Scene3D mount, every failed gate and the opt-in
+  `RequireFeature("renderer-probe")` chunk publish the renderer the browser uses
+  (`webgpu`, `webgl2`, `canvas2d`, `none`) on `<html data-gosx-renderer>`, the
+  `$gosx.renderer` signal and the `gosx:renderer` event. Selective pages now emit
+  `<script defer data-gosx-script="feature-engines|hubs|controllers|islands">`
+  tags instead of preload links, so an app writes no runtime `<script>` tag.
+  Bundle sizes: bootstrap-runtime.js 193,953 -> 196,603 raw (54,164 -> 54,965
+  gzip, 48,587 -> 49,162 Brotli); bootstrap-feature-engines.js 114,364 ->
+  117,534 raw (33,152 -> 34,064 gzip, 30,173 -> 30,948 Brotli); bootstrap.js
+  2,036,426 -> 2,041,423 raw (566,879 -> 568,410 gzip, 466,054 -> 466,840
+  Brotli); bootstrap-feature-scene3d.js 657,780 -> 658,021 raw (186,973 ->
+  187,048 gzip, 159,257 -> 159,304 Brotli); the new
+  bootstrap-feature-renderer-probe.js is 891 raw (440 gzip, 365 Brotli) and loads
+  only on pages that require it. See docs/scene3d-performance.
+
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,
   schema-checked ObjectIR equality proofs, including embedded model records.
   Transform and interaction updates
