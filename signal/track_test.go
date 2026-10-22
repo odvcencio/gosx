@@ -137,6 +137,35 @@ func TestTrackingScratchDoesNotRetainDependencyGraphs(t *testing.T) {
 	}
 }
 
+func TestSharedTrackingScopeCanCloseWindowsOutOfOrder(t *testing.T) {
+	var deps []dependency
+	outer := pushTracker(0)
+	middle := pushTracker(0)
+	inner := pushTracker(0)
+	popTracker(outer, &deps)
+	// Reusing the closed window elsewhere must not change the still-live
+	// shared scope or leave its parent pointing into the scratch cache.
+	reused := pushTracker(1)
+	trackerMu.Lock()
+	valid := trackerStacks[0] == inner && inner.parent == middle && middle.parent == nil
+	trackerMu.Unlock()
+	popTracker(reused, &deps)
+	popTracker(middle, &deps)
+	trackerMu.Lock()
+	valid = valid && trackerStacks[0] == inner && inner.parent == nil
+	trackerMu.Unlock()
+	popTracker(inner, &deps)
+	if !valid {
+		t.Fatal("closing the outer window lost or aliased the live inner window")
+	}
+	trackerMu.Lock()
+	empty := len(trackerStacks) == 0
+	trackerMu.Unlock()
+	if !empty || openTrackers.Load() != 0 {
+		t.Fatal("closing shared windows left tracking active")
+	}
+}
+
 func BenchmarkTrackDependencies(b *testing.B) {
 	for _, count := range []int{1, 5, 16, 64} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {

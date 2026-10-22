@@ -19,6 +19,7 @@ var (
 )
 
 type dependencyTracker struct {
+	gid    uint64
 	parent *dependencyTracker
 	deps   []dependency
 	seen   map[Subscribable]bool
@@ -40,9 +41,9 @@ func recordDependency(s Subscribable, revision uint64) {
 	gid := goroutineID()
 
 	trackerMu.Lock()
-	defer trackerMu.Unlock()
 	t := trackerStacks[gid]
 	if t == nil {
+		trackerMu.Unlock()
 		return
 	}
 
@@ -51,6 +52,7 @@ func recordDependency(s Subscribable, revision uint64) {
 	if len(t.deps) < 8 {
 		for _, dep := range t.deps {
 			if dep.source == s {
+				trackerMu.Unlock()
 				return
 			}
 		}
@@ -64,22 +66,22 @@ func recordDependency(s Subscribable, revision uint64) {
 			}
 		}
 		if t.seen[s] {
+			trackerMu.Unlock()
 			return
 		}
 		t.seen[s] = true
 	}
 	t.deps = append(t.deps, dependency{source: s, revision: revision})
+	trackerMu.Unlock()
 }
 
 // trackDependencies runs fn and reports every signal that fn read on the
 // calling goroutine. Nested windows are supported. The returned dependencies
 // belong to the caller; only cleared tracking scratch is cached for reuse.
-func trackDependencies[T any](fn func() T) (T, []dependency) {
-	gid := goroutineID()
-	t := pushTracker(gid)
-	defer popTracker(gid, t)
-	val := fn()
-	return val, snapshotDependencies(t)
+func trackDependencies[T any](fn func() T) (value T, deps []dependency) {
+	t := pushTracker(goroutineID())
+	defer popTracker(t, &deps)
+	return fn(), nil
 }
 
 // Keep scratch management outside the generic evaluator so each value type
@@ -87,7 +89,6 @@ func trackDependencies[T any](fn func() T) (T, []dependency) {
 func pushTracker(gid uint64) *dependencyTracker {
 	openTrackers.Add(1)
 	trackerMu.Lock()
-	defer trackerMu.Unlock()
 	t := spareTrackers
 	if t == nil {
 		t = new(dependencyTracker)
@@ -98,40 +99,39 @@ func pushTracker(gid uint64) *dependencyTracker {
 	if trackerStacks == nil {
 		trackerStacks = make(map[uint64]*dependencyTracker)
 	}
+	t.gid = gid
 	t.parent = trackerStacks[gid]
 	trackerStacks[gid] = t
+	trackerMu.Unlock()
 	return t
-}
-
-func snapshotDependencies(t *dependencyTracker) []dependency {
-	trackerMu.Lock()
-	defer trackerMu.Unlock()
-	return append([]dependency(nil), t.deps...)
 }
 
 // Pop and clear the window even when fn panics. Neither subsequent reads
 // nor cached scratch may retain a dependency of an abandoned computation.
-func popTracker(gid uint64, t *dependencyTracker) {
+func popTracker(t *dependencyTracker, deps *[]dependency) {
 	trackerMu.Lock()
-	if t.parent == nil {
+	*deps = append([]dependency(nil), t.deps...)
+	gid := t.gid
+	head := trackerStacks[gid]
+	if head != t {
+		// Runtimes without goroutine IDs share one scope. If overlapping
+		// windows finish out of order, detach this window before caching it.
+		// Each pushed window remains linked until its matching pop.
+		for head.parent != t {
+			head = head.parent
+		}
+		head.parent = t.parent
+	} else if t.parent == nil {
 		delete(trackerStacks, gid)
 	} else {
 		trackerStacks[gid] = t.parent
 	}
-	t.parent = nil
-	if cap(t.deps) > 128 {
-		// An unusually large computation must not permanently enlarge
-		// the scratch retained by ordinary, short tracking windows.
-		t.deps = nil
-		t.seen = nil
-	} else {
+	// Cache only small, cleared windows. Oversized or excess windows can be
+	// collected instead of keeping their backing arrays or source graphs.
+	if cap(t.deps) <= 128 && spareCount < 8 {
 		clear(t.deps)
 		t.deps = t.deps[:0]
 		clear(t.seen)
-	}
-	// A typed cache avoids interface boxing in the small browser runtime.
-	// Bound retained windows as well as each window's scratch capacity.
-	if spareCount < 8 {
 		t.parent = spareTrackers
 		spareTrackers = t
 		spareCount++
