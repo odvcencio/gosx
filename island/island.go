@@ -1450,6 +1450,22 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 		r.writeScene3DChunkURLs(&b)
 	}
 	b.WriteString(fmt.Sprintf(` src="%s"%s></script>`, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
+	// Selective pages: declare the feature chunks the page needs as deferred
+	// script tags. The preload scanner starts them at parse time and the loader
+	// finds their factories registered when bootstrapPage runs, so the
+	// bootstrap-then-insert round trip disappears. Each chunk registers into the
+	// shared window.__gosx_bootstrap_features object when it runs before the
+	// runtime (see 26b-feature-engines-prefix.ts), so order is not load-bearing.
+	if plan.Selective {
+		for _, name := range []string{"islands", "engines", "hubs", "controllers"} {
+			path := r.selectedBootstrapFeaturePath(name)
+			if strings.TrimSpace(path) == "" {
+				continue
+			}
+			b.WriteByte('\n')
+			b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="feature-%s" src="%s"%s></script>`, name, html.EscapeString(path), r.runtimeScriptAttrs(path, nonce)))
+		}
+	}
 	if scene3dPath != "" && eager {
 		// The strict hydrate decoder is not part of the initial Scene3D route.
 		// Emit it only for a shared-runtime Scene3D program, ordered before the
@@ -2350,6 +2366,13 @@ func (r *Renderer) bootstrapScriptSrcs() map[string]bool {
 	}
 	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" && r.scene3DHasEagerEngine() {
 		srcs[scene3dPath] = true
+	}
+	if plan.Selective {
+		for _, name := range []string{"islands", "engines", "hubs", "controllers"} {
+			if path := r.selectedBootstrapFeaturePath(name); path != "" {
+				srcs[path] = true
+			}
+		}
 	}
 	return srcs
 }

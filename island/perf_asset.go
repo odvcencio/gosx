@@ -187,6 +187,12 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 	if err != nil {
 		return fail("invalid-input", "/pageHead")
 	}
+	headScripts := map[string]bool{}
+	for _, ref := range refs {
+		if ref.Tag == "script" && ref.URL != "" {
+			headScripts[ref.URL] = true
+		}
+	}
 	for _, ref := range refs {
 		tag, url, rel, as := ref.Tag, ref.URL, ref.Rel, ref.As
 		if tag == "script" && url != "" || tag == "link" && (rel == "preload" || rel == "prefetch") && (as == "script" || as == "" || as == "fetch") {
@@ -216,7 +222,9 @@ func (r *Renderer) PerfAssetUses(opts PerfAssetOptions) (*buildmanifest.PerfAsse
 	if plan.Selective && r.bootstrapRuntimePath != "" && summary.BootstrapPath == r.bootstrapRuntimePath {
 		for _, path := range []string{summary.BootstrapFeatureIslandsPath, summary.BootstrapFeatureEnginesPath,
 			summary.BootstrapFeatureHubsPath, summary.BootstrapFeatureControllersPath} {
-			if path == "" {
+			// A chunk the server emits as its own <script defer> tag is found by
+			// the preload scanner; it does not wait for the runtime to fetch it.
+			if path == "" || headScripts[path] {
 				continue
 			}
 			if err := mark(public(path), "startup", "always", public(summary.BootstrapPath)); err != nil {

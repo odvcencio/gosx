@@ -239,8 +239,8 @@ func TestRegisterComputeIslandUsesSharedRuntimeWithoutDOMPatch(t *testing.T) {
 	}
 
 	preloads := gosx.RenderHTML(r.PreloadHints())
-	if !strings.Contains(preloads, "bootstrap-feature-islands.js") {
-		t.Fatalf("compute island page should preload islands feature chunk: %s", preloads)
+	if !strings.Contains(gosx.RenderHTML(r.BootstrapScript()), `data-gosx-script="feature-islands"`) {
+		t.Fatalf("compute island page should declare the islands feature chunk as a script tag: %s", gosx.RenderHTML(r.BootstrapScript()))
 	}
 	if !strings.Contains(preloads, "/gosx/islands/FightController.json") {
 		t.Fatalf("compute island program should be prefetched: %s", preloads)
@@ -969,14 +969,8 @@ func TestPreloadHintsSkipScene3DAlreadyEmittedAsScriptTag(t *testing.T) {
 	if strings.Contains(preloads, `href="`+r.selectedBootstrapFeaturePath("scene3d")+`"`) {
 		t.Fatalf("scene3d bundle must not be preloaded — it is already a same-document <script defer> tag: %s", preloads)
 	}
-	if !strings.Contains(preloads, "bootstrap-feature-engines") {
-		t.Fatalf("engines bundle preload must be preserved (client-side fetched, never a same-document script tag): %s", preloads)
-	}
-
-	path := r.selectedBootstrapFeaturePath("engines")
-	expected := `<link rel="preload" href="` + path + `" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`
-	if !strings.Contains(preloads, expected) {
-		t.Fatalf("regression: preload for engines path %q missing exact link tag (needs crossorigin and referrerpolicy in order)\nwant: %s\ngot:  %s", path, expected, preloads)
+	if strings.Contains(preloads, "bootstrap-feature-engines") {
+		t.Fatalf("engines bundle is a same-document script tag and must not also be preloaded: %s", preloads)
 	}
 
 	scripts := gosx.RenderHTML(r.BootstrapScript())
