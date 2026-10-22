@@ -1185,6 +1185,14 @@ func (r *Renderer) clientManifest() *hydrate.Manifest {
 	}
 	manifest := *r.manifest
 	manifest.Features = r.explicitFeatures()
+	manifest.Engines = append([]hydrate.EngineEntry(nil), r.manifest.Engines...)
+	for i := range manifest.Engines {
+		if d := manifest.Engines[i].Defer; d != nil && strings.EqualFold(manifest.Engines[i].Component, "GoSXScene3D") {
+			copyD := *d
+			copyD.Preloads = r.scene3DEntryPreloads(&manifest.Engines[i])
+			manifest.Engines[i].Defer = &copyD
+		}
+	}
 	manifest.Preview = r.clientRuntimePlan().Mode == "preview"
 	if len(r.manifest.Bundles) > 0 {
 		manifest.Bundles = make(map[string]hydrate.BundleRef, len(r.manifest.Bundles))
@@ -1424,11 +1432,25 @@ func (r *Renderer) BootstrapScriptWithNonce(nonce string) gosx.Node {
 	}
 	bootstrapPath := r.selectedBootstrapPath()
 	b.WriteString(fmt.Sprintf(`<script defer data-gosx-script="bootstrap" data-gosx-bootstrap-mode="%s"`, plan.Mode))
-	if r.hasSceneEngines() && bootstrapPath == r.bootstrapPath {
+	eager := r.scene3DHasEagerEngine()
+	scene3dPath := r.selectedBootstrapFeaturePath("scene3d")
+	if r.hasSceneEngines() && (bootstrapPath == r.bootstrapPath || !eager) {
+		if scene3dPath != "" && !eager {
+			// A deferred or gated page withholds the chunk tag; the runtime
+			// inserts it after the schedule and the gates pass.
+			b.WriteString(` data-gosx-scene3d-url="` + html.EscapeString(scene3dPath) + `"`)
+			integrity := r.compatRuntimeIntegrity(scene3dPath)
+			if integrity == "" {
+				integrity = sriIntegrity(r.compatRuntimeHash(scene3dPath))
+			}
+			if integrity != "" {
+				b.WriteString(` data-gosx-scene3d-integrity="` + html.EscapeString(integrity) + `"`)
+			}
+		}
 		r.writeScene3DChunkURLs(&b)
 	}
 	b.WriteString(fmt.Sprintf(` src="%s"%s></script>`, html.EscapeString(bootstrapPath), r.runtimeScriptAttrs(bootstrapPath, nonce)))
-	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+	if scene3dPath != "" && eager {
 		// The strict hydrate decoder is not part of the initial Scene3D route.
 		// Emit it only for a shared-runtime Scene3D program, ordered before the
 		// main deferred scene bundle so the factory observes its published API.
@@ -1553,10 +1575,22 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 		}
 	}
 
+	deferMode := ""
 	if strings.EqualFold(strings.TrimSpace(cfg.Name), "GoSXScene3D") {
 		entry := &r.manifest.Engines[len(r.manifest.Engines)-1]
 		entry.Scene3DProbe = cfg.Scene3DProbe
 		cfg.Scene3DProbe = sceneProbe(entry)
+		if d := cfg.Scene3DProbe.Defer; d != nil {
+			deferMode = "idle"
+			if strings.EqualFold(strings.TrimSpace(d.Until), "load") {
+				deferMode = "load"
+			}
+			entry.Defer = &hydrate.EngineDefer{Until: deferMode, TimeoutMS: d.TimeoutMS, DelayMS: d.DelayMS}
+			if store := DefaultSceneEntryStore(); store != nil && !d.Inline && len(entry.Props) > 0 {
+				entry.PropsRef = SceneEntryPath(store.Put(entry.Props))
+				entry.Props = json.RawMessage("null")
+			}
+		}
 	}
 
 	if !engine.KindNeedsMount(cfg.Kind) {
@@ -1578,6 +1612,9 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	poster, hasPoster := scenePosterFromEngine(cfg)
 	if hasPoster {
 		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-poster", poster.Poster))
+	}
+	if deferMode != "" {
+		attrs = append(attrs, gosx.Attr("data-gosx-scene3d-defer", deferMode))
 	}
 	mountStyle := ""
 	// mountNames iterates in sorted order (gosx#204, mirroring gosx#188): Go's
@@ -2213,6 +2250,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 		// server-rendered as <script> tags, so preloading them still
 		// starts the fetch earlier than the dynamic loader otherwise would.
 		emittedScriptSrcs := r.bootstrapScriptSrcs()
+		scene3dChunk := r.selectedBootstrapFeaturePath("scene3d")
 		for _, path := range []string{
 			r.selectedBootstrapFeaturePath("engines"),
 			r.selectedBootstrapFeaturePath("hubs"),
@@ -2220,7 +2258,7 @@ func (r *Renderer) PreloadHints() gosx.Node {
 			r.selectedBootstrapFeaturePath("islands"),
 			r.selectedBootstrapFeaturePath("scene3d"),
 		} {
-			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] {
+			if strings.TrimSpace(path) == "" || emittedScriptSrcs[path] || (path == scene3dChunk && !r.scene3DHasEagerEngine()) {
 				continue
 			}
 			b.WriteString(fmt.Sprintf(`<link rel="preload" href="%s" as="script" crossorigin="anonymous" referrerpolicy="no-referrer">`, path))
@@ -2310,7 +2348,7 @@ func (r *Renderer) bootstrapScriptSrcs() map[string]bool {
 	if bootstrapPath := r.selectedBootstrapPath(); bootstrapPath != "" {
 		srcs[bootstrapPath] = true
 	}
-	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" {
+	if scene3dPath := r.selectedBootstrapFeaturePath("scene3d"); scene3dPath != "" && r.scene3DHasEagerEngine() {
 		srcs[scene3dPath] = true
 	}
 	return srcs
@@ -2695,7 +2733,7 @@ func (r *Renderer) scene3DChunkNeeds() (needsCompute bool, needsDecompress bool)
 		if !strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") {
 			continue
 		}
-		if len(entry.Props) == 0 {
+		if len(entry.Props) == 0 && entry.Scene3DProbe == nil {
 			continue
 		}
 		probe := sceneProbe(entry)
@@ -2788,6 +2826,38 @@ func (r *Renderer) scene3DNeedsWalkChunk() bool {
 		}
 		props := sceneProbe(entry)
 		if props.Walk != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// scene3DEnvironmentGates are the capabilities the browser can only answer
+// at run time. A scene that requires one must not download its chunk before
+// the answer, so the server never emits its chunk tag or preloads eagerly.
+var scene3DEnvironmentGates = map[string]bool{
+	string(engine.CapHardwareGPU): true, string(engine.CapFullMotion): true, string(engine.CapFullData): true,
+}
+
+// scene3DLoadsEagerly reports whether an entry's scene chunk may start at
+// parse time: not deferred and no environment gate.
+func scene3DLoadsEagerly(entry *hydrate.EngineEntry) bool {
+	if entry.Defer != nil {
+		return false
+	}
+	for _, name := range entry.RequiredCapabilities {
+		if scene3DEnvironmentGates[strings.ToLower(strings.TrimSpace(name))] {
+			return false
+		}
+	}
+	return true
+}
+
+// scene3DHasEagerEngine reports whether any Scene3D on the page loads eagerly.
+func (r *Renderer) scene3DHasEagerEngine() bool {
+	for i := range r.manifest.Engines {
+		entry := &r.manifest.Engines[i]
+		if strings.EqualFold(strings.TrimSpace(entry.Component), "GoSXScene3D") && scene3DLoadsEagerly(entry) {
 			return true
 		}
 	}
