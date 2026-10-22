@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Match SceneIR records with one ID table instead of building two maps.
+  Preserve the handling of repeated and empty IDs, sorted removals, and the
+  order of updates and optional patches without mutating either snapshot.
+
 - Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
   Identical negative thresholds and standalone omitted values still reach the
   JSON rejection path instead of silently suppressing the update. Carrying

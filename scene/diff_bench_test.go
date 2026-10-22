@@ -356,3 +356,37 @@ func BenchmarkDiffSceneTextureDescriptors5000Objects(b *testing.B) {
 		})
 	}
 }
+
+// Keep asymmetric scene transitions alongside the steady-state benchmarks: an
+// allocation improvement must not depend on snapshots having the same length.
+func BenchmarkDiffSceneRecordChurn(b *testing.B) {
+	for _, test := range []struct {
+		name                         string
+		previous, next, wantCommands int
+	}{
+		{"create", 0, 5000, 5000}, {"remove", 5000, 0, 5000},
+		{"shrink", 5000, 1, 4999}, {"grow", 1, 5000, 4999},
+		{"reorder", 5000, 5000, 0}, {"empty", 0, 0, 0},
+	} {
+		b.Run(test.name, func(b *testing.B) {
+			previous, next := SceneIR{Objects: make([]ObjectIR, test.previous)}, SceneIR{Objects: make([]ObjectIR, test.next)}
+			for i := range previous.Objects {
+				previous.Objects[i] = ObjectIR{ID: fmt.Sprint(i), X: float64(i)}
+			}
+			for i := range next.Objects {
+				index := i
+				if test.name == "reorder" {
+					index = len(next.Objects) - 1 - i
+				}
+				next.Objects[i] = ObjectIR{ID: fmt.Sprint(index), X: float64(index)}
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				if got := len(DiffCommands(previous, next)); got != test.wantCommands {
+					b.Fatalf("commands=%d want%d", got, test.wantCommands)
+				}
+			}
+		})
+	}
+}
