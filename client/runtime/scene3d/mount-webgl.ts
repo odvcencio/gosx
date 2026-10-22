@@ -495,6 +495,9 @@
   function createSceneModelTextureVariantScope(context) {
     const scope = {
       key: "scene-model-variant-" + String(++sceneModelTextureVariantScopeSequence),
+      manifest: typeof loadManifest === "function" ? loadManifest() : null,
+      modelCacheKeys: new Set(),
+      retired: false,
       context: null,
       fingerprint: "",
       settled: false,
@@ -526,6 +529,64 @@
     return normalized;
   }
 
+  function retireSceneModelTextureVariantScope(scope) {
+    if (!scope || scope.retired) return;
+    if (!scope.settled) settleSceneModelTextureVariantScope(scope, null);
+    scope.retired = true;
+    const state = scope.ownerState;
+    state?._modelTextureOwnedScopes?.delete(scope);
+    const registry = state?._modelTextureScopeRegistry;
+    if (registry?.scopes.get(scope.fingerprint) === scope) registry.scopes.delete(scope.fingerprint);
+    scope.ownerState = null;
+    for (const key of scope.modelCacheKeys) {
+      sceneModelAssetCache.delete(key);
+      sceneModelAssetReady.delete(key);
+    }
+    scope.modelCacheKeys.clear();
+  }
+
+  function retireSceneModelTextureVariantScopes(state) {
+    if (!state) return;
+    for (const scope of state._modelTextureOwnedScopes || []) retireSceneModelTextureVariantScope(scope);
+    state._modelTextureOwnedScopes?.clear();
+    state._modelTextureScopeRegistry = null;
+  }
+
+  function sceneModelTextureVariantRegistry(state) {
+    const manifest = typeof loadManifest === "function" ? loadManifest() : null;
+    let registry = state._modelTextureScopeRegistry;
+    if (!registry || registry.manifest !== manifest) {
+      if (registry) {
+        for (const scope of state._modelTextureOwnedScopes || []) {
+          if (scope !== state._modelTextureVariantScope && scope !== state._modelTextureProfileStage?.previousScope)
+            retireSceneModelTextureVariantScope(scope);
+        }
+      }
+      registry = { manifest, scopes: new Map() };
+      state._modelTextureScopeRegistry = registry;
+    }
+    return registry;
+  }
+
+  function rememberSceneModelTextureVariantScope(state, scope) {
+    if (!state || !scope) return scope;
+    if (!state._modelTextureOwnedScopes) state._modelTextureOwnedScopes = new Set();
+    scope.ownerState = state;
+    state._modelTextureOwnedScopes.add(scope);
+    const registry = sceneModelTextureVariantRegistry(state);
+    if (scope.settled && scope.manifest === registry.manifest && !scope.retired)
+      registry.scopes.set(scope.fingerprint, scope);
+    return scope;
+  }
+
+  function sceneModelTextureVariantScopeForState(state, context) {
+    const registry = sceneModelTextureVariantRegistry(state);
+    const fingerprint = sceneModelTextureVariantFingerprint(context);
+    const cached = registry.scopes.get(fingerprint);
+    if (cached && !cached.retired) return cached;
+    return rememberSceneModelTextureVariantScope(state, createSceneModelTextureVariantScope(context));
+  }
+
   function replaceSceneModelTextureVariantScope(state, renderer) {
     if (!state) {
       return { changed: false, scope: null };
@@ -533,11 +594,17 @@
     const context = sceneModelTextureVariantContextForRenderer(renderer, state._textureDeliveryProfile);
     const fingerprint = sceneModelTextureVariantFingerprint(context);
     const current = state._modelTextureVariantScope;
-    if (current && current.settled && current.fingerprint === fingerprint) {
+    const registry = sceneModelTextureVariantRegistry(state);
+    if (current && current.settled && !current.retired && current.manifest === registry.manifest &&
+        current.fingerprint === fingerprint) {
       return { changed: false, scope: current };
     }
-    const scope = createSceneModelTextureVariantScope(context);
+    const scope = sceneModelTextureVariantScopeForState(state, context);
     state._modelTextureVariantScope = scope;
+    // Renderer swaps do not roll back this scope. Release the obsolete manifest
+    // cache while the drawn model records retain any assets still in use.
+    if (current && current.manifest !== scope.manifest && current !== state._modelTextureProfileStage?.previousScope)
+      retireSceneModelTextureVariantScope(current);
     return { changed: true, scope };
   }
 
@@ -578,7 +645,7 @@
     const activeRenderer = hooks.renderer();
     const previousScope = state._modelTextureVariantScope;
     const context = sceneModelTextureVariantContextForRenderer(activeRenderer, nextProfile);
-    const candidate = createSceneModelTextureVariantScope(context);
+    const candidate = sceneModelTextureVariantScopeForState(state, context);
     const nativeRecords = new Set();
     let preparedTextures = 0;
     for (let offset = 0; offset < requests.length; offset += 32) {
@@ -587,7 +654,8 @@
       else preparedTextures += Number(batch?.textures) || 0;
     }
     if (signal?.aborted) throw new DOMException("Scene3D texture profile canceled", "AbortError");
-    if (hooks.disposed() || hooks.renderer() !== activeRenderer || !hooks.current(generation) ||
+    if (candidate.retired || candidate.manifest !== (typeof loadManifest === "function" ? loadManifest() : null) ||
+        hooks.disposed() || hooks.renderer() !== activeRenderer || !hooks.current(generation) ||
         state._modelTextureVariantScope !== previousScope) throw new Error("Scene3D texture profile preparation became stale");
     const currentModels = sceneHydrationModels(state, null);
     if (currentModels.length !== activeModels.length || currentModels.some((model, index) =>
@@ -613,6 +681,8 @@
       // The next profile request may supersede this one after this commit.
       state._textureDeliveryProfile = nextProfile;
       hooks.commit(nextProfile, candidate);
+      if (previousScope && previousScope.manifest !== candidate.manifest)
+        retireSceneModelTextureVariantScope(previousScope);
       return { models: requests.length, textures: nativeRecords.size + preparedTextures, profile: nextProfile };
     } catch (error) {
       if (state._modelTextureVariantScope === candidate) state._modelTextureVariantScope = previousScope;
@@ -2522,6 +2592,9 @@
     const cacheKey = (format === "glb" || format === "gltf") && variantScope && variantScope.key
       ? String(variantScope.key) + "\u0000" + key
       : key;
+    if (variantScope && variantScope.retired) throw new Error("Scene3D model texture scope retired");
+    if ((format === "glb" || format === "gltf") && variantScope && variantScope.modelCacheKeys)
+      variantScope.modelCacheKeys.add(cacheKey);
     const statusMeta = hydrationMeta
       ? Object.assign({}, hydrationMeta, { variantScope })
       : { variantScope };
@@ -2564,7 +2637,7 @@
                 asset._crowdUnsupported = String(error && error.message || error);
               }
             }
-            sceneModelAssetReady.add(cacheKey);
+            if (!variantScope || !variantScope.retired) sceneModelAssetReady.add(cacheKey);
             return { asset, error: null };
           }
           const response = await fetch(key, { credentials: "same-origin" });
@@ -2572,7 +2645,7 @@
             throw new Error("HTTP " + String(response && response.status || 0));
           }
           const asset = parseSceneModelAsset(await response.json(), key);
-          sceneModelAssetReady.add(cacheKey);
+          if (!variantScope || !variantScope.retired) sceneModelAssetReady.add(cacheKey);
           return { asset, error: null };
         } catch (error) {
           console.warn("[gosx] failed to load Scene3D model asset:", key, error && error.message ? error.message : error);
@@ -2588,8 +2661,9 @@
       // in-flight Promise long enough to deduplicate current waiters, then
       // evict it before a subsequent request so a transient failure can retry.
       loadPromise.then(function(result) {
-        if (result && result.error && sceneModelAssetCache.get(cacheKey) === loadPromise) {
+        if ((result && result.error || variantScope && variantScope.retired) && sceneModelAssetCache.get(cacheKey) === loadPromise) {
           sceneModelAssetCache.delete(cacheKey);
+          sceneModelAssetReady.delete(cacheKey);
         }
       });
     }

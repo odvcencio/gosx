@@ -74,16 +74,17 @@
     }
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
+    rememberSceneModelTextureVariantScope(sceneState, sceneState._modelTextureVariantScope);
     await ensurePreferredWebGPUBackend(props, capability);
-    if (!scene3DFactoryCurrent()) return {};
+    if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     // Settle lazy WebGL and compute before first renderer creation/fallback.
     await settlePreferredWebGLBackend(props, capability);
-    if (!scene3DFactoryCurrent()) return {};
+    if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     await settleSceneComputeFeature(sceneState);
-    if (!scene3DFactoryCurrent()) return {};
+    if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     if (initialRuntimeCommands) {
       await applySceneCommands(sceneState, initialRuntimeCommands);
-      if (!scene3DFactoryCurrent()) return {};
+      if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     }
 
     const sceneMountOwner = { m: mount };
@@ -380,6 +381,7 @@
         sceneState._modelTextureVariantScope,
         sceneModelTextureVariantContextForRenderer(null, sceneState._textureDeliveryProfile),
       );
+      retireSceneModelTextureVariantScopes(sceneState);
       if (mount.__gosxScene3DOwner === sceneMountOwner) delete mount.__gosxScene3DOwner;
       return {};
     }
@@ -490,6 +492,7 @@
       sceneState._modelTextureVariantScope,
       sceneModelTextureVariantContextForRenderer(renderer, sceneState._textureDeliveryProfile)
     );
+    rememberSceneModelTextureVariantScope(sceneState, sceneState._modelTextureVariantScope);
     publishSceneModelTextureVariantContext(mount, sceneState._modelTextureVariantScope);
     applySceneRendererState(mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
     publishSceneWaterRendererState(mount, sceneState, renderer, "");
@@ -3748,6 +3751,7 @@
       sceneControlHandle.dispose();
       if (typeof mount.removeEventListener === "function") mount.removeEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
       renderer.dispose();
+      retireSceneModelTextureVariantScopes(sceneState);
       disposeSceneHTMLTextureState(htmlTextureState);
       if (typeof releaseTextureLoadListener === "function") releaseTextureLoadListener();
       if (wasmMotionState === 1 && typeof window !== "undefined"
