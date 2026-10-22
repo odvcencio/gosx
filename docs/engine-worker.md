@@ -6,7 +6,10 @@ and GoSX starts a dedicated Web Worker, loads the engine's Go module inside it,
 and keeps the page for what only the page can do: the DOM, Scene3D, shared
 signals, input and the `RTCPeerConnection`.
 
-You write Go only. No JavaScript.
+You write Go only for the engine, and for the islands that talk to it. Signals,
+calls, views and status (see "Talk to islands") need no JavaScript on the page.
+The raw `Port` messages described under "Message protocol" are different: only
+page JavaScript can read them, so use shared signals for anything an island must see.
 
 ## Turn it on
 
@@ -41,13 +44,23 @@ wasm.Register("Sim", func(ctx wasm.Context) (wasm.Handle, error) {
 
 ## If the worker cannot start
 
-The engine falls back to the main thread and says why. Nothing else in your Go
-code changes.
+By default the engine falls back to the main thread and says why. Nothing else
+in your Go code changes. Two `engine.Config` fields change that:
+
+| Field | Effect |
+|---|---|
+| `Worker: engine.WorkerRequired` | The engine never runs on the main thread. If the worker cannot start, the page reports it, the status signal says `unsupported`, and no Go code runs. `WorkerPreferred` (the zero value) is the default behavior above. |
+| `ForceWorkerFallback: true` | The page behaves as if the worker could not start (reason `worker-forced-fallback`). Use it in tests to run the same Go code on the main thread, or to see the `unsupported` state under `WorkerRequired`. It is rendered by the server into the manifest, so no page JavaScript is needed. |
+
+Both need `Thread: engine.ThreadWorker`. The JavaScript switch
+`window.__gosx_engine_worker_disable = true` still works and gives the reason
+`worker-disabled`.
 
 | Reason code | When |
 |---|---|
 | `worker-unsupported` | The browser has no `Worker`. |
 | `worker-disabled` | The page set `window.__gosx_engine_worker_disable = true`. |
+| `worker-forced-fallback` | The server set `ForceWorkerFallback` in the engine config. |
 | `worker-toolchain-unsupported` | The engine is built with TinyGo. |
 | `worker-create-failed` | `new Worker(...)` threw (for example a CSP block). |
 | `worker-script-error` | The worker script failed to load or run. |
@@ -58,8 +71,140 @@ A fallback appears as a runtime issue (`__gosx.listIssues()`, type `worker`,
 `fallback: "main-thread"`), a telemetry warning, and a
 `gosx:engine:thread-fallback` event on `document`. In Go, `ctx.Thread()` is
 then `engine.ThreadMain` and `ctx.ThreadFallbackReason()` returns the code. A
-worker that crashes after it mounted is not restarted: the page reports
-`worker-crashed`, fires `gosx:engine:worker-error`, and ends the engine.
+`WorkerRequired` engine fires `gosx:engine:worker-unsupported` instead and logs
+a runtime issue with severity `error`. A worker that crashes after it mounted is
+not restarted: the page reports `worker-crashed`, fires
+`gosx:engine:worker-error`, and ends the engine.
+
+## Talk to islands: calls, views and status
+
+An island reaches a worker engine through shared signals. The signal names are
+the wire contract; there is no `Port` and no page JavaScript. Three pieces cover
+the common needs:
+
+| Need | Engine side (Go) | Island side |
+|---|---|---|
+| Ask the engine to do something and get the answer | `wasm.ServeCalls` | write `$<channel>`, read `$<channel>.result` |
+| Show the engine's state, at a pace the page can follow | `wasm.NewView` | read the signals the view sets |
+| Know whether the engine is running | none (the page writes it) | read `$gosx.engine.<engine id>` |
+
+All three work the same when the engine falls back to the main thread, so one
+island and one engine serve both cases.
+
+### Wire types
+
+`engine` defines the types. They have no JSON tags, because island records are
+keyed by Go field name (a test pins this). An island cannot use a generic type
+in a handler, so it declares its own struct with the same field names.
+
+```go
+type WorkerStatus struct{ State, Thread, Reason string }
+// State: booting | running | unsupported | crashed | disposed
+// Thread: "worker" or "main" (after a fallback). Reason: a code such as worker-forced-fallback.
+
+type Call[A any] struct { ID uint64; Name string; Args A }
+type Result[R any] struct { ID uint64; Name, Error string; Value R; Recent []ResultRef }
+type ResultRef struct { ID uint64; Error string }
+```
+
+The status signal is named `$gosx.engine.<id>`. The engine ID is
+`gosx-engine-<MountID>` when you set `MountID` on the config (also for a worker
+engine), so set it to get a stable name. Before the page runs, a status signal
+holds the island's default value. Compare against `"running"` rather than
+testing for an empty string.
+
+### Calls
+
+```go
+// Engine (Go, runs in the worker or on the main thread)
+type Add struct{ A, B int }
+type Sum struct{ Total int }
+
+off, err := wasm.ServeCalls(ctx, "bv.cmd", wasm.CallOptions{Timeout: 5 * time.Second},
+    func(name string, args Add) (Sum, error) {
+        if name != "add" {
+            return Sum{}, fmt.Errorf("unknown call %q", name)
+        }
+        return Sum{Total: args.A + args.B}, nil
+    })
+// return off (a HandleFunc) from your factory, or dispose it in your Handle.
+```
+
+```go
+// Island (.gsx)
+status := signal.NewShared("gosx.engine.gosx-engine-bv", engine.WorkerStatus{})
+cmd := signal.NewShared("bv.cmd", Cmd{})            // Cmd has the fields ID, Name, Args
+res := signal.NewShared("bv.cmd.result", Reply{})   // Reply has ID, Name, Error, Value, Recent
+add := func() { cmd.Set(Cmd{ID: cmd.Get().ID + 1, Name: "add", Args: Args{A: 2, B: 3}}) }
+// <button onClick={add} disabled={status.Get().State != "running"}>Add</button>
+// <p>{res.Get().Value.Total} {res.Get().Error}</p>
+```
+
+The rules:
+
+1. Number calls from 1, increasing by one. The engine ignores any ID at or below
+   the last one it handled, because a batch flush can deliver the same value twice.
+2. Write the call signal **once per handler**. The runtime batches the writes of
+   one handler, so two writes send only the last.
+3. A result with `ID >=` your call's ID means your call is finished. If the IDs
+   are equal, `Value` and `Error` are its reply. If the result is newer, find
+   your ID in `Recent` (the last `CallOptions.Recent` replies, default 8; it holds
+   the ID and error, not the value).
+4. A call whose arguments do not decode gets `Error: "bad-args: ..."`. A handler
+   that returns an error or panics gets that message in `Error`.
+5. A call written before the engine subscribed is handled from the signal's
+   current value.
+
+On a worker engine the page also watches each call. If no reply reaches the
+result signal within `CallOptions.Timeout` (default 10 s), the page writes
+`Error: "timeout"`. If the worker dies, every pending call, and any later one,
+gets `Error: "worker-crashed"`. The page enforces this, so it works while the
+worker is stuck in a long loop. If the worker finishes the call late, its real
+reply replaces the timeout. On the main thread there is no watchdog; a handler
+that blocks blocks the page.
+
+### Views
+
+`wasm.NewView` sends the engine's state to the page at a pace the page can
+follow, so a simulation can call `Set` every tick:
+
+```go
+view := wasm.NewView(ctx, wasm.ViewOptions{MinInterval: 100 * time.Millisecond}) // 10 Hz, the default
+view.Set(map[string]any{"$bv.hud": hud, "$bv.crew": crew}) // newest value of each signal wins
+// view.Dispose() in your Handle.
+```
+
+A batch goes out when at least `MinInterval` has passed and the page has
+applied the previous batch (the page acknowledges each one; an acknowledgement
+that never arrives frees the credit after `AckTimeout`, 2 s). Only signals whose
+JSON changed since the last batch are sent. While the page is hidden nothing is
+sent and the engine keeps running; the next batch carries the newest state.
+Measured in headless Chrome 153: an engine setting the view every 10 ms
+rendered into an island about 10 times per second.
+
+Keep signals small and separate. Every reader of a signal re-renders when any
+field of it changes, so put the fast fields in their own signal.
+
+### Two engines on one page
+
+Shared signal names are global to the page. Two engines that use `$bv.cmd` would
+both answer it. Prefix every signal an engine owns with a name unique to it
+(`bv.cmd`, `bv.view`, `bv.hud`; for a second engine `lab.cmd`, `lab.view`). The
+status signal already carries the engine ID. GoSX does not enforce this.
+
+### Vessel pose and cutaway from a worker
+
+`scene.DispatchVesselPose` and `scene.DispatchVesselCutaway` work unchanged in a
+worker. The worker forwards the pose as a transferred frame and the cutaway as a
+message to the page's vessel controller. As on the main thread, they report no
+error to Go when the mount is not ready; the page counts them in
+`__gosx.engineWorker.get(id).stats().vesselRejected`.
+
+### Not covered
+
+An island cannot receive bytes (checkpoints, traces). Use `Port.PostBytes` and
+page JavaScript for those. A call or write to a signal can come from any island
+or page script, so treat call arguments as untrusted input.
 
 ## A fixed-rate loop in the worker
 
@@ -221,6 +366,7 @@ Page to worker:
 | `mount.event` | `lid, json` | A listened Scene3D mount event. |
 | `net.signal`, `net.state`, `net.mode`, `net.channel`, `net.data` | | Netplay: signaling out, connection state, route, the transferred channel, relayed datagrams. |
 | `fault` | `where, message` | The page rejected something the worker sent. |
+| `ack` | `seq` | The page applied the view batch numbered `seq`. |
 
 Worker to page:
 
@@ -229,7 +375,9 @@ Worker to page:
 | `booted`, `mounted`, `disposed` | | Lifecycle acknowledgements. |
 | `fatal` | `code, message` | Boot or mount failure, or a crash. |
 | `log` | `level, text` | Console output. |
-| `signals` | `changedOnly, buf` | A signal batch as UTF-8 JSON bytes. |
+| `signals` | `changedOnly, buf, seq?` | A signal batch as UTF-8 JSON bytes. With `seq` (a view batch) the page answers `ack`. |
+| `calls` | `channel, timeout, recent, zero` | The engine serves calls on `channel`; the page starts its watchdog. |
+| `vessel.cutaway` | `target, nodeID, json` | `scene.DispatchVesselCutaway`. Vessel poses travel as `frame` with `kind: "vessel-pose"`. |
 | `signal.set`, `subscribe`, `unsubscribe` | | Single write and subscription control. |
 | `scene3d`, `navigate` | `rid, ...` | Requests that answer with `reply`. |
 | `emit` | `name, detail` | `ctx.Emit`. |
@@ -249,7 +397,7 @@ Application messages: in Go, `port.Post(name, v)`, `port.PostBytes(name, b)` and
 |---|---|
 | `node --test client/runtime/host/engine-worker.test.js` | The page and worker halves against a fake `Worker` and a fake netplay binding. |
 | `make test-engine-worker-wasm` | The Go port, frame source, `Surface`, `StreamWriter` and input on js/wasm. |
-| `make test-engine-worker-browser` | A real worker in headless Chromium: boot, fallback, 60 Hz under a busy page, Scene3D driven by frames, input. |
+| `make test-engine-worker-browser` | A real worker in headless Chromium: boot, fallback, 60 Hz under a busy page, Scene3D driven by frames, input, and a real island that calls the worker, sees its paced view, gets a timeout and a crash error, and runs the same code under a forced fallback. |
 | `make test-engine-worker-hidden` | Worker clocks in a really hidden tab (headed Chrome). |
 | `make test-netplay-browser` | Real matches against a native peer, including the four worker routes. |
 

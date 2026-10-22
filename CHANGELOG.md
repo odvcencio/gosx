@@ -2,6 +2,26 @@
 
 ## Unreleased
 
+- Let islands talk to a worker engine with typed request and reply, a paced
+  view and a visible status, with no page JavaScript. `wasm.ServeCalls` answers
+  `engine.Call` values written to a shared signal with `engine.Result` values on
+  `<channel>.result`: it ignores repeated IDs, answers bad arguments with an
+  error, handles a call written before it subscribed, and keeps the last replies
+  in `Recent`. On a worker engine the page fails a call with `timeout` or
+  `worker-crashed` when no reply comes. `wasm.NewView` sends the newest state
+  at most once per `MinInterval` and only after the page applied the previous
+  batch, skips unchanged signals, and pauses while the tab is hidden. The page
+  writes `engine.WorkerStatus` to `$gosx.engine.<id>` on boot, mount, fallback,
+  crash and dispose. `engine.Config.Worker: WorkerRequired` never runs the engine
+  on the main thread, and `ForceWorkerFallback` forces the fallback from the
+  server for tests (the JavaScript `__gosx_engine_worker_disable` still works).
+  `scene.DispatchVesselPose` and `DispatchVesselCutaway` now work from an engine
+  worker. `bootstrap-feature-engine-worker.js` grows from 28,462 to 32,678 bytes
+  raw (9,351 to 10,557 gzip, 8,682 to 9,865 Brotli) and now has a size budget; no
+  other bundle changes. `docs/engine-worker.md` no longer says the worker needs
+  no JavaScript for everything: only signals, calls, views and status are
+  JavaScript-free.
+
 - Add large powered ships to GoSX. The new deterministic `vessel` package models
   a powered displacement hull (power roughly proportional to speed cubed,
   rudder or pod steering with turning circles and stopping distances, roll and
