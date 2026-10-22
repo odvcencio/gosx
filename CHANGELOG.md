@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reduce SceneIR comparison CPU and temporary patch allocations with generated,
+  schema-checked ObjectIR equality proofs, including embedded model records.
+  Transform and interaction updates
+  avoid copying whole mesh records on the common path while preserving the
+  reference JSON fallback for ambiguous values and mixed edits.
+
 - Reduce allocation churn in `signal.Derive` and `signal.Watch` dependency
   tracking, including computed values used by islands and Scene3D engines.
   Reuse cleared tracking scratch with bounded capacity while preserving
