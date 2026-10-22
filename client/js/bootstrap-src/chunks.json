@@ -401,7 +401,11 @@
       "sources": [
         "../runtime/scene3d/ocean-fft-kernels.ts",
         "../runtime/scene3d/ocean-fft-surface.ts",
-        "../runtime/scene3d/ocean-fft.ts"
+        "../runtime/scene3d/ocean-fft.ts",
+        "../runtime/scene3d/elio-graph.ts",
+        "../runtime/scene3d/elio-graph-gather.ts",
+        "../runtime/scene3d/elio-graph-compute.ts",
+        "../runtime/scene3d/ocean-fft-surface-gl.ts"
       ]
     },
     {
