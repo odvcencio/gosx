@@ -48,11 +48,56 @@ type Ocean struct {
 	Spectrum *OceanSpectrum `json:"spectrum,omitempty"`
 	// Masks lists node IDs whose meshes remove water: a hull, a dry dock, a cave.
 	Masks []string `json:"masks,omitempty"`
+	// Presentation sets the water's clock, drift and sea-state transition. It
+	// is declarative: an app changes it through an ordinary scene update.
+	Presentation *OceanPresentation `json:"presentation,omitempty"`
 	// SwellWaves is computed during normalization from Spectrum and
 	// WindDirection and is read-only: whatever an author sets is replaced. It
 	// holds the DefaultOceanSwellCount strongest bins of the first two cascades
 	// as plane waves, for ship motion and the browser's first frames.
 	SwellWaves []OceanWave `json:"swellWaves,omitempty"`
+}
+
+// OceanPresentation is how the sea is presented over time, apart from what it
+// looks like. It exists so a host that fast-forwards a voyage never speeds up
+// the waves: wave animation keeps natural time and only the water's apparent
+// motion past the hull follows the host (R9), and a change of sea state
+// arrives gradually (R10). All fields are presentation only; nothing here feeds
+// back into a simulation.
+//
+// Each field is the value of a named parameter of the Elio ocean pass graph
+// (`elio emit ts --set ocean --backend webgpu`, kernel set "ocean"), which the
+// GoSX graph runner fills from the normalized scene:
+//
+//	TimeScale         graph param timeScale (f32, source value): wave evolution
+//	                  time = presentation time * timeScale
+//	WaterDriftX       graph param driftX (f32, source value, m/s)
+//	WaterDriftZ       graph param driftZ (f32, source value, m/s): the runtime
+//	                  integrates the water-frame offset from these every frame;
+//	                  the cascades, the persistent foam and the wakes are
+//	                  sampled at xz - offset
+//	TransitionSeconds the tween (seconds) of the graph params the spectrum
+//	                  drives: windSpeed, fetch, gamma, spread, swell,
+//	                  windDirDeg, swellDirDeg and lambda
+//
+// Zero is the default marker for TimeScale and TransitionSeconds, as elsewhere
+// in Ocean; a zero drift is no drift. TimeScale cannot be zero on the wire, so
+// to freeze the sea an app pauses the scene clock instead.
+type OceanPresentation struct {
+	// TimeScale multiplies presentation time for wave evolution. 1 is natural
+	// motion. 0-4, default 1. A voyage at 1,000x game speed keeps TimeScale at 1
+	// so waves stay natural.
+	TimeScale float64 `json:"timeScale,omitempty"`
+	// WaterDriftX and WaterDriftZ are the apparent velocity of the water past
+	// the world origin, in m/s, -100 to 100 each. The runtime integrates the
+	// water-frame offset every frame, so the app updates them only when the
+	// ship's speed or heading changes. A fast-forwarding host sets a believable
+	// apparent speed. Non-finite values become 0.
+	WaterDriftX float64 `json:"waterDriftX,omitempty"`
+	WaterDriftZ float64 `json:"waterDriftZ,omitempty"`
+	// TransitionSeconds: when Spectrum changes, the runtime interpolates the
+	// spectrum parameters over this much presentation time. 0.1-600, default 20.
+	TransitionSeconds float64 `json:"transitionSeconds,omitempty"`
 }
 
 // OceanSpectrum describes a wind sea by its JONSWAP spectrum. Zero fields mean
@@ -160,6 +205,7 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Reflections = normalizeOceanReflections(ocean.Reflections)
 	out.Spectrum = normalizeOceanSpectrum(ocean.Spectrum)
 	out.Masks = normalizeOceanMasks(ocean.Masks)
+	out.Presentation = normalizeOceanPresentation(ocean.Presentation)
 	out.SwellWaves = nil
 	if out.Spectrum != nil {
 		out.SwellWaves = OceanSwellWaves(*out.Spectrum, out.WindDirection, DefaultOceanSwellCount)
@@ -216,6 +262,32 @@ func normalizeOceanCascades(cascades []OceanCascade) []OceanCascade {
 // in 1e9 so the band stays strictly below it.
 func oceanNyquist64(size float64) float64 {
 	return math.Pi * 64 / size * (1 - 1e-9)
+}
+
+// normalizeOceanPresentation clamps authored nonzero parameters and keeps zero
+// as the default marker. A nil presentation stays nil so existing wire bytes
+// are unchanged.
+func normalizeOceanPresentation(presentation *OceanPresentation) *OceanPresentation {
+	if presentation == nil {
+		return nil
+	}
+	out := *presentation
+	out.TimeScale = clampOceanParam(finiteOceanParam(presentation.TimeScale), 0, 4)
+	out.WaterDriftX = clampOceanDrift(presentation.WaterDriftX)
+	out.WaterDriftZ = clampOceanDrift(presentation.WaterDriftZ)
+	out.TransitionSeconds = clampOceanParam(finiteOceanParam(presentation.TransitionSeconds), 0.1, 600)
+	return &out
+}
+
+func finiteOceanParam(value float64) float64 {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0
+	}
+	return value
+}
+
+func clampOceanDrift(value float64) float64 {
+	return math.Max(-100, math.Min(100, finiteOceanParam(value)))
 }
 
 func normalizeOceanMasks(masks []string) []string {

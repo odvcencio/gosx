@@ -3153,6 +3153,9 @@
     // Spectral ocean: Go normalizes the spectrum and computes the read-only swellWaves (scene.OceanSwellWaves).
     if (sceneIsPlainObject(raw.spectrum)) { out.spectrum = sceneCloneData(raw.spectrum); out.swellWaves = sceneCloneData(raw.swellWaves || []); }
     if (Array.isArray(raw.masks)) out.masks = raw.masks.filter(id => id && typeof id === "string");
+    // Presentation (scene.OceanPresentation): the water's clock scale, drift in m/s and sea-state transition time.
+    const view = sceneIsPlainObject(raw.presentation) ? raw.presentation : null;
+    if (view) { const num = key => sceneNumber(view[key], 0); out.presentation = { timeScale: Math.max(0, Math.min(4, num("timeScale"))) || 1, waterDriftX: Math.max(-100, Math.min(100, num("waterDriftX"))), waterDriftZ: Math.max(-100, Math.min(100, num("waterDriftZ"))), transitionSeconds: Math.max(0.1, Math.min(600, num("transitionSeconds") || 20)) }; }
     return out;
   }
 

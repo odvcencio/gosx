@@ -76,3 +76,19 @@ test("ocean normalization carries the spectrum, its swell waves and the masks", 
   assert.deepEqual(plain(api.normalizeSceneOcean({ spectrum: { seed: 0 } }).swellWaves), [], "waves default to none");
   h.renderer.dispose();
 });
+
+test("ocean normalization carries presentation with defaults and clamps, and omits it when absent", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const plain = value => JSON.parse(JSON.stringify(value));
+  assert.equal("presentation" in plain(api.normalizeSceneOcean({})), false);
+  assert.deepEqual(plain(api.normalizeSceneOcean({ presentation: {} }).presentation), { timeScale: 1, waterDriftX: 0, waterDriftZ: 0, transitionSeconds: 20 });
+  assert.deepEqual(plain(api.normalizeSceneOcean({ presentation: { timeScale: 2, waterDriftX: 1.5, waterDriftZ: -3, transitionSeconds: 8 } }).presentation),
+    { timeScale: 2, waterDriftX: 1.5, waterDriftZ: -3, transitionSeconds: 8 });
+  assert.deepEqual(plain(api.normalizeSceneOcean({ presentation: { timeScale: 99, waterDriftX: 1e6, waterDriftZ: -1e6, transitionSeconds: 1e9 } }).presentation),
+    { timeScale: 4, waterDriftX: 100, waterDriftZ: -100, transitionSeconds: 600 });
+  assert.deepEqual(plain(api.normalizeSceneOcean({ presentation: { timeScale: "fast", waterDriftX: NaN, waterDriftZ: Infinity, transitionSeconds: -4 } }).presentation),
+    { timeScale: 1, waterDriftX: 0, waterDriftZ: 0, transitionSeconds: 0.1 });
+  assert.equal(api.normalizeSceneOcean({ presentation: { timeScale: -2 } }).presentation.timeScale, 1, "below the range reads as the default, like Go");
+  assert.equal("presentation" in plain(api.normalizeSceneOcean({ presentation: "slow" })), false);
+});
