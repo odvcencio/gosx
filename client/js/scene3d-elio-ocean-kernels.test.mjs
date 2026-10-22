@@ -8,7 +8,7 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const file = path.join(root, "client/runtime/scene3d/webgpu-ocean-kernels.ts");
+const file = path.join(root, "client/runtime/scene3d/ocean-fft-kernels.ts");
 const source = fs.readFileSync(file, "utf8");
 
 const unescapeTemplate = (s) => s.replaceAll("\\${", "${").replaceAll("\\`", "`").replaceAll("\\\\", "\\");

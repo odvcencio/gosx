@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Writes client/runtime/scene3d/webgpu-ocean-kernels.ts from an Elio checkout.
+# Writes client/runtime/scene3d/ocean-fft-kernels.ts from an Elio checkout.
 #
 # usage: scripts/generate-elio-ocean.sh <elio-dir>
 #
@@ -17,7 +17,7 @@ if [ "$#" -ne 1 ] || [ ! -d "$1" ]; then
 fi
 elio_dir=$(cd "$1" && pwd)
 root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-out="$root/client/runtime/scene3d/webgpu-ocean-kernels.ts"
+out="$root/client/runtime/scene3d/ocean-fft-kernels.ts"
 tmp=$(mktemp)
 trap 'rm -f "$tmp"' EXIT
 
