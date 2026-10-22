@@ -5,15 +5,15 @@
   "tree": "595b3b8d55b08db4c4de204fe2260b958d9dc94b",
   "featuredPath": "/demos/water",
   "machine": {
-    "name": "WSL2 VM · 20 vCPU",
+    "name": "WSL2 VM \u00b7 20 vCPU",
     "os": "Linux 6.18.54.1-microsoft-standard-WSL2",
     "cpu": "Intel(R) Core(TM) Ultra 9 285",
     "memoryGiB": 13.65,
-    "loadAverage": "LH: 17.58 16.61 10.93; interrupted. Recovery LH: 12.31 14.03 12.59 → 11.05 13.67 12.49; recovery end: 18.92 15.60 13.36."
+    "loadAverage": "LH: 17.58 16.61 10.93; interrupted. Recovery LH: 12.31 14.03 12.59 \u2192 11.05 13.67 12.49; recovery end: 18.92 15.60 13.36."
   },
   "lighthouse": {
-    "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 · Lighthouse 13.5.0",
-    "method": "Mobile emulation, local production build; three cold reports per route in fresh Windows Chrome profiles. All completed reports retained; one missing Home setup report replaced after a protocol timeout. Interrupted batch; load recorded.",
+    "browser": "Windows HeadlessChrome/155.0.0.0; Lighthouse 13.5.0",
+    "method": "Mobile/production; three cold runs per route in fresh profiles. All completed reports kept; only missing Home setup recovered after timeout. Interrupted batch; load logged.",
     "loadAverageStart": "12.31 14.03 12.59",
     "loadAverageEnd": "11.05 13.67 12.49",
     "runCount": 3,
@@ -253,8 +253,8 @@
   },
   "gpu": {
     "label": "RTX 5070 Ti desktop, not a mid-range laptop",
-    "browser": "Chrome/155.0.8059.85 · NVIDIA GeForce RTX 5070 Ti, driver 32.0.16.1714, headless",
-    "method": "Windows Chrome with ANGLE D3D11 at 1440x900; separate WebGPU and forced WebGL2 runs; each scene received 240 alternating 2 px wheel-zoom inputs while 240 animation frames were sampled.",
+    "browser": "Chrome/155.0.8059.85 \u00b7 NVIDIA GeForce RTX 5070 Ti, driver 32.0.16.1714, headless",
+    "method": "Windows ANGLE D3D11, 1440x900; separate WebGPU/forced WebGL2; 240 sampled frames and 240 alternating 2px wheel zooms per scene.",
     "scenes": [
       {
         "path": "/demos/beacon",
@@ -716,7 +716,7 @@
   ],
   "quickstart": {
     "command": "go install m31labs.dev/gosx/cmd/gosx@latest",
-    "method": "Isolated module/build caches for cold; reused for warm. Includes downloads and compilation. @latest resolved published v0.57.18.",
+    "method": "Isolated cold module/build caches; warm reused them. Downloads and compile included; @latest=v0.57.18 (published).",
     "coldSeconds": 71.26,
     "warmSeconds": 0.95
   }
