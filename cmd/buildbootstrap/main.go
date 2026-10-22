@@ -420,6 +420,11 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/host/netplay.ts")},
 	},
 	{
+		// Opt-in renderer answer for pages without a scene; see RequireFeature("renderer-probe").
+		name:    "bootstrap-feature-renderer-probe.js",
+		sources: []source{sourceFile("../runtime/host/renderer-probe.ts")},
+	},
+	{
 		// Host for engines with Thread: worker. The same file is the page
 		// half (starts the Worker, relays calls and binary frames) and the
 		// Worker script. It loads only for a page that has such an engine.

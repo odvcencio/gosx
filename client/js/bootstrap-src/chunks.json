@@ -254,6 +254,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-renderer-probe.js",
+      "sources": [
+        "../runtime/host/renderer-probe.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-engine-worker.js",
       "sources": [
         "../runtime/host/engine-worker.ts"

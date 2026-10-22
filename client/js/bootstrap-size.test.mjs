@@ -105,6 +105,9 @@ const budgets = [
   // Netplay's browser binding loads only for a page that calls RequireFeature("netplay");
   // no existing bundle changed size (measured 4353 raw / 1772 gzip / 1639 Brotli).
   { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
+  // The renderer probe loads only for RequireFeature("renderer-probe"); no other bundle changes.
+  // Measured 891 raw / 440 gzip / 365 brotli bytes.
+  { file: "bootstrap-feature-renderer-probe.js", raw: 900, gzip: 450, brotli: 400 },
   // The engine-worker host loads only for a page with a Thread: worker engine, so no other
   // bundle or route changed. It had no entry before. Call watchdog, status signal, worker
   // policy, view acknowledgements and vessel forwarding grew it from 28462 / 9351 / 8682 to
