@@ -2967,11 +2967,13 @@
     var block = false;
     var container = false, format = false;
     var bc5 = gltfLowerToken(variant.format).indexOf("bc5") === 0;
+    var variantFormat = gltfLowerToken(variant.format);
     for (var i = 0; i < required.length; i++) {
       var token = gltfLowerToken(required[i]);
       if (token === "container:ktx2") container = true;
       if (token.indexOf("texture-format:") === 0) format = true;
       if (token.indexOf("texture-format:bc5") === 0) bc5 = true;
+      if (!variantFormat && token.indexOf("texture-format:") === 0) variantFormat = token.slice(15);
       // Tier is selected by the mount profile, not by a page-global device hint.
       if (token.indexOf("budget:") === 0 && profile) continue;
       if (!tokens[token]) {
@@ -2986,6 +2988,11 @@
     if (profile && (!container || !format)) return false;
     if (tier > ceiling || !block && ceiling >= 4) return false;
     if (usage && usage.ambiguous) return false;
+    // Transparent base colour needs a built four-channel encoding. BC1 and
+    // three-channel portable variants can discard authored blend/mask alpha.
+    if (usage && usage.requiresAlpha &&
+        (gltfLowerToken(variant.channels) !== "4" && gltfLowerToken(variant.channels) !== "rgba" ||
+         !(/^(bc3-|bc7-|rgba8unorm)/).test(variantFormat))) return false;
     // Current WebGL/WebGPU material shaders read normal.rgb directly. BC5 has
     // only RG; selecting it would require reconstructing tangent-space Z.
     if (bc5 && usage && usage.role === "normal") return false;
@@ -3030,33 +3037,39 @@
   }
 
   function gltfImageUsages(gltf: any) {
-    var usages: Record<number, { role: string; colorSpace: string; ambiguous: boolean }> = {};
+    var usages: Record<number, { role: string; colorSpace: string; ambiguous: boolean; requiresAlpha: boolean }> = {};
     var textures = Array.isArray(gltf.textures) ? gltf.textures : [];
-    function add(info: any, role: string, colorSpace: string) {
+    function add(info: any, role: string, colorSpace: string, requiresAlpha?: boolean) {
       var texture = info && textures[info.index];
       if (!texture || texture.source == null) return;
       var index = texture.source;
       var previous = usages[index];
-      if (!previous) usages[index] = { role: role, colorSpace: colorSpace, ambiguous: false };
+      if (!previous) usages[index] = { role: role, colorSpace: colorSpace, ambiguous: false, requiresAlpha: !!requiresAlpha };
       else if (previous.colorSpace === "linear" && colorSpace === "linear" &&
           (previous.role === "packed" && role === "mask" || previous.role === "mask" && role === "packed")) {
         // glTF often binds one ORM image as both packed metallic/roughness
         // data and occlusion. Packed BC7 retains all sampled channels.
         previous.role = "packed";
+      } else if (previous.colorSpace === "srgb" && colorSpace === "srgb" &&
+          (previous.role === "base-color" && role === "emissive" || previous.role === "emissive" && role === "base-color")) {
+        // One sRGB image may drive both albedo and emission. Base colour owns
+        // the variant role because it may also need its authored alpha.
+        previous.role = "base-color";
       } else if (previous.role !== role || previous.colorSpace !== colorSpace) previous.ambiguous = true;
+      if (previous) previous.requiresAlpha = previous.requiresAlpha || !!requiresAlpha;
     }
     function markExtensionImages(value: any) {
       if (!value || typeof value !== "object") return;
       if (Number.isInteger(value.index) && textures[value.index] && textures[value.index].source != null) {
         var index = textures[value.index].source;
-        if (!usages[index]) usages[index] = { role: "", colorSpace: "", ambiguous: true };
+        if (!usages[index]) usages[index] = { role: "", colorSpace: "", ambiguous: true, requiresAlpha: false };
         else usages[index].ambiguous = true;
       }
       for (var key in value) if (Object.prototype.hasOwnProperty.call(value, key)) markExtensionImages(value[key]);
     }
     for (var material of Array.isArray(gltf.materials) ? gltf.materials : []) {
       var pbr = material.pbrMetallicRoughness || {};
-      add(pbr.baseColorTexture, "base-color", "srgb");
+      add(pbr.baseColorTexture, "base-color", "srgb", !!material.alphaMode && material.alphaMode !== "OPAQUE");
       add(pbr.metallicRoughnessTexture, "packed", "linear");
       add(material.normalTexture, "normal", "linear");
       add(material.occlusionTexture, "mask", "linear");

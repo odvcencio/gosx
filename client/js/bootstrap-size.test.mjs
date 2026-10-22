@@ -848,7 +848,8 @@ const budgets = [
     // Model-map profiles and staged rehydration on the merged retry base measure
     // 1,979,196 raw bytes. Move only the exhausted target by 4,951 bytes;
     // keep the 65,536-byte governed allowance unchanged.
-    file: "bootstrap.js", raw: 1913660, gzip: 533049,
+    // Shared base-color/emissive alpha selection adds 425 measured raw bytes.
+    file: "bootstrap.js", raw: 1914085, gzip: 533196,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
     brotli: 436662 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
@@ -1652,7 +1653,7 @@ const budgets = [
   // move to 45_000 / 16_200 / 14_420, leaving 56 / 72 / 69 bytes of
   // rounding headroom.
   // Volume transmission adds 340 raw / 97 gzip / 78 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 46124, gzip: 16297, brotli: 14498 },
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 46526, gzip: 16297, brotli: 14498 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
