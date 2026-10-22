@@ -56,6 +56,12 @@ const (
 	CapPointerLock  Capability = "pointer-lock"
 	CapTextInput    Capability = "text-input"
 
+	// Environment gates. The browser runtime evaluates these before it
+	// downloads a Scene3D chunk, so a failed gate costs no bytes.
+	CapHardwareGPU Capability = "hardware-gpu" // WebGL2 with no major performance caveat and no software renderer
+	CapFullMotion  Capability = "full-motion"  // prefers-reduced-motion is not "reduce"
+	CapFullData    Capability = "full-data"    // no Save-Data, no prefers-reduced-data, no 2G-class connection
+
 	CapWebGPUTimestampQuery                 Capability = "webgpu:timestamp-query"
 	CapWebGPUIndirectFirstInstance          Capability = "webgpu:indirect-first-instance"
 	CapWebGPUShaderF16                      Capability = "webgpu:shader-f16"
@@ -462,6 +468,7 @@ func ValidateCapabilities(requested []Capability) error {
 		CapVideo: true, CapCanvas: true, CapWebGL: true, CapWebGL2: true, CapWebGPU: true, CapCompute: true, CapWASM: true, CapPixelSurface: true,
 		CapAnimation: true, CapStorage: true, CapFetch: true, CapClipboard: true, CapAudio: true,
 		CapWorker: true, CapGamepad: true, CapKeyboard: true, CapPointer: true, CapPointerLock: true, CapTextInput: true,
+		CapHardwareGPU: true, CapFullMotion: true, CapFullData: true,
 	}
 	for _, cap := range requested {
 		normalized := Capability(strings.ToLower(strings.TrimSpace(string(cap))))
