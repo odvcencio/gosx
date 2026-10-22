@@ -279,6 +279,10 @@ type HubBinding struct {
 	RefreshDebounceMS int `json:"refreshDebounceMs,omitempty"`
 	// RefreshPreserveScroll defaults to true; false wins within a pending burst.
 	RefreshPreserveScroll *bool `json:"refreshPreserveScroll,omitempty"`
+	// CSSVars writes fields of a matching inbound payload to CSS custom
+	// properties. The page loads bootstrap-feature-hub-css-vars.js only when a
+	// binding sets it. See HubCSSVars.
+	CSSVars *HubCSSVars `json:"cssVars,omitempty"`
 }
 
 // HubInputConfig lets the browser bootstrap forward bounded, page-declared
