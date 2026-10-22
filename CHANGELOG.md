@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,
   schema-checked ObjectIR equality proofs, including embedded model records.
   Transform and interaction updates

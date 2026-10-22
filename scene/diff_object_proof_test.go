@@ -27,6 +27,11 @@ func TestObjectProofMatchesAuthoredSchema(t *testing.T) {
 			t.Fatalf("schema proof ignored field name %s", original.Name)
 		}
 		fields[i] = original
+		fields[i].Tag = `json:"changed"`
+		if objectProofSchemaMatchesType(reflect.StructOf(fields)) {
+			t.Fatalf("schema proof ignored JSON tag for %s", original.Name)
+		}
+		fields[i] = original
 		if original.Type.Kind() == reflect.String {
 			fields[i].Type = reflect.TypeFor[int]()
 		} else {

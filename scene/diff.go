@@ -6,6 +6,8 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"strings"
+	"sync"
 )
 
 // CommandKind mirrors the Scene3D client command protocol. The numeric values
@@ -970,13 +972,27 @@ func provenJSONEqual(a, b reflect.Value) bool {
 	case reflect.String:
 		return a.String() == b.String()
 	case reflect.Struct:
+		// Omitted alpha cutoffs have no standalone wire form. Only a carrying
+		// omitzero field may prove them equal without invoking the encoder.
+		if a.Type() == reflect.TypeFor[AlphaCutoff]() {
+			left, right := alphaCutoffProofValue(a), alphaCutoffProofValue(b)
+			return !left.IsZero() && !right.IsZero() && left.state == right.state && provenFloatEqual(left.value, right.value) && provenAlphaCutoffFieldEqual(left, right)
+		}
 		// Model and aggregate records embed ObjectIR. Reuse its typed proof
 		// when reflection can expose the actual record without copying it.
 		if a.Type() == reflect.TypeFor[ObjectIR]() && a.CanAddr() && b.CanAddr() && a.CanInterface() && b.CanInterface() && objectProofEnabled() {
 			return provenObjectFieldsEqual(a.Addr().Interface().(*ObjectIR), b.Addr().Interface().(*ObjectIR), 0)
 		}
 		for index := range a.NumField() {
-			if !provenJSONEqual(a.Field(index), b.Field(index)) {
+			left, right := a.Field(index), b.Field(index)
+			if left.Kind() == reflect.Struct && left.Type() == reflect.TypeFor[AlphaCutoff]() && alphaCutoffFieldOmitsZero(a.Type(), index) {
+				x, y := alphaCutoffProofValue(left), alphaCutoffProofValue(right)
+				if !provenAlphaCutoffFieldEqual(x, y) {
+					return false
+				}
+				continue
+			}
+			if !provenJSONEqual(left, right) {
 				return false
 			}
 		}
@@ -1038,6 +1054,72 @@ func provenJSONEqual(a, b reflect.Value) bool {
 			return false
 		}
 		return provenJSONEqual(a.Elem(), b.Elem())
+	default:
+		return false
+	}
+}
+
+// Omission is a field property, not permission to encode the zero value as a
+// standalone uniform. Keep that context when proving tri-state cutoff fields.
+var alphaCutoffOmissionPlans sync.Map // reflect.Type -> []bool; lazy per carrying type
+
+func sceneRecordHasJSONMarshaler(typ reflect.Type) bool {
+	marshaler := reflect.TypeFor[json.Marshaler]()
+	return typ.Implements(marshaler) || reflect.PointerTo(typ).Implements(marshaler)
+}
+
+func alphaCutoffFieldOmitsZero(typ reflect.Type, index int) bool {
+	if cached, ok := alphaCutoffOmissionPlans.Load(typ); ok {
+		return cached.([]bool)[index]
+	}
+	fields := make([]bool, typ.NumField())
+	if sceneRecordHasJSONMarshaler(typ) {
+		cached, _ := alphaCutoffOmissionPlans.LoadOrStore(typ, fields)
+		return cached.([]bool)[index]
+	}
+	for i := range fields {
+		field := typ.Field(i)
+		if field.Type != reflect.TypeFor[AlphaCutoff]() {
+			continue
+		}
+		_, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+		for options != "" {
+			var option string
+			option, options, _ = strings.Cut(options, ",")
+			if option == "omitzero" {
+				fields[i] = true
+				break
+			}
+		}
+	}
+	cached, _ := alphaCutoffOmissionPlans.LoadOrStore(typ, fields)
+	return cached.([]bool)[index]
+}
+
+func alphaCutoffProofValue(value reflect.Value) AlphaCutoff {
+	// Private nested fields can be read by kind without Interface. This preserves
+	// the structural walk's proof for identical records without unsafe access.
+	if !value.CanInterface() {
+		return AlphaCutoff{state: alphaCutoffState(value.FieldByName("state").Uint()), value: value.FieldByName("value").Float()}
+	}
+	if value.CanAddr() {
+		return *value.Addr().Interface().(*AlphaCutoff)
+	}
+	return value.Interface().(AlphaCutoff)
+}
+
+// A carrying omitzero field drops the omitted state, even if internal unused
+// numeric bits differ. Disabled values encode null; authored numbers must be
+// finite/non-negative and retain the sign of zero in their encoding.
+func provenAlphaCutoffFieldEqual(a, b AlphaCutoff) bool {
+	if a.state != b.state {
+		return false
+	}
+	switch a.state {
+	case alphaCutoffOmitted, alphaCutoffDisabled:
+		return true
+	case alphaCutoffNumeric:
+		return validAlphaCutoff(a.value) && validAlphaCutoff(b.value) && provenFloatEqual(a.value, b.value)
 	default:
 		return false
 	}

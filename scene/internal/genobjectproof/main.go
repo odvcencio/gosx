@@ -12,13 +12,16 @@ import (
 	"go/token"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 )
 
 type field struct {
 	name string
 	typ  ast.Expr
+	tag  reflect.StructTag
 }
 
 func main() {
@@ -114,20 +117,20 @@ func objectProofSchemaMatches() bool {
 }
 
 func objectProofSchemaMatchesType(t reflect.Type) bool {
- if t.Kind() != reflect.Struct { return false }
- fields := [...]struct { name string; typ reflect.Type }{`)
+ if t.Kind() != reflect.Struct || sceneRecordHasJSONMarshaler(t) { return false }
+ fields := [...]struct { name string; typ reflect.Type; tag reflect.StructTag }{`)
 	for _, f := range objects {
 		var typ bytes.Buffer
 		if err := format.Node(&typ, fset, f.typ); err != nil {
 			return err
 		}
-		fmt.Fprintf(&out, "{%q, reflect.TypeFor[%s]()},\n", f.name, typ.String())
+		fmt.Fprintf(&out, "{%q, reflect.TypeFor[%s](), %q},\n", f.name, typ.String(), string(f.tag))
 	}
 	fmt.Fprintln(&out, `}
  if t.NumField() != len(fields) { return false }
  for i, expected := range fields {
   actual := t.Field(i)
-  if actual.Name != expected.name || actual.Type != expected.typ { return false }
+  if actual.Name != expected.name || actual.Type != expected.typ || actual.Tag != expected.tag { return false }
  }
  return true
 }`)
@@ -184,7 +187,15 @@ func fields(file *ast.File, name string) []field {
 					if n.Name == "_" {
 						panic("blank ObjectIR fields require an explicit proof")
 					}
-					result = append(result, field{n.Name, f.Type})
+					var tag reflect.StructTag
+					if f.Tag != nil {
+						text, err := strconv.Unquote(f.Tag.Value)
+						if err != nil {
+							panic(err)
+						}
+						tag = reflect.StructTag(text)
+					}
+					result = append(result, field{name: n.Name, typ: f.Type, tag: tag})
 				}
 			}
 			return result
@@ -211,6 +222,14 @@ func scalarDifference(typ ast.Expr, left, right string) string {
 
 func compare(out *bytes.Buffer, f field) {
 	a, b := "a."+f.name, "b."+f.name
+	if typ, ok := f.typ.(*ast.Ident); ok && typ.Name == "AlphaCutoff" {
+		for _, option := range strings.Split(f.tag.Get("json"), ",")[1:] {
+			if option == "omitzero" {
+				fmt.Fprintf(out, "if !provenAlphaCutoffFieldEqual(%s, %s) { return false }\n", a, b)
+				return
+			}
+		}
+	}
 	if different := scalarDifference(f.typ, a, b); different != "" {
 		fmt.Fprintf(out, "if %s { return false }\n", different)
 		return
