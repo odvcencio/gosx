@@ -328,6 +328,18 @@ type Config struct {
 	// today's behavior. ThreadWorker needs Runtime: RuntimeGoWASM.
 	Thread Thread `json:"thread,omitempty"`
 
+	// Worker says what happens when a ThreadWorker engine cannot start its
+	// worker. WorkerPreferred (the default) falls back to the main thread;
+	// WorkerRequired never runs the engine on the main thread and reports the
+	// status "unsupported". Needs Thread: ThreadWorker.
+	Worker WorkerMode `json:"worker,omitempty"`
+
+	// ForceWorkerFallback makes the page behave as if the worker could not
+	// start (reason "worker-forced-fallback"), so a test can run the same Go
+	// code on the main thread, or see "unsupported" under WorkerRequired,
+	// without page JavaScript. Needs Thread: ThreadWorker.
+	ForceWorkerFallback bool `json:"forceWorkerFallback,omitempty"`
+
 	// PixelSurface configures a managed pixel framebuffer when CapPixelSurface
 	// is declared. The runtime creates a canvas at the logical resolution,
 	// handles GPU-accelerated scaling to the mount element, and exposes the
@@ -393,6 +405,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := ValidateThread(c.Thread, c.Runtime); err != nil {
+		return err
+	}
+	if err := ValidateWorkerMode(c.Worker, c.ForceWorkerFallback, c.Thread); err != nil {
 		return err
 	}
 	if err := ValidateCapabilities(c.Capabilities); err != nil {

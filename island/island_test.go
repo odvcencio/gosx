@@ -2028,3 +2028,30 @@ func TestRenderEngineWorkerThreadWithoutGoWASMIsRejected(t *testing.T) {
 		t.Fatalf("a worker-thread engine without go-wasm must not register: %+v", r.Manifest().Engines)
 	}
 }
+
+func TestRenderEngineWorkerModeAndForcedFallbackReachManifest(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{
+		Name: "Sim", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, Thread: engine.ThreadWorker,
+		WASMPath: "/gosx/engines/sim.wasm", Worker: engine.WorkerRequired, ForceWorkerFallback: true,
+	}, gosx.Node{})
+	engines := r.Manifest().Engines
+	if len(engines) != 1 || engines[0].WorkerMode != "required" || !engines[0].ForceWorkerFallback {
+		t.Fatalf("engine entries = %+v, want workerMode required and forced fallback", engines)
+	}
+	raw, err := r.ManifestJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(raw, `"workerMode":"required"`) || !strings.Contains(raw, `"forceWorkerFallback":true`) {
+		t.Fatalf("manifest must carry the worker policy: %s", raw)
+	}
+}
+
+func TestRenderEngineWorkerModeWithoutWorkerThreadIsRejected(t *testing.T) {
+	r := NewRenderer("main")
+	r.RenderEngine(engine.Config{Name: "Sim", Kind: engine.KindWorker, Runtime: engine.RuntimeGoWASM, WASMPath: "/s.wasm", Worker: engine.WorkerRequired}, gosx.Node{})
+	if len(r.Manifest().Engines) != 0 {
+		t.Fatalf("a worker policy without a worker thread must not register: %+v", r.Manifest().Engines)
+	}
+}

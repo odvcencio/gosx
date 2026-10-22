@@ -1499,6 +1499,9 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	if err := engine.ValidateThread(cfg.Thread, cfg.Runtime); err != nil {
 		return renderEngineError(err)
 	}
+	if err := engine.ValidateWorkerMode(cfg.Worker, cfg.ForceWorkerFallback, cfg.Thread); err != nil {
+		return renderEngineError(err)
+	}
 	if err := engine.ValidateCapabilities(cfg.Capabilities); err != nil {
 		return renderEngineError(err)
 	}
@@ -1540,7 +1543,10 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 	}
 
 	if cfg.Thread == engine.ThreadWorker {
-		r.manifest.Engines[len(r.manifest.Engines)-1].Thread = string(cfg.Thread)
+		last := &r.manifest.Engines[len(r.manifest.Engines)-1]
+		last.Thread = string(cfg.Thread)
+		last.WorkerMode = string(cfg.Worker)
+		last.ForceWorkerFallback = cfg.ForceWorkerFallback
 		// The worker host chunk loads only for pages with a worker-thread engine.
 		if err := r.manifest.RequireFeature("engine-worker"); err != nil {
 			return renderEngineError(err)
