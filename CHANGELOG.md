@@ -9,7 +9,9 @@
   built KTX2 maps, including bounded uncompressed variants on devices without
   BC support; unsupported or failed variants return preparation errors rather
   than loading full-size authored images. Preserve material role and color-space
-  metadata for external, embedded, and data-URI glTF images.
+  metadata for external, embedded, and data-URI glTF images. One sRGB image can
+  serve base color and emissive maps; transparent materials require a
+  four-channel alpha-preserving variant.
 - Add `Surface.ApplyTextureProfile` to prepare target maps and rehydrate active
   models before committing a live quality change. Failed, canceled, superseded,
   or stale changes retain the last working textured scene. Existing cached maps
