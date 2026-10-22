@@ -95,6 +95,48 @@ func TestTrackingOverlappingWindowsRemainIndependent(t *testing.T) {
 	done.Wait()
 }
 
+// Tracking scratch outlives computations. Its cache must not keep disposed
+// signals, callbacks, or an unbounded number of nested windows alive.
+func TestTrackingScratchDoesNotRetainDependencyGraphs(t *testing.T) {
+	var nested func(int)
+	nested = func(depth int) {
+		trackDependencies(func() int {
+			count := 64
+			if depth%2 != 0 {
+				count = 129
+			}
+			for i := 0; i < count; i++ {
+				New(i).Get()
+			}
+			if depth > 0 {
+				nested(depth - 1)
+			}
+			return 0
+		})
+	}
+	nested(16)
+	trackerMu.Lock()
+	defer trackerMu.Unlock()
+	count := 0
+	for tracker := spareTrackers; tracker != nil; tracker = tracker.parent {
+		count++
+		if count > 8 {
+			t.Fatal("scratch cache retained too many windows or a cycle")
+		}
+		if len(tracker.deps) != 0 || cap(tracker.deps) > 128 || len(tracker.seen) != 0 {
+			t.Fatal("scratch retained dependency identities or an oversized buffer")
+		}
+		for _, dep := range tracker.deps[:cap(tracker.deps)] {
+			if dep.source != nil || dep.unsubscribe != nil {
+				t.Fatal("scratch backing array retained a dependency graph")
+			}
+		}
+	}
+	if count != spareCount {
+		t.Fatalf("scratch count = %d, advertised %d", count, spareCount)
+	}
+}
+
 func BenchmarkTrackDependencies(b *testing.B) {
 	for _, count := range []int{1, 5, 16, 64} {
 		b.Run(fmt.Sprint(count), func(b *testing.B) {
