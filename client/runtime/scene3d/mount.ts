@@ -70,18 +70,23 @@
       initialRuntimeCommands = resolved.commands;
     }
     const sceneState = createSceneState(props, capability);
+    sceneState._textureDeliveryProfile = String(props.textureDeliveryProfile || "").trim().toLowerCase();
+    if (!["", "auto", "low", "standard", "high"].includes(sceneState._textureDeliveryProfile)) {
+      throw new TypeError("invalid Scene3D texture delivery profile");
+    }
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ // Allocate model texture variants while state remains private.
     sceneState._modelTextureVariantScope = createSceneModelTextureVariantScope();
+    rememberSceneModelTextureVariantScope(sceneState, sceneState._modelTextureVariantScope);
     await ensurePreferredWebGPUBackend(props, capability);
-    if (!scene3DFactoryCurrent()) return {};
+    if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     // Settle lazy WebGL and compute before first renderer creation/fallback.
     await settlePreferredWebGLBackend(props, capability);
-    if (!scene3DFactoryCurrent()) return {};
+    if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     await settleSceneComputeFeature(sceneState);
-    if (!scene3DFactoryCurrent()) return {};
+    if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     if (initialRuntimeCommands) {
       await applySceneCommands(sceneState, initialRuntimeCommands);
-      if (!scene3DFactoryCurrent()) return {};
+      if (!scene3DFactoryCurrent()) { retireSceneModelTextureVariantScopes(sceneState); return {}; }
     }
 
     const sceneMountOwner = { m: mount };
@@ -376,8 +381,9 @@
       invalidateSceneModelHydration(sceneState);
       settleSceneModelTextureVariantScope(
         sceneState._modelTextureVariantScope,
-        sceneModelTextureVariantContextForRenderer(null),
+        sceneModelTextureVariantContextForRenderer(null, sceneState._textureDeliveryProfile),
       );
+      retireSceneModelTextureVariantScopes(sceneState);
       if (mount.__gosxScene3DOwner === sceneMountOwner) delete mount.__gosxScene3DOwner;
       return {};
     }
@@ -435,7 +441,7 @@
       invalidateSceneModelHydration(sceneState);
       settleSceneModelTextureVariantScope(
         sceneState._modelTextureVariantScope,
-        sceneModelTextureVariantContextForRenderer(null)
+        sceneModelTextureVariantContextForRenderer(null, sceneState._textureDeliveryProfile)
       );
       publishSceneModelTextureVariantContext(mount, sceneState._modelTextureVariantScope);
       console.warn("[gosx] Scene3D could not acquire a renderer");
@@ -482,11 +488,13 @@
       canvas.appendChild(sentinelLayer);
     }
     let renderer = initialRenderer.renderer;
+    let textureProfileApplyGeneration = 0;
     sceneState._crowdRenderer = renderer;
     settleSceneModelTextureVariantScope(
       sceneState._modelTextureVariantScope,
-      sceneModelTextureVariantContextForRenderer(renderer)
+      sceneModelTextureVariantContextForRenderer(renderer, sceneState._textureDeliveryProfile)
     );
+    rememberSceneModelTextureVariantScope(sceneState, sceneState._modelTextureVariantScope);
     publishSceneModelTextureVariantContext(mount, sceneState._modelTextureVariantScope);
     applySceneRendererState(mount, renderer, initialRenderer.fallbackReason || "", initialRenderer.degraded || []);
     publishSceneWaterRendererState(mount, sceneState, renderer, "");
@@ -3580,6 +3588,21 @@
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");
       },
+      async applyTextureProfile(requests: any[], profile: string, signal: AbortSignal, module: any) {
+        return sceneApplyMountedTextureProfile(sceneState, mount, requests, profile, signal, module, {
+          disposed: () => disposed,
+          renderer: () => renderer,
+          nextGeneration: () => ++textureProfileApplyGeneration,
+          current: (generation: number) => generation === textureProfileApplyGeneration,
+          rehydrate: () => sceneRehydrateModelsAfterCommand(sceneState, true),
+          invalidate: () => invalidateSceneModelHydration(sceneState),
+          commit: (nextProfile: string, candidate: any) => {
+            props.textureDeliveryProfile = nextProfile;
+            publishSceneModelTextureVariantContext(mount, candidate);
+            scheduleRender("texture-profile");
+          },
+        });
+      },
       // updateSceneProps merges a partial props object into the mount's
       // live props in place. Most Scene3D state (models, points, postFX,
       // camera, ...) is already reachable through applyCommands(), which
@@ -3732,6 +3755,7 @@
       sceneControlHandle.dispose();
       if (typeof mount.removeEventListener === "function") mount.removeEventListener("gosx:scene3d:program-ready", onSceneProgramsReady);
       renderer.dispose();
+      retireSceneModelTextureVariantScopes(sceneState);
       disposeSceneHTMLTextureState(htmlTextureState);
       if (typeof releaseTextureLoadListener === "function") releaseTextureLoadListener();
       if (wasmMotionState === 1 && typeof window !== "undefined"

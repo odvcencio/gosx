@@ -42,22 +42,40 @@ type SeaConfig struct {
 	WindDirection float64 // degrees, as in scene.Ocean
 	Speed         float64 // time scale
 	Components    int     // 1..6; 0 means 6
+
+	// Swell, when it is not empty, replaces the six-wave table: the sea is the
+	// sum of these plane waves (the swell waves of scene.Ocean.Spectrum, from
+	// scene.OceanSwellWaves or the normalized Ocean.SwellWaves). WaveHeight,
+	// WaveLength, WindDirection, Speed and Components are then ignored, as they
+	// are for a spectral Ocean, and time runs at 1x.
+	Swell []SwellWave
 }
 
 type seaWave struct{ wx, wz, k, omega, amp, phase float64 }
 
+// SwellWave is one plane wave of a spectral sea: the surface rises by
+// Amplitude*cos(K*(DirX*x + DirZ*z) - Omega*t + Phase) metres. It has the
+// fields of scene.OceanWave, so a game converts with vessel.SwellWave(w).
+type SwellWave struct {
+	DirX, DirZ, K, Omega, Amplitude, Phase float64
+}
+
 // Sea is a deterministic sum of sinusoids built from the Scene3D ocean wave
-// table. It models vertical motion only, without the ocean's horizontal
-// Gerstner displacement, so it differs from the rendered surface by a small
-// fraction of the wave height.
+// table, or from the swell waves of a spectral ocean. It models vertical motion
+// only, without the ocean's horizontal Gerstner displacement, so it differs
+// from the rendered surface by a small fraction of the wave height.
 type Sea struct {
 	level float64
 	waves [6]seaWave
 	count int
+	swell []SwellWave
 }
 
 // NewSea builds a [Sea] from c.
 func NewSea(c SeaConfig) *Sea {
+	if len(c.Swell) > 0 {
+		return &Sea{level: c.Level, swell: append([]SwellWave(nil), c.Swell...)}
+	}
 	h, l, sp := c.WaveHeight, c.WaveLength, c.Speed
 	if h == 0 {
 		h = 0.8
@@ -95,6 +113,11 @@ func NewSea(c SeaConfig) *Sea {
 // Height implements [WaveField].
 func (s *Sea) Height(x, z, t float64) float64 {
 	y := s.level
+	for i := range s.swell {
+		w := &s.swell[i]
+		arg := float64(w.K*(float64(w.DirX*x)+float64(w.DirZ*z))) - float64(w.Omega*t) + w.Phase
+		y += float64(w.Amplitude * det.Cos(arg))
+	}
 	for i := 0; i < s.count; i++ {
 		w := &s.waves[i]
 		arg := float64(w.k*(float64(w.wx*x)+float64(w.wz*z))) - float64(w.omega*t) + w.phase

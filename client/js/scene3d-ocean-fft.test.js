@@ -323,3 +323,46 @@ test("the shipped (packed) WebGPU bundle still accepts the spectral surface patc
   if (naga) validateWGSL(module.code, "ocean-fft-surface-shipped");
   h.renderer.dispose();
 });
+
+// --- the Go contract: normalized SceneIR in, shared wind direction and time -------------------------------------
+
+test("the browser reads the spectrum from the normalized scene the Go side emits", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const { api } = standalone();
+  const raw = { spectrum: { windSpeed: 12, fetch: 100, peakEnhancement: 2, spread: 4, swell: 0.3, swellDirection: 15, seed: 0 }, swellWaves: [{ dx: 0, dz: 1, k: 0.1, omega: 1, amplitude: 0.1, phase: 0 }], masks: ["hull", 3] };
+  const state = h.env.context.__gosx_scene3d_api.createSceneState({ scene: { environment: { ocean: raw } } });
+  const ocean = state.environment.ocean;
+  assert.equal(ocean.spectrum.windSpeed, 12);
+  assert.equal(ocean.spectrum.seed, 0);
+  assert.equal(ocean.swellWaves.length, 1);
+  assert.deepEqual(Array.from(ocean.masks), ["hull"]);
+  const resolved = api.resolve(JSON.parse(JSON.stringify(ocean)), "high");
+  assert.deepEqual([resolved.windSpeed, resolved.fetchKm, resolved.gamma, resolved.spread, resolved.swell], [12, 100, 2, 4, 0.3]);
+  h.renderer.dispose();
+});
+
+test("GPU spectrum and Go swell waves share wind direction and loop time", () => {
+  const { api } = standalone();
+  const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-spectrum-query-parity.json"), "utf8"));
+  const omega0 = 2 * Math.PI / api.LOOP_PERIOD;
+  let checked = 0;
+  for (const c of cases) {
+    const waves = c.ocean.swellWaves || [];
+    for (const w of waves) {
+      // The Go swell waves quantize omega to whole cycles per loop, exactly as ocean_spectrum does, so the
+      // query (scene time) and the GPU (scene time modulo the loop) agree at every time.
+      const cycles = w.omega / omega0;
+      assert.ok(Math.abs(cycles - Math.round(cycles)) < 1e-6, `omega ${w.omega} is not a whole number of cycles per ${api.LOOP_PERIOD} s`);
+    }
+    const s = c.ocean.spectrum || {};
+    if (!waves.length || (s.swell || 0) > 0.2 || s.swellDirection) continue;
+    // Direction of the strongest wind-sea wave against the kernel angle the GPU gets for the same wind direction.
+    const wanted = api.resolve(c.ocean, "high").windDir;
+    const top = waves.slice().sort((a, b) => b.amplitude - a.amplitude)[0];
+    const got = Math.atan2(top.dz, top.dx);
+    const delta = Math.abs(Math.atan2(Math.sin(got - wanted), Math.cos(got - wanted)));
+    assert.ok(delta < 0.9, `strongest wave travels at ${got.toFixed(2)} rad, the GPU wind angle is ${wanted.toFixed(2)} (windDirection ${c.ocean.windDirection})`);
+    checked++;
+  }
+  assert.ok(checked >= 3, "enough fixture cases carry a pure wind sea: " + checked);
+});

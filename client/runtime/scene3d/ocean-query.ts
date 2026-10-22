@@ -14,16 +14,26 @@
     }
     data[0] = o.level || 0; data[3] = Number.isFinite(o.speed) ? o.speed : 1;
     data[19] = Number.isFinite(o.surf) ? o.surf : 0.5;
-    window.__gosx_scene3d_ocean_waves.write(o, quality, data);
-    return { data, floor: floor || (() => -1e4) };
+    // A spectral ocean is its Go-computed swell waves (scene.OceanSwellWaves): time runs at 1x and the Gerstner table is unused.
+    const swell = o.spectrum && Array.isArray(o.swellWaves) && o.swellWaves.length ? o.swellWaves : null;
+    if (swell) data[3] = 1; else window.__gosx_scene3d_ocean_waves.write(o, quality, data);
+    return { data, floor: floor || (() => -1e4), swell, chop: Number.isFinite(o.choppiness) ? o.choppiness : 0.6 };
   }
   // Normal deliberately uses the GPU tangents: the shader does not differentiate
   // shoaling or run-up spatially. Velocity is the material (water-particle) velocity.
   // @ts-ignore TS7006 -- plain JS query is also evaluated by Node without transpilation.
   function evaluate(query, x, z, seconds) {
-    const u = query.data, t = Math.fround(seconds), depth = u[0] - query.floor(x, z);
+    const u = query.data, t = query.swell ? seconds : Math.fround(seconds), depth = u[0] - query.floor(x, z);
     let px = x, y = u[0], pz = z, vx = 0, vy = 0, vz = 0;
     let dxx = 1, dxy = 0, dxz = 0, dzx = 0, dzy = 0, dzz = 1;
+    for (const w of query.swell || []) {
+      const wx = w.dx, wz = w.dz, k = w.k, omega = w.omega, a = w.amplitude * smooth(0, 1.2, depth * k), ch = query.chop * a;
+      const th = k * (wx * x + wz * z) - omega * t + w.phase, s = Math.sin(th), c = Math.cos(th);
+      px -= ch * wx * s; y += a * c; pz -= ch * wz * s;
+      dxx -= k * ch * wx * wx * c; dxy -= k * a * wx * s; dxz -= k * ch * wx * wz * c;
+      dzx -= k * ch * wx * wz * c; dzy -= k * a * wz * s; dzz -= k * ch * wz * wz * c;
+      vx += ch * wx * omega * c; vy += a * omega * s; vz += ch * wz * omega * c;
+    }
     for (let i = 0; i < u[27]; i++) {
       const b = 36 + i * 8, wx = u[b], wz = u[b + 1], k = u[b + 2], omega = u[b + 3];
       const shoal = smooth(0, 1.2, depth * k), a = u[b + 4] * shoal, qa = u[b + 5] * shoal;

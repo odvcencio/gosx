@@ -41,6 +41,79 @@ type Ocean struct {
 	Extent      float64           `json:"extent,omitempty"`
 	Bathymetry  *OceanBathymetry  `json:"bathymetry,omitempty"`
 	Reflections *OceanReflections `json:"reflections,omitempty"`
+	// Spectrum switches the surface from the six-wave Gerstner sum to the
+	// spectral ocean. When it is set, WaveHeight, WaveLength and Speed are
+	// ignored (the spectrum defines height and length; time runs at 1x) and
+	// WindDirection sets the wind direction. The other fields keep their meaning.
+	Spectrum *OceanSpectrum `json:"spectrum,omitempty"`
+	// Masks lists node IDs whose meshes remove water: a hull, a dry dock, a cave.
+	Masks []string `json:"masks,omitempty"`
+	// SwellWaves is computed during normalization from Spectrum and
+	// WindDirection and is read-only: whatever an author sets is replaced. It
+	// holds the DefaultOceanSwellCount strongest bins of the first two cascades
+	// as plane waves, for ship motion and the browser's first frames.
+	SwellWaves []OceanWave `json:"swellWaves,omitempty"`
+}
+
+// OceanSpectrum describes a wind sea by its JONSWAP spectrum. Zero fields mean
+// the documented default, as elsewhere in Ocean. Fetch is in kilometres, as
+// oceanographic tables give it; the other inputs are SI.
+type OceanSpectrum struct {
+	// WindSpeed is m/s at 10 m, 0.5-40. Default: 9.
+	WindSpeed float64 `json:"windSpeed,omitempty"`
+	// Fetch is km, 1-2000. Default: 300.
+	Fetch float64 `json:"fetch,omitempty"`
+	// PeakEnhancement is the JONSWAP gamma, 1-7. Default: 3.3.
+	PeakEnhancement float64 `json:"peakEnhancement,omitempty"`
+	// Spread is the directional sharpness, 1-32. Default: 8.
+	Spread float64 `json:"spread,omitempty"`
+	// Swell is the 0-1 share of a long swell. Default: 0.
+	Swell float64 `json:"swell,omitempty"`
+	// SwellDirection is the direction the swell travels, in degrees, as
+	// WindDirection. Values are normalized into [0, 360).
+	SwellDirection float64 `json:"swellDirection,omitempty"`
+	// Cascades are the tiles. Empty means the four defaults: tile sizes 1600, 250,
+	// 37 and 5.3 m with bands [2pi/1600, 0.12), [0.12, 0.80), [0.80, 5.4) and
+	// [5.4, 37) rad/m. At most four.
+	Cascades []OceanCascade `json:"cascades,omitempty"`
+	// Seed picks the realization. Any value, including 0, is a seed.
+	Seed uint32 `json:"seed"`
+}
+
+// OceanCascade is one tile of the spectral ocean. Its band is [KMin, KMax) in
+// rad/m, and KMax stays below pi*64/Size, the Nyquist wavenumber of a 64-point
+// cascade, so the Nyquist row and column are always empty.
+type OceanCascade struct {
+	Size float64 `json:"size"` // tile size, metres
+	KMin float64 `json:"kMin"` // band start, rad/m
+	KMax float64 `json:"kMax"` // band end, rad/m; below pi*64/Size
+}
+
+// OceanPreset returns a sea state by name: "calm", "moderate", "rough" or
+// "storm" (case-insensitive; any other name gives "moderate"). The presets
+// follow the Beaufort scale in wind speed over a fetch that keeps the
+// significant wave height Hs = 4 sqrt(m0) in the usual range. The Hs below is
+// measured on the realized four-cascade spectrum with seed 1 and the default
+// cascades (TestOceanSwellTruncationError):
+//
+//	calm      Beaufort 2-3,  3 m/s over  30 km:             Hs 0.4 m, a short choppy sea
+//	moderate  Beaufort 4,    7 m/s over 100 km:             Hs 1.7 m
+//	rough     Beaufort 6,   11 m/s over 200 km:             Hs 3.7 m
+//	storm     Beaufort 9,   20 m/s over 250 km, gamma 2:    Hs 7.4 m, a less peaked sea
+//
+// Swell shares grow with the sea state and travel toward +Z (SwellDirection 0);
+// set SwellDirection to turn them. The seed is 1; change it for another sea of
+// the same state.
+func OceanPreset(name string) OceanSpectrum {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "calm":
+		return OceanSpectrum{WindSpeed: 3, Fetch: 30, PeakEnhancement: 3.3, Spread: 16, Swell: 0.1, Seed: 1}
+	case "rough":
+		return OceanSpectrum{WindSpeed: 11, Fetch: 200, PeakEnhancement: 3.3, Spread: 6, Swell: 0.25, Seed: 1}
+	case "storm":
+		return OceanSpectrum{WindSpeed: 20, Fetch: 250, PeakEnhancement: 2, Spread: 4, Swell: 0.35, Seed: 1}
+	}
+	return OceanSpectrum{WindSpeed: 7, Fetch: 100, PeakEnhancement: 3.3, Spread: 8, Swell: 0.15, Seed: 1}
 }
 
 // OceanBathymetry maps a grayscale image's R channel into world-space seabed
@@ -85,7 +158,82 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Extent = clampOceanParam(ocean.Extent, 100, 20000)
 	out.Bathymetry = normalizeOceanBathymetry(ocean.Bathymetry)
 	out.Reflections = normalizeOceanReflections(ocean.Reflections)
+	out.Spectrum = normalizeOceanSpectrum(ocean.Spectrum)
+	out.Masks = normalizeOceanMasks(ocean.Masks)
+	out.SwellWaves = nil
+	if out.Spectrum != nil {
+		out.SwellWaves = OceanSwellWaves(*out.Spectrum, out.WindDirection, DefaultOceanSwellCount)
+	}
 	return &out
+}
+
+// normalizeOceanSpectrum clamps authored nonzero parameters and keeps zero as
+// the default marker. A cascade list that is empty, longer than four or invalid
+// becomes nil, the four defaults.
+func normalizeOceanSpectrum(spectrum *OceanSpectrum) *OceanSpectrum {
+	if spectrum == nil {
+		return nil
+	}
+	out := *spectrum
+	out.WindSpeed = clampOceanParam(spectrum.WindSpeed, 0.5, 40)
+	out.Fetch = clampOceanParam(spectrum.Fetch, 1, 2000)
+	out.PeakEnhancement = clampOceanParam(spectrum.PeakEnhancement, 1, 7)
+	out.Spread = clampOceanParam(spectrum.Spread, 1, 32)
+	out.Swell = clampOceanParam(spectrum.Swell, 0, 1)
+	out.SwellDirection = normalizeOceanWindDirection(spectrum.SwellDirection)
+	out.Cascades = normalizeOceanCascades(spectrum.Cascades)
+	return &out
+}
+
+func normalizeOceanCascades(cascades []OceanCascade) []OceanCascade {
+	if len(cascades) == 0 || len(cascades) > 4 {
+		return nil
+	}
+	out := make([]OceanCascade, len(cascades))
+	for i, c := range cascades {
+		for _, v := range []float64{c.Size, c.KMin, c.KMax} {
+			if math.IsNaN(v) || math.IsInf(v, 0) {
+				return nil
+			}
+		}
+		if c.Size <= 0 || c.KMin < 0 || c.KMax <= c.KMin {
+			return nil
+		}
+		c.Size = clampOceanParam(c.Size, 1, 20000)
+		if limit := oceanNyquist64(c.Size); c.KMax > limit {
+			c.KMax = limit
+		}
+		if c.KMin >= c.KMax {
+			return nil
+		}
+		out[i] = c
+	}
+	return out
+}
+
+// oceanNyquist64 is the Nyquist wavenumber of a 64-point cascade of the given
+// tile size, the upper limit of any band: pi*64/size, rounded down by one part
+// in 1e9 so the band stays strictly below it.
+func oceanNyquist64(size float64) float64 {
+	return math.Pi * 64 / size * (1 - 1e-9)
+}
+
+func normalizeOceanMasks(masks []string) []string {
+	var out []string
+	for _, mask := range masks {
+		mask = strings.TrimSpace(mask)
+		if mask == "" {
+			continue
+		}
+		duplicate := false
+		for _, seen := range out {
+			duplicate = duplicate || seen == mask
+		}
+		if !duplicate {
+			out = append(out, mask)
+		}
+	}
+	return out
 }
 
 func clampOceanParam(value, minimum, maximum float64) float64 {

@@ -39,6 +39,16 @@ function readFixture(name) {
   return new Uint8Array(buffer);
 }
 
+let u8GoFixtures;
+function readU8GoFixture(name) {
+  if (!u8GoFixtures) {
+    u8GoFixtures = JSON.parse(execFileSync(process.env.GOSX_GO || "go",
+      ["run", "./client/js/testdata/ktx2-u8-go-writer-fixture"],
+      { cwd: path.join(__dirname, "..", ".."), encoding: "utf8" }));
+  }
+  return new Uint8Array(Buffer.from(u8GoFixtures[name], "base64"));
+}
+
 // Every reference container, with the VkFormat, the WebGPU name and the WebGL2
 // internal format the reader must report for it.
 //
@@ -161,10 +171,24 @@ test("the assetpipe IBL half-float formats map without pretending to be compress
   );
 });
 
-test("an uncompressed VkFormat is refused by name", () => {
+test("portable assetpipe formats have byte-exact WebGL upload layouts", () => {
   const { api } = loadKTX2();
-  // 37 is VK_FORMAT_R8G8B8A8_UNORM. An image element already loads those pixels.
-  assert.throws(() => api.formatInfo(37), (error) => error.code === "format");
+  for (const [vkFormat, gpu, internal, external, channels] of [
+    [9, "r8unorm", 0x8229, 0x1903, 1],
+    [16, "rg8unorm", 0x822B, 0x8227, 2],
+    [23, null, 0x8051, 0x1907, 3],
+    [29, null, 0x8C41, 0x1907, 3],
+    [37, "rgba8unorm", 0x8058, 0x1908, 4],
+    [43, "rgba8unorm-srgb", 0x8C43, 0x1908, 4],
+  ]) {
+    const info = api.formatInfo(vkFormat);
+    assert.equal(info.webgpuFormat, gpu);
+    assert.equal(info.webglInternalFormat, internal);
+    assert.equal(info.webglFormat, external);
+    assert.equal(info.webglType, 0x1401);
+    assert.equal(info.bytesPerBlock, channels);
+    assert.equal(info.compressed, false);
+  }
   assert.throws(() => api.formatInfo(157), (error) => error.code === "format", "ASTC has no built payload");
 });
 
@@ -488,7 +512,8 @@ test("the WebGPU uploader refuses an image that was never decoded", () => {
 // recordingGL captures every WebGL2 call and grants the named extensions.
 function recordingGL(extensions) {
   const granted = new Set(extensions);
-  const calls = { compressedTexImage2D: [], texImage2D: [], extensions: [] };
+  const calls = { compressedTexImage2D: [], texImage2D: [], extensions: [], pixelStorei: [] };
+  let unpackAlignment = 4;
   return {
     calls,
     TEXTURE_2D: 0x0DE1,
@@ -499,6 +524,9 @@ function recordingGL(extensions) {
     TEXTURE_WRAP_T: 0x2803,
     TEXTURE_WRAP_R: 0x8072,
     CLAMP_TO_EDGE: 0x812F,
+    UNPACK_ALIGNMENT: 0x0CF5,
+    getParameter(name) { return name === 0x0CF5 ? unpackAlignment : null; },
+    pixelStorei(name, value) { calls.pixelStorei.push([name, value]); if (name === 0x0CF5) unpackAlignment = value; },
     getExtension(name) {
       calls.extensions.push(name);
       return granted.has(name) ? {} : null;
@@ -520,6 +548,38 @@ function recordingGL(extensions) {
     },
   };
 }
+
+test("portable RGB8 normal mips upload as byte pixels with restored WebGL alignment", async () => {
+  const { api } = loadKTX2();
+  const first = Uint8Array.from({ length: 3 * 3 * 3 }, (_, i) => i);
+  const final = Uint8Array.from([128, 128, 255]);
+  const image = await api.decode(readU8GoFixture("normal"));
+  assert.deepEqual(Array.from(image.levels[0].bytes), Array.from(first));
+  const gl = recordingGL([]);
+  api.uploadWebGL2(gl, image);
+  assert.deepEqual(gl.calls.texImage2D.map(call => [call.width, call.height, call.internalFormat, call.format, call.type, call.view]), [
+    [3, 3, 0x8051, 0x1907, 0x1401, "Uint8Array"],
+    [1, 1, 0x8051, 0x1907, 0x1401, "Uint8Array"],
+  ]);
+  assert.deepEqual(Array.from(gl.calls.texImage2D[1].data), Array.from(final));
+  assert.deepEqual(gl.calls.pixelStorei, [[gl.UNPACK_ALIGNMENT, 1], [gl.UNPACK_ALIGNMENT, 4]]);
+  assert.equal(gl.calls.compressedTexImage2D.length, 0);
+  assert.throws(() => api.uploadWebGPU(recordingDevice(), image), error => error.code === "format");
+});
+
+test("portable RGBA8 sRGB alpha reaches WebGPU and WebGL without conversion", async () => {
+  const { api } = loadKTX2();
+  const alpha = Uint8Array.from([210, 120, 30, 77]);
+  const image = await api.decode(readU8GoFixture("alpha"));
+  const gl = recordingGL([]);
+  api.uploadWebGL2(gl, image);
+  assert.equal(gl.calls.texImage2D[0].internalFormat, 0x8C43);
+  assert.deepEqual(Array.from(gl.calls.texImage2D[0].data), Array.from(alpha));
+  const device = recordingDevice();
+  api.uploadWebGPU(device, image);
+  assert.equal(device.calls.createTexture[0].format, "rgba8unorm-srgb");
+  assert.equal(device.calls.writeTexture[0].byteLength, 4);
+});
 
 test("the WebGL2 uploader passes the logical level size and the right internal format", async () => {
   const { api } = loadKTX2();

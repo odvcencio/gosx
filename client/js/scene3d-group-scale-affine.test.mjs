@@ -23,6 +23,11 @@ function readRuntime(name) {
   return fs.readFileSync(path.join(runtimeDir, name), "utf8");
 }
 
+// Match the production TypeScript syntax before evaluating the real loader.
+const gltfSource = ts.transpileModule(readRuntime("gltf.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
 function trimBeforeSharedAPI(source) {
   const marker = source.indexOf("// Scene3D shared API");
   assert.ok(marker >= 0);
@@ -471,7 +476,7 @@ test("browser direct, instanced, skinned and morph shaders share affine normal s
 
 test("glTF POINTS and LINES modes 0-3 retain exact affine through animation", () => {
   const context = createCoreContext({ mount: true });
-  vm.runInContext(readRuntime("gltf.ts"), context, { filename: "gltf.ts" });
+  vm.runInContext(gltfSource, context, { filename: "gltf.ts" });
   const result = runJSON(context, `(() => {
     const buffer = new ArrayBuffer(80);
     new Float32Array(buffer).set([

@@ -3150,6 +3150,9 @@
       bathymetry,
     };
     if (raw.reflections) out.reflections = sceneOceanReflections(raw.reflections);
+    // Spectral ocean: Go normalizes the spectrum and computes the read-only swellWaves (scene.OceanSwellWaves).
+    if (sceneIsPlainObject(raw.spectrum)) { out.spectrum = sceneCloneData(raw.spectrum); out.swellWaves = sceneCloneData(raw.swellWaves || []); }
+    if (Array.isArray(raw.masks)) out.masks = raw.masks.filter(id => id && typeof id === "string");
     return out;
   }
 
@@ -4416,9 +4419,17 @@
     return promise;
   }
 
-  function sceneRehydrateModelsAfterCommand(state) {
+  function sceneRehydrateModelsAfterCommand(state, textureProfileOwned = false) {
     if (!state || typeof hydrateSceneStateModels !== "function") {
       return null;
+    }
+    // A normal scene/model command owns the next hydration. Restore the last
+    // committed scope before it snapshots materials, invalidating any staged
+    // profile switch without delaying gameplay commands.
+    const staged = state._modelTextureProfileStage;
+    if (staged && !textureProfileOwned) {
+      if (state._modelTextureVariantScope === staged.candidate) state._modelTextureVariantScope = staged.previousScope;
+      state._modelTextureProfileStage = null;
     }
     return sceneTrackModelHydrationPromise(state, hydrateSceneStateModels(state, null));
   }
