@@ -820,6 +820,16 @@
   },
   "functionExceptions": [
     {
+      "source": "../runtime/scene3d/model-preparation.ts",
+      "name": "scenePrepareModels@37:1",
+      "lines": 52,
+      "cyclomatic": 41,
+      "cognitive": 45,
+      "maxNesting": 2,
+      "parameters": 4,
+      "reason": "Preparation owns one cancellation and cleanup lifecycle. For an atomic texture-profile commit, it conditionally returns staged record handles while preserving the ordinary public result shape. That bounded conditional raises cyclomatic complexity by one branch."
+    },
+    {
       "source": "../runtime/scene3d/mount-vessel.ts",
       "name": "anonymous@2:2",
       "lines": 117,
