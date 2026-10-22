@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,
   schema-checked ObjectIR equality proofs, including embedded model records.
   Transform and interaction updates
