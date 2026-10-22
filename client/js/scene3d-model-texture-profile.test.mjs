@@ -151,3 +151,31 @@ test("a 51-model profile prepares bounded batches and counts shared map records 
   assert.deepEqual(batches, [32, 19]);
   assert.deepEqual({ ...(await applied) }, { models: 51, textures: 1, profile: "low" });
 });
+
+test("overlapping apply cannot restore an uncommitted staged scope after failure", async () => {
+  const h = harness(), first = h.apply();
+  h.preload.resolve({ textures: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  const staged = h.state._modelTextureVariantScope;
+  assert.notEqual(staged, h.oldScope);
+  const drawn = h.oldScope;
+  await assert.rejects(h.apply(), /commit already staged/);
+  assert.equal(h.state._modelTextureVariantScope, staged);
+  assert.equal(h.state._textureDeliveryProfile, "high");
+  assert.equal(drawn, h.oldScope, "the existing material stays drawn during staged hydration");
+  h.hydration.resolve({ committed: false });
+  await assert.rejects(first, /did not commit/);
+  assert.equal(h.state._modelTextureVariantScope, drawn);
+  assert.equal(h.state._modelTextureProfileStage, null);
+  assert.equal(h.commits, 0);
+});
+
+test("a model joining during upload invalidates bounded profile preparation before staging", async () => {
+  const h = harness(), applied = h.apply();
+  h.state.models.push({ id: "late", src: "/late.glb" });
+  h.preload.resolve({ textures: 1 });
+  await assert.rejects(applied, /active models changed/);
+  assert.equal(h.state._modelTextureVariantScope, h.oldScope);
+  assert.equal(h.state._textureDeliveryProfile, "high");
+  assert.equal(h.commits, 0);
+});

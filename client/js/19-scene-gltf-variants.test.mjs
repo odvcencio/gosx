@@ -553,3 +553,20 @@ test("one ORM image may serve packed metallic roughness and occlusion without lo
     tokens: [...PLAIN_TOKENS, "texture-format:rgba8unorm"]});
   assert.ok(doc.images[0].uri.endsWith("orm.low.rgba8.ktx2"));
 });
+
+test("BC5 normal is rejected until shaders reconstruct Z, even when BC upload is supported", () => {
+  const tokens = [...PLAIN_TOKENS, "texture-format:bc5-rg-unorm", "device-feature:texture-compression-bc", "texture-format:rgba8unorm"];
+  const variants = [
+    {uri: "/assets/normal.low.bc5.ktx2", quality: "low", role: "normal", colorSpace: "linear", format: "bc5-rg-unorm", bytes: 10,
+      requiredCapabilities: ["container:ktx2", "texture-format:bc5-rg-unorm", "device-feature:texture-compression-bc"]},
+    {uri: "/assets/normal.low.rgba8.ktx2", quality: "low", role: "normal", colorSpace: "linear", format: "rgba8unorm", bytes: 80,
+      requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm"]},
+  ];
+  const makeDoc = () => ({images: [{uri: "../assets/normal.png"}], textures: [{source: 0}], materials: [{normalTexture: {index: 0}}]});
+  const loader = loadLoader({manifest: {textureVariants: {"assets/normal.png": variants}}, tokens});
+  const doc = makeDoc();
+  loader.gltfResolveExternalImageURIs(doc, BASE, {...loader.context, profile: "low"});
+  assert.ok(doc.images[0].uri.endsWith("normal.low.rgba8.ktx2"));
+  const unsupported = loadLoader({manifest: {textureVariants: {"assets/normal.png": variants.slice(0, 1)}}, tokens});
+  assert.throws(() => unsupported.gltfResolveExternalImageURIs(makeDoc(), BASE, {...unsupported.context, profile: "low"}), /no compatible low variant/);
+});

@@ -2878,11 +2878,9 @@
   //   - the manifest lists BUILT files only, so a selected URI always exists.
   //     assetpipe.BuildVariantManifest skips a planned variant and
   //     TestSelectVariantRefusesPlannedVariants proves the refusal;
-  //   - only a block-compressed variant may replace the authored URI, and only
-  //     when the device token set holds every capability that variant requires.
-  //     An uncompressed KTX2 file saves no GPU memory and an image element
-  //     already loads the authored source, so a device with no block feature
-  //     keeps that source unchanged;
+  //   - legacy selection uses capability-proven blocks only. Explicit low and
+  //     standard profiles may choose a bounded portable KTX2 variant when the
+  //     active backend lacks BC, but never silently use full authored bytes;
   //   - the swap runs only when a renderer registered a KTX2 upload path. A
   //     renderer that loads every image URI through an image element cannot
   //     decode a .ktx2 file, and swapping would trade a working texture for a
@@ -2959,12 +2957,8 @@
     return keys;
   }
 
-  // gltfVariantEligible reports whether one variant is both block-compressed and
-  // fully supported by the device.
-  //
-  // The block requirement is what keeps an uncompressed KTX2 file from replacing
-  // the authored image. Only a block variant cuts GPU memory, and the authored
-  // source already loads through an image element with no extra code.
+  // An explicit low/standard profile may use portable KTX2, while the legacy
+  // selection keeps its block-only rule. The renderer must prove each format.
   function gltfVariantEligible(variant: any, tokens: Record<string, boolean>, profile: string, usage: any) {
     if (!variant || typeof variant.uri !== "string" || !variant.uri) {
       return false;
@@ -2972,10 +2966,12 @@
     var required = Array.isArray(variant.requiredCapabilities) ? variant.requiredCapabilities : [];
     var block = false;
     var container = false, format = false;
+    var bc5 = gltfLowerToken(variant.format).indexOf("bc5") === 0;
     for (var i = 0; i < required.length; i++) {
       var token = gltfLowerToken(required[i]);
       if (token === "container:ktx2") container = true;
       if (token.indexOf("texture-format:") === 0) format = true;
+      if (token.indexOf("texture-format:bc5") === 0) bc5 = true;
       // Tier is selected by the mount profile, not by a page-global device hint.
       if (token.indexOf("budget:") === 0 && profile) continue;
       if (!tokens[token]) {
@@ -2990,6 +2986,9 @@
     if (profile && (!container || !format)) return false;
     if (tier > ceiling || !block && ceiling >= 4) return false;
     if (usage && usage.ambiguous) return false;
+    // Current WebGL/WebGPU material shaders read normal.rgb directly. BC5 has
+    // only RG; selecting it would require reconstructing tangent-space Z.
+    if (bc5 && usage && usage.role === "normal") return false;
     if (profile && usage && (!variant.role || !variant.colorSpace)) return false;
     if (usage && variant.colorSpace && usage.colorSpace &&
         gltfLowerToken(variant.colorSpace) !== usage.colorSpace) return false;

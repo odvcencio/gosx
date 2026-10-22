@@ -566,8 +566,10 @@
     if (!["auto", "low", "standard", "high"].includes(nextProfile)) throw new TypeError("invalid Scene3D texture delivery profile");
     if (!Array.isArray(requests) || requests.length < 1 || requests.length > 256) throw new TypeError("Scene3D texture profile requires 1–256 models");
     if (hooks.disposed() || !module || typeof module.prepare !== "function") throw new Error("Scene3D preparation unavailable");
+    if (state._modelTextureProfileStage) throw new Error("Scene3D texture profile commit already staged");
     const requested = new Set(requests.map(request => String(request.src || "").trim()));
-    for (const model of sceneHydrationModels(state, null)) {
+    const activeModels = sceneHydrationModels(state, null).map(model => ({ id: String(model?.id || ""), src: String(model?.src || "") }));
+    for (const model of activeModels) {
       if (model && model.src && !requested.has(String(model.src).trim())) {
         throw new Error("Scene3D texture profile requires every active model: " + model.src);
       }
@@ -587,6 +589,11 @@
     if (signal?.aborted) throw new DOMException("Scene3D texture profile canceled", "AbortError");
     if (hooks.disposed() || hooks.renderer() !== activeRenderer || !hooks.current(generation) ||
         state._modelTextureVariantScope !== previousScope) throw new Error("Scene3D texture profile preparation became stale");
+    const currentModels = sceneHydrationModels(state, null);
+    if (currentModels.length !== activeModels.length || currentModels.some((model, index) =>
+        String(model.id || "") !== String(activeModels[index].id || "") || String(model.src || "") !== String(activeModels[index].src || "")))
+      throw new Error("Scene3D texture profile active models changed during preparation");
+    state._modelTextureProfileStage = candidate;
     state._modelTextureVariantScope = candidate;
     try {
       const abortHydration = () => {
@@ -610,6 +617,8 @@
     } catch (error) {
       if (state._modelTextureVariantScope === candidate) state._modelTextureVariantScope = previousScope;
       throw error;
+    } finally {
+      if (state._modelTextureProfileStage === candidate) state._modelTextureProfileStage = null;
     }
   }
 
