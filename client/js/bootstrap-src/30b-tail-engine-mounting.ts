@@ -4599,7 +4599,6 @@
     const capabilityStatus = engineCapabilityStatus(entry);
     applyRuntimeCapabilityState(mount, "engine", capabilityStatus);
     if (!capabilityStatus.ok) {
-      if (entry.component === "GoSXScene3D") publishRendererChoice("none", capabilityStatus.missing[0], entry.id);
       disposePendingEngine(pending, true);
       const authoredFallback = showEngineCapabilityUnsupported(mount, entry, capabilityStatus);
       reportMissingEngineCapabilities(entry, mount, capabilityStatus, authoredFallback);
@@ -4812,7 +4811,7 @@
       if (engineExportName(entry) !== name) continue;
       const engineID = String(entry.id || "");
       if (!engineID) continue;
-      if (window.__gosx.engines.has(engineID)) continue;
+      if (entry.defer || window.__gosx.engines.has(engineID)) continue;
       if (pendingEngineRuntimes.has(engineID)) continue;
       console.info("[gosx] mounting engine after late factory registration:", engineID);
       mountEngine(entry).catch(function(err) {
@@ -4820,108 +4819,6 @@
       });
     }
   };
-
-  // Deferred Scene3D: the page painted the poster; the scene arrives after
-  // first paint and idle, and only if every environment gate holds. Nothing
-  // below this comment downloads a byte before the gate.
-  const pendingDeferredEngines = new Map();
-
-  function deferredEngineSchedule(defer) {
-    return {
-      until: defer && defer.until === "load" ? "load" : "idle",
-      timeout: defer && defer.timeoutMs > 0 ? defer.timeoutMs : 1800,
-      delay: defer && defer.delayMs > 0 ? defer.delayMs : 0,
-    };
-  }
-  function afterLoad() {
-    return document.readyState === "complete" ? Promise.resolve() : new Promise(function(resolve) { window.addEventListener("load", function() { resolve(); }, { once: true }); });
-  }
-  function afterTwoFrames() {
-    return new Promise(function(resolve) { engineFrame(function() { engineFrame(function() { resolve(); }); }); });
-  }
-  function whenIdle(timeout) {
-    return new Promise(function(resolve) {
-      if (typeof window.requestIdleCallback === "function") window.requestIdleCallback(function() { resolve(); }, { timeout: timeout });
-      else setTimeout(resolve, 250);
-    });
-  }
-  function appendPreloadHint(href, as) {
-    if (!href) return;
-    const head = document.head || document.documentElement;
-    for (const node of Array.from(head.children || [])) {
-      if (String(node.tagName || "").toUpperCase() === "LINK" && node.getAttribute("href") === href) return;
-    }
-    const link = document.createElement("link");
-    link.setAttribute("rel", "preload"); link.setAttribute("as", as); link.setAttribute("href", href);
-    link.setAttribute("crossorigin", "anonymous");
-    if (as === "script") link.setAttribute("referrerpolicy", "no-referrer");
-    head.appendChild(link);
-  }
-  function emitDeferredPreloads(entry) {
-    const bootstrap = document.querySelector('script[data-gosx-script="bootstrap"]');
-    const get = function(name) { return (bootstrap && bootstrap.getAttribute(name)) || ""; };
-    appendPreloadHint(get("data-gosx-scene3d-url") || (typeof bootstrapFeatureURL === "function" ? bootstrapFeatureURL("scene3d") : ""), "script");
-    appendPreloadHint(typeof navigator !== "undefined" && navigator.gpu ? get("data-gosx-scene3d-webgpu-url") : get("data-gosx-scene3d-webgl-url"), "script");
-    for (const hint of (entry.defer && entry.defer.preloads) || []) appendPreloadHint(hint.href, hint.as);
-  }
-  function deferredPropsRef(entry) {
-    for (const variant of (entry.defer && entry.defer.variants) || []) {
-      if (variant && variant.media && variant.propsRef && typeof window.matchMedia === "function" && window.matchMedia(variant.media).matches) return variant.propsRef;
-    }
-    return entry.propsRef || "";
-  }
-  async function fetchDeferredProps(entry) {
-    const ref = deferredPropsRef(entry);
-    if (!ref) return entry.props || {};
-    const response = await fetch(ref, { credentials: "same-origin" });
-    if (!response.ok) throw new Error("scene props " + ref + " returned " + response.status);
-    return response.json();
-  }
-
-  function scheduleDeferredEngine(entry) {
-    const mount = resolveEngineMount(entry);
-    if (!mount) return;
-    const generation = goWASMEnginePageGeneration;
-    const schedule = deferredEngineSchedule(entry.defer);
-    let cancelled = false;
-    pendingDeferredEngines.set(entry.id, { cancel() { cancelled = true; } });
-    const live = function() { return !cancelled && generation === goWASMEnginePageGeneration && document.getElementById(entry.mountId || entry.id) === mount; };
-    mount.setAttribute("data-gosx-scene3d-defer-state", "scheduled");
-    (schedule.until === "load" ? afterLoad() : Promise.resolve())
-      .then(function() { return schedule.delay ? new Promise(function(r) { setTimeout(r, schedule.delay); }) : null; })
-      .then(afterTwoFrames)
-      .then(function() { return whenIdle(schedule.timeout); })
-      .then(async function() {
-        if (!live()) return;
-        await prepareRuntimeCapabilityProbe(entry);
-        if (!live()) return;
-        const status = engineCapabilityStatus(entry);
-        applyRuntimeCapabilityState(mount, "engine", status);
-        if (!status.ok) {
-          mount.setAttribute("data-gosx-scene3d-defer-state", "gated");
-          publishRendererChoice("none", status.missing[0], entry.id);
-          reportMissingEngineCapabilities(entry, mount, status, true); // the poster is the authored fallback: warn, not error
-          return;
-        }
-        mount.setAttribute("data-gosx-scene3d-defer-state", "loading");
-        emitDeferredPreloads(entry);
-        const loaded = await Promise.all([
-          fetchDeferredProps(entry),
-          typeof ensureBootstrapFeature === "function" ? ensureBootstrapFeature("scene3d") : null,
-        ]);
-        if (!live()) return;
-        entry.props = loaded[0];
-        mount.setAttribute("data-gosx-scene3d-defer-state", "mounting");
-        await mountEngine(entry, null);
-        if (live()) mount.setAttribute("data-gosx-scene3d-defer-state", "mounted");
-      })
-      .catch(function(error) {
-        if (!live()) return;
-        mount.setAttribute("data-gosx-scene3d-defer-state", "failed");
-        console.warn("[gosx] deferred scene " + entry.id + " did not load:", error);
-      })
-      .then(function() { pendingDeferredEngines.delete(entry.id); });
-  }
 
   async function mountAllEngines(manifest, reuseEngineIDs, isNavigationBootstrap) {
     lastMountManifest = manifest;
@@ -4988,10 +4885,7 @@
         // unchanged, so there is nothing to (re)mount here.
         return Promise.resolve();
       }
-      if (entry && entry.component === "GoSXScene3D" && entry.defer && !invalidEntries.get(entry)) {
-        scheduleDeferredEngine(entry);
-        return Promise.resolve();
-      }
+      if (entry.defer) return Promise.resolve(); // the scene3d-defer chunk mounts it
       const promise = mountEngine(entry, invalidEntries.get(entry) || null).catch(function(e) {
         console.error(`[gosx] unexpected error mounting engine ${entry.id}:`, e);
       });

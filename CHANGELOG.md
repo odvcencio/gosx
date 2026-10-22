@@ -9,19 +9,19 @@
   an idle callback have passed. `Defer.Variants` picks another snapshot by media
   query. Three new engine capabilities gate a scene before any download:
   `hardware-gpu`, `full-motion` and `full-data`; a failed gate keeps the poster
-  and publishes the result. Every Scene3D mount, every failed gate and the opt-in
-  `RequireFeature("renderer-probe")` chunk publish the renderer the browser uses
-  (`webgpu`, `webgl2`, `canvas2d`, `none`) on `<html data-gosx-renderer>`, the
-  `$gosx.renderer` signal and the `gosx:renderer` event. Selective pages now emit
+  and publishes the result. A deferred or gated scene, a failed gate and the
+  opt-in `RequireFeature("renderer-probe")` chunk publish the renderer the
+  browser uses (`webgpu`, `webgl2`, `canvas2d`, `none`) on
+  `<html data-gosx-renderer>`, the `$gosx.renderer` signal and the
+  `gosx:renderer` event. Selective pages now emit
   `<script defer data-gosx-script="feature-engines|hubs|controllers|islands">`
   tags instead of preload links, so an app writes no runtime `<script>` tag.
-  Bundle sizes: bootstrap-runtime.js 193,953 -> 196,695 raw (54,164 -> 54,988
-  gzip, 48,587 -> 49,173 Brotli); bootstrap-feature-engines.js 114,364 ->
-  117,534 raw (33,152 -> 34,064 gzip, 30,173 -> 30,948 Brotli); bootstrap.js
-  2,036,426 -> 2,041,397 raw (566,879 -> 568,375 gzip, 466,054 -> 467,210
-  Brotli); bootstrap-feature-scene3d.js 657,780 -> 657,905 raw (186,973 ->
-  187,056 gzip, 159,257 -> 159,364 Brotli); the new
-  bootstrap-feature-renderer-probe.js is 891 raw (440 gzip, 365 Brotli) and loads
+  The scheduler, the gates and the publisher are the new
+  bootstrap-feature-scene3d-defer.js (6,690 raw, 2,608 gzip, 2,317 Brotli),
+  which loads only on pages with a deferred or gated scene. Pages without one
+  change by under 25 raw bytes (two one-line hooks). The new
+  bootstrap-feature-renderer-probe.js is 953 raw (476 gzip, 424 Brotli) and
+  loads
   only on pages that require it. See docs/scene3d-performance.
 
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,

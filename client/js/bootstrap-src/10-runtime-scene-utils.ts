@@ -928,9 +928,7 @@
     if (!name) {
       return true;
     }
-    // full-motion and full-data follow user settings that change at run time.
-    const dynamicWebGPUFeature = name.indexOf("webgpu:") === 0 || name.indexOf("webgpu-feature:") === 0 ||
-      name === "full-motion" || name === "full-data";
+    const dynamicWebGPUFeature = name.indexOf("webgpu:") === 0 || name.indexOf("webgpu-feature:") === 0;
     if (!dynamicWebGPUFeature && Object.prototype.hasOwnProperty.call(browserCapabilityCache, name)) {
       return browserCapabilityCache[name];
     }
@@ -998,12 +996,6 @@
         } catch (_error) {
           return false;
         }
-      case "hardware-gpu":
-        return detectHardwareGPU();
-      case "full-motion":
-        return !gosxMediaQueryMatches("(prefers-reduced-motion: reduce)");
-      case "full-data":
-        return detectFullData();
       case "keyboard":
       case "pointer":
         return Boolean(document && typeof document.addEventListener === "function");
@@ -1144,72 +1136,6 @@
     }
     const canvas = document.createElement("canvas");
     return Boolean(canvas && typeof canvas.getContext === "function");
-  }
-
-  // Renderer strings of rasterizers that run on the CPU. The same list as
-  // sceneWebGLRendererLooksSoftware in mount-backend.ts; this copy runs before
-  // that chunk exists.
-  const SOFTWARE_RENDERER_PATTERN = /swiftshader|llvmpipe|softpipe|lavapipe|software|microsoft basic render|basic render driver|mesa offscreen/i;
-  let hardwareGPUProbe = null;
-
-  function detectHardwareGPU() {
-    if (hardwareGPUProbe) return hardwareGPUProbe.ok;
-    let ok = false;
-    let renderer = "";
-    try {
-      const canvas = document.createElement("canvas");
-      const gl = canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true, powerPreference: "low-power" });
-      if (gl) {
-        const info = gl.getExtension("WEBGL_debug_renderer_info");
-        renderer = String((info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) || "");
-        ok = !SOFTWARE_RENDERER_PATTERN.test(renderer);
-        const lose = gl.getExtension("WEBGL_lose_context");
-        if (lose) lose.loseContext();
-      }
-    } catch (_e) {
-      ok = false;
-    }
-    hardwareGPUProbe = { ok, renderer };
-    return ok;
-  }
-
-  function detectFullData() {
-    const connection = gosxNavigatorConnection();
-    if (connection && (connection.saveData || /(^|-)2g$/.test(String(connection.effectiveType || "")))) return false;
-    return !gosxMediaQueryMatches("(prefers-reduced-data: reduce)");
-  }
-
-  function isEnvironmentGate(name) {
-    return name === "hardware-gpu" || name === "full-motion" || name === "full-data";
-  }
-
-  // attributeNamesOf reads attribute names from a real element
-  // (getAttributeNames) or from the test harness, where attributes is a Map.
-  function attributeNamesOf(el) {
-    if (!el) return [];
-    if (typeof el.getAttributeNames === "function") return el.getAttributeNames();
-    const attrs = el.attributes;
-    if (attrs && typeof attrs.keys === "function") return Array.from(attrs.keys());
-    return Array.from(attrs || [], function(attr) { return attr.name; });
-  }
-
-  // publishRendererChoice records which Scene3D renderer the page uses, or
-  // "none" and the gate that refused it, on <html> and the $gosx.renderer
-  // signal. renderer is one of webgpu, webgl2, canvas2d, none.
-  function publishRendererChoice(renderer, reason, source) {
-    // The runtime's backend kinds map to the published vocabulary.
-    const published = { webgpu: "webgpu", webgl: "webgl2", webgl2: "webgl2", canvas: "canvas2d", canvas2d: "canvas2d" }[String(renderer || "")] || "none";
-    const value = { renderer: published, reason: String(reason || ""), source: String(source || "") };
-    const root = document && document.documentElement;
-    if (root) {
-      setAttrValue(root, "data-gosx-renderer", value.renderer);
-      setAttrValue(root, "data-gosx-renderer-reason", value.reason);
-    }
-    setSharedSignalJSON("$gosx.renderer", JSON.stringify(value));
-    if (document && typeof document.dispatchEvent === "function" && typeof CustomEvent === "function") {
-      document.dispatchEvent(new CustomEvent("gosx:renderer", { detail: value }));
-    }
-    return value;
   }
 
   function canCreateCanvasContext(kind) {
@@ -1754,10 +1680,7 @@
     // only through `typeof X === "function"` guards. A guard turns a missing
     // symbol into silent wrong behaviour, not a crash, so publish both.
     Object.assign(window.__gosx_runtime_api, {
-      attributeNamesOf,
       browserCapabilitySupported,
-      isEnvironmentGate,
-      publishRendererChoice,
       gosxApplyCurrentScriptNonce,
       loadManifest,
       cancelEngineFrame,

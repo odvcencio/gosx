@@ -1,5 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const {
@@ -7,6 +9,8 @@ const {
   installManualRAF, installManualTimers, flushSceneInitialFrameBoundary, FakeElement, sharedSignalValue,
 } = require("./runtime-test-harness.js");
 
+const DEFER_CHUNK = "/gosx/bootstrap-feature-scene3d-defer.js";
+const deferChunkSource = fs.readFileSync(path.join(path.dirname(new URL(import.meta.url).pathname), "bootstrap-feature-scene3d-defer.js"), "utf8");
 const SCENE_CHUNK = "/gosx/bootstrap-feature-scene3d.js";
 const PROPS_URL = "/gosx/scene3d/0123456789abcdef0123456789abcdef.json";
 // Stand-in for the real scene chunk: registers the engine factory and signals
@@ -45,10 +49,11 @@ function page(entries, options = {}) {
     enableWebGL2: true,
     fetchRoutes: {
       "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+      [DEFER_CHUNK]: { text: deferChunkSource },
       [SCENE_CHUNK]: { text: STUB_SCENE_CHUNK },
       [PROPS_URL]: { text: JSON.stringify({ width: 10, height: 10, scene: { objects: [] } }) },
     },
-    manifest: { engines: entries },
+    manifest: { engines: entries, features: ["scene3d-defer"] },
     ...options,
   });
   const raf = installManualRAF(env.context);
@@ -72,7 +77,7 @@ test("a deferred scene downloads no chunk and no props at bootstrap", async () =
 });
 
 test("a gated eager scene inserts the chunk tag itself once the gate holds", async () => {
-  const { env, urls } = page([{ ...deferredEntry("eager"), defer: undefined, propsRef: undefined, props: { width: 10, height: 10, scene: { objects: [] } }, requiredCapabilities: ["full-motion"] }]);
+  const { env, urls } = page([{ ...deferredEntry("eager"), defer: { until: "now" }, propsRef: undefined, props: { width: 10, height: 10, scene: { objects: [] } }, requiredCapabilities: ["full-motion"] }]);
   runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
   await flushAsyncWork(); await flushAsyncWork();
   assert.ok(urls().includes(SCENE_CHUNK), "the runtime must insert the scene chunk tag");
@@ -99,6 +104,7 @@ test("after two frames and idle the scene preloads, fetches its props, loads the
 test("two deferred scenes on one page both mount, each fetching its own props once", async () => {
   const second = deferredEntry("field", { propsRef: PROPS_URL.replace("0123", "ffff") });
   const { env, raf, timers, urls } = page([deferredEntry("hero"), second], { fetchRoutes: {
+    [DEFER_CHUNK]: { text: deferChunkSource },
     "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
     [SCENE_CHUNK]: { text: STUB_SCENE_CHUNK },
     [PROPS_URL]: { text: JSON.stringify({ scene: { objects: [] } }) },
@@ -145,6 +151,7 @@ test("a matching media variant fetches its own props instead of the base", async
     const { env, raf, timers, urls } = page([entry], {
       matchMedia: { "(max-width: 767px)": matches },
       fetchRoutes: {
+        [DEFER_CHUNK]: { text: deferChunkSource },
         "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
         [SCENE_CHUNK]: { text: STUB_SCENE_CHUNK },
         [PROPS_URL]: { text: JSON.stringify({ scene: { objects: [] } }) },

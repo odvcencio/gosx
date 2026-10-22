@@ -359,6 +359,7 @@ var runtimeExcludableAssetRoles = map[string][]string{
 	"renderer-probe": {"bootstrap-feature-renderer-probe.js"},
 	"scene3d": {
 		"bootstrap-feature-scene3d.js",
+		"bootstrap-feature-scene3d-defer.js",
 		"bootstrap-feature-scene3d-command.js",
 		"bootstrap-feature-scene3d-experience.js",
 		"bootstrap-feature-scene3d-hydrate.js",

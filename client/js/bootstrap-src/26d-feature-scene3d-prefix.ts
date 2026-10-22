@@ -18,7 +18,6 @@
   var setStyleValue = runtimeApi.setStyleValue || function() {};
   var gosxSubscribeSharedSignal = runtimeApi.gosxSubscribeSharedSignal || function() { return function() {}; };
   var setSharedSignalValue = runtimeApi.setSharedSignalValue || function() {};
-  var publishRendererChoice = runtimeApi.publishRendererChoice || function() {};
   var gosxTextLayoutRevision = runtimeApi.gosxTextLayoutRevision || function() { return 0; };
   var normalizeTextLayoutOverflow = runtimeApi.normalizeTextLayoutOverflow || function() { return "ellipsis"; };
   var layoutBrowserText = runtimeApi.layoutBrowserText || function() { return null; };

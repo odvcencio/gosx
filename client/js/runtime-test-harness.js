@@ -2124,13 +2124,14 @@ class FakeFormData {
 }
 
 function createConsoleSpy() {
-  const logs = { error: [], warn: [], log: [] };
+  const logs = { error: [], warn: [], log: [], info: [] };
   return {
     logs,
     console: {
       error: (...args) => logs.error.push(args.map(String).join(" ")),
       warn: (...args) => logs.warn.push(args.map(String).join(" ")),
       log: (...args) => logs.log.push(args.map(String).join(" ")),
+      info: (...args) => logs.info.push(args.map(String).join(" ")),
     },
   };
 }

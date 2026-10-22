@@ -61,7 +61,7 @@ func TestDeferredSceneMovesPropsToContentAddressedURL(t *testing.T) {
 		t.Fatalf("the bootstrap tag must advertise the scene chunk and sub-chunk URLs: %s", head)
 	}
 	hints := gosx.RenderHTML(r.PreloadHints())
-	if strings.Contains(hints, "bootstrap-feature-scene3d") || strings.Contains(hints, "/models/hero.glb") {
+	if strings.Contains(hints, "bootstrap-feature-scene3d.js") || strings.Contains(hints, "/models/hero.glb") {
 		t.Fatalf("a deferred scene must not preload at parse time: %s", hints)
 	}
 }
@@ -112,6 +112,11 @@ func TestEnvironmentGateDefersChunkLoad(t *testing.T) {
 	manifest, _ := r.ManifestJSON()
 	if !strings.Contains(manifest, `"requiredCapabilities":["hardware-gpu"]`) {
 		t.Fatalf("gate missing from manifest: %s", manifest)
+	}
+	// A gated scene runs through the scheduler with no wait, and the page
+	// loads the chunk that holds the scheduler, the probes and the publisher.
+	if !strings.Contains(manifest, `"defer":{"until":"now"`) || !strings.Contains(manifest, `"scene3d-defer"`) {
+		t.Fatalf("gated scene must carry defer=now and require the scene3d-defer feature: %s", manifest)
 	}
 }
 
@@ -177,5 +182,16 @@ func TestDeferVariantsAreDroppedWhenStoreDisabled(t *testing.T) {
 	manifest, _ := r.ManifestJSON()
 	if strings.Contains(manifest, "deferVariants") || strings.Contains(manifest, `"variants"`) {
 		t.Fatalf("inline props must not carry variants: %s", manifest)
+	}
+}
+
+func TestPlainSceneDoesNotRequireTheDeferChunk(t *testing.T) {
+	r := NewRenderer("main")
+	plain := scene.Props{Graph: scene.NewGraph(scene.Model{ID: "p", Src: "/models/p.glb"})}.EngineConfig()
+	plain.MountID = "plain"
+	r.RenderEngine(plain, gosx.Text(""))
+	manifest, _ := r.ManifestJSON()
+	if strings.Contains(manifest, "scene3d-defer") || strings.Contains(manifest, `"defer"`) {
+		t.Fatalf("a scene with no defer and no gate must not pay for the defer chunk: %s", manifest)
 	}
 }

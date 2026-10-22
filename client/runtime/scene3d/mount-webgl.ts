@@ -4776,9 +4776,6 @@
       webgpuDiagnostics.adapterInfo.device || "",
     ].filter(Boolean).join(" ") : "");
     sceneSyncStatusBindings(mount);
-    if (typeof publishRendererChoice === "function") {
-      publishRendererChoice(chosenBackend, fallbackReason || (chosenBackend ? "selected" : "unsupported"), mount.id || "scene");
-    }
   }
 
   function showSceneRequiredRendererMessage(mount, props, reason) {

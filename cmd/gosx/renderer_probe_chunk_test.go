@@ -2,17 +2,27 @@ package main
 
 import "testing"
 
-func TestRendererProbeChunkIsAProductionFeature(t *testing.T) {
-	found := false
-	for _, chunk := range runtimeFeatureChunks {
-		if chunk.name == "renderer-probe" {
+func TestDeferAndProbeChunksAreProductionFeatures(t *testing.T) {
+	for name, file := range map[string]string{
+		"renderer-probe": "bootstrap-feature-renderer-probe.js",
+		"scene3d-defer":  "bootstrap-feature-scene3d-defer.js",
+	} {
+		found := false
+		for _, chunk := range runtimeFeatureChunks {
+			if chunk.name != name {
+				continue
+			}
 			found = true
-			if files := runtimeExcludableAssetRoles[chunk.role]; len(files) != 1 || files[0] != "bootstrap-feature-renderer-probe.js" {
-				t.Fatalf("role %q must cover exactly the probe chunk: %v", chunk.role, files)
+			ok := false
+			for _, f := range runtimeExcludableAssetRoles[chunk.role] {
+				ok = ok || f == file
+			}
+			if !ok {
+				t.Fatalf("role %q must cover %s: %v", chunk.role, file, runtimeExcludableAssetRoles[chunk.role])
 			}
 		}
-	}
-	if !found {
-		t.Fatal("renderer-probe is missing from runtimeFeatureChunks, so production builds would not list or serve it")
+		if !found {
+			t.Fatalf("%s is missing from runtimeFeatureChunks, so production builds would not list or serve it", name)
+		}
 	}
 }

@@ -39,9 +39,6 @@
       runtimeCapabilityStatus,
       engineCapabilityStatus,
       browserCapabilitySupported,
-      isEnvironmentGate,
-      publishRendererChoice,
-      bootstrapFeatureURL,
       applyRuntimeCapabilityState,
       activateInputProviders,
       releaseInputProviders,
@@ -114,30 +111,6 @@
     return pending;
   }
 
-  // insertScene3DFeatureScript emits the scene chunk tag the server withheld
-  // for a deferred or gated page. It copies the sub-chunk URL contract from
-  // the bootstrap tag, so script-loader.ts resolves them as before.
-  function insertScene3DFeatureScript() {
-    const bootstrap = document.querySelector('script[data-gosx-script="bootstrap"]');
-    const src = (bootstrap && bootstrap.getAttribute("data-gosx-scene3d-url")) || bootstrapFeatureURL("scene3d");
-    if (!src) return null;
-    const script = document.createElement("script");
-    script.setAttribute("data-gosx-script", "feature-scene3d");
-    for (const attr of attributeNamesOf(bootstrap)) {
-      if (attr.indexOf("data-gosx-scene3d-") !== 0 || attr === "data-gosx-scene3d-url" || attr === "data-gosx-scene3d-integrity") continue;
-      script.setAttribute(attr, bootstrap.getAttribute(attr));
-    }
-    const integrity = bootstrap && bootstrap.getAttribute("data-gosx-scene3d-integrity");
-    if (integrity) script.setAttribute("integrity", integrity);
-    script.setAttribute("crossorigin", "anonymous");
-    script.setAttribute("referrerpolicy", "no-referrer");
-    gosxApplyCurrentScriptNonce(script);
-    script.src = src;
-    script.setAttribute("src", src);
-    (document.head || document.documentElement).appendChild(script);
-    return script;
-  }
-
   async function initBootstrapFeature(name) {
     if (activeBootstrapFeatures.has(name)) {
       return activeBootstrapFeatures.get(name);
@@ -158,7 +131,6 @@
     // not dynamically by the runtime. Wait for it to signal readiness.
     if (name === "scene3d") {
       if (!window.__gosx_scene3d_available) {
-        if (!document.querySelector('script[data-gosx-script="feature-scene3d"]')) insertScene3DFeatureScript();
         await new Promise(function(resolve) {
           if (window.__gosx_scene3d_available) { resolve(); return; }
           var prev = window.__gosx_scene3d_loaded;
@@ -244,15 +216,10 @@
       names.push("engines");
       // Check if any engine is GoSXScene3D
       for (var i = 0; i < manifest.engines.length; i++) {
-        const entry = manifest.engines[i];
-        if (!entry || entry.component !== "GoSXScene3D") continue;
-        // A deferred scene loads its chunk from its own schedule. A scene whose
-        // environment gate fails must never download it.
-        if (entry.defer) continue;
-        const status = runtimeCapabilityStatus(entry);
-        if (!status.ok && status.missing.every(isEnvironmentGate)) continue;
-        names.push("scene3d");
-        break;
+        if (manifest.engines[i].component === "GoSXScene3D" && !manifest.engines[i].defer) {
+          names.push("scene3d");
+          break;
+        }
       }
     }
     if (manifestHasEntries(manifest, "hubs")) {
@@ -400,11 +367,6 @@
       if (!incomingEntry) continue;
       if (String(outgoingEntry.component || "") !== String(incomingEntry.component || "")) continue;
       if (String(outgoingEntry.mountId || outgoingEntry.id || "") !== String(incomingEntry.mountId || incomingEntry.id || "")) continue;
-      if (outgoingEntry.propsRef || incomingEntry.propsRef) {
-        // Deferred scenes are content-addressed: the same URL is the same scene.
-        if (outgoingEntry.propsRef === incomingEntry.propsRef) reusable.add(engineID);
-        continue;
-      }
       if (String(outgoingEntry.component || "") === "GoSXScene3D") {
         if (!await sceneNavigationTryReuse(
           record,

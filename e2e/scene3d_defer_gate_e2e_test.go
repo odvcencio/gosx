@@ -16,7 +16,8 @@ var softwareGL = map[string]any{"enable-unsafe-swiftshader": true, "use-angle": 
 
 func sceneBytesRequested(page *browserPage) bool {
 	return page.anyRequest(func(u string) bool {
-		return strings.Contains(u, "bootstrap-feature-scene3d") || strings.Contains(u, "/gosx/scene3d/")
+		// The scene3d-defer chunk holds the gates, so it must load to decide.
+		return (strings.Contains(u, "bootstrap-feature-scene3d") && !strings.Contains(u, "bootstrap-feature-scene3d-defer")) || strings.Contains(u, "/gosx/scene3d/")
 	})
 }
 
@@ -71,7 +72,7 @@ func TestScene3DDeferMountsAfterIdleAndSurvivesNavigation(t *testing.T) {
 		t.Fatal("the deferred scene must have fetched its props and chunk")
 	}
 	var hints int
-	page.eval(t, `document.querySelectorAll('link[rel="preload"][href*="bootstrap-feature-scene3d"]').length`, &hints)
+	page.eval(t, `document.querySelectorAll('link[rel="preload"][href*="bootstrap-feature-scene3d.js"]').length`, &hints)
 	if hints < 1 {
 		t.Fatal("the runtime must emit the scene chunk preload when the deferred load starts")
 	}

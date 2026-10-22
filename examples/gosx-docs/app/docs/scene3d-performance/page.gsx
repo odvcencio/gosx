@@ -91,7 +91,7 @@ func Page() Node {
 		<section id="renderer">
 			<h2>The published renderer</h2>
 			<p>
-				Every Scene3D mount, and every failed gate, publishes the renderer on
+				A deferred or gated scene publishes the renderer it mounted on, and a failed gate publishes the refusal, on
 				<span class="inline-code">&lt;html data-gosx-renderer&gt;</span>
 				as
 				<span class="inline-code">webgpu</span>
@@ -110,7 +110,7 @@ func Page() Node {
 				event fires when it changes.
 			</p>
 			<p>
-				A page without a scene can ask for the answer with
+				The scene code for this lives in a small chunk that loads only on pages with a deferred or gated scene; a scene with neither pays nothing for it. A page that has no such scene can ask for the answer with
 				<span class="inline-code">RequireFeature("renderer-probe")</span>
 				. That small chunk loads only on pages that require it. Style from the answer in CSS, for example
 				<span class="inline-code">html[data-gosx-renderer="webgpu"] .answer-webgpu {"{"} display: inline {"}"}</span>

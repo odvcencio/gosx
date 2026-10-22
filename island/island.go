@@ -1620,6 +1620,17 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 				// Inline props carry no variants: the runtime has no URL to switch to.
 				entry.Props = withoutDeferVariants(entry.Props)
 			}
+		} else if scene3DHasEnvironmentGate(entry.RequiredCapabilities) {
+			// A gated scene runs through the same scheduler with no wait: the
+			// runtime checks the gates before it downloads any scene byte.
+			entry.Defer = &hydrate.EngineDefer{Until: "now"}
+		}
+		if entry.Defer != nil {
+			// The scheduler, probes and renderer publisher are their own chunk;
+			// only pages with such a scene load it.
+			if err := r.manifest.RequireFeature("scene3d-defer"); err != nil {
+				return renderEngineError(err)
+			}
 		}
 	}
 
@@ -2894,15 +2905,16 @@ var scene3DEnvironmentGates = map[string]bool{
 // scene3DLoadsEagerly reports whether an entry's scene chunk may start at
 // parse time: not deferred and no environment gate.
 func scene3DLoadsEagerly(entry *hydrate.EngineEntry) bool {
-	if entry.Defer != nil {
-		return false
-	}
-	for _, name := range entry.RequiredCapabilities {
+	return entry.Defer == nil && !scene3DHasEnvironmentGate(entry.RequiredCapabilities)
+}
+
+func scene3DHasEnvironmentGate(names []string) bool {
+	for _, name := range names {
 		if scene3DEnvironmentGates[strings.ToLower(strings.TrimSpace(name))] {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 // scene3DHasEagerEngine reports whether any Scene3D on the page loads eagerly.

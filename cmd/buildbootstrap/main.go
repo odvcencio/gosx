@@ -420,6 +420,12 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/host/netplay.ts")},
 	},
 	{
+		// Deferred and gated Scene3D: schedule, environment gates and the
+		// renderer publisher. Loads only for a page with such a scene.
+		name:    "bootstrap-feature-scene3d-defer.js",
+		sources: []source{sourceFile("../runtime/host/scene3d-defer.ts")},
+	},
+	{
 		// Opt-in renderer answer for pages without a scene; see RequireFeature("renderer-probe").
 		name:    "bootstrap-feature-renderer-probe.js",
 		sources: []source{sourceFile("../runtime/host/renderer-probe.ts")},
