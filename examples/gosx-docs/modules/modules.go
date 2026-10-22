@@ -48,5 +48,6 @@ import (
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-m2"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-material"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/motion-spin"
+	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/scene3d-defer"
 	_ "m31labs.dev/gosx/examples/gosx-docs/app/test/webgpu-honesty-gate"
 )
