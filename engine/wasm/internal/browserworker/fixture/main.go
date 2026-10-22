@@ -8,9 +8,11 @@ package main
 
 import (
 	"context"
+	"errors"
 	"syscall/js"
 	"time"
 
+	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/engine/wasm"
 	"m31labs.dev/gosx/game"
 	"m31labs.dev/gosx/game/host"
@@ -55,6 +57,8 @@ func main() {
 			stop = startScene(ctx, props.Target)
 		case "input":
 			stop = startInput(ctx)
+		case "calls":
+			stop = startCalls(ctx)
 		}
 		return wasm.HandleFunc(func() {
 			if stop != nil {
@@ -237,4 +241,69 @@ func startInput(ctx wasm.Context) (stop func()) {
 	})
 	report(ctx, "input-ready", nil)
 	return func() { cancel(); input.Close() }
+}
+
+// callArgs and callReply are the fixture's call types. An island declares
+// records with the same field names; those names are the wire keys.
+type callArgs struct{ A, B int }
+type callReply struct {
+	Total  int
+	Thread string
+}
+
+// startCalls serves typed calls from an island and streams a paced view. The
+// call names pick the behavior the browser test needs: "add" answers, "fail"
+// returns an error, "slow" keeps the worker busy longer than the page's call
+// timeout, and "crash" ends the Go program.
+func startCalls(ctx wasm.Context) (stop func()) {
+	off, err := wasm.ServeCalls(ctx, "bv.cmd", wasm.CallOptions{Timeout: 400 * time.Millisecond, Recent: 4},
+		func(name string, args callArgs) (callReply, error) {
+			switch name {
+			case "add":
+				return callReply{Total: args.A + args.B, Thread: threadName(ctx)}, nil
+			case "fail":
+				return callReply{}, errors.New("refused")
+			case "slow":
+				for end := time.Now().Add(1500 * time.Millisecond); time.Now().Before(end); {
+				}
+				return callReply{Total: -1, Thread: threadName(ctx)}, nil
+			case "crash":
+				go panic("the fixture engine crashed on purpose")
+				select {}
+			}
+			return callReply{}, errors.New("unknown call " + name)
+		})
+	if err != nil {
+		report(ctx, "calls-error", map[string]any{"error": err.Error()})
+		return nil
+	}
+	view := wasm.NewView(ctx, wasm.ViewOptions{MinInterval: 100 * time.Millisecond})
+	done := make(chan struct{})
+	ticks := 0
+	go func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				ticks++
+				_ = view.Set(map[string]any{"$bv.view": map[string]any{"Tick": ticks, "Thread": threadName(ctx)}})
+			}
+		}
+	}()
+	report(ctx, "calls-ready", nil)
+	return func() {
+		close(done)
+		view.Dispose()
+		off.Dispose()
+	}
+}
+
+func threadName(ctx wasm.Context) string {
+	if ctx.Thread() == engine.ThreadWorker {
+		return "worker"
+	}
+	return "main"
 }

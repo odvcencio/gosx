@@ -36,6 +36,7 @@ type browserState struct {
 	Log     []string         `json:"log"`
 	Frames  []map[string]any `json:"frames"`
 	Signal  map[string]any   `json:"signal"`
+	Calls   map[string]any   `json:"calls"`
 	Shots   []shot           `json:"shots"`
 }
 
@@ -113,7 +114,7 @@ func assets(t *testing.T) string {
 const harness = `<script>
 window.__reports = []; window.__events = []; window.__frames = [];
 document.addEventListener("gosx:engine:report", function(e) { window.__reports.push(e.detail.detail); });
-["thread-fallback", "worker-error", "worker-frame-error"].forEach(function(n) {
+["thread-fallback", "worker-error", "worker-frame-error", "worker-unsupported"].forEach(function(n) {
   document.addEventListener("gosx:engine:" + n, function(e) { window.__events.push({ name: n, detail: e.detail }); });
 });
 var q = new URLSearchParams(location.search);
@@ -140,6 +141,12 @@ if (q.get("jank")) setInterval(function() { var t = performance.now(); while (pe
 type pageOptions struct {
 	engines []engine.Config
 	body    string
+	// islands renders islands into the page. It runs with the page's renderer,
+	// before the engines, and needs the island runtime from islandRuntime.
+	islands func(r *island.Renderer) gosx.Node
+	// runtimeSize and runtimeHash describe the island runtime, set with islands.
+	runtimeSize int64
+	runtimeHash string
 }
 
 func page(t *testing.T, opts pageOptions) string {
@@ -149,6 +156,10 @@ func page(t *testing.T, opts pageOptions) string {
 	r.SetStandardGoWASMExecPath("/gosx/standard-go-wasm_exec.js")
 	var body strings.Builder
 	body.WriteString(opts.body)
+	if opts.islands != nil {
+		r.SetRuntime("/gosx/runtime.wasm", opts.runtimeHash, opts.runtimeSize)
+		body.WriteString(gosx.RenderHTML(opts.islands(r)))
+	}
 	for _, cfg := range opts.engines {
 		body.WriteString(gosx.RenderHTML(r.RenderEngine(cfg, gosx.Node{})))
 	}
@@ -164,6 +175,10 @@ func serve(t *testing.T, dir string, html func(r *http.Request) string) *httptes
 		name := filepath.Base(r.URL.Path)
 		path := filepath.Join(root, "client", "js", name)
 		if name == "standard-go-wasm_exec.js" {
+			path = filepath.Join(dir, name)
+		}
+		if _, err := os.Stat(path); err != nil {
+			// Island runtime assets built by islandRuntime.
 			path = filepath.Join(dir, name)
 		}
 		if _, err := os.Stat(path); err != nil {

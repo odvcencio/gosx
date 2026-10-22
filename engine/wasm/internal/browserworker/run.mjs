@@ -58,6 +58,7 @@ try {
     reports: window.__reports || [],
     events: window.__events || [],
     frames: window.__frames || [],
+    calls: window.__calls || null,
     signal: window.__gosx && window.__gosx.sharedSignals ? (window.__gosx.sharedSignals.values.get("$sim") ?? null) : null,
     issues: window.__gosx && window.__gosx.listIssues ? window.__gosx.listIssues().map(i => ({ code: i.code, scope: i.scope, type: i.type, severity: i.severity, message: i.message, fallback: i.fallback })) : [],
     mainTicks: window.__mainTicks || 0,
