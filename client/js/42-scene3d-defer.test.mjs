@@ -80,3 +80,60 @@ test("a gated eager scene inserts the chunk tag itself once the gate holds", asy
   assert.equal(tag.getAttribute("data-gosx-scene3d-webgl-url"), "/gosx/bootstrap-feature-scene3d-webgl.js", "sub-chunk URLs copied from the bootstrap tag");
   assert.equal((env.context.__stub_scene_mounts || []).length, 1);
 });
+
+test("after two frames and idle the scene preloads, fetches its props, loads the chunk and mounts", async () => {
+  const { env, mounts, raf, timers, urls } = page([deferredEntry("hero")]);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  assert.equal(mounts[0].getAttribute("data-gosx-scene3d-defer-state"), "scheduled");
+  await reachIdle(raf, timers);
+  const hrefs = Array.from(env.document.head.children).filter((n) => n.tagName === "LINK").map((n) => n.getAttribute("href"));
+  assert.ok(hrefs.includes(SCENE_CHUNK) && hrefs.includes("/gosx/bootstrap-feature-scene3d-webgl.js") && hrefs.includes("/models/hero.glb"), "preloads: " + hrefs.join(","));
+  assert.ok(!hrefs.includes("/gosx/bootstrap-feature-scene3d-webgpu.js"), "no WebGPU chunk hint without navigator.gpu");
+  assert.ok(urls().includes(PROPS_URL) && urls().includes(SCENE_CHUNK));
+  assert.equal(env.context.__stub_scene_mounts.length, 1);
+  assert.deepEqual(JSON.parse(JSON.stringify(env.context.__stub_scene_mounts[0].scene)), { objects: [] });
+  assert.equal(mounts[0].getAttribute("data-gosx-scene3d-defer-state"), "mounted");
+});
+
+test("two deferred scenes on one page both mount, each fetching its own props once", async () => {
+  const second = deferredEntry("field", { propsRef: PROPS_URL.replace("0123", "ffff") });
+  const { env, raf, timers, urls } = page([deferredEntry("hero"), second], { fetchRoutes: {
+    "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+    [SCENE_CHUNK]: { text: STUB_SCENE_CHUNK },
+    [PROPS_URL]: { text: JSON.stringify({ scene: { objects: [] } }) },
+    [second.propsRef]: { text: JSON.stringify({ scene: { objects: [], points: [] } }) },
+  } });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await reachIdle(raf, timers);
+  assert.equal(env.context.__stub_scene_mounts.length, 2);
+  assert.equal(urls().filter((u) => u === PROPS_URL).length, 1);
+  assert.equal(urls().filter((u) => u === second.propsRef).length, 1);
+  assert.equal(urls().filter((u) => u === SCENE_CHUNK).length, 1, "the chunk loads once for both scenes");
+});
+
+test("disposing the page before idle cancels the deferred load", async () => {
+  const { env, raf, timers, urls } = page([deferredEntry("hero")]);
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await env.context.__gosx_dispose_page(new Set());
+  await reachIdle(raf, timers);
+  assert.ok(!urls().includes(PROPS_URL) && !urls().includes(SCENE_CHUNK), "nothing may load for a disposed page: " + urls().join(","));
+});
+
+test("a failed gate keeps the poster, downloads nothing and publishes renderer none", async () => {
+  const { env, mounts, raf, timers, urls } = page([deferredEntry("hero", { requiredCapabilities: ["full-motion", "hardware-gpu"] })], { prefersReducedMotion: true });
+  runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+  await flushAsyncWork();
+  await reachIdle(raf, timers);
+  assert.ok(!urls().includes(PROPS_URL) && !urls().includes(SCENE_CHUNK), "a failed gate must fetch nothing: " + urls().join(","));
+  assert.equal(mounts[0].getAttribute("data-gosx-scene3d-defer-state"), "gated");
+  assert.ok(mounts[0].children.some((c) => c.getAttribute && c.getAttribute("data-poster") === "1"), "the poster stays");
+  assert.equal(mounts[0].getAttribute("data-gosx-engine-capability-state"), "unsupported");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-renderer"), "none");
+  assert.equal(env.document.documentElement.getAttribute("data-gosx-renderer-reason"), "full-motion");
+  assert.deepEqual(JSON.parse(JSON.stringify(sharedSignalValue(env, "$gosx.renderer"))), { renderer: "none", reason: "full-motion", source: "gosx-engine-hero" });
+  assert.equal(env.consoleLogs.warn.filter((l) => l.includes("full-motion")).length, 1);
+  assert.equal(env.consoleLogs.error.length, 0);
+});

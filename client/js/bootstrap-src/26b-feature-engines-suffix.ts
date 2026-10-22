@@ -9,6 +9,8 @@
       },
       disposePage(reuseEngineIDs) {
         const reuseIDs = reuseEngineIDs instanceof Set ? reuseEngineIDs : new Set();
+        for (const pending of Array.from(pendingDeferredEngines.values())) pending.cancel();
+        pendingDeferredEngines.clear();
         goWASMEnginePageGeneration += 1;
         for (const pending of Array.from(pendingEngineRuntimes.values())) {
           disposePendingEngine(pending, true);

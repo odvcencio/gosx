@@ -48,6 +48,8 @@
     const gosxNotifySharedSignal = api.gosxNotifySharedSignal;
     const gosxSubscribeSharedSignal = api.gosxSubscribeSharedSignal;
     const setSharedSignalValue = api.setSharedSignalValue;
+    const publishRendererChoice = api.publishRendererChoice || function() {};
+    const bootstrapFeatureURL = api.bootstrapFeatureURL;
 
     // Use shared normalizers when present; otherwise keep non-Scene3D shared
     // engines self-contained in the split engines bundle.
