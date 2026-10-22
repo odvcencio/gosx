@@ -593,7 +593,7 @@
     if (currentModels.length !== activeModels.length || currentModels.some((model, index) =>
         String(model.id || "") !== String(activeModels[index].id || "") || String(model.src || "") !== String(activeModels[index].src || "")))
       throw new Error("Scene3D texture profile active models changed during preparation");
-    state._modelTextureProfileStage = candidate;
+    state._modelTextureProfileStage = { candidate, previousScope };
     state._modelTextureVariantScope = candidate;
     try {
       const abortHydration = () => {
@@ -618,7 +618,7 @@
       if (state._modelTextureVariantScope === candidate) state._modelTextureVariantScope = previousScope;
       throw error;
     } finally {
-      if (state._modelTextureProfileStage === candidate) state._modelTextureProfileStage = null;
+      if (state._modelTextureProfileStage?.candidate === candidate) state._modelTextureProfileStage = null;
     }
   }
 

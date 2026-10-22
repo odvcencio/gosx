@@ -3573,7 +3573,7 @@
           renderer: () => renderer,
           nextGeneration: () => ++textureProfileApplyGeneration,
           current: (generation: number) => generation === textureProfileApplyGeneration,
-          rehydrate: () => sceneRehydrateModelsAfterCommand(sceneState),
+          rehydrate: () => sceneRehydrateModelsAfterCommand(sceneState, true),
           invalidate: () => invalidateSceneModelHydration(sceneState),
           commit: (nextProfile: string, candidate: any) => {
             props.textureDeliveryProfile = nextProfile;

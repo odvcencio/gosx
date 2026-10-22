@@ -22,6 +22,13 @@ assert.ok(scopeStart > 0 && scopeEnd > scopeStart);
 const scopeFragment = ts.transpileModule(source.slice(scopeStart, scopeEnd), {
   compilerOptions: { target: ts.ScriptTarget.ES2022 },
 }).outputText;
+const coreSource = fs.readFileSync(path.join(here, "bootstrap-src/10-runtime-scene-core.ts"), "utf8");
+const coreStart = coreSource.indexOf("  function sceneTrackModelHydrationPromise(");
+const coreEnd = coreSource.indexOf("  function applySceneModelTransformCommand(", coreStart);
+assert.ok(coreStart > 0 && coreEnd > coreStart);
+const coreFragment = ts.transpileModule(coreSource.slice(coreStart, coreEnd), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 function deferred() {
   let resolve, reject;
@@ -54,7 +61,7 @@ function harness() {
   const requests = [{ id: "hero", src: "/hero.glb" }];
   const module = { prepare: (_mount, _requests, _signal, scope) => { module.scope = scope; return preload.promise; } };
   const apply = (signal = new AbortController().signal, selection = requests) => context.sceneApplyMountedTextureProfile(state, {}, selection, "low", signal, module, hooks);
-  return { apply, state, oldScope, preload, hydration, module, hooks,
+  return { apply, state, oldScope, preload, hydration, module, hooks, context,
     get commits() { return commits; },
     replaceRenderer: () => { currentRenderer = { kind: "webgpu" }; },
     supersede: () => { generation++; },
@@ -175,6 +182,34 @@ test("a model joining during upload invalidates bounded profile preparation befo
   h.state.models.push({ id: "late", src: "/late.glb" });
   h.preload.resolve({ textures: 1 });
   await assert.rejects(applied, /active models changed/);
+  assert.equal(h.state._modelTextureVariantScope, h.oldScope);
+  assert.equal(h.state._textureDeliveryProfile, "high");
+  assert.equal(h.commits, 0);
+});
+
+test("ordinary model rehydration rolls back a staged profile before taking its texture scope", async () => {
+  const h = harness(), jobs = [], drawn = { scope: h.oldScope };
+  h.context.hydrateSceneStateModels = state => {
+    const job = deferred(), scope = state._modelTextureVariantScope;
+    jobs.push({ job, scope });
+    return job.promise.then(result => { if (result.committed) drawn.scope = scope; return result; });
+  };
+  vm.runInContext(coreFragment, h.context);
+  h.hooks.rehydrate = () => h.context.sceneRehydrateModelsAfterCommand(h.state, true);
+  const applied = h.apply();
+  h.preload.resolve({ textures: 1 });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(jobs.length, 1);
+  assert.notEqual(jobs[0].scope, h.oldScope);
+  assert.equal(drawn.scope, h.oldScope);
+  const command = h.context.sceneRehydrateModelsAfterCommand(h.state);
+  assert.equal(jobs.length, 2);
+  assert.equal(jobs[1].scope, h.oldScope, "normal model command must capture committed texture scope");
+  jobs[0].job.resolve({ committed: false, stale: true });
+  await assert.rejects(applied, /did not commit/);
+  jobs[1].job.resolve({ committed: true });
+  await command;
+  assert.equal(drawn.scope, h.oldScope);
   assert.equal(h.state._modelTextureVariantScope, h.oldScope);
   assert.equal(h.state._textureDeliveryProfile, "high");
   assert.equal(h.commits, 0);
