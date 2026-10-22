@@ -1,6 +1,11 @@
 package island
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"m31labs.dev/gosx"
+)
 
 func TestSceneEntryStorePutIsContentAddressed(t *testing.T) {
 	s := NewSceneEntryStore(8, 1<<20)
@@ -50,5 +55,34 @@ func TestDefaultSceneEntryStoreCanBeDisabled(t *testing.T) {
 	SetSceneEntryStore(nil)
 	if DefaultSceneEntryStore() != nil {
 		t.Fatal("nil must disable the store")
+	}
+}
+
+func TestSceneEntryStoreIsOffDuringStaticExport(t *testing.T) {
+	env := func(v string) func(string) string {
+		return func(name string) string {
+			if name == "GOSX_STATIC_EXPORT" {
+				return v
+			}
+			return ""
+		}
+	}
+	if sceneEntryStoreFromEnv(env("1")) != nil {
+		t.Fatal("gosx export sets GOSX_STATIC_EXPORT=1; a static site has no server for /gosx/scene3d/, so props stay inline")
+	}
+	if sceneEntryStoreFromEnv(env("")) == nil || sceneEntryStoreFromEnv(env("0")) == nil {
+		t.Fatal("a running server keeps the store")
+	}
+}
+
+func TestStaticExportKeepsDeferredPropsInline(t *testing.T) {
+	prev := DefaultSceneEntryStore()
+	t.Cleanup(func() { SetSceneEntryStore(prev) })
+	SetSceneEntryStore(sceneEntryStoreFromEnv(func(string) string { return "1" }))
+	r := NewRenderer("main")
+	r.RenderEngine(deferredSceneConfig("hero"), gosx.Text("poster"))
+	manifest, _ := r.ManifestJSON()
+	if strings.Contains(manifest, "propsRef") || strings.Contains(manifest, `"props":null`) || !strings.Contains(manifest, `/models/hero.glb`) {
+		t.Fatalf("exported pages must carry their props inline: %s", manifest)
 	}
 }

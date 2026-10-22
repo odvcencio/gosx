@@ -39,14 +39,12 @@ func Page() Node {
 				<span class="inline-code">TimeoutMS</span>
 				caps the idle wait (1800 ms by default).
 				<span class="inline-code">Inline</span>
-				keeps the props in the page manifest; use it for a static export, which has no server for the props URL.
+				keeps the props in the page manifest. <span class="inline-code">gosx export</span> does this for every page on its own, because a static site has no server for the props URL.
 			</p>
 			<p>
 				The server keeps the props out of the page. It stores them by content hash and serves them at
 				<span class="inline-code">/gosx/scene3d/&lt;hash&gt;.json</span>
-				with an immutable cache header, so the browser and a CDN can cache them. The store lives in server memory and holds the most recent 64 scenes. After a restart, a cached page can point at a hash the server no longer has; the mount then reports
-				<span class="inline-code">failed</span>
-				and the poster stays.
+				with an immutable cache header, so the browser and a CDN can cache them. The store lives in server memory. When a server has not stored a hash (after a restart, or when another pod rendered the page), the props URL carries the route that produced it. The server renders that route again, which stores the props, and serves them if the hash matches. A hash the route does not produce is a 404, and the mount then reports <span class="inline-code">failed</span> and the poster stays.
 			</p>
 			<p>
 				When the deferred load starts, the runtime emits the preload hints for the scene chunk, the one renderer chunk the browser will use, and the scene's first assets. It then fetches the props, inserts the scene chunk tag and mounts. The mount element reports its progress in

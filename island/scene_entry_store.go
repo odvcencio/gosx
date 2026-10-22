@@ -3,6 +3,7 @@ package island
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -103,7 +104,17 @@ func (s *SceneEntryStore) Get(hash string) ([]byte, bool) {
 var defaultSceneEntryStore atomic.Pointer[SceneEntryStore]
 
 func init() {
-	defaultSceneEntryStore.Store(NewSceneEntryStore(sceneEntryMaxEntries, sceneEntryMaxBytes))
+	defaultSceneEntryStore.Store(sceneEntryStoreFromEnv(os.Getenv))
+}
+
+// sceneEntryStoreFromEnv returns the process store, or nil during `gosx
+// export`: a static site has no server for /gosx/scene3d/, so deferred props
+// stay inline in each page's manifest (the Defer.Inline behaviour).
+func sceneEntryStoreFromEnv(getenv func(string) string) *SceneEntryStore {
+	if getenv("GOSX_STATIC_EXPORT") == "1" {
+		return nil
+	}
+	return NewSceneEntryStore(sceneEntryMaxEntries, sceneEntryMaxBytes)
 }
 
 // DefaultSceneEntryStore returns the process store; nil when disabled, in which
