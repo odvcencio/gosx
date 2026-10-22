@@ -174,7 +174,7 @@
     record.lastSceneCommandRevision.set(mountID, revision);
     const mount = document.getElementById(mountID);
     const detail = { revision: revision, commands: data.commands };
-    if (mount && mount.getAttribute("data-gosx-scene3d-command-ready") === "true") {
+    if (hubSceneMountReady(record, mountID, mount, binding)) {
       emitHubSceneCommands(mount, detail);
       return;
     }
@@ -185,25 +185,66 @@
     // from the initial scene, so older queued batches are unnecessary.
     record.pendingSceneCommands = record.pendingSceneCommands || new Map();
     record.pendingSceneCommands.set(mountID, detail);
-    watchHubSceneCommandMount(record, mountID);
+    watchHubSceneCommandMount(record, mountID, binding);
   }
 
-  function watchHubSceneCommandMount(record, mountID) {
+  // A mount takes command batches once it is command-ready. With
+  // sceneCommandsWhen "revealed" it must also have drawn its first frame with
+  // content (data-gosx-scene3d-revealed), unless the reveal timeout passed.
+  function hubSceneMountReady(record, mountID, mount, binding) {
+    if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return false;
+    if (!binding || binding.sceneCommandsWhen !== "revealed") return true;
+    if (record.sceneCommandRevealTimedOut && record.sceneCommandRevealTimedOut.has(mountID)) return true;
+    return mount.getAttribute("data-gosx-scene3d-revealed") === "true";
+  }
+
+  function flushHubSceneCommands(record, mountID, binding) {
+    const mount = document.getElementById(mountID);
+    if (!hubSceneMountReady(record, mountID, mount, binding)) return false;
+    const observer = record.sceneCommandObservers && record.sceneCommandObservers.get(mountID);
+    if (observer) {
+      observer.disconnect();
+      record.sceneCommandObservers.delete(mountID);
+    }
+    const timer = record.sceneCommandTimers && record.sceneCommandTimers.get(mountID);
+    if (timer != null) {
+      clearTimeout(timer);
+      record.sceneCommandTimers.delete(mountID);
+    }
+    const detail = record.pendingSceneCommands && record.pendingSceneCommands.get(mountID);
+    if (record.pendingSceneCommands) record.pendingSceneCommands.delete(mountID);
+    if (detail) emitHubSceneCommands(mount, detail);
+    return true;
+  }
+
+  // When the gate is "revealed", a scene that never draws content must not
+  // hold hub commands forever: after the timeout, apply on command-ready alone.
+  function armHubSceneRevealTimeout(record, mountID, binding) {
+    if (!binding || binding.sceneCommandsWhen !== "revealed") return;
+    record.sceneCommandTimers = record.sceneCommandTimers || new Map();
+    if (record.sceneCommandTimers.has(mountID)) return;
+    const delay = Math.max(1, Number(binding.sceneCommandsWhenTimeoutMs) || 20000);
+    record.sceneCommandTimers.set(mountID, setTimeout(function() {
+      record.sceneCommandTimers.delete(mountID);
+      if (record.disposed) return;
+      record.sceneCommandRevealTimedOut = record.sceneCommandRevealTimedOut || new Set();
+      record.sceneCommandRevealTimedOut.add(mountID);
+      console.warn("[gosx] scene commands for #" + mountID + " applied before reveal after " + delay + " ms");
+      flushHubSceneCommands(record, mountID, binding);
+    }, delay));
+  }
+
+  function watchHubSceneCommandMount(record, mountID, binding) {
+    armHubSceneRevealTimeout(record, mountID, binding);
     if (typeof MutationObserver !== "function" || !document.documentElement) return;
     record.sceneCommandObservers = record.sceneCommandObservers || new Map();
     if (record.sceneCommandObservers.has(mountID)) return;
     const observer = new MutationObserver(function() {
-      const mount = document.getElementById(mountID);
-      if (!mount || mount.getAttribute("data-gosx-scene3d-command-ready") !== "true") return;
-      observer.disconnect();
-      record.sceneCommandObservers.delete(mountID);
-      const detail = record.pendingSceneCommands && record.pendingSceneCommands.get(mountID);
-      if (record.pendingSceneCommands) record.pendingSceneCommands.delete(mountID);
-      if (detail) emitHubSceneCommands(mount, detail);
+      flushHubSceneCommands(record, mountID, binding);
     });
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-gosx-scene3d-command-ready"],
+      attributeFilter: ["data-gosx-scene3d-command-ready", "data-gosx-scene3d-revealed"],
       childList: true,
       subtree: true,
     });
