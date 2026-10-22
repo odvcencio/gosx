@@ -119,8 +119,10 @@ test("resources are created once, spectrum changes rerun only ocean_spectrum, ti
   frame(s.api, resources, h, ocean({ windSpeed: 9 }), { time: 6 });
   assert.equal(dispatchesOf("spectrum"), 4, "an unchanged spectrum does not rerun ocean_spectrum");
   assert.equal([state.buffers.length, state.textures.length].join(), [buffers, textures].join(), "no allocation per frame");
-  frame(s.api, resources, h, ocean({ windSpeed: 15 }), { time: 7 });
-  assert.equal(dispatchesOf("spectrum"), 8, "a changed spectrum reruns it once per cascade");
+  const quick = { presentation: { transitionSeconds: 0.1 } };
+  frame(s.api, resources, h, ocean({ windSpeed: 15 }, quick), { time: 7 });
+  frame(s.api, resources, h, ocean({ windSpeed: 15 }, quick), { time: 8 });
+  assert.equal(dispatchesOf("spectrum"), 8, "a changed spectrum reruns it once per cascade once its transition ends");
   assert.equal([state.buffers.length, state.textures.length].join(), [buffers, textures].join(), "spectrum change keeps buffers and textures");
   assert.equal(resources.fft.buildCount, 1);
   const before = state.buffers.filter((b) => b.usage & 128), beforeTextures = state.textures.filter((t) => !/dummy/.test(t.desc.label));
@@ -420,14 +422,26 @@ test("removing the spectrum releases every FFT buffer and texture and returns to
   h.renderer.dispose();
 });
 
-test("foam threshold: none on a glassy sea, whitecaps from about 10 m/s, one documented table", () => {
+test("foam: Go's graph parameters win, and the fallback table equals Go's golden values", () => {
   const { api } = standalone();
-  assert.equal(api.foamThreshold(0.5), 0);
-  assert.equal(api.foamThreshold(5), 0);
-  assert.ok(api.foamThreshold(6) < 0.15, "a breeze foams barely");
-  assert.ok(api.foamThreshold(10) >= api.FOAM.maxThreshold * 0.95, "whitecaps at 10 m/s");
-  assert.equal(api.foamThreshold(40), api.FOAM.maxThreshold);
+  const golden = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-graph-params.json"), "utf8"));
+  for (const entry of golden) {
+    const g = entry.graphParams;
+    const fallback = api.foamOf({}, { windSpeed: g.windSpeed, lambda: g.lambda });
+    assert.ok(Math.abs(fallback.threshold - g.foamThreshold) < 1e-9, `${entry.preset}: threshold ${fallback.threshold} vs Go ${g.foamThreshold}`);
+    assert.equal(fallback.tau, g.foamTau);
+    assert.equal(fallback.gain, g.foamGain);
+    assert.deepEqual(JSON.parse(JSON.stringify(api.foamOf({ graphParams: g }, { windSpeed: 1, lambda: 1 }))), { tau: g.foamTau, threshold: g.foamThreshold, gain: g.foamGain });
+  }
+  // No foam on a glassy sea, whitecaps from about 10 m/s, and a monotone rise with the wind.
+  assert.equal(api.foamThreshold(0.5, 0.6), 0);
+  assert.equal(api.foamThreshold(5, 1), 0);
+  assert.ok(api.foamThreshold(10, 1) >= api.FOAM.maxThreshold * 0.95, "whitecaps at 10 m/s");
   let last = -1;
-  for (let u = 0; u <= 40; u += 0.5) { const t = api.foamThreshold(u); assert.ok(t >= last); last = t; }
-  assert.ok(api.FOAM.tau > 0 && api.FOAM.foamLambda > 0);
+  for (let u = 0; u <= 40; u += 0.5) { const t = api.foamThreshold(u, 1); assert.ok(t >= last); last = t; }
+});
+
+test("an absent swell direction is 0 degrees, as in Go, not the wind direction", () => {
+  const { api } = standalone();
+  assert.equal(api.resolve(ocean({}, { windDirection: 90 }), "high").swellDir, api.travelAngle(0));
 });

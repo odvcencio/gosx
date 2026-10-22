@@ -92,3 +92,20 @@ test("ocean normalization carries presentation with defaults and clamps, and omi
   assert.equal(api.normalizeSceneOcean({ presentation: { timeScale: -2 } }).presentation.timeScale, 1, "below the range reads as the default, like Go");
   assert.equal("presentation" in plain(api.normalizeSceneOcean({ presentation: "slow" })), false);
 });
+
+test("ocean normalization passes the Go-computed graph parameters through unchanged", async () => {
+  const fs = require("node:fs"), path = require("node:path");
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const plain = value => JSON.parse(JSON.stringify(value));
+  const golden = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-graph-params.json"), "utf8"));
+  for (const entry of golden) {
+    const ocean = plain(api.normalizeSceneOcean({ spectrum: { windSpeed: 5 }, graphParams: entry.graphParams, graphTween: entry.graphTween }));
+    assert.deepEqual(ocean.graphParams, entry.graphParams, entry.preset);
+    assert.equal(ocean.graphTween, entry.graphTween);
+  }
+  assert.equal("graphParams" in plain(api.normalizeSceneOcean({ graphParams: { windSpeed: 9 } })), false, "no spectrum, no graph params");
+  const cleaned = plain(api.normalizeSceneOcean({ spectrum: {}, graphParams: { windSpeed: 9, bad: "x", worse: NaN }, graphTween: "slow" }));
+  assert.deepEqual(cleaned.graphParams, { windSpeed: 9 });
+  assert.equal("graphTween" in cleaned, false);
+});

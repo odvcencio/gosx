@@ -56,6 +56,12 @@ type Ocean struct {
 	// holds the DefaultOceanSwellCount strongest bins of the first two cascades
 	// as plane waves, for ship motion and the browser's first frames.
 	SwellWaves []OceanWave `json:"swellWaves,omitempty"`
+	// GraphParams and GraphTween are computed during normalization when Spectrum
+	// is set and are read-only: whatever an author sets is replaced. They are the
+	// value parameters of the Elio ocean pass graph and the sea-state tween
+	// seconds; see ocean_graph.go for each name and its source.
+	GraphParams map[string]float64 `json:"graphParams,omitempty"`
+	GraphTween  float64            `json:"graphTween,omitempty"`
 }
 
 // OceanPresentation is how the sea is presented over time, apart from what it
@@ -206,9 +212,11 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Spectrum = normalizeOceanSpectrum(ocean.Spectrum)
 	out.Masks = normalizeOceanMasks(ocean.Masks)
 	out.Presentation = normalizeOceanPresentation(ocean.Presentation)
-	out.SwellWaves = nil
+	out.SwellWaves, out.GraphParams, out.GraphTween = nil, nil, 0
 	if out.Spectrum != nil {
 		out.SwellWaves = OceanSwellWaves(*out.Spectrum, out.WindDirection, DefaultOceanSwellCount)
+		out.GraphParams = oceanGraphParams(&out)
+		out.GraphTween = oceanGraphTween(&out)
 	}
 	return &out
 }

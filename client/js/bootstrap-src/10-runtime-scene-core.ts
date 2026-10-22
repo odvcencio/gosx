@@ -3152,6 +3152,8 @@
     if (raw.reflections) out.reflections = sceneOceanReflections(raw.reflections);
     // Spectral ocean: Go normalizes the spectrum and computes the read-only swellWaves (scene.OceanSwellWaves).
     if (sceneIsPlainObject(raw.spectrum)) { out.spectrum = sceneCloneData(raw.spectrum); out.swellWaves = sceneCloneData(raw.swellWaves || []); }
+    // The Elio ocean graph's value parameters and tween seconds, computed in Go (scene/ocean_graph.go); passed through unchanged.
+    if (out.spectrum && sceneIsPlainObject(raw.graphParams)) { out.graphParams = {}; for (const key of Object.keys(raw.graphParams)) if (Number.isFinite(raw.graphParams[key])) out.graphParams[key] = raw.graphParams[key]; if (Number.isFinite(raw.graphTween)) out.graphTween = raw.graphTween; }
     if (Array.isArray(raw.masks)) out.masks = raw.masks.filter(id => id && typeof id === "string");
     // Presentation (scene.OceanPresentation): the water's clock scale, drift in m/s and sea-state transition time.
     const view = sceneIsPlainObject(raw.presentation) ? raw.presentation : null;
