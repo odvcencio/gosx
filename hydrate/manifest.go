@@ -185,6 +185,13 @@ type EngineEntry struct {
 	// Empty keeps the engine on the main thread.
 	Thread string `json:"thread,omitempty"`
 
+	// WorkerMode is "required" when the engine must never run on the main
+	// thread. Empty means the engine falls back to the main thread.
+	WorkerMode string `json:"workerMode,omitempty"`
+
+	// ForceWorkerFallback makes the page treat the worker as unavailable.
+	ForceWorkerFallback bool `json:"forceWorkerFallback,omitempty"`
+
 	// Props is the JSON-serialized props snapshot.
 	Props json.RawMessage `json:"props"`
 

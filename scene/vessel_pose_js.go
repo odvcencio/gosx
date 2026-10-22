@@ -18,7 +18,9 @@ var vesselPoseBuffers = sync.Pool{New: func() any { b := make([]byte, 0, 256); r
 // one call into the lazy vessel controller. It returns an error while the
 // controller has not mounted yet or the mount is not showing a Vessel with
 // ExternalPose; a game that sends a pose every tick can ignore those errors
-// during start-up.
+// during start-up. In an engine worker the page's answer arrives asynchronously:
+// the first call returns the not-ready error, and later calls return what the
+// page last answered.
 func DispatchVesselPose(target string, frame VesselPoseFrame) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
