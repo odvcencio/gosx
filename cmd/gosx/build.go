@@ -61,6 +61,7 @@ var runtimeFeatureChunks = []struct{ name, role string }{
 	{"browser-services", "engines"},
 	{"workbench", "workbench"},
 	{"hub-document", "hubs"},
+	{"hub-css-vars", "hubs"},
 	{"netplay", "hubs"},
 	{"arcade-audio", "hubs"},
 	{"engine-worker", "engines"},

@@ -248,6 +248,12 @@
       ]
     },
     {
+      "name": "bootstrap-feature-hub-css-vars.js",
+      "sources": [
+        "../runtime/host/hub-css-vars.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-netplay.js",
       "sources": [
         "../runtime/host/netplay.ts"

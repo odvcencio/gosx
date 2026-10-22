@@ -107,6 +107,10 @@ func TestPrefixedProductionBuild(t *testing.T) {
 			t.Fatal("export rewrote base path metadata")
 		}
 	}
+	// build.json lists the opt-in hub-css-vars chunk and the production server serves it.
+	if chunk, _ := get(origin + prefix + "/gosx/bootstrap-feature-hub-css-vars.js"); !strings.Contains(chunk, "hub-css-vars") {
+		t.Fatalf("hub-css-vars chunk body does not register the feature: %.200s", chunk)
+	}
 	// A same-origin parent exercises framing without changing the secure default.
 	upstream, _ := url.Parse(origin)
 	proxy := httputil.NewSingleHostReverseProxy(upstream)
