@@ -71,7 +71,10 @@ available, including after an upload error; they do not silently load the
 authored full-resolution image. High and the empty legacy profile may retain
 the authored image where no suitable variant exists. A shared linear ORM image
 can serve metallic/roughness and occlusion when its packed variant preserves
-the sampled channels. Ambiguous role or color-space reuse is not substituted.
+the sampled channels. A shared sRGB base-color/emissive image uses the
+base-color variant; transparent materials require a four-channel encoding
+that preserves alpha. Other ambiguous role or color-space reuse is not
+substituted.
 Current material shaders do not reconstruct a normal's Z channel from BC5 RG,
 so BC5 normal variants are rejected; provide a compatible full-RGB variant.
 

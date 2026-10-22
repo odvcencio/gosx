@@ -303,7 +303,7 @@ test("a malformed variant never replaces a working URI", () => {
   assert.equal(resolve(loader, ["../assets/wood.png"])[0], "https://example.test/assets/wood.png");
 });
 
-function buildTexturedGLB(imageKind = "external") {
+function buildTexturedGLB(imageKind = "external", sharedEmissive = false) {
   const positions = new Float32Array([
     0, 0.75, 0,
     -0.65, -0.45, 0.3,
@@ -338,6 +338,7 @@ function buildTexturedGLB(imageKind = "external") {
       pbrMetallicRoughness: {
         baseColorTexture: { index: 0 },
       },
+      ...(sharedEmissive ? { emissiveTexture: { index: 0 }, emissiveFactor: [1, 1, 1], alphaMode: "BLEND" } : {}),
     }],
     accessors: [
       { bufferView: 0, componentType: 5126, count: 3, type: "VEC3" },
@@ -512,7 +513,10 @@ test("bounded low tier selects portable KTX2 without BC and refuses a missing co
 });
 
 test("ambiguous color and normal use retains authored bytes for legacy and rejects a bounded profile", () => {
-  const loader = loadLoader({tokens: BC_TOKENS});
+  const loader = loadLoader({tokens: PLAIN_TOKENS, manifest: {textureVariants: {"assets/wood.png": [{
+    uri: "/assets/wood.low.rgba8.ktx2", quality: "low", role: "base-color", colorSpace: "srgb", channels: "4",
+    format: "rgba8unorm-srgb", requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm-srgb"],
+  }]}}});
   const makeDoc = () => ({images: [{uri: "../assets/wood.png"}], textures: [{source: 0}],
     materials: [{pbrMetallicRoughness: {baseColorTexture: {index: 0}}, normalTexture: {index: 0}}]});
   const legacy = makeDoc();
@@ -552,6 +556,37 @@ test("one ORM image may serve packed metallic roughness and occlusion without lo
   loader.gltfResolveExternalImageURIs(doc, BASE, {...loader.context, profile: "low",
     tokens: [...PLAIN_TOKENS, "texture-format:rgba8unorm"]});
   assert.ok(doc.images[0].uri.endsWith("orm.low.rgba8.ktx2"));
+});
+
+test("one sRGB image may serve transparent base color and emissive with four-channel variants", async () => {
+  const variants = [
+    {uri: "/assets/shared.low.bc1.ktx2", quality: "low", role: "base-color", colorSpace: "srgb", channels: "3",
+      format: "bc1-rgb-unorm-srgb", bytes: 10,
+      requiredCapabilities: ["container:ktx2", "texture-format:bc1-rgb-unorm-srgb", "device-feature:texture-compression-bc"]},
+    {uri: "/assets/shared.low.rgba8.ktx2", quality: "low", role: "base-color", colorSpace: "srgb", channels: "4",
+      format: "rgba8unorm-srgb", bytes: 80,
+      requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm-srgb"]},
+  ];
+  const tokens = [...PLAIN_TOKENS, "texture-format:bc1-rgb-unorm-srgb", "device-feature:texture-compression-bc"];
+  for (const kind of ["external", "embedded"]) {
+    const bytes = buildTexturedGLB(kind, true);
+    const key = kind === "embedded" ? "/models/city.glb#image=0" : "assets/wood.png";
+    const loader = loadLoader({manifest: {textureVariants: {[key]: variants}}, tokens,
+      fetch: async () => ({ok: true, status: 200,
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)})});
+    const scene = await loader.sceneLoadGLTFModel("/models/city.glb", {...loader.context, profile: "low"});
+    const material = scene.objects[0].material;
+    assert.equal(material.texture, "https://example.test/assets/shared.low.rgba8.ktx2", kind);
+    assert.equal(material.emissiveMap, material.texture, kind);
+    assert.equal(material.alphaMode, "BLEND", kind);
+    assert.equal(material.textureDescriptors.baseColor.channels, "rgba", kind);
+    assert.equal(material.textureDescriptors.emissive.colorSpace, "srgb", kind);
+  }
+  const unsupported = loadLoader({manifest: {textureVariants: {"assets/wood.png": variants.slice(0, 1)}}, tokens});
+  const doc = {images: [{uri: "../assets/wood.png"}], textures: [{source: 0}], materials: [{
+    pbrMetallicRoughness: {baseColorTexture: {index: 0}}, emissiveTexture: {index: 0}, alphaMode: "BLEND",
+  }]};
+  assert.throws(() => unsupported.gltfResolveExternalImageURIs(doc, BASE, {...unsupported.context, profile: "low"}), /no compatible low variant/);
 });
 
 test("BC5 normal is rejected until shaders reconstruct Z, even when BC upload is supported", () => {
