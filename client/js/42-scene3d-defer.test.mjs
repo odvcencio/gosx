@@ -137,3 +137,24 @@ test("a failed gate keeps the poster, downloads nothing and publishes renderer n
   assert.equal(env.consoleLogs.warn.filter((l) => l.includes("full-motion")).length, 1);
   assert.equal(env.consoleLogs.error.length, 0);
 });
+
+test("a matching media variant fetches its own props instead of the base", async () => {
+  const SMALL_URL = PROPS_URL.replace("0123", "5555");
+  for (const [matches, want, other] of [[true, SMALL_URL, PROPS_URL], [false, PROPS_URL, SMALL_URL]]) {
+    const entry = deferredEntry("hero", { defer: { until: "idle", variants: [{ media: "(max-width: 767px)", propsRef: SMALL_URL }] } });
+    const { env, raf, timers, urls } = page([entry], {
+      matchMedia: { "(max-width: 767px)": matches },
+      fetchRoutes: {
+        "/gosx/bootstrap-feature-engines.js": { text: bootstrapFeatureEnginesSource },
+        [SCENE_CHUNK]: { text: STUB_SCENE_CHUNK },
+        [PROPS_URL]: { text: JSON.stringify({ scene: { objects: [] } }) },
+        [SMALL_URL]: { text: JSON.stringify({ width: 320, scene: { objects: [] } }) },
+      },
+    });
+    runScript(bootstrapRuntimeSource, env.context, "bootstrap-runtime.js");
+    await flushAsyncWork();
+    await reachIdle(raf, timers);
+    assert.ok(urls().includes(want), "media=" + matches + " must fetch " + want + ": " + urls().join(","));
+    assert.ok(!urls().includes(other), "media=" + matches + " must not fetch " + other);
+  }
+});

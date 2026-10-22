@@ -2042,6 +2042,16 @@ func (p Props) legacyBaseProps() map[string]any {
 	setBool(out, "renderBeforeModels", p.RenderBeforeModels)
 	if p.Defer != nil {
 		out["defer"] = p.Defer
+		var variants []map[string]any
+		for _, v := range p.Defer.Variants {
+			if v.Props == nil || strings.TrimSpace(v.Media) == "" {
+				continue
+			}
+			variants = append(variants, map[string]any{"media": v.Media, "props": v.Props.RawPropsJSON()})
+		}
+		if len(variants) > 0 {
+			out["deferVariants"] = variants
+		}
 	}
 	setBool(out, "modelPreparation", p.ModelPreparation)
 	setString(out, "framePacing", p.FramePacing)

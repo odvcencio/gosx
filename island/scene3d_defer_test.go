@@ -126,3 +126,56 @@ func TestDeferInlineKeepsPropsWhenStoreDisabled(t *testing.T) {
 		t.Fatalf("disabled store must keep props inline: %s", manifest)
 	}
 }
+
+func TestDeferVariantsAreStoredAndListedByMedia(t *testing.T) {
+	store := useTestSceneEntryStore(t)
+	r := NewRenderer("main")
+	base := scene.Props{Graph: scene.NewGraph(scene.Model{ID: "m", Src: "/models/a.glb"})}
+	small := base
+	small.Width = 320
+	base.Defer = &scene.Defer{Variants: []scene.DeferVariant{{Media: "(max-width: 767px), (pointer: coarse)", Props: &small}}}
+	cfg := base.EngineConfig()
+	cfg.MountID = "hero"
+	r.RenderEngine(cfg, gosx.Text(""))
+	manifest, _ := r.ManifestJSON()
+	if !strings.Contains(manifest, `"variants":[{"media":"(max-width: 767px), (pointer: coarse)","propsRef":"/gosx/scene3d/`) {
+		t.Fatalf("variant missing: %s", manifest)
+	}
+	if strings.Contains(manifest, "deferVariants") {
+		t.Fatalf("variant props must not stay inline: %s", manifest)
+	}
+	var m struct {
+		Engines []struct {
+			PropsRef string
+			Defer    struct{ Variants []struct{ PropsRef string } }
+		}
+	}
+	if err := json.Unmarshal([]byte(manifest), &m); err != nil {
+		t.Fatal(err)
+	}
+	variantHash := strings.TrimSuffix(strings.TrimPrefix(m.Engines[0].Defer.Variants[0].PropsRef, SceneEntryPathPrefix), ".json")
+	stored, ok := store.Get(variantHash)
+	if !ok || !strings.Contains(string(stored), `"width":320`) || strings.Contains(string(stored), "deferVariants") {
+		t.Fatalf("variant body = %s", stored)
+	}
+	baseHash := strings.TrimSuffix(strings.TrimPrefix(m.Engines[0].PropsRef, SceneEntryPathPrefix), ".json")
+	if body, _ := store.Get(baseHash); strings.Contains(string(body), "deferVariants") {
+		t.Fatalf("base body must not carry the variants: %s", body)
+	}
+}
+
+func TestDeferVariantsAreDroppedWhenStoreDisabled(t *testing.T) {
+	prev := DefaultSceneEntryStore()
+	t.Cleanup(func() { SetSceneEntryStore(prev) })
+	SetSceneEntryStore(nil)
+	r := NewRenderer("main")
+	small := scene.Props{Width: 320}
+	base := scene.Props{Defer: &scene.Defer{Variants: []scene.DeferVariant{{Media: "(max-width: 767px)", Props: &small}}}}
+	cfg := base.EngineConfig()
+	cfg.MountID = "hero"
+	r.RenderEngine(cfg, gosx.Text(""))
+	manifest, _ := r.ManifestJSON()
+	if strings.Contains(manifest, "deferVariants") || strings.Contains(manifest, `"variants"`) {
+		t.Fatalf("inline props must not carry variants: %s", manifest)
+	}
+}

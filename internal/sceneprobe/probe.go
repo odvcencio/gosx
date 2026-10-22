@@ -171,7 +171,9 @@ type Probe struct {
 	PosterWidth, PosterHeight float64
 	PosterAlt                 string
 	// Defer is the author's deferred-mount request; nil when absent.
-	Defer                           *DeferProbe
+	Defer *DeferProbe
+	// DeferVariants are media-query alternatives of a deferred scene's props.
+	DeferVariants                   []DeferVariantProbe
 	Err                             error `json:"-"`
 	ChunkErr, PreloadErr, PosterErr error `json:"-"`
 }
@@ -265,4 +267,11 @@ type DeferProbe struct {
 	TimeoutMS int    `json:"timeoutMs"`
 	DelayMS   int    `json:"delayMs"`
 	Inline    bool   `json:"inline"`
+}
+
+// DeferVariantProbe is one media-query alternative; Props is the variant's
+// complete props JSON.
+type DeferVariantProbe struct {
+	Media string
+	Props json.RawMessage
 }

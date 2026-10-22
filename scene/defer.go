@@ -16,4 +16,13 @@ type Defer struct {
 	// Inline keeps the props in the page manifest instead of a
 	// content-addressed URL. A static export needs it; a server does not.
 	Inline bool `json:"inline,omitempty"`
+	// Variants pick a different props snapshot by media query; the first
+	// match wins. The server stores each variant content-addressed.
+	Variants []DeferVariant `json:"-"`
+}
+
+// DeferVariant is one media-query alternative of a deferred scene.
+type DeferVariant struct {
+	Media string
+	Props *Props
 }

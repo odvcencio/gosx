@@ -1602,9 +1602,23 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 				deferMode = "load"
 			}
 			entry.Defer = &hydrate.EngineDefer{Until: deferMode, TimeoutMS: d.TimeoutMS, DelayMS: d.DelayMS}
-			if store := DefaultSceneEntryStore(); store != nil && !d.Inline && len(entry.Props) > 0 {
-				entry.PropsRef = SceneEntryPath(store.Put(entry.Props))
+			store := DefaultSceneEntryStore()
+			variants := cfg.Scene3DProbe.DeferVariants
+			if store != nil && !d.Inline && len(entry.Props) > 0 {
+				base := entry.Props
+				if len(variants) > 0 {
+					base = withoutDeferVariants(base)
+					for _, v := range variants {
+						if len(v.Props) > 0 && strings.TrimSpace(v.Media) != "" {
+							entry.Defer.Variants = append(entry.Defer.Variants, hydrate.EngineDeferVariant{Media: v.Media, PropsRef: SceneEntryPath(store.Put(v.Props))})
+						}
+					}
+				}
+				entry.PropsRef = SceneEntryPath(store.Put(base))
 				entry.Props = json.RawMessage("null")
+			} else if len(variants) > 0 {
+				// Inline props carry no variants: the runtime has no URL to switch to.
+				entry.Props = withoutDeferVariants(entry.Props)
 			}
 		}
 	}
@@ -2853,6 +2867,21 @@ func (r *Renderer) scene3DNeedsWalkChunk() bool {
 		}
 	}
 	return false
+}
+
+// withoutDeferVariants drops the top-level deferVariants key from scene props.
+// Only the top level is decoded; every other value stays a raw message.
+func withoutDeferVariants(props json.RawMessage) json.RawMessage {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(props, &top) != nil {
+		return props
+	}
+	delete(top, "deferVariants")
+	out, err := json.Marshal(top)
+	if err != nil {
+		return props
+	}
+	return out
 }
 
 // scene3DEnvironmentGates are the capabilities the browser can only answer
