@@ -299,3 +299,40 @@ func referenceDiffSceneRecords[T any](commands *[]Command, previous, next []T, i
 		*commands = append(*commands, create(record))
 	}
 }
+
+// Include interaction changes in the same frame as a move: a state patch must
+// keep geometry and carry both edits without constructing replacement records.
+func BenchmarkDiffScenePatchState5000Objects10PercentMoved(b *testing.B) {
+	previous, next := benchDiffScenes(5000, 500)
+	for i := range 500 {
+		next.Objects[i].Selected = true
+		next.Objects[i].Label = "selected"
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		diff := DiffScene(previous, next, DiffOptions{PatchObjectState: true})
+		if len(diff.Commands) != 500 {
+			b.Fatalf("commands = %d, want 500", len(diff.Commands))
+		}
+	}
+}
+
+// Model snapshots embed ObjectIR and are compared as a collection. No model
+// command should be emitted when only a later camera update needs the scene.
+func BenchmarkDiffSceneModels5000Unchanged(b *testing.B) {
+	previous := SceneIR{Models: make([]ModelIR, 5000)}
+	next := SceneIR{Models: make([]ModelIR, 5000)}
+	for i := range previous.Models {
+		previous.Models[i] = ModelIR{ObjectIR: benchObjectIR(i), Src: "/assets/model.glb", Fit: "contain"}
+		next.Models[i] = previous.Models[i]
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		diff := DiffScene(previous, next, DiffOptions{})
+		if len(diff.Commands) != 0 {
+			b.Fatalf("commands=%d, want none", len(diff.Commands))
+		}
+	}
+}
