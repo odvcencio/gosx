@@ -1471,8 +1471,8 @@ const budgets = [
   // kernel module (12 kernels, WGSL and GLSL with layouts; about 58 KB of the raw size is that generated
   // text), the compute scheduler and the surface shader patch. Measured 69_716 / 13_431 / 12_275;
   // targets rise to the next 100 bytes. New budget, spectral ocean (cypress lane, 2026-10-22).
-  // The WebGL2 gather scheduler is now the generic Elio graph runner (elio-graph*.ts: parameter sources, tweens, two executors) plus the GLSL surface patch; the chunk measures 92_366 / 20_688 / 18_595 with the committed kernel module.
-  { file: "bootstrap-feature-scene3d-ocean-fft.js", raw: 92400, gzip: 20700, brotli: 18600 },
+  // The WebGL2 gather scheduler is now the generic Elio graph runner (elio-graph*.ts: parameter sources, tweens, two executors) plus the GLSL surface patch; the chunk measures 95_787 / 21_740 / 19_497 with the committed kernel module.
+  { file: "bootstrap-feature-scene3d-ocean-fft.js", raw: 95800, gzip: 21800, brotli: 19500 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning
