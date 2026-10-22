@@ -1386,7 +1386,7 @@ const budgets = [
     // Pending-pose and CPU playback retention adds 564 more Brotli bytes
     // (152948 -> 153512); the smallest clearing target step is 500 bytes.
     // Integrated baked shadow bounds measure 645370 raw bytes; keep the 5% allowance.
-    file: "bootstrap-feature-scene3d.js", raw: 620386, gzip: 176600,
+    file: "bootstrap-feature-scene3d.js", raw: 620257, gzip: 176600,
     // Moving model controls and validating the lazy API reduces core Brotli bytes
     // from 153692 to 153112. Lock in the saving; allowances stay fixed.
     brotli: 153200 },
@@ -1652,7 +1652,7 @@ const budgets = [
   // move to 45_000 / 16_200 / 14_420, leaving 56 / 72 / 69 bytes of
   // rounding headroom.
   // Volume transmission adds 340 raw / 97 gzip / 78 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 46164, gzip: 16297, brotli: 14498 },
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 46124, gzip: 16297, brotli: 14498 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the

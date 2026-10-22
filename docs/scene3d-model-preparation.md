@@ -86,7 +86,8 @@ restore the committed scope if they invalidate a staged change. Existing
 cache-owned textures from an old profile may remain retained after a switch;
 this API makes no total VRAM or eviction guarantee.
 
-Public generic-fixture hardware verification on Chrome 155 used typed Go/WASM
+Public generic-fixture hardware verification of feature commit `3ffb3d7355`
+on Chrome 155 used typed Go/WASM
 `Surface` calls and real WebGL (D3D11) and WebGPU (NVIDIA Blackwell) uploads.
 Both backends selected low BC1 sRGB base color and BC7 linear shared ORM, then
 standard BC7 sRGB base color and BC7 ORM, each with seven mip levels. Held
@@ -95,8 +96,11 @@ changed the fixture's pixels. Upload failure, cancellation, and a model-command
 race retained the old textured frame and profile. An embedded-image GLB also
 switched correctly. Cache record counts increased after the switch, confirming
 old-profile retention. A non-BC browser was unavailable for hardware proof;
-portable KTX2 selection is covered by focused selector tests. These fixture
-results do not establish game-art visual parity or total GPU memory usage.
+portable KTX2 selection is covered by focused selector tests. The later
+texture-retry merge and regenerated corpus passed focused Go, JS, TypeScript,
+and generated-bundle checks; the screenshots do not attest that merged blob.
+These fixture results do not establish game-art visual parity or total GPU
+memory usage.
 
 ## Requested frame submissions
 
