@@ -5,12 +5,18 @@ import vm from 'node:vm';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import harness from './runtime-test-harness.js';
+import { createRequire } from "node:module";
+
+const ts = createRequire(new URL("../runtime/package.json", import.meta.url))("typescript");
 
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../..');
+const gltfSource = ts.transpileModule(fs.readFileSync(path.join(root, "client/runtime/scene3d/gltf.ts"), "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 const context=vm.createContext({window:{},Float32Array,Uint8Array,Uint16Array,Uint32Array,Int8Array,Int16Array,ArrayBuffer,DataView,TextDecoder});
 for(const source of ['client/js/bootstrap-src/11-scene-math.ts','client/runtime/scene3d/gltf.ts',
  'client/runtime/scene3d/vessel-navigation.ts','client/runtime/scene3d/vessel-physics.ts','client/runtime/scene3d/vessel-model.ts']) {
- vm.runInContext(fs.readFileSync(path.join(root,source),'utf8'),context);
+ vm.runInContext(source.endsWith("/gltf.ts") ? gltfSource : fs.readFileSync(path.join(root,source),'utf8'),context);
 }
 const physics=context.window.__gosx_scene3d_vessel_physics,modelAPI=context.window.__gosx_scene3d_vessel_model;
 function load(lod) {

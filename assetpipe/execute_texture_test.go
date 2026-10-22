@@ -704,8 +704,34 @@ func TestBuildTextureIsSideEffectFree(t *testing.T) {
 		if variant.Bytes != int64(result.Variants[i].Bytes) {
 			t.Fatalf("variant %d reports %d bytes, the plan holds %d", i, variant.Bytes, result.Variants[i].Bytes)
 		}
+		if variant.ColorSpace != result.ColorSpace || variant.Format != result.Variants[i].Format || variant.MipLevels != result.Variants[i].Levels {
+			t.Fatalf("variant %d lost the built image format metadata: %#v", i, variant)
+		}
 	}
 	if files := listFiles(t, dir); len(files) != 0 {
 		t.Fatalf("BuildTexture wrote %v", files)
+	}
+}
+
+func TestBuildTexturePublishesExplicitRoleColorAndAlpha(t *testing.T) {
+	source := writeTestPNG(t, 16, 16, func(x, y int) color.NRGBA {
+		return color.NRGBA{R: uint8(x * 15), G: uint8(y * 15), B: 128, A: uint8(96 + x*10)}
+	})
+	for _, tc := range []struct{ role, space string }{{"base-color", "srgb"}, {"normal", "linear"}} {
+		result, variants, err := BuildTexture("maps/shared.png", source, TextureOptions{
+			Role: tc.role, ColorSpace: tc.space, BlockCompression: true,
+			Tiers: []texture.Tier{{Name: "low", MaxEdge: 16}},
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.AlphaMode != "blend" {
+			t.Fatalf("alpha mode %q", result.AlphaMode)
+		}
+		for _, variant := range variants {
+			if variant.Role != tc.role || variant.ColorSpace != tc.space || variant.Channels != "4" {
+				t.Fatalf("%s variant lost role, transfer or alpha channels: %#v", tc.role, variant)
+			}
+		}
 	}
 }

@@ -1,4 +1,4 @@
-// 19a-scene-ktx2 — the KTX2 container reader and the block-texture uploader.
+// 19a-scene-ktx2 — the KTX2 container reader and texture uploader.
 //
 // Why this file exists
 //
@@ -16,8 +16,8 @@
 //
 // Scope
 //
-// Native block-compressed material textures plus the two uncompressed
-// half-float products written by assetpipe/ibl. The latter cannot go through an
+// Native block-compressed and portable uncompressed material textures, plus
+// the two half-float products written by assetpipe/ibl. The latter cannot go through an
 // image element: they carry cube faces, a roughness mip chain and linear HDR
 // values that an image decoder would flatten or tone map.
 //
@@ -56,6 +56,14 @@
   // ASTC and ETC2 have no row. No GoSX build step writes those payloads, so a
   // row for them would describe a file that never exists.
   var SCENE_KTX2_FORMATS = {
+    // Portable assetpipe/texture variants. WebGPU cannot upload RGB8; its
+    // selector must choose RGBA8 (and the uploader also rejects RGB8 below).
+    9:   ["r8unorm", 0x8229, 1, 1, 1, "", false, 0x1903, 0x1401],
+    16:  ["rg8unorm", 0x822B, 1, 1, 2, "", false, 0x8227, 0x1401],
+    23:  [null, 0x8051, 1, 1, 3, "", false, 0x1907, 0x1401],
+    29:  [null, 0x8C41, 1, 1, 3, "", false, 0x1907, 0x1401],
+    37:  ["rgba8unorm", 0x8058, 1, 1, 4, "", false, 0x1908, 0x1401],
+    43:  ["rgba8unorm-srgb", 0x8C43, 1, 1, 4, "", false, 0x1908, 0x1401],
     // VK_FORMAT_R16G16_SFLOAT / VK_FORMAT_R16G16B16A16_SFLOAT. WebGL enum
     // values are RG16F/RG and RGBA16F/RGBA; HALF_FLOAT is 0x140B.
     83:  ["rg16float", 0x822F, 1, 1, 4, "OES_texture_float_linear", false, 0x8227, 0x140B],
@@ -97,7 +105,7 @@
   function sceneKTX2FormatInfo(vkFormat) {
     var row = SCENE_KTX2_FORMATS[vkFormat];
     if (!row) {
-      throw sceneKTX2Error("format", "vkFormat " + vkFormat + " has no block upload path");
+      throw sceneKTX2Error("format", "vkFormat " + vkFormat + " has no upload path");
     }
     return {
       webgpuFormat: row[0],
@@ -307,6 +315,9 @@
   // upload paths pass different numbers for the same level on purpose.
   function sceneKTX2UploadWebGPU(device, image, options) {
     var layout = sceneKTX2DecodedLayout(image);
+    if (!layout.webgpuFormat) {
+      throw sceneKTX2Error("format", "vkFormat " + image.vkFormat + " has no WebGPU upload format");
+    }
     var opts = options || {};
     var slices = image.layers * image.faces;
     var texture = device.createTexture({
@@ -373,21 +384,30 @@
     }
     var target = cube ? gl.TEXTURE_CUBE_MAP : gl.TEXTURE_2D;
     gl.bindTexture(target, texture);
-    for (var i = 0; i < image.levels.length; i++) {
-      var level = image.levels[i];
-      var faceBytes = level.bytes.byteLength / image.faces;
-      if (!Number.isInteger(faceBytes)) {
-        throw sceneKTX2Error("face-size", "level " + i + " does not divide into " + image.faces + " faces");
-      }
-      for (var face = 0; face < image.faces; face++) {
-        var faceTarget = cube ? gl.TEXTURE_CUBE_MAP_POSITIVE_X + face : gl.TEXTURE_2D;
-        var payload = level.bytes.subarray(face * faceBytes, (face + 1) * faceBytes);
-        if (layout.compressed) {
-          gl.compressedTexImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, payload);
-        } else {
-          gl.texImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, layout.webglFormat, layout.webglType, sceneKTX2HalfFloatView(payload));
+    // RGB8 row strides need byte alignment (a 1x1 mip has three bytes). Keep
+    // caller pixel-store state intact for subsequent ordinary image uploads.
+    var unpackAlignment = layout.webglType === 0x1401 && gl.getParameter ? gl.getParameter(gl.UNPACK_ALIGNMENT) : null;
+    if (unpackAlignment !== null) gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    try {
+      for (var i = 0; i < image.levels.length; i++) {
+        var level = image.levels[i];
+        var faceBytes = level.bytes.byteLength / image.faces;
+        if (!Number.isInteger(faceBytes)) {
+          throw sceneKTX2Error("face-size", "level " + i + " does not divide into " + image.faces + " faces");
+        }
+        for (var face = 0; face < image.faces; face++) {
+          var faceTarget = cube ? gl.TEXTURE_CUBE_MAP_POSITIVE_X + face : gl.TEXTURE_2D;
+          var payload = level.bytes.subarray(face * faceBytes, (face + 1) * faceBytes);
+          if (layout.compressed) {
+            gl.compressedTexImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, payload);
+          } else {
+            gl.texImage2D(faceTarget, i, layout.webglInternalFormat, level.width, level.height, 0, layout.webglFormat, layout.webglType,
+              layout.webglType === 0x140B ? sceneKTX2HalfFloatView(payload) : payload);
+          }
         }
       }
+    } finally {
+      if (unpackAlignment !== null) gl.pixelStorei(gl.UNPACK_ALIGNMENT, unpackAlignment);
     }
     gl.texParameteri(target, gl.TEXTURE_MAX_LEVEL, image.levels.length - 1);
     gl.texParameteri(target, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
