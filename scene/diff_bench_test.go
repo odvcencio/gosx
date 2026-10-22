@@ -317,3 +317,22 @@ func BenchmarkDiffScenePatchState5000Objects10PercentMoved(b *testing.B) {
 		}
 	}
 }
+
+// Model snapshots embed ObjectIR and are compared as a collection. No model
+// command should be emitted when only a later camera update needs the scene.
+func BenchmarkDiffSceneModels5000Unchanged(b *testing.B) {
+	previous := SceneIR{Models: make([]ModelIR, 5000)}
+	next := SceneIR{Models: make([]ModelIR, 5000)}
+	for i := range previous.Models {
+		previous.Models[i] = ModelIR{ObjectIR: benchObjectIR(i), Src: "/assets/model.glb", Fit: "contain"}
+		next.Models[i] = previous.Models[i]
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		diff := DiffScene(previous, next, DiffOptions{})
+		if len(diff.Commands) != 0 {
+			b.Fatalf("commands=%d, want none", len(diff.Commands))
+		}
+	}
+}

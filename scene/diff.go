@@ -970,6 +970,11 @@ func provenJSONEqual(a, b reflect.Value) bool {
 	case reflect.String:
 		return a.String() == b.String()
 	case reflect.Struct:
+		// Model and aggregate records embed ObjectIR. Reuse its typed proof
+		// when reflection can expose the actual record without copying it.
+		if a.Type() == reflect.TypeFor[ObjectIR]() && a.CanAddr() && b.CanAddr() && a.CanInterface() && b.CanInterface() && objectProofEnabled() {
+			return provenObjectFieldsEqual(a.Addr().Interface().(*ObjectIR), b.Addr().Interface().(*ObjectIR), 0)
+		}
 		for index := range a.NumField() {
 			if !provenJSONEqual(a.Field(index), b.Field(index)) {
 				return false

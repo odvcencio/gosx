@@ -3,7 +3,8 @@
 ## Unreleased
 
 - Reduce SceneIR comparison CPU and temporary patch allocations with generated,
-  schema-checked ObjectIR equality proofs. Transform and interaction updates
+  schema-checked ObjectIR equality proofs, including embedded model records.
+  Transform and interaction updates
   avoid copying whole mesh records on the common path while preserving the
   reference JSON fallback for ambiguous values and mixed edits.
 

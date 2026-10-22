@@ -160,3 +160,27 @@ func TestObjectPatchProofPreservesNonFiniteAndJSONEdges(t *testing.T) {
 		})
 	}
 }
+
+func TestNestedObjectProofPreservesStructuralAndJSONSemantics(t *testing.T) {
+	type wrapper struct {
+		Object ObjectIR
+		hidden ObjectIR
+	}
+	a := wrapper{Object: benchObjectIR(1), hidden: benchObjectIR(2)}
+	b := a
+	if !provenJSONEqual(reflect.ValueOf(&a).Elem(), reflect.ValueOf(&b).Elem()) {
+		t.Fatal("identical nested records were not proven equal")
+	}
+	b.hidden.X++
+	if provenJSONEqual(reflect.ValueOf(&a).Elem(), reflect.ValueOf(&b).Elem()) {
+		t.Fatal("structural proof ignored an unexported nested edit")
+	}
+	if !sceneRecordJSONEqual(a, b) {
+		t.Fatal("JSON fallback lost unexported-field semantics")
+	}
+	b = a
+	b.Object.X++
+	if sceneRecordJSONEqual(a, b) {
+		t.Fatal("nested typed proof lost an exported edit")
+	}
+}
