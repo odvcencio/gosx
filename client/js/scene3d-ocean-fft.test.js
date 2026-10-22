@@ -366,3 +366,68 @@ test("GPU spectrum and Go swell waves share wind direction and loop time", () =>
   }
   assert.ok(checked >= 3, "enough fixture cases carry a pure wind sea: " + checked);
 });
+
+// --- environment updates ------------------------------------------------------------------------------------------
+
+test("an environment update that adds a spectrum loads the FFT chunk once; one that removes it releases the GPU resources", async () => {
+  const { FakeElement, createContext, installManualRAF, runScript, flushAsyncWork, bootstrapSource } = require("./runtime-test-harness.js");
+  const chunk = fs.readFileSync(path.join(__dirname, "bootstrap-feature-scene3d-ocean-fft.js"), "utf8");
+  const mount = new FakeElement("div", null);
+  mount.id = "ocean-update"; mount.setAttribute("data-gosx-engine", "GoSXScene3D");
+  const camera = { x: 0, y: 20, z: 0, rotationX: -0.1, rotationY: 0, fov: 60, near: 0.1, far: 2000 };
+  const props = { camera, scene: { camera, objects: [], environment: { ocean: { level: 0 } } } };
+  const env = createContext({ elements: [mount], enableWebGL: true, disableCanvas2D: true, performanceNow: () => 0, fetchRoutes: { "/ocean-fft.js": { text: chunk } },
+    manifest: { engines: [{ id: "ocean-update", component: "GoSXScene3D", kind: "surface", mountId: mount.id, props }] } });
+  const script = env.document.createElement("script");
+  script.setAttribute("data-gosx-script", "feature-scene3d");
+  script.setAttribute("data-gosx-scene3d-ocean-fft-url", "/ocean-fft.js");
+  env.document.head.appendChild(script);
+  const raf = installManualRAF(env.context);
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  env.document.dispatchEvent({ type: "DOMContentLoaded" });
+  for (let i = 0; i < 8; i++) { await flushAsyncWork(); raf.flush(i * 17); }
+  const handle = env.context.__gosx.engines.get("ocean-update").handle;
+  const fetched = () => (env.fetchCalls || []).filter((c) => /ocean-fft\.js/.test(String(c.url || c))).length;
+  assert.equal(fetched(), 0, "a scene without a spectrum never fetches the chunk");
+  assert.equal(env.context.__gosx_scene3d_ocean_fft_api, undefined);
+  await handle.applyCommands([{ kind: 13, data: { environment: { ocean: { level: 0, spectrum: { windSpeed: 10 } } }, shape: "sceneIR" } }]);
+  for (let i = 0; i < 8; i++) { await flushAsyncWork(); raf.flush(200 + i * 17); }
+  assert.equal(fetched(), 1, "adding a spectrum fetches the chunk");
+  assert.ok(env.context.__gosx_scene3d_ocean_fft_api, "and publishes the API");
+  await handle.applyCommands([{ kind: 13, data: { environment: { ocean: { level: 0, spectrum: { windSpeed: 12 } } }, shape: "sceneIR" } }]);
+  for (let i = 0; i < 4; i++) { await flushAsyncWork(); raf.flush(400 + i * 17); }
+  assert.equal(fetched(), 1, "a later update does not fetch again");
+  handle.dispose();
+});
+
+test("removing the spectrum releases every FFT buffer and texture and returns to the Gerstner shader", async () => {
+  const h = await rendererWithChunk();
+  h.canvas.width = h.canvas.height = 64;
+  const b = sceneBundle(null);
+  await renderSettled(h, b, 3);
+  const { state } = h.fake;
+  const baseline = new Set([...state.buffers, ...state.textures]);
+  b.environment.ocean.spectrum = { windSpeed: 9 };
+  await renderSettled(h, b, 8);
+  const spectral = [...state.buffers, ...state.textures].filter((r) => !baseline.has(r));
+  assert.ok(spectral.length > 16, "the spectral ocean allocated resources: " + spectral.length);
+  const live = () => spectral.filter((r) => !r.destroyed);
+  delete b.environment.ocean.spectrum;
+  await renderSettled(h, b, 4);
+  assert.deepEqual(live().map((r) => r.desc ? r.desc.label : "buffer " + r.size), [], "resources released");
+  const draws = state.renderPasses.flatMap((p) => p.draws).filter((d) => d.pipeline && d.pipeline.desc && /^gosx-ocean/.test(d.pipeline.desc.label));
+  assert.equal(draws[draws.length - 1].pipeline.desc.label, "gosx-ocean");
+  h.renderer.dispose();
+});
+
+test("foam threshold: none on a glassy sea, whitecaps from about 10 m/s, one documented table", () => {
+  const { api } = standalone();
+  assert.equal(api.foamThreshold(0.5), 0);
+  assert.equal(api.foamThreshold(5), 0);
+  assert.ok(api.foamThreshold(6) < 0.15, "a breeze foams barely");
+  assert.ok(api.foamThreshold(10) >= api.FOAM.maxThreshold * 0.95, "whitecaps at 10 m/s");
+  assert.equal(api.foamThreshold(40), api.FOAM.maxThreshold);
+  let last = -1;
+  for (let u = 0; u <= 40; u += 0.5) { const t = api.foamThreshold(u); assert.ok(t >= last); last = t; }
+  assert.ok(api.FOAM.tau > 0 && api.FOAM.foamLambda > 0);
+});

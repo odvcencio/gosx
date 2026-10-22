@@ -2100,12 +2100,22 @@
     return Array.isArray(state.instancedMeshes) && state.instancedMeshes.length > 0;
   }
 
+  // A scene command can add a wave spectrum after mount. Ask for the FFT chunk once; until it lands the renderer keeps
+  // drawing Gerstner waves, and a failed fetch is not retried on every schedule.
+  var sceneOceanFFTRequested = false;
+  function requestSceneOceanFFTIfNeeded(state) {
+    if (sceneOceanFFTRequested || window.__gosx_scene3d_ocean_fft_api || !state?.environment?.ocean?.spectrum) return;
+    sceneOceanFFTRequested = true;
+    ensureSceneGatedFeatureLoaded("ocean-fft", "gosxScene3dOceanFftUrl", "").catch(function() {});
+  }
+
   // requestSceneComputeFeatureIfNeeded starts the fetch without awaiting it.
   // A runtime program or a scene command can add a particle system after the
   // mount settled, and the renderer bridges return null until the chunk lands.
   // The scene then draws its particles one or two frames later instead of
   // throwing.
   function requestSceneComputeFeatureIfNeeded(state) {
+    requestSceneOceanFFTIfNeeded(state);
     if (!sceneNeedsComputeFeature(state)) return;
     try {
       ensureComputeFeatureLoaded().catch(function() {});
