@@ -4436,16 +4436,14 @@
       next[key] = key === "parentMatrix" ? sceneNormalizeParentMatrix(data[key], current[key])
         : sceneNumber(data[key], current[key]);
     }
-    const records = state._hydratedModelRecords;
-    const key = sceneRigidInstanceHydrationKey(state, current, sceneModelTransformMatrix(current));
-    const staged = records && records.rigidInstances && records.rigidInstances.get(key);
+    const key = sceneRigidInstanceHydrationKey(state, current);
+    const staged = state._hydratedModelRecords?.rigidInstances?.get(key);
     // A Model's children use root/primitive IDs, so a root command cannot go
     // through the ordinary object lookup. Retained rigid geometry needs only
     // a new parent matrix; preserve every material and resident vertex stream.
-    const fitted = staged ? sceneModelWithAssetFit(next, { bounds: staged.rigidInstanceModel._fitBounds }) : next;
-    const matrix = sceneModelTransformMatrix(fitted);
+    const matrix = sceneModelTransformMatrix(next);
     const retained = !state._modelHydrationPromise && sceneRigidInstanceHydrationEligible(next, matrix)
-      ? scenePrepareRigidInstancePatch(state, staged, fitted, matrix) : null;
+      ? scenePrepareRigidInstancePatch(state, staged, next, matrix) : null;
     models[index] = next;
     if (retained) {
       sceneCommitRigidInstancePatch(retained);

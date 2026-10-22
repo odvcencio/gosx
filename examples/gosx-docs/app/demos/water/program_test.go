@@ -311,6 +311,7 @@ func TestWaterDemoControlsContract(t *testing.T) {
 		`y={2.8}`,
 		`z={2.1}`,
 		`fov={38}`,
+		`portraitFOV={42}`,
 		`interactionProfile="water-object-drop-orbit"`,
 		`interactionTarget="water-main"`,
 		`interactionObject="Sphere"`,

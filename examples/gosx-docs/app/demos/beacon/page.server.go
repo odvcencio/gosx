@@ -22,19 +22,12 @@ func init() {
 			period := blackglassBeachPeriodFor(ctx.Query("period"))
 			instructions := "Click or drag to look · WASD or arrows to walk · Shift to run · Esc to release"
 			touchInstructions := "Left thumb to move · drag the right side to look"
-			chartIslands := map[string]any{}
-			for _, place := range blackglassBeachPlaces() {
-				if place.Island {
-					chartIslands[place.View+"X"] = place.X
-					chartIslands[place.View+"Z"] = place.Z
-				}
-			}
 			return map[string]any{
 				"instructions": instructions, "touchInstructions": touchInstructions,
 				"scene": BlackglassBeachProgram(view.ID, period.ID), "posterSrc": blackglassBeachPosterSrc,
 				"view": view.ID, "period": period.ID,
 				"pickupCommands": blackglassHandheldPickupCommands(), "islandFindSites": blackglassIslandFindSites(), "harborExit": blackglassHarborExit(),
-				"chartIslands": chartIslands, "chartShore": blackglassBeachChart(), "chartPlaces": blackglassBeachChartPlaces(), "poolRippleSites": blackglassBeachPoolRippleSites(),
+				"chartIslands": blackglassBeachChartIslandCoordinates(), "chartShore": blackglassBeachChart(), "chartPlaces": blackglassBeachChartPlaces(), "poolRippleSites": blackglassBeachPoolRippleSites(),
 				"shoreHref":  "?view=shore&period=" + period.ID,
 				"glassHref":  "?view=glass&period=" + period.ID,
 				"cliffHref":  "?view=cliff&period=" + period.ID,

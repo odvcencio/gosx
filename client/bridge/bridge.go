@@ -361,6 +361,14 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 		b.dispatching = make(map[string]uint32)
 	}
 
+	// Keep peers behind the complete handler notification pass. Deliver them
+	// before the writer reconciles, so peer callbacks can update its result.
+	ownsUpdate := !b.store.updating
+	var flush func()
+	if ownsUpdate {
+		b.store.updating = true
+		flush = b.store.afterUpdate
+	}
 	b.dispatching[islandID]++
 	defer func() {
 		if b.dispatching[islandID] <= 1 {
@@ -369,8 +377,15 @@ func (b *Bridge) DispatchAction(islandID, handlerName, eventDataJSON string) ([]
 			b.dispatching[islandID]--
 		}
 	}()
+	// Flush failed handlers before releasing their writer guard. The separate
+	// cleanup defer still runs if an observer panics during this fallback.
+	defer func() {
+		if ownsUpdate && b.store.updating {
+			b.store.endUpdate()
+		}
+	}()
 
-	return island.Dispatch(handlerName, eventDataJSON), nil
+	return island.DispatchWithFlush(handlerName, eventDataJSON, flush), nil
 }
 
 // SetSharedSignalJSON updates a shared signal from a JSON payload.
@@ -634,6 +649,7 @@ func (b *Bridge) reconcileSharedIsland(reader *sharedIslandReader) {
 }
 
 func (b *Bridge) flushSharedIslands() {
+	b.store.updating = false
 	// Detach before rendering: patch callbacks may start a separate batch.
 	// Its pending readers belong to that batch, not the one being drained.
 	pending := b.pendingReaders

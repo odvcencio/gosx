@@ -373,7 +373,10 @@
       (withColor ? "\\s*@location\\(8\\) instanceColor: vec4f," : ""));
   }
 
-  var SCENE_GPU_DRIVEN_MODEL_ANCHOR = /[ \t]*let (\w+) = mat4x4f\(in\.instanceMatrix0, in\.instanceMatrix1, in\.instanceMatrix2, in\.instanceMatrix3\);/;
+  // The model-matrix declaration, at any indentation and spacing. Shader packing
+  // may rename the local, so the name is captured; the four authored
+  // per-instance matrix columns remain part of this renderer contract.
+  var SCENE_GPU_DRIVEN_MODEL_ANCHOR = /[ \t]*\blet\s+([A-Za-z_][A-Za-z_0-9]*)\s*=\s*mat4x4f\(\s*in\.instanceMatrix0\s*,\s*in\.instanceMatrix1\s*,\s*in\.instanceMatrix2\s*,\s*in\.instanceMatrix3\s*\)\s*;/;
 
   function sceneGPUDrivenPBRVertexWGSL(base) {
     var s = sceneGPUDrivenReplace(base, sceneGPUDrivenInstanceInputs(true), "    @location(4) gdSlot: u32,", "pbr inputs");
@@ -599,7 +602,9 @@
         // Same factories as the renderer's own layouts, so the renderer's
         // frame, material and shadow bind groups are group-equivalent here.
         frame: hooks.createFrameBindGroupLayout(device),
-        material: hooks.createMaterialBindGroupLayout(device),
+        // Renderer materials include the dynamic model-uniform binding even
+        // when this shader pulls the instance transform from storage.
+        material: hooks.createMaterialBindGroupLayout(device, true),
         shadow: hooks.createShadowBindGroupLayout(device),
       };
       return layouts;
@@ -610,6 +615,7 @@
       failed = name;
       console.warn("[gosx] gpu-driven: " + name + " pipeline rejected:", detail);
       if (typeof sceneReportPipelineFailure === "function") sceneReportPipelineFailure("gpu-driven", name, String(detail));
+      if (typeof hooks.onResourceReady === "function") hooks.onResourceReady();
     }
 
     // settle waits for a pipeline promise, then for the module's compile
@@ -620,7 +626,12 @@
         return check.then(function(error) {
           if (disposed) return;
           if (error) fail(name, error);
-          else store(pipeline);
+          else {
+            store(pipeline);
+            // The device's own completion notification precedes shader
+            // diagnostics. Wake static scenes only after the host is ready.
+            if (typeof hooks.onResourceReady === "function") hooks.onResourceReady();
+          }
         });
       }).catch(function(error) {
         fail(name, error && error.message ? error.message : error);

@@ -15,7 +15,7 @@
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 283738,
-          "lazyJsWireBytes": 203162,
+          "lazyJsWireBytes": 203695,
           "requests": 10,
           "totalWireBytes": 1018650,
           "wasmWireBytes": 662965
@@ -29,7 +29,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
+        }
       },
       "/capabilities/": {
         "limits": {
@@ -87,7 +90,7 @@
           "imageWireBytes": 8404,
           "inlineScriptBytes": 256,
           "jsWireBytes": 267128,
-          "lazyJsWireBytes": 203162,
+          "lazyJsWireBytes": 203695,
           "requests": 8,
           "totalWireBytes": 978053,
           "wasmWireBytes": 662965
@@ -101,7 +104,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
+        }
       },
       "/demos/water": {
         "limits": {
@@ -111,7 +117,7 @@
           "imageWireBytes": 193942,
           "inlineScriptBytes": 256,
           "jsWireBytes": 271525,
-          "lazyJsWireBytes": 203162,
+          "lazyJsWireBytes": 203695,
           "requests": 15,
           "totalWireBytes": 1204485,
           "wasmWireBytes": 662965
@@ -125,7 +131,10 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "lazyJsWireBytes": "2026-10-21 retained Water model poses, geometry-specific optics, and production GPU shader fixes add 533 advertised lazy-chunk wire bytes; capped at the measured 203695 bytes without changing tolerance."
+        }
       },
       "/docs/getting-started/": {
         "limits": {
@@ -154,7 +163,7 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 309732,
+          "frameworkJsWireBytes": 310733,
           "htmlWireBytes": 14280,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
@@ -162,7 +171,7 @@
           "lazyJsWireBytes": 256,
           "requests": 11,
           "totalWireBytes": 383937,
-          "wasmWireBytes": 219045
+          "wasmWireBytes": 221073
         },
         "require": [
           "html-compressed",
@@ -173,7 +182,11 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase. Final-head full-route qualification is required.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required."
+        }
       },
       "/performance/": {
         "limits": {
@@ -228,15 +241,15 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 309727,
+          "frameworkJsWireBytes": 310728,
           "htmlWireBytes": 1516,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 90521,
           "lazyJsWireBytes": 256,
           "requests": 9,
-          "totalWireBytes": 312157,
-          "wasmWireBytes": 219045
+          "totalWireBytes": 313106,
+          "wasmWireBytes": 221073
         },
         "require": [
           "html-compressed",
@@ -247,7 +260,12 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required.",
+          "totalWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required."
+        }
       },
       "/stack/": {
         "limits": {

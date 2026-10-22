@@ -18,14 +18,20 @@ var (
 
 type dependencyTracker struct {
 	mu   sync.Mutex
-	deps []Subscribable
+	deps []dependency
 	seen map[Subscribable]bool
+}
+
+type dependency struct {
+	source      Subscribable
+	revision    uint64
+	unsubscribe func()
 }
 
 // recordDependency adds s to the innermost tracking window of the calling
 // goroutine. It returns at once when no window is open anywhere, so an ordinary
 // Get pays one atomic load.
-func recordDependency(s Subscribable) {
+func recordDependency(s Subscribable, revision uint64) {
 	if openTrackers.Load() == 0 {
 		return
 	}
@@ -43,14 +49,14 @@ func recordDependency(s Subscribable) {
 	t.mu.Lock()
 	if !t.seen[s] {
 		t.seen[s] = true
-		t.deps = append(t.deps, s)
+		t.deps = append(t.deps, dependency{source: s, revision: revision})
 	}
 	t.mu.Unlock()
 }
 
 // trackDependencies runs fn and reports every signal that fn read on the
 // calling goroutine. Nested windows are supported.
-func trackDependencies[T any](fn func() T) (T, []Subscribable) {
+func trackDependencies[T any](fn func() T) (T, []dependency) {
 	t := &dependencyTracker{
 		seen: make(map[Subscribable]bool),
 	}

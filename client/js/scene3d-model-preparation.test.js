@@ -13,13 +13,13 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 function boundary(native) {
   const listeners = new Map(), observers = [], calls = [], pending = new Map(), records = new Map();
   const canvas = native?.canvas || {
-    addEventListener(name, callback) { listeners.set(name, callback); },
-    removeEventListener(name, callback) { if (listeners.get(name) === callback) listeners.delete(name); },
+    addEventListener(name, callback) { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(callback); },
+    removeEventListener(name, callback) { listeners.get(name)?.delete(callback); if (!listeners.get(name)?.size) listeners.delete(name); },
   };
   if (!canvas.addEventListener) {
-    canvas.addEventListener = (name, callback) => listeners.set(name, callback);
-    canvas.removeEventListener = (name, callback) => { if (listeners.get(name) === callback) listeners.delete(name); };
-    canvas.dispatchEvent = event => { listeners.get(event.type)?.(event); return true; };
+    canvas.addEventListener = (name, callback) => { if (!listeners.has(name)) listeners.set(name, new Set()); listeners.get(name).add(callback); };
+    canvas.removeEventListener = (name, callback) => { listeners.get(name)?.delete(callback); if (!listeners.get(name)?.size) listeners.delete(name); };
+    canvas.dispatchEvent = event => { for (const callback of [...(listeners.get(event.type) || [])]) callback(event); return true; };
   }
   const generation = { disposed: false };
   const renderer = native?.renderer || { texturePreparation: { generation, load(uri, desc, role, colorSpace) {
@@ -36,7 +36,7 @@ function boundary(native) {
   win.__gosx_scene3d_preload_model = (src, meta) => { calls.push({ src, meta }); if (!pending.has(src)) pending.set(src, deferred()); return pending.get(src).promise; };
   vm.runInContext(code, context, { filename: 'model-preparation.ts' });
   const prepare = (requests = [{ id: 'hero', src: '/hero.glb' }], controller = new AbortController()) => win.__gosx_scene3d_model_preparation_api.prepare(mount, requests, controller.signal);
-  const notify = () => listeners.get('gosx:scene3d:resource-ready')?.();
+  const notify = () => { for (const callback of [...(listeners.get('gosx:scene3d:resource-ready') || [])]) callback(); };
   const material = { texture: '/albedo.png', normalMap: '/normal.png', textureDescriptors: { baseColor: { uri: '/albedo.png', wrapS: 'repeat' } } };
   return { prepare, mount, renderer, canvas, calls, pending, records, scope, observers, listeners, generation, notify, material };
 }
@@ -106,6 +106,40 @@ test('already disposed renderer fails before model fetch and invalid selections 
 });
 
 for (const backend of ['webgl', 'webgpu']) {
+  test('failed ' + backend + ' map retries only during preparation on the same cached record', async () => {
+    const native = backend === 'webgl' ? createWebGLRendererForPost({ fresh: true }) : await createBoardWebGPUHarness({ fresh: true });
+    const h = boundary(native), images = [];
+    native.env.context.Image = class { constructor() { this.width = this.naturalWidth = 2; this.height = this.naturalHeight = 2; images.push(this); } };
+    const asset = { objects: [{ material: { texture: '/retry.png' } }] };
+    const first = h.prepare();
+    h.pending.get('/hero.glb').resolve(asset);
+    await tick();
+    assert.equal(images.length, 1);
+    const record = h.renderer.texturePreparation.load('/retry.png', null, 'base-color', 'srgb');
+    const rejected = assert.rejects(first, /retry.png/);
+    images[0].onerror();
+    assert.equal(record.failed, true, 'initial image failure marked cached record');
+    await rejected;
+    for (let i = 0; i < 10; i++) assert.equal(h.renderer.texturePreparation.load('/retry.png', null, 'base-color', 'srgb'), record);
+    assert.equal(images.length, 1, 'ordinary cache reads do not retry');
+    const second = h.prepare(), concurrent = h.prepare();
+    await tick();
+    assert.equal(images.length, 2, 'concurrent preparations share the retry');
+    assert.equal(h.renderer.texturePreparation.load('/retry.png', null, 'base-color', 'srgb'), record);
+    images[0].onload();
+    assert.equal(record.loaded, false, 'stale image event cannot settle the retry');
+    images[1].onload();
+    await tick();
+    if (backend === 'webgpu') assert.equal(record.pending, false, 'retry upload settled');
+    assert.deepEqual({ ...await second }, { models: 1, textures: 1 });
+    assert.deepEqual({ ...await concurrent }, { models: 1, textures: 1 });
+    assert.equal(record.failed, false);
+    assert.equal(record.loaded, true);
+    assert.deepEqual({ ...await h.prepare() }, { models: 1, textures: 1 });
+    assert.equal(images.length, 2, 'successful record remains cached');
+    native.renderer.dispose();
+  });
+
   test('preparation uses actual ' + backend + ' image upload/cache and native disposal notification', async () => {
     const native = backend === 'webgl' ? createWebGLRendererForPost({ fresh: true }) : await createBoardWebGPUHarness({ fresh: true });
     const h = boundary(native), images = [];
@@ -136,4 +170,61 @@ test('preparation is separately gated and has a fixed new-chunk size bound', () 
     assert.ok(fs.statSync(path.join(__dirname, chunk.name + suffix)).size <= limit, 'new optional chunk budget ' + suffix);
   }
   assert.doesNotMatch(source, /requestAnimationFrame|setInterval|getParameter|getError/);
+});
+
+
+for(const backend of ['webgl','webgpu']) {
+ test('opt-in rigid preparation uses '+backend+' scope without submitting nodes or draws',async()=>{
+  const native=backend==='webgl'?createWebGLRendererForPost({fresh:true}):await createBoardWebGPUHarness({fresh:true});
+  const h=boundary(native),win=native.env.context.window||native.env.context,geometry=[];
+  let draws=0;const render=h.renderer.render.bind(h.renderer);
+  h.renderer.render=(...args)=>{draws++;return render(...args);};
+  const prepareRigid=win.__gosx_scene3d_api.modelGeometry.prepare;
+  win.__gosx_scene3d_api.modelGeometry.prepare=raw=>{geometry.push(raw);return prepareRigid(raw);};
+  const asset={objects:[{kind:'mesh',vertices:{count:3,positions:[0,0,0,1,0,0,0,1,0],normals:[0,0,1,0,0,1,0,0,1],uvs:[0,0,1,0,0,1]}}],skins:[],animations:[],points:[],labels:[],sprites:[],html:[],lights:[]},selection=[{id:'prop',src:'/prop.glb',rigidGeometry:true}];
+  const wait=h.prepare(selection);
+  selection[0].rigidGeometry=false;
+  h.pending.get('/prop.glb').resolve(asset);
+  assert.deepEqual({...await wait},{models:1,textures:0});
+  assert.equal(geometry.length,1);assert.equal(geometry[0],asset.objects[0]);assert.equal(draws,0);
+  assert.equal(h.mount.__gosxScene3DState.objects,undefined,'no scene member map is created');
+  for(const [name,change] of Object.entries({skin:{objects:[{...asset.objects[0],skin:{joints:[0],inverseBindMatrices:new Float32Array(16)}}]},morph:{objects:[{...asset.objects[0],_morphAnim:{}}]},node:{objects:[{...asset.objects[0],_nodeAnim:{}}]},aux:{points:[{}]},invalid:{objects:[{vertices:{count:3,positions:[]}}]}})) {
+   const rejected=assert.rejects(h.prepare([{id:name,src:'/'+name+'.glb',rigidGeometry:true}]),new RegExp('Not rigid: '+name));
+   h.pending.get('/'+name+'.glb').resolve({...asset,...change});await rejected;
+  }
+  const identity=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
+  const skinObject={...asset.objects[0],skinIndex:0,vertices:{...asset.objects[0].vertices,joints:new Float32Array(12),weights:new Float32Array([1,0,0,0,1,0,0,0,1,0,0,0])}};
+  const metadataCases={skinIndex:{objects:[skinObject],skins:[{joints:[0],inverseBindMatrices:identity}],nodes:[{}]}};
+  for(const property of ['weights','translation','rotation','scale']) metadataCases[property]={nodes:[{}],animations:[{name:'Attack',channels:[{nodeIndex:0,property,times:new Float32Array([0,1]),values:new Float32Array([0,1])}]}]};
+  const before=geometry.length;
+  for(const [name,change] of Object.entries(metadataCases)) {
+   const rejected=assert.rejects(h.prepare([{id:name,src:'/meta-'+name+'.glb',rigidGeometry:true}]),new RegExp('Not rigid: '+name));
+   h.pending.get('/meta-'+name+'.glb').resolve({...asset,...change});await rejected;
+  }
+  assert.equal(geometry.length,before,'source-shaped playback metadata is rejected before primitive caching');
+  native.renderer.dispose();
+ });
+}
+
+test('rigid preparation obeys cancellation and renderer replacement before delayed decode',async()=>{
+ for(const mode of ['cancel','replace']) {
+  const h=boundary(),controller=new AbortController();
+  // The optional hook must not be reached after the existing ownership check.
+  const wait=h.prepare([{id:'prop',src:'/prop.glb',rigidGeometry:true}],controller);
+  const rejected=assert.rejects(wait,/canceled|replaced/);
+  if(mode==='cancel')controller.abort();else h.mount.__gosxScene3DState._crowdRenderer={};
+  h.pending.get('/prop.glb').resolve({objects:[{material:{}}]});
+  await rejected;await tick();
+  assert.equal(h.listeners.size,0);assert.equal(h.calls.filter(c=>c.uri).length,0);
+ }
+});
+
+test('rigid preparation failure is explicit and opt-out leaves it untouched',async()=>{
+ const h=boundary();
+ const wait=h.prepare([{id:'prop',src:'/prop.glb',rigidGeometry:true}]);
+ const rejected=assert.rejects(wait); // missing capability must not silently succeed
+ h.pending.get('/prop.glb').resolve({objects:[{material:{}}]});
+ await rejected;
+ assert.equal(h.listeners.size,0);
+ assert.throws(()=>h.prepare([{id:'bad',src:'/bad.glb',rigidGeometry:1}]),/preparation/);
 });

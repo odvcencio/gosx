@@ -110,7 +110,7 @@ async function renderFrames(harness, api, state, frames) {
 
 async function gpuDrivenHarness(options) {
   const opts = options || {};
-  const harness = await createBoardWebGPUHarness({ fresh: true, configureDevice: opts.configureDevice, fakeDeviceOptions: Object.assign({ timestampQuery: true }, opts.device || {}) });
+  const harness = await createBoardWebGPUHarness({ fresh: opts.production !== true, configureDevice: opts.configureDevice, fakeDeviceOptions: Object.assign({ timestampQuery: true }, opts.device || {}) });
   harness.canvas.width = 64;
   harness.canvas.height = 64;
   // The fake device drops buffer labels; keep them so tests can find buffers.
@@ -203,6 +203,61 @@ test("gpu-driven: vertex shader derivations swap every instance input", async ()
   assert.ok(shadow.includes("let model = gdInstances[in.gdSlot].model;"));
   assert.ok(!shadow.includes("instanceMatrix"));
   assert.throws(() => api.sceneGPUDrivenPBRVertexWGSL("fn main() {}"), /anchor missing: pbr inputs/);
+});
+
+test("gpu-driven: production chunks derive packed shaders and keep indirect rendering active", async () => {
+  const { harness, api } = await gpuDrivenHarness({ production: true });
+  await renderFrames(harness, api, sceneState(api, { occlusion: true }, { light: true }), 5);
+  assert.equal(harness.renderer.getFailureReason(), "", "packed WGSL must not trip an indentation-sensitive anchor: " + JSON.stringify(harness.env.consoleLogs));
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-driven-active"), "true");
+  assert.ok(harness.fake.state.shaderModules.some(module => module.label === "gosx-gpu-driven-shadow-vert" && !module.code.includes("instanceMatrix")));
+  assert.ok(mainPasses(harness.fake).some(pass => pass.drawIndirects.length > 0), "the emitted chunks must submit a real indirect draw, not only load");
+});
+
+test("gpu-driven: material layout matches the renderer's dynamic model binding", async () => {
+  const { harness, api } = await gpuDrivenHarness();
+  await renderFrames(harness, api, sceneState(api, {}), 4);
+  const pipeline = harness.fake.state.renderPipelines.find(value => value.desc.label === "gosx-gpu-driven-pbr");
+  assert.ok(pipeline, "the indirect PBR pipeline must be created");
+  const expected = pipeline.desc.layout.desc.bindGroupLayouts[1].desc.entries;
+  const bound = mainPasses(harness.fake).flatMap(pass => pass.bindGroups).filter(value => value.slot === 1 && value.group.desc.layout.desc.label === "gosx-material");
+  assert.ok(bound.length > 0, "the renderer must bind an actual material group");
+  for (const value of bound) {
+    assert.deepEqual(expected, value.group.desc.layout.desc.entries, "indirect draws must accept the exact material ABI, including dynamic model binding 19");
+    assert.deepEqual(value.dynamicOffsets, [0]);
+  }
+});
+
+test("gpu-driven: pipeline settlement wakes a stationary scene after host readiness", async () => {
+  const { harness, api } = await gpuDrivenHarness();
+  const createHost = api.createSceneGPUDrivenHost;
+  let ready = 0;
+  api.createSceneGPUDrivenHost = function(device, hooks) {
+    assert.equal(typeof hooks.onResourceReady, "function", "renderer must forward its resource-ready notification");
+    const notify = hooks.onResourceReady;
+    hooks.onResourceReady = function() { ready++; notify(); };
+    return createHost(device, hooks);
+  };
+  const state = sceneState(api, {});
+  await renderFrames(harness, api, state, 1);
+  assert.ok(ready >= 3, "cull, shadow and PBR pipelines must notify after diagnostic settlement");
+  await renderFrames(harness, api, state, 1);
+  assert.equal(harness.mount.getAttribute("data-gosx-scene3d-webgpu-gpu-driven-active"), "true");
+});
+
+test("gpu-driven: derivation accepts packed shader indentation and renamed matrix bindings", async () => {
+  const { api } = await gpuDrivenHarness();
+  const packed = await createBoardWebGPUHarness({ fresh: false });
+  for (const [label, derive] of [
+    ["pbr-instanced-vert", api.sceneGPUDrivenPBRVertexWGSL],
+    ["shadow-instanced-vert", api.sceneGPUDrivenShadowVertexWGSL],
+  ]) {
+    const module = packed.fake.state.shaderModules.find(value => value.label === label);
+    assert.ok(module, "packed renderer must publish " + label);
+    const derived = derive(module.code);
+    assert.ok(derived.includes("gdInstances"));
+    assert.ok(!derived.includes("instanceMatrix"), "all packed matrix references must be replaced");
+  }
 });
 
 test("gpu-driven: two-phase occlusion splits the main pass around a Hi-Z build", async () => {

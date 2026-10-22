@@ -1,7 +1,7 @@
 package signal
 
 type Subscriber func()
-type Subscribable interface { subscribe(fn Subscriber) func() }
+type Subscribable interface { subscribe(fn, invalidate Subscriber) func(); refresh(); revision() uint64 }
 type Signal[T any] struct{}
 func New[T any](initial T) *Signal[T] { return nil }
 func NewShared[T any](name string, initial T) *Signal[T] { return nil }
@@ -12,12 +12,16 @@ func (s *Signal[T]) Revision() uint64 { return 0 }
 func (s *Signal[T]) Set(value T) {}
 func (s *Signal[T]) Update(fn func(T) T) {}
 func (s *Signal[T]) Subscribe(fn Subscriber) func() { return nil }
-func (s *Signal[T]) subscribe(fn Subscriber) func() { return nil }
+func (s *Signal[T]) subscribe(fn, invalidate Subscriber) func() { return nil }
+func (s *Signal[T]) refresh() {}
+func (s *Signal[T]) revision() uint64 { return 0 }
 type Computed[T any] struct{}
 func Derive[T any](fn func() T) *Computed[T] { return nil }
 func (c *Computed[T]) Get() T { var v T; return v }
 func (c *Computed[T]) Subscribe(fn Subscriber) func() { return nil }
-func (c *Computed[T]) subscribe(fn Subscriber) func() { return nil }
+func (c *Computed[T]) subscribe(fn, invalidate Subscriber) func() { return nil }
+func (c *Computed[T]) refresh() {}
+func (c *Computed[T]) revision() uint64 { return 0 }
 func (c *Computed[T]) Stop() {}
 type Effect struct{}
 func Watch(fn func()) *Effect { return nil }

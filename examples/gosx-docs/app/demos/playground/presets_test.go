@@ -1,11 +1,24 @@
 package playground
 
 import (
+	"strings"
 	"testing"
 
 	gosx "m31labs.dev/gosx"
 	"m31labs.dev/gosx/ir"
 )
+
+func TestGreeterInputHasAccessibleNameAndInitialValue(t *testing.T) {
+	preset, ok := PresetBySlug("greeter")
+	if !ok {
+		t.Fatal("missing greeter preset")
+	}
+	for _, attr := range []string{`aria-label="Your name"`, `placeholder="Your name"`, `value={name.Get()}`} {
+		if !strings.Contains(preset.Source, attr) {
+			t.Errorf("Greeter input is missing %s", attr)
+		}
+	}
+}
 
 // expectedSlugs is the canonical list of preset slugs the suite enforces, in
 // display order. TestPresetSlugsMatchExpected below actually checks this

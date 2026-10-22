@@ -31,6 +31,7 @@ function trimBeforeSharedAPI(source) {
 
 function createCoreContext({ mount = false } = {}) {
   const sandbox = {
+    __gosx_scene3d_api: {},
     console: { warn() {}, error() {}, log() {} },
     Math, JSON, Number, Object, Array, Map, Set, WeakMap,
     Float32Array, Float64Array, Uint8Array, Uint16Array, Uint32Array,

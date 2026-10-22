@@ -2862,8 +2862,18 @@
     };
   }
 
-  // Map the live active water object to the scene mesh-object id the bundle
-  // carries (mirrors the WebGPU sceneWaterActiveObjectID).
+  function sceneWaterRenderObjectColor(bundle, targetID, fallback) {
+    var objects = bundle && bundle.meshObjects || [];
+    for (var i = 0; i < objects.length; i++) {
+      var object = objects[i], id = String(object && object.id || "");
+      if (!targetID || !(id === targetID || id.indexOf(targetID + ":") === 0 || id.indexOf(targetID + "-prim") === 0)) continue;
+      var material = bundle.materials && bundle.materials[object.materialIndex];
+      var color = material && material.customUniforms && material.customUniforms.baseColor;
+      if (Array.isArray(color) && color.length >= 4) return color;
+    }
+    return fallback;
+  }
+  // Map the active water object to its bundle mesh id (WebGPU parity).
   function sceneWaterRenderActiveMeshID(activeObject, objectSubtype, objectKind) {
     var a = String(activeObject || "").trim().toLowerCase();
     var s = String(objectSubtype || "").trim().toLowerCase();
@@ -3408,6 +3418,8 @@
     var objectReflectionTarget = null;
     var objectClippedTarget = null;
     var objectTextureSlotsReady = [false, false, false];
+    var objectTextureSubject = "";
+    var objectTextureMVP = new Float32Array(16);
     var objectTextureTargetsRequired = false;
     function disposeWaterColorTarget(target) {
       if (!target) return;
@@ -3867,8 +3879,11 @@
     // view-projection + texture-pass mode (1 = refraction/reflection, 2 = clipped
     // reflection: discards submerged fragments). Mirrors the WebGPU
     // renderWaterObjectMeshTargetPass: clear transparent, depth-test on, no cull.
-    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameCausticTex, frameLightDir, framePoolWidth, framePoolLength, framePoolHeight, frameObjectCenter, frameObjectRadius, frameObjectKind) {
-      if (!scenePBRProgramReady(gl, prog) || !target || !meshUpload || !meshUpload.count) return;
+    function renderMeshTextureTarget(prog, desc, target, vpMatrix, mode, modelTex, stateTex, frameCausticTex, frameLightDir, framePoolWidth, framePoolLength, framePoolHeight, frameObjectCenter, frameObjectRadius, frameObjectKind, frameBaseColor) {
+      if (!scenePBRProgramReady(gl, prog) || !target || !meshUpload || !meshUpload.count) return false;
+      // surface.sel samples top-origin projected textures; GL FBOs are bottom-origin.
+      objectTextureMVP.set(vpMatrix);
+      for (var rowY = 1; rowY < 16; rowY += 4) objectTextureMVP[rowY] = -objectTextureMVP[rowY];
       gl.bindFramebuffer(gl.FRAMEBUFFER, target.fbo);
       gl.viewport(0, 0, target.size, target.size);
       gl.enable(gl.DEPTH_TEST);
@@ -3887,13 +3902,14 @@
       if (modelTex) samplers.push({ name: "modelTexture", target: gl.TEXTURE_2D, tex: modelTex });
       sceneWaterRenderBindSamplers(gl, prog, samplers);
       sceneWaterRenderSetUniforms(gl, prog, desc, {
-        mvp: vpMatrix, modelMatrix: identity4, normalMatrix: identity3,
+        mvp: objectTextureMVP, modelMatrix: identity4, normalMatrix: identity3,
         lightDir: frameLightDir, poolWidth: framePoolWidth, poolLength: framePoolLength, poolHeight: framePoolHeight,
         objectCenter: frameObjectCenter, objectRadius: frameObjectRadius, objectKind: frameObjectKind,
-        baseColor: [1, 1, 1, 1], isTexturePass: 1, texturePassMode: mode,
+        baseColor: frameBaseColor, isTexturePass: 1, texturePassMode: mode,
       });
       gl.drawArrays(gl.TRIANGLES, 0, meshUpload.count);
       gl.bindVertexArray(null);
+      return true;
     }
 
     function drawFrame(frameMeta) {
@@ -4003,6 +4019,7 @@
       // object-material for the torus (its <Mesh> uses water-object-material).
       var meshProgram = liveMeshID === "float-duck" && duckProgram ? duckProgram : objectProgram;
       var meshUsesModelTex = meshProgram === duckProgram;
+      var liveBaseColor = sceneWaterRenderObjectColor(lastBundle, liveMeshID, meshUsesModelTex ? [1, 1, 1, 1] : [0.52, 0.54, 0.56, 1]);
       var meshData = isMeshObject && meshProgram ? sceneWaterRenderFindBundleMesh(lastBundle, liveMeshID) : null;
       if (meshData) refreshMeshUpload(meshProgram, meshData);
 
@@ -4101,7 +4118,7 @@
         livePoolWidth, livePoolLength, useCompoundShadow, compoundSphereCount
       );
       var refreshShadowPass = shadowSignature !== lastShadowSignature;
-      if (shadowTarget && scenePBRProgramReady(gl, useCompoundShadow ? compoundShadowProgram : shadowProgram) && refreshShadowPass) {
+      if (shadowTarget && refreshShadowPass && (liveKindNum === 0 || scenePBRProgramReady(gl, useCompoundShadow ? compoundShadowProgram : shadowProgram))) {
         gl.bindFramebuffer(gl.FRAMEBUFFER, shadowTarget.fbo);
         gl.viewport(0, 0, shadowTarget.size, shadowTarget.size);
         gl.disable(gl.DEPTH_TEST);
@@ -4110,29 +4127,31 @@
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
         gl.bindVertexArray(emptyVAO);
-        if (useCompoundShadow) {
-          // objectTop mirrors the raw-WGSL oracle's
-          // objectCenter.y + max(halfSizeRadius.y, halfSizeRadius.w) (the
-          // topmost Y of the object's bounding volume), gating the shadow off
-          // once the object has been lifted clear of the pool.
-          var shadowObjectTop = liveCenter[1] + Math.max(liveHalf[1], liveRadius);
-          gl.useProgram(compoundShadowProgram);
-          sceneWaterRenderSetUniforms(gl, compoundShadowProgram, compoundShadowDesc, {
-            spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,
-            objectEnabled: 1, objectTop: shadowObjectTop, lightDir: liveLightDir,
-            poolWidth: livePoolWidth, poolLength: livePoolLength,
-            objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
-          });
-        } else {
-          gl.useProgram(shadowProgram);
-          sceneWaterRenderSetUniforms(gl, shadowProgram, shadowDesc, {
-            objectKind: liveKindNum, objectEnabled: liveKindNum > 0 ? 1 : 0, lightDir: liveLightDir,
-            poolWidth: livePoolWidth, poolLength: livePoolLength,
-            objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
-            objectRadius: liveRadius, objectHalfX: liveHalf[0], objectHalfZ: liveHalf[2],
-          });
+        if (liveKindNum > 0) {
+          if (useCompoundShadow) {
+            // objectTop mirrors the raw-WGSL oracle's
+            // objectCenter.y + max(halfSizeRadius.y, halfSizeRadius.w) (the
+            // topmost Y of the object's bounding volume), gating the shadow off
+            // once the object has been lifted clear of the pool.
+            var shadowObjectTop = liveCenter[1] + Math.max(liveHalf[1], liveRadius);
+            gl.useProgram(compoundShadowProgram);
+            sceneWaterRenderSetUniforms(gl, compoundShadowProgram, compoundShadowDesc, {
+              spheres: compoundShadowSpheres, sphereCount: compoundSphereCount,
+              objectEnabled: 1, objectTop: shadowObjectTop, lightDir: liveLightDir,
+              poolWidth: livePoolWidth, poolLength: livePoolLength,
+              objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
+            });
+          } else {
+            gl.useProgram(shadowProgram);
+            sceneWaterRenderSetUniforms(gl, shadowProgram, shadowDesc, {
+              objectKind: liveKindNum, objectEnabled: 1, lightDir: liveLightDir,
+              poolWidth: livePoolWidth, poolLength: livePoolLength,
+              objectCenterX: liveCenter[0], objectCenterZ: liveCenter[2],
+              objectRadius: liveRadius, objectHalfX: liveHalf[0], objectHalfZ: liveHalf[2],
+            });
+          }
+          gl.drawArrays(gl.TRIANGLES, 0, 3);
         }
-        gl.drawArrays(gl.TRIANGLES, 0, 3);
         lastShadowSignature = shadowSignature;
         shadowRefreshCount++;
       }
@@ -4144,6 +4163,11 @@
       // sampling is disabled (meshTextureEnable = 0) and the transparent stub
       // backs the samplers. Mirrors the WebGPU object-texture pass (capped 512²).
       var meshTextureReady = false;
+      if (objectTextureSubject !== liveMeshID) {
+        objectTextureSubject = liveMeshID;
+        objectTextureSlotsReady.fill(false);
+        meshTexturePassCursor = 0;
+      }
       if (isMeshObject && meshData && scenePBRProgramReady(gl, meshProgram) && ensureObjectTextureTargets()) {
         var meshDescActive = meshUsesModelTex ? duckDesc : objectDesc;
         var meshModel = meshUsesModelTex ? meshModelTex : null;
@@ -4151,26 +4175,18 @@
           // A replacement set is not visible to the surface until all three
           // projective views contain the same-frame mesh. This is a one-time
           // transition cost and avoids two frames of transparent reflection.
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          objectTextureSlotsReady[0] = true;
-          objectTextureSlotsReady[1] = true;
-          objectTextureSlotsReady[2] = true;
+          objectTextureSlotsReady[0] = renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
+          objectTextureSlotsReady[1] = renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
+          objectTextureSlotsReady[2] = renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
           meshTexturePassCursor = 0;
-          meshTexturePassCount += 3;
+          meshTexturePassCount += Number(objectTextureSlotsReady[0]) + Number(objectTextureSlotsReady[1]) + Number(objectTextureSlotsReady[2]);
         } else {
           // Steady state retains two views and refreshes one round-robin.
           var meshTexturePassSlot = meshTexturePassCursor % 3;
-          if (meshTexturePassSlot === 0) {
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectRefractionTarget, objectRefractionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          } else if (meshTexturePassSlot === 1) {
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectReflectionTarget, objectReflectionMatrix, 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          } else {
-            renderMeshTextureTarget(meshProgram, meshDescActive, objectClippedTarget, objectReflectionMatrix, 2, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum);
-          }
+          var meshTarget = meshTexturePassSlot === 0 ? objectRefractionTarget : meshTexturePassSlot === 1 ? objectReflectionTarget : objectClippedTarget;
+          objectTextureSlotsReady[meshTexturePassSlot] = renderMeshTextureTarget(meshProgram, meshDescActive, meshTarget, meshTexturePassSlot === 0 ? objectRefractionMatrix : objectReflectionMatrix, meshTexturePassSlot === 2 ? 2 : 1, meshModel, stateTex, causticTex, liveLightDir, livePoolWidth, livePoolLength, livePoolHeight, liveCenter, liveRadius, liveKindNum, liveBaseColor);
           meshTexturePassCursor = (meshTexturePassCursor + 1) % 3;
-          meshTexturePassCount++;
+          if (objectTextureSlotsReady[meshTexturePassSlot]) meshTexturePassCount++;
         }
         meshTextureReady = objectTextureSlotsReady[0] && objectTextureSlotsReady[1] && objectTextureSlotsReady[2];
       }
@@ -4249,7 +4265,7 @@
           mvp: mvp, modelMatrix: identity4, normalMatrix: identity3,
           lightDir: liveLightDir, poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
           objectCenter: liveCenter, objectRadius: liveRadius, objectKind: liveKindNum,
-          baseColor: meshUsesModelTex ? [1, 1, 1, 1] : [0.52, 0.54, 0.56, 1],
+          baseColor: liveBaseColor,
           isTexturePass: 0, texturePassMode: 0,
         });
         gl.drawArrays(gl.TRIANGLES, 0, meshUpload.count);
@@ -4264,7 +4280,7 @@
           mvp: mvp, modelMatrix: identity4, normalMatrix: identity3,
           lightDir: liveLightDir, poolWidth: livePoolWidth, poolLength: livePoolLength, poolHeight: livePoolHeight,
           objectCenter: liveCenter, objectRadius: liveRadius, objectKind: liveKindNum,
-          baseColor: [0.52, 0.54, 0.56, 1], isTexturePass: 0, texturePassMode: 0,
+          baseColor: liveBaseColor, isTexturePass: 0, texturePassMode: 0,
         });
         gl.drawElements(gl.TRIANGLES, objectMesh.count, gl.UNSIGNED_SHORT, 0);
       }
@@ -5314,7 +5330,32 @@
     ].join("\u0000");
   }
 
-  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
+  function scenePBRStartTextureLoad(gl, record) {
+    const key = record.src, target = record.target, texture = record.texture;
+    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) return;
+    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
+      scenePBRUploadKTX2Texture(gl, key, record);
+      return;
+    }
+    if (target === gl.TEXTURE_CUBE_MAP) {
+      Object.assign(record, { failed: true, error: "cube descriptors require a KTX2 upload path" });
+    } else if (typeof Image === "function") {
+      const image = new Image();
+      record.image = image;
+      image.onload = function() {
+        if (record.image === image) scenePBRUploadImageTexture(gl, record, image);
+      };
+      image.onerror = function() {
+        if (record.image !== image || !scenePBRTextureLive(record)) return;
+        record.failed = true;
+        scenePBRNotifyTextureSettled(record);
+      };
+      image.crossOrigin = "anonymous";
+      image.src = key;
+    }
+  }
+
+  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace, retryFailed = false) {
     if (!cache) return null;
     const textureMap = cache;
     var descriptor = scenePBRTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
@@ -5323,8 +5364,15 @@
       return null;
     }
     var cacheKey = scenePBRTextureCacheKey(descriptor);
-    if (textureMap.has(cacheKey)) {
-      return textureMap.get(cacheKey);
+    const cached = textureMap.get(cacheKey);
+    if (cached) {
+      if (retryFailed && cached.failed && scenePBRTextureLive(cached)) {
+        cached.failed = false;
+        cached.loaded = false;
+        cached.error = undefined;
+        scenePBRStartTextureLoad(gl, cached);
+      }
+      return cached;
     }
 
     const texture = gl.createTexture();
@@ -5359,34 +5407,7 @@
       }
     });
 
-    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
-      return record;
-    }
-
-    // A .ktx2 URI holds a block-compressed container, not an image an <img>
-    // element can decode. Route it through the KTX2 reader. An image element
-    // fed a .ktx2 URI leaves the 1x1 white placeholder bound and never reports
-    // an error the caller can see.
-    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
-      scenePBRUploadKTX2Texture(gl, key, record);
-      return record;
-    }
-
-    if (target === gl.TEXTURE_CUBE_MAP) {
-      Object.assign(record, { failed: true, error: "cube descriptors require a KTX2 upload path" });
-    } else if (typeof Image === "function") {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const image = new Image();
-      record.image = image;
-      image.onload = function() { scenePBRUploadImageTexture(gl, record, image); };
-      image.onerror = function() {
-        if (!scenePBRTextureLive(record)) return;
-        record.failed = true;
-        scenePBRNotifyTextureSettled(record);
-      };
-      image.crossOrigin = "anonymous";
-      image.src = key;
-    }
-
+    scenePBRStartTextureLoad(gl, record);
     return record;
   }
 
@@ -11207,7 +11228,7 @@
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
       },
-      prepareCrowdAtlas, texturePreparation: { generation: textureCache._gosxGeneration, load: (url: any, descriptor: any, role: any, colorSpace: any) => scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace) },
+      prepareCrowdAtlas, texturePreparation: { generation: textureCache._gosxGeneration, load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace, retryFailed) },
       // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
       // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads
       // crowdMotionProgram directly (see drawPBRObjectList's rigidProgram

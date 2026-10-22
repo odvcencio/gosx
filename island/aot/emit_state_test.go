@@ -561,7 +561,7 @@ func TestEmitComputedBatchReadsMatchNativeVM(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("diamond=%v: %v want %v", diamond, got, want)
 		}
-		if !diamond && !reflect.DeepEqual(got[:2], [][]int64{{1, 0}, {2, 4}}) {
+		if !diamond && !reflect.DeepEqual(got[:2], [][]int64{{1, 2}, {2, 4}}) {
 			t.Fatalf("lazy batch reads: %v", got)
 		}
 	}
@@ -604,7 +604,7 @@ func TestEmitComputedDuplicateNotificationsKeepSubscriptionOrder(t *testing.T) {
 	refreshes = nil
 	signal.Batch(func() { base.Set(base.Get()); base.Set(base.Get()) })
 	want := append([]uint32{0, 0}, refreshes...)
-	if !reflect.DeepEqual(got, want) || len(refreshes) != 8 {
+	if !reflect.DeepEqual(got, want) || len(refreshes) != 3 {
 		t.Fatalf("callback order: %v want %v", got, want)
 	}
 }
