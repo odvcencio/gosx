@@ -20,11 +20,11 @@ const (
 )
 
 type computedLayout struct {
-	getters                                                                     []uint32
-	begin, commit, abort, initialize, snapshot, publish, deliver, notify, flush uint32
-	mask, tracking, clockLo, clockHi, committedClockLo, committedClockHi        uint32
-	batch, head, tail                                                           uint32
-	instancesBase                                                               int32
+	getters                                                                                 []uint32
+	begin, commit, abort, initialize, snapshot, publish, deliver, notify, flush, invalidate uint32
+	mask, tracking, clockLo, clockHi, committedClockLo, committedClockHi                    uint32
+	batch, head, tail                                                                       uint32
+	instancesBase                                                                           int32
 }
 
 func (e *expressionEmitter) setupComputed() error {
@@ -48,7 +48,7 @@ func (e *expressionEmitter) setupComputed() error {
 	if len(e.module.Data) > wasmgen.MaxDataBytes {
 		return fmt.Errorf("computed instance table exceeds constants")
 	}
-	indices := []*uint32{&c.begin, &c.commit, &c.abort, &c.initialize, &c.snapshot, &c.publish, &c.deliver, &c.notify, &c.flush}
+	indices := []*uint32{&c.begin, &c.commit, &c.abort, &c.initialize, &c.snapshot, &c.publish, &c.deliver, &c.notify, &c.flush, &c.invalidate}
 	for i := range c.getters {
 		indices = append(indices, &c.getters[i])
 	}
@@ -66,6 +66,7 @@ func (e *expressionEmitter) setupComputed() error {
 	put(c.deliver, e.computedDeliverFunction())
 	put(c.notify, e.computedNotifyFunction())
 	put(c.flush, e.computedFlushFunction())
+	put(c.invalidate, e.computedInvalidateFunction())
 	for i, def := range e.unit.Program.Computeds {
 		put(c.getters[i], e.computedGetFunction(uint32(i), def.Expr))
 	}
@@ -135,6 +136,21 @@ func (e *expressionEmitter) computedGetFunction(index uint32, body program.ExprI
 	b.memory(0x36, 2, 0)
 	b.op(0x03)
 	b.op(0x40)
+	// Settle recorded parents before clearing our dirty bit. Their publication
+	// may invalidate us again, but this evaluation will read their new caches.
+	for parent, getter := range e.computed.getters {
+		b.get(2)
+		b.memory(0x28, 2, 4)
+		b.i32(int32(uint32(1) << (16 + uint32(parent))))
+		b.op(0x71)
+		b.op(0x04)
+		b.op(0x40)
+		b.get(0)
+		b.index(0x10, getter)
+		b.op(0x1a)
+		b.errorGuard()
+		b.op(0x0b)
+	}
 	b.get(2)
 	b.memory(0x28, 2, 0)
 	b.i32(computedCreated)
@@ -535,10 +551,106 @@ func (e *expressionEmitter) computedPublishFunction() wasmgen.Function {
 	b.index(0x10, e.computed.snapshot)
 	b.set(4)
 	b.statusGuard()
+	invalidateSnapshot(&b, 4, 5, e.computed.invalidate)
 	b.get(4)
 	b.index(0x10, e.computed.deliver)
 	b.op(0x0b)
-	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 2, Body: b}
+	return wasmgen.Function{Signature: i32Signature(3), I32Locals: 3, Body: b}
+}
+
+// Invalidation is immediate; delivery may be deferred. Walking the captured
+// list preserves subscription order without allocating another callback list.
+func invalidateSnapshot(b *instructions, head, cursor, invalidate uint32) {
+	b.get(head)
+	b.set(cursor)
+	b.op(0x02)
+	b.op(0x40)
+	b.op(0x03)
+	b.op(0x40)
+	b.get(cursor)
+	b.op(0x45)
+	b.index(0x0d, 1)
+	b.get(cursor)
+	b.memory(0x28, 2, 4)
+	b.index(0x10, invalidate)
+	b.op(0x1a)
+	b.statusGuard()
+	b.get(cursor)
+	b.memory(0x28, 2, 0)
+	b.set(cursor)
+	b.index(0x0c, 0)
+	b.op(0x0b)
+	b.op(0x0b)
+}
+
+// Only VM Value computeds reach this backend: their values are incomparable
+// and every evaluation publishes. Mark their transitive dependents stale now;
+// a queued callback later refreshes only if a current read has not done so.
+func (e *expressionEmitter) computedInvalidateFunction() wasmgen.Function {
+	var b instructions
+	b.statusGuard()
+	b.i32(computedMetaBase + computedWorking)
+	b.get(0)
+	b.i32(computedMetaBytes)
+	b.op(0x6c)
+	b.op(0x6a)
+	b.set(1)
+	b.get(1)
+	b.memory(0x28, 2, 0)
+	b.i32(computedDirty)
+	b.op(0x71)
+	b.statusFailure(0)
+	b.get(1)
+	b.get(1)
+	b.memory(0x28, 2, 0)
+	b.i32(computedDirty)
+	b.op(0x72)
+	b.memory(0x36, 2, 0)
+	b.get(0)
+	b.i32(int32(e.state.computedStride))
+	b.op(0x6e)
+	b.i32(int32(e.state.computedStride))
+	b.op(0x6c)
+	b.set(2)
+	b.get(0)
+	b.i32(int32(e.state.computedStride))
+	b.op(0x70)
+	b.i32(16)
+	b.op(0x6a)
+	b.set(3)
+	for index := uint32(0); index < e.state.computedStride; index++ {
+		b.i32(computedMetaBase + computedWorking + int32(index)*computedMetaBytes)
+		b.get(2)
+		b.i32(computedMetaBytes)
+		b.op(0x6c)
+		b.op(0x6a)
+		b.set(1)
+		b.get(1)
+		b.memory(0x28, 2, 0)
+		b.i32(computedCreated)
+		b.op(0x71)
+		b.get(1)
+		b.memory(0x28, 2, 4)
+		b.i32(1)
+		b.get(3)
+		b.op(0x74)
+		b.op(0x71)
+		b.op(0x45)
+		b.op(0x45)
+		b.op(0x71)
+		b.op(0x04)
+		b.op(0x40)
+		b.get(2)
+		b.i32(int32(index))
+		b.op(0x6a)
+		b.index(0x10, e.computed.invalidate)
+		b.op(0x1a)
+		b.statusGuard()
+		b.op(0x0b)
+	}
+	b.i32(0)
+	b.op(0x0b)
+	return wasmgen.Function{Signature: i32Signature(1), I32Locals: 3, Body: b}
 }
 
 func (e *expressionEmitter) computedDeliverFunction() wasmgen.Function {
@@ -600,18 +712,6 @@ func (e *expressionEmitter) computedDeliverFunction() wasmgen.Function {
 func (e *expressionEmitter) computedNotifyFunction() wasmgen.Function {
 	var b instructions
 	b.statusGuard()
-	b.i32(computedMetaBase + computedWorking)
-	b.get(0)
-	b.i32(computedMetaBytes)
-	b.op(0x6c)
-	b.op(0x6a)
-	b.set(1)
-	b.get(1)
-	b.get(1)
-	b.memory(0x28, 2, 0)
-	b.i32(computedDirty)
-	b.op(0x72)
-	b.memory(0x36, 2, 0)
 	b.get(0)
 	b.i32(int32(e.state.computedStride))
 	b.op(0x6e)

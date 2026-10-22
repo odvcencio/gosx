@@ -303,6 +303,13 @@ func ResolveInitialTree(prog *program.Program, propsJSON string) *ResolvedTree {
 // Dispatch executes a named handler and returns the resulting patch ops.
 // All signal mutations within the handler body are batched into a single reconcile.
 func (island *Island) Dispatch(handlerName string, eventDataJSON string) []PatchOp {
+	return island.DispatchWithFlush(handlerName, eventDataJSON, nil)
+}
+
+// DispatchWithFlush lets a host finish shared notifications before the island's
+// reconciliation. The callback runs with the dispatch guard active, and writes
+// it makes are included in the returned patches.
+func (island *Island) DispatchWithFlush(handlerName string, eventDataJSON string, flush func()) []PatchOp {
 	if island == nil || island.vm == nil {
 		return nil
 	}
@@ -326,6 +333,9 @@ func (island *Island) Dispatch(handlerName string, eventDataJSON string) []Patch
 		island.evalHandlerBody(handler)
 	})
 	island.vm.ClearEventData()
+	if flush != nil {
+		flush()
+	}
 	return island.Reconcile()
 }
 

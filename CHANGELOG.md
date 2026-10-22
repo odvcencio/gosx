@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep derived reads current inside batched actions and source observers,
+  preserving cached descendants when a derived value stays equal. Match the
+  same settled reads and callback order in AOT islands. Deliver shared peers
+  once after each handler, before the writer returns its final patches.
+
 ## v0.57.18
 
 - Preserve asset fitting through retained model updates, keep Water shapes

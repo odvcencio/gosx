@@ -24,7 +24,7 @@ import (
 //go:embed island_aot_signal.stub
 var aotSignalStub string
 
-const aotStubRevision = "signal-api-v1:7efe0270ca59f827910d9b5dcf9e22159092e299d37564cb62612e1a148c83d3"
+const aotStubRevision = "signal-api-v1:a7d247b2cc06b6380bf73dcb7a3553014a07750480427e53e4a5d45d03828dfb"
 
 type aotCheckedSource struct {
 	fset             *token.FileSet
