@@ -242,6 +242,16 @@ type HubEntry struct {
 	// Document binds a server-rendered textarea view to this hub. Its optional
 	// runtime chunk owns editing, presence and caret lifecycle without app JavaScript.
 	Document *HubDocumentConfig `json:"document,omitempty"`
+
+	// ConnectionSignal names a shared signal that receives the hub connection
+	// state: {"state":"connecting|open|reconnecting|error","attempt":n,"at":ms}.
+	// The browser also stamps data-gosx-hub-connection on elements marked
+	// data-gosx-hub-status="<hub name>". Set it through SetHubLifecycle.
+	ConnectionSignal string `json:"connectionSignal,omitempty"`
+
+	// Resync asks the hub for its current state when the page resumes. Set it
+	// through SetHubLifecycle.
+	Resync *HubResyncConfig `json:"resync,omitempty"`
 }
 
 // HubRoundTripConfig configures a bootstrap-owned heartbeat that writes the
