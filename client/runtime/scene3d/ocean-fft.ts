@@ -358,4 +358,6 @@
   }
 
   window.__gosx_scene3d_ocean_fft_api = { frame: frame, resolve: resolve, pack: pack, travelAngle: travelAngle, MIP_WGSL: MIP_WGSL, LOOP_PERIOD: LOOP_PERIOD };
+  // What the WebGL2 scheduler (ocean-fft-gl.ts) shares with this file: one set of defaults, keys and foam constants.
+  window.__gosx_scene3d_ocean_fft_api.shared = { layoutKey: layoutKey, paramKey: paramKey, FOAM: FOAM, FOAM_WINDOW: FOAM_WINDOW, FOAM_RADIUS: FOAM_RADIUS, LOOP_PERIOD: LOOP_PERIOD };
 })();

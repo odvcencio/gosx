@@ -37,6 +37,8 @@
     "scene3d/ocean-query.ts",
     "scene3d/ocean-fft-surface.ts",
     "scene3d/ocean-fft.ts",
+    "scene3d/ocean-fft-surface-gl.ts",
+    "scene3d/ocean-fft-gl.ts",
     "scene3d/animation.ts",
     "scene3d/mount-backend.ts",
     "scene3d/dom-regions.ts",

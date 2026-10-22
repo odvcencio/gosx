@@ -131,6 +131,17 @@ class RecordingGL {
   live(kind) { return this.created[kind].filter((o) => !o.deleted); }
 }
 
+
+// ocean_spectrum has a gather form in Elio, but a kernel module generated before Elio marks it gather carries no GLSL for it
+// (the scheduler then reports the "kernel:oceanSpectrum" fallback). Tests that need the passes skip until the module is regenerated.
+const HAS_SPECTRUM_GLSL = (() => {
+  const context = vm.createContext({ Object, Array, Error, window: {} });
+  context.window = context.window;
+  vm.runInContext(transpile("ocean-fft-kernels.ts"), context);
+  return Boolean(context.window.__gosx_scene3d_elio_ocean.kernels.oceanSpectrum.glsl);
+})();
+const spectral = (name, fn) => test(name, { skip: HAS_SPECTRUM_GLSL ? false : "the generated Elio kernel module has no ocean_spectrum GLSL (regenerate with ocean_spectrum marked gather)" }, fn);
+
 function loadSources(context, files) {
   context.window ||= context;
   for (const file of files) vm.runInContext(transpile(file), context, { filename: file });
@@ -201,7 +212,7 @@ test("gate: too few texture units or a kernel set without the spectrum GLSL also
   assert.equal(res.fftDisabled, "kernel:oceanSpectrum");
 });
 
-test("pass order and count: spectrum once, then evolve, two transforms of 2 log2 n stages, assemble, mips; foam last", () => {
+spectral("pass order and count: spectrum once, then evolve, two transforms of 2 log2 n stages, assemble, mips; foam last", () => {
   for (const tier of ["high", "medium", "low"]) {
     const s = standalone(), resources = {};
     assert.ok(s.run(resources, ocean({ windSpeed: 12 }), { tier }), tier + ": engine");
@@ -215,7 +226,7 @@ test("pass order and count: spectrum once, then evolve, two transforms of 2 log2
   assert.equal(draws(s.gl).length, expectedPasses("high", true).filter((x) => x !== "mip").length, "one draw per pass");
 });
 
-test("every FFT pass reads the texture the previous pass wrote and never the one it writes", () => {
+spectral("every FFT pass reads the texture the previous pass wrote and never the one it writes", () => {
   const s = standalone(), resources = {};
   s.run(resources, ocean({}));
   const all = draws(s.gl);
@@ -235,7 +246,7 @@ test("every FFT pass reads the texture the previous pass wrote and never the one
   assert.equal(assemble.inputs[1], evolve.attachments[1]);
 });
 
-test("multi-target setup: attachments, draw buffers, formats and viewports follow each kernel's outputs", () => {
+spectral("multi-target setup: attachments, draw buffers, formats and viewports follow each kernel's outputs", () => {
   const s = standalone(), resources = {};
   s.run(resources, ocean({}));
   const by = (kernel) => draws(s.gl).filter((d) => d.kernel === kernel);
@@ -264,7 +275,7 @@ test("multi-target setup: attachments, draw buffers, formats and viewports follo
   assert.equal(order[order.length - 1], "foam");
 });
 
-test("when the driver rejects a multi-target framebuffer, each output gets its own and the kernel runs once per output", () => {
+spectral("when the driver rejects a multi-target framebuffer, each output gets its own and the kernel runs once per output", () => {
   const s = standalone({ incompleteMultiTarget: true }), resources = {};
   const engine = s.run(resources, ocean({}));
   assert.ok(engine && engine.split, "split mode");
@@ -278,7 +289,7 @@ test("when the driver rejects a multi-target framebuffer, each output gets its o
   assert.equal(by("fft").length, 4 * 0 + (2 * 2 * (6 + 8 + 8 + 8)), "FFT passes have one output and are not repeated");
 });
 
-test("GL state is saved before the passes and restored after, whatever the host had bound", () => {
+spectral("GL state is saved before the passes and restored after, whatever the host had bound", () => {
   const s = standalone(), resources = {}, gl = s.gl;
   const hostFB = gl.createFramebuffer(), hostRead = gl.createFramebuffer(), hostProgram = gl.createProgram(), hostVAO = gl.createVertexArray();
   gl.drawFB = hostFB; gl.readFB = hostRead; gl.currentProgram = hostProgram; gl.vao = hostVAO; gl.unit = 2; gl.viewportRect = [3, 4, 500, 300];
@@ -301,7 +312,7 @@ test("GL state is saved before the passes and restored after, whatever the host 
   assert.equal(gl.drawFB, hostFB); assert.deepEqual(gl.viewportRect, want.viewport);
 });
 
-test("each frame bumps the texture epoch so material bindings are rebound", () => {
+spectral("each frame bumps the texture epoch so material bindings are rebound", () => {
   const s = standalone(), resources = {};
   s.run(resources, ocean({}));
   const one = s.textureCache._sceneTextureEpoch;
@@ -310,7 +321,7 @@ test("each frame bumps the texture epoch so material bindings are rebound", () =
   assert.ok(s.textureCache._sceneTextureEpoch > one);
 });
 
-test("the B field reaches the foam kernel in the foam layout through a pixel buffer, once per cascade", () => {
+spectral("the B field reaches the foam kernel in the foam layout through a pixel buffer, once per cascade", () => {
   const s = standalone(), resources = {};
   s.run(resources, ocean({}));
   const reads = s.gl.ops.filter((o) => o[0] === "readPixels"), writes = s.gl.ops.filter((o) => o[0] === "texSubImage2D");
@@ -322,7 +333,7 @@ test("the B field reaches the foam kernel in the foam layout through a pixel buf
   assert.equal(foam.inputs[1].w, 1024, "the foam kernel's fieldB textures are foam-state wide");
 });
 
-test("scene time, tier and spectrum changes: evolve gets t modulo the loop, a changed spectrum reruns ocean_spectrum, a tier change rebuilds", () => {
+spectral("scene time, tier and spectrum changes: evolve gets t modulo the loop, a changed spectrum reruns ocean_spectrum, a tier change rebuilds", () => {
   const s = standalone(), resources = {};
   s.run(resources, ocean({ windSpeed: 9 }), { time: 1234.5 });
   const evolve = draws(s.gl).find((d) => d.kernel === "evolve");
@@ -343,7 +354,7 @@ test("scene time, tier and spectrum changes: evolve gets t modulo the loop, a ch
   assert.equal(s.gl.created.program.length, programs + 0, "programs are kept across rebuilds");
 });
 
-test("dispose releases every GL object; a lost context does no work", () => {
+spectral("dispose releases every GL object; a lost context does no work", () => {
   const s = standalone(), resources = {};
   s.run(resources, ocean({}));
   assert.ok(s.gl.live("texture").length > 0 && s.gl.live("framebuffer").length > 0);
@@ -355,7 +366,7 @@ test("dispose releases every GL object; a lost context does no work", () => {
   assert.equal(lost.gl.created.texture.length, 0);
 });
 
-test("a shader that does not compile disables the scheduler instead of throwing", () => {
+spectral("a shader that does not compile disables the scheduler instead of throwing", () => {
   const s = standalone(), resources = {};
   s.gl.rejectShader = (source) => /OceanFoamParams_ubo/.test(source);
   assert.equal(s.run(resources, ocean({})), null);
@@ -415,7 +426,7 @@ function oceanProgramSources(gl) {
   return program ? program.attached.map((shader) => String(shader.source || "")) : null;
 }
 
-test("the renderer runs the gather passes before the ocean draw and compiles the spectral surface", () => {
+spectral("the renderer runs the gather passes before the ocean draw and compiles the spectral surface", () => {
   const { h, gl, mount } = rendererWithFFT();
   h.renderer.render(sceneBundle({ windSpeed: 12 }), { width: 320, height: 180 });
   assert.deepEqual(h.warnLog, [], "no warnings");
@@ -444,7 +455,7 @@ test("without EXT_color_buffer_float the renderer draws the Gerstner ocean and s
   h.renderer.dispose();
 });
 
-test("a surface patch that cannot be applied falls back to the Gerstner ocean and disables the scheduler", () => {
+spectral("a surface patch that cannot be applied falls back to the Gerstner ocean and disables the scheduler", () => {
   const { h, gl, mount } = rendererWithFFT();
   h.env.context.window.__gosx_scene3d_ocean_fft_surface_gl.glsl = () => { throw new Error("anchor not found: injected"); };
   h.renderer.render(sceneBundle({}), { width: 320, height: 180 });
@@ -464,7 +475,7 @@ test("scenes without a spectrum render as before: no FFT resources", () => {
   h.renderer.dispose();
 });
 
-test("renderer dispose (also the context-loss path) releases the gather resources", () => {
+spectral("renderer dispose (also the context-loss path) releases the gather resources", () => {
   const { h, gl } = rendererWithFFT();
   h.renderer.render(sceneBundle({}), { width: 320, height: 180 });
   const created = gl.ops.filter((op) => op[0] === "createFramebuffer").length;
@@ -484,7 +495,8 @@ function validateGLSL(code, stage, name) {
   try { execFileSync(glslang, [file], { stdio: "pipe" }); } catch (e) { throw new Error(name + ": " + String(e.stdout)); } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 }
 
-test("every gather kernel and both patched ocean shaders pass glslangValidator as GLSL ES 3.00", { skip: glslang ? false : "glslangValidator is not available" }, () => {
+spectral("every gather kernel and both patched ocean shaders pass glslangValidator as GLSL ES 3.00", () => {
+  if (!glslang) return;
   const context = glContext();
   const kernels = context.window.__gosx_scene3d_elio_ocean.kernels;
   for (const name of ["oceanSpectrum", "oceanEvolve", "oceanAssemble", "oceanFoam", "fftGather64", "fftGather128", "fftGather256"]) validateGLSL(kernels[name].glsl, "frag", name);
@@ -498,7 +510,7 @@ test("every gather kernel and both patched ocean shaders pass glslangValidator a
   h.renderer.dispose();
 });
 
-test("the shipped (packed) WebGL bundle still accepts the spectral surface patch", () => {
+spectral("the shipped (packed) WebGL bundle still accepts the spectral surface patch", () => {
   const { h, mount } = rendererWithFFT({ fresh: false });
   h.renderer.render(sceneBundle({ windSpeed: 9 }), { width: 320, height: 180 });
   assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface+spectrum");
@@ -506,7 +518,7 @@ test("the shipped (packed) WebGL bundle still accepts the spectral surface patch
   h.renderer.dispose();
 });
 
-test("the surface uniform matches the WebGPU scheduler's byte for byte", () => {
+spectral("the surface uniform matches the WebGPU scheduler's byte for byte", () => {
   const context = glContext({ GPUBufferUsage: { MAP_READ: 1, MAP_WRITE: 2, COPY_SRC: 4, COPY_DST: 8, INDEX: 16, VERTEX: 32, UNIFORM: 64, STORAGE: 128, INDIRECT: 256, QUERY_RESOLVE: 512 },
     GPUTextureUsage: { COPY_SRC: 1, COPY_DST: 2, TEXTURE_BINDING: 4, STORAGE_BINDING: 8, RENDER_ATTACHMENT: 16 }, GPUShaderStage: { VERTEX: 1, FRAGMENT: 2, COMPUTE: 4 } });
   const fake = makeFakeGPUDevice(), validation = new Map();

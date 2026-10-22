@@ -157,3 +157,15 @@ func TestWGSLPackingLeavesTextPatchedShadersAsAuthored(t *testing.T) {
 		t.Errorf("other built-in shaders must still be packed: %s", packed)
 	}
 }
+
+// The spectral ocean chunk rewrites the WebGL2 ocean shaders by text too; the GLSL sources must ship as authored.
+func TestGLSLPackingLeavesTextPatchedShadersAsAuthored(t *testing.T) {
+	source := "const SCENE_OCEAN_VERTEX_GLSL = [\"void main() {\", \"  float level = 1.0;\", \"  vec3 p = vec3(1.0, level, 2.0);\", \"}\"].join(\"\\n\");\n" +
+		"const SCENE_OCEAN_FRAGMENT_GLSL = [\"void main() {\", \"  float level = 1.0;\", \"  vec3 p = vec3(level);\", \"}\"].join(\"\\n\");\n"
+	packed := packBuiltinGLSL(source)
+	for _, text := range []string{"  float level = 1.0;", "  vec3 p = vec3(1.0, level, 2.0);", "  vec3 p = vec3(level);"} {
+		if !strings.Contains(packed, text) {
+			t.Errorf("text-patched ocean shader changed: lost %q in %s", text, packed)
+		}
+	}
+}
