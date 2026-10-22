@@ -146,3 +146,10 @@ func prefixEngineURLJSON(prefix string, data json.RawMessage, shape engineURLSha
 	}
 	return data, false
 }
+
+// EnginePropsWithBasePath returns entry's props with the base path applied to
+// the URLs the runtime fetches. It lets the server prefix props it stores
+// outside the manifest, such as a deferred Scene3D's content-addressed props.
+func EnginePropsWithBasePath(prefix string, entry EngineEntry) json.RawMessage {
+	return enginePropsWithBasePath(prefix, entry)
+}

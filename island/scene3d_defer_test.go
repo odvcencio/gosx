@@ -213,3 +213,43 @@ func TestDeferredPropsRefNamesItsRoute(t *testing.T) {
 		t.Fatalf("a framework route must not be named: %s", manifest)
 	}
 }
+
+func TestStoredDeferredPropsCarryTheBasePath(t *testing.T) {
+	store := useTestSceneEntryStore(t)
+	r := NewRenderer("main")
+	r.SetBasePath("/.proxy/game")
+	small := scene.Props{Graph: scene.NewGraph(scene.Model{ID: "m", Src: "/models/small.glb"})}
+	base := scene.Props{
+		Graph: scene.NewGraph(scene.Model{ID: "m", Src: "/models/hero.glb"}),
+		Defer: &scene.Defer{Variants: []scene.DeferVariant{{Media: "(max-width: 767px)", Props: &small}}},
+	}
+	cfg := base.EngineConfig()
+	cfg.MountID = "hero"
+	r.RenderEngine(cfg, gosx.Text(""))
+	manifest, _ := r.ManifestJSON()
+	var m struct {
+		Engines []struct {
+			PropsRef string
+			Defer    struct{ Variants []struct{ PropsRef string } }
+		}
+	}
+	if err := json.Unmarshal([]byte(manifest), &m); err != nil {
+		t.Fatal(err)
+	}
+	hashOf := func(ref string) string {
+		ref = strings.TrimPrefix(ref, "/.proxy/game")
+		return strings.TrimSuffix(strings.TrimPrefix(ref, SceneEntryPathPrefix), ".json")
+	}
+	for name, ref := range map[string]string{"base": m.Engines[0].PropsRef, "variant": m.Engines[0].Defer.Variants[0].PropsRef} {
+		body, ok := store.Get(hashOf(ref))
+		if !ok {
+			t.Fatalf("%s props not stored under %s", name, ref)
+		}
+		if !strings.Contains(string(body), `"/.proxy/game/models/`) || strings.Contains(string(body), `"/models/`) {
+			t.Fatalf("%s props must carry the base path: %s", name, body)
+		}
+	}
+	if !strings.Contains(manifest, `"href":"/.proxy/game/models/hero.glb"`) {
+		t.Fatalf("preload hint lost the base path: %s", manifest)
+	}
+}

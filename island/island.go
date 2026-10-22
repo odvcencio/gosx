@@ -1620,12 +1620,14 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 			store := DefaultSceneEntryStore()
 			variants := cfg.Scene3DProbe.DeferVariants
 			if store != nil && !d.Inline && len(entry.Props) > 0 {
-				base := entry.Props
+				// The stored bytes are served as they are, so they carry the
+				// base path the manifest would otherwise add.
+				base := hydrate.EnginePropsWithBasePath(r.basePath, *entry)
 				if len(variants) > 0 {
 					base = withoutDeferVariants(base)
 					for _, v := range variants {
 						if len(v.Props) > 0 && strings.TrimSpace(v.Media) != "" {
-							entry.Defer.Variants = append(entry.Defer.Variants, hydrate.EngineDeferVariant{Media: v.Media, PropsRef: r.sceneEntryRef(store, v.Props)})
+							entry.Defer.Variants = append(entry.Defer.Variants, hydrate.EngineDeferVariant{Media: v.Media, PropsRef: r.sceneEntryRef(store, hydrate.EnginePropsWithBasePath(r.basePath, hydrate.EngineEntry{Component: entry.Component, Kind: entry.Kind, Props: v.Props}))})
 						}
 					}
 				}
