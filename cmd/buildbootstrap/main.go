@@ -665,8 +665,10 @@ var outputs = []output{
 			sourceFile("../runtime/scene3d/ocean-fft-kernels.ts"),
 			sourceFile("../runtime/scene3d/ocean-fft-surface.ts"),
 			sourceFile("../runtime/scene3d/ocean-fft.ts"),
+			sourceFile("../runtime/scene3d/elio-graph.ts"),
+			sourceFile("../runtime/scene3d/elio-graph-gather.ts"),
+			sourceFile("../runtime/scene3d/elio-graph-compute.ts"),
 			sourceFile("../runtime/scene3d/ocean-fft-surface-gl.ts"),
-			sourceFile("../runtime/scene3d/ocean-fft-gl.ts"),
 		},
 	},
 	{

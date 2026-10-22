@@ -295,6 +295,7 @@ interface Window {
   __gosx_scene3d_ocean_fft_surface: any;
   __gosx_scene3d_ocean_fft_api: any;
   __gosx_scene3d_ocean_fft_surface_gl: any;
+  __gosx_elio_graph: any;
   __gosx_scene3d_ocean_fft_gl_api: any;
   __gosx_scene3d_vessel_api: any;
   __gosx_scene3d_vessel_navigation: any;

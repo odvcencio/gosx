@@ -1,0 +1,235 @@
+// Generic Elio pass-graph runner (lazy chunk bootstrap-feature-scene3d-ocean-fft.js).
+//
+// Elio emits, per backend and quality tier, a pass graph next to its kernels (NAME.graphs["webgl2/high"], ...):
+// resources with concrete sizes and formats, passes in order with kernel, bindings, dispatch or target size,
+// uniform values as constants or named parameters, ping-pong pairs and the textures exported to a surface.
+// This file is the one runner for every such graph. An effect (the ocean adapter) supplies only the graph's
+// named parameter values each frame; it holds no pass logic.
+//
+// The two executors (elio-graph-gather.ts, elio-graph-compute.ts) register themselves in
+// window.__gosx_elio_graph.executors. A graph that cannot be built or run is disabled, never thrown:
+// runner.failed says why and the caller keeps whatever it draws without the graph.
+//
+//   const runner = window.__gosx_elio_graph.create({ module: kernelSet, backend: "webgl2", tier: "high", host: { gl, caps, textureCache } });
+//   runner.setValue("windSpeed", 12);                       // a scene update changed a "value" parameter
+//   if (runner.run({ time: 12.5, dt: 0.016, cameraX: 0, cameraY: 30, cameraZ: 0 })) surface.bind(runner.export("disp0"));
+//
+// Parameters come from the graph, not from effect code. Each declares its source: "value" (set from the scene, with an
+// optional tween in presentation seconds), "frame" (time, dt, cameraX/Y/Z), "expr" (add, sub, mul, div, mod, floor, min,
+// max over earlier parameters or numbers) or "accumulate" (integrates another parameter by dt). They are evaluated in
+// declaration order every frame. A pass runs when its "when" holds: "always", "param:<p>" or "changed:<p1>,<p2>" (the
+// first frame, and any frame where a listed parameter changed, including during a tween).
+//
+// host (webgl2): gl, caps(gl) -> { colorBufferFloat }, textureCache (its _sceneTextureEpoch is bumped), firstUnit (default 4).
+// host (webgpu): device, create(device, "compute", descriptor) -> validated pipeline handle, validation map, guard.
+(function () {
+  // "ocean_evolve" -> "oceanEvolve", "fft_gather_64" -> "fftGather64": the module keys kernels in camel case.
+  function kernelKey(name: string): string {
+    return name.replace(/_([a-z0-9])/g, function (_m: string, c: string) { return c.toUpperCase(); });
+  }
+
+  function finiteNumber(v: any): number {
+    if (typeof v === "boolean") return v ? 1 : 0;
+    return Number(v);
+  }
+  // value resolves a uniform field value: a number, or "param:<name>" read from this frame's parameters.
+  function value(v: any, params: any, where: string): number {
+    if (typeof v === "string") {
+      if (v.indexOf("param:") !== 0) throw new Error("elio-graph: " + where + ": bad value " + v);
+      const name = v.slice(6);
+      if (!(name in params)) throw new Error("elio-graph: parameter " + name + " was not supplied");
+      return finiteNumber(params[name]);
+    }
+    return finiteNumber(v);
+  }
+
+  // pack writes one uniform block as the kernel's layout says (WGSL offsets on webgpu, std140 on webgl2). A missing
+  // field or a field the layout does not have throws; padding fields default to zero.
+  function pack(layout: any, values: any, params: any, where: string): ArrayBuffer {
+    const out = new ArrayBuffer(Math.max(16, Math.ceil(layout.size / 16) * 16)), view = new DataView(out);
+    const seen: any = {};
+    for (const f of layout.fields) {
+      let v = values[f.name];
+      if (v === undefined) {
+        if (!/^_pad/.test(f.name)) throw new Error("elio-graph: " + where + ": uniform " + layout.struct + " lacks a value for " + f.name);
+        v = 0;
+      }
+      seen[f.name] = true;
+      const n = value(v, params, where);
+      if (f.type === "u32") view.setUint32(f.offset, n >>> 0, true);
+      else if (f.type === "i32") view.setInt32(f.offset, n | 0, true);
+      else if (f.type === "f32") view.setFloat32(f.offset, n, true);
+      else throw new Error("elio-graph: " + where + ": unsupported uniform type " + f.type);
+    }
+    for (const k of Object.keys(values)) if (!seen[k]) throw new Error("elio-graph: " + where + ": uniform " + layout.struct + " has no field " + k);
+    return out;
+  }
+  // isStatic: a uniform whose values hold no parameter reference is written once.
+  function isStatic(values: any): boolean {
+    for (const k of Object.keys(values)) if (typeof values[k] === "string") return false;
+    return true;
+  }
+
+
+  const FRAME_SOURCES: any = { time: 1, dt: 1, cameraX: 1, cameraY: 1, cameraZ: 1 };
+  const OPS: any = {
+    add: function (a: number, b: number) { return a + b; }, sub: function (a: number, b: number) { return a - b; },
+    mul: function (a: number, b: number) { return a * b; }, div: function (a: number, b: number) { return b === 0 ? 0 : a / b; },
+    mod: function (a: number, b: number) { return b === 0 ? 0 : a - Math.floor(a / b) * b; }, // GLSL/WGSL mod: the sign follows b
+    floor: function (a: number) { return Math.floor(a); }, min: function (a: number, b: number) { return Math.min(a, b); }, max: function (a: number, b: number) { return Math.max(a, b); },
+  };
+  function coerce(type: string, n: number): number {
+    if (!Number.isFinite(n)) return 0;
+    if (type === "bool") return n ? 1 : 0;
+    if (type === "u32") return Math.max(0, Math.floor(n)) >>> 0;
+    if (type === "i32") return Math.trunc(n) | 0;
+    return Math.fround(n);
+  }
+  // params evaluates a graph's parameters. State (tweens, accumulators, the previous frame's values) lives here.
+  function createParams(decls: any[]): any {
+    const current: any = {}, prev: any = {}, tweens: any = {}, accum: any = {}, targets: any = {};
+    let first = true;
+    for (const d of decls) {
+      const src = d.source || { kind: "value", value: 0 };
+      if (src.kind === "value") targets[d.name] = coerce(d.type, src.value || 0);
+    }
+    const ref = function (a: any): number {
+      if (typeof a === "number") return a;
+      if (typeof a === "string" && a.indexOf("param:") === 0) { const n = a.slice(6); return n in current ? current[n] : 0; }
+      throw new Error("elio-graph: bad argument " + a);
+    };
+    const api: any = {
+      current: current, changed: {},
+      // set records a scene update of a "value" parameter; its tween (if any) starts on the next frame.
+      set: function (name: string, v: number) {
+        const d = decls.find(function (x: any) { return x.name === name; });
+        if (!d || (d.source && d.source.kind !== "value")) throw new Error("elio-graph: " + name + " is not a value parameter");
+        const n = coerce(d.type, Number(v));
+        if (n === targets[name]) return;
+        targets[name] = n;
+        if (d.tween > 0 && !first) tweens[name] = { from: current[name], start: null };
+        else delete tweens[name];
+      },
+      evaluate: function (frame: any) {
+        const time = Number(frame.time) || 0, dt = Number(frame.dt) || 0;
+        for (const d of decls) {
+          const src = d.source || { kind: "value", value: 0 };
+          let n = 0;
+          if (src.kind === "value") {
+            n = targets[d.name];
+            const tw = tweens[d.name];
+            if (tw) {
+              if (tw.start === null) tw.start = time;
+              const k = Math.min(1, Math.max(0, (time - tw.start) / d.tween));
+              if (k >= 1) delete tweens[d.name]; else n = tw.from + (n - tw.from) * k;
+            }
+          } else if (src.kind === "frame") {
+            if (!FRAME_SOURCES[src.name]) throw new Error("elio-graph: unknown frame source " + src.name);
+            n = src.name === "time" ? time : src.name === "dt" ? dt : Number(frame[src.name]) || 0;
+          } else if (src.kind === "expr") {
+            const op = OPS[src.op];
+            if (!op) throw new Error("elio-graph: unknown op " + src.op);
+            n = op(ref(src.args[0]), src.args.length > 1 ? ref(src.args[1]) : 0);
+          } else if (src.kind === "accumulate") {
+            accum[d.name] = (accum[d.name] || 0) + ref(src.of) * dt;
+            n = accum[d.name];
+          } else throw new Error("elio-graph: unknown parameter source " + src.kind);
+          current[d.name] = coerce(d.type, n);
+        }
+        for (const d of decls) api.changed[d.name] = first || current[d.name] !== prev[d.name];
+        for (const d of decls) prev[d.name] = current[d.name];
+        first = false;
+      },
+    };
+    return api;
+  }
+  // holds decides whether a pass runs this frame.
+  function holds(when: any, params: any, changed: any): boolean {
+    if (!when || when === "always") return true;
+    if (when.indexOf("param:") === 0) return Boolean(params[when.slice(6)]);
+    if (when.indexOf("changed:") === 0) return when.slice(8).split(",").some(function (n: string) { return Boolean(changed[n.trim()]); });
+    throw new Error("elio-graph: bad when " + when);
+  }
+
+  // check rejects a graph the runner cannot execute before any GPU object exists. Elio validates deeper at emit time.
+  function check(graph: any, module: any, backend: string): void {
+    if (!graph || graph.version !== 1) throw new Error("elio-graph: unsupported graph version");
+    if (graph.backend !== backend) throw new Error("elio-graph: graph is for " + graph.backend + ", not " + backend);
+    const resources: any = {};
+    for (const r of graph.resources) resources[r.name] = r;
+    const params: any = {};
+    for (const p of graph.params) params[p.name] = true;
+    const ref = function (v: any) { if (typeof v === "string" && v.indexOf("param:") === 0 && !params[v.slice(6)]) throw new Error("elio-graph: undeclared parameter " + v.slice(6)); };
+    for (const p of graph.passes) {
+      const w = p.when || "always";
+      if (w.indexOf("param:") === 0) ref(w);
+      else if (w.indexOf("changed:") === 0) { for (const n of w.slice(8).split(",")) if (!params[n.trim()]) throw new Error("elio-graph: undeclared parameter " + n.trim()); }
+      else if (w !== "always") throw new Error("elio-graph: pass " + p.name + ": bad when " + w);
+      if (p.type === "mipmap") { if (!resources[p.resource]) throw new Error("elio-graph: pass " + p.name + ": unknown resource " + p.resource); continue; }
+      if (!module.kernels[kernelKey(p.kernel)]) throw new Error("elio-graph: pass " + p.name + ": the module has no kernel " + p.kernel);
+      for (const b of p.bindings) if (!resources[b.resource]) throw new Error("elio-graph: pass " + p.name + ": unknown resource " + b.resource);
+      for (const u of p.uniforms || []) for (const k of Object.keys(u.values)) ref(u.values[k]);
+    }
+    for (const pair of graph.frameSwaps || []) for (const n of pair) if (!resources[n]) throw new Error("elio-graph: frameSwaps names unknown resource " + n);
+    for (const k of Object.keys(graph.exports || {})) {
+      const r = resources[graph.exports[k]];
+      if (!r || r.kind !== "texture") throw new Error("elio-graph: export " + k + " must name a texture resource");
+    }
+  }
+
+  // create builds a runner for one graph. options: module (the generated kernel set), backend, tier, graph (optional override), host.
+  function create(options: any): any {
+    const backend = options.backend, module = options.module, host = options.host || {};
+    const runner: any = { graph: null, backend: backend, ready: false, failed: null, disposed: false, buildCount: 0, run: run, setValue: setValue, params: null, export: exportTexture, dispose: dispose, fail: fail };
+    let executor: any = null, evaluator: any = null;
+    const disable = function (error: any): void {
+      if (runner.failed) return;
+      runner.failed = (error && error.fallback) || "error";
+      runner.error = error;
+      if (executor) { try { executor.dispose(); } catch (_e) {} executor = null; }
+      runner.ready = false;
+      if (options.onFail) options.onFail(runner.failed, error);
+      if (!(error && error.fallback) && typeof console !== "undefined" && console.warn) console.warn("elio-graph: graph disabled: " + (error && error.message ? error.message : String(error)));
+    };
+    try {
+      const graph = options.graph || (module.graphs && module.graphs[backend + "/" + (options.tier || "high")]);
+      if (!graph) throw Object.assign(new Error("elio-graph: no graph for " + backend + "/" + options.tier), { fallback: "no-graph" });
+      check(graph, module, backend);
+      const make = window.__gosx_elio_graph.executors[backend];
+      if (!make) throw Object.assign(new Error("elio-graph: no executor for " + backend), { fallback: "no-executor" });
+      runner.graph = graph;
+      evaluator = runner.params = createParams(graph.params);
+      executor = make({ graph: graph, module: module, host: host, pack: pack, isStatic: isStatic, kernelKey: kernelKey, holds: holds, label: options.label || graph.name });
+      runner.buildCount = 1;
+      runner.ready = executor.isReady();
+    } catch (error) { disable(error); }
+
+    // setValue is how a scene update reaches a "value" parameter.
+    function setValue(name: string, v: number): void {
+      if (!evaluator || runner.failed) return;
+      try { evaluator.set(name, v); } catch (error) { disable(error); }
+    }
+    // run evaluates the parameters for this frame and executes the passes. frame: time, dt, cameraX/Y/Z (parameter sources),
+    // and for webgpu the command encoder. It returns false, without evaluating, while pipelines are still validating.
+    function run(frame: any): boolean {
+      if (!executor || runner.failed || runner.disposed) return false;
+      try {
+        runner.ready = executor.isReady();
+        if (!runner.ready) return false;
+        const f = frame || {};
+        evaluator.evaluate(f);
+        return executor.run(evaluator.current, f, evaluator.changed) !== false;
+      } catch (error) { disable(error); return false; }
+    }
+    function exportTexture(name: string): any { return executor && !runner.failed ? executor.export(name) : null; }
+    function fail(reason: string): void { disable({ message: reason, fallback: reason }); }
+    function dispose(): void {
+      if (runner.disposed) return;
+      runner.disposed = true; runner.ready = false;
+      if (executor) { try { executor.dispose(); } catch (_e) {} executor = null; }
+    }
+    return runner;
+  }
+
+  window.__gosx_elio_graph = { create: create, pack: pack, kernelKey: kernelKey, check: check, holds: holds, createParams: createParams, executors: {} };
+})();
