@@ -22,8 +22,20 @@
     { size: 37, kMin: 0.8, kMax: 5.4 },
     { size: 5.3, kMin: 5.4, kMax: 37 },
   ];
-  // threshold is the Jacobian below which crests inject foam; gain is per 1/60 s; statelessGain drives the distant, stateless foam.
-  const FOAM = { tau: 5, threshold: 0.72, gain: 1, statelessGain: 3.5 };
+  // Foam, in one place. Crests inject foam where the combined Jacobian J of the horizontal displacement drops below a
+  // threshold (J < 1 compresses the surface, J < 0 folds it). Two choices keep foam tied to the sea state:
+  //   - J is formed with lambda = foamLambda, not the authored choppiness, so a low Choppiness (the Blackglass cove
+  //     uses 0.32) changes how far crests lean, not whether they break;
+  //   - the threshold rises with wind speed U (m/s): 0 at 5 m/s and below, so a glassy sea carries no foam, and
+  //     maxThreshold from windHigh up. threshold(U) = maxThreshold * smoothstep(windLow, windHigh, U).
+  // Injected foam persists for tau seconds, which stretches each crest's injections into streaks behind it.
+  //   gain           per 1/60 s frame (scaled by the frame time): how fast a crest below the threshold fills a texel
+  //   statelessGain  the same ramp for the stateless foam the shader derives from J beyond the persistent window
+  const FOAM = { tau: 6, foamLambda: 1, maxThreshold: 0.64, windLow: 5, windHigh: 9, gain: 0.9, statelessGain: 3.5 };
+  function foamThreshold(windSpeed: number): number {
+    const t = Math.min(1, Math.max(0, (windSpeed - FOAM.windLow) / (FOAM.windHigh - FOAM.windLow)));
+    return FOAM.maxThreshold * t * t * (3 - 2 * t);
+  }
   // Four-corner WGSL downsample. Elio's ocean_mip reads a storage buffer and writes a texture, so it cannot
   // chain levels on WebGPU; this reads the previous level as a texture instead (same 2x2 box filter).
   const MIP_WGSL = [
@@ -317,7 +329,7 @@
       const cs = res.cascades, sz = [1, 1, 1, 1], ns = [1, 1, 1, 1];
       for (let i = 0; i < cs.length; i++) { sz[i] = cs[i].c.size; ns[i] = cs[i].n; }
       q.writeBuffer(f.u, 0, pack(layoutOf(K.oceanFoam), { width: f.width, cascades: cs.length, originX: ox, originZ: oz, shiftX: ox - prev[0], shiftZ: oz - prev[1],
-        dt: dt, tau: FOAM.tau, threshold: FOAM.threshold, gain: FOAM.gain * dt * 60, lambda: r.lambda, cell: f.cell,
+        dt: dt, tau: FOAM.tau, threshold: foamThreshold(r.windSpeed), gain: FOAM.gain * dt * 60, lambda: FOAM.foamLambda, cell: f.cell,
         n0: ns[0], n1: ns[1], n2: ns[2], n3: ns[3], size0: sz[0], size1: sz[1], size2: sz[2], size3: sz[3] }));
       run(pipelines.foam, f.groups[foamFlip], Math.ceil(f.width * f.width / 64));
       foamFlip = 1 - foamFlip;
@@ -328,7 +340,7 @@
       for (let i = 0; i < cs.length; i++) {
         d[i * 4] = cs[i].c.size; d[i * 4 + 1] = Math.sqrt(Math.max(cs[i].c.kMin, 1e-6) * cs[i].c.kMax); d[i * 4 + 2] = cs[i].n; d[i * 4 + 3] = 1;
       }
-      d[16] = 1 / (f.cell * f.width); d[17] = 1; d[18] = FOAM.threshold; d[19] = FOAM.statelessGain;
+      d[16] = 1 / (f.cell * f.width); d[17] = r.lambda > 0.01 ? FOAM.foamLambda / r.lambda : 0; d[18] = foamThreshold(r.windSpeed); d[19] = FOAM.statelessGain;
       d[20] = Math.max(0.3, 0.14 * r.windSpeed * r.windSpeed / 9.81); d[23] = FOAM_RADIUS;
       q.writeBuffer(surfaceUniform, 0, d);
     }
@@ -357,5 +369,5 @@
     return eng;
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, resolve: resolve, pack: pack, travelAngle: travelAngle, MIP_WGSL: MIP_WGSL, LOOP_PERIOD: LOOP_PERIOD };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, resolve: resolve, pack: pack, travelAngle: travelAngle, foamThreshold: foamThreshold, FOAM: FOAM, MIP_WGSL: MIP_WGSL, LOOP_PERIOD: LOOP_PERIOD };
 })();

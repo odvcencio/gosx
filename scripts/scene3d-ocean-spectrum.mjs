@@ -63,6 +63,8 @@ for (const height of [30, 120, 300]) {
     cases.push({ name: `spectrum-wind${wind}-h${height}`, height, spectrum: { windSpeed: wind, fetch: 300, peakEnhancement: 3.3, spread: 8, swell: wind === 9 ? 0.25 : 0, swellDirection: -35, seed: 7 } });
   }
 }
+// Glassy and onset winds, for the foam check.
+for (const wind of [3, 10]) cases.push({ name: `spectrum-wind${wind}-h30`, height: 30, spectrum: { windSpeed: wind, fetch: 300, peakEnhancement: 3.3, spread: 8, swell: 0, seed: 7 } });
 for (const height of [30, 120, 300]) {
   for (const [wind, waveHeight, waveLength] of [[9, 1.0, 38], [15, 2.2, 70]]) {
     cases.push({ name: `gerstner-wind${wind}-h${height}`, height, gerstner: { waveHeight, waveLength } });
@@ -70,7 +72,7 @@ for (const height of [30, 120, 300]) {
 }
 const selected = cases.filter(c => !only || c.name.includes(only));
 
-const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames]) => {
+const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, foam]) => {
   const api = window.__gosx_scene3d_api;
   const canvas = document.getElementById('c');
   const a = await navigator.gpu.requestAdapter();
@@ -89,7 +91,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
   let time = 100;
   for (const c of cases) {
     const camera = { x: 0, y: c.height, z: 0, rotationX: -0.045 - 0.25 * Math.min(1, c.height / 300), rotationY: 0.6, fov: 62, near: 0.5, far: 20000 };
-    const ocean = Object.assign({ level: 0, extent: 8000, choppiness: 0.7, windDirection: 20, foam: 0.9 }, c.gerstner || {});
+    const ocean = Object.assign({ level: 0, extent: 8000, choppiness: 0.7, windDirection: 20, foam }, c.gerstner || {});
     if (c.spectrum) ocean.spectrum = c.spectrum;
     let status = '', first = null;
     const gpu = [];
@@ -121,7 +123,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     images.push({ name: c.name, url: copy.toDataURL('image/png') });
   }
   return { results: out, images, adapter };
-}, [selected, W, H, frames]);
+}, [selected, W, H, frames, Number(arg('--foam', '0.9'))]);
 await browser.close();
 if (adapter) console.log('adapter', JSON.stringify(adapter));
 if (outDir) for (const image of images) fs.writeFileSync(path.join(outDir, image.name + '.png'), Buffer.from(image.url.split(',')[1], 'base64'));
