@@ -12,14 +12,16 @@ import (
 // in a window that goroutine B opened.
 var (
 	trackerMu     sync.Mutex
-	trackerStacks map[uint64][]*dependencyTracker
+	trackerStacks map[uint64]*dependencyTracker
 	openTrackers  atomic.Int32
+	trackerPool   = sync.Pool{New: func() any { return new(dependencyTracker) }}
 )
 
 type dependencyTracker struct {
-	mu   sync.Mutex
-	deps []dependency
-	seen map[Subscribable]bool
+	mu     sync.Mutex
+	parent *dependencyTracker
+	deps   []dependency
+	seen   map[Subscribable]struct{}
 }
 
 type dependency struct {
@@ -38,55 +40,85 @@ func recordDependency(s Subscribable, revision uint64) {
 	gid := goroutineID()
 
 	trackerMu.Lock()
-	stack := trackerStacks[gid]
-	if len(stack) == 0 {
-		trackerMu.Unlock()
+	t := trackerStacks[gid]
+	trackerMu.Unlock()
+	if t == nil {
 		return
 	}
-	t := stack[len(stack)-1]
-	trackerMu.Unlock()
 
 	t.mu.Lock()
-	if !t.seen[s] {
-		t.seen[s] = true
-		t.deps = append(t.deps, dependency{source: s, revision: revision})
+	defer t.mu.Unlock()
+	// Most derived values read only a few sources. A short scan avoids a
+	// hash table for those windows; larger dependency sets keep O(1) lookup.
+	if len(t.deps) < 8 {
+		for _, dep := range t.deps {
+			if dep.source == s {
+				return
+			}
+		}
+	} else {
+		if len(t.seen) == 0 {
+			if t.seen == nil {
+				t.seen = make(map[Subscribable]struct{})
+			}
+			for _, dep := range t.deps {
+				t.seen[dep.source] = struct{}{}
+			}
+		}
+		if _, found := t.seen[s]; found {
+			return
+		}
+		t.seen[s] = struct{}{}
 	}
-	t.mu.Unlock()
+	t.deps = append(t.deps, dependency{source: s, revision: revision})
 }
 
 // trackDependencies runs fn and reports every signal that fn read on the
-// calling goroutine. Nested windows are supported.
+// calling goroutine. Nested windows are supported. The returned dependencies
+// belong to the caller; only cleared tracking scratch is shared through a pool.
 func trackDependencies[T any](fn func() T) (T, []dependency) {
-	t := &dependencyTracker{
-		seen: make(map[Subscribable]bool),
-	}
+	t := trackerPool.Get().(*dependencyTracker)
 	gid := goroutineID()
 
 	openTrackers.Add(1)
 	trackerMu.Lock()
 	if trackerStacks == nil {
-		trackerStacks = make(map[uint64][]*dependencyTracker)
+		trackerStacks = make(map[uint64]*dependencyTracker)
 	}
-	trackerStacks[gid] = append(trackerStacks[gid], t)
+	t.parent = trackerStacks[gid]
+	trackerStacks[gid] = t
 	trackerMu.Unlock()
 
-	// Pop the window even when fn panics. A leaked window would silently
-	// attach every later read to a dead computed value.
+	// Pop and clear the window even when fn panics. Neither subsequent reads
+	// nor pooled scratch may retain a dependency of an abandoned computation.
 	defer func() {
 		trackerMu.Lock()
-		stack := trackerStacks[gid]
-		if n := len(stack); n > 0 {
-			stack = stack[:n-1]
-			if len(stack) == 0 {
-				delete(trackerStacks, gid)
-			} else {
-				trackerStacks[gid] = stack
-			}
+		if t.parent == nil {
+			delete(trackerStacks, gid)
+		} else {
+			trackerStacks[gid] = t.parent
 		}
 		trackerMu.Unlock()
 		openTrackers.Add(-1)
+		t.mu.Lock()
+		t.parent = nil
+		if cap(t.deps) > 128 {
+			// An unusually large computation must not permanently enlarge
+			// the scratch retained by ordinary, short tracking windows.
+			t.deps = nil
+			t.seen = nil
+		} else {
+			clear(t.deps)
+			t.deps = t.deps[:0]
+			clear(t.seen)
+		}
+		t.mu.Unlock()
+		trackerPool.Put(t)
 	}()
 
 	val := fn()
-	return val, t.deps
+	t.mu.Lock()
+	deps := append([]dependency(nil), t.deps...)
+	t.mu.Unlock()
+	return val, deps
 }
