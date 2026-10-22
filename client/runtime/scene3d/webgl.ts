@@ -5341,8 +5341,8 @@
       return null;
     }
     var cacheKey = scenePBRTextureCacheKey(descriptor);
-    if (textureMap.has(cacheKey)) {
-      const cached = textureMap.get(cacheKey);
+    const cached = textureMap.get(cacheKey);
+    if (cached) {
       if (retryFailed && cached.failed && scenePBRTextureLive(cached)) {
         cached.failed = false;
         cached.loaded = false;

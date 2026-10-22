@@ -3685,8 +3685,8 @@
     var key = descriptor.uri;
     if (!key) return null;
     var cacheKey = wgpuTextureCacheKey(descriptor);
-    if (cache.has(cacheKey)) {
-      var cached = cache.get(cacheKey);
+    var cached = cache.get(cacheKey);
+    if (cached) {
       if (retryFailed && cached.failed && !wgpuTextureRecordDisposed(cached)) {
         cached.failed = false;
         cached.loaded = false;
