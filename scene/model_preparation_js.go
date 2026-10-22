@@ -95,7 +95,8 @@ func (s *Surface) PrepareModels(ctx context.Context, requests []ModelPreparation
 // tier, then commits the new mount scope and rehydrates those models. Until all
 // selected material maps upload, the old scene remains in use. A failed,
 // canceled, or stale preparation returns an error and does not claim the new
-// profile. requests must include every active model source on the mount.
+// profile. requests must include every active model source on the mount. Up to
+// 256 selected models are prepared in bounded batches of 32.
 func (s *Surface) ApplyTextureProfile(ctx context.Context, profile TextureDeliveryProfile, requests []ModelPreparation) (result ModelPreparationResult, err error) {
 	defer surfaceRecover(&err)
 	if profile != TextureDeliveryAuto && profile != TextureDeliveryLow && profile != TextureDeliveryStandard && profile != TextureDeliveryHigh {
@@ -107,7 +108,7 @@ func (s *Surface) ApplyTextureProfile(ctx context.Context, profile TextureDelive
 	if err = ctx.Err(); err != nil {
 		return result, err
 	}
-	data, err := modelPreparationSnapshot(requests)
+	data, err := modelPreparationSnapshotLimit(requests, 256)
 	if err != nil {
 		return result, err
 	}

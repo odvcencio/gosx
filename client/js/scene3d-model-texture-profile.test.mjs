@@ -53,7 +53,7 @@ function harness() {
   };
   const requests = [{ id: "hero", src: "/hero.glb" }];
   const module = { prepare: (_mount, _requests, _signal, scope) => { module.scope = scope; return preload.promise; } };
-  const apply = (signal = new AbortController().signal) => context.sceneApplyMountedTextureProfile(state, {}, requests, "low", signal, module, hooks);
+  const apply = (signal = new AbortController().signal, selection = requests) => context.sceneApplyMountedTextureProfile(state, {}, selection, "low", signal, module, hooks);
   return { apply, state, oldScope, preload, hydration, module, hooks,
     get commits() { return commits; },
     replaceRenderer: () => { currentRenderer = { kind: "webgpu" }; },
@@ -135,4 +135,19 @@ test("abort during hydration invalidates the staged generation and retains the o
   controller.abort();
   await assert.rejects(applied, /did not commit/);
   assert.equal(h.state._modelTextureVariantScope, h.oldScope);
+});
+
+test("a 51-model profile prepares bounded batches and counts shared map records once", async () => {
+  const h = harness(), shared = {}, batches = [];
+  const requests = Array.from({ length: 51 }, (_, index) => ({ id: "model-" + index, src: "/model-" + index + ".glb" }));
+  h.state.models = requests;
+  h.module.prepare = (_mount, batch) => {
+    batches.push(batch.length);
+    return Promise.resolve({ textures: 1, records: [shared] });
+  };
+  const applied = h.apply(undefined, requests);
+  await new Promise(resolve => setImmediate(resolve));
+  h.hydration.resolve({ committed: true });
+  assert.deepEqual(batches, [32, 19]);
+  assert.deepEqual({ ...(await applied) }, { models: 51, textures: 1, profile: "low" });
 });

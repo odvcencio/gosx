@@ -564,6 +564,7 @@
       signal: AbortSignal, module: any, hooks: any) {
     const nextProfile = String(profile || "").trim().toLowerCase();
     if (!["auto", "low", "standard", "high"].includes(nextProfile)) throw new TypeError("invalid Scene3D texture delivery profile");
+    if (!Array.isArray(requests) || requests.length < 1 || requests.length > 256) throw new TypeError("Scene3D texture profile requires 1–256 models");
     if (hooks.disposed() || !module || typeof module.prepare !== "function") throw new Error("Scene3D preparation unavailable");
     const requested = new Set(requests.map(request => String(request.src || "").trim()));
     for (const model of sceneHydrationModels(state, null)) {
@@ -576,7 +577,13 @@
     const previousScope = state._modelTextureVariantScope;
     const context = sceneModelTextureVariantContextForRenderer(activeRenderer, nextProfile);
     const candidate = createSceneModelTextureVariantScope(context);
-    const prepared = await module.prepare(mount, requests, signal, candidate);
+    const nativeRecords = new Set();
+    let preparedTextures = 0;
+    for (let offset = 0; offset < requests.length; offset += 32) {
+      const batch = await module.prepare(mount, requests.slice(offset, offset + 32), signal, candidate);
+      if (Array.isArray(batch?.records)) for (const record of batch.records) nativeRecords.add(record);
+      else preparedTextures += Number(batch?.textures) || 0;
+    }
     if (signal?.aborted) throw new DOMException("Scene3D texture profile canceled", "AbortError");
     if (hooks.disposed() || hooks.renderer() !== activeRenderer || !hooks.current(generation) ||
         state._modelTextureVariantScope !== previousScope) throw new Error("Scene3D texture profile preparation became stale");
@@ -599,7 +606,7 @@
       // The next profile request may supersede this one after this commit.
       state._textureDeliveryProfile = nextProfile;
       hooks.commit(nextProfile, candidate);
-      return { models: requests.length, textures: prepared && prepared.textures || 0, profile: nextProfile };
+      return { models: requests.length, textures: nativeRecords.size + preparedTextures, profile: nextProfile };
     } catch (error) {
       if (state._modelTextureVariantScope === candidate) state._modelTextureVariantScope = previousScope;
       throw error;

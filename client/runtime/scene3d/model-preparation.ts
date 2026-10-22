@@ -48,7 +48,9 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
       done = true;
       canvas.removeEventListener('gosx:scene3d:resource-ready', check);
       signal?.removeEventListener('abort', cancel);
-      error ? reject(error) : resolve({ models: selected.length, textures: records.size });
+      error ? reject(error) : resolve(selectedScope
+        ? { models: selected.length, textures: records.size, records: Array.from(records) }
+        : { models: selected.length, textures: records.size });
     }
     function cancel() { close(new DOMException('Scene3D preparation canceled', 'AbortError')); }
     function check() {

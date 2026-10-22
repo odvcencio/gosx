@@ -2,6 +2,7 @@ package scene
 
 import (
 	"encoding/json"
+	"fmt"
 	"testing"
 )
 
@@ -23,6 +24,19 @@ func TestModelPreparationSnapshotValidation(t *testing.T) {
 	}
 	if len(got) != 2 || got[0].ID != "hero" || got[0].Src != "/hero.glb" {
 		t.Fatalf("snapshot changed: %#v", got)
+	}
+}
+
+func TestTextureProfileSnapshotSupportsBatchedModelCount(t *testing.T) {
+	requests := make([]ModelPreparation, 51)
+	for i := range requests {
+		requests[i] = ModelPreparation{ID: fmt.Sprintf("model-%d", i), Src: fmt.Sprintf("/model-%d.glb", i)}
+	}
+	if _, err := modelPreparationSnapshotLimit(requests, 256); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := modelPreparationSnapshot(requests); err == nil {
+		t.Fatal("ordinary PrepareModels cap changed")
 	}
 }
 
