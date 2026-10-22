@@ -12,6 +12,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const { createBoardWebGPUHarness, flushAsyncWork, renderPreparedFrame } = require("./runtime-test-harness.js");
+const { readSceneRendererBackendSrc } = require("./scene3d-renderer-source-set.js");
 
 let F32 = Float32Array;
 
@@ -205,9 +206,8 @@ test("a crowd on a cut vessel gets the planes in its params and culls on them", 
   if (shadow) assert.match(shadow.code, /crowdCulled/);
 });
 
-test("the cutaway module is a registered renderer source and the backend list names webgpu", () => {
-  const architecture = JSON.parse(fs.readFileSync(path.join(__dirname, "testdata", "scene3d-renderer-architecture.json"), "utf8"));
-  assert.ok(architecture.sourceSets.webgpu.sources.includes("../runtime/scene3d/webgpu-cutaway.ts"));
+test("the cutaway module ships in the WebGPU source set and the backend list names webgpu", () => {
+  assert.ok(readSceneRendererBackendSrc("webgpu").includes("SCENE_WEBGPU_CUTAWAY_SLOT_BYTES = 112"));
   const source = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "vessel-cutaway.ts"), "utf8");
   assert.match(source, /BACKENDS = \['webgl', 'webgpu'\]/);
 });

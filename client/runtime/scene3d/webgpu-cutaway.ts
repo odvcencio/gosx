@@ -1,9 +1,9 @@
 // Vessel cutaway ("dollhouse") on the WebGPU renderer. vessel-cutaway.ts keeps
 // object.cutaway (Float32Array(12): decks-above plane, hull-section plane, fade)
 // and object.cutawayCrowd (its first 8 floats) current; this file carries them
-// to the GPU the way webgl.ts does through u_cut and u_crowdCut.
+// to the GPU the way the WebGL renderer does through u_cut and u_crowdCut.
 //
-// A cut object owns one slot of the per-frame model arena (webgpu.ts,
+// A cut object owns one slot of the per-frame model arena (the renderer,
 // materialFrame): the 64-byte model matrix, then the three planes. Binding 19
 // of the material group is that slot, visible to both stages, so the fragment
 // shader reads the planes of the object it is drawing. A point p is cut when
