@@ -96,6 +96,12 @@ const budgets = [
   // Netplay's browser binding loads only for a page that calls RequireFeature("netplay");
   // no existing bundle changed size (measured 4353 raw / 1772 gzip / 1639 Brotli).
   { file: "bootstrap-feature-netplay.js", raw: 4400, gzip: 1800, brotli: 1650 },
+  // The engine-worker host loads only for a page with a Thread: worker engine, so no other
+  // bundle or route changed. It had no entry before. Call watchdog, status signal, worker
+  // policy, view acknowledgements and vessel forwarding grew it from 28462 / 9351 / 8682 to a
+  // measured 32678 raw / 10557 gzip / 9865 Brotli. The targets sit at that measurement
+  // (rounded up), not above it.
+  { file: "bootstrap-feature-engine-worker.js", raw: 32700, gzip: 10600, brotli: 9900 },
   // The arcade synth for a page with no hub chunk; loads only for RequireFeature("arcade-audio").
   // Measured 8330 / 2748 / 2519.
   { file: "bootstrap-feature-arcade-audio.js", raw: 8400, gzip: 2800, brotli: 2570 },

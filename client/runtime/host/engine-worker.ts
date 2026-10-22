@@ -103,6 +103,7 @@
     }
 
     function unsupportedReason(entry) {
+      if (entry && entry.forceWorkerFallback === true) return { code: "worker-forced-fallback", message: "the page forces the main-thread fallback" };
       if (window.__gosx_engine_worker_disable === true) return { code: "worker-disabled", message: "engine workers are disabled for this page" };
       if (typeof window.Worker !== "function") return { code: "worker-unsupported", message: "this browser has no Web Worker" };
       if (entry && entry.toolchain === "tinygo") return { code: "worker-toolchain-unsupported", message: "TinyGo engines cannot run in a worker yet" };
@@ -135,6 +136,29 @@
       } catch (_) { /* reporting must not break the mount path */ }
     }
 
+    // ---- page signals -------------------------------------------------------
+    //
+    // The host writes shared signals (status, call results) the same way a
+    // main-thread engine does, but it has no engine context before the mount,
+    // so it goes through the page-level setter.
+
+    function writeSignal(name, value) {
+      var json = JSON.stringify(value == null ? null : value);
+      try {
+        if (typeof window.__gosx_set_shared_signal === "function") {
+          var result = window.__gosx_set_shared_signal(name, json);
+          if (typeof result === "string" && result !== "" && typeof window.__gosx_notify_shared_signal === "function") window.__gosx_notify_shared_signal(name, json);
+        } else if (typeof window.__gosx_notify_shared_signal === "function") {
+          window.__gosx_notify_shared_signal(name, json);
+        }
+      } catch (_) { /* a signal write must not break the engine path */ }
+    }
+
+    // $gosx.engine.<id> carries {State, Thread, Reason}. Keys are Go field names.
+    function setStatus(entry, state, thread, reason) {
+      writeSignal("$gosx.engine." + entry.id, { State: state, Thread: thread || "", Reason: reason || "" });
+    }
+
     function dispatchDocumentEvent(name, detail) {
       try { document.dispatchEvent(new CustomEvent("gosx:engine:" + name, { detail: detail })); } catch (_) {}
     }
@@ -159,8 +183,25 @@
           reason = { code: (error && error.code) || "worker-boot-failed", message: (error && error.message) || String(error), error: error };
         }
       }
+      if (reason && entry.workerMode === "required") return refuse(entry, reason);
       if (reason) return degrade(entry, reason, fallback);
       return { factory: function(ctx) { return mountRecord(record, ctx); }, moduleRecord: null };
+    }
+
+    // A worker-required engine never runs on the main thread: report why and
+    // hand the runtime an engine that does nothing.
+    function refuse(entry, reason) {
+      report(entry, "error", reason.code, "engine worker unavailable and " + entry.id + " requires one: " + reason.message, reason.error);
+      dispatchDocumentEvent("worker-unsupported", { engineID: entry.id, component: entry.component, code: reason.code, message: reason.message });
+      setStatus(entry, "unsupported", "", reason.code);
+      return {
+        moduleRecord: null,
+        factory: function(ctx) {
+          ctx.threadMode = "";
+          ctx.threadFallbackReason = reason.code;
+          return { dispose: function() { setStatus(entry, "disposed", "", reason.code); } };
+        },
+      };
     }
 
     async function degrade(entry, reason, fallback) {
@@ -173,7 +214,13 @@
         factory: typeof inner !== "function" ? inner : function(ctx) {
           ctx.threadMode = "main";
           ctx.threadFallbackReason = reason.code;
-          return inner(ctx);
+          setStatus(entry, "running", "main", reason.code);
+          var handle = inner(ctx);
+          var finish = function(h) {
+            var original = h && h.dispose;
+            return Object.assign({}, h, { dispose: function() { setStatus(entry, "disposed", "main", reason.code); if (typeof original === "function") original.call(h); } });
+          };
+          return handle && typeof handle.then === "function" ? handle.then(finish) : finish(handle);
         },
       };
     }
@@ -189,10 +236,11 @@
         }
         var rec = {
           entry: entry, worker: worker, state: "booting", ctx: null, disposed: false,
-          subs: new Map(), listeners: new Map(), appHandlers: new Map(), nets: new Map(), netModes: {}, mountWaiter: null,
-          stats: { messagesIn: 0, framesIn: 0, frameBytes: 0, signalBatches: 0, signalBytes: 0, appMessages: 0, inputSent: 0 },
+          subs: new Map(), calls: new Map(), crashedStatus: false, listeners: new Map(), appHandlers: new Map(), nets: new Map(), netModes: {}, mountWaiter: null,
+          stats: { messagesIn: 0, framesIn: 0, frameBytes: 0, signalBatches: 0, signalBytes: 0, appMessages: 0, inputSent: 0, vesselRejected: 0 },
           terminate: function() { terminate(rec); },
         };
+        setStatus(entry, "booting", "worker", "");
         var timer = setTimeout(function() {
           if (rec.state !== "booting") return;
           terminate(rec);
@@ -249,9 +297,91 @@
 
     function onWorkerCrash(rec, error) {
       if (rec.terminated) return;
+      setStatus(rec.entry, "crashed", "worker", error.code);
+      failCalls(rec, "worker-crashed");
       report(rec.entry, "error", error.code, "engine worker crashed: " + error.message, error);
       dispatchDocumentEvent("worker-error", { engineID: rec.entry.id, component: rec.entry.component, code: error.code, message: error.message });
       terminate(rec);
+    }
+
+    // The page ended the engine: stop the watchdogs, say so, free the worker.
+    function endRecord(rec) {
+      if (rec.terminated) return;
+      closeCalls(rec);
+      setStatus(rec.entry, "disposed", "worker", "");
+      terminate(rec);
+    }
+
+    // ---- calls --------------------------------------------------------------
+    //
+    // A worker engine that serves calls (wasm.ServeCalls) declares the channel.
+    // The page then watches "$<channel>" and, if no reply reaches
+    // "$<channel>.result" within the timeout, writes the error result itself, so
+    // an island is never left waiting on a worker that hung or died. Keys are
+    // Go field names: ID, Name, Error, Value, Recent.
+
+    function parseObject(encoded) {
+      try { var v = JSON.parse(encoded); return v && typeof v === "object" ? v : null; } catch (_) { return null; }
+    }
+
+    function declareCalls(rec, msg) {
+      if (!current(rec) || typeof msg.channel !== "string" || rec.calls.has(msg.channel)) return;
+      var st = {
+        channel: msg.channel, resultSignal: msg.channel + ".result", timeout: msg.timeout > 0 ? msg.timeout : 10000,
+        recent: msg.recent > 0 ? msg.recent : 8, zero: parseObject(msg.zero) || {},
+        pending: new Map(), maxCall: 0, last: null, offs: [],
+      };
+      rec.calls.set(msg.channel, st);
+      st.offs.push(rec.ctx.subscribeSignalJSON(st.resultSignal, function(encoded) {
+        var result = parseObject(encoded);
+        if (!result) return;
+        st.last = result;
+        var id = Number(result.ID) || 0;
+        for (var entry of Array.from(st.pending)) {
+          if (entry[0] <= id) { clearTimeout(entry[1].timer); st.pending.delete(entry[0]); }
+        }
+      }, { immediate: false }));
+      // The first delivery is the signal's current value: a call written before
+      // the worker declared the channel starts its clock now.
+      st.offs.push(rec.ctx.subscribeSignalJSON(st.channel, function(encoded) {
+        var call = parseObject(encoded);
+        var id = call ? Number(call.ID) || 0 : 0;
+        if (id <= st.maxCall) return;
+        st.maxCall = id;
+        var name = typeof call.Name === "string" ? call.Name : "";
+        if (rec.crashedStatus) { failCall(st, id, name, "worker-crashed"); return; }
+        var timer = setTimeout(function() { st.pending.delete(id); failCall(st, id, name, "timeout"); }, st.timeout);
+        st.pending.set(id, { name: name, timer: timer });
+      }));
+    }
+
+    function failCall(st, id, name, code) {
+      var result = Object.assign({}, st.zero, { ID: id, Name: name, Error: code });
+      var recent = st.last && Array.isArray(st.last.Recent) ? st.last.Recent.slice() : [];
+      recent.push({ ID: id, Error: code });
+      result.Recent = recent.slice(-st.recent);
+      st.last = result;
+      writeSignal(st.resultSignal, result);
+    }
+
+    function failCalls(rec, code) {
+      rec.crashedStatus = code === "worker-crashed";
+      for (var st of rec.calls.values()) {
+        for (var entry of Array.from(st.pending)) {
+          clearTimeout(entry[1].timer);
+          st.pending.delete(entry[0]);
+          failCall(st, entry[0], entry[1].name, code);
+        }
+      }
+    }
+
+    function closeCalls(rec) {
+      for (var st of rec.calls.values()) {
+        for (var entry of st.pending.values()) clearTimeout(entry.timer);
+        st.pending.clear();
+        for (var off of st.offs) { try { off(); } catch (_) {} }
+      }
+      rec.calls.clear();
     }
 
     // ---- mount ------------------------------------------------------------
@@ -264,8 +394,9 @@
         rec.mountWaiter = { ok: ok, bad: bad };
         rec.worker.postMessage({ t: "mount" });
       }).then(function() {
+        setStatus(rec.entry, "running", "worker", "");
         startInput(rec);
-        return { dispose: function() { disposeRecord(rec); } };
+        return { dispose: function() { if (rec.terminated) closeCalls(rec); else disposeRecord(rec); } };
       }, function(error) {
         terminate(rec);
         throw error;
@@ -277,7 +408,7 @@
       rec.disposing = true;
       rec.disposed = true;
       try { rec.worker.postMessage({ t: "dispose" }); } catch (_) {}
-      rec.shutdownTimer = setTimeout(function() { terminate(rec); }, SHUTDOWN_GRACE_MS);
+      rec.shutdownTimer = setTimeout(function() { endRecord(rec); }, SHUTDOWN_GRACE_MS);
     }
 
     // ---- input forwarding ---------------------------------------------------
@@ -437,7 +568,7 @@
       },
       disposed: function(rec) {
         clearTimeout(rec.shutdownTimer);
-        terminate(rec);
+        endRecord(rec);
       },
       log: function(rec, msg) {
         var fn = console[msg.level === "error" ? "error" : msg.level === "warn" ? "warn" : "log"] || console.log;
@@ -457,6 +588,16 @@
         } catch (error) {
           try { rec.worker.postMessage({ t: "fault", where: "signals", message: String(error && error.message || error) }); } catch (_) {}
         }
+        // Acknowledge a paced view batch (wasm.View) so the worker may send the next.
+        if (typeof msg.seq === "number") { try { rec.worker.postMessage({ t: "ack", seq: msg.seq }); } catch (_) {} }
+      },
+      calls: function(rec, msg) { declareCalls(rec, msg); },
+      "vessel.cutaway": function(rec, msg) {
+        if (!current(rec)) return;
+        var fn = window.__gosx_scene3d_vessel_cutaway;
+        var ok = false;
+        try { ok = typeof fn === "function" && fn(String(msg.target), String(msg.nodeID), String(msg.json)) === true; } catch (error) { frameFault(rec, { kind: "vessel-cutaway", target: msg.target }, error); return; }
+        if (!ok) rec.stats.vesselRejected++;
       },
       "signal.set": function(rec, msg) {
         if (!current(rec)) return;
@@ -514,6 +655,14 @@
         if (options && options.fallbackPoseFrame instanceof ArrayBuffer) options.fallbackPoseFrame = new Uint8Array(options.fallbackPoseFrame);
         var result;
         try {
+          if (msg.kind === "vessel-pose") {
+            // The entry point the main-thread Go call uses. A mount that is not
+            // showing an external-pose vessel yet answers false; poses arrive
+            // every tick, so that is counted, not raised.
+            var pose = window.__gosx_scene3d_vessel_pose;
+            if (typeof pose !== "function" || pose(String(msg.target), bytes) !== true) rec.stats.vesselRejected++;
+            return;
+          }
           if (msg.kind === "instance") {
             var mount = resolveMount(msg.target);
             var handle = mount && mount.__gosxScene3DHandle;
@@ -688,7 +837,7 @@
     function disposePage(reuseIDs) {
       for (var rec of Array.from(records.values())) {
         if (reuseIDs instanceof Set && reuseIDs.has(rec.entry.id)) continue;
-        if (rec.ctx) disposeRecord(rec); else terminate(rec);
+        if (rec.ctx) disposeRecord(rec); else endRecord(rec);
       }
     }
 
@@ -724,6 +873,8 @@
     var mountListeners = new Map();   // lid -> callback(json)
     var nextLID = 1;
     var hidden = false;
+    var nextViewSeq = 1;
+    var viewAcks = new Map();         // seq -> {token, fn}
 
     function post(msg, transfer) { scope.postMessage(msg, transfer || []); }
 
@@ -814,6 +965,16 @@
         return Promise.resolve({ queued: true });
       };
     });
+    // Vessel pose and cutaway: scene.DispatchVesselPose and DispatchVesselCutaway
+    // look these globals up. In a worker they forward to the page's controller.
+    scope.__gosx_scene3d_vessel_pose = function(target, bytes) {
+      postFrame("vessel-pose", target, bytes);
+      return true;
+    };
+    scope.__gosx_scene3d_vessel_cutaway = function(target, nodeID, json) {
+      post({ t: "vessel.cutaway", target: String(target), nodeID: String(nodeID), json: String(json) });
+      return true;
+    };
     scene3d.applyInstanceStream = function(target, bytes) {
       postFrame("instance", target, bytes);
       return { applied: true, queued: true };
@@ -848,12 +1009,28 @@
           post({ t: "signals", changedOnly: changedOnly === true, buf: bytes.buffer }, [bytes.buffer]);
           return undefined;
         },
+        // A paced view batch (wasm.View): like setSignalsJSON, but the page
+        // acknowledges it, and then onApplied(token) runs.
+        sendView: function(encoded, changedOnly, token, onApplied) {
+          var bytes = encoder.encode(String(encoded));
+          var seq = nextViewSeq++;
+          viewAcks.set(seq, { token: token, fn: onApplied });
+          post({ t: "signals", changedOnly: changedOnly === true, buf: bytes.buffer, seq: seq }, [bytes.buffer]);
+          return undefined;
+        },
+        // Tell the page this engine serves calls on a channel (wasm.ServeCalls),
+        // so its watchdog can fail a call the worker never answers.
+        declareCalls: function(channel, timeoutMS, recent, zeroResult) {
+          post({ t: "calls", channel: String(channel), timeout: Number(timeoutMS) || 0, recent: Number(recent) || 0, zero: String(zeroResult || "{}") });
+        },
         subscribeSignal: function(name, handler, options) {
           return ctx.subscribeSignalJSON(name, function(encoded, signalName) { handler(JSON.parse(encoded), signalName); }, options);
         },
-        subscribeSignalJSON: function(name, handler) {
+        subscribeSignalJSON: function(name, handler, options) {
           var sid = nextSID++;
-          signalHandlers.set(sid, { name: String(name), fn: handler });
+          // {immediate: true} also delivers the current value once (Go passes
+          // the option explicitly; the default stays "changes only").
+          signalHandlers.set(sid, { name: String(name), fn: handler, immediate: !!(options && options.immediate === true) });
           post({ t: "subscribe", sid: sid, name: String(name) });
           return function() {
             if (!signalHandlers.delete(sid)) return;
@@ -954,6 +1131,12 @@
         mount().catch(function(error) { fatal(error && error.code || "worker-mount-failed", error); });
       },
       dispose: disposeEngine,
+      ack: function(msg) {
+        var waiter = viewAcks.get(msg.seq);
+        if (!waiter) return;
+        viewAcks.delete(msg.seq);
+        try { waiter.fn(waiter.token); } catch (_) { /* the Go callback was released */ }
+      },
       reply: function(msg) {
         var waiter = pendingReplies.get(msg.rid);
         if (!waiter) return;
@@ -968,7 +1151,7 @@
         var entry = signalHandlers.get(msg.sid);
         var name = String(msg.name);
         try { mirror.set(name, JSON.parse(msg.json)); } catch (_) { return; }
-        if (!entry || msg.initial) return;
+        if (!entry || (msg.initial && !entry.immediate)) return;
         try { entry.fn(msg.json, name); } catch (error) { logToPage("error", error); }
       },
       app: function(msg) {
