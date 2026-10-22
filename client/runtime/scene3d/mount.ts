@@ -971,6 +971,11 @@
     // fresh diagnostics snapshot or discovered synchronously when
     // disablePostProcessing() itself declines to act.
     function escalateSceneWebGPUToFallback(streak, diagnostics) {
+      // With reload recovery configured and still allowed, the strike counter
+      // ends the ladder, not the in-page swap.
+      if (webgpuRecovery && webgpuRecovery.reload && !webgpuRecoveryDone && sceneWebGPURecoveryReloadAllowed()) {
+        return true;
+      }
       gosxSceneEmit("warn", "webgpu-persistent-frame-error-fallback", {
         frameErrorStreak: streak,
         lastError: (diagnostics && diagnostics.lastError) || "",
@@ -1075,6 +1080,69 @@
       return escalateSceneWebGPUToFallback(streak, diagnostics);
     }
 
+    // WebGPU recovery (scene.Props.WebGPURecovery). Every watchdog check that
+    // sees a WebGPU device error is one strike and a clean check resets the
+    // count. At the configured strikes the scene swaps to WebGL in place, or,
+    // with reload, asks the page for one reload with WebGL forced. The reload
+    // runs at most once per tab session. The mount publishes
+    // data-gosx-scene3d-webgpu-recovery: inactive, armed, fallback, reloading
+    // or webgl-forced, plus -strikes while errors accumulate.
+    const SCENE_WEBGPU_RECOVERY_RELOADS_KEY = "gosx:scene3d:webgpu-recovery-reloads";
+    function sceneWebGPURecoveryConfig(source: any) {
+      const raw = source && source.webgpuRecovery;
+      if (!raw || typeof raw !== "object") return null;
+      const strikes = Math.floor(Number(raw.strikes));
+      return {
+        strikes: Number.isFinite(strikes) && strikes >= 1 ? Math.min(20, strikes) : 3,
+        reload: raw.reload === true,
+      };
+    }
+    const webgpuRecovery = sceneWebGPURecoveryConfig(props);
+    let webgpuRecoveryStrikes = 0;
+    let webgpuRecoveryDone = false;
+    function publishSceneWebGPURecoveryState(state: string) {
+      if (webgpuRecovery) setAttrValue(mount, sceneAttr("webgpu-recovery"), state);
+    }
+    function sceneWebGPURecoveryReloads() {
+      try {
+        return Math.max(0, Math.floor(Number(window.sessionStorage.getItem(SCENE_WEBGPU_RECOVERY_RELOADS_KEY)) || 0));
+      } catch (_error) {
+        return -1;
+      }
+    }
+    function sceneWebGPURecoveryReloadAllowed() {
+      return sceneWebGPURecoveryReloads() === 0;
+    }
+    function sceneWebGPURecoveryStrike(diagnostics: any, failureReason: string) {
+      if (!webgpuRecovery || webgpuRecoveryDone || !renderer || renderer.kind !== "webgpu") return false;
+      const erroring = Boolean(failureReason) ||
+        sceneNumber(diagnostics && diagnostics.frameErrorStreak, 0) > 0 ||
+        Boolean(diagnostics && diagnostics.deviceLost);
+      webgpuRecoveryStrikes = erroring ? webgpuRecoveryStrikes + 1 : 0;
+      setAttrValue(mount, sceneAttr("webgpu-recovery-strikes"), webgpuRecoveryStrikes || "");
+      if (webgpuRecoveryStrikes < webgpuRecovery.strikes) return false;
+      const detail = {
+        strikes: webgpuRecoveryStrikes,
+        reason: failureReason || "webgpu-frame-errors",
+        lastError: String((diagnostics && diagnostics.lastError) || "").slice(0, 200),
+      };
+      webgpuRecoveryDone = true;
+      const request = typeof window !== "undefined" ? window.__gosx_scene3d_request_webgl_recovery : null;
+      if (webgpuRecovery.reload && typeof request === "function" && sceneWebGPURecoveryReloadAllowed()) {
+        try {
+          window.sessionStorage.setItem(SCENE_WEBGPU_RECOVERY_RELOADS_KEY, "1");
+        } catch (_error) {}
+        publishSceneWebGPURecoveryState("reloading");
+        gosxSceneEmit("error", "webgpu-recovery-reload", detail);
+        request({ reload: true });
+        return true;
+      }
+      publishSceneWebGPURecoveryState("fallback");
+      gosxSceneEmit("warn", "webgpu-recovery-fallback", detail);
+      recoverSceneWebGPURenderer(detail.reason, 0, true, false);
+      return true;
+    }
+
     function checkSceneRenderWatchdog() {
       if (disposed || !mount || !renderer) {
         return;
@@ -1114,6 +1182,9 @@
       const progress = readSceneWebGPUProgress();
       const diagnostics = typeof renderer.diagnostics === "function" ? renderer.diagnostics() : null;
       const failureReason = rendererReportsWebGPUFailure(diagnostics);
+      if (sceneWebGPURecoveryStrike(diagnostics, failureReason)) {
+        return;
+      }
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ if (failureReason) {
         recoverSceneWebGPURenderer(failureReason, 0, true);
         return;
@@ -1986,6 +2057,10 @@
     }
 
 	    attachSceneCanvasContextListeners(canvas);
+    publishSceneWebGPURecoveryState(
+      typeof window !== "undefined" && window.__gosx_scene3d_force_webgl === true && renderer.kind !== "webgpu"
+        ? "webgl-forced"
+        : (renderer.kind === "webgpu" ? "armed" : "inactive"));
     startSceneRenderWatchdog();
 
     function sceneCanRender() {
