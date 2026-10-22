@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
 - Compare lowered material texture descriptors with generated typed field proofs
   during SceneIR updates, avoiding repeated reflection over texture slots.
   Nested schema and named-scalar checks retain the JSON fallback when a proof

@@ -41,6 +41,11 @@ func assertProofSchema(t *testing.T, typ reflect.Type, matches func(reflect.Type
 			t.Fatalf("schema proof ignored field name %s", original.Name)
 		}
 		fields[i] = original
+		fields[i].Tag = `json:"changed"`
+		if matches(reflect.StructOf(fields)) {
+			t.Fatalf("schema proof ignored JSON tag for %s", original.Name)
+		}
+		fields[i] = original
 		if original.Type.Kind() == reflect.String {
 			fields[i].Type = reflect.TypeFor[int]()
 		} else {

@@ -12,6 +12,7 @@ import (
 	"go/token"
 	"os"
 	"path"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,7 @@ import (
 type field struct {
 	name string
 	typ  ast.Expr
+	tag  reflect.StructTag
 }
 
 func main() {
@@ -207,20 +209,20 @@ func lowerFirst(name string) string { return strings.ToLower(name[:1]) + name[1:
 
 func writeSchema(out *bytes.Buffer, fset *token.FileSet, name string, fields []field) {
 	fmt.Fprintf(out, "\nfunc %sProofSchemaMatchesType(t reflect.Type) bool {\n", name)
-	fmt.Fprintln(out, `if t.Kind() != reflect.Struct { return false }
- fields := [...]struct { name string; typ reflect.Type }{`)
+	fmt.Fprintln(out, `if t.Kind() != reflect.Struct || sceneRecordHasJSONMarshaler(t) { return false }
+ fields := [...]struct { name string; typ reflect.Type; tag reflect.StructTag }{`)
 	for _, f := range fields {
 		var typ bytes.Buffer
 		if err := format.Node(&typ, fset, f.typ); err != nil {
 			panic(err)
 		}
-		fmt.Fprintf(out, "{%q, reflect.TypeFor[%s]()},\n", f.name, typ.String())
+		fmt.Fprintf(out, "{%q, reflect.TypeFor[%s](), %q},\n", f.name, typ.String(), string(f.tag))
 	}
 	fmt.Fprintln(out, `}
  if t.NumField() != len(fields) { return false }
  for i, expected := range fields {
   actual := t.Field(i)
-  if actual.Name != expected.name || actual.Type != expected.typ { return false }
+  if actual.Name != expected.name || actual.Type != expected.typ || actual.Tag != expected.tag { return false }
  }
  return true
 }`)
@@ -253,7 +255,15 @@ func fields(file *ast.File, name string) []field {
 					if n.Name == "_" {
 						panic("blank " + name + " fields require an explicit proof")
 					}
-					result = append(result, field{n.Name, f.Type})
+					var tag reflect.StructTag
+					if f.Tag != nil {
+						text, err := strconv.Unquote(f.Tag.Value)
+						if err != nil {
+							panic(err)
+						}
+						tag = reflect.StructTag(text)
+					}
+					result = append(result, field{name: n.Name, typ: f.Type, tag: tag})
 				}
 			}
 			return result
@@ -291,6 +301,14 @@ func underlyingType(typ ast.Expr, declarations map[string]ast.Expr) ast.Expr {
 
 func compare(out *bytes.Buffer, f field, proofs map[string][]field, scalarTypes map[string]ast.Expr) {
 	a, b := "a."+f.name, "b."+f.name
+	if typ, ok := f.typ.(*ast.Ident); ok && typ.Name == "AlphaCutoff" {
+		for _, option := range strings.Split(f.tag.Get("json"), ",")[1:] {
+			if option == "omitzero" {
+				fmt.Fprintf(out, "if !provenAlphaCutoffFieldEqual(%s, %s) { return false }\n", a, b)
+				return
+			}
+		}
+	}
 	if ident, ok := f.typ.(*ast.Ident); ok && proofs[ident.Name] != nil {
 		fmt.Fprintf(out, "if !proven%sEqual(&%s, &%s) { return false }\n", ident.Name, a, b)
 		return
