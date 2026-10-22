@@ -1,7 +1,9 @@
 package scene
 
 import (
+	"encoding/json"
 	"math"
+	"os"
 	"testing"
 )
 
@@ -95,5 +97,69 @@ func TestOceanQuerySpectrumComputesWavesWhenNotNormalized(t *testing.T) {
 	a, b := NewOceanQuery(raw, "high", nil), NewOceanQuery(*n, "high", nil)
 	if a.Evaluate(5, 6, 7) != b.Evaluate(5, 6, 7) {
 		t.Fatal("an un-normalized spectral Ocean must compute its waves")
+	}
+}
+
+// TestOceanQuerySpectrumParityGolden keeps the browser's ocean-query.ts and
+// OceanQuery in step: it holds normalized spectral oceans (with their swell
+// waves, as the SceneIR carries them) and Sample results, and
+// client/js/scene3d-ocean-query.test.js evaluates the same file. UPDATE_GOLDEN=1
+// rewrites testdata/ocean-spectrum-query-parity.json.
+func TestOceanQuerySpectrumParityGolden(t *testing.T) {
+	type record struct {
+		Ocean       Ocean   `json:"ocean"`
+		FloorOffset float64 `json:"floorOffset"` // floor(x, z) = level - floorOffset - floorSlope*x
+		FloorSlope  float64 `json:"floorSlope"`
+		X           float64 `json:"x"`
+		Z           float64 `json:"z"`
+		Time        float64 `json:"time"`
+		Position    Vector3 `json:"position"`
+		Normal      Vector3 `json:"normal"`
+		Velocity    Vector3 `json:"velocity"`
+	}
+	var records []record
+	for i, name := range []string{"calm", "moderate", "rough", "storm"} {
+		s := OceanPreset(name)
+		ocean := *normalizeOcean(&Ocean{Level: float64(i) - 1, WindDirection: float64(70*i + 10), Choppiness: 0.3 + 0.2*float64(i), Surf: 0.4, Spectrum: &s})
+		for _, f := range [][2]float64{{1e4, 0}, {3, 0.01}} {
+			f := f
+			q := NewOceanQuery(ocean, "high", func(x, z float64) float64 { return ocean.Level - f[0] - f[1]*x })
+			for _, p := range [][3]float64{{0, 0, 0}, {12.3, -40.1, 7.7}, {-250.5, 99.9, 63}, {800, -640, 1234.5}} {
+				v := q.Sample(p[0], p[1], p[2])
+				records = append(records, record{Ocean: ocean, FloorOffset: f[0], FloorSlope: f[1], X: p[0], Z: p[1], Time: p[2], Position: v.Position, Normal: v.Normal, Velocity: v.Velocity})
+			}
+		}
+	}
+	const path = "testdata/ocean-spectrum-query-parity.json"
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		data, err := json.MarshalIndent(records, "", " ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("%v (run with UPDATE_GOLDEN=1)", err)
+	}
+	var want []record
+	if err := json.Unmarshal(data, &want); err != nil {
+		t.Fatal(err)
+	}
+	if len(want) != len(records) {
+		t.Fatalf("golden has %d records, this run %d: run with UPDATE_GOLDEN=1", len(want), len(records))
+	}
+	for i, w := range want {
+		g := records[i]
+		for _, d := range []float64{g.Position.X - w.Position.X, g.Position.Y - w.Position.Y, g.Position.Z - w.Position.Z,
+			g.Normal.X - w.Normal.X, g.Normal.Y - w.Normal.Y, g.Normal.Z - w.Normal.Z,
+			g.Velocity.X - w.Velocity.X, g.Velocity.Y - w.Velocity.Y, g.Velocity.Z - w.Velocity.Z} {
+			if math.Abs(d) > 1e-7 {
+				t.Fatalf("record %d differs by %g: got %+v, golden %+v", i, d, g, w)
+			}
+		}
 	}
 }

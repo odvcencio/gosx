@@ -59,3 +59,20 @@ test("ocean normalization applies defaults, clamps values, wraps direction, and 
   for (const key of ["foam", "speed", "choppiness", "surf"]) assert.equal(state.environment.ocean[key], 0);
   h.renderer.dispose();
 });
+
+test("ocean normalization carries the spectrum, its swell waves and the masks", async () => {
+  const h = await createBoardWebGPUHarness({ fresh: true });
+  const api = h.env.context.__gosx_scene3d_api;
+  const plain = value => JSON.parse(JSON.stringify(value));
+  const plainOcean = api.normalizeSceneOcean({ windDirection: 10 });
+  assert.equal("spectrum" in plainOcean || "swellWaves" in plainOcean || "masks" in plainOcean, false, "no spectrum, no new fields");
+  const wave = { dx: 0.6, dz: 0.8, k: 0.125, omega: 1.1, amplitude: 0.04, phase: -1.5 };
+  const spectrum = { windSpeed: 12, fetch: 80, swell: 0.2, swellDirection: 270, seed: 4294967295, cascades: [{ size: 1600, kMin: 0.0039, kMax: 0.12 }] };
+  const ocean = api.normalizeSceneOcean({ spectrum, swellWaves: [wave], masks: ["hull", "", 7, "dock"] });
+  assert.deepEqual(plain(ocean.spectrum), spectrum);
+  assert.notEqual(ocean.spectrum, spectrum, "the spectrum is copied");
+  assert.deepEqual(plain(ocean.swellWaves), [wave]);
+  assert.deepEqual(plain(ocean.masks), ["hull", "dock"]);
+  assert.deepEqual(plain(api.normalizeSceneOcean({ spectrum: { seed: 0 } }).swellWaves), [], "waves default to none");
+  h.renderer.dispose();
+});

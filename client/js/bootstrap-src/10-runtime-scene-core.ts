@@ -3150,6 +3150,9 @@
       bathymetry,
     };
     if (raw.reflections) out.reflections = sceneOceanReflections(raw.reflections);
+    // Spectral ocean: Go normalizes the spectrum and computes the read-only swellWaves (scene.OceanSwellWaves).
+    if (sceneIsPlainObject(raw.spectrum)) { out.spectrum = sceneCloneData(raw.spectrum); out.swellWaves = sceneCloneData(raw.swellWaves || []); }
+    if (Array.isArray(raw.masks)) out.masks = raw.masks.filter(id => id && typeof id === "string");
     return out;
   }
 
