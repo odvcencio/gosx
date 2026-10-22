@@ -137,6 +137,10 @@ func (a *App) serveRuntimeAsset(w http.ResponseWriter, r *http.Request) {
 		serveYouTubeAudioBridge(w, r)
 		return
 	}
+	if file, ok := strings.CutPrefix(name, "scene3d/"); ok {
+		a.serveSceneEntry(w, r, file)
+		return
+	}
 
 	root := a.effectiveRuntimeRoot()
 	if root == "" {
