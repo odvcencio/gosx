@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## v0.57.20
+
+- Select Scene3D model-map variants by each mount's delivery profile and actual
+  WebGL or WebGPU texture capabilities. Low and standard require compatible
+  built KTX2 maps, including bounded uncompressed variants on devices without
+  BC support; unsupported or failed variants return preparation errors rather
+  than loading full-size authored images. Preserve material role and color-space
+  metadata for external, embedded, and data-URI glTF images.
+- Add `Surface.ApplyTextureProfile` to prepare target maps and rehydrate active
+  models before committing a live quality change. Failed, canceled, superseded,
+  or stale changes retain the last working textured scene. Existing cached maps
+  from the old profile may remain resident after a switch. BC5 normal maps are
+  rejected until the shaders reconstruct their missing Z channel.
+
 ## v0.57.19
 
 - Recover failed material textures through explicit Scene3D model preparation on
