@@ -507,6 +507,37 @@ func (h *Hub) SetState(key string, value any) {
 	h.state[key] = value
 }
 
+// ReplayLatched sends every latched payload to one connected client and
+// returns how many it queued. Join uses it; a "resync" handler can call it so
+// a client that resumed from a hidden tab or the back-forward cache sees the
+// current state without a reconnect. A full buffer drops a frame, as in Broadcast.
+func (h *Hub) ReplayLatched(clientID string) int {
+	h.mu.RLock()
+	client := h.clients[clientID]
+	h.mu.RUnlock()
+	if client == nil {
+		return 0
+	}
+	// Snapshot payload pointers under the read lock and send after unlocking,
+	// so a slow consumer cannot hold latchedMu.
+	h.latchedMu.RLock()
+	payloads := make([][]byte, 0, len(h.latched))
+	for _, payload := range h.latched {
+		if payload == nil {
+			continue // declared but never broadcast
+		}
+		payloads = append(payloads, payload)
+	}
+	h.latchedMu.RUnlock()
+	sent := 0
+	for _, payload := range payloads {
+		if client.trySend(payload) {
+			sent++
+		}
+	}
+	return sent
+}
+
 // Broadcast sends a message to all connected clients.
 func (h *Hub) Broadcast(event string, data any) {
 	h.latchedMu.RLock()
@@ -882,28 +913,9 @@ func (h *Hub) ServeHTTPWithMetadata(w http.ResponseWriter, r *http.Request, meta
 	h.initClientSync(client)
 
 	// Replay latched payloads to this client so it sees current state
-	// for any topic declared via Latch. Topic ordering doesn't matter —
-	// latched topics are independent of each other.
-	//
-	// Snapshot latched payload pointers under the read lock; send them
-	// after unlocking. Matches Broadcast's non-blocking-send pattern so
-	// a slow consumer can't deadlock the join path while holding
-	// latchedMu.
-	h.latchedMu.RLock()
-	payloads := make([][]byte, 0, len(h.latched))
-	for _, payload := range h.latched {
-		if payload == nil {
-			continue // declared but never broadcast
-		}
-		payloads = append(payloads, payload)
-	}
-	h.latchedMu.RUnlock()
-
-	for _, payload := range payloads {
-		// trySend counts a full buffer as a drop. Latch replay follows the
-		// same rule as Broadcast: never block the join path.
-		client.trySend(payload)
-	}
+	// for any topic declared via Latch. ReplayLatched never blocks the join
+	// path: a full buffer drops a frame, as in Broadcast.
+	h.ReplayLatched(clientID)
 
 	// Fire join handler (may broadcast to all clients including this one)
 	h.mu.RLock()
