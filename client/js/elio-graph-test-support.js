@@ -114,7 +114,7 @@ class RecordingGL {
     if (target === GLC.FRAMEBUFFER || target === GLC.DRAW_FRAMEBUFFER) this.drawFB = f;
     if (target === GLC.FRAMEBUFFER || target === GLC.READ_FRAMEBUFFER) this.readFB = f;
   }
-  framebufferTexture2D(target, attachment, texTarget, t) { this.drawFB.attachments[attachment - GLC.COLOR_ATTACHMENT0] = t; }
+  framebufferTexture2D(target, attachment, texTarget, t, level) { this.drawFB.attachments[attachment - GLC.COLOR_ATTACHMENT0] = t; (this.attachmentLevels ||= {})[attachment - GLC.COLOR_ATTACHMENT0] = level; }
   drawBuffers(list) { this.drawFB.drawBuffers = list.slice(); }
   checkFramebufferStatus() {
     const f = this.drawFB;

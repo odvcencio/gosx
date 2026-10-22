@@ -37,8 +37,9 @@
     if (!caps.colorBufferFloat) throw Object.assign(new Error("EXT_color_buffer_float is not available"), { fallback: "EXT_color_buffer_float" });
     const number = function (pname: number, fallback: number): number { const v = gl.getParameter(pname); return typeof v === "number" ? v : fallback; };
     if (number(gl.MAX_DRAW_BUFFERS, 0) < 2 || number(gl.MAX_TEXTURE_IMAGE_UNITS, 0) < firstUnit + 5) throw Object.assign(new Error("too few texture units or draw buffers"), { fallback: "texture-units" });
-    for (const p of graph.passes) {
-      if (p.type !== "kernel") continue;
+    for (const step of ctx.steps) {
+      const p = step.pass;
+      if (!p || p.type !== "kernel") continue;
       const k = K[ctx.kernelKey(p.kernel)];
       if (!k.glsl || !k.gatherLayout) throw Object.assign(new Error("kernel " + p.kernel + " has no GLSL gather form"), { fallback: "kernel:" + p.kernel });
     }
@@ -162,7 +163,9 @@
     let plans: any[] = [];
     const saved = saveState(gl);
     try {
-    plans = graph.passes.map(function (pass: any) {
+    plans = ctx.steps.map(function (step: any) {
+      if (step.swap) return { swap: step.swap };
+      const pass = step.pass;
       if (pass.type === "mipmap") return { pass: pass };
       const p = program(pass.kernel), layout = p.layout;
       const inputs = layout.inputs.map(function (input: any) {
@@ -190,11 +193,25 @@
     build();
     } catch (error) { teardown(); throw error; } finally { restoreState(gl, saved); }
 
+    function exchange(pairs: any[]): void { for (const pair of pairs) { const a = resources[pair[0]]; resources[pair[0]] = resources[pair[1]]; resources[pair[1]] = a; } }
+    // feed uploads each fed parameter (a buffer parameter, such as probe points) into its resource.
+    function feed(params: any): void {
+      for (const r of graph.resources) {
+        if (!r.feed) continue;
+        const res = resources[r.name], data = new Float32Array(res.w * res.h * 4);
+        data.set(params[r.feed].subarray(0, data.length));
+        gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, res.tex);
+        gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, res.w, res.h, gl.RGBA, gl.FLOAT, data);
+      }
+    }
     function draw(plan: any, params: any): void {
       const pass = plan.pass, p = plan.p, t = pass.target;
       const outs = plan.outputs.map(function (o: any) { return { res: resources[o.binding.resource], level: o.binding.level || 0, location: o.location }; });
       const ins = plan.inputs.map(function (b: any) { return resources[b.resource]; });
-      for (const o of outs) for (const i of ins) if (o.res === i) throw new Error("elio-graph: pass " + pass.name + " reads " + o.res.name + ", which it writes");
+      // A pass may read level L-1 of a texture and write level L (mip passes); the same image is a feedback loop WebGL2 rejects.
+      plan.inputs.forEach(function (b: any, k: number) {
+        for (const o of outs) if (o.res === ins[k] && o.level === (b.level || 0)) throw new Error("elio-graph: pass " + pass.name + " reads " + o.res.name + ", which it writes");
+      });
       gl.useProgram(p.handle);
       gl.uniform1ui(p.width, t.elioWidth);
       ins.forEach(function (r: any, i: number) {
@@ -221,13 +238,15 @@
         try {
           gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.disable(gl.CULL_FACE); gl.disable(gl.SCISSOR_TEST);
           gl.colorMask(true, true, true, true); gl.bindVertexArray(vao);
+          feed(params);
           for (const plan of plans) {
+            if (plan.swap) { exchange(plan.swap); continue; }
             if (!ctx.holds(plan.pass.when, params, changed)) continue;
             if (plan.pass.type === "mipmap") {
               gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, resources[plan.pass.resource].tex); gl.generateMipmap(gl.TEXTURE_2D);
             } else draw(plan, params);
           }
-          for (const pair of graph.frameSwaps || []) { const a = resources[pair[0]]; resources[pair[0]] = resources[pair[1]]; resources[pair[1]] = a; }
+          exchange(graph.frameSwaps || []);
         } finally { restoreState(gl, s); }
         const cache = ctx.host.textureCache;
         if (cache) cache._sceneTextureEpoch = (cache._sceneTextureEpoch || 0) + 1;

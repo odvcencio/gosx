@@ -50,7 +50,9 @@
       });
     }
     // One pipeline per (kernel, entry point); a kernel's entry points share its bind group layout.
-    for (const pass of graph.passes) {
+    for (const step of ctx.steps) {
+      const pass = step.pass;
+      if (!pass) continue;
       if (pass.type !== "kernel") throw new Error("elio-graph: pass " + pass.name + ": " + pass.type + " passes exist only on webgl2");
       const key = pass.kernel + "/" + pass.entry;
       if (pipelines[key]) continue;
@@ -66,7 +68,10 @@
       return !v || v.ready === true ? (v && v.pipeline) || p.handle : null;
     }
 
-    const plans = graph.passes.map(function (pass: any) {
+    let planSeq = 0;
+    const plans = ctx.steps.map(function (step: any) {
+      if (step.swap) return { swap: step.swap };
+      const pass = step.pass;
       const p = pipelines[pass.kernel + "/" + pass.entry];
       const blocks = (pass.uniforms || []).map(function (u: any) {
         const lay = p.kernel.uniforms.find(function (x: any) { return x.name === u.name; });
@@ -76,12 +81,12 @@
         buffers.push(buffer);
         return { name: u.name, layout: lay, values: u.values, buffer: buffer, constant: ctx.isStatic(u.values), written: false };
       });
-      return { pass: pass, p: p, blocks: blocks };
+      return { pass: pass, p: p, blocks: blocks, id: ++planSeq };
     });
 
     // bindGroup is memoised on the identity of the bound resources, so a frameSwaps flip builds each variant once.
     function bindGroup(plan: any): any {
-      const pass = plan.pass, entries: any[] = [], idParts: any[] = [pass.name];
+      const pass = plan.pass, entries: any[] = [], idParts: any[] = [pass.name, plan.id];
       for (const b of plan.p.kernel.bindings) {
         let resource: any;
         if (b.kind === "uniform") resource = { buffer: plan.blocks.find(function (x: any) { return x.name === b.name; }).buffer };
@@ -100,6 +105,8 @@
       if (!g) { g = device.createBindGroup({ label: prefix + pass.name, layout: plan.p.layout, entries: entries }); groups.set(key, g); }
       return g;
     }
+
+    function exchange(pairs: any[]): void { for (const pair of pairs) { const a = resources[pair[0]]; resources[pair[0]] = resources[pair[1]]; resources[pair[1]] = a; } }
 
     const lost = device.lost && device.lost.then ? device.lost : null;
     if (lost) lost.then(function () { dispose(); }, function () { dispose(); });
@@ -122,7 +129,9 @@
       run: function (params: any, frame: any, changed: any) {
         const encoder = frame.encoder;
         if (!encoder) throw new Error("elio-graph: a webgpu frame needs frame.encoder");
+        for (const r of graph.resources) if (r.feed) queue.writeBuffer(resources[r.name].buffer, 0, params[r.feed]);
         for (const plan of plans) {
+          if (plan.swap) { exchange(plan.swap); continue; }
           const pass = plan.pass;
           if (!ctx.holds(pass.when, params, changed)) continue;
           for (const b of plan.blocks) {
@@ -135,12 +144,13 @@
           cp.dispatchWorkgroups(pass.dispatch[0], pass.dispatch[1] || 1, pass.dispatch[2] || 1);
           cp.end();
         }
-        for (const pair of graph.frameSwaps || []) { const a = resources[pair[0]]; resources[pair[0]] = resources[pair[1]]; resources[pair[1]] = a; }
+        exchange(graph.frameSwaps || []);
         return true;
       },
       // export names the texture a surface binds: its view, size and mip count as of now.
       export: function (name: string) {
         const r = resources[graph.exports[name]];
+        if (r && r.buffer) return { buffer: r.buffer };
         return r ? { texture: r.texture, view: r.texture.createView(), width: r.w, height: r.h, levels: r.levels } : null;
       },
       dispose: dispose,

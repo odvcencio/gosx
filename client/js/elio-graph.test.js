@@ -153,3 +153,75 @@ test("a graph that cannot be built is disabled with a reason, not thrown", () =>
   assert.ok(bad.failed);
   bad.dispose();
 });
+
+test("delta sources report the change of another parameter since the last frame, 0 on the first", () => {
+  const p = evaluator([decl("cell", { kind: "frame", name: "cameraX" }), { name: "shift", type: "i32", source: { kind: "delta", of: "param:cell" } }]);
+  p.evaluate(frame(0, 0.1, { cameraX: 5 }));
+  assert.equal(p.current.shift, 0, "first frame");
+  p.evaluate(frame(1, 0.1, { cameraX: 8 }));
+  assert.equal(p.current.shift, 3);
+  p.evaluate(frame(2, 0.1, { cameraX: 8 }));
+  assert.equal(p.current.shift, 0);
+  p.evaluate(frame(3, 0.1, { cameraX: 6 }));
+  assert.equal(p.current.shift, -2);
+});
+
+test("f32 parameters stay in float64 until a uniform is packed, so a wrapped water offset keeps its precision", () => {
+  const p = evaluator([decl("drift", { kind: "value", value: 3.3 }), decl("dt", { kind: "frame", name: "dt" }), decl("water", { kind: "accumulate", of: "param:drift" }),
+    decl("wrapped", { kind: "expr", op: "mod", args: ["param:water", 1600] })]);
+  for (let i = 0; i < 3600; i++) p.evaluate(frame(i / 60, 1 / 60));
+  assert.ok(Math.abs(p.current.water - 3.3 * 60) < 1e-6, "an hour of 60 Hz frames at 3.3 m/s");
+  assert.ok(Math.abs(p.current.wrapped - ((3.3 * 60) % 1600)) < 1e-6);
+});
+
+test("buffer parameters hold arrays; a new array marks them changed", () => {
+  const p = evaluator([{ name: "probes", type: "vec4<f32>[]", count: 2, source: { kind: "value", value: [1, 2, 3, 4, 5, 6, 7, 8] } }]);
+  p.evaluate(frame(0));
+  assert.deepEqual(Array.from(p.current.probes), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.ok(p.current.probes instanceof Float32Array);
+  p.evaluate(frame(1));
+  assert.equal(p.changed.probes, false);
+  p.set("probes", [9, 9, 9, 9]);
+  p.evaluate(frame(2));
+  assert.equal(p.changed.probes, true);
+  assert.deepEqual(Array.from(p.current.probes), [9, 9, 9, 9]);
+});
+
+test("repeat passes expand into steps: index values substituted per iteration, swaps after each, nested repeats multiply", () => {
+  const { expand } = api();
+  const body = { name: "stage", type: "kernel", kernel: "fft_gather_64", entry: "fft_stage", when: "always", bindings: [], uniforms: [{ name: "fft", values: { n: 64, stage: "param:s", axis: "param:a" } }] };
+  const steps = expand([{ type: "repeat", name: "axes", count: 2, index: "a", swap: [["x", "y"]], body: [{ type: "repeat", name: "stages", count: 3, index: "s", swap: [["p", "q"]], body: [body] }] }], {}, []);
+  const kinds = steps.map((st) => st.swap ? "swap:" + st.swap[0].join("") : "pass");
+  assert.deepEqual(kinds, ["pass", "swap:pq", "pass", "swap:pq", "pass", "swap:pq", "swap:xy", "pass", "swap:pq", "pass", "swap:pq", "pass", "swap:pq", "swap:xy"]);
+  const values = steps.filter((st) => st.pass).map((st) => [st.pass.uniforms[0].values.axis, st.pass.uniforms[0].values.stage]);
+  assert.deepEqual(values, [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2]]);
+  assert.equal(body.uniforms[0].values.stage, "param:s", "the source graph is not modified");
+  const check = api().check, module = runnerContext().window.__gosx_scene3d_elio_ocean;
+  const g = testGraph("webgl2");
+  g.passes = [{ type: "repeat", name: "r", count: 2, index: "nothing", body: [] }];
+  assert.throws(() => check(g, module, "webgl2"), /declared index parameter/);
+});
+
+test("exportParams are read from the runner in float64; a buffer may be exported on webgpu only", () => {
+  const ctx = runnerContext(), g = ctx.window.__gosx_elio_graph, module = ctx.window.__gosx_scene3d_elio_ocean;
+  const graph = testGraph("webgl2");
+  graph.params.push({ name: "water", type: "f32", source: { kind: "value", value: 1234.56789012345 } });
+  graph.exportParams = ["water", "lambda"];
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const r = g.create({ module, backend: "webgl2", graph, host: {} });
+    assert.ok(r.failed, "no gl in the host");
+    graph.exportParams = ["nothing"];
+    assert.throws(() => g.check(graph, module, "webgl2"), /exportParams names undeclared/);
+    graph.exportParams = [];
+    const bufferExport = Object.assign(testGraph("webgl2"), { exports: { probes: "h0" } });
+    assert.throws(() => g.check(bufferExport, module, "webgl2"), /must name a texture/);
+    const gpu = Object.assign(testGraph("webgpu"), { exports: { probes: "h0" } });
+    g.check(gpu, module, "webgpu");
+    const fed = testGraph("webgl2"); fed.resources[0].feed = "nothing";
+    assert.throws(() => g.check(fed, module, "webgl2"), /fed by undeclared parameter/);
+  } finally { console.warn = warn; }
+  const p = evaluator([decl("w", { kind: "value", value: 1234.56789012345 })]);
+  p.evaluate(frame(0));
+  assert.equal(p.current.w, 1234.56789012345);
+});

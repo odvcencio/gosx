@@ -192,3 +192,51 @@ test("a shader that does not compile disables the graph and releases what was bu
     assert.ok(s.runner);
   } finally { console.warn = warn; }
 });
+
+test("repeat passes run their body per iteration with the index in the uniform and the pairs swapped, never sampling their target", () => {
+  const s = setup(undefined, (g) => {
+    g.params.push({ name: "stage", type: "u32", source: { kind: "value", value: 0 } });
+    const target = { width: 64, height: 64, elioWidth: 64 };
+    g.passes = [{ type: "repeat", name: "stages", count: 4, index: "stage", swap: [["a0", "a1"]], body: [
+      { name: "fft", type: "kernel", kernel: "fft_gather_64", entry: "fft_stage", when: "always", target,
+        bindings: [{ name: "src", resource: "a0" }, { name: "dst", resource: "a1" }], uniforms: [{ name: "fft", values: { n: 64, stage: "param:stage", axis: 0 } }] }] }];
+    g.exports = {};
+  });
+  assert.equal(s.runner.failed, null);
+  s.step();
+  const ffts = draws(s.gl).filter((d) => d.kernel === "fft");
+  assert.deepEqual(ffts.map((d) => d.u32[1]), [0, 1, 2, 3], "the index parameter is the stage");
+  assert.deepEqual(ffts.map((d) => d.input), [s.tex("a0"), s.tex("a1"), s.tex("a0"), s.tex("a1")], "each iteration samples the last one's output");
+  assert.deepEqual(ffts.map((d) => d.attachments[0]), [s.tex("a1"), s.tex("a0"), s.tex("a1"), s.tex("a0")]);
+  assert.ok(ffts.every((d, i) => d.input !== d.attachments[0]));
+});
+
+test("a mip pass may read level L-1 and write level L of one texture; the same level is a feedback loop and disables the graph", () => {
+  const mipGraph = (srcLevel, dstLevel) => (g) => {
+    g.passes = [{ name: "mip", type: "kernel", kernel: "ocean_mip", entry: "ocean_mip", when: "always", target: { width: 32, height: 32, elioWidth: 32 },
+      bindings: [{ name: "src", resource: "disp", level: srcLevel }, { name: "dst", resource: "disp", level: dstLevel }],
+      uniforms: [{ name: "mip", values: { srcWidth: 64, srcHeight: 64, dstWidth: 32, dstHeight: 32 } }] }];
+  };
+  const ok = setup(undefined, mipGraph(0, 1));
+  assert.equal(ok.step(), true);
+  const d = draws(ok.gl)[0];
+  assert.equal(d.attachments[0], ok.tex("disp"));
+  assert.equal(ok.gl.attachmentLevels && ok.gl.attachmentLevels[0], 1, "level 1 of the texture is attached");
+  const warn = console.warn; console.warn = () => {};
+  try {
+    const bad = setup(undefined, mipGraph(1, 1));
+    assert.equal(bad.step(), false);
+    assert.match(bad.runner.error.message, /reads disp, which it writes/);
+  } finally { console.warn = warn; }
+});
+
+test("a resource fed by a buffer parameter is uploaded from it every frame", () => {
+  const s = setup(undefined, (g) => {
+    g.params.push({ name: "probes", type: "vec4<f32>[]", count: 2, source: { kind: "value", value: [1, 2, 3, 4, 5, 6, 7, 8] } });
+    g.resources[0].feed = "probes";
+  });
+  s.step(); s.step();
+  const uploads = s.gl.ops.filter((o) => o[0] === "texSubImage2D");
+  assert.equal(uploads.length, 2);
+  assert.equal(uploads[0][1], s.tex("h0"));
+});
