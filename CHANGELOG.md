@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## v0.57.19
+
+- Recover failed material textures through explicit Scene3D model preparation on
+  the existing WebGL or WebGPU renderer. Concurrent preparations share one retry;
+  normal drawing keeps settled cache behavior without repeated image requests.
+  Retain cached records and ignore superseded image callbacks.
 - Keep derived reads current inside batched actions and source observers,
   preserving cached descendants when a derived value stays equal. Match the
   same settled reads and callback order in AOT islands. Deliver shared peers
