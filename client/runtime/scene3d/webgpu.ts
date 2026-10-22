@@ -7958,7 +7958,7 @@
     // Post-processor.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
 
     // Scratch Float32Arrays.
     var scratchViewMatrix = new Float32Array(16);
@@ -18813,7 +18813,7 @@
       selenaFrame.cameraProximity = Math.max(0, Math.min(1, sceneNumber(bundle.cameraProximity, 0)));
       var computeParticleRecords = updateComputeParticleSystems(bundle.computeParticles, encoder, frameTimeSeconds);
       var computedMorphStats = updateComputedMorphMeshes(bundle, encoder);
-      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder);
+      var elioSkinStats = updateElioSkinnedMeshes(bundle, encoder); window.__gosx_scene3d_ocean_fft_api?.frame(oceanResources, { device: device, encoder: encoder, environment: bundle.environment, camera: cam, time: selenaFrame.time, tier: frameMeta?.oceanTier, create: wgpuCreateValidatedPipeline, validation: wgpuPipelineValidation, guard: pipelineGuard });
       var pbrSceneBuffers = hasPBRData ? ensurePBRSceneAttributeBuffers(bundle) : null;
       activePickMeshPositions = pbrSceneBuffers;
       if (incomingWaterShaderSourcesByID && Object.keys(incomingWaterShaderSourcesByID).length > 0) {
@@ -19403,7 +19403,7 @@
     function dispose() { pipelineGuard.release(rawDevice);
       if (rendererResourcesDisposed) return;
       rendererResourcesDisposed = true; clearTimeout(webGPUAttributeTimer); webGPUAttributeTimer = null;
-      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
+      if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources); if (oceanResources.renderer) oceanResources.renderer.dispose(); oceanResources.fft?.dispose(); sceneReflectDispose(oceanResources);
       if (transmissionResources) transmissionResources.dispose(); transmissionResources = null; transmissionView = null;
       skyResources.renderer = null;
 

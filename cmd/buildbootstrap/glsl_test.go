@@ -141,3 +141,19 @@ func TestWGSLPackingPreservesAttributeLabelsThatMatchParameters(t *testing.T) {
 		}
 	}
 }
+
+// The spectral ocean chunk rewrites WGSL_SCENE_OCEAN by text, in a different chunk from the one that carries it.
+// Packing must leave that source exactly as authored: no renamed locals, no stripped indentation.
+func TestWGSLPackingLeavesTextPatchedShadersAsAuthored(t *testing.T) {
+	source := "const WGSL_SCENE_OCEAN = [\"@vertex fn vertexMain(id: u32) -> f32 {\", \"  let level = 1.0;\", \"  var p = vec3f(1.0, level, 2.0);\", \"  return level;\", \"}\"].join(\"\\n\");\n" +
+		"const WGSL_PBR_FRAGMENT = [\"fn shade(inputValue: f32) -> f32 {\", \"    var localValue = inputValue + 1e-6;\", \"    return localValue;\", \"}\"].join(\"\\n\");\n"
+	packed := packBuiltinWGSL(source)
+	for _, text := range []string{"  let level = 1.0;", "  var p = vec3f(1.0, level, 2.0);", "  return level;"} {
+		if !strings.Contains(packed, text) {
+			t.Errorf("text-patched ocean shader changed: lost %q in %s", text, packed)
+		}
+	}
+	if strings.Contains(packed, "localValue") {
+		t.Errorf("other built-in shaders must still be packed: %s", packed)
+	}
+}

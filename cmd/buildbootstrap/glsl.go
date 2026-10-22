@@ -279,6 +279,11 @@ func shaderLiteral(code []byte, node *gotreesitter.Node, grammar *gotreesitter.L
 	}
 	return start, end, string(masked)
 }
+// textPatchedShaders lists built-in shader constants that another chunk rewrites by text. Packing renames
+// locals and strips indentation, which would leave those rewrites with nothing to match, so they ship as authored.
+// WGSL_SCENE_OCEAN: the spectral ocean (bootstrap-feature-scene3d-ocean-fft.js, ocean-fft-surface.ts).
+var textPatchedShaders = map[string]bool{"WGSL_SCENE_OCEAN": true}
+
 func packBuiltinGLSL(code string) string {
 	return packBuiltinShaders(code, false)
 }
@@ -334,7 +339,7 @@ func packBuiltinShaders(code string, wgsl bool) string {
 				if wgsl {
 					selected = strings.HasPrefix(text, "WGSL_") || strings.HasPrefix(text, "SCENE_") && (strings.Contains(text, "SOURCE") || strings.Contains(text, "WGSL"))
 				}
-				if selected {
+				if selected && !textPatchedShaders[text] {
 					if !strings.Contains(value.Text(bytes), ".replace(") {
 						constants = append(constants, value)
 					}
