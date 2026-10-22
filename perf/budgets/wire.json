@@ -163,7 +163,7 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 310618,
+          "frameworkJsWireBytes": 310733,
           "htmlWireBytes": 14280,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
@@ -171,7 +171,7 @@
           "lazyJsWireBytes": 256,
           "requests": 11,
           "totalWireBytes": 383937,
-          "wasmWireBytes": 220958
+          "wasmWireBytes": 221073
         },
         "require": [
           "html-compressed",
@@ -184,8 +184,8 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "frameworkJsWireBytes": "2026-10-21: include the same 1561 B core-WASM increase for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; set this metric to actual plus 256 B. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase.",
-          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions add 1561 B Brotli (0.71%) to the qualified 219141 B core; the actual core is 220702 B (655059 raw). Keep the limit at actual plus 256 B. The same WASM growth is accounted for in the affected aggregate metrics; JavaScript bytes, request counts, other resources, hard ceilings and policy requirements are unchanged. Exact-head hosted and independent wire qualification remain required."
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase. Final-head full-route qualification is required.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required."
         }
       },
       "/performance/": {
@@ -241,15 +241,15 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 310613,
+          "frameworkJsWireBytes": 310728,
           "htmlWireBytes": 1516,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 90521,
           "lazyJsWireBytes": 256,
           "requests": 9,
-          "totalWireBytes": 312991,
-          "wasmWireBytes": 220958
+          "totalWireBytes": 313106,
+          "wasmWireBytes": 221073
         },
         "require": [
           "html-compressed",
@@ -262,9 +262,9 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "frameworkJsWireBytes": "2026-10-21: include the same 1561 B core-WASM increase for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; set this metric to actual plus 256 B. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase.",
-          "totalWireBytes": "2026-10-21: include the same 1561 B core-WASM increase for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; set this metric to actual plus 256 B. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Total includes a 3 B smaller compressed HTML document than the qualified baseline.",
-          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions add 1561 B Brotli (0.71%) to the qualified 219141 B core; the actual core is 220702 B (655059 raw). Keep the limit at actual plus 256 B. The same WASM growth is accounted for in the affected aggregate metrics; JavaScript bytes, request counts, other resources, hard ceilings and policy requirements are unchanged. Exact-head hosted and independent wire qualification remain required."
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required.",
+          "totalWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required."
         }
       },
       "/stack/": {
