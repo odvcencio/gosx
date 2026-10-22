@@ -52,6 +52,7 @@
     "webgl-contact-shadows.ts",
     "webgpu-contact-shadows.ts",
     "webgpu-crowd.ts",
+    "webgpu-cutaway.ts",
     "webgl-taa.ts",
     "pipeline-recovery.ts",
     "webgpu-selena-textures.ts",
@@ -592,6 +593,21 @@
     },
     {
       "file": "cmd/buildbootstrap/main.go",
+      "source": "webgpu-cutaway.ts",
+      "count": 2
+    },
+    {
+      "file": "client/js/bootstrap-src/chunks.json",
+      "source": "webgpu-cutaway.ts",
+      "count": 2
+    },
+    {
+      "file": "client/runtime/tsconfig.scene3d.json",
+      "source": "webgpu-cutaway.ts",
+      "count": 1
+    },
+    {
+      "file": "cmd/buildbootstrap/main.go",
       "source": "webgl-specular-bloom.ts",
       "count": 2
     },
@@ -710,6 +726,7 @@
         "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/pipeline-recovery.ts",
         "../runtime/scene3d/webgpu-selena-textures.ts",
+        "../runtime/scene3d/webgpu-cutaway.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
@@ -736,6 +753,7 @@
         "../runtime/scene3d/webgpu-contact-shadows.ts": "governed-renderer",
         "../runtime/scene3d/pipeline-recovery.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-selena-textures.ts": "governed-renderer",
+        "../runtime/scene3d/webgpu-cutaway.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-specular-bloom.ts": "governed-renderer",
         "../runtime/scene3d/webgpu-crowd.ts": "governed-renderer"
       },
@@ -744,6 +762,7 @@
         "../runtime/scene3d/webgpu-detail.ts",
         "../runtime/scene3d/pipeline-recovery.ts",
         "../runtime/scene3d/webgpu-selena-textures.ts",
+        "../runtime/scene3d/webgpu-cutaway.ts",
         "../runtime/scene3d/webgpu.ts",
         "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts",
         "../runtime/scene3d/webgpu-ocean.ts",
@@ -754,13 +773,13 @@
         "../runtime/scene3d/webgpu-contact-shadows.ts",
         "../runtime/scene3d/webgpu-crowd.ts"
       ],
-      "maxLines": 22562,
-      "maxFileLines": 19930
+      "maxLines": 22644,
+      "maxFileLines": 19934
     }
   },
   "files": {
     "../runtime/scene3d/webgl.ts": 11398,
-    "../runtime/scene3d/webgpu.ts": 19930,
+    "../runtime/scene3d/webgpu.ts": 19934,
     "bootstrap-src/16a1-scene-webgpu-selena-uniforms.ts": 208,
     "../runtime/scene3d/hydrate-input.ts": 90,
     "../runtime/scene3d/mount-webgl.ts": 5390,
@@ -803,7 +822,8 @@
     "../runtime/scene3d/model-preparation.ts": 87,
     "../runtime/scene3d/mount-pan.ts": 63,
     "../runtime/scene3d/vessel-instruments.ts": 80,
-    "../runtime/scene3d/webgpu-crowd.ts": 1246
+    "../runtime/scene3d/webgpu-crowd.ts": 1250,
+    "../runtime/scene3d/webgpu-cutaway.ts": 74
   },
   "functionDefaults": {
     "lines": 200,

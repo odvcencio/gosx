@@ -113,7 +113,7 @@ for (const retained of [true, false]) {
     const call = writes.pop();
     const at = find(call.data, CUT);
     // The planes sit straight after the 16-float model matrix, in the same slot.
-    assert.deepEqual(Array.from(call.data.slice(at - 16, at - 12)), [1, 0, 0, 0], "model matrix column 0 precedes the planes");
+    assert.deepEqual(Array.from(call.data.slice(at - 16, at - 12), (v) => v + 0), [1, 0, 0, 0], "model matrix column 0 precedes the planes");
     assert.equal(call.data[at + 8], 0.25, "fade is the first float of the third vec4");
   });
 }

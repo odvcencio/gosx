@@ -1845,6 +1845,7 @@
     "",
     // Group 1: per-material
     "@group(1) @binding(0) var<uniform> material: MaterialUniforms;",
+    SCENE_WEBGPU_CUTAWAY_DECL_WGSL,
     "@group(1) @binding(1) var albedoTex: texture_2d<f32>;",
     "@group(1) @binding(2) var albedoSamp: sampler;",
     "@group(1) @binding(3) var normalTex: texture_2d<f32>;",
@@ -2129,6 +2130,7 @@
     "}",
     WGSL_TRANSMISSION,
     "fn gosxPBRColor(in: VertexOutput) -> vec4f {",
+    SCENE_WEBGPU_CUTAWAY_DISCARD_WGSL,
     // Resolve material properties, sampling textures when available.
     "    var albedo = material.albedo;",
     "    var texAlpha = 1.0;",
@@ -3969,8 +3971,8 @@
     for (var binding = 1; binding < 19; binding += 2) entries.push(
       { binding: binding, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: "float" } },
       { binding: binding + 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} });
-    if (models) entries.push({ binding: 19, visibility: GPUShaderStage.VERTEX,
-      buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: 64 } });
+    if (models) entries.push({ binding: 19, visibility: GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT,
+      buffer: { type: "uniform", hasDynamicOffset: true, minBindingSize: SCENE_WEBGPU_CUTAWAY_SLOT_BYTES } });
     return device.createBindGroupLayout({ label: "gosx-material", entries: entries });
   }
   function wgpuCreatePointsBindGroupLayout(device) {
@@ -15272,7 +15274,7 @@
         { binding: textureIndex * 2 + 1, resource: texViews[textureIndex] },
         { binding: textureIndex * 2 + 2, resource: texSamplers[textureIndex] });
       var modelBuffer = materialFrame.buffer;
-      if (modelBuffer) entries.push({ binding: 19, resource: { buffer: modelBuffer, size: 64 } });
+      if (modelBuffer) entries.push({ binding: 19, resource: { buffer: modelBuffer, size: SCENE_WEBGPU_CUTAWAY_SLOT_BYTES } });
       var matBG = device.createBindGroup({ layout: materialBindGroupLayout, entries: entries });
       owner[bgCacheSlot] = { device: device, materialBuffer: materialBuffer, texViews: texViews,
         texSamplers: texSamplers, modelBuffer: modelBuffer, bg: matBG };
@@ -16554,7 +16556,7 @@
         bindPBRPipeline(reflectedDirect, mat);
 
         var matBG = webGPUFrameMaterialGroup(materialFrame, matIndex, mat, receiveShadow, createMaterialBindGroup);
-        var modelOffset = obj.retainedGeometry ? (materialFrame.offsets.get(obj.modelMatrix) || 0) : 0;
+        var modelOffset = webGPUCutawayOffset(materialFrame, obj);
         if (matIndex !== lastMaterialIndex || receiveShadow !== lastReceiveShadow || matBG !== lastMaterialOwner || modelOffset !== lastModelOffset) {
           modelDynamicOffsets[0] = modelOffset;
           pass.setBindGroup(1, matBG, modelDynamicOffsets);
@@ -19831,8 +19833,8 @@
     materialFrame.epoch = epoch;
     var objects = Array.isArray(bundle.meshObjects) ? bundle.meshObjects : [];
     var alignment = Math.max(16, sceneNumber(device.limits && device.limits.minUniformBufferOffsetAlignment, 256));
-    materialFrame.stride = Math.ceil(64 / alignment) * alignment;
-    var required = 1 + objects.filter(object => object && object.retainedGeometry).length;
+    materialFrame.stride = Math.ceil(SCENE_WEBGPU_CUTAWAY_SLOT_BYTES / alignment) * alignment;
+    var required = 1 + objects.filter(webGPUCutawayHasSlot).length;
     var resized = !materialFrame.buffer || required > materialFrame.capacity;
     if (resized) {
       var capacity = Math.max(1, materialFrame.capacity);
@@ -19852,10 +19854,11 @@
     var slotIndex = 0, firstDirty = 0, lastDirty = 0;
     for (var i = 0; i < objects.length; i++) {
       var object = objects[i];
-      if (!object || !object.retainedGeometry) continue;
-      var matrix = webGPUObjectModelMatrix(object);
+      if (!webGPUCutawayHasSlot(object)) continue;
+      var matrix = object.retainedGeometry ? webGPUObjectModelMatrix(object) : null;
       var offset = ++slotIndex * materialFrame.stride;
-      if (matrix) materialFrame.offsets.set(matrix, offset);
+      var slotKey = webGPUCutawayKey(object, matrix);
+      if (slotKey) materialFrame.offsets.set(slotKey, offset);
       var changed = resized;
       for (var column = 0; column < 16; column++) {
         var index = offset / 4 + column, before = materialFrame.words[index];
@@ -19864,10 +19867,11 @@
         // Compare stored float32 bits, including the rounding of wire numbers.
         if (materialFrame.words[index] !== before) changed = true;
       }
+      if (webGPUCutawayWrite(materialFrame, offset, object.cut)) changed = true;
       if (changed) { if (!firstDirty) firstDirty = slotIndex; lastDirty = slotIndex; }
     }
     if (lastDirty) device.queue.writeBuffer(materialFrame.buffer, firstDirty * materialFrame.stride,
-      materialFrame.data.subarray(firstDirty * materialFrame.stride / 4, (lastDirty * materialFrame.stride + 64) / 4));
+      materialFrame.data.subarray(firstDirty * materialFrame.stride / 4, (lastDirty * materialFrame.stride + SCENE_WEBGPU_CUTAWAY_SLOT_BYTES) / 4));
     var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
     var signatures = materialFrame.signatures;
     signatures.length = materials.length;
