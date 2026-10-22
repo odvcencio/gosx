@@ -51,7 +51,9 @@
     if (record.socket && (record.socket.readyState === 1 || record.socket.readyState == null)) {
       bindHubOutputs(record);
       startHubRoundTrip(record);
-      emitHubConnection(record, "open");
+      publishHubConnection(record, "open");
+    } else if (record.socket && record.socket.readyState === 0) {
+      publishHubConnection(record, "connecting");
     }
   }
 
@@ -574,6 +576,7 @@
       }
       bindHubOutputs(record);
       startHubRoundTrip(record);
+      publishHubConnection(record, "open");
     };
     socket.onmessage = function(evt) {
       if (record.disposed || record.suspended) return;
@@ -592,11 +595,13 @@
       record.closed = true;
       stopHubRoundTrip(record);
       scheduleHubReconnect(record);
-      emitHubConnection(record, "reconnecting");
+      publishHubConnection(record, "reconnecting", { reconnectInMs: record.reconnectDelay });
     };
 
     socket.onerror = function(e) {
-      if (!record.disposed) console.error(`[gosx] hub connection error for ${record.entry.id}:`, e);
+      if (record.disposed) return;
+      console.error(`[gosx] hub connection error for ${record.entry.id}:`, e);
+      publishHubConnection(record, "error");
     };
   }
 
@@ -662,9 +667,26 @@
 
   // Page views observe lifecycle without polling the socket. These local
   // notifications never enter the wire protocol or shared-signal bindings.
-  function emitHubConnection(record, state) {
+  // Each state also goes to the entry's connectionSignal (hydrate.HubEntry)
+  // and to the data-gosx-hub-connection attribute of every element marked
+  // data-gosx-hub-status="<hub name>", so CSS can show status without script.
+  function publishHubConnection(record, state, extra) {
+    const data = Object.assign({ state: state, attempt: record.reconnectAttempt || 0, at: Date.now() }, extra || {});
+    const text = JSON.stringify(data);
     for (const entry of record.entries.values()) {
-      emitHubEvent(entry, { event: "__connection", data: { state: state } });
+      emitHubEvent(entry, { event: "__connection", data: data });
+      if (entry.connectionSignal) {
+        try {
+          setSharedSignalJSON(entry.connectionSignal, text);
+        } catch (_e) {}
+      }
+      if (typeof document.querySelectorAll === "function" && entry.name) {
+        const name = String(entry.name).replace(/["\\]/g, "\\$&");
+        try {
+          const nodes = document.querySelectorAll('[data-gosx-hub-status="' + name + '"]');
+          for (let i = 0; i < nodes.length; i++) nodes[i].setAttribute("data-gosx-hub-connection", state);
+        } catch (_e) {}
+      }
     }
   }
 
