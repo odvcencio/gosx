@@ -3679,13 +3679,23 @@
   function wgpuEnvMapMaxLod(envMap: any): number {
     return envMap.active ? Math.max(0, sceneNumber(envMap.record && envMap.record.levels, 1) - 1) : 0;
   }
-  function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
+  function wgpuLoadTexture(device, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace, retryFailed = false) {
     if (!cache) return null;
     var descriptor = wgpuTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
     var key = descriptor.uri;
     if (!key) return null;
     var cacheKey = wgpuTextureCacheKey(descriptor);
-    if (cache.has(cacheKey)) return cache.get(cacheKey);
+    if (cache.has(cacheKey)) {
+      var cached = cache.get(cacheKey);
+      if (retryFailed && cached.failed && !wgpuTextureRecordDisposed(cached)) {
+        cached.failed = false;
+        cached.loaded = false;
+        cached.pending = true;
+        cached.error = undefined;
+        wgpuStartTextureLoad(device, cached);
+      }
+      return cached;
+    }
     // Placeholder: 1x1 white pixel.
     var cube = descriptor.view === "cube";
     var placeholderTex = cube ? wgpuCreatePlaceholderCubeTexture(device) : device.createTexture({
@@ -3715,6 +3725,12 @@
       disposed: false,
     };
     cache.set(cacheKey, record);
+    wgpuStartTextureLoad(device, record);
+    return record;
+  }
+  function wgpuStartTextureLoad(device, record) {
+    var descriptor = record.descriptor, key = record.src;
+    var cube = descriptor.view === "cube";
     // KTX2 uploads supplied mips through its decoder, outside the Image path.
     if (wgpuIsKTX2URL(key) && wgpuKTX2API()) {
       wgpuUploadKTX2Texture(device, key, record);
@@ -3722,14 +3738,14 @@
     }
     if (cube) {
       record.failed = true;
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ record.pending = false;
+      record.pending = false;
       record.error = "cube descriptors require a KTX2 upload path";
       wgpuNotifyTextureSettled(record);
     } else if (typeof Image === "function") {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ var image = new Image();
+      var image = new Image();
       record.image = image;
       image.onload = function() {
-        if (wgpuTextureRecordDisposed(record)) return;
+        if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
         // Preserve base/specular RGB under transparent pixels and MASK alpha
         // by decoding/copying these roles unpremultiplied.
         var needsUnpremultipliedAlpha = ["specular-color", "base-color"].indexOf(descriptor.role) >= 0;
@@ -3756,14 +3772,14 @@
         if (imagePromise) {
           imagePromise.then(async function(bitmap) {
             try {
-              if (wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
+              if (record.image !== image || wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
               device.queue.copyExternalImageToTexture(
                 { source: bitmap },
                 needsUnpremultipliedAlpha || isHTMLTexture ? { texture: tex, premultipliedAlpha: false } : { texture: tex },
                 [w, h]
               );
               await wgpuGenerateTextureMips(device, tex, imageTexture.format, imageTexture.levels);
-              if (wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
+              if (record.image !== image || wgpuTextureRecordDisposed(record)) { tex.destroy(); return; }
               record.texture.destroy();
               record.texture = tex;
               record.view = tex.createView();
@@ -3777,7 +3793,7 @@
             }
           }).catch(function() {
             tex.destroy();
-            if (wgpuTextureRecordDisposed(record)) return;
+            if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
             record.failed = true;
             record.pending = false;
             wgpuNotifyTextureSettled(record);
@@ -3789,7 +3805,7 @@
         }
       };
       image.onerror = function() {
-        if (wgpuTextureRecordDisposed(record)) return;
+        if (record.image !== image || wgpuTextureRecordDisposed(record)) return;
         record.failed = true;
         record.pending = false;
         wgpuNotifyTextureSettled(record);
@@ -3801,7 +3817,6 @@
       record.pending = false;
       wgpuNotifyTextureSettled(record);
     }
-    return record;
   }
   function wgpuWaterCubeMapFaceURLs(value) {
     var base = typeof value === "string" ? value.trim() : "";
@@ -19709,7 +19724,7 @@
       kind: "webgpu",
       type: "webgpu",
       supportsRetainedGeometry: true,
-      supportsBundle: supportsBundle, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace) },
+      supportsBundle: supportsBundle, texturePreparation: { generation: textureCache["_gosxGeneration"], load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => wgpuLoadTexture(device, url, textureCache, descriptor, role, colorSpace, retryFailed) },
       queuePick: queuePick,
       setLifecycle: setLifecycle,
       pollPerformanceSample: pollPerformanceSample,

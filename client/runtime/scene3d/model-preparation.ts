@@ -28,7 +28,7 @@ function sceneModelPreparationMaps(asset: any, renderer: any, records: Set<any>)
       const descriptor = material.textureDescriptors?.[slot];
       const uri = descriptor?.uri?.trim() || material[prop];
       if (!uri) continue;
-      const record = renderer.texturePreparation.load(uri, descriptor, role, colorSpace);
+      const record = renderer.texturePreparation.load(uri, descriptor, role, colorSpace, true);
       if (!record) throw new Error('Scene3D material map unavailable: ' + uri);
       records.add(record);
     }
