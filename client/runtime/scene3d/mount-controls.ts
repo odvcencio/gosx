@@ -42,6 +42,12 @@
     return props && props.vessel && typeof props.vessel === "object" && typeof props.vessel.nodeId === "string" && props.vessel.nodeId.length > 0;
   }
 
+  // One predicate picks the ocean quality tier for the shader (mount frame meta) and the vessel's water query.
+  function sceneLowHardware() {
+    // @ts-ignore TS2339 -- Chromium deviceMemory
+    return gosxLowEndHardware(navigator.deviceMemory, navigator.hardwareConcurrency);
+  }
+
   // @ts-ignore TS7006 -- keep this helper JavaScript-compatible in the runtime bundle
   function sceneRunFrameGuard(callback, args, shouldRecover, recover) {
     try { return callback.apply(null, args); } catch (error) { if (shouldRecover()) recover(); throw error; }
@@ -1076,8 +1082,7 @@
       publish: typeof setSharedSignalValue === "function" ? setSharedSignalValue : undefined,
       // @ts-ignore TS7006 -- renderer-neutral creation seam for the lazy wake
       addObject: (state, id, object) => state.objects.set(id, normalizeSceneObject(Object.assign({ id, kind: "mesh" }, object), id)),
-      // @ts-ignore TS2339 -- Chromium deviceMemory is also used by the ocean quality gate
-      lowHardware: () => gosxLowEndHardware(navigator.deviceMemory, navigator.hardwareConcurrency),
+      lowHardware: sceneLowHardware,
     });
     if ((!props.controlZoom && !props.optics) || !base.controller) return base;
     const controller = base.controller, current = controller.currentCamera;

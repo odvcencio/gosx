@@ -312,7 +312,7 @@ const oceanRecord=()=>({level:0,windDirection:0,waveHeight:.8,waveLength:18,chop
 const oceanBundle=()=>{const b=makePointsBundle(null);b.points=[];b.environment.ocean=oceanRecord();return b;};
 // Wall time (nowMS, performance.now) and the scene clock differ after a pause; the ocean must draw at the scene clock
 // and at the quality tier the mount chose, as the vessel's water query does.
-const oceanMeta=(quality)=>({nowMS:91000,sceneTime:7.25,oceanQuality:quality,active:true,displayDeltaMS:17});
+const oceanMeta=(quality)=>({nowMS:91000,sceneTime:7.25,oceanTier:quality,active:true,displayDeltaMS:17});
 test('WebGL ocean draws at the scene clock and the mount quality tier',t=>{
  const h=createWebGLRendererForPost({fresh:true});t.after(()=>h.renderer.dispose());
  const gl=h.canvas.getContext('webgl2');
