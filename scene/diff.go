@@ -819,54 +819,51 @@ func MarshalCommands(commands []Command) ([]byte, error) {
 // patch is optional. When it returns a command, that command replaces the remove
 // plus create pair for one record. Pass nil to keep the pair.
 //
-// The ID index stores positions in previous. A presence slice avoids a second
-// string-keyed map while retaining the last previous record for duplicate IDs.
-// Next records remain in input order, including repeated IDs.
+// One table holds next identities and their last matching previous records.
+// Nil entries denote creations. Sort and deduplicate missing identities before
+// visiting next records in input order, including repeated IDs.
 func diffSceneRecords[T any](commands *[]Command, previous, next []T, id func(*T) string, create func(*T) Command, patch func(previous, next *T) (Command, bool)) {
-	previousIndices := make(map[string]int, len(previous))
-	var seen []bool
-	if len(next) != 0 {
-		seen = make([]bool, len(previous))
-	}
-	for index := range previous {
-		if recordID := id(&previous[index]); recordID != "" {
-			previousIndices[recordID] = index
-		}
-	}
-	for index := range next {
-		if recordID := id(&next[index]); recordID != "" {
-			if previousIndex, exists := previousIndices[recordID]; exists {
-				seen[previousIndex] = true
+	// Seed next identities, then retain the last matching previous record.
+	// A nil value denotes a new identity. No table is needed for creation only.
+	var matchingPrevious map[string]*T
+	if len(previous) != 0 {
+		matchingPrevious = make(map[string]*T, len(next))
+		for index := range next {
+			if recordID := id(&next[index]); recordID != "" {
+				matchingPrevious[recordID] = nil
 			}
 		}
 	}
-
 	var removed []string
-	for recordID, previousIndex := range previousIndices {
-		if len(next) == 0 || !seen[previousIndex] {
+	for index := range previous {
+		recordID := id(&previous[index])
+		if recordID == "" {
+			continue
+		}
+		if _, exists := matchingPrevious[recordID]; exists {
+			matchingPrevious[recordID] = &previous[index]
+		} else {
 			removed = append(removed, recordID)
 		}
 	}
 	sort.Strings(removed)
-	for _, recordID := range removed {
-		*commands = append(*commands, RemoveObjectCommand(recordID))
+	for index, recordID := range removed {
+		// A repeated missing identity still emits one removal, as in the ID map.
+		if index == 0 || recordID != removed[index-1] {
+			*commands = append(*commands, RemoveObjectCommand(recordID))
+		}
 	}
-
 	for index := range next {
 		record := &next[index]
 		recordID := id(record)
 		if recordID == "" {
 			continue
 		}
-		previousIndex, existed := previousIndices[recordID]
-		var previousRecord *T
-		if existed {
-			previousRecord = &previous[previousIndex]
-		}
-		if existed && sceneRecordPointerJSONEqual(previousRecord, record) {
-			continue
-		}
-		if existed {
+		previousRecord := matchingPrevious[recordID]
+		if previousRecord != nil {
+			if sceneRecordPointerJSONEqual(previousRecord, record) {
+				continue
+			}
 			if patch != nil {
 				if command, ok := patch(previousRecord, record); ok {
 					*commands = append(*commands, command)

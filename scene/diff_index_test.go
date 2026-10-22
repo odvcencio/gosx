@@ -44,7 +44,9 @@ func TestSceneRecordIndexKeepsOrderAndPatchModes(t *testing.T) {
 	old := ObjectIR{ID: "a", Kind: "box", X: 1}
 	first := old
 	first.X = 0
-	previous := SceneIR{Objects: []ObjectIR{{ID: "z"}, first, {ID: "b"}, old, {ID: "", X: 99}}}
+	previous := SceneIR{Objects: []ObjectIR{
+		{ID: "z"}, first, {ID: "b"}, {ID: "z"}, old, {ID: "b"}, {ID: "", X: 99},
+	}}
 	moved := old
 	moved.X = 2
 	created := ObjectIR{ID: "new", Kind: "box"}
