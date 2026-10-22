@@ -1197,7 +1197,9 @@
   // "none" and the gate that refused it, on <html> and the $gosx.renderer
   // signal. renderer is one of webgpu, webgl2, canvas2d, none.
   function publishRendererChoice(renderer, reason, source) {
-    const value = { renderer: String(renderer || "none"), reason: String(reason || ""), source: String(source || "") };
+    // The runtime's backend kinds map to the published vocabulary.
+    const published = { webgpu: "webgpu", webgl: "webgl2", webgl2: "webgl2", canvas: "canvas2d", canvas2d: "canvas2d" }[String(renderer || "")] || "none";
+    const value = { renderer: published, reason: String(reason || ""), source: String(source || "") };
     const root = document && document.documentElement;
     if (root) {
       setAttrValue(root, "data-gosx-renderer", value.renderer);

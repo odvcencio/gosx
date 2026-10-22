@@ -15,12 +15,12 @@
   `$gosx.renderer` signal and the `gosx:renderer` event. Selective pages now emit
   `<script defer data-gosx-script="feature-engines|hubs|controllers|islands">`
   tags instead of preload links, so an app writes no runtime `<script>` tag.
-  Bundle sizes: bootstrap-runtime.js 193,953 -> 196,603 raw (54,164 -> 54,965
-  gzip, 48,587 -> 49,162 Brotli); bootstrap-feature-engines.js 114,364 ->
+  Bundle sizes: bootstrap-runtime.js 193,953 -> 196,695 raw (54,164 -> 54,988
+  gzip, 48,587 -> 49,173 Brotli); bootstrap-feature-engines.js 114,364 ->
   117,534 raw (33,152 -> 34,064 gzip, 30,173 -> 30,948 Brotli); bootstrap.js
-  2,036,426 -> 2,041,423 raw (566,879 -> 568,410 gzip, 466,054 -> 466,840
-  Brotli); bootstrap-feature-scene3d.js 657,780 -> 658,021 raw (186,973 ->
-  187,048 gzip, 159,257 -> 159,304 Brotli); the new
+  2,036,426 -> 2,041,397 raw (566,879 -> 568,375 gzip, 466,054 -> 467,210
+  Brotli); bootstrap-feature-scene3d.js 657,780 -> 657,905 raw (186,973 ->
+  187,056 gzip, 159,257 -> 159,364 Brotli); the new
   bootstrap-feature-renderer-probe.js is 891 raw (440 gzip, 365 Brotli) and loads
   only on pages that require it. See docs/scene3d-performance.
 
