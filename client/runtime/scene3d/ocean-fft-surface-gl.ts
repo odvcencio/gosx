@@ -1,6 +1,6 @@
 // Spectral surface for the WebGL2 ocean pass (lazy chunk bootstrap-feature-scene3d-ocean-fft.js).
 //
-// The WebGL2 ocean pass shaders (webgl-ocean.ts) sum six Gerstner waves. This file turns those two
+// The WebGL2 ocean pass shaders (the WebGL2 ocean pass source) sum six Gerstner waves. This file turns those two
 // sources into the spectral variant, the same way ocean-fft-surface.ts does for WGSL: displacement,
 // slopes and the Jacobian come from the cascade textures that ocean-fft-gl.ts fills each frame, and foam
 // comes from the combined Jacobian plus the persistent foam texture. Sky, glint, reflections, bathymetry,
