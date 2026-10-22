@@ -18,6 +18,11 @@
   from the old profile may remain resident after a switch. BC5 normal maps are
   rejected until the shaders reconstruct their missing Z channel.
 
+- Reuse mount-owned decoded model scopes when revisiting the same texture
+  profile, backend, capabilities and manifest. Retire obsolete manifest scopes
+  and evict their model-cache entries on disposal; late asynchronous decodes
+  cannot repopulate a retired scope.
+
 - Recover failed material textures through explicit Scene3D model preparation on
   the existing WebGL or WebGPU renderer. Concurrent preparations share one retry;
   normal drawing keeps settled cache behavior without repeated image requests.
