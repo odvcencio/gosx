@@ -898,8 +898,8 @@
 
   if (typeof window.addEventListener === "function") {
     window.addEventListener("pageshow", revalidateHubConnections);
-    if (!window.__gosxHubResyncListeners) {
-      window.__gosxHubResyncListeners = true;
+    if (!window.__gosx.hubResyncListeners) {
+      window.__gosx.hubResyncListeners = true;
       // A page script cannot be sure the document finished loading, so focus
       // waits until it left the "loading" state.
       if (typeof document.addEventListener === "function") {

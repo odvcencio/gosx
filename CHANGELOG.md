@@ -47,8 +47,8 @@
   the tab becomes visible, the window gains focus, the network returns, the
   page leaves the back-forward cache, after the socket opens, and on a
   wall-clock schedule, at most once per 1.2 s by default. `Hub.ReplayLatched`
-  answers it for hubs that use `Latch`. The hubs chunk grows by 3,659 raw /
-  1,015 gzip / 880 Brotli bytes.
+  answers it for hubs that use `Latch`. The hubs chunk grows by 3,661 raw /
+  1,013 gzip / 876 Brotli bytes.
 
 - Gate Scene3D hub command batches on the first content frame with
   `HubBinding.SceneCommandsWhen: "revealed"` and a timeout (default 20 s).

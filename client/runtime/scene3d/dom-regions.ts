@@ -80,9 +80,9 @@
   }
 
   // The effect is "composited" when the mount renders on WebGPU or WebGL and
-  // has neither dropped, deferred nor demoted its post-FX. The attributes are
-  // published by mount-webgl.ts (backend), mount-quality.ts (postfx) and
-  // mount.ts (webgpu-postfx-demoted). Missing attributes count as healthy.
+  // has neither dropped, deferred nor demoted its post-FX. The mount publishes
+  // the backend, postfx and webgpu-postfx-demoted attributes. Missing
+  // attributes count as healthy.
   // The tracker's syncPresence applies this rule to its mount.
 
   var SCENE_DOM_REGION_PRESENCE_ATTRIBUTES = [
