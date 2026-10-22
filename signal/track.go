@@ -12,14 +12,17 @@ import (
 // in a window that goroutine B opened.
 var (
 	trackerMu     sync.Mutex
-	trackerStacks map[uint64][]*dependencyTracker
+	trackerStacks map[uint64]*dependencyTracker
 	openTrackers  atomic.Int32
+	spareTrackers *dependencyTracker
+	spareCount    int
 )
 
 type dependencyTracker struct {
-	mu   sync.Mutex
-	deps []dependency
-	seen map[Subscribable]bool
+	gid    uint64
+	parent *dependencyTracker
+	deps   []dependency
+	seen   map[Subscribable]bool
 }
 
 type dependency struct {
@@ -38,55 +41,101 @@ func recordDependency(s Subscribable, revision uint64) {
 	gid := goroutineID()
 
 	trackerMu.Lock()
-	stack := trackerStacks[gid]
-	if len(stack) == 0 {
+	t := trackerStacks[gid]
+	if t == nil {
 		trackerMu.Unlock()
 		return
 	}
-	t := stack[len(stack)-1]
-	trackerMu.Unlock()
 
-	t.mu.Lock()
-	if !t.seen[s] {
+	// Most derived values read only a few sources. A short scan avoids a
+	// hash table for those windows; larger dependency sets keep O(1) lookup.
+	if len(t.deps) < 8 {
+		for _, dep := range t.deps {
+			if dep.source == s {
+				trackerMu.Unlock()
+				return
+			}
+		}
+	} else {
+		if len(t.seen) == 0 {
+			if t.seen == nil {
+				t.seen = make(map[Subscribable]bool)
+			}
+			for _, dep := range t.deps {
+				t.seen[dep.source] = true
+			}
+		}
+		if t.seen[s] {
+			trackerMu.Unlock()
+			return
+		}
 		t.seen[s] = true
-		t.deps = append(t.deps, dependency{source: s, revision: revision})
 	}
-	t.mu.Unlock()
+	t.deps = append(t.deps, dependency{source: s, revision: revision})
+	trackerMu.Unlock()
 }
 
 // trackDependencies runs fn and reports every signal that fn read on the
-// calling goroutine. Nested windows are supported.
-func trackDependencies[T any](fn func() T) (T, []dependency) {
-	t := &dependencyTracker{
-		seen: make(map[Subscribable]bool),
-	}
-	gid := goroutineID()
+// calling goroutine. Nested windows are supported. The returned dependencies
+// belong to the caller; only cleared tracking scratch is cached for reuse.
+func trackDependencies[T any](fn func() T) (value T, deps []dependency) {
+	t := pushTracker(goroutineID())
+	defer popTracker(t, &deps)
+	return fn(), nil
+}
 
+// Keep scratch management outside the generic evaluator so each value type
+// shares the same implementation in the browser runtime.
+func pushTracker(gid uint64) *dependencyTracker {
 	openTrackers.Add(1)
 	trackerMu.Lock()
-	if trackerStacks == nil {
-		trackerStacks = make(map[uint64][]*dependencyTracker)
+	t := spareTrackers
+	if t == nil {
+		t = new(dependencyTracker)
+	} else {
+		spareTrackers = t.parent
+		spareCount--
 	}
-	trackerStacks[gid] = append(trackerStacks[gid], t)
+	if trackerStacks == nil {
+		trackerStacks = make(map[uint64]*dependencyTracker)
+	}
+	t.gid = gid
+	t.parent = trackerStacks[gid]
+	trackerStacks[gid] = t
 	trackerMu.Unlock()
+	return t
+}
 
-	// Pop the window even when fn panics. A leaked window would silently
-	// attach every later read to a dead computed value.
-	defer func() {
-		trackerMu.Lock()
-		stack := trackerStacks[gid]
-		if n := len(stack); n > 0 {
-			stack = stack[:n-1]
-			if len(stack) == 0 {
-				delete(trackerStacks, gid)
-			} else {
-				trackerStacks[gid] = stack
-			}
+// Pop and clear the window even when fn panics. Neither subsequent reads
+// nor cached scratch may retain a dependency of an abandoned computation.
+func popTracker(t *dependencyTracker, deps *[]dependency) {
+	trackerMu.Lock()
+	*deps = append([]dependency(nil), t.deps...)
+	gid := t.gid
+	head := trackerStacks[gid]
+	if head != t {
+		// Runtimes without goroutine IDs share one scope. If overlapping
+		// windows finish out of order, detach this window before caching it.
+		// Each pushed window remains linked until its matching pop.
+		for head.parent != t {
+			head = head.parent
 		}
-		trackerMu.Unlock()
-		openTrackers.Add(-1)
-	}()
-
-	val := fn()
-	return val, t.deps
+		head.parent = t.parent
+	} else if t.parent == nil {
+		delete(trackerStacks, gid)
+	} else {
+		trackerStacks[gid] = t.parent
+	}
+	// Cache only small, cleared windows. Oversized or excess windows can be
+	// collected instead of keeping their backing arrays or source graphs.
+	if cap(t.deps) <= 128 && spareCount < 8 {
+		clear(t.deps)
+		t.deps = t.deps[:0]
+		clear(t.seen)
+		t.parent = spareTrackers
+		spareTrackers = t
+		spareCount++
+	}
+	trackerMu.Unlock()
+	openTrackers.Add(-1)
 }
