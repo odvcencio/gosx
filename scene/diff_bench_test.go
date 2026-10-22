@@ -299,3 +299,21 @@ func referenceDiffSceneRecords[T any](commands *[]Command, previous, next []T, i
 		*commands = append(*commands, create(record))
 	}
 }
+
+// Include interaction changes in the same frame as a move: a state patch must
+// keep geometry and carry both edits without constructing replacement records.
+func BenchmarkDiffScenePatchState5000Objects10PercentMoved(b *testing.B) {
+	previous, next := benchDiffScenes(5000, 500)
+	for i := range 500 {
+		next.Objects[i].Selected = true
+		next.Objects[i].Label = "selected"
+	}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for b.Loop() {
+		diff := DiffScene(previous, next, DiffOptions{PatchObjectState: true})
+		if len(diff.Commands) != 500 {
+			b.Fatalf("commands = %d, want 500", len(diff.Commands))
+		}
+	}
+}

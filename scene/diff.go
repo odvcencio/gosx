@@ -702,27 +702,26 @@ func SetTransformCommand(id string, patch TransformPatch) Command {
 	return Command{Kind: CommandSetTransform, ObjectID: id, Data: patch}
 }
 
-// objectTransformPatch returns a transform patch when next changed only in
-// position, rotation, or scale. It proves that claim rather than assuming it: it
-// copies previous, overwrites the ten transform fields with next's, and
-// requires the copy to equal next. Any other changed field, including a nested
-// slice or a map, leaves the copy unequal and the caller falls back to remove
-// plus create. So a patch can never drop a second edit that arrived in the same
-// frame.
+// objectTransformPatch proves that a compact patch can replace the whole edit.
+// The common proof compares typed fields without copying the mesh record; the
+// reference path still decides values whose JSON equivalence is not proven.
 func objectTransformPatch(previous, next *ObjectIR) (Command, bool) {
-	probe := *previous
-	probe.X, probe.Y, probe.Z = next.X, next.Y, next.Z
-	probe.RotationX, probe.RotationY, probe.RotationZ = next.RotationX, next.RotationY, next.RotationZ
-	probe.ScaleX, probe.ScaleY, probe.ScaleZ = next.ScaleX, next.ScaleY, next.ScaleZ
-	probe.ParentMatrix = next.ParentMatrix
-	if !sceneRecordPointerJSONEqual(&probe, next) {
+	if !objectPatchFieldsEqual(previous, next, objectProofOmitTransform) {
 		return Command{}, false
 	}
-	parentMatrix, ok := transformPatchParentMatrix(next.ParentMatrix)
+	patch, ok := objectTransformPatchData(next)
 	if !ok {
 		return Command{}, false
 	}
-	return SetTransformCommand(next.ID, TransformPatch{
+	return SetTransformCommand(next.ID, patch), true
+}
+
+func objectTransformPatchData(next *ObjectIR) (TransformPatch, bool) {
+	parentMatrix, ok := transformPatchParentMatrix(next.ParentMatrix)
+	if !ok {
+		return TransformPatch{}, false
+	}
+	return TransformPatch{
 		X:            next.X,
 		Y:            next.Y,
 		Z:            next.Z,
@@ -733,7 +732,7 @@ func objectTransformPatch(previous, next *ObjectIR) (Command, bool) {
 		ScaleY:       resolveIRScale(next.ScaleY),
 		ScaleZ:       resolveIRScale(next.ScaleZ),
 		ParentMatrix: parentMatrix,
-	}), true
+	}, true
 }
 
 // ObjectStatePatch extends the transform patch with explicit interaction and
@@ -757,20 +756,19 @@ func objectStatePatch(previous, next *ObjectIR) (Command, bool) {
 	if next.Pickable == nil && !next.Interactive && (previous.Pickable != nil || previous.Interactive) {
 		return Command{}, false
 	}
-	probe := *previous
-	probe.Interactive, probe.Label, probe.InteractiveOrder = next.Interactive, next.Label, next.InteractiveOrder
-	probe.Pickable, probe.Visible, probe.Selected = next.Pickable, next.Visible, next.Selected
-	command, ok := objectTransformPatch(&probe, next)
+	if !objectPatchFieldsEqual(previous, next, objectProofOmitTransform|objectProofOmitState) {
+		return Command{}, false
+	}
+	transform, ok := objectTransformPatchData(next)
 	if !ok {
 		return Command{}, false
 	}
 	visible := next.Visible == nil || *next.Visible
-	command.Data = ObjectStatePatch{
-		TransformPatch: command.Data.(TransformPatch),
+	return Command{Kind: CommandSetTransform, ObjectID: next.ID, Data: ObjectStatePatch{
+		TransformPatch: transform,
 		Interactive:    next.Interactive, Label: next.Label, InteractiveOrder: next.InteractiveOrder,
 		Pickable: next.Pickable, Visible: visible, Selected: next.Selected,
-	}
-	return command, true
+	}}, true
 }
 
 func transformPatchParentMatrix(values []float64) (*[16]float64, bool) {
@@ -874,8 +872,9 @@ func sceneRecordJSONEqual[T any](a, b T) bool {
 // sceneRecordPointerJSONEqual answers the same question as sceneRecordJSONEqual
 // without copying either value.
 //
-// It rejects unequal plain object transforms, tries provenJSONEqual, and then
-// rejects known scalar/vertex differences before resorting to marshaling.
+// It rejects unequal plain object transforms, uses a schema-checked typed
+// ObjectIR proof when available (the reflective proof otherwise), and rejects
+// known scalar/vertex differences before resorting to marshaling.
 //
 // provenJSONEqual is one-way on purpose: true means the two values
 // must encode to identical JSON, and false means "not proven", never "different".
@@ -899,7 +898,13 @@ func sceneRecordPointerJSONEqual[T any](a, b *T) bool {
 			return false
 		}
 	}
-	if provenJSONEqual(reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()) {
+	proven := false
+	if object, ok := any(a).(*ObjectIR); ok && objectProofEnabled() {
+		proven = provenObjectFieldsEqual(object, any(b).(*ObjectIR), 0)
+	} else {
+		proven = provenJSONEqual(reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem())
+	}
+	if proven {
 		return true
 	}
 	if object, ok := any(a).(*ObjectIR); ok && objectRecordJSONDifferent(object, any(b).(*ObjectIR)) {
