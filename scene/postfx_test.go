@@ -905,3 +905,32 @@ func TestBloomModeIR(t *testing.T) {
 		t.Fatalf("unknown mode retained: %q", ir.Mode)
 	}
 }
+
+func TestCustomPostDOMRegionsPresenceClassLowers(t *testing.T) {
+	ir := CustomPostDOMRegionsIR{Selector: ".hero-card", PresenceClass: "hero-glass-live"}
+	data, _ := json.Marshal(ir)
+	if !strings.Contains(string(data), `"presenceClass":"hero-glass-live"`) {
+		t.Fatalf("presenceClass missing: %s", data)
+	}
+	plain, _ := json.Marshal(CustomPostDOMRegionsIR{Selector: ".x"})
+	if strings.Contains(string(plain), "presenceClass") {
+		t.Fatalf("empty presenceClass must be omitted: %s", plain)
+	}
+	lowered := func(class string) *CustomPostDOMRegionsIR {
+		pfx := PostFX{Effects: []PostEffect{CustomPost{
+			Name:       "Glass",
+			Material:   &CustomMaterial{FragmentWGSL: "fn fragmentMain() {}"},
+			DOMRegions: CustomPostDOMRegions{Selector: ".hero-card", PresenceClass: class},
+		}}}
+		return pfx.sceneIR()[0].(CustomPostIR).DOMRegions
+	}
+	if got := lowered(" hero-glass-live ").PresenceClass; got != "hero-glass-live" {
+		t.Fatalf("authoring value lowered to %q", got)
+	}
+	if got := lowered("two words").PresenceClass; got != "" {
+		t.Fatalf("a class with whitespace must be dropped, got %q", got)
+	}
+	if got := lowered(strings.Repeat("a", 65)).PresenceClass; got != "" {
+		t.Fatalf("a class over 64 characters must be dropped, got %q", got)
+	}
+}

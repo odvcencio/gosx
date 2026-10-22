@@ -268,6 +268,10 @@ type CustomPostDOMRegions struct {
 	Max      int
 	Uniforms DOMRegionUniforms
 	Bounds   CustomPostDOMRegionBounds
+	// PresenceClass names a class the browser adds to the document element
+	// while a matched region is visible in the canvas and the effect is
+	// composited. One token, at most 64 characters; anything else is dropped.
+	PresenceClass string
 }
 
 // FXAA applies fast approximate anti-aliasing (the FXAA 3.11 quality

@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // PostEffectIR is the typed compatibility record for one post-processing
@@ -570,6 +571,11 @@ type CustomPostDOMRegionsIR struct {
 	Max      int                          `json:"max,omitempty"`
 	Uniforms DOMRegionUniformsIR          `json:"uniforms,omitempty"`
 	Bounds   *CustomPostDOMRegionBoundsIR `json:"bounds,omitempty"`
+	// PresenceClass is added to the document element while at least one matched
+	// region is visible inside the canvas and the effect is composited; removed
+	// otherwise. CSS uses it to switch from a CSS-only fallback to the shader
+	// version.
+	PresenceClass string `json:"presenceClass,omitempty"`
 }
 
 // CustomPostDOMRegionBoundsIR describes runtime execution bounds for a
@@ -783,7 +789,19 @@ func lowerCustomPostDOMRegions(dom CustomPostDOMRegions) *CustomPostDOMRegionsIR
 		Max:      max,
 		Uniforms: uniforms,
 		Bounds:   lowerCustomPostDOMRegionBounds(dom.Bounds),
+
+		PresenceClass: customPostPresenceClass(dom.PresenceClass),
 	}
+}
+
+// customPostPresenceClass returns the class token, or "" when the value has
+// whitespace or is longer than 64 characters (the browser would ignore it).
+func customPostPresenceClass(value string) string {
+	value = strings.TrimSpace(value)
+	if len(value) > 64 || strings.IndexFunc(value, unicode.IsSpace) >= 0 {
+		return ""
+	}
+	return value
 }
 
 func lowerCustomPostDOMRegionBounds(bounds CustomPostDOMRegionBounds) *CustomPostDOMRegionBoundsIR {
