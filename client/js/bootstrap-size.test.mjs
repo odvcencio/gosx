@@ -877,7 +877,9 @@ const budgets = [
     // 166 gzip and 111 Brotli bytes after the cache-hit lookup reduction.
     // Retain the governed allowances and all other targets.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    file: "bootstrap.js", raw: 1976289, gzip: 552171,
+    // Portable U8 KTX2 upload grows the combined bootstrap by 557 measured
+    // raw bytes; keep the existing 65,536-byte allowance fixed.
+    file: "bootstrap.js", raw: 1976846, gzip: 552364,
     brotli: 450858 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
@@ -1681,7 +1683,9 @@ const budgets = [
   // move to 45_000 / 16_200 / 14_420, leaving 56 / 72 / 69 bytes of
   // rounding headroom.
   // Volume transmission adds 340 raw / 97 gzip / 78 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
-  { file: "bootstrap-feature-scene3d-gltf.js", raw: 46526, gzip: 16297, brotli: 14498 },
+  // Portable U8 KTX2 upload: 49,409 raw / 15,575 Brotli measured in this
+  // chunk. Move only exhausted minima under the existing allowances.
+  { file: "bootstrap-feature-scene3d-gltf.js", raw: 47056, gzip: 16297, brotli: 14551 },
   // Live deformation rebuild measured 8_162 raw; raw 8_000 -> 8_500; gzip and
   // brotli caps unchanged (measured 3_428 / 3_081, well inside 4_000 caps).
   // CUBICSPLINE playback measured 8_551 / 3_636 / 3_260; raw moves to the
