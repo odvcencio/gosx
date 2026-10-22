@@ -15,11 +15,11 @@
 //
 // Each bin k of the evolved field is the plane wave
 //
-//	y = A cos(k.x - omega_q t + phase),  A = 2 |m(k)|,  phase = arg m(k)
+//	y = A cos(k.x - omega_q t + phase),  A = 2 |h0(k)|,  phase = arg h0(k)
 //
-// where m(k) = conj h0(-k) is the kernel's (z, w) lane pair. The wave travels
-// along k. Summed over every bin it equals the inverse FFT of the kernel's
-// evolved spectrum exactly.
+// where h0(k) is the kernel's (x, y) lane pair. The wave travels toward +k.
+// Summed over every bin it equals the inverse FFT of the kernel's evolved
+// spectrum h(k, t) = h0(k) e^{-i omega t} + conj h0(-k) e^{+i omega t} exactly.
 package oceanspec
 
 import "m31labs.dev/gosx/det"
@@ -167,18 +167,18 @@ func Bins(p Params, c Cascade, cascade int) []Wave {
 			if k0 < c.KMin || k0 >= c.KMax {
 				continue
 			}
-			// The (z, w) lanes: z0, z1 keyed by (-ix, -iz), density at -k.
-			z0, z1 := normals(p.Seed, uint32(cascade), -ix, -iz)
-			amp := float64(float64(0.5*det.Sqrt(density(p, wp, alpha, float64(dk*float64(-ix)), float64(dk*float64(-iz))))) * dk)
-			mr, mi := float64(z0*amp), -float64(z1*amp)
-			a := 2 * det.Sqrt(float64(mr*mr)+float64(mi*mi))
+			// The (x, y) lanes: z0, z1 keyed by (ix, iz), density at +k.
+			z0, z1 := normals(p.Seed, uint32(cascade), ix, iz)
+			amp := float64(float64(0.5*det.Sqrt(density(p, wp, alpha, float64(dk*float64(ix)), float64(dk*float64(iz))))) * dk)
+			hr, hi := float64(z0*amp), float64(z1*amp)
+			a := 2 * det.Sqrt(float64(hr*hr)+float64(hi*hi))
 			if a == 0 {
 				continue
 			}
 			out = append(out, Wave{
 				DirX: float64(ix) / n, DirZ: float64(iz) / n, K: k0,
 				Omega:     float64(omega0 * det.Floor(det.Sqrt(float64(gravity*k0))/omega0)),
-				Amplitude: a, Phase: det.Atan2(mi, mr),
+				Amplitude: a, Phase: det.Atan2(hi, hr),
 				Cascade: cascade, IX: ix, IZ: iz,
 			})
 		}
@@ -231,14 +231,8 @@ func Strongest(p Params, cascades []Cascade, count int) []Wave {
 
 // Direction converts a scene direction in degrees (0 travels toward +Z,
 // positive toward +X, as scene.Ocean.WindDirection) to the kernel's windDir and
-// swellDir uniform: radians measured from +x toward +z.
-//
-// The kernel puts the energy of h0(k) at k parallel to the uniform, and with
-// h0(k) e^{+i omega t} and e^{+i k.x} that term travels toward -k. The evolved
-// field therefore travels opposite to the uniform, and the uniform for water
-// that travels toward the authored direction is the authored direction turned
-// by pi: -pi/2 - degrees pi/180. Whoever runs ocean_spectrum on a GPU must pass
-// the same value, or the rendered sea and these waves part ways.
+// swellDir uniform: the angle theta of the direction of travel, vector
+// (cos theta, sin theta) in (x, z), so theta = pi/2 - degrees pi/180.
 func Direction(degrees float64) float64 {
-	return -1.5707963267948966 - float64(degrees*3.141592653589793)/180
+	return 1.5707963267948966 - float64(degrees*3.141592653589793)/180
 }

@@ -83,3 +83,14 @@ func TestStrongestBreaksTiesBySmallerKThenIndex(t *testing.T) {
 		t.Fatal("smaller iz must win next")
 	}
 }
+
+// Direction is the angle theta of the travel vector (cos theta, sin theta) in
+// (x, z): 0 degrees travels toward +Z, 90 degrees toward +X.
+func TestDirectionIsTheTravelAngle(t *testing.T) {
+	for _, c := range []struct{ deg, dx, dz float64 }{{0, 0, 1}, {90, 1, 0}, {180, 0, -1}, {270, -1, 0}, {45, math.Sqrt2 / 2, math.Sqrt2 / 2}} {
+		th := Direction(c.deg)
+		if math.Abs(math.Cos(th)-c.dx) > 1e-15 || math.Abs(math.Sin(th)-c.dz) > 1e-15 {
+			t.Errorf("Direction(%g) = %g, vector (%g, %g), want (%g, %g)", c.deg, th, math.Cos(th), math.Sin(th), c.dx, c.dz)
+		}
+	}
+}
