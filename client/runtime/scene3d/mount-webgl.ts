@@ -4776,6 +4776,18 @@
       webgpuDiagnostics.adapterInfo.device || "",
     ].filter(Boolean).join(" ") : "");
     sceneSyncStatusBindings(mount);
+    if (typeof publishRendererChoice === "function") {
+      publishRendererChoice(sceneRendererPublicName(chosenBackend), fallbackReason || (chosenBackend ? "selected" : "unsupported"), mount.id || "scene");
+    }
+  }
+
+  // sceneRendererPublicName maps the runtime's backend kind to the published
+  // vocabulary: webgpu, webgl2, canvas2d, none.
+  function sceneRendererPublicName(kind) {
+    if (kind === "webgpu") return "webgpu";
+    if (kind === "webgl") return "webgl2";
+    if (kind === "canvas" || kind === "canvas2d") return "canvas2d";
+    return "none";
   }
 
   function showSceneRequiredRendererMessage(mount, props, reason) {
