@@ -468,6 +468,7 @@
       backend: backend === "canvas" ? "canvas2d" : backend,
       uploadReady: source.uploadReady === true,
       tokens,
+      profile: String(source.profile || "").trim().toLowerCase(),
     };
   }
 
@@ -477,15 +478,18 @@
       normalized.backend,
       normalized.uploadReady ? "ready" : "authored",
       normalized.tokens.join(","),
+      normalized.profile,
     ].join("|");
   }
 
-  function sceneModelTextureVariantContextForRenderer(renderer) {
+  function sceneModelTextureVariantContextForRenderer(renderer, profile = "") {
     const kind = renderer && renderer.kind ? renderer.kind : "";
-    return normalizeSceneModelTextureVariantContext(
+    const context = normalizeSceneModelTextureVariantContext(
       renderer && renderer.textureVariantContext,
       kind === "canvas" ? "canvas2d" : kind
     );
+    context.profile = String(profile || "").trim().toLowerCase();
+    return context;
   }
 
   function createSceneModelTextureVariantScope(context) {
@@ -526,7 +530,7 @@
     if (!state) {
       return { changed: false, scope: null };
     }
-    const context = sceneModelTextureVariantContextForRenderer(renderer);
+    const context = sceneModelTextureVariantContextForRenderer(renderer, state._textureDeliveryProfile);
     const fingerprint = sceneModelTextureVariantFingerprint(context);
     const current = state._modelTextureVariantScope;
     if (current && current.settled && current.fingerprint === fingerprint) {
@@ -554,6 +558,52 @@
     setAttrValue(mount, "data-gosx-scene3d-texture-variant-upload-ready", snapshot.uploadReady ? "true" : "false");
     setAttrValue(mount, "data-gosx-scene3d-texture-variant-token-count", String(snapshot.tokens.length));
     setAttrValue(mount, "data-gosx-scene3d-texture-variant-scope", snapshot.scope);
+  }
+
+  async function sceneApplyMountedTextureProfile(state: any, mount: any, requests: any[], profile: string,
+      signal: AbortSignal, module: any, hooks: any) {
+    const nextProfile = String(profile || "").trim().toLowerCase();
+    if (!["auto", "low", "standard", "high"].includes(nextProfile)) throw new TypeError("invalid Scene3D texture delivery profile");
+    if (hooks.disposed() || !module || typeof module.prepare !== "function") throw new Error("Scene3D preparation unavailable");
+    const requested = new Set(requests.map(request => String(request.src || "").trim()));
+    for (const model of sceneHydrationModels(state, null)) {
+      if (model && model.src && !requested.has(String(model.src).trim())) {
+        throw new Error("Scene3D texture profile requires every active model: " + model.src);
+      }
+    }
+    const generation = hooks.nextGeneration();
+    const activeRenderer = hooks.renderer();
+    const previousScope = state._modelTextureVariantScope;
+    const context = sceneModelTextureVariantContextForRenderer(activeRenderer, nextProfile);
+    const candidate = createSceneModelTextureVariantScope(context);
+    const prepared = await module.prepare(mount, requests, signal, candidate);
+    if (signal?.aborted) throw new DOMException("Scene3D texture profile canceled", "AbortError");
+    if (hooks.disposed() || hooks.renderer() !== activeRenderer || !hooks.current(generation) ||
+        state._modelTextureVariantScope !== previousScope) throw new Error("Scene3D texture profile preparation became stale");
+    state._modelTextureVariantScope = candidate;
+    try {
+      const abortHydration = () => {
+        if (state._modelTextureVariantScope === candidate && state._modelHydrationUncommitted) hooks.invalidate();
+      };
+      signal?.addEventListener("abort", abortHydration, { once: true });
+      let hydration;
+      try {
+        hydration = sceneHydrationModels(state, null).length ? await hooks.rehydrate() : { committed: true };
+      } finally {
+        signal?.removeEventListener("abort", abortHydration);
+      }
+      if (!hydration || !hydration.committed || hydration.stale || hooks.renderer() !== activeRenderer ||
+          state._modelTextureVariantScope !== candidate) throw new Error("Scene3D texture profile hydration did not commit");
+      // Once the staged hydration committed, a late abort cannot restore the
+      // old scope: those old material records are no longer the drawn scene.
+      // The next profile request may supersede this one after this commit.
+      state._textureDeliveryProfile = nextProfile;
+      hooks.commit(nextProfile, candidate);
+      return { models: requests.length, textures: prepared && prepared.textures || 0, profile: nextProfile };
+    } catch (error) {
+      if (state._modelTextureVariantScope === candidate) state._modelTextureVariantScope = previousScope;
+      throw error;
+    }
   }
 
   function resolveSceneModelAssetURL(baseSrc, value) {

@@ -44,6 +44,23 @@ func TestPropsModelPreparationSerializesOnlyAuthoredCapability(t *testing.T) {
 	}
 }
 
+func TestPropsTextureDeliveryProfileSerialization(t *testing.T) {
+	for _, profile := range []TextureDeliveryProfile{"", TextureDeliveryAuto, TextureDeliveryLow, TextureDeliveryStandard, TextureDeliveryHigh} {
+		data, err := (Props{TextureDeliveryProfile: profile}).MarshalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(data, &payload); err != nil {
+			t.Fatal(err)
+		}
+		got, present := payload["textureDeliveryProfile"]
+		if present != (profile != "") || profile != "" && got != string(profile) {
+			t.Fatalf("profile %q serialized as %s", profile, data)
+		}
+	}
+}
+
 func TestModelPreparationRigidGeometryOptIn(t *testing.T) {
 	for _, enabled := range []bool{false, true} {
 		data, err := modelPreparationSnapshot([]ModelPreparation{{ID: "prop", Src: "/prop.glb", RigidGeometry: enabled}})

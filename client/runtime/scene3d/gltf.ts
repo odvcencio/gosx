@@ -2933,6 +2933,7 @@
       backend: gltfLowerToken(value.backend),
       uploadReady: value.uploadReady === true,
       tokens: Array.isArray(value.tokens) ? value.tokens.slice() : [],
+      profile: gltfLowerToken(value.profile),
     };
   }
 
@@ -2964,14 +2965,19 @@
   // The block requirement is what keeps an uncompressed KTX2 file from replacing
   // the authored image. Only a block variant cuts GPU memory, and the authored
   // source already loads through an image element with no extra code.
-  function gltfVariantEligible(variant, tokens) {
+  function gltfVariantEligible(variant: any, tokens: Record<string, boolean>, profile: string, usage: any) {
     if (!variant || typeof variant.uri !== "string" || !variant.uri) {
       return false;
     }
     var required = Array.isArray(variant.requiredCapabilities) ? variant.requiredCapabilities : [];
     var block = false;
+    var container = false, format = false;
     for (var i = 0; i < required.length; i++) {
       var token = gltfLowerToken(required[i]);
+      if (token === "container:ktx2") container = true;
+      if (token.indexOf("texture-format:") === 0) format = true;
+      // Tier is selected by the mount profile, not by a page-global device hint.
+      if (token.indexOf("budget:") === 0 && profile) continue;
       if (!tokens[token]) {
         return false;
       }
@@ -2979,7 +2985,17 @@
         block = true;
       }
     }
-    return block;
+    var tier = gltfVariantQualityRank(variant.quality);
+    var ceiling = profile === "low" ? 2 : profile === "standard" ? 3 : 4;
+    if (profile && (!container || !format)) return false;
+    if (tier > ceiling || !block && ceiling >= 4) return false;
+    if (usage && usage.ambiguous) return false;
+    if (profile && usage && (!variant.role || !variant.colorSpace)) return false;
+    if (usage && variant.colorSpace && usage.colorSpace &&
+        gltfLowerToken(variant.colorSpace) !== usage.colorSpace) return false;
+    if (usage && variant.role && usage.role &&
+        gltfLowerToken(variant.role) !== usage.role) return false;
+    return true;
   }
 
   // gltfVariantOutranks is the comparison SelectFromManifest sorts with.
@@ -2997,14 +3013,14 @@
     return String(candidate.uri) < String(best.uri);
   }
 
-  function gltfSelectTextureVariant(variants, tokens) {
+  function gltfSelectTextureVariant(variants: any[], tokens: Record<string, boolean>, profile: string, usage: any) {
     if (!Array.isArray(variants)) {
       return null;
     }
     var best = null;
     for (var i = 0; i < variants.length; i++) {
       var variant = variants[i];
-      if (!gltfVariantEligible(variant, tokens)) {
+      if (!gltfVariantEligible(variant, tokens, profile, usage)) {
         continue;
       }
       if (best === null || gltfVariantOutranks(variant, best)) {
@@ -3012,6 +3028,49 @@
       }
     }
     return best;
+  }
+
+  function gltfImageUsages(gltf: any) {
+    var usages: Record<number, { role: string; colorSpace: string; ambiguous: boolean }> = {};
+    var textures = Array.isArray(gltf.textures) ? gltf.textures : [];
+    function add(info: any, role: string, colorSpace: string) {
+      var texture = info && textures[info.index];
+      if (!texture || texture.source == null) return;
+      var index = texture.source;
+      var previous = usages[index];
+      if (!previous) usages[index] = { role: role, colorSpace: colorSpace, ambiguous: false };
+      else if (previous.colorSpace === "linear" && colorSpace === "linear" &&
+          (previous.role === "packed" && role === "mask" || previous.role === "mask" && role === "packed")) {
+        // glTF often binds one ORM image as both packed metallic/roughness
+        // data and occlusion. Packed BC7 retains all sampled channels.
+        previous.role = "packed";
+      } else if (previous.role !== role || previous.colorSpace !== colorSpace) previous.ambiguous = true;
+    }
+    function markExtensionImages(value: any) {
+      if (!value || typeof value !== "object") return;
+      if (Number.isInteger(value.index) && textures[value.index] && textures[value.index].source != null) {
+        var index = textures[value.index].source;
+        if (!usages[index]) usages[index] = { role: "", colorSpace: "", ambiguous: true };
+        else usages[index].ambiguous = true;
+      }
+      for (var key in value) if (Object.prototype.hasOwnProperty.call(value, key)) markExtensionImages(value[key]);
+    }
+    for (var material of Array.isArray(gltf.materials) ? gltf.materials : []) {
+      var pbr = material.pbrMetallicRoughness || {};
+      add(pbr.baseColorTexture, "base-color", "srgb");
+      add(pbr.metallicRoughnessTexture, "packed", "linear");
+      add(material.normalTexture, "normal", "linear");
+      add(material.occlusionTexture, "mask", "linear");
+      add(material.emissiveTexture, "emissive", "srgb");
+      markExtensionImages(material.extensions);
+    }
+    return usages;
+  }
+
+  // The fragment is a stable manifest identity, never a request for GLB bytes.
+  // It also covers data: images, whose literal URI is not a useful build key.
+  function gltfEmbeddedImageKey(baseURL: string, index: number) {
+    return new URL(baseURL).pathname + "#image=" + index;
   }
 
   function gltfResolveExternalImageURIs(gltf, baseURL, variantContext) {
@@ -3023,39 +3082,48 @@
     var context = gltfTextureVariantContext(variantContext);
     var tokens = gltfTextureVariantTokens(context);
     var table = tokens ? gltfTextureVariantTable() : null;
+    var profile = context && context.profile;
+    if (profile === "auto") {
+      profile = tokens && Object.prototype.hasOwnProperty.call(tokens, "budget:low") ? "low" :
+        tokens && Object.prototype.hasOwnProperty.call(tokens, "budget:high") ? "high" : "standard";
+    }
+    // Empty preserves the former block-only selection. Explicit bounded
+    // profiles must not claim readiness with an authored full-size fallback.
+    var strict = profile === "low" || profile === "standard";
+    var usages = gltfImageUsages(gltf);
     if (!table) {
       tokens = null;
     }
     for (var i = 0; i < gltf.images.length; i += 1) {
       var image = gltf.images[i];
-      if (!image || typeof image.uri !== "string" || !image.uri || image.uri.indexOf("data:") === 0) {
+      if (!image) {
         continue;
       }
-      var authored = image.uri;
-      try {
-        image.uri = new URL(image.uri, baseURL).toString();
-      } catch (_error) {
-        // Keep the authored URI; downstream texture loading will report any
-        // remaining failure with the original value.
-        continue;
+      var authored = typeof image.uri === "string" ? image.uri : "";
+      var embedded = !authored || image.uri.indexOf("data:") === 0;
+      if (!embedded) {
+        try {
+          image.uri = new URL(image.uri, baseURL).toString();
+        } catch (_error) {
+          continue;
+        }
       }
-      if (!tokens) {
-        continue;
-      }
-      var keys = gltfVariantTableKeys(image.uri, authored);
-      for (var k = 0; k < keys.length; k++) {
-        var winner = gltfSelectTextureVariant(table[keys[k]], tokens);
+      var keys = embedded ? [gltfEmbeddedImageKey(baseURL, i)] : gltfVariantTableKeys(image.uri, authored);
+      var selected = false;
+      for (var k = 0; table && tokens && k < keys.length; k++) {
+        var winner = gltfSelectTextureVariant(table[keys[k]], tokens, profile, usages[i]);
         if (!winner) {
           continue;
         }
         try {
           image.uri = new URL(winner.uri, baseURL).toString();
+          selected = true;
         } catch (_variantError) {
-          // A manifest URI that will not resolve is not a reason to lose the
-          // authored texture, so the loop leaves the resolved source in place.
+          // A malformed manifest URI is a preparation error for bounded tiers.
         }
         break;
       }
+      if (strict && usages[i] && !selected) throw new Error("glTF texture has no compatible " + profile + " variant: " + keys[0]);
     }
   }
 
