@@ -287,6 +287,12 @@ type HubBinding struct {
 	SceneCommands  bool   `json:"sceneCommands,omitempty"`
 	SceneInput     string `json:"sceneInput,omitempty"`
 	SceneInputKind string `json:"sceneInputKind,omitempty"`
+	// SceneCommandsWhen delays SceneCommands batches. Empty applies a batch as
+	// soon as the mount is command-ready. "revealed" waits until the mount has
+	// drawn its first frame with content (data-gosx-scene3d-revealed="true"),
+	// then at most SceneCommandsWhenTimeoutMS (default 20000) before applying anyway.
+	SceneCommandsWhen          string `json:"sceneCommandsWhen,omitempty"`
+	SceneCommandsWhenTimeoutMS int    `json:"sceneCommandsWhenTimeoutMs,omitempty"`
 	// Refresh forces a same-URL soft navigation after a matching inbound event.
 	Refresh bool `json:"refresh,omitempty"`
 	// RefreshDebounceMS joins the hub connection's refresh burst and rearms its
@@ -731,6 +737,17 @@ func (m *Manifest) keepValidHubBindings(hubName string, bindings []HubBinding) [
 
 // validateHubBinding reports the first authoring problem with one binding.
 func validateHubBinding(hubName string, b HubBinding) error {
+	if b.SceneCommandsWhen != "" && b.SceneCommandsWhen != "revealed" {
+		return fmt.Errorf("hub %q binding %q: sceneCommandsWhen %q is not \"revealed\"", hubName, b.Event, b.SceneCommandsWhen)
+	}
+	if b.SceneCommandsWhenTimeoutMS != 0 {
+		if b.SceneCommandsWhen == "" || !b.SceneCommands {
+			return fmt.Errorf("hub %q binding %q: sceneCommandsWhenTimeoutMs needs sceneCommandsWhen and sceneCommands", hubName, b.Event)
+		}
+		if b.SceneCommandsWhenTimeoutMS < 250 || b.SceneCommandsWhenTimeoutMS > 120000 {
+			return fmt.Errorf("hub %q binding %q: sceneCommandsWhenTimeoutMs %d is outside 250..120000", hubName, b.Event, b.SceneCommandsWhenTimeoutMS)
+		}
+	}
 	if b.CSSVars != nil {
 		if err := b.CSSVars.Validate(); err != nil {
 			return fmt.Errorf("hub %q binding %q: %w", hubName, b.Event, err)

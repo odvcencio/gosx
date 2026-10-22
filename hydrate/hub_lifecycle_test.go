@@ -49,3 +49,23 @@ func TestSetHubLifecycleRejectsBadInput(t *testing.T) {
 		t.Fatal("unknown hub id must error")
 	}
 }
+
+func TestSceneCommandsWhenValidation(t *testing.T) {
+	m := NewManifest()
+	m.AddHub("scene", "/ws", []HubBinding{
+		{Event: "update", SceneMountID: "scene", SceneCommands: true, SceneCommandsWhen: "revealed"},
+		{Event: "update", SceneMountID: "scene", SceneCommands: true, SceneCommandsWhen: "painted"},
+		{Event: "update", SceneMountID: "scene", SceneCommands: true, SceneCommandsWhenTimeoutMS: 500},
+	})
+	if got := len(m.Hubs[0].Bindings); got != 1 {
+		t.Fatalf("kept %d bindings, want 1 (unknown gate and timeout-without-gate are dropped)", got)
+	}
+	err := m.Validate()
+	if err == nil || !strings.Contains(err.Error(), "sceneCommandsWhen") {
+		t.Fatalf("error must name sceneCommandsWhen: %v", err)
+	}
+	data, _ := json.Marshal(m.Hubs[0].Bindings[0])
+	if !strings.Contains(string(data), `"sceneCommandsWhen":"revealed"`) {
+		t.Fatalf("round trip: %s", data)
+	}
+}
