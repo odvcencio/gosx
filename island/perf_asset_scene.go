@@ -42,6 +42,12 @@ func (r *Renderer) legacyPerfSceneStartupGates() (map[string]bool, bool, error) 
 		node, _ := vessel["nodeId"].(string)
 		gates["vessel"] = gates["vessel"] || node != ""
 		gates["ocean-query"] = gates["vessel"]
+		for _, root := range []map[string]any{props, scene} {
+			environment, _ := root["environment"].(map[string]any)
+			ocean, _ := environment["ocean"].(map[string]any)
+			spectrum, present := ocean["spectrum"]
+			gates["ocean-fft"] = gates["ocean-fft"] || present && spectrum != nil
+		}
 		gates["compute"] = gates["compute"] || len(list("computeParticles")) > 0 || len(list("instancedMeshes")) > 0
 		gates["decompress"] = gates["decompress"] || perfJSTruthy(props["compression"])
 		compressed := func(values []any) bool {
@@ -159,6 +165,7 @@ func (r *Renderer) perfSceneStartupGates() (map[string]bool, bool, error) {
 		gates["walk"] = gates["walk"] || p.Walk != nil && (mode == "first-person" || mode == "firstperson" || mode == "fps")
 		gates["vessel"] = gates["vessel"] || p.Vessel != nil && p.Vessel.NodeID != ""
 		gates["ocean-query"] = gates["vessel"]
+		gates["ocean-fft"] = gates["ocean-fft"] || p.NeedsOceanFFT()
 		particles, meshes := p.ComputeParticles, p.InstancedMeshes
 		points, animations := p.Points, p.Animations
 		regular, crowds := p.Models, p.InstancedGLBMeshes

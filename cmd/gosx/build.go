@@ -1535,6 +1535,8 @@ func manifestRuntimeRefSourcePath(distDir string, manifest *BuildManifest, ref s
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DVessel.File)
 	case "/gosx/bootstrap-feature-scene3d-ocean-query.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DOceanQuery.File)
+	case "/gosx/bootstrap-feature-scene3d-ocean-fft.js":
+		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DOceanFFT.File)
 	case "/gosx/bootstrap-feature-scene3d-decompress.js":
 		return manifestRuntimeFilePath(runtimeDir, manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
 	case "/gosx/bootstrap-feature-scene3d-instance-stream.js":

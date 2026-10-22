@@ -657,6 +657,17 @@ var outputs = []output{
 		sources: []source{sourceFile("../runtime/scene3d/ocean-query.ts")},
 	},
 	{
+		// Spectral (FFT) ocean for WebGPU: the Elio-generated kernels, the compute
+		// scheduler and the surface shader patch. Fetched only when
+		// environment.ocean.spectrum is set; scenes without it never pay for it.
+		name: "bootstrap-feature-scene3d-ocean-fft.js",
+		sources: []source{
+			sourceFile("../runtime/scene3d/ocean-fft-kernels.ts"),
+			sourceFile("../runtime/scene3d/ocean-fft-surface.ts"),
+			sourceFile("../runtime/scene3d/ocean-fft.ts"),
+		},
+	},
+	{
 		name: "bootstrap-feature-scene3d-vessel.js",
 		sources: []source{
 			sourceFile("../runtime/scene3d/vessel-instruments.ts"),

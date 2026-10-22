@@ -48,6 +48,7 @@ func runtimeJSAssetSpecs(gosxRoot string, assets *RuntimeAssets) []runtimeJSAsse
 		{"bootstrap-feature-scene3d-timeline", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-timeline.js"), &assets.BootstrapFeatureScene3DTimeline, "scene3d"},
 		{"bootstrap-feature-scene3d-vessel", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-vessel.js"), &assets.BootstrapFeatureScene3DVessel, "scene3d"},
 		{"bootstrap-feature-scene3d-ocean-query", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-ocean-query.js"), &assets.BootstrapFeatureScene3DOceanQuery, "scene3d"},
+		{"bootstrap-feature-scene3d-ocean-fft", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-ocean-fft.js"), &assets.BootstrapFeatureScene3DOceanFFT, "scene3d"},
 		{"bootstrap-feature-scene3d-instance-stream", filepath.Join(gosxRoot, "client", "js", "bootstrap-feature-scene3d-instance-stream.js"), &assets.BootstrapFeatureScene3DInstanceStream, "scene3d"},
 		{"patch", filepath.Join(gosxRoot, "client", "js", "patch.js"), &assets.Patch, ""},
 		{"hls.min", filepath.Join(gosxRoot, "client", "js", "vendor", "hls.min.js"), &assets.VideoHLS, "video"},

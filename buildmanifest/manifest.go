@@ -86,6 +86,7 @@ type RuntimeAssets struct {
 	BootstrapFeatureScene3DTimeline         HashedAsset `json:"bootstrapFeatureScene3dTimeline,omitzero"`
 	BootstrapFeatureScene3DVessel           HashedAsset `json:"bootstrapFeatureScene3dVessel,omitzero"`
 	BootstrapFeatureScene3DOceanQuery       HashedAsset `json:"bootstrapFeatureScene3dOceanQuery,omitzero"`
+	BootstrapFeatureScene3DOceanFFT         HashedAsset `json:"bootstrapFeatureScene3dOceanFft,omitzero"`
 	BootstrapFeatureScene3DParticleBurst    HashedAsset `json:"bootstrapFeatureScene3dParticleBurst,omitzero"`
 	// BootstrapFeatureScene3DInstanceStream is the opt-in binary
 	// instance-transform fast path (see client/runtime/scene3d/
@@ -235,6 +236,7 @@ type RuntimePaths struct {
 	BootstrapFeatureScene3DTimeline         string
 	BootstrapFeatureScene3DVessel           string
 	BootstrapFeatureScene3DOceanQuery       string
+	BootstrapFeatureScene3DOceanFFT         string
 	BootstrapFeatureScene3DInstanceStream   string
 	Patch                                   string
 	VideoHLS                                string
@@ -312,6 +314,7 @@ func (m *Manifest) RuntimeURLs(assetBaseURL string) RuntimePaths {
 		BootstrapFeatureScene3DTimeline:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DTimeline.File),
 		BootstrapFeatureScene3DVessel:           AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DVessel.File),
 		BootstrapFeatureScene3DOceanQuery:       AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DOceanQuery.File),
+		BootstrapFeatureScene3DOceanFFT:         AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DOceanFFT.File),
 		BootstrapFeatureScene3DInstanceStream:   AssetURL(assetBaseURL, "runtime", m.Runtime.BootstrapFeatureScene3DInstanceStream.File),
 		Patch:                                   AssetURL(assetBaseURL, "runtime", m.Runtime.Patch.File),
 		VideoHLS:                                AssetURL(assetBaseURL, "runtime", m.Runtime.VideoHLS.File),
