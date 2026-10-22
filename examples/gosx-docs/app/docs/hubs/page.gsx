@@ -95,7 +95,7 @@ func Page() Node {
 			and client drop statistics. A dropped text event is not replayed automatically.
 		</p>
 		<p>
-			The browser runtime's own hub client reconnects automatically after an unexpected close: the delay grows from 500 ms, doubling per attempt with up to 25 percent jitter, up to a 15 second cap, and resets to 500 ms the moment a reconnect actually opens.
+			The browser runtime's own hub client reconnects automatically after an unexpected close: the delay grows from 500 ms, doubling per attempt with up to 25 percent jitter, up to a 15 second cap, and resets to 500 ms the moment a reconnect actually opens. It reports four connection states: connecting, open, reconnecting and error (see Connection state and resync below).
 		</p>
 		<h2 id="documents">CRDT documents</h2>
 		<CodeBlock lang="go" source={data.crdtSample} />
@@ -140,6 +140,63 @@ func Page() Node {
 			<span class="inline-code">SyncDoc</span>
 			registers a document on the hub binary protocol and triggers synchronization after commits. Register documents and authorization gates before accepting connections.
 		</p>
+		<h2 id="css-vars">CSS custom properties from hub payloads</h2>
+		<p>
+			<span class="inline-code">HubBinding.CSSVars</span>
+			writes fields of a hub payload to CSS custom properties, so a page can follow live state without page JavaScript. Each variable maps a payload path to a name that must start with
+			<span class="inline-code">--</span>
+			. The target is the document element unless
+			<span class="inline-code">Target</span>
+			holds a selector. A flash class marks a changed apply and a live class marks the first one. The browser skips the flash class under reduced motion, in a hidden tab, or when the page URL carries a
+			<span class="inline-code">__gosx_visual_seed</span>
+			query parameter. It never removes a property, and it skips values that are not a string, a finite number or a boolean. An invalid mapping is dropped when the manifest is built and reported by
+			<span class="inline-code">Manifest.Validate()</span>
+			. The code loads in its own chunk, only on pages with a
+			<span class="inline-code">CSSVars</span>
+			binding.
+		</p>
+		<CodeBlock lang="go" source={data.cssVarsSample} />
+		<p>
+			<span class="inline-code">hub.Broadcast</span>
+			encodes a
+			<span class="inline-code">[]byte</span>
+			field as a base64 string. Wrap pre-encoded JSON in
+			<span class="inline-code">json.RawMessage</span>
+			so the browser receives an object.
+		</p>
+		<h2 id="lifecycle">Connection state and resync</h2>
+		<p>
+			The browser reports the connection state as connecting, open, reconnecting or error. Set
+			<span class="inline-code">ConnectionSignal</span>
+			through
+			<span class="inline-code">SetHubLifecycle</span>
+			and the shared signal receives an object with
+			<span class="inline-code">state</span>
+			,
+			<span class="inline-code">attempt</span>
+			and
+			<span class="inline-code">at</span>
+			(milliseconds). For status text without a signal, mark any element with
+			<span class="inline-code">data-gosx-hub-status</span>
+			set to the hub name. The runtime then sets
+			<span class="inline-code">data-gosx-hub-connection</span>
+			on it, and CSS can select on the value.
+		</p>
+		<p>
+			<span class="inline-code">HubResyncConfig</span>
+			makes the browser send a
+			<span class="inline-code">resync</span>
+			event when the tab becomes visible, the window gains focus, the network returns, the page leaves the back-forward cache, after the socket opens, and on an optional wall-clock schedule. It sends at most one request per
+			<span class="inline-code">MinIntervalMS</span>
+			(1.2 s by default). Register a handler with
+			<span class="inline-code">hub.On("resync", ...)</span>
+			; hubs that use
+			<span class="inline-code">Latch</span>
+			can answer with
+			<span class="inline-code">ReplayLatched</span>
+			.
+		</p>
+		<CodeBlock lang="go" source={data.resyncSample} />
 		<h2 id="security">Origin and authorization boundaries</h2>
 		<p>
 			WebSocket upgrades reject cross-origin requests by default and accept an absent origin or the request own host. Override

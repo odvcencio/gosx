@@ -1,0 +1,20 @@
+room.Latch("state")
+room.On("resync", func(ctx *hub.Context) {
+	// Send the current state to the one client that asked.
+	ctx.Hub.ReplayLatched(ctx.Client.ID)
+})
+
+id := ctx.Runtime().BindHub("live", "/live/ws", []hydrate.HubBinding{
+	{Event: "state", Signal: "$live.state"},
+})
+if err := ctx.Runtime().SetHubLifecycle(id, hydrate.HubLifecycle{
+	ConnectionSignal: "$live.connection", // {"state":"open","attempt":0,"at":...}
+	Resync: &hydrate.HubResyncConfig{
+		MinIntervalMS:  1200,   // default
+		PeriodMS:       180000, // also resync every 3 minutes of wall-clock time
+		OffsetMS:       2200,
+		InitialDelayMS: 1200,
+	},
+}); err != nil {
+	return nil, err
+}

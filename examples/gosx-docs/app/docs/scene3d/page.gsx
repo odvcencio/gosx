@@ -337,6 +337,17 @@ func Page() Node {
 				<span class="inline-code">webgl</span>
 				requirements and removes Canvas2D fallback.
 			</p>
+			<p>
+				<span class="inline-code">WebGPURecovery</span>
+				decides what happens after repeated WebGPU errors. The render watchdog checks the renderer every 2 s. A check that sees a device error (a frame-error streak, a lost device or a failed pipeline) counts as one strike, and a clean check resets the count. At
+				<span class="inline-code">Strikes</span>
+				(3 by default) the scene swaps to WebGL in place. With
+				<span class="inline-code">Reload</span>
+				it reloads once per tab session with WebGL forced instead. The mount publishes
+				<span class="inline-code">data-gosx-scene3d-webgpu-recovery</span>
+				as inactive, armed, fallback, reloading or webgl-forced.
+			</p>
+			{CodeBlock("go", data.sample054)}
 		</section>
 		<section id="camera-controls">
 			<h2>Camera and Controls</h2>
@@ -753,6 +764,11 @@ func Page() Node {
 				<span class="inline-code">DeferPostFXDelayMS</span>
 				delay chain setup past first paint, which keeps the largest contentful paint (LCP) clean on a heavy page.
 			</p>
+			<p>
+				<span class="inline-code">CustomPostDOMRegions.PresenceClass</span>
+				names a class that the runtime adds to the document element while at least one matched region is visible inside the canvas and the effect is composited, which means a WebGPU or WebGL backend whose post-processing is not dropped, deferred or demoted. Remove the class and CSS shows its own fallback again. Use it to switch from a CSS-only look to the shader version.
+			</p>
+			{CodeBlock("go", data.sample053)}
 		</section>
 		<section id="animation">
 			<h2>Animation</h2>
@@ -821,6 +837,18 @@ func Page() Node {
 				<span class="inline-code">Live</span>
 				names the hub events that should re-read this node. Combine it with a hub binding in the loader, and the node updates without a page navigation.
 			</p>
+			<p>
+				Set
+				<span class="inline-code">SceneCommandsWhen</span>
+				to
+				<span class="inline-code">"revealed"</span>
+				on a hub binding with
+				<span class="inline-code">SceneCommands</span>
+				to hold command batches until the mount has drawn its first frame with content. The runtime keeps only the newest held batch. After
+				<span class="inline-code">SceneCommandsWhenTimeoutMS</span>
+				(20 s by default) it applies the batch anyway and logs a warning, so a scene that never reveals still receives its commands.
+			</p>
+			{CodeBlock("go", data.sample052)}
 		</section>
 		<section id="css-scene-state">
 			<h2>CSS-driven Scene State</h2>
