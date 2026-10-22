@@ -203,9 +203,9 @@ func (r *PageRuntime) BindHubWithRoundTrip(name, path string, bindings []hydrate
 }
 
 // SetTextureVariants publishes built assetpipe texture variants to the current
-// page manifest. Scene3D uses them to choose a block-compressed texture only
-// when the selected renderer reports the required device capability; other
-// devices keep the authored PNG or WebP URI.
+// page manifest. Scene3D checks the selected renderer's actual upload
+// capabilities. A scene with an explicit low or standard delivery profile may
+// also choose a compatible uncompressed KTX2 tier on devices without BC.
 func (r *PageRuntime) SetTextureVariants(manifest assetpipe.VariantManifest) {
 	if r == nil || r.renderer == nil {
 		return

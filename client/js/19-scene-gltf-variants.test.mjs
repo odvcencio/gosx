@@ -13,12 +13,17 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const ts = require("../runtime/node_modules/typescript");
 const srcDir = path.join(__dirname, "bootstrap-src");
 const sceneMathSource = fs.readFileSync(path.join(srcDir, "11-scene-math.ts"), "utf8");
-const gltfSource = fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "gltf.ts"), "utf8");
+const gltfSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "gltf.ts"), "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 const BASE = "https://example.test/models/city.gltf";
 
@@ -298,7 +303,7 @@ test("a malformed variant never replaces a working URI", () => {
   assert.equal(resolve(loader, ["../assets/wood.png"])[0], "https://example.test/assets/wood.png");
 });
 
-function buildTexturedGLB() {
+function buildTexturedGLB(imageKind = "external") {
   const positions = new Float32Array([
     0, 0.75, 0,
     -0.65, -0.45, 0.3,
@@ -310,7 +315,7 @@ function buildTexturedGLB() {
     0, 0, 1,
   ]);
   const indices = new Uint16Array([0, 1, 2]);
-  const bin = Buffer.alloc(80);
+  const bin = Buffer.alloc(imageKind === "embedded" ? 84 : 80);
   Buffer.from(positions.buffer).copy(bin, 0);
   Buffer.from(normals.buffer).copy(bin, 36);
   Buffer.from(indices.buffer).copy(bin, 72);
@@ -326,7 +331,8 @@ function buildTexturedGLB() {
         material: 0,
       }],
     }],
-    images: [{ uri: "../assets/wood.png" }],
+    images: [imageKind === "embedded" ? { bufferView: 3, mimeType: "image/png" } :
+      imageKind === "data" ? { uri: "data:image/png;base64,iVBORw==" } : { uri: "../assets/wood.png" }],
     textures: [{ source: 0 }],
     materials: [{
       pbrMetallicRoughness: {
@@ -343,8 +349,12 @@ function buildTexturedGLB() {
       { buffer: 0, byteOffset: 36, byteLength: 36, target: 34962 },
       { buffer: 0, byteOffset: 72, byteLength: 8, target: 34963 },
     ],
-    buffers: [{ byteLength: 80 }],
+    buffers: [{ byteLength: bin.length }],
   };
+  if (imageKind === "embedded") {
+    Buffer.from([137, 80, 78, 71]).copy(bin, 80);
+    gltf.bufferViews.push({ buffer: 0, byteOffset: 80, byteLength: 4 });
+  }
   let json = Buffer.from(JSON.stringify(gltf), "utf8");
   while (json.length % 4 !== 0) json = Buffer.concat([json, Buffer.from(" ")]);
   const totalLength = 12 + 8 + json.length + 8 + bin.length;
@@ -383,6 +393,23 @@ test("GLB external image URIs use the explicit renderer context before extractio
     view: "2d",
     wrapS: 10497, wrapT: 10497,
   });
+});
+
+test("GLB embedded and data images resolve manifest variants before material extraction", async () => {
+  for (const kind of ["embedded", "data"]) {
+    const bytes = buildTexturedGLB(kind);
+    const loader = loadLoader({
+      manifest: {textureVariants: {"/models/city.glb#image=0": [{
+        uri: "/maps/city.low.ktx2", quality: "low", role: "base-color", colorSpace: "srgb",
+        requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm-srgb"],
+      }]}},
+      tokens: PLAIN_TOKENS,
+      fetch: async () => ({ok: true, status: 200,
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)}),
+    });
+    const scene = await loader.sceneLoadGLTFModel("/models/city.glb", {...loader.context, profile: "low"});
+    assert.equal(scene.objects[0].material.texture, "https://example.test/maps/city.low.ktx2", kind);
+  }
 });
 
 test("concurrent WebGL and WebGPU contexts resolve independently", async () => {
@@ -455,4 +482,91 @@ test("prefixed model-relative textures match public manifest keys", () => {
   const doc = {images: [{uri: "../assets/wood.png"}]};
   loader.gltfResolveExternalImageURIs(doc, "https://example.test/.proxy/game/models/city.gltf", loader.context);
   assert.equal(doc.images[0].uri, "https://example.test/.proxy/game/assets/wood.bc7.ktx2");
+});
+
+test("embedded and data images use stable model image keys without rewriting source buffers", () => {
+  const manifest = {textureVariants: {
+    "/models/city.gltf#image=0": [{uri: "/maps/city.low.rgba8.ktx2", quality: "low", role: "base-color", colorSpace: "srgb", requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm-srgb"]}],
+    "/models/city.gltf#image=1": [{uri: "/maps/normal.low.rg8.ktx2", quality: "low", role: "normal", colorSpace: "linear", requiredCapabilities: ["container:ktx2", "texture-format:rg8unorm"]}],
+  }};
+  const loader = loadLoader({manifest, tokens: [...PLAIN_TOKENS, "texture-format:rg8unorm"]});
+  const doc = {images: [{bufferView: 0, mimeType: "image/png"}, {uri: "data:image/png;base64,AAAA"}],
+    textures: [{source: 0}, {source: 1}], materials: [{pbrMetallicRoughness: {baseColorTexture: {index: 0}}, normalTexture: {index: 1}}]};
+  loader.gltfResolveExternalImageURIs(doc, BASE, {...loader.context, profile: "low"});
+  assert.equal(doc.images[0].uri, "https://example.test/maps/city.low.rgba8.ktx2");
+  assert.equal(doc.images[1].uri, "https://example.test/maps/normal.low.rg8.ktx2");
+  assert.equal(doc.images[0].bufferView, 0);
+});
+
+test("bounded low tier selects portable KTX2 without BC and refuses a missing compatible map", () => {
+  const loader = loadLoader({tokens: PLAIN_TOKENS});
+  const doc = {images: [{uri: "../assets/wood.png"}], textures: [{source: 0}],
+    materials: [{pbrMetallicRoughness: {baseColorTexture: {index: 0}}}]};
+  assert.throws(() => loader.gltfResolveExternalImageURIs(doc, BASE, {...loader.context, profile: "low"}), /no compatible low variant/);
+  const manifest = {textureVariants: {"assets/wood.png": [{uri: "/assets/wood.low.rgba8.ktx2", quality: "low", role: "base-color", colorSpace: "srgb", requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm-srgb"]}]}};
+  const ready = loadLoader({manifest, tokens: PLAIN_TOKENS});
+  const lowDoc = {images: [{uri: "../assets/wood.png"}], textures: [{source: 0}],
+    materials: [{pbrMetallicRoughness: {baseColorTexture: {index: 0}}}]};
+  ready.gltfResolveExternalImageURIs(lowDoc, BASE, {...ready.context, profile: "low"});
+  assert.equal(lowDoc.images[0].uri, "https://example.test/assets/wood.low.rgba8.ktx2");
+});
+
+test("ambiguous color and normal use retains authored bytes for legacy and rejects a bounded profile", () => {
+  const loader = loadLoader({tokens: BC_TOKENS});
+  const makeDoc = () => ({images: [{uri: "../assets/wood.png"}], textures: [{source: 0}],
+    materials: [{pbrMetallicRoughness: {baseColorTexture: {index: 0}}, normalTexture: {index: 0}}]});
+  const legacy = makeDoc();
+  loader.gltfResolveExternalImageURIs(legacy, BASE, loader.context);
+  assert.equal(legacy.images[0].uri, "https://example.test/assets/wood.png");
+  assert.throws(() => loader.gltfResolveExternalImageURIs(makeDoc(), BASE, {...loader.context, profile: "low"}), /no compatible low variant/);
+});
+
+test("high, standard and low profiles rank only their permitted tiers per backend evidence", () => {
+  const table = {"assets/wood.png": [
+    {uri: "/assets/wood.high.bc7.ktx2", quality: "high", role: "base-color", colorSpace: "srgb", bytes: 100, requiredCapabilities: ["container:ktx2", "texture-format:bc7-rgba-unorm-srgb", "device-feature:texture-compression-bc", "budget:high"]},
+    {uri: "/assets/wood.standard.bc7.ktx2", quality: "standard", role: "base-color", colorSpace: "srgb", bytes: 70, requiredCapabilities: ["container:ktx2", "texture-format:bc7-rgba-unorm-srgb", "device-feature:texture-compression-bc"]},
+    {uri: "/assets/wood.low.bc7.ktx2", quality: "low", role: "base-color", colorSpace: "srgb", bytes: 40, requiredCapabilities: ["container:ktx2", "texture-format:bc7-rgba-unorm-srgb", "device-feature:texture-compression-bc"]},
+    {uri: "/assets/wood.low.rgba8.ktx2", quality: "low", role: "base-color", colorSpace: "srgb", bytes: 160, requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm-srgb"]},
+  ]};
+  const loader = loadLoader({manifest: {textureVariants: table}, tokens: BC_TOKENS});
+  const makeDoc = () => ({images: [{uri: "../assets/wood.png"}], textures: [{source: 0}],
+    materials: [{pbrMetallicRoughness: {baseColorTexture: {index: 0}}}]});
+  for (const [profile, expected] of [["high", "high.bc7"], ["standard", "standard.bc7"], ["low", "low.bc7"]]) {
+    const doc = makeDoc();
+    loader.gltfResolveExternalImageURIs(doc, BASE, {...loader.context, profile});
+    assert.ok(doc.images[0].uri.includes(expected), profile + " selected " + doc.images[0].uri);
+  }
+  const unsupportedWebGPU = makeDoc();
+  loader.gltfResolveExternalImageURIs(unsupportedWebGPU, BASE, {backend: "webgpu", uploadReady: true, profile: "low", tokens: PLAIN_TOKENS});
+  assert.ok(unsupportedWebGPU.images[0].uri.endsWith("wood.low.rgba8.ktx2"));
+});
+
+test("one ORM image may serve packed metallic roughness and occlusion without losing channels", () => {
+  const loader = loadLoader({tokens: PLAIN_TOKENS, manifest: {textureVariants: {"assets/wood.png": [{
+    uri: "/assets/orm.low.rgba8.ktx2", quality: "low", role: "packed", colorSpace: "linear",
+    requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm"],
+  }]}}});
+  const doc = {images: [{uri: "../assets/wood.png"}], textures: [{source: 0}], materials: [{
+    pbrMetallicRoughness: {metallicRoughnessTexture: {index: 0}}, occlusionTexture: {index: 0},
+  }]};
+  loader.gltfResolveExternalImageURIs(doc, BASE, {...loader.context, profile: "low",
+    tokens: [...PLAIN_TOKENS, "texture-format:rgba8unorm"]});
+  assert.ok(doc.images[0].uri.endsWith("orm.low.rgba8.ktx2"));
+});
+
+test("BC5 normal is rejected until shaders reconstruct Z, even when BC upload is supported", () => {
+  const tokens = [...PLAIN_TOKENS, "texture-format:bc5-rg-unorm", "device-feature:texture-compression-bc", "texture-format:rgba8unorm"];
+  const variants = [
+    {uri: "/assets/normal.low.bc5.ktx2", quality: "low", role: "normal", colorSpace: "linear", format: "bc5-rg-unorm", bytes: 10,
+      requiredCapabilities: ["container:ktx2", "texture-format:bc5-rg-unorm", "device-feature:texture-compression-bc"]},
+    {uri: "/assets/normal.low.rgba8.ktx2", quality: "low", role: "normal", colorSpace: "linear", format: "rgba8unorm", bytes: 80,
+      requiredCapabilities: ["container:ktx2", "texture-format:rgba8unorm"]},
+  ];
+  const makeDoc = () => ({images: [{uri: "../assets/normal.png"}], textures: [{source: 0}], materials: [{normalTexture: {index: 0}}]});
+  const loader = loadLoader({manifest: {textureVariants: {"assets/normal.png": variants}}, tokens});
+  const doc = makeDoc();
+  loader.gltfResolveExternalImageURIs(doc, BASE, {...loader.context, profile: "low"});
+  assert.ok(doc.images[0].uri.endsWith("normal.low.rgba8.ktx2"));
+  const unsupported = loadLoader({manifest: {textureVariants: {"assets/normal.png": variants.slice(0, 1)}}, tokens});
+  assert.throws(() => unsupported.gltfResolveExternalImageURIs(makeDoc(), BASE, {...unsupported.context, profile: "low"}), /no compatible low variant/);
 });
