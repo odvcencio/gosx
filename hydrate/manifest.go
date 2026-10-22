@@ -4,7 +4,9 @@ package hydrate
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"log"
 	"m31labs.dev/gosx/internal/sceneprobe"
 	"regexp"
 	"strings"
@@ -94,6 +96,9 @@ func (m *Manifest) RequireFeature(name string) error {
 type Manifest struct {
 	basePath       string
 	basePathSource *Manifest
+	// errors collects authoring problems found while the manifest is built
+	// (dropped hub bindings, failed feature requirements). Validate reports them.
+	errors []error
 
 	// Version of the manifest format.
 	Version string `json:"version"`
@@ -670,6 +675,7 @@ func (m *Manifest) AddHub(name, path string, bindings []HubBinding) string {
 // bootstrap-owned browser input forwarding.
 func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, input *HubInputConfig) string {
 	id := hubID(len(m.Hubs))
+	bindings = m.keepValidHubBindings(name, bindings)
 	m.Hubs = append(m.Hubs, HubEntry{
 		ID:       id,
 		Name:     name,
@@ -678,6 +684,60 @@ func (m *Manifest) AddHubWithInput(name, path string, bindings []HubBinding, inp
 		Input:    input,
 	})
 	return id
+}
+
+// keepValidHubBindings drops bindings that fail validation, logs each drop
+// once, records it for Validate, and requires the hub-css-vars chunk when a
+// kept binding uses CSSVars. A typo never blanks a production page.
+func (m *Manifest) keepValidHubBindings(hubName string, bindings []HubBinding) []HubBinding {
+	if len(bindings) == 0 {
+		return bindings
+	}
+	kept := make([]HubBinding, 0, len(bindings))
+	dropped := false
+	needsCSSVars := false
+	for _, b := range bindings {
+		if err := validateHubBinding(hubName, b); err != nil {
+			dropped = true
+			m.errors = append(m.errors, err)
+			log.Printf("[gosx/hydrate] %v (binding dropped)", err)
+			continue
+		}
+		if b.CSSVars != nil {
+			needsCSSVars = true
+		}
+		kept = append(kept, b)
+	}
+	if needsCSSVars {
+		if err := m.RequireFeature("hub-css-vars"); err != nil {
+			m.errors = append(m.errors, err)
+		}
+	}
+	if !dropped {
+		return bindings
+	}
+	return kept
+}
+
+// validateHubBinding reports the first authoring problem with one binding.
+func validateHubBinding(hubName string, b HubBinding) error {
+	if b.CSSVars != nil {
+		if err := b.CSSVars.Validate(); err != nil {
+			return fmt.Errorf("hub %q binding %q: %w", hubName, b.Event, err)
+		}
+	}
+	return nil
+}
+
+// Validate returns the authoring problems recorded while the manifest was
+// built, or nil. Marshal still works when Validate fails: invalid hub bindings
+// are dropped so a typo never blanks a production page. Tests and app Go tests
+// should assert through Validate.
+func (m *Manifest) Validate() error {
+	if m == nil || len(m.errors) == 0 {
+		return nil
+	}
+	return errors.Join(m.errors...)
 }
 
 // AddLocalInput registers a fighting-input controller that runs without a hub
