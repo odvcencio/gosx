@@ -145,7 +145,7 @@ const budgets = [
   // Only this optional chunk's exhausted targets change; allowances stay fixed.
   // Shared render interpolation, stable foam and the touch dead zone measure 31,260 / 11,914 / 10,914 bytes.
   // Only exhausted targets rise to the measured minimum; allowances remain fixed.
-  // WebGPU vessel cutaway parity: the backend list names webgpu (+9 raw, +6 gzip bytes). Only the exhausted targets move.
+  // WebGPU vessel cutaway parity: the backend list names webgpu (+9 raw, +6 gzip bytes, -82 Brotli bytes). Only the exhausted targets move.
   { file: "bootstrap-feature-scene3d-vessel.js", raw: 41436, gzip: 15470, brotli: 14115 },
   // bootstrap.js raw bumped 806_000 -> 812_000 for 28-video-sync-fallback.ts
   // (parity-locked JS drift engine on the brain-absent video path). gzip/brotli
@@ -878,9 +878,9 @@ const budgets = [
     // 166 gzip and 111 Brotli bytes after the cache-hit lookup reduction.
     // Retain the governed allowances and all other targets.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    // WebGPU vessel cutaway parity adds 1,412 raw / 507 gzip / 35 Brotli bytes to the monolith; only the exhausted targets move.
-    file: "bootstrap.js", raw: 1972302, gzip: 551002,
-    brotli: 449705 },
+    // WebGPU vessel cutaway parity adds 1,430 raw / 531 gzip / 237 Brotli bytes to the monolith; only the exhausted targets move.
+    file: "bootstrap.js", raw: 1972320, gzip: 551026,
+    brotli: 449907 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1643,8 +1643,8 @@ const budgets = [
     // Merged WebGPU sources measure 118,032 gzip bytes; raise only this target by 1,411 B under the unchanged 5% allowance.
     // Explicit failed-texture retry adds 74 gzip bytes to this chunk; retain
     // its other targets and the governed allowance.
-    // WebGPU vessel cutaway parity adds 1,376 raw / 468 gzip / 418 Brotli bytes to this chunk, which had no headroom.
-    raw: 468084, gzip: 123758,
+    // WebGPU vessel cutaway parity adds 1,394 raw / 519 gzip / 412 Brotli bytes to this chunk.
+    raw: 468084, gzip: 123786,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     brotli: 104855 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
@@ -2147,13 +2147,13 @@ const routeBudgets = [
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     // The same two-backend retry adds 74 gzip bytes to this route after the
     // cache-hit lookup reduction; retain the 16,384 B cap.
-    // WebGPU vessel cutaway parity adds 1,376 raw / 468 gzip bytes to the WebGPU chunk; only the exhausted targets move.
-    raw: 1434502,
-    gzip: 398376,
+    // WebGPU vessel cutaway parity adds 1,394 raw / 519 gzip bytes to the WebGPU chunk; only the exhausted targets move.
+    raw: 1434520,
+    gzip: 398427,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
-    // WebGPU vessel cutaway parity adds 418 Brotli bytes to the WebGPU chunk; only this exhausted target moves.
+    // WebGPU vessel cutaway parity adds 412 Brotli bytes to the WebGPU chunk; only this exhausted target moves.
     brotli: 341382,
   },
   // Volume transmission adds 7086 raw / 2090 gzip / 1289 Brotli bytes for scene capture, mip filtering and volume controls. Targets move only by this measured delta.
@@ -2551,9 +2551,9 @@ const routeBudgets = [
     // Combined main runtime: 1,723,199 raw / 478,194 gzip / 401,518 Brotli bytes.
     // WebGPU detail lifecycle adds 1,086 raw, 314 gzip and 280 Brotli bytes.
     // Raise only breached targets; keep shared governed allowances fixed.
-    // WebGPU vessel cutaway parity: the same 1,376 raw / 468 gzip / 418 Brotli bytes in the WebGPU chunk this route carries.
-    raw: 1728044,
-    gzip: 485286,
+    // WebGPU vessel cutaway parity: the same 1,394 raw / 519 gzip / 412 Brotli bytes in the WebGPU chunk this route carries.
+    raw: 1728062,
+    gzip: 485337,
     // The PBR binding also changes the dual-backend Brotli sum: 401,686 bytes.
     // Merged dual-backend sources measure 417,218 Brotli bytes; raise only this target by 1,330 B under the unchanged allowance.
     // The combined renderer route measures 418623 Brotli bytes; allowance unchanged.
@@ -2725,9 +2725,9 @@ const routeBudgets = [
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     // The same WebGPU chunk adds 74 gzip bytes to this route; retain its
     // other targets and the governed allowance.
-    // WebGPU vessel cutaway parity: the same 1,376 raw / 468 gzip / 418 Brotli bytes in the WebGPU chunk this route carries.
+    // WebGPU vessel cutaway parity: the same 1,394 raw / 519 gzip / 412 Brotli bytes in the WebGPU chunk this route carries.
     raw: 1279258,
-    gzip: 354676,
+    gzip: 354727,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     brotli: 302801,
