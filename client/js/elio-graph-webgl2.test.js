@@ -195,7 +195,6 @@ test("a shader that does not compile disables the graph and releases what was bu
 
 test("repeat passes run their body per iteration with the index in the uniform and the pairs swapped, never sampling their target", () => {
   const s = setup(undefined, (g) => {
-    g.params.push({ name: "stage", type: "u32", source: { kind: "value", value: 0 } });
     const target = { width: 64, height: 64, elioWidth: 64 };
     g.passes = [{ type: "repeat", name: "stages", count: 4, index: "stage", swap: [["a0", "a1"]], body: [
       { name: "fft", type: "kernel", kernel: "fft_gather_64", entry: "fft_stage", when: "always", target,

@@ -146,21 +146,18 @@ test("dispose, and device loss, release every buffer and texture; a disposed run
 
 test("repeat passes become separate compute passes, each with its own uniform block holding its index", () => {
   const s = setup((g) => {
-    g.params.push({ name: "stage", type: "u32", source: { kind: "value", value: 0 } });
-    g.passes = [{ type: "repeat", name: "stages", count: 3, index: "stage", swap: [["a0", "a1"]], body: [
+    g.passes = [{ type: "repeat", name: "stages", count: 4, index: "stage", swap: [["a0", "a1"]], body: [
       { name: "evolve", type: "kernel", kernel: "ocean_evolve", entry: "ocean_evolve", when: "always", dispatch: [64, 1, 1],
         bindings: [{ name: "h0", resource: "h0" }, { name: "omega", resource: "omega" }, { name: "outA", resource: "a0" }, { name: "outB", resource: "b0" }],
         uniforms: [{ name: "ev", values: { n: 64, t: "param:stage", tile: 250, loopPeriod: 1000 } }] }] }];
   });
   s.settle();
   s.step();
-  assert.equal(s.fake.state.computePasses.length, 3);
+  assert.equal(s.fake.state.computePasses.length, 4);
   const writes = s.fake.state.writeBufferCalls.filter((w) => w.buffer.size === 32);
-  assert.equal(new Set(writes.map((w) => w.buffer)).size, 3, "one uniform buffer per iteration, so queued writes cannot overwrite each other");
+  assert.equal(new Set(writes.map((w) => w.buffer)).size, 4, "one uniform buffer per iteration, so queued writes cannot overwrite each other");
   const t = s.module.kernels.oceanEvolve.uniforms[0].fields.find((f) => f.name === "t").offset;
-  assert.deepEqual(writes.map((w) => new DataView(w.data.buffer || w.data, w.data.byteOffset || 0).getFloat32(t, true)), [0, 1, 2]);
-  const groups = s.fake.state.bindGroups.slice(-3);
-  assert.equal(groups.length, 3);
+  assert.deepEqual(writes.map((w) => new DataView(w.data.buffer || w.data, w.data.byteOffset || 0).getFloat32(t, true)), [0, 1, 2, 3]);
 });
 
 test("a fed buffer is uploaded from its parameter each frame, and a buffer export reaches the surface or a readback", () => {

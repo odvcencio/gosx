@@ -160,33 +160,72 @@
   }
 
 
-  // expand flattens repeat passes into the steps the executors run: { pass } or { swap: [[a, b], ...] }. A repeat runs its body
-  // `count` times with the index parameter fixed to 0..count-1 (substituted into uniform values, so each instance packs once and
-  // owns its uniform block) and swaps its listed pairs after every iteration. Repeats nest. The result also feeds validation.
-  function expand(passes: any[], env: any, out: any[]): any[] {
-    for (const p of passes) {
-      if (p.type === "repeat") {
-        for (let i = 0; i < p.count; i++) {
-          expand(p.body, Object.assign({}, env, { [p.index]: i }), out);
-          if (p.swap && p.swap.length) out.push({ swap: p.swap });
-        }
-        continue;
-      }
-      if (!p.uniforms || !Object.keys(env).length) { out.push({ pass: p }); continue; }
-      const uniforms = p.uniforms.map(function (u: any) {
-        const values: any = {};
-        for (const k of Object.keys(u.values)) {
-          const v = u.values[k];
-          values[k] = typeof v === "string" && v.indexOf("param:") === 0 && (v.slice(6) in env) ? env[v.slice(6)] : v;
-        }
-        return Object.assign({}, u, { values: values });
-      });
-      out.push({ pass: Object.assign({}, p, { uniforms: uniforms }) });
-    }
-    return out;
+  // indexValue evaluates an IndexExpr {index, offset, shr} for the repeat index i: i + offset, or max(shr >> (i + offset), 1) when shr is set.
+  function indexValue(x: any, i: number): number {
+    const v = i + (x.offset || 0);
+    return x.shr ? Math.max(x.shr >> v, 1) : v;
   }
-  function flat(passes: any[], out: any[]): any[] {
-    for (const p of passes) { if (p.type === "repeat") { out.push(p); flat(p.body, out); } else out.push(p); }
+  // expand mirrors Elio's graph.Expand: every repeat pass becomes its iterations, in order, named "<repeat>[<i>].<pass>"; the index
+  // parameter and IndexExprs become numbers in uniform values and binding levels; and the resources of each swap pair are exchanged
+  // in the bindings that follow (swaps persist across iterations and must cancel by the end). The result holds only plain passes
+  // with concrete resource names; the graph is not modified. A malformed repeat throws.
+  function expand(graph: any): any[] {
+    const res: any = {}, alias: any = {}, declared: any = {};
+    for (const r of graph.resources) res[r.name] = r;
+    for (const q of graph.params) declared[q.name] = true;
+    const resolve = function (name: string): string { return name in alias ? alias[name] : name; };
+    const walk = function (passes: any[], env: any, prefix: string, when: string): any[] {
+      const out: any[] = [];
+      for (const p of passes) {
+        if (p.type !== "repeat") { out.push(plain(p, env, prefix, when)); continue; }
+        const name = prefix + p.name;
+        if (!(p.count >= 1)) throw new Error("elio-graph: repeat " + name + ": count " + p.count + ", want at least 1");
+        if (!p.index || declared[p.index]) throw new Error("elio-graph: repeat " + name + ": index " + p.index + " is empty or names a declared param");
+        if (!p.body || !p.body.length) throw new Error("elio-graph: repeat " + name + ": body is empty");
+        if (p.index in env) throw new Error("elio-graph: repeat " + name + ": index " + p.index + " is already in use by an outer repeat");
+        for (const sw of p.swap || []) if (!res[sw[0]] || !res[sw[1]]) throw new Error("elio-graph: repeat " + name + ": swap names an unknown resource");
+        const inner = p.when && p.when !== "always" ? p.when : when;
+        for (let i = 0; i < p.count; i++) {
+          const env2 = Object.assign({}, env, { [p.index]: i });
+          for (const q of walk(p.body, env2, name + "[" + i + "].", inner)) out.push(q);
+          for (const sw of p.swap || []) { const a = resolve(sw[0]), b = resolve(sw[1]); alias[sw[0]] = b; alias[sw[1]] = a; }
+        }
+      }
+      return out;
+    };
+    const plain = function (p: any, env: any, prefix: string, when: string): any {
+      const q = Object.assign({}, p, { name: prefix + p.name });
+      if (when && (!p.when || p.when === "always")) q.when = when;
+      if (p.resource) q.resource = resolve(p.resource);
+      if (p.bindings) {
+        q.bindings = p.bindings.map(function (b: any) {
+          const c = Object.assign({}, b, { resource: resolve(b.resource) });
+          if (b.levelAt) {
+            if (!(b.levelAt.index in env)) throw new Error("elio-graph: pass " + q.name + ": index " + b.levelAt.index + " is not in scope");
+            c.level = indexValue(b.levelAt, env[b.levelAt.index]);
+            delete c.levelAt;
+          }
+          return c;
+        });
+      }
+      if (p.uniforms) {
+        q.uniforms = p.uniforms.map(function (u: any) {
+          const values: any = {};
+          for (const k of Object.keys(u.values)) {
+            let v = u.values[k];
+            if (v && typeof v === "object") {
+              if (!(v.index in env)) throw new Error("elio-graph: pass " + q.name + ": index " + v.index + " is not in scope");
+              v = indexValue(v, env[v.index]);
+            } else if (typeof v === "string" && v.indexOf("param:") === 0 && (v.slice(6) in env)) v = env[v.slice(6)];
+            values[k] = v;
+          }
+          return Object.assign({}, u, { values: values });
+        });
+      }
+      return q;
+    };
+    const out = walk(graph.passes, {}, "", "");
+    for (const name of Object.keys(alias)) if (alias[name] !== name) throw new Error("elio-graph: swaps are not restored: " + name + " still refers to " + alias[name] + " at the end of the passes");
     return out;
   }
 
@@ -199,11 +238,7 @@
     const params: any = {};
     for (const p of graph.params) params[p.name] = true;
     const ref = function (v: any) { if (typeof v === "string" && v.indexOf("param:") === 0 && !params[v.slice(6)]) throw new Error("elio-graph: undeclared parameter " + v.slice(6)); };
-    for (const p of flat(graph.passes, [])) {
-      if (p.type === "repeat") {
-        if (!(p.count >= 0) || !params[p.index]) throw new Error("elio-graph: repeat " + p.name + " needs a count and a declared index parameter");
-        continue;
-      }
+    for (const p of expand(graph)) {
       const w = p.when || "always";
       if (w.indexOf("param:") === 0) ref(w);
       else if (w.indexOf("changed:") === 0) { for (const n of w.slice(8).split(",")) if (!params[n.trim()]) throw new Error("elio-graph: undeclared parameter " + n.trim()); }
@@ -244,7 +279,7 @@
       if (!make) throw Object.assign(new Error("elio-graph: no executor for " + backend), { fallback: "no-executor" });
       runner.graph = graph;
       evaluator = runner.params = createParams(graph.params);
-      executor = make({ steps: expand(graph.passes, {}, []), graph: graph, module: module, host: host, pack: pack, isStatic: isStatic, kernelKey: kernelKey, holds: holds, label: options.label || graph.name });
+      executor = make({ steps: expand(graph).map(function (p: any) { return { pass: p }; }), graph: graph, module: module, host: host, pack: pack, isStatic: isStatic, kernelKey: kernelKey, holds: holds, label: options.label || graph.name });
       runner.buildCount = 1;
       runner.ready = executor.isReady();
     } catch (error) { disable(error); }

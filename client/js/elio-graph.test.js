@@ -187,19 +187,42 @@ test("buffer parameters hold arrays; a new array marks them changed", () => {
   assert.deepEqual(Array.from(p.current.probes), [9, 9, 9, 9]);
 });
 
-test("repeat passes expand into steps: index values substituted per iteration, swaps after each, nested repeats multiply", () => {
+test("repeat passes expand as Elio's graph.Expand does: named <repeat>[i].<pass>, indexes substituted, swaps persisting and cancelling", () => {
   const { expand } = api();
-  const body = { name: "stage", type: "kernel", kernel: "fft_gather_64", entry: "fft_stage", when: "always", bindings: [], uniforms: [{ name: "fft", values: { n: 64, stage: "param:s", axis: "param:a" } }] };
-  const steps = expand([{ type: "repeat", name: "axes", count: 2, index: "a", swap: [["x", "y"]], body: [{ type: "repeat", name: "stages", count: 3, index: "s", swap: [["p", "q"]], body: [body] }] }], {}, []);
-  const kinds = steps.map((st) => st.swap ? "swap:" + st.swap[0].join("") : "pass");
-  assert.deepEqual(kinds, ["pass", "swap:pq", "pass", "swap:pq", "pass", "swap:pq", "swap:xy", "pass", "swap:pq", "pass", "swap:pq", "pass", "swap:pq", "swap:xy"]);
-  const values = steps.filter((st) => st.pass).map((st) => [st.pass.uniforms[0].values.axis, st.pass.uniforms[0].values.stage]);
-  assert.deepEqual(values, [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2]]);
+  const kernel = (name, src, dst, values, extra) => Object.assign({ name, type: "kernel", kernel: "fft_gather_64", entry: "fft_stage", when: "always",
+    bindings: [{ name: "src", resource: src, level: 0 }, { name: "dst", resource: dst, level: 0 }], uniforms: [{ name: "fft", values }] }, extra);
+  const res = ["p", "q", "x", "y"].map((name) => ({ name, kind: "buffer", elementType: "vec4<f32>", count: 4096, width: 64 }));
+  const body = kernel("stage", "p", "q", { n: 64, stage: "param:s", axis: "param:a" });
+  const graph = { params: [], resources: res, passes: [{ name: "axes", type: "repeat", count: 2, index: "a", swap: [["x", "y"]], when: "changed:t", body: [
+    { name: "stages", type: "repeat", count: 3, index: "s", swap: [["p", "q"]], body: [body, kernel("other", "x", "y", { n: 64, stage: 0, axis: "param:a" })] }] }] };
+  const out = Array.from(expand(graph));
+  assert.deepEqual(out.map((p) => p.name), ["axes[0].stages[0].stage", "axes[0].stages[0].other", "axes[0].stages[1].stage", "axes[0].stages[1].other", "axes[0].stages[2].stage", "axes[0].stages[2].other",
+    "axes[1].stages[0].stage", "axes[1].stages[0].other", "axes[1].stages[1].stage", "axes[1].stages[1].other", "axes[1].stages[2].stage", "axes[1].stages[2].other"]);
+  const stage = out.filter((p) => /\.stage$/.test(p.name));
+  assert.deepEqual(stage.map((p) => [p.uniforms[0].values.axis, p.uniforms[0].values.stage]), [[0, 0], [0, 1], [0, 2], [1, 0], [1, 1], [1, 2]]);
+  assert.deepEqual(stage.slice(0, 3).map((p) => p.bindings.map((b) => b.resource).join()), ["p,q", "q,p", "p,q"], "p and q swap after each stage");
+  assert.deepEqual(stage.slice(3).map((p) => p.bindings.map((b) => b.resource).join()), ["q,p", "p,q", "q,p"], "three swaps leave the pair exchanged until the outer repeat's next iteration");
+  const other = out.filter((p) => /\.other$/.test(p.name));
+  assert.deepEqual(other.map((p) => p.bindings[0].resource), ["x", "x", "x", "y", "y", "y"], "the outer swap applies after its iteration");
+  assert.ok(out.every((p) => p.when === "changed:t"), "a repeat's condition applies to passes that have none");
   assert.equal(body.uniforms[0].values.stage, "param:s", "the source graph is not modified");
-  const check = api().check, module = runnerContext().window.__gosx_scene3d_elio_ocean;
-  const g = testGraph("webgl2");
-  g.passes = [{ type: "repeat", name: "r", count: 2, index: "nothing", body: [] }];
-  assert.throws(() => check(g, module, "webgl2"), /declared index parameter/);
+  assert.throws(() => expand(Object.assign({}, graph, { passes: [Object.assign({}, graph.passes[0], { swap: [["x", "y"]], count: 1 })] })), /swaps are not restored/);
+  const bad = (edit) => expand(Object.assign({}, graph, { passes: [Object.assign({}, graph.passes[0], edit)] }));
+  assert.throws(() => bad({ count: 0 }), /want at least 1/);
+  assert.throws(() => bad({ index: "" }), /index/);
+  assert.throws(() => bad({ body: [] }), /body is empty/);
+  assert.throws(() => expand(Object.assign({}, graph, { params: [{ name: "a" }] })), /names a declared param/);
+});
+
+test("IndexExpr values and level bindings follow Elio: i + offset, or max(shr >> (i + offset), 1)", () => {
+  const { expand } = api();
+  const mip = { name: "mip", type: "kernel", kernel: "ocean_mip", entry: "ocean_mip", when: "always", dispatch: [16, 1, 1],
+    bindings: [{ name: "src", resource: "d", level: 0, levelAt: { index: "l" } }, { name: "dst", resource: "d", level: 0, levelAt: { index: "l", offset: 1 } }],
+    uniforms: [{ name: "mip", values: { srcLevel: 0, dstWidth: { index: "l", offset: 1, shr: 64 }, dstHeight: { index: "l", offset: 1, shr: 64 }, pad: 0 } }] };
+  const out = Array.from(expand({ params: [], resources: [{ name: "d", kind: "texture", format: "rgba16float", width: 64, height: 64, mipLevels: 7 }], passes: [{ name: "mips", type: "repeat", count: 6, index: "l", body: [mip] }] }));
+  assert.deepEqual(out.map((p) => [p.bindings[0].level, p.bindings[1].level, p.uniforms[0].values.dstWidth]), [[0, 1, 32], [1, 2, 16], [2, 3, 8], [3, 4, 4], [4, 5, 2], [5, 6, 1]]);
+  assert.ok(out.every((p) => !("levelAt" in p.bindings[0])));
+  assert.throws(() => expand({ params: [], resources: [], passes: [mip] }), /not in scope/);
 });
 
 test("exportParams are read from the runner in float64; a buffer may be exported on webgpu only", () => {

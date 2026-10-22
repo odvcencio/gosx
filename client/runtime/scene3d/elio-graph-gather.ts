@@ -164,7 +164,6 @@
     const saved = saveState(gl);
     try {
     plans = ctx.steps.map(function (step: any) {
-      if (step.swap) return { swap: step.swap };
       const pass = step.pass;
       if (pass.type === "mipmap") return { pass: pass };
       const p = program(pass.kernel), layout = p.layout;
@@ -240,7 +239,6 @@
           gl.colorMask(true, true, true, true); gl.bindVertexArray(vao);
           feed(params);
           for (const plan of plans) {
-            if (plan.swap) { exchange(plan.swap); continue; }
             if (!ctx.holds(plan.pass.when, params, changed)) continue;
             if (plan.pass.type === "mipmap") {
               gl.activeTexture(gl.TEXTURE0 + firstUnit); gl.bindTexture(gl.TEXTURE_2D, resources[plan.pass.resource].tex); gl.generateMipmap(gl.TEXTURE_2D);

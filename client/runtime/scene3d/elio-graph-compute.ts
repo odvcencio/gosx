@@ -44,7 +44,7 @@
         if (b.kind === "uniform") e.buffer = { type: "uniform" };
         else if (b.kind === "storage-read") e.buffer = { type: "read-only-storage" };
         else if (b.kind === "storage-rw") e.buffer = { type: "storage" };
-        else if (b.kind === "sampled-texture") e.texture = { sampleType: /32float$/.test(b.format || "") ? "unfilterable-float" : "float", viewDimension: "2d" };
+        else if (b.kind === "sampled-texture" || b.kind === "texture") e.texture = { sampleType: "unfilterable-float", viewDimension: "2d" }; // textureLoad only, so any float format binds
         else e.storageTexture = { access: "write-only", format: b.format, viewDimension: "2d" };
         return e;
       });
@@ -70,7 +70,6 @@
 
     let planSeq = 0;
     const plans = ctx.steps.map(function (step: any) {
-      if (step.swap) return { swap: step.swap };
       const pass = step.pass;
       const p = pipelines[pass.kernel + "/" + pass.entry];
       const blocks = (pass.uniforms || []).map(function (u: any) {
@@ -131,7 +130,6 @@
         if (!encoder) throw new Error("elio-graph: a webgpu frame needs frame.encoder");
         for (const r of graph.resources) if (r.feed) queue.writeBuffer(resources[r.name].buffer, 0, params[r.feed]);
         for (const plan of plans) {
-          if (plan.swap) { exchange(plan.swap); continue; }
           const pass = plan.pass;
           if (!ctx.holds(pass.when, params, changed)) continue;
           for (const b of plan.blocks) {
