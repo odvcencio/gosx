@@ -195,3 +195,21 @@ func TestPlainSceneDoesNotRequireTheDeferChunk(t *testing.T) {
 		t.Fatalf("a scene with no defer and no gate must not pay for the defer chunk: %s", manifest)
 	}
 }
+
+func TestDeferredPropsRefNamesItsRoute(t *testing.T) {
+	useTestSceneEntryStore(t)
+	r := NewRenderer("main")
+	r.SetRoute("/galaxy?profile=mobile")
+	r.RenderEngine(deferredSceneConfig("hero"), gosx.Text(""))
+	manifest, _ := r.ManifestJSON()
+	if !strings.Contains(manifest, `.json?r=%2Fgalaxy%3Fprofile%3Dmobile"`) {
+		t.Fatalf("props URL must name its route: %s", manifest)
+	}
+	r = NewRenderer("main")
+	r.SetRoute("/gosx/scene3d/x.json")
+	r.RenderEngine(deferredSceneConfig("hero"), gosx.Text(""))
+	manifest, _ = r.ManifestJSON()
+	if strings.Contains(manifest, "?r=") {
+		t.Fatalf("a framework route must not be named: %s", manifest)
+	}
+}

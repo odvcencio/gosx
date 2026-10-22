@@ -81,6 +81,11 @@ type statusCoder interface {
 
 // App is the GoSX server application.
 type App struct {
+	// sceneRender serves a route for a props-URL refill; see refillSceneEntry.
+	sceneRender     http.Handler
+	sceneRefill     *sceneRefill
+	sceneRefillOnce sync.Once
+
 	basePath            string
 	basePathOptions     BasePathOptions
 	pageRoutes          map[string]registeredPageRoute
@@ -581,6 +586,7 @@ func (a *App) Build() http.Handler {
 	regenerate := func(w http.ResponseWriter, r *http.Request, _ bool) {
 		regeneration.ServeHTTP(w, r)
 	}
+	a.sceneRender = regeneration
 
 	return basepath.Handler(a.basePath, a.basePathOptions.ProxyStripsPrefix, a.wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if a.maybeServeISR(w, r, regenerate) {

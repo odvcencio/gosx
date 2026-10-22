@@ -18,6 +18,7 @@ import (
 type PageState struct {
 	basePath       string
 	requestPath    string
+	routeURI       string
 	headers        http.Header
 	status         int
 	metadata       Metadata
@@ -51,6 +52,7 @@ func NewPageStateForRequest(r *http.Request) *PageState {
 	if r != nil && r.URL != nil {
 		state.basePath = basepath.FromRequest(r)
 		state.requestPath = basepath.URL(state.basePath, r.URL.Path)
+		state.routeURI = r.URL.RequestURI()
 	}
 	state.PrepareCache(r)
 	return state
@@ -386,6 +388,7 @@ func (s *PageState) Runtime() *PageRuntime {
 	if s.runtime == nil {
 		s.runtime = NewPageRuntime()
 		s.runtime.renderer.SetBasePath(s.basePath)
+		s.runtime.renderer.SetRoute(s.routeURI)
 	}
 	return s.runtime
 }

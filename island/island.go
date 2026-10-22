@@ -44,6 +44,7 @@ import (
 type Renderer struct {
 	fixturePreview                        bool
 	basePath                              string
+	route                                 string
 	manifest                              *hydrate.Manifest
 	counter                               int
 	bundleID                              string
@@ -1337,6 +1338,20 @@ func (r *Renderer) requiredFeatureNames() []string {
 // SetBasePath selects the public prefix for client manifest URLs.
 func (r *Renderer) SetBasePath(prefix string) { r.basePath = prefix }
 
+// SetRoute names the request (path and query, without the base path) that is
+// rendering this page. A deferred scene's props URL carries it, so a server
+// that never stored the props can render the route again and rebuild them.
+func (r *Renderer) SetRoute(requestURI string) { r.route = requestURI }
+
+// sceneEntryRef stores body and returns the URL the page names it by.
+func (r *Renderer) sceneEntryRef(store *SceneEntryStore, body []byte) string {
+	ref := SceneEntryPath(store.Put(body))
+	if route := r.route; route != "" && ValidSceneEntryRoute(route) {
+		ref += "?r=" + neturl.QueryEscape(route)
+	}
+	return ref
+}
+
 // ManifestJSON returns the manifest as a JSON string.
 func (r *Renderer) ManifestJSON() (string, error) {
 	manifest := r.clientManifest()
@@ -1610,11 +1625,11 @@ func (r *Renderer) RenderEngine(cfg engine.Config, fallback gosx.Node) gosx.Node
 					base = withoutDeferVariants(base)
 					for _, v := range variants {
 						if len(v.Props) > 0 && strings.TrimSpace(v.Media) != "" {
-							entry.Defer.Variants = append(entry.Defer.Variants, hydrate.EngineDeferVariant{Media: v.Media, PropsRef: SceneEntryPath(store.Put(v.Props))})
+							entry.Defer.Variants = append(entry.Defer.Variants, hydrate.EngineDeferVariant{Media: v.Media, PropsRef: r.sceneEntryRef(store, v.Props)})
 						}
 					}
 				}
-				entry.PropsRef = SceneEntryPath(store.Put(base))
+				entry.PropsRef = r.sceneEntryRef(store, base)
 				entry.Props = json.RawMessage("null")
 			} else if len(variants) > 0 {
 				// Inline props carry no variants: the runtime has no URL to switch to.

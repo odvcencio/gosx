@@ -3,6 +3,7 @@ package island
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
@@ -111,3 +112,18 @@ func DefaultSceneEntryStore() *SceneEntryStore { return defaultSceneEntryStore.L
 
 // SetSceneEntryStore replaces the process store; nil disables it.
 func SetSceneEntryStore(s *SceneEntryStore) { defaultSceneEntryStore.Store(s) }
+
+// ValidSceneEntryRoute reports whether route can be named in a props URL and
+// re-rendered later: a rooted request path, bounded, and never under /gosx/
+// (which would let a props URL point back at the framework's own routes).
+func ValidSceneEntryRoute(route string) bool {
+	if len(route) == 0 || len(route) > 2048 || route[0] != '/' || strings.HasPrefix(route, "//") || strings.HasPrefix(route, "/gosx/") || strings.HasPrefix(route, "/\\") {
+		return false
+	}
+	for i := 0; i < len(route); i++ {
+		if route[i] < 0x20 || route[i] == 0x7f {
+			return false
+		}
+	}
+	return true
+}
