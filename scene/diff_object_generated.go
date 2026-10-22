@@ -4,10 +4,26 @@ package scene
 
 import "reflect"
 
-// Validate names and types lazily before using generated field accesses. A stale
-// proof declines and leaves the reflective/reference comparison in control.
+// Validate names and types lazily before using generated field accesses.
+// Nested texture declarations participate so stale proofs fail closed.
 func objectProofSchemaMatches() bool {
-	return objectProofSchemaMatchesType(reflect.TypeFor[ObjectIR]())
+	return objectProofSchemaMatchesType(reflect.TypeFor[ObjectIR]()) && materialTextureDescriptorsProofSchemaMatchesType(reflect.TypeFor[MaterialTextureDescriptors]()) && textureDescriptorProofSchemaMatchesType(reflect.TypeFor[TextureDescriptor]()) && textureScalarProofSchemaMatches(reflect.TypeFor[TextureColorSpace](), reflect.TypeFor[TextureRole]())
+}
+
+func textureScalarProofSchemaMatches(types ...reflect.Type) bool {
+	expected := [...]reflect.Kind{
+		reflect.TypeFor[string]().Kind(),
+		reflect.TypeFor[string]().Kind(),
+	}
+	if len(types) != len(expected) {
+		return false
+	}
+	for i, typ := range types {
+		if typ == nil || typ.Kind() != expected[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func objectProofSchemaMatchesType(t reflect.Type) bool {
@@ -135,6 +151,68 @@ func objectProofSchemaMatchesType(t reflect.Type) bool {
 		{"Live", reflect.TypeFor[[]string](), "json:\"live,omitempty\""},
 		{"Vertices", reflect.TypeFor[*MeshVertices](), "json:\"vertices,omitempty\""},
 		{"Points", reflect.TypeFor[LinePoints](), "json:\"points,omitempty\""},
+	}
+	if t.NumField() != len(fields) {
+		return false
+	}
+	for i, expected := range fields {
+		actual := t.Field(i)
+		if actual.Name != expected.name || actual.Type != expected.typ || actual.Tag != expected.tag {
+			return false
+		}
+	}
+	return true
+}
+
+func materialTextureDescriptorsProofSchemaMatchesType(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct || sceneRecordHasJSONMarshaler(t) {
+		return false
+	}
+	fields := [...]struct {
+		name string
+		typ  reflect.Type
+		tag  reflect.StructTag
+	}{
+		{"BaseColor", reflect.TypeFor[TextureDescriptor](), "json:\"baseColor,omitzero\""},
+		{"Normal", reflect.TypeFor[TextureDescriptor](), "json:\"normal,omitzero\""},
+		{"Roughness", reflect.TypeFor[TextureDescriptor](), "json:\"roughness,omitzero\""},
+		{"Metalness", reflect.TypeFor[TextureDescriptor](), "json:\"metalness,omitzero\""},
+		{"Occlusion", reflect.TypeFor[TextureDescriptor](), "json:\"occlusion,omitzero\""},
+		{"Emissive", reflect.TypeFor[TextureDescriptor](), "json:\"emissive,omitzero\""},
+		{"Thickness", reflect.TypeFor[TextureDescriptor](), "json:\"thickness,omitzero\""},
+		{"Data", reflect.TypeFor[map[string]TextureDescriptor](), "json:\"data,omitempty\""},
+	}
+	if t.NumField() != len(fields) {
+		return false
+	}
+	for i, expected := range fields {
+		actual := t.Field(i)
+		if actual.Name != expected.name || actual.Type != expected.typ || actual.Tag != expected.tag {
+			return false
+		}
+	}
+	return true
+}
+
+func textureDescriptorProofSchemaMatchesType(t reflect.Type) bool {
+	if t.Kind() != reflect.Struct || sceneRecordHasJSONMarshaler(t) {
+		return false
+	}
+	fields := [...]struct {
+		name string
+		typ  reflect.Type
+		tag  reflect.StructTag
+	}{
+		{"URI", reflect.TypeFor[string](), "json:\"uri\""},
+		{"Role", reflect.TypeFor[TextureRole](), "json:\"role\""},
+		{"ColorSpace", reflect.TypeFor[TextureColorSpace](), "json:\"colorSpace\""},
+		{"Channels", reflect.TypeFor[string](), "json:\"channels,omitempty\""},
+		{"View", reflect.TypeFor[string](), "json:\"view,omitempty\""},
+		{"Format", reflect.TypeFor[string](), "json:\"format,omitempty\""},
+		{"MipLevels", reflect.TypeFor[int](), "json:\"mipLevels,omitempty\""},
+		{"Width", reflect.TypeFor[int](), "json:\"width,omitempty\""},
+		{"Height", reflect.TypeFor[int](), "json:\"height,omitempty\""},
+		{"Faces", reflect.TypeFor[int](), "json:\"faces,omitempty\""},
 	}
 	if t.NumField() != len(fields) {
 		return false
@@ -490,7 +568,7 @@ func provenObjectFieldsEqual(a, b *ObjectIR, omitted objectProofOmissions) bool 
 	if !provenFloatEqual(a.RimStrength, b.RimStrength) {
 		return false
 	}
-	if !provenJSONEqual(reflect.ValueOf(&a.TextureDescriptors).Elem(), reflect.ValueOf(&b.TextureDescriptors).Elem()) {
+	if !provenMaterialTextureDescriptorsEqual(&a.TextureDescriptors, &b.TextureDescriptors) {
 		return false
 	}
 	if a.LODGroup != b.LODGroup {
@@ -553,6 +631,70 @@ func provenObjectFieldsEqual(a, b *ObjectIR, omitted objectProofOmissions) bool 
 		}
 	}
 	if !provenJSONEqual(reflect.ValueOf(&a.Points).Elem(), reflect.ValueOf(&b.Points).Elem()) {
+		return false
+	}
+	return true
+}
+
+func provenMaterialTextureDescriptorsEqual(a, b *MaterialTextureDescriptors) bool {
+	if !provenTextureDescriptorEqual(&a.BaseColor, &b.BaseColor) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Normal, &b.Normal) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Roughness, &b.Roughness) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Metalness, &b.Metalness) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Occlusion, &b.Occlusion) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Emissive, &b.Emissive) {
+		return false
+	}
+	if !provenTextureDescriptorEqual(&a.Thickness, &b.Thickness) {
+		return false
+	}
+	if a.Data != nil || b.Data != nil {
+		if !provenJSONEqual(reflect.ValueOf(&a.Data).Elem(), reflect.ValueOf(&b.Data).Elem()) {
+			return false
+		}
+	}
+	return true
+}
+
+func provenTextureDescriptorEqual(a, b *TextureDescriptor) bool {
+	if a.URI != b.URI {
+		return false
+	}
+	if a.Role != b.Role {
+		return false
+	}
+	if a.ColorSpace != b.ColorSpace {
+		return false
+	}
+	if a.Channels != b.Channels {
+		return false
+	}
+	if a.View != b.View {
+		return false
+	}
+	if a.Format != b.Format {
+		return false
+	}
+	if a.MipLevels != b.MipLevels {
+		return false
+	}
+	if a.Width != b.Width {
+		return false
+	}
+	if a.Height != b.Height {
+		return false
+	}
+	if a.Faces != b.Faces {
 		return false
 	}
 	return true

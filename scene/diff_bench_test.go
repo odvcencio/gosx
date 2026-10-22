@@ -336,3 +336,23 @@ func BenchmarkDiffSceneModels5000Unchanged(b *testing.B) {
 		}
 	}
 }
+
+// Lowered textured meshes populate descriptor slots as well as legacy URIs.
+// Keep both cases: hand-built IR and real material lowering must benefit.
+func BenchmarkDiffSceneTextureDescriptors5000Objects(b *testing.B) {
+	for _, moved := range []int{0, 500} {
+		b.Run(fmt.Sprintf("moved-%d", moved), func(b *testing.B) {
+			previous, next := benchDiffScenes(5000, moved)
+			populateSceneTextureDescriptors(&previous)
+			populateSceneTextureDescriptors(&next)
+			b.ReportAllocs()
+			b.ResetTimer()
+			for b.Loop() {
+				diff := DiffScene(previous, next, DiffOptions{PatchTransforms: true})
+				if len(diff.Commands) != moved {
+					b.Fatalf("commands=%d, want %d", len(diff.Commands), moved)
+				}
+			}
+		})
+	}
+}
