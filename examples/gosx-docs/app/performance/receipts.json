@@ -13,7 +13,7 @@
   },
   "lighthouse": {
     "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 · Lighthouse 13.5.0",
-    "method": "Lighthouse mobile emulation against the local production-shaped build served with Go default GOMAXPROCS; a fresh Windows Chrome process and profile for each of 21 cold runs; median of three runs per path, with no result filtering. The separate GPU browser remained idle on about:blank during this batch.",
+    "method": "Lighthouse mobile emulation, local production build, Go default GOMAXPROCS. Each of 21 cold runs used a fresh Windows Chrome process/profile. Per-path medians cover three unfiltered runs; the GPU browser stayed idle.",
     "loadAverageStart": "4.70 7.74 10.15",
     "loadAverageEnd": "10.12 8.50 9.76",
     "runCount": 3,
@@ -254,7 +254,7 @@
   "gpu": {
     "label": "RTX 5070 Ti desktop, not a mid-range laptop",
     "browser": "Chrome/155.0.8059.85 · NVIDIA GeForce RTX 5070 Ti, driver 32.0.16.1714, headless",
-    "method": "Windows Chrome with NVIDIA ANGLE D3D11 at 1440x900; separate WebGPU and forced WebGL2 runs. Each scene received 240 alternating 2 px wheel-zoom inputs while 240 animation frames were sampled. The first browser client stalled before creating the scene3d context after ten successful rows; its ten rows and six successful rows from a fresh bounded browser session are all included, with no scene result filtered.",
+    "method": "NVIDIA D3D11, 1440x900; WebGPU and forced WebGL2, 240 RAF ticks per scene with alternating 2px zoom inputs. A browser-client stall preceded Scene3D creation: ten rows were retained, six added in a fresh session, none filtered. Values measure draw cadence, not physical presentation FPS.",
     "scenes": [
       {
         "path": "/demos/beacon",
@@ -695,7 +695,7 @@
   ],
   "quickstart": {
     "command": "go install m31labs.dev/gosx/cmd/gosx@latest",
-    "method": "Cold run used fresh isolated GOMODCACHE and GOCACHE directories. Warm run reused both caches. Times include compilation and module download. At measurement time, @latest resolved the published GoSX CLI v0.57.18, not the v0.57.19 candidate source measured for the docs site.",
+    "method": "Cold: fresh GOMODCACHE/GOCACHE; warm: reused caches. Includes compilation and downloads. @latest resolved published CLI v0.57.18; these timings do not measure the v0.57.19 candidate.",
     "coldSeconds": 34.39,
     "warmSeconds": 1.06
   }
