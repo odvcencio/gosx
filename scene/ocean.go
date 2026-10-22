@@ -48,6 +48,11 @@ type Ocean struct {
 	Spectrum *OceanSpectrum `json:"spectrum,omitempty"`
 	// Masks lists node IDs whose meshes remove water: a hull, a dry dock, a cave.
 	Masks []string `json:"masks,omitempty"`
+	// SwellWaves is computed during normalization from Spectrum and
+	// WindDirection and is read-only: whatever an author sets is replaced. It
+	// holds the DefaultOceanSwellCount strongest bins of the first two cascades
+	// as plane waves, for ship motion and the browser's first frames.
+	SwellWaves []OceanWave `json:"swellWaves,omitempty"`
 }
 
 // OceanSpectrum describes a wind sea by its JONSWAP spectrum. Zero fields mean
@@ -86,13 +91,15 @@ type OceanCascade struct {
 
 // OceanPreset returns a sea state by name: "calm", "moderate", "rough" or
 // "storm" (case-insensitive; any other name gives "moderate"). The presets
-// follow the Beaufort scale in wind and approximate fetch-limited significant
-// wave height Hs = 4 sqrt(m0) from the JONSWAP fit:
+// follow the Beaufort scale in wind speed over a fetch that keeps the
+// significant wave height Hs = 4 sqrt(m0) in the usual range. The Hs below is
+// measured on the realized four-cascade spectrum with seed 1 and the default
+// cascades (TestOceanSwellTruncationError):
 //
-//	calm      Beaufort 2-3, 3 m/s over 30 km:   Hs about 0.4 m, a short choppy sea
-//	moderate  Beaufort 4-5, 9 m/s over 300 km:  Hs about 1.5 m, the spectrum defaults
-//	rough     Beaufort 6-7, 13 m/s over 200 km: Hs about 3.9 m
-//	storm     Beaufort 9-10, 22 m/s over 250 km, a less peaked sea (gamma 2): Hs about 6.5 m
+//	calm      Beaufort 2-3,  3 m/s over  30 km:             Hs 0.4 m, a short choppy sea
+//	moderate  Beaufort 4,    7 m/s over 100 km:             Hs 1.7 m
+//	rough     Beaufort 6,   11 m/s over 200 km:             Hs 3.7 m
+//	storm     Beaufort 9,   20 m/s over 250 km, gamma 2:    Hs 7.4 m, a less peaked sea
 //
 // Swell shares grow with the sea state and travel toward +Z (SwellDirection 0);
 // set SwellDirection to turn them. The seed is 1; change it for another sea of
@@ -102,11 +109,11 @@ func OceanPreset(name string) OceanSpectrum {
 	case "calm":
 		return OceanSpectrum{WindSpeed: 3, Fetch: 30, PeakEnhancement: 3.3, Spread: 16, Swell: 0.1, Seed: 1}
 	case "rough":
-		return OceanSpectrum{WindSpeed: 13, Fetch: 200, PeakEnhancement: 3.3, Spread: 6, Swell: 0.25, Seed: 1}
+		return OceanSpectrum{WindSpeed: 11, Fetch: 200, PeakEnhancement: 3.3, Spread: 6, Swell: 0.25, Seed: 1}
 	case "storm":
-		return OceanSpectrum{WindSpeed: 22, Fetch: 250, PeakEnhancement: 2, Spread: 4, Swell: 0.35, Seed: 1}
+		return OceanSpectrum{WindSpeed: 20, Fetch: 250, PeakEnhancement: 2, Spread: 4, Swell: 0.35, Seed: 1}
 	}
-	return OceanSpectrum{WindSpeed: 9, Fetch: 300, PeakEnhancement: 3.3, Spread: 8, Swell: 0.15, Seed: 1}
+	return OceanSpectrum{WindSpeed: 7, Fetch: 100, PeakEnhancement: 3.3, Spread: 8, Swell: 0.15, Seed: 1}
 }
 
 // OceanBathymetry maps a grayscale image's R channel into world-space seabed
@@ -153,6 +160,10 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Reflections = normalizeOceanReflections(ocean.Reflections)
 	out.Spectrum = normalizeOceanSpectrum(ocean.Spectrum)
 	out.Masks = normalizeOceanMasks(ocean.Masks)
+	out.SwellWaves = nil
+	if out.Spectrum != nil {
+		out.SwellWaves = OceanSwellWaves(*out.Spectrum, out.WindDirection, DefaultOceanSwellCount)
+	}
 	return &out
 }
 
