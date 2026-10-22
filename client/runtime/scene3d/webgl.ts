@@ -5307,7 +5307,32 @@
     ].join("\u0000");
   }
 
-  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace) {
+  function scenePBRStartTextureLoad(gl, record) {
+    const key = record.src, target = record.target, texture = record.texture;
+    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) return;
+    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
+      scenePBRUploadKTX2Texture(gl, key, record);
+      return;
+    }
+    if (target === gl.TEXTURE_CUBE_MAP) {
+      Object.assign(record, { failed: true, error: "cube descriptors require a KTX2 upload path" });
+    } else if (typeof Image === "function") {
+      const image = new Image();
+      record.image = image;
+      image.onload = function() {
+        if (record.image === image) scenePBRUploadImageTexture(gl, record, image);
+      };
+      image.onerror = function() {
+        if (record.image !== image || !scenePBRTextureLive(record)) return;
+        record.failed = true;
+        scenePBRNotifyTextureSettled(record);
+      };
+      image.crossOrigin = "anonymous";
+      image.src = key;
+    }
+  }
+
+  function scenePBRLoadTexture(gl, url, cache, rawDescriptor, fallbackRole, fallbackColorSpace, retryFailed = false) {
     if (!cache) return null;
     const textureMap = cache;
     var descriptor = scenePBRTextureDescriptor(rawDescriptor, url, fallbackRole, fallbackColorSpace);
@@ -5316,8 +5341,15 @@
       return null;
     }
     var cacheKey = scenePBRTextureCacheKey(descriptor);
-    if (textureMap.has(cacheKey)) {
-      return textureMap.get(cacheKey);
+    const cached = textureMap.get(cacheKey);
+    if (cached) {
+      if (retryFailed && cached.failed && scenePBRTextureLive(cached)) {
+        cached.failed = false;
+        cached.loaded = false;
+        cached.error = undefined;
+        scenePBRStartTextureLoad(gl, cached);
+      }
+      return cached;
     }
 
     const texture = gl.createTexture();
@@ -5352,34 +5384,7 @@
       }
     });
 
-    if (scenePBRTextureLooksHDR(key) && scenePBRLoadHDRTexture(gl, key, texture, record)) {
-      return record;
-    }
-
-    // A .ktx2 URI holds a block-compressed container, not an image an <img>
-    // element can decode. Route it through the KTX2 reader. An image element
-    // fed a .ktx2 URI leaves the 1x1 white placeholder bound and never reports
-    // an error the caller can see.
-    if (scenePBRIsKTX2URL(key) && scenePBRKTX2API()) {
-      scenePBRUploadKTX2Texture(gl, key, record);
-      return record;
-    }
-
-    if (target === gl.TEXTURE_CUBE_MAP) {
-      Object.assign(record, { failed: true, error: "cube descriptors require a KTX2 upload path" });
-    } else if (typeof Image === "function") {
-      /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ const image = new Image();
-      record.image = image;
-      image.onload = function() { scenePBRUploadImageTexture(gl, record, image); };
-      image.onerror = function() {
-        if (!scenePBRTextureLive(record)) return;
-        record.failed = true;
-        scenePBRNotifyTextureSettled(record);
-      };
-      image.crossOrigin = "anonymous";
-      image.src = key;
-    }
-
+    scenePBRStartTextureLoad(gl, record);
     return record;
   }
 
@@ -11131,7 +11136,7 @@
       get supportsRigidImportedBatches() {
         return scenePBRPassReady(gl, instancedProgram) && instancedProgram.attributes.instanceMatrix >= 0;
       },
-      prepareCrowdAtlas, texturePreparation: { generation: textureCache._gosxGeneration, load: (url: any, descriptor: any, role: any, colorSpace: any) => scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace) },
+      prepareCrowdAtlas, texturePreparation: { generation: textureCache._gosxGeneration, load: (url: any, descriptor: any, role: any, colorSpace: any, retryFailed = false) => scenePBRLoadTexture(gl, url, textureCache, descriptor, role, colorSpace, retryFailed) },
       // prepareCrowdMotionShaders: call eagerly at hydration time, exactly
       // like prepareCrowdAtlas -- the color/shadow-pass draw dispatch reads
       // crowdMotionProgram directly (see drawPBRObjectList's rigidProgram

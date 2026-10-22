@@ -842,9 +842,12 @@ const budgets = [
     // Native touch deduplication and the cross-chunk bridge measure 1969984 raw / 544188 gzip; targets use only the exhausted minima under unchanged allowances.
     // Typed night lighting and held-signal deduplication: only the exhausted gzip minimum moves; allowances remain unchanged.
     // Reused baked shadow bounds measure 544730 gzip bytes; preserve the 16384-byte allowance.
-    file: "bootstrap.js", raw: 1908303, gzip: 531366,
+    // Explicit failed-texture preparation retry in both renderers adds 406 raw,
+    // 166 gzip and 111 Brotli bytes after the cache-hit lookup reduction.
+    // Retain the governed allowances and all other targets.
+    file: "bootstrap.js", raw: 1908709, gzip: 531532,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 432728.
-    brotli: 434717 },
+    brotli: 434828 },
   // Bumped raw 124_000 -> 126_000, gzip 34_000 -> 35_000, brotli 29_000 ->
   // 30_000 for the same generic region/action/stream contracts. Bumped raw
   // 126_000 -> 129_000 for the core request transport bridge. Bumped raw
@@ -1604,7 +1607,9 @@ const budgets = [
     file: "bootstrap-feature-scene3d-webgpu.js",
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 461857.
     // Merged WebGPU sources measure 118,032 gzip bytes; raise only this target by 1,411 B under the unchanged 5% allowance.
-    raw: 461900, gzip: 113824,
+    // Explicit failed-texture retry adds 74 gzip bytes to this chunk; retain
+    // its other targets and the governed allowance.
+    raw: 461900, gzip: 113898,
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 97961.
     brotli: 98000 },
   // Bumped raw 22_000 -> 27_500, gzip 8_000 -> 10_300, brotli 7_000 -> 9_200
@@ -2102,7 +2107,9 @@ const routeBudgets = [
     // Detail resource reuse and retirement adds 1,086 raw, 314 gzip and 280
     // Brotli bytes to this route. Keep the shared allowances unchanged.
     raw: 1394681,
-    gzip: 384661,
+    // The same two-backend retry adds 74 gzip bytes to this route after the
+    // cache-hit lookup reduction; retain the 16,384 B cap.
+    gzip: 384735,
     // Retained pending poses and CPU playback add 564 measured Brotli bytes;
     // move only this exceeded route target, keeping allowances unchanged.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 337941.
@@ -2675,7 +2682,9 @@ const routeBudgets = [
     // smallest 100-byte steps that clear the hard limits.
     // Mip-chain bloom and RenderBeforeModels on top of the ocean: targets rise by the smallest 100-byte steps that clear the measured sizes.
     raw: 1242159,
-    gzip: 341053,
+    // The same WebGPU chunk adds 74 gzip bytes to this route; retain its
+    // other targets and the governed allowance.
+    gzip: 341127,
     // The same 564-byte shared runtime addition exceeds this route's cap.
     // Baseline = shipped size with #474 (decision 0014 exception, owner-approved 2026-10-07); measured 299314.
     brotli: 299400,
