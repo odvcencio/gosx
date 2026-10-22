@@ -72,8 +72,35 @@
         meta: sceneDOMRegionUniformPattern(uniforms.meta, "region%dMeta"),
       },
       bounds: bounds,
+      presenceClass: sceneDOMRegionClassToken(raw.presenceClass),
     };
   }
+
+  // One class token: no whitespace, at most 64 characters. Anything else is ignored.
+  function sceneDOMRegionClassToken(value) {
+    var token = typeof value === "string" ? value.trim() : "";
+    if (!token || token.length > 64 || /\s/.test(token)) return "";
+    return token;
+  }
+
+  // The effect is "composited" when the mount renders on WebGPU or WebGL and
+  // has neither dropped, deferred nor demoted its post-FX. The attributes are
+  // published by mount-webgl.ts (backend), mount-quality.ts (postfx) and
+  // mount.ts (webgpu-postfx-demoted). Missing attributes count as healthy.
+  function sceneDOMRegionComposited(mount) {
+    if (!mount || typeof mount.getAttribute !== "function") return false;
+    var backend = String(mount.getAttribute("data-gosx-scene3d-backend") || "");
+    if (backend !== "webgpu" && backend !== "webgl") return false;
+    var postfx = String(mount.getAttribute("data-gosx-scene3d-postfx") || "");
+    if (postfx === "dropped" || postfx === "deferred" || postfx === "none") return false;
+    return String(mount.getAttribute("data-gosx-scene3d-webgpu-postfx-demoted") || "") !== "true";
+  }
+
+  var SCENE_DOM_REGION_PRESENCE_ATTRIBUTES = [
+    "data-gosx-scene3d-backend",
+    "data-gosx-scene3d-postfx",
+    "data-gosx-scene3d-webgpu-postfx-demoted",
+  ];
 
   function sceneDOMRegionBoundsConfig(raw) {
     if (!raw || typeof raw !== "object") return null;
@@ -269,6 +296,10 @@
     var resizeObserver = null;
     var observed = [];
     var geometryTracking = false;
+    var visibleByName = {};
+    var appliedClasses = {};
+    var presenceObserver = null;
+    var presenceAttributeWritten = false;
     var scheduledRender = typeof scheduleRender === "function" ? scheduleRender : function() {};
 
     function currentCanvas() {
@@ -321,6 +352,62 @@
       observed = next;
     }
 
+    function documentClassList() {
+      var root = typeof document !== "undefined" ? document.documentElement : null;
+      return root && root.classList ? root.classList : null;
+    }
+
+    // Toggle each config's presenceClass on the document element: on while a
+    // matched region is visible inside the canvas and the effect is composited.
+    function syncPresence() {
+      var wanted = {};
+      var parts = [];
+      var composited = !disposed && sceneDOMRegionComposited(mount);
+      for (var i = 0; i < configs.length; i += 1) {
+        var config = configs[i];
+        if (!config.presenceClass) continue;
+        var on = composited && visibleByName[config.name] === true;
+        parts.push(config.name + ":" + (on ? 1 : 0));
+        if (on) wanted[config.presenceClass] = true;
+      }
+      var classList = documentClassList();
+      if (classList) {
+        for (var applied in appliedClasses) {
+          if (!wanted[applied]) {
+            classList.remove(applied);
+            delete appliedClasses[applied];
+          }
+        }
+        for (var cls in wanted) {
+          if (!appliedClasses[cls]) {
+            classList.add(cls);
+            appliedClasses[cls] = true;
+          }
+        }
+      }
+      if (mount && typeof mount.setAttribute === "function" && (parts.length > 0 || presenceAttributeWritten)) {
+        var text = parts.join("|");
+        if (mount.getAttribute("data-gosx-scene3d-dom-region-presence") !== text) {
+          mount.setAttribute("data-gosx-scene3d-dom-region-presence", text);
+        }
+        presenceAttributeWritten = parts.length > 0;
+      }
+    }
+
+    function ensurePresenceObserver() {
+      var needed = geometryTracking && !disposed && configs.some(function(config) { return !!config.presenceClass; });
+      if (!needed) {
+        if (presenceObserver) {
+          presenceObserver.disconnect();
+          presenceObserver = null;
+        }
+        return;
+      }
+      if (presenceObserver || typeof MutationObserver !== "function" || !mount) return;
+      presenceObserver = new MutationObserver(syncPresence);
+      presenceObserver.observe(mount, { attributes: true, attributeFilter: SCENE_DOM_REGION_PRESENCE_ATTRIBUTES });
+    }
+
     function queryTargets(selector) {
       if (typeof document === "undefined" || typeof document.querySelectorAll !== "function") return [];
       try {
@@ -342,9 +429,16 @@
         var targets = queryTargets(config.selector);
         allTargets = allTargets.concat(targets.slice(0, config.max));
         targetKeyParts.push(config.name + ":" + config.selector + ":" + targets.length);
-        entries.push(sceneDOMRegionPatch(config, sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max, config.bounds)));
+        var measurement = sceneDOMRegionMeasure(activeCanvas || mount, targets, config.max, config.bounds);
+        var anyVisible = false;
+        for (var v = 0; v < measurement.count; v += 1) {
+          if (measurement.meta[v * 4 + 1] > 0) anyVisible = true;
+        }
+        visibleByName[config.name] = anyVisible;
+        entries.push(sceneDOMRegionPatch(config, measurement));
       }
       observeTargets(allTargets);
+      syncPresence();
       var patchKey = JSON.stringify(entries);
       if (patchKey === lastPatchKey) return;
       lastPatchKey = patchKey;
@@ -397,6 +491,7 @@
         window.addEventListener("scroll", onGeometryChange, true);
         window.addEventListener("resize", onGeometryChange);
       }
+      ensurePresenceObserver();
     }
 
     function disableGeometryTracking() {
@@ -408,6 +503,7 @@
         window.removeEventListener("resize", onGeometryChange);
       }
       geometryTracking = false;
+      ensurePresenceObserver();
     }
 
     function configure(postEffects) {
@@ -422,9 +518,11 @@
       key = nextKey;
       configs = next;
       lastPatchKey = "";
+      visibleByName = {};
       disconnectObserved();
       if (configs.length === 0) {
         disableGeometryTracking();
+        syncPresence();
         if (mount && typeof mount.setAttribute === "function") {
           mount.setAttribute("data-gosx-scene3d-dom-regions", "0");
           mount.setAttribute("data-gosx-scene3d-dom-region-targets", "");
@@ -434,6 +532,8 @@
         return;
       }
       enableGeometryTracking();
+      ensurePresenceObserver();
+      syncPresence();
       scheduleMeasure();
     }
 
@@ -450,6 +550,7 @@
       dispose: function() {
         disposed = true;
         disableGeometryTracking();
+        syncPresence();
       },
       _measureNow: measureNow,
     };
