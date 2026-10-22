@@ -77,7 +77,7 @@
   }
 
   // One class token: no whitespace, at most 64 characters. Anything else is ignored.
-  function sceneDOMRegionClassToken(value) {
+  function sceneDOMRegionClassToken(value: any) {
     var token = typeof value === "string" ? value.trim() : "";
     if (!token || token.length > 64 || /\s/.test(token)) return "";
     return token;
@@ -87,7 +87,7 @@
   // has neither dropped, deferred nor demoted its post-FX. The attributes are
   // published by mount-webgl.ts (backend), mount-quality.ts (postfx) and
   // mount.ts (webgpu-postfx-demoted). Missing attributes count as healthy.
-  function sceneDOMRegionComposited(mount) {
+  function sceneDOMRegionComposited(mount: any) {
     if (!mount || typeof mount.getAttribute !== "function") return false;
     var backend = String(mount.getAttribute("data-gosx-scene3d-backend") || "");
     if (backend !== "webgpu" && backend !== "webgl") return false;
@@ -290,15 +290,15 @@
   function createSceneCustomPostDOMRegionTracker(mount, canvas, state, scheduleRender) {
     var disposed = false;
     var raf = 0;
-    var configs = [];
+    var configs: any[] = [];
     var key = "";
     var lastPatchKey = "";
-    var resizeObserver = null;
-    var observed = [];
+    var resizeObserver: any = null;
+    var observed: any[] = [];
     var geometryTracking = false;
-    var visibleByName = {};
-    var appliedClasses = {};
-    var presenceObserver = null;
+    var visibleByName: Record<string, boolean> = {};
+    var appliedClasses: Record<string, boolean> = {};
+    var presenceObserver: any = null;
     var presenceAttributeWritten = false;
     var scheduledRender = typeof scheduleRender === "function" ? scheduleRender : function() {};
 
@@ -360,8 +360,8 @@
     // Toggle each config's presenceClass on the document element: on while a
     // matched region is visible inside the canvas and the effect is composited.
     function syncPresence() {
-      var wanted = {};
-      var parts = [];
+      var wanted: Record<string, boolean> = {};
+      var parts: string[] = [];
       var composited = !disposed && sceneDOMRegionComposited(mount);
       for (var i = 0; i < configs.length; i += 1) {
         var config = configs[i];
@@ -395,7 +395,7 @@
     }
 
     function ensurePresenceObserver() {
-      var needed = geometryTracking && !disposed && configs.some(function(config) { return !!config.presenceClass; });
+      var needed = geometryTracking && !disposed && configs.some(function(config: any) { return !!config.presenceClass; });
       if (!needed) {
         if (presenceObserver) {
           presenceObserver.disconnect();
