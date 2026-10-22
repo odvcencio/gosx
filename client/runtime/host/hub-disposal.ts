@@ -10,6 +10,8 @@
       record.refreshTimer = null;
     }
     if (typeof stopHubRoundTrip === "function") stopHubRoundTrip(record);
+    if (typeof stopHubResyncTimers === "function") stopHubResyncTimers(record, false);
+    record.lastResyncAt = 0;
     record.refreshPreserveScroll = null;
     record.refreshEvent = null;
     record.refreshFetchEpoch = null;

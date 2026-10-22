@@ -51,6 +51,7 @@
     if (record.socket && (record.socket.readyState === 1 || record.socket.readyState == null)) {
       bindHubOutputs(record);
       startHubRoundTrip(record);
+      scheduleHubResyncPeriod(record);
       publishHubConnection(record, "open");
     } else if (record.socket && record.socket.readyState === 0) {
       publishHubConnection(record, "connecting");
@@ -576,6 +577,8 @@
       }
       bindHubOutputs(record);
       startHubRoundTrip(record);
+      scheduleHubResyncPeriod(record);
+      armHubResyncInitial(record);
       publishHubConnection(record, "open");
     };
     socket.onmessage = function(evt) {
@@ -778,8 +781,99 @@
     }
   }
 
+  // Resync asks the hub to resend current state after the page was not
+  // running (hydrate.HubResyncConfig). Requests share the open socket, so a
+  // dead socket reconnects instead and its join replays state.
+  function hubResyncConfig(record) {
+    for (const entry of record.entries.values()) if (entry && entry.resync) return entry.resync;
+    return null;
+  }
+
+  function requestHubResync(record, reason) {
+    const config = hubResyncConfig(record);
+    if (!config || record.disposed || record.suspended || !record.socket || record.socket.readyState !== 1) return false;
+    const now = hubMonotonicNow();
+    const minInterval = Math.max(250, Number(config.minIntervalMs) || 1200);
+    if (record.lastResyncAt && now - record.lastResyncAt < minInterval) return false;
+    record.lastResyncAt = now;
+    record.socket.send(JSON.stringify({ event: config.event || "resync", data: { reason: reason } }));
+    return true;
+  }
+
+  function hubResyncTriggerEnabled(config, trigger) {
+    const on = Array.isArray(config.on) && config.on.length ? config.on : ["visible", "focus", "online", "pageshow"];
+    return on.indexOf(trigger) >= 0;
+  }
+
+  function resyncHubs(trigger) {
+    hubConnections.forEach(function(record) {
+      const config = hubResyncConfig(record);
+      if (config && hubResyncTriggerEnabled(config, trigger)) requestHubResync(record, trigger);
+    });
+  }
+
+  // Delay until the next wall-clock multiple of periodMs plus offsetMs.
+  function nextHubResyncDelay(periodMs, offsetMs) {
+    const now = Date.now();
+    const next = Math.floor(now / periodMs) * periodMs + periodMs + offsetMs;
+    return Math.max(offsetMs, Math.min(next - now, periodMs + offsetMs));
+  }
+
+  function scheduleHubResyncPeriod(record) {
+    stopHubResyncTimers(record, true);
+    const config = hubResyncConfig(record);
+    if (!config || !(Number(config.periodMs) > 0) || record.disposed) return;
+    record.resyncPeriodTimer = setTimeout(function() {
+      record.resyncPeriodTimer = null;
+      if (typeof document === "undefined" || document.visibilityState !== "hidden") requestHubResync(record, "period");
+      scheduleHubResyncPeriod(record);
+    }, nextHubResyncDelay(Number(config.periodMs), Math.max(0, Number(config.offsetMs) || 0)));
+  }
+
+  function armHubResyncInitial(record) {
+    const config = hubResyncConfig(record);
+    if (record.resyncInitialTimer != null) {
+      clearTimeout(record.resyncInitialTimer);
+      record.resyncInitialTimer = null;
+    }
+    if (!config || !(Number(config.initialDelayMs) > 0) || record.disposed) return;
+    record.resyncInitialTimer = setTimeout(function() {
+      record.resyncInitialTimer = null;
+      requestHubResync(record, "initial");
+    }, Number(config.initialDelayMs));
+  }
+
+  function stopHubResyncTimers(record, periodOnly) {
+    if (!record) return;
+    if (record.resyncPeriodTimer != null) {
+      clearTimeout(record.resyncPeriodTimer);
+      record.resyncPeriodTimer = null;
+    }
+    if (!periodOnly && record.resyncInitialTimer != null) {
+      clearTimeout(record.resyncInitialTimer);
+      record.resyncInitialTimer = null;
+    }
+  }
+
   if (typeof window.addEventListener === "function") {
     window.addEventListener("pageshow", revalidateHubConnections);
+    if (!window.__gosxHubResyncListeners) {
+      window.__gosxHubResyncListeners = true;
+      // A page script cannot be sure the document finished loading, so focus
+      // waits until it left the "loading" state.
+      if (typeof document.addEventListener === "function") {
+        document.addEventListener("visibilitychange", function() {
+          if (document.visibilityState !== "hidden") resyncHubs("visible");
+        });
+      }
+      window.addEventListener("focus", function() {
+        if (document.readyState !== "loading") resyncHubs("focus");
+      });
+      window.addEventListener("online", function() { resyncHubs("online"); });
+      window.addEventListener("pageshow", function(event) {
+        if (event && event.persisted) resyncHubs("pageshow");
+      });
+    }
   }
 
   gosxHost.hubs = Object.assign(gosxHost.hubs || {}, {

@@ -37,3 +37,51 @@ test("publishes connecting, open, error and reconnecting to the signal, the stat
   await flushAsyncWork();
   assert.equal(h.signal().state, "connecting", "a reconnect attempt publishes connecting again");
 });
+
+const resync = { event: "resync", minIntervalMs: 1200, periodMs: 180000, offsetMs: 2200, initialDelayMs: 1200 };
+
+test("asks the hub to resend state on visible, focus, online and pageshow, at most once per minIntervalMs", async () => {
+  let now = 10000;
+  const h = await boot({ resync }, { performanceNow: () => now });
+  h.socket().readyState = 1; h.socket().onopen();
+  h.timers.runDelay(1200);
+  assert.deepEqual(h.socket().sent.at(-1), { event: "resync", data: { reason: "initial" } });
+  now += 1300;
+  h.env.context.document.visibilityState = "visible";
+  h.env.context.document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(h.socket().sent.filter((m) => m.event === "resync").length, 2);
+  h.env.context.window.dispatchEvent({ type: "online" });
+  assert.equal(h.socket().sent.filter((m) => m.event === "resync").length, 2, "second trigger inside 1.2 s is dropped");
+  now += 1300;
+  h.env.context.window.dispatchEvent({ type: "focus" });
+  assert.equal(h.socket().sent.at(-1).data.reason, "focus");
+  now += 1300;
+  h.env.context.window.dispatchEvent({ type: "pageshow", persisted: true });
+  assert.equal(h.socket().sent.at(-1).data.reason, "pageshow");
+  now += 1300;
+  h.env.context.document.visibilityState = "hidden";
+  h.env.context.document.dispatchEvent({ type: "visibilitychange" });
+  assert.equal(h.socket().sent.at(-1).data.reason, "pageshow", "hiding the tab never resyncs");
+});
+
+test("schedules a resync after each wall-clock period boundary plus the offset, only while visible", async () => {
+  let now = 10000;
+  const h = await boot({ resync }, { performanceNow: () => now });
+  // 1 s after a period boundary. The vm context has its own Date.
+  runScript("globalThis.__realDateNow = Date.now; Date.now = () => 180000 * 5 + 1000;", h.env.context, "date-stub.js");
+  try {
+    const before = h.timers.count();
+    h.socket().readyState = 1; h.socket().onopen();
+    assert.ok(h.timers.count() > before, "period and initial timers armed");
+    now += 5000; h.timers.runDelay(180000 - 1000 + 2200);
+    assert.equal(h.socket().sent.at(-1).data.reason, "period");
+  } finally { runScript("Date.now = globalThis.__realDateNow;", h.env.context, "date-restore.js"); }
+});
+
+test("a hub without resync never sends resync", async () => {
+  const h = await boot();
+  h.socket().readyState = 1; h.socket().onopen();
+  h.timers.runDelay(5000);
+  h.env.context.window.dispatchEvent({ type: "online" });
+  assert.equal(h.socket().sent.filter((m) => m.event === "resync").length, 0);
+});
