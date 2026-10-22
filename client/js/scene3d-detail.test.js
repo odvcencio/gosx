@@ -96,7 +96,9 @@ test("WebGPU detail preserves the nil shader and uses a separate array binding",
   assert.equal(c.sceneWebGPUDetailFragment(base, null), base);
   // Reviewed optics/MRT base and explicit environment-map LOD for seam-free reflections.
   // The browser optics oracle covers behavior; nil detail must keep this base exact.
-  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "8865456a17f7928ce0cd550c17c8dd0fd1ee1b939ca7ca518bf0e0d9e8ae08ab");
+  // Reviewed vessel cutaway base: the fragment reads two planes from its model slot and discards before shading;
+  // all-zero planes cut nothing.
+  assert.equal(crypto.createHash("sha256").update(base).digest("hex"), "c36e68d8d98ee29f9ac4116d838e35e7bc9d35df4996a2e6c8d793faaebd6738");
   const shader = c.sceneWebGPUDetailFragment(base, true);
   assert.match(shader, /textureSampleGrad\(detailAtlas/);
   assert.match(shader, /@group\(2\) @binding\(1\) var detailAtlas: texture_2d_array/);

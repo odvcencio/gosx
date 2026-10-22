@@ -19851,7 +19851,7 @@
       for (var mi = 0; mi < 16; mi++) materialFrame.data[mi] = mi % 5 === 0 ? 1 : 0;
       device.queue.writeBuffer(materialFrame.buffer, 0, materialFrame.data.subarray(0, 16));
     }
-    var slotIndex = 0, firstDirty = 0, lastDirty = 0;
+    var slotIndex = 0, firstDirty = 0, lastDirty = 0, lastBytes = 64;
     for (var i = 0; i < objects.length; i++) {
       var object = objects[i];
       if (!webGPUCutawayHasSlot(object)) continue;
@@ -19867,11 +19867,11 @@
         // Compare stored float32 bits, including the rounding of wire numbers.
         if (materialFrame.words[index] !== before) changed = true;
       }
-      if (webGPUCutawayWrite(materialFrame, offset, object.cut)) changed = true;
-      if (changed) { if (!firstDirty) firstDirty = slotIndex; lastDirty = slotIndex; }
+      var cutChanged = webGPUCutawayWrite(materialFrame, offset, object.cut);
+      if (changed || cutChanged) { if (!firstDirty) firstDirty = slotIndex; lastDirty = slotIndex; lastBytes = cutChanged || resized ? SCENE_WEBGPU_CUTAWAY_SLOT_BYTES : 64; }
     }
     if (lastDirty) device.queue.writeBuffer(materialFrame.buffer, firstDirty * materialFrame.stride,
-      materialFrame.data.subarray(firstDirty * materialFrame.stride / 4, (lastDirty * materialFrame.stride + SCENE_WEBGPU_CUTAWAY_SLOT_BYTES) / 4));
+      materialFrame.data.subarray(firstDirty * materialFrame.stride / 4, (lastDirty * materialFrame.stride + lastBytes) / 4));
     var materials = Array.isArray(bundle.materials) ? bundle.materials : [];
     var signatures = materialFrame.signatures;
     signatures.length = materials.length;
