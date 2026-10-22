@@ -22,6 +22,12 @@
   the existing WebGL or WebGPU renderer. Concurrent preparations share one retry;
   normal drawing keeps settled cache behavior without repeated image requests.
   Retain cached records and ignore superseded image callbacks.
+
+- Reduce allocation churn in `signal.Derive` and `signal.Watch` dependency
+  tracking, including computed values used by islands and Scene3D engines.
+  Reuse cleared tracking scratch with bounded capacity while preserving
+  goroutine isolation, nested tracking and fresh derived reads inside `Batch`.
+
 - Let islands talk to a worker engine with typed request and reply, a paced
   view and a visible status, with no page JavaScript. `wasm.ServeCalls` answers
   `engine.Call` values written to a shared signal with `engine.Result` values on
