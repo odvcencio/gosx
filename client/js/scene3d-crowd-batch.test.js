@@ -8,9 +8,14 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const vm = require("node:vm");
+const ts = require("../runtime/node_modules/typescript");
 const { bootstrapSource, createContext, runScript, flushAsyncWork } = require("./runtime-test-harness.js");
 const fs = require("node:fs");
 const path = require("node:path");
+
+const gltfSource = ts.transpileModule(fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", "gltf.ts"), "utf8"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
 
 // The bootstrap runs in a vm context, whose Float32Array differs from this
 // file's. The runtime tests typed arrays with instanceof, so build them in its
@@ -468,7 +473,7 @@ test("a crowd parented on today's vessel rides its JS-computed pose", async () =
   const vessel = vm.createContext({ window: {}, Float32Array, Uint8Array, Uint16Array, Uint32Array, Int8Array, Int16Array, ArrayBuffer, DataView, TextDecoder });
   for (const source of ["client/js/bootstrap-src/11-scene-math.ts", "client/runtime/scene3d/gltf.ts", "client/runtime/scene3d/vessel-navigation.ts",
     "client/runtime/scene3d/vessel-physics.ts", "client/runtime/scene3d/vessel-model.ts"]) {
-    vm.runInContext(fs.readFileSync(path.join(root, source), "utf8"), vessel);
+    vm.runInContext(source.endsWith("/gltf.ts") ? gltfSource : fs.readFileSync(path.join(root, source), "utf8"), vessel);
   }
   const physics = vessel.window.__gosx_scene3d_vessel_physics, modelAPI = vessel.window.__gosx_scene3d_vessel_model;
   const hull = makeShip(api, null);

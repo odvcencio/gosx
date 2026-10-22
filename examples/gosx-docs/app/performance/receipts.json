@@ -9,11 +9,11 @@
     "os": "Linux 6.18.54.1-microsoft-standard-WSL2",
     "cpu": "Intel(R) Core(TM) Ultra 9 285",
     "memoryGiB": 13.65,
-    "loadAverage": "Interrupted Lighthouse batch resumed: original batch start 17.58 16.61 10.93, original end unavailable; recovery start 12.31 14.03 12.59 4/1916 317599; recovery end 18.92 15.60 13.36 13/1926 326542. Recovery Lighthouse bounds 12.31 14.03 12.59 -> 11.05 13.67 12.49."
+    "loadAverage": "LH: 17.58 16.61 10.93; interrupted. Recovery LH: 12.31 14.03 12.59 → 11.05 13.67 12.49; recovery end: 18.92 15.60 13.36."
   },
   "lighthouse": {
     "browser": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/155.0.0.0 Safari/537.36 · Lighthouse 13.5.0",
-    "method": "Lighthouse mobile emulation, local production build. Three completed cold runs per path, each in a fresh Windows Chrome process/profile; GPU browser idle. All completed reports retained. One Home setup protocol timeout produced no report; a fresh cold run replaced only that missing sample. Batch interruption and recovery load recorded.",
+    "method": "Mobile emulation, local production build; three cold reports per route in fresh Windows Chrome profiles. All completed reports retained; one missing Home setup report replaced after a protocol timeout. Interrupted batch; load recorded.",
     "loadAverageStart": "12.31 14.03 12.59",
     "loadAverageEnd": "11.05 13.67 12.49",
     "runCount": 3,
@@ -716,7 +716,7 @@
   ],
   "quickstart": {
     "command": "go install m31labs.dev/gosx/cmd/gosx@latest",
-    "method": "Cold run used fresh isolated GOMODCACHE and GOCACHE directories. Warm run reused both caches. Times include compilation and module download. The command resolved published v0.57.18; these install times do not measure the unpublished v0.57.19 candidate.",
+    "method": "Isolated module/build caches for cold; reused for warm. Includes downloads and compilation. @latest resolved published v0.57.18.",
     "coldSeconds": 71.26,
     "warmSeconds": 0.95
   }
