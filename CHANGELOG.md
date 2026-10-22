@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reduce SceneIR diff scratch with one ID index and compact presence flags.
+  Keep matching duplicate IDs to the last previous record, sort removals, and
+  retain the order of next records and optional transform/state patches without
+  mutating either snapshot.
+
 - Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
   Identical negative thresholds and standalone omitted values still reach the
   JSON rejection path instead of silently suppressing the update. Carrying
