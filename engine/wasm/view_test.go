@@ -2,6 +2,7 @@ package wasm
 
 import (
 	"encoding/json"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -10,12 +11,12 @@ import (
 type fakeSink struct {
 	mu      sync.Mutex
 	batches []map[string]json.RawMessage
-	applied []func()
+	applied []func(bool)
 	isHid   bool
 	vis     func()
 }
 
-func (s *fakeSink) send(b []byte, applied func()) error {
+func (s *fakeSink) send(b []byte, applied func(bool)) error {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(b, &m); err != nil {
 		return err
@@ -30,7 +31,13 @@ func (s *fakeSink) hidden() bool                      { s.mu.Lock(); defer s.mu.
 func (s *fakeSink) onVisibility(fn func()) HandleFunc { s.vis = fn; return func() {} }
 func (s *fakeSink) release()                          {}
 func (s *fakeSink) count() int                        { s.mu.Lock(); defer s.mu.Unlock(); return len(s.batches) }
-func (s *fakeSink) ack(i int)                         { s.mu.Lock(); f := s.applied[i]; s.mu.Unlock(); f() }
+func (s *fakeSink) ack(i int)                         { s.ackOK(i, true) }
+func (s *fakeSink) ackOK(i int, ok bool) {
+	s.mu.Lock()
+	f := s.applied[i]
+	s.mu.Unlock()
+	f(ok)
+}
 
 func waitFor(t *testing.T, what string, ok func() bool) {
 	t.Helper()
@@ -125,5 +132,45 @@ func TestViewSetReportsUnencodableValueAndKeepsOthers(t *testing.T) {
 	}
 	if s.count() != 1 || string(s.batches[0]["$ok"]) != "1" {
 		t.Fatalf("batches = %v", s.batches)
+	}
+}
+
+type failOnceSink struct {
+	fakeSink
+	failed bool
+}
+
+func (s *failOnceSink) send(b []byte, done func(bool)) error {
+	if !s.failed {
+		s.failed = true
+		return errors.New("page rejected batch")
+	}
+	return s.fakeSink.send(b, done)
+}
+
+// A batch that fails to send is requeued, so a value set once still arrives.
+func TestViewRetriesAfterAFailedSend(t *testing.T) {
+	s := &failOnceSink{}
+	v := newView(s, ViewOptions{MinInterval: time.Millisecond})
+	defer v.Dispose()
+	_ = v.Set(map[string]any{"$hud": "final"})
+	waitFor(t, "retry", func() bool { return s.count() == 1 })
+	if string(s.batches[0]["$hud"]) != `"final"` {
+		t.Fatalf("batch = %v", s.batches[0])
+	}
+}
+
+// A page that rejects a batch (ok false) gets the values again, unless a
+// newer value was set meanwhile.
+func TestViewRequeuesARejectedBatchButKeepsNewerValues(t *testing.T) {
+	s := &fakeSink{}
+	v := newView(s, ViewOptions{MinInterval: time.Millisecond})
+	defer v.Dispose()
+	_ = v.Set(map[string]any{"$a": 1, "$b": 1})
+	_ = v.Set(map[string]any{"$a": 2}) // newer, while the first batch is in flight
+	s.ackOK(0, false)
+	waitFor(t, "second batch", func() bool { return s.count() == 2 })
+	if string(s.batches[1]["$a"]) != "2" || string(s.batches[1]["$b"]) != "1" {
+		t.Fatalf("second batch = %v, want $a=2 (newer) and $b=1 (requeued)", s.batches[1])
 	}
 }

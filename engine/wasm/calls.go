@@ -58,7 +58,9 @@ func callSignals(channel string) (call, result string, err error) {
 // with an ID higher than any it has handled, ServeCalls decodes the arguments,
 // runs handle, and writes one result. A call whose arguments do not decode gets
 // an error result instead of silence. A call that arrives before ServeCalls
-// subscribes is handled from the signal's current value. Repeated deliveries of
+// subscribes is handled from the signal's current value, unless the result
+// signal shows it was already answered (an engine that remounts does not run an
+// old call again). Repeated deliveries of
 // the same value, which a batch flush can produce, are ignored.
 //
 // Result.Recent lists the last CallOptions.Recent replies (ID and error), so an
@@ -93,7 +95,9 @@ func serveCalls[A, R any](tr callTransport, channel string, opts CallOptions, ha
 		disposed bool
 	)
 	process := func(data json.RawMessage) {
-		var head engine.Call[json.RawMessage]
+		// The ID decodes on its own, so a call with a wrongly typed Name or
+		// Args still gets an answer.
+		var head struct{ ID uint64 }
 		if json.Unmarshal(data, &head) != nil {
 			return // no ID to answer
 		}
@@ -105,15 +109,21 @@ func serveCalls[A, R any](tr callTransport, channel string, opts CallOptions, ha
 		last = head.ID
 		mu.Unlock()
 
-		result := engine.Result[R]{ID: head.ID, Name: head.Name}
+		result := engine.Result[R]{ID: head.ID}
 		var args A
-		if len(head.Args) > 0 && string(head.Args) != "null" {
-			if err := json.Unmarshal(head.Args, &args); err != nil {
-				result.Error = "bad-args: " + err.Error()
+		var call engine.Call[json.RawMessage]
+		if err := safeDecode(data, &call); err != nil {
+			result.Error = "bad-call: " + err.Error()
+		} else {
+			result.Name = call.Name
+			if len(call.Args) > 0 && string(call.Args) != "null" {
+				if err := safeDecode(call.Args, &args); err != nil {
+					result.Error = "bad-args: " + err.Error()
+				}
 			}
 		}
 		if result.Error == "" {
-			value, err := safeHandle(handle, head.Name, args)
+			value, err := safeHandle(handle, call.Name, args)
 			if err != nil {
 				result.Error = err.Error()
 			} else {
@@ -143,8 +153,28 @@ func serveCalls[A, R any](tr callTransport, channel string, opts CallOptions, ha
 	if encoded, err := json.Marshal(engine.Result[R]{}); err == nil {
 		zero = string(encoded)
 	}
+	// Shared signals outlive an engine instance, so a remounted engine finds
+	// the previous call and its result. Read the result first and treat every
+	// call up to its ID as answered. The result subscription comes before the
+	// call subscription so that on a worker, where both current values arrive
+	// as messages, the result is seen first.
+	offResult, err := tr.subscribe(resultSignal, func(data json.RawMessage) {
+		var answered struct{ ID uint64 }
+		if json.Unmarshal(data, &answered) != nil {
+			return
+		}
+		mu.Lock()
+		if answered.ID > last {
+			last = answered.ID
+		}
+		mu.Unlock()
+	})
+	if err != nil {
+		return nil, fmt.Errorf("serve calls on %s: %w", resultSignal, err)
+	}
 	off, err := tr.subscribe(callSignal, process)
 	if err != nil {
+		offResult.Dispose()
 		return nil, fmt.Errorf("serve calls on %s: %w", callSignal, err)
 	}
 	tr.declare(callSignal, opts.Timeout, opts.Recent, zero)
@@ -153,7 +183,19 @@ func serveCalls[A, R any](tr callTransport, channel string, opts CallOptions, ha
 		disposed = true
 		mu.Unlock()
 		off.Dispose()
+		offResult.Dispose()
 	}, nil
+}
+
+// safeDecode unmarshals data into v, turning a panic in a custom UnmarshalJSON
+// into an error so a bad call cannot end the engine.
+func safeDecode(data []byte, v any) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("decoder panic: %v", r)
+		}
+	}()
+	return json.Unmarshal(data, v)
 }
 
 func safeHandle[A, R any](handle func(string, A) (R, error), name string, args A) (value R, err error) {

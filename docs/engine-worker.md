@@ -152,16 +152,33 @@ The rules:
    the ID and error, not the value).
 4. A call whose arguments do not decode gets `Error: "bad-args: ..."`. A handler
    that returns an error or panics gets that message in `Error`.
-5. A call written before the engine subscribed is handled from the signal's
-   current value.
+5. A call whose ID decodes but whose other fields do not (for example a number
+   for `Name`) gets `Error: "bad-call: ..."`. A call with no usable ID cannot be
+   answered.
+6. A call written before the engine subscribed is handled from the signal's
+   current value, unless the result signal shows it was already answered.
+   Shared signals outlive an engine, so an engine that remounts does not run an
+   old call again. The replay runs before `ServeCalls` returns on the main
+   thread, and a little later, as a message, in a worker.
 
 On a worker engine the page also watches each call. If no reply reaches the
 result signal within `CallOptions.Timeout` (default 10 s), the page writes
 `Error: "timeout"`. If the worker dies, every pending call, and any later one,
-gets `Error: "worker-crashed"`. The page enforces this, so it works while the
-worker is stuck in a long loop. If the worker finishes the call late, its real
+gets `Error: "worker-crashed"`; this holds for a crash while the engine mounts
+too. A worker that is only disposed (or whose mount is cancelled) fails nothing:
+the page just stops watching. The page enforces the timeout, so it works while
+the worker is stuck in a long loop. If the worker finishes the call late, its real
 reply replaces the timeout. On the main thread there is no watchdog; a handler
 that blocks blocks the page.
+
+A handler must not block on an asynchronous JavaScript result, for example
+`http.Get` or a channel that only a JavaScript callback fills. The handler runs
+inside a JavaScript callback, and Go cannot run other callbacks until it
+returns, so the engine deadlocks. Start a goroutine for slow work and answer
+with a later call, or have the island poll a signal.
+
+Any script on the page can write the call, result and status signals, not only
+the engine and the page host. Treat all three as untrusted input.
 
 ### Views
 
@@ -176,7 +193,9 @@ view.Set(map[string]any{"$bv.hud": hud, "$bv.crew": crew}) // newest value of ea
 
 A batch goes out when at least `MinInterval` has passed and the page has
 applied the previous batch (the page acknowledges each one; an acknowledgement
-that never arrives frees the credit after `AckTimeout`, 2 s). Only signals whose
+that never arrives frees the credit after `AckTimeout`, 2 s). A batch the page
+rejects, or that fails to send, goes back into the queue (a newer value for the
+same signal wins) and is retried after `MinInterval`. Only signals whose
 JSON changed since the last batch are sent. While the page is hidden nothing is
 sent and the engine keeps running; the next batch carries the newest state.
 Measured in headless Chrome 153: an engine setting the view every 10 ms
@@ -196,8 +215,12 @@ status signal already carries the engine ID. GoSX does not enforce this.
 
 `scene.DispatchVesselPose` and `scene.DispatchVesselCutaway` work unchanged in a
 worker. The worker forwards the pose as a transferred frame and the cutaway as a
-message to the page's vessel controller. As on the main thread, they report no
-error to Go when the mount is not ready; the page counts them in
+message to the page's vessel controller. The call cannot wait for the page, so
+the worker returns what the page last answered for that target (and cutaway
+node). Until the page answers once, the call returns the error that the main
+thread gives for a mount with no vessel yet. After the first accepted frame it
+returns no error, and if the mount stops showing a vessel the error returns one
+round trip later. The page counts rejected calls in
 `__gosx.engineWorker.get(id).stats().vesselRejected`.
 
 ### Not covered
@@ -366,7 +389,8 @@ Page to worker:
 | `mount.event` | `lid, json` | A listened Scene3D mount event. |
 | `net.signal`, `net.state`, `net.mode`, `net.channel`, `net.data` | | Netplay: signaling out, connection state, route, the transferred channel, relayed datagrams. |
 | `fault` | `where, message` | The page rejected something the worker sent. |
-| `ack` | `seq` | The page applied the view batch numbered `seq`. |
+| `ack` | `seq, ok` | The page handled the view batch numbered `seq`; `ok` is false if it rejected the batch, and the view sends it again. |
+| `vessel.result` | `kind, target, nodeID, ok` | The page's answer for a vessel pose or cutaway target, sent on the first call and when it changes. |
 
 Worker to page:
 

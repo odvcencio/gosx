@@ -214,13 +214,16 @@
         factory: typeof inner !== "function" ? inner : function(ctx) {
           ctx.threadMode = "main";
           ctx.threadFallbackReason = reason.code;
-          setStatus(entry, "running", "main", reason.code);
-          var handle = inner(ctx);
+          // "running" only once the engine has mounted; a failed mount is "crashed".
           var finish = function(h) {
+            setStatus(entry, "running", "main", reason.code);
             var original = h && h.dispose;
             return Object.assign({}, h, { dispose: function() { setStatus(entry, "disposed", "main", reason.code); if (typeof original === "function") original.call(h); } });
           };
-          return handle && typeof handle.then === "function" ? handle.then(finish) : finish(handle);
+          var failed = function(error) { setStatus(entry, "crashed", "main", reason.code); throw error; };
+          var handle;
+          try { handle = inner(ctx); } catch (error) { failed(error); }
+          return handle && typeof handle.then === "function" ? handle.then(finish, failed) : finish(handle);
         },
       };
     }
@@ -236,19 +239,20 @@
         }
         var rec = {
           entry: entry, worker: worker, state: "booting", ctx: null, disposed: false,
-          subs: new Map(), calls: new Map(), crashedStatus: false, listeners: new Map(), appHandlers: new Map(), nets: new Map(), netModes: {}, mountWaiter: null,
+          subs: new Map(), calls: new Map(), vessel: new Map(), crashedStatus: false, listeners: new Map(), appHandlers: new Map(), nets: new Map(), netModes: {}, mountWaiter: null,
           stats: { messagesIn: 0, framesIn: 0, frameBytes: 0, signalBatches: 0, signalBytes: 0, appMessages: 0, inputSent: 0, vesselRejected: 0 },
           terminate: function() { terminate(rec); },
         };
         setStatus(entry, "booting", "worker", "");
         var timer = setTimeout(function() {
           if (rec.state !== "booting") return;
+          rec.bootFailed = true;
           terminate(rec);
           rejectBoot(workerError("worker-boot-timeout", "timed out waiting for the engine worker to start"));
         }, bootTimeoutMS());
         rec.bootDone = function(error) {
           clearTimeout(timer);
-          if (error) { terminate(rec); rejectBoot(error); } else { rec.state = "ready"; resolveBoot(rec); }
+          if (error) { rec.bootFailed = true; terminate(rec); rejectBoot(error); } else { rec.state = "ready"; resolveBoot(rec); }
         };
         worker.onmessage = function(event) { onWorkerMessage(rec, event.data); };
         worker.onerror = function(event) {
@@ -282,6 +286,12 @@
       if (rec.terminated) return;
       rec.terminated = true;
       rec.disposed = true;
+      // Stop the call watchdogs. After a crash the subscriptions stay, so a call
+      // written later still gets "worker-crashed"; otherwise release them.
+      closeCalls(rec, rec.crashedStatus);
+      // A boot failure continues as a fallback or "unsupported", which write
+      // their own status. Every other path ends with a final status here.
+      if (!rec.bootFailed && !rec.finalStatus) { rec.finalStatus = true; setStatus(rec.entry, "disposed", "worker", ""); }
       for (var off of rec.subs.values()) { try { off(); } catch (_) {} }
       rec.subs.clear();
       for (var off2 of rec.listeners.values()) { try { off2(); } catch (_) {} }
@@ -297,6 +307,8 @@
 
     function onWorkerCrash(rec, error) {
       if (rec.terminated) return;
+      rec.crashedStatus = true;
+      rec.finalStatus = true;
       setStatus(rec.entry, "crashed", "worker", error.code);
       failCalls(rec, "worker-crashed");
       report(rec.entry, "error", error.code, "engine worker crashed: " + error.message, error);
@@ -308,6 +320,7 @@
     function endRecord(rec) {
       if (rec.terminated) return;
       closeCalls(rec);
+      rec.finalStatus = true;
       setStatus(rec.entry, "disposed", "worker", "");
       terminate(rec);
     }
@@ -325,24 +338,31 @@
     }
 
     function declareCalls(rec, msg) {
-      if (!current(rec) || typeof msg.channel !== "string" || rec.calls.has(msg.channel)) return;
-      var st = {
-        channel: msg.channel, resultSignal: msg.channel + ".result", timeout: msg.timeout > 0 ? msg.timeout : 10000,
-        recent: msg.recent > 0 ? msg.recent : 8, zero: parseObject(msg.zero) || {},
-        pending: new Map(), maxCall: 0, last: null, offs: [],
-      };
+      if (!current(rec) || typeof msg.channel !== "string") return;
+      var timeout = msg.timeout > 0 ? msg.timeout : 10000;
+      var recent = msg.recent > 0 ? msg.recent : 8;
+      var zero = parseObject(msg.zero) || {};
+      var known = rec.calls.get(msg.channel);
+      if (known) { known.timeout = timeout; known.recent = recent; known.zero = zero; return; }
+      var st = { channel: msg.channel, resultSignal: msg.channel + ".result", timeout: timeout, recent: recent, zero: zero, pending: new Map(), maxCall: 0, last: null, offs: [] };
       rec.calls.set(msg.channel, st);
+      // Shared signals outlive an engine, so a remounted engine finds the last
+      // call and its result. The result's current value (delivered once, at
+      // once) marks every call up to its ID as answered.
+      var seeding = true;
       st.offs.push(rec.ctx.subscribeSignalJSON(st.resultSignal, function(encoded) {
         var result = parseObject(encoded);
         if (!result) return;
         st.last = result;
         var id = Number(result.ID) || 0;
+        if (seeding && id > st.maxCall) st.maxCall = id;
         for (var entry of Array.from(st.pending)) {
           if (entry[0] <= id) { clearTimeout(entry[1].timer); st.pending.delete(entry[0]); }
         }
-      }, { immediate: false }));
-      // The first delivery is the signal's current value: a call written before
-      // the worker declared the channel starts its clock now.
+      }, { immediate: true }));
+      seeding = false;
+      // The first delivery is the call signal's current value: a call written
+      // before the worker declared the channel starts its clock now.
       st.offs.push(rec.ctx.subscribeSignalJSON(st.channel, function(encoded) {
         var call = parseObject(encoded);
         var id = call ? Number(call.ID) || 0 : 0;
@@ -350,7 +370,11 @@
         st.maxCall = id;
         var name = typeof call.Name === "string" ? call.Name : "";
         if (rec.crashedStatus) { failCall(st, id, name, "worker-crashed"); return; }
-        var timer = setTimeout(function() { st.pending.delete(id); failCall(st, id, name, "timeout"); }, st.timeout);
+        var timer = setTimeout(function() {
+          if (rec.calls.get(st.channel) !== st) return;
+          st.pending.delete(id);
+          failCall(st, id, name, "timeout");
+        }, st.timeout);
         st.pending.set(id, { name: name, timer: timer });
       }));
     }
@@ -365,7 +389,6 @@
     }
 
     function failCalls(rec, code) {
-      rec.crashedStatus = code === "worker-crashed";
       for (var st of rec.calls.values()) {
         for (var entry of Array.from(st.pending)) {
           clearTimeout(entry[1].timer);
@@ -375,13 +398,13 @@
       }
     }
 
-    function closeCalls(rec) {
+    function closeCalls(rec, keepSubscriptions) {
       for (var st of rec.calls.values()) {
         for (var entry of st.pending.values()) clearTimeout(entry.timer);
         st.pending.clear();
-        for (var off of st.offs) { try { off(); } catch (_) {} }
+        if (!keepSubscriptions) for (var off of st.offs) { try { off(); } catch (_) {} }
       }
-      rec.calls.clear();
+      if (!keepSubscriptions) rec.calls.clear();
     }
 
     // ---- mount ------------------------------------------------------------
@@ -560,7 +583,13 @@
       fatal: function(rec, msg) {
         var error = workerError(msg.code || "worker-failed", msg.message || "engine worker failed");
         if (rec.state === "booting") rec.bootDone(error);
-        else if (rec.mountWaiter) { var w = rec.mountWaiter; rec.mountWaiter = null; w.bad(error); }
+        else if (rec.mountWaiter) {
+          // The worker died while mounting: say so, and fail the calls it declared.
+          rec.finalStatus = true;
+          setStatus(rec.entry, "crashed", "worker", error.code);
+          failCalls(rec, "worker-crashed");
+          var w = rec.mountWaiter; rec.mountWaiter = null; w.bad(error);
+        }
         else onWorkerCrash(rec, error);
       },
       mounted: function(rec) {
@@ -582,22 +611,24 @@
         if (!current(rec) || !(msg.buf instanceof ArrayBuffer)) return;
         rec.stats.signalBatches++;
         rec.stats.signalBytes += msg.buf.byteLength;
+        var applied = true;
         try {
           var text = new TextDecoder("utf-8").decode(msg.buf);
           rec.ctx.setSignalsJSON(text, msg.changedOnly === true);
         } catch (error) {
+          applied = false;
           try { rec.worker.postMessage({ t: "fault", where: "signals", message: String(error && error.message || error) }); } catch (_) {}
         }
         // Acknowledge a paced view batch (wasm.View) so the worker may send the next.
-        if (typeof msg.seq === "number") { try { rec.worker.postMessage({ t: "ack", seq: msg.seq }); } catch (_) {} }
+        if (typeof msg.seq === "number") { try { rec.worker.postMessage({ t: "ack", seq: msg.seq, ok: applied }); } catch (_) {} }
       },
       calls: function(rec, msg) { declareCalls(rec, msg); },
       "vessel.cutaway": function(rec, msg) {
         if (!current(rec)) return;
         var fn = window.__gosx_scene3d_vessel_cutaway;
         var ok = false;
-        try { ok = typeof fn === "function" && fn(String(msg.target), String(msg.nodeID), String(msg.json)) === true; } catch (error) { frameFault(rec, { kind: "vessel-cutaway", target: msg.target }, error); return; }
-        if (!ok) rec.stats.vesselRejected++;
+        try { ok = typeof fn === "function" && fn(String(msg.target), String(msg.nodeID), String(msg.json)) === true; } catch (error) { frameFault(rec, { kind: "vessel-cutaway", target: msg.target }, error); }
+        vesselResult(rec, "cutaway", msg.target, msg.nodeID, ok);
       },
       "signal.set": function(rec, msg) {
         if (!current(rec)) return;
@@ -660,7 +691,7 @@
             // showing an external-pose vessel yet answers false; poses arrive
             // every tick, so that is counted, not raised.
             var pose = window.__gosx_scene3d_vessel_pose;
-            if (typeof pose !== "function" || pose(String(msg.target), bytes) !== true) rec.stats.vesselRejected++;
+            vesselResult(rec, "pose", msg.target, "", typeof pose === "function" && pose(String(msg.target), bytes) === true);
             return;
           }
           if (msg.kind === "instance") {
@@ -780,6 +811,17 @@
     var SCENE_EVENT = /^gosx:scene3d:[a-z0-9-]+$/;
     var MOUNT_CALLS = ["updateSceneProps"];
 
+    // The worker's vessel calls return at once, so the page tells the worker
+    // whenever the answer for a target changes (and on the first call). Go then
+    // sees the same error as on the main thread, one round trip late.
+    function vesselResult(rec, kind, target, nodeID, ok) {
+      if (!ok) rec.stats.vesselRejected++;
+      var key = kind + "|" + target + "|" + nodeID;
+      if (rec.vessel.get(key) === ok) return;
+      rec.vessel.set(key, ok);
+      try { rec.worker.postMessage({ t: "vessel.result", kind: kind, target: String(target), nodeID: String(nodeID || ""), ok: ok }); } catch (_) {}
+    }
+
     function mountFault(rec, msg, text) {
       try { rec.worker.postMessage({ t: "fault", where: "mount." + msg.op, message: text }); } catch (_) {}
     }
@@ -875,6 +917,7 @@
     var hidden = false;
     var nextViewSeq = 1;
     var viewAcks = new Map();         // seq -> {token, fn}
+    var vesselOK = new Map();         // "kind|target|nodeID" -> the page's last answer
 
     function post(msg, transfer) { scope.postMessage(msg, transfer || []); }
 
@@ -967,13 +1010,16 @@
     });
     // Vessel pose and cutaway: scene.DispatchVesselPose and DispatchVesselCutaway
     // look these globals up. In a worker they forward to the page's controller.
+    // They return what the page last said about that target (false until it
+    // has answered once), so Go gets the main thread's error while the vessel is
+    // not ready: "no external-pose vessel yet".
     scope.__gosx_scene3d_vessel_pose = function(target, bytes) {
       postFrame("vessel-pose", target, bytes);
-      return true;
+      return vesselOK.get("pose|" + target + "|") === true;
     };
     scope.__gosx_scene3d_vessel_cutaway = function(target, nodeID, json) {
       post({ t: "vessel.cutaway", target: String(target), nodeID: String(nodeID), json: String(json) });
-      return true;
+      return vesselOK.get("cutaway|" + target + "|" + nodeID) === true;
     };
     scene3d.applyInstanceStream = function(target, bytes) {
       postFrame("instance", target, bytes);
@@ -1115,6 +1161,7 @@
 
     function disposeEngine() {
       ctxDisposing = true;
+      viewAcks.clear(); // late acknowledgements must not reach released Go callbacks
       if (ctxObject) ctxObject._disposed = true;
       try { if (handle && typeof handle.dispose === "function") handle.dispose(); } catch (error) { logToPage("error", error); }
       frameClock.stop();
@@ -1131,11 +1178,12 @@
         mount().catch(function(error) { fatal(error && error.code || "worker-mount-failed", error); });
       },
       dispose: disposeEngine,
+      "vessel.result": function(msg) { vesselOK.set(String(msg.kind) + "|" + String(msg.target) + "|" + String(msg.nodeID || ""), msg.ok === true); },
       ack: function(msg) {
         var waiter = viewAcks.get(msg.seq);
         if (!waiter) return;
         viewAcks.delete(msg.seq);
-        try { waiter.fn(waiter.token); } catch (_) { /* the Go callback was released */ }
+        try { waiter.fn(waiter.token, msg.ok !== false); } catch (_) { /* the Go callback was released */ }
       },
       reply: function(msg) {
         var waiter = pendingReplies.get(msg.rid);

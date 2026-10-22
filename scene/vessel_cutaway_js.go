@@ -11,7 +11,8 @@ import (
 
 // DispatchVesselCutaway changes the cutaway of the vessel nodeID on the mount
 // whose element ID is target. It returns an error until the vessel has mounted,
-// so call it after the scene is ready.
+// so call it after the scene is ready. In an engine worker the page's answer
+// arrives asynchronously, so the first call for a node returns the error.
 func DispatchVesselCutaway(target, nodeID string, c VesselCutaway) (err error) {
 	defer func() {
 		if r := recover(); r != nil {

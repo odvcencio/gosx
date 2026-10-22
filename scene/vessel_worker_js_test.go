@@ -42,9 +42,19 @@ func TestVesselPoseAndCutawayWorkFromAnEngineWorker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := DispatchVesselPose("scene", frame); err != nil {
-		t.Fatalf("DispatchVesselPose in a worker: %v", err)
+	// Until the page answers, a worker reports what the main thread reports
+	// for a mount with no vessel yet.
+	if err := DispatchVesselPose("scene", frame); err == nil {
+		t.Fatal("the first pose must report that the vessel is not ready")
 	}
+	reply := func(kind, nodeID string, ok bool) {
+		js.Global().Call("onmessage", map[string]any{"data": map[string]any{"t": "vessel.result", "kind": kind, "target": "scene", "nodeID": nodeID, "ok": ok}})
+	}
+	reply("pose", "", true)
+	if err := DispatchVesselPose("scene", frame); err != nil {
+		t.Fatalf("DispatchVesselPose after the page accepted a pose: %v", err)
+	}
+	posted.Call("splice", 0, 1) // keep only the second pose frame
 	if posted.Length() != 1 {
 		t.Fatalf("posted %d messages, want 1 frame", posted.Length())
 	}
@@ -62,10 +72,18 @@ func TestVesselPoseAndCutawayWorkFromAnEngineWorker(t *testing.T) {
 	}
 
 	cut := VesselCutaway{Enabled: true, Deck: 1}
-	if err := DispatchVesselCutaway("scene", "ship", cut); err != nil {
-		t.Fatalf("DispatchVesselCutaway in a worker: %v", err)
+	if err := DispatchVesselCutaway("scene", "ship", cut); err == nil {
+		t.Fatal("the first cutaway must report that the vessel is not ready")
 	}
-	cm := posted.Index(1).Get("msg")
+	reply("cutaway", "ship", true)
+	if err := DispatchVesselCutaway("scene", "ship", cut); err != nil {
+		t.Fatalf("DispatchVesselCutaway after the page accepted one: %v", err)
+	}
+	reply("pose", "", false)
+	if err := DispatchVesselPose("scene", frame); err == nil {
+		t.Fatal("a mount that stopped showing a vessel must report an error again")
+	}
+	cm := posted.Index(2).Get("msg")
 	if cm.Get("t").String() != "vessel.cutaway" || cm.Get("target").String() != "scene" || cm.Get("nodeID").String() != "ship" {
 		t.Fatalf("cutaway message = %s", js.Global().Get("JSON").Call("stringify", cm).String())
 	}

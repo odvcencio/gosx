@@ -16,8 +16,8 @@
   on the main thread, and `ForceWorkerFallback` forces the fallback from the
   server for tests (the JavaScript `__gosx_engine_worker_disable` still works).
   `scene.DispatchVesselPose` and `DispatchVesselCutaway` now work from an engine
-  worker. `bootstrap-feature-engine-worker.js` grows from 28,462 to 32,678 bytes
-  raw (9,351 to 10,557 gzip, 8,682 to 9,865 Brotli) and now has a size budget; no
+  worker. `bootstrap-feature-engine-worker.js` grows from 28,462 to 33,566 bytes
+  raw (9,351 to 10,837 gzip, 8,682 to 10,130 Brotli) and now has a size budget; no
   other bundle changes. `docs/engine-worker.md` no longer says the worker needs
   no JavaScript for everything: only signals, calls, views and status are
   JavaScript-free.

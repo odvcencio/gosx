@@ -40,7 +40,10 @@ func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (di
 
 // subscribeSignalReplay is SubscribeSignal that also delivers the signal's
 // current value once. ServeCalls uses it so a call written before the engine
-// subscribed is answered. A signal that has no value delivers JSON null.
+// subscribed is answered. On the main thread the current value arrives before
+// this function returns, and a signal with no value delivers JSON null. In a
+// worker it arrives later, as a message, and a signal with no value delivers
+// nothing.
 func (c Context) subscribeSignalReplay(name string, handler func(json.RawMessage)) (HandleFunc, error) {
 	return c.subscribeSignal(name, handler, true)
 }

@@ -134,3 +134,30 @@ func TestViewOnAMainThreadContextAppliesAtOnce(t *testing.T) {
 		t.Fatal("a main-thread view must not wait for an acknowledgement")
 	}
 }
+
+// Shared signals survive an engine remount. With call 3 and its result 3 in the
+// store, neither a worker context nor a main-thread (fallback) context may run
+// the handler again.
+func TestServeCallsRemountSkipsAnsweredCallOnWorkerAndMainThread(t *testing.T) {
+	for _, worker := range []bool{true, false} {
+		v := callCtx(t, worker)
+		parse := js.Global().Get("JSON").Get("parse")
+		v.Get("store").Call("set", "$bv.cmd", parse.Invoke(`{"ID":3,"Name":"add","Args":{"A":1,"B":2}}`))
+		v.Get("store").Call("set", "$bv.cmd.result", parse.Invoke(`{"ID":3,"Name":"add","Value":{"Total":3},"Recent":[{"ID":3,"Error":""}]}`))
+		runs := 0
+		_, err := ServeCalls(Context{value: v}, "bv.cmd", CallOptions{}, func(name string, a addArgs) (sum, error) {
+			runs++
+			return adder(name, a)
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if runs != 0 || v.Get("batches").Length() != 0 {
+			t.Fatalf("worker=%v: handler ran %d times, %d replies written; want 0 and 0", worker, runs, v.Get("batches").Length())
+		}
+		v.Call("deliver", "$bv.cmd", parse.Invoke(`{"ID":4,"Name":"add","Args":{"A":1,"B":1}}`))
+		if runs != 1 {
+			t.Fatalf("worker=%v: call 4 after the remount must run, runs = %d", worker, runs)
+		}
+	}
+}

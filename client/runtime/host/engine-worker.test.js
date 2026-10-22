@@ -1279,7 +1279,7 @@ test("page: a view batch with a seq is acknowledged after it is applied", async 
   const bytes = new TextEncoder().encode('{"$v":1}');
   worker.say({ t: "signals", changedOnly: true, buf: bytes.buffer, seq: 9 });
   assert.deepEqual(ctx.calls.at(-1), ["setSignalsJSON", '{"$v":1}', true]);
-  assert.deepEqual(plain(worker.of("ack")), [{ t: "ack", seq: 9 }]);
+  assert.deepEqual(plain(worker.of("ack")), [{ t: "ack", seq: 9, ok: true }]);
   worker.say({ t: "signals", buf: new TextEncoder().encode("{}").buffer });
   assert.equal(worker.of("ack").length, 1, "a batch without a seq needs no ack");
 });
@@ -1289,7 +1289,7 @@ test("page: a rejected view batch is still acknowledged so the view does not sta
   const { worker } = await mounted(page, ENTRY, { setSignalsJSON() { throw new Error("bad"); } });
   worker.say({ t: "signals", buf: new TextEncoder().encode("[]").buffer, seq: 2 });
   assert.equal(worker.of("fault").length, 1);
-  assert.deepEqual(plain(worker.of("ack")), [{ t: "ack", seq: 2 }]);
+  assert.deepEqual(plain(worker.of("ack")), [{ t: "ack", seq: 2, ok: false }]);
 });
 
 test("page: vessel pose frames and cutaways reach the page controller", async () => {
@@ -1302,9 +1302,16 @@ test("page: vessel pose frames and cutaways reach the page controller", async ()
   worker.say({ t: "vessel.cutaway", target: "ship", nodeID: "hull", json: '{"Open":true}' });
   assert.deepEqual(seen, [["pose", "ship", [1, 2, 3]], ["cutaway", "ship", "hull", '{"Open":true}']]);
   assert.equal(page.docEvents.length, 0);
+  assert.deepEqual(plain(worker.of("vessel.result")), [
+    { t: "vessel.result", kind: "pose", target: "ship", nodeID: "", ok: true },
+    { t: "vessel.result", kind: "cutaway", target: "ship", nodeID: "hull", ok: true },
+  ]);
+  worker.say({ t: "frame", kind: "vessel-pose", target: "ship", buf: new ArrayBuffer(4) });
+  assert.equal(worker.of("vessel.result").length, 2, "an unchanged answer is not repeated");
   page.win.__gosx_scene3d_vessel_pose = () => false;
   worker.say({ t: "frame", kind: "vessel-pose", target: "ship", buf: new ArrayBuffer(4) });
   assert.equal(page.host.get(ENTRY.id).stats().vesselRejected, 1);
+  assert.equal(worker.of("vessel.result").at(-1).ok, false, "the worker learns the page rejected it");
   assert.equal(page.docEvents.length, 0, "an early pose is counted, not raised");
 });
 
@@ -1321,6 +1328,13 @@ test("worker: sendView posts a numbered batch and the page's ack calls back with
   w.send({ t: "ack", seq: 2 });
   w.send({ t: "ack", seq: 1 });
   assert.deepEqual(acked, [42, 41], "each ack fires once");
+  ctx.sendView('{"$v":3}', true, 43, (token, ok) => acked.push([token, ok]));
+  w.send({ t: "ack", seq: 3, ok: false });
+  assert.deepEqual(plain(acked.at(-1)), [43, false], "a rejected batch is reported to the callback");
+  ctx.sendView('{"$v":4}', true, 44, t => acked.push(t));
+  w.send({ t: "dispose" });
+  w.send({ t: "ack", seq: 4 });
+  assert.equal(acked.includes(44), false, "no acknowledgement reaches a disposed engine");
 });
 
 test("worker: declareCalls tells the page about the channel", async () => {
@@ -1340,12 +1354,145 @@ test("worker: {immediate: true} replays the page's current value once", async ()
   assert.deepEqual(seen, ['{"ID":3}', '{"ID":4}']);
 });
 
-test("worker: the vessel globals forward poses as frames and cutaways as messages", async () => {
+test("worker: the vessel globals forward and return what the page last said", async () => {
   const w = await mountedWorker();
-  assert.equal(w.scope.__gosx_scene3d_vessel_pose("ship", new Uint8Array([9, 8])), true);
+  const pose = w.scope.__gosx_scene3d_vessel_pose, cut = w.scope.__gosx_scene3d_vessel_cutaway;
+  assert.equal(pose("ship", new Uint8Array([9, 8])), false, "unknown until the page answers, like a mount with no vessel yet");
   const [frame] = w.of("frame");
   assert.deepEqual({ kind: frame.msg.kind, target: frame.msg.target, bytes: Array.from(new Uint8Array(frame.msg.buf)) }, { kind: "vessel-pose", target: "ship", bytes: [9, 8] });
   assert.equal(frame.transfer.length, 1);
-  assert.equal(w.scope.__gosx_scene3d_vessel_cutaway("ship", "hull", '{"Open":true}'), true);
+  assert.equal(cut("ship", "hull", '{"Open":true}'), false);
   assert.deepEqual(plain(w.of("vessel.cutaway")[0].msg), { t: "vessel.cutaway", target: "ship", nodeID: "hull", json: '{"Open":true}' });
+  w.send({ t: "vessel.result", kind: "pose", target: "ship", nodeID: "", ok: true });
+  assert.equal(pose("ship", new Uint8Array(1)), true);
+  assert.equal(pose("other", new Uint8Array(1)), false, "answers are per target");
+  assert.equal(cut("ship", "hull", "{}"), false, "and per kind and node");
+  w.send({ t: "vessel.result", kind: "cutaway", target: "ship", nodeID: "hull", ok: true });
+  assert.equal(cut("ship", "hull", "{}"), true);
+  w.send({ t: "vessel.result", kind: "pose", target: "ship", nodeID: "", ok: false });
+  assert.equal(pose("ship", new Uint8Array(1)), false, "the mount can stop showing a vessel");
+});
+
+// ---------------------------------------------------------------------------
+// Review fixes: remount, teardown paths, ordering
+// ---------------------------------------------------------------------------
+
+const engineStatuses = page => statusOf(page).map(s => s.State);
+
+test("page: a remounted engine does not time out a call its result already answers", async () => {
+  const page = bootPage();
+  const { worker, out } = await bootedRecord(page);
+  const ctx = storeCtx();
+  ctx.write("$bv.cmd", { ID: 3, Name: "fire" });
+  ctx.write("$bv.cmd.result", { ID: 3, Name: "fire", Error: "", Value: { Total: 9 }, Recent: [{ ID: 3, Error: "" }] });
+  const handleP = out.factory(ctx);
+  await tick();
+  worker.say({ t: "mounted" });
+  await handleP;
+  worker.say({ t: "calls", channel: "$bv.cmd", timeout: 20, recent: 3, zero: ZERO });
+  await new Promise(r => setTimeout(r, 50));
+  assert.deepEqual(resultWrites(page), [], "call 3 was answered before the remount");
+  ctx.write("$bv.cmd", { ID: 4, Name: "fire" });
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(resultWrites(page)[0].ID, 4, "a new call is still watched");
+});
+
+test("page: declaring a channel twice updates its timeout and recent length", async () => {
+  const { page, worker, ctx } = await servingPage({ timeout: 1000 });
+  worker.say({ t: "calls", channel: "$bv.cmd", timeout: 20, recent: 1, zero: ZERO });
+  ctx.write("$bv.cmd", { ID: 1, Name: "a" });
+  await new Promise(r => setTimeout(r, 50));
+  assert.equal(resultWrites(page)[0].Error, "timeout");
+  assert.equal(ctx.subscribers("$bv.cmd"), 1, "no second subscription");
+});
+
+test("page: a mount that fails after the engine declared calls leaves nothing armed", async () => {
+  const page = bootPage();
+  const { worker, out } = await bootedRecord(page);
+  const ctx = storeCtx();
+  const handleP = out.factory(ctx);
+  await tick();
+  worker.say({ t: "calls", channel: "$bv.cmd", timeout: 20, recent: 3, zero: ZERO });
+  ctx.write("$bv.cmd", { ID: 1, Name: "a" });
+  worker.say({ t: "fatal", code: "go-wasm-factory-failed", message: "factory error" });
+  await assert.rejects(handleP);
+  await new Promise(r => setTimeout(r, 50));
+  assert.deepEqual(resultWrites(page).map(r => [r.ID, r.Error]), [[1, "worker-crashed"]], "the pending call is failed once, by the crash, not later by a timer");
+  assert.equal(engineStatuses(page).at(-1), "crashed");
+  assert.equal(worker.terminated, true);
+  assert.equal(ctx.subscribers("$bv.cmd"), 0);
+  assert.equal(ctx.subscribers("$bv.cmd.result"), 0);
+});
+
+test("page: terminating a pending engine mid-mount stops watchdogs, frees subscriptions, and ends the status", async () => {
+  const page = bootPage();
+  const pending = {};
+  const resolved = page.host.resolve(ENTRY, pending, fakeFallback());
+  await tick();
+  const worker = FakeWorker.all[0];
+  worker.say({ t: "booted", v: 1 });
+  const out = await resolved;
+  const ctx = storeCtx();
+  const handleP = out.factory(ctx);
+  await tick();
+  worker.say({ t: "calls", channel: "$bv.cmd", timeout: 20, recent: 3, zero: ZERO });
+  ctx.write("$bv.cmd", { ID: 7, Name: "fire" });
+  pending.workerRecord.terminate();
+  await assert.rejects(handleP);
+  await new Promise(r => setTimeout(r, 50));
+  assert.deepEqual(resultWrites(page), []);
+  assert.equal(engineStatuses(page).at(-1), "disposed");
+  assert.equal(ctx.subscribers("$bv.cmd"), 0);
+  assert.equal(ctx.subscribers("$bv.cmd.result"), 0);
+});
+
+test("page: a worker still booting when it is terminated does not stay at booting", async () => {
+  const page = bootPage();
+  const pending = {};
+  page.host.resolve(ENTRY, pending, fakeFallback());
+  await tick();
+  pending.workerRecord.terminate();
+  assert.equal(engineStatuses(page).at(-1), "disposed");
+});
+
+test("page: a boot failure falls back without a transient disposed status", async () => {
+  const page = bootPage({ timeout: 20 });
+  const resolved = page.host.resolve(ENTRY, {}, fakeFallback()); // the worker never says "booted"
+  const out = await resolved;
+  out.factory({});
+  assert.deepEqual(engineStatuses(page), ["booting", "running"]);
+  const page2 = bootPage();
+  const second = page2.host.resolve(ENTRY, {}, fakeFallback());
+  await tick();
+  FakeWorker.all[0].say({ t: "fatal", code: "worker-fetch-status", message: "404" });
+  (await second).factory({});
+  assert.deepEqual(engineStatuses(page2), ["booting", "running"]);
+});
+
+test("page: after a crash a later call still fails at once, and dispose then frees the subscriptions", async () => {
+  const { page, worker, ctx, handle } = await servingPage({ timeout: 1000 });
+  worker.onerror({ message: "boom", preventDefault() {} });
+  assert.equal(ctx.subscribers("$bv.cmd"), 1);
+  ctx.write("$bv.cmd", { ID: 1, Name: "a" });
+  assert.equal(resultWrites(page).at(-1).Error, "worker-crashed");
+  handle.dispose();
+  assert.equal(ctx.subscribers("$bv.cmd"), 0);
+  assert.equal(engineStatuses(page).at(-1), "crashed", "dispose does not hide the crash");
+});
+
+test("page: a fallback reports running only after the engine mounted, and crashed if it fails", async () => {
+  const page = bootPage({ noWorker: true });
+  const fallback = async () => ({ factory: () => new Promise((ok, bad) => { page.settle = { ok, bad }; }), moduleRecord: null });
+  const out = await page.host.resolve(ENTRY, {}, fallback);
+  const pending = out.factory({});
+  assert.deepEqual(statusOf(page), [], "no running status while the engine is still mounting");
+  page.settle.ok({ dispose() {} });
+  await pending;
+  assert.equal(engineStatuses(page).at(-1), "running");
+
+  const page2 = bootPage({ noWorker: true });
+  const failing = async () => ({ factory: () => Promise.reject(new Error("mount failed")), moduleRecord: null });
+  const out2 = await page2.host.resolve(ENTRY, {}, failing);
+  await assert.rejects(out2.factory({}));
+  assert.deepEqual(statusOf(page2), [{ State: "crashed", Thread: "main", Reason: "worker-unsupported" }]);
 });

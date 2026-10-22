@@ -16,5 +16,5 @@ func (c Context) declareCalls(channel string, timeout time.Duration, recent int,
 	if declare.Type() != js.TypeFunction {
 		return
 	}
-	c.value.Call("declareCalls", channel, timeout.Milliseconds(), recent, zeroResult)
+	c.value.Call("declareCalls", channel, int64((timeout+time.Millisecond-1)/time.Millisecond), recent, zeroResult)
 }

@@ -16,14 +16,14 @@ type jsViewSink struct {
 	ctx      Context
 	mu       sync.Mutex
 	next     uint64
-	waiting  map[uint64]func()
+	waiting  map[uint64]func(bool)
 	callback js.Func
 	hasCB    bool
 }
 
-func (c Context) viewSink() viewSink { return &jsViewSink{ctx: c, waiting: map[uint64]func(){}} }
+func (c Context) viewSink() viewSink { return &jsViewSink{ctx: c, waiting: map[uint64]func(bool){}} }
 
-func (s *jsViewSink) send(batch []byte, applied func()) (err error) {
+func (s *jsViewSink) send(batch []byte, done func(bool)) (err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("send view batch: %v", r)
@@ -34,7 +34,7 @@ func (s *jsViewSink) send(batch []byte, applied func()) (err error) {
 		if result.Type() == js.TypeString && result.String() != "" {
 			return errors.New(result.String())
 		}
-		applied()
+		done(true)
 		return nil
 	}
 	s.mu.Lock()
@@ -49,7 +49,8 @@ func (s *jsViewSink) send(batch []byte, applied func()) (err error) {
 			delete(s.waiting, token)
 			s.mu.Unlock()
 			if done != nil {
-				done()
+				// The page answers (token, ok); ok is false after it rejected the batch.
+				done(len(args) < 2 || args[1].Type() != js.TypeBoolean || args[1].Bool())
 			}
 			return nil
 		})
@@ -57,7 +58,7 @@ func (s *jsViewSink) send(batch []byte, applied func()) (err error) {
 	}
 	s.next++
 	token := s.next
-	s.waiting[token] = applied
+	s.waiting[token] = done
 	callback := s.callback
 	s.mu.Unlock()
 	result := s.ctx.value.Call("sendView", string(batch), true, float64(token), callback)

@@ -61,7 +61,7 @@ func (Context) viewSink() viewSink { return unsupportedViewSink{} }
 
 type unsupportedViewSink struct{}
 
-func (unsupportedViewSink) send([]byte, func()) error      { return ErrUnsupported }
+func (unsupportedViewSink) send([]byte, func(bool)) error  { return ErrUnsupported }
 func (unsupportedViewSink) hidden() bool                   { return false }
 func (unsupportedViewSink) onVisibility(func()) HandleFunc { return func() {} }
 func (unsupportedViewSink) release()                       {}

@@ -12,12 +12,15 @@ import (
 )
 
 type fakeCalls struct {
-	mu       sync.Mutex
-	handler  func(json.RawMessage)
-	writes   []json.RawMessage
-	signals  []string
-	initial  json.RawMessage
-	declared struct {
+	mu      sync.Mutex
+	handler func(json.RawMessage)
+	results func(json.RawMessage)
+	writes  []json.RawMessage
+	signals []string
+	initial json.RawMessage
+	// resultInitial is the result signal's value when the engine subscribes.
+	resultInitial json.RawMessage
+	declared      struct {
 		channel string
 		timeout time.Duration
 		recent  int
@@ -25,7 +28,14 @@ type fakeCalls struct {
 	}
 }
 
-func (f *fakeCalls) subscribe(_ string, h func(json.RawMessage)) (HandleFunc, error) {
+func (f *fakeCalls) subscribe(signal string, h func(json.RawMessage)) (HandleFunc, error) {
+	if strings.HasSuffix(signal, ".result") {
+		f.results = h
+		if f.resultInitial != nil {
+			h(f.resultInitial)
+		}
+		return func() { f.results = nil }, nil
+	}
 	f.handler = h
 	if f.initial != nil {
 		h(f.initial)
@@ -158,5 +168,58 @@ func TestServeCallsRequiresChannelAndHandler(t *testing.T) {
 	}
 	if _, err := serveCalls[addArgs, sum](f, "c", CallOptions{}, nil); err == nil {
 		t.Fatal("nil handler must fail")
+	}
+}
+
+// Shared signals outlive an engine instance. A remounted engine finds call 3
+// and result 3 in the store and must not run call 3 again.
+func TestServeCallsRemountDoesNotRunAnAnsweredCallAgain(t *testing.T) {
+	runs := 0
+	h := func(name string, a addArgs) (sum, error) { runs++; return sum{Total: a.A + a.B}, nil }
+	f1 := &fakeCalls{}
+	off, _ := serveCalls(f1, "c", CallOptions{}, h)
+	f1.send(t, `{"ID":3,"Name":"fire","Args":{"A":1,"B":1}}`)
+	off.Dispose()
+	if f1.handler != nil || f1.results != nil {
+		t.Fatal("dispose must release both subscriptions")
+	}
+	f2 := &fakeCalls{
+		initial:       json.RawMessage(`{"ID":3,"Name":"fire","Args":{"A":1,"B":1}}`),
+		resultInitial: json.RawMessage(`{"ID":3,"Name":"fire","Value":{"Total":2}}`),
+	}
+	_, _ = serveCalls(f2, "c", CallOptions{}, h)
+	if runs != 1 || len(f2.writes) != 0 {
+		t.Fatalf("handler runs = %d (want 1), writes on the second instance = %d (want 0)", runs, len(f2.writes))
+	}
+	f2.send(t, `{"ID":4,"Name":"fire","Args":{"A":1,"B":1}}`)
+	if runs != 2 {
+		t.Fatalf("a new call after the remount must run, runs = %d", runs)
+	}
+}
+
+type panicArgs struct{}
+
+func (*panicArgs) UnmarshalJSON([]byte) error { panic("decoder blew up") }
+
+func TestServeCallsDecoderPanicIsBadArgs(t *testing.T) {
+	f := &fakeCalls{}
+	_, _ = serveCalls(f, "c", CallOptions{}, func(string, panicArgs) (sum, error) { return sum{}, nil })
+	f.send(t, `{"ID":1,"Name":"x","Args":{}}`)
+	if r := f.result(t, 0); r.ID != 1 || !strings.HasPrefix(r.Error, "bad-args:") {
+		t.Fatalf("result = %+v", r)
+	}
+}
+
+func TestServeCallsWronglyTypedCallGetsBadCall(t *testing.T) {
+	f := &fakeCalls{}
+	runs := 0
+	_, _ = serveCalls(f, "c", CallOptions{}, func(string, addArgs) (sum, error) { runs++; return sum{}, nil })
+	f.send(t, `{"ID":5,"Name":42,"Args":{}}`)
+	f.send(t, `{"ID":"six","Name":"x"}`) // no usable ID: nothing to answer
+	if len(f.writes) != 1 || runs != 0 {
+		t.Fatalf("writes = %d, runs = %d", len(f.writes), runs)
+	}
+	if r := f.result(t, 0); r.ID != 5 || !strings.HasPrefix(r.Error, "bad-call:") {
+		t.Fatalf("result = %+v", r)
 	}
 }

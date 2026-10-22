@@ -28,10 +28,10 @@ const (
 
 // viewSink delivers one batch to the page. Context implements it on js/wasm.
 type viewSink interface {
-	// send delivers an encoded {"$name": value, ...} batch. It calls applied
-	// once the page has applied it: on a worker after the page's
-	// acknowledgement, on the main thread at once.
-	send(batch []byte, applied func()) error
+	// send delivers an encoded {"$name": value, ...} batch. It calls done once
+	// the page has handled it: on a worker after the page's acknowledgement, on
+	// the main thread at once. done(false) means the page rejected the batch.
+	send(batch []byte, done func(ok bool)) error
 	hidden() bool
 	// onVisibility calls fn when the page is hidden or shown.
 	onVisibility(fn func()) HandleFunc
@@ -59,7 +59,8 @@ type View struct {
 	pending  map[string]json.RawMessage
 	sent     map[string]json.RawMessage
 	lastSend time.Time
-	inFlight uint64 // token of the unacknowledged batch; 0 when none
+	inFlight uint64                     // token of the unacknowledged batch; 0 when none
+	batch    map[string]json.RawMessage // the unacknowledged batch
 	token    uint64
 	timer    *time.Timer
 	ackTimer *time.Timer
@@ -179,23 +180,20 @@ func (v *View) kick() {
 	v.token++
 	token := v.token
 	v.inFlight = token
+	v.batch = batch
 	v.lastSend = time.Now()
-	v.ackTimer = time.AfterFunc(v.opts.AckTimeout, func() { v.acknowledge(token) })
+	v.ackTimer = time.AfterFunc(v.opts.AckTimeout, func() { v.acknowledge(token, true) })
 	v.mu.Unlock()
 
-	if err := v.sink.send(encoded, func() { v.acknowledge(token) }); err != nil {
-		// The batch did not reach the page: forget it so the next Set resends.
-		v.mu.Lock()
-		for name := range batch {
-			delete(v.sent, name)
-		}
-		v.mu.Unlock()
-		v.acknowledge(token)
+	if err := v.sink.send(encoded, func(ok bool) { v.acknowledge(token, ok) }); err != nil {
+		v.acknowledge(token, false)
 	}
 }
 
 // acknowledge returns the credit for the batch with token and sends the next.
-func (v *View) acknowledge(token uint64) {
+// A rejected batch goes back into the pending state, except for names that
+// have a newer value, and is retried after MinInterval.
+func (v *View) acknowledge(token uint64, ok bool) {
 	v.mu.Lock()
 	if v.inFlight != token {
 		v.mu.Unlock()
@@ -203,6 +201,15 @@ func (v *View) acknowledge(token uint64) {
 	}
 	v.inFlight = 0
 	stopTimer(&v.ackTimer)
+	if !ok && !v.disposed {
+		for name, data := range v.batch {
+			delete(v.sent, name)
+			if _, newer := v.pending[name]; !newer {
+				v.pending[name] = data
+			}
+		}
+	}
+	v.batch = nil
 	v.mu.Unlock()
 	v.kick()
 }
