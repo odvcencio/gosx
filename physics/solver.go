@@ -1,6 +1,6 @@
 package physics
 
-import "math"
+import "m31labs.dev/gosx/det"
 
 const (
 	// positionSlop is the overlap the position pass leaves in place. A resting
@@ -200,7 +200,7 @@ func (w *World) prepareContacts() {
 			// of this step, which is what makes a bounce reproducible.
 			approach := relativeVelocityAt(bodyA, bodyB, slot.rA, slot.rB).Dot(normal)
 			if manifold.Restitution > 0 && -approach > restitutionVelMinimum {
-				slot.restitutionTarget = -manifold.Restitution * approach
+				slot.restitutionTarget = float64(-manifold.Restitution * approach)
 			}
 		}
 	}
@@ -235,7 +235,7 @@ func solveContactVelocityState(manifold *ContactManifold, state *contactSolveMan
 		for i := 0; i < state.count; i++ {
 			point := &manifold.Points[i]
 			slot := &state.points[i]
-			limit := state.friction * point.NormalImpulse
+			limit := float64(state.friction * point.NormalImpulse)
 			if limit <= 0 {
 				point.TangentImpulse[0] = 0
 				point.TangentImpulse[1] = 0
@@ -245,13 +245,13 @@ func solveContactVelocityState(manifold *ContactManifold, state *contactSolveMan
 			relative := relativeVelocityAt(bodyA, bodyB, slot.rA, slot.rB)
 			old0 := point.TangentImpulse[0]
 			old1 := point.TangentImpulse[1]
-			new0 := old0 - relative.Dot(state.tangent[0])*slot.tangentMass[0]
-			new1 := old1 - relative.Dot(state.tangent[1])*slot.tangentMass[1]
+			new0 := old0 - float64(relative.Dot(state.tangent[0])*slot.tangentMass[0])
+			new1 := old1 - float64(relative.Dot(state.tangent[1])*slot.tangentMass[1])
 
-			if magnitude := math.Hypot(new0, new1); magnitude > limit && magnitude > epsilon {
+			if magnitude := det.Hypot(new0, new1); magnitude > limit && magnitude > epsilon {
 				scale := limit / magnitude
-				new0 *= scale
-				new1 *= scale
+				new0 = float64(new0 * scale)
+				new1 = float64(new1 * scale)
 			}
 
 			delta0 := new0 - old0
@@ -277,7 +277,7 @@ func solveContactVelocityState(manifold *ContactManifold, state *contactSolveMan
 		velAlongNormal := relative.Dot(normal)
 
 		oldTotal := point.NormalImpulse
-		newTotal := oldTotal + (slot.restitutionTarget-velAlongNormal)*slot.normalMass
+		newTotal := oldTotal + float64((slot.restitutionTarget-velAlongNormal)*slot.normalMass)
 		if newTotal < 0 {
 			newTotal = 0
 		}
@@ -319,7 +319,7 @@ func solveContactPositionState(manifold *ContactManifold, state *contactSolveMan
 
 		relative := relativePseudoVelocityAt(bodyA, bodyB, slot.rA, slot.rB).Dot(normal)
 		old := slot.positionImpulse
-		next := old + (bias-relative)*slot.normalMass
+		next := old + float64((bias-relative)*slot.normalMass)
 		if next < 0 {
 			next = 0
 		}

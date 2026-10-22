@@ -35,6 +35,20 @@ func (c Context) SetSignal(name string, value any) (err error) {
 // SubscribeSignal receives JSON from subsequent writes to a page shared signal.
 // Dispose the returned HandleFunc to detach and release the Go callback.
 func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (dispose HandleFunc, err error) {
+	return c.subscribeSignal(name, handler, false)
+}
+
+// subscribeSignalReplay is SubscribeSignal that also delivers the signal's
+// current value once. ServeCalls uses it so a call written before the engine
+// subscribed is answered. On the main thread the current value arrives before
+// this function returns, and a signal with no value delivers JSON null. In a
+// worker it arrives later, as a message, and a signal with no value delivers
+// nothing.
+func (c Context) subscribeSignalReplay(name string, handler func(json.RawMessage)) (HandleFunc, error) {
+	return c.subscribeSignal(name, handler, true)
+}
+
+func (c Context) subscribeSignal(name string, handler func(json.RawMessage), replay bool) (dispose HandleFunc, err error) {
 	if handler == nil {
 		return nil, fmt.Errorf("shared signal handler is required")
 	}
@@ -72,7 +86,7 @@ func (c Context) SubscribeSignal(name string, handler func(json.RawMessage)) (di
 		return nil
 	})
 	created = true
-	unsubscribe := c.value.Call(method, name, callback, map[string]any{"immediate": false})
+	unsubscribe := c.value.Call(method, name, callback, map[string]any{"immediate": replay})
 	if unsubscribe.Type() != js.TypeFunction {
 		return nil, fmt.Errorf("shared signal subscription is unavailable")
 	}

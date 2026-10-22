@@ -370,17 +370,20 @@ func TestManifestAddHubWithInput(t *testing.T) {
 	id := m.AddHubWithInput("fight", "/ws/fight/abc", []HubBinding{
 		{Event: "tick", Signal: "$fight"},
 	}, &HubInputConfig{
-		Mode:           "fighting",
-		Event:          "input",
-		ReadyEvent:     "ready",
-		TrainingEvent:  "training",
-		Signal:         "$fightInput",
-		TrainingSignal: "$fightTrainingUI",
-		TouchRoot:      "#touch-controls",
-		Player:         2,
-		Local:          true,
-		SlotToken:      "slot-two",
-		SendEveryMS:    16,
+		Mode:            "fighting",
+		Event:           "input",
+		ReadyEvent:      "ready",
+		TrainingEvent:   "training",
+		Signal:          "$fightInput",
+		TrainingSignal:  "$fightTrainingUI",
+		TouchRoot:       "#touch-controls",
+		Player:          2,
+		Local:           true,
+		SlotToken:       "slot-two",
+		SendEveryMS:     16,
+		ReadyWhen:       "scene-committed",
+		DisableEdgeSend: true,
+		HeldMode:        "absolute",
 	})
 
 	if id != "gosx-hub-0" {
@@ -391,6 +394,19 @@ func TestManifestAddHubWithInput(t *testing.T) {
 	}
 	if m.Hubs[0].Input.Mode != "fighting" || m.Hubs[0].Input.Player != 2 {
 		t.Fatalf("unexpected hub input config %#v", m.Hubs[0].Input)
+	}
+	data, err := json.Marshal(m.Hubs[0].Input)
+	if err != nil {
+		t.Fatalf("marshal input: %v", err)
+	}
+	for _, want := range []string{`"readyWhen":"scene-committed"`, `"disableEdgeSend":true`, `"heldMode":"absolute"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected %s in %s", want, data)
+		}
+	}
+	zero, _ := json.Marshal(HubInputConfig{Mode: "fighting"})
+	if strings.Contains(string(zero), "readyWhen") || strings.Contains(string(zero), "disableEdgeSend") || strings.Contains(string(zero), "heldMode") {
+		t.Fatalf("zero values must be omitted, got %s", zero)
 	}
 }
 
@@ -624,5 +640,41 @@ func TestManifestAddEngineRejectsMalformedGoWASMRuntime(t *testing.T) {
 	}
 	if len(m.Engines) != 0 {
 		t.Fatalf("invalid engines must not reach the manifest: %#v", m.Engines)
+	}
+}
+
+func TestManifestAddLocalInputRunsWithoutSocket(t *testing.T) {
+	m := NewManifest()
+	id := m.AddLocalInput("fight-input", &HubInputConfig{
+		Mode:       "fighting",
+		Local:      true,
+		SignalName: "$fightHeld",
+		HeldMode:   "legacy-ignored",
+	})
+	if id != "gosx-hub-0" || len(m.Hubs) != 1 {
+		t.Fatalf("id=%q hubs=%d", id, len(m.Hubs))
+	}
+	hub := m.Hubs[0]
+	if hub.Path != "" || hub.Input == nil || hub.Input.Sink != "signal" || hub.Input.SignalName != "$fightHeld" {
+		t.Fatalf("unexpected local input hub %#v", hub)
+	}
+	data, err := json.Marshal(hub.Input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"sink":"signal"`, `"signalName":"$fightHeld"`} {
+		if !strings.Contains(string(data), want) {
+			t.Fatalf("expected %s in %s", want, data)
+		}
+	}
+	if m.AddLocalInput("x", nil) != "" || len(m.Hubs) != 1 {
+		t.Fatal("nil input must not register a hub")
+	}
+	if m.AddLocalInput("x", &HubInputConfig{Mode: "fighting"}) != "" || len(m.Hubs) != 1 {
+		t.Fatal("a local sink without a signal name must not register a hub")
+	}
+	prefixed := m.WithBasePath("/app")
+	if prefixed.Hubs[0].Path != "" {
+		t.Fatalf("base path invented a socket path %q", prefixed.Hubs[0].Path)
 	}
 }

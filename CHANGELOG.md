@@ -2,6 +2,198 @@
 
 ## Unreleased
 
+- Let islands talk to a worker engine with typed request and reply, a paced
+  view and a visible status, with no page JavaScript. `wasm.ServeCalls` answers
+  `engine.Call` values written to a shared signal with `engine.Result` values on
+  `<channel>.result`: it ignores repeated IDs, answers bad arguments with an
+  error, handles a call written before it subscribed, and keeps the last replies
+  in `Recent`. On a worker engine the page fails a call with `timeout` or
+  `worker-crashed` when no reply comes. `wasm.NewView` sends the newest state
+  at most once per `MinInterval` and only after the page applied the previous
+  batch, skips unchanged signals, and pauses while the tab is hidden. The page
+  writes `engine.WorkerStatus` to `$gosx.engine.<id>` on boot, mount, fallback,
+  crash and dispose. `engine.Config.Worker: WorkerRequired` never runs the engine
+  on the main thread, and `ForceWorkerFallback` forces the fallback from the
+  server for tests (the JavaScript `__gosx_engine_worker_disable` still works).
+  `scene.DispatchVesselPose` and `DispatchVesselCutaway` now work from an engine
+  worker. `bootstrap-feature-engine-worker.js` grows from 28,462 to 33,566 bytes
+  raw (9,351 to 10,837 gzip, 8,682 to 10,130 Brotli) and now has a size budget; no
+  other bundle changes. `docs/engine-worker.md` no longer says the worker needs
+  no JavaScript for everything: only signals, calls, views and status are
+  JavaScript-free.
+
+- Add large powered ships to GoSX. The new deterministic `vessel` package models
+  a powered displacement hull (power roughly proportional to speed cubed,
+  rudder or pod steering with turning circles and stopping distances, roll and
+  pitch from the wave field, optional stabilizers) with expedition, liner and
+  megaship presets, and gives the same bits on js/wasm, amd64 and arm64
+  (checked on a real Apple Silicon Mac). `Vessel.ExternalPose` lets Go own a
+  vessel's pose: send `scene.VesselPoseFrame` (wire format GSV1, 62 bytes for one
+  ship) with `scene.DispatchVesselPose`; the browser runs no sailing physics and
+  blends between ticks, and walkers, wake and `ParentNode` crowds follow.
+  `Vessel.Decks` gives a ship many walkable decks (polygons with holes and stair
+  ramps, generated from short `vessel.DeckPlan` descriptions or
+  `vessel.StandardLayout`); `vessel.Layout` also answers deck, route, stairs and
+  lift-capacity queries for simulation. `Vessel.Cutaway` and
+  `scene.DispatchVesselCutaway` hide or ghost everything above a deck and can
+  slice the hull; parented crowd agents above the cut are culled and cast no
+  shadow. The cutaway works on WebGL only. For a 290 m, 14-deck liner with 2,900
+  parented agents, a 10 Hz tick is 13.6 KB and the mean frame costs 0.66 ms of
+  main thread in Node. Sailing vessels behave as before. Several Scene3D size
+  targets rise by the measured growth. See `docs/scene3d-powered-vessels.md`.
+
+- Add two opt-in features for thousands of animated agents on a moving ship.
+  `scene.PartialMotionFrame` (wire format GSP5) names each agent by slot and
+  carries only the agents that changed; send it with
+  `scene.DispatchPartialMotionFrame` or `scene.EncodePartialMotionFrame`, after
+  a full `MotionFrame` has stated every agent. The browser merges queued
+  partial frames, rejects one built for a different batch size, and copies only
+  the changed slots into the renderer. `InstancedGLBMesh.ParentNode` makes a
+  batch ride a scene node: instance transforms and motion frames are relative
+  to the node, and the renderer applies the node's world matrix once per frame,
+  including a pose computed in the browser, as `scene.Vessel` does. Culling,
+  depth sorting, shadows and picking use the parented positions. For 5,000
+  agents with 5% changing per 10 Hz tick, a tick drops from 513,917 to 23,279
+  bytes and its decode and apply time from 27 ms to 1.2 ms (Node benchmark).
+  The WebGL and WebGPU crowd paths follow a parent; a selected agent of a parented
+  batch draws without an outline. A per-instance `ParentMatrix` is still
+  rejected in motion frames. Existing crowds and frames behave as before. See
+  `docs/scene3d-crowd-motion.md`.
+- Draw animated crowds on the WebGPU renderer. A scene that sets `PreferWebGPU`
+  now hydrates its `InstancedGLBMesh` agents as crowd batches, and the WebGPU
+  renderer draws them with the same features as WebGL: palette-skinned poses,
+  `MotionFrame` motion with GPU interpolation, `PartialMotionFrame` updates that
+  upload only the changed slot runs, `ParentNode`, and shadows. The batch record
+  and the planner are shared with WebGL. `scene.GPUDriven` now covers crowd
+  batches too: one compute dispatch per batch culls every agent against the
+  camera frustum, and with `Occlusion` the main pass runs in two phases and a
+  Hi-Z pyramid built from that frame's depth hides the agents behind decks and
+  walls, with no per-agent work on the CPU. A frustum cull changes no pixel; Hi-Z
+  removes only stray pixels that an occluded agent leaks through a wall (26 to 30
+  of 230,400 in the 5,000 and 7,800 agent ship benchmark, where it draws 45% and
+  44% of the agents). Measured on SwiftShader, not on a GPU: main thread 1.3 to
+  2.9 ms per frame for 5,000 to 7,800 agents. Limits: agents are not GPU pick
+  targets on WebGPU, crowd materials draw without detail layers, and water and
+  ocean reflection passes skip crowds. See `docs/scene3d-crowd-motion.md`.
+- Fix GPU-driven instancing in the shipped WebGPU bundle. The bundle build
+  strips the indentation of the renderer's WGSL and renames its locals, so the
+  host's text anchors never matched, and a `GPUDriven` scene with an eligible
+  instanced mesh failed over to WebGL2 on its first frame. The host now matches its anchors without depending on
+  indentation or local names.
+- Run the fighting input controller without a hub socket. `HubInputConfig.Sink`
+  `"signal"` with `SignalName` (register it with `Manifest.AddLocalInput`)
+  publishes each closed frame's absolute held samples, `[{player, dir, btn,
+  frame}]` with both players in local mode, to a shared signal that a Go WASM
+  engine reads. It uses the same per-frame latch and same-turn edge writes as
+  `HeldMode: "absolute"`, and makes a game's own keyboard, touch and pad
+  reading unnecessary. Hub input is unchanged. See `docs/fight-input.md`.
+
+- Add `Scene3D.Live(ctx, event, data)` to `engine/wasm` and
+  `window.__gosx.scene3d.live`, which feed a named Live event to a mounted
+  scene through the same path as a hub event. Engines no longer need to
+  dispatch the internal `gosx:hub:event` document event.
+
+- Add the `arcade-audio` feature chunk (`RequireFeature("arcade-audio")`) so a
+  page without hubs gets `window.__gosx.arcadeAudio`. Several bundle size
+  targets rise by the measured growth.
+- Add engine workers: set `engine.Config{Runtime: engine.RuntimeGoWASM, Thread:
+  engine.ThreadWorker}` and GoSX runs the Go WASM engine in a dedicated Web
+  Worker instead of the main thread. Apps write no JavaScript; `Thread` defaults
+  to the main thread, so existing engines do not change. If the browser cannot
+  start the worker, the engine falls back to the main thread and the runtime
+  reports why (`Context.ThreadFallbackReason`, a `gosx:engine:thread-fallback`
+  event). In the worker, `game/loop` and `game/host.FrameSourceJS` run on a
+  fixed-rate timer clock (60 Hz by default) and `Hidden()` follows the page's
+  visibility; the new `loop.Driver.RunWhileHidden` keeps a simulation stepping in
+  a hidden tab. Binary frames (GSP2, GSP3, GSP4, GSXI) and signal batches reach
+  the page as transferred buffers and go to the same Scene3D and signal code as
+  on the main thread. `scene.Surface`, `StreamWriter` and the frame dispatchers
+  work in a worker; `Context.Scene3DByID` targets a mount by id. Page input is
+  forwarded to the worker with timestamps (`host.NewForwardedInput`, a
+  `game/gamepad` source). `netplay/client` works in a worker: the page keeps the
+  `RTCPeerConnection` and transfers the data channel to the worker where the
+  browser allows it, and relays datagrams over the port where it does not. In
+  headless Chrome 153 a worker engine held 60.0 frames per second while the page
+  was busy 60% of the time (a main-thread engine ran at 34), and in a tab hidden
+  for 25 s the worker clock kept 60 ticks per second while a page timer ran at
+  about 1. The new chunk `bootstrap-feature-engine-worker.js` loads only for
+  pages with a worker engine; the engines chunk grows by 246 bytes. New make
+  targets: `test-engine-worker-wasm`, `test-engine-worker-browser`,
+  `test-engine-worker-hidden`. See `docs/engine-worker.md`.
+
+- Add sampled clip frames to Scene3D, so an app can pose a skinned model from
+  its own simulation clock. Declare `scene.Model{ID: ..., ClipSampled: true}`,
+  then send `scene.ClipFrame` (up to four layers per model: clip name or
+  index, exact clip time, weight, loop flag) through `scene.DispatchClipFrame`
+  or `window.__gosx.scene3d.dispatchClipFrame`. The new binary frame type GSP4
+  takes 11 bytes per layer, with no JSON per frame. The browser runs no clock
+  for a sampled model, and the same layers give the same pose after a jump
+  backwards (a rollback) or forwards. Time past a clip's end wraps for a
+  looping layer and holds the last key otherwise. Clip root motion is ignored
+  by default (horizontal translation of root nodes keeps its authored value);
+  `Model.RootMotion` applies it. Existing models and `PoseFrame`/`MotionFrame`
+  behave as before. Evaluating a frame allocates almost nothing in steady
+  state. The IR mesh node (`IRMeshNode`) also carries `clipSampled` and
+  `rootMotion`. See `docs/scene3d-clip-frames.md`.
+
+- Add `m31labs.dev/gosx/det`, assembly-free and fusion-proof versions of Exp,
+  Exp2, Log, Log2, Log10, Pow, Sin, Cos, Tan, Asin, Acos, Atan, Atan2, Hypot,
+  Sinh, Cosh and Tanh that return the same bits on js/wasm, amd64 and arm64,
+  plus `det.MulAdd`. Add `det/parity` to record and compare per-step state
+  hashes, `gosx detlint` and `gosx-detlint` (a `go vet -vettool`) to check
+  packages marked `//gosx:deterministic`, and the make targets
+  `test-det-parity`, `test-det-parity-arm64-remote`,
+  `build-det-parity-darwin-arm64` and `lint-deterministic`. See
+  `docs/deterministic-simulation.md`. Go 1.26's `math.Log` on amd64 returns
+  wrong values for subnormal inputs; `det.Log` does not.
+
+- Make `physics` bit-identical whether or not the build fuses a multiply and an
+  add. The package is now marked `//gosx:deterministic`: float products are
+  rounded explicitly, `math.Sin/Cos/Acos/Atan2/Hypot` became `det` calls, and
+  the static broadphase prune walks slots in index order instead of ranging a
+  map. The parity corpus now passes at `GOAMD64=v3` and on arm64.
+- Add `HubInputConfig.HeldMode = "absolute"` for fighting hubs whose simulation
+  derives press edges and resolves opposite directions itself. Each sample
+  carries `dir` (wire contract, bit mask: left 1, right 2, up 4, down 8, with
+  no client SOCD and no forward/back mapping by player slot), `btn` (bit mask:
+  LP 1, HP 2, LK 4, HK 8, Guard 16; 32 is reserved for Transform) and `frame` (a local sample frame number, +1 per animation frame). All
+  samples in one frame combine by one latch rule for keyboard, touch and
+  gamepad: buttons are OR-ed and directions take the last sample, so a press
+  and release inside one frame still counts. Edge sends still go out in the
+  same event turn. Default behavior is unchanged.
+- Add `netplay`, a transport-agnostic rollback netcode engine for two-player
+  deterministic simulations, standard library only. `Session` predicts the
+  remote input, rolls back within one tick, stalls at an 8-frame prediction
+  window, syncs frame advantage and exchanges confirmed-frame checksums over a
+  versioned binary packet under 1,200 bytes. `Relay` forwards packets, verifies
+  checksums with a native copy of the game, repairs a desync with its `Save`
+  blob, flags late inputs and streams delayed inputs to spectators.
+  `EventLedger` starts, cancels or keeps presentation effects after a rollback.
+  Replays are versioned and refuse a different simulation identity; the
+  `netplay-identity` generator hashes sources, data files, the Go version and
+  an optional det version. `LossyNet` and `Loopback` are in-process transports.
+  Ten thousand seeded lossy sessions agree with zero desyncs, and a steady-state
+  frame allocates nothing on native and js/wasm. See `docs/netplay.md`.
+
+- Add a network transport for `netplay`: WebRTC data channels between browsers
+  and a Go relay, with a WebSocket fallback. Apps write no JavaScript. The relay
+  uses `m31labs.dev/gosx/netplay/webrtc`, a nested Go module that holds the
+  only pion dependency, so the core `go.mod` gains no requirements and the
+  js/wasm build imports no pion. `webrtc.Server` answers browser offers over the
+  hub WebSocket, opens one unordered, zero-retransmit data channel per peer,
+  takes STUN and TURN servers from `webrtc.Config`, and gives the relay a
+  `Link` per client that answers on the path the client uses. In the browser,
+  `netplay/client.Dial` returns a `netplay.Transport`; after a timeout, or when
+  WebRTC fails, it uses hub binary frames and reports `Degraded()`. A page
+  loads the new `bootstrap-feature-netplay.js` chunk (4,353 bytes, none for
+  other pages) through `RequireFeature("netplay")`. New core packages:
+  `netplay/signal` (signaling messages with size limits and validation),
+  `netplay/hubnet` and `netplay/dgram`. `hub.Hub.SendBinary` sends one binary
+  frame to one client, and `hubclient` gains `Options.OnBinary` and
+  `Client.SendBinary`; before, `hubclient` dropped every binary frame. Native
+  `hubclient` writes are now serialized. Make targets: `test-netplay-webrtc`
+  and `test-netplay-browser`. See `docs/netplay.md`.
+
 - Keep derived reads current inside batched actions and source observers,
   preserving cached descendants when a derived value stays equal. Match the
   same settled reads and callback order in AOT islands. Deliver shared peers
@@ -37,6 +229,53 @@
   individual signal events and reentrant observer updates. Group subscriptions,
   reuse the pending-reader queue, and ignore callbacks from retired programs.
   Remove repeated canonical lookups and JSON string-to-byte round trips.
+- Fix a data race in `sim`: a spectator join read `Simulation.Snapshot` on the
+  HTTP goroutine while the tick goroutine ran `Tick`. The runner now serializes
+  all calls into the simulation.
+- Make `game.Runtime.ApplyNetworkInputs` order-stable: inputs apply in ascending
+  player ID order, so event order and the last pointer position no longer depend
+  on map iteration. Add `sim.SortedPlayerIDs` and `sim.EachInput`.
+- Store default `game` snapshot time as integer nanoseconds (`timeNanos`),
+  still reading older `timeSeconds` snapshots. Add `sim.Runner.Restore`, which
+  also restores the frame counter, and extend `sim.ReplayLog` with `Initial`,
+  `InitialFrame`, `Seed` and `Truncated`. New `Options.Seed` and
+  `Options.ReplayMaxFrames`. Replay now takes one extra `Snapshot` call at start.
+- Add `sim.Options` `Broadcaster`, `RingSize` (`sim.RingDisabled`),
+  `SnapshotEvery`, `BroadcastEvery`, `CatchUpBudget`, `InputQueue` and
+  `InputQueueDepth`; `sim.NewBinarySnapshotBroadcaster`; `Runner.Pause`,
+  `Resume`, `SetSpeed`, `ReceiveInputAt` and `SnapshotAt`; and
+  `TickEvent.Behind`. Defaults keep the previous behavior.
+- Add `game.Clock` and `game.Runtime` pause and time scale, `Frame.RealDelta`,
+  `Frame.Steps`, `Context.Tick`, and the `game.Every` and `game.EveryInterval`
+  system cadence wrappers. `Frame.Delta` is now game time (unchanged at scale
+  1). A default `MaxDelta` no longer clamps a coarse `FixedStep` below one step.
+- Add `game.SaveCodec` to export and import `World` entities, registered
+  component columns and resources, and a `SnapshotCodec` helper that includes
+  them.
+- Send fighting-mode hub input on key and touch edges. A mapped key or touch
+  control that changes held state now sends the full input state in the same
+  event turn instead of waiting up to `SendEveryMS` for the timer. Key repeat,
+  typing in inputs, textareas and contenteditable, and states identical to the
+  last send are skipped, and window blur sends the release. The timer still
+  polls gamepads. Set `HubInputConfig.DisableEdgeSend` to keep timer-only sends.
+
+- Add `HubInputConfig.ReadyWhen` (`"scene-committed"`) so a fighting hub sends
+  its ready event only after the socket opens, a Scene3D mount reports
+  `data-gosx-scene3d-ready` and `data-gosx-scene3d-model-hydration-committed`,
+  and two animation frames pass. It sends at most once per socket, so it holds
+  across reconnects and enhanced navigation. Default behavior is unchanged.
+- Cut the per-frame main-thread cost of animated crowds. A WebGL
+  crowd (palette-skinned `InstancedGLB` actors or GSP3 motion batches) now
+  reaches the render bundle as one record per batch instead of one per agent,
+  and the batch keeps that record from frame to frame. Moving agents, pose
+  frames and motion frames bump a batch revision; the renderer repacks and
+  uploads a batch only when its revision changes. The prepared scene no longer
+  rebuilds when only the camera, the viewport or opaque mesh depth changes, and
+  translucent objects still sort by the current camera. At 5,000 agents, bundle
+  plus planner time falls from about 26 ms to about 1 ms per frame in the Node
+  benchmark (`node client/js/scene3d-crowd-frame.bench.mjs`). The color pass
+  now culls a crowd batch as a whole rather than agent by agent; every agent
+  still casts shadows.
 
 - Preserve signed 64-bit integer values in shared-signal JSON batches, including
   nested IDs and counters. State snapshots and event batches use the same exact

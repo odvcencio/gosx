@@ -100,7 +100,7 @@ func TestObserverWholeTickScheduledLagAndWallJump(t *testing.T) {
 			events := make(chan TickEvent, 2)
 			var r *Runner
 			r = New(h, s, Options{TickRate: 10, Clock: c, DisableReplay: !replay, Observer: tickObserverFunc(func(e TickEvent) {
-				if r.Frame() != e.Frame || s.snapshots != int(e.Frame) || s.states != int(e.Frame) {
+				if r.Frame() != e.Frame || s.snapshots != int(e.Frame)+map[bool]int{true: 1}[replay] || s.states != int(e.Frame) {
 					t.Error("duplicate or incomplete state work")
 				}
 				if replay && len(r.Replay().Frames) != int(e.Frame) {

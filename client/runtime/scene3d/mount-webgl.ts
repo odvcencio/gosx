@@ -2682,12 +2682,15 @@
     if (!record || !record.animationApi || !record.nodes || !record.skins) {
       return;
     }
+    if (record.clipSampler && record.clipSampler.pose(record)) return; // sampled: allocation-free path
     const animatedTransforms = record.animatedTransforms;
     if (animatedTransforms && typeof animatedTransforms.clear === "function") {
       animatedTransforms.clear();
     }
     if (record.explicitClips) {
       record.animationApi.sampleExplicitAnimation(record.explicitClips, record.model._crowdPose, animatedTransforms);
+    } else if (record.clipSampler) { // sampled: a pure function of the last layers; deltaTime is ignored
+      record.clipSampler.sample(record.sampledLayers, record.sampledLayerCount, animatedTransforms);
     } else if (sceneModelWasmMixerActive(record)) {
       sceneAdvanceWasmModelMixer(record, deltaTime, reduced, animatedTransforms);
     } else if (record.mixer) {
@@ -2764,7 +2767,7 @@
   }
 
   function sceneRegisterModelAnimationRecord(state, record) {
-    if (!state || !record || (!record.mixer && !record.wasmMixerActive)) {
+    if (!state || !record || (!record.mixer && !record.wasmMixerActive && !record.clipSampler)) {
       return;
     }
     if (!Array.isArray(state._modelAnimations)) {
@@ -2884,6 +2887,11 @@
     /* @ts-expect-error TS2339 -- this object literal grows fields after construction; TypeScript does not apply evolving-object inference to .ts files (only to checkJs .js files) */ if (instanceModel._instancedGLB && instanceModel._crowdPose && animationApi.sampleExplicitAnimation) {
       record.explicitClips = clips;
       sceneApplyModelSkinPose(record, 0, false);
+      return;
+    }
+    if (instanceModel.clipSampled === true && animationApi.configureSampledRecord) {
+      animationApi.configureSampledRecord(state, record, clips, instanceModel);
+      sceneRegisterModelAnimationRecord(state, record); sceneApplyModelSkinPose(record, 0, false);
       return;
     }
     const wantWasmMixer = clips.length > 0
@@ -3484,6 +3492,7 @@
     const stageState = {
       _modelAnimations: staged.modelAnimations,
       _modelSkins: staged.modelSkins,
+      _clipFrameLayers: state && (state._clipFrameLayers || (state._clipFrameLayers = new Map())),
     };
     let stage = "load";
     try {
@@ -3546,7 +3555,7 @@
           object.vertices = primitive.vertices;
           object._modelLocalVertices = primitive.vertices;
           object.parentMatrix = new Float32Array(sceneModelTransformMatrix(instanceModel));
-          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows };
+          object._crowdSkin = { atlas, bounds: primitive.bounds, rows: api.crowdPoseRows(atlas, model._crowdPose), poseRows: api.crowdPoseRows, batchID: sceneInstancedGLBBatchIDs.get(model) || "", parent: sceneInstancedGLBBatchParents.get(model) || "", rev: 0, group: null };
           object.static = false;
           staged.objects.push(object);
         }
@@ -3754,7 +3763,7 @@
       for (const object of staged.objects) object.parentMatrix = matrix;
     }
     if (crowdRows) {
-      for (const update of crowdRows) update.object._crowdSkin.rows.set(update.rows);
+      for (const update of crowdRows) { update.object._crowdSkin.rows.set(update.rows); update.object._crowdSkin.rev += 1; }
     }
     staged.rigidInstanceModel = staged.model = model;
   }
@@ -4336,7 +4345,7 @@
         }
         for (const object of staged.objects) {
           if (!staged.modelSkins.length) object.parentMatrix = staged._pendingRigidMatrix;
-          if (object._crowdSkin) object._crowdSkin.poseRows(object._crowdSkin.atlas, staged.model._crowdPose, object._crowdSkin.rows);
+          if (object._crowdSkin) { object._crowdSkin.poseRows(object._crowdSkin.atlas, staged.model._crowdPose, object._crowdSkin.rows); object._crowdSkin.rev += 1; }
         }
         delete staged._pendingRigidMatrix;
       }

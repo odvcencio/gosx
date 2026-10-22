@@ -253,3 +253,37 @@ func TestEngineConfig_Validate(t *testing.T) {
 		t.Fatal("expected unsupported runtime to fail")
 	}
 }
+
+func TestValidateThread(t *testing.T) {
+	cases := []struct {
+		name    string
+		thread  Thread
+		runtime Runtime
+		wantErr bool
+	}{
+		{"default main", ThreadMain, RuntimeNone, false},
+		{"main with go-wasm", ThreadMain, RuntimeGoWASM, false},
+		{"worker with go-wasm", ThreadWorker, RuntimeGoWASM, false},
+		{"worker without runtime", ThreadWorker, RuntimeNone, true},
+		{"worker with shared", ThreadWorker, RuntimeShared, true},
+		{"unknown", Thread("fiber"), RuntimeGoWASM, true},
+	}
+	for _, tc := range cases {
+		err := ValidateThread(tc.thread, tc.runtime)
+		if (err != nil) != tc.wantErr {
+			t.Errorf("%s: err = %v, wantErr %v", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
+func TestConfigValidateRejectsWorkerThreadWithoutGoWASM(t *testing.T) {
+	cfg := Config{Name: "Sim", Kind: KindWorker, Thread: ThreadWorker}
+	if err := cfg.Validate(); err == nil {
+		t.Fatal("worker thread without go-wasm runtime must fail validation")
+	}
+	cfg.Runtime = RuntimeGoWASM
+	cfg.WASMPath = "/sim.wasm"
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("worker thread with go-wasm: %v", err)
+	}
+}

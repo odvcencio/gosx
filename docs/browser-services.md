@@ -64,6 +64,8 @@ storage. The renderer consumes the view synchronously; a subsequent call may
 overwrite it safely. `Apply` performs no DOM lookup or JSON conversion.
 It rejects reentrant writes, which could otherwise corrupt an active view.
 For skinned animation, use the existing typed `PoseFrame`/`MotionFrame` paths.
+To pose a skinned model from your own simulation clock, see
+[sampled clip frames](scene3d-clip-frames.md).
 
 `InstanceStreamFrame.Encode()` returns an independently owned byte slice.
 `EncodeInto(dst)` may alias `dst`; its bytes are valid until that storage is

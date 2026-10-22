@@ -155,3 +155,37 @@ func TestDriverOnErrorReceivesStepError(t *testing.T) {
 type errFixture struct{}
 
 func (errFixture) Error() string { return "boom" }
+
+func TestDriverRunWhileHiddenKeepsSteppingWithoutACatchUpJump(t *testing.T) {
+	rt, fixedSteps := newCountingRuntime(t, 10*time.Millisecond)
+	source := NewManualFrameSource()
+	d := New(rt, source)
+	d.RunWhileHidden = true
+
+	renders := 0
+	var lastFrame game.Frame
+	d.Start(func(alpha float64, frame game.Frame) { renders++; lastFrame = frame })
+	source.Fire(0)
+	source.SetHidden(true)
+	source.Fire(10) // hidden, but the simulation must keep its clock
+	source.Fire(20)
+	source.Fire(30)
+	if renders != 4 {
+		t.Fatalf("renders = %d, want 4: a RunWhileHidden driver advances on hidden frames", renders)
+	}
+	if *fixedSteps != 3 {
+		t.Fatalf("fixed steps = %d, want 3 (one per 10 ms frame, hidden or not)", *fixedSteps)
+	}
+	if lastFrame.Delta != 10*time.Millisecond {
+		t.Fatalf("hidden frame delta = %s, want 10ms", lastFrame.Delta)
+	}
+}
+
+func TestDriverDefaultStillPausesWhileHidden(t *testing.T) {
+	rt, _ := newCountingRuntime(t, 10*time.Millisecond)
+	source := NewManualFrameSource()
+	d := New(rt, source)
+	if d.RunWhileHidden {
+		t.Fatal("RunWhileHidden must default to false so existing games keep pausing")
+	}
+}

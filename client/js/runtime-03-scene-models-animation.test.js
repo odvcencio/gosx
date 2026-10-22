@@ -26,6 +26,7 @@ const {
   flushSceneInitialFrameBoundary,
   runScript,
   flushAsyncWork,
+  scene3DCommandFetchRoutes,
   SELENA_SKINNABLE_VERTEX_GLSL_FIXTURE,
   SELENA_SKINNABLE_FRAGMENT_GLSL_FIXTURE,
   SELENA_SKINNABLE_SHADER_LAYOUT_FIXTURE,
@@ -774,6 +775,91 @@ test("bootstrap replays Scene3D GLB model animations when live sequence changes"
       animationFadeOutMS: 60,
     } } },
   }));
+
+  assert.deepEqual(calls, [
+    ["play", "bend", { loop: true, speed: 1, weight: 1, fadeIn: 0 }],
+    ["stop", "bend", { fadeOut: 0 }],
+    ["play", "bend", { loop: true, speed: 1, weight: 1, fadeIn: 0 }],
+    ["stop", "bend", { fadeOut: 0.06 }],
+    ["play", "bend", { loop: true, speed: 1.75, weight: 0.65, fadeIn: 0.08 }],
+  ]);
+  assert.equal(env.consoleLogs.error.length, 0);
+});
+
+test("scene3d.live feeds the same Live path as a hub event without a document event", async () => {
+  const mount = new FakeElement("div", null);
+  mount.id = "scene-model-live-animation-root";
+
+  const env = createContext({
+    elements: [mount],
+    fetchRoutes: scene3DCommandFetchRoutes({
+      "/models/rig.glb": {
+        bytes: buildSkinnedGLBBytes(),
+      },
+    }),
+    manifest: {
+      engines: [
+        {
+          id: "gosx-engine-model-live-animation",
+          component: "GoSXScene3D",
+          kind: "surface",
+          mountId: "scene-model-live-animation-root",
+          props: {
+            width: 640,
+            height: 360,
+            autoRotate: false,
+            models: [
+              {
+                id: "rig",
+                src: "/models/rig.glb",
+                animation: "bend",
+                loop: true,
+                live: ["attack"],
+              },
+            ],
+          },
+        },
+      ],
+    },
+  });
+  installManualRAF(env.context);
+
+  runScript(bootstrapSource, env.context, "bootstrap.js");
+  const animationApi = env.context.__gosx_scene3d_animation_api;
+  const originalCreateMixer = animationApi.createMixer;
+  const calls = [];
+  animationApi.createMixer = function createObservedMixer(...args) {
+    const mixer = originalCreateMixer.apply(this, args);
+    const originalPlay = mixer.play.bind(mixer);
+    const originalStop = mixer.stop.bind(mixer);
+    mixer.play = function observedPlay(name, options) {
+      calls.push(["play", name, options && {
+        loop: options.loop,
+        speed: options.speed,
+        weight: options.weight,
+        fadeIn: options.fadeIn,
+      }]);
+      return originalPlay(name, options);
+    };
+    mixer.stop = function observedStop(name, options) {
+      calls.push(["stop", name, options && {
+        fadeOut: options.fadeOut,
+      }]);
+      return originalStop(name, options);
+    };
+    return mixer;
+  };
+  await flushAsyncWork();
+
+  const engineID = "gosx-engine-model-live-animation";
+  const events = [];
+  env.document.addEventListener("gosx:hub:event", (event) => events.push(event));
+  const first = await env.context.__gosx.scene3d.live(engineID, "attack", { rig: { animation: "bend", animationSeq: "hit-1" } }, { engineID, timeoutMS: 5000 });
+  assert.equal(first.applied, true);
+  await env.context.__gosx.scene3d.live(engineID, "attack", { rig: { animation: "bend", animationSeq: "hit-1" } }, { engineID });
+  await env.context.__gosx.scene3d.live(engineID, "attack", { rig: { animation: "bend", animationSeq: "hit-2", animationSpeed: 1.75, animationWeight: 0.65, animationFadeInMS: 80, animationFadeOutMS: 60 } }, { engineID });
+  assert.equal(events.length, 0, "Live must not synthesize the internal document event");
+  await assert.rejects(env.context.__gosx.scene3d.live(engineID, 7, {}, { engineID }), /event/);
 
   assert.deepEqual(calls, [
     ["play", "bend", { loop: true, speed: 1, weight: 1, fadeIn: 0 }],

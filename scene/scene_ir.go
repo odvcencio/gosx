@@ -170,6 +170,9 @@ type InstancedGLBMeshIR struct {
 	// SharedAppearance opts corresponding primitives into one shared renderer
 	// appearance across instances. It does not merge different GLB primitives.
 	SharedAppearance bool `json:"sharedAppearance,omitempty"`
+	// ParentNode names the scene node whose world matrix carries the batch;
+	// see InstancedGLBMesh.ParentNode.
+	ParentNode string `json:"parentNode,omitempty"`
 }
 
 // MeshInstanceIR holds the per-instance transform data for InstancedGLBMeshIR.
@@ -348,6 +351,8 @@ type ModelIR struct {
 	AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
 	AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
 	Loop               *bool    `json:"loop,omitempty"`
+	ClipSampled        bool     `json:"clipSampled,omitempty"`
+	RootMotion         bool     `json:"rootMotion,omitempty"`
 }
 
 // MarshalJSON emits both the embedded ObjectIR fields AND the ModelIR
@@ -388,6 +393,8 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		AnimationFadeInMS  *int     `json:"animationFadeInMS,omitempty"`
 		AnimationFadeOutMS *int     `json:"animationFadeOutMS,omitempty"`
 		Loop               *bool    `json:"loop,omitempty"`
+		ClipSampled        bool     `json:"clipSampled,omitempty"`
+		RootMotion         bool     `json:"rootMotion,omitempty"`
 	}
 	return json.Marshal(modelWire{
 		objectAlias:        objectAlias(m.ObjectIR),
@@ -409,6 +416,8 @@ func (m ModelIR) MarshalJSON() ([]byte, error) {
 		AnimationFadeInMS:  nonNegativeIntPtr(m.AnimationFadeInMS),
 		AnimationFadeOutMS: nonNegativeIntPtr(m.AnimationFadeOutMS),
 		Loop:               m.Loop,
+		ClipSampled:        m.ClipSampled,
+		RootMotion:         m.RootMotion,
 	})
 }
 
@@ -2306,6 +2315,12 @@ func (item ModelIR) legacyProps() map[string]any {
 	setNumericPtr(record, "animationWeight", nonNegativeFloatPtr(item.AnimationWeight))
 	setIntPtr(record, "animationFadeInMS", nonNegativeIntPtr(item.AnimationFadeInMS))
 	setIntPtr(record, "animationFadeOutMS", nonNegativeIntPtr(item.AnimationFadeOutMS))
+	if item.ClipSampled {
+		record["clipSampled"] = true
+	}
+	if item.RootMotion {
+		record["rootMotion"] = true
+	}
 	if item.Loop != nil {
 		record["loop"] = *item.Loop
 	}
@@ -2613,6 +2628,7 @@ func (item InstancedGLBMeshIR) legacyProps() map[string]any {
 	if item.SharedAppearance {
 		record["sharedAppearance"] = true
 	}
+	setString(record, "parentNode", item.ParentNode)
 	if len(item.Instances) > 0 {
 		instances := make([]map[string]any, 0, len(item.Instances))
 		for _, inst := range item.Instances {

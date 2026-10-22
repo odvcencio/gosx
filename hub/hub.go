@@ -576,6 +576,24 @@ func (h *Hub) BroadcastBinary(payload []byte) int {
 	return sent
 }
 
+// SendBinary sends one binary WebSocket frame to a single client and reports
+// whether the client accepted it. It copies payload, so the caller may reuse
+// the slice. A client with a full buffer loses the frame and raises the binary
+// drop counters. The same framing rule as BroadcastBinary applies: an
+// application frame starts with 0x00, because SyncDoc uses prefixes 1 to 255.
+func (h *Hub) SendBinary(clientID string, payload []byte) bool {
+	if len(payload) == 0 {
+		return false
+	}
+	h.mu.RLock()
+	client, ok := h.clients[clientID]
+	h.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	return client.tryBinarySend(append([]byte(nil), payload...))
+}
+
 // Send sends a message to a specific client.
 func (h *Hub) Send(clientID string, event string, data any) {
 	h.mu.RLock()

@@ -27,6 +27,7 @@ func TestGoModHasNoLocalReplace(t *testing.T) {
 	for _, name := range []string{
 		"go.mod",
 		filepath.Join("cmd", "buildbootstrap", "go.mod"),
+		filepath.Join("netplay", "webrtc", "go.mod"),
 	} {
 		data, err := os.ReadFile(name)
 		if err != nil {

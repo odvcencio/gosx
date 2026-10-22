@@ -464,6 +464,7 @@
       pendingEngineRuntimes.delete(pending.id);
     }
     releaseGoWASMEngineWaiter(pending);
+    if (pending.workerRecord) pending.workerRecord.terminate();
     if (!owned) return;
     if (!pending.runtimeDisposed && pending.runtime && typeof pending.runtime.dispose === "function") {
       pending.runtimeDisposed = true;
@@ -4743,7 +4744,13 @@
 
   async function resolveMountedEngineFactory(entry, pending) {
     if (engineUsesGoWASMRuntime(entry)) {
-      return resolveGoWASMEngineFactory(entry, pending);
+      const mainThread = () => resolveGoWASMEngineFactory(entry, pending);
+      if (entry.thread !== "worker") return mainThread();
+      // Thread "worker": the host chunk starts a Worker and falls back to
+      // mainThread, reporting why, when it cannot.
+      try { if (typeof ensureBootstrapFeature === "function") await ensureBootstrapFeature("engine-worker"); } catch (_) {}
+      const host = window.__gosx.engineWorker;
+      return host ? host.resolve(entry, pending, mainThread) : mainThread();
     }
     return { factory: resolveEngineFactory(entry), moduleRecord: null };
   }

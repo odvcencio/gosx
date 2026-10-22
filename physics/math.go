@@ -1,6 +1,10 @@
 package physics
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 const epsilon = 1e-9
 
@@ -20,7 +24,7 @@ func (v Vec3) Sub(o Vec3) Vec3 {
 }
 
 func (v Vec3) Mul(s float64) Vec3 {
-	return Vec3{X: v.X * s, Y: v.Y * s, Z: v.Z * s}
+	return Vec3{X: float64(v.X * s), Y: float64(v.Y * s), Z: float64(v.Z * s)}
 }
 
 func (v Vec3) Div(s float64) Vec3 {
@@ -35,14 +39,14 @@ func (v Vec3) Neg() Vec3 {
 }
 
 func (v Vec3) Dot(o Vec3) float64 {
-	return v.X*o.X + v.Y*o.Y + v.Z*o.Z
+	return float64(v.X*o.X) + float64(v.Y*o.Y) + float64(v.Z*o.Z)
 }
 
 func (v Vec3) Cross(o Vec3) Vec3 {
 	return Vec3{
-		X: v.Y*o.Z - v.Z*o.Y,
-		Y: v.Z*o.X - v.X*o.Z,
-		Z: v.X*o.Y - v.Y*o.X,
+		X: float64(v.Y*o.Z) - float64(v.Z*o.Y),
+		Y: float64(v.Z*o.X) - float64(v.X*o.Z),
+		Z: float64(v.X*o.Y) - float64(v.Y*o.X),
 	}
 }
 
@@ -114,17 +118,17 @@ func QuatFromAxisAngle(axis Vec3, angle float64) Quat {
 		return IdentityQuat()
 	}
 	half := angle * 0.5
-	s := math.Sin(half)
+	s := det.Sin(half)
 	return Quat{
-		X: normalized.X * s,
-		Y: normalized.Y * s,
-		Z: normalized.Z * s,
-		W: math.Cos(half),
+		X: float64(normalized.X * s),
+		Y: float64(normalized.Y * s),
+		Z: float64(normalized.Z * s),
+		W: det.Cos(half),
 	}.Normalize()
 }
 
 func (q Quat) Normalize() Quat {
-	length := math.Sqrt(q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W)
+	length := math.Sqrt(float64(q.X*q.X) + float64(q.Y*q.Y) + float64(q.Z*q.Z) + float64(q.W*q.W))
 	if length <= epsilon {
 		return IdentityQuat()
 	}
@@ -136,7 +140,7 @@ func (q Quat) Conjugate() Quat {
 }
 
 func (q Quat) Inverse() Quat {
-	length2 := q.X*q.X + q.Y*q.Y + q.Z*q.Z + q.W*q.W
+	length2 := float64(q.X*q.X) + float64(q.Y*q.Y) + float64(q.Z*q.Z) + float64(q.W*q.W)
 	if length2 <= epsilon {
 		return IdentityQuat()
 	}
@@ -145,10 +149,10 @@ func (q Quat) Inverse() Quat {
 
 func (q Quat) Mul(o Quat) Quat {
 	return Quat{
-		X: q.W*o.X + q.X*o.W + q.Y*o.Z - q.Z*o.Y,
-		Y: q.W*o.Y - q.X*o.Z + q.Y*o.W + q.Z*o.X,
-		Z: q.W*o.Z + q.X*o.Y - q.Y*o.X + q.Z*o.W,
-		W: q.W*o.W - q.X*o.X - q.Y*o.Y - q.Z*o.Z,
+		X: float64(q.W*o.X) + float64(q.X*o.W) + float64(q.Y*o.Z) - float64(q.Z*o.Y),
+		Y: float64(q.W*o.Y) - float64(q.X*o.Z) + float64(q.Y*o.W) + float64(q.Z*o.X),
+		Z: float64(q.W*o.Z) + float64(q.X*o.Y) - float64(q.Y*o.X) + float64(q.Z*o.W),
+		W: float64(q.W*o.W) - float64(q.X*o.X) - float64(q.Y*o.Y) - float64(q.Z*o.Z),
 	}
 }
 
@@ -156,37 +160,37 @@ func (q Quat) Rotate(v Vec3) Vec3 {
 	n := q.Normalize()
 	u := Vec3{X: n.X, Y: n.Y, Z: n.Z}
 	return u.Mul(2 * u.Dot(v)).
-		Add(v.Mul(n.W*n.W - u.Dot(u))).
+		Add(v.Mul(float64(n.W*n.W) - u.Dot(u))).
 		Add(u.Cross(v).Mul(2 * n.W))
 }
 
 func (q Quat) Slerp(to Quat, t float64) Quat {
 	a := q.Normalize()
 	b := to.Normalize()
-	dot := a.X*b.X + a.Y*b.Y + a.Z*b.Z + a.W*b.W
+	dot := float64(a.X*b.X) + float64(a.Y*b.Y) + float64(a.Z*b.Z) + float64(a.W*b.W)
 	if dot < 0 {
 		b = Quat{X: -b.X, Y: -b.Y, Z: -b.Z, W: -b.W}
 		dot = -dot
 	}
 	if dot > 0.9995 {
 		return Quat{
-			X: a.X + (b.X-a.X)*t,
-			Y: a.Y + (b.Y-a.Y)*t,
-			Z: a.Z + (b.Z-a.Z)*t,
-			W: a.W + (b.W-a.W)*t,
+			X: a.X + float64((b.X-a.X)*t),
+			Y: a.Y + float64((b.Y-a.Y)*t),
+			Z: a.Z + float64((b.Z-a.Z)*t),
+			W: a.W + float64((b.W-a.W)*t),
 		}.Normalize()
 	}
-	theta0 := math.Acos(dot)
-	theta := theta0 * t
-	sinTheta := math.Sin(theta)
-	sinTheta0 := math.Sin(theta0)
-	s0 := math.Cos(theta) - dot*sinTheta/sinTheta0
+	theta0 := det.Acos(dot)
+	theta := float64(theta0 * t)
+	sinTheta := det.Sin(theta)
+	sinTheta0 := det.Sin(theta0)
+	s0 := det.Cos(theta) - dot*sinTheta/sinTheta0
 	s1 := sinTheta / sinTheta0
 	return Quat{
-		X: a.X*s0 + b.X*s1,
-		Y: a.Y*s0 + b.Y*s1,
-		Z: a.Z*s0 + b.Z*s1,
-		W: a.W*s0 + b.W*s1,
+		X: float64(a.X*s0) + float64(b.X*s1),
+		Y: float64(a.Y*s0) + float64(b.Y*s1),
+		Z: float64(a.Z*s0) + float64(b.Z*s1),
+		W: float64(a.W*s0) + float64(b.W*s1),
 	}.Normalize()
 }
 

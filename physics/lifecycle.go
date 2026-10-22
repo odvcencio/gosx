@@ -20,6 +20,7 @@ func (w *World) RemoveBody(body *RigidBody) bool {
 	w.colliders = filterColliders(w.colliders, removedColliders)
 	w.constraints = filterConstraintsForBody(w.constraints, body)
 	w.pruneContactState(removedColliders)
+	//gosx:allow map-range each iteration writes only its own collider, so order does not matter
 	for collider := range removedColliders {
 		collider.index = 0
 	}
@@ -146,11 +147,13 @@ func (w *World) pruneContactState(removed map[*Collider]struct{}) {
 
 	if len(w.contactCache) > 0 {
 		removedIndexes := make(map[int]struct{}, len(removed))
+		//gosx:allow map-range builds a set, so order does not matter
 		for collider := range removed {
 			if collider != nil && collider.index != 0 {
 				removedIndexes[collider.index] = struct{}{}
 			}
 		}
+		//gosx:allow map-range deletes entries by key, so order does not matter
 		for key := range w.contactCache {
 			if _, drop := removedIndexes[key.a]; drop {
 				delete(w.contactCache, key)

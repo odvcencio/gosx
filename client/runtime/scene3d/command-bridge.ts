@@ -4,8 +4,10 @@
 /**
  * @typedef {object} GoSXScene3DCommandBridge
  * @property {(target: unknown, commands: unknown[], options?: object) => Promise<unknown>} dispatchCommands
+ * @property {(target: unknown, event: string, data: unknown, options?: object) => Promise<unknown>} live
  * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchPoseFrame
  * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchMotionFrame
+ * @property {(target: unknown, frame: ArrayBuffer|Uint8Array, options?: object) => Promise<unknown>} dispatchClipFrame
  * @property {(root: ParentNode) => unknown} applyCommandScripts
  */
 
@@ -24,12 +26,19 @@
   };
 
   // All public command and presentation calls share one demand-loaded bridge.
-  ["dispatchCommands", "dispatchPoseFrame", "dispatchMotionFrame", "playTimeline", "burstParticles", "setCamera", "whenReady", "setAnimationClock"].forEach(function(method) {
+  ["dispatchCommands", "live", "dispatchPoseFrame", "dispatchMotionFrame", "dispatchClipFrame", "playTimeline", "burstParticles", "setCamera", "whenReady", "setAnimationClock"].forEach(function(method) {
     api[method] = function() {
       const args = arguments;
       return loadCommandBridge().then(function(bridge) { return bridge[method](...args); });
     };
   });
+  // Clip frames arrive every simulation frame. Once the bridge is loaded, call it
+  // directly instead of chaining a load promise and a spread per frame.
+  const stagedClipFrame = api.dispatchClipFrame;
+  api.dispatchClipFrame = function() {
+    const bridge = window.__gosx_scene3d_command_bridge;
+    return bridge ? bridge.dispatchClipFrame.apply(bridge, arguments) : stagedClipFrame.apply(api, arguments);
+  };
   api.getCamera = function(target) {
     return window.__gosx_scene3d_command_bridge?.getCamera(target) || null;
   };
