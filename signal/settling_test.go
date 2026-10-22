@@ -196,3 +196,64 @@ func TestUnchangedDerivedBoundaryKeepsDependentsCached(t *testing.T) {
 		}
 	})
 }
+
+func TestDerivedObserverReadsItsOwnDependencyWrite(t *testing.T) {
+	for _, batch := range []bool{false, true} {
+		t.Run(map[bool]string{false: "direct", true: "batch"}[batch], func(t *testing.T) {
+			base := New(1)
+			computations := 0
+			result := Derive(func() int {
+				computations++
+				return 2 * base.Get()
+			})
+			defer result.Stop()
+			changed, seen, notifications := false, 0, 0
+			result.Subscribe(func() {
+				notifications++
+				if changed {
+					return
+				}
+				changed = true
+				writeAndRead := func() {
+					base.Set(3)
+					seen = result.Get()
+				}
+				if batch {
+					Batch(writeAndRead)
+				} else {
+					writeAndRead()
+				}
+			})
+			base.Set(2)
+			if seen != 6 || result.Get() != 6 || computations != 3 || notifications != 2 {
+				t.Fatalf("reentrant publication: read=%d value=%d computations=%d notifications=%d", seen, result.Get(), computations, notifications)
+			}
+		})
+	}
+}
+
+func TestComputedEqualityPanicDoesNotPoisonRefresh(t *testing.T) {
+	type payload struct{ value any }
+	base := New(1)
+	result := Derive(func() payload {
+		value := base.Get()
+		if value < 3 {
+			return payload{[]int{value}}
+		}
+		return payload{value}
+	})
+	defer result.Stop()
+	result.Subscribe(func() {})
+	var caught any
+	func() {
+		defer func() { caught = recover() }()
+		base.Set(2)
+	}()
+	if caught == nil {
+		t.Fatal("expected equality of dynamically incomparable values to panic")
+	}
+	base.Set(3)
+	if got := result.Get().value; got != 3 {
+		t.Fatalf("equality panic poisoned the next refresh: got %v, want 3", got)
+	}
+}

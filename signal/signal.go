@@ -357,6 +357,15 @@ func (c *Computed[T]) refresh() {
 			continue
 		}
 		value, deps := trackDependencies(c.compute)
+		notify := true
+		if equal := c.signal.equal; equal != nil {
+			c.signal.mu.Lock()
+			previous := c.signal.value
+			c.signal.mu.Unlock()
+			// Compare outside both locks: a struct containing an interface
+			// can panic on equality when its dynamic value is incomparable.
+			notify = !equal(previous, value)
+		}
 		c.mu.Lock()
 		stopped := c.stopped
 		stale := false
@@ -370,17 +379,37 @@ func (c *Computed[T]) refresh() {
 				}
 			}
 		}
-		c.mu.Unlock()
 		if stopped {
-			c.mu.Lock()
 			c.refreshing = false
 			completed = true
 			c.mu.Unlock()
 			return
 		}
-		if !stale {
-			c.signal.Set(value)
+		if stale {
+			c.mu.Unlock()
+			continue
 		}
+		// Commit before releasing the refresh owner, so another refresh
+		// cannot publish a newer value and then be overwritten by this one.
+		// Deliver callbacks afterward: an observer can write a dependency
+		// and synchronously read its newly derived value without a stale
+		// cache being pinned by the preceding publication.
+		var invalidators, subscribers []Subscriber
+		if notify {
+			c.signal.mu.Lock()
+			c.signal.value = value
+			c.signal.rev.Add(1)
+			invalidators, subscribers = c.signal.snapshotSubscribersLocked()
+			c.signal.mu.Unlock()
+		}
+		c.refreshing = false
+		completed = true
+		c.mu.Unlock()
+		for _, fn := range invalidators {
+			fn()
+		}
+		batchNotify(subscribers)
+		return
 	}
 }
 
