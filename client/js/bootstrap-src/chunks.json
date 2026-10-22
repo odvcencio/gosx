@@ -397,6 +397,14 @@
       ]
     },
     {
+      "name": "bootstrap-feature-scene3d-ocean-fft.js",
+      "sources": [
+        "../runtime/scene3d/ocean-fft-kernels.ts",
+        "../runtime/scene3d/ocean-fft-surface.ts",
+        "../runtime/scene3d/ocean-fft.ts"
+      ]
+    },
+    {
       "name": "bootstrap-feature-scene3d-vessel.js",
       "sources": [
         "../runtime/scene3d/vessel-instruments.ts",
