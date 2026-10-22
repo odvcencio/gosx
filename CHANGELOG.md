@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
 ## v0.57.19
 
 - Select Scene3D model-map variants by each mount's delivery profile and actual
