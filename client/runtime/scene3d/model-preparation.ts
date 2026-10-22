@@ -34,7 +34,7 @@ function sceneModelPreparationMaps(asset: any, renderer: any, records: Set<any>)
     }
   }
 }
-function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], signal: AbortSignal) {
+function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], signal: AbortSignal, selectedScope?: any) {
   const selected = sceneModelPreparationSnapshot(requests), state = mount?.__gosxScene3DState;
   const handle = mount?.__gosxScene3DHandle, renderer = state?._crowdRenderer;
   const canvas = mount?.querySelector('canvas');
@@ -48,7 +48,9 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
       done = true;
       canvas.removeEventListener('gosx:scene3d:resource-ready', check);
       signal?.removeEventListener('abort', cancel);
-      error ? reject(error) : resolve({ models: selected.length, textures: records.size });
+      error ? reject(error) : resolve(selectedScope
+        ? { models: selected.length, textures: records.size, records: Array.from(records) }
+        : { models: selected.length, textures: records.size });
     }
     function cancel() { close(new DOMException('Scene3D preparation canceled', 'AbortError')); }
     function check() {
@@ -69,7 +71,7 @@ function scenePrepareModels(mount: any, requests: SceneModelPreparationSpec[], s
     check();
     if (done) return;
     Promise.all(selected.map(async req => {
-      const asset = await window.__gosx_scene3d_preload_model(req.src, { variantScope: state._modelTextureVariantScope });
+      const asset = await window.__gosx_scene3d_preload_model(req.src, { variantScope: selectedScope || state._modelTextureVariantScope });
       check();
       if (done) return;
       if (!asset?.objects?.length) throw new Error('Scene3D model failed or has no geometry: ' + req.id + ': ' + req.src);

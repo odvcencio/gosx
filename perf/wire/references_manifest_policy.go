@@ -72,7 +72,7 @@ var manifestFieldPolicies = func() map[string]manifestFieldPolicy {
 	add("clientIdentity.", "storageKey cookieName legacyCookieNames headerName globalName prefix maxAgeSeconds sameSite", manifestMetadata, true, "client/runtime/host/hubs.ts:275-373", "Browser identity storage, cookie and header configuration; no independently fetched URL.")
 	add("", "textureVariants", manifestFetchedGated, false, "client/runtime/scene3d/gltf.ts:2903-2906,3012-3063", "Map keys select a source texture; device/quality selection and variant fetches are not modelled.")
 	add("textureVariants{}[].", "uri", manifestFetchedGated, false, "client/runtime/scene3d/gltf.ts:2963-2982,3042-3055", "Device-qualified chosen URI replaces a fetched image; selection is not modelled.")
-	add("textureVariants{}[].", "quality bytes requiredCapabilities", manifestMetadata, true, "client/runtime/scene3d/gltf.ts:2963-3010", "Ranking/eligibility metadata; URI is the fetch target.")
+	add("textureVariants{}[].", "quality bytes requiredCapabilities role colorSpace format channels mipLevels", manifestMetadata, true, "client/runtime/scene3d/gltf.ts:2963-3010", "Ranking, material-usage, format and mip eligibility metadata; URI is the fetch target, and variant selection remains unmodelled.")
 	add("commands[].", "id", manifestMetadata, true, "client/runtime/host/workbench.ts:92-96,143-145,155-157", "Registry lookup and command-event identity; no URL selection.")
 	add("commands[].", "title", manifestMetadata, true, "client/runtime/host/workbench.ts:155", "Command-list display metadata; no URL loader.")
 	add("commands[].", "keys", manifestMetadata, true, "client/runtime/host/workbench.ts:48-82,144-150,164", "Parsed keyboard chords and ARIA shortcut labels; strings are never loader URLs.")

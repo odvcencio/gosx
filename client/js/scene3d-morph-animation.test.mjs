@@ -24,6 +24,11 @@ function readRuntimeSource(name) {
   return fs.readFileSync(path.join(__dirname, "..", "runtime", "scene3d", name), "utf8");
 }
 
+// Match the production TypeScript syntax before evaluating the real loader.
+const gltfSource = ts.transpileModule(readRuntimeSource("gltf.ts"), {
+  compilerOptions: { target: ts.ScriptTarget.ES2022 },
+}).outputText;
+
 // One triangle, 5 morph targets: POSITION deltas on all targets, NORMAL and
 // TANGENT deltas on TARGET 0 ONLY (absent channels must fold as zero — part
 // of the contract under test). LINEAR weight channel over node 0 with
@@ -220,7 +225,7 @@ function createContextWithFetch() {
   sandbox.__morphRoutes = routes;
   const context = vm.createContext(sandbox);
   vm.runInContext(readChunkSource("11-scene-math.ts"), context, { filename: "11-scene-math.ts" });
-  vm.runInContext(readRuntimeSource("gltf.ts"), context, { filename: "gltf.ts" });
+  vm.runInContext(gltfSource, context, { filename: "gltf.ts" });
   vm.runInContext(FIXTURE_SOURCE, context, { filename: "morph-fixture.js" });
   return { context, consoleLogs };
 }
