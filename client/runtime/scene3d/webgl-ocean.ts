@@ -231,7 +231,7 @@ function sceneOceanWebGLDraw(resources, gl, opts) {
   let state = "none";
   if (env && env.ocean) {
     // A spectral ocean runs its gather passes first (float render targets, EXT_color_buffer_float); null keeps the Gerstner surface.
-    const api = window.__gosx_scene3d_ocean_fft_gl_api, fft = env.ocean.spectrum && api ? api.frame(resources, gl, { ocean: env.ocean, tier: opts.quality, time: opts.timeSeconds, camera: opts.camera, textureCache: opts.textureCache, mount: opts.mount, caps: sceneWaterGLFloatCaps }) : null;
+    const api = window.__gosx_scene3d_ocean_fft_gl_api, fft = env.ocean.spectrum && api ? api.run(resources, gl, { ocean: env.ocean, tier: opts.quality, time: opts.timeSeconds, camera: opts.camera, textureCache: opts.textureCache, mount: opts.mount, caps: sceneWaterGLFloatCaps }) : null;
     if (!fft && resources.fft) { resources.fft.dispose(); resources.fft = null; }
     const featureKey = (sceneOceanReflections(oceanReflections(env)) ? 1 : 0) + (env.sky && env.sky.mode === "physical" && env.sky.clouds ? 2 : 0) + (fft ? 4 : 0);
     if (resources.renderer && resources.featureKey !== featureKey) { resources.renderer.dispose(); resources.renderer = null; resources.failed = false; }

@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { webglInit, glTiming, describeTiming } from './scene3d-gl-timer.mjs';
 
 const toolsDir = process.env.SCENE3D_TOOLS_DIR;
 if (!toolsDir) throw new Error('set SCENE3D_TOOLS_DIR to a directory that contains node_modules/playwright-core');
@@ -29,6 +30,8 @@ for (const name of ['playwright', 'playwright-core']) {
 }
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : fallback; };
+const backend = arg('--backend', 'webgpu'); // 'webgl' hides WebGPU so Scene3D draws with WebGL2, and times the frames with EXT_disjoint_timer_query_webgl2
+if (backend !== 'webgpu' && backend !== 'webgl') throw new Error('--backend must be webgpu or webgl');
 const base = arg('--base', 'http://localhost:8091').replace(/\/$/, '');
 const outDir = arg('--out', '');
 if (!outDir) throw new Error('pass --out <dir>');
@@ -45,6 +48,7 @@ const browser = await chromium.launchPersistentContext(profile, {
   args: ['--enable-gpu', '--use-angle=d3d11', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-dawn-features=allow_unsafe_apis'],
 });
 const page = browser.pages()[0] || await browser.newPage();
+if (backend === 'webgl') await page.addInitScript(webglInit);
 page.on('pageerror', error => console.error('[pageerror]', error.message));
 page.on('console', message => { if (message.type() === 'warning' || message.type() === 'error') console.error('[console]', message.text().slice(0, 300)); });
 
@@ -65,7 +69,7 @@ for (const view of ['shore', 'cliff', 'ship']) {
         failed: attr('data-gosx-scene3d-webgpu-pipeline-failed'), gpuMs: attr('data-gosx-scene3d-webgpu-gpu-ms') };
     });
     await page.screenshot({ path: path.join(outDir, name + '.png') });
-    console.log(`${name}: ocean ${state.ocean}, backend ${state.backend}, gpu ${state.gpuMs} ms${state.failed ? ', pipeline failures ' + state.failed : ''}`);
+    console.log(`${name}: ocean ${state.ocean}, backend ${state.backend}, ${backend === 'webgl' ? describeTiming(await glTiming(page)) : 'gpu ' + state.gpuMs + ' ms'}${state.failed ? ', pipeline failures ' + state.failed : ''}`);
     if (state.failed) failed = true;
   }
 }

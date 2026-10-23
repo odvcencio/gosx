@@ -30,3 +30,16 @@ func TestCompactShaderSourceKeepsDetailInjectionAnchor(t *testing.T) {
 		t.Fatal("detail injection anchor changed")
 	}
 }
+
+// The ocean chunk rewrites the ocean's GLSL by text, so those two arrays keep the authored spacing; other shaders are compacted.
+func TestShaderIndentationLeavesTextPatchedOceanShadersAlone(t *testing.T) {
+	source := "const SCENE_OCEAN_VERTEX_GLSL = [\n  \"  vec3 p = vec3(xz.x, level, xz.y), dx = vec3(1.0, 0.0, 0.0);\",\n];\n" +
+		"const SCENE_SKY_FRAGMENT_GLSL = [\n  \"  vec3 q = vec3(1.0, 2.0, 3.0);\",\n];\n"
+	got := compactShaderIndentation(source)
+	if !strings.Contains(got, `"  vec3 p = vec3(xz.x, level, xz.y), dx = vec3(1.0, 0.0, 0.0);"`) {
+		t.Errorf("the text-patched ocean shader changed: %s", got)
+	}
+	if !strings.Contains(got, `"vec3 q=vec3(1.,2.,3.);"`) {
+		t.Errorf("another shader must still be compacted: %s", got)
+	}
+}

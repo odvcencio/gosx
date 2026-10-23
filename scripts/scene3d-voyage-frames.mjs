@@ -16,6 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import { webglInit, glTiming, describeTiming } from './scene3d-gl-timer.mjs';
 
 const toolsDir = process.env.SCENE3D_TOOLS_DIR;
 if (!toolsDir) throw new Error('set SCENE3D_TOOLS_DIR to a directory that contains node_modules/playwright-core');
@@ -26,6 +27,8 @@ for (const name of ['playwright', 'playwright-core']) {
 }
 const argv = process.argv.slice(2);
 const arg = (name, fallback) => { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : fallback; };
+const backend = arg('--backend', 'webgpu'); // 'webgl' hides WebGPU so Scene3D draws with WebGL2, and times the frames with EXT_disjoint_timer_query_webgl2
+if (backend !== 'webgpu' && backend !== 'webgl') throw new Error('--backend must be webgpu or webgl');
 const base = arg('--base', 'http://localhost:8091').replace(/\/$/, '');
 const outDir = arg('--out', '');
 if (!outDir) throw new Error('pass --out <dir>');
@@ -43,6 +46,7 @@ const browser = await chromium.launchPersistentContext(profile, {
   args: ['--enable-gpu', '--use-angle=d3d11', '--enable-unsafe-webgpu', '--ignore-gpu-blocklist', '--enable-dawn-features=allow_unsafe_apis'],
 });
 const page = browser.pages()[0] || await browser.newPage();
+if (backend === 'webgl') await page.addInitScript(webglInit);
 page.on('pageerror', error => console.error('[pageerror]', error.message));
 page.on('console', message => { if (['warning', 'error'].includes(message.type()) && !/preloaded|CORS|Failed to load resource/.test(message.text())) console.error('[console]', message.text().slice(0, 300)); });
 
@@ -56,7 +60,7 @@ const state = () => page.evaluate(() => {
   return { ocean: mount.getAttribute('data-gosx-scene3d-ocean'), period: root && root.getAttribute('data-period'), view: root && root.getAttribute('data-view'),
     failed: mount.getAttribute('data-gosx-scene3d-webgpu-pipeline-failed'), gpuMs: mount.getAttribute('data-gosx-scene3d-webgpu-gpu-ms') };
 });
-const shot = async name => { await page.screenshot({ path: path.join(outDir, name + '.png') }); const s = await state(); console.log(`${name}: ocean ${s.ocean}, period ${s.period}, view ${s.view}, gpu ${s.gpuMs} ms${s.failed ? ', pipeline failures ' + s.failed : ''}`); return s; };
+const shot = async name => { await page.screenshot({ path: path.join(outDir, name + '.png') }); const s = await state(); console.log(`${name}: ocean ${s.ocean}, period ${s.period}, view ${s.view}, ${backend === 'webgl' ? describeTiming(await glTiming(page)) : 'gpu ' + s.gpuMs + ' ms'}${s.failed ? ', pipeline failures ' + s.failed : ''}`); return s; };
 let failed = false;
 const check = s => { if (s.failed || !/\+spectrum$/.test(String(s.ocean))) failed = true; };
 

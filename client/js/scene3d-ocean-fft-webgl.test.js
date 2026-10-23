@@ -42,7 +42,7 @@ function rendererWithStub(options = {}) {
   const window = h.env.context.window || h.env.context;
   h.env.context.window = window;
   loadSources(h.env.context, ["ocean-fft-surface-gl.ts"]);
-  window.__gosx_scene3d_ocean_fft_gl_api = { frame: (resources, g, host) => {
+  window.__gosx_scene3d_ocean_fft_gl_api = { run: (resources, g, host) => {
     calls.frame.push(host);
     if (engine) { resources.fft = engine; }
     return engine;
@@ -154,7 +154,7 @@ function glue(glOptions) {
   const gl = new RecordingGL(glOptions), api = context.window.__gosx_scene3d_ocean_fft_gl_api, ocean = context.window.__gosx_scene3d_ocean_fft_api;
   const mount = { attrs: {}, setAttribute(k, v) { this.attrs[k] = v; } }, textureCache = { _sceneTextureEpoch: 0 };
   const resources = {};
-  const frame = (env, extra) => api.frame(resources, gl, Object.assign({ ocean: env, tier: "high", time: 0, camera: { x: 0, y: 30, z: 0 }, textureCache, mount, caps: floatCaps }, extra));
+  const frame = (env, extra) => api.run(resources, gl, Object.assign({ ocean: env, tier: "high", time: 0, camera: { x: 0, y: 30, z: 0 }, textureCache, mount, caps: floatCaps }, extra));
   return { context, gl, api, ocean, mount, textureCache, resources, frame };
 }
 const spectral = (extra) => Object.assign({ level: 0, spectrum: { windSpeed: 9 }, graphParams: { windSpeed: 9, foamThreshold: 0.3, driftX: 2, driftZ: 0 }, graphTween: 0 }, extra);
@@ -231,4 +231,53 @@ test("glue (WebGL2): there is no probe on WebGL2; the vessel's points are record
   assert.ok(g.frame(env, { time: 1.02 }));
   assert.equal(g.resources.fft.runner.failed, null);
   assert.equal(g.gl.ops.filter((o) => o[0] === "readPixels").length, 0, "no readback of any kind on WebGL2");
+});
+
+// The lazy WebGL chunk is minified with property mangling that the monolith and the fresh sources do not get. The two chunks share
+// the glue's API by property name, so the shipped lazy chunks themselves must work together.
+test("the shipped lazy WebGL chunk and the shipped ocean chunk agree on the glue's API names", () => {
+  const { createContext, runScript } = require("./runtime-test-harness.js");
+  const read = (name) => fs.readFileSync(path.join(__dirname, name), "utf8");
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  env.context.WebGL2RenderingContext = RecordingGL;
+  for (const name of ["bootstrap-runtime.js", "bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-compute.js", "bootstrap-feature-scene3d-webgl.js", "bootstrap-feature-scene3d-ocean-fft.js"]) runScript(read(name), env.context, name);
+  const glue = env.context.__gosx_scene3d_ocean_fft_gl_api;
+  assert.deepEqual(Object.keys(glue).sort(), ["fail", "run"]);
+  const webgl = read("bootstrap-feature-scene3d-webgl.js");
+  assert.ok(!/__gosx_scene3d_ocean_fft_gl_api[^;]{0,200}\.frame\(/.test(webgl), "the WebGL chunk must not call a method its minifier renames");
+  assert.match(webgl, /__gosx_scene3d_ocean_fft_gl_api[,;][^;]{0,160}\.run\(/, "it calls run");
+  for (const key of ["run", "fail"]) assert.ok(new RegExp("[{,]" + key + ":").test(read("bootstrap-feature-scene3d-ocean-fft.js")), key + " is published unmangled");
+});
+
+test("the shipped lazy chunks render a spectral ocean on WebGL2: the packed GLSL still takes the surface patch and the graph runs", () => {
+  const { createContext, runScript, FakeWebGLContext } = require("./runtime-test-harness.js");
+  const read = (name) => fs.readFileSync(path.join(__dirname, name), "utf8");
+  const env = createContext({ enableWebGL2: true, disableCanvas2D: true });
+  env.context.WebGL2RenderingContext = FakeWebGLContext;
+  for (const name of ["bootstrap-runtime.js", "bootstrap-feature-scene3d.js", "bootstrap-feature-scene3d-compute.js", "bootstrap-feature-scene3d-webgl.js", "bootstrap-feature-scene3d-ocean-fft.js"]) runScript(read(name), env.context, name);
+  const api = env.context.__gosx_scene3d_api;
+  const backend = api.sceneBackendRegistry.select({ webgl: true, webgl2: true, webgpu: false, canvas: false, canvas2d: false });
+  const canvas = env.document.createElement("canvas"); canvas.width = 320; canvas.height = 180;
+  const mount = env.document.createElement("div"); mount.appendChild(canvas);
+  const renderer = backend.create(canvas, { background: "#000000" }, { tier: "full" });
+  const gl = canvas.getContext("webgl2");
+  const extensions = new Set(["EXT_color_buffer_float"]);
+  const getExtension = gl.getExtension.bind(gl), getParameter = gl.getParameter.bind(gl);
+  gl.getExtension = (name) => extensions.has(name) ? {} : getExtension(name);
+  gl.getParameter = (p) => ({ [GLC.MAX_VERTEX_TEXTURE_IMAGE_UNITS]: 16, [GLC.MAX_TEXTURE_IMAGE_UNITS]: 16, [GLC.MAX_DRAW_BUFFERS]: 8, [GLC.UNIFORM_BUFFER_OFFSET_ALIGNMENT]: 256,
+    [GLC.COLOR_WRITEMASK]: [true, true, true, true], [GLC.DEPTH_WRITEMASK]: true })[p] ?? getParameter(p);
+  const enabled = new Set([gl.CULL_FACE]);
+  gl.isEnabled = (c) => enabled.has(c); gl.enable = (c) => enabled.add(c); gl.disable = (c) => enabled.delete(c);
+  for (const [name, fn] of Object.entries({ createSampler: () => ({}), deleteSampler() {}, samplerParameteri() {}, bindSampler() {}, uniform4fv() {}, uniform1i() {}, uniform1ui() {}, blendFuncSeparate() {}, uniformMatrix4fv() {},
+    getUniformBlockIndex: () => 0, uniformBlockBinding() {}, bindBufferBase() {}, bindBufferRange() {}, colorMask() {}, readPixels() {}, texSubImage2D() {}, bufferSubData() {}, texStorage2D() {}, framebufferTexture2D() {}, generateMipmap() {},
+    getUniformLocation: (p, n) => ({ n }) })) if (!gl[name]) gl[name] = fn;
+  Object.assign(gl, Object.fromEntries(Object.entries(GLC).filter(([k]) => gl[k] === undefined)));
+  const bundle = sceneBundle({ windSpeed: 9 });
+  bundle.environment.ocean.graphParams = { windSpeed: 9 };
+  renderer.render(bundle, { width: 320, height: 180 });
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ocean-fft-fallback"), null, "no fallback reason: " + mount.getAttribute("data-gosx-scene3d-ocean-fft-fallback"));
+  assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface+spectrum");
+  const draws = gl.ops.filter((op) => op[0] === "drawArrays" && op[3] === 3).length;
+  assert.ok(draws > 60, "the gather passes ran: " + draws);
+  renderer.dispose();
 });

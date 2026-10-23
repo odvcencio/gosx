@@ -103,11 +103,13 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
   }
   // WebGL2 timing: queue TIME_ELAPSED queries around the chosen span and read finished ones on later frames.
   const queries = [], samples = [];
+  let timing = false;
   const timed = (fn) => {
-    if (!timer) return fn();
+    if (!timer || timing) return fn(); // GL allows one TIME_ELAPSED query at a time
     const q = gl.createQuery();
     gl.beginQuery(timer.TIME_ELAPSED_EXT, q);
-    try { return fn(); } finally { gl.endQuery(timer.TIME_ELAPSED_EXT); queries.push(q); }
+    timing = true;
+    try { return fn(); } finally { gl.endQuery(timer.TIME_ELAPSED_EXT); timing = false; queries.push(q); }
   };
   const drain = () => {
     if (!timer) return;
@@ -117,10 +119,10 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       if (!bad) samples.push(ns / 1e6);
     }
   };
-  const gather = window.__gosx_scene3d_ocean_fft_gl_api; // the WebGL2 ocean host, once one is installed
+  const gather = window.__gosx_scene3d_ocean_fft_gl_api; // the WebGL2 ocean glue: run() executes the graph's gather passes
   if (webgl && timeMode === 'gather' && gather) {
-    const inner = gather.frame;
-    gather.frame = function () { return timed(() => inner.apply(this, arguments)); };
+    const inner = gather.run;
+    gather.run = function () { return timed(() => inner.apply(this, arguments)); };
   }
   const copy = document.createElement('canvas');
   copy.width = W; copy.height = H;

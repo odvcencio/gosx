@@ -331,5 +331,6 @@
   }
 
   window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
-  window.__gosx_scene3d_ocean_fft_gl_api = { frame: frameGL, fail: failGL };
+  // The WebGL chunk's minifier renames some property names (frame among them); the method the two chunks share is called run.
+  window.__gosx_scene3d_ocean_fft_gl_api = { run: frameGL, fail: failGL };
 })();
