@@ -1,3 +1,5 @@
+//gosx:deterministic
+
 // Package preview renders typed GoSX Scene3D scenes without a browser, WebGPU,
 // or a platform graphics driver. It is intended for authoring previews,
 // thumbnails, documentation images, and deterministic visual tests.
@@ -14,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"m31labs.dev/gosx/det"
 	"m31labs.dev/gosx/engine"
 	"m31labs.dev/gosx/render/bundle"
 	"m31labs.dev/gosx/render/gpu/headless"
@@ -194,10 +197,12 @@ func renderBundle(frame engine.RenderBundle, opts Options) (*Result, error) {
 		return nil, fmt.Errorf("scene preview: create renderer: %w", err)
 	}
 	defer renderer.Destroy()
+	//gosx:allow wall-clock measures render duration for Result.Duration only; no output pixel reads it
 	started := time.Now()
 	if err := renderer.Frame(frame, opts.Width, opts.Height, opts.Time); err != nil {
 		return nil, fmt.Errorf("scene preview: render frame: %w", err)
 	}
+	//gosx:allow wall-clock measures render duration for Result.Duration only; no output pixel reads it
 	elapsed := time.Since(started)
 	return &Result{Image: cloneRGBA(device.Framebuffer()), Bundle: frame, Stats: renderer.Stats(), Duration: elapsed}, nil
 }
@@ -220,8 +225,8 @@ func Bundle(props scene.Props, opts Options) engine.RenderBundle {
 
 func lookAtRotation(eye, target scene.Vector3) scene.Euler {
 	dx, dy, dz := eye.X-target.X, eye.Y-target.Y, eye.Z-target.Z
-	horizontal := math.Hypot(dx, dz)
-	return scene.Euler{X: math.Atan2(dy, horizontal), Y: -math.Atan2(dx, dz)}
+	horizontal := det.Hypot(dx, dz)
+	return scene.Euler{X: det.Atan2(dy, horizontal), Y: -det.Atan2(dx, dz)}
 }
 
 // BundleIR maps canonical SceneIR records onto the shared native renderer
@@ -405,7 +410,7 @@ func renderCamera(camera scene.PerspectiveCamera) engine.RenderCamera {
 	}
 	// Public Scene3D FOV is authored in degrees; RenderBundle uses radians.
 	if math.Abs(fov) > math.Pi*2 {
-		fov *= math.Pi / 180
+		fov = float64(fov * (math.Pi / 180))
 	}
 	near, far := camera.Near, camera.Far
 	if near <= 0 {
@@ -578,24 +583,24 @@ func composeParentMatrix(parent, local []float64) []float64 {
 	out := make([]float64, 16)
 	for column := 0; column < 4; column++ {
 		for row := 0; row < 4; row++ {
-			out[column*4+row] = parent[row]*local[column*4] +
-				parent[4+row]*local[column*4+1] +
-				parent[8+row]*local[column*4+2] +
-				parent[12+row]*local[column*4+3]
+			out[column*4+row] = float64(parent[row]*local[column*4]) +
+				float64(parent[4+row]*local[column*4+1]) +
+				float64(parent[8+row]*local[column*4+2]) +
+				float64(parent[12+row]*local[column*4+3])
 		}
 	}
 	return out
 }
 
 func trsMatrix(x, y, z, rx, ry, rz, sx, sy, sz float64) []float64 {
-	cx, sxn := math.Cos(rx), math.Sin(rx)
-	cy, syn := math.Cos(ry), math.Sin(ry)
-	cz, szn := math.Cos(rz), math.Sin(rz)
+	cx, sxn := det.Cos(rx), det.Sin(rx)
+	cy, syn := det.Cos(ry), det.Sin(ry)
+	cz, szn := det.Cos(rz), det.Sin(rz)
 	// Column-major Rz*Ry*Rx with scale applied to each basis column.
 	return []float64{
-		(cz * cy) * sx, (szn * cy) * sx, (-syn) * sx, 0,
-		(cz*syn*sxn - szn*cx) * sy, (szn*syn*sxn + cz*cx) * sy, (cy * sxn) * sy, 0,
-		(cz*syn*cx + szn*sxn) * sz, (szn*syn*cx - cz*sxn) * sz, (cy * cx) * sz, 0,
+		float64((cz * cy) * sx), float64((szn * cy) * sx), float64((-syn) * sx), 0,
+		float64((float64(cz*syn*sxn) - float64(szn*cx)) * sy), float64((float64(szn*syn*sxn) + float64(cz*cx)) * sy), float64((cy * sxn) * sy), 0,
+		float64((float64(cz*syn*cx) + float64(szn*sxn)) * sz), float64((float64(szn*syn*cx) - float64(cz*sxn)) * sz), float64((cy * cx) * sz), 0,
 		x, y, z, 1,
 	}
 }
@@ -609,9 +614,9 @@ func transformPointPositions(points scene.PointsIR) []float64 {
 	copy(out, points.Positions)
 	for index := 0; index+2 < len(out); index += 3 {
 		x, y, z := out[index], out[index+1], out[index+2]
-		out[index] = matrix[0]*x + matrix[4]*y + matrix[8]*z + matrix[12]
-		out[index+1] = matrix[1]*x + matrix[5]*y + matrix[9]*z + matrix[13]
-		out[index+2] = matrix[2]*x + matrix[6]*y + matrix[10]*z + matrix[14]
+		out[index] = float64(matrix[0]*x) + float64(matrix[4]*y) + float64(matrix[8]*z) + matrix[12]
+		out[index+1] = float64(matrix[1]*x) + float64(matrix[5]*y) + float64(matrix[9]*z) + matrix[13]
+		out[index+2] = float64(matrix[2]*x) + float64(matrix[6]*y) + float64(matrix[10]*z) + matrix[14]
 	}
 	return out
 }
@@ -673,6 +678,7 @@ func renderPostEffectJSON(data []byte) (engine.RenderPostEffect, bool) {
 	var raw map[string]any
 	if json.Unmarshal(data, &raw) == nil {
 		out.Params = make(map[string]float64)
+		//gosx:allow map-range copies each parameter independently into a map
 		for key, value := range raw {
 			if n, ok := value.(float64); ok {
 				out.Params[key] = n
@@ -702,6 +708,7 @@ func cloneAttributes(in map[string][]float64) map[string][]float64 {
 		return nil
 	}
 	out := make(map[string][]float64, len(in))
+	//gosx:allow map-range copies each entry independently into a map
 	for key, value := range in {
 		out[key] = append([]float64(nil), value...)
 	}

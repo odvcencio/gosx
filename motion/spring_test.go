@@ -49,9 +49,9 @@ func TestSpringDeterminism(t *testing.T) {
 	x := from
 	v := m.Velocity
 	for i := 0; i < N; i++ {
-		F := -m.Stiffness*(x-to) - m.Damping*v
-		v += (F / m.Mass) * SpringDT
-		x += v * SpringDT
+		F := float64(-m.Stiffness*(x-to)) - float64(m.Damping*v)
+		v += float64((F / m.Mass) * SpringDT)
+		x += float64(v * SpringDT)
 	}
 	manual := x
 
@@ -93,9 +93,9 @@ func durationIntegrated(s Spring, from, to float64) float64 {
 	v := p.Velocity
 
 	for i := 0; i < maxSteps; i++ {
-		F := -p.Stiffness*(x-to) - p.Damping*v
-		v += (F / p.Mass) * SpringDT
-		x += v * SpringDT
+		F := float64(-p.Stiffness*(x-to)) - float64(p.Damping*v)
+		v += float64((F / p.Mass) * SpringDT)
+		x += float64(v * SpringDT)
 
 		if math.Abs(x-to) < 1e-3 && math.Abs(v) < 1e-3 {
 			return float64(i+1) * SpringDT

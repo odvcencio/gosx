@@ -86,6 +86,7 @@ func ValidBufferAttributeName(name string) bool {
 // iteration order.
 func sortedBufferAttributeNames(attributes map[string]BufferAttribute) []string {
 	names := make([]string, 0, len(attributes))
+	//gosx:allow map-range keys are sorted on the next lines
 	for name := range attributes {
 		names = append(names, name)
 	}

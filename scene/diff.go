@@ -377,6 +377,7 @@ var sceneIRRemountFieldNames = sortedRemountFieldNames()
 
 func sortedRemountFieldNames() []string {
 	names := make([]string, 0, len(sceneIRFieldPolicies))
+	//gosx:allow map-range keys are sorted on the next lines
 	for name, policy := range sceneIRFieldPolicies {
 		if policy.policy == sceneIRRemount {
 			names = append(names, name)

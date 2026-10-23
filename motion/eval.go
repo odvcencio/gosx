@@ -1,6 +1,10 @@
 package motion
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // Eval samples the timeline at time t (seconds) and appends packed writes to out.
 // Pure function of t — no mutable cross-call state. Zero heap allocation on the hot
@@ -97,7 +101,7 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 
 	switch gen.Kind {
 	case GenSpin:
-		q := QuatFromEuler(gen.Spin[0]*t, gen.Spin[1]*t, gen.Spin[2]*t)
+		q := QuatFromEuler(float64(gen.Spin[0]*t), float64(gen.Spin[1]*t), float64(gen.Spin[2]*t))
 		scratch[0] = q.X
 		scratch[1] = q.Y
 		scratch[2] = q.Z
@@ -109,7 +113,7 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 			return
 		}
 		for a := 0; a < 3; a++ {
-			scratch[a] = gen.Base.F[a] + gen.Drift[a]*math.Sin(t*gen.DriftSpeed[a]+gen.DriftPhase[a])
+			scratch[a] = gen.Base.F[a] + float64(gen.Drift[a]*det.Sin(float64(t*gen.DriftSpeed[a])+gen.DriftPhase[a]))
 		}
 		out.Push(track.TargetID, track.PropID, Value{Arity: ArityVec3, F: scratch})
 
@@ -125,7 +129,7 @@ func evalGenerator(track *Track, t float64, policy Policy, out *WriteBuf) {
 		// Per-component sinusoidal pulse at the output arity (zero-alloc).
 		w := gen.OscArity.Width()
 		for a := 0; a < w; a++ {
-			scratch[a] = gen.OscBase[a] + gen.OscAmp[a]*math.Sin(t*gen.OscFreq[a]*2*math.Pi+gen.OscPhase[a])
+			scratch[a] = gen.OscBase[a] + float64(gen.OscAmp[a]*det.Sin(float64(t*gen.OscFreq[a]*2*math.Pi)+gen.OscPhase[a]))
 		}
 		out.Push(track.TargetID, track.PropID, Value{Arity: gen.OscArity, F: scratch})
 

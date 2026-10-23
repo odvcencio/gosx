@@ -290,8 +290,8 @@ func (r bvhRay) hitsBox(box aabb, padding, maxDistance float64) bool {
 		far = maxDistance
 	}
 
-	lower := (box.Min.X - padding - r.origin.X) * r.inverse.X
-	upper := (box.Max.X + padding - r.origin.X) * r.inverse.X
+	lower := float64((box.Min.X - padding - r.origin.X) * r.inverse.X)
+	upper := float64((box.Max.X + padding - r.origin.X) * r.inverse.X)
 	if lower > upper {
 		lower, upper = upper, lower
 	}
@@ -301,8 +301,8 @@ func (r bvhRay) hitsBox(box aabb, padding, maxDistance float64) bool {
 		return false
 	}
 
-	lower = (box.Min.Y - padding - r.origin.Y) * r.inverse.Y
-	upper = (box.Max.Y + padding - r.origin.Y) * r.inverse.Y
+	lower = float64((box.Min.Y - padding - r.origin.Y) * r.inverse.Y)
+	upper = float64((box.Max.Y + padding - r.origin.Y) * r.inverse.Y)
 	if lower > upper {
 		lower, upper = upper, lower
 	}
@@ -312,8 +312,8 @@ func (r bvhRay) hitsBox(box aabb, padding, maxDistance float64) bool {
 		return false
 	}
 
-	lower = (box.Min.Z - padding - r.origin.Z) * r.inverse.Z
-	upper = (box.Max.Z + padding - r.origin.Z) * r.inverse.Z
+	lower = float64((box.Min.Z - padding - r.origin.Z) * r.inverse.Z)
+	upper = float64((box.Max.Z + padding - r.origin.Z) * r.inverse.Z)
 	if lower > upper {
 		lower, upper = upper, lower
 	}
@@ -911,7 +911,7 @@ func (a *SceneAccelerator) intersect(prim *accelPrim, ray Ray, threshold float64
 	case primPoint, primSprite:
 		radius := threshold
 		if prim.kind == primSprite {
-			radius *= prim.scale.X
+			radius = float64(radius * prim.scale.X)
 		}
 		hit, ok := intersectWorldSphere(ray, prim.world.Position, radius)
 		if !ok {
@@ -1036,7 +1036,7 @@ func (a *SceneAccelerator) flattenMesh(mesh Mesh, parent worldTransform) {
 		pickable: mesh.Pickable == nil || *mesh.Pickable,
 		stroked:  strokes > 0,
 		index:    -1,
-		radius:   radius*worldScaleBound(world, scale) + strokes*a.buildThreshold,
+		radius:   float64(radius*worldScaleBound(world, scale)) + float64(strokes*a.buildThreshold),
 	})
 	a.flattenChildren(mesh.Children, world)
 }
@@ -1046,7 +1046,7 @@ func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent world
 	pickable := mesh.Pickable == nil || *mesh.Pickable
 	id := strings.TrimSpace(mesh.ID)
 	localRadius, strokes := geometryBounds(mesh.Geometry)
-	stroke := strokes * a.buildThreshold
+	stroke := float64(strokes * a.buildThreshold)
 	geometry := a.exactGeometry(mesh.Geometry, id)
 	for i := 0; i < count; i++ {
 		position := vectorAt(mesh.Positions, i, Vector3{})
@@ -1062,7 +1062,7 @@ func (a *SceneAccelerator) flattenInstancedMesh(mesh InstancedMesh, parent world
 			pickable: pickable,
 			stroked:  strokes > 0,
 			index:    i,
-			radius:   localRadius*worldScaleBound(world, scale) + stroke,
+			radius:   float64(localRadius*worldScaleBound(world, scale)) + stroke,
 		})
 	}
 }
@@ -1183,7 +1183,7 @@ func (a *SceneAccelerator) flattenSprite(sprite Sprite, parent worldTransform) {
 		kind:     primSprite,
 		pickable: true,
 		index:    -1,
-		radius:   a.buildThreshold * radiusScale,
+		radius:   float64(a.buildThreshold * radiusScale),
 	})
 }
 
@@ -1203,7 +1203,7 @@ func (a *SceneAccelerator) flattenModel(model Model, parent worldTransform) {
 		kind:     primModel,
 		pickable: model.Pickable == nil || *model.Pickable,
 		index:    -1,
-		radius:   radius * worldScaleBound(world, scale),
+		radius:   float64(radius * worldScaleBound(world, scale)),
 	})
 }
 
