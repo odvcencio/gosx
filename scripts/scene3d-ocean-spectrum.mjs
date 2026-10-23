@@ -215,13 +215,18 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     let status = '', first = null;
     const gpu = [];
     const t0 = performance.now();
+    // Until the spectral ocean first renders (shader compile on WebGL2, pipeline validation on WebGPU: tens of frames, a different number on each) the scene
+    // time, hull and camera stand still and the frame counter does not advance. Both backends then start the same run from the same state, so a frame
+    // compared across backends shows the same sea. (Without this the sea's phase differs by the warm-up length and the frames cannot be compared.)
+    let warmUp = 0;
     for (let i = 0; i < frames; i++) {
+      const warm = first === null && warmUp < 3000;
       const bundle = api.createSceneRenderBundle(W, H, '#101820', camera, [], [], [], [], [], {}, 0.4, [], [], [], [], [], 0, false, {});
       bundle.environment = { sky: { mode: 'physical', sunDirection: { x: -0.35, y: 0.7, z: 0.62 }, turbidity: 3 }, ocean };
       bundle.lights = [];
       bundle.postEffects = [{ kind: 'toneMapping', mode: 'aces', exposure: 0.5 }];
-      time += 1 / 30;
-      if (hull) {
+      if (!warm) time += 1 / 30;
+      if (warm) { if (hull) (window.__gosx_scene3d_node_poses ||= {}).ship = { x: hull.x, z: hull.z, heading: Math.PI, speed: hull.speed }; /* the scene stands still */ } else if (hull) {
         // The hull advances along -Z; the camera keeps its offset from it.
         hull.z -= hull.speed / 30;
         if (!staticCamera) camera.z -= hull.speed / 30;
@@ -248,6 +253,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
         images.push({ name: c.name + '-seq' + (seqCount - 1 - (frames - 1 - i) / seqStep), url: copy.toDataURL('image/png') });
       }
       if (i === frames - 1) { copyContext.clearRect(0, 0, W, H); copyContext.drawImage(canvas, 0, 0); break; }
+      if (warm && first === null) { warmUp++; i--; }
       await frame();
     }
     const pixels = copyContext.getImageData(0, 0, W, H).data;

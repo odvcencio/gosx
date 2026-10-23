@@ -5354,7 +5354,7 @@
     const suppress = adaptiveQuality.adaptivePostFX && adaptiveQuality.postFXSuppressed && source.length > 0;
     const limited = adaptiveQuality.postFXMobile || adaptiveQuality.activeTier !== "full";
     // Keep the existing spatial edge pass; denied TAA never enters history.
-    const next = suppress ? [] : limited ? source.filter(function(effect) { return effect.kind !== "ssao" && effect.kind !== "contactShadows" && effect.kind !== "taa"; }) : source;
+    const next = suppress ? source.filter(function(effect) { return String(effect && effect.kind || "").toLowerCase() === "tonemapping"; }) : limited ? source.filter(function(effect) { return effect.kind !== "ssao" && effect.kind !== "contactShadows" && effect.kind !== "taa"; }) : source;
     if (limited && !suppress && source.some(function(effect) { return effect.kind === "taa"; }) && !next.some(function(effect) { return effect.kind === "fxaa"; })) next.push({ kind: "fxaa" });
     const current = Array.isArray(sceneState.postEffects) ? sceneState.postEffects : [];
     if (current.length === next.length && current.every(function(effect, index) { return effect === next[index]; })) {
