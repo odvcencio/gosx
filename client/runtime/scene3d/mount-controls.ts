@@ -206,6 +206,8 @@
   // value. Controllers with no orbit (walk, vessel, fly) ignore it.
   // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
   function sceneControlsApplyOrbit(controls, orbit) {
+    // A vessel scene wraps the orbit controller in its own, which forwards to the one inside.
+    if (controls && typeof controls.applyOrbit === "function") return controls.applyOrbit(orbit);
     if (!controls || (controls.mode !== "orbit" && controls.mode !== "fixed") || !sceneIsPlainObject(orbit)) {
       return false;
     }
@@ -1136,7 +1138,7 @@
       if (sceneState) sceneState._gosxMotionController = fixed;
     }
     if (sceneVesselEnabled(props)) base = window.__gosx_scene3d_vessel_api.setup(canvas, props, base, sceneState, {
-      schedule, current: sceneCurrentControlCamera,
+      schedule, current: sceneCurrentControlCamera, apply: applySceneControlsCamera, orbit: sceneControlsApplyOrbit,
       subscribe: typeof gosxSubscribeSharedSignal === "function" ? gosxSubscribeSharedSignal : undefined,
       publish: typeof setSharedSignalValue === "function" ? setSharedSignalValue : undefined,
       // @ts-ignore TS7006 -- renderer-neutral creation seam for the lazy wake

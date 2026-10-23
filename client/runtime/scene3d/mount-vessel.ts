@@ -51,7 +51,7 @@
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
       syncCamera:camera=>base.controller?.syncCamera?.(camera),
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-      applyCamera:camera=>{if(state.mode==='sailing'&&props.vessel.navigation){state.detached=true;window.__gosx_scene3d_vessel_input.clear(controls.input);suspend(false);navigation?.publish();}else leave();base.controller?.applyCamera?.(camera);}};
+      applyCamera:camera=>{if(state.mode==='sailing'&&props.vessel.navigation){state.detached=true;window.__gosx_scene3d_vessel_input.clear(controls.input);suspend(false);navigation?.publish();}else leave();helpers.apply(base.controller,camera);},applyOrbit:function(){return helpers.orbit(base.controller,arguments[0]);}};
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
     function suspend(value) {
       if(base.controller&&base.controller.setSuspended)base.controller.setSuspended(value);
