@@ -2506,16 +2506,10 @@
       scheduleRender("signal-gizmo-mode");
     }
 
-    function mountedSceneController(): any {
-      return sceneControlHandle && sceneControlHandle.controller;
-    }
-
+    function mountedSceneController(): any { return sceneControlHandle && sceneControlHandle.controller; }
     function currentMountedSceneCamera(sourceCamera) {
       return sceneRenderCamera(sceneViewportCamera(sceneCurrentControlCamera(
-        sceneControlHandle && sceneControlHandle.controller,
-        sourceCamera || readSceneSourceCamera(),
-        sceneState._scrollCamera,
-      ), sceneState.camera, viewport));
+        mountedSceneController(), sourceCamera || readSceneSourceCamera(), sceneState._scrollCamera), sceneState.camera, viewport));
     }
 
     function currentMountedSceneOrbitState() {
@@ -2563,15 +2557,10 @@
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
 	      const currentCamera = currentMountedSceneCamera();
 	      const nextCamera = normalizeSceneCamera(camera, currentCamera);
-	      // An orbit target and limits change before the controls re-derive
-	      // their state from the camera, so the orbit continues from the new target.
-	      const controller = mountedSceneController();
-	      const orbitChanged = sceneControlsApplyOrbit(controller, camera.orbit);
-	      if (!orbitChanged && sceneCameraEquivalent(currentCamera, nextCamera)) {
-	        return false;
-	      }
+	      // The orbit target and limits change first, so the orbit continues from the new target.
+	      if (!sceneControlsApplyOrbit(mountedSceneController(), camera.orbit) && sceneCameraEquivalent(currentCamera, nextCamera)) return false;
 	      sceneState.camera = nextCamera;
-	      applySceneControlsCamera(controller, nextCamera);
+	      applySceneControlsCamera(mountedSceneController(), nextCamera);
 	      scheduleRender(reason || "camera");
 	      publishMountedSceneCamera(nextCamera, reason || "camera");
 	      return true;
@@ -2859,8 +2848,7 @@
             return applyMountedSceneCamera(camera, "managed-control-forms-camera");
           },
           getControlTarget: function() {
-            const controller = mountedSceneController();
-            return controller && controller.target ? Object.assign({}, controller.target) : sceneControlsTarget(props);
+            return sceneControlsCurrentTarget(mountedSceneController(), props);
           },
           stopCameraInertia: function() {
             if (!sceneControlHandle || typeof sceneControlHandle.stopInertia !== "function") {
@@ -3492,18 +3480,6 @@
       });
     }
 
-    function applyMountedCameraCommands(commands: any[], reason: string) {
-      let last: any = null;
-      for (const command of commands) {
-        if (command && command.kind === 5) last = command;
-      }
-      if (!last) return;
-      const controller = mountedSceneController();
-      sceneControlsApplyOrbit(controller, last.data && last.data.orbit);
-      applySceneControlsCamera(controller, sceneState.camera);
-      publishMountedSceneCamera(sceneState.camera, reason || "commands");
-    }
-
     function applyMountedSceneCommands(commands, reason) {
       const setModelsCommands = sceneCommandsSetModels(commands);
       if (setModelsCommands) {
@@ -3511,10 +3487,7 @@
       }
       const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
-      // applySceneCommands writes the camera into the scene state only. Built-in
-      // controls keep their own orbit or fly state and would never see it, so
-      // route the last camera command through the controls, as setCamera does.
-      applyMountedCameraCommands(commands, reason);
+      if (sceneControlsFollowCameraCommands(mountedSceneController(), sceneState, commands)) publishMountedSceneCamera(sceneState.camera, reason || "commands");
       if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
@@ -3609,12 +3582,7 @@
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");
       },
-      // setOrbit moves the orbit target and the distance and pitch limits
-      // without moving the camera: the camera keeps its position and turns to
-      // face the new target. orbit is {target?, minDistance?, maxDistance?, pitchLimit?}.
-      setOrbit(orbit: any) {
-        return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit");
-      },
+      setOrbit(orbit: any) { return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit"); },
       async applyTextureProfile(requests: any[], profile: string, signal: AbortSignal, module: any) {
         return sceneApplyMountedTextureProfile(sceneState, mount, requests, profile, signal, module, {
           disposed: () => disposed,

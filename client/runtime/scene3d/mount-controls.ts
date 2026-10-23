@@ -197,7 +197,8 @@
   // anything changed. The caller then re-derives the orbit state from the
   // camera (applySceneControlsCamera), so the orbit continues from the new
   // target without a jump. Controllers with no orbit (walk, vessel, fly) ignore it.
-  function sceneControlsApplyOrbit(controls: any, orbit: any) {
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneControlsApplyOrbit(controls, orbit) {
     if (!controls || (controls.mode !== "orbit" && controls.mode !== "fixed") || !sceneIsPlainObject(orbit)) {
       return false;
     }
@@ -213,7 +214,8 @@
       controls.target = next;
     }
     if (controls.mode === "orbit") {
-      const finite = (value: any) => typeof value === "number" && Number.isFinite(value);
+      // @ts-ignore TS7006 -- plain JavaScript fixture
+      const finite = (value) => typeof value === "number" && Number.isFinite(value);
       const minDistance = finite(orbit.minDistance) ? Math.max(0.001, orbit.minDistance) : controls.minDistance;
       const maxDistance = Math.max(minDistance, finite(orbit.maxDistance) ? orbit.maxDistance : controls.maxDistance);
       const pitchLimit = finite(orbit.pitchLimit) ? sceneOrbitPitchLimit(orbit.pitchLimit) : controls.pitchLimit;
@@ -223,6 +225,28 @@
       controls.pitchLimit = pitchLimit;
     }
     return changed;
+  }
+
+  // sceneControlsFollowCameraCommands runs after SetCamera commands wrote the
+  // scene camera (applySceneCommands writes only the scene state). Built-in
+  // controls keep their own orbit or fly state, so the last camera command,
+  // with its orbit settings, goes through them as handle.setCamera does. It
+  // reports whether a camera command was present.
+  // @ts-ignore TS7006 -- plain JavaScript fixture
+  function sceneControlsFollowCameraCommands(controls, sceneState, commands) {
+    let last = null;
+    for (const command of commands) if (command && command.kind === 5) last = command;
+    if (!last) return false;
+    sceneControlsApplyOrbit(controls, last.data && last.data.orbit);
+    applySceneControlsCamera(controls, sceneState.camera);
+    return true;
+  }
+
+  // The orbit target now in effect: the controller's, which a camera command or
+  // pan may have moved since mount, else the mount-time prop.
+  // @ts-ignore TS7006 -- plain JavaScript fixture
+  function sceneControlsCurrentTarget(controls, props) {
+    return controls && controls.target ? Object.assign({}, controls.target) : sceneControlsTarget(props);
   }
 
   function sceneControlsRotateSpeed(props) {
