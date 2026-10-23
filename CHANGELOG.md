@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Retain WebGL2 instance stream snapshots across camera-only frames and upload
+  only changed spans, preserving in-place edits, dirty ranges and buffer retirement.
+
+- Reuse retired dependency storage for derived values and effects without
+  recycling lists still read by a refresh. Avoid TinyGo WASM goroutine-identity
+  lookups and a constant-key tracking map while preserving native Go isolation.
+
 - Compile authored Selena vertex texture sampling through SceneIR. Expose only
   vertex-sampled textures to the WebGPU vertex stage and reject unsupported
   WebGL device limits before shader compilation, retaining material fallbacks.

@@ -115,6 +115,24 @@ func TestTrackingScratchDoesNotRetainDependencyGraphs(t *testing.T) {
 		})
 	}
 	nested(16)
+	// Leave retired buffers of both supported and oversized graphs behind.
+	for _, count := range []int{129, 64} {
+		source := New(0)
+		sources := make([]*Signal[int], count)
+		for i := range sources {
+			sources[i] = New(i)
+		}
+		computed := Derive(func() int {
+			sum := source.Get()
+			for _, dependency := range sources {
+				sum += dependency.Get()
+			}
+			return sum
+		})
+		source.Set(1)
+		computed.Get()
+		computed.Stop()
+	}
 	trackerMu.Lock()
 	defer trackerMu.Unlock()
 	count := 0
@@ -145,21 +163,21 @@ func TestSharedTrackingScopeCanCloseWindowsOutOfOrder(t *testing.T) {
 	popTracker(outer, &deps)
 	// Reusing the closed window elsewhere must not change the still-live
 	// shared scope or leave its parent pointing into the scratch cache.
-	reused := pushTracker(1)
+	reused := pushTracker(0)
 	trackerMu.Lock()
-	valid := trackerStacks[0] == inner && inner.parent == middle && middle.parent == nil
+	valid := currentTracker(0) == reused && reused.parent == inner && inner.parent == middle && middle.parent == nil
 	trackerMu.Unlock()
 	popTracker(reused, &deps)
 	popTracker(middle, &deps)
 	trackerMu.Lock()
-	valid = valid && trackerStacks[0] == inner && inner.parent == nil
+	valid = valid && currentTracker(0) == inner && inner.parent == nil
 	trackerMu.Unlock()
 	popTracker(inner, &deps)
 	if !valid {
 		t.Fatal("closing the outer window lost or aliased the live inner window")
 	}
 	trackerMu.Lock()
-	empty := len(trackerStacks) == 0
+	empty := currentTracker(0) == nil
 	trackerMu.Unlock()
 	if !empty || openTrackers.Load() != 0 {
 		t.Fatal("closing shared windows left tracking active")
