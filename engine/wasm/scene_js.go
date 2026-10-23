@@ -113,6 +113,19 @@ func (s Scene3D) SetCamera(ctx context.Context, camera any) error {
 	return s.async(ctx, "setCamera", value)
 }
 
+// SetOrbit changes the orbit controls' target and limits after mount. The camera
+// keeps its position and turns to face the new target, and the player's mouse
+// orbit continues around it. It needs Props.Controls = scene.ControlOrbit.
+// Moving the camera and the target together is one SetCamera call with
+// PerspectiveCamera.Orbit set.
+func (s Scene3D) SetOrbit(ctx context.Context, orbit scene.Orbit) error {
+	value, err := encodeEventDetail(orbit)
+	if err != nil {
+		return err
+	}
+	return s.async(ctx, "setOrbit", value)
+}
+
 // SetAnimationClock controls the scene clock without exposing renderer internals.
 func (s Scene3D) SetAnimationClock(ctx context.Context, seconds float64, paused bool) error {
 	return s.async(ctx, "setAnimationClock", map[string]any{"timeSeconds": seconds, "paused": paused})

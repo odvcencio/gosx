@@ -228,6 +228,17 @@
     });
   }
 
+  // setOrbit moves the orbit target and limits of a mounted scene without moving
+  // the camera. orbit is {target?, minDistance?, maxDistance?, pitchLimit?}.
+  function setOrbit(target: any, orbit: any, opts: any = {}) {
+    return waitForCommandMount(target, opts, "orbit", (rec, resolve, reject) => {
+      aborted(opts);
+      if (typeof rec.handle.setOrbit !== "function") return reject(new Error("Scene3D orbit is unavailable"));
+      rec.handle.setOrbit(orbit);
+      resolve(true);
+    });
+  }
+
   function setAnimationClock(target: any, clock: any, opts: any = {}) {
     return waitForCommandMount(target, opts, "animation clock", (rec, resolve, reject) => {
       aborted(opts);
@@ -882,7 +893,7 @@
   window.__gosx_scene3d_command_bridge = {
     dispatchCommands: dispatchCommands,
     live: live,
-    getCamera, setCamera, whenReady, setAnimationClock,
+    getCamera, setCamera, setOrbit, whenReady, setAnimationClock,
     playTimeline: playTimeline,
     burstParticles: burstParticles,
     dispatchPoseFrame: dispatchPoseFrame,

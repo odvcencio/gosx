@@ -49,6 +49,10 @@ type PerspectiveCamera struct {
 	Near         float64
 	Far          float64
 	TransitionMS float64 // if > 0, client interpolates over this many milliseconds
+	// Orbit, when set, also moves the orbit controls' target and limits, so the
+	// player's mouse orbit continues around the new target. Nil leaves them as
+	// they are.
+	Orbit *Orbit
 }
 
 // OrthographicCamera describes a non-perspective camera for CAD, editor, and

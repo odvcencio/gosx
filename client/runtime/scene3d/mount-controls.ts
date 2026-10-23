@@ -191,6 +191,40 @@
     };
   }
 
+  // sceneControlsApplyOrbit changes the orbit target and its distance and
+  // pitch limits after mount. orbit is {target?, minDistance?, maxDistance?,
+  // pitchLimit?}; a field left out keeps its current value. It reports whether
+  // anything changed. The caller then re-derives the orbit state from the
+  // camera (applySceneControlsCamera), so the orbit continues from the new
+  // target without a jump. Controllers with no orbit (walk, vessel, fly) ignore it.
+  function sceneControlsApplyOrbit(controls, orbit) {
+    if (!controls || (controls.mode !== "orbit" && controls.mode !== "fixed") || !sceneIsPlainObject(orbit)) {
+      return false;
+    }
+    let changed = false;
+    if (sceneIsPlainObject(orbit.target)) {
+      const current = controls.target || { x: 0, y: 0, z: 0 };
+      const next = {
+        x: sceneNumber(orbit.target.x, current.x),
+        y: sceneNumber(orbit.target.y, current.y),
+        z: sceneNumber(orbit.target.z, current.z),
+      };
+      changed = next.x !== current.x || next.y !== current.y || next.z !== current.z;
+      controls.target = next;
+    }
+    if (controls.mode === "orbit") {
+      const finite = (value) => typeof value === "number" && Number.isFinite(value);
+      const minDistance = finite(orbit.minDistance) ? Math.max(0.001, orbit.minDistance) : controls.minDistance;
+      const maxDistance = Math.max(minDistance, finite(orbit.maxDistance) ? orbit.maxDistance : controls.maxDistance);
+      const pitchLimit = finite(orbit.pitchLimit) ? sceneOrbitPitchLimit(orbit.pitchLimit) : controls.pitchLimit;
+      changed = changed || minDistance !== controls.minDistance || maxDistance !== controls.maxDistance || pitchLimit !== controls.pitchLimit;
+      controls.minDistance = minDistance;
+      controls.maxDistance = maxDistance;
+      controls.pitchLimit = pitchLimit;
+    }
+    return changed;
+  }
+
   function sceneControlsRotateSpeed(props) {
     return Math.max(0.1, sceneNumber(props && props.controlRotateSpeed, 1));
   }
