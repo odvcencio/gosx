@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Compile authored Selena vertex texture sampling through SceneIR. Expose only
+  vertex-sampled textures to the WebGPU vertex stage and reject unsupported
+  WebGL device limits before shader compilation, retaining material fallbacks.
+
 - Reuse live computed-value subscriptions when a recomputation reads the same
   ordered dependencies. Retain freshly tracked revisions, the replacement path
   for changed dependencies, batched reads, and disposal while reducing

@@ -1,0 +1,124 @@
+{
+ "wgsl": "struct Uniforms {\n  mvp : mat4x4<f32>,\n  normalMatrix : mat3x3<f32>,\n  scale : f32,\n  lod : f32,\n};\n@group(0) @binding(0) var<uniform> u : Uniforms;\n\n@group(0) @binding(1) var heightMap : texture_2d<f32>;\n@group(0) @binding(2) var heightMapSampler : sampler;\n@group(0) @binding(3) var tint : texture_2d<f32>;\n@group(0) @binding(4) var tintSampler : sampler;\n\nstruct VertexInput {\n  @location(0) position : vec3<f32>,\n  @location(1) normal : vec3<f32>,\n  @location(2) uv : vec2<f32>,\n};\n\nstruct VertexOutput {\n  @builtin(position) position : vec4<f32>,\n  @location(0) height : f32,\n  @location(1) vUv : vec2<f32>,\n};\n\n@vertex\nfn vertexMain(in : VertexInput) -> VertexOutput {\n  var out : VertexOutput;\n  let h = textureSampleLevel(heightMap, heightMapSampler, in.uv, u.lod).x;\n  let p = (in.position + (in.normal * (h * u.scale)));\n  out.height = h;\n  out.vUv = in.uv;\n  out.position = (u.mvp * vec4<f32>(p, 1.0));\n  return out;\n}\n\n@fragment\nfn fragmentMain(in : VertexOutput) -> @location(0) vec4<f32> {\n  let c = textureSample(tint, tintSampler, in.vUv);\n  return vec4<f32>(vec3<f32>((c.x * (0.5 + in.height)), (c.y * (0.5 + in.height)), (c.z * (0.5 + in.height))), 1.0);\n}\n",
+ "glslVertex": "attribute vec3 position;\nattribute vec3 normal;\nattribute vec2 uv;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform float scale;\nuniform float lod;\nuniform highp sampler2D heightMap;\nvarying float height;\nvarying vec2 vUv;\n\nvoid main() {\n  float h = texture2DLod(heightMap, uv, lod).x;\n  vec3 p = (position + (normal * (h * scale)));\n  height = h;\n  vUv = uv;\n  gl_Position = (mvp * vec4(p, 1.0));\n}\n",
+ "glslFragment": "precision mediump float;\nuniform mat4 mvp;\nuniform mat3 normalMatrix;\nuniform float scale;\nuniform float lod;\nvarying float height;\nvarying vec2 vUv;\nuniform sampler2D heightMap;\nuniform sampler2D tint;\n\nvoid main() {\n  vec4 c = texture2D(tint, vUv);\n  gl_FragColor = vec4(vec3((c.x * (0.5 + height)), (c.y * (0.5 + height)), (c.z * (0.5 + height))), 1.0);\n}\n",
+ "layout": {
+  "schemaVersion": "selena.descriptor.v1",
+  "languageVersion": "selena.lang.v1",
+  "material": "HeightDisplace",
+  "kind": "mesh",
+  "entryPoints": {
+   "vertex": "vertexMain",
+   "fragment": "fragmentMain"
+  },
+  "uniformBlock": {
+   "size": 128,
+   "fields": [
+    {
+     "name": "mvp",
+     "type": "mat4",
+     "offset": 0,
+     "size": 64
+    },
+    {
+     "name": "normalMatrix",
+     "type": "mat3",
+     "offset": 64,
+     "size": 48
+    },
+    {
+     "name": "scale",
+     "type": "float",
+     "offset": 112,
+     "size": 4
+    },
+    {
+     "name": "lod",
+     "type": "float",
+     "offset": 116,
+     "size": 4
+    }
+   ],
+   "defaults": [
+    {
+     "name": "scale",
+     "type": "float",
+     "values": [
+      0.25
+     ]
+    },
+    {
+     "name": "lod",
+     "type": "float",
+     "values": [
+      0
+     ]
+    }
+   ]
+  },
+  "attributes": [
+   {
+    "name": "position",
+    "location": 0,
+    "type": "vec3"
+   },
+   {
+    "name": "normal",
+    "location": 1,
+    "type": "vec3"
+   },
+   {
+    "name": "uv",
+    "location": 2,
+    "type": "vec2"
+   }
+  ],
+  "textures": [
+   {
+    "name": "heightMap",
+    "dimension": "2d",
+    "wgsl": {
+     "group": 0,
+     "textureBinding": 1,
+     "samplerBinding": 2
+    },
+    "gl": {
+     "uniform": "heightMap",
+     "unit": 0
+    },
+    "metal": {
+     "texture": 0,
+     "sampler": 0
+    },
+    "vertexStage": true
+   },
+   {
+    "name": "tint",
+    "dimension": "2d",
+    "wgsl": {
+     "group": 0,
+     "textureBinding": 3,
+     "samplerBinding": 4
+    },
+    "gl": {
+     "uniform": "tint",
+     "unit": 1
+    },
+    "metal": {
+     "texture": 1,
+     "sampler": 1
+    }
+   }
+  ],
+  "wgsl": {
+   "group": 0,
+   "binding": 0
+  },
+  "metal": {
+   "buffer": 0
+  },
+  "requires": {
+   "glVertexTextureUnits": 1
+  }
+ }
+}

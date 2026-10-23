@@ -8938,19 +8938,19 @@
       var textures = sceneSelenaTextureDescriptors(layout);
       for (var i = 0; i < textures.length; i++) {
         var wgsl = textures[i] && textures[i].wgsl || {};
-        // dimension:"cube" (e.g. the water surface/surface-below passes' "sky"
-        // environment map) needs viewDimension:"cube" in the bind group layout
-        // entry; every other texture (the overwhelming majority) keeps the
-        // existing "2d" default.
+        // Cube maps require cube views; other material textures use 2D.
         var texDimension = textures[i] && textures[i].dimension === "cube" ? "cube" : "2d";
+        var textureVisibility = textures[i] && textures[i].vertexStage === true
+          ? visibility
+          : (typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2);
         entries.push({
           binding: sceneNumber(wgsl.textureBinding, 1 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           texture: { sampleType: "float", viewDimension: texDimension },
         });
         entries.push({
           binding: sceneNumber(wgsl.samplerBinding, 2 + i * 2),
-          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: typeof GPUShaderStage !== "undefined" ? GPUShaderStage.FRAGMENT : 2,
+          /* @ts-expect-error TS2353 -- GPU bind group layout entries vary per index: buffer vs. texture vs. sampler shapes */ visibility: textureVisibility,
           sampler: { type: "filtering" },
         });
       }
