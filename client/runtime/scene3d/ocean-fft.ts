@@ -152,6 +152,20 @@
     return true;
   }
 
+  // sampler gives a vessel its water queries for one update: sample() evaluates the CPU swell waves in the water frame (position minus the
+  // graph's water origin, at the graph's wave time), probed() answers from the probe readback first and falls back to sample(), and begin()
+  // starts a probe pass. Without a running graph (the first frames, WebGL2 after a failure) sample() is the plain query at `seconds`.
+  function sampler(query: any, q: any, seconds: number): any {
+    const sample = function (x: number, z: number): any {
+      const w = lastWater;
+      if (!w) return query.sample(q, x, z, seconds);
+      const r = query.sample(q, x - w.x, z - w.z, w.time);
+      r.x += w.x; r.z += w.z;
+      return r;
+    };
+    return { sample: sample, probed: function (x: number, z: number): any { return probeSample(x, z, q.data[0]) || sample(x, z); }, begin: probeBegin };
+  }
+
   // --- WebGPU ------------------------------------------------------------------------------------------------------
 
   function createGPU(host: any): any {
@@ -316,6 +330,6 @@
     if (host && host.mount && host.mount.setAttribute) host.mount.setAttribute("data-gosx-scene3d-ocean-fft-fallback", reason);
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
   window.__gosx_scene3d_ocean_fft_gl_api = { frame: frameGL, fail: failGL };
 })();

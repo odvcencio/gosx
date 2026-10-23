@@ -241,6 +241,28 @@ test("probe: the ring holds three staging buffers; with all three in flight the 
   assert.equal(probe.sample(1, 1, 0, 5), null, "a disposed graph leaves no stale answers");
 });
 
+test("sampler: CPU swell waves are evaluated in the water frame at the graph's wave time, and probed() falls back to them", () => {
+  const s = standalone(), resources = {}, h = s.host();
+  const calls = [], query = { sample: (q, x, z, t) => { calls.push([x, z, t]); return { x: x + 0.5, y: 1, z: z - 0.25 }; } };
+  let r = s.api.sampler(query, { data: [3] }, 42).sample(10, 20);
+  assert.deepEqual(calls.pop(), [10, 20, 42], "before the graph runs: the plain query at the scene's water clock");
+  assert.deepEqual([r.x, r.z], [10.5, 19.75]);
+  warm(s, resources, h, ocean({ graphParams: { driftX: 3.3, driftZ: -1.7 }, graphTween: 0 }), { time: 100 });
+  for (let i = 1; i <= 60; i++) frame(s, resources, h, ocean({ graphParams: { driftX: 3.3, driftZ: -1.7 }, graphTween: 0 }), { time: 100 + i / 60 });
+  const w = s.api.water();
+  const sm = s.api.sampler(query, { data: [3] }, 42);
+  r = sm.sample(10, 20);
+  const c = calls.pop();
+  assert.ok(Math.abs(c[0] - (10 - w.x)) < 1e-9 && Math.abs(c[1] - (20 - w.z)) < 1e-9 && c[2] === w.time, "sampled at (position - origin) at the graph's wave time: " + JSON.stringify(c));
+  assert.ok(Math.abs(r.x - (10.5)) < 1e-9 && Math.abs(r.z - 19.75) < 1e-9, "the displaced position is back in world coordinates");
+  assert.equal(sm.probed(10, 20).y, 1, "no probe answer: the swell waves");
+  sm.begin();
+  const gone = frame(s, resources, h, { level: 0 });
+  assert.equal(gone, null);
+  assert.equal(s.api.sampler(query, { data: [3] }, 7).sample(1, 2).x, 1.5);
+  assert.deepEqual(calls.pop(), [1, 2, 7], "after the graph is gone the query is plain again");
+});
+
 function nagaPath() {
   for (const candidate of ["naga", path.join(process.env.HOME || "", ".cargo", "bin", "naga")]) {
     try { execFileSync(candidate, ["--version"], { stdio: "ignore" }); return candidate; } catch (_e) {}
