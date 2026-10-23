@@ -75,7 +75,18 @@ for (const height of [30, 120, 300]) {
     cases.push({ name: `gerstner-wind${wind}-h${height}`, height, gerstner: { waveHeight, waveLength } });
   }
 }
-const selected = cases.filter(c => !only || c.name.includes(only));
+// Ship wakes: a hull of 125 x 21 m crossing the water at 8, 15 and 22 knots (bow toward -Z), seen from above and from astern, and the same
+// passage with the wake off for the cost comparison. The page publishes the hull's pose each frame as a vessel would.
+for (const wake of [true, false]) {
+  for (const knots of [8, 15, 22]) {
+    for (const view of ['above', 'astern']) {
+      if (!wake && view === 'above') continue;
+      cases.push({ name: `wake-${wake ? 'on' : 'off'}-${knots}kn-${view}`, height: 0, view, knots, wakeOn: wake, spectrum: { windSpeed: Number(arg('--wake-wind', '7')), fetch: 100, peakEnhancement: 3.3, spread: 8, swell: 0, seed: 7 } });
+    }
+  }
+}
+const wakeRun = argv.includes('--wake');
+const selected = cases.filter(c => (wakeRun ? c.name.startsWith('wake-') : !c.name.startsWith('wake-')) && (!only || c.name.includes(only)));
 
 const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam]) => {
   const api = window.__gosx_scene3d_api;
@@ -118,6 +129,37 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       if (!bad) samples.push(ns / 1e6);
     }
   };
+  // Diagnostics: capture the graph runner so the wake texture can be read back (WebGL2 only) once a wake case has run.
+  const runners = [];
+  const createRunner = window.__gosx_elio_graph.create;
+  window.__gosx_elio_graph.create = function () { const r = createRunner.apply(this, arguments); runners.push(r); return r; };
+  const wakeImage = () => {
+    const r = runners[runners.length - 1], e = r && r.export && r.export('wake');
+    if (!gl || !e || !e.tex) return null;
+    const w = e.width, h = e.height, px = new Float32Array(w * h * 4), fb = gl.createFramebuffer(), prev = gl.getParameter(gl.READ_FRAMEBUFFER_BINDING);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, fb); gl.framebufferTexture2D(gl.READ_FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, e.tex, 0);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.FLOAT, px);
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, prev); gl.deleteFramebuffer(fb);
+    const stats = { h: [0, 0], gx: 0, gz: 0, turb: 0 }, c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d'), img = ctx.createImageData(w, h);
+    // The window is toroidal: the hull sits at storage cell (originMod + hullU / cell) mod width. Far field = more than 24 cells from it. The image
+    // stretches height by the far-field maximum so the trail shows (the hull's own depression saturates).
+    const wrapCell = (v) => ((Math.floor(v) % w) + w) % w;
+    const hx = wrapCell(r.value('wakeOriginX') + r.value('wakeHullU') / r.value('wakeCell')), hz = wrapCell(r.value('wakeOriginZ') + r.value('wakeHullV') / r.value('wakeCell'));
+    const near = (x, z) => Math.min(Math.abs(x - hx), w - Math.abs(x - hx)) <= 24 && Math.min(Math.abs(z - hz), h - Math.abs(z - hz)) <= 24;
+    let hmax = 1e-9, far = 0, hull = 0;
+    for (let z = 0; z < h; z++) for (let x = 0; x < w; x++) { const v = Math.abs(px[(z * w + x) * 4]); if (near(x, z)) hull = Math.max(hull, v); else { far = Math.max(far, v); hmax = Math.max(hmax, v); } }
+    stats.far = far; stats.hull = hull; stats.hullCell = [hx, hz];
+    for (let i = 0; i < w * h; i++) {
+      const hh = px[i * 4], gx = px[i * 4 + 1], gz = px[i * 4 + 2], t = px[i * 4 + 3];
+      stats.h[0] = Math.min(stats.h[0], hh); stats.h[1] = Math.max(stats.h[1], hh); stats.gx = Math.max(stats.gx, Math.abs(gx)); stats.gz = Math.max(stats.gz, Math.abs(gz)); stats.turb = Math.max(stats.turb, t);
+      const v = Math.min(1, Math.max(0, 0.5 + 0.5 * hh / hmax));
+      img.data[i * 4] = 255 * v; img.data[i * 4 + 1] = 255 * v; img.data[i * 4 + 2] = 255 * Math.min(1, t); img.data[i * 4 + 3] = 255;
+    }
+    ctx.putImageData(img, 0, 0);
+    for (const n of ['hullX', 'hullZ', 'hullHeading', 'hullSpeed', 'wakeEnabled', 'wakeOn', 'wakeDt', 'wakeSrcLength', 'wakeSrcBeam', 'wakeHullU', 'wakeHullV', 'wakeGEff', 'wakeReset', 'wakeFoamGainEff']) (stats.params ||= {})[n] = r.value(n);
+    return { stats, url: c.toDataURL('image/png') };
+  };
   const copy = document.createElement('canvas');
   copy.width = W; copy.height = H;
   const copyContext = copy.getContext('2d', { willReadFrequently: true });
@@ -126,7 +168,8 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
   const out = [], images = [];
   let time = 100;
   for (const c of cases) {
-    const camera = { x: 0, y: c.height, z: 0, rotationX: -0.045 - 0.25 * Math.min(1, c.height / 300), rotationY: 0.6, fov: 62, near: 0.5, far: 20000 };
+    const hull = c.knots ? { x: 0, z: 0, speed: c.knots * 0.514444 } : null;
+    const camera = hull ? { x: 0, y: c.view === 'above' ? 170 : 26, z: c.view === 'above' ? 30 : 95, rotationX: c.view === 'above' ? -1.35 : -0.2, rotationY: 0, fov: 62, near: 0.5, far: 20000 } : { x: 0, y: c.height, z: 0, rotationX: -0.045 - 0.25 * Math.min(1, c.height / 300), rotationY: 0.6, fov: 62, near: 0.5, far: 20000 };
     const ocean = Object.assign({ level: 0, extent: 8000, choppiness: 0.7, windDirection: 20, foam }, c.gerstner || {});
     if (c.spectrum) {
       ocean.spectrum = c.spectrum;
@@ -137,6 +180,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
         windDirDeg: ocean.windDirection, swellDirDeg: c.spectrum.swellDirection, seed: c.spectrum.seed, loopPeriod: 1000, lambda: ocean.choppiness, timeScale: 1, driftX: 0, driftZ: 0,
         foamTau: 6, foamGain: 0.9, foamThreshold: base === 0 ? 0 : 1 - ocean.choppiness * (1 - base) };
       ocean.graphTween = 0;
+      if (hull) { Object.assign(ocean.graphParams, { wakeEnabled: c.wakeOn ? 1 : 0, hullLength: 125, hullBeam: 21 }); ocean.graphNodes = { hull: 'ship' }; }
     }
     let status = '', first = null;
     const gpu = [];
@@ -147,8 +191,14 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
       bundle.lights = [];
       bundle.postEffects = [{ kind: 'toneMapping', mode: 'aces', exposure: 0.5 }];
       time += 1 / 30;
-      // Drift the camera a little so the foam window moves in whole texels, as under a ship.
-      camera.x += 0.15; camera.z += 0.1;
+      if (hull) {
+        // The hull advances along -Z; the camera keeps its offset from it.
+        hull.z -= hull.speed / 30; camera.z -= hull.speed / 30;
+        (window.__gosx_scene3d_node_poses ||= {}).ship = { x: hull.x, z: hull.z, heading: Math.PI, speed: hull.speed };
+      } else {
+        // Drift the camera a little so the foam window moves in whole texels, as under a ship.
+        camera.x += 0.15; camera.z += 0.1;
+      }
       status = webgl ? timed(() => renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier })) : renderer.render(bundle, viewport, { sceneTime: time, oceanTier: tier });
       drain();
       if (first === null && status === 'submitted' && String(canvas.parentNode.getAttribute('data-gosx-scene3d-ocean')).endsWith(c.spectrum ? '+spectrum' : 'surface')) first = i;
@@ -165,10 +215,11 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     if (webgl) { for (let k = 0; k < 6 && queries.length; k++) { await frame(); drain(); } gpu.push(...samples); queries.length = 0; }
     out.push({ name: c.name, status, firstSubmitted: first, ocean: mount.getAttribute('data-gosx-scene3d-ocean'),
       failed: mount.getAttribute('data-gosx-scene3d-webgpu-pipeline-failed'), fallback: mount.getAttribute('data-gosx-scene3d-ocean-fft-fallback'), meanLuma: sum / (pixels.length / 4) / 3, brightPixels: bright,
-      wallMsPerFrame: (performance.now() - t0) / frames, gpuSamples: gpu.length,
+      wallMsPerFrame: (performance.now() - t0) / frames, gpuSamples: gpu.length, graphMs: (() => { const t = !webgl && window.__gosx_scene3d_ocean_fft_api && window.__gosx_scene3d_ocean_fft_api.timing(); if (!t || !t.samples.length) return null; const v = t.samples.slice().sort((a, b) => a - b); return { p50: v[Math.floor(v.length * 0.5)], p95: v[Math.min(v.length - 1, Math.floor(v.length * 0.95))], samples: v.length }; })(),
       gpuMsP50: gpu.length ? gpu.slice().sort((a, b) => a - b)[Math.floor(gpu.length * 0.5)] : null,
       gpuMsMin: gpu.length ? Math.min(...gpu) : null, gpuMsMax: gpu.length ? Math.max(...gpu) : null, gpuMsP95: gpu.length ? gpu.slice().sort((a, b) => a - b)[Math.min(gpu.length - 1, Math.floor(gpu.length * 0.95))] : null });
     images.push({ name: c.name, url: copy.toDataURL('image/png') });
+    if (c.knots && c.wakeOn) { const wi = wakeImage(); if (wi) { images.push({ name: c.name + '-texture', url: wi.url }); out[out.length - 1].wakeStats = wi.stats; } }
   }
   return { results: out, images, adapter };
 }, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9'))]);
@@ -177,9 +228,9 @@ if (adapter) console.log('adapter', JSON.stringify(adapter));
 if (outDir) for (const image of images) fs.writeFileSync(path.join(outDir, image.name + '.png'), Buffer.from(image.url.split(',')[1], 'base64'));
 let failed = false;
 for (const r of results) {
-  const spectral = r.name.startsWith('spectrum');
+  const spectral = r.name.startsWith('spectrum') || r.name.startsWith('wake-');
   const ok = r.status === 'submitted' && !r.failed && (spectral ? /\+spectrum$/.test(r.ocean) : r.ocean === 'surface');
   if (!ok) failed = true;
-  console.log(`${ok ? 'ok  ' : 'FAIL'} ${r.name}: status ${r.status}, ocean ${r.ocean}, first spectral frame ${r.firstSubmitted}, mean luma ${r.meanLuma.toFixed(1)}, ${r.brightPixels} bright pixels, ${r.wallMsPerFrame.toFixed(2)} ms/frame wall, GPU frame ${r.gpuSamples ? 'p50 ' + r.gpuMsP50.toFixed(3) + ' / p95 ' + r.gpuMsP95.toFixed(3) + ' / min ' + r.gpuMsMin.toFixed(3) + ' / max ' + r.gpuMsMax.toFixed(3) + ' ms (' + r.gpuSamples + ' samples)' : 'n/a'}${r.failed ? ', pipeline failures ' + r.failed : ''}${r.fallback ? ', fft fallback ' + r.fallback : ''}`);
+  console.log(`${ok ? 'ok  ' : 'FAIL'} ${r.name}: status ${r.status}, ocean ${r.ocean}, first spectral frame ${r.firstSubmitted}, mean luma ${r.meanLuma.toFixed(1)}, ${r.brightPixels} bright pixels, ${r.wallMsPerFrame.toFixed(2)} ms/frame wall, GPU frame ${r.gpuSamples ? 'p50 ' + r.gpuMsP50.toFixed(3) + ' / p95 ' + r.gpuMsP95.toFixed(3) + ' / min ' + r.gpuMsMin.toFixed(3) + ' / max ' + r.gpuMsMax.toFixed(3) + ' ms (' + r.gpuSamples + ' samples)' : 'n/a'}${r.wakeStats ? ', wake texture h ' + r.wakeStats.h[0].toFixed(3) + '..' + r.wakeStats.h[1].toFixed(3) + ' m (hull neighbourhood ' + r.wakeStats.hull.toFixed(3) + ', far field ' + r.wakeStats.far.toFixed(4) + '), max slope ' + Math.max(r.wakeStats.gx, r.wakeStats.gz).toFixed(3) + ', max turbulence ' + r.wakeStats.turb.toFixed(3) + ' params ' + JSON.stringify(r.wakeStats.params) : ''}${r.graphMs ? ', graph compute p50 ' + r.graphMs.p50.toFixed(3) + ' / p95 ' + r.graphMs.p95.toFixed(3) + ' ms (' + r.graphMs.samples + ' samples)' : ''}${r.failed ? ', pipeline failures ' + r.failed : ''}${r.fallback ? ', fft fallback ' + r.fallback : ''}`);
 }
 process.exit(failed ? 1 : 0);
