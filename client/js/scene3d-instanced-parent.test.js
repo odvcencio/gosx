@@ -134,3 +134,29 @@ test("a parented instanced mesh named under its node's id does not parent itself
   const [entry] = bundleOf(api, [own, agent, hull], [mesh]).instancedMeshes;
   assert.equal(entry.transforms[12], 51);
 });
+
+test("a parented instanced mesh keeps its array while the node is still and takes a new array and revision when it moves", async () => {
+  const api = await makeSceneApiEnv();
+  const mesh = windows(api, { parentNode: "ship" });
+  const pose = translation(50, 0, 0);
+  const hull = shipPart(api, "ship/hull", pose);
+  const first = bundleOf(api, [hull], [mesh]).instancedMeshes[0];
+  const still = bundleOf(api, [hull], [mesh]).instancedMeshes[0];
+  assert.equal(still.transforms, first.transforms, "an unmoved node leaves the array alone");
+  assert.equal(still._instanceStreamRevision, first._instanceStreamRevision);
+  pose.set(translation(60, 0, 0));
+  const moved = bundleOf(api, [hull], [mesh]).instancedMeshes[0];
+  assert.notEqual(moved.transforms, first.transforms, "a moved node hands the renderers a new array");
+  assert.ok(moved._instanceStreamRevision > first._instanceStreamRevision, "and a new revision, which the GPU-driven path reads");
+  assert.equal(moved.transforms[12], 61);
+  // A local array changed in place counts as a change too.
+  mesh.transforms[12] = 5;
+  const edited = bundleOf(api, [hull], [mesh]).instancedMeshes[0];
+  assert.equal(edited.transforms[12], 65);
+  assert.ok(edited._instanceStreamRevision > moved._instanceStreamRevision);
+  // Flipping between two poses never reports a stale array as current.
+  pose.set(translation(50, 0, 0));
+  const back = bundleOf(api, [hull], [mesh]).instancedMeshes[0];
+  assert.equal(back.transforms[12], 55);
+  assert.ok(back._instanceStreamRevision > edited._instanceStreamRevision);
+});

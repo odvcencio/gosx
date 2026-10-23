@@ -17,8 +17,8 @@
   current world matrix into the transforms the WebGL2 and WebGPU renderers read.
   A ship that heaves, pitches and rolls under `DispatchVesselPose` now carries
   its windows, rails and lifeboats; before, the instances stayed where the scene
-  first placed them. For 20,000 instances the composition costs about 0.8 ms per
-  bundle. The same parent search no longer picks a crowd agent as the node, so a
+  first placed them. For 20,000 instances the composition costs about 0.5 ms
+  per bundle (measured 1.0 ms without a parent, 1.5 ms with a moving one). The same parent search no longer picks a crowd agent as the node, so a
   crowd batch ID may start with its parent's ID.
 
 - Reuse live computed-value subscriptions when a recomputation reads the same
