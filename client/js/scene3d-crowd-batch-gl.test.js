@@ -227,8 +227,10 @@ test("a tinted pose crowd binds one colour per agent and uploads it only when a 
   assert.equal(record.crowdRevision, posedRevision, "a recolour is not a pose revision");
   assert.deepEqual(Array.from(record.crowdColors), expected);
   h.renderer.render(recolored, viewport);
-  const colorUploads = h.gl.ops.slice(mark).filter(op => (op[0] === "bufferSubData" || op[0] === "bufferData") && (op[4] === 24 || op[3] === 24));
-  assert.equal(colorUploads.length, 1, "exactly one colour upload after the recolour");
+  // The stream retained from the last frame uploads only the changed span: the three
+  // components of agent 1 that differ (the alpha stays 1), at float 4.
+  const colorUploads = h.gl.ops.slice(mark).filter(op => op[0] === "bufferSubData" && op[1] === 34962);
+  assert.deepEqual(colorUploads.map(op => op.slice(3)), [[4 * 4, 3]], "exactly one colour upload, of the changed span");
   assert.equal(drawn(h.gl, mark).length, 1);
   h.renderer.dispose();
 });
