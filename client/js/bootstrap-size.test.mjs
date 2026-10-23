@@ -106,7 +106,7 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // 1,775 raw / 464 gzip / 596 Brotli bytes to the monolith and
 // 1,765 / 481 / 171 to Scene3D core. Only exhausted targets below move to their
 // measured minimum; warning/error allowances and route fractions stay fixed.
-// 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Targets below that this combination exceeded were set to the measured sizes (no extra headroom); other targets are unchanged.
+// 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Targets below that this combination exceeded were set to the measured sizes (no extra headroom); other targets are unchanged. PR #744 (camera runtime yield) is merged too; it raised the Scene3D command chunk to 21827 raw / 6948 gzip, measured.
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
@@ -1470,7 +1470,7 @@ const budgets = [
   // copy of the same shape. Measured: 13_839 / 3_606 / 3_158; all three caps
   // raised with narrow rounding headroom. The merged build measures
   // 13_888 / 3_631 / 3_181.
-  { file: "bootstrap-feature-scene3d-command.js", raw: 19588, gzip: 5887, brotli: 5309 },
+  { file: "bootstrap-feature-scene3d-command.js", raw: 21827, gzip: 6948, brotli: 5309 },
   // Strict initial-hydrate decoding is a separate progressive chunk. The
   // server emits it only for a shared-runtime Scene3D entry with a program
   // reference, before the main deferred Scene3D feature script. Static scenes
