@@ -15,6 +15,7 @@ name: determinism-arm64
 on:
   pull_request:
     paths:
+      - 'cmd/gosx-detlint/**'
       - 'det/**'
       - 'motion/**'
       - 'scene/**'
@@ -28,6 +29,7 @@ on:
       - '.github/workflows/determinism-arm64.yml'
   push:
     paths:
+      - 'cmd/gosx-detlint/**'
       - 'det/**'
       - 'motion/**'
       - 'scene/**'
