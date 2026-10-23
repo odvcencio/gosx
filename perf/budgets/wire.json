@@ -10,15 +10,15 @@
       "/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 946915,
+          "frameworkJsWireBytes": 976211,
           "htmlWireBytes": 12831,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 283738,
-          "lazyJsWireBytes": 218145,
+          "jsWireBytes": 292075,
+          "lazyJsWireBytes": 225414,
           "requests": 10,
-          "totalWireBytes": 1018650,
-          "wasmWireBytes": 662965
+          "totalWireBytes": 1048098,
+          "wasmWireBytes": 684135
         },
         "require": [
           "html-compressed",
@@ -29,22 +29,26 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged."
-        }
+          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises lazyJsWireBytes from 218145 B to 225414 B (+7269 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 946915 B to 976211 B (+29296 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 283738 B to 292075 B (+8337 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 1018650 B to 1048098 B (+29448 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "wasmWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises wasmWireBytes from 662965 B to 684135 B (+21170 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        },
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       },
       "/capabilities/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 28780,
-          "htmlWireBytes": 11098,
+          "frameworkJsWireBytes": 29008,
+          "htmlWireBytes": 11175,
           "imageWireBytes": 256,
           "inlineScriptBytes": 1620,
-          "jsWireBytes": 28620,
+          "jsWireBytes": 28847,
           "lazyJsWireBytes": 256,
           "requests": 5,
-          "totalWireBytes": 98832,
+          "totalWireBytes": 99136,
           "wasmWireBytes": 256
         },
         "require": [
@@ -56,19 +60,25 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 28780 B to 29008 B (+228 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 11098 B to 11175 B (+77 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 98832 B to 99136 B (+304 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        }
       },
       "/demos/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 28620,
-          "htmlWireBytes": 15235,
+          "frameworkJsWireBytes": 28847,
+          "htmlWireBytes": 15484,
           "imageWireBytes": 26270,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 28620,
+          "jsWireBytes": 28847,
           "lazyJsWireBytes": 256,
           "requests": 4,
-          "totalWireBytes": 91823,
+          "totalWireBytes": 92300,
           "wasmWireBytes": 256
         },
         "require": [
@@ -80,20 +90,26 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 15235 B to 15484 B (+249 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 91823 B to 92300 B (+477 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        }
       },
       "/demos/scene3d/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 930294,
-          "htmlWireBytes": 17910,
+          "frameworkJsWireBytes": 959463,
+          "htmlWireBytes": 18033,
           "imageWireBytes": 8404,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 267311,
-          "lazyJsWireBytes": 218145,
+          "jsWireBytes": 275328,
+          "lazyJsWireBytes": 225414,
           "requests": 8,
-          "totalWireBytes": 978053,
-          "wasmWireBytes": 662965
+          "totalWireBytes": 1007546,
+          "wasmWireBytes": 684135
         },
         "require": [
           "html-compressed",
@@ -104,24 +120,28 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged.",
-          "jsWireBytes": "2026-10-22: the mount-owned decoded-model cache repair adds 171 Brotli bytes to the eager Scene3D feature chunk. The production wire measurement at frozen source 871e80b9 reports jsWireBytes=267237 for /demos/scene3d/, exceeding the previous 267128 B cap by 109 B. Set this metric to the measured minimum 267237 B with no extra headroom. Lazy bytes, request counts, all other limits, and required policies are unchanged. 2026-10-23: ocean rendering on the scene clock with quality tiers adds 74 B to the startup bootstrap; hosted wire run 39897867084 measured 267311 B (scene3d) and 271601 B (water), set with no extra headroom."
-        }
+          "jsWireBytes": "2026-10-22: the mount-owned decoded-model cache repair adds 171 Brotli bytes to the eager Scene3D feature chunk. The production wire measurement at frozen source 871e80b9 reports jsWireBytes=267237 for /demos/scene3d/, exceeding the previous 267128 B cap by 109 B. Set this metric to the measured minimum 267237 B with no extra headroom. Lazy bytes, request counts, all other limits, and required policies are unchanged. 2026-10-23: ocean rendering on the scene clock with quality tiers adds 74 B to the startup bootstrap; hosted wire run 39897867084 measured 267311 B (scene3d) and 271601 B (water), set with no extra headroom. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 267237 B to 275328 B (+8091 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises lazyJsWireBytes from 218145 B to 225414 B (+7269 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 930294 B to 959463 B (+29169 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 17910 B to 18033 B (+123 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 978053 B to 1007546 B (+29493 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "wasmWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises wasmWireBytes from 662965 B to 684135 B (+21170 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        },
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       },
       "/demos/water": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 930204,
-          "htmlWireBytes": 54354,
+          "frameworkJsWireBytes": 959463,
+          "htmlWireBytes": 54824,
           "imageWireBytes": 193942,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 271601,
-          "lazyJsWireBytes": 218145,
+          "jsWireBytes": 279725,
+          "lazyJsWireBytes": 225414,
           "requests": 15,
-          "totalWireBytes": 1204485,
-          "wasmWireBytes": 662965
+          "totalWireBytes": 1234324,
+          "wasmWireBytes": 684135
         },
         "require": [
           "html-compressed",
@@ -132,23 +152,27 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged.",
-          "jsWireBytes": "2026-10-22: the mount-owned decoded-model cache repair adds 171 Brotli bytes to the eager Scene3D feature chunk. The production wire measurement at frozen source 871e80b9 reports jsWireBytes=271527 for /demos/water, exceeding the previous 271525 B cap by 2 B. Set this metric to the measured minimum 271527 B with no extra headroom. Lazy bytes, request counts, all other limits, and required policies are unchanged. 2026-10-23: ocean rendering on the scene clock with quality tiers adds 74 B to the startup bootstrap; hosted wire run 39897867084 measured 267311 B (scene3d) and 271601 B (water), set with no extra headroom."
-        }
+          "jsWireBytes": "2026-10-22: the mount-owned decoded-model cache repair adds 171 Brotli bytes to the eager Scene3D feature chunk. The production wire measurement at frozen source 871e80b9 reports jsWireBytes=271527 for /demos/water, exceeding the previous 271525 B cap by 2 B. Set this metric to the measured minimum 271527 B with no extra headroom. Lazy bytes, request counts, all other limits, and required policies are unchanged. 2026-10-23: ocean rendering on the scene clock with quality tiers adds 74 B to the startup bootstrap; hosted wire run 39897867084 measured 267311 B (scene3d) and 271601 B (water), set with no extra headroom. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 271527 B to 279725 B (+8198 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "lazyJsWireBytes": "2026-10-22: merging main into the integration branch carries the Scene3D lane growth in the on-demand chunks these pages advertise (WebGPU crowds and Hi-Z, crowd batches, powered vessels, animation and command, hubs). Compressed chunk sizes grow by 13,602 B in total, with the WebGPU chunk +8,190 B the largest. Hosted wire run 39747737518 measured lazyJsWireBytes=217297 B for this route. The model-texture delivery profile and portable KTX2 upload add 848 B in the fresh exact-source wire run (218145 B): 592 B above the prior 217553 B cap. Set this metric to the measured minimum 218145 B with no extra headroom. All other byte limits, request counts, and require policies are unchanged. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises lazyJsWireBytes from 218145 B to 225414 B (+7269 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 930204 B to 959463 B (+29259 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 54354 B to 54824 B (+470 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 1204485 B to 1234324 B (+29839 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "wasmWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises wasmWireBytes from 662965 B to 684135 B (+21170 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        },
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       },
       "/docs/getting-started/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 67514,
-          "htmlWireBytes": 12817,
+          "frameworkJsWireBytes": 67671,
+          "htmlWireBytes": 12981,
           "imageWireBytes": 48647,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 67514,
+          "jsWireBytes": 67671,
           "lazyJsWireBytes": 256,
           "requests": 7,
-          "totalWireBytes": 188161,
+          "totalWireBytes": 188414,
           "wasmWireBytes": 256
         },
         "require": [
@@ -160,20 +184,57 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-19 native docs controls: static docs explicitly enable the existing lite framework bootstrap so copy works without application JavaScript or WASM. Measured 65,868 JS bytes and 183,572 total bytes on getting-started; retain the unchanged 2.5% byte headroom and original seven requests. Other route limits, required policies and tolerance remain unchanged."
+        "raiseReason": "2026-10-19 native docs controls: static docs explicitly enable the existing lite framework bootstrap so copy works without application JavaScript or WASM. Measured 65,868 JS bytes and 183,572 total bytes on getting-started; retain the unchanged 2.5% byte headroom and original seven requests. Other route limits, required policies and tolerance remain unchanged.",
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 67514 B to 67671 B (+157 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 12817 B to 12981 B (+164 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 67514 B to 67671 B (+157 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 188161 B to 188414 B (+253 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        }
       },
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 311391,
-          "htmlWireBytes": 14520,
+          "frameworkJsWireBytes": 325966,
+          "htmlWireBytes": 14900,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 91332,
+          "jsWireBytes": 92451,
           "lazyJsWireBytes": 256,
           "requests": 11,
-          "totalWireBytes": 383937,
-          "wasmWireBytes": 221073
+          "totalWireBytes": 399980,
+          "wasmWireBytes": 233349
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 310733 B to 325966 B (+15233 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 14280 B to 14900 B (+620 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises wasmWireBytes from 221073 B to 233349 B (+12276 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 91332 B to 92451 B (+1119 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 383937 B to 399980 B (+16043 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        },
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+      },
+      "/performance/": {
+        "limits": {
+          "cssWireBytes": 256,
+          "frameworkJsWireBytes": 28847,
+          "htmlWireBytes": 10971,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 28847,
+          "lazyJsWireBytes": 256,
+          "requests": 5,
+          "totalWireBytes": 98933,
+          "wasmWireBytes": 256
         },
         "require": [
           "html-compressed",
@@ -186,73 +247,26 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom.",
-          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required.",
-          "htmlWireBytes": "2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom."
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 10850 B to 10971 B (+121 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 98584 B to 98933 B (+349 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
         }
-      },
-      "/performance/": {
-        "limits": {
-          "cssWireBytes": 256,
-          "frameworkJsWireBytes": 28620,
-          "htmlWireBytes": 10850,
-          "imageWireBytes": 256,
-          "inlineScriptBytes": 256,
-          "jsWireBytes": 28620,
-          "lazyJsWireBytes": 256,
-          "requests": 5,
-          "totalWireBytes": 98584,
-          "wasmWireBytes": 256
-        },
-        "require": [
-          "html-compressed",
-          "assets-compressed",
-          "no-cookie",
-          "immutable-hashed",
-          "runtime-hashed",
-          "no-inline-runtime",
-          "html-shareable"
-        ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       }
     },
     "scaffold": {
       "/": {
         "limits": {
           "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 28620,
+          "frameworkJsWireBytes": 28847,
           "htmlWireBytes": 1491,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 28620,
+          "jsWireBytes": 28847,
           "lazyJsWireBytes": 256,
           "requests": 3,
-          "totalWireBytes": 31024,
+          "totalWireBytes": 31252,
           "wasmWireBytes": 256
-        },
-        "require": [
-          "html-compressed",
-          "assets-compressed",
-          "no-cookie",
-          "immutable-hashed",
-          "runtime-hashed",
-          "no-inline-runtime",
-          "html-shareable"
-        ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
-      },
-      "/counter/": {
-        "limits": {
-          "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 311386,
-          "htmlWireBytes": 1516,
-          "imageWireBytes": 256,
-          "inlineScriptBytes": 256,
-          "jsWireBytes": 90521,
-          "lazyJsWireBytes": 256,
-          "requests": 9,
-          "totalWireBytes": 313763,
-          "wasmWireBytes": 221073
         },
         "require": [
           "html-compressed",
@@ -265,22 +279,53 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom.",
-          "totalWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom.",
-          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required."
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 31024 B to 31252 B (+228 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
         }
+      },
+      "/counter/": {
+        "limits": {
+          "cssWireBytes": 1367,
+          "frameworkJsWireBytes": 325961,
+          "htmlWireBytes": 1523,
+          "imageWireBytes": 256,
+          "inlineScriptBytes": 256,
+          "jsWireBytes": 92451,
+          "lazyJsWireBytes": 256,
+          "requests": 9,
+          "totalWireBytes": 328398,
+          "wasmWireBytes": 233349
+        },
+        "require": [
+          "html-compressed",
+          "assets-compressed",
+          "no-cookie",
+          "immutable-hashed",
+          "runtime-hashed",
+          "no-inline-runtime",
+          "html-shareable"
+        ],
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 310728 B to 325961 B (+15233 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 313106 B to 328398 B (+15292 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required. 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises wasmWireBytes from 221073 B to 233349 B (+12276 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "htmlWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises htmlWireBytes from 1516 B to 1523 B (+7 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 90521 B to 92451 B (+1930 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        },
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
       },
       "/stack/": {
         "limits": {
           "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 28620,
+          "frameworkJsWireBytes": 28847,
           "htmlWireBytes": 999,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
-          "jsWireBytes": 28620,
+          "jsWireBytes": 28847,
           "lazyJsWireBytes": 256,
           "requests": 3,
-          "totalWireBytes": 30520,
+          "totalWireBytes": 30741,
           "wasmWireBytes": 256
         },
         "require": [
@@ -292,7 +337,12 @@
           "no-inline-runtime",
           "html-shareable"
         ],
-        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7."
+        "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
+        "raise": {
+          "frameworkJsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises frameworkJsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "jsWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises jsWireBytes from 28620 B to 28847 B (+227 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged.",
+          "totalWireBytes": "2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Fresh local wire-gate measurement (make wire-gate, no hosted run yet) raises totalWireBytes from 30520 B to 30741 B (+221 B), set with no extra headroom. Growth per PR was not measured separately. All other limits, request counts and require policies are unchanged."
+        }
       }
     }
   }
