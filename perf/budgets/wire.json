@@ -165,8 +165,8 @@
       "/docs/islands/": {
         "limits": {
           "cssWireBytes": 256,
-          "frameworkJsWireBytes": 310733,
-          "htmlWireBytes": 14280,
+          "frameworkJsWireBytes": 311391,
+          "htmlWireBytes": 14520,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 91332,
@@ -186,8 +186,9 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase. Final-head full-route qualification is required.",
-          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required."
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310362 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 11. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom.",
+          "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required.",
+          "htmlWireBytes": "2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom."
         }
       },
       "/performance/": {
@@ -243,14 +244,14 @@
       "/counter/": {
         "limits": {
           "cssWireBytes": 1367,
-          "frameworkJsWireBytes": 310728,
+          "frameworkJsWireBytes": 311386,
           "htmlWireBytes": 1516,
           "imageWireBytes": 256,
           "inlineScriptBytes": 256,
           "jsWireBytes": 90521,
           "lazyJsWireBytes": 256,
           "requests": 9,
-          "totalWireBytes": 313106,
+          "totalWireBytes": 313763,
           "wasmWireBytes": 221073
         },
         "require": [
@@ -264,8 +265,8 @@
         ],
         "raiseReason": "2026-10-13 interim relief: tolerance 5%, limits regenerated with 2.5% headroom (minimum 256 B); see decision.gosx.perf-defaults-and-size-budgets.2026-10-13, item 7.",
         "raise": {
-          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required.",
-          "totalWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required.",
+          "frameworkJsWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured frameworkJsWireBytes=310357 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom.",
+          "totalWireBytes": "2026-10-21: include the same core-WASM growth for coherent derived reads and settled shared actions. Hosted wire run 39694477164 measured totalWireBytes=312735 B; the source-bound eb933795e163 probe adds 115 B for reentrant observer correctness. Set this metric to that measurement plus 115 B and 256 B headroom. JavaScript remains 89499 B and requests remain 9. No independent JS, request or policy increase. Final-head full-route qualification is required. 2026-10-23: namespace-aware element creation (SVG and MathML) and transparent implicit table bodies in the patch runtime add 658 B of framework JavaScript to island pages; the islands docs page adds an \"Islands in other files\" section (+240 B HTML). Hosted wire run on PR #743 measured these values, set with no extra headroom.",
           "wasmWireBytes": "2026-10-21: coherent derived reads and settled shared actions, including reentrant observer reads, add 1676 B Brotli (0.76%) to the qualified 219141 B core. The source-bound eb933795e163 production probe measured 220817 B (656537 raw). Set the limit to measured bytes plus 256 B. The same core growth is included in affected aggregate metrics; JavaScript, requests, other resources, hard ceilings and policy requirements remain unchanged. Final-head hosted and independent full-route qualification are required."
         }
       },
