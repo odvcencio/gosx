@@ -39,6 +39,31 @@ func BenchmarkDeriveFiveDeps(b *testing.B) {
 	}
 }
 
+func BenchmarkDeriveRepeatedRead(b *testing.B) {
+	for _, reads := range []int{1, 4, 16, 64} {
+		b.Run(fmt.Sprint(reads), func(b *testing.B) {
+			base := New(0)
+			computed := Derive(func() int {
+				sum := 0
+				for range reads {
+					sum += base.Get()
+				}
+				return sum
+			})
+			defer computed.Stop()
+			computed.Subscribe(func() {})
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := range b.N {
+				base.Set(i + 1)
+				if got := computed.Get(); got != reads*(i+1) {
+					b.Fatalf("computed = %d, want %d", got, reads*(i+1))
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkBatchTen(b *testing.B) {
 	s := New(0)
 	s.Subscribe(func() {})
