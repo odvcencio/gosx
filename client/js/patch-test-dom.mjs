@@ -25,7 +25,25 @@ export const patchAuthoritySource = [
   fs.readFileSync(path.join(here, "../runtime/host/patch.ts"), "utf8"),
 ].join("\n");
 
+function nextSiblingOf(node) {
+  const siblings = node.parentNode ? node.parentNode.childNodes : [];
+  const at = siblings.indexOf(node);
+  return at >= 0 && at + 1 < siblings.length ? siblings[at + 1] : null;
+}
+
+function previousSiblingOf(node) {
+  const siblings = node.parentNode ? node.parentNode.childNodes : [];
+  const at = siblings.indexOf(node);
+  return at > 0 ? siblings[at - 1] : null;
+}
+
 export class FakeText {
+  get nextSibling() {
+    return nextSiblingOf(this);
+  }
+  get previousSibling() {
+    return previousSiblingOf(this);
+  }
   constructor(data) {
     this.nodeType = TEXT_NODE;
     this.data = String(data);
@@ -56,6 +74,15 @@ export class FakeElement {
   }
   get children() {
     return this.childNodes.filter((kid) => kid.nodeType === ELEMENT_NODE);
+  }
+  get nextSibling() {
+    return nextSiblingOf(this);
+  }
+  get previousSibling() {
+    return previousSiblingOf(this);
+  }
+  get lastChild() {
+    return this.childNodes[this.childNodes.length - 1] || null;
   }
   get firstChild() {
     return this.childNodes[0] || null;

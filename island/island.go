@@ -1947,12 +1947,63 @@ func renderResolvedNodeInto(b *strings.Builder, resolved *vm.ResolvedTree, nodeI
 	if node.Text != "" {
 		b.WriteString(html.EscapeString(node.Text))
 	}
-	for idx, childIdx := range node.Children {
-		renderResolvedNodeInto(b, resolved, childIdx, childProgramPath(path, idx))
+	if strings.EqualFold(node.Tag, "table") {
+		renderTableChildrenInto(b, resolved, node.Children, path)
+	} else {
+		for idx, childIdx := range node.Children {
+			renderResolvedNodeInto(b, resolved, childIdx, childProgramPath(path, idx))
+		}
 	}
 	b.WriteString("</")
 	b.WriteString(safeTag)
 	b.WriteByte('>')
+}
+
+// ImplicitTbodyAttr marks a <tbody> the renderer added around table rows. It
+// has no node in the island's tree, so the browser runtime skips it when it
+// resolves a patch path and when it inserts or removes rows.
+const ImplicitTbodyAttr = "data-gosx-implicit"
+
+// renderTableChildrenInto renders a table's children and wraps each run of
+// <tr> rows that sit directly under the table in a marked <tbody>.
+//
+// The browser's HTML parser does this wrap on its own: it moves a <tr> that is
+// a direct child of <table> into a <tbody> it creates. The island's tree has no
+// such node, so without the wrap the live DOM is table > tbody > tr while patch
+// paths assume table > tr, and a patch lands on the wrong node whenever the
+// table also holds a <thead> or <tfoot>. Writing the <tbody> here makes the
+// parser leave the rows alone and gives the runtime a marker to skip.
+//
+// A run starts at a row and ends at the last row before a different element,
+// so text between two rows stays inside the run and trailing text does not.
+// Child paths use the island tree's indices, so the wrapper takes no index.
+func renderTableChildrenInto(b *strings.Builder, resolved *vm.ResolvedTree, children []int, path string) {
+	isRow := func(i int) bool {
+		idx := children[i]
+		return idx >= 0 && idx < len(resolved.Nodes) && strings.EqualFold(resolved.Nodes[idx].Tag, "tr")
+	}
+	isText := func(i int) bool {
+		idx := children[i]
+		return idx >= 0 && idx < len(resolved.Nodes) && resolved.Nodes[idx].Tag == ""
+	}
+	for i := 0; i < len(children); i++ {
+		if !isRow(i) {
+			renderResolvedNodeInto(b, resolved, children[i], childProgramPath(path, i))
+			continue
+		}
+		last := i
+		for k := i + 1; k < len(children) && (isRow(k) || isText(k)); k++ {
+			if isRow(k) {
+				last = k
+			}
+		}
+		b.WriteString("<tbody " + ImplicitTbodyAttr + `="">`)
+		for k := i; k <= last; k++ {
+			renderResolvedNodeInto(b, resolved, children[k], childProgramPath(path, k))
+		}
+		b.WriteString("</tbody>")
+		i = last
+	}
 }
 
 // expandIslandManagedFormAttrs applies the data-gosx-managed shorthand

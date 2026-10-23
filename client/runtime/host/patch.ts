@@ -32,12 +32,13 @@
   var PATCH_SET_DISPATCH    = 10;
   var PATCH_REMOVE_DISPATCH = 11;
 
-  // Elements that browsers may insert implicitly (e.g. <tbody> inside <table>).
-  // When walking a path we need to skip through these so that the path indices
-  // from the Go VDOM still line up with the real DOM.
-  var IMPLICIT_ELEMENTS = new Set([
-    "TBODY", "THEAD", "TFOOT", "COLGROUP",
-  ]);
+  // A <tr> that is a direct child of <table> in the island's tree sits inside a
+  // <tbody> in the DOM, because the HTML parser adds one. The server writes that
+  // <tbody> itself and marks it with this attribute. The marked element has no
+  // node in the island's tree, so every index that counts a table's children
+  // reads through it: the table's children are the marked <tbody>'s children
+  // in its place. A <tbody> the author wrote has no mark and counts as itself.
+  var IMPLICIT_ATTR = "data-gosx-implicit";
 
   // Namespaces for elements created after load. document.createElement always
   // makes an HTML element, so <svg> and <path> created that way draw nothing.
@@ -203,7 +204,8 @@
   /**
    * Build a cache entry.
    *
-   * box is skipImplicit(node) — the node that owns the child indices. kids maps
+   * table is true for a <table>, whose children are read through its marked
+   * implicit <tbody>; flat memoizes that flattened child list. kids maps
    * effective child index to entry. cursor* memoize the last child resolved
    * here. attached is true only for entries reachable from the cache root; a
    * detached entry reads fine but its position is unknown, so dirtying it
@@ -216,7 +218,8 @@
     return {
       node: node,
       attached: attached,
-      box: null,
+      table: isTable(node),
+      flat: null,
       kids: null,
       cursorIndex: -1,
       cursorRaw: -1,
@@ -245,7 +248,7 @@
     // Unknown position: dirty the root rather than leave a stale descendant.
     if (!entry.attached) entry = pathCache;
     if (!entry) return;
-    entry.box = null;
+    entry.flat = null;
     entry.kids = null;
     entry.cursorIndex = -1;
     entry.cursorRaw = -1;
@@ -257,8 +260,8 @@
    * An append shifts no index, so the memoized children and the cursor stay
    * correct — this is what makes a list build linear.
    *
-   * One risk: appending the first element child can make skipImplicit pick a
-   * <tbody>, which remaps every index. Drop the child state in that case.
+   * A table is the exception: where an append lands (the marked <tbody> or the
+   * table itself) decides its flattened child list, so a table drops its state.
    *
    * @param {Object|null} entry
    */
@@ -268,10 +271,7 @@
       dropChildState(pathCache);
       return;
     }
-    if (entry.box === null) return; // nothing memoized yet
-    if (entry.box !== entry.node || skipImplicit(entry.node) !== entry.node) {
-      dropChildState(entry);
-    }
+    if (entry.table) dropChildState(entry);
   }
 
   /**
@@ -292,12 +292,6 @@
     dropChildState(resolveEntry(root, text.slice(0, cut)));
   }
 
-  /** Return skipImplicit(entry.node), computed once per child-list version. */
-  function entryBox(entry) {
-    if (entry.box === null) entry.box = skipImplicit(entry.node);
-    return entry.box;
-  }
-
   /**
    * Return the effective child of `entry` at `index`, or null. Effective
    * children are elements and text nodes, matching the Go VDOM's child list.
@@ -310,8 +304,11 @@
    */
   function effectiveChildAt(entry, index) {
     if (!(index >= 0)) return null;
-    var box = entryBox(entry);
-    var children = box.childNodes;
+    if (entry.table) {
+      if (entry.flat === null) entry.flat = getEffectiveChildren(entry.node);
+      return index < entry.flat.length ? entry.flat[index] : null;
+    }
+    var children = entry.node.childNodes;
     if (!children) return null;
     var total = children.length;
     var elementType = Node.ELEMENT_NODE;
@@ -445,9 +442,6 @@
       var idx = parseInt(indices[i], 10);
       if (isNaN(idx)) return null;
 
-      // Skip browser-implicit wrapper elements (e.g. auto-inserted <tbody>).
-      node = skipImplicit(node);
-
       var children = getEffectiveChildren(node);
       if (idx < 0 || idx >= children.length) return null;
       node = children[idx];
@@ -502,7 +496,8 @@
     if (resolved.index >= children.length) {
       resolved.parent.appendChild(textNode);
     } else {
-      resolved.parent.insertBefore(textNode, children[resolved.index]);
+      var before = children[resolved.index];
+      before.parentNode.insertBefore(textNode, before);
     }
     // The insert changed the parent's child list. Dirty it so later ops see
     // the new node instead of a cached pre-insert sibling.
@@ -510,48 +505,54 @@
     return textNode;
   }
 
-  /**
-   * If a node has exactly one element child and that child is an implicit
-   * wrapper (TBODY, THEAD, etc.), skip into it.  This keeps Go-side indices
-   * aligned with the browser DOM.
-   *
-   * @param {Node} node
-   * @returns {Node}
-   */
-  function skipImplicit(node) {
-    // Only element nodes can have .children
-    if (node.nodeType !== Node.ELEMENT_NODE) return node;
+  /** True for a <table> element, the only parent of a marked implicit <tbody>. */
+  function isTable(node) {
+    return node.nodeType === Node.ELEMENT_NODE &&
+      String(node.localName || node.tagName).toLowerCase() === "table";
+  }
 
-    if (
-      node.children.length === 1 &&
-      IMPLICIT_ELEMENTS.has(node.children[0].tagName)
-    ) {
-      return node.children[0];
-    }
-    return node;
+  /** True for a <tbody> the server added around a table's direct rows. */
+  function isImplicitWrapper(node) {
+    return node.nodeType === Node.ELEMENT_NODE &&
+      typeof node.hasAttribute === "function" &&
+      node.hasAttribute(IMPLICIT_ATTR) &&
+      String(node.localName || node.tagName).toLowerCase() === "tbody";
+  }
+
+  /** True for a <tr> element. */
+  function isRowElement(node) {
+    return node.nodeType === Node.ELEMENT_NODE &&
+      String(node.localName || node.tagName).toLowerCase() === "tr";
   }
 
   /**
    * Return the "effective" child list of a node — elements and text nodes,
    * excluding comment nodes and other non-renderable nodes.  This matches the
-   * child list the Go VDOM sees.
+   * child list the Go VDOM sees. A table's list reads through its marked
+   * implicit <tbody> (see IMPLICIT_ATTR).
    *
    * @param {Node} node
    * @returns {Node[]}
    */
   function getEffectiveChildren(node) {
     var result = [];
+    appendEffectiveChildren(result, node, isTable(node));
+    return result;
+  }
+
+  function appendEffectiveChildren(result, node, throughWrappers) {
     var children = node.childNodes;
     for (var i = 0; i < children.length; i++) {
       var child = children[i];
-      if (
+      if (throughWrappers && isImplicitWrapper(child)) {
+        appendEffectiveChildren(result, child, false);
+      } else if (
         child.nodeType === Node.ELEMENT_NODE ||
         child.nodeType === Node.TEXT_NODE
       ) {
         result.push(child);
       }
     }
-    return result;
   }
 
   // ---------------------------------------------------------------------------
@@ -793,6 +794,7 @@
    * @returns {boolean} true when the node landed after every existing child.
    */
   function insertChildAt(target, node, op) {
+    if (isTable(target)) return insertIntoTable(target, node, op);
     var children = target.childNodes;
     var count = children.length;
     var insertIdx =
@@ -803,6 +805,56 @@
       return false;
     }
     target.appendChild(node);
+    return true;
+  }
+
+  /**
+   * Insert into a table, whose child indices read through a marked implicit
+   * <tbody>. A row goes into that <tbody> when its neighbour is there, so rows
+   * stay in one group; any other node goes into the table itself.
+   *
+   * @param {Node} table
+   * @param {Node} node
+   * @param {Object} op
+   * @returns {boolean} true when the node landed after every existing child.
+   */
+  function insertIntoTable(table, node, op) {
+    var logical = getEffectiveChildren(table);
+    var at = op.children && op.children.length > 0 ? op.children[0] : logical.length;
+    var row = isRowElement(node);
+
+    if (at < logical.length) {
+      var ref = logical[at];
+      if (row && at > 0) {
+        var prev = logical[at - 1];
+        if (prev.parentNode !== table && isImplicitWrapper(prev.parentNode)) {
+          prev.parentNode.insertBefore(node, prev.nextSibling);
+          return false;
+        }
+      }
+      if (row && ref.parentNode === table) {
+        // An emptied row group has no row to follow; join it when it sits just
+        // before the node this row goes ahead of.
+        var gap = ref.previousSibling;
+        while (gap && gap.nodeType !== Node.ELEMENT_NODE) gap = gap.previousSibling;
+        if (gap && isImplicitWrapper(gap)) {
+          gap.appendChild(node);
+          return false;
+        }
+      }
+      if (ref.parentNode !== table && !row) {
+        // Only a row belongs in the row group: go before the group instead.
+        table.insertBefore(node, ref.parentNode);
+      } else {
+        ref.parentNode.insertBefore(node, ref);
+      }
+      return false;
+    }
+
+    var last = table.lastChild;
+    while (last && last.nodeType !== Node.ELEMENT_NODE) last = last.previousSibling;
+    if (row && last && isImplicitWrapper(last)) last.appendChild(node);
+    else table.appendChild(node);
     return true;
   }
 
@@ -845,6 +897,10 @@
    */
   function applyReorder(target, op) {
     if (!op.children || op.children.length === 0) return;
+    if (isTable(target)) {
+      reorderTable(target, op);
+      return;
+    }
 
     var currentChildren = Array.from(target.childNodes);
     var fragment = document.createDocumentFragment();
@@ -862,6 +918,47 @@
       target.removeChild(target.firstChild);
     }
     target.appendChild(fragment);
+  }
+
+  /**
+   * Reorder a table's children by logical index. Rows are put back into the
+   * marked <tbody> elements the table already has, one group per run of rows;
+   * every other child goes straight into the table. Children the order omits
+   * are dropped, as in the plain reorder.
+   */
+  function reorderTable(table, op) {
+    var logical = getEffectiveChildren(table);
+    var wrappers = [];
+    for (var w = 0; w < table.childNodes.length; w++) {
+      if (isImplicitWrapper(table.childNodes[w])) wrappers.push(table.childNodes[w]);
+    }
+
+    var ordered = [];
+    for (var i = 0; i < op.children.length; i++) {
+      var idx = op.children[i];
+      if (idx >= 0 && idx < logical.length) ordered.push(logical[idx]);
+    }
+    for (var d = 0; d < ordered.length; d++) {
+      if (ordered[d].parentNode) ordered[d].parentNode.removeChild(ordered[d]);
+    }
+    while (table.firstChild) table.removeChild(table.firstChild);
+    for (var c = 0; c < wrappers.length; c++) {
+      while (wrappers[c].firstChild) wrappers[c].removeChild(wrappers[c].firstChild);
+    }
+
+    var next = 0;
+    var pos = 0;
+    while (pos < ordered.length) {
+      var node = ordered[pos];
+      if (isRowElement(node) && next < wrappers.length) {
+        var group = wrappers[next++];
+        table.appendChild(group);
+        while (pos < ordered.length && isRowElement(ordered[pos])) group.appendChild(ordered[pos++]);
+      } else {
+        table.appendChild(node);
+        pos++;
+      }
+    }
   }
 
   /**
