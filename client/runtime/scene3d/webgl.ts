@@ -1145,10 +1145,12 @@
     "in vec3 a_normal;",
     "in vec2 a_uv;",
     "in vec4 a_tangent;",
+    "in vec4 a_instanceColor;",
     SCENE_CROWD_MOTION_ATTRIBUTES_GLSL,
     "",
     "uniform mat4 u_viewMatrix;",
     "uniform mat4 u_projectionMatrix;",
+    "uniform bool u_hasInstanceColor;",
     "",
     "out vec3 v_worldPosition;",
     "out vec3 v_normal;",
@@ -1170,7 +1172,7 @@
     "vec3 t=m*a_tangent.xyz;vec3 N=v_normal;vec3 tangentFrame=t-N*dot(N,t);vec3 tangentAxis=abs(N.x)<0.8?vec3(1,0,0):vec3(0,1,0);vec3 T=normalize(dot(tangentFrame,tangentFrame)>1e-12?tangentFrame:tangentAxis-N*dot(N,tangentAxis));",
     "v_bitangent=cross(N,T)*a_tangent.w*q.w;",
     "    v_tangent = T;",
-    "    v_instanceColor = vec4(1.0);",
+    "    v_instanceColor = u_hasInstanceColor ? a_instanceColor : vec4(1.0);",
     "    gl_Position = u_projectionMatrix * u_viewMatrix * worldPos;",
     "}",
   ].join("\n");
@@ -6305,8 +6307,9 @@
   function createScenePBRCrowdMotionProgram(gl, detail = false) {
     return scenePBRCreateProgramInfo(gl, SCENE_PBR_CROWD_MOTION_VERTEX_SOURCE, scenePBRFragmentSourceForContext(gl, detail ? sceneWebGLDetailFragment(SCENE_PBR_FRAGMENT_SOURCE, true) : SCENE_PBR_FRAGMENT_SOURCE), "Crowd motion PBR shader", function(program: any) {
 
-      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState");
+      var attributes = scenePBRAttributeLocations(gl, program, "position normal uv tangent joints weights motionPrevPos motionPrevRot motionPrevScale tPrev motionNextPos motionNextRot motionNextScale tNext animState instanceColor");
       var uniforms = scenePBRCacheBaseUniforms(gl, program);
+      uniforms.hasInstanceColor = gl.getUniformLocation(program, "u_hasInstanceColor");
       uniforms.crowdAtlas = gl.getUniformLocation(program, "u_crowdAtlas");
       uniforms.crowdClipTable = gl.getUniformLocation(program, "u_crowdClipTable");
       uniforms.now = gl.getUniformLocation(program, "u_now");
@@ -7843,9 +7846,41 @@
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const location = ip.attributes.pose; allowed[location] = true;
       gl.bindBuffer(gl.ARRAY_BUFFER, uploadPackedStream(batch, "poses", batch.poses));
       gl.enableVertexAttribArray(location); gl.vertexAttribPointer(location, 3, gl.FLOAT, false, 12, 0); gl.vertexAttribDivisor(location, 1);
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     function finishCrowdBatch(batch, ip) {
       if (batch.atlas) { gl.vertexAttribDivisor(ip.attributes.pose, 0); gl.disableVertexAttribArray(ip.attributes.pose); }
+      finishCrowdBatchColors(ip);
+    }
+
+    // Per-agent tints (linear RGBA, 4 floats per agent) as an instance-rate attribute.
+    // They upload when the record's colour generation changes, not with every pose revision.
+    // The shadow programs have no a_instanceColor and skip this.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function bindCrowdBatchColors(batch, ip, allowed) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      // The program keeps its uniforms between draws: say "no tint" whenever this batch has none.
+      if (!batch.colors || batch.colors.length < batch.count * 4) { gl.uniform1i(ip.uniforms.hasInstanceColor, 0); return; }
+      allowed[location] = true;
+      const retained = batch._colorUploaded === undefined ? null : touchInstancedStream(batch, 0, "colors");
+      let buffer = retained;
+      if (!retained || batch._colorUploaded !== batch._colorGeneration) {
+        batch._colorUploaded = batch._colorGeneration;
+        buffer = uploadInstancedStream(batch, 0, "colors", batch.colors, batch.count * 4);
+      }
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      gl.enableVertexAttribArray(location);
+      gl.vertexAttribPointer(location, 4, gl.FLOAT, false, 0, 0);
+      gl.vertexAttribDivisor(location, 1);
+      gl.uniform1i(ip.uniforms.hasInstanceColor, 1);
+    }
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function finishCrowdBatchColors(ip) {
+      const location = ip.attributes.instanceColor;
+      if (!(location >= 0)) return;
+      gl.vertexAttribDivisor(location, 0);
+      gl.disableVertexAttribArray(location);
     }
 
     // --- GPU-driven crowd motion batch binding ---
@@ -8012,10 +8047,12 @@
         gl.vertexAttribPointer(location, components, gl.FLOAT, false, stride, byteOffset);
         gl.vertexAttribDivisor(location, 1);
       }
+      bindCrowdBatchColors(batch, ip, allowed);
     }
     // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
     function finishCrowdMotionBatch(batch, ip) {
       if (!batch.atlas) return;
+      finishCrowdBatchColors(ip);
       for (const name of ["motionPrevPos", "motionPrevRot", "motionPrevScale", "tPrev", "motionNextPos", "motionNextRot", "motionNextScale", "tNext", "animState"]) {
         gl.vertexAttribDivisor(ip.attributes[name], 0);
         gl.disableVertexAttribArray(ip.attributes[name]);
@@ -9677,6 +9714,7 @@
       batch.atlas = obj.crowdAtlas; batch.clipTable = obj.crowdClipTable;
       batch.members = obj.crowdMembers; batch.shape = obj.crowdShape; batch.count = obj.instanceCount;
       batch.transforms = obj.crowdTransforms; batch.poses = obj.crowdPoses; batch.parent = obj.crowdParentMatrix || null; batch.cut = obj.crowdCut || null;
+      batch.colors = obj.crowdColors || null; batch._colorGeneration = obj.crowdColorGen;
       if (batch._packedRevision !== obj.crowdRevision) {
         // Dirty slot ranges describe one revision. Use them only when this
         // batch packed the revision just before it.
@@ -9687,6 +9725,31 @@
       }
       meshColorVisibility.set(obj, batch.count > 0 && !(obj.bounds && boundsOutsideSidePlanes(obj.bounds, planes)));
       if (batch.count > 0) rigidObjectBatches.set(obj, batch);
+    }
+
+    // An agent that left its crowd batch still draws on the crowd shader, as a batch
+    // of its own; its tint comes from its own skin record.
+    // @ts-ignore TS7006 -- raw-source tests parse this as JavaScript.
+    function prepareRigidCrowdColors(batch) {
+      const objects = batch.objects;
+      let any = false;
+      for (let i = 0; i < batch.count; i++) {
+        const skin = objects[i]._crowdSkin;
+        if (skin && skin.tint) { any = true; break; }
+      }
+      if (!any) { batch.colors = null; return; }
+      const need = batch.count * 4;
+      let colors = batch.colors;
+      let changed = false;
+      if (!colors || colors.length !== need) { colors = batch.colors = new Float32Array(need); changed = true; }
+      for (let i = 0; i < batch.count; i++) {
+        const skin = objects[i]._crowdSkin, tint = skin && skin.tint;
+        for (let k = 0; k < 4; k++) {
+          const value = tint ? tint[k] : 1;
+          if (colors[i * 4 + k] !== value) { colors[i * 4 + k] = value; changed = true; }
+        }
+      }
+      if (changed) batch._colorGeneration = (batch._colorGeneration | 0) + 1;
     }
 
     function prepareRigidMeshBatches(bundle) {
@@ -9795,6 +9858,7 @@
             batch.transforms = null;
             continue;
           }
+          if (batch.atlas) prepareRigidCrowdColors(batch);
           if (batch.motion) {
             // GPU-motion crowd batch: no CPU transform/pose math here at all,
             // and prepareCrowdMotionRecords re-copies/re-uploads only when an
