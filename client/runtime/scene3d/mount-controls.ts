@@ -191,6 +191,77 @@
     };
   }
 
+  // sceneControlsApplyOrbit changes the orbit target and its distance and
+  // pitch limits after mount. orbit is {target?, minDistance?, maxDistance?,
+  // pitchLimit?}; a field left out keeps its current value. It reports whether
+  // anything changed. The caller then re-derives the orbit state from the
+  // camera (applySceneControlsCamera), so the orbit continues from the new
+  // target without a jump. A limit that is not a positive number keeps its
+  // value. Controllers with no orbit (walk, vessel, fly) ignore it.
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneControlsApplyOrbit(controls, orbit) {
+    // A vessel scene wraps the orbit controller in its own, which forwards to the one inside.
+    if (controls && typeof controls.applyOrbit === "function") return controls.applyOrbit(orbit);
+    if (!controls || (controls.mode !== "orbit" && controls.mode !== "fixed") || !sceneIsPlainObject(orbit)) {
+      return false;
+    }
+    let changed = false;
+    if (sceneIsPlainObject(orbit.target)) {
+      const current = controls.target || { x: 0, y: 0, z: 0 };
+      const next = {
+        x: sceneNumber(orbit.target.x, current.x),
+        y: sceneNumber(orbit.target.y, current.y),
+        z: sceneNumber(orbit.target.z, current.z),
+      };
+      changed = next.x !== current.x || next.y !== current.y || next.z !== current.z;
+      controls.target = next;
+    }
+    if (controls.mode === "orbit") {
+      // @ts-ignore TS7006 -- plain JavaScript fixture
+      const finite = (value) => typeof value === "number" && Number.isFinite(value) && value > 0; // zero leaves a limit as it is
+      const minDistance = finite(orbit.minDistance) ? Math.max(0.001, orbit.minDistance) : controls.minDistance;
+      const maxDistance = Math.max(minDistance, finite(orbit.maxDistance) ? orbit.maxDistance : controls.maxDistance);
+      const pitchLimit = finite(orbit.pitchLimit) ? sceneOrbitPitchLimit(orbit.pitchLimit) : controls.pitchLimit;
+      // @ts-ignore TS7006 -- plain JavaScript fixture
+      const number = (value, current) => typeof value === "number" && Number.isFinite(value) ? value : current;
+      const minPitch = number(orbit.minPitch, controls.minPitch), maxPitch = number(orbit.maxPitch, controls.maxPitch), minHeight = number(orbit.minHeight, controls.minHeight);
+      changed = changed || minDistance !== controls.minDistance || maxDistance !== controls.maxDistance || pitchLimit !== controls.pitchLimit ||
+        minPitch !== controls.minPitch || maxPitch !== controls.maxPitch || minHeight !== controls.minHeight;
+      controls.minPitch = minPitch;
+      controls.maxPitch = maxPitch;
+      controls.minHeight = minHeight;
+      controls.minDistance = minDistance;
+      controls.maxDistance = maxDistance;
+      controls.pitchLimit = pitchLimit;
+    }
+    return changed;
+  }
+
+  // sceneControlsFollowCameraCommands runs after SetCamera commands wrote the
+  // scene camera (applySceneCommands writes only the scene state). Built-in
+  // controls keep their own orbit or fly state, so the last camera command,
+  // with its orbit settings, goes through them as handle.setCamera does. It
+  // reports whether a camera command was present.
+  // @ts-ignore TS7006 -- plain JavaScript fixture
+  function sceneControlsFollowCameraCommands(controls, sceneState, commands) {
+    let hasCamera = false;
+    for (const command of commands) {
+      if (!command || command.kind !== 5) continue;
+      hasCamera = true;
+      sceneControlsApplyOrbit(controls, command.data && command.data.orbit);
+    }
+    if (!hasCamera) return false;
+    applySceneControlsCamera(controls, sceneState.camera);
+    return true;
+  }
+
+  // The orbit target now in effect: the controller's, which a camera command or
+  // pan may have moved since mount, else the mount-time prop.
+  // @ts-ignore TS7006 -- plain JavaScript fixture
+  function sceneControlsCurrentTarget(controls, props) {
+    return controls && controls.target ? Object.assign({}, controls.target) : sceneControlsTarget(props);
+  }
+
   function sceneControlsRotateSpeed(props) {
     return Math.max(0.1, sceneNumber(props && props.controlRotateSpeed, 1));
   }
@@ -212,6 +283,7 @@
   const SCENE_ORBIT_STOP_SPEED = (Math.PI / 180) * 0.01;
   const SCENE_ORBIT_DEFAULT_PITCH_LIMIT = 1.4;
   const SCENE_ORBIT_MAX_PITCH_LIMIT = Math.PI / 2 - (Math.PI / 180) * 0.001;
+  const SCENE_ORBIT_MAX_PITCH_SINE = Math.sin(SCENE_ORBIT_MAX_PITCH_LIMIT);
   const SCENE_ORBIT_DEFAULT_MIN_DISTANCE = 0.6;
   const SCENE_ORBIT_DEFAULT_MAX_DISTANCE = 256;
 
@@ -221,6 +293,33 @@
       0.1,
       SCENE_ORBIT_MAX_PITCH_LIMIT,
     );
+  }
+
+  // A floor above the target needs enough radius to reach it without a pole
+  // singularity. The floor wins when authored distance/pitch bounds conflict.
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneOrbitClampRadius(limits, target, radius) {
+    let min = Math.max(0.001, sceneNumber(limits.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
+    if (Number.isFinite(limits.minHeight)) {
+      const height = limits.minHeight - sceneNumber(target && target.y, 0);
+      min = Math.max(min, height / SCENE_ORBIT_MAX_PITCH_SINE);
+    }
+    return sceneClamp(radius, min, Math.max(min, sceneNumber(limits.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE)));
+  }
+
+  // The pitch an orbit may take at its radius. PitchLimit is the symmetric default; MinPitch and MaxPitch
+  // (either may be zero or negative) replace its two sides; MinHeight raises the lower side so the camera
+  // stays at or above that world height. limits is the controls or an orbit state.
+  // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
+  function sceneOrbitClampPitch(limits, orbit, pitch) {
+    const limit = sceneOrbitPitchLimit(limits.pitchLimit), cap = SCENE_ORBIT_MAX_PITCH_LIMIT;
+    let min = sceneClamp(sceneNumber(limits.minPitch, -limit), -cap, cap);
+    const max = sceneClamp(sceneNumber(limits.maxPitch, limit), -cap, cap);
+    if (Number.isFinite(limits.minHeight)) {
+      const ratio = (limits.minHeight - sceneNumber(orbit.target && orbit.target.y, 0)) / Math.max(sceneNumber(orbit.radius, 1), 0.001);
+      min = Math.max(min, Math.asin(sceneClamp(ratio, -1, 1)));
+    }
+    return sceneClamp(pitch, min, Math.max(min, max));
   }
 
   function sceneControlsRotateMode(props) {
@@ -372,10 +471,9 @@
     const offsetZ = worldPosition.z - sceneNumber(orbitTarget.z, 0);
     const minDistance = Math.max(0.001, sceneNumber(controls && controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
     const maxDistance = Math.max(minDistance, sceneNumber(controls && controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
-    const radius = sceneClamp(Math.hypot(offsetX, offsetY, offsetZ), minDistance, maxDistance);
-    const pitchLimit = sceneOrbitPitchLimit(controls && controls.pitchLimit);
-    const pitchRatioLimit = Math.sin(pitchLimit);
-    return {
+    const radius = sceneOrbitClampRadius(controls || {}, orbitTarget, Math.hypot(offsetX, offsetY, offsetZ));
+    const limits = controls || {};
+    const state = {
       target: {
         x: sceneNumber(orbitTarget.x, 0),
         y: sceneNumber(orbitTarget.y, 0),
@@ -384,9 +482,12 @@
       radius,
       minDistance,
       maxDistance,
-      pitchLimit,
+      pitchLimit: sceneOrbitPitchLimit(limits.pitchLimit),
+      minPitch: limits.minPitch,
+      maxPitch: limits.maxPitch,
+      minHeight: limits.minHeight,
       yaw: Math.atan2(offsetX, offsetZ),
-      pitch: Math.asin(sceneClamp(offsetY / Math.max(radius, 0.001), -pitchRatioLimit, pitchRatioLimit)),
+      pitch: Math.asin(sceneClamp(offsetY / Math.max(radius, 0.001), -1, 1)),
       kind: normalized.kind,
       fov: normalized.fov,
       left: normalized.left,
@@ -397,16 +498,15 @@
       near: normalized.near,
       far: normalized.far,
     };
+    state.pitch = sceneOrbitClampPitch(state, state, state.pitch);
+    return state;
   }
 
   function sceneOrbitCamera(state, fallbackCamera) {
     /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ const base = sceneRenderCamera(fallbackCamera);
     const orbit = state || sceneOrbitStateFromCamera(base, { x: 0, y: 0, z: 0 });
-    const minDistance = Math.max(0.001, sceneNumber(orbit.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE));
-    const maxDistance = Math.max(minDistance, sceneNumber(orbit.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE));
-    const radius = sceneClamp(sceneNumber(orbit.radius, 6), minDistance, maxDistance);
-    const pitchLimit = sceneOrbitPitchLimit(orbit.pitchLimit);
-    const pitch = sceneClamp(sceneNumber(orbit.pitch, 0), -pitchLimit, pitchLimit);
+    const radius = sceneOrbitClampRadius(orbit, orbit.target, sceneNumber(orbit.radius, 6));
+    const pitch = sceneOrbitClampPitch(orbit, Object.assign({}, orbit, { radius }), sceneNumber(orbit.pitch, 0));
     const yaw = sceneNumber(orbit.yaw, 0);
     const target = orbit.target || { x: 0, y: 0, z: 0 };
     const cosPitch = Math.cos(pitch);
@@ -495,13 +595,9 @@
     if (!controls.orbit) return false;
     const seconds = Math.max(0.001, Math.min(0.05, sceneNumber(deltaSeconds, 0)));
     controls.orbit.yaw += sceneNumber(controls.orbitVelocityYaw, 0) * seconds;
-    const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
-    const nextPitch = sceneClamp(
-      controls.orbit.pitch + sceneNumber(controls.orbitVelocityPitch, 0) * seconds,
-      -pitchLimit,
-      pitchLimit,
-    );
-    if (nextPitch === -pitchLimit || nextPitch === pitchLimit) {
+    const wanted = controls.orbit.pitch + sceneNumber(controls.orbitVelocityPitch, 0) * seconds;
+    const nextPitch = sceneOrbitClampPitch(controls, controls.orbit, wanted);
+    if (nextPitch !== wanted) {
       controls.orbitVelocityPitch = 0;
     }
     controls.orbit.pitch = nextPitch;
@@ -734,13 +830,8 @@
     const deltaPitch = controls.rotateMode === "pixel-degrees"
       ? sample.deltaY * pixelRadians * pitchDirection
       : (sample.deltaY / Math.max(metrics.height, 1)) * Math.PI * rotateSpeed * pitchDirection;
-    const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
     controls.orbit.yaw += deltaYaw;
-    controls.orbit.pitch = sceneClamp(
-      controls.orbit.pitch + deltaPitch,
-      -pitchLimit,
-      pitchLimit,
-    );
+    controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch + deltaPitch);
     controls.orbitVelocityYaw = sceneClamp(deltaYaw / seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED);
     controls.orbitVelocityPitch = sceneClamp(deltaPitch / seconds, -SCENE_ORBIT_MAX_SPEED, SCENE_ORBIT_MAX_SPEED);
     controls.orbitLastMoveMS = now;
@@ -787,11 +878,9 @@
     syncSceneControlsFromSource(controls, readSourceCamera);
     sceneOrbitStopInertia(controls);
     controls.touched = true;
-    controls.orbit.radius = sceneClamp(
-      controls.orbit.radius * Math.exp(sceneNumber(event && event.deltaY, 0) * 0.001 * controls.zoomSpeed),
-      Math.max(0.001, sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE)),
-      Math.max(sceneNumber(controls.minDistance, SCENE_ORBIT_DEFAULT_MIN_DISTANCE), sceneNumber(controls.maxDistance, SCENE_ORBIT_DEFAULT_MAX_DISTANCE)),
-    );
+    controls.orbit.radius = sceneOrbitClampRadius(controls.orbit, controls.orbit.target,
+      controls.orbit.radius * Math.exp(sceneNumber(event && event.deltaY, 0) * 0.001 * controls.zoomSpeed));
+    controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch);
     if (event && typeof event.preventDefault === "function") {
       event.preventDefault();
     }
@@ -982,20 +1071,12 @@
       return true;
     }
     if (key === "up" || key === "down") {
-      const pitchLimit = sceneOrbitPitchLimit(controls.pitchLimit);
-      controls.orbit.pitch = sceneClamp(
-        controls.orbit.pitch + (key === "up" ? -1 : 1) * (Math.PI / 36) * controls.rotateSpeed,
-        -pitchLimit,
-        pitchLimit,
-      );
+      controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch + (key === "up" ? -1 : 1) * (Math.PI / 36) * controls.rotateSpeed);
       return true;
     }
     const zoomScale = Math.exp((key === "zoom-in" ? -1 : 1) * 0.12 * controls.zoomSpeed);
-    controls.orbit.radius = sceneClamp(
-      controls.orbit.radius * zoomScale,
-      controls.minDistance,
-      controls.maxDistance,
-    );
+    controls.orbit.radius = sceneOrbitClampRadius(controls.orbit, controls.orbit.target, controls.orbit.radius * zoomScale);
+    controls.orbit.pitch = sceneOrbitClampPitch(controls, controls.orbit, controls.orbit.pitch);
     return true;
   }
 
@@ -1071,7 +1152,7 @@
       if (sceneState) sceneState._gosxMotionController = fixed;
     }
     if (sceneVesselEnabled(props)) base = window.__gosx_scene3d_vessel_api.setup(canvas, props, base, sceneState, {
-      schedule, current: sceneCurrentControlCamera,
+      schedule, current: sceneCurrentControlCamera, apply: applySceneControlsCamera, orbit: sceneControlsApplyOrbit,
       subscribe: typeof gosxSubscribeSharedSignal === "function" ? gosxSubscribeSharedSignal : undefined,
       publish: typeof setSharedSignalValue === "function" ? setSharedSignalValue : undefined,
       // @ts-ignore TS7006 -- renderer-neutral creation seam for the lazy wake

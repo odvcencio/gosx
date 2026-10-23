@@ -17,6 +17,47 @@
 - Compile authored Selena vertex texture sampling through SceneIR. Expose only
   vertex-sampled textures to the WebGPU vertex stage and reject unsupported
   WebGL device limits before shader compilation, retaining material fallbacks.
+- Bound an orbit's pitch on each side, and give it a floor. `scene.Orbit` gains
+  `MinPitch` and `MaxPitch` (radians of camera elevation above the target's
+  horizon; pointers, because zero is valid) and `MinHeight` (a world y the
+  camera never goes below, at any distance). `PitchLimit` stays the symmetric
+  shorthand. A drag, inertia, a key, a zoom or a camera command all stop on the
+  range and the floor, so a preset aimed near the waterline cannot orbit under
+  the sea. The floor is a fixed height; it does not follow the waves.
+
+- Change a mounted Scene3D scene's orbit target, distance limits and pitch limit
+  after mount. Put `scene.Orbit` on a camera (`PerspectiveCamera.Orbit`,
+  `IRCamera.Orbit`) and the orbit controls take the new target when the camera
+  command runs, so mouse orbit continues around it. `Scene3D.SetOrbit` (and the
+  page-side `__gosx.scene3d.setOrbit` and handle `setOrbit`) changes them alone:
+  the camera keeps its position and turns to the new target. Props with
+  `Controls: ControlOrbit` carry `ControlTarget` and the control limits in the
+  canonical camera record, so a Go-side scene update that changes them reaches
+  the mounted controls.
+
+- Apply a dispatched `SetCamera` command to the built-in camera controls.
+  `Scene3D.Dispatch` with a camera command used to update only the scene state,
+  and orbit, fly and first-person controls kept their own camera, so the camera
+  never moved once the user had touched it. It now takes the same path as
+  `Scene3D.SetCamera` and publishes the new camera.
+
+- Add `wasm.EachFrame`, the way to write a loop in a page-side Go WASM engine.
+  A loop made only of Scene3D calls never lets the browser draw or handle
+  input, because each call waits on an already-resolved promise: the page
+  freezes for the length of the loop. `EachFrame` runs a step once per visible
+  animation frame, pauses while the page is hidden, and ends with its context.
+  See docs/engine-frame-loop.md.
+
+- Boot multi-component Go WASM modules in engine workers. Worker startup
+  accepts each module-local factory and mounts only the requested component,
+  matching page-side registration. Wrong tokens, duplicate names and factory
+  registrations after synchronous module startup are rejected.
+
+- Serve the current Go WASM build from a development server. A hashed Go WASM
+  module is revalidated on each reload (`no-cache` with an ETag), a compressed
+  sidecar older than its file is not used, and a request for an older hash gets
+  the manifest's current build for that module. A production server still
+  serves a hashed file as immutable and never remaps a hash.
 
 - Reuse live computed-value subscriptions when a recomputation reads the same
   ordered dependencies. Retain freshly tracked revisions, the replacement path

@@ -2506,12 +2506,10 @@
       scheduleRender("signal-gizmo-mode");
     }
 
+    function mountedSceneController(): any { return sceneControlHandle && sceneControlHandle.controller; }
     function currentMountedSceneCamera(sourceCamera) {
       return sceneRenderCamera(sceneViewportCamera(sceneCurrentControlCamera(
-        sceneControlHandle && sceneControlHandle.controller,
-        sourceCamera || readSceneSourceCamera(),
-        sceneState._scrollCamera,
-      ), sceneState.camera, viewport));
+        mountedSceneController(), sourceCamera || readSceneSourceCamera(), sceneState._scrollCamera), sceneState.camera, viewport));
     }
 
     function currentMountedSceneOrbitState() {
@@ -2559,11 +2557,10 @@
       /* @ts-expect-error TS2554 -- this call omits trailing arguments the JS caller has always been able to omit */ }
 	      const currentCamera = currentMountedSceneCamera();
 	      const nextCamera = normalizeSceneCamera(camera, currentCamera);
-	      if (sceneCameraEquivalent(currentCamera, nextCamera)) {
-	        return false;
-	      }
+	      // The orbit target and limits change first, so the orbit continues from the new target.
+	      if (!sceneControlsApplyOrbit(mountedSceneController(), camera.orbit) && sceneCameraEquivalent(currentCamera, nextCamera)) return false;
 	      sceneState.camera = nextCamera;
-	      applySceneControlsCamera(sceneControlHandle && sceneControlHandle.controller, nextCamera);
+	      applySceneControlsCamera(mountedSceneController(), nextCamera);
 	      scheduleRender(reason || "camera");
 	      publishMountedSceneCamera(nextCamera, reason || "camera");
 	      return true;
@@ -2851,7 +2848,7 @@
             return applyMountedSceneCamera(camera, "managed-control-forms-camera");
           },
           getControlTarget: function() {
-            return sceneControlsTarget(props);
+            return sceneControlsCurrentTarget(mountedSceneController(), props);
           },
           stopCameraInertia: function() {
             if (!sceneControlHandle || typeof sceneControlHandle.stopInertia !== "function") {
@@ -3490,6 +3487,7 @@
       }
       const postSource = sceneState._adaptiveSourcePostEffects;
       const result = applySceneCommands(sceneState, commands);
+      if (sceneControlsFollowCameraCommands(mountedSceneController(), sceneState, commands)) publishMountedSceneCamera(sceneState.camera, reason || "commands");
       if (postSource !== sceneState._adaptiveSourcePostEffects) sceneApplyAdaptivePostFX(sceneState, adaptiveQuality);
       applyScenePostFXState(mount, sceneState);
       if (domRegionTracker) {
@@ -3584,6 +3582,7 @@
       setCamera(camera) {
         return applyMountedSceneCamera(camera, "handle-camera");
       },
+      setOrbit(orbit: any) { return applyMountedSceneCamera(Object.assign({}, currentMountedSceneCamera(null), { orbit }), "handle-orbit"); },
       async applyTextureProfile(requests: any[], profile: string, signal: AbortSignal, module: any) {
         return sceneApplyMountedTextureProfile(sceneState, mount, requests, profile, signal, module, {
           disposed: () => disposed,
