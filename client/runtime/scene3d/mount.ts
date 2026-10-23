@@ -1131,22 +1131,39 @@
         Boolean(diagnostics && diagnostics.deviceLost);
       webgpuRecoveryStrikes = erroring ? webgpuRecoveryStrikes + 1 : 0;
       setAttrValue(mount, sceneAttr("webgpu-recovery-strikes"), webgpuRecoveryStrikes || "");
+      const request = typeof window !== "undefined" ? window.__gosx_scene3d_request_webgl_recovery : null;
       // A hard failure (lost device, failed pipeline, init failure, not ready)
-      // is a strike too. Below the threshold it must not take the immediate
-      // in-place swap, or a lost device would skip the reload.
-      if (webgpuRecoveryStrikes < webgpuRecovery.strikes) return Boolean(failureReason);
+      // is a strike too. While a reload is still possible it waits for the
+      // threshold, or a lost device would skip the reload. When no reload can
+      // happen (Reload is false, the tab's one reload is used, or there is no
+      // bridge) the in-place swap runs at once so the scene is not black longer.
+      const reloadPossible = webgpuRecovery.reload && typeof request === "function" && sceneWebGPURecoveryReloadAllowed();
+      if (webgpuRecoveryStrikes < webgpuRecovery.strikes) {
+        if (failureReason && !reloadPossible) {
+          webgpuRecoveryDone = true;
+          publishSceneWebGPURecoveryState("fallback");
+          gosxSceneEmit("warn", "webgpu-recovery-fallback", {
+            strikes: webgpuRecoveryStrikes,
+            reason: failureReason,
+            lastError: String((diagnostics && diagnostics.lastError) || "").slice(0, 200),
+          });
+          return false;
+        }
+        return Boolean(failureReason);
+      }
       const detail = {
         strikes: webgpuRecoveryStrikes,
         reason: failureReason || "webgpu-frame-errors",
         lastError: String((diagnostics && diagnostics.lastError) || "").slice(0, 200),
       };
       webgpuRecoveryDone = true;
-      const request = typeof window !== "undefined" ? window.__gosx_scene3d_request_webgl_recovery : null;
-      if (webgpuRecovery.reload && typeof request === "function" && sceneWebGPURecoveryReloadAllowed() && sceneWebGPURecoveryMarkReload()) {
+      if (reloadPossible && sceneWebGPURecoveryMarkReload()) {
         publishSceneWebGPURecoveryState("reloading");
         gosxSceneEmit("error", "webgpu-recovery-reload", detail);
-        request({ reload: true });
-        return true;
+        const result = request({ reload: true });
+        // The bridge declines when its flag cannot be stored or the page cannot
+        // reload. Swap in place at once instead of waiting in "reloading".
+        if (!result || result.reload !== false) return true;
       }
       publishSceneWebGPURecoveryState("fallback");
       gosxSceneEmit("warn", "webgpu-recovery-fallback", detail);

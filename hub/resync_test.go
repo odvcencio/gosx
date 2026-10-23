@@ -3,8 +3,11 @@ package hub
 import (
 	"encoding/json"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"m31labs.dev/gosx/internal/telemetryauthority"
 )
 
 func TestEncodeMessageEmbedsRawJSONAsObject(t *testing.T) {
@@ -107,5 +110,47 @@ func TestReplayLatchedNeverDeliversStaleStateAfterABroadcast(t *testing.T) {
 			}
 			last = msg.Data.V
 		}
+	}
+}
+
+type broadcastingObserver struct {
+	NoopObserver
+	hub  *Hub
+	once atomic.Bool
+}
+
+func (o *broadcastingObserver) Message(_ *Hub, _ *Client, _ TrafficEvent) {
+	if o.once.CompareAndSwap(false, true) {
+		o.hub.Broadcast("a", map[string]any{"v": 99})
+	}
+}
+
+// An observer that broadcasts must not deadlock against the latch lock that
+// ReplayLatched holds while it queues frames.
+func TestReplayLatchedRunsObserversAfterReleasingTheLatchLock(t *testing.T) {
+	h := New("replay-observer")
+	h.Latch("a")
+	h.Broadcast("a", map[string]any{"v": 1})
+	obs := &broadcastingObserver{hub: h}
+	if _, err := h.UseTelemetryObserver(obs, 1, telemetryauthority.New()); err != nil {
+		t.Fatal(err)
+	}
+	client := queueFixture(h)
+	client.ID = "c1"
+	h.mu.Lock()
+	h.clients[client.ID] = client
+	h.mu.Unlock()
+	done := make(chan int, 1)
+	go func() { done <- h.ReplayLatched("c1") }()
+	select {
+	case sent := <-done:
+		if sent != 1 {
+			t.Fatalf("replayed %d, want 1", sent)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ReplayLatched deadlocked with an observer that calls Broadcast")
+	}
+	if !obs.once.Load() {
+		t.Fatal("the observer never ran, so the test proves nothing")
 	}
 }

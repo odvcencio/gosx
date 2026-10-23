@@ -176,3 +176,17 @@ test("dispose removes the live class", async () => {
   await h.env.context.__gosx_dispose_page();
   assert.equal(h.root.classList.contains("live"), false);
 });
+
+test("length kind accepts five-letter units and exponent forms but not functions", async () => {
+  const h = await boot({ vars: [
+    { name: "--a", path: "a", kind: "length" },
+    { name: "--b", path: "b", kind: "length" },
+    { name: "--c", path: "c", kind: "length" },
+    { name: "--d", path: "d", kind: "length" },
+  ] });
+  h.send({ a: "10svmax", b: "5dvmin", c: "1e-7", d: "calc(1px)" });
+  assert.equal(h.root.style.getPropertyValue("--a"), "10svmax");
+  assert.equal(h.root.style.getPropertyValue("--b"), "5dvmin");
+  assert.equal(h.root.style.getPropertyValue("--c"), "1e-7");
+  assert.equal(h.root.style.getPropertyValue("--d"), "");
+});

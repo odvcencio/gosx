@@ -190,13 +190,32 @@ for (const [label, patch] of [
   });
 }
 
-test("hard failure without reload swaps in place only at the threshold", async () => {
-  const h = await mountWithRecovery({ strikes: 2 });
+test("hard failure without reload swaps in place at once", async () => {
+  const h = await mountWithRecovery({ strikes: 3 });
   h.diag.deviceLost = true;
   await h.check();
-  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "armed");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "fallback");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+});
+
+test("hard failure after the tab's one reload was used swaps in place at once", async () => {
+  const h = await mountWithRecovery({ strikes: 3, reload: true }, { sessionStorage: { [RELOADS_KEY]: "1" } });
+  const requests = [];
+  h.env.context.__gosx_scene3d_request_webgl_recovery = (o) => { requests.push(o); };
+  h.diag.pipelineCoreError = "bad";
+  await h.check();
+  assert.equal(requests.length, 0);
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "fallback");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
+});
+
+test("when the bridge declines the reload the scene swaps in place instead of staying reloading", async () => {
+  const h = await mountWithRecovery({ strikes: 1, reload: true }, { sessionStorage: {} });
+  h.env.context.__gosx_scene3d_request_webgl_recovery = () => ({ forceWebGL: true, reload: false });
+  h.diag.frameErrorStreak = 1;
   await h.check();
   assert.equal(h.mount.getAttribute("data-gosx-scene3d-webgpu-recovery"), "fallback");
+  assert.equal(h.mount.getAttribute("data-gosx-scene3d-renderer"), "webgl");
 });
 
 test("a storage that reads but cannot write never reloads and falls back in place", async () => {

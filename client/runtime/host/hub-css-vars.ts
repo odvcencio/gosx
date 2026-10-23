@@ -31,7 +31,7 @@
     const UNIT_RE = /^[A-Za-z%]{0,16}$/;
     const KINDS = ["", "number", "length", "color", "ident", "string"];
     const NUMBER_RE = /^-?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
-    const LENGTH_RE = /^-?(\d+\.?\d*|\.\d+)(%|[a-z]{1,4})?$/i;
+    const LENGTH_RE = /^-?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?(%|[a-z]{1,5})?$/i;
     const COLOR_RE = /^(#[0-9a-f]{3,8}|[a-z]{3,30}|(rgb|rgba|hsl|hsla|hwb|lab|lch|oklab|oklch)\([-+0-9.,%\s\/a-z]*\))$/i;
     const IDENT_RE = /^-?[A-Za-z_][A-Za-z0-9_-]*$/;
     const CONTROL_RE = /[\u0000-\u001f\u007f]/;

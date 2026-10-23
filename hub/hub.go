@@ -103,8 +103,6 @@ type Hub struct {
 	textDropped      atomic.Uint64
 	binaryDropped    atomic.Uint64
 	snapshotReplaced atomic.Uint64
-	// lastReplayNanos is the time of the last ReplayLatched to this client.
-	lastReplayNanos atomic.Int64
 
 	// MaxClients limits the number of concurrent connections. 0 = unlimited.
 	MaxClients int
@@ -537,22 +535,32 @@ func (h *Hub) ReplayLatched(clientID string) int {
 		return 0
 	}
 	now := time.Now().UnixNano()
-	last := client.lastReplayNanos.Load()
-	if last != 0 && now-last < int64(ReplayLatchedMinInterval) {
-		return 0
+	for {
+		last := client.lastReplayNanos.Load()
+		if last != 0 && now-last < int64(ReplayLatchedMinInterval) {
+			return 0
+		}
+		if client.lastReplayNanos.CompareAndSwap(last, now) {
+			break
+		}
 	}
-	client.lastReplayNanos.Store(now)
-	sent := 0
+	// Frames are queued under the latch read lock. Observer callbacks are
+	// collected in a batch and run after the lock is released, so an observer
+	// that calls Broadcast cannot wait on a lock this goroutine still holds.
+	var batch enqueueBatch
+	sent, bytes := 0, 0
 	h.latchedMu.RLock()
 	for _, payload := range h.latched {
 		if payload == nil {
 			continue // declared but never broadcast
 		}
-		if client.trySend(payload) {
+		if accepted, _ := client.enqueue(payload, false, &batch); accepted {
 			sent++
 		}
+		bytes = len(payload)
 	}
 	h.latchedMu.RUnlock()
+	h.publishBatch(&batch, false, bytes)
 	return sent
 }
 
