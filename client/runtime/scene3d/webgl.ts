@@ -6127,7 +6127,7 @@
 
   function createSceneSelenaProgram(gl, material, skinned, selective = false) {
     var layout = sceneSelenaMaterialLayout(material);
-    if (!layout) return null;
+    if (!layout || (layout.requires && layout.requires.glVertexTextureUnits > sceneCachedGLParameter(gl, gl.MAX_VERTEX_TEXTURE_IMAGE_UNITS))) return null; // device has too few vertex texture units
     var vertexSource = sceneWebGLNormalizeCustomShaderSource(material.customVertex);
     var fragmentSource = sceneWebGLNormalizeCustomShaderSource(selective ? material.specularFragmentGLSL : material.customFragment);
     var skinInfo = null;
