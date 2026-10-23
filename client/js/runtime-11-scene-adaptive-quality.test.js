@@ -45,6 +45,21 @@ for (const enabled of [false, true]) {
   });
 }
 
+test("Scene3D adaptive controller keeps tone mapping when it sheds all other postFX (dropping it blows the HDR sky out to white)", () => {
+  const { api } = loadSceneAdaptiveQualityAPI();
+  const source = readSceneMountSrc();
+  const start = source.indexOf("function applyScenePostFXState(");
+  vm.runInNewContext(source.slice(start, source.indexOf("\n  }", start) + 4), api.__context || {});
+  const state = api.createSceneAdaptiveQualityState({ adaptiveQuality: true, qualityTier: "survival" }, {}, { tier: "full" });
+  state.postFXSuppressed = true;
+  const mount = new FakeElement("div", null);
+  mount.setAttribute("data-gosx-scene3d-postfx", "enabled");
+  const tone = { kind: "toneMapping", mode: "aces" }, effects = [{ kind: "ssao" }, { kind: "bloom" }, tone, { kind: "fxaa" }];
+  const sceneState = { postEffects: effects, _adaptiveSourcePostEffects: effects };
+  api.scenePrimeAdaptiveQuality(state, {}, mount, sceneState);
+  assert.deepEqual(sceneState.postEffects.map((e) => e.kind), ["toneMapping"], "suppression sheds every effect but tone mapping");
+});
+
 test("Scene3D declarative status bindings expose backend fallback and quality without CSS :has()", () => {
   const { api } = loadSceneAdaptiveQualityAPI();
   const scope = new FakeElement("section", null);
