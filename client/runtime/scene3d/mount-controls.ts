@@ -196,7 +196,8 @@
   // pitchLimit?}; a field left out keeps its current value. It reports whether
   // anything changed. The caller then re-derives the orbit state from the
   // camera (applySceneControlsCamera), so the orbit continues from the new
-  // target without a jump. Controllers with no orbit (walk, vessel, fly) ignore it.
+  // target without a jump. A limit that is not a positive number keeps its
+  // value. Controllers with no orbit (walk, vessel, fly) ignore it.
   // @ts-ignore TS7006 -- this fragment also runs as plain JavaScript in source fixtures
   function sceneControlsApplyOrbit(controls, orbit) {
     if (!controls || (controls.mode !== "orbit" && controls.mode !== "fixed") || !sceneIsPlainObject(orbit)) {
@@ -215,7 +216,7 @@
     }
     if (controls.mode === "orbit") {
       // @ts-ignore TS7006 -- plain JavaScript fixture
-      const finite = (value) => typeof value === "number" && Number.isFinite(value);
+      const finite = (value) => typeof value === "number" && Number.isFinite(value) && value > 0; // zero leaves a limit as it is
       const minDistance = finite(orbit.minDistance) ? Math.max(0.001, orbit.minDistance) : controls.minDistance;
       const maxDistance = Math.max(minDistance, finite(orbit.maxDistance) ? orbit.maxDistance : controls.maxDistance);
       const pitchLimit = finite(orbit.pitchLimit) ? sceneOrbitPitchLimit(orbit.pitchLimit) : controls.pitchLimit;

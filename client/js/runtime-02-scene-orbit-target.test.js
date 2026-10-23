@@ -98,3 +98,22 @@ test("a dispatched camera command carries the orbit target like setCamera", asyn
   assert.equal(JSON.stringify(viaCommand.mounted.handle.getTelemetry().orbit), JSON.stringify(viaHandle.mounted.handle.getTelemetry().orbit));
   assert.ok(aimError(viaCommand.mounted.handle.getCamera(), { x: 1, y: 2, z: 3 }) < 1e-6);
 });
+
+test("a zero limit in an orbit update leaves that limit as it is", async () => {
+  const { mounted, canvas } = await mountScene({ controls: "orbit", controlTarget: { x: 0, y: 0, z: 0 }, controlMinDistance: 1, controlMaxDistance: 400 });
+  const target = { x: 0, y: 0, z: 0 };
+  mounted.handle.setOrbit({ target, minDistance: 20, maxDistance: 40, pitchLimit: 0.3 });
+  mounted.handle.setCamera({ kind: "perspective", x: 0, y: 0, z: 30, fov: 60, orbit: { target, minDistance: 0, maxDistance: 0, pitchLimit: 0 } });
+  await flushAsyncWork();
+  for (const deltaY of [-100000, 100000]) {
+    canvas.dispatchEvent({ type: "wheel", deltaY, preventDefault() {}, stopPropagation() {} });
+    await flushAsyncWork();
+    const d = distance(mounted.handle.getCamera(), target);
+    assert.ok(d >= 19.999 && d <= 40.001, "distance " + d + " left [20, 40] after a zero limit update");
+  }
+  drag(canvas, [320, 180], [320, 600]);
+  drag(canvas, [320, 180], [320, 600]);
+  await flushAsyncWork();
+  const camera = mounted.handle.getCamera();
+  assert.ok(Math.abs(Math.asin((camera.y - target.y) / distance(camera, target))) <= 0.3 + 1e-6, "pitch limit was reset by a zero");
+});
