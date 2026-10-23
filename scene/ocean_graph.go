@@ -26,6 +26,12 @@ import "math"
 //	                                        WaterDriftX and WaterDriftZ (m/s)
 //	foamTau, foamThreshold, foamGain        the foam constants below
 //	probeCount, probeOriginX, probeOriginZ  the probe defaults: no points, at the origin
+//	wakeEnabled                             1 when Wake has a NodeID and is Enabled, else 0
+//	hullLength, hullBeam                    Wake.Length and Wake.Beam in metres (defaults 200 and 30)
+//
+// The hull's position, heading and speed are not parameters: the graph reads them
+// from a scene node (a "node" parameter source named OceanGraphHullNode), and
+// Ocean.GraphNodes maps that name to Wake.NodeID for the runner.
 //
 // The graph declares a build-time tween (20 s) on the parameters a spectrum
 // change moves (windSpeed, fetch, gamma, spread, swell, windDirDeg, swellDirDeg,
@@ -57,6 +63,16 @@ var OceanFoam = struct {
 	Tau, MaxThreshold, WindLow, WindHigh, Gain float64
 }{Tau: 6, MaxThreshold: 0.64, WindLow: 5, WindHigh: 9, Gain: 0.9}
 
+// OceanGraphHullNode is the logical node name the Elio ocean graph uses for the
+// wake's hull; Ocean.GraphNodes maps it to Wake.NodeID.
+const OceanGraphHullNode = "hull"
+
+// Hull size defaults, the graph's own.
+const (
+	oceanDefaultHullLength = 200
+	oceanDefaultHullBeam   = 30
+)
+
 // oceanGraphTweenSeconds is the default sea-state transition, the graph's own.
 const oceanGraphTweenSeconds = 20
 
@@ -75,7 +91,20 @@ func oceanGraphParams(o *Ocean) map[string]float64 {
 		}
 		driftX, driftZ = pr.WaterDriftX, pr.WaterDriftZ
 	}
+	wakeEnabled, hullLength, hullBeam := 0.0, float64(oceanDefaultHullLength), float64(oceanDefaultHullBeam)
+	if w := o.Wake; w != nil {
+		if w.Enabled && w.NodeID != "" {
+			wakeEnabled = 1
+		}
+		if w.Length > 0 {
+			hullLength = w.Length
+		}
+		if w.Beam > 0 {
+			hullBeam = w.Beam
+		}
+	}
 	return map[string]float64{
+		"wakeEnabled": wakeEnabled, "hullLength": hullLength, "hullBeam": hullBeam,
 		"windSpeed": p.WindSpeed, "fetch": p.FetchKm, "gamma": p.Gamma, "spread": p.Spread, "swell": p.Swell,
 		"windDirDeg": o.WindDirection, "swellDirDeg": o.Spectrum.SwellDirection,
 		"seed": float64(p.Seed), "loopPeriod": 1000,
@@ -100,4 +129,13 @@ func oceanGraphTween(o *Ocean) float64 {
 		return o.Presentation.TransitionSeconds
 	}
 	return oceanGraphTweenSeconds
+}
+
+// oceanGraphNodes binds the graph's hull node to the wake's scene node, or
+// returns nil when no node is named.
+func oceanGraphNodes(o *Ocean) map[string]string {
+	if o.Wake == nil || o.Wake.NodeID == "" {
+		return nil
+	}
+	return map[string]string{OceanGraphHullNode: o.Wake.NodeID}
 }

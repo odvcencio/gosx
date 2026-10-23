@@ -278,6 +278,45 @@ test("timing(): the WebGPU graph's compute time is reported separately, and abse
   assert.equal(s.api.timing(), null, "gone with the graph");
 });
 
+test("graphNodes bind the graph's logical nodes to scene nodes; poses come from the node registry the vessel publishes", () => {
+  const s = standalone();
+  const G = s.G, module = s.context.window.__gosx_scene3d_elio_ocean;
+  const graph = { name: "t", backend: "webgpu", tier: "high", version: 1, resources: [], passes: [], frameSwaps: [], exports: {},
+    params: ["x", "z", "heading", "speed"].map((f) => ({ name: "hull_" + f, type: "f32", source: { kind: "node", node: "hull", field: f } })) };
+  const runner = G.create({ module, backend: "webgpu", graph, host: { device: s.fake.device, create() { return {}; }, nodePose: s.api.nodePose } });
+  assert.equal(runner.failed, null);
+  const poses = s.context.window.__gosx_scene3d_node_poses = { ship: { x: 100, z: -40, heading: 2, speed: 7.5 } };
+  s.api.feed(runner, { graphNodes: { hull: "ship" } });
+  runner.run({ time: 1, dt: 0.016, encoder: s.fake.device.createCommandEncoder() });
+  assert.deepEqual([runner.value("hull_x"), runner.value("hull_z"), runner.value("hull_heading"), runner.value("hull_speed")], [100, -40, 2, 7.5]);
+  assert.equal(s.api.nodePose("nobody"), null);
+  delete poses.ship;
+  assert.equal(s.api.nodePose("ship"), null, "a node that stopped publishing is absent");
+});
+
+test("a hull's speed for the wake is its speed through the water: the node's velocity minus the water's drift", () => {
+  const s = standalone();
+  const graph = { name: "t", backend: "webgpu", tier: "high", version: 1, resources: [], passes: [], frameSwaps: [], exports: {},
+    params: [{ name: "driftX", type: "f32", source: { kind: "value", value: 0 } }, { name: "driftZ", type: "f32", source: { kind: "value", value: 0 } },
+      { name: "hullSpeed", type: "f32", source: { kind: "node", node: "hull", field: "speed" } }] };
+  const module = s.context.window.__gosx_scene3d_elio_ocean;
+  let runner;
+  const host = { device: s.fake.device, create() { return {}; }, nodePose: (id) => s.api.waterRelative(s.api.nodePose(id), () => runner) };
+  runner = s.G.create({ module, backend: "webgpu", graph, host });
+  const poses = s.context.window.__gosx_scene3d_node_poses = {};
+  const speedFor = (pose, drift) => {
+    poses.ship = pose;
+    s.api.feed(runner, { graphNodes: { hull: "ship" }, graphParams: { driftX: drift[0], driftZ: drift[1] }, graphTween: 0 });
+    runner.run({ time: speedFor.t = (speedFor.t || 0) + 1, dt: 1, encoder: s.fake.device.createCommandEncoder() });
+    runner.run({ time: speedFor.t += 1, dt: 1, encoder: s.fake.device.createCommandEncoder() });
+    return runner.value("hullSpeed");
+  };
+  assert.ok(Math.abs(speedFor({ x: 0, z: 0, heading: 0, speed: 0 }, [0, 8.2]) - 8.2) < 1e-9, "a ship at rest in drifting water moves through it at the drift speed");
+  assert.ok(Math.abs(speedFor({ x: 0, z: 0, heading: 0, speed: 5 }, [0, 3]) - 2) < 1e-9, "5 m/s ahead (+z) with 3 m/s of current the same way: 2 m/s through the water");
+  assert.ok(Math.abs(speedFor({ x: 0, z: 0, heading: Math.PI / 2, speed: 6 }, [0, 0]) - 6) < 1e-9, "no drift: the node's own speed");
+  assert.equal(s.api.waterRelative(null, () => runner), null);
+});
+
 function nagaPath() {
   for (const candidate of ["naga", path.join(process.env.HOME || "", ".cargo", "bin", "naga")]) {
     try { execFileSync(candidate, ["--version"], { stdio: "ignore" }); return candidate; } catch (_e) {}
@@ -438,7 +477,7 @@ test("the shipped (packed) WebGPU bundle still accepts the spectral surface patc
 test("the browser carries the spectrum, swell waves, graphParams and graphTween from the normalized scene unchanged", async () => {
   const h = await createBoardWebGPUHarness({ fresh: true });
   const raw = { spectrum: { windSpeed: 12, fetch: 100, peakEnhancement: 2, spread: 4, swell: 0.3, swellDirection: 15, seed: 0 }, swellWaves: [{ dx: 0, dz: 1, k: 0.1, omega: 1, amplitude: 0.1, phase: 0 }],
-    masks: ["hull", 3], graphParams: { windSpeed: 12, seed: 0, bogus: "x" }, graphTween: 5 };
+    masks: ["hull", 3], graphParams: { windSpeed: 12, seed: 0, bogus: "x" }, graphTween: 5, graphNodes: { hull: "ship", bad: 3, empty: "" } };
   const state = h.env.context.__gosx_scene3d_api.createSceneState({ scene: { environment: { ocean: raw } } });
   const ocean = state.environment.ocean;
   assert.equal(ocean.spectrum.windSpeed, 12);
@@ -447,6 +486,7 @@ test("the browser carries the spectrum, swell waves, graphParams and graphTween 
   assert.deepEqual(Array.from(ocean.masks), ["hull"]);
   assert.deepEqual(JSON.parse(JSON.stringify(ocean.graphParams)), { windSpeed: 12, seed: 0 }, "non-numeric values are dropped");
   assert.equal(ocean.graphTween, 5);
+  assert.deepEqual(JSON.parse(JSON.stringify(ocean.graphNodes)), { hull: "ship" }, "only node ids that are non-empty strings");
   h.renderer.dispose();
 });
 
@@ -455,9 +495,16 @@ test("Go's graph parameters are exactly the graph's value parameters, and its sw
   const graph = s.graphs["webgpu/high"];
   const golden = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-graph-params.json"), "utf8"));
   const valuesOf = (g) => Array.from(g.params).filter((p) => p.source.kind === "value" && !/\[\]$/.test(p.type)).map((p) => p.name).sort();
+  // Go's parameters are the graph's value parameters. The wake's own tuning parameters (wakeCell, wakeDepth, ...) stay at the graph's defaults,
+  // and the hull pose comes from a scene node, so the graph may have value parameters Go does not set, but only wake and hull ones; and
+  // before the wake is in the generated module Go's three wake parameters have no counterpart yet.
+  const graphValues = valuesOf(graph), hasWake = graphValues.includes("wakeEnabled"), WAKE = ["wakeEnabled", "hullLength", "hullBeam"];
   for (const entry of golden) {
-    assert.deepEqual(Object.keys(entry.graphParams).sort(), valuesOf(graph), entry.preset + ": Go's values are the WebGPU graph's value parameters (probePoints is a buffer the vessel fills)");
-    for (const name of valuesOf(s.graphs["webgl2/high"])) assert.ok(name in entry.graphParams, "webgl2 parameter " + name);
+    const goKeys = Object.keys(entry.graphParams).sort();
+    const known = hasWake ? graphValues : graphValues.concat(WAKE).sort();
+    assert.deepEqual(goKeys.filter((k) => !known.includes(k)), [], entry.preset + ": every Go parameter names a graph value parameter");
+    assert.deepEqual(graphValues.filter((k) => !goKeys.includes(k) && !/^(wake|hull)/.test(k)), [], entry.preset + ": only wake and hull parameters keep the graph's defaults");
+    for (const name of valuesOf(s.graphs["webgl2/high"])) assert.ok(name in entry.graphParams || /^(wake|hull|probe)/.test(name), "webgl2 parameter " + name);
   }
   const loop = graph.params.find((p) => p.name === "loopPeriod").source.value;
   const cases = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "..", "scene", "testdata", "ocean-spectrum-query-parity.json"), "utf8"));

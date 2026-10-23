@@ -15,6 +15,7 @@ import (
 var graphValueParams = []string{
 	"windSpeed", "fetch", "gamma", "spread", "swell", "windDirDeg", "swellDirDeg", "seed", "loopPeriod", "lambda",
 	"timeScale", "driftX", "driftZ", "foamTau", "foamThreshold", "foamGain", "probeCount", "probeOriginX", "probeOriginZ",
+	"wakeEnabled", "hullLength", "hullBeam",
 }
 
 func TestOceanGraphParamsNameExactlyTheGraphsValueParameters(t *testing.T) {

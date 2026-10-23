@@ -51,6 +51,9 @@ type Ocean struct {
 	// Presentation sets the water's clock, drift and sea-state transition. It
 	// is declarative: an app changes it through an ordinary scene update.
 	Presentation *OceanPresentation `json:"presentation,omitempty"`
+	// Wake adds a spectral ship wake behind the vessel the scene node NodeID
+	// names. It needs Spectrum; without one the wake is not drawn. See OceanWake.
+	Wake *OceanWake `json:"wake,omitempty"`
 	// SwellWaves is computed during normalization from Spectrum and
 	// WindDirection and is read-only: whatever an author sets is replaced. It
 	// holds the DefaultOceanSwellCount strongest bins of the first two cascades
@@ -62,6 +65,32 @@ type Ocean struct {
 	// seconds; see ocean_graph.go for each name and its source.
 	GraphParams map[string]float64 `json:"graphParams,omitempty"`
 	GraphTween  float64            `json:"graphTween,omitempty"`
+	// GraphNodes is computed with GraphParams and read-only: it maps the scene
+	// nodes the Elio graph reads (its logical names, such as OceanGraphHullNode)
+	// to scene node IDs, so the runner can resolve the graph's node sources.
+	GraphNodes map[string]string `json:"graphNodes,omitempty"`
+}
+
+// OceanWake switches on the ship wake: a pressure-driven wave field in a
+// window that follows the hull, with Kelvin-angle arms and foam. The Elio
+// ocean graph computes it (wake passes gated by its wakeEnabled parameter) and
+// the surface adds its height, slopes and turbulence to the sea.
+//
+// The hull is the scene node NodeID, normally a vessel; the runtime reads that
+// node's world position, heading and speed every frame, so the author never
+// feeds the wake a speed. Length and Beam are the hull's waterline size in
+// metres and shape the pressure source: zero means the graph's defaults (200
+// and 30), nonzero values are clamped to 5-500 and 1-80, and non-finite or
+// negative values count as zero. A wake with no NodeID cannot be enabled.
+type OceanWake struct {
+	// NodeID is the scene node that carries the wake. Required.
+	NodeID string `json:"nodeId,omitempty"`
+	// Enabled draws the wake. The node stays bound when it is false, so a later
+	// scene update can switch the wake on without re-binding.
+	Enabled bool `json:"enabled,omitempty"`
+	// Length and Beam are the hull's waterline size in metres.
+	Length float64 `json:"length,omitempty"`
+	Beam   float64 `json:"beam,omitempty"`
 }
 
 // OceanPresentation is how the sea is presented over time, apart from what it
@@ -212,13 +241,34 @@ func normalizeOcean(ocean *Ocean) *Ocean {
 	out.Spectrum = normalizeOceanSpectrum(ocean.Spectrum)
 	out.Masks = normalizeOceanMasks(ocean.Masks)
 	out.Presentation = normalizeOceanPresentation(ocean.Presentation)
-	out.SwellWaves, out.GraphParams, out.GraphTween = nil, nil, 0
+	out.Wake = normalizeOceanWake(ocean.Wake)
+	out.SwellWaves, out.GraphParams, out.GraphTween, out.GraphNodes = nil, nil, 0, nil
 	if out.Spectrum != nil {
 		out.SwellWaves = OceanSwellWaves(*out.Spectrum, out.WindDirection, DefaultOceanSwellCount)
 		out.GraphParams = oceanGraphParams(&out)
 		out.GraphTween = oceanGraphTween(&out)
+		out.GraphNodes = oceanGraphNodes(&out)
 	}
 	return &out
+}
+
+// normalizeOceanWake trims the node ID and keeps the sizes in range; zero stays the default marker.
+func normalizeOceanWake(wake *OceanWake) *OceanWake {
+	if wake == nil {
+		return nil
+	}
+	out := *wake
+	out.NodeID = strings.TrimSpace(wake.NodeID)
+	out.Length = oceanWakeSize(wake.Length, 5, 500)
+	out.Beam = oceanWakeSize(wake.Beam, 1, 80)
+	return &out
+}
+
+func oceanWakeSize(v, lo, hi float64) float64 {
+	if math.IsNaN(v) || math.IsInf(v, 0) || v <= 0 {
+		return 0
+	}
+	return math.Min(hi, math.Max(lo, v))
 }
 
 // normalizeOceanSpectrum clamps authored nonzero parameters and keeps zero as

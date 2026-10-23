@@ -50,6 +50,7 @@
     const params = ocean.graphParams;
     if (params) for (const name of Object.keys(params)) if (Number.isFinite(params[name]) && runner.hasParam(name)) runner.setValue(name, params[name]); // a backend's graph may omit a parameter (no probe on WebGL2)
     if (Number.isFinite(ocean.graphTween)) runner.setTween(ocean.graphTween);
+    runner.setNodes(ocean.graphNodes || {}); // the graph's logical nodes ("hull") to scene node ids
   }
 
   // surfaceData fills the surface uniform the spectral shaders read; see the declarations in the two surface files.
@@ -72,6 +73,23 @@
     state.last = time;
     const cam = host.camera || {};
     return { time: time, dt: dt, cameraX: cam.x || 0, cameraY: cam.y || 0, cameraZ: cam.z || 0 };
+  }
+
+  // nodePose is the graph runner's view of the scene: the pose a vessel (or any node that publishes) put in window.__gosx_scene3d_node_poses[id]
+  // this frame, as { x, z, heading, speed } with heading the yaw whose forward direction is (sin, cos) in (x, z) and speed in m/s.
+  function nodePose(id: string): any {
+    const registry = (window as any).__gosx_scene3d_node_poses;
+    return registry && registry[id] ? registry[id] : null;
+  }
+
+  // waterRelative turns a node pose's speed into the speed through the water: the pose's velocity (speed along its heading) minus the water's
+  // drift velocity (the graph's driftX and driftZ), which is what shapes a wake. A ship at rest in drifting water moves through it at the drift
+  // speed; without drift the speed is unchanged. `runner` is a function because a graph is built after its host.
+  function waterRelative(pose: any, runner: () => any): any {
+    const r = pose && runner();
+    if (!r || !(Math.abs(r.value("driftX")) + Math.abs(r.value("driftZ")) > 0)) return pose;
+    const vx = pose.speed * Math.sin(pose.heading) - r.value("driftX"), vz = pose.speed * Math.cos(pose.heading) - r.value("driftZ");
+    return { x: pose.x, z: pose.z, heading: pose.heading, speed: Math.hypot(vx, vz) };
   }
 
   // water is the running graph's water frame, in float64: the origin of the water (what the drift has integrated) and the wave
@@ -198,7 +216,7 @@
     }
     function build(tier: string): void {
       if (state.runner) state.runner.dispose();
-      const runner = G.create({ module: MODULE, backend: "webgpu", tier: tier, host: { device: device, create: host.create, validation: host.validation } });
+      const runner = G.create({ module: MODULE, backend: "webgpu", tier: tier, host: { device: device, create: host.create, validation: host.validation, nodePose: function (id: string) { return waterRelative(nodePose(id), function () { return state.runner; }); } } });
       state.runner = runner; state.tier = tier; state.last = null; state.viewList = null; engine.group = null; engine.ready = false;
       state.info = runner.graph ? describe(runner.graph) : null;
     }
@@ -272,7 +290,7 @@
 
   function createGL(gl: any, host: any): any {
     const state: any = { last: null };
-    const runner = G.create({ module: MODULE, backend: "webgl2", tier: tierOf(host.tier), host: { gl: gl, caps: host.caps, textureCache: host.textureCache } });
+    const runner = G.create({ module: MODULE, backend: "webgl2", tier: tierOf(host.tier), host: { gl: gl, caps: host.caps, textureCache: host.textureCache, nodePose: function (id: string) { return waterRelative(nodePose(id), function () { return engine.runner; }); } } });
     const data = new Float32Array(SURFACE_FLOATS), cache = new Map();
     const info = runner.graph ? describe(runner.graph) : null;
     const engine: any = { gl: gl, runner: runner, tier: tierOf(host.tier), disposed: false, update: update, bind: bind, dispose: dispose, fail: function (reason: string) { runner.fail(reason); } };
@@ -334,7 +352,7 @@
     if (host && host.mount && host.mount.setAttribute) host.mount.setAttribute("data-gosx-scene3d-ocean-fft-fallback", reason);
   }
 
-  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, timing: timing, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
+  window.__gosx_scene3d_ocean_fft_api = { frame: frame, water: water, timing: timing, nodePose: nodePose, waterRelative: waterRelative, sampler: sampler, probe: { begin: probeBegin, sample: probeSample }, probeState: probe, describe: describe, feed: feed, surfaceData: surfaceData };
   // The WebGL chunk's minifier renames some property names (frame among them); the method the two chunks share is called run.
   window.__gosx_scene3d_ocean_fft_gl_api = { run: frameGL, fail: failGL };
 })();

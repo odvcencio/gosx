@@ -346,3 +346,20 @@ test('a vessel asks the spectral ocean for its sampler: buoyancy goes through pr
  assert.equal(h.mount.getAttribute('data-gosx-scene3d-vessel'),'sailing');
  h.handle.dispose();
 });
+test('a vessel publishes its pose and speed for scene-node readers, bow forward as (sin, cos), and withdraws it on dispose',async()=>{
+ const h=await mountScene(true,60,false,false,false,false,{navigation:true,quickBoard:true});
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'helm'}});
+ h.event(h.mount,'gosx:scene3d:vessel-command',{detail:{nodeId:'ship',action:'trim',trim:1}});
+ for(let t=500;t<3500;t+=50)h.raf.flush(t);
+ const poses=h.env.context.__gosx_scene3d_node_poses,pose=poses&&poses.ship;
+ assert.ok(pose,'the vessel published its pose under its node id');
+ for(const key of ['x','z','heading','speed'])assert.ok(Number.isFinite(pose[key]),key+' is a number');
+ assert.ok(pose.speed>0,'under sail it is moving: '+pose.speed);
+ // The hull's bow points along (-sin h, -cos h) for the vessel's heading h, so the published yaw is h + pi and its forward is (sin, cos).
+ const state=JSON.parse(h.mount.getAttribute('data-gosx-scene3d-vessel-state')||'null');
+ const dir={x:Math.sin(pose.heading),z:Math.cos(pose.heading)};
+ assert.ok(Math.abs(Math.hypot(dir.x,dir.z)-1)<1e-9);
+ if(state&&Number.isFinite(state.heading))assert.ok(Math.abs(dir.x+Math.sin(state.heading))<1e-6&&Math.abs(dir.z+Math.cos(state.heading))<1e-6);
+ h.handle.dispose();
+ assert.ok(!poses.ship,'withdrawn on dispose');
+});
