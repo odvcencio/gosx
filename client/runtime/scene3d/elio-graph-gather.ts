@@ -3,8 +3,9 @@
 // WebGL2 has no compute shaders, so each kernel pass is the kernel's GLSL ES 3.00 gather form drawn as a fullscreen
 // triangle into float render targets (EXT_color_buffer_float). A graph buffer is an RGBA32F texture `width` wide;
 // a graph texture keeps its format (RGBA16F is filterable and renders, so surfaces can sample it with mips).
-// Gather kernels index every buffer as an elio_width-wide texture, and a kernel never reads what it writes: the
-// runner checks that for every pass and fails the graph if a pass breaks it.
+// A gather kernel reads each input buffer at that buffer's own width (the `<name>_w` uniform the executor sets) and
+// writes at the pass's elio_width; a kernel never reads what it writes: the runner checks that for every pass and fails
+// the graph if a pass breaks it.
 //
 // The executor saves and restores the GL state it disturbs (framebuffers, viewport, program, VAO, blend, depth,
 // cull, scissor, masks, buffer bindings), keeps gather inputs on texture units firstUnit and up (default 4), and
@@ -86,6 +87,7 @@
       gl.useProgram(handle);
       p.width = gl.getUniformLocation(handle, "elio_width");
       p.lens = layout.inputs.map(function (input: any) { return gl.getUniformLocation(handle, input.length); });
+      p.widths = layout.inputs.map(function (input: any) { return input.width ? gl.getUniformLocation(handle, input.width) : null; });
       layout.inputs.forEach(function (input: any, i: number) { gl.uniform1i(gl.getUniformLocation(handle, input.sampler), firstUnit + i); });
       layout.uniforms.forEach(function (u: any, i: number) { gl.uniformBlockBinding(handle, gl.getUniformBlockIndex(handle, u.block), i); });
       return p;
@@ -229,7 +231,6 @@
       const pass = plan.pass, p = plan.p, t = pass.target;
       const outs = plan.outputs.map(function (o: any) { return { res: resources[o.binding.resource], level: o.binding.level || 0, location: o.location }; });
       const ins = plan.inputs.map(function (b: any) { return resources[b.resource]; });
-      for (const r of ins) if (r.kind === "buffer" && r.w !== t.elioWidth) throw new Error("elio-graph: pass " + pass.name + " reads buffer " + r.name + " " + r.w + " wide at elio_width " + t.elioWidth);
       // A pass may read level L-1 of a texture and write level L (mip passes); the same image is a feedback loop WebGL2 rejects.
       plan.inputs.forEach(function (b: any, k: number) {
         for (const o of outs) if (o.res === ins[k] && o.level === (b.level || 0)) throw new Error("elio-graph: pass " + pass.name + " reads " + o.res.name + ", which it writes");
@@ -239,6 +240,7 @@
       ins.forEach(function (r: any, i: number) {
         gl.activeTexture(gl.TEXTURE0 + firstUnit + i); gl.bindTexture(gl.TEXTURE_2D, r.tex);
         if (p.lens[i]) gl.uniform1ui(p.lens[i], r.w * r.h);
+        if (p.widths[i]) gl.uniform1ui(p.widths[i], r.w); // a read buffer is read at its own width
       });
       for (const b of plan.blocks) {
         if (!b.constant || !b.written) {
@@ -271,11 +273,12 @@
       for (const pl of members) pl.group = g;
       groups.push(g);
     }
-    // A frame swap whose resources only a throttled group touches happens only when that group runs; otherwise its ping-pong would flip on skipped frames.
+    // A frame swap whose resources only a throttled group writes happens only on frames the group runs; otherwise its ping-pong would flip on
+    // skipped frames. Passes outside the group may read the pair (they read what the group last wrote).
     const swapOwner = function (pair: any[]): any {
       let owner: any = null, mixed = false;
       for (const pl of plans) {
-        const names = (pl.inputs || []).map(function (b: any) { return b.resource; }).concat((pl.outputs || []).map(function (o: any) { return o.binding.resource; }), pl.pass.resource ? [pl.pass.resource] : []);
+        const names = (pl.outputs || []).map(function (o: any) { return o.binding.resource; }).concat(pl.pass.resource ? [pl.pass.resource] : []);
         if (names.indexOf(pair[0]) < 0 && names.indexOf(pair[1]) < 0) continue;
         if (!pl.group || (owner && owner !== pl.group)) mixed = true; else owner = pl.group;
       }

@@ -441,7 +441,10 @@ test("the renderer encodes the ocean graph before the main pass and samples the 
   assert.match(module.code, /let swk = textureSampleLevel\(spWakeTex[^\n]*\n[^\n]*\n[^\n]*p\.y \+= swk\.x/, "vertex: height");
   assert.match(module.code, /dx\.y \+= swk\.y[^\n]*dz\.y \+= swk\.z|dx\.y \+= swk\.y/, "vertex: slopes into the tangents");
   assert.match(module.code, /sGx \+= swf\.y \* swm \* 3\.00; sGz \+= swf\.z \* swm \* 3\.00/, "fragment: slopes into the normal, with the surface-side slope gain");
-  assert.match(module.code, /foam = max\(foam, [^\n]*swf\.w/, "fragment: turbulence into foam");
+  assert.match(module.code, /foam = max\(foam, sDis \* /, "fragment: the wake's foam, dissolved per pixel");
+  assert.match(module.code, /sFoamTex\.b/, "fragment: the foam texture's wake lane");
+  assert.match(module.code, /sSlick/, "fragment: the slick damps the small cascades");
+  assert.match(module.code, /sTurq/, "fragment: the aerated-water glow");
   assert.match(module.code, /smoothstep\(0\.0, WAKE_EDGE_CELLS/, "the window edge fades out");
   assert.match(module.code, /sp\.k\[1\]\.w > 0\.0\) \{ p = vec3f\(xz\.x, level, xz\.y\)/, "debug view: a flat sea");
   assert.match(module.code, /if \(sp\.k\[1\]\.w > 0\.0\) \{[^\n]*swf\.x[^\n]*color = /, "debug view: the height ramp replaces the colour");

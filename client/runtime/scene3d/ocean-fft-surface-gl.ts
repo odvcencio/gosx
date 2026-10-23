@@ -11,7 +11,7 @@
   // Texture units of the spectral samplers. Units 0 to 3 belong to the ocean pass (bathymetry, reflection inputs).
   const UNIT = { disp: 4, slope: 8, foam: 12, wake: 13 };
   // Surface-side wake tuning (not simulation), as in the WGSL variant: the window edge fade in cells, the wake's shoaling wavenumber (rad/m) and foam gain.
-  const WAKE = { edgeCells: 8, k: 0.2, foam: 1.5, slope: 3 };
+  const WAKE = { edgeCells: 8, k: 0.2, slope: 3, slickLo: 0.04, slickHi: 0.4, slickFine: 0.85, slickMid: 0.4, glow: 0.3, ragged: 0.7, thin: 0.72, density: 0.55 };
 
   function swap(src: string, from: string, to: string): string {
     if (src.indexOf(from) < 0) throw new Error("ocean-fft: anchor not found: " + from.slice(0, 48));
@@ -71,19 +71,24 @@
   function fragmentBlock(): string {
     let s = "  float sGx = 0., sGz = 0., sXX = 0., sZZ = 0., sXZ = 0.;\n";
     s += "  vec2 wxz = v_rest - u_sp[5].yz;\n";
+    // The wake first: the slick (calmer water where it churned, T = swf.w) damps the small cascades' slopes below.
+    s += "  float sShade = 1.;\n";
+    s += "  vec3 swv = spWake(v_rest, u_ocean[7].xz);\n";
+    s += "  vec4 swf = texture(u_spWake, swv.xy);\n";
+    s += "  float sSlick = swv.z * smoothstep(" + WAKE.slickLo.toFixed(2) + ", " + WAKE.slickHi.toFixed(2) + ", swf.w);\n";
     for (let i = 0; i < 4; i++) {
+      const damp = i >= 2 ? WAKE.slickFine : i === 1 ? WAKE.slickMid : 0;
       s += "  if (u_sp[" + i + "].w > 0.5) {\n";
-      s += "    vec2 suv = (v_rest - u_sp[" + (6 + i) + "].xy) / u_sp[" + i + "].x; float sk = smoothstep(0., 1.2, v_d0 * u_sp[" + i + "].y);\n";
+      s += "    vec2 suv = (v_rest - u_sp[" + (6 + i) + "].xy) / u_sp[" + i + "].x; float sk = smoothstep(0., 1.2, v_d0 * u_sp[" + i + "].y)" + (damp ? " * (1. - " + damp.toFixed(2) + " * sSlick)" : "") + ";\n";
       s += "    vec4 sa = texture(u_spDisp" + i + ", suv), sb = texture(u_spSlope" + i + ", suv);\n";
       s += "    sGx += sb.x * sk; sGz += sb.y * sk; sXX += sb.z * sk; sZZ += sb.w * sk; sXZ += sa.w * sk;\n";
       s += "  }\n";
     }
-    s += "  vec3 swv = spWake(v_rest, u_ocean[7].xz);\n";
-    s += "  vec4 swf = texture(u_spWake, swv.xy);\n";
     s += "  float swm = swv.z * smoothstep(0., 1.2, v_d0 * " + WAKE.k.toFixed(2) + ");\n";
     s += "  sGx += swf.y * swm * " + WAKE.slope.toFixed(2) + "; sGz += swf.z * swm * " + WAKE.slope.toFixed(2) + ";\n";
     s += "  float sJ = (1. + sXX) * (1. + sZZ) - sXZ * sXZ;\n";
-    s += "  float sPersist = textureLod(u_spFoam, wxz * u_sp[4].x, 0.).r;\n";
+    s += "  vec4 sFoamTex = textureLod(u_spFoam, wxz * u_sp[4].x, 0.);\n";
+    s += "  float sPersist = sFoamTex.r;\n";
     s += "  vec3 N = normalize(vec3(sGz * sXZ - (1. + sZZ) * sGx, max(sJ, 0.1), sXZ * sGx - sGz * (1. + sXX)));\n";
     return s;
   }
@@ -93,7 +98,12 @@
     "    float sStateless = clamp((u_sp[4].z - sJf) * u_sp[4].w, 0., 1.) * lace * bu;\n" +
     "    float sKept = smoothstep(0.04, 0.6, sPersist) * (0.55 + 0.45 * lace);\n" +
     "    foam = mix(sStateless, sKept, sNear);\n" +
-    "    foam = max(foam, clamp(swf.w * swv.z * " + WAKE.foam.toFixed(2) + ", 0., 1.) * (0.6 + 0.4 * lace));\n";
+    // The wake's foam: the foam texture's wake lane (the kernel's streaky coverage) near the camera, the wake's own turbulence beyond that window.
+    "    float sWake = mix(smoothstep(0.35, 0.9, swf.w) * swv.z, sFoamTex.b, sNear);\n" +
+    // Dissolve the kernel's coverage per pixel with fine noise so the edges are ragged below the foam texel; thin foam is greyer.
+    "    float sDis = smoothstep(0.3, 0.6, sWake + (of(wxz * 2.3 + 7.) - 0.5) * " + WAKE.ragged.toFixed(2) + ");\n" +
+    "    sShade = mix(" + WAKE.thin.toFixed(2) + ", 1., smoothstep(0.35, 1., sWake)) * (0.86 + 0.14 * of(wxz * 3.1 + 13.));\n" +
+    "    foam = max(foam, sDis * (" + WAKE.density.toFixed(2) + " + " + (1 - 0.55).toFixed(2) + " * smoothstep(0.3, 0.9, sWake)) * (0.92 + 0.08 * lace));\n";
 
   // glsl returns the spectral variant of the base ocean vertex and fragment shaders.
   function glsl(vertex: string, fragment: string): any {
@@ -111,6 +121,8 @@
     f = swap(f, "(1. - smoothstep(80., 250., dist))", "(1. - smoothstep(1500., 6000., dist))");
     // Debug view: the wake height as a colour ramp (blue below rest, red above, grey outside the wake window), unlit, replacing the colour.
     f = swap(f, "  fragColor = vec4(color, alpha);", "  if (u_sp[11].w > 0.) { float hh = clamp(swf.x / u_sp[11].w, -1., 1.); color = swv.z > 0. ? (hh < 0. ? mix(vec3(1.), vec3(.1, .3, 1.), -hh) : mix(vec3(1.), vec3(1., .15, .1), hh)) : vec3(.25); alpha = 1.; }\n  fragColor = vec4(color, alpha);");
+    // Aerated water: a turquoise glow where the wake is freshly churned (T from the wake texture), under the foam.
+    f = swap(f, "  color = mix(color, fl, foam); alpha = mix(alpha, 1., foam);", "  float sAer = swv.z * smoothstep(0.45, 1.0, swf.w);\n  vec3 sTurq = vec3(0.05, 0.42, 0.44) * (ambient * 0.9 + sunCol * 0.05);\n  color = mix(color, sTurq, sAer * " + WAKE.glow.toFixed(2) + " * (1. - foam)); alpha = mix(alpha, 1., sAer * 0.5);\n  color = mix(color, fl * sShade, foam); alpha = mix(alpha, 1., foam);");
     // Foam is lit like the base shader lights it, with the sky term lifted so it reads as white foam under a bright sky.
     f = swap(f, "(ambient * 0.55 + sunCol * 0.04 * max(dot(N, L), 0.))", "(ambient * 1.4 + sunCol * 0.2 * max(dot(N, L), 0.) + vec3(0.05))");
     return { vertex: v, fragment: f };

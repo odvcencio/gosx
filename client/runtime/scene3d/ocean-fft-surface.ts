@@ -12,7 +12,7 @@
   const SLOT = { uniform: 0, sampler: 1, disp: 2, slope: 6, foam: 10, wake: 11 };
   // Surface-side wake tuning (not simulation): the window edge fades over this many cells, the wake's shoaling wavenumber (rad/m, like a
   // cascade's band centre), and how strongly wake turbulence reads as foam.
-  const WAKE = { edgeCells: 8, k: 0.2, foam: 1.5, slope: 3 };
+  const WAKE = { edgeCells: 8, k: 0.2, slope: 3, slickLo: 0.04, slickHi: 0.4, slickFine: 0.85, slickMid: 0.4, glow: 0.3, ragged: 0.7, thin: 0.72, density: 0.55 };
 
   function between(src: string, from: string, to: string, replacement: string): string {
     const a = src.indexOf(from);
@@ -74,19 +74,24 @@
   function fragmentBlock(): string {
     let s = "  var sGx = 0.0; var sGz = 0.0; var sXX = 0.0; var sZZ = 0.0; var sXZ = 0.0;\n";
     s += "  let wxz = in.rest - sp.m.yz;\n";
+    // The wake first: the slick (calmer water where it churned, T = swf.w) damps the small cascades' slopes below.
+    s += "  var sShade = 1.0;\n";
+    s += "  let swv = spWake(in.rest, ocean.p[7].xz);\n";
+    s += "  let swf = textureSample(spWakeTex, spSampler, swv.xy);\n";
+    s += "  let sSlick = swv.z * smoothstep(" + WAKE.slickLo.toFixed(2) + ", " + WAKE.slickHi.toFixed(2) + ", swf.w);\n";
     for (let i = 0; i < 4; i++) {
+      const damp = i >= 2 ? WAKE.slickFine : i === 1 ? WAKE.slickMid : 0;
       s += "  if (sp.c[" + i + "].w > 0.5) {\n";
-      s += "    let uv = (in.rest - sp.w[" + i + "].xy) / sp.c[" + i + "].x; let k = smoothstep(0.0, 1.2, in.depth0 * sp.c[" + i + "].y);\n";
+      s += "    let uv = (in.rest - sp.w[" + i + "].xy) / sp.c[" + i + "].x; let k = smoothstep(0.0, 1.2, in.depth0 * sp.c[" + i + "].y)" + (damp ? " * (1.0 - " + damp.toFixed(2) + " * sSlick)" : "") + ";\n";
       s += "    let a = textureSample(spDisp" + i + ", spSampler, uv); let b = textureSample(spSlope" + i + ", spSampler, uv);\n";
       s += "    sGx += b.x * k; sGz += b.y * k; sXX += b.z * k; sZZ += b.w * k; sXZ += a.w * k;\n";
       s += "  }\n";
     }
-    s += "  let swv = spWake(in.rest, ocean.p[7].xz);\n";
-    s += "  let swf = textureSample(spWakeTex, spSampler, swv.xy);\n";
     s += "  let swm = swv.z * smoothstep(0.0, 1.2, in.depth0 * " + WAKE.k.toFixed(2) + ");\n";
     s += "  sGx += swf.y * swm * " + WAKE.slope.toFixed(2) + "; sGz += swf.z * swm * " + WAKE.slope.toFixed(2) + ";\n";
     s += "  let sJ = (1.0 + sXX) * (1.0 + sZZ) - sXZ * sXZ;\n";
-    s += "  let sPersist = textureSampleLevel(spFoam, spSampler, wxz * sp.f.x, 0.0).r;\n";
+    s += "  let sFoamTex = textureSampleLevel(spFoam, spSampler, wxz * sp.f.x, 0.0);\n";
+    s += "  let sPersist = sFoamTex.r;\n";
     s += "  let N = normalize(vec3f(sGz * sXZ - (1.0 + sZZ) * sGx, max(sJ, 0.1), sXZ * sGx - sGz * (1.0 + sXX)));\n";
     return s;
   }
@@ -96,7 +101,12 @@
     "    let sStateless = clamp((sp.f.z - sJf) * sp.f.w, 0.0, 1.0) * lace * bu;\n" +
     "    let sKept = smoothstep(0.04, 0.6, sPersist) * (0.55 + 0.45 * lace);\n" +
     "    foam = mix(sStateless, sKept, sNear);\n" +
-    "    foam = max(foam, clamp(swf.w * swv.z * " + WAKE.foam.toFixed(2) + ", 0.0, 1.0) * (0.6 + 0.4 * lace));\n";
+    // The wake's foam: the foam texture's wake lane (the kernel's streaky coverage) near the camera, the wake's own turbulence beyond that window.
+    "    let sWake = mix(smoothstep(0.35, 0.9, swf.w) * swv.z, sFoamTex.b, sNear);\n" +
+    // Dissolve the kernel's coverage per pixel with fine noise so the edges are ragged below the foam texel; thin foam is greyer.
+    "    let sDis = smoothstep(0.3, 0.6, sWake + (ob(wxz * 2.3 + vec2f(7.0)) - 0.5) * " + WAKE.ragged.toFixed(2) + ");\n" +
+    "    sShade = mix(" + WAKE.thin.toFixed(2) + ", 1.0, smoothstep(0.35, 1.0, sWake)) * (0.86 + 0.14 * ob(wxz * 3.1 + vec2f(13.0)));\n" +
+    "    foam = max(foam, sDis * (" + WAKE.density.toFixed(2) + " + " + (1 - 0.55).toFixed(2) + " * smoothstep(0.3, 0.9, sWake)) * (0.92 + 0.08 * lace));\n";
 
   // wgsl returns the spectral variant of the base ocean shader. group is the bind group index of the spectral resources.
   function wgsl(base: string, group: number): string {
@@ -110,6 +120,8 @@
     s = swap(s, "(1.0 - smoothstep(80.0, 250.0, dist))", "(1.0 - smoothstep(1500.0, 6000.0, dist))");
     // Debug view: the wake height as a colour ramp (blue below rest, red above, grey outside the wake window), unlit, replacing the colour.
     s = swap(s, "  return vec4f(color, alpha);", "  if (sp.k[1].w > 0.0) { let hh = clamp(swf.x / sp.k[1].w, -1.0, 1.0); color = select(vec3f(0.25), select(mix(vec3f(1.0), vec3f(1.0, 0.15, 0.1), hh), mix(vec3f(1.0), vec3f(0.1, 0.3, 1.0), -hh), hh < 0.0), swv.z > 0.0); alpha = 1.0; }\n  return vec4f(color, alpha);");
+    // Aerated water: a turquoise glow where the wake is freshly churned (T from the wake texture), under the foam.
+    s = swap(s, "  color = mix(color, fl, foam); alpha = mix(alpha, 1.0, foam);", "  let sAer = swv.z * smoothstep(0.45, 1.0, swf.w);\n  let sTurq = vec3f(0.05, 0.42, 0.44) * (ambient * 0.9 + sunCol * 0.05);\n  color = mix(color, sTurq, sAer * " + WAKE.glow.toFixed(2) + " * (1.0 - foam)); alpha = mix(alpha, 1.0, sAer * 0.5);\n  color = mix(color, fl * sShade, foam); alpha = mix(alpha, 1.0, foam);");
     // Foam is lit like the base shader lights it, with the sky term lifted so it reads as white foam under a bright sky.
     s = swap(s, "(ambient * 0.55 + sunCol * 0.04 * max(dot(N, L), 0.0))", "(ambient * 1.4 + sunCol * 0.2 * max(dot(N, L), 0.0) + vec3f(0.05))");
     return s + "\n" + declarations(group);

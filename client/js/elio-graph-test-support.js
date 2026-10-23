@@ -128,7 +128,8 @@ class RecordingGL {
     const record = { kind: "draw", mode, count, program: p, kernel: names[kernel] || null, viewport: this.viewportRect.slice(), fbo: this.drawFB,
       attachments: this.drawFB ? Object.assign({}, this.drawFB.attachments) : null, drawBuffers: this.drawFB ? this.drawFB.drawBuffers.slice() : null,
       enabled: new Set(this.enabled), input: this.textureUnits.get(4) || null, inputs: [4, 5, 6, 7, 8].map((u) => this.textureUnits.get(u) || null),
-      elioWidth: p && p.uniforms.get("elio_width"), vao: this.vao };
+      elioWidth: p && p.uniforms.get("elio_width"), vao: this.vao,
+      widths: p ? Object.fromEntries([...p.uniforms].filter(([k]) => /_w$/.test(k))) : {} };
     if (kernel && ubo) { const v = new DataView(ubo.buffer.data.buffer, ubo.offset); record.u32 = [v.getUint32(0, true), v.getUint32(4, true), v.getUint32(8, true), v.getUint32(12, true)]; if (ubo.size >= 24) record.f32 = [v.getFloat32(16, true), v.getFloat32(20, true)]; }
     this.draws.push(record);
   }

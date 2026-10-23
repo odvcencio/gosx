@@ -240,7 +240,7 @@ test("a resource fed by a buffer parameter is uploaded from it every frame", () 
   assert.equal(uploads[0][1], s.tex("h0"));
 });
 
-// A WebGL2 kernel pass reads a buffer only at its own elio_width. A buffer a pass needs at another width is first copied by a copy pass,
+// A WebGL2 kernel pass reads a buffer at the buffer's own width. A graph may still copy a buffer to lay it out at another width with a copy pass,
 // which lays the same elements out `width` texels wide, GPU to GPU through a pixel buffer, and only when the source changed.
 function wideGraph(g, extra) {
   const wide = (name) => ({ name, kind: "buffer", elementType: "vec4<f32>", count: 4096, width: 32 });
@@ -274,13 +274,12 @@ test("copy passes lay a buffer out at another width through a pixel buffer, and 
   for (const kind of Object.keys(s.gl.created)) assert.equal(s.gl.live(kind).length, 0, kind + " leaked");
 });
 
-test("a pass that reads a buffer at another width than the buffer's own disables the graph; a copy pass honours its condition", () => {
-  const warn = console.warn; console.warn = () => {};
-  try {
-    const bad = setup(undefined, (g) => { const p = g.passes.find((x) => x.name === "assemble"); p.target = Object.assign({}, p.target, { elioWidth: 32 }); });
-    assert.equal(bad.step(), false);
-    assert.match(bad.runner.error.message, /reads buffer a0 64 wide at elio_width 32/);
-  } finally { console.warn = warn; }
+test("a pass reads each input buffer at the buffer's own width, set through its width uniform; a copy pass honours its condition", () => {
+  const plain = setup(undefined, (g) => { const p = g.passes.find((x) => x.name === "assemble"); p.target = Object.assign({}, p.target, { elioWidth: 32 }); });
+  assert.equal(plain.step(), true, "reading a 64-wide buffer in a 32-wide pass is valid");
+  const assemble = draws(plain.gl).find((d) => d.kernel === "assemble");
+  assert.equal(assemble.elioWidth, 32);
+  assert.deepEqual(Object.values(assemble.widths), [64, 64], "both inputs are 64 texels wide whatever the pass width");
   const s = setup(undefined, (g) => wideGraph(g, (x) => { x.passes.find((p) => p.name === "copy-a").when = "param:mips"; }));
   s.runner.setValue("mips", 0);
   s.step();

@@ -1481,7 +1481,7 @@ const budgets = [
   // The chunk now carries the generic Elio graph runner (elio-graph*.ts), both backends' kernels and all six ocean graphs from one Elio module (about 193 KB of the raw size is that
   // generated text), the ocean glue and both spectral surface patches. Measured 212_876 / 26_193 / 22_903 before the wake; the wake adds three kernels, their graphs, the surface samples and the copy passes: 246_231 / 33_747 / 28_625. One module serves both backends because the mount loads the chunk
   // before it knows the backend; per-backend chunks would need a deferred load.
-  { file: "bootstrap-feature-scene3d-ocean-fft.js", raw: 246300, gzip: 33800, brotli: 28700 },
+  { file: "bootstrap-feature-scene3d-ocean-fft.js", raw: 256366, gzip: 36551, brotli: 31040 },
   // Bumped raw 130_000 -> 135_000, gzip 32_000 -> 33_500, brotli 28_000 ->
   // 29_000 for the WebGPU Selena executor. Bumped raw 135_000 -> 143_000,
   // gzip 33_500 -> 36_000, brotli 29_000 -> 31_000 for Elio compute skinning

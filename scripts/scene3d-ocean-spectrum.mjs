@@ -75,12 +75,12 @@ for (const height of [30, 120, 300]) {
     cases.push({ name: `gerstner-wind${wind}-h${height}`, height, gerstner: { waveHeight, waveLength } });
   }
 }
-// Ship wakes: a hull of 125 x 21 m crossing the water at 8, 15 and 22 knots (bow toward -Z), seen from above and from astern, and the same
+// Ship wakes: a hull of 125 x 21 m crossing the water at 8, 15 and 22 knots (bow toward -Z), seen from above, from astern and from a three-quarter view at the stern rail, and the same
 // passage with the wake off for the cost comparison. The page publishes the hull's pose each frame as a vessel would.
 for (const wake of [true, false]) {
   for (const knots of [8, 15, 22]) {
-    for (const view of ['above', 'astern']) {
-      if (!wake && view === 'above') continue;
+    for (const view of ['above', 'astern', 'quarter', 'trail']) {
+      if (!wake && (view === 'above' || view === 'trail')) continue;
       cases.push({ name: `wake-${wake ? 'on' : 'off'}-${knots}kn-${view}`, height: 0, view, knots, wakeOn: wake, spectrum: { windSpeed: Number(arg('--wake-wind', '7')), fetch: 100, peakEnhancement: 3.3, spread: 8, swell: 0, seed: 7 } });
     }
   }
@@ -198,7 +198,8 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
   let time = 100;
   for (const c of cases) {
     const hull = c.knots ? { x: 0, z: 0, speed: c.knots * 0.514444 } : null;
-    const camera = hull ? { x: 0, y: c.view === 'above' ? 170 : 26, z: c.view === 'above' ? 30 : 95, rotationX: c.view === 'above' ? -1.35 : -0.2, rotationY: 0, fov: 62, near: 0.5, far: 20000 } : { x: 0, y: c.height, z: 0, rotationX: -0.045 - 0.25 * Math.min(1, c.height / 300), rotationY: 0.6, fov: 62, near: 0.5, far: 20000 };
+    const views = { above: [0, 170, 30, -1.35, 0], astern: [0, 26, 95, -0.2, 0], quarter: [9, 13, 58, -0.2, 2.62], trail: [0, 420, 190, -1.45, 0] }; // x, y, z, rotationX, rotationY
+    const camera = hull ? { x: views[c.view][0], y: views[c.view][1], z: views[c.view][2], rotationX: views[c.view][3], rotationY: views[c.view][4], fov: 62, near: 0.5, far: 20000 } : { x: 0, y: c.height, z: 0, rotationX: -0.045 - 0.25 * Math.min(1, c.height / 300), rotationY: 0.6, fov: 62, near: 0.5, far: 20000 };
     const ocean = Object.assign({ level: 0, extent: 8000, choppiness: 0.7, windDirection: 20, foam }, c.gerstner || {});
     if (c.spectrum) {
       ocean.spectrum = c.spectrum;
