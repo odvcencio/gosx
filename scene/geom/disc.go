@@ -1,6 +1,10 @@
 package geom
 
-import "math"
+import (
+	"math"
+
+	"m31labs.dev/gosx/det"
+)
 
 // This file builds the two flat discs: a filled circle and an annulus.
 //
@@ -29,9 +33,9 @@ func Circle(radius float64, segments int, thetaStart, thetaLength float64, want 
 	b.emit(center)
 	for i := 0; i <= segments; i++ {
 		theta := thetaStart + thetaLength*float64(i)/float64(segments)
-		cos, sin := math.Cos(theta), math.Sin(theta)
+		cos, sin := det.Cos(theta), det.Sin(theta)
 		b.emit(vertex{
-			position: vec3{X: radius * cos, Y: 0, Z: radius * sin},
+			position: vec3{X: float64(radius * cos), Y: 0, Z: float64(radius * sin)},
 			normal:   up,
 			uv:       radialUV(cos, sin),
 			color:    discColor(1),
@@ -77,12 +81,12 @@ func Ring(innerRadius, outerRadius float64, thetaSegments, phiSegments int, thet
 	up := vec3{0, 1, 0}
 	for band := 0; band <= phiSegments; band++ {
 		t := float64(band) / float64(phiSegments)
-		radius := innerRadius + (outerRadius-innerRadius)*t
+		radius := innerRadius + float64((outerRadius-innerRadius)*t)
 		for step := 0; step <= thetaSegments; step++ {
 			theta := thetaStart + thetaLength*float64(step)/float64(thetaSegments)
-			cos, sin := math.Cos(theta), math.Sin(theta)
+			cos, sin := det.Cos(theta), det.Sin(theta)
 			b.emit(vertex{
-				position: vec3{X: radius * cos, Y: 0, Z: radius * sin},
+				position: vec3{X: float64(radius * cos), Y: 0, Z: float64(radius * sin)},
 				normal:   up,
 				uv:       radialUV(cos*radius/outerRadius, sin*radius/outerRadius),
 				color:    discColor(t),
@@ -122,5 +126,5 @@ func sweepOr(thetaLength float64) float64 {
 // discColor tints a disc from its center to its rim so the unlit fallback path
 // shows the shape.
 func discColor(t float64) vec3 {
-	return vec3{X: 0.62 + 0.24*t, Y: 0.70 - 0.10*t, Z: 0.92 - 0.12*t}
+	return vec3{X: 0.62 + float64(0.24*t), Y: 0.70 - float64(0.10*t), Z: 0.92 - float64(0.12*t)}
 }

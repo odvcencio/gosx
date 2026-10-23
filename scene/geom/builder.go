@@ -94,36 +94,38 @@ func triangleNormal(a, b, c vec3) vec3 {
 	ab := vec3{b.X - a.X, b.Y - a.Y, b.Z - a.Z}
 	ac := vec3{c.X - a.X, c.Y - a.Y, c.Z - a.Z}
 	return normalize(vec3{
-		X: ab.Y*ac.Z - ab.Z*ac.Y,
-		Y: ab.Z*ac.X - ab.X*ac.Z,
-		Z: ab.X*ac.Y - ab.Y*ac.X,
+		X: float64(ab.Y*ac.Z) - float64(ab.Z*ac.Y),
+		Y: float64(ab.Z*ac.X) - float64(ab.X*ac.Z),
+		Z: float64(ab.X*ac.Y) - float64(ab.Y*ac.X),
 	})
 }
 
 // normalize scales a vector to unit length. A zero or non-finite vector returns
 // +Y, so no buffer ever carries a NaN normal.
 func normalize(v vec3) vec3 {
-	length := math.Sqrt(v.X*v.X + v.Y*v.Y + v.Z*v.Z)
+	length := math.Sqrt(float64(v.X*v.X) + float64(v.Y*v.Y) + float64(v.Z*v.Z))
 	if length <= 0 || math.IsNaN(length) || math.IsInf(length, 0) {
 		return vec3{Y: 1}
 	}
 	inv := 1 / length
-	return vec3{X: v.X * inv, Y: v.Y * inv, Z: v.Z * inv}
+	return vec3{X: float64(v.X * inv), Y: float64(v.Y * inv), Z: float64(v.Z * inv)}
 }
 
 func addVec(a, b vec3) vec3 { return vec3{a.X + b.X, a.Y + b.Y, a.Z + b.Z} }
 
 func subVec(a, b vec3) vec3 { return vec3{a.X - b.X, a.Y - b.Y, a.Z - b.Z} }
 
-func scaleVec(v vec3, s float64) vec3 { return vec3{v.X * s, v.Y * s, v.Z * s} }
+func scaleVec(v vec3, s float64) vec3 {
+	return vec3{float64(v.X * s), float64(v.Y * s), float64(v.Z * s)}
+}
 
-func dotVec(a, b vec3) float64 { return a.X*b.X + a.Y*b.Y + a.Z*b.Z }
+func dotVec(a, b vec3) float64 { return float64(a.X*b.X) + float64(a.Y*b.Y) + float64(a.Z*b.Z) }
 
 func crossVec(a, b vec3) vec3 {
 	return vec3{
-		X: a.Y*b.Z - a.Z*b.Y,
-		Y: a.Z*b.X - a.X*b.Z,
-		Z: a.X*b.Y - a.Y*b.X,
+		X: float64(a.Y*b.Z) - float64(a.Z*b.Y),
+		Y: float64(a.Z*b.X) - float64(a.X*b.Z),
+		Z: float64(a.X*b.Y) - float64(a.Y*b.X),
 	}
 }
 
