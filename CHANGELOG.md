@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Bound an orbit's pitch on each side, and give it a floor. `scene.Orbit` gains
+  `MinPitch` and `MaxPitch` (radians of camera elevation above the target's
+  horizon; pointers, because zero is valid) and `MinHeight` (a world y the
+  camera never goes below, at any distance). `PitchLimit` stays the symmetric
+  shorthand. A drag, inertia, a key, a zoom or a camera command all stop on the
+  range and the floor, so a preset aimed near the waterline cannot orbit under
+  the sea. The floor is a fixed height; it does not follow the waves.
+
 - Change a mounted Scene3D scene's orbit target, distance limits and pitch limit
   after mount. Put `scene.Orbit` on a camera (`PerspectiveCamera.Orbit`,
   `IRCamera.Orbit`) and the orbit controls take the new target when the camera

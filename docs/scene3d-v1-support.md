@@ -183,6 +183,10 @@ without a jump:
   mounted camera takes the camera's position and faces `Orbit.Target`. A camera
   without `Orbit` keeps the current target, so the camera faces it from its new
   position. A zero limit leaves that limit as it is; the target is always applied.
+- `Orbit.MinPitch` and `Orbit.MaxPitch` bound the camera's elevation above the target's
+  horizon on each side (radians; pointers, so zero is a value) and replace that side of
+  `PitchLimit`. `Orbit.MinHeight` is a world-y floor: the camera stops on it when dragged or
+  zoomed, at any distance. It is a fixed height and does not follow the waves.
 - `Scene3D.SetOrbit(ctx, scene.Orbit{...})`, the handle method `setOrbit(orbit)` and
   `__gosx.scene3d.setOrbit(mount, orbit)` change the target and limits only. The
   camera keeps its position and turns to the target.
