@@ -200,7 +200,7 @@ func Page() Node {
 			<span class="inline-code">Latch</span>
 			can answer with
 			<span class="inline-code">ReplayLatched</span>
-			. Scheduled resyncs add random jitter of up to 10 percent of the period (at most 5 s), so clients do not all ask at once. Only the first hub entry that shares a socket supplies the resync settings. 
+			. Scheduled resyncs add random jitter of up to 10 percent of the period (at most 5 s), so clients do not all ask at once. Only the first hub entry that shares a socket supplies the resync settings.
 			<span class="inline-code">ReplayLatched</span>
 			answers one client at most once per second, because any browser can send
 			<span class="inline-code">resync</span>
