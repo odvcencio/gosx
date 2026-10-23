@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reuse retired dependency storage for derived values and effects without
+  recycling lists still read by a refresh. Avoid TinyGo WASM goroutine-identity
+  lookups and a constant-key tracking map while preserving native Go isolation.
+
 - Compile authored Selena vertex texture sampling through SceneIR. Expose only
   vertex-sampled textures to the WebGPU vertex stage and reject unsupported
   WebGL device limits before shader compilation, retaining material fallbacks.
