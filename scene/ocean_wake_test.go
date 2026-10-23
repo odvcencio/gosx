@@ -3,6 +3,8 @@ package scene
 import (
 	"encoding/json"
 	"math"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -87,5 +89,30 @@ func TestOceanWakeIsIgnoredWithoutASpectrumAndGraphNodesAreReplaced(t *testing.T
 	replaced := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{}, GraphNodes: map[string]string{"hull": "forged", "extra": "y"}})
 	if replaced.GraphNodes != nil {
 		t.Fatalf("authored graph nodes survived: %v", replaced.GraphNodes)
+	}
+}
+
+func TestOceanWakeDebugViewIsAnOptInDiagnosticThatSurvivesNormalization(t *testing.T) {
+	plain := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{}, Wake: &OceanWake{NodeID: "ship", Enabled: true}})
+	if plain.Wake.Debug {
+		t.Fatal("the debug view is off by default")
+	}
+	wire, _ := json.Marshal(plain)
+	if strings.Contains(string(wire), "debug") {
+		t.Fatalf("an unset debug flag stays off the wire: %s", wire)
+	}
+	debug := normalizeOcean(&Ocean{Spectrum: &OceanSpectrum{}, Wake: &OceanWake{NodeID: "ship", Enabled: true, Debug: true}})
+	if !debug.Wake.Debug {
+		t.Fatal("debug lost")
+	}
+	wire, _ = json.Marshal(debug)
+	var back struct{ Wake struct{ Debug bool } }
+	_ = json.Unmarshal(wire, &back)
+	if !back.Wake.Debug {
+		t.Fatalf("debug missing from the wire: %s", wire)
+	}
+	// The debug view changes no graph parameter: it is a presentation choice.
+	if !reflect.DeepEqual(plain.GraphParams, debug.GraphParams) {
+		t.Fatalf("graph params differ: %v vs %v", plain.GraphParams, debug.GraphParams)
 	}
 }

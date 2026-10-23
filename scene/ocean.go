@@ -91,6 +91,11 @@ type OceanWake struct {
 	// Length and Beam are the hull's waterline size in metres.
 	Length float64 `json:"length,omitempty"`
 	Beam   float64 `json:"beam,omitempty"`
+	// Debug renders the wake's height field alone, as a colour ramp (blue
+	// below the rest surface, red above, grey outside the wake window) on a flat
+	// sea. It is a diagnostic for looking at the simulation from above and
+	// changes no graph parameter.
+	Debug bool `json:"debug,omitempty"`
 }
 
 // OceanPresentation is how the sea is presented over time, apart from what it
