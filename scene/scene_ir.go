@@ -740,6 +740,10 @@ type InstancedMeshIR struct {
 	CullKernelEntry   string  `json:"cullKernelEntry,omitempty"`
 	CullRadius        float64 `json:"cullRadius,omitempty"`
 	CullBackend       string  `json:"cullBackend,omitempty"`
+
+	// ParentNode names the scene node whose world matrix carries the batch;
+	// see InstancedMesh.ParentNode.
+	ParentNode string `json:"parentNode,omitempty"`
 }
 
 // ComputeParticlesIR is the typed compatibility record for one GPU particle system.
@@ -2551,6 +2555,7 @@ func (item InstancedMeshIR) legacyProps() map[string]any {
 	setString(record, "cullKernelEntry", item.CullKernelEntry)
 	setNumeric(record, "cullRadius", item.CullRadius)
 	setString(record, "cullBackend", item.CullBackend)
+	setString(record, "parentNode", item.ParentNode)
 	applySceneLifecycleRecord(record, item.Transition, item.InState, item.OutState, item.Live)
 	return record
 }

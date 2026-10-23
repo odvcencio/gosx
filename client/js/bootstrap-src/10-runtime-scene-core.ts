@@ -2260,6 +2260,11 @@
       cullKernelEntry: typeof sceneObjectMaterialValue(item, "cullKernelEntry") === "string" ? sceneObjectMaterialValue(item, "cullKernelEntry").trim() : (typeof current.cullKernelEntry === "string" ? current.cullKernelEntry : ""),
       cullRadius: sceneNumber(sceneObjectMaterialValue(item, "cullRadius"), sceneNumber(current.cullRadius, 0)),
       cullBackend: typeof sceneObjectMaterialValue(item, "cullBackend") === "string" ? sceneObjectMaterialValue(item, "cullBackend").trim().toLowerCase() : (typeof current.cullBackend === "string" ? current.cullBackend : ""),
+      // The scene node whose world matrix carries the batch (see
+      // sceneInstancedMeshParentTransforms). "" draws in world space.
+      parentNode: Object.prototype.hasOwnProperty.call(item, "parentNode")
+        ? (typeof item.parentNode === "string" ? item.parentNode.trim() : "")
+        : (typeof current.parentNode === "string" ? current.parentNode : ""),
       transforms,
       colors,
       attributes,
@@ -7961,6 +7966,7 @@
     sceneOceanUniformData: typeof sceneOceanUniformData === "function" ? sceneOceanUniformData : undefined,
     normalizeSceneHTML,
     normalizeSceneInstancedGLBMeshEntry,
+    normalizeSceneInstancedMeshEntry,
     normalizeSceneLabel,
     normalizeSceneLabelAlign,
     normalizeSceneLabelCollision,

@@ -634,6 +634,16 @@ type InstancedMesh struct {
 	OutState      *InstancedMeshProps
 	Live          []string
 
+	// ParentNode names a scene node (a Model ID, a Vessel.NodeID, an object ID)
+	// whose world transform carries the whole batch. Positions, rotations and
+	// scales are then relative to that node, and the renderer applies the
+	// node's current world matrix each frame, so a ship that heaves, pitches
+	// and rolls under pose frames carries its windows, rails and lifeboats.
+	// The node must exist in the same scene; while it is absent the batch
+	// draws in world space. An object whose ID equals ParentNode wins over
+	// one whose ID starts with ParentNode + "/".
+	ParentNode string
+
 	// Optional Elio GPU cull kernel. When set, the browser runtime (slice 2)
 	// will run a compute pass to cull instances before drawing. Absent here
 	// ⇒ byte-identical payload (pure additive).
@@ -3137,6 +3147,7 @@ func (l *graphLowerer) lowerInstancedMesh(im InstancedMesh, parent worldTransfor
 		CullKernelEntry: im.CullKernelEntry,
 		CullRadius:      im.CullRadius,
 		CullBackend:     im.CullBackend,
+		ParentNode:      strings.TrimSpace(im.ParentNode),
 	}
 	// Apply geometry dimensions.
 	if geometryProps != nil {

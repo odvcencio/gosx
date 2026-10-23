@@ -4408,3 +4408,49 @@ func TestInstancedGLBMeshParentNodeReachesTheWire(t *testing.T) {
 		t.Fatal("a batch without a parent must not carry the field")
 	}
 }
+
+func TestInstancedMeshParentNodeReachesTheWire(t *testing.T) {
+	ir := Props{
+		Camera: PerspectiveCamera{Position: Vec3(0, 6, 8), FOV: 45, Near: 0.1, Far: 40},
+		Graph: NewGraph(
+			InstancedMesh{
+				ID: "ship/windows", Count: 1, ParentNode: "  ship ",
+				Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Positions: []Vector3{Vec3(1, 2, 3)},
+			},
+			InstancedMesh{
+				ID: "free", Count: 1,
+				Geometry:  BoxGeometry{Width: 1, Height: 1, Depth: 1},
+				Positions: []Vector3{Vec3(4, 5, 6)},
+			},
+		),
+	}.SceneIR()
+	if len(ir.InstancedMeshes) != 2 {
+		t.Fatalf("meshes: %d", len(ir.InstancedMeshes))
+	}
+	if got := ir.InstancedMeshes[0].ParentNode; got != "ship" {
+		t.Fatalf("ParentNode: %q", got)
+	}
+	// Positions stay relative to the parent: lowering must not move them.
+	if tr := ir.InstancedMeshes[0].Transforms; tr[12] != 1 || tr[13] != 2 || tr[14] != 3 {
+		t.Fatalf("instance moved during lowering: %v", tr)
+	}
+	data, err := json.Marshal(ir.InstancedMeshes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), `"parentNode":"ship"`) || strings.Count(string(data), "parentNode") != 1 {
+		t.Fatalf("parentNode should appear once, on the opted-in mesh: %s", data)
+	}
+	meshes := ir.legacyProps()["instancedMeshes"].([]map[string]any)
+	if meshes[0]["parentNode"] != "ship" {
+		t.Fatalf("legacy props: %#v", meshes[0])
+	}
+	if _, present := meshes[1]["parentNode"]; present {
+		t.Fatal("a mesh without a parent must not carry the field")
+	}
+	spread := InstancedMesh{ID: "s", Count: 1, ParentNode: "ship", Geometry: BoxGeometry{Width: 1, Height: 1, Depth: 1}}.SpreadProps()
+	if spread["parentNode"] != "ship" {
+		t.Fatalf("SpreadProps: %#v", spread)
+	}
+}
