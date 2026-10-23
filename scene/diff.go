@@ -6,6 +6,8 @@ import (
 	"math"
 	"reflect"
 	"sort"
+	"strings"
+	"sync"
 )
 
 // CommandKind mirrors the Scene3D client command protocol. The numeric values
@@ -816,42 +818,52 @@ func MarshalCommands(commands []Command) ([]byte, error) {
 //
 // patch is optional. When it returns a command, that command replaces the remove
 // plus create pair for one record. Pass nil to keep the pair.
+//
+// One table holds next identities and their last matching previous records.
+// Nil entries denote creations. Sort and deduplicate missing identities before
+// visiting next records in input order, including repeated IDs.
 func diffSceneRecords[T any](commands *[]Command, previous, next []T, id func(*T) string, create func(*T) Command, patch func(previous, next *T) (Command, bool)) {
-	prevByID := make(map[string]*T, len(previous))
-	nextIDs := make(map[string]struct{}, len(next))
-	for index := range previous {
-		if recordID := id(&previous[index]); recordID != "" {
-			prevByID[recordID] = &previous[index]
+	// Seed next identities, then retain the last matching previous record.
+	// A nil value denotes a new identity. No table is needed for creation only.
+	var matchingPrevious map[string]*T
+	if len(previous) != 0 {
+		matchingPrevious = make(map[string]*T, len(next))
+		for index := range next {
+			if recordID := id(&next[index]); recordID != "" {
+				matchingPrevious[recordID] = nil
+			}
 		}
 	}
-	for index := range next {
-		if recordID := id(&next[index]); recordID != "" {
-			nextIDs[recordID] = struct{}{}
-		}
-	}
-
 	var removed []string
-	for recordID := range prevByID {
-		if _, ok := nextIDs[recordID]; !ok {
+	for index := range previous {
+		recordID := id(&previous[index])
+		if recordID == "" {
+			continue
+		}
+		if _, exists := matchingPrevious[recordID]; exists {
+			matchingPrevious[recordID] = &previous[index]
+		} else {
 			removed = append(removed, recordID)
 		}
 	}
 	sort.Strings(removed)
-	for _, recordID := range removed {
-		*commands = append(*commands, RemoveObjectCommand(recordID))
+	for index, recordID := range removed {
+		// A repeated missing identity still emits one removal, as in the ID map.
+		if index == 0 || recordID != removed[index-1] {
+			*commands = append(*commands, RemoveObjectCommand(recordID))
+		}
 	}
-
 	for index := range next {
 		record := &next[index]
 		recordID := id(record)
 		if recordID == "" {
 			continue
 		}
-		previousRecord, existed := prevByID[recordID]
-		if existed && sceneRecordPointerJSONEqual(previousRecord, record) {
-			continue
-		}
-		if existed {
+		previousRecord := matchingPrevious[recordID]
+		if previousRecord != nil {
+			if sceneRecordPointerJSONEqual(previousRecord, record) {
+				continue
+			}
 			if patch != nil {
 				if command, ok := patch(previousRecord, record); ok {
 					*commands = append(*commands, command)
@@ -970,13 +982,27 @@ func provenJSONEqual(a, b reflect.Value) bool {
 	case reflect.String:
 		return a.String() == b.String()
 	case reflect.Struct:
+		// Omitted alpha cutoffs have no standalone wire form. Only a carrying
+		// omitzero field may prove them equal without invoking the encoder.
+		if a.Type() == reflect.TypeFor[AlphaCutoff]() {
+			left, right := alphaCutoffProofValue(a), alphaCutoffProofValue(b)
+			return !left.IsZero() && !right.IsZero() && left.state == right.state && provenFloatEqual(left.value, right.value) && provenAlphaCutoffFieldEqual(left, right)
+		}
 		// Model and aggregate records embed ObjectIR. Reuse its typed proof
 		// when reflection can expose the actual record without copying it.
 		if a.Type() == reflect.TypeFor[ObjectIR]() && a.CanAddr() && b.CanAddr() && a.CanInterface() && b.CanInterface() && objectProofEnabled() {
 			return provenObjectFieldsEqual(a.Addr().Interface().(*ObjectIR), b.Addr().Interface().(*ObjectIR), 0)
 		}
 		for index := range a.NumField() {
-			if !provenJSONEqual(a.Field(index), b.Field(index)) {
+			left, right := a.Field(index), b.Field(index)
+			if left.Kind() == reflect.Struct && left.Type() == reflect.TypeFor[AlphaCutoff]() && alphaCutoffFieldOmitsZero(a.Type(), index) {
+				x, y := alphaCutoffProofValue(left), alphaCutoffProofValue(right)
+				if !provenAlphaCutoffFieldEqual(x, y) {
+					return false
+				}
+				continue
+			}
+			if !provenJSONEqual(left, right) {
 				return false
 			}
 		}
@@ -1038,6 +1064,72 @@ func provenJSONEqual(a, b reflect.Value) bool {
 			return false
 		}
 		return provenJSONEqual(a.Elem(), b.Elem())
+	default:
+		return false
+	}
+}
+
+// Omission is a field property, not permission to encode the zero value as a
+// standalone uniform. Keep that context when proving tri-state cutoff fields.
+var alphaCutoffOmissionPlans sync.Map // reflect.Type -> []bool; lazy per carrying type
+
+func sceneRecordHasJSONMarshaler(typ reflect.Type) bool {
+	marshaler := reflect.TypeFor[json.Marshaler]()
+	return typ.Implements(marshaler) || reflect.PointerTo(typ).Implements(marshaler)
+}
+
+func alphaCutoffFieldOmitsZero(typ reflect.Type, index int) bool {
+	if cached, ok := alphaCutoffOmissionPlans.Load(typ); ok {
+		return cached.([]bool)[index]
+	}
+	fields := make([]bool, typ.NumField())
+	if sceneRecordHasJSONMarshaler(typ) {
+		cached, _ := alphaCutoffOmissionPlans.LoadOrStore(typ, fields)
+		return cached.([]bool)[index]
+	}
+	for i := range fields {
+		field := typ.Field(i)
+		if field.Type != reflect.TypeFor[AlphaCutoff]() {
+			continue
+		}
+		_, options, _ := strings.Cut(field.Tag.Get("json"), ",")
+		for options != "" {
+			var option string
+			option, options, _ = strings.Cut(options, ",")
+			if option == "omitzero" {
+				fields[i] = true
+				break
+			}
+		}
+	}
+	cached, _ := alphaCutoffOmissionPlans.LoadOrStore(typ, fields)
+	return cached.([]bool)[index]
+}
+
+func alphaCutoffProofValue(value reflect.Value) AlphaCutoff {
+	// Private nested fields can be read by kind without Interface. This preserves
+	// the structural walk's proof for identical records without unsafe access.
+	if !value.CanInterface() {
+		return AlphaCutoff{state: alphaCutoffState(value.FieldByName("state").Uint()), value: value.FieldByName("value").Float()}
+	}
+	if value.CanAddr() {
+		return *value.Addr().Interface().(*AlphaCutoff)
+	}
+	return value.Interface().(AlphaCutoff)
+}
+
+// A carrying omitzero field drops the omitted state, even if internal unused
+// numeric bits differ. Disabled values encode null; authored numbers must be
+// finite/non-negative and retain the sign of zero in their encoding.
+func provenAlphaCutoffFieldEqual(a, b AlphaCutoff) bool {
+	if a.state != b.state {
+		return false
+	}
+	switch a.state {
+	case alphaCutoffOmitted, alphaCutoffDisabled:
+		return true
+	case alphaCutoffNumeric:
+		return validAlphaCutoff(a.value) && validAlphaCutoff(b.value) && provenFloatEqual(a.value, b.value)
 	default:
 		return false
 	}

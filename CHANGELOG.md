@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Reuse live computed-value subscriptions when a recomputation reads the same
+  ordered dependencies. Retain freshly tracked revisions, the replacement path
+  for changed dependencies, batched reads, and disposal while reducing
+  subscription allocation churn in islands and engines.
+
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
+- Match SceneIR records with one ID table instead of building two maps.
+  Preserve the handling of repeated and empty IDs, sorted removals, and the
+  order of updates and optional patches without mutating either snapshot.
+
+- Keep invalid numeric alpha cutoffs from being proven equal in SceneIR diffs.
+  Identical negative thresholds and standalone omitted values still reach the
+  JSON rejection path instead of silently suppressing the update. Carrying
+  omitzero fields keep their omission semantics, including nested records.
+
+- Compare lowered material texture descriptors with generated typed field proofs
+  during SceneIR updates, avoiding repeated reflection over texture slots.
+  Nested schema and named-scalar checks retain the JSON fallback when a proof
+  is stale or a comparison is ambiguous.
+
 ## v0.57.19
 
 - Select Scene3D model-map variants by each mount's delivery profile and actual
