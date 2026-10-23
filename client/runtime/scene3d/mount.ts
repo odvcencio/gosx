@@ -260,8 +260,7 @@
         return true;
       }
       const layout = entry.shaderLayout;
-      const block = layout?.uniformBlock;
-      const fields = block?.fields || block?.Fields;
+      const fields = layout?.uniformBlock?.fields || layout?.uniformBlock?.Fields;
       return Array.isArray(fields) && fields.some(field => field && (field.name === "time" || field.Name === "time"));
     }
 
@@ -579,7 +578,6 @@
         nowMS: nowMS,
         // Declarative scene seconds; telemetry retains the separate wall clock.
         sceneTime: clockSeconds,
-        // Same tier predicate as the vessel's water query (sceneLowHardware).
         oceanTier: sceneLowHardware() ? "low" : "high",
         clockRevision: clockSubmission.requested,
         displayDeltaMS: displayDeltaMS,
