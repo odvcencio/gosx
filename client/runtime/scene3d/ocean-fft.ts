@@ -24,7 +24,7 @@
   // window; FOAM_RADIUS is where the shader stops trusting that window; the crest amplitude normalizes the crest shading.
   const STATELESS_GAIN = 3.5, FOAM_RADIUS = 240;
   const crestAmplitude = function (windSpeed: number): number { return Math.max(0.3, 0.14 * windSpeed * windSpeed / 9.81); };
-  const SURFACE_FLOATS = 40; // c[4], f, m, w[4]: ten vec4s, the layout both surface variants declare
+  const SURFACE_FLOATS = 48; // c[4], f, m, w[4], k[2]: twelve vec4s, the layout both surface variants declare
   const CASCADES = 4;
   let timingSource: any = null; // the running WebGPU graph, for timing()
   let lastWater: any = null; // the most recent running graph's water frame, for CPU queries (see water())
@@ -62,6 +62,12 @@
       out[24 + i * 4] = wrapped["waterModX" + i] || 0; out[24 + i * 4 + 1] = wrapped["waterModZ" + i] || 0;
     });
     const span = foam.cell * foam.width, wrap = function (v: number) { return v - Math.floor(v / span) * span; };
+    // The wake window (the graph's wake export and wake* exportParams); all zero, so masked out, when the graph has no wake or it is off.
+    const wakeTex = runner.export("wake");
+    if (wakeTex) {
+      out[40] = wrapped.wakeCamRelX || 0; out[41] = wrapped.wakeCamRelZ || 0; out[42] = wrapped.wakeOriginModX || 0; out[43] = wrapped.wakeOriginModZ || 0;
+      out[44] = wrapped.wakeCell || 0; out[45] = wrapped.wakeOn || 0; out[46] = wakeTex.width;
+    }
     out[16] = 1 / span; out[17] = 1; out[18] = runner.value("foamThreshold"); out[19] = STATELESS_GAIN;
     out[20] = crestAmplitude(runner.value("windSpeed")); out[21] = wrap(runner.value("waterX")); out[22] = wrap(runner.value("waterZ")); out[23] = FOAM_RADIUS;
   }
@@ -196,7 +202,7 @@
       const both = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT, entries: any[] = [];
       entries.push({ binding: SURFACE.SLOT.uniform, visibility: both, buffer: { type: "uniform" } }, { binding: SURFACE.SLOT.sampler, visibility: both, sampler: { type: "filtering" } });
       for (let i = 0; i < CASCADES; i++) entries.push({ binding: SURFACE.SLOT.disp + i, visibility: both, texture: { sampleType: "float" } }, { binding: SURFACE.SLOT.slope + i, visibility: both, texture: { sampleType: "float" } });
-      entries.push({ binding: SURFACE.SLOT.foam, visibility: both, texture: { sampleType: "float" } });
+      entries.push({ binding: SURFACE.SLOT.foam, visibility: both, texture: { sampleType: "float" } }, { binding: SURFACE.SLOT.wake, visibility: both, texture: { sampleType: "float" } });
       return entries;
     };
     const layout = device.createBindGroupLayout({ label: label + "surface", entries: surfaceEntries() });
@@ -231,6 +237,9 @@
       const foam = runner.export("foam");
       entries.push({ binding: SURFACE.SLOT.foam, resource: foam ? foam.view : dummyView });
       views.push(foam ? foam.view : dummyView);
+      const wake = runner.export("wake");
+      entries.push({ binding: SURFACE.SLOT.wake, resource: wake ? wake.view : dummyView });
+      views.push(wake ? wake.view : dummyView);
       if (state.viewList && views.every(function (v: any, i: number) { return v === state.viewList[i]; })) return;
       state.viewList = views;
       engine.group = device.createBindGroup({ label: label + "surface", layout: layout, entries: entries });
@@ -307,7 +316,7 @@
       let loc = cache.get(program);
       if (!loc) {
         const u = function (name: string) { return g.getUniformLocation(program, name); };
-        loc = { sp: u("u_sp[0]"), disp: [0, 1, 2, 3].map(function (i) { return u("u_spDisp" + i); }), slope: [0, 1, 2, 3].map(function (i) { return u("u_spSlope" + i); }), foam: u("u_spFoam") };
+        loc = { sp: u("u_sp[0]"), disp: [0, 1, 2, 3].map(function (i) { return u("u_spDisp" + i); }), slope: [0, 1, 2, 3].map(function (i) { return u("u_spSlope" + i); }), foam: u("u_spFoam"), wake: u("u_spWake") };
         cache.set(program, loc);
       }
       const unit = function (n: number, location: any, exported: any) { g.activeTexture(g.TEXTURE0 + n); g.bindTexture(g.TEXTURE_2D, exported ? exported.tex : engine.dummy); g.uniform1i(location, n); };
@@ -317,6 +326,7 @@
         unit(SURFACE_GL.UNIT.slope + i, loc.slope[i], runner.export("slope" + i));
       }
       unit(SURFACE_GL.UNIT.foam, loc.foam, runner.export("foam"));
+      unit(SURFACE_GL.UNIT.wake, loc.wake, runner.export("wake"));
       g.uniform4fv(loc.sp, data);
     }
     function dispose(): void {

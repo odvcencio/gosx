@@ -39,7 +39,7 @@ const ocean = (extra) => Object.assign({ level: 0, choppiness: 0.6, windDirectio
 const frame = (s, resources, h, env, extra) => s.api.frame(resources, Object.assign({}, h, { environment: { ocean: env }, encoder: h.encoder || h.device.createCommandEncoder() }, extra));
 // The graph's pipelines are created by the first frame and become ready afterwards, as after asynchronous validation.
 const warm = (s, resources, h, env, extra) => { frame(s, resources, h, env, extra); s.settle(); return frame(s, resources, h, env, extra); };
-const surfaceWrites = (s) => s.fake.state.writeBufferCalls.filter((w) => w.buffer.size === 160);
+const surfaceWrites = (s) => s.fake.state.writeBufferCalls.filter((w) => w.buffer.size === 192);
 const lastSurface = (s) => { const w = surfaceWrites(s).pop(); return w ? Array.from(new Float32Array(w.data.buffer || w.data, w.data.byteOffset || 0, 40)) : null; };
 const labels = (pass) => pass.dispatches.map((d) => d.pipeline.label);
 
@@ -317,6 +317,19 @@ test("a hull's speed for the wake is its speed through the water: the node's vel
   assert.equal(s.api.waterRelative(null, () => runner), null);
 });
 
+test("surface uniform: the wake window terms come from exportParams and the wake export", () => {
+  const s = standalone();
+  const out = new Float32Array(48);
+  const runner = { exportParams: () => ({ wakeCamRelX: -12.5, wakeCamRelZ: 30.25, wakeOriginModX: 17, wakeOriginModZ: 200, wakeCell: 4, wakeOn: 1 }), value: () => 0, export: (n) => n === "wake" ? { width: 256, height: 256 } : null };
+  s.api.surfaceData(runner, { cascades: [], foam: { cell: 0.5, width: 1024 } }, out);
+  assert.deepEqual(Array.from(out.slice(40, 44)), [-12.5, 30.25, 17, 200], "camera-relative window origin and the toroidal origin, in texels");
+  assert.deepEqual(Array.from(out.slice(44, 48)), [4, 1, 256, 0], "cell metres, on, window size in texels");
+  // No wake export (a graph without a wake, or the wake switched off): the wake is masked out.
+  const none = { exportParams: () => ({}), value: () => 0, export: () => null };
+  s.api.surfaceData(none, { cascades: [], foam: { cell: 0.5, width: 1024 } }, out);
+  assert.deepEqual(Array.from(out.slice(40, 48)), [0, 0, 0, 0, 0, 0, 0, 0]);
+});
+
 function nagaPath() {
   for (const candidate of ["naga", path.join(process.env.HOME || "", ".cargo", "bin", "naga")]) {
     try { execFileSync(candidate, ["--version"], { stdio: "ignore" }); return candidate; } catch (_e) {}
@@ -374,6 +387,13 @@ test("the renderer encodes the ocean graph before the main pass and samples the 
   assert.ok(module, "the spectral surface variant is compiled");
   assert.match(module.code, /textureSampleLevel\(spDisp0/);
   assert.match(module.code, /sp\.w\[0\]\.xy/, "each cascade is sampled at its own wrapped water offset");
+  // The wake: height into displacement, slopes into the tangents and the normal, turbulence into foam, inside the wake window only.
+  assert.match(module.code, /var spWakeTex: texture_2d<f32>/);
+  assert.match(module.code, /let swk = textureSampleLevel\(spWakeTex[^\n]*\n[^\n]*\n[^\n]*p\.y \+= swk\.x/, "vertex: height");
+  assert.match(module.code, /dx\.y \+= swk\.y[^\n]*dz\.y \+= swk\.z|dx\.y \+= swk\.y/, "vertex: slopes into the tangents");
+  assert.match(module.code, /sGx \+= swf\.y \* swm; sGz \+= swf\.z \* swm/, "fragment: slopes into the normal");
+  assert.match(module.code, /foam = max\(foam, [^\n]*swf\.w/, "fragment: turbulence into foam");
+  assert.match(module.code, /smoothstep\(0\.0, WAKE_EDGE_CELLS/, "the window edge fades out");
   assert.doesNotMatch(module.code, /for \(var i = 0; i < 6; i\+\+\) \{\n    if \(i >= waves\)/, "the Gerstner loop is replaced");
   if (naga) validateWGSL(module.code, "ocean-fft-surface");
   const pipeline = state.renderPipelines.find((p) => p.desc.label === "gosx-ocean-fft-surface");

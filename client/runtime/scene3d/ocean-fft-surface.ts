@@ -9,7 +9,10 @@
 // and the drift test, never a silent half-patch.
 (function () {
   // Binding slots of the spectral group, shared with ocean-fft.ts.
-  const SLOT = { uniform: 0, sampler: 1, disp: 2, slope: 6, foam: 10 };
+  const SLOT = { uniform: 0, sampler: 1, disp: 2, slope: 6, foam: 10, wake: 11 };
+  // Surface-side wake tuning (not simulation): the window edge fades over this many cells, the wake's shoaling wavenumber (rad/m, like a
+  // cascade's band centre), and how strongly wake turbulence reads as foam.
+  const WAKE = { edgeCells: 8, k: 0.2, foam: 1.5 };
 
   function between(src: string, from: string, to: string, replacement: string): string {
     const a = src.indexOf(from);
@@ -24,15 +27,24 @@
   }
 
   function declarations(group: number): string {
-    let s = "struct OceanSpec { c: array<vec4f, 4>, f: vec4f, m: vec4f, w: array<vec4f, 4> };\n";
+    let s = "const WAKE_EDGE_CELLS: f32 = " + WAKE.edgeCells.toFixed(1) + ";\n";
+    s += "struct OceanSpec { c: array<vec4f, 4>, f: vec4f, m: vec4f, w: array<vec4f, 4>, k: array<vec4f, 2> };\n";
     s += "@group(" + group + ") @binding(" + SLOT.uniform + ") var<uniform> sp: OceanSpec;\n";
     s += "@group(" + group + ") @binding(" + SLOT.sampler + ") var spSampler: sampler;\n";
     for (let i = 0; i < 4; i++) s += "@group(" + group + ") @binding(" + (SLOT.disp + i) + ") var spDisp" + i + ": texture_2d<f32>;\n";
     for (let i = 0; i < 4; i++) s += "@group(" + group + ") @binding(" + (SLOT.slope + i) + ") var spSlope" + i + ": texture_2d<f32>;\n";
     s += "@group(" + group + ") @binding(" + SLOT.foam + ") var spFoam: texture_2d<f32>;\n";
+    s += "@group(" + group + ") @binding(" + SLOT.wake + ") var spWakeTex: texture_2d<f32>;\n";
     // c[i] = (tile size m, band centre rad/m, texels, enabled); f = (foam uv scale, foam lambda / authored lambda, J threshold, gain);
     // m = (crest amplitude m, foam water offset x, foam water offset z, persistent radius m); w[i].xy = the water offset wrapped by cascade
     // i's tile (the graph's waterMod<c> parameters), so a cascade is sampled at (position - w[i].xy) / tile.
+    // k[0] = (wake window origin relative to the camera x, z in metres, toroidal origin x, z in texels); k[1] = (cell metres, on, window texels).
+    // spWake returns (u, v, mask): the wake texture coordinate of a rest position and how much of the wake shows there (zero outside the window).
+    s += "fn spWake(rest: vec2f, cam: vec2f) -> vec3f {\n";
+    s += "  let r = (rest - cam - sp.k[0].xy) / max(sp.k[1].x, 1e-3);\n";
+    s += "  let edge = min(min(r.x, sp.k[1].z - r.x), min(r.y, sp.k[1].z - r.y));\n";
+    s += "  return vec3f((r + sp.k[0].zw) / sp.k[1].z, smoothstep(0.0, WAKE_EDGE_CELLS, edge) * sp.k[1].y);\n";
+    s += "}\n";
     s += "fn spLod(c: vec4f, spacing: f32) -> f32 { return max(log2(max(spacing, 1e-3) * c.z / c.x), 0.0); }\n";
     return s;
   }
@@ -48,6 +60,12 @@
       s += "    p += a.xyz * k; dx += vec3f(b.z, b.x, a.w) * k; dz += vec3f(a.w, b.y, b.w) * k;\n";
       s += "  }\n";
     }
+    s += "  let swv = spWake(xz, ocean.p[7].xz);\n";
+    s += "  if (swv.z > 0.0) {\n";
+    s += "    let swk = textureSampleLevel(spWakeTex, spSampler, swv.xy, max(log2(max(spacing, 1e-3) / max(sp.k[1].x, 1e-3)), 0.0));\n";
+    s += "    let sws = swv.z * smoothstep(0.0, 1.2, depth0 * " + WAKE.k.toFixed(2) + ");\n";
+    s += "    p.y += swk.x * sws; dx.y += swk.y * sws; dz.y += swk.z * sws;\n";
+    s += "  }\n";
     return s;
   }
 
@@ -61,6 +79,10 @@
       s += "    sGx += b.x * k; sGz += b.y * k; sXX += b.z * k; sZZ += b.w * k; sXZ += a.w * k;\n";
       s += "  }\n";
     }
+    s += "  let swv = spWake(in.rest, ocean.p[7].xz);\n";
+    s += "  let swf = textureSample(spWakeTex, spSampler, swv.xy);\n";
+    s += "  let swm = swv.z * smoothstep(0.0, 1.2, in.depth0 * " + WAKE.k.toFixed(2) + ");\n";
+    s += "  sGx += swf.y * swm; sGz += swf.z * swm;\n";
     s += "  let sJ = (1.0 + sXX) * (1.0 + sZZ) - sXZ * sXZ;\n";
     s += "  let sPersist = textureSampleLevel(spFoam, spSampler, wxz * sp.f.x, 0.0).r;\n";
     s += "  let N = normalize(vec3f(sGz * sXZ - (1.0 + sZZ) * sGx, max(sJ, 0.1), sXZ * sGx - sGz * (1.0 + sXX)));\n";
@@ -71,7 +93,8 @@
     "    let sJf = (1.0 + sp.f.y * sXX) * (1.0 + sp.f.y * sZZ) - sp.f.y * sp.f.y * sXZ * sXZ;\n" +
     "    let sStateless = clamp((sp.f.z - sJf) * sp.f.w, 0.0, 1.0) * lace * bu;\n" +
     "    let sKept = smoothstep(0.04, 0.6, sPersist) * (0.55 + 0.45 * lace);\n" +
-    "    foam = mix(sStateless, sKept, sNear);\n";
+    "    foam = mix(sStateless, sKept, sNear);\n" +
+    "    foam = max(foam, clamp(swf.w * swv.z * " + WAKE.foam.toFixed(2) + ", 0.0, 1.0) * (0.6 + 0.4 * lace));\n";
 
   // wgsl returns the spectral variant of the base ocean shader. group is the bind group index of the spectral resources.
   function wgsl(base: string, group: number): string {

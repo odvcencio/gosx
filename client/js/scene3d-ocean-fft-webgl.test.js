@@ -69,7 +69,7 @@ test("a spectral ocean asks the graph for a frame first, then draws the patched 
   assert.equal(mount.getAttribute("data-gosx-scene3d-ocean"), "surface+spectrum");
   const all = oceanSources(gl).join("\n");
   assert.match(all, /textureLod\(u_spDisp0/);
-  assert.match(all, /uniform vec4 u_sp\[10\]/);
+  assert.match(all, /uniform vec4 u_sp\[12\]/);
   assert.doesNotMatch(all, /for \(int i = 0; i < 6; i\+\+\) \{\n    if \(i >= waves\)/, "the Gerstner loop is gone");
   assert.equal(calls.bind.length, 1, "the ocean program gets the cascade samplers");
   assert.equal(calls.bind[0], gl.programMatching("u_ocean[35]"));
@@ -179,16 +179,17 @@ test("glue (WebGL2): the graph runs on the first frame, graphParams reach it, an
   const water = g.ocean.water();
   assert.ok(Math.abs(water.x - 2) < 1e-6, "driftX 2 m/s for one second: " + water.x);
   const program = g.gl.createProgram();
-  program.shaders.push({ source: "uniform vec4 u_sp[10]; uniform sampler2D u_spDisp0, u_spDisp1, u_spDisp2, u_spDisp3, u_spSlope0, u_spSlope1, u_spSlope2, u_spSlope3, u_spFoam;" });
+  program.shaders.push({ source: "uniform vec4 u_sp[12]; uniform sampler2D u_spDisp0, u_spDisp1, u_spDisp2, u_spDisp3, u_spSlope0, u_spSlope1, u_spSlope2, u_spSlope3, u_spFoam, u_spWake;" });
   engine.bind(g.gl, program);
   const d = Array.from(program.uniforms.get("u_sp[0]"));
-  assert.equal(d.length, 40);
+  assert.equal(d.length, 48);
   assert.deepEqual([d[3], d[7], d[11], d[15]], [1, 1, 1, 1]);
   assert.equal(Math.fround(d[18]), Math.fround(0.3), "foam threshold from graphParams");
   assert.ok(Math.abs(d[24] - 2) < 1e-4 && d[25] === 0, "cascade 0's wrapped water offset");
   assert.deepEqual([0, 1, 2, 3].map((i) => program.uniforms.get("u_spDisp" + i)), [4, 5, 6, 7]);
   assert.deepEqual([0, 1, 2, 3].map((i) => program.uniforms.get("u_spSlope" + i)), [8, 9, 10, 11]);
   assert.equal(program.uniforms.get("u_spFoam"), 12);
+  assert.equal(program.uniforms.get("u_spWake"), 13, "the wake texture rides on unit 13 (a dummy until the graph has a wake)");
   engine.dispose();
   for (const kind of Object.keys(g.gl.created)) assert.equal(g.gl.live(kind).filter((o) => o !== program).length, kind === "program" ? 0 : 0, kind + " leaked");
 });
@@ -197,7 +198,7 @@ test("glue (WebGL2): the low tier builds three cascades; a tier change rebuilds 
   const g = glue();
   const low = g.frame(spectral(), { tier: "low" });
   const program = g.gl.createProgram();
-  program.shaders.push({ source: "uniform vec4 u_sp[10]; uniform sampler2D u_spDisp0, u_spDisp1, u_spDisp2, u_spDisp3, u_spSlope0, u_spSlope1, u_spSlope2, u_spSlope3, u_spFoam;" });
+  program.shaders.push({ source: "uniform vec4 u_sp[12]; uniform sampler2D u_spDisp0, u_spDisp1, u_spDisp2, u_spDisp3, u_spSlope0, u_spSlope1, u_spSlope2, u_spSlope3, u_spFoam, u_spWake;" });
   low.bind(g.gl, program);
   assert.deepEqual([3, 7, 11, 15].map((i) => program.uniforms.get("u_sp[0]")[i]), [1, 1, 1, 0]);
   const high = g.frame(spectral(), { tier: "high" });

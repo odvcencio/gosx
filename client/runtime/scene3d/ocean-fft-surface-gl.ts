@@ -9,7 +9,9 @@
 // waves (and fails the drift test), never a silent half-patch.
 (function () {
   // Texture units of the spectral samplers. Units 0 to 3 belong to the ocean pass (bathymetry, reflection inputs).
-  const UNIT = { disp: 4, slope: 8, foam: 12 };
+  const UNIT = { disp: 4, slope: 8, foam: 12, wake: 13 };
+  // Surface-side wake tuning (not simulation), as in the WGSL variant: the window edge fade in cells, the wake's shoaling wavenumber (rad/m) and foam gain.
+  const WAKE = { edgeCells: 8, k: 0.2, foam: 1.5 };
 
   function swap(src: string, from: string, to: string): string {
     if (src.indexOf(from) < 0) throw new Error("ocean-fft: anchor not found: " + from.slice(0, 48));
@@ -28,10 +30,18 @@
   // water offset wrapped by cascade i's tile (the graph's waterMod<c> parameters).
   // u_sp[4].y is the foam lambda over the authored lambda, as in the WGSL variant.
   function declarations(): string {
-    let s = "uniform vec4 u_sp[10];\n";
+    let s = "uniform vec4 u_sp[12];\n";
     for (let i = 0; i < 4; i++) s += "uniform sampler2D u_spDisp" + i + ";\n";
     for (let i = 0; i < 4; i++) s += "uniform sampler2D u_spSlope" + i + ";\n";
     s += "uniform sampler2D u_spFoam;\n";
+    s += "uniform sampler2D u_spWake;\n";
+    // u_sp[10] = (wake window origin relative to the camera x, z in metres, toroidal origin x, z in texels); u_sp[11] = (cell metres, on, window texels).
+    // spWake returns (u, v, mask): the wake texture coordinate of a rest position and how much of the wake shows there (zero outside the window).
+    s += "vec3 spWake(vec2 rest, vec2 cam) {\n";
+    s += "  vec2 r = (rest - cam - u_sp[10].xy) / max(u_sp[11].x, 1e-3);\n";
+    s += "  float edge = min(min(r.x, u_sp[11].z - r.x), min(r.y, u_sp[11].z - r.y));\n";
+    s += "  return vec3((r + u_sp[10].zw) / u_sp[11].z, smoothstep(0., " + WAKE.edgeCells.toFixed(1) + ", edge) * u_sp[11].y);\n";
+    s += "}\n";
     s += "float spLod(vec4 c, float spacing) { return max(log2(max(spacing, 1e-3) * c.z / c.x), 0.); }\n";
     return s;
   }
@@ -47,6 +57,12 @@
       s += "    p += sa.xyz * sk; dx += vec3(sb.z, sb.x, sa.w) * sk; dz += vec3(sa.w, sb.y, sb.w) * sk;\n";
       s += "  }\n";
     }
+    s += "  vec3 swv = spWake(xz, u_ocean[7].xz);\n";
+    s += "  if (swv.z > 0.) {\n";
+    s += "    vec4 swk = textureLod(u_spWake, swv.xy, max(log2(max(spacing, 1e-3) / max(u_sp[11].x, 1e-3)), 0.));\n";
+    s += "    float sws = swv.z * smoothstep(0., 1.2, depth0 * " + WAKE.k.toFixed(2) + ");\n";
+    s += "    p.y += swk.x * sws; dx.y += swk.y * sws; dz.y += swk.z * sws;\n";
+    s += "  }\n";
     return s;
   }
 
@@ -60,6 +76,10 @@
       s += "    sGx += sb.x * sk; sGz += sb.y * sk; sXX += sb.z * sk; sZZ += sb.w * sk; sXZ += sa.w * sk;\n";
       s += "  }\n";
     }
+    s += "  vec3 swv = spWake(v_rest, u_ocean[7].xz);\n";
+    s += "  vec4 swf = texture(u_spWake, swv.xy);\n";
+    s += "  float swm = swv.z * smoothstep(0., 1.2, v_d0 * " + WAKE.k.toFixed(2) + ");\n";
+    s += "  sGx += swf.y * swm; sGz += swf.z * swm;\n";
     s += "  float sJ = (1. + sXX) * (1. + sZZ) - sXZ * sXZ;\n";
     s += "  float sPersist = textureLod(u_spFoam, wxz * u_sp[4].x, 0.).r;\n";
     s += "  vec3 N = normalize(vec3(sGz * sXZ - (1. + sZZ) * sGx, max(sJ, 0.1), sXZ * sGx - sGz * (1. + sXX)));\n";
@@ -70,7 +90,8 @@
     "    float sJf = (1. + u_sp[4].y * sXX) * (1. + u_sp[4].y * sZZ) - u_sp[4].y * u_sp[4].y * sXZ * sXZ;\n" +
     "    float sStateless = clamp((u_sp[4].z - sJf) * u_sp[4].w, 0., 1.) * lace * bu;\n" +
     "    float sKept = smoothstep(0.04, 0.6, sPersist) * (0.55 + 0.45 * lace);\n" +
-    "    foam = mix(sStateless, sKept, sNear);\n";
+    "    foam = mix(sStateless, sKept, sNear);\n" +
+    "    foam = max(foam, clamp(swf.w * swv.z * " + WAKE.foam.toFixed(2) + ", 0., 1.) * (0.6 + 0.4 * lace));\n";
 
   // glsl returns the spectral variant of the base ocean vertex and fragment shaders.
   function glsl(vertex: string, fragment: string): any {
