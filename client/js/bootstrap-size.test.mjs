@@ -106,7 +106,7 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 // 1,775 raw / 464 gzip / 596 Brotli bytes to the monolith and
 // 1,765 / 481 / 171 to Scene3D core. Only exhausted targets below move to their
 // measured minimum; warning/error allowances and route fractions stay fixed.
-// 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Targets below that this combination exceeded were set to the measured sizes (no extra headroom); other targets are unchanged. PR #744 (camera runtime yield) is merged too; it raised the Scene3D command chunk to 21827 raw / 6948 gzip, measured.
+// 2026-10-23: the bon-voyage-gosx integration branch combines PRs #732, #733, #739, #741, #742 and #743 with the spectral-ocean work. Targets below that this combination exceeded were set to the measured sizes (no extra headroom); other targets are unchanged. PR #744 (camera runtime yield) is merged too; it raised the Scene3D command chunk to 21827 raw / 6948 gzip, measured. 2026-10-23 (later round): merging origin/main (#746), the orbit pitch limits and the ocean reflection and bow-wave changes raised the WebGL chunk gzip target to 87937, measured.
 const budgets = [
   // Optional document views; no new payload on pages without the binding.
   { file: "bootstrap-feature-hub-document.js", raw: 7330, gzip: 3074, brotli: 2801 },
@@ -1282,7 +1282,7 @@ const budgets = [
     // BLEND texture coverage with current main measures 73,953 Brotli bytes. Use the
     // minimum target under the unchanged 5% allowance; retain raw and gzip.
     // Wind-ripple warping measures 73,997 Brotli bytes; the minimum target rises by 24 bytes.
-    file: "bootstrap-feature-scene3d-webgl.js", raw: 290800, gzip: 83600, brotli: 76481 },
+    file: "bootstrap-feature-scene3d-webgl.js", raw: 290800, gzip: 87937, brotli: 76481 },
   // Bumped raw 723_000 -> 730_000, gzip 198_000 -> 201_000, brotli 163_000 ->
   // 166_000 for procedural point clouds (11b-scene-points-generate.ts) — the
   // same canonical math kernel and box-scatter expander added to bootstrap.js

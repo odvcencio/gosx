@@ -1032,15 +1032,15 @@
     {
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer@7666:3",
-      "lines": 3409,
-      "cyclomatic": 1110,
-      "cognitive": 1694,
+      "lines": 3407,
+      "cyclomatic": 1128,
+      "cognitive": 1716,
       "maxNesting": 7,
       "parameters": 2
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "uploadCustomUniforms@8678:5",
+      "name": "uploadCustomUniforms@8690:5",
       "lines": 24,
       "cyclomatic": 21,
       "cognitive": 31,
@@ -1049,7 +1049,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "renderFrame@8900:5",
+      "name": "renderFrame@8912:5",
       "lines": 345,
       "cyclomatic": 113,
       "cognitive": 163,
@@ -1058,7 +1058,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "prepareRigidMeshBatches@9755:5",
+      "name": "prepareRigidMeshBatches@9767:5",
       "lines": 136,
       "cyclomatic": 79,
       "cognitive": 147,
@@ -1067,7 +1067,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPBRObjectList@10018:5",
+      "name": "drawPBRObjectList@10030:5",
       "lines": 256,
       "cyclomatic": 88,
       "cognitive": 207,
@@ -1076,7 +1076,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "applyPointsAuthoredCustomUniforms@10391:5",
+      "name": "applyPointsAuthoredCustomUniforms@10403:5",
       "lines": 23,
       "cyclomatic": 15,
       "cognitive": 39,
@@ -1085,7 +1085,7 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawPointsEntries@10557:5",
+      "name": "drawPointsEntries@10569:5",
       "lines": 187,
       "cyclomatic": 59,
       "cognitive": 120,
@@ -1094,8 +1094,8 @@
     },
     {
       "source": "../runtime/scene3d/webgl.ts",
-      "name": "drawInstancedMeshes@10849:5",
-      "lines": 191,
+      "name": "drawInstancedMeshes@10861:5",
+      "lines": 178,
       "cyclomatic": 57,
       "cognitive": 116,
       "maxNesting": 5,
@@ -1159,8 +1159,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "createSceneWebGPURenderer@6970:3",
       "lines": 12185,
-      "cyclomatic": 4198,
-      "cognitive": 5442,
+      "cyclomatic": 4199,
+      "cognitive": 5443,
       "maxNesting": 7,
       "parameters": 2,
       "reason": "The existing renderer closure includes its draw and resource helpers. Excluding direct vertex draws from baked-buffer sizing adds one conditional to its cumulative metrics, covered by the mixed hull/canvas upload regression. Other limits remain fixed. Disabled alpha-cutoff upload distinguishes BLEND texture coverage (-2) from OPAQUE (-1) without changing the material uniform layout."
@@ -1358,8 +1358,8 @@
       "source": "../runtime/scene3d/webgpu.ts",
       "name": "render@18613:5",
       "lines": 737,
-      "cyclomatic": 252,
-      "cognitive": 311,
+      "cyclomatic": 253,
+      "cognitive": 312,
       "maxNesting": 4,
       "parameters": 3
     },
@@ -1427,8 +1427,8 @@
       "source": "../runtime/scene3d/webgl.ts",
       "name": "createScenePBRRenderer",
       "lines": 3409,
-      "cyclomatic": 1110,
-      "cognitive": 1694,
+      "cyclomatic": 1128,
+      "cognitive": 1716,
       "maxNesting": 7,
       "parameters": 2
     },
