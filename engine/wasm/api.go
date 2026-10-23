@@ -16,6 +16,8 @@ package wasm
 import (
 	"encoding/json"
 	"errors"
+
+	"m31labs.dev/gosx/engine/host"
 )
 
 var (
@@ -28,19 +30,10 @@ var (
 
 // Handle owns one mounted engine instance. GoSX calls Dispose exactly once
 // when the instance is replaced or the page is disposed.
-type Handle interface {
-	Dispose()
-}
+type Handle = host.Handle
 
 // HandleFunc adapts a function to Handle.
-type HandleFunc func()
-
-// Dispose calls f when it is non-nil.
-func (f HandleFunc) Dispose() {
-	if f != nil {
-		f()
-	}
-}
+type HandleFunc = host.HandleFunc
 
 // Factory creates one independent engine instance for a browser context.
 type Factory func(Context) (Handle, error)

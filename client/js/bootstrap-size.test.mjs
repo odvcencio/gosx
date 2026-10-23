@@ -116,8 +116,10 @@ const budgets = [
   // bundle or route changed. It had no entry before. Call watchdog, status signal, worker
   // policy, view acknowledgements and vessel forwarding grew it from 28462 / 9351 / 8682 to
   // 33566 raw / 10837 gzip / 10130 Brotli after review fixes (remount seeding, teardown
-  // cleanup, vessel results). The targets sit at that measurement, rounded up.
-  { file: "bootstrap-feature-engine-worker.js", raw: 33600, gzip: 10840, brotli: 10130 },
+  // cleanup, vessel results). The native-host channel (desktop engines over the typed bridge)
+  // then added 1963 raw / 640 gzip / 618 Brotli bytes, to 35529 / 11477 / 10748. The targets
+  // sit at that measurement, rounded up.
+  { file: "bootstrap-feature-engine-worker.js", raw: 35600, gzip: 11480, brotli: 10750 },
   // The arcade synth for a page with no hub chunk; loads only for RequireFeature("arcade-audio").
   // Measured 8330 / 2748 / 2519.
   { file: "bootstrap-feature-arcade-audio.js", raw: 8400, gzip: 2800, brotli: 2570 },
