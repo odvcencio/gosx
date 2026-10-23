@@ -159,7 +159,7 @@ function sceneReflectWebGLDrawOpaque(gl, ctx, view, proj) {
     gl.uniformMatrix4fv(ctx.uniforms.viewMatrix,false,ctx.view);
     gl.uniformMatrix4fv(ctx.uniforms.projectionMatrix,false,ctx.proj);
     gl.uniform3f(ctx.uniforms.cameraPosition,ctx.camera.x,ctx.camera.y,ctx.camera.z);
-    ctx.draw(sceneReflectOpaqueList(ctx.list.opaque,ctx.materials));
+    ctx.draw(sceneReflectOpaqueList(ctx.list.opaque,ctx.materials,ctx.camera,level));
   } finally {
     ctx.view.set(originalView); ctx.proj.set(originalProj); ctx.camera.y = cameraY;
     maps.forEach((m,i) => entries[i].forEach(([key,value]) => m.set(key,value)));
