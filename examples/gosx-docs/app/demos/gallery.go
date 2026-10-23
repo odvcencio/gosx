@@ -9,6 +9,7 @@ import (
 	orreryDemo "m31labs.dev/gosx/examples/gosx-docs/app/demos/orrery"
 	scene3dDemo "m31labs.dev/gosx/examples/gosx-docs/app/demos/scene3d"
 	scene3dBenchDemo "m31labs.dev/gosx/examples/gosx-docs/app/demos/scene3d-bench"
+	voyageDemo "m31labs.dev/gosx/examples/gosx-docs/app/demos/voyage"
 	"m31labs.dev/gosx/scene"
 	"m31labs.dev/gosx/scene/capability"
 )
@@ -17,6 +18,7 @@ var demoSummaries = map[string]string{
 	"showreel":      "Orbit a compact sculpture assembled from typed Go scene data.",
 	"checkers":      "Play a two-seat Chinese Checkers match with Go-checked moves and CPU turns.",
 	"beacon":        "Walk a volcanic shoreline, switch the light, and sail from the jetty.",
+	"voyage":        "Choose a sea state and a game speed for an expedition ship under way.",
 	"water":         "Draw ripples and watch the pool bend light around floating objects.",
 	"playground":    "Edit a GoSX component and compile its browser preview as you type.",
 	"fluid":         "Drag through a server-computed velocity field and trace its flow.",
@@ -41,6 +43,7 @@ var demoGroups = map[string]string{
 	"playground":    "Application patterns",
 	"cms":           "Application patterns",
 	"beacon":        "Engine studies",
+	"voyage":        "Engine studies",
 	"scene3d-bench": "Engine studies",
 	"water":         "",
 }
@@ -84,6 +87,13 @@ var demoSources = map[string][]string{
 		"examples/gosx-docs/app/demos/beacon/page.gsx",
 		"examples/gosx-docs/app/demos/beacon/page.server.go",
 		"examples/gosx-docs/app/demos/beacon/route.config.json",
+	},
+	"voyage": {
+		"examples/gosx-docs/app/demos/voyage/page.css",
+		"examples/gosx-docs/app/demos/voyage/page.gsx",
+		"examples/gosx-docs/app/demos/voyage/page.server.go",
+		"examples/gosx-docs/app/demos/voyage/route.config.json",
+		"examples/gosx-docs/app/demos/voyage/voyage.go",
 	},
 	"water": {
 		"examples/gosx-docs/app/demos/water/cmd/generate-selena-fixtures/main.go",
@@ -318,6 +328,8 @@ func scenePropsForDemo(slug string) (scene.Props, bool) {
 		return checkersDemo.ShowcaseScene(), true
 	case "beacon":
 		return beaconDemo.BlackglassBeachProgram("shore", "golden-hour"), true
+	case "voyage":
+		return voyageDemo.VoyageProgram("quarter", "moderate-1x"), true
 	case "water":
 		// The Water page authors Scene3D with typed JSX elements. This matching
 		// capability probe carries the same WaterSystem passes into SceneIR.

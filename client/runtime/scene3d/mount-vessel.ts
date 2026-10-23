@@ -88,12 +88,13 @@
       const local=aboard?window.__gosx_scene3d_vessel_model.inversePoint(model.pose,Object.assign({},camera,{y:camera.y-lastBob})):null;
       lastBob=0;
   // @ts-ignore TS7006 -- this governed module is also evaluated as plain JS in Node tests.
-      const q=helpers.lowHardware()?low:high,sample=(x,z)=>query.sample(q,x,z,waterSeconds);
+      // A spectral ocean's waves live in the water frame, and on WebGPU its graph answers the buoyancy points (see sampler in ocean-fft.ts); without it these are the plain CPU swell waves.
+      const q=helpers.lowHardware()?low:high,fft=window.__gosx_scene3d_ocean_fft_api,ws=fft?fft.sampler(query,q,waterSeconds):null,sample=ws?ws.sample:(x,z)=>query.sample(q,x,z,waterSeconds);
       if(first) {if(!link)state.y=sample(state.x,state.z).y;physics.presentation(state,true);first=false;}
       const input=link?link.input:window.__gosx_scene3d_vessel_input.value(controls.input,true);
       physics.look(state,input.lookYaw*Math.min(.1,dt)*1.4,input.lookPitch*Math.min(.1,dt)*1.4);
       if(link)link.apply(state);
-      else if(!paused)physics.advance(state,dt,seconds,input,sample,floor);
+      else if(!paused){if(ws)ws.begin();physics.advance(state,dt,seconds,input,ws?ws.probed:sample,floor);}
       const pose=link?state:physics.presentation(state);
       if(decks)decks.update(pose);if(!multi)deck(pose,physics,surface);if(cw)cw.update(decks);
       if(local&&(multi?decks.aboard(local):Math.abs(local.x)<surface.sizeX/2+.3&&Math.abs(local.z)<surface.sizeZ/2+.3&&Math.abs(local.y-state.helm.y)<2)) {

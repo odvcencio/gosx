@@ -144,7 +144,7 @@ const WGSL_SCENE_OCEAN = [
 ].join("\n");
 // wgpuCreateOceanRenderer builds the pass lazily; pipelines are cached per
 // target format and sample count, like the sky pass.
-function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
+function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds, fft) {
   // A deep-sea placeholder (R = 0) until the bathymetry map loads.
   const placeholder = device.createTexture({ label: "gosx-ocean-bathymetry-placeholder", size: [1, 1, 1], format: "rgba8unorm",
     usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
@@ -164,8 +164,8 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
   const layout = device.createBindGroupLayout({entries});
   const reflectLayout = reflections ? sceneReflectWebGPULayout(device) : null;
   const dummyReflection = reflections ? sceneReflectWebGPUFallback(device, placeholderView) : null;
-  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: reflections ? [layout, reflectLayout] : [layout] });
-  const module = device.createShaderModule({ label: "gosx-ocean", code: WGSL_SCENE_OCEAN
+  const pipelineLayout = device.createPipelineLayout({ bindGroupLayouts: [layout].concat(reflections ? [reflectLayout] : [], fft ? [fft.layout] : []) });
+  const module = device.createShaderModule({ label: fft ? "gosx-ocean-fft-surface" : "gosx-ocean", code: (fft ? window.__gosx_scene3d_ocean_fft_surface.wgsl(WGSL_SCENE_OCEAN, reflections ? 2 : 1) : WGSL_SCENE_OCEAN)
     .replace("//GOSX_REFLECTION", reflections ? sceneOceanReflectWGSL() : "")
     .replace("//GOSX_CLOUD_SOURCE", clouds ? sceneOceanCloudWGSL() : "")
     .replace("//GOSX_CLOUD_REFLECT", clouds ? "let c = gosxClouds(d,cloud.p[13].xyz,cloud.p[11],cloud.p[12],cloud.p[14].xyz,cloud.p[15].xyz,cloud.p[9].xyz); base = base*(1.0-c.a)+c.rgb;" : "")
@@ -186,11 +186,11 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
         else { data[16 + 26] = 0; state = record && record.failed ? "bathymetry-failed" : "bathymetry-pending"; }
       }
       device.queue.writeBuffer(uniform, 0, data);
-      if (clouds) { sceneCloudUniformData(Object.assign({},opts,{view: opts.view, aspect: opts.aspect || 1}),cloudData); if (!sceneAtmosphereQuality(opts.meta).clouds) cloudData[44] = 0; device.queue.writeBuffer(cloudBuffer,0,cloudData); }
+      if (clouds) { sceneCloudUniformData(Object.assign({},opts,{aspect: opts.aspect || 1}),cloudData); if (!sceneAtmosphereQuality(opts.meta).clouds) cloudData[44] = 0; device.queue.writeBuffer(cloudBuffer,0,cloudData); }
       const key = opts.format + ":" + opts.samples;
       let pipeline = pipelines.get(key);
       if (!pipeline) {
-        pipeline = wgpuCreateValidatedPipeline(device, "render", { label: "gosx-ocean", layout: pipelineLayout,
+        pipeline = wgpuCreateValidatedPipeline(device, "render", { label: fft ? "gosx-ocean-fft-surface" : "gosx-ocean", layout: pipelineLayout,
           vertex: { module: module, entryPoint: "vertexMain" },
           fragment: { module: module, entryPoint: "fragmentMain", targets: [{ format: opts.format, blend: { color: blend, alpha: blend } }] },
           primitive: { topology: "triangle-list", cullMode: "none" }, multisample: { count: opts.samples },
@@ -207,13 +207,19 @@ function wgpuCreateOceanRenderer(device, textureCache, reflections, clouds) {
       }
       pass.setPipeline(wgpuRequirePipeline(pipeline));
       pass.setBindGroup(0, group);
-      if (reflections) pass.setBindGroup(1, sceneReflectWebGPUGroup(device, reflectLayout, opts.reflection || dummyReflection));
+      if (reflections) pass.setBindGroup(1, sceneReflectWebGPUGroup(device, reflectLayout, opts.reflection || dummyReflection)); if (fft) pass.setBindGroup(reflections ? 2 : 1, fft.group);
       pass.draw(data[16 + 32] * data[16 + 33] * 6);
       if (opts.frameBindGroup) pass.setBindGroup(0, opts.frameBindGroup);
-      return state;
+      return fft ? state + "+spectrum" : state;
     },
     dispose: function() { uniform.destroy(); placeholder.destroy(); if (dummyReflection) dummyReflection.uniform.destroy(); if (cloudBuffer) cloudBuffer.destroy(); pipelines.clear(); group = null; },
   };
+}
+
+// A spectral shader that cannot be built reports through the pass guard (the ocean then falls back to Gerstner waves).
+function wgpuOceanCreate(resources, opts, featureKey) {
+  try { return wgpuCreateOceanRenderer(opts.device, opts.textureCache, Boolean(featureKey & 1), Boolean(featureKey & 2), featureKey & 4 ? resources.fft : null); }
+  catch (error) { if (!(featureKey & 4)) throw error; resources.fft.fail(error); return null; }
 }
 
 // wgpuOceanDraw is the one call the WebGPU renderer makes per frame; it
@@ -222,16 +228,16 @@ function wgpuOceanDraw(resources, pass, opts) {
   const env = opts.environment;
   let state = "none";
   if (env && env.ocean) {
-    const featureKey = (sceneOceanReflections(env.ocean.reflections) ? 1 : 0) + (env.sky && env.sky.mode === "physical" && env.sky.clouds ? 2 : 0);
-    if (resources.renderer && resources.featureKey !== featureKey) { resources.renderer.dispose(); resources.renderer = null; resources.failed = false; }
+    const featureKey = (sceneOceanReflections(env.ocean.reflections) ? 1 : 0) + (env.sky && env.sky.mode === "physical" && env.sky.clouds ? 2 : 0) + (resources.fft?.ready && env.ocean.spectrum ? 4 : 0);
+    if ((resources.renderer || resources.failed) && resources.featureKey !== featureKey) { if (resources.renderer) resources.renderer.dispose(); resources.renderer = null; resources.failed = false; }
     if (!resources.renderer && !resources.failed) {
       resources.featureKey = featureKey;
-      resources.renderer = wgpuCreateOceanRenderer(opts.device, opts.textureCache, Boolean(featureKey & 1), Boolean(featureKey & 2));
+      resources.renderer = wgpuOceanCreate(resources, opts, featureKey);
       resources.failed = !resources.renderer;
     }
     state = resources.renderer ? resources.renderer.draw(pass, opts) : "unavailable";
   }
   if (opts.publishAttribute) opts.publishAttribute("data-gosx-scene3d-ocean", state);
-  else if (opts.mount && opts.mount.setAttribute) opts.mount.setAttribute("data-gosx-scene3d-ocean", state);
+  else opts.mount?.setAttribute?.("data-gosx-scene3d-ocean", state);
   return state !== "none";
 }

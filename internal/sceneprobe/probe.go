@@ -164,6 +164,7 @@ type Probe struct {
 	Environment                                                                                                  struct {
 		EnvMap string
 		IBL    struct{ Radiance, Irradiance, BRDFLUT Texture }
+		Ocean  struct{ Spectrum Presence }
 	}
 	Walk                            map[string]json.RawMessage
 	Vessel                          *struct{ NodeID string }
@@ -172,6 +173,12 @@ type Probe struct {
 	PosterAlt                       string
 	Err                             error `json:"-"`
 	ChunkErr, PreloadErr, PosterErr error `json:"-"`
+}
+
+// NeedsOceanFFT reports whether the scene's ocean carries a wave spectrum, in
+// either accepted props shape. Only such a scene fetches the spectral ocean chunk.
+func (p *Probe) NeedsOceanFFT() bool {
+	return p != nil && (p.Environment.Ocean.Spectrum.NonNull || p.Scene.NeedsOceanFFT())
 }
 
 // NeedsMaterialMotion identifies declared native material programs in either

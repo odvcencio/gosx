@@ -443,6 +443,8 @@ func (a *App) runtimeCompatBuiltPath(root, name string) (string, bool) {
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DVessel.File)
 	case "bootstrap-feature-scene3d-ocean-query.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DOceanQuery.File)
+	case "bootstrap-feature-scene3d-ocean-fft.js":
+		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DOceanFFT.File)
 	case "bootstrap-feature-scene3d-decompress.js":
 		return runtimeManifestAssetPath(assetsDir, "runtime", manifest.Runtime.BootstrapFeatureScene3DDecompress.File)
 	case "bootstrap-feature-scene3d-instance-stream.js":

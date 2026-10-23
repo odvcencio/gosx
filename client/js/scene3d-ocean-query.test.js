@@ -78,3 +78,27 @@ test('public zero-valued Ocean props match omitted defaults; normalized values r
   near(api.evaluate(stopped,3,-2,0).y,api.evaluate(stopped,3,-2,5).y);
   for (let i=0;i<6;i++) near(stopped.data[36+i*8+5],0);
 });
+test('spectral ocean: Go and JavaScript share golden samples of the swell waves', () => {
+  const cases=JSON.parse(fs.readFileSync(path.join(root,'scene/testdata/ocean-spectrum-query-parity.json'),'utf8'));
+  assert.ok(cases.length>=16);
+  for(const c of cases) {
+    const q=api.create(c.ocean,'high',x=>(c.ocean.level||0)-c.floorOffset-c.floorSlope*x,true);
+    assert.equal(q.swell.length,24);
+    const p=api.sample(q,c.x,c.z,c.time);
+    for(const axis of ['x','y','z']) { near(p[axis],c.position[axis],1e-6);near(p.normal[axis],c.normal[axis],1e-6);near(p.velocity[axis],c.velocity[axis],1e-6); }
+  }
+});
+test('spectral ocean: velocity and tangents are derivatives of the position, and time is not rounded to float32', () => {
+  const cases=JSON.parse(fs.readFileSync(path.join(root,'scene/testdata/ocean-spectrum-query-parity.json'),'utf8'));
+  const c=cases[10], q=api.create(c.ocean,'high',()=>-1e4,true), h=1e-4, t=c.time+0.123456789;
+  const p=api.evaluate(q,3,-1,t), a=api.evaluate(q,3,-1,t-h), b=api.evaluate(q,3,-1,t+h);
+  ['x','y','z'].forEach(axis=>near(p.velocity[axis],(b[axis]-a[axis])/(2*h),1e-5));
+  const dx=api.evaluate(q,3+h,-1,t), mx=api.evaluate(q,3-h,-1,t);
+  near(p.tangentX.y,(dx.y-mx.y)/(2*h),1e-5);near(p.tangentX.x,(dx.x-mx.x)/(2*h),1e-5);
+  assert.notEqual(api.evaluate(q,0,0,1234.5).y,api.evaluate(q,0,0,Math.fround(1234.5)+1e-3).y);
+});
+test('a spectral ocean without swell waves keeps the Gerstner table', () => {
+  const o={waveHeight:.9,waveLength:17,choppiness:.7,windDirection:8,speed:1,surf:.6};
+  assert.deepEqual(Array.from(api.create({...o,spectrum:{seed:1}},'high').data),Array.from(api.create(o,'high').data));
+  assert.equal(api.create({...o,spectrum:{seed:1}},'high').swell,null);
+});

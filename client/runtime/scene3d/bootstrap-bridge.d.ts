@@ -291,6 +291,12 @@ declare function createSceneAtmospherePostWebGPU(host: any): any;
 interface Window {
   __gosx_scene3d_ocean_waves: any;
   __gosx_scene3d_ocean_query: any;
+  __gosx_scene3d_elio_ocean: any;
+  __gosx_scene3d_ocean_fft_surface: any;
+  __gosx_scene3d_ocean_fft_api: any;
+  __gosx_scene3d_ocean_fft_surface_gl: any;
+  __gosx_elio_graph: any;
+  __gosx_scene3d_ocean_fft_gl_api: any;
   __gosx_scene3d_vessel_api: any;
   __gosx_scene3d_vessel_navigation: any;
 }

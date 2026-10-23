@@ -3922,7 +3922,7 @@
       var nowMS = frameMeta && Number.isFinite(Number(frameMeta.nowMS))
         ? Number(frameMeta.nowMS)
         : (sceneWebGLNow());
-      var active = lifecycleActive && (!frameMeta || frameMeta.active !== false);
+      var active = lifecycleActive && (frameMeta?.active !== false);
       var paused = lifecyclePaused || sceneBool(liveEntry.paused, false);
       var clockFrame = sceneWaterAdvanceRendererClock(waterClock, nowMS, active, paused, waterClockOptions);
 
@@ -4198,7 +4198,7 @@
       gl.depthMask(true);
       gl.disable(gl.BLEND);
       gl.disable(gl.CULL_FACE);
-      var compositeWorld = frameMeta && frameMeta.compositeWorld === true;
+      var compositeWorld = frameMeta?.compositeWorld === true;
       if (!compositeWorld || frameMeta.clearComposite === true) {
         var bg = compositeWorld
           ? sceneWaterRenderHexColor(frameMeta.background, [0.03, 0.08, 0.12])
@@ -7695,7 +7695,7 @@
     // Post-processing pipeline — created lazily when postEffects are present.
     var postProcessor: any = null;
     // @ts-ignore TS7018 -- lazily allocated backend sky resources.
-    var skyResources = { renderer: null }, oceanResources = { renderer: null, failed: false };
+    var skyResources = { renderer: null }, oceanResources: any = { renderer: null, failed: false };
     var transmissionResources = sceneCreateTransmissionWebGL(gl);
     var frameLinear = false;
     const programPreparation: ScenePBRPreparationHooks = { ensureSelenaProgram, ensureSkinnedProgram, ensureCustomProgram,
@@ -8849,7 +8849,7 @@
         }
       }
       bundle = sceneAtmosphereBundle(bundle, frameMeta);
-      detailEnabled = !frameMeta || frameMeta.detailEnabled !== false;
+      detailEnabled = frameMeta?.detailEnabled !== false;
       sceneWebGLPrepareDetailFrame(gl, detailResources, bundle.materials, textureCache);
 
       programPreparation.textureCache = textureCache; programPreparation.placeholder = selenaPlaceholderTexture;
@@ -9058,7 +9058,7 @@
         }
         var temporalActive = false;
         if (temporalRequested) {
-          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (!frameMeta || frameMeta.compositeOverWater !== true), bundle.lights);
+          temporalActive = postProcessor.prepareTemporal(postEffects, projMatrix, viewMatrix, !hasLineData && (frameMeta?.compositeOverWater !== true), bundle.lights);
           if (temporalActive) sceneMat4MultiplyInto(scratchSelenaViewProjection, projMatrix, viewMatrix);
         } else postProcessor.resetTemporal();
         var antialiasing = temporalActive ? "taa" : temporalRequested || spatialRequested ? "fxaa" : "none";
@@ -9084,7 +9084,7 @@
         bg[3] = 0;
       }
 
-      if (!frameMeta || frameMeta.compositeOverWater !== true) {
+      if (frameMeta?.compositeOverWater !== true) {
         // Fullscreen post passes disable depth writes. Clear must restore the
         // write mask first, or last frame's glass occludes this frame's opaque
         // transmission capture even though the color attachment was cleared.
@@ -9096,7 +9096,7 @@
       }
 
       var skyState = "none";
-      if (bundle.environment && bundle.environment.sky && (!frameMeta || frameMeta.compositeOverWater !== true)) {
+      if (bundle.environment && bundle.environment.sky && (frameMeta?.compositeOverWater !== true)) {
         if (!skyResources.renderer) skyResources.renderer = createSceneSkyWebGLRenderer(gl, textureCache, selenaPlaceholderTexture);
         skyState = skyResources.renderer ? skyResources.renderer.draw({ environment: bundle.environment, view: viewMatrix,
           camera: cam, aspect: aspect, linear: frameLinear }) : "unavailable";
@@ -9150,11 +9150,11 @@
       // Draw opaque pass.
       applyBlendMode(gl, "opaque");
       applyDepthMode(gl, "opaque");
-      drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta && frameMeta.frameRequest);
+      drawPBRObjectList(gl, drawList.opaque, bundle, materials, frameMeta?.frameRequest);
       } // end if (hasPBRData)
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "opaque");
       const oceanReflection = sceneReflectWebGL(oceanResources, gl, { environment: bundle.environment, meta: frameMeta, width: renderW, height: renderH, view: viewMatrix, proj: projMatrix, linear: frameLinear, draw: (v = viewMatrix,p = projMatrix) => sceneReflectWebGLDrawOpaque(gl, { program, uniforms, bundle, materials, camera: cam, view: viewMatrix, proj: projMatrix, list: drawList || {opaque: []}, visibility: meshColorVisibility, batches: rigidObjectBatches, draw: (list = []) => drawPBRObjectList(gl, list, bundle, materials) }, v, p) });
-      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: performance.now() / 1000,
+      sceneOceanWebGLDraw(oceanResources, gl, { reflection: oceanReflection, environment: bundle.environment, camera: cam, view: viewMatrix, proj: projMatrix, timeSeconds: frameMeta?.sceneTime, quality: frameMeta?.oceanTier,
         meta: frameMeta, aspect, linear: frameLinear, textureCache: textureCache, placeholder: selenaPlaceholderTexture, mount: canvas.parentNode });
       // Shared water must be present in the opaque capture sampled by glass.
       scenePBRCompositePass(gl, frameMeta, renderTarget);
@@ -9170,7 +9170,7 @@
       if (drawList && drawList.alpha.length > 0) {
         applyBlendMode(gl, "alpha");
         applyDepthMode(gl, "alpha");
-        drawPBRObjectList(gl, drawList.alpha, bundle, materials, frameMeta && frameMeta.frameRequest);
+        drawPBRObjectList(gl, drawList.alpha, bundle, materials, frameMeta?.frameRequest);
       }
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "alpha");
 
@@ -9178,7 +9178,7 @@
       if (drawList && drawList.additive.length > 0) {
         applyBlendMode(gl, "additive");
         applyDepthMode(gl, "additive");
-        drawPBRObjectList(gl, drawList.additive, bundle, materials, frameMeta && frameMeta.frameRequest);
+        drawPBRObjectList(gl, drawList.additive, bundle, materials, frameMeta?.frameRequest);
       }
       drawInstancedMeshes(gl, bundle, viewMatrix, projMatrix, "additive");
 
@@ -11001,7 +11001,7 @@
     function dispose() {
       sceneWebGLDisposeDetail(gl, detailResources);
       if (skyResources.renderer) skyResources.renderer.dispose(); sceneCloudDispose(skyResources);
-      if (oceanResources.renderer) oceanResources.renderer.dispose(); sceneReflectDispose(oceanResources);
+      if (oceanResources.renderer) oceanResources.renderer.dispose(); if (oceanResources.fft) oceanResources.fft.dispose(); sceneReflectDispose(oceanResources);
       skyResources.renderer = null; oceanResources.renderer = null; oceanResources.failed = false;
       transmissionResources.dispose();
       scenePBRDisposeProgramQueue(gl);
