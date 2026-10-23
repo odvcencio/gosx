@@ -7921,6 +7921,8 @@
     sceneStateObjectsWithMaterials,
     sceneStatePointsWithMaterials,
     sceneStateInstancedMeshesWithMaterials,
+    scenePrepareInstancedTransforms,
+    scenePrepareInstancedColors,
     sceneResolveMaterialUniforms,
     // The legacy vertex-colour renderer moved to 16e-scene-webgl-legacy.js,
     // which ships only in bootstrap.js and in the WebGL chunk. Guard the read:
