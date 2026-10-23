@@ -79,8 +79,8 @@ for (const height of [30, 120, 300]) {
 // passage with the wake off for the cost comparison. The page publishes the hull's pose each frame as a vessel would.
 for (const wake of [true, false]) {
   for (const knots of [8, 15, 22]) {
-    for (const view of ['above', 'astern', 'quarter', 'trail']) {
-      if (!wake && (view === 'above' || view === 'trail')) continue;
+    for (const view of ['above', 'astern', 'quarter', 'trail', 'waterline', 'bowq']) {
+      if (!wake && (view === 'above' || view === 'trail' || view === 'waterline' || view === 'bowq')) continue;
       cases.push({ name: `wake-${wake ? 'on' : 'off'}-${knots}kn-${view}`, height: 0, view, knots, wakeOn: wake, spectrum: { windSpeed: Number(arg('--wake-wind', '7')), fetch: 100, peakEnhancement: 3.3, spread: 8, swell: 0, seed: 7 } });
     }
   }
@@ -88,7 +88,7 @@ for (const wake of [true, false]) {
 const wakeRun = argv.includes('--wake');
 const selected = cases.filter(c => (wakeRun ? c.name.startsWith('wake-') : !c.name.startsWith('wake-')) && (!only || c.name.includes(only)));
 
-const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam, wakeDebug, profiling, throttle, throttleMatch, seqCount, seqStep, staticCamera]) => {
+const { results, images, adapter } = await page.evaluate(async ([cases, W, H, frames, webgl, tier, foam, wakeDebug, profiling, throttle, throttleMatch, seqCount, seqStep, staticCamera, moon]) => {
   const api = window.__gosx_scene3d_api;
   const diag = window.__gosx_elio_diagnostics = {};
   // --profile: the page times every graph pass with its own timer query, so the renderer must not see the timer extension (one query at a time).
@@ -198,9 +198,11 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
   let time = 100;
   for (const c of cases) {
     const hull = c.knots ? { x: 0, z: 0, speed: c.knots * 0.514444 } : null;
-    const views = { above: [0, 170, 30, -1.35, 0], astern: [0, 26, 95, -0.2, 0], quarter: [9, 13, 58, -0.2, 2.62], trail: [0, 420, 190, -1.45, 0] }; // x, y, z, rotationX, rotationY
+    const views = { above: [0, 170, 30, -1.35, 0], astern: [0, 26, 95, -0.2, 0], quarter: [9, 13, 58, -0.2, 2.62], trail: [0, 420, 190, -1.45, 0],
+      waterline: [22, 3, -30, -0.03, 0.6], bowq: [30, 16, -10, -0.26, 0.52] }; // the bow: a low view from the side and a three-quarter view from above (the hull's bow is at z = -62) // x, y, z, rotationX, rotationY
     const camera = hull ? { x: views[c.view][0], y: views[c.view][1], z: views[c.view][2], rotationX: views[c.view][3], rotationY: views[c.view][4], fov: 62, near: 0.5, far: 20000 } : { x: 0, y: c.height, z: 0, rotationX: -0.045 - 0.25 * Math.min(1, c.height / 300), rotationY: 0.6, fov: 62, near: 0.5, far: 20000 };
     const ocean = Object.assign({ level: 0, extent: 8000, choppiness: 0.7, windDirection: 20, foam }, c.gerstner || {});
+    if (moon) ocean.reflections = { mode: 'ssr+planar', resolution: 0.5, strength: 0.8 };
     if (c.spectrum) {
       ocean.spectrum = c.spectrum;
       // What Go's normalization (scene/ocean_graph.go) would put in environment.ocean.graphParams for this scene; the graph's own defaults
@@ -219,9 +221,11 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     // time, hull and camera stand still and the frame counter does not advance. Both backends then start the same run from the same state, so a frame
     // compared across backends shows the same sea. (Without this the sea's phase differs by the warm-up length and the frames cannot be compared.)
     let warmUp = 0;
+    // --moon: a sphere mesh 1.5 km away and high in the sky (a moon built as geometry), to see what the sea's reflections do with it.
+    const sceneObjects = moon ? api.sceneStateObjectsWithMaterials(api.createSceneState({ scene: { objects: [{ id: 'moon', kind: 'sphere', radius: 60, segments: 24, x: 80, y: 380, z: -1330, material: { color: '#d8dce4', wireframe: false }, wireframe: false }] } })) : [];
     for (let i = 0; i < frames; i++) {
       const warm = first === null && warmUp < 3000;
-      const bundle = api.createSceneRenderBundle(W, H, '#101820', camera, [], [], [], [], [], {}, 0.4, [], [], [], [], [], 0, false, {});
+      const bundle = api.createSceneRenderBundle(W, H, '#101820', camera, sceneObjects, [], [], [], [], {}, 0.4, [], [], [], [], [], 0, false, {});
       bundle.environment = { sky: { mode: 'physical', sunDirection: { x: -0.35, y: 0.7, z: 0.62 }, turbidity: 3 }, ocean };
       bundle.lights = [];
       bundle.postEffects = [{ kind: 'toneMapping', mode: 'aces', exposure: 0.5 }];
@@ -277,7 +281,7 @@ const { results, images, adapter } = await page.evaluate(async ([cases, W, H, fr
     if (c.knots && c.wakeOn) { const wi = wakeImage(); if (wi) { images.push({ name: c.name + '-texture', url: wi.url }); out[out.length - 1].wakeStats = wi.stats; } }
   }
   return { results: out, images, adapter };
-}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9')), argv.includes('--wake-debug'), argv.includes('--profile'), Number(arg('--throttle', '1')), arg('--throttle-match', '^wake\\.'), Number(arg('--sequence', '0')), Number(arg('--sequence-step', '15')), argv.includes('--static-camera')]);
+}, [selected, W, H, frames, webgl, tier, Number(arg('--foam', '0.9')), argv.includes('--wake-debug'), argv.includes('--profile'), Number(arg('--throttle', '1')), arg('--throttle-match', '^wake\\.'), Number(arg('--sequence', '0')), Number(arg('--sequence-step', '15')), argv.includes('--static-camera'), argv.includes('--moon')]);
 await browser.close();
 if (adapter) console.log('adapter', JSON.stringify(adapter));
 if (outDir) for (const image of images) fs.writeFileSync(path.join(outDir, image.name + '.png'), Buffer.from(image.url.split(',')[1], 'base64'));

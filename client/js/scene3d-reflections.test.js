@@ -51,3 +51,17 @@ test("WebGL planar fallback draws built-in PBR outside the walking camera cull",
  b.meshObjects=[{id:"reflection-quad",kind:"box",materialIndex:0,directVertices:true,vertexOffset:0,vertexCount:4,bounds:{minX:99,minY:0,minZ:0,maxX:101,maxY:2,maxZ:0},vertices:{count:4,positions:new Float32Array([99,0,0,101,0,0,101,2,0,99,2,0]),normals:new Float32Array([0,0,1,0,0,1,0,0,1,0,0,1]),uvs:new Float32Array([0,0,1,0,1,1,0,1]),indices:new Uint32Array([0,1,2,0,2,3])}}];b.materials=[{baseColor:"#ffffff",roughness:0.5}];
  h.renderer.render(b,{width:320,height:180});assert.ok(gl.ops.some(op=>op[0]==="drawElements"));assert.equal(b.camera.y,1.7);h.renderer.dispose();assert.deepEqual(h.warnLog,[]);
 });
+
+test("the sea's mirror keeps near and low geometry and leaves out sky bodies: a mesh far away and high in the sky is not drawn into the planar reflection", async () => {
+ const h = await createBoardWebGPUHarness({ fresh: true }), a = h.env.context.__gosx_scene3d_api;
+ const box = (x, y, z, r) => ({ minX: x - r, maxX: x + r, minY: y - r, maxY: y + r, minZ: z - r, maxZ: z + r });
+ const ship = { id: "ship", bounds: box(0, 20, -120, 40) }, moon = { id: "moon", bounds: box(80, 380, -1330, 60) };
+ const mountain = { id: "mountain", bounds: box(900, 250, -2500, 300) }, noBounds = { id: "plain" }, kite = { id: "kite", bounds: box(0, 90, -400, 5) };
+ const camera = { x: 0, y: 26, z: 95 };
+ const ids = (list) => Array.from(list, (o) => o.id);
+ const all = [ship, moon, mountain, noBounds, kite];
+ assert.deepEqual(ids(a.sceneReflectOpaqueList(all, [], camera, 0)), ["ship", "mountain", "plain", "kite"],
+  "the moon (1.4 km away, 16 degrees up) leaves; the ship, a mountain at 5 degrees, a mesh without bounds and a near kite stay");
+ assert.deepEqual(ids(a.sceneReflectOpaqueList(all, [])), ids(all), "without a camera nothing is judged");
+ h.renderer.dispose();
+});
