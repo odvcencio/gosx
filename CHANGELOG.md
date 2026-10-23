@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reject SceneIR transform and state patches with known non-patch edits before
+  copying large mesh records. Cache scalar comparison fields from the authored
+  patch types, retaining the JSON fallback for ambiguous comparisons.
+
 - Match SceneIR records with one ID table instead of building two maps.
   Preserve the handling of repeated and empty IDs, sorted removals, and the
   order of updates and optional patches without mutating either snapshot.

@@ -38,8 +38,12 @@ var objectScalarFields = func() []int {
 // both entire mesh records just to discover that edit. Signed scalar zeros
 // retain the reference fallback because omitempty can erase their difference.
 func objectRecordJSONDifferent(a, b *ObjectIR) bool {
+	return objectRecordJSONDifferentOnFields(a, b, objectScalarFields)
+}
+
+func objectRecordJSONDifferentOnFields(a, b *ObjectIR, fields []int) bool {
 	left, right := reflect.ValueOf(a).Elem(), reflect.ValueOf(b).Elem()
-	for _, i := range objectScalarFields {
+	for _, i := range fields {
 		x, y := left.Field(i), right.Field(i)
 		if x.Kind() == reflect.Pointer {
 			if x.IsNil() != y.IsNil() {
