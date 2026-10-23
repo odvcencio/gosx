@@ -17,7 +17,7 @@
   `<script defer data-gosx-script="feature-engines|hubs|controllers|islands">`
   tags instead of preload links, so an app writes no runtime `<script>` tag.
   The scheduler, the gates and the publisher are the new
-  bootstrap-feature-scene3d-defer.js (6,951 raw, 2,722 gzip, 2,411 Brotli),
+  bootstrap-feature-scene3d-defer.js (7,034 raw, 2,762 gzip, 2,446 Brotli),
   which loads only on pages with a deferred or gated scene. Pages without one
   change by under 25 raw bytes (two one-line hooks). The new
   bootstrap-feature-renderer-probe.js is 953 raw (476 gzip, 424 Brotli) and

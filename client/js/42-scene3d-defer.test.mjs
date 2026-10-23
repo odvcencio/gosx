@@ -211,3 +211,14 @@ test("a 404 for the props is not retried", async () => {
   assert.equal(calls(), 1);
   assert.equal(mounts[0].getAttribute("data-gosx-scene3d-defer-state"), "failed");
 });
+
+test("a page change during the 503 wait skips the retry fetch", async () => {
+  const busy = { status: 503, headers: { "Retry-After": "1" }, text: "busy" };
+  const { env, timers, calls } = await retryRun([busy, { text: "{}" }]);
+  assert.equal(calls(), 1);
+  await env.context.__gosx_dispose_page(new Set());
+  timers.runDelay(1000);
+  await flushAsyncWork(); await flushAsyncWork();
+  assert.equal(calls(), 1, "the retry must not fetch for a page that is gone");
+  assert.equal(env.context.__stub_scene_mounts, undefined);
+});

@@ -63,7 +63,7 @@ func newRefillFixture(t *testing.T, secret []byte, scenes int) *refillFixture {
 			case <-f.gate:
 			case <-ctx.Request.Context().Done():
 				f.ctxDone <- struct{}{}
-			case <-time.After(5 * time.Second):
+			case <-time.After(time.Second):
 			}
 		}
 		return one(ctx, "slow", true, "")
@@ -77,7 +77,7 @@ func newRefillFixture(t *testing.T, secret []byte, scenes int) *refillFixture {
 				select {
 				case <-f.gate:
 				case <-ctx.Request.Context().Done():
-				case <-time.After(5 * time.Second):
+				case <-time.After(time.Second):
 				}
 			}
 			return one(ctx, "shared", true, "")
@@ -324,20 +324,28 @@ func TestSceneEntryRefillConcurrencyCap(t *testing.T) {
 	}
 }
 
-// A client that leaves ends the render it started and frees the slot, and a
-// waiter that leaves does not block on the leader.
-func TestSceneEntryRefillStopsWhenTheClientLeaves(t *testing.T) {
+// A waiter whose client leaves stops waiting. A leader whose client leaves does
+// not cut its render short: a loader that honours its context would fail, and
+// the failure would be cached as a miss for every visitor.
+func TestSceneEntryDepartedClientDoesNotPoisonTheRefill(t *testing.T) {
 	island.SetSceneEntryStore(island.NewSceneEntryStore(8, 1<<20))
 	f := newRefillFixture(t, testSceneSecret, 0)
 	f.gate = make(chan struct{})
-	ref := signedRef(strings.Repeat("ee", 16), "/slow")
+	close(f.gate) // learn the real hash with an open gate
+	hash := refHash(f.refs(t, "/slow")[0])
+	for len(f.entered) > 0 {
+		<-f.entered
+	}
+	island.SetSceneEntryStore(island.NewSceneEntryStore(8, 1<<20))
+	f.renders.Store(0)
+	f.gate = make(chan struct{})
+	ref := signedRef(hash, "/slow")
 
 	leaderCtx, cancelLeader := context.WithCancel(context.Background())
 	leaderDone := make(chan struct{})
 	go func() {
 		defer close(leaderDone)
-		req := httptest.NewRequest(http.MethodGet, ref, nil).WithContext(leaderCtx)
-		f.handler.ServeHTTP(httptest.NewRecorder(), req)
+		f.handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, ref, nil).WithContext(leaderCtx))
 	}()
 	<-f.entered
 
@@ -346,8 +354,7 @@ func TestSceneEntryRefillStopsWhenTheClientLeaves(t *testing.T) {
 	waiterResp := httptest.NewRecorder()
 	go func() {
 		defer close(waiterDone)
-		req := httptest.NewRequest(http.MethodGet, ref, nil).WithContext(waiterCtx)
-		f.handler.ServeHTTP(waiterResp, req)
+		f.handler.ServeHTTP(waiterResp, httptest.NewRequest(http.MethodGet, ref, nil).WithContext(waiterCtx))
 	}()
 	time.Sleep(50 * time.Millisecond)
 	cancelWaiter()
@@ -362,19 +369,21 @@ func TestSceneEntryRefillStopsWhenTheClientLeaves(t *testing.T) {
 	cancelLeader()
 	select {
 	case <-f.ctxDone:
-	case <-time.After(2 * time.Second):
-		t.Fatal("the render must see the request context end")
+		t.Fatal("a departed client must not cancel the render")
+	case <-time.After(200 * time.Millisecond):
 	}
+	close(f.gate) // the loader finishes and produces the props
 	select {
 	case <-leaderDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("the leader must return")
+		t.Fatal("the leader must return once the render ends")
 	}
-	// The slot is free again.
-	f.gate = nil
-	w := f.get(signedRef(strings.Repeat("ff", 16), "/slow"))
-	if w.Code == http.StatusServiceUnavailable {
-		t.Fatal("slot leaked after the client left")
+	// The next visitor gets the props, not a cached miss.
+	if w := f.get(ref); w.Code != 200 {
+		t.Fatalf("after the leader left, the next request = %d, want 200", w.Code)
+	}
+	if n := f.renders.Load(); n != 1 {
+		t.Fatalf("renders = %d, want 1", n)
 	}
 }
 

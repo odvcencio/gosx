@@ -211,7 +211,10 @@ func (a *App) refillSceneEntry(r *http.Request, store *island.SceneEntryStore, h
 	rf.mu.Unlock()
 
 	watch := store.Watch(hash)
-	ctx, cancel := context.WithTimeout(r.Context(), sceneRefillTimeout)
+	// The render must not end because the client that started it left: a
+	// loader that honours its context would fail, and the miss would be cached
+	// for every visitor. Only the timeout bounds it.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), sceneRefillTimeout)
 	defer func() {
 		cancel()
 		watch.Close()
